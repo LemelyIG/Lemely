@@ -24,8 +24,11 @@ class NotificationPreferencesDTO(ApiModel):
     and parent only)"); ``reviewWithdrawn`` is ``null`` for every role but
     teacher (Task 17, R10) — it fires only for a teacher whose review item a
     student's own deletion withdrew (Task 9's ``_notify_withdrawn_reviewers``
-    never targets any other role). ``lemely.web.routers.me`` decides the
-    filtering for both; this DTO just carries the optional values.
+    never targets any other role). The eight tutoring toggles
+    (``bookingRequest`` .. ``tutoringReport``) follow the same pattern, each
+    non-null only for the roles SPEC ``docs/tutoring/SPEC.md`` §a.1 lists for
+    it. ``lemely.web.routers.me`` decides the filtering for all of them; this
+    DTO just carries the optional values.
     """
 
     gradeReady: bool
@@ -34,6 +37,14 @@ class NotificationPreferencesDTO(ApiModel):
     studyPlanReminder: bool
     atRiskAlert: bool | None = None
     reviewWithdrawn: bool | None = None
+    bookingRequest: bool | None = None
+    bookingUpdate: bool | None = None
+    bookingNote: bool | None = None
+    tutorAccess: bool | None = None
+    tutorReview: bool | None = None
+    tutorListing: bool | None = None
+    parentLink: bool | None = None
+    tutoringReport: bool | None = None
     quietHoursStart: time | None = None
     quietHoursEnd: time | None = None
 
@@ -88,9 +99,9 @@ class NotificationPreferencesUpdateDTO(ApiModel):
     A genuine partial update: a field omitted from the request body is left
     untouched server-side, which the router distinguishes from "explicitly
     supplied" via pydantic's ``model_fields_set``. This matters for
-    ``atRiskAlert`` (role-gated — omission is never an error, explicit
-    provision by a disallowed role is) and for the quiet-hours pair (an
-    explicit ``null`` clears that bound; omission leaves it as-is).
+    ``atRiskAlert`` and the other role-gated toggles (omission is never an
+    error, explicit provision by a disallowed role is) and for the quiet-hours
+    pair (an explicit ``null`` clears that bound; omission leaves it as-is).
     """
 
     gradeReady: bool | None = None
@@ -99,6 +110,14 @@ class NotificationPreferencesUpdateDTO(ApiModel):
     studyPlanReminder: bool | None = None
     atRiskAlert: bool | None = None
     reviewWithdrawn: bool | None = None
+    bookingRequest: bool | None = None
+    bookingUpdate: bool | None = None
+    bookingNote: bool | None = None
+    tutorAccess: bool | None = None
+    tutorReview: bool | None = None
+    tutorListing: bool | None = None
+    parentLink: bool | None = None
+    tutoringReport: bool | None = None
     quietHoursStart: time | None = None
     quietHoursEnd: time | None = None
 

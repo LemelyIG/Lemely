@@ -54,14 +54,31 @@ class StorageBackend(Protocol):
         """Remove ``object_path`` from ``bucket``. A missing object is not an error."""
         ...
 
-    def create_signed_url(self, bucket: str, object_path: str, expires_in: int) -> str:
+    def create_signed_url(
+        self,
+        bucket: str,
+        object_path: str,
+        expires_in: int,
+        *,
+        disposition: str | None = None,
+        content_type: str | None = None,
+    ) -> str:
         """Return a URL that reads ``object_path`` for ``expires_in`` seconds.
 
-        Exists for profile pictures: the browser fetches the image directly,
-        so the bytes must be reachable without the caller's session, and the
-        reachability must expire. Every other consumer downloads through the
-        backend instead, which is why this is the only read that produces a
-        URL rather than bytes.
+        Exists for two consumers whose bytes must be reachable without the
+        caller's session, for a limited time: profile pictures (the browser
+        fetches the image directly) and tutor evidence files, which a platform
+        admin downloads through a 300 s link (SPEC §b.2 A2, THREAT-MODEL SC-22).
+        Every other consumer downloads through the backend instead, which is
+        why this is the only read that produces a URL rather than bytes.
+
+        ``disposition`` is a ``Content-Disposition`` value the response must
+        carry (``attachment; filename=...`` for evidence, so a browser saves the
+        file rather than rendering it). ``None`` leaves the response as the
+        object is stored, which is what avatars need. ``content_type`` is the
+        ``Content-Type`` the response must carry whatever the object's stored
+        metadata says (SC-22: an evidence file's type from its database row,
+        which was sniffed from its bytes); ``None`` leaves the stored type.
 
         Raises :class:`~lemely.runtime.errors.ExternalServiceError` when the
         configured credentials cannot sign. Callers that merely *display* an
@@ -107,4 +124,56 @@ def check_storage(settings: Settings, *, no_network: bool) -> tuple[bool, str]:
     return True, f"gcs://{' + '.join(buckets)}"
 
 
-__all__ = ["StorageBackend", "StorageObjectNotFoundError", "check_storage"]
+def check_tutor_evidence_storage(settings: Settings, *, no_network: bool) -> tuple[bool, str]:
+    """``lemely doctor``'s tutor evidence check: ``(passed, detail)``.
+
+    Separate from :func:`check_storage` because the evidence bucket is judged
+    differently: ``local``: its directory under the storage root is writable.
+    ``gcs``: the checks the backend runs before its first evidence operation
+    (:mod:`lemely.io.storage_gcs`, SC-22). The placeholder name and an unset
+    ``storage.gcs_project_number`` fail offline; unless ``no_network``, the
+    bucket must then enforce public access prevention and uniform access and
+    belong to that project. The result is the privacy-and-owner decision the
+    upload route would get, not merely that the bucket answers, so a deploy
+    whose bootstrap was never re-run shows here instead of as a 503 on upload.
+    """
+    bucket = settings.storage.tutor_evidence_bucket
+    if settings.storage.backend == "local":
+        directory = settings.paths.output_dir / "storage" / bucket
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            return False, str(exc)
+        return os.access(directory, os.W_OK), str(directory)
+
+    from lemely.io.storage_gcs import GcsStorageBackend, placeholder_evidence_bucket_refusal
+
+    placeholder = placeholder_evidence_bucket_refusal(bucket)
+    if placeholder is not None:
+        return False, placeholder
+    number = settings.storage.gcs_project_number
+    backend = GcsStorageBackend(
+        project=settings.storage.gcs_project,
+        tutor_evidence_bucket=bucket,
+        project_number=number,
+    )
+    if number is None:
+        return False, (
+            f"gcs://{bucket}: LEMELY_STORAGE__GCS_PROJECT_NUMBER is not set, so every "
+            "evidence upload is refused (the bucket cannot be shown to be this project's)"
+        )
+    if no_network:
+        return True, f"gcs://{bucket} (privacy and owner not probed: --no-network)"
+    try:
+        backend.check_tutor_evidence_bucket()
+    except Exception as exc:  # any probe failure (refusal, ADC, network) surfaces as the detail
+        return False, f"gcs://{bucket}: {exc}"
+    return True, f"gcs://{bucket} (private; owned by project {number})"
+
+
+__all__ = [
+    "StorageBackend",
+    "StorageObjectNotFoundError",
+    "check_storage",
+    "check_tutor_evidence_storage",
+]

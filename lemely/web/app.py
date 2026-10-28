@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
@@ -23,6 +24,10 @@ from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 from lemely.web.deps import get_settings, get_sweeper
 from lemely.web.routers import (
     admin,
+    admin_tutor_sanctions,
+    admin_tutoring_moderation,
+    admin_tutoring_reports,
+    admin_tutors,
     announcements,
     auth,
     classes,
@@ -36,6 +41,8 @@ from lemely.web.routers import (
     meta,
     notifications,
     parent,
+    parent_bookings,
+    parent_tutor_access,
     placement,
     practice,
     quiz,
@@ -44,20 +51,60 @@ from lemely.web.routers import (
     school,
     student,
     student_announcements,
+    student_bookings,
     student_classes,
     student_deletion,
+    student_reviews,
     student_self_review,
+    student_tutor_access,
+    student_tutoring_settings,
     study_plan,
     teacher,
+    tutor_bookings,
+    tutor_evidence,
+    tutor_preview,
+    tutor_profile,
+    tutor_reviews,
+    tutor_students,
+    tutoring_blocks,
+    tutoring_booking,
+    tutoring_directory,
+    tutoring_outcomes,
+    tutoring_public,
+    tutoring_reports,
+    tutoring_reviews,
     widget,
     xp,
 )
 from lemely.web.scheduled_notifications import run_sweeper
+from lemely.web.tutoring_email import MOCK_WARNING, email_delivery_mode
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Iterator, Sequence
+
+    from starlette.routing import BaseRoute
 
 log = logging.getLogger(__name__)
+
+_TUTORING_PATH = re.compile(r"/tutor(s|ing)?(/|$)")
+
+
+def _tutoring_routes_mounted(app: FastAPI) -> bool:
+    """True when any route of ``app`` is a tutoring route.
+
+    ``include_router`` wraps a router in an object that exposes it as
+    ``original_router``, so ``app.routes`` alone does not list the tutoring paths.
+    """
+
+    def walk(routes: Sequence[BaseRoute]) -> Iterator[str]:
+        for route in routes:
+            inner = getattr(route, "original_router", None)
+            if inner is not None:
+                yield from walk(inner.routes)
+            else:
+                yield getattr(route, "path", "")
+
+    return any(_TUTORING_PATH.search(path) for path in walk(app.routes))
 
 
 @asynccontextmanager
@@ -76,6 +123,8 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
     settings = get_settings()
     log_marking_flags(settings.grading.marking_options())
+    if email_delivery_mode(settings) == "mock" and _tutoring_routes_mounted(_app):
+        log.warning(MOCK_WARNING)
     # The same model table `lemely doctor` checks: every configured claude- model.
     missing_claude = anthropic_key_missing_tags(settings, configured_models(settings))
     if missing_claude:
@@ -152,6 +201,29 @@ def create_app() -> FastAPI:
     app.include_router(me.router)
     app.include_router(announcements.router)
     app.include_router(widget.router)
+    app.include_router(tutoring_public.router)
+    app.include_router(tutoring_directory.router)
+    app.include_router(tutor_profile.router)
+    app.include_router(tutor_evidence.router)
+    app.include_router(admin_tutors.router)
+    app.include_router(tutoring_reviews.router)
+    app.include_router(student_reviews.router)
+    app.include_router(tutor_reviews.router)
+    app.include_router(admin_tutoring_moderation.router)
+    app.include_router(student_tutor_access.router)
+    app.include_router(tutor_students.router)
+    app.include_router(tutoring_booking.router)
+    app.include_router(student_bookings.router)
+    app.include_router(parent_bookings.router)
+    app.include_router(tutor_bookings.router)
+    app.include_router(tutoring_outcomes.router)
+    app.include_router(tutor_preview.router)
+    app.include_router(student_tutoring_settings.router)
+    app.include_router(parent_tutor_access.router)
+    app.include_router(tutoring_blocks.router)
+    app.include_router(admin_tutor_sanctions.router)
+    app.include_router(tutoring_reports.router)
+    app.include_router(admin_tutoring_reports.router)
 
     @app.exception_handler(EmptyGradeBoundaryStoreError)
     async def _thresholds_not_ingested(

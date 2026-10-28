@@ -14514,3 +14514,345 @@ similarity metric (and its normalisation, per I2) that produced the `extraction_
 it measured. This is what makes a metric swap detectable rather than a silent invalidation of a
 prior decision. `REREAD_AGREEMENT_THRESHOLD` stays at the plan's `0.8` until then -- see the
 comment on it in `lemely/io/second_read.py` -- it is not re-derived on a guess.
+
+## D-2026-10-25 — tutoring: roles
+
+**What.** A tutor is a `tutor_profiles` row, 1:1 with a `users` row of role `teacher`. No new
+`Role` value. Tutor routes live under `/api/tutor/*`, are guarded by `require_role(Role.teacher)`,
+and resolve the caller's profile from `auth.user_id`; a teacher without a profile gets 404. Teacher
+self-service sign-up already makes a school-less teacher, so a "pure tutor" needs no new sign-up
+route. A co-teacher is a peer with their own profile; there is no delegation.
+
+**Why.** `users.role` is one enum value per account (`lemely/db/models/users.py:36`). A sixth role
+would force a school teacher who tutors to hold two accounts and would touch every
+`require_role`. The profile keeps tutor state in one table and leaves the role model alone.
+
+**Rejected.** A `tutor` role; an `is_tutor` flag on `users`; an assistant-under-lead-tutor model
+(a third adult seeing minors' data). Source: decision-log rows 1a, 1b; `docs/tutoring/adr/ADR-T01-role-model.md`.
+
+## D-2026-10-25 — tutoring: tenancy
+
+**What.** The marketplace has no tenant: `tutor_profiles` has no `school_id`, and listings are
+platform-wide after `platform_admin` approval. Three gates to a student's analytics stay disjoint
+and never union: the class roster (`_visible_students`, unchanged), the parent link (unchanged),
+and the new student-issued grant. `school_admin` sees nothing of tutoring. `platform_admin`
+moderates profiles, reviews and reports but has no path to a student's analytics.
+
+**Why.** A tutor relationship is a private, consented arrangement, not enrolment. Modelling it as a
+hidden class would put tutoring students into every school-scoped view and cannot express
+"revoked" or "audited".
+
+**Rejected.** A `School` tenant with a hidden class per tutor; a per-school marketplace.
+Source: rows 1a, 5a; `docs/tutoring/adr/ADR-T03-tenancy.md`.
+
+## D-2026-10-25 — tutoring: grants and audit
+
+**What.** The student alone grants a listed tutor access, minors included; all subjects, until
+revoked (`tutor_data_grants`, one live row per pair, history kept). Derived analytics only: the
+T-05 `StudentDetailDTO`, never scans, crops, answers or question detail. Validity (revoked,
+expired, tutor suspended, blocked) is computed at read time by `lemely.core.tutor_grants`, so a
+revocation applies on the next read. Every tutor read writes a `tutor_access_audit` row in the
+same transaction as the validity check, before data loads; if the insert fails the read fails. The
+student reads the whole log. `scope` and `expires_at` columns exist so a narrower grant can be
+added later without a table change.
+
+**Accepted risk (user decision, argued against).** A minor can give an adult indefinite,
+all-subject access with no guardian in the loop. Controls in force: listed tutors only, parents
+notified of every grant, audit log visible to the student, one-tap revoke, block auto-revokes,
+admin suspension invalidates grants.
+
+**Rejected.** Parent approval for under-18s (recommended); student and parent always; per-subject
+90-day grants (recommended); grants tied to a booking. Source: rows 2+3a, 3b;
+`docs/tutoring/adr/ADR-T02-consent-and-access.md`.
+
+## D-2026-10-25 — tutoring: safeguarding
+
+**What.** Linked parents are notified of each grant and each booking event (inbox and email) and
+can read every booking and its notes thread; they cannot revoke a grant. Notes are booking-scoped,
+immutable, readable by the student, the tutor and linked parents, and reportable by anyone who can
+read them. Moderation is reactive: an admin reads notes only through a report, and can hide a note,
+cancel a booking or suspend a tutor. Students and tutors can block each other; a block revokes the
+grant and cancels future sessions in the same transaction. Emails never carry note text, meeting
+links or addresses.
+
+**Accepted risk (user decision, argued against).** A guardian cannot stop a minor's grant or an
+in-person booking, and free text passes between an adult and a minor with nothing scanning it.
+
+**Open, not adopted by the LOCK reply (do not build):** read-only grant and audit visibility for
+linked parents; a one-line safety notice on a student's first booking.
+
+**Rejected.** Parent sees, revokes and confirms in-person sessions for under-18s (recommended); no
+messaging in v1 (recommended). Source: rows 4, 4b; ADR-T02.
+
+## D-2026-10-25 — tutoring: listing and public fields
+
+**What.** `platform_admin` approves a profile before it is listed. The directory is public on the
+web with a minimal card only: first name and last initial, headline, subjects, modes, city-level
+area, rating and count. Bio, qualification note, availability, reviews, outcome figures, the
+"documents seen" badge and booking are logged-in only. No photo, evidence or exact location is ever
+public. Editing a moderated text field sends a listed profile back to review. "Verified" means only
+that an admin saw the uploaded documents. Every public tutor page is sent with `noindex`; the
+tutor's opt-in is stored and has no effect until a server-rendered page exists.
+
+**Accepted risk (user decision, argued against).** Tutor PII on the open web. Limited by the
+minimal card and `noindex`.
+
+**Rejected.** Logged-in-only browsing (recommended); auto-listing with delisting; a full public
+profile. Source: rows 5a, 5b; `docs/tutoring/SPEC.md` §a.5.
+
+## D-2026-10-25 — tutoring: discovery and ranking
+
+**What.** Filters: subject, mode, area, minimum rating, and availability (weekday and
+morning/afternoon/evening, logged-in only, matched against weekly rules and labelled "Usually
+available"). Default order is a Bayesian average computed by `lemely.core.tutor_ratings` and stored
+as `tutor_profiles.rank_score` in the same transaction as any rating change; under 3 reviews the
+card shows "New", not stars. Keyset paging on `(rank_score DESC, id)`. Two SQL statements per page
+regardless of page size.
+
+**Why.** The prior stops a single five-star review from topping the list. Storing the score keeps
+the sort indexable and keyset-safe. A fixed prior (proposed 4.0, weight 5) means one tutor's
+reviews never re-rank everyone else.
+
+**Rejected.** Raw average; a prior equal to the global mean (every new review would re-rank every
+tutor). Source: row 6.
+
+## D-2026-10-25 — tutoring: reviews
+
+**What.** One review per completed booking (`UNIQUE (booking_id)`), by that booking's student only;
+stars 1-5 plus optional text. Stars count in the rating at once; text is public only after
+`platform_admin` approval. Text edits within 14 days return it to moderation. The tutor gets one
+reply, also moderated. Reviews show "A student" and a month, never a name. Parents cannot review.
+
+**Rejected.** Per-relationship reviews; stars only. Source: row 7.
+
+## D-2026-10-25 — tutoring: outcomes
+
+**What.** On the logged-in profile, per tutor and subject: an ordered grade-distribution bar and a
+"change in grade while with this tutor" figure (higher / same / lower), each with `n`, a table
+alternative, and a caveat that marking is automatic and students choose their tutors. k ≥ 5 applies
+to each figure separately; below k an insufficient-data state hides the exact count. Students are
+counted by default and opt out with one tap (`student_tutoring_preferences`), effective on the next
+read. Computed per request in two queries; nothing cached. The pie chart is dropped. The bar uses
+the recorded ladder `GRADE_ORDER` (A*-E, U), not A*-G, because F and G are not grade-bearing today.
+
+**Accepted risk (user decision, argued against).** Minors counted without consent; a figure that
+reads as cause; small-group re-identification (the homogeneity case is raised for a user decision).
+
+**Rejected.** Ordered bar only, opt-in, default off (recommended); dumbbell only; pie. Source: rows
+8, 8b; `docs/tutoring/adr/ADR-T04-outcome-stats.md`.
+
+## D-2026-10-25 — tutoring: booking
+
+**What.** A student, or a linked parent for the child, requests a slot; the tutor accepts or
+declines. Weekly availability is stored as Cairo wall-clock rules plus the zone; every concrete
+instant is stored UTC. Postgres `btree_gist` exclusion constraints on `(tutor_profile_id, slot)`
+and `(student_id, slot)` for active (`requested`, `accepted`) bookings, plus one pending request per
+student and tutor, make double booking impossible in the database. Virtual sessions reveal the link
+after accept; in-person sessions show the city area until accept and the meeting place after.
+Cancel up to 24 hours before an accepted session; the tutor marks completed or no-show after the
+start. Expiry and staleness are computed at read time; an expired request is written as expired
+only during a later write. Inbox notifications plus a generic `email_outbox` written in the same
+transaction and sent after commit by a mock-first provider, with no retry.
+
+**Verified.** `btree_gist` is trusted and creatable by the non-superuser `postgres` role on the
+local Supabase image (`postgres:17.6.1.143`); the exact constraints were exercised in rolled-back
+transactions (SPEC §a.4).
+
+**Rejected.** Instant booking; app-level conflict checks; weekly rules stored as UTC offsets (they
+shift by an hour at every DST change). Source: row 9.
+
+## D-2026-10-25 — tutoring: parents
+
+**What.** A parent browses the directory and requests sessions for a linked child, the first parent
+write action. Bookings record the subject (`student_id`) and the actor (`requested_by_user_id`,
+`requested_by_party`); the link is re-checked on every action. A parent may cancel only bookings
+they requested, reads the child's sessions and notes, and cannot post notes, review, grant or
+revoke. All of it is new routes; the four existing parent routes keep their guards.
+
+**Accepted risk (user decision, argued against).** The parent role gains a write path.
+
+**Rejected.** Browse only; no parent access. Source: row 10.
+
+## D-2026-10-25 — tutoring: money
+
+**What.** No payments and no prices anywhere in the marketplace. The UI says fees are agreed between
+the family and the tutor, outside Lemely.
+
+**Why.** MISSION §1 defers payments; an indicative rate would be invented data. Source: row 11.
+
+## D-2026-10-25 — tutoring: MVP slice
+
+**What.** Every decided feature ships, in five dependency waves, each with its own additive
+migration in one chain from `0043_merge_heads` (`0044_tutoring_enums_ext` to `0050_email_outbox`):
+profiles and directory; booking, notes and email; reviews; grants, audit, tutor student view and
+outcomes; reports and blocks. DELIVERY.md marks as limited: no email retry or scheduler, no
+auto-expiry of pending requests, reactive moderation only, outcome figures carry the marking
+caveat, "verified" means documents seen, public pages always `noindex`.
+
+**Rejected.** Core first with the rest in a later release. Source: row 12; `docs/tutoring/SPEC.md` §f, §g.
+
+## D-2026-10-25 — tutoring: outcome suppression and timing
+
+**What.** Outcome figures stay live (computed on every request, no snapshot) with these rules
+added to row 8. A student counts only after their window closes: the window is the 120 days from
+the start of their first counted session, and a counted session is any accepted session whose time
+has passed, so marking a session completed or no-show, or a tutor blocking a student, changes
+nothing in the figures. The published set grows only in steps of 5 students. k applies to students
+with a grade (`nGraded`) and to students with both grades (`nPaired`), never to cohort size. A
+figure is hidden unless the students in it who never granted the tutor access number 0 or at least
+5, and its largest bucket holds at most n − 2. Students who ever blocked the tutor, opted out, have
+no verified email, or whose account was under 30 days old at their first session are left out. Any
+opt-out change or block by a cohort student hides both figures for 90 days. Grades from estimated
+boundaries are left out.
+
+**Accepted risk (user decision, argued against; ADVERSARIAL F1).** A tutor can still compare the
+live figure before and after a step and learn the grade of one student who never shared, when at
+least five students who never shared are already counted and four of the five students who enter
+share with the tutor. No tutor action causes the change; the tutor only has to look on the right
+day. Recorded with the exact scenario in ADR-T04 R5 and DELIVERY §5.7.
+
+**Rejected.** A monthly as-of snapshot (recommended); dropping the change figure. Source: row 13;
+`docs/tutoring/adr/ADR-T04-outcome-stats.md`; `docs/tutoring/SPEC.md` §e.1.
+
+## D-2026-10-25 — tutoring: parent links and the class side door
+
+**What.** Two existing paths change behaviour, with no permission change (guards, object rules and
+response bodies are unchanged). Parent links: removing a link tells the removed parent once (inbox
+and email, fixed text); adding one tells every parent already linked; every link and unlink is
+recorded in a new `parent_link_events` table; a child can have at most 4 linked parents (409
+`parent_limit` from `POST /api/invites/{code}/redeem` and, before any account is created, from
+`POST /api/auth/parent/signup`). Classes: a block deletes the student's enrolments in the tutor's
+school-less classes; a suspension or close deletes, from the tutor's school-less classes, every
+student who has a booking or a grant with them; a new `DELETE /api/student/classes/{class_id}` lets a
+student leave a school-less class; linked parents are told when a student joins a school-less class
+run by someone who tutors; the student sees which class teachers can see their progress.
+
+**Why.** Every "parent notified" control depended on a link the child could delete silently, and a
+school-less class gave any tutor the same analytics as a grant with no audit, no parent notice and
+no way out (THREAT-MODEL CB-1, CB-2, XT-1).
+
+**Rejected.** Doing neither; parent-link changes only. Source: row 14; `docs/tutoring/SPEC.md` §c.4;
+ADR-T02; ADR-T03.
+
+## D-2026-10-25 — tutoring: additions approved beyond the earlier rows
+
+**What.** Approved as narrow readings of rows 4, 7, 8 and 9: (a) blocks, which revoke the grant and
+cancel the pair's future sessions even inside 24 hours; (b) moderation of tutor replies before they
+are public; (c) a second exclusion constraint so one student cannot hold two overlapping sessions;
+(d) a `requested` booking holds the tutor's slot, bounded by 5 live requests per student and a
+28-day booking horizon; (e) the change figure drawn as higher / same / lower counts.
+
+**Source.** Row 15; ADVERSARIAL F30. No longer open items.
+
+## D-2026-10-25 — tutoring: parent view of sharing and the first-booking safety notice
+
+**What.** (i) Linked parents see, read-only, the child's grants and the log of every tutor read
+(`GET /api/parent/children/{child_id}/tutor-grants`, `…/tutor-access-log`, screen P-08). Parents still
+cannot create, approve or revoke a grant. (ii) Before a student's first booking request and first
+note, the student must acknowledge a fixed safety notice (keep contact on Lemely, meet in public,
+tell an adult, report or block, Egypt's 16000 child helpline). The acknowledgement is stored in
+`student_tutoring_preferences.safety_notice_acknowledged_at` and enforced by the server (409
+`safety_notice_required`), so the notice is shown once per student.
+
+**Rejected.** Not adopting either. Source: row 16; `BUILD/tutoring/design-summary.md` risk 1;
+ADR-T02.
+
+## D-2026-10-25 — tutoring: spec revision corrections (supersedes parts of the entries above)
+
+**What.** Facts and mechanisms corrected after the threat model and the adversarial review; the
+earlier entries above stay as written and these statements replace the parts named.
+- *Booking, MVP slice:* a sweeper already runs every 60 s (`lemely/web/scheduled_notifications.py`).
+  Email outbox rows are written in the change's transaction and sent once each by one new sweeper job,
+  not by a post-response task; there is still no retry and no expiry job (row 12). Inbox rows are
+  written after commit through `notify_safely`, as D5.9 §1 requires.
+- *Reviews:* a review can be written only 7 days after the session ends, by an account at least 14
+  days old; the rating counts each student's latest review once; reviews show a quarter, not a month.
+- *Outcomes:* computed in three statements, not two; the window rule above replaces "60 days after
+  the last session".
+- *Listing:* suspension and the new `closed` state revoke grants; reinstatement restores nothing.
+  Whether the tutor's search-engine opt-in takes effect (row 5b) is an open user decision (SPEC §h D-1).
+- *Tests:* tutoring models install `btree_gist` through a table-level DDL listener so the ~88 test
+  files that build schemas with `create_all` keep working.
+
+**Source.** `docs/tutoring/REVISION-LOG.md`; `docs/tutoring/SPEC.md` rev 2.
+
+## D-2026-10-25 — tutoring: search indexing of the public card (row 17; supersedes the "noindex" sentences above)
+
+**What.** A listed tutor's public card is indexable by search engines by default
+(`tutor_profiles.indexable boolean NOT NULL DEFAULT true`). The tutor turns it off with the "Show
+my card in search engines" toggle on T-16 (`PATCH /api/tutor/profile`; not a moderated field), and
+onboarding states plainly that the card is public and can be listed. The edge worker honours the
+choice: `web/wrangler.jsonc` `run_worker_first` gains `/tutors` and `/tutors/*`; for a card path
+with one UUID segment the worker looks up `GET /api/public/tutors/{id}` (fixed path, no client
+headers, 60 s edge cache, 1500 ms timeout) and omits `X-Robots-Tag` only when that returns 200 with
+`indexable: true`. Every other outcome, including any lookup failure, sends `noindex, nofollow`. The
+directory page `/tutors` is always `noindex, follow`, because it lists opted-out tutors too. The
+worker sets every security header itself, because Cloudflare does not apply `_headers` to responses
+generated by Worker code; `_headers` gets no `/tutors` rule. The nginx self-host deploy stays
+`noindex` on every tutor page. No sitemap.
+
+**Why.** User decision, 2026-10-25 (free-text answer "public, opt-in by default", read as indexable
+by default with a per-tutor opt-out). It overrides row 5b's "`noindex` until the tutor opts in" and
+the earlier entries' "every public tutor page is sent with `noindex`" / "public pages always
+`noindex`".
+
+**Accepted risk (user decision, argued against).** Tutor names, cities and subjects appear in
+search results. The lookup is new edge attack surface, bounded by a fixed path template, a
+one-boolean read and fail-closed handling. An opt-out reaches the edge within 60 s, but a search
+engine drops a card only on its next crawl.
+
+**Rejected.** Always `noindex` (recommended); an opt-in with default off (row 5b as written).
+Source: decision-log row 17; `docs/tutoring/SPEC.md` rev 3 §a.2, §b.5, §d T-16, §i.1.
+
+## D-2026-10-25 — tutoring: late cancellation (row 18)
+
+**What.** Inside 24 hours of the start of an accepted session only the tutor may cancel, and only
+with a non-blank reason (422 `reason_required`). The reason is shown to the student and linked
+parents in the booking (S-37, P-06), never in a notice or an email. The student and the requesting
+parent may cancel only up to 24 hours before the start (409 `cancel_window_closed` after that).
+Enforced three times: `core.booking.check_transition`, the compare-and-set `WHERE`, and the CHECK
+`ck_tutor_bookings_late_cancel_reason`. `BookingDTO.cancelledLate` marks it, and the tutor's
+`allowedActions` shows `cancel_with_reason` inside the window. Outcome figures are unaffected: a
+cancelled booking never enters the cohort.
+
+**Why.** Without it a session that cannot go ahead has no honest end state: the tutor would have to
+record a false `completed` or a blaming `no_show` (ADVERSARIAL F26). The student cannot silently
+escape a session at the last minute.
+
+**Rejected.** Mutual cancel inside 24 hours; nobody can cancel inside 24 hours (row 9 as written).
+Source: decision-log row 18; SPEC rev 3 §a.2, §a.3, §b.2 T13, §c.3 O30.
+
+## D-2026-10-25 — tutoring: reading calls confirmed, no subscription gate (row 19; SPEC O-4..O-7, O-11, O-15)
+
+**What.** Confirmed by the user as the SPEC read them: (O-4) the outcome bar uses the recorded ladder
+`GRADE_ORDER` A*–E, U, not A*–G; (O-5) weekly availability is stored as tutor-zone wall clock plus
+the zone, and every concrete instant as UTC; (O-6) a parent cancels or completes only bookings they
+requested and is read-only otherwise; (O-7) parents may file reports; (O-11) UI spec §1.4 principles
+3 and 5 are reworded in the Phase 4 docs, and MISSION §3 "their teachers" includes a tutor the
+student granted, so ADR-T02 is not blocked. Also recorded at rev 3: (O-15) no tutoring route checks a
+subscription or an activation (X-02), for tutors, students or parents; `lemely/web/deps.py` has no
+subscription dependency today, so nothing is added or removed. (D-3) closed with no change: locked
+row 12 stands (no email retry, no persisted expiry), although a 60-second sweeper exists.
+
+**Why.** Each reading avoids a data or DST error (O-4, O-5) or is the narrowest reading of rows 3b, 8
+and 10 (O-6, O-7, O-11). O-15: the marketplace has no prices or payments (row 11), and the spec
+gates nothing.
+
+**Source.** Decision-log row 19; SPEC rev 3 §i.1; `docs/tutoring/REVISION-LOG.md` rev 3.
+
+## D-2026-10-25 — tutoring: execution decisions (plan rev 2)
+
+**Decision.** (1) Notification preferences for the eight new tutoring types are role-gated in the
+preference API (SPEC §a.1 table), so a type a role never receives is not a toggle it can see.
+(2) Every non-public tutoring route is `Cache-Control: private, no-store` on every status, set once
+by the shared route class. (3) `origin/develop` is merged into the feature branch, never rebased
+(117 commits behind at 2026-10-25; signed `--no-ff` merge, branch already pushed). (4) One draft PR
+against `develop` is opened at I1 so every integration push runs CI; it is marked ready at the end
+and never merged by the build. Full-suite evidence is CI on the PR head; local pytest runs named files
+only.
+
+**Why.** (1) and (2) close threat-model and review findings (P4, P12). (3) a rebase would rewrite
+pushed history. (4) `ci.yml` only runs on pull requests and on `main`, so without an open PR there
+is no full-suite evidence, and the saved rule is that the full suite is never run locally.
+
+**Source.** `BUILD/tutoring/PLAN.md` §0.10, §1.4 #10, #13; `docs/tutoring/PLAN-REVISION-LOG.md`.

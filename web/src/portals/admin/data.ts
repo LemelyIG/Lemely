@@ -29,7 +29,17 @@ export interface AdminNavItem {
   to: string
   label: string
   /** Which phosphor icon renders in the sidebar. */
-  icon: "dashboard" | "seats" | "teachers" | "classes" | "console" | "activations" | "pipeline"
+  icon:
+    | "dashboard"
+    | "seats"
+    | "teachers"
+    | "classes"
+    | "console"
+    | "activations"
+    | "pipeline"
+    | "tutors"
+    | "moderation"
+    | "reports"
   /** Index route match (the lane's dashboard lives at its root). */
   end?: boolean
 }
@@ -46,8 +56,17 @@ export const schoolNavItems: AdminNavItem[] = [
 export const platformNavItems: AdminNavItem[] = [
   { to: "/platform", label: "Console", icon: "console", end: true },
   { to: "/platform/activations", label: "Activations", icon: "activations" },
+  { to: "/platform/tutors", label: "Tutors", icon: "tutors" },
+  { to: "/platform/moderation", label: "Moderation", icon: "moderation" },
+  { to: "/platform/reports", label: "Reports", icon: "reports" },
   { to: "/platform/pipeline", label: "Pipeline and corpus", icon: "pipeline" },
 ]
+
+/** Platform screens one level below a section: the section they belong to and what the page is called. */
+const PLATFORM_DETAIL_CRUMBS = [
+  { parent: "/platform/tutors", label: "Application" },
+  { parent: "/platform/reports", label: "Report" },
+] as const
 
 export interface TrailCrumb {
   label: string
@@ -76,6 +95,16 @@ export function resolveAdminTrail(pathname: string, lane: AdminLane): TrailCrumb
 
   const section = items.find((item) => item.to === path)
   if (section) return [{ label: rootLabel, to: rootPath }, { label: section.label }]
+
+  if (lane === "platform") {
+    for (const detail of PLATFORM_DETAIL_CRUMBS) {
+      const rest = path.startsWith(`${detail.parent}/`) ? path.slice(detail.parent.length + 1) : ""
+      const parent = items.find((item) => item.to === detail.parent)
+      if (parent && rest !== "" && !rest.includes("/")) {
+        return [{ label: rootLabel, to: rootPath }, { label: parent.label, to: parent.to }, { label: detail.label }]
+      }
+    }
+  }
 
   return [{ label: rootLabel, to: rootPath }]
 }

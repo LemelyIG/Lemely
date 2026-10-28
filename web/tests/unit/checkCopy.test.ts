@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest"
 
 import {
   findEmDashes,
+  TUTORING_COPY_PATHS,
   findExclamationMarks,
+  findTutoringBannedWords,
   isClosedCompound,
+  isTutoringCopyPath,
   isPlaceholder,
   isRange,
   proseSpans,
@@ -377,5 +380,68 @@ describe("aria attributes: spoken ones are copy, referential ones are not", () =
     ['<div aria-describedby="note! x" />'],
   ])("allows %s", (source) => {
     expect(findBangs(source)).toHaveLength(0)
+  })
+})
+
+/*
+ * T16 · tutoring copy lint (PLAN T16, P26). "improvement" and "verified" are
+ * banned in tutoring copy because the product must not imply Lemely vouches
+ * for a tutor or promises a grade gain. The rule is scoped by path, so the
+ * fixtures below are in-memory paths: it is exercised although no tutoring
+ * file exists yet.
+ */
+const scan = (rel: string, source: string) =>
+  findTutoringBannedWords(rel, source) as { line: number; text: string; word: string }[]
+
+const TUTORING_FIXTURE_PATHS = [
+  "src/portals/student/tutoring/TutorProfile.tsx",
+  "src/tutoring/Directory.tsx",
+  "src/portals/marketing/tutors/TutorsLanding.tsx",
+  "src/components/ordinal-distribution.tsx",
+  "src/components/grade-change-summary.tsx",
+  "src/components/slot-picker.tsx",
+  "src/components/booking-status.tsx",
+  "src/components/notes-thread.tsx",
+  "src/components/rating-summary.tsx",
+  "src/components/tutor-card.tsx",
+  "src/components/safety-notice-sheet.tsx",
+]
+
+describe("tutoring copy lint", () => {
+  it("names at least one fixture path per glob (non-vacuity)", () => {
+    for (const re of TUTORING_COPY_PATHS as RegExp[]) {
+      expect(TUTORING_FIXTURE_PATHS.some((p) => re.test(p))).toBe(true)
+    }
+    for (const p of TUTORING_FIXTURE_PATHS) expect(isTutoringCopyPath(p)).toBe(true)
+  })
+
+  it("flags 'improvement' in a tutoring file", () => {
+    const path = "src/portals/student/tutoring/TutorProfile.tsx"
+    expect(scan(path, "<p>See their improvement over time.</p>")).toHaveLength(1)
+    expect(scan(path, 'const msg = "Expect an Improvement of two grades"')).toHaveLength(1)
+    expect(scan(path, ["<p>", "  Proven improvements here", "</p>"].join("\n"))[0].line).toBe(2)
+  })
+
+  it("flags 'verified' in a tutoring file", () => {
+    const path = "src/portals/marketing/tutors/TutorsLanding.tsx"
+    expect(scan(path, "<span>Verified tutor</span>")).toHaveLength(1)
+    expect(scan(path, 'const badge = "verified by Lemely"')).toHaveLength(1)
+  })
+
+  it("allows 'Verify your email'", () => {
+    const path = "src/tutoring/Directory.tsx"
+    expect(scan(path, "<p>Verify your email to book a session.</p>")).toHaveLength(0)
+    expect(scan(path, 'const cta = "Verify your email"')).toHaveLength(0)
+  })
+
+  it("does not flag code identifiers or comments", () => {
+    const path = "src/tutoring/Directory.tsx"
+    expect(scan(path, "const verified = user.emailVerified")).toHaveLength(0)
+    expect(scan(path, "// never say verified or improvement here")).toHaveLength(0)
+  })
+
+  it("ignores non-tutoring files", () => {
+    expect(isTutoringCopyPath("src/portals/student/Dashboard.tsx")).toBe(false)
+    expect(scan("src/portals/student/Dashboard.tsx", "<p>Your improvement is verified</p>")).toHaveLength(0)
   })
 })

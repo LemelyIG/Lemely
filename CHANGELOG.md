@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Tutoring marketplace (branch `feat/tutoring-marketplace`)
+
+A tutor marketplace for the existing teacher, student, parent and platform-admin
+portals. It is covered by unit and API tests and was run live: the five tutoring
+journeys pass, and 62 of 63 Playwright tests pass (the one failure is a pre-existing
+student-journey expectation, not part of this change). On the tutoring routes axe
+reports zero violations and Lighthouse accessibility is 100; performance is 80 to 87
+on the gated routes (a few ungated routes score lower, 74 to 79). The whole-product
+audit still fails on 21 violations in older screens, which are not part of this change
+(`BUILD/tutoring/handoffs/live-I8.md`, `live-I9-audit.md`). The staging
+search-indexing check had not run when this entry was written;
+`BUILD/tutoring/handoffs/DELIVERY-final.md` lists what is unverified. Specification: `docs/tutoring/SPEC.md`. No prices appear anywhere and
+Lemely takes no payments; fees are agreed outside it.
+
+#### Added
+
+- **Tutor profiles and approval.** A tutor is a teacher account with a tutor profile,
+  not a new role. A tutor submits a profile with up to five qualification documents;
+  a platform admin approves, rejects, suspends, reinstates or closes it. "Documents
+  seen" means an admin looked at the documents. It is not an identity check or a
+  criminal-records check.
+- **Directory.** A public directory and tutor card (G-16, G-17) and a signed-in
+  directory with subject, mode, area, rating and availability filters, ranked with a
+  Bayesian rating (S-33, S-34). Tutor cards are indexable by search engines by
+  default with a per-tutor opt-out, honoured by the edge worker (`web/worker/robots.ts`);
+  the directory page is never indexed.
+- **Booking.** Request, accept, decline, cancel, complete and no-show (S-35 to S-37,
+  T-15 to T-18). The database prevents double booking. A parent can book for a
+  linked child (P-05 to P-07). A booking has a notes thread that linked parents can
+  read, checked for contact details, with reporting.
+- **Reviews.** One per completed session, moderated before they are public, with one
+  tutor reply (T-21, X-06).
+- **Sharing progress with a tutor.** A student alone can grant a listed tutor read
+  access to derived analytics for all subjects until the student stops it. Every
+  tutor read is logged and visible to the student and to linked parents, who cannot
+  revoke it (S-38, T-19, T-20, P-08).
+- **Past-student results.** Grade figures on a tutor's profile, shown only when at
+  least five students have a marked paper, with default-on counting and an opt-out.
+  They rest on automatic marking and do not show what a tutor caused.
+- **Safeguarding.** Reports and blocks, admin moderation and a first-booking safety
+  notice (X-07).
+- **Email.** A transactional outbox delivered by the existing 60-second sweeper, once
+  per row, capped at 60 a day. Without an email provider key rows are recorded as
+  skipped and the admin queue says "Email delivery: mock". See `docs/email-delivery.md`.
+- Eight notification types and toggles; migrations `0044` to `0051` (the first
+  creates the `btree_gist` extension); `lemely tutoring recompute-ratings`; the
+  setting `LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET` and `[tutoring] email_daily_cap`.
+
+#### Changed
+
+- Existing routes gain behaviour with no permission change: a student removing a
+  parent link now tells that parent once; redeeming a parent invite returns 409
+  `parent_limit` when the child already has four linked parents and tells the parents
+  already linked; joining a class with no school taught by a tutor tells the student's
+  linked parents.
+- `docs/LEMELY_UI_SPEC.md` principles 3 and 5 and `BUILD/MISSION.md` section 3 now say a
+  tutor the student chose to share with counts as one of their teachers, and that a
+  parent can book for a linked child.
+
+#### Known limits
+
+- Operator step for the evidence bucket: re-run `scripts/gcp-bootstrap.sh`, which
+  creates it private; `deploy.yml` sets it per environment and checks it is private
+  and owned by this project. Confirm `GCP_WORKLOAD_IDENTITY_PROVIDER` starts with
+  `projects/<number>/`. See `docs/deployment.md` section 5.9.
+- Rolling back a Cloud Run revision across this release needs a `DELETE` on
+  `notifications` first (`docs/deployment.md` section 5.7).
+- No per-IP rate limit on the public directory in the application, no sitemap, no
+  retention job for the audit and outbox tables, and email is first-attempt only.
+- A tutor can sometimes work out one student's grade by comparing a figure over time.
+  This is an accepted limit (`docs/tutoring/SPEC.md` section g, 5.7).
+
 ### Changed
 
 - Sub-project C default flip: every task tag defaults to `claude-haiku-5-5` (binder retry on

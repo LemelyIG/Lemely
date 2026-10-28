@@ -66,6 +66,31 @@ Precedence is the same everywhere: env > `.env` > `lemely.toml` > defaults.
 Workflow: change a model → `make db-revision m="describe change"` → review the
 generated file in `lemely/db/migrations/versions/` → `make db-migrate`.
 
+### Extensions
+
+`btree_gist` is the first Postgres extension that Alembic creates. Migration
+`0044_tutoring_enums_ext` runs `CREATE EXTENSION IF NOT EXISTS btree_gist`
+because the tutoring tables use GiST exclusion constraints that mix equality on
+a UUID with a range (no double booking of a tutor, no overlapping availability).
+No earlier revision creates an extension. The downgrade never drops it, because
+it may have existed before `0044`. The role that runs `alembic upgrade` must be
+allowed to create it. The extension is created in the default schema, so the
+Supabase advisor is expected to flag `extension_in_public`; that warning is
+accepted (`docs/tutoring/SPEC.md` section h, O-14).
+
+### Tenancy for tutoring
+
+Tutoring adds no tenant. The tutoring tables have no `school_id`, and a tutor
+profile belongs to a user, not to a school (`docs/tutoring/adr/ADR-T03-tenancy.md`).
+Existing school scoping is unchanged. A tutor reaches a student's data only
+through a student-issued grant (`tutor_data_grants`), never through a class
+roster, and the two gates are never combined. `school_admin` sees nothing of
+tutoring. The eight revisions are `0044` to `0051`; the `0049` downgrade destroys
+the tutor access audit log (see `docs/deployment.md` section 5.7).
+`0051_tutor_evidence_uploads` adds `tutor_evidence_uploads`, an append-only log of
+evidence upload attempts (profile and time only) that the 20-per-24-hours upload
+quota counts; deleting a file does not remove its attempt.
+
 ## Why Alembic owns `public`, not Supabase migrations
 
 Supabase's own migration mechanism (`supabase/migrations/*.sql`) is left unused

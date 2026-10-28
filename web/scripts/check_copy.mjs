@@ -571,6 +571,87 @@ export function findExclamationMarks(source) {
 }
 
 /*
+ * ── Rule 3: tutoring vocabulary (PLAN T16, P26)
+ *
+ * Tutoring copy may not say "improvement" or "verified": the first promises a
+ * grade gain, the second implies Lemely vouches for a tutor. Both are scoped
+ * to the tutoring surface by PATH, so the rest of the product keeps its
+ * vocabulary. "Verify your email" is a different word and stays allowed (the
+ * rule matches the whole words `improvement(s)` and `verified`, never the
+ * stem "verif").
+ *
+ * Like rule 2 it only reads copy: string literals and JSX text nodes of a
+ * comment-stripped file, never identifiers (`const verified = ...`,
+ * `emailVerified`).
+ */
+
+/**
+ * Where tutoring copy lives, as patterns over the path relative to `web/`
+ * (forward slashes). This is the single list to extend: the two directory
+ * globs from the plan plus the C-17..C-24 shared components, which sit outside
+ * a tutoring directory and are therefore named by file (SPEC §d component
+ * catalogue).
+ */
+export const TUTORING_COPY_PATHS = [
+  /^src\/(?:.+\/)?tutoring\//,
+  /^src\/portals\/marketing\/tutors\//,
+  /(?:^|\/)(?:ordinal-distribution|grade-change-summary|slot-picker|booking-status|notes-thread|rating-summary|tutor-card|safety-notice-sheet)\.tsx?$/,
+]
+
+/** Whole words banned in tutoring copy. */
+export const TUTORING_BANNED_WORDS = /\b(?:improvements?|verified)\b/gi
+
+/** Is this `web/`-relative path a tutoring copy file? */
+export function isTutoringCopyPath(rel) {
+  const normalized = rel.split("\\").join("/")
+  return TUTORING_COPY_PATHS.some((re) => re.test(normalized))
+}
+
+/**
+ * Every banned word in one tutoring file's copy, as `{line, text, word}`
+ * (one finding per line). Returns nothing for a path outside the tutoring
+ * surface. Same two passes as `findExclamationMarks`: string literals and
+ * single-line JSX text via `proseSpans`, wrapped JSX text via `jsxTextSpans`.
+ */
+export function findTutoringBannedWords(rel, source) {
+  if (!isTutoringCopyPath(rel)) return []
+  const stripped = stripComments(source)
+  const lines = stripped.split("\n")
+  const hits = new Map() // line number -> first banned word on it
+
+  const firstWord = (text) => {
+    const match = new RegExp(TUTORING_BANNED_WORDS.source, "i").exec(text)
+    return match ? match[0].toLowerCase() : null
+  }
+
+  lines.forEach((line, lineIndex) => {
+    for (const span of proseSpans(line)) {
+      const word = firstWord(span)
+      if (word) {
+        hits.set(lineIndex + 1, word)
+        break
+      }
+    }
+  })
+
+  const lineStarts = lineStartOffsets(stripped)
+  for (const { start, text } of jsxTextSpans(stripped)) {
+    for (const match of text.matchAll(TUTORING_BANNED_WORDS)) {
+      const lineNum = lineForOffset(lineStarts, start + match.index)
+      if (!hits.has(lineNum)) hits.set(lineNum, match[0].toLowerCase())
+    }
+  }
+
+  return [...hits.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([lineNum, word]) => ({
+      line: lineNum,
+      text: lines[lineNum - 1].trim().slice(0, 120),
+      word,
+    }))
+}
+
+/*
  * CLI entry, guarded.
  *
  * The unit suite imports the classifier above, and an unguarded module body
@@ -586,9 +667,13 @@ const invokedDirectly =
 if (invokedDirectly) {
   const emDashFindings = []
   const exclamationFindings = []
+  const tutoringFindings = []
   for (const file of sourceFiles(SRC)) {
     const rel = relative(ROOT, file)
     const source = readFileSync(file, "utf8")
+    for (const hit of findTutoringBannedWords(rel, source)) {
+      tutoringFindings.push({ file: rel, ...hit })
+    }
     for (const hit of findEmDashes(source)) {
       emDashFindings.push({ file: rel, ...hit })
     }
@@ -601,21 +686,39 @@ if (invokedDirectly) {
 
   if (process.argv.includes("--count")) {
     const perFile = new Map()
-    for (const f of [...emDashFindings, ...exclamationFindings]) {
+    for (const f of [...emDashFindings, ...exclamationFindings, ...tutoringFindings]) {
       perFile.set(f.file, (perFile.get(f.file) ?? 0) + 1)
     }
     const sorted = [...perFile.entries()].sort((a, b) => b[1] - a[1])
     for (const [file, count] of sorted) console.log(`${String(count).padStart(3)}  ${file}`)
     console.log(
       `\n${emDashFindings.length} em-dash line(s), ${exclamationFindings.length} ` +
-        `exclamation-mark line(s), across ${perFile.size} files`,
+        `exclamation-mark line(s), ${tutoringFindings.length} banned tutoring word ` +
+        `line(s), across ${perFile.size} files`,
     )
     process.exit(0)
   }
 
-  if (emDashFindings.length === 0 && exclamationFindings.length === 0) {
-    console.log("check_copy: no em-dashes or exclamation marks in UI copy.")
+  if (
+    emDashFindings.length === 0 &&
+    exclamationFindings.length === 0 &&
+    tutoringFindings.length === 0
+  ) {
+    console.log("check_copy: no em-dashes, exclamation marks or banned tutoring words in UI copy.")
     process.exit(0)
+  }
+
+  if (tutoringFindings.length > 0) {
+    console.error(
+      `check_copy: ${tutoringFindings.length} banned word(s) in tutoring copy ` +
+        '("improvement", "verified"; PLAN T16).',
+    )
+    console.error("Rewrite without the word. \"Verify your email\" is fine.\n")
+    for (const f of tutoringFindings) {
+      console.error(`  ${f.file}:${f.line} (${f.word})`)
+      console.error(`    ${f.text}`)
+    }
+    if (emDashFindings.length > 0 || exclamationFindings.length > 0) console.error("")
   }
 
   if (emDashFindings.length > 0) {

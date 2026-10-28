@@ -11,6 +11,9 @@ import {
   Gauge,
   ClipboardText,
   FlowArrow,
+  GraduationCap,
+  ChatText,
+  Flag,
   type Icon,
 } from "@phosphor-icons/react"
 import { useQueryClient } from "@tanstack/react-query"
@@ -68,6 +71,21 @@ const PipelineHealth = lazy(() =>
   import("./screens/PipelineHealth").then((m) => ({ default: m.PipelineHealth })),
 )
 const Schools = lazy(() => import("./screens/Schools").then((m) => ({ default: m.Schools })))
+const TutorQueue = lazy(() =>
+  import("./screens/tutoring/TutorQueue").then((m) => ({ default: m.TutorQueue })),
+)
+const TutorApplication = lazy(() =>
+  import("./screens/tutoring/TutorApplication").then((m) => ({ default: m.TutorApplication })),
+)
+const Moderation = lazy(() =>
+  import("./screens/tutoring/Moderation").then((m) => ({ default: m.Moderation })),
+)
+const TutoringReports = lazy(() =>
+  import("./screens/tutoring/Reports").then((m) => ({ default: m.Reports })),
+)
+const TutoringReportDetail = lazy(() =>
+  import("./screens/tutoring/ReportDetail").then((m) => ({ default: m.ReportDetail })),
+)
 
 const NAV_ICON: Record<AdminNavItem["icon"], Icon> = {
   dashboard: SquaresFour,
@@ -79,6 +97,9 @@ const NAV_ICON: Record<AdminNavItem["icon"], Icon> = {
   console: Gauge,
   activations: ClipboardText,
   pipeline: FlowArrow,
+  tutors: GraduationCap,
+  moderation: ChatText,
+  reports: Flag,
 }
 
 /*
@@ -428,6 +449,32 @@ export const platformAdminRoute: RouteObject = {
       path: "pipeline",
       element: <PipelineHealth />,
       handle: { title: "Pipeline health", skeleton: "page-header" },
+    },
+    // Tutoring marketplace (X-04..X-07). Guarded by the same `platformAdminRoute` wrap.
+    {
+      path: "tutors",
+      element: <TutorQueue />,
+      handle: { title: "Platform tutors", skeleton: "list" },
+    },
+    {
+      path: "tutors/:tutorId",
+      element: <TutorApplication />,
+      handle: { title: "Platform tutor application", skeleton: "page-header" },
+    },
+    {
+      path: "moderation",
+      element: <Moderation />,
+      handle: { title: "Platform moderation", skeleton: "list" },
+    },
+    {
+      path: "reports",
+      element: <TutoringReports />,
+      handle: { title: "Platform reports", skeleton: "list" },
+    },
+    {
+      path: "reports/:reportId",
+      element: <TutoringReportDetail />,
+      handle: { title: "Platform report", skeleton: "page-header" },
     },
     {
       path: "*",

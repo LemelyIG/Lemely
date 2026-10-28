@@ -189,6 +189,46 @@ A send that fails is swallowed at both call sites by design — see
 never to a failed signup. It is logged at `ERROR` on the `lemely.auth.service`
 logger, which is the thing to alert on.
 
+## Tutoring email: the outbox path
+
+Booking and safeguarding emails for the tutoring marketplace do not go through
+`AuthService`. They use a transactional outbox, because a send inside a request
+can be lost on Cloud Run (CPU is throttled outside requests) and must never be
+sent for a transaction that rolled back.
+
+| Piece | Where |
+| --- | --- |
+| Queue table `email_outbox` and its repository | `lemely/db/email_outbox_repo.py` |
+| Provider seam for these mails (`TransactionalEmailProvider`) | `lemely/io/notify_email.py` |
+| Delivery job, mock-mode reporting, doctor lines | `lemely/web/tutoring_email.py` (`deliver_tutoring_email`) |
+| Where it runs | one more job in `Sweeper.sweep_once` (`lemely/web/scheduled_notifications.py`) |
+| Daily cap setting | `[tutoring] email_daily_cap` (`LEMELY_TUTORING__EMAIL_DAILY_CAP`), default 60 |
+| Tests | `tests/test_email_outbox_repo.py`, `tests/test_tutoring_email.py`, `tests/test_notify_email.py` |
+
+How it behaves, as built:
+
+- The row is written in the same transaction as the booking event. Nothing is
+  sent in the request. The 60-second sweeper picks pending rows one at a time
+  (`FOR UPDATE SKIP LOCKED`, so replicas do not collide) and tries each **once**.
+- A row is `skipped`, never sent, when the address is a legacy placeholder, the
+  recipient's email is not confirmed, or they switched that notice type off.
+- **A failed send stays `failed` and is never retried.** The send happens inside
+  the row's transaction, so a crash between send and commit puts the row back to
+  `pending` and a rare duplicate is possible. While no instance is running
+  (`--min-instances=0`), rows wait.
+- **The daily cap is 60 in any 24 hours.** The free Resend tier is 100 a day and is
+  shared with sign-up and reset mail above. Rows past the cap are `skipped`. The
+  count is taken under an advisory lock so replicas cannot overshoot it.
+- Emails carry no note text, meeting link or address.
+
+**Mock versus real.** The same rule as above applies: no `[email] api_key` means
+the mock provider. For tutoring mail that means every queued row is recorded as
+`skipped` with `last_error = 'mock_provider'`, nothing leaves the building, startup
+logs `MOCK_WARNING` ("Tutoring email delivery is in mock mode ..."), and the
+platform admin approval queue shows "Email delivery: mock". Unlike a sign-up on
+the mock, nobody is handed a link, so booking mail simply does not arrive. Check
+that banner after a deploy.
+
 ## If the account ever goes Workers Paid
 
 Cloudflare Email Sending becomes available and is then the better home: the

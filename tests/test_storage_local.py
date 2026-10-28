@@ -33,6 +33,57 @@ def test_delete_is_idempotent(tmp_path: Path) -> None:
         backend.download("uploads", "u/p/scan.pdf")
 
 
+def test_signed_url_disposition_attachment(tmp_path: Path) -> None:
+    """A ``data:`` URL has no headers, so an attachment is served as octet-stream (SC-22).
+
+    Without a disposition (avatars) the media type still follows the key, so an
+    ``<img>`` renders it; with one, no browser renders the bytes inline.
+    """
+    import base64
+
+    backend = LocalFileStorageBackend(tmp_path)
+    data = b"%PDF-1.7\n%evidence"
+    backend.upload("evidence", "tutor-evidence/t/e.pdf", data, "application/pdf")
+
+    inline = backend.create_signed_url("evidence", "tutor-evidence/t/e.pdf", 300)
+    attached = backend.create_signed_url(
+        "evidence", "tutor-evidence/t/e.pdf", 300, disposition='attachment; filename="e.pdf"'
+    )
+
+    assert inline.startswith("data:application/pdf;base64,")
+    prefix = "data:application/octet-stream;base64,"
+    assert attached.startswith(prefix)
+    assert base64.b64decode(attached.removeprefix(prefix)) == data
+
+
+def test_signed_url_content_type(tmp_path: Path) -> None:
+    """T10 review R8: the caller's type (the DB row's sniffed one) wins over the key's suffix.
+
+    A disposition still wins over both: a ``data:`` URL carries one media type
+    and no headers, so a download must be ``application/octet-stream``.
+    """
+    import base64
+
+    backend = LocalFileStorageBackend(tmp_path)
+    data = b"\x89PNG\r\n\x1a\nnot-really"
+    backend.upload("evidence", "tutor-evidence/t/e.pdf", data, "image/png")
+
+    typed = backend.create_signed_url(
+        "evidence", "tutor-evidence/t/e.pdf", 300, content_type="image/png"
+    )
+    attached = backend.create_signed_url(
+        "evidence",
+        "tutor-evidence/t/e.pdf",
+        300,
+        disposition='attachment; filename="e.png"',
+        content_type="image/png",
+    )
+
+    assert typed.startswith("data:image/png;base64,")
+    assert base64.b64decode(typed.removeprefix("data:image/png;base64,")) == data
+    assert attached.startswith("data:application/octet-stream;base64,")
+
+
 @pytest.mark.parametrize("bad_key", ["../escape.pdf", "u/../../escape.pdf", "/abs/escape.pdf"])
 def test_key_cannot_escape_root(tmp_path: Path, bad_key: str) -> None:
     backend = LocalFileStorageBackend(tmp_path)

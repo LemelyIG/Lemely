@@ -34,6 +34,7 @@ export interface NavItem {
     | "atRisk"
     | "schemes"
     | "quizzes"
+    | "tutoring"
     | "announcements"
     | "notifications"
     | "settings"
@@ -71,6 +72,7 @@ export const navItems: NavItem[] = [
   { to: "/teacher/at-risk", label: "At-risk students", icon: "atRisk" },
   { to: "/teacher/schemes", label: "Mark schemes", icon: "schemes" },
   { to: "/teacher/quizzes", label: "AI quizzes", icon: "quizzes" },
+  { to: "/teacher/tutoring", label: "Tutoring", icon: "tutoring" },
   { to: "/teacher/announcements", label: "Announcements", icon: "announcements" },
   // The inbox carries its unread count (push-delivery spec §6): at_risk_alert
   // is the one notification a teacher receives, and it is the one that asks
@@ -152,6 +154,30 @@ export function resolveTrail(pathname: string): TrailCrumb[] {
 
   if (path === "/teacher/settings/notifications") {
     return [root, { label: "Settings", to: "/teacher/settings" }, { label: "Notifications" }]
+  }
+
+  // Tutoring (T-16 to T-18, T-21): one hop below the "Tutoring" section, which is a
+  // nav item and so resolves above as a flat section.
+  const tutoringTitles: Record<string, string> = {
+    "/teacher/tutoring/profile": "Tutor profile",
+    "/teacher/tutoring/availability": "Weekly availability",
+    "/teacher/tutoring/preview": "Profile preview and reviews",
+    "/teacher/tutoring/students": "My students",
+  }
+  const tutoringPage = tutoringTitles[path]
+  if (tutoringPage) {
+    return [root, { label: "Tutoring", to: "/teacher/tutoring" }, { label: tutoringPage }]
+  }
+  if (/^\/teacher\/tutoring\/sessions\/[^/]+$/.test(path)) {
+    return [root, { label: "Tutoring", to: "/teacher/tutoring" }, { label: "This session" }]
+  }
+  if (/^\/teacher\/tutoring\/students\/[^/]+$/.test(path)) {
+    return [
+      root,
+      { label: "Tutoring", to: "/teacher/tutoring" },
+      { label: "My students", to: "/teacher/tutoring/students" },
+      { label: "This student" },
+    ]
   }
 
   const classAnalytics = path.match(/^\/teacher\/classes\/([^/]+)\/analytics$/)

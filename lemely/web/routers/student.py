@@ -31,7 +31,7 @@ from typing import Annotated, NoReturn, TypedDict
 
 import anyio
 import structlog
-from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -105,6 +105,7 @@ from lemely.web.notify import notify_safely
 # leaves an unresolvable ForwardRef that raises PydanticUserError on the
 # route's *first request* rather than at import (P5.6 chunk C1).
 from lemely.web.push import NotificationTransport
+from lemely.web.routers.invites import parent_link_change_notices, tutor_class_join_notices
 from lemely.web.schemas import question_to_dto
 from lemely.web.schemas_classes import JoinClassRequestDTO, JoinClassResponseDTO
 from lemely.web.schemas_parent import (
@@ -135,12 +136,15 @@ from lemely.web.schemas_student import (
     VizColor,
     WeakThreadDTO,
 )
+from lemely.web.schemas_tutoring import ClassAccessDTO, ClassAccessItemDTO
 from lemely.web.services.grading import (
     BindingHeldError,
     ensure_binding_allows_marking,
     extract_answers,
     grade_paper,
 )
+from lemely.web.tutoring_http import NO_STORE
+from lemely.web.tutoring_notify import send_after_commit
 from lemely.web.upload_utils import check_scan_geometry, check_upload_cap, safe_upload_name
 from lemely.web.xp_awards import award_xp_safely
 
@@ -1324,6 +1328,8 @@ def student_join_class(
     payload: JoinClassRequestDTO,
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
     service: Annotated[ClassService, Depends(get_class_service)],
+    notifications: Annotated[NotificationService, Depends(get_notification_service)],
+    transport: Annotated[NotificationTransport, Depends(get_push_transport)],
 ) -> JoinClassResponseDTO:
     """Self-enrol the authenticated student into a class via its join code.
 
@@ -1331,14 +1337,52 @@ def student_join_class(
     caller-supplied id (D1.6 — the IDOR pattern the two former ``studentId``
     body fields were removed for). Idempotent: re-joining an already-enrolled
     class is a no-op. An unknown code is a clean 404, never a 500.
+
+    Tutoring SPEC §c.4 (SC-2d), no guard change: a new enrolment in a
+    school-less class whose teacher holds a tutor profile queues an email to
+    each of the student's linked parents in the enrolment's transaction, and
+    sends each an inbox notice here, after commit.
     """
     try:
-        row = service.join_by_code(auth.user_id, payload.joinCode)
+        joined = service.join_by_code_with_notice(auth.user_id, payload.joinCode)
     except JoinCodeError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return JoinClassResponseDTO(classId=str(row.class_id), className=row.name)
+    send_after_commit(
+        tutor_class_join_notices(joined.tutor_join), service=notifications, transport=transport
+    )
+    return JoinClassResponseDTO(classId=str(joined.row.class_id), className=joined.row.name)
+
+
+@router.get("/student/tutor-access/classes", response_model=ClassAccessDTO)
+def student_class_access(
+    response: Response,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[ClassService, Depends(get_class_service)],
+) -> ClassAccessDTO:
+    """S16: the classes whose teacher sees the caller's progress through the roster (SC-2e).
+
+    Exactly the caller's own enrolments (O25), so identity is structurally
+    ``auth.user_id``. ``leavable`` marks the school-less classes S17 can
+    leave; ``teacherIsYourTutor`` marks a class teacher who is also the
+    caller's tutor (XT-2). ``Cache-Control: private, no-store`` (SPEC §b.5):
+    this router keeps its own route class, so the header is set here.
+    """
+    response.headers["Cache-Control"] = NO_STORE
+    return ClassAccessDTO(
+        items=[
+            ClassAccessItemDTO(
+                classId=str(item.class_id),
+                className=item.class_name,
+                teacherName=item.teacher_name,
+                schoolName=item.school_name,
+                leavable=item.leavable,
+                teacherIsYourTutor=item.teacher_is_your_tutor,
+            )
+            for item in service.class_access_for_student(auth.user_id)
+        ]
+    )
 
 
 # ── Parent links (list/revoke) ──────────────────────────────────────────────
@@ -1379,16 +1423,26 @@ def student_unlink_parent(
     parent_id: str,
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
     service: Annotated[ParentLinkService, Depends(get_parent_link_service)],
+    notifications: Annotated[NotificationService, Depends(get_notification_service)],
+    transport: Annotated[NotificationTransport, Depends(get_push_transport)],
 ) -> None:
     """Revoke a parent's link to the authenticated student. Idempotent.
 
     Revoking a link that does not exist (already revoked, or never granted)
     is a silent no-op, not an error — mirrors ``ClassService.remove_student``.
+
+    Tutoring SPEC §c.4 (SC-1 a), no guard change: a removal records a
+    ``parent_link_events(unlinked)`` row and queues the unlinked parent's
+    email in the delete's transaction; the parent's inbox notice is sent here,
+    after commit. A no-op writes and sends nothing.
     """
     try:
-        service.unlink(auth.user_id, parent_id)
+        change = service.unlink_with_event(auth.user_id, parent_id)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    send_after_commit(
+        parent_link_change_notices(change), service=notifications, transport=transport
+    )
 
 
 # ── Parent invites (child-issued, spec §4) ──────────────────────────────────

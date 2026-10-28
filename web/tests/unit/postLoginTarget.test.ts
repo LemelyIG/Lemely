@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import { postLoginTarget } from "@/lib/auth/postLoginTarget"
 
@@ -59,5 +61,56 @@ describe("postLoginTarget", () => {
     expect(
       postLoginTarget({ next: "/platform/schools", from: null, role: "student" }),
     ).toBe("/student")
+  })
+})
+
+/*
+ * T27 · G-17's "Sign in to book" carries `?next=/student/tutors/{id}` because the public
+ * page cannot know who will sign in. A parent lands on the parent's page for the same
+ * tutor; the mapping lives in `postLoginTarget` itself, so these tests go through it.
+ */
+describe("postLoginTarget · a parent following G-17's 'Sign in to book'", () => {
+  const ID = "0f8fad5b-d9cb-469f-a165-70867728950e"
+
+  it("maps the student's tutor page to the parent's page for the same tutor", () => {
+    expect(postLoginTarget({ next: `/student/tutors/${ID}`, from: undefined, role: "parent" })).toBe(
+      `/parent/tutors/${ID}`,
+    )
+  })
+
+  it("leaves a student's own tutor page alone", () => {
+    expect(postLoginTarget({ next: `/student/tutors/${ID}`, from: undefined, role: "student" })).toBe(
+      `/student/tutors/${ID}`,
+    )
+  })
+
+  it("does not map the student's booking step: a parent lands on the parent home", () => {
+    expect(postLoginTarget({ next: `/student/tutors/${ID}/book`, from: undefined, role: "parent" })).toBe("/parent")
+  })
+
+  it("does not map a segment that is not a tutor id", () => {
+    expect(postLoginTarget({ next: "/student/tutors/not-a-uuid", from: undefined, role: "parent" })).toBe("/parent")
+    expect(postLoginTarget({ next: "/student/tutors/..%2F..", from: undefined, role: "parent" })).toBe("/parent")
+  })
+
+  it("still rejects open-redirect shapes for a parent", () => {
+    for (const next of [
+      "//evil.example",
+      `//evil.example/student/tutors/${ID}`,
+      `https://evil.example/student/tutors/${ID}`,
+      `/\\evil.example`,
+    ]) {
+      expect(postLoginTarget({ next, from: undefined, role: "parent" }), next).toBe("/parent")
+    }
+  })
+
+  it("keeps the Login bundle small: the mapping sits in a module with no imports", () => {
+    const WEB = join(import.meta.dirname, "..", "..")
+    const target = readFileSync(join(WEB, "src/lib/auth/postLoginTarget.ts"), "utf8")
+    expect(target).toMatch(/from "@\/lib\/tutoring\/parentNext"/)
+    expect(target).not.toMatch(/tutoring\/(parentTutoring|accessView|sessionView)/)
+    const mapping = readFileSync(join(WEB, "src/lib/tutoring/parentNext.ts"), "utf8")
+    expect(mapping).not.toMatch(/^\s*import\b/m)
+    expect(mapping).not.toMatch(/\bfrom\s+["']/)
   })
 })

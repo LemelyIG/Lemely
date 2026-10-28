@@ -2,7 +2,13 @@
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import { Reveal } from "@/components/ui/reveal"
-import { dataHandlingClose, dataHandlingIntro, dataHandlingSections, deletion } from "./dataHandling"
+import {
+  dataHandlingClose,
+  dataHandlingIntro,
+  dataHandlingSections,
+  deletion,
+  tutoringSections,
+} from "./dataHandling"
 
 /*
  * "How Lemely handles your data" (P6.5, D6.8 option A).
@@ -50,7 +56,7 @@ export function DataHandling() {
           heading navigation exists for.
         */}
         <div className="flex flex-col">
-          {dataHandlingSections.map((section, i) => (
+          {[...dataHandlingSections, ...tutoringSections].map((section, i) => (
             <Reveal key={section.heading} delay={i * 40}>
               <section className="border-t border-rule py-7">
                 <h2 className="text-display-sm text-ink">{section.heading}</h2>

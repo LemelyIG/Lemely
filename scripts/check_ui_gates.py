@@ -79,6 +79,13 @@ STUDENT_PATH_PREFIX = "/student"
 # the class analytics dashboard (charts, tables) and the review queue.
 PERF_GATED_TEACHER_SLUGS = ("teacher-class-analytics", "teacher-review")
 
+# T33: the tutoring marketplace's two public pages (SPEC §d, "Accessibility and
+# performance gate routes": performance >= 80 on `/tutors`, `/tutors/:id` and every
+# `/student/*` route). The student routes are covered by ``is_student_route``; these two
+# are signed-out pages outside the ``/student`` subtree, so they are gated by slug.
+# The slugs are the ones ``web/scripts/audit_tutoring_registry.mjs`` registers.
+PERF_GATED_TUTORING_SLUGS = ("tutors-directory", "tutors-public-card")
+
 
 def is_student_route(route: dict[str, object]) -> bool:
     """True for rows in the ``/student`` portal subtree.
@@ -100,12 +107,16 @@ def is_perf_gated_route(route: dict[str, object]) -> bool:
     """True for any row the performance floor (``PERFORMANCE_FLOOR``) applies to.
 
     That is: the whole ``/student`` subtree (``is_student_route``), OR a slug
-    in ``PERF_GATED_TEACHER_SLUGS`` (C4). Slug membership, not a path prefix,
-    for the teacher half — unlike the student subtree there is no single
-    ``/teacher`` prefix this floor applies to as a whole, only the named
-    routes.
+    in ``PERF_GATED_TEACHER_SLUGS`` (C4) or ``PERF_GATED_TUTORING_SLUGS`` (T33).
+    Slug membership, not a path prefix, for the other halves — unlike the
+    student subtree there is no single prefix this floor applies to as a whole,
+    only the named routes.
     """
-    return is_student_route(route) or route["slug"] in PERF_GATED_TEACHER_SLUGS
+    return (
+        is_student_route(route)
+        or route["slug"] in PERF_GATED_TEACHER_SLUGS
+        or route["slug"] in PERF_GATED_TUTORING_SLUGS
+    )
 
 
 def main() -> int:
@@ -200,15 +211,15 @@ def main() -> int:
         return 1
 
     student_routes = [r for r in lighthouse if is_student_route(r)]
-    gated_teacher_routes = [
+    gated_named_routes = [
         r for r in lighthouse if is_perf_gated_route(r) and not is_student_route(r)
     ]
     print(
         f"UI gates clean: {len(axe)} route(s) zero serious/critical axe, "
         f"Lighthouse accessibility >= {ACCESSIBILITY_FLOOR} on all "
         f"({len(lighthouse)} route report(s)), performance >= {PERFORMANCE_FLOOR} on "
-        f"{len(student_routes)} student route(s) + {len(gated_teacher_routes)} teacher "
-        f"route(s), zero console errors, zero horizontal-scroll violations, "
+        f"{len(student_routes)} student route(s) + {len(gated_named_routes)} named "
+        f"teacher or tutoring route(s), zero console errors, zero horizontal-scroll violations, "
         f"zero routes that died mid-run."
     )
     return 0

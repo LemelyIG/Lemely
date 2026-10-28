@@ -383,6 +383,9 @@ module = [
   "lemely.web.schemas_invites",
   "lemely.web.schemas_client_errors",
   "lemely.web.schemas_widget",
+  "lemely.web.schemas_tutoring",
+  "lemely.web.schemas_tutoring_admin",
+  "lemely.io.notify_email",
   # httpx `.json()` and pyjwt `decode()` return Any at the trust boundary; these
   # modules parse those payloads defensively into typed dataclasses/Claims.
   "lemely.auth.gotrue",
@@ -424,6 +427,8 @@ exclude_also = [
 
 [tool.importlinter]
 root_package = "lemely"
+# Required so a contract may forbid external packages (sqlalchemy, fastapi).
+include_external_packages = true
 
 [[tool.importlinter.contracts]]
 name = "Layered architecture"
@@ -456,6 +461,27 @@ forbidden_modules = [
   "lemely.core.correction",
   "lemely.io.correction_ai",
   "lemely.core.schemas",
+]
+
+[[tool.importlinter.contracts]]
+name = "Tutoring pure rules stay pure (SPEC §e.1)"
+type = "forbidden"
+source_modules = [
+  "lemely.core.keyset",
+  "lemely.core.contact_patterns",
+  "lemely.core.tutor_directory",
+  "lemely.core.tutor_ratings",
+  "lemely.core.booking",
+  "lemely.core.tutor_grants",
+  "lemely.core.tutor_outcomes",
+]
+forbidden_modules = [
+  "lemely.db",
+  "lemely.web",
+  "lemely.io",
+  "lemely.app",
+  "sqlalchemy",
+  "fastapi",
 ]
 
 [tool.pyright]
