@@ -50,7 +50,7 @@ test('walkthrough, review and FAQ work with the keyboard', async ({ page }) => {
     await page.getByRole('button', { name: 'Explain Q3(c)' }).click()
     await expect(page.getByText('AI confidence 72%')).toBeVisible()
     await page.getByRole('radio', { name: 'Award A1' }).click()
-    await expect(page.getByText('Illustration: A1 awarded')).toBeVisible()
+    await expect(page.getByRole('radio', { name: 'Award A1' })).toBeChecked()
     await page.getByRole('tab', { name: /03 Insights/ }).click()
     await expect(page.getByText('Weak topic found')).toBeVisible()
   }

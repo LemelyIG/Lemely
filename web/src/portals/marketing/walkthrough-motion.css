@@ -88,7 +88,6 @@
 .brand-scheme p { margin:0; font-size:14px; line-height:1.4; }
 .brand-review { display:flex; flex-direction:column; gap:10px; padding:12px; border-radius:12px; background:var(--brand-wk-flag-bg); }
 .brand-review p { margin:0; font-size:14px; line-height:1.4; color:var(--brand-wk-flag-ink); }
-.brand-review [role=status] { font-size:12px; }
 .brand-review [data-slot=toggle-group] { display:flex; gap:8px; }
 .brand-review [data-slot=toggle-group-item] { flex:none; height:auto; min-width:0; padding:8px 12px; border-radius:10px; background:var(--brand-white); color:var(--brand-abyss); font:700 13px var(--brand-body); }
 .brand-review [data-slot=toggle-group-item][data-state=on] { background:var(--brand-abyss); color:var(--brand-white); }

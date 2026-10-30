@@ -637,17 +637,13 @@ export function MarkingWalkthrough() {
                               selectStep("marked");
                           }
                         }}
-                        aria-label="Illustrative teacher review"
+                        aria-label="Teacher review"
                       >
                         <ToggleGroupItem value="keep">Keep A0</ToggleGroupItem>
                         <ToggleGroupItem value="award">
                           Award A1
                         </ToggleGroupItem>
                       </ToggleGroup>
-                      <p role="status">
-                        Illustration:{" "}
-                        {review === "award" ? "A1 awarded" : "A0 kept"}
-                      </p>
                     </div>
                   )}
                 </div>

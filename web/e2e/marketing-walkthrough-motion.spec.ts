@@ -47,7 +47,7 @@ test("desktop scroll drives all three pinned walkthrough stages and step navigat
     "true",
   );
   await page.getByRole("radio", { name: "Award A1" }).click();
-  await expect(page.getByText("Illustration: A1 awarded")).toBeVisible();
+  await expect(page.getByRole("radio", { name: "Award A1" })).toBeChecked();
   await at(0.85);
   await expect(page.getByRole("tab", { name: "03 Insights" })).toHaveAttribute(
     "aria-selected",
