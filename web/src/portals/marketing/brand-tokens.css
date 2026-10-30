@@ -68,6 +68,7 @@
   --brand-wash: oklch(0.92 0.035 235);
   --brand-border: oklch(0.88 0.02 240);
   --brand-muted: oklch(0.45 0.02 240);
+  --brand-idle-control: oklch(0.75 0.03 240);
   --brand-night: oklch(0.22 0.03 264);
   --brand-night-panel: oklch(0.27 0.035 264);
   --brand-night-rule: oklch(0.38 0.035 264);

@@ -12,6 +12,7 @@ colors:
   mist-wash: "#cfe9f9"
   hairline: "#ccdae4"
   muted-ink: "#4c575f"
+  idle-control: "#9eb1bf"
   night: "#131a29"
   night-panel: "#1e2638"
   night-rule: "#394255"
@@ -220,6 +221,7 @@ A cool-neutral field with one deep-blue primary, one sky accent for dark surface
 - **White** (#ffffff): Raised cards, chart card, on-primary text.
 - **Hairline** (oklch(0.88 0.02 240)): All borders, rules, empty progress tracks.
 - **Muted Ink** (oklch(0.45 0.02 240)): Secondary text, labels, fine print.
+- **Idle Control** (oklch(0.75 0.03 240)): Fill of a primary button that cannot act yet (the FAQ Send button until both fields are valid).
 - **Night** (oklch(0.22 0.03 264)): Proof and teacher band background.
 - **Night Panel** (oklch(0.27 0.035 264)): Metric cards, accuracy block, school strip, mobile teacher cards.
 - **Night Rule** (oklch(0.38 0.035 264)): Dividers on Night.

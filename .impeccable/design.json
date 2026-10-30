@@ -14,6 +14,7 @@
       "subtle": { "role": "neutral", "displayName": "Subtle", "canonical": "oklch(0.97 0.006 240)" },
       "hairline": { "role": "neutral", "displayName": "Hairline", "canonical": "oklch(0.88 0.02 240)" },
       "muted-ink": { "role": "neutral", "displayName": "Muted Ink", "canonical": "oklch(0.45 0.02 240)" },
+      "idle-control": { "role": "neutral", "displayName": "Idle Control", "canonical": "oklch(0.75 0.03 240)" },
       "night": { "role": "neutral", "displayName": "Night", "canonical": "oklch(0.22 0.03 264)" },
       "night-panel": { "role": "neutral", "displayName": "Night Panel", "canonical": "oklch(0.27 0.035 264)" },
       "night-rule": { "role": "neutral", "displayName": "Night Rule", "canonical": "oklch(0.38 0.035 264)" },

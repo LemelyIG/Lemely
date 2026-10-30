@@ -21,6 +21,8 @@
 .brand-faq-binny[data-mood=happy] { animation:brand-answer 600ms cubic-bezier(.16,1,.3,1); }
 .brand-faq-binny[data-motion=still] { animation:none; }
 .brand-conversation>header .brand-faq-binny { width:52px; height:52px; flex-shrink:0; }
+.brand-conversation>header .brand-label[role=status] { font:400 11px/normal var(--brand-mono); letter-spacing:.06em; color:var(--brand-wk-ok); }
+.brand-conversation>header .brand-label[role=status][data-typing] { color:var(--brand-abyss); }
 .brand-binny-ear-left { transform-origin:75px 100px; }
 .brand-binny-ear-right { transform-origin:125px 100px; }
 .brand-faq-binny[data-motion=active] .brand-binny-ear { animation:brand-binny-ears 2.6s cubic-bezier(.16,1,.3,1) infinite alternate; }

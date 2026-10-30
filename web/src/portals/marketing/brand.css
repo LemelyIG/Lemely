@@ -104,11 +104,15 @@
 .brand-faq [data-slot=accordion-trigger] { font:700 16px/1.5 var(--brand-body); padding-block:22px; }
 .brand-faq [data-slot=accordion-content] { font-size:14px; line-height:1.65; color:var(--brand-muted); }
 .brand-faq [data-slot=accordion-item] { border-color:var(--brand-border); }
-.brand-contact { margin-top:24px; padding-top:24px; border-top:1px solid var(--brand-border); }
-.brand-contact>div:last-child { display:flex; align-items:center; gap:16px; margin-block:16px; }
-.brand-contact p { font-size:11px; }
-.brand-contact p a { text-decoration:underline; }
-.brand-contact>a,.brand-contact a:last-child { flex-shrink:0; }
+.brand-contact { margin-top:24px; padding-top:24px; border-top:1px solid var(--brand-border); display:flex; flex-direction:column; gap:10px; }
+.brand-contact>div:first-child { gap:10px; }
+.brand-contact textarea,.brand-contact input { box-sizing:border-box; width:100%; resize:none; border:0; border-radius:12px; padding:12px 14px; font:400 15px/normal var(--brand-body); background:var(--brand-white); box-shadow:inset 0 0 0 1.5px var(--brand-rule-input); }
+.brand-contact-row { display:flex; flex-wrap:wrap; gap:10px; }
+.brand-contact-email { flex:1; min-width:180px; }
+.marketing-brand .brand-contact-send { height:auto; border:0; border-radius:12px; padding:12px 18px; font:700 15px/normal var(--brand-body); background:var(--brand-abyss); color:var(--brand-white); opacity:1; transition:background-color .2s; display:inline-flex; align-items:center; }
+.marketing-brand .brand-contact-send[aria-disabled=true] { background:var(--brand-idle-control); cursor:not-allowed; }
+.brand-contact-alt { font-size:13px; color:var(--brand-hint); }
+.brand-contact-alt a { font-weight:700; text-decoration:none; }
 .brand-closing { text-align:center; position:relative; overflow:clip; background:var(--brand-wash); padding-block:128px; }
 .marketing-brand .brand-closing h2 { font-size:clamp(64px,8vw,112px); margin:0 0 28px; }
 .brand-closing p { max-width:520px; margin-inline:auto; font-size:18px; color:var(--brand-muted); }
@@ -218,9 +222,7 @@
   .brand-faq .brand-hand { font-size:24px; margin-top:16px; }
   .brand-faq-panel { padding:0; border:0; background:transparent; border-radius:0; display:flex; flex-direction:column; gap:20px; }
   .brand-contact { margin:0; padding:18px; border:0; border-radius:20px; background:var(--brand-white); box-shadow:0 0 0 1px var(--brand-line); }
-  .brand-contact>div:last-child { flex-direction:column; align-items:flex-start; gap:10px; margin-block:16px 9px; }
-  .brand-contact>div:first-child { gap:10px; }
-  .brand-contact textarea { display:block; height:62px; min-height:0; }
+  .brand-contact textarea { display:block; height:62px; min-height:0; resize:none; }
   .brand-closing { padding-block:88px 210px; }
 
   .brand-closing p { font-size:20px; line-height:30px; }
@@ -241,7 +243,6 @@
 }
 @media(max-width:359px) {
   .brand-contact textarea { height:87px; }
-  .brand-contact>div:last-child a:last-child { align-self:stretch; justify-content:center; min-height:43px; }
   .brand-predicted { flex-direction:column; gap:2px; text-align:center; }
   .brand-metric strong { font-size:44px; }
   .marketing-brand .brand-closing .brand-actions a { max-width:100%; }

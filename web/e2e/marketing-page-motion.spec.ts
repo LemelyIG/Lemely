@@ -56,13 +56,13 @@ test('Binny thinks, answers, and returns to idle without blocking other question
     .click()
   await expect(
     page.getByRole('region', { name: 'Binny answers' }),
-  ).toContainText('THINKING')
+  ).toContainText('TYPING…')
   await expect(
     page.getByRole('region', { name: 'Binny answers' }),
   ).toContainText('Very. In blind tests', { timeout: 4000 })
   await expect(
     page.getByRole('region', { name: 'Binny answers' }),
-  ).toContainText('READY TO HELP')
+  ).toContainText('ONLINE · ANSWERS IN SECONDS')
   await page.getByRole('button', { name: 'Can parents see results?' }).click()
   await expect(
     page.getByRole('region', { name: 'Binny answers' }),

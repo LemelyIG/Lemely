@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/accordion'
 import { Textarea } from '@/components/ui/textarea'
 import { Button, buttonVariants } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { faqItems, marketingLinks } from './content'
 import { useSceneMotion } from './useSceneMotion'
 import { Binny, type BinnyMood } from './Binny'
@@ -18,6 +19,7 @@ const answerMood = (id: string) =>
 
 export function BinnyFaq() {
   const [question, setQuestion] = useState('')
+  const [replyTo, setReplyTo] = useState('')
   const [asked, setAsked] = useState<{ id: string; answered: boolean }[]>([])
   const { ref, enabled, reducedMotion, inView, pageVisible } =
     useSceneMotion<HTMLElement>()
@@ -48,7 +50,11 @@ export function BinnyFaq() {
     if (chatRef.current)
       chatRef.current.scrollTop = chatRef.current.scrollHeight
   }, [asked])
-  const email = `${marketingLinks.contact}?subject=${encodeURIComponent('A question for Lemely')}&body=${encodeURIComponent(question)}`
+  const canSend = /.+@.+\..+/.test(replyTo) && question.trim() !== ''
+  // There is no backend: Send hands the two fields to the visitor's mail app.
+  const mailto = canSend
+    ? `${marketingLinks.contact}?subject=${encodeURIComponent('A question for Lemely')}&body=${encodeURIComponent(`${question.trim()}\n\nReply to: ${replyTo.trim()}`)}`
+    : undefined
   return (
     <section ref={ref} id="faq" className="brand-faq brand-section">
       <div className="brand-wrap brand-faq-grid">
@@ -116,8 +122,12 @@ export function BinnyFaq() {
               />
               <div>
                 <strong>Binny</strong>
-                <span className="brand-label" role="status">
-                  {pending ? 'THINKING' : 'READY TO HELP'}
+                <span
+                  className="brand-label"
+                  role="status"
+                  data-typing={pending ? '' : undefined}
+                >
+                  {pending ? 'TYPING…' : 'ONLINE · ANSWERS IN SECONDS'}
                 </span>
               </div>
             </header>
@@ -162,18 +172,29 @@ export function BinnyFaq() {
               onChange={(e) => setQuestion(e.target.value)}
               placeholder="Your question"
             />
-            <div>
-              <p>
-                Opens your email app. Or email us at{' '}
-                <a href={marketingLinks.contact}>contact@lemelyig.com</a>.
-              </p>
+            <div className="brand-contact-row">
+              <Input
+                type="email"
+                label="Your email"
+                labelClassName="sr-only"
+                wrapperClassName="brand-contact-email"
+                value={replyTo}
+                onChange={(e) => setReplyTo(e.target.value)}
+                placeholder="Your email"
+                autoComplete="email"
+              />
               <a
-                href={email}
-                className={buttonVariants({ variant: 'primary', size: 'sm' })}
+                href={mailto}
+                aria-disabled={!canSend}
+                className={`${buttonVariants({ variant: 'primary' })} brand-contact-send`}
               >
-                Open email
+                Send
               </a>
             </div>
+            <span className="brand-contact-alt">
+              Or email us at{' '}
+              <a href={marketingLinks.contact}>contact@lemelyig.com</a>
+            </span>
           </div>
         </div>
       </div>

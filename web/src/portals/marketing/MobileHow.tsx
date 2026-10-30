@@ -103,7 +103,7 @@ function InsightsArt() {
       </div>
       <div data-anim className="how-report a-up" style={at('1.3s')}>
         <span aria-hidden="true">✓</span>
-        Progress report ready for Layan's parents
+        Progress report sent to Layan's parents
       </div>
     </div>
   )

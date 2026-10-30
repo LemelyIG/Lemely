@@ -117,11 +117,10 @@
   .brand-faq-panel { border: 0; border-radius: 28px; padding: 0; box-shadow: var(--brand-panel-shadow); overflow: hidden; display: flex; flex-direction: column; }
   .brand-conversation>header { padding: 16px 20px; border-bottom-color: var(--brand-rule-soft); }
   .brand-conversation>header strong { font-size: 17px; font-weight: 800; }
-  .brand-conversation-log { height: 400px; padding: 20px; }
-  .brand-contact textarea { resize: none; border: 0; border-radius: 12px; padding: 12px 14px; font-size: 15px; min-height: 112px; background: var(--brand-white); box-shadow: inset 0 0 0 1.5px var(--brand-rule-input); }
+  .brand-conversation-log { height: 440px; padding: 20px; }
+  .brand-contact textarea { resize: none; border: 0; border-radius: 12px; padding: 12px 14px; font-size: 15px; min-height: 0; }
   .brand-contact label { font-size: 14px; font-weight: 700; }
-  .brand-contact>div:last-child { margin-block: 16px 0; }
-  .brand-contact { margin: 0; padding: 16px 20px 41px; border-top-color: var(--brand-rule-soft); background: var(--brand-paper); }
+  .brand-contact { margin: 0; padding: 16px 20px; border-top-color: var(--brand-rule-soft); background: var(--brand-paper); }
 
   /* Closing */
   .brand-closing.brand-section { padding-block: 128px; }

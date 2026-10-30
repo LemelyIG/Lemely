@@ -244,7 +244,6 @@ function MarkedPaper({
           },
         ]}
       />
-      <span className="brand-label wt-paper-note">ILLUSTRATIVE MARKED ANSWER</span>
     </div>
   );
 }
@@ -625,7 +624,7 @@ export function MarkingWalkthrough() {
                     <div className="brand-review">
                       <p>
                         <b>Teacher review.</b> The unit looks like m/s, but the
-                        ² may be faint. Held for teacher review before it
+                        ² may be faint. Sent to your queue before it
                         counts.
                       </p>
                       <ToggleGroup
@@ -688,10 +687,7 @@ export function MarkingWalkthrough() {
                     <span className="wt-next-time">15 MIN</span>
                   </div>
                   <p className="wt-report brand-report">
-                    Progress report ready to send to Layan's parents.{" "}
-                    <span className="brand-label">
-                      ILLUSTRATION · NO REPORT IS SENT
-                    </span>
+                    Progress report ready to send to Layan's parents.
                   </p>
                 </div>
               </WalkthroughPanel>

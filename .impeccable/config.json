@@ -32,6 +32,12 @@
         ],
         "createdAt": "2026-10-28T23:51:24.000Z",
         "reason": "User confirmed: copied verbatim from the Lemely Landing Page reference (deck dot width)"
+      },
+      {
+        "rule": "bounce-easing",
+        "value": "cubic-bezier(.3, 1.5, .5, 1)",
+        "createdAt": "2026-10-30T12:24:31.911Z",
+        "reason": "User confirmed: copied verbatim from the Lemely Landing Page reference (Binny closing peek)"
       }
     ]
   }
