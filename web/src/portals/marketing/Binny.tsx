@@ -4,13 +4,11 @@ export type BinnyMood =
 
 /** The supplied mascot's FAQ expressions, shared with the closing cameo. */
 export function Binny({
-  mood = "idle",
-  active = false,
+  mood = "open",
   className = "",
   compact = false,
 }: {
   mood?: BinnyMood;
-  active?: boolean;
   className?: string;
   /** Head-and-shoulders crop (reference viewBox 30 10 140 140) for small icon use. */
   compact?: boolean;
@@ -20,7 +18,6 @@ export function Binny({
     <svg
       className={className}
       data-mood={mood}
-      data-motion={active ? "active" : "still"}
       aria-hidden="true"
       width="200"
       height="220"
@@ -90,63 +87,64 @@ export function Binny({
         </>
       )}
       <g transform={compact ? "translate(0 -8)" : undefined}>
-        <g className="brand-binny-eyes">
-          {happy ? (
-            <path
-              d="M68 143 Q78 130 88 143"
-              fill="none"
-              stroke="var(--brand-white)"
-              strokeWidth="5"
-              strokeLinecap="round"
-            />
-          ) : (
-            <>
-              <ellipse
-                cx="78"
-                cy="140"
-                rx="11"
-                ry="12"
-                fill="var(--brand-white)"
-              />
-              <circle
-                cx={mood === "thinking" ? 82 : 78}
-                cy={mood === "thinking" ? 137 : 141}
-                r="6.5"
-                fill="var(--brand-ink)"
-              />
-            </>
-          )}
-          {happy || mood === "wink" ? (
-            <path
-              d="M112 143 Q122 130 132 143"
-              fill="none"
-              stroke="var(--brand-white)"
-              strokeWidth="5"
-              strokeLinecap="round"
-            />
-          ) : (
-            <>
-              <ellipse
-                cx="122"
-                cy="140"
-                rx="11"
-                ry="12"
-                fill="var(--brand-white)"
-              />
-              <circle
-                cx={mood === "thinking" ? 126 : 122}
-                cy={mood === "thinking" ? 137 : 141}
-                r="6.5"
-                fill="var(--brand-ink)"
-              />
-            </>
-          )}
-        </g>
-        {mood === "nerd" && (
+        {mood === "nerd" ? (
           <g fill="none" stroke="var(--brand-tide)" strokeWidth="5">
             <circle cx="78" cy="140" r="17" />
             <circle cx="122" cy="140" r="17" />
             <path d="M95 138 Q100 134 105 138" />
+          </g>
+        ) : (
+          <g className="brand-binny-eyes">
+            {happy ? (
+              <path
+                d="M68 143 Q78 130 88 143"
+                fill="none"
+                stroke="var(--brand-white)"
+                strokeWidth="6"
+                strokeLinecap="round"
+              />
+            ) : (
+              <>
+                <ellipse
+                  cx="78"
+                  cy="140"
+                  rx="11"
+                  ry="12"
+                  fill="var(--brand-white)"
+                />
+                <circle
+                  cx={mood === "thinking" ? 84 : 80}
+                  cy="141"
+                  r="6.5"
+                  fill="var(--brand-ink)"
+                />
+              </>
+            )}
+            {happy || mood === "wink" ? (
+              <path
+                d="M112 143 Q122 130 132 143"
+                fill="none"
+                stroke="var(--brand-white)"
+                strokeWidth="6"
+                strokeLinecap="round"
+              />
+            ) : (
+              <>
+                <ellipse
+                  cx="122"
+                  cy="140"
+                  rx="11"
+                  ry="12"
+                  fill="var(--brand-white)"
+                />
+                <circle
+                  cx={mood === "thinking" ? 128 : 124}
+                  cy="141"
+                  r="6.5"
+                  fill="var(--brand-ink)"
+                />
+              </>
+            )}
           </g>
         )}
       </g>

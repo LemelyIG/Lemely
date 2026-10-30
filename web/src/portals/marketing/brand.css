@@ -93,14 +93,14 @@
 .brand-faq-panel { background:var(--brand-white); border:1px solid var(--brand-border); border-radius:24px; padding:20px 28px; }
 .brand-faq-chips { display:flex; flex-direction:column; gap:10px; margin-top:24px; }
 .marketing-brand .brand-faq-chips button { white-space:normal; text-align:start; justify-content:space-between; border-radius:14px; padding:14px 18px; font:700 16px/1.5 var(--brand-body); }
-.brand-faq-chips button[aria-expanded=true] { background:var(--brand-abyss); color:var(--brand-white); }
+.brand-faq-chips button[aria-expanded=true] { background:var(--brand-wash); color:var(--brand-abyss); }
 .brand-faq-mobile { display:none; }
 .brand-conversation>header { display:flex; gap:12px; align-items:center; border-bottom:1px solid var(--brand-border); padding-bottom:16px; }
 .brand-conversation>header img { width:52px; height:52px; object-fit:contain; }
 .brand-conversation-log { height:400px; overflow-y:auto; padding-block:20px; display:flex; flex-direction:column; gap:12px; overscroll-behavior:contain; }
-.brand-conversation-log>p,.brand-conversation-log dd { align-self:flex-start; max-width:90%; background:var(--brand-subtle); border-radius:18px 18px 18px 6px; padding:12px 16px; color:var(--brand-ink); font-size:15px; line-height:1.5; margin:0; }
+.brand-conversation-log>p,.brand-conversation-log dd { align-self:flex-start; max-width:86%; background:var(--brand-subtle); border-radius:18px 18px 18px 6px; padding:12px 16px; color:var(--brand-ink); font-size:15px; line-height:1.5; margin:0; }
 .brand-conversation-log dl { display:flex; flex-direction:column; gap:12px; margin:0; }
-.brand-conversation-log dt { align-self:flex-end; max-width:85%; background:var(--brand-abyss); color:var(--brand-white); border-radius:18px 18px 6px 18px; padding:12px 16px; font-size:15px; font-weight:600; }
+.brand-conversation-log dt { align-self:flex-end; max-width:80%; background:var(--brand-abyss); color:var(--brand-white); border-radius:18px 18px 6px 18px; padding:12px 16px; font-size:15px; font-weight:600; line-height:1.45; }
 .brand-faq [data-slot=accordion-trigger] { font:700 16px/1.5 var(--brand-body); padding-block:22px; }
 .brand-faq [data-slot=accordion-content] { font-size:14px; line-height:1.65; color:var(--brand-muted); }
 .brand-faq [data-slot=accordion-item] { border-color:var(--brand-border); }
@@ -110,7 +110,10 @@
 .brand-contact-row { display:flex; flex-wrap:wrap; gap:10px; }
 .brand-contact-email { flex:1; min-width:180px; }
 .marketing-brand .brand-contact-send { height:auto; border:0; border-radius:12px; padding:12px 18px; font:700 15px/normal var(--brand-body); background:var(--brand-abyss); color:var(--brand-white); opacity:1; transition:background-color .2s; display:inline-flex; align-items:center; }
-.marketing-brand .brand-contact-send[aria-disabled=true] { background:var(--brand-idle-control); cursor:not-allowed; }
+.marketing-brand .brand-contact-send:disabled { background:var(--brand-idle-control); opacity:1; pointer-events:auto; cursor:not-allowed; transform:none; }
+.marketing-brand .brand-contact-send:not(:disabled):active { transform:scale(.97); }
+.brand-contact-sent { display:flex; align-items:center; gap:12px; font-size:15px; line-height:1.45; animation:walkthrough-up 300ms ease-out both; }
+.brand-contact-sent>span:first-child { width:28px; height:28px; flex-shrink:0; border-radius:50%; background:var(--brand-sent-badge); color:var(--brand-white); display:flex; align-items:center; justify-content:center; }
 .brand-contact-alt { font-size:13px; color:var(--brand-hint); }
 .brand-contact-alt a { font-weight:700; text-decoration:none; }
 .brand-closing { text-align:center; position:relative; overflow:clip; background:var(--brand-wash); padding-block:128px; }

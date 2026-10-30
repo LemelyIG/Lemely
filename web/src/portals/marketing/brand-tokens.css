@@ -1,4 +1,4 @@
-@import '@fontsource-variable/bricolage-grotesque';
+@import '@fontsource-variable/bricolage-grotesque/opsz.css';
 @import '@fontsource-variable/schibsted-grotesk';
 
 @theme inline {
@@ -42,6 +42,7 @@
   --brand-art-25: oklch(0.48 0.18 25);
   --brand-art-26: oklch(0.94 0.01 240);
   --brand-art-27: oklch(0.6 0.12 150);
+  --brand-sent-badge: var(--brand-art-27);
   --brand-art-28: oklch(0.94 0.06 85);
   --brand-art-29: oklch(0.42 0.1 70);
   --brand-art-30: oklch(0.3 0.08 150 / 0.5);
@@ -69,6 +70,7 @@
   --brand-border: oklch(0.88 0.02 240);
   --brand-muted: oklch(0.45 0.02 240);
   --brand-idle-control: oklch(0.75 0.03 240);
+  --brand-typing-dot: oklch(0.6 0.03 240);
   --brand-night: oklch(0.22 0.03 264);
   --brand-night-panel: oklch(0.27 0.035 264);
   --brand-night-rule: oklch(0.38 0.035 264);

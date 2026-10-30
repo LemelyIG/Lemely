@@ -66,16 +66,15 @@ test('walkthrough, review and FAQ work with the keyboard', async ({ page }) => {
   await page
     .getByRole('textbox', { name: 'Ask anything else' })
     .fill('Can we arrange a demo?')
-  // Send stays inert until both fields are valid, and never claims delivery.
-  await expect(page.getByText('Send', { exact: true })).not.toHaveAttribute(
-    'href',
-  )
+  // Send is disabled until both fields are valid; sending only writes into the chat.
+  const send = page.getByRole('button', { name: 'Send', exact: true })
+  await expect(send).toBeDisabled()
   await page.getByRole('textbox', { name: 'Your email' }).fill('a@b.co')
-  await expect(page.getByRole('link', { name: 'Send' })).toHaveAttribute(
-    'href',
-    /mailto:contact@lemelyig.com.*Can%20we.*a%40b\.co/,
-  )
-  await expect(page.getByText(/Got it|We'll email you/)).toHaveCount(0)
+  await expect(send).toBeEnabled()
+  await send.click()
+  // The chat log is desktop-only; the reply is in the DOM everywhere.
+  await expect(page.getByText('Good one. A human from the team')).toHaveCount(1)
+  await expect(page.getByText("Got it. We'll email you back at")).toBeVisible()
 })
 
 test('responsive layout and accessible mobile navigation', async ({
