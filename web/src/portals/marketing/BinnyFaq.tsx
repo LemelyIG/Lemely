@@ -57,7 +57,7 @@ export function BinnyFaq() {
           <h2>
             Questions?
             <br />
-            Ask Binny.
+            <span>Ask Binny.</span>
           </h2>
           <p>Tap a question and Binny will answer.</p>
           <div className="brand-faq-chips">
@@ -78,13 +78,14 @@ export function BinnyFaq() {
                 <span aria-hidden="true">
                   {asked.some((item) => item.id === x.id && item.answered)
                     ? '✓'
-                    : '+'}
+                    : 'ASK'}
                 </span>
               </Button>
             ))}
           </div>
           <Binny
             className="brand-faq-mascot brand-faq-binny"
+            compact
             active={enabled}
             mood={answerMood(mobileAnswer)}
           />
@@ -108,6 +109,7 @@ export function BinnyFaq() {
           <section className="brand-conversation" aria-label="Binny answers">
             <header>
               <Binny
+                compact
                 className="brand-faq-binny"
                 mood={pending ? 'thinking' : answerMood(asked.at(-1)?.id ?? '')}
                 active={enabled}
@@ -158,7 +160,7 @@ export function BinnyFaq() {
               rows={2}
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
-              placeholder="What's on your mind?"
+              placeholder="Your question"
             />
             <div>
               <p>

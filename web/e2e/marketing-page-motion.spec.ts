@@ -90,11 +90,13 @@ test('mobile feature deck exposes every feature and announces its position', asy
   await page.goto('/landing#features')
   const deck = page.getByRole('region', { name: 'Lemely features' })
   await expect(deck.getByRole('status')).toHaveText('1 / 8')
-  await deck.getByRole('button', { name: 'Next slide' }).click()
+  await deck.getByRole('button', { name: 'Next card' }).click()
   await expect(deck.getByRole('status')).toHaveText('2 / 8')
   await expect(
     deck.getByRole('heading', { name: 'Confidence on every mark' }),
   ).toBeInViewport()
-  await deck.getByRole('button', { name: 'Previous slide' }).click()
+  await deck
+    .getByRole('group', { name: 'Lemely features cards' })
+    .press('ArrowLeft')
   await expect(deck.getByRole('status')).toHaveText('1 / 8')
 })

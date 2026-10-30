@@ -1,1047 +1,345 @@
-# DESIGN.md — The Study Notebook
-
-> **Read this file before emitting any UI.** It is the single source of truth for
-> Lemely's visual system. `BUILD/BRAND.md` owns *meaning*; this file owns *values*.
-> Where they disagree on a value, this file wins; on meaning, BRAND.md wins.
->
-> Supersedes the build-era "Academic Warmth" system (a Material-3 palette
-> generated before the Study Notebook direction existed). Nothing from that
-> palette survives except the semantic *names*, which are deliberately reused so
-> the ~20 components already consuming them keep working while surfaces are
-> migrated one at a time in Phase 4.
->
-> Authority: `BUILD/REDESIGN-MISSION.md` §3 (skill conflicts, pre-resolved) and
-> §4 (the direction, not re-openable). `design-system/lemely/MASTER.md` is
-> research input that was mined and mostly rejected; it is never a second source
-> of truth.
-
+---
+name: Lemely Abyss
+description: Every mark, explained. Cool, precise, deep-blue brand system for the Lemely marketing portal, with Clip Letters wordmark and the Binny mascot.
+colors:
+  abyss: "#042f4f"
+  abyss-hover: "#0a3d62"
+  tide: "#7fb8e0"
+  ink: "#130e10"
+  white: "#ffffff"
+  paper: "#f8fafd"
+  subtle: "#f2f6f9"
+  mist-wash: "#cfe9f9"
+  hairline: "#ccdae4"
+  muted-ink: "#4c575f"
+  night: "#131a29"
+  night-panel: "#1e2638"
+  night-rule: "#394255"
+  night-muted: "#bdcdda"
+  gold: "#e9b452"
+  correct-green: "#03642b"
+  error-red: "#b00a1d"
+typography:
+  display:
+    fontFamily: "'Bricolage Grotesque Variable', sans-serif"
+    fontSize: "clamp(64px, 7.2vw, 104px)"
+    fontWeight: 800
+    lineHeight: 0.88
+    letterSpacing: "-0.05em"
+  headline:
+    fontFamily: "'Bricolage Grotesque Variable', sans-serif"
+    fontSize: "clamp(40px, 5vw, 68px)"
+    fontWeight: 800
+    lineHeight: 0.95
+    letterSpacing: "-0.045em"
+  title:
+    fontFamily: "'Schibsted Grotesk Variable', sans-serif"
+    fontSize: "21px"
+    fontWeight: 800
+    lineHeight: 1.2
+  body:
+    fontFamily: "'Schibsted Grotesk Variable', sans-serif"
+    fontSize: "16px"
+    fontWeight: 400
+    lineHeight: 1.5
+  label:
+    fontFamily: "'JetBrains Mono Variable', monospace"
+    fontSize: "11px"
+    fontWeight: 400
+    lineHeight: 1.6
+    letterSpacing: "0.065em"
+  handwriting:
+    fontFamily: "'Caveat Variable', cursive"
+    fontSize: "30px"
+    fontWeight: 600
+  scale:
+    step-7: "7px"
+    step-9: "9px"
+    step-10: "10px"
+    step-12: "12px"
+    step-13: "13px"
+    step-14: "14px"
+    step-15: "15px"
+    step-17: "17px"
+    step-18: "18px"
+    step-19: "19px"
+    step-20: "20px"
+    step-22: "22px"
+    step-24: "24px"
+    step-26: "26px"
+    step-28: "28px"
+    step-32: "32px"
+    step-42: "42px"
+    step-44: "44px"
+    step-56: "56px"
+    step-60: "60px"
+    step-72: "72px"
+    step-112: "112px"
+rounded:
+  hair: "2px"
+  dot: "3px"
+  track: "4px"
+  xs: "5px"
+  tag: "6px"
+  sm: "8px"
+  md: "10px"
+  chip: "12px"
+  lg: "14px"
+  tile: "16px"
+  bubble: "18px"
+  xl: "20px"
+  card: "24px"
+  panel: "28px"
+  stage: "32px"
+  plate: "44px"
+  full: "999px"
+  pill: "50%"
+spacing:
+  xs: "8px"
+  sm: "12px"
+  md: "16px"
+  lg: "24px"
+  xl: "32px"
+  gutter: "32px"
+  gutter-mobile: "20px"
+  section: "112px"
+  section-mobile: "72px"
+components:
+  button-primary:
+    backgroundColor: "{colors.abyss}"
+    textColor: "{colors.white}"
+    rounded: "{rounded.lg}"
+    padding: "16px 24px"
+    height: "56px"
+  button-ghost:
+    backgroundColor: "transparent"
+    textColor: "{colors.abyss}"
+    rounded: "{rounded.lg}"
+    padding: "16px 24px"
+    height: "56px"
+  button-primary-on-abyss:
+    backgroundColor: "{colors.tide}"
+    textColor: "{colors.abyss}"
+    rounded: "{rounded.lg}"
+    padding: "16px 24px"
+    height: "56px"
+  nav-cta:
+    backgroundColor: "{colors.abyss}"
+    textColor: "{colors.white}"
+    rounded: "{rounded.md}"
+  feature-card:
+    backgroundColor: "{colors.white}"
+    textColor: "{colors.ink}"
+    rounded: "{rounded.card}"
+    padding: "24px"
+  feature-card-core:
+    backgroundColor: "{colors.abyss}"
+    textColor: "{colors.white}"
+    rounded: "{rounded.card}"
+    padding: "32px"
+  metric-card:
+    backgroundColor: "{colors.night-panel}"
+    textColor: "{colors.white}"
+    rounded: "{rounded.card}"
+    padding: "28px"
+  chart-card:
+    backgroundColor: "{colors.white}"
+    textColor: "{colors.ink}"
+    rounded: "{rounded.panel}"
+    padding: "22px"
+  walkthrough-stage:
+    backgroundColor: "{colors.mist-wash}"
+    rounded: "{rounded.stage}"
+    padding: "20px"
+  step-tab-active:
+    backgroundColor: "{colors.abyss}"
+    textColor: "{colors.white}"
+    rounded: "{rounded.lg}"
+    padding: "16px"
+  faq-chip-open:
+    backgroundColor: "{colors.abyss}"
+    textColor: "{colors.white}"
+    rounded: "{rounded.lg}"
+    padding: "14px 18px"
+  chat-bubble-student:
+    backgroundColor: "{colors.abyss}"
+    textColor: "{colors.white}"
+    rounded: "18px"
+    padding: "12px 16px"
+  chat-bubble-binny:
+    backgroundColor: "{colors.subtle}"
+    textColor: "{colors.ink}"
+    rounded: "18px"
+    padding: "12px 16px"
+  coming-badge:
+    backgroundColor: "{colors.gold}"
+    textColor: "{colors.ink}"
+    rounded: "{rounded.xs}"
+    padding: "3px 7px"
 ---
 
-## 1. Genre and the one protected quality
-
-**Genre:** warm editorial product UI. Notion's calm information density crossed
-with the physical artefact the product is actually about, a student's exam
-paper and the teacher's marks on it.
-
-**The one protected quality** (REDESIGN-MISSION §1): the warmth and
-notebook/sketchbook feel. Every other visual decision is replaceable. This is
-what the texture layer (§8) exists to protect, and it is the thing to check
-first when a surface feels wrong.
-
-**Hard anti-references.** Generic SaaS: dense bootstrap-coloured dashboards,
-purple-blue gradients, cookie-cutter card grids, dark glass "AI product"
-aesthetic. If an emitted screen would look at home in a Y-Combinator batch
-screenshot, it is wrong.
-
-**The tone in one sentence.** A beautifully kept notebook that happens to be
-alive: warm paper, ink, hairlines, marginalia, sticker-like pastel tags, and
-quiet motion, with expressive celebration reserved for genuine wins.
-
----
-
-## 2. Macrostructure per lane
-
-Three lanes, from `PRODUCT.md`. Each gets its own page skeleton; all three share
-the token system, and per-surface variation happens only through §13's knobs.
-
-### Persuade — marketing, landing, public pages
-Full-bleed warm paper, generous macro-whitespace (96–128px between sections),
-asymmetric and deliberately broken symmetry, one idea per section. Section
-rhythm: hero → proof → the loop → who it serves → plans → close. Wide container
-(1200–1440px). Display type does the work; imagery is real screenshots in a
-`<figure>` with a hairline border, never hand-drawn browser chrome.
-
-### Operate — dashboards, marking, teacher and parent and admin tools
-Sidebar plus content well. Content max-width 1200px, sidebar 240–280px fixed.
-Scanability and task speed outrank expression: tabular numbers, consistent row
-rhythm, a single obvious primary action per screen. Brand lives in the details
-here (subject colours, marginalia in empty states, the celebration register on
-wins), never in decoration that costs a teacher a second.
-
-### Read — study content, flashcards, worksheets, explanations
-Single centred column, body max 65ch, line-height 1.6, ruled-paper background
-option on. This lane is the closest to literal paper and may use the texture
-layer most heavily. No sidebar; navigation collapses to a back path and progress.
-
----
-
-## 3. Colour tokens (OKLCH)
-
-OKLCH throughout, so lightness is perceptually uniform and dark mode is a
-lightness inversion rather than a re-pick. **Both light and dark ship.** Dark
-is a token swap under `data-theme="dark"` (§3.10) — REDESIGN-MISSION §3.2 item
-8's "build tokens so a future dark theme is a token swap" is what §3.10 now
-is, shipped in Phase C, task C5a. No component file changes for the swap to
-work, and every contrast guarantee this section makes is measured for both
-ladders by `tests/test_design_tokens.py`.
-
-Every value below is a token. Raw hex, `rgb()`, or `oklch()` written inline in a
-component is a gate failure (§3.2 item 13); lift the value here first.
-
-### 3.1 Paper (canvas and surfaces)
-
-| Token | OKLCH | ≈ hex | Use |
-|---|---|---|---|
-| `--paper` | `oklch(0.976 0.004 85)` | `#F8F7F4` | The page. The default background of everything. |
-| `--paper-raised` | `oklch(0.992 0.003 85)` | `#FDFCFA` | Cards and panels sitting on the page. Slightly *lighter* than the canvas, the way a sheet laid on a desk catches more light. |
-| `--paper-sunk` | `oklch(0.952 0.006 85)` | `#F1EFEB` | Wells: sidebars, table headers, code blocks, inset areas. |
-| `--paper-inverse` | `oklch(0.28 0.008 250)` | `#26292D` | The one dark surface permitted, for a single proof/close band on marketing only. Never a dark section inside an app screen. |
-
-Never pure `#FFF` and never pure `#000`. Both read as sterile and break the
-paper illusion instantly.
-
-### 3.2 Ink (text)
-
-| Token | OKLCH | ≈ hex | Use | Measured on `--paper` |
-|---|---|---|---|---|
-| `--ink` | `oklch(0.321 0.009 234)` | `#2F3437` | Primary text, headings, the logo mark. | 11.6:1 |
-| `--ink-muted` | `oklch(0.48 0.006 240)` | `#5B5E61` | Secondary text, descriptions, inactive nav. | 6.09:1 |
-| `--ink-faint` | `oklch(0.52 0.006 240)` | `#66696C` | Captions, metadata, timestamps. The floor. | 5.13:1 |
-| `--ink-inverse` | `oklch(0.97 0.004 85)` | `#F6F5F2` | Text on `--paper-inverse` or on a filled accent. | 13.37:1 on inverse |
-
-Every ratio in that table is **measured**, not estimated, by converting the
-OKLCH value to sRGB and applying the WCAG relative-luminance formula. `--ink` is
-exactly the logo's ink, derived by converting `#2F3437` to OKLCH rather than
-eyeballed, so the mark and the interface are literally the same colour.
-
-`--ink-faint` is the lightest text token that exists, and it is the one token in
-this file whose value is decided by something other than paper. An earlier draft
-had it at L 0.575, which measured 4.08:1 and 3.80:1 on the paper rungs and would
-have shipped a system-wide AA failure on every caption in the product. It moved
-to L 0.529, which cleared all three.
-
-**That was still not the constraint.** Captions do not only sit on paper — they
-sit on the eleven tinted fills of §3.5 and §3.6 too, and until P6.4 nothing in
-this system had ever measured that pairing. At L 0.529 the token was below AA on
-**eight of those eleven** (worst `--err-wash` at 4.36:1) and cleared the other
-three by 0.01–0.06. It was not a bad pairing on one screen; it was a token
-floored by the wrong surface.
-
-It is now **L 0.52** (D6.7), which clears 4.5:1 on all fourteen surfaces it can
-land on: **5.13:1 on `--paper`, 5.38:1 on `--paper-raised`, 4.78:1 on
-`--paper-sunk`**, and worst-case **4.53:1 on `--err-wash`**. The binding
-constraint on this token is `--err-wash`, not `--paper-sunk`, and
-`tests/test_design_tokens.py` pins that fact by name so a later change to either
-colour reports which pair moved.
-
-There is deliberately no fifth, lighter step. The build-era system had one and
-spent three separate rounds failing and re-nudging AA on it, each round fixing
-one surface and leaving another broken. If text needs to recede further than
-`--ink-faint`, make it smaller or move it. Do not make it lighter.
-
-### 3.3 Rules (hairlines)
-
-| Token | OKLCH | ≈ hex | Use |
-|---|---|---|---|
-| `--rule` | `oklch(0.905 0.004 85)` | `#E1DFDD` | The default 1px border. Cards, inputs, dividers, table rows. |
-| `--rule-strong` | `oklch(0.845 0.005 85)` | `#CDCCC8` | Emphasis borders, focused input rest state, header underlines. |
-| `--rule-faint` | `oklch(0.945 0.003 85)` | `#EEEDEA` | Ruled-paper lines, dotted grids, the texture layer. |
-
-Borders are the primary containment strategy. Shadows are not (§7).
-
-### 3.4 Accent
-
-One accent, warm and slightly desaturated, taken directly from the logo mark so
-the brand and the UI are literally the same red.
-
-| Token | OKLCH | ≈ hex | Use |
-|---|---|---|---|
-| `--accent` | `oklch(0.576 0.146 33)` | `#C0523D` | Primary buttons, active nav, links, the logo tick, the teacher's mark. |
-| `--accent-hover` | `oklch(0.505 0.132 34)` | `#A2422D` | Hover and pressed states of accent fills. |
-| `--accent-wash` | `oklch(0.945 0.028 34)` | `#FFE7E1` | Tinted backgrounds: selected rows, highlight bands, tag fills. |
-| `--accent-ink` | `oklch(0.38 0.10 34)` | `#6E2A1B` | Accent-coloured *text* on paper or on `--accent-wash`. |
-| `--accent-on` | `#FFFFFF` | `#FFFFFF` | Text and icons **on** an `--accent` fill. Nothing else. |
-
-`--accent` is derived by converting the logo's `#C0523D` to OKLCH, so the mark's
-tick and the product's primary button are the same red by construction rather
-than by eye.
-
-Three accent values, because three different jobs have three different contrast
-requirements, all measured:
-
-- **`--accent` measures 4.34:1 on `--paper`.** That clears AA for large text (≥18.66px, or ≥14px bold) and for graphics and UI components, so it is correct for a filled button, an icon, or the logo tick. It is **not** correct for body copy or small labels.
-- **`--accent-ink` measures 9.75:1 on `--paper` and 8.84:1 on `--accent-wash`.** Use it for any accent-coloured text below the large-text threshold. `--accent-hover` is also safe as text at 5.85:1 if a darker fill is wanted.
-- **`--accent-on` is the one place pure white is permitted in this system.** It measures **4.65:1** on an `--accent` fill and clears AA for normal text, which matters because button labels are `label` (13px/500), i.e. normal text, not large. `--ink-inverse` was tried here first and measures only **4.27:1**, which fails. Do not substitute it back.
-
-The §3.1 ban on pure white governs *surfaces* (a white canvas reads sterile and
-kills the paper illusion). It does not govern a label sitting on a saturated
-fill, where the only question is legibility.
-
-### 3.5 Pastels
-
-The sticker set. Washed fills with a dark text pair each, for tags, subject
-coding, and inline highlights. Every pair is AA on its own fill.
-
-| Name | Fill | Text on fill | hex fill / text | Measured |
-|---|---|---|---|---|
-| `--pastel-rose` | `oklch(0.94 0.032 20)` | `oklch(0.42 0.11 20)` | `#FFE3E2` / `#7E2F33` | 7.41:1 |
-| `--pastel-amber` | `oklch(0.945 0.045 85)` | `oklch(0.42 0.08 70)` | `#FBEBCB` / `#694413` | 7.32:1 |
-| `--pastel-sage` | `oklch(0.94 0.032 155)` | `oklch(0.40 0.07 160)` | `#DBF2E2` / `#1F533A` | 7.54:1 |
-| `--pastel-sky` | `oklch(0.94 0.030 235)` | `oklch(0.42 0.08 240)` | `#D9EFFD` / `#1B5274` | 7.05:1 |
-| `--pastel-lilac` | `oklch(0.94 0.030 300)` | `oklch(0.42 0.08 300)` | `#EEE7FD` / `#544272` | 7.27:1 |
-| `--pastel-clay` | `oklch(0.94 0.022 55)` | `oklch(0.42 0.06 50)` | `#F8E8DE` / `#68432F` | 7.22:1 |
-
-Last column is the measured ratio of each pair's text on its own fill. Every
-pastel text colour is also AA on `--paper` (7.80:1 to 8.36:1), so a tag's label
-stays legible if the fill is ever dropped.
-
-Lilac is the one hue that must never be used for a primary action, a chart's
-first series, or anything AI-adjacent. It exists for subject coding only. The
-purple-blue AI gradient is a firing offence (§3.2 item 7) and lilac is the
-nearest legal neighbour to it.
-
-### 3.6 Semantic states
-
-Deliberately **not** green/amber/red. Teal replaces green so the
-success/error pair stays distinguishable under deuteranopia and protanopia,
-which pure green against red does not. This was a real decision in the build-era
-system and it is carried forward on purpose.
-
-| Token | Text | Fill | Measured on fill | Use |
-|---|---|---|---|---|
-| `--ok` / `--ok-wash` | `oklch(0.48 0.075 175)` `#256B5B` | `oklch(0.945 0.030 175)` `#D9F4EC` | 5.41:1 | Correct, complete, saved, on track. |
-| `--warn` / `--warn-wash` | `oklch(0.45 0.085 70)` `#734C17` | `oklch(0.945 0.045 85)` `#FBEBCB` | 6.45:1 | Partial credit, uncertain, borderline, needs attention. |
-| `--err` / `--err-wash` | `oklch(0.38 0.145 27)` `#7E0D10` | `oklch(0.94 0.035 27)` `#FFE3DF` | 8.86:1 | Wrong, failed, destructive, blocked. |
-| `--info` / `--info-wash` | `oklch(0.44 0.080 265)` `#3D517F` | `oklch(0.94 0.030 265)` `#E1EBFF` | 6.56:1 | Neutral notices, tips, "how this works". Hue 265 (was 240/235, which collided with `--pastel-sky-ink`'s hue and `--focus-ring`'s hue — see D-A3.1). |
-
-Every semantic text colour is also AA on `--paper` (5.38:1 to 10.04:1) and on
-`--paper-sunk`.
-
-**The lightness ladder is deliberate and load-bearing.** `--ok`, `--warn` and
-`--err` descend in relative luminance (0.117 → 0.089 → 0.048), so the three
-states remain distinguishable when hue is removed entirely: in greyscale, for a
-colour-blind reader, or on a bad projector. An earlier draft of this file set
-all three at roughly L 0.45, which read as three identical greys and made the
-teal-not-green decision above pointless. If one of these values is ever
-adjusted, the ordering must be preserved; a test enforces it
-(`tests/test_design_tokens.py`).
-
-**Colour never carries meaning alone.** Every state pairs its colour with an
-icon or a text label. A student who cannot distinguish the teal from the red
-must still be able to read their paper.
-
-**The red-pen register.** Its scope is narrow and deliberate: the per-question
-wrong-answer explanation on `PaperResult`, and nothing else. `.lm-red-pen`
-(`web/src/index.css`) sets `--mark-wrong` ink at weight 500 with a 2px
-`border-inline-start` rule, applied only to the expanded explanation slot a
-wrong `QuestionRow` renders — never the row itself, never the feedback panel
-beneath it (that keeps its own `bg-paper-sunk`), and never a red fill of any
-kind. PRODUCT.md's accessibility section sets the boundary this register stays
-inside of: "avoid red-heavy error states; prefer amber/neutral for 'needs
-attention.'" `PaperResult` is the screen a student opens the moment their
-marking finishes, already carrying whatever exam stress sent them there — an
-error-red panel fill on that screen is exactly the red-heavy state the caveat
-warns against. Ink and a rule read as a correction mark in the margin of a
-graded paper, which is what this actually is; a filled red block reads as an
-alarm. No Caveat here either — §4.1's rule that Caveat decorates and never
-carries meaning applies with particular force to a wrong answer, where the
-one thing the register may not do is soften or embellish what happened to the
-mark.
-
-### 3.7 Product scales
-
-These three scales are load-bearing product semantics, not decoration. They
-carry over from the build-era system with their meaning intact and their values
-re-pointed at the new palette.
-
-**Confidence** (how sure the marker is). Three tiers, separated by hue *and* a
-monotonic lightness step so the ladder survives greyscale:
-
-| Tier | Text | Wash | Meaning |
-|---|---|---|---|
-| `--confidence-high` | `--ok` | `--ok-wash` | Confident. |
-| `--confidence-medium` | `--warn` | `--warn-wash` | Uncertain, re-marked or flagged. |
-| `--confidence-low` | `--err` | `--err-wash` | Below the review floor, a teacher is asked. |
-
-**Marking** (what happened to this mark): `--mark-correct` = `--ok`,
-`--mark-partial` = `--warn`, `--mark-wrong` = `--err`. Always paired with a
-distinct glyph (check, half-circle, cross), never colour alone.
-
-**Grade bands**, grouped across A*–G/U so a badge never reads as a button
-(hence: never `--accent`):
-
-| Band | Grades | Text / wash |
-|---|---|---|
-| `--grade-top` | A*, A, B | `--ok` / `--ok-wash` |
-| `--grade-mid` | C, D | `--pastel-clay` text / fill |
-| `--grade-borderline` | E | `--warn` / `--warn-wash` |
-| `--grade-fail` | F, G, U | `--err` / `--err-wash` |
-
-### 3.8 Subject colours
-
-Semantic, not decorative: a student scanning a dashboard should find Physics by
-colour before reading. Assign from the pastel set, fixed:
-
-| Subject | Pastel |
-|---|---|
-| Mathematics | `--pastel-sky` |
-| Physics | `--pastel-lilac` |
-| Chemistry | `--pastel-sage` |
-| Biology | `--pastel-clay` |
-| English | `--pastel-amber` |
-| Unassigned / other | `--pastel-rose` |
-
-New subjects extend this table here first. Never pick a subject colour at a call
-site.
-
-### 3.9 Focus
-
-| Token | Value |
-|---|---|
-| `--focus-ring` | `oklch(0.50 0.14 240)` `#006AAA` (5.37:1 on `--paper`) |
-| `--focus-ring-offset` | `--paper` |
-
-Focus is a 2px solid ring at 2px offset, **deliberately blue** rather than the
-accent: it must be distinguishable from the accent's own hover and selected
-states, and it must read as "the browser is talking to you" rather than as
-brand. `:focus-visible` only, never `:focus` (no rings on mouse click). It is
-never removed, on any element, for any reason.
-
-### 3.10 Dark ladder
-
-Shipped in Phase C, task C5a, as `:root[data-theme="dark"]` in `index.css` — a
-token swap and nothing more. Every token below already has a job assigned by
-its light-mode counterpart (§3.1–3.9); no component file changed to ship this.
-Hue and chroma are kept from the light ladder except where a row says
-otherwise; every value is measured, and `tests/test_design_tokens.py` runs
-every contrast guarantee this file makes about the light ladder against this
-one too, in the same test bodies (parametrised by theme, not duplicated).
-
-**The greyscale ladder (§3.6) survives the swap but flips direction.** Light
-DESCENDS with severity (`--ok` > `--warn` > `--err` in relative luminance —
-darkest text reads loudest against white paper). Dark ASCENDS (`--ok` <
-`--warn` < `--err` — brightest text reads loudest against near-black paper).
-`--ok`/`--warn` sit a little below the natural 0.78–0.82 starting band (L
-0.74/0.77) because at equal lightness `--err`'s higher chroma (0.145 vs
-0.075/0.085) suppresses its luminance enough to break the monotonic step;
-nudging lightness rather than touching hue or chroma keeps the step ≥0.02 in
-relative luminance — the same floor the light ladder is held to.
-
-**`--accent-on` does not carry its own literal in dark mode.** Pure white
-measures **2.61:1** on the dark `--accent` (fails AA); the dark `--paper`
-measures **6.93:1** and reads as the fill "recessing" into the page, so
-`index.css` sets `--accent-on: var(--paper)` instead of a second literal.
-
-| Token | Dark OKLCH | ≈ hex | Measured | Binding surface / use |
-|---|---|---|---|---|
-| `--paper` | `oklch(0.20 0.004 85)` | `#171614` | — | The page. |
-| `--paper-raised` | `oklch(0.24 0.003 85)` | `#201F1E` | — | Cards and panels — lighter than the canvas, same "sheet catches more light" logic as light. |
-| `--paper-sunk` | `oklch(0.17 0.006 85)` | `#110F0C` | — | Wells: sidebars, table headers, insets. |
-| `--paper-inverse` | `oklch(0.92 0.008 250)` | `#E1E5EA` | — | The one deliberately LIGHT surface in the dark theme — mirrors light's one deliberately dark surface. |
-| `--ink` | `oklch(0.93 0.009 234)` | `#E2E9ED` | 10.97:1 | Primary text, headings. Binding (tightest) surface: `--pastel-sage`. |
-| `--ink-muted` | `oklch(0.78 0.006 240)` | `#B4B8BB` | 6.73:1 | Secondary text. Binding surface: `--pastel-sage`. |
-| `--ink-faint` | `oklch(0.72 0.006 240)` | `#A1A5A8` | 5.43:1 | Captions, metadata. The floor. Binding surface: `--pastel-sage` — NOT `--paper-sunk`, and not `--err-wash` (light's binding surface). |
-| `--ink-inverse` | `oklch(0.25 0.004 85)` | `#22211F` | 12.64:1 | Text on `--paper-inverse`. |
-| `--rule` | `oklch(0.30 0.004 85)` | `#2F2E2C` | — | Default 1px border. |
-| `--rule-strong` | `oklch(0.36 0.005 85)` | `#3E3D3A` | — | Emphasis border. |
-| `--rule-faint` | `oklch(0.26 0.003 85)` | `#252422` | — | Ruled/dotted texture. |
-| `--accent` | `oklch(0.72 0.13 33)` | `#EA846E` | 6.93:1 on `--paper` (large text/UI) | Buttons, active nav, marks. Chroma down from light's 0.146, kept legible (not glowing) at this lightness. |
-| `--accent-hover` | `oklch(0.78 0.13 34)` | `#FF977F` | — | Hover/pressed — LIGHTER than `--accent`. Light's hover is darker (paper deepens under a press); dark's hover glows brighter instead — the equivalent "more emphasis" cue for its own surface. |
-| `--accent-wash` | `oklch(0.28 0.05 34)` | `#3E1F18` | — | Tinted backgrounds, selected rows, tag fills. |
-| `--accent-ink` | `oklch(0.80 0.10 34)` | `#F7A693` | 6.95:1 | Accent-coloured text. Binding surface: `--pastel-sage`. |
-| `--accent-on` | `var(--paper)` | `#171614` | 6.93:1 on `--accent` | Text/icons on an `--accent` fill. White fails AA (2.61:1); aliases `--paper` instead of a second literal. |
-| `--focus-ring` | `oklch(0.72 0.14 240)` | `#3FAFF3` | 7.42:1 on `--paper` | Focus ring. |
-| `--pastel-rose` / `-ink` | `oklch(0.30 0.032 20)` / `oklch(0.85 0.11 20)` | `#3C2727` / `#FFB1B0` | 7.98:1 on own fill | Unassigned / other subject. |
-| `--pastel-amber` / `-ink` | `oklch(0.30 0.045 85)` / `oklch(0.85 0.08 70)` | `#382C11` / `#F0C595` | 8.55:1 on own fill | English. |
-| `--pastel-sage` / `-ink` | `oklch(0.30 0.032 155)` / `oklch(0.85 0.07 160)` | `#213327` / `#A6DCBE` | 8.75:1 on own fill | Chemistry. |
-| `--pastel-sky` / `-ink` | `oklch(0.30 0.030 235)` / `oklch(0.85 0.08 240)` | `#1F303B` / `#9ED5FD` | 8.67:1 on own fill | Mathematics. |
-| `--pastel-lilac` / `-ink` | `oklch(0.30 0.030 300)` / `oklch(0.85 0.08 300)` | `#302A3B` / `#D5C2FB` | 8.51:1 on own fill | Physics. |
-| `--pastel-clay` / `-ink` | `oklch(0.30 0.022 55)` / `oklch(0.85 0.06 50)` | `#372B23` / `#EFC3AB` | 8.54:1 on own fill | Biology. |
-| `--ok` / `--ok-wash` | `oklch(0.74 0.075 175)` / `oklch(0.28 0.030 175)` | `#76BBA8` / `#182E28` | 6.47:1 on own wash | Correct, complete, on track. Ladder position: lowest. |
-| `--warn` / `--warn-wash` | `oklch(0.77 0.085 70)` / `oklch(0.28 0.045 85)` | `#D7AB78` / `#33270C` | 6.97:1 on own wash | Partial, uncertain, borderline. Ladder position: middle. |
-| `--err` / `--err-wash` | `oklch(0.82 0.145 27)` / `oklch(0.27 0.035 27)` | `#FF9D90` / `#36201D` | 7.61:1 on own wash | Wrong, failed, destructive. Ladder position: highest. |
-| `--info` / `--info-wash` | `oklch(0.80 0.080 265)` / `oklch(0.29 0.030 265)` | `#A5BDF2` / `#242B3B` | 7.54:1 on own wash | Neutral notices. Not part of the §3.6 ladder in either theme. |
-
-Every "Binding surface" above naming a tinted fill is the tightest of all
-fourteen surfaces the token may sit on (the three paper rungs plus the eleven
-tinted fills — the same matrix §3.2's prose describes for light); every pastel
-and semantic pair's ratio is against its own fill, which is tighter than
-`--paper` in every case, same as light.
-
-`--grade-*`, `--mark-*`, `--confidence-*`, and `--subject-*` (§3.7–3.8) are
-`var()` aliases of the tokens above, not redefined here — they repaint
-automatically the instant `data-theme="dark"` lands on `<html>`, and the same
-is true of the `--bg`/`--surface`/`--t1` compatibility layer and the
-`@theme inline` Tailwind mapping.
-
-**Out of scope for this ladder:** `--shadow-float` and `--scrim` (§7). Resting
-cards carry no shadow in either theme, and the only consumers are floating
-layers (popovers, dropdowns, modals, toasts). A dark-appropriate elevation
-treatment — shadows read as holes on a dark surface; Material's answer is
-lighter panels, not darker shadows — is a decision for whichever task first
-ships a floating layer against this ladder, not a token-value nudge here.
-
----
-
-## 4. Typography
-
-Four faces, each with exactly one job. Weights 400/500/600 are all in play;
-400/700 alone is a build-era habit and reads generic.
-
-| Role | Face | Package | Weights | Job |
-|---|---|---|---|---|
-| Display | **Newsreader Variable** | `@fontsource-variable/newsreader` | 400, 500, 600 (+ italic) | Headings, hero, section titles, big numbers on marketing. |
-| UI / body | **Geist Variable** | `@fontsource-variable/geist` | 400, 500, 600 | Everything interface: body, buttons, nav, labels, forms. |
-| Data | **JetBrains Mono Variable** | `@fontsource-variable/jetbrains-mono` | 400, 500 | All scores, grades, marks, XP, timers, paper codes, IDs. Always `font-variant-numeric: tabular-nums`. |
-| Marginalia | **Caveat Variable** | `@fontsource-variable/caveat` | 400, 600 | Annotation moments only. See the hard rule below. |
-
-**Banned faces, everywhere, no exceptions:** Inter, Roboto, Arial, Open Sans,
-Helvetica. All nine skills agree and §3.2 item 2 makes it law.
-
-**Why Newsreader and not Instrument Serif** (which the build-era system used and
-which is already installed): Instrument Serif ships a single 400 weight with no
-bold. That forces every heading hierarchy to be built from size alone, which is
-exactly why the build-era teacher portal invented six ad-hoc sizes across
-eighteen screens. Newsreader is a variable serif drawn for screen reading, it is
-warmer and more bookish than Instrument Serif's high-fashion contrast, and it
-gives the 500 and 600 the scale below actually needs.
-
-### 4.1 The Caveat rule (hard)
-
-Caveat is a decorative layer, never an information layer.
-
-- **Permitted:** empty-state marginalia, a "nice work" note beside a result, decorative annotations pointing at a chart, sticker captions.
-- **Forbidden:** headings, buttons, labels, form fields, table content, error messages, navigation, and anything a screen reader must announce as meaningful.
-- If the text would be a problem to lose, it is not Caveat.
-
-Caveat has poor legibility at small sizes and near-zero legibility for dyslexic
-readers. It decorates; it never carries.
-
-### 4.2 Type scale
-
-Sizes in px for precision. Every rung names its face, so a rung cannot be used
-with the wrong family.
-
-| Token | Face | Size | Line-height | Tracking | Weight | Use |
-|---|---|---|---|---|---|---|
-| `display-hero` | Newsreader | 60 | 1.05 | -0.015em | 400 | Marketing hero only. One per page. |
-| `display-xl` | Newsreader | 44 | 1.08 | -0.01em | 400 | Marketing section openers. |
-| `display-lg` | Newsreader | 32 | 1.12 | -0.005em | 400 | Page titles in-app. |
-| `display-md` | Newsreader | 24 | 1.18 | 0 | 500 | Section headings, card titles. |
-| `display-sm` | Newsreader | 19 | 1.25 | 0 | 500 | Sub-section headings. |
-| `body-lg` | Geist | 15 | 1.6 | 0 | 400 | Default body. Max 65ch. |
-| `body-md` | Geist | 14 | 1.55 | 0 | 400 | Dense body, table cells, descriptions. |
-| `body-sm` | Geist | 13 | 1.5 | 0 | 400 | Captions, helper text, secondary rows. |
-| `label` | Geist | 13 | 1 | 0 | 500 | Buttons, form labels, nav items. |
-| `eyebrow` | Geist | 11 | 1 | 0.1em | 600 | Uppercase kickers above headings. |
-| `data-lg` | JetBrains Mono | 32 | 1 | -0.01em | 500 | The big number: a score, a predicted grade. |
-| `data-md` | JetBrains Mono | 15 | 1.2 | 0 | 500 | Inline figures, marks, XP. |
-| `data-sm` | JetBrains Mono | 11 | 1 | 0.05em | 500 | Paper codes, IDs, timestamps, metadata. |
-| `hand` | Caveat | 19 | 1.35 | 0 | 400 | Marginalia. See §4.1. |
-| `field` | — | 16 | inherit | inherit | inherit | **Not a rung.** A platform floor: iOS Safari auto-zooms the viewport on focusing any input under 16px. `.text-field` is a standalone `font-size` override for native form fields, not a modifier layered on top of a `.text-body-*` class — both are in the same twMerge font-size group, so `cn("text-body-md", "text-field")` always collapses to `text-field` alone; family/weight/line-height come from whatever the field inherits, not from a `.text-body-*` rung. |
-
-**Mobile.** `display-hero` → 38px, `display-xl` → 30px, `display-lg` → 26px
-below 768px. Everything else holds; the body scale is already comfortable on a
-phone and shrinking it is how learning platforms become unreadable on the device
-students actually use.
-
-**Rules.** Sentence case for all headings. Body copy never below 13px. No italic
-display headings and no italic emphasis inside a heading (§3.2 item 12);
-emphasis is weight, accent colour, or a drawn underline. Italic is body-copy
-only, plus Caveat, which is its own thing.
-
-**Platform chrome.** `index.html`'s `apple-mobile-web-app-status-bar-style` is
-`"default"`, not `"black-translucent"`, on purpose: `"black-translucent"` draws
-the status bar text over the page instead of reserving space for it, which is
-the exact "phone drew a dark address bar over a light app" defect the
-`theme-color` fix above this meta tag exists to prevent. `"default"` keeps the
-status bar its own opaque row, matching the light `--paper` ground everywhere
-this product renders. Do not "fix" the mismatch between this note's location
-and a stale `§5` reference elsewhere — this is the correct, current home for
-it.
-
----
-
-## 5. Spacing
-
-Base unit **4px**. The scale is the set of values allowed; a value outside it
-gets added here or is wrong.
-
-| Token | px | Typical |
-|---|---|---|
-| `space-1` | 4 | Icon-to-label gap. |
-| `space-2` | 8 | Tight stacks, chip padding. |
-| `space-3` | 12 | Related elements. |
-| `space-4` | 16 | Default gap between components. |
-| `space-5` | 20 | Card internal padding, compact. |
-| `space-6` | 24 | Card internal padding, default. Grid gutter. |
-| `space-8` | 32 | Between cards, between form groups. |
-| `space-10` | 40 | Card padding, generous (marketing). |
-| `space-12` | 48 | Sub-section separation. |
-| `space-16` | 64 | Section separation, in-app. |
-| `space-24` | 96 | Section separation, marketing. |
-| `space-32` | 128 | Hero breathing room, marketing only. |
-
-Card internal padding is **24–40px** (§4). Cramped padding is the single
-fastest way to lose the notebook feel; when in doubt go up one rung.
-
-**Containers.** Marketing 1280px max. App content 1200px max. Read lane 680px
-max (65ch at `body-lg`). Page gutter 32px desktop, 20px tablet, 16px mobile.
-
----
-
-## 6. Radius
-
-| Token | px | Use |
-|---|---|---|
-| `radius-sm` | 4 | Chips, tags, small inline elements. |
-| `radius-md` | 8 | Buttons, inputs, selects. |
-| `radius-lg` | 12 | Cards, panels, table containers. |
-| `radius-xl` | 16 | Modals, large feature containers. |
-| `radius-full` | 9999 | Pills and circles. **Tags and status badges only.** |
-
-**Buttons are never pills** (§3.2 item 4). `radius-full` on an interactive
-element is a gate failure, with these exceptions:
-
-1. **True icon-only circular controls**, such as a close button.
-2. **Native control affordances that are circular by platform convention**: the
-   radio dot, and a switch's thumb. A radio is round because a hundred years of
-   forms made it round, and squaring it off to satisfy a rule about *pills*
-   would make the control harder to tell apart from a checkbox. The pill ban
-   exists to stop rectangular things (buttons, inputs, cards) being rounded into
-   lozenges; it was never about the radio.
-3. **Status and live dots**, which is why avatars are squircles (below): a
-   circle has to keep meaning "status", not "person".
-
-This exception list was written after the component kit raised the radio case as
-a genuine ambiguity in the original wording. It is recorded here so it is not
-re-litigated at every new form.
-
-**Avatars are squircles**, `radius-lg` on a square, not circles. Circles are
-reserved for live/status dots so a dot never reads as a person.
-
----
-
-## 7. Elevation
-
-Flat. Depth comes from tonal layering (`--paper-sunk` < `--paper` <
-`--paper-raised`) and 1px `--rule` borders.
-
-- **Resting cards have no shadow.** Ever.
-- Floating layers only — popovers, dropdowns, modals, toasts — may use `shadow-float`: `0 4px 16px oklch(0.30 0.006 240 / 0.05), 0 1px 3px oklch(0.30 0.006 240 / 0.04)`. Ultra-diffuse, ≤0.05 opacity.
-- Modal scrim: `oklch(0.30 0.006 240 / 0.28)`.
-- **Glassmorphism is banned** except a `backdrop-blur(10px)` on the fixed navbar. Never on scrolling content: it is a real performance cost on the mid-range Android phones students use.
-- **Gradients are banned** as visible elements. Permitted only as ambient warmth: a radial light spot at ≤0.04 opacity behind a hero or section.
-
-### Z-index scale
-Only these values. A raw `z-index` outside the scale is a gate failure.
-
-| Token | Value | Layer |
-|---|---|---|
-| `z-base` | 0 | Page content. |
-| `z-sticky` | 10 | Sticky table headers, section headers. |
-| `z-nav` | 20 | Fixed navbar, sidebar. |
-| `z-dropdown` | 30 | Popovers, selects, tooltips. |
-| `z-scrim` | 40 | Modal backdrop. |
-| `z-modal` | 50 | Dialogs, sheets. |
-| `z-toast` | 60 | Toasts. Above everything, always. |
-
----
-
-## 8. The notebook texture layer
-
-This is how the protected quality (§1) survives contact with a dashboard. It is
-also the easiest thing in this system to overdo.
-
-**The restraint rule: marginalia decorates, never carries meaning alone.**
-Remove every texture element and the product must still be fully usable and
-fully understandable. If removing a doodle loses information, it was not a
-doodle.
-
-1. **Paper grain.** One fixed, `pointer-events: none`, full-viewport SVG noise overlay at **≤0.04 opacity**. Fixed, so it never repaints on scroll.
-2. **Ruled and dotted backgrounds.** `--rule-faint` horizontal lines at 32px, or a 24px dot grid. For section backgrounds and the Read lane. Never behind body text at more than 0.5 opacity.
-3. **Hand-drawn accents.** SVG underlines, circles, and arrows in `--accent` or `--ink`, slightly irregular. Budget: **at most two per viewport.** They punctuate; they are not a pattern.
-4. **Sticker badges.** Achievements and streak milestones as pastel-filled, slightly rotated (±2°) badges with `radius-sm`. Rotation only on genuinely decorative badges, never on a status chip that must be scanned.
-5. **Margin rule.** A single `--rule` vertical hairline at the content's inline start, echoing the logo. The cheapest and most on-brand texture available. Prefer it over a doodle.
-
-**Reduced motion and print:** the grain and doodles are decorative, so they are
-hidden under `prefers-reduced-motion` only if animated (they should not be), and
-always hidden in print styles.
-
----
-
-## 9. Motion
-
-Baseline is **invisible**. The user should feel the interface is responsive, not
-watch it perform. Expressive motion is rationed to genuine wins (§9.2).
-
-### 9.1 Easings and durations
-
-| Token | Value | Use |
-|---|---|---|
-| `ease-out-soft` | `cubic-bezier(0.22, 0.61, 0.36, 1)` | Entrances, reveals, most things. |
-| `ease-in-soft` | `cubic-bezier(0.55, 0.06, 0.68, 0.19)` | Exits, dismissals. |
-| `ease-spring` | `cubic-bezier(0.34, 1.36, 0.64, 1)` | Panels, modals, anything that should feel physical. |
-| `ease-celebrate` | `cubic-bezier(0.18, 1.5, 0.5, 1)` | Celebration register only. |
-
-| Token | ms | Use |
-|---|---|---|
-| `dur-instant` | 120 | Hover colour, focus ring. |
-| `dur-fast` | 200 | Button press, chip toggle, tooltip. |
-| `dur-base` | 320 | Panel open, tab switch, card entrance. |
-| `dur-slow` | 600 | Scroll-triggered section reveal. |
-| `dur-celebrate` | 900 | XP count-up, streak flourish. |
-
-**Never `linear` or `ease-in-out` on a designed transition** (§3.2 item 14).
-
-### 9.2 Rules
-
-- **Animate only `transform` and `opacity`.** Anything else is a gate failure. No animating `height`, `top`, `width`, or `box-shadow`.
-- **`IntersectionObserver` for scroll entries, never a scroll listener.**
-- Scroll entries: fade up 8px over `dur-slow` with `ease-out-soft`, staggered 60ms per item, capped at 6 items of stagger (beyond that it reads as slow, not choreographed).
-- Press: `scale(0.98)` over `dur-fast`. Hover: a colour or 1px translate shift over `dur-instant`.
-- **Nothing blocks input.** No animation gates a click.
-- **Exits.** Every dismissible overlay (a `Modal`, `NavDrawer`, or anything
-  built on the same contract) plays an exit over `dur-fast`/`ease-in-soft`
-  before it unmounts, rather than disappearing on the frame its `open` prop
-  goes false. It unmounts on `animationend`, not a fixed timer, so the
-  animation and the unmount can never drift apart. Scroll lock and the focus
-  trap both stay active for the duration of the exit — the overlay is still
-  visibly present, so the page behind it must not start scrolling, and focus
-  must not yet be released, until it actually is. A re-open mid-exit snaps
-  straight back to open rather than finishing the exit first.
-- **The one documented exception.** The brand mark's self-drawing stroke
-  (`stroke-dashoffset` on the mark's silhouette — four steps: the right page,
-  the left page, the coil, the tick — in `components/ui/mark.tsx` and, inline,
-  in the pre-mount shell in `index.html`) is the one permitted
-  non-transform/opacity animation. Granted by the product owner for the
-  slow-load tier (§12) on the grounds that a few short paths are not the jank
-  this rule exists to prevent, and it renders fully drawn and still under
-  `prefers-reduced-motion` rather than animating. Both surfaces read their
-  geometry from `lib/brandMark.ts` and set `pathLength="1"`, so neither carries
-  a path length; the drawn mark is the mark, not a copy of it.
-
-### 9.3 The celebration register
-
-Reserved for: XP gained, a streak milestone, a leaderboard climb, a correct
-answer, and the marked-paper result reveal. Nothing else.
-
-- Count-up on tabular numbers over `dur-celebrate`, `ease-celebrate`.
-- A brief confetti-class flourish on milestones, paper-coloured and pastel, never neon.
-- Spring scale on the badge or number, 1 → 1.08 → 1.
-- **Always interruptible.** A user who taps through mid-celebration is never blocked or made to wait.
-- **Never on a failure.** A dropped mark gets calm, specific, useful feedback. Celebrating engagement rather than achievement is how learning products become slot machines, and it is banned here.
-
-### 9.4 Reduced motion
-
-`prefers-reduced-motion: reduce` is respected everywhere, and it means *reduced*,
-not *broken*: transforms and celebration flourishes drop to a simple opacity
-change or nothing, but every state change stays legible and every element still
-arrives. Count-ups jump to their final value immediately. Confetti does not run.
-The loading tiers (§12) still stage under reduced motion: their delays live in
-`animation-delay`, which the reduced-motion rule leaves untouched, so only the
-motion within each tier (the pulsing skeleton, the self-drawing mark) is
-affected, never when a tier appears.
-
-**When View Transitions apply.** A screen's entrance (`.lm-screen`) plays on
-every navigation by default. Native View Transitions — a directional slide of
-the outgoing/incoming screen, keyed to browser back vs. everything else — are
-layered on top of that only for portal-internal navigation initiated from
-shell chrome: sidebar links, breadcrumbs, `BackControl`, bottom-tab and
-drawer navigation. They never apply to the marked-paper result reveal (§9.3's
-celebration register owns that entrance instead) and never run under
-`prefers-reduced-motion: reduce`, where both the screen entrance and any
-in-flight transition collapse to an immediate, static swap.
-
----
-
-## 10. Icons
-
-**Phosphor** (`@phosphor-icons/react`), already installed. One library, product-wide.
-Lucide, Feather, FontAwesome, Material: banned (§3.2 item 3).
-
-**Weight: `regular`.** Chosen over duotone because duotone's second tone
-competes with the pastel tag system for the same visual register, and against
-`bold` because the hairline aesthetic wants icons that sit at roughly the weight
-of a `--rule` border. `fill` is permitted for a single active-state nav icon.
-
-Default size 20px inline with `body-lg`, 16px with `body-sm`/`label`, 24px
-standalone. Icon-only buttons **must** carry an `aria-label`, and icon plus
-label is preferred wherever space allows.
-
-**No emoji anywhere in the UI** (§3.2 item 9): not in markup, headings, buttons,
-empty states, or alt text.
-
----
-
-## 11. Chart theme (Nivo)
-
-Charts use **Nivo** (`@nivo/*`), decided in §4. One shared `nivoTheme.ts` built
-from these tokens; no chart sets its own colours.
-
-- **Background** `--paper-raised`. **Text** `--ink-muted` at `data-sm`, tabular-nums.
-- **Grid lines** `--rule-faint`, horizontal only. **Axis** `--rule`.
-- **Series order** (categorical): sky, sage, amber, clay, lilac, rose. Accent red is *not* a series colour: it means "the teacher's mark" everywhere else and must not come to mean "series 1".
-- **Sequential** scales: lightness ramp on a single hue, never a rainbow.
-- **A single-series line** uses `--accent` deliberately, since there is no ambiguity with one line.
-- **Legends and tooltips are required.** Tooltips give exact values. Meaning is never encoded by colour alone: pair with direct labels, shape, or pattern.
-- **Empty-data state is mandatory** on every chart, in the Read/Operate voice, with marginalia rather than a blank box.
-- A scoped D3 component is permitted if a viz genuinely exceeds Nivo, matching this theme; log the exception in the Phase 7 report.
-- **Dark mode (C5c).** Tokens re-resolve when `data-theme` changes: `useNivoTheme` (`web/src/lib/nivoTheme.ts`) watches `document.documentElement` with a `MutationObserver` on `data-theme` and re-runs `resolveChartTokens()`, so a chart already open when the reader flips Appearance repaints in the new ladder rather than holding the palette it mounted with.
-
----
-
-## 12. Component rules
-
-Full component kit and its 8-state preview live at `web/dev-previews/`. Rules
-that bind every component:
-
-- **Every interactive component implements all 8 states:** default, hover, focus-visible, active, disabled, loading, error, success. A component missing one does not merge (§9 gate 4).
-- **Buttons.** Solid ink or accent fill, `radius-md`, `scale(0.98)` press, subtle hover shift. Primary (accent fill), secondary (paper-raised + rule border), ghost (no fill or border). No pills. No button-in-button.
-- **Inputs.** Visible label always, never placeholder-as-label. `radius-md`, `--rule` border going `--rule-strong` on hover and `--focus-ring` on focus. Errors inline and adjacent to the field, never only at the top of the form.
-- **Cards.** `--paper-raised`, 1px `--rule`, `radius-lg`, 24px padding, no shadow. No forced equal-height rows; align titles and CTAs across siblings and pin CTAs to the bottom. Marketing cards turn the knob to `space-8`.
-- **Tags and badges.** Pastel fill with its paired text colour, `radius-full`, `eyebrow` type, tight padding. This is the *only* place pills are legal.
-- **Tables.** `--paper-sunk` header, `--rule` row dividers, tabular-nums on every numeric column, right-aligned numbers, sticky header at `z-sticky`.
-- **Skeletons, not spinners.** Loading states match the layout they replace so nothing shifts (CLS < 0.1). A spinner is permitted only for an indeterminate action under ~1s inside a button — the practice generator's "Create" button's `loading` prop is exactly this case (a sub-second mutation, not a route or content wait) and stays as it is. Token-driven (`bg-paper-sunk`), so a skeleton needs no dark-mode variant of its own — it works in both themes for free (C5c).
-- **Loading tiers.** Every full-page wait has three tiers, gated by two tokens (`--loading-tier-skeleton` 200ms, `--loading-tier-slow` 5s): tier 1 (0 to `--loading-tier-skeleton`) is warm paper only, nothing visible; tier 2 (`--loading-tier-skeleton` to `--loading-tier-slow`) is a skeleton matching the layout being waited for; tier 3 (after `--loading-tier-slow`) is the brand mark drawing itself, "Still loading", and a reload action. Applies both before React mounts (the pre-mount shell in `index.html`) and inside the app (`RouteFallback` for lazy route chunks).
-- **Route skeletons.** Every route with an `element` declares `handle.skeleton` (`"standalone" | "card-grid" | "list" | "page-header"`, `web/src/lib/meta/documentMeta.ts`): `"standalone"` for a top-level auth/settings/misc route with no portal chrome to promise; `"card-grid"` for a dashboard of tiles; `"list"` for a queue/roster/feed; `"page-header"` for everything else (a form, a single record, a drilldown). `<RouteSkeleton />` (`web/src/components/ui/route-skeleton.tsx`) reads the deepest matched route's declared shape and renders `RouteFallback`'s tier-2 skeleton accordingly, so a route that forgets to declare one is caught by a test rather than silently rendering the wrong shape. iOS home-screen splash screens (`web/vite/splashScreens.ts`) cover the one loading window this system cannot reach at all: iOS paints a blank rectangle before the pre-mount shell's own markup is even shown, unless the page's `<head>` carries a matching `apple-touch-startup-image` link for the device's exact size, dpr and orientation.
-- **Empty states** are composed, never blank: a line of Caveat marginalia, a one-sentence explanation, and the action that fills it.
-- **Error states** name what happened and what to do, in active voice ("We couldn't save your changes"), and offer a retry.
-
----
-
-## 13. Variation knobs
-
-The system is shared product-wide; hallmark's per-page diversification rule is
-**inverted** for this project (§3.2 item 1). Surfaces differ only by turning
-these knobs. Anything else is drift.
-
-| Knob | Range | Notes |
-|---|---|---|
-| Section spacing | `space-12` … `space-32` | Marketing turns it up, Operate turns it down. |
-| Card padding | `space-6` … `space-8` | Density. |
-| Display rung | `display-md` … `display-hero` | Which rung a page's title uses. |
-| Texture intensity | 0 … 3 elements/viewport | Read lane high, Operate low, per §8's budget. |
-| Motion | per §3.3 dials | Marketing 7, auth 5, student 7, teacher/parent 6. |
-| Accent density | sparse … prominent | How much accent appears; Operate stays sparse. |
-| Container | 680 / 1200 / 1280px | Read / Operate / Persuade. |
-
-Per-surface dial rows are in REDESIGN-MISSION §3.3 and are authoritative.
-
----
-
-## 14. Adding a new page without breaking the system
-
-1. Read this file and `PRODUCT.md`. Identify the lane (§2).
-2. Take the container, spacing, and display rung from §13 for that lane.
-3. Use only tokens. If a value is missing, add it *here* first, then use it.
-4. Use only the four faces (§4), Phosphor regular (§10), and the 8 states (§12).
-5. Every state exists before ship: loading, empty, error, and the long-content case.
-6. Check the four mobile widths (320/375/414/768) and desktop.
-7. Check `prefers-reduced-motion`, keyboard traversal, and focus-visible on every control.
-8. Ask the §1 question last: does this still feel like a well-kept notebook? If not, the texture layer (§8) is the first thing to reach for, and restraint is the second.
-9. Logical properties only (P3.4): `inline-start`/`inline-end`, `ms-`/`me-`/`ps-`/`pe-`, `text-start`/`text-end`; never `left`/`right`, `ml-`/`mr-`, `text-left`/`text-right`. `scripts/adapt_audit.mjs` and the responsive gate read `dir="rtl"`.
-
----
-
-## 15. Device envelope
-
-Phase A's mechanics — what makes Lemely behave like an installed app rather
-than a browser tab, and where each rule actually lives. Sections below are
-the settled state after Phase A; forward pointers name what Phase B still
-owns.
-
-**Install / update lifecycle.** `registerType: "autoUpdate"` (`vite.config.ts`)
-means a new build is fetched and installed in the background with no
-prompt. Taking control is gated, not automatic: `self.skipWaiting()`
-(`src/sw.ts`) runs only inside the worker's own `message` listener, fired by
-the page once it has shown a reload prompt (`src/main.tsx` /
-`lib/staleChunk.ts`) and the reader has agreed — never on install, which
-would otherwise swap the app out from under whatever the reader is mid-way
-through. `scripts/check-native-invariants.mjs` enforces the gating
-mechanically (below).
-
-**Offline behaviour.** The service worker precaches the app shell only on
-the real production hosts — `PRECACHE_HOSTS` (`src/sw.ts`) lists
-`lemelyig.com`/`www.lemelyig.com` explicitly, so staging and local dev never
-precache and never need the activate-time cache-clear that host set exists
-to avoid (`emp-offline-staging-by-design`: offline on staging is expected to
-fail, not a bug — documented here rather than fixed, since fixing it would
-mean staging serving a stale deploy to a returning visitor, which is the
-exact failure this host split exists to avoid). `/api/*` is never cached,
-on any host: marks, grades and the review queue are live data, and a stale
-response there is a wrong answer, not a convenience. On the client,
-`isOfflineFailure` classifies a network error and `<OfflineState>`
-(`components/ui/state-views.tsx`, wired through `<QueryState>`) renders a
-real "you're offline" screen instead of the generic error state — a
-network failure and a 500 are different facts and read as different
-screens.
-
-**Offline upload queue (Task 10, B6).** A scan that fails to upload because
-the request never reached the server at all (`shouldQueueUpload`,
-`lib/offline/queueDecision.ts` — the same "status 0" test
-`isOfflineFailure` uses) is queued, not lost: `CorrectPaper.tsx` calls
-`enqueueUpload` (`lib/offline/uploadQueue.ts`) and renders `<QueuedBanner>`
-alongside the ordinary form rather than replacing it with a failure panel —
-a real 4xx/5xx from the server is a decision the server made and is never
-queued, only ever a genuine transport failure is. The queue itself is one
-`idb-keyval`-backed IndexedDB store (`QueuedUpload`: the scan and
-mark-scheme bytes as `Blob`s, an `Idempotency-Key` generated once per
-attempt and resent on every retry so a request that in fact already reached
-the server before the connection dropped is never double-uploaded, an
-attempt counter, and — once known — the `paperId`), drained by
-`drainUploadQueue`, which is DOM-free and takes its `upload`/`correct`
-network calls as injected dependencies so the exact same drain logic runs
-from two places: `useUploadQueue.ts`'s page hook (mount, the browser's
-`online` event, and a message from the worker) with a real, authenticated
-session, and `sw.ts`'s `Queue("lemely-uploads", { onSync })` — plain
-`Queue` with a custom `onSync`, not `workbox-background-sync`'s own replay
-plugin, because this flow needs the returned `paperId` back to call
-`/student/correct`, which the plugin's request-replay-and-discard shape
-cannot give it. An entry older than 24h or retried 5 times is dropped
-(`nextQueueAction`), never retried forever.
-
-The worker's own drain attempt is honest about a real limitation: it has no
-access to `localStorage`, so it cannot send the bearer token
-`/student/uploads`/`/student/correct` require, and its own `fetch` calls
-will ordinarily 401 — deliberately not "fixed" by mirroring a token into
-IndexedDB for the worker to read, which would be exactly the kind of
-second, longer-lived credential copy `sw.ts`'s push-handshake code already
-rejects for the same session-boundary reason. What Background Sync
-reliably does instead is message every open client once a sync fires
-(`UPLOAD_QUEUE_DRAINED`), including a tab that is open but
-backgrounded/throttled on mobile — a case the page's own `online` listener
-can miss — so that tab's `useUploadQueue.ts` hook runs the real,
-authenticated drain. Nothing is ever removed from the queue except by a
-`drainUploadQueue` call that actually succeeded, so this is a nudge, not a
-correctness dependency (`sw-background-sync-upload-candidate`,
-`sw-offline-production-trace`).
-
-Sign-out clears the queue (`AuthContext.tsx`'s `logout()` calls
-`clearUploadQueue()`): unlike a cached query response, an entry here holds
-the scan's own bytes, which must not sit on a shared device across an
-account switch (`offline-1`, `offline-3`).
-
-**Persisted query cache (Task 10, B6).** `main.tsx` wraps the app in
-`PersistQueryClientProvider` (`@tanstack/react-query-persist-client`) with
-an `idb-keyval`-backed persister (`lib/offline/queryPersister.ts`). Which
-queries are written to IndexedDB at all is an allowlist, not a denylist —
-`isPersistableQueryKey` (`lib/offline/persistAllowlist.ts`) only persists
-the reference catalogue, the student's/teacher's class list, announcements,
-the notifications inbox, the flashcard deck list, and the signed-in
-profile, by their real, re-grepped `queryKey` prefixes. Grades, an active
-marking run, and the teacher review queue are never written, not merely
-excluded on read: `dehydrateOptions.shouldDehydrateQuery` is checked before
-a query is ever serialized, so a stale number on a report card cannot
-happen by way of this cache. `maxAge` (24h) matches the upload queue's own
-abandon window, and `buster: currentBuildId()` invalidates the whole
-persisted cache on a new deploy, the same build-id guard `lib/staleChunk.ts`
-already uses for chunk URLs.
-
-**Safe areas.** `viewport-fit=cover` (`index.html`) opts into the notch/
-home-indicator layout in the first place; without it `env(safe-area-inset-*)`
-resolves to `0` everywhere and every rule below is a no-op. Standalone-only
-chrome is gated behind `@media (display-mode: standalone)` (`index.css`) —
-a same-origin browser tab gets no inset padding, because the browser's own
-chrome already occupies that space there. `.lm-app-header` adds the inset
-additively (`padding-top: calc(var(--lm-app-header-pt, 0px) +
-env(safe-area-inset-top))`) rather than replacing a header's existing
-padding, and `.lm-safe-bottom` does the equivalent for the bottom nav/toast
-rail. `apple-mobile-web-app-status-bar-style="default"` (`index.html`) is a
-deliberate choice, not an oversight: `black-translucent` draws the page
-*under* the status bar, which reads as content overlapping system chrome
-unless every top-level screen accounts for it independently; `default`
-keeps the status bar opaque and out of the layout's way, and the safe-area
-insets above are what actually earn the notch/home-indicator space back.
-
-**Orientation.** The manifest declares `orientation: "any"`
-(`vite/manifest.ts`) — a marking/study app has no portrait-only or
-landscape-only surface, and locking orientation would fight a student who
-rotates to read a wide mark scheme. Phase A ships no orientation-specific
-layout of its own; a dedicated landscape overlay or layout is Phase B's
-scope, not this one's.
-
-**Gestures.** Phase A shipped none. The disambiguation rule
-(`|dx| > 10 && |dx| > 2*|dy|`, distinguishing an intentional horizontal
-swipe from scroll noise) lives in `src/lib/gestures/dragMath.ts`
-(`shouldCommitDrag`), the single source of truth `useDragGesture`
-(`src/lib/gestures/useDragGesture.ts`) and every gesture built on it read.
-**Edge-swipe-back (standalone only, 24px inline-start edge)** is Task 4's
-(B3) own gesture — `src/lib/nav/edgeSwipeBack.ts` (`edgeSwipeDecision`) plus
-`src/components/edge-swipe-back.tsx` (`EdgeSwipeBack`, mounted by the
-student and teacher layouts, renders nothing). It is gated to a PWA running
-in standalone display mode (a browser tab already owns the platform's own
-back gesture) and to a drag that both starts within 24px of the
-inline-start edge and commits away from it, using the same `backTarget`
-decision `BackControl` (B2) uses.
-
-**The rest of the list, shipped in Task 5/6 (B4).** `useDragGesture`'s
-`commitThreshold` (default 10px) is raised per gesture to the distance that
-gesture actually means, so a drag short of the real threshold always
-springs back animated rather than snapping. **Flashcard reveal/grade**
-(`FlashcardReview.tsx`, `lib/flashcardSwipe.ts::flashcardSwipeAction`): one
-axis throughout the card's whole interaction — swipe right (or, before
-reveal, up — `flashcardSwipeAction` recognises both, though the discoverable
-touch path stays the single consistent right-swipe idiom) reveals at 60px;
-once revealed, left grades "again" and right grades "good" at 80px; "hard"
-and "easy" stay button/keyboard-only. Reveal button, grade buttons and the
-1-4/Space keyboard shortcuts are unchanged. **Nav-drawer drag-dismiss**
-(`nav-drawer.tsx`): the panel commits closed at 40% of its own width, RTL-
-aware via `--lm-dir` read at commit time (never cached, so a language switch
-mid-session is never stale); `startFilter` excludes the drawer's own
-scrollable nav list, so a vertical scroll in there is never fought.
-**Pull-to-refresh** (`lib/gestures/usePullToRefresh.ts`,
-`components/ui/pull-indicator.tsx::PullIndicator`) on Notifications,
-Announcements and Overview: none of the three has a scroll container of its
-own, so both the gesture and its scroll-top check key off
-`document.documentElement` — the same target `EdgeSwipeBack` already
-listens on, coexisting the way that component's own comment anticipates.
-**Quiz page-turn** (`QuizTaker.tsx`, `lib/quizSwipe.ts::quizSwipeAllowed`):
-swiping the question card always flushes the 600ms autosave before moving
-(a page-turn racing an unsaved answer is exactly the D3.21 shape); refuses
-to start on an MCQ radio, a textarea, an input, a button or a link, so it
-never races a tap already owned by one of those; and is fully disabled
-(the listener detaches, not merely a no-op check) in the last 60 seconds of
-a timed test. Previous/Next buttons are unchanged. **Long-press menus**
-(`lib/gestures/useLongPress.ts`, opening the existing `components/ui/
-popover.tsx::Popover` in controlled mode) on three rows, each only where it
-has a real secondary action to offer: `QuestionRow` gains optional
-`practiceHref`/`onShare` props (`PaperResult.tsx` supplies both — "Practice
-this topic" links to the practice generator prefilled with the question's
-topic when one is recorded, "Share" reuses the same action `ResultHeader`'s
-own Share button already builds); the notification row offers "Mark read",
-shown only while the row is actually unread; the flashcard deck row offers
-"Delete" through the existing confirm flow — **no "Rename"**:
-`lemely/web/routers/flashcards.py` has `DELETE /decks/{id}` and `PATCH
-/cards/{id}` but no deck rename endpoint, and `useFlashcardApi.ts` has no
-`useUpdateDeck`, so there is nothing for a rename item to call. No
-additional long-press targets beyond these three rows: the affirmed
-override for `gesture-no-long-press-and-thats-fine` is that the one
-additional place the dossier suggested stays without it, by user decision,
-rather than being added here for completeness.
-
-**Navigation chrome (Task 4, B3).** Three constants — `SIDEBAR_WIDTH` (252),
-`SIDEBAR_BREAKPOINT` (820), `BOTTOM_NAV_HEIGHT` (56), exported from
-`src/components/ui/nav-shells.tsx` and backed by `index.css`'s
-`--sidebar-width`/`--breakpoint-sidebar`/`--bottom-nav-height` tokens (§14
-rule 3: a named token, never an arbitrary `w-[252px]`/`min-[820px]`
-literal) — are the whole retrofit's shared vocabulary. `w-sidebar` and the
-`sidebar:` variant back every portal's `<aside>`; `.pb-bottom-nav` clears
-`<main>` from the fixed `BottomNav` below that breakpoint. Below it, the
-student portal shows a five-tab `BottomNav`: Overview · Correct · Classes ·
-Profile · More (opens the existing `NavDrawer`); the teacher portal shows
-Overview · Grading · Review · Classes · More. The student portal's "Correct"
-tab renders as a raised accent-circle emphasis tab (`BottomNav`'s
-`emphasisId`), and a matching `BottomActionBar` ("Correct a paper") appears
-above the bar on Overview, Subject and PaperResult — the three routes whose
-`handle.primaryAction === "correct"` — mirroring the header's own CTA, which
-stays for ≥ `SIDEBAR_BREAKPOINT` instead. The admin portal is desktop-first
-and carries no `BottomNav` at all; its two lanes reach every screen through
-`SidebarNav` and the `NavDrawer` alone. `TAB_ROOTS`
-(`src/lib/nav/scrollRestorationKey.ts`) names the eight `BottomNav`/
-`SidebarNav` destinations that restore scroll position by pathname rather
-than by history entry when a reader switches away and back — the same set
-`src/lib/nav/tabMemory.ts`'s `useTabState` reads for per-tab UI memory (a
-filter, an expanded section), so the two can never disagree about what
-counts as a tab.
-
-**Scanner (Task 8, B5).** `CameraCapture.tsx`'s live viewfinder runs a
-`requestAnimationFrame` loop (every 3rd frame, once the stream is live) that
-downscales to a 320px-wide luma buffer, runs a hand-rolled Sobel edge pass,
-finds the largest rectangular document quad in it, and tracks frame-to-frame
-stability — three steady frames with a quad found auto-fires "Capture page"
-exactly once, then re-arms after the new thumbnail lands. A found quad also
-drives perspective correction (a 4-point homography warp) on the captured
-frame instead of keeping it skewed, and is drawn live as a quad outline over
-the viewfinder. The torch button appears only when the active video track's
-capabilities actually report one (`torchSupported`). **Accuracy floor:** a
-rectangular sheet of paper on a contrasting surface, filling at least 20% of
-the frame — a photo that doesn't meet this still captures on the student's
-own tap, just without perspective correction. **Why not `opencv.js`:** the
-hand-rolled pipeline (`src/lib/scanner/`) is ~1.7KB gzipped in its own lazy
-chunk (`import("@/lib/scanner")`, loaded only once the camera stream starts —
-never in the file-picker-only path); `opencv.js` is 1.5MB+ as a single
-wasm/JS chunk, and `check-bundle-budget.mjs` gzips every shipped chunk
-individually, so a lazy `opencv.js` chunk would fail the budget outright.
-Hand-rolled is the only option that fits.
-
-**Capability register.**
-
-| Capability | Status | Where |
-|---|---|---|
-| Web Share Target | Shipped (A6) | `vite/manifest.ts`'s `share_target`, `src/sw/shareTarget.ts` |
-| Web Share (`navigator.share`) | Shipped (B5) | `src/lib/share.ts` (`shareResult`/`canWebShare`), `PaperResult.tsx`'s header Share button — falls back to copying the link (`navigator.clipboard.writeText`) plus a toast on an engine or a cancelled/refused share sheet; there is no result download on this screen to fall back to instead |
-| File Handling API | Shipped (A6) | `vite/manifest.ts`'s `file_handlers`, `/file-handler` (`routes.tsx`) |
-| Widgets (Streak) | Declared, SW bridge pending | `vite/manifest.ts`'s `widgets`, `public/widgets/streak.json`, `GET /api/student/widget` — `self.widgets.updateByTag` is not yet called anywhere in `src/sw.ts`; until it lands, an installed widget shows its static default data rather than a real streak |
-| Badging API | Shipped (B5) | `src/lib/badging.ts` (`setAppBadge`), `src/components/badge-sync.tsx` (`BadgeSync`, mounted in each authenticated portal layout — `useNotificationCounts` is auth-gated, so it cannot live in `main.tsx`), `Notifications.tsx` clears it to 0 on mount. Pushes carry no payload (`lemely/web/push.py:16`), so there is no count to read off a push event itself — `src/sw.ts`'s `handlePush` calls `self.navigator.setAppBadge?.(unread)` only when the page-side handshake reply (`src/lib/push/pushClientBridge.ts`) attached a cached `NotificationCounts.unread`, i.e. the badge rides the existing content handshake rather than the push body |
-| Haptics (Vibration API) | Shipped (B5) | `src/lib/haptics.ts` (`haptic`) — a tap on `ConfirmModal`'s confirm button, a success pulse once per finished flashcard review session (`FlashcardReview.tsx`) |
-| Torch (`MediaStreamTrack` capability) | Shipped (B5) | `src/lib/scanner/torch.ts` (`torchSupported`/`setTorch`), `CameraCapture.tsx`'s viewfinder button — rendered only when the active video track's own capabilities report `torch: true` |
-| Wake Lock | Shipped (B5) | `src/lib/wakeLock.ts` (`useWakeLock`), held by `CameraCapture.tsx` while `phase === "live" && started` — the one flow where the screen sleeping mid-capture loses real work |
-
-**Mechanical enforcement.** The mechanics sections above are guarded, not
-just documented: `scripts/check-native-invariants.mjs` (wired into `npm run
-lint` and CI's own unit-test step) asserts the viewport meta, the
-touch/tap/overscroll CSS rules, the `--fs-field` token, the safe-area
-rules, the additive `.lm-app-header` inset and its named utilities, the
-`lm-nav-chrome` coverage, the status-bar style meta, the absence of
-class-list `min-h-screen` outside a desktop `<aside>` (there is no
-"paired with `min-h-dvh`" exemption — the class must be gone, since
-Tailwind v4 emits `.min-h-screen` after `.min-h-dvh` regardless of source
-order and both sit at equal specificity, so `min-h-screen` always wins the
-cascade when both are present), the 8-state `active:` requirement on every
-interactive `components/ui/*.tsx` control — whether its classes sit inline
-on the JSX tag or inside a `cva(...)` variant recipe (`button.tsx`'s own
-shape: a reusable primitive with no `onClick` of its own, its `hover:`/
-`active:` split across a base array and a variant string rather than on
-any literal tag) — scoped per element/recipe, not merely present somewhere
-in the file, and that `skipWaiting` only ever runs inside `self.
-addEventListener("message", ...)`, never at module scope or inside some
-other block that still executes unconditionally at install time.
-`scripts/check-bundle-budget.mjs` (wired into `npm run
-build` via `postbuild` — which means it now also gates every production
-deploy, not only CI, since `deploy.yml`'s frontend build step runs through
-the same `npm run build`) fails the build if any shipped JS chunk exceeds
-its gzip budget — 150KB as of Phase B (Task 11, B6c), tightened from Phase
-A's 200KB once `pdf-lib` and the scanner were split out of `CorrectPaper`.
-The one named exception is the lazy `assemblePages-*.js` chunk that split
-produced: `pdf-lib`'s own official minified build has no tree-shakeable
-"core" and lands that chunk at ~171KB gzipped on its own, with no further
-code-organization move available to shrink it, so `KNOWN_HEAVY_LAZY_CHUNKS`
-in the script gives it its own 175KB ceiling rather than raising the
-general 150KB budget for every other chunk — the chunk only downloads once
-a student assembles 2+ photos into one PDF, never on an initial-load path,
-so it is not the same cost category the 150KB budget exists to catch.
-Neither script replaces this document, nor `tests/unit/
-nativeMechanics.test.ts` (the vitest suite CI's own unit-test step runs) —
-all three exist because a rule stated only in prose is a rule the next
-edit can silently break.
-
-`web/e2e/native-feel.spec.ts` (Task 12, B7) is the behavioural half of this
-enforcement — real device emulation (`iphone-15`/`pixel-7` Playwright
-projects), not source-text pins: 16px form fields, 44px tap targets, the
-chrome-suppression computed styles, safe-area CSS and the exact viewport
-meta, history-trapped dialogs, per-tab scroll and state memory, the
-authenticated deep-link return, and reduced motion across a whole screen
-rather than one component. `web/scripts/check_installability.mjs`
-(`npm run check:installable`) closes the gap Google's Lighthouse PWA-category
-removal left (`scripts/audit.mjs:210-214`): it calls the same CDP
-`Page.getInstallabilityErrors` that audit used to wrap, against a production
-build served under the real `lemelyig.com` origin family so the manifest's
-`scope_extensions` and service-worker scope are checked the way a real
-install actually would be, not against `127.0.0.1`.
-
----
-
-## 16. Recorded decisions (audit remediation)
-
-Six audit-ledger findings compare a pre-redesign exploration canvas against
-this document and find a mismatch. In every case this document (or
-`PRODUCT.md`) is what shipped, and the canvas fact is the one that is stale.
-Full write-up (findings 1–5): `docs/design-canvas-notes.md`; finding 6's is
-§3.10 itself.
-
-1. **Device limit** (`trust-ops-device-limit-count-divergence`) — the canvas
-   diverges from `PRODUCT.md`'s "Maximum 3 concurrent devices per account".
-   `PRODUCT.md` wins.
-2. **Subject colour mapping** (`brand-subject-color-mapping-mismatch`) — §3.8
-   is authoritative; the canvas mapping is superseded.
-3. **Instrument Serif** (`x-type-instrument-serif-rejected`) — rejected as a
-   typeface; §4 names the four faces actually used.
-4. **"Academic Warmth" colour system** (`brand-color-system-superseded`) —
-   superseded by §3's OKLCH ladder.
-5. **Hero grade on the student home** (`student-home-no-hero-grade`) — not
-   built. Overview reports per-subject predicted grades; a single hero grade
-   would be a cross-subject aggregate the product does not compute.
-6. **Dark mode** (`x-a11y-dark-theme-exploration-correctly-unshipped`) —
-   shipped as a token swap; the exploration artboards' bespoke dark palette
-   was not adopted — see §3.10.
+# Design System: Lemely Abyss
+
+## 1. Overview
+
+**Creative North Star: "The Marked Paper, Under Deep Water"**
+
+Abyss is the current Lemely brand direction: a cool, precise, deep-blue identity (all neutrals sit near hue 240) that explains every mark. Light surfaces carry the argument, a single saturated deep blue (Abyss, #042f4f) carries action, and a pale sky blue (Tide, #7fb8e0) appears where the system needs to glow, mostly on dark. Night-blue bands break the page for proof and teacher content. Playfulness is confined to Binny the binder-clip bunny and a handwritten Caveat voice; everything else is calm and exact.
+
+**Scope warning for agents.** These tokens apply only to the marketing portal. In code they are declared on `.marketing-brand` in `web/src/portals/marketing/brand-tokens.css` and are not global. The authenticated app (student, teacher, parent, admin, auth portals) still consumes the legacy "Study Notebook" tokens from `web/src/index.css` (`--paper`, `--ink`, `--accent`, `--rule`, pastel tags, and the `--ease-*`/`--dur-*` scales). Do not apply Abyss colors, fonts, or radii to app screens. The marketing scope aliases a few legacy names (`--paper`, `--ink`, `--accent`, `--rule`, `--font-sans`) to Abyss values so shared components render correctly inside the landing page only. The previous root DESIGN.md that described the Study Notebook system was replaced by this file; recover it from git history (the last commit before this file replaced it) when working on app screens.
+
+The system rejects, in PRODUCT.md's words: academic and institutional aesthetics, generic SaaS dashboards, consumer edtech gamification, the "AI product" look, and cookie-cutter card grids. Archived directions (crimson v3, royal blue v4) are superseded and must not be used.
+
+**Key Characteristics:**
+- Cool and exact: neutrals tinted toward hue 240, never warm browns, never dark reds.
+- One action color (Abyss); Tide is its dark-surface counterpart. Abyss is never used on dark surfaces; Tide takes over there.
+- Heavy, tightly tracked display type (Bricolage Grotesque 800) against a calm grotesque body (Schibsted Grotesk).
+- Flat tonal layering by default; one soft blue shadow (`--brand-shadow`) reserved for floating product artifacts.
+- Clip Letters wordmark: lowercase `lemely` with both `l`s drawn as upright paperclips.
+- Motion is one signature easing (`cubic-bezier(.16,1,.3,1)`), short, and fully off under `prefers-reduced-motion`.
+- Layout: content column max 1304px, 32px gutters (20px under 760px), sections padded 112px (72px under 760px), 12-to-28px gaps inside components.
+
+## 2. Colors
+
+A cool-neutral field with one deep-blue primary, one sky accent for dark surfaces, and three strictly functional colors (gold, green, red). Values in the frontmatter are sRGB hex conversions of the OKLCH values declared in `brand-tokens.css`, which remains canonical.
+
+### Primary
+- **Abyss** (#042f4f): Primary actions, active tabs, the clip in the wordmark on light, headline emphasis spans, confidence bars, the closing section background. Hover is **Abyss Hover** (#0a3d62), also used as the inset panel color inside the core feature card.
+- **Tide** (#7fb8e0): The dark-surface primary. Labels and icons on Night bands, the clip on dark, focus ring, text selection background, the walkthrough scan line, CTA fill on the Abyss closing section.
+
+### Secondary
+- **Mist Wash** (oklch(0.92 0.035 235)): Secondary container. Walkthrough stage, hero art backing plate, avatar fill, closing-section tint where used, secondary surface (`--secondary`).
+
+### Tertiary
+- **Reward Gold** (oklch(0.8 0.13 80)): Only for rewards and "coming soon" markers, and the check-ring in the accuracy dot grid. Never decorative.
+
+### Neutral
+- **Ink** (#130e10): Text on light. Letters of the wordmark on light.
+- **Paper** (oklch(0.985 0.004 240)): Page background.
+- **Subtle** (oklch(0.97 0.006 240)): Feature section background, Binny chat bubble fill.
+- **White** (#ffffff): Raised cards, chart card, on-primary text.
+- **Hairline** (oklch(0.88 0.02 240)): All borders, rules, empty progress tracks.
+- **Muted Ink** (oklch(0.45 0.02 240)): Secondary text, labels, fine print.
+- **Night** (oklch(0.22 0.03 264)): Proof and teacher band background.
+- **Night Panel** (oklch(0.27 0.035 264)): Metric cards, accuracy block, school strip, mobile teacher cards.
+- **Night Rule** (oklch(0.38 0.035 264)): Dividers on Night.
+- **Night Muted** (oklch(0.84 0.025 240)): Body text on Night and on Abyss.
+
+### Functional
+- **Correct Green** (oklch(0.44 0.12 150)): Awarded marks, predicted-grade chip, correct working.
+- **Error Red** (oklch(0.48 0.19 25)): Lost marks and genuine errors only.
+
+### Named Rules
+**The Dark-Surface Swap Rule.** On Night or Abyss backgrounds, accent roles move from Abyss to Tide. Abyss text or icons on a dark surface are forbidden.
+**The Functional Color Rule.** Gold, green, and red each carry one meaning (reward, correct, lost marks). If one appears as decoration or as a background wash, it is wrong.
+**The Cool Neutral Rule.** Every gray is tinted toward hue 240 (Night toward 264). A warm or untinted gray breaks the system.
+
+## 3. Typography
+
+**Display Font:** Bricolage Grotesque Variable (with sans-serif)
+**Body Font:** Schibsted Grotesk Variable (with sans-serif)
+**Label/Mono Font:** JetBrains Mono Variable (with monospace)
+**Handwriting Font:** Caveat Variable (with cursive)
+
+**Character:** A compressed, heavy display voice over a friendly, legible grotesque. Mono labels signal data and provenance; Caveat appears only as a student's pen or a marginal note.
+
+### Hierarchy
+- **Display** (800, clamp(64px, 7.2vw, 104px), 0.88, -0.05em): Hero h1 only. Drops to 72px at 760-1050px and 13vw under 760px.
+- **Headline** (800, clamp(40px, 5vw, 68px), 0.95, -0.045em): Section h2, with balanced wrapping. 12vw on mobile. The closing h2 is larger, clamp(64px, 8vw, 112px).
+- **Title** (Schibsted 800, 21px, 1.2): h3 and card titles. Feature cards use 19px; the core feature card and accuracy block use Bricolage 800 at 40px.
+- **Body** (Schibsted 400, 16px, 1.5): Paragraphs, with `text-wrap: pretty`. Hero lede is 20px (18px mobile) at max 520px wide.
+- **Label** (JetBrains Mono, 11px, 0.065em): Section kickers, fine print, marks, confidence values, topic lists. Chart and script labels drop to 7-9px inside product artifacts only.
+- **Handwriting** (Caveat 600, 24-30px): Student working inside the script card and short margin notes (`.brand-hand`).
+
+### Measured Reference Ramp
+The `typography.scale` frontmatter lists every other fixed size the landing page uses, measured from the reference: 7, 9, 10, 12, 13, 14, 15, 17, 18, 19, 20, 22, 24, 26, 28, 32, 42, 44, 56, 60, 72 and 112px. Product-artifact labels use 7-10px, UI text 12-20px, and display or numeric figures 24-112px. The `rounded` scale likewise carries the measured radii: hair 2px, dot 3px, track 4px, tag 6px, chip 12px, tile 16px, bubble 18px, plate 44px, and full 999px (upload bar pill).
+
+### Named Rules
+**The Measured Ramp Rule.** The type ramp and radius scale include the measured reference values above, and nothing else. A new font size or radius goes into `typography.scale` or `rounded` here first, never straight into CSS.
+**The Heavy Display Rule.** Bricolage is always 800 with negative tracking (-0.03em to -0.05em) and used at 28px or larger. Never set it small or light.
+**The Wordmark Rule.** The wordmark is Bricolage 800, -0.04em, line-height 0.82, lowercase, bottom-aligned with the clips. Letters are Ink with an Abyss clip on light; white letters with a Tide clip on dark. Clips are always upright, stroke 5, round caps.
+
+## 4. Elevation
+
+Flat by default. Depth comes from tonal layering: Paper page, Subtle sections, White cards, Mist Wash stages, and full-bleed Night or Abyss bands. Borders are 1px Hairline, used mainly where white sits on near-white.
+
+### Shadow Vocabulary
+- **Floating Artifact** (`box-shadow: 0 32px 70px -40px oklch(0.3 0.08 242 / 0.4)`): The hero chart card, the marked-script card, and the fixed mobile upload bar. A long, low, blue-tinted shadow.
+- **Scan Glow** (`box-shadow: 0 0 20px 5px #7fb8e0`): The walkthrough scan line only.
+- **Binny Focus** (`filter: drop-shadow(0 0 4px #7fb8e0)`): Keyboard focus on the mascot.
+
+### Named Rules
+**The Flat-By-Default Rule.** Cards, panels, and chips are flat at rest. Only product artifacts that "float" over a backing plate take the Floating Artifact shadow. If a standard card has a shadow, remove it.
+**The Tilted Plate Rule.** The hero artifact sits on a Mist Wash plate rotated -2.5deg with 44px radius; this tilt is the only decorative rotation besides the stacked-photo and Binny poses.
+
+## 5. Components
+
+### Buttons
+- **Shape:** Soft squared (14px radius), 56px minimum height, 16px 24px padding, Schibsted 700 at 17px (16px mobile). Full width on mobile.
+- **Primary:** Abyss fill, white text. On the Abyss closing section it becomes Tide fill with Abyss text.
+- **Ghost / Secondary:** Transparent, 1.5px Hairline border, Abyss text. On Abyss it becomes white text on a Tide border.
+- **Hover:** Opacity drops to 0.85 on links. There is no lift or scale.
+- **Focus:** 2.5px Tide outline, 4px offset, on every focusable element.
+- **Nav CTA:** Same Abyss fill and white text, 10px radius.
+
+### Cards / Containers
+- **Corner Style:** 24px for feature, metric, and FAQ cards; 28px for the hero chart card; 32px for the walkthrough stage; 20px for school strip and insight tiles; 16px for the marked-script card.
+- **Background:** White on Paper or Subtle; Night Panel on Night; Mist Wash for the stage.
+- **Shadow Strategy:** Flat, except the Floating Artifact cases in Elevation.
+- **Border:** 1px Hairline on white-on-white (hero chart, FAQ panel); none elsewhere.
+- **Internal Padding:** 24px (feature), 28px (metric), 32px (core feature, accuracy block on Night Panel).
+- **Core feature card:** Abyss fill, white text, Tide label, Abyss Hover inset art panel at 20px radius.
+
+### Inputs / Fields
+- **Style:** Contact textarea inherits Hairline border and Abyss caret color; toggle-group items are white with 8px radius and flip to Abyss with white text when on.
+- **Focus:** Global Tide outline.
+
+### Navigation
+- **Style:** Sticky 64px header on Paper with 1px Hairline bottom border and a 2px Abyss reading-progress bar. Links are Schibsted 600 at 14px; the active section link turns Abyss with a 2px underline at 7px offset. Under 1050px the links collapse into a sheet menu; under 760px sign-in and demo links also hide and a fixed Abyss upload bar appears at the bottom.
+
+### Chips and Tabs
+- **Step tabs (walkthrough):** Schibsted 700, 14px radius, Abyss fill with white text when selected. Stacked on desktop, a row on mobile.
+- **FAQ chips:** 14px radius, bold 16px, Abyss when expanded.
+- **Coming badge:** Gold fill, Ink mono 9px, 5px radius, perched 20px above its card.
+
+### Chat (Binny FAQ)
+- Student bubble: Abyss fill, white text, 18px radius with a 6px bottom-right corner. Binny bubble: Subtle fill, Ink text, 6px bottom-left corner. Typing indicator is three 7px muted dots.
+
+### Wordmark and Binny (Signature)
+- **Clip Letters wordmark:** `BrandLockup` with `identity="clip"` draws two 12x29 SVG paperclips around the letters `eme` and `y`. Minimum wordmark height is 20px; below that use the "lm" monogram icon.
+- **Binny:** A binder-clip bunny in Abyss with steel wire ears. Students only, one per screen, never beside the logo. It appears in the FAQ chat header, the mobile FAQ, and peeks up from the bottom of the closing section.
+
+### Motion
+- **Easing:** `cubic-bezier(.16,1,.3,1)` for all entrances and Binny motion; `cubic-bezier(.65,0,.35,1)` for the scan line; ease-out for the typing dots.
+- **Durations:** 300-600ms for entrances, 900ms for the closing peek, 1.6-2.6s for idle Binny loops. Entrances rise 8-10px; staggers run 150-300ms per item.
+- **Walkthrough:** One sticky scroll scene (330vh tall on desktop) advances the pipeline. Ordinary page scrolling is never trapped. Under 760px it becomes a plain vertical sequence.
+- **Reduced motion:** Under `prefers-reduced-motion: reduce` all animation and transition is disabled and the walkthrough renders as static content with full progress bars.
+- **Responsive breakpoints:** 1100px, 1050px, 760px (and 700px for the hero lede), plus `pointer: coarse` which raises tap targets to 44px.
+
+## 6. Do's and Don'ts
+
+### Do:
+- **Do** use Abyss (#042f4f) for action on light surfaces and Tide (#7fb8e0) for the same role on Night or Abyss surfaces.
+- **Do** set display type in Bricolage Grotesque 800 with -0.03em to -0.05em tracking, at 28px or larger.
+- **Do** keep every neutral tinted toward hue 240, and reserve Gold, Green, and Red for reward, correct, and lost marks.
+- **Do** use mono labels (11px, 0.065em) for data, marks, confidence, and provenance so deterministic, AI-assisted, and missing data stay distinguishable.
+- **Do** use the 14px button radius, 24px card radius, and 56px button height consistently.
+- **Do** give every focusable element the 2.5px Tide outline at 4px offset.
+- **Do** honor `prefers-reduced-motion` with fully static fallbacks, and keep the walkthrough scroll non-blocking.
+- **Do** keep Binny to student-facing moments, one per screen, never next to the logo, and write copy in the warm, encouraging voice PRODUCT.md calls for: a result that says what to work on next beats a naked percentage.
+- **Do** keep these tokens inside `.marketing-brand`; app screens keep their own legacy tokens.
+
+### Don't:
+- **Don't** apply Abyss tokens, Bricolage/Schibsted fonts, or these radii to authenticated app screens. They still use the Study Notebook tokens.
+- **Don't** use Academic/institutional aesthetics: "Times New Roman, university portal grays, government-form layouts."
+- **Don't** build a generic SaaS dashboard look: "navy blue hero, metric cards with gradient shadows, the HubSpot/Salesforce template." Abyss is a deep brand blue used flat; never pair it with gradient shadows or a stock navy hero.
+- **Don't** drift into consumer edtech gamification: "Duolingo-style emojis-as-UI, confetti, bright primary colours, cheerleader copy."
+- **Don't** produce "The 'AI product' look: purple-blue gradients, dark glassmorphic panels, neon accents on near-black." Night bands stay flat and opaque, with Tide as a restrained label and icon color, not a glow. The scan line is the only glowing element.
+- **Don't** build "Cookie-cutter card grids and dense bootstrap-coloured dashboards, equal-height rows of identical boxes, colour used as decoration rather than meaning." Vary scale as the feature grid does (a 2x2 core card beside single cards) and let color carry meaning only.
+- **Don't** use Abyss as text or icon color on dark surfaces.
+- **Don't** use Error Red as decoration or a background wash, or Gold outside rewards and "coming soon" markers.
+- **Don't** tilt the wordmark clips, use the monogram icon beside the wordmark, or set the wordmark below 20px height.
+- **Don't** add shadows to ordinary cards. If a card has a shadow and is not a floating product artifact, remove it.
+- **Don't** use `linear` or default browser easing for entrances; use `cubic-bezier(.16,1,.3,1)`.
+- **Don't** use the words "cram", "hack", "easy A", or "guaranteed grade" in brand copy.
+- **Don't** use warm browns, very dark reds, or the archived crimson and royal-blue directions as reference.

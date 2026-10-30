@@ -7,17 +7,21 @@ import { FeatureGrid } from './FeatureGrid'
 import { BinnyFaq } from './BinnyFaq'
 import { ConversionActions } from './ConversionActions'
 import { useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
+import { UploadSimple } from '@phosphor-icons/react'
 import { useLandingMotion } from './useLandingMotion'
 import { useSceneMotion } from './useSceneMotion'
 import { useMobileUpload } from './useMobileUpload'
-import { Binny } from './Binny'
+import { BinnyPeek } from './Binny'
 import './page-motion.css'
+import './desktop-fidelity.css'
+import './tablet-fidelity.css'
 
 export function Landing() {
   const ref = useRef<HTMLDivElement>(null)
   const closing = useSceneMotion<HTMLElement>()
-  const showUpload = useMobileUpload(closing.inView)
+  const showUpload = useMobileUpload()
   useLandingMotion(ref)
   return (
     <div ref={ref} className="brand-landing">
@@ -44,13 +48,28 @@ export function Landing() {
             next step in minutes. No card, no setup.
           </p>
           <ConversionActions />
-          <span className="brand-hand">Go on. One paper.</span>
-          <Binny className="brand-closing-binny" active={closing.enabled} />
+        </div>
+        <div className="brand-closing-cameo" aria-hidden="true">
+          <span className="brand-closing-bubble">Go on. One paper.</span>
+          <div className="brand-closing-peek">
+            <BinnyPeek />
+          </div>
         </div>
       </section>
-      <Link to="/signup" className="brand-mobile-upload" hidden={!showUpload}>
-        Upload free
-      </Link>
+      {createPortal(
+        <div className="marketing-brand brand-mobile-upload-host">
+          <Link
+            to="/signup"
+            className="brand-mobile-upload"
+            data-shown={showUpload}
+            tabIndex={showUpload ? undefined : -1}
+          >
+            <UploadSimple aria-hidden="true" size={20} weight="bold" />
+            Upload free
+          </Link>
+        </div>,
+        document.body,
+      )}
     </div>
   )
 }

@@ -15,6 +15,8 @@ const gradeTokens = [7, 8, 8, 9, 10]
 export function useHeroArtMotion() {
   const scene = useSceneMotion<HTMLElement>()
   const clock = useRef(0)
+  // The journey plays once and then holds its finished chart, like the reference's settled state.
+  const done = useRef(false)
   useEffect(() => {
     const root = scene.ref.current
     if (!root) return
@@ -42,7 +44,7 @@ export function useHeroArtMotion() {
     const cheer = () => {
       celebration = clock.current
       hover = clock.current
-      if (!scene.enabled) {
+      if (!scene.enabled || done.current) {
         set('lvl', 'opacity', 1)
         for (const name of ['happy', 'open']) {
           const el = q(name)
@@ -66,9 +68,29 @@ export function useHeroArtMotion() {
     const move = (event: PointerEvent) => {
       mouse = [event.clientX, event.clientY]
     }
+    const restore = () => {
+      snapshots.forEach(({ el, transform, opacity, style }) => {
+        for (const [name, value] of [
+          ['transform', transform],
+          ['opacity', opacity],
+          ['style', style],
+        ]) {
+          if (value === null) el.removeAttribute(name!)
+          else el.setAttribute(name!, value!)
+        }
+      })
+      clip.setAttribute('width', '640')
+      grade.textContent = 'A*'
+      grade.style.removeProperty('background-color')
+    }
     const frame = (now: number) => {
       if (previous) clock.current += Math.min(now - previous, 80)
       previous = now
+      if (clock.current >= 9600) {
+        done.current = true
+        restore()
+        return
+      }
       const t = (clock.current / 1000) % 9.6
       const index = Math.max(0, Math.min(4, Math.floor((t - 0.8) / 1.5)))
       let position = index,
@@ -168,7 +190,7 @@ export function useHeroArtMotion() {
       }
       raf = requestAnimationFrame(frame)
     }
-    if (scene.enabled) {
+    if (scene.enabled && !done.current) {
       raf = requestAnimationFrame(frame)
       root.addEventListener('pointermove', move)
     }
@@ -181,19 +203,7 @@ export function useHeroArtMotion() {
       binny.removeEventListener('pointerenter', enter)
       binny.removeEventListener('keydown', key)
       root.removeEventListener('pointermove', move)
-      snapshots.forEach(({ el, transform, opacity, style }) => {
-        for (const [name, value] of [
-          ['transform', transform],
-          ['opacity', opacity],
-          ['style', style],
-        ]) {
-          if (value === null) el.removeAttribute(name!)
-          else el.setAttribute(name!, value!)
-        }
-      })
-      clip.setAttribute('width', '640')
-      grade.textContent = 'A*'
-      grade.style.removeProperty('background-color')
+      restore()
     }
   }, [scene.enabled, scene.ref])
   return scene

@@ -35,10 +35,20 @@ export function MarketingHeader() {
         progress.current.style.transform = `scaleX(${Math.min(1, window.scrollY / max)})`
       let current = ''
       for (const id of ['teachers', 'how', 'features']) {
-        const section = document.getElementById(id)
-        if (!section) continue
-        const bounds = section.getBoundingClientRect()
-        if (bounds.top < 140 && bounds.bottom > 140) current = id
+        // A nav target can span several sections (Proof plus the teacher
+        // features), so measure the union of every element that claims it.
+        const parts = document.querySelectorAll(
+          `#${id}, [data-nav-section="${id}"]`,
+        )
+        if (!parts.length) continue
+        let top = Infinity
+        let bottom = -Infinity
+        parts.forEach((part) => {
+          const bounds = part.getBoundingClientRect()
+          top = Math.min(top, bounds.top)
+          bottom = Math.max(bottom, bounds.bottom)
+        })
+        if (top < 140 && bottom > 140) current = id
       }
       setActive(current)
     }

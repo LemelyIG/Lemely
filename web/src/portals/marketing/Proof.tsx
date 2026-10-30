@@ -13,7 +13,11 @@ export function Proof() {
           <br />
           <span>Proven paper by paper.</span>
         </h2>
-        <ResponsiveDeck label="Marking results" className="brand-metrics">
+        <ResponsiveDeck
+          label="Marking results"
+          className="brand-metrics"
+          tone="dark"
+        >
           {proofMetrics.map((x, index) => (
             <ProofMetric
               key={x.value}

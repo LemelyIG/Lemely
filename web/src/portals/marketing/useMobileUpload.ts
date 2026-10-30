@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 
-export function useMobileUpload(closingInView: boolean) {
+export function useMobileUpload() {
   const [shown, setShown] = useState(true)
+  const [atClosing, setAtClosing] = useState(false)
   useEffect(() => {
     let previous = window.scrollY
     let frame = 0
@@ -11,8 +12,15 @@ export function useMobileUpload(closingInView: boolean) {
         frame = 0
         const current = window.scrollY
         const delta = current - previous
-        if (delta < -6 || current < 80) setShown(true)
+        if (delta < -6) setShown(true)
         else if (delta > 6) setShown(false)
+        const closing = document.getElementById('start')
+        setAtClosing(
+          Boolean(
+            closing &&
+            closing.getBoundingClientRect().top < window.innerHeight * 0.95,
+          ),
+        )
         previous = current
       })
     }
@@ -22,5 +30,5 @@ export function useMobileUpload(closingInView: boolean) {
       cancelAnimationFrame(frame)
     }
   }, [])
-  return shown && !closingInView
+  return shown && !atClosing
 }

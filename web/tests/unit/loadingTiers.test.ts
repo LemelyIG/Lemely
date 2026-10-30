@@ -141,7 +141,7 @@ describe("index.css: lm-appear keyframe and tier classes are visibility:hidden u
 })
 
 describe("DESIGN.md §9.2 documents the self-drawing-stroke exception", () => {
-  const designDoc = readFileSync(join(ROOT, "..", "DESIGN.md"), "utf8")
+  const designDoc = readFileSync(join(ROOT, "..", "docs", "DESIGN-study-notebook.md"), "utf8")
 
   it("contains the exception sentence", () => {
     const section92Start = designDoc.indexOf("### 9.2 Rules")

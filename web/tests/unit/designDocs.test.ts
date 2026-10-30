@@ -25,7 +25,7 @@ const LEDGER_IDS = [
 ] as const
 
 describe("DESIGN.md §16 Recorded decisions", () => {
-  const designMd = read("DESIGN.md")
+  const designMd = read("docs/DESIGN-study-notebook.md")
 
   it("has a '## 16. Recorded decisions' heading", () => {
     expect(designMd).toMatch(/## 16\. Recorded decisions/)
@@ -52,7 +52,7 @@ describe("docs/design-canvas-notes.md", () => {
 })
 
 describe("DESIGN.md §13 card padding range", () => {
-  const designMd = read("DESIGN.md")
+  const designMd = read("docs/DESIGN-study-notebook.md")
   const section13 = designMd.match(/## 13\. Variation knobs[\s\S]*?(?=\n## 14\.)/)?.[0] ?? ""
 
   it("Card padding row uses space-6 … space-8, not space-5 … space-10", () => {
@@ -62,7 +62,7 @@ describe("DESIGN.md §13 card padding range", () => {
 })
 
 describe("DESIGN.md §12 Cards rule", () => {
-  const designMd = read("DESIGN.md")
+  const designMd = read("docs/DESIGN-study-notebook.md")
   const section12 = designMd.match(/## 12\. Component rules[\s\S]*?(?=\n## 13\.)/)?.[0] ?? ""
 
   it("notes that marketing cards turn the knob to space-8", () => {

@@ -43,14 +43,17 @@ test('public landing preserves destinations and reference sections', async ({
 test('walkthrough, review and FAQ work with the keyboard', async ({ page }) => {
   await page.goto('/landing')
   const mobile = await page.evaluate(() => innerWidth < 760)
-  if (!mobile) await page.getByRole('tab', { name: /02 Marked/ }).click()
-  await page.getByRole('tab', { name: /Q3\(c\)/ }).click()
-  await expect(page.getByText('AI confidence 72%')).toBeVisible()
-  await page.getByRole('radio', { name: 'Award A1' }).click()
-  await expect(page.getByText('Illustration: A1 awarded')).toBeVisible()
-  if (!mobile) await page.getByRole('tab', { name: /03 Insights/ }).click()
-  else await page.getByText('Weak topic found').scrollIntoViewIfNeeded()
-  await expect(page.getByText('Weak topic found')).toBeVisible()
+  // Mobile shows the three-card How it works stack; the review controls live
+  // in the desktop scroll scene.
+  if (!mobile) {
+    await page.getByRole('tab', { name: /02 Marked/ }).click()
+    await page.getByRole('button', { name: 'Explain Q3(c)' }).click()
+    await expect(page.getByText('AI confidence 72%')).toBeVisible()
+    await page.getByRole('radio', { name: 'Award A1' }).click()
+    await expect(page.getByText('Illustration: A1 awarded')).toBeVisible()
+    await page.getByRole('tab', { name: /03 Insights/ }).click()
+    await expect(page.getByText('Weak topic found')).toBeVisible()
+  }
   const faq = page.getByRole('button', {
     name: 'How accurate is the AI marking?',
   })
@@ -91,6 +94,11 @@ test('responsive layout and accessible mobile navigation', async ({
     expect(clippedHeadings).toEqual([])
   }
   await page.setViewportSize({ width: 390, height: 844 })
+  const header = page.locator('.brand-header')
+  await expect(header.getByRole('link', { name: 'Sign in' })).toBeVisible()
+  await expect(header.getByRole('link', { name: 'Sign up' })).toBeHidden()
+  await expect(header.getByRole('button', { name: 'Open menu' })).toBeHidden()
+  await page.setViewportSize({ width: 768, height: 900 })
   await page.getByRole('button', { name: 'Open menu' }).click()
   await expect(page.getByRole('dialog')).toBeVisible()
   await page

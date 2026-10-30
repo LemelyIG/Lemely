@@ -31,7 +31,7 @@ test("desktop scroll drives all three pinned walkthrough stages and step navigat
     "aria-selected",
     "true",
   );
-  await page.getByRole("tab", { name: "Q3(c)" }).click();
+  await page.getByRole("button", { name: "Explain Q3(c)" }).click();
   // Browser focus/layout scroll cannot dismiss the question under interaction.
   await how.evaluate((el) =>
     window.scrollTo({
@@ -67,29 +67,27 @@ test("desktop scroll drives all three pinned walkthrough stages and step navigat
     .toBeLessThan(0.34);
 });
 
-test("mobile keeps the full progressive walkthrough in document flow", async ({
+test("mobile shows How it works as a three-card stack with every step reachable", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.goto("/landing");
-  const scenes = page.locator("#how [data-walkthrough-step]");
-  await expect(scenes).toHaveCount(3);
-  const handwriting = page.locator(".brand-photo-stack .brand-hand");
-  const fits = await handwriting.evaluate(
-    (el) =>
-      el.getBoundingClientRect().height <=
-      el.parentElement!.getBoundingClientRect().height,
-  );
-  expect(fits).toBe(true);
-  await scenes.nth(2).scrollIntoViewIfNeeded();
-  await expect(scenes.nth(2)).toHaveAttribute("data-active", "true");
-  await expect(
-    page.getByText("ILLUSTRATION · NO REPORT IS SENT"),
-  ).toBeVisible();
-  await scenes.nth(1).scrollIntoViewIfNeeded();
-  await page.getByRole("tab", { name: "Q3(c)" }).click();
-  await expect(page.getByText("AI confidence 72%")).toBeVisible();
+  const deck = page.getByRole("region", { name: "How it works" });
+  await expect(deck.getByRole("status")).toHaveText("1 / 3");
+  await expect(deck.getByRole("heading", { name: "Upload" })).toBeVisible();
+  const cards = deck.getByRole("group", { name: "How it works cards" });
+  await cards.press("ArrowRight");
+  await expect(deck.getByRole("status")).toHaveText("2 / 3");
+  await expect(deck.getByRole("heading", { name: "Marked" })).toBeVisible();
+  await cards.press("ArrowRight");
+  await expect(deck.getByRole("heading", { name: "Insights" })).toBeVisible();
+  await expect(deck.getByText("Units & SI")).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
 });
 
 test("reduced motion removes pinned travel and retains keyboard-accessible stages", async ({

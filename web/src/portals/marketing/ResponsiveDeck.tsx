@@ -8,8 +8,35 @@ import {
   CarouselNext,
   type CarouselApi,
 } from '@/components/ui/carousel'
+import { StackDeck } from './StackDeck'
 
+const MOBILE = '(max-width: 759px)'
+
+/** Mobile gets the reference card stack; wider screens keep the grid. */
 export function ResponsiveDeck({
+  tone,
+  ...props
+}: {
+  label: string
+  children: ReactNode[]
+  className?: string
+  tone?: 'light' | 'dark'
+}) {
+  const [mobile, setMobile] = useState(() => window.matchMedia(MOBILE).matches)
+  useEffect(() => {
+    const media = window.matchMedia(MOBILE)
+    const change = () => setMobile(media.matches)
+    media.addEventListener('change', change)
+    return () => media.removeEventListener('change', change)
+  }, [])
+  return mobile ? (
+    <StackDeck {...props} tone={tone} />
+  ) : (
+    <DesktopDeck {...props} />
+  )
+}
+
+function DesktopDeck({
   label,
   children,
   className = '',

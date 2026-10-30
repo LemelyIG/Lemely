@@ -57,45 +57,53 @@ export const features = [
     title: 'Method-aware marking',
     description:
       'Marks the working, not just the answer, exactly like the official mark scheme.',
+    mobileDescription: 'Marks the working, not just the answer.',
   },
   {
     key: 'confidence',
     title: 'Confidence on every mark',
     description:
       'Anything unsure goes to your review queue, never silently into a grade.',
+    mobileDescription: 'Unsure marks go to review, never silently into a grade.',
   },
   {
     key: 'predicted',
     title: 'Predicted grade',
     description:
       'A live forecast from every paper, so results day has no surprises.',
+    mobileDescription: 'A live forecast from every paper.',
   },
   {
     key: 'clusters',
     title: 'Weak topics, clustered',
     description:
       'Lost marks group into the topics behind them, across every paper.',
+    mobileDescription: 'Lost marks grouped by the topic behind them.',
   },
   {
     key: 'trends',
     title: 'Performance trends',
     description: 'Each student and the whole class, climbing paper by paper.',
+    mobileDescription: 'Each student and the class, paper by paper.',
   },
   {
     key: 'plan',
     title: 'Adaptive study plans',
     description: 'A week of practice built from the marks actually lost.',
+    mobileDescription: 'Practice built from the marks actually lost.',
   },
   {
     key: 'xp',
     title: 'XP, streaks & Binny',
     description:
       'Students earn XP for every paper. Binny keeps them coming back.',
+    mobileDescription: 'XP for every paper. Binny keeps them coming back.',
   },
   {
     key: 'content',
     title: 'Content generation',
     description:
       'Turn any weak topic into a worksheet, with its own mark scheme, in seconds.',
+    mobileDescription: 'Any weak topic into a worksheet, with its mark scheme.',
   },
 ] as const
