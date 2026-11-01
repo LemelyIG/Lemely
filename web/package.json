@@ -20,7 +20,7 @@
     "preview:kit": "vite --config vite.preview.config.ts",
     "build:kit": "vite build --config vite.preview.config.ts",
     "mark": "node --experimental-strip-types scripts/generate_mark_svg.mjs",
-    "icons": "npm run mark && node --experimental-strip-types scripts/generate_icons.mjs",
+    "icons": "node --experimental-strip-types scripts/generate_icons.mjs",
     "screenshots:manifest": "node scripts/manifest_screenshots.mjs",
     "check:native": "node scripts/check-native-invariants.mjs",
     "check:bundle": "node scripts/check-bundle-budget.mjs",
