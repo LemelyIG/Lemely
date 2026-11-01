@@ -3,6 +3,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
@@ -301,7 +302,7 @@ export function StackDeck({
               inert={!top}
               aria-label={`${k + 1} of ${n}`}
               role="group"
-              style={{ zIndex: n - position, ...style }}
+              style={{ ...({ '--stack-z': n - position } as CSSProperties), ...style }}
             >
               <div key={top ? `on-${tick}` : 'off'} className="stack-card-body">
                 {child}

@@ -104,11 +104,7 @@ function PaperQuestion({
   onSelect?: (question: QuestionKey) => void;
 }) {
   return (
-    <div
-      className="wt-q"
-      data-selected={selected}
-      onClick={() => marked && onSelect?.(id)}
-    >
+    <div className="wt-q" data-selected={selected}>
       <div className="wt-q-head">
         <span>
           <Button
