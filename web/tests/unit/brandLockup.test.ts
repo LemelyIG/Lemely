@@ -27,7 +27,8 @@ const LOCKUP_SITES = [
   "src/portals/admin/index.tsx",
   "src/portals/settings/SettingsFrame.tsx",
   "src/portals/auth/Login.tsx",
-  "src/portals/marketing/index.tsx",
+  "src/portals/marketing/MarketingHeader.tsx",
+  "src/portals/marketing/MarketingFooter.tsx",
 ] as const
 
 describe("brand-lockup.tsx", () => {
@@ -53,16 +54,8 @@ describe("brand-lockup.tsx", () => {
   })
 })
 
-describe("no file under web/src/portals carries a raw <BrandMark except marketing/index.tsx", () => {
-  it("marketing/index.tsx is the sole exception, and carries it exactly once", () => {
-    // marketing/index.tsx:183's footer sentence sits beside a small mark and
-    // is a sentence, not a lockup — Task 1 leaves it untouched.
-    const source = sourceOf("src/portals/marketing/index.tsx")
-    const count = (source.match(/<BrandMark/g) ?? []).length
-    expect(count).toBe(1)
-  })
-
-  it.each(LOCKUP_SITES.filter((f) => f !== "src/portals/marketing/index.tsx"))(
+describe("portal lockups reuse the shared brand component", () => {
+  it.each(LOCKUP_SITES)(
     "%s carries no raw <BrandMark",
     (relativePath) => {
       expect(sourceOf(relativePath)).not.toContain("<BrandMark")
@@ -70,7 +63,7 @@ describe("no file under web/src/portals carries a raw <BrandMark except marketin
   )
 })
 
-describe("every one of the seven lockup sites renders <BrandLockup", () => {
+describe("every lockup site renders <BrandLockup", () => {
   it.each(LOCKUP_SITES)("%s", (relativePath) => {
     expect(sourceOf(relativePath)).toContain("<BrandLockup")
   })

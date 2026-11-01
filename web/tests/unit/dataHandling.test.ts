@@ -110,7 +110,7 @@ describe("the data page is public and reachable — P6.5", () => {
 
   it("is linked from the marketing footer, so it is not an orphan route", () => {
     const source = fs.readFileSync(
-      path.resolve(__dirname, "../../src/portals/marketing/index.tsx"),
+      path.resolve(__dirname, "../../src/portals/marketing/MarketingFooter.tsx"),
       "utf8",
     )
     expect(source).toMatch(/to="\/data"/)

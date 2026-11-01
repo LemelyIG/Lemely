@@ -170,7 +170,7 @@ describe("headers keep their existing padding while opting into the additive ins
   })
 
   it("marketing's header is untouched — it had no py-* to lose", () => {
-    const line = headerLine("portals/marketing/index.tsx")
+    const line = headerLine("portals/marketing/MarketingHeader.tsx")
     expect(line).not.toContain("lm-app-header-pt")
   })
 })
@@ -182,7 +182,7 @@ describe("lm-nav-chrome coverage", () => {
     "portals/student/index.tsx",
     "portals/teacher/index.tsx",
     "portals/admin/index.tsx",
-    "portals/marketing/index.tsx",
+    "portals/marketing/MarketingHeader.tsx",
   ]
 
   it.each(CHROME_FILES)("%s applies lm-nav-chrome", (file) => {

@@ -98,7 +98,7 @@ const GOOD_FILES: Record<string, string> = {
   "portals/student/index.tsx": `<main className="min-h-dvh flex flex-col">${NAV_CHROME_FILE}`,
   "portals/teacher/index.tsx": NAV_CHROME_FILE,
   "portals/admin/index.tsx": NAV_CHROME_FILE,
-  "portals/marketing/index.tsx": NAV_CHROME_FILE,
+  "portals/marketing/MarketingHeader.tsx": NAV_CHROME_FILE,
   "routes.tsx": `export const routes = []`,
 }
 

@@ -425,6 +425,9 @@ from_name = "Lemely"
 # Where replies go. Unset means they return to `from_address`, an unattended
 # mailbox; point it at a real inbox once one exists.
 # reply_to = "support@lemelyig.com"
+# Inbox that receives questions sent from the landing page FAQ composer
+# (POST /api/contact). The visitor's address is the Reply-To on that mail.
+contact_address = "contact@lemelyig.com"
 # Short on purpose: verification mail is a best-effort side effect of an
 # already-created account and must never make a signup hang.
 timeout_seconds = 10.0

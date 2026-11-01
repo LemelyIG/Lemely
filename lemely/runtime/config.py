@@ -1306,6 +1306,9 @@ class EmailSettings(BaseModel):
     # ``from_address`` — an unattended mailbox, which is why this is worth
     # setting to a real inbox once one exists.
     reply_to: OptionalCredential = None
+    # Inbox that receives landing-page questions (``POST /api/contact``). The
+    # visitor's own address is set as Reply-To on that mail, not here.
+    contact_address: str = "contact@lemelyig.com"
     # Per-request timeout. Short on purpose: verification mail is a best-effort
     # side effect of an already-created account (``AuthService`` rule 4 — see
     # ``_try_send_verification``), and must never make a signup hang.
