@@ -1,5 +1,6 @@
 import { safeNextPath } from "@/lib/nextPath"
 import { portalPathForRole } from "@/lib/auth/RequireAuth"
+import { parentNextTarget } from "@/lib/tutoring/parentNext"
 
 /*
  * Packet B2a · where `Login.tsx` sends a reader once `login.mutate` succeeds.
@@ -25,7 +26,9 @@ export function postLoginTarget(input: {
   const { next, from, role } = input
   const portal = portalPathForRole(role)
 
-  const safeNext = safeNextPath(next)
+  // G-17's "Sign in to book" carries the student's tutor page, because the public page cannot
+  // know who signs in; a parent lands on the parent's page for the same tutor (T27).
+  const safeNext = safeNextPath(role === "parent" ? parentNextTarget(next) : next)
   if (safeNext && safeNext.startsWith(portal)) return safeNext
 
   const safeFrom = safeNextPath(typeof from === "string" ? from : null)

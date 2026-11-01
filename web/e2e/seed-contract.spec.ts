@@ -36,6 +36,20 @@ function account(prefix: string): Record<string, "string"> {
   return Object.fromEntries(ACCOUNT_FIELDS.map((f) => [`${prefix}.${f}`, "string"]))
 }
 
+/** A `SeedTutor`: an account plus its profile id, public name, headline and listing state.
+ * (`indexable` is a boolean and is checked in its own test below.) */
+function tutor(prefix: string): Record<string, "string"> {
+  return {
+    ...account(prefix),
+    ...Object.fromEntries(
+      ["tutorProfileId", "publicName", "headline", "listingState"].map((f) => [
+        `${prefix}.${f}`,
+        "string",
+      ]),
+    ),
+  }
+}
+
 /**
  * Dotted path → expected `typeof`. Paths are exhaustive over `SeedContract`:
  * every declared leaf appears exactly once.
@@ -59,6 +73,8 @@ const SHAPE: Record<string, "string" | "number"> = {
 
   ...account("students.declining"),
   "students.declining.parentInviteCode": "string",
+  ...account("students.inviteOnly"),
+  "students.inviteOnly.parentInviteCode": "string",
   ...account("students.inactive"),
   ...account("students.control"),
   ...account("students.correctedPaper"),
@@ -156,9 +172,58 @@ const SHAPE: Record<string, "string" | "number"> = {
   // its own test below.
   "deletion.reviewItemId": "string",
   "deletion.consolePaperId": "string",
+
+  // Tutoring marketplace (T29). The `outcomes.insufficient` counts are null by
+  // design and the bookings/grants shapes beyond ids are checked below.
+  "tutoring.subjectCode": "string",
+  "tutoring.subjectName": "string",
+  ...account("tutoring.platformAdmin"),
+  ...tutor("tutoring.tutors.sufficient"),
+  ...tutor("tutoring.tutors.insufficient"),
+  ...tutor("tutoring.tutors.draft"),
+  ...account("tutoring.student"),
+  ...account("tutoring.discover.student"),
+  ...account("tutoring.discover.rival"),
+  "tutoring.bookings.requested": "string",
+  "tutoring.bookings.accepted": "string",
+  "tutoring.bookings.awaitingOutcome": "string",
+  "tutoring.bookings.completed": "string",
+  "tutoring.bookings.noShow": "string",
+  "tutoring.bookings.declined": "string",
+  "tutoring.bookings.cancelledByStudent": "string",
+  "tutoring.bookings.cancelledByTutorLate": "string",
+  "tutoring.bookings.expired": "string",
+  "tutoring.bookings.child.childRequested": "string",
+  "tutoring.bookings.child.parentAccepted": "string",
+  "tutoring.bookings.child.awaitingOutcome": "string",
+  "tutoring.grants.live.grantId": "string",
+  "tutoring.grants.live.studentUserId": "string",
+  "tutoring.grants.live.tutorProfileId": "string",
+  "tutoring.grants.live.accessLogCount": "number",
+  "tutoring.grants.ended.grantId": "string",
+  "tutoring.grants.ended.studentUserId": "string",
+  "tutoring.grants.ended.tutorProfileId": "string",
+  "tutoring.grants.revocable.grantId": "string",
+  "tutoring.grants.revocable.studentUserId": "string",
+  "tutoring.grants.revocable.tutorProfileId": "string",
+  "tutoring.reports.openSafety.reportId": "string",
+  "tutoring.reports.openSafety.bookingId": "string",
+  "tutoring.reports.resolved.reportId": "string",
+  "tutoring.reports.resolved.tutorProfileId": "string",
+  "tutoring.reviews.approvedReviewId": "string",
+  "tutoring.reviews.pendingReviewId": "string",
+  "tutoring.outcomes.sufficient.distributionState": "string",
+  "tutoring.outcomes.sufficient.changeState": "string",
+  "tutoring.outcomes.sufficient.nGraded": "number",
+  "tutoring.outcomes.sufficient.nPaired": "number",
+  "tutoring.outcomes.sufficient.higher": "number",
+  "tutoring.outcomes.sufficient.same": "number",
+  "tutoring.outcomes.sufficient.lower": "number",
+  "tutoring.outcomes.insufficient.distributionState": "string",
+  "tutoring.outcomes.insufficient.changeState": "string",
 }
 
-/** The 17 keys `build_result_payload` returns (scripts/seed_e2e.py). */
+/** The 18 keys `build_result_payload` returns (scripts/seed_e2e.py). */
 const TOP_LEVEL_KEYS = [
   "runTag",
   "generatedAt",
@@ -177,6 +242,7 @@ const TOP_LEVEL_KEYS = [
   "studyPlan",
   "engagement",
   "deletion",
+  "tutoring",
 ] as const
 
 function resolve(root: unknown, dotted: string): unknown {
@@ -350,4 +416,81 @@ test("the deletion group's attemptId arrays keep their shapes (Task 18 e2e)", ()
   // Kept off every other class/roster in this seed — see `seed.ts`'s own
   // `deletion` docstring.
   expect(resolve(seed, "deletion.classId")).not.toEqual(resolve(seed, "class.classId"))
+})
+
+test("the tutoring group can carry the journeys it was seeded for (T29)", () => {
+  const seed = readSeedRaw()
+  const at = (dotted: string): unknown => resolve(seed, `tutoring.${dotted}`)
+
+  // Two listed tutors, one indexable and one opted out, and a draft: the three
+  // listing states a journey needs, distinct profiles on distinct accounts.
+  expect(at("tutors.sufficient.listingState")).toBe("listed")
+  expect(at("tutors.insufficient.listingState")).toBe("listed")
+  expect(at("tutors.draft.listingState")).toBe("draft")
+  expect(at("tutors.sufficient.indexable")).toBe(true)
+  expect(at("tutors.insufficient.indexable")).toBe(false)
+  expect(typeof at("tutors.draft.indexable")).toBe("boolean")
+  const profileIds = ["sufficient", "insufficient", "draft"].map((k) =>
+    at(`tutors.${k}.tutorProfileId`),
+  )
+  expect(new Set(profileIds).size, "tutor profile ids are not distinct").toBe(3)
+  const userIds = ["sufficient", "insufficient", "draft"].map((k) => at(`tutors.${k}.userId`))
+  expect(new Set(userIds).size, "tutor accounts are not distinct").toBe(3)
+
+  // The sufficient figure is a real one: counts that add up, and the hidden
+  // figure's counts are null rather than zero (zero would read as "no students").
+  const suff = at("outcomes.sufficient") as Record<string, unknown>
+  expect(suff.distributionState).toBe("sufficient")
+  expect(suff.changeState).toBe("sufficient")
+  expect(suff.nGraded as number).toBeGreaterThanOrEqual(5)
+  const buckets = suff.buckets as Record<string, number>
+  expect(Object.keys(buckets)).toEqual(["A*", "A", "B", "C", "D", "E", "U"])
+  expect(Object.values(buckets).reduce((a, b) => a + b, 0)).toBe(suff.nGraded)
+  expect((suff.higher as number) + (suff.same as number) + (suff.lower as number)).toBe(
+    suff.nPaired,
+  )
+  const insuff = at("outcomes.insufficient") as Record<string, unknown>
+  expect(insuff.distributionState).toBe("insufficient")
+  expect(insuff.changeState).toBe("insufficient")
+  for (const field of ["nGraded", "nPaired", "higher", "same", "lower"]) {
+    expect(insuff[field], `outcomes.insufficient.${field}`).toBeNull()
+  }
+  expect(insuff.buckets).toEqual({})
+
+  // One booking per effective state (eight) plus the child's three, all distinct.
+  const bookings = at("bookings") as Record<string, unknown>
+  const own = Object.entries(bookings).filter(([k]) => k !== "child")
+  expect(own.map(([k]) => k).sort()).toEqual(
+    [
+      "accepted",
+      "awaitingOutcome",
+      "cancelledByStudent",
+      "cancelledByTutorLate",
+      "completed",
+      "declined",
+      "expired",
+      "noShow",
+      "requested",
+    ].sort(),
+  )
+  const child = bookings.child as Record<string, string>
+  expect(Object.keys(child).sort()).toEqual(
+    ["awaitingOutcome", "childRequested", "parentAccepted"].sort(),
+  )
+  const ids = [...own.map(([, v]) => v as string), ...Object.values(child)]
+  expect(new Set(ids).size, "booking ids are not distinct").toBe(ids.length)
+
+  // The live grant is the seeded parent's child's to the sufficient tutor, with a
+  // log to show; the revocable one belongs to a different student so revoking it
+  // leaves the first alone.
+  expect(at("grants.live.studentUserId")).toEqual(resolve(seed, "students.declining.userId"))
+  expect(at("grants.live.tutorProfileId")).toEqual(at("tutors.sufficient.tutorProfileId"))
+  expect(at("grants.live.accessLogCount") as number).toBeGreaterThanOrEqual(1)
+  expect(at("grants.ended.studentUserId")).toEqual(resolve(seed, "students.declining.userId"))
+  expect(at("grants.revocable.studentUserId")).toEqual(at("student.userId"))
+  expect(at("grants.revocable.studentUserId")).not.toEqual(at("grants.live.studentUserId"))
+  expect(at("grants.revocable.grantId")).not.toEqual(at("grants.live.grantId"))
+
+  // The open safety concern is on the booking the contract names as completed.
+  expect(at("reports.openSafety.bookingId")).toEqual(at("bookings.completed"))
 })

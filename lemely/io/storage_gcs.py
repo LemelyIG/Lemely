@@ -10,6 +10,32 @@ Uploads are **create-only**: ``if_generation_match=0`` refuses to overwrite an
 existing key and, as a side effect, switches on the SDK's conditional retry
 policy. Every key this codebase writes carries a server-generated UUID, so a
 precondition failure is a bug and is surfaced as one.
+
+**The tutor evidence bucket (SC-22).** Tutors' identity and qualification
+documents go to their own bucket. GCS bucket names are one global namespace, so
+a bucket name is only safe if this project created it. Two checks follow from
+that. The settings default ``lemely-tutor-evidence`` is a name no Lemely
+project owns, so every operation on it is refused at once, without a read
+(:class:`ExternalServiceError` naming ``LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET``).
+The refusal is at first use and never at construction, because the backend is
+built at app startup and serves the uploads and avatars buckets as well. For
+any other evidence bucket, before the first operation on it the backend reads
+that bucket's settings and refuses one that does not enforce public access
+prevention and uniform bucket-level access, or that belongs to any project but
+``storage.gcs_project_number`` (:class:`ExternalServiceError`, which the
+evidence routes already turn into "storage unavailable"), so no document is
+written to or read from a bucket that has not been shown to be private and
+ours. The owner matters because the first two settings are the bucket owner's
+to set: a stranger who registers this environment's name first can enforce
+both and grant our runtime account access, and only the owning project number
+tells that bucket from ours. With no project number configured, ownership
+cannot be shown, so the evidence bucket is refused before any read. That second
+check needs the network, so it runs on first use and not in the constructor,
+which stays offline; it touches only the evidence bucket, so uploads and
+avatars behave exactly as before. A passed check is remembered for the life of
+the backend; a failed one is not, so the next request retries it once the
+operator has fixed the bucket or the setting. ``lemely doctor`` runs the same
+check on demand through :meth:`GcsStorageBackend.check_tutor_evidence_bucket`.
 """
 
 from __future__ import annotations
@@ -21,12 +47,33 @@ import google.auth.transport.requests
 from google.api_core.exceptions import GoogleAPICallError, NotFound, PreconditionFailed
 from google.auth.exceptions import DefaultCredentialsError
 from google.cloud import storage
+from google.cloud.storage.constants import PUBLIC_ACCESS_PREVENTION_ENFORCED
 from google.cloud.storage.retry import DEFAULT_RETRY_IF_GENERATION_SPECIFIED
 
 from lemely.io.storage import StorageObjectNotFoundError
+from lemely.runtime.config import DEFAULT_TUTOR_EVIDENCE_BUCKET
 from lemely.runtime.errors import ExternalServiceError
 
 _TRANSFER_TIMEOUT_SECONDS = 30.0
+
+
+def placeholder_evidence_bucket_refusal(bucket: str) -> str | None:
+    """Why ``bucket`` must not hold tutor evidence, if it is the settings default; else ``None``.
+
+    Compared trimmed and case-folded, so no spelling of the default slips through. Offline: the
+    backend raises it at the evidence bucket's first use, and ``lemely doctor`` reports it.
+    """
+    if bucket.strip().lower() != DEFAULT_TUTOR_EVIDENCE_BUCKET:
+        return None
+    return (
+        "LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET is the placeholder default "
+        f"{DEFAULT_TUTOR_EVIDENCE_BUCKET!r}. GCS bucket names are global and no "
+        "Lemely project owns that one, so tutors' documents would go to whoever "
+        "creates it. Set it to this environment's private bucket: deploy.yml "
+        "sets <project-id>-tutor-evidence-<env>, which scripts/gcp-bootstrap.sh "
+        "creates."
+    )
+
 
 # The scope IAM signBlob demands. `storage.Client.SCOPE` is the three
 # `devstorage.*` scopes and nothing else, so the credential the client holds
@@ -38,16 +85,119 @@ _IAM_SIGN_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 class GcsStorageBackend:
     """Real :class:`StorageBackend` over ``google.cloud.storage``."""
 
-    def __init__(self, *, project: str | None = None, _client: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        project: str | None = None,
+        tutor_evidence_bucket: str | None = None,
+        project_number: int | None = None,
+        _client: Any = None,
+    ) -> None:
         """Optionally inject a client (tests); otherwise one is built on first use.
 
         ``project`` is ``settings.storage.gcs_project``: Application Default
         Credentials usually carry or infer a project on their own, so this is
         only needed when that inference is wrong or absent (a user-account
         credential with no associated quota project).
+
+        ``tutor_evidence_bucket`` is ``settings.storage.tutor_evidence_bucket``:
+        the bucket that must be shown to be private and ours before first use
+        (module docstring). The settings default is accepted here and refused
+        at its first use, like an unset ``project_number``. ``None`` names no
+        evidence bucket and checks nothing.
+
+        ``project_number`` is ``settings.storage.gcs_project_number``, the
+        project that must own the evidence bucket. ``None`` is accepted here, so
+        scans and avatars keep working, and refuses the evidence bucket at its
+        first use.
+
+        Construction never raises: ``get_storage_backend`` and ``get_sweeper``
+        build this backend at startup, so a refusal here would stop the whole
+        app, scan uploads, avatars and the purge job included.
         """
         self._raw_client: Any = _client
         self._project = project
+        self._evidence_bucket = tutor_evidence_bucket
+        self._project_number = project_number
+        self._evidence_bucket_private = False
+
+    def check_tutor_evidence_bucket(self) -> None:
+        """Run the evidence bucket's first-use check now (``lemely doctor``).
+
+        Raises exactly what the first evidence operation would, and a pass is
+        remembered the same way. With no evidence bucket configured there is
+        nothing to check.
+        """
+        if self._evidence_bucket is not None:
+            self._require_private_evidence_bucket(self._evidence_bucket)
+
+    def _require_private_evidence_bucket(self, bucket: str) -> None:
+        """Refuse an operation on the evidence bucket until it is shown to be private and ours.
+
+        Refuses at once, without a read, when the bucket is the placeholder
+        default (:func:`placeholder_evidence_bucket_refusal`) or no project
+        number is configured. Otherwise reads the bucket's settings
+        (``storage.buckets.get``, which ``scripts/gcp-bootstrap.sh`` grants the
+        runtime account on this bucket through
+        ``roles/storage.legacyBucketReader``) and requires public access
+        prevention ``enforced``, uniform bucket-level access on, and the owning
+        project number equal to the configured one. Any other bucket returns at
+        once. See the module docstring for why this runs on first use and why
+        only a pass is remembered.
+        """
+        if bucket != self._evidence_bucket or self._evidence_bucket_private:
+            return
+        placeholder = placeholder_evidence_bucket_refusal(bucket)
+        if placeholder is not None:
+            raise ExternalServiceError(placeholder)
+        if self._project_number is None:
+            raise ExternalServiceError(
+                f"Refusing to use the tutor evidence bucket {bucket}: "
+                "LEMELY_STORAGE__GCS_PROJECT_NUMBER is not set, so the bucket cannot be "
+                "shown to belong to this project. Set it to this project's number "
+                "(`gcloud projects describe <project-id> --format='value(projectNumber)'`); "
+                "deploy.yml derives it from GCP_WORKLOAD_IDENTITY_PROVIDER."
+            )
+        try:
+            metadata = self._client().get_bucket(bucket, timeout=_TRANSFER_TIMEOUT_SECONDS)
+        except NotFound as exc:
+            raise ExternalServiceError(
+                f"The tutor evidence bucket {bucket} does not exist. "
+                "Run scripts/gcp-bootstrap.sh, which creates it private."
+            ) from exc
+        except GoogleAPICallError as exc:
+            raise ExternalServiceError(
+                f"Cannot read the settings of the tutor evidence bucket {bucket} ({exc}). "
+                "The runtime service account needs storage.buckets.get on it; "
+                "scripts/gcp-bootstrap.sh grants roles/storage.legacyBucketReader there."
+            ) from exc
+        iam = metadata.iam_configuration
+        prevention = iam.public_access_prevention
+        uniform = iam.uniform_bucket_level_access_enabled
+        if prevention != PUBLIC_ACCESS_PREVENTION_ENFORCED or uniform is not True:
+            raise ExternalServiceError(
+                f"Refusing to use the tutor evidence bucket {bucket}: public access "
+                f"prevention is {prevention!r} and uniform bucket-level access is "
+                f"{'on' if uniform else 'off'}; both must be enforced. Run "
+                f"`gcloud storage buckets update gs://{bucket} "
+                "--uniform-bucket-level-access --public-access-prevention`, or "
+                "scripts/gcp-bootstrap.sh."
+            )
+        owner = metadata.project_number
+        if owner != self._project_number:
+            found = (
+                "reports no owning project number"
+                if owner is None
+                else f"belongs to project number {owner}"
+            )
+            raise ExternalServiceError(
+                f"Refusing to use the tutor evidence bucket {bucket}: it {found}, not this "
+                f"project's {self._project_number} (LEMELY_STORAGE__GCS_PROJECT_NUMBER). "
+                "Bucket names are global, so another project may have registered this name "
+                "first. Do not use it: create a private bucket under another name in this "
+                "project and point GCS_TUTOR_EVIDENCE_BUCKET at it (docs/deployment.md §5.9)."
+            )
+        self._evidence_bucket_private = True
 
     def _client(self) -> Any:
         if self._raw_client is None:
@@ -73,6 +223,7 @@ class GcsStorageBackend:
         content_type: str | None,
     ) -> None:
         """Create ``object_path`` in ``bucket``. An existing key is an error."""
+        self._require_private_evidence_bucket(bucket)
         try:
             self._blob(bucket, object_path).upload_from_string(
                 data,
@@ -90,6 +241,7 @@ class GcsStorageBackend:
 
     def download(self, bucket: str, object_path: str) -> bytes:
         """Return the bytes at ``object_path``; missing → :class:`StorageObjectNotFoundError`."""
+        self._require_private_evidence_bucket(bucket)
         try:
             data: bytes = self._blob(bucket, object_path).download_as_bytes(
                 timeout=_TRANSFER_TIMEOUT_SECONDS
@@ -102,6 +254,7 @@ class GcsStorageBackend:
 
     def delete(self, bucket: str, object_path: str) -> None:
         """Delete ``object_path``; a missing object is not an error."""
+        self._require_private_evidence_bucket(bucket)
         try:
             self._blob(bucket, object_path).delete()
         except NotFound:
@@ -151,8 +304,26 @@ class GcsStorageBackend:
         token: str = signing_credentials.token
         return token
 
-    def create_signed_url(self, bucket: str, object_path: str, expires_in: int) -> str:
+    def create_signed_url(
+        self,
+        bucket: str,
+        object_path: str,
+        expires_in: int,
+        *,
+        disposition: str | None = None,
+        content_type: str | None = None,
+    ) -> str:
         """Create a V4 signed URL for ``{bucket}/{object_path}``.
+
+        ``disposition`` becomes the signed ``response-content-disposition``
+        query parameter, so GCS answers with that ``Content-Disposition``
+        header and the value cannot be edited without breaking the signature
+        (evidence downloads use ``attachment``, SC-22). ``content_type``
+        becomes the signed ``response-content-type`` parameter the same way,
+        so the response carries the caller's type (an evidence file's sniffed
+        type from its database row, T10 review R8) rather than whatever the
+        object's stored metadata says. ``None`` for either adds nothing, so
+        avatar URLs are unchanged.
 
         A service-account JSON key credential exposes a ``signer`` and can sign
         entirely locally; ``google-cloud-storage`` uses it automatically. A
@@ -182,11 +353,16 @@ class GcsStorageBackend:
         """
         from datetime import timedelta
 
+        self._require_private_evidence_bucket(bucket)
         client = self._client()
         credentials = getattr(client, "_credentials", None)
         try:
             blob = client.bucket(bucket).blob(object_path)
             sign_kwargs: dict[str, Any] = {}
+            if disposition is not None:
+                sign_kwargs["response_disposition"] = disposition
+            if content_type is not None:
+                sign_kwargs["response_type"] = content_type
             if credentials is not None and not hasattr(credentials, "signer"):
                 if not hasattr(credentials, "service_account_email"):
                     raise ExternalServiceError(
@@ -215,4 +391,4 @@ class GcsStorageBackend:
         return signed
 
 
-__all__ = ["GcsStorageBackend"]
+__all__ = ["GcsStorageBackend", "placeholder_evidence_bucket_refusal"]

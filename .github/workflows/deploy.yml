@@ -238,6 +238,32 @@ jobs:
           echo "::add-mask::$DB_URL_PSYCOPG"
           echo "DATABASE_URL_PSYCOPG=$DB_URL_PSYCOPG" >> "$GITHUB_ENV"
 
+      # The project NUMBER that must own the tutor evidence bucket
+      # (LEMELY_STORAGE__GCS_PROJECT_NUMBER below; SC-22). Bucket names are
+      # global, so a stranger who registered <project-id>-tutor-evidence-<env>
+      # first could make it private and grant the runtime account access; only
+      # the owning project number tells that bucket from ours. Not a secret, and
+      # no new variable: the auth step above already requires the provider's
+      # full resource name, projects/<number>/locations/global/
+      # workloadIdentityPools/<pool>/providers/<provider>, and
+      # scripts/gcp-bootstrap.sh creates that provider in the deploy project
+      # itself. A provider kept in another project would yield that project's
+      # number; the backend would then refuse the evidence bucket, and the
+      # evidence bucket check at the end of this job fails naming both numbers.
+      - name: Derive the project number
+        id: project-number
+        env:
+          PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        run: |
+          set -euo pipefail
+          PATTERN='^projects/([0-9]+)/locations/global/workloadIdentityPools/[^/]+/providers/[^/]+$'
+          if [[ ! "$PROVIDER" =~ $PATTERN ]]; then
+            echo "::error::GCP_WORKLOAD_IDENTITY_PROVIDER is not projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider> (got '$PROVIDER'), so LEMELY_STORAGE__GCS_PROJECT_NUMBER cannot be derived. Set it to the PROVIDER_NAME scripts/gcp-bootstrap.sh prints."
+            exit 1
+          fi
+          echo "project number: ${BASH_REMATCH[1]}"
+          echo "number=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+
       # max-instances=3 is a COST knob, not a correctness one. Every piece of
       # state that once required a single replica now lives in Postgres or
       # object storage (docs/deployment.md §5.1); the only per-instance state
@@ -314,7 +340,7 @@ jobs:
           #
           # --service-account runs the revision as the per-environment runtime
           # identity provisioned by scripts/gcp-bootstrap.sh, which holds
-          # object access on its own two buckets only — never a project-level
+          # object access on its own three buckets only — never a project-level
           # storage role; the deployer's project-level iam.serviceAccountUser
           # (also granted by that script) is the separate permission that lets
           # it deploy a revision running as that identity.
@@ -335,21 +361,37 @@ jobs:
           # Worker Custom Domains in web/wrangler.jsonc and the smoke-test
           # job below.
           #
-          # Object storage is Google Cloud Storage, and the two bucket names
+          # Object storage is Google Cloud Storage, and the three bucket names
           # are set explicitly per environment. They MUST differ between
           # staging and production — one shared bucket would let a staging
-          # test overwrite a real student's scan or avatar at the same object
-          # path.
+          # test overwrite a real student's scan or avatar, or a tutor's
+          # documents, at the same object path.
           #
           # The `||` fallbacks mean this works with no new GitHub variables:
           # unset `vars.` render as the empty string, which is falsy, so the
           # names default to `<project-id>-uploads-<env>` /
-          # `<project-id>-avatars-<env>` — globally unique because the GCS
-          # namespace is global and the project id already is. Set
-          # `GCS_UPLOADS_BUCKET`/`GCS_AVATAR_BUCKET` as environment variables
+          # `<project-id>-avatars-<env>` / `<project-id>-tutor-evidence-<env>`
+          # — globally unique because the GCS namespace is global and the
+          # project id already is. Set `GCS_UPLOADS_BUCKET`/`GCS_AVATAR_BUCKET`/
+          # `GCS_TUTOR_EVIDENCE_BUCKET` as environment variables
           # (Settings > Environments > staging|production) only to point an
           # environment at differently-named buckets. `scripts/gcp-bootstrap.sh`
           # derives the same defaults, so the pair agree by construction.
+          #
+          # The evidence bucket holds tutors' ID and qualification scans. Its
+          # settings default (`lemely-tutor-evidence`) is a name anyone can
+          # create in GCS's global namespace, so it must never reach a deploy,
+          # and this line always sets a project-scoped name instead (SC-22;
+          # lemely/io/storage_gcs.py refuses the default and checks the bucket
+          # is private). The bootstrap script must have created the bucket
+          # before the first deploy; tests/test_deploy_evidence_bucket.py
+          # checks that the two derive the same name.
+          #
+          # LEMELY_STORAGE__GCS_PROJECT_NUMBER is the project that must own
+          # that bucket, from the "Derive the project number" step above. One
+          # number serves both environments: the bootstrap creates staging and
+          # production in one project. Unset, the backend refuses the evidence
+          # bucket (scans and avatars are unaffected).
           #
           # Web push (VAPID). The public key is handed to every browser and is
           # a repository VARIABLE; the private key is a repository SECRET; the
@@ -365,6 +407,8 @@ jobs:
             LEMELY_STORAGE__GCS_PROJECT=${{ vars.GCP_PROJECT_ID }}
             LEMELY_STORAGE__BUCKET=${{ vars.GCS_UPLOADS_BUCKET || format('{0}-uploads-{1}', vars.GCP_PROJECT_ID, needs.resolve-env.outputs.environment) }}
             LEMELY_STORAGE__AVATAR_BUCKET=${{ vars.GCS_AVATAR_BUCKET || format('{0}-avatars-{1}', vars.GCP_PROJECT_ID, needs.resolve-env.outputs.environment) }}
+            LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET=${{ vars.GCS_TUTOR_EVIDENCE_BUCKET || format('{0}-tutor-evidence-{1}', vars.GCP_PROJECT_ID, needs.resolve-env.outputs.environment) }}
+            LEMELY_STORAGE__GCS_PROJECT_NUMBER=${{ steps.project-number.outputs.number }}
             LEMELY_LOGGING__FORMAT=json
             LEMELY_GRADING__EQUIVALENCE_GATE=${{ vars.GRADING_EQUIVALENCE_GATE || 'false' }}
             LEMELY_GRADING__ECF_SUBSTITUTION=${{ vars.GRADING_ECF_SUBSTITUTION || 'false' }}
@@ -500,6 +544,44 @@ jobs:
           # an environment sets GCS_UPLOADS_BUCKET, failing a correct deploy.
           EXPECTED_BUCKET="${{ vars.GCS_UPLOADS_BUCKET || format('{0}-uploads-{1}', vars.GCP_PROJECT_ID, needs.resolve-env.outputs.environment) }}"
           echo "$BODY" | grep -q "\"bucket\":\"${EXPECTED_BUCKET}\"" || { echo "health reports the wrong bucket (expected ${EXPECTED_BUCKET})"; exit 1; }
+
+      # The tutor evidence bucket, judged the way the backend judges it before
+      # its first evidence operation (lemely/io/storage_gcs.py, SC-22): public
+      # access prevention enforced, uniform bucket-level access on, and owned by
+      # the project number the service was just given. /api/health cannot
+      # report it (the backend checks on first use; health never touches
+      # storage), so without this a deploy whose bootstrap was never re-run went
+      # green while every tutor document upload answered 503. BUCKET and
+      # EXPECTED_NUMBER are the same expressions as the env_vars above. Read as
+      # the deploy account through the JSON API's buckets.get, which returns
+      # projectNumber; scripts/gcp-bootstrap.sh grants that account
+      # legacyBucketReader on this one bucket for it.
+      - name: Verify the tutor evidence bucket is private and this project's
+        env:
+          BUCKET: ${{ vars.GCS_TUTOR_EVIDENCE_BUCKET || format('{0}-tutor-evidence-{1}', vars.GCP_PROJECT_ID, needs.resolve-env.outputs.environment) }}
+          EXPECTED_NUMBER: ${{ steps.project-number.outputs.number }}
+        run: |
+          set -euo pipefail
+          TOKEN="$(gcloud auth print-access-token)"
+          echo "::add-mask::$TOKEN"
+          if ! BODY="$(curl --fail --silent --show-error --retry 3 --retry-delay 5 \
+                         -H "Authorization: Bearer $TOKEN" \
+                         "https://storage.googleapis.com/storage/v1/b/${BUCKET}?fields=projectNumber,iamConfiguration")"; then
+            echo "::error::Cannot read the settings of gs://$BUCKET as the deploy account. Run scripts/gcp-bootstrap.sh: it creates the bucket private and grants the deploy account legacyBucketReader on it."
+            exit 1
+          fi
+          PREVENTION="$(printf '%s' "$BODY" | jq -r '.iamConfiguration.publicAccessPrevention // "unset"')"
+          UNIFORM="$(printf '%s' "$BODY" | jq -r '.iamConfiguration.uniformBucketLevelAccess.enabled // false')"
+          OWNER="$(printf '%s' "$BODY" | jq -r '.projectNumber // "none"')"
+          echo "gs://$BUCKET: public access prevention $PREVENTION, uniform bucket-level access $UNIFORM, owning project number $OWNER"
+          if [ "$PREVENTION" != "enforced" ] || [ "$UNIFORM" != "true" ]; then
+            echo "::error::gs://$BUCKET is not private: public access prevention is $PREVENTION and uniform bucket-level access is $UNIFORM; both must be on. The backend refuses it, so tutor document uploads answer 503. Run scripts/gcp-bootstrap.sh."
+            exit 1
+          fi
+          if [ "$OWNER" != "$EXPECTED_NUMBER" ]; then
+            echo "::error::gs://$BUCKET has owning project number $OWNER, not this project's $EXPECTED_NUMBER (LEMELY_STORAGE__GCS_PROJECT_NUMBER, from GCP_WORKLOAD_IDENTITY_PROVIDER). The backend refuses it. Either another project registered this name first (do not use it; docs/deployment.md section 5.9) or the workload identity provider lives in another project."
+            exit 1
+          fi
 
   deploy-frontend:
     needs: [resolve-env, deploy-backend]

@@ -206,6 +206,188 @@ export const dataHandlingSections: DataHandlingSection[] = [
   },
 ]
 
+/*
+ * The tutoring marketplace (SPEC `docs/tutoring/SPEC.md` section f, release
+ * groupings 1, 2 and 4, plus the review and report data of groupings 3 and 5).
+ *
+ * These sections follow the rule at the top of this file: each sentence
+ * describes behaviour and names the module that does it, and a claim with no
+ * source comment does not ship. They are a separate export, not part of
+ * `dataHandlingSections`, because two of the original guards in
+ * `dataHandling.test.ts` apply to that array only: the "no retention number
+ * outside the deletion panel" test, and the original six headings. Every number
+ * below is pinned to the Python constant behind it by the last describe in
+ * that test file, so a changed constant turns the test red rather than leaving
+ * the page stale.
+ *
+ * Where an item is an accepted limit rather than a feature, the sentence says
+ * so in plain words (SPEC section i.3, i.8, i.9; `docs/tutoring/adr/`).
+ */
+export const tutoringSections: DataHandlingSection[] = [
+  {
+    heading: "Tutors on the public directory",
+    /*
+     * `lemely/web/schemas_tutoring.py`: `TutorCardDTO` is "the only tutor
+     * fields the open web ever sees" (publicName, headline, subjects, modes,
+     * area, rating), and `tutorId` is `tutor_profiles.id`, never `users.id`.
+     * `PublicTutorCardDTO.indexable` is the one extra boolean the edge reads.
+     * `web/worker/robots.ts`: `handleTutorPage` sends `noindex, nofollow` for
+     * anything but a 200 with `indexable === true` (a failed or slow lookup
+     * counts), `DIRECTORY_ROBOTS_TAG` keeps the directory page itself out of
+     * the index, and `PUBLIC_CACHE_TTL_SECONDS` (60) is the delay before an
+     * opt-out reaches the edge. A search engine's own re-crawl is outside this
+     * repository, so the sentence says "when it next visits" and gives no date.
+     */
+    body: "A tutor's public card shows a first name and last initial, a headline, subjects, teaching modes, a city area and a rating summary. It carries a tutor identifier, not the account identifier. Search engines can list a card unless the tutor turns that off in their profile, and the directory page itself is marked not to be indexed. If the edge cannot check a card, the card is marked not to be indexed. An opt-out reaches Lemely's edge within a minute, but a search engine drops a card only when it next visits it.",
+  },
+  {
+    heading: "Documents a tutor uploads",
+    /*
+     * `lemely/db/tutor_evidence_repo.py`: `MAX_EVIDENCE_FILES` (5), and
+     * `open_for_admin` signs each file's URL and writes one `evidence_open`
+     * row per URL (`TutoringAdminAction` in `lemely/db/models/enums.py`,
+     * table `TutoringAdminAccess` in `lemely/db/models/tutoring.py`).
+     * `lemely/io/evidence_files.py`: `MAX_EVIDENCE_BYTES` (10 MiB).
+     * `lemely/runtime/config.py`: `tutor_evidence_bucket` is its own private
+     * bucket; `tutor_evidence_signed_url_ttl_seconds` (300).
+     * `documents_seen_at` is cleared by any evidence change
+     * (`tutor_evidence_repo.py`). "Documents seen" is that timestamp and
+     * nothing else: no identity, issuer or records check exists in this code.
+     */
+    body: "A tutor can upload up to 5 files of up to 10 MiB each as evidence of their qualifications. They are kept in a separate private bucket in Google Cloud Storage and are opened only by a Lemely platform administrator, through a link that lasts 300 seconds. Each open is logged. \"Documents seen\" means an administrator looked at them. It is not an identity check, a check with whoever issued the qualification, or a criminal-records check. Changing the documents removes the badge until an administrator looks again.",
+  },
+  {
+    heading: "Booking a session",
+    /*
+     * `lemely/db/models/tutoring.py` (`TutorBooking`) holds the student, the
+     * tutor, subject, mode, start and end, the requesting party, the state,
+     * the decline and cancel reasons and the meeting link or place.
+     * `lemely/core/booking.py`: `CANCEL_CUTOFF` (24 hours) is the point after
+     * which only the tutor may cancel, with a reason the student and linked
+     * parents see (`ck_tutor_bookings_late_cancel_reason`). A request whose
+     * start has passed is shown as expired by `EFFECTIVE_STATE_SQL`
+     * (`lemely/db/tutoring_predicates.py`) when read; no job rewrites it.
+     */
+    body: "A booking records the student, the tutor, the subject, the mode, the start and end, who requested it (the student or a linked parent), its state, and any reason given and any meeting link or place the tutor entered. A student or parent cannot cancel inside 24 hours of the start. The tutor can, with a reason that the student and linked parents see. A request whose start time has passed is shown as expired when it is read. Nothing changes it in the database until that student next requests that tutor.",
+  },
+  {
+    heading: "Notes between a student and a tutor",
+    /*
+     * `lemely/db/booking_repo.py`: notes are posted by the booking's student or
+     * tutor only; a linked parent reads and cannot post. `NOTE_POST_GRACE` in
+     * `lemely/core/booking.py` (7 days) is how long after the session notes
+     * stay open. `lemely/core/contact_patterns.py` checks free text for phone
+     * numbers, emails, links and handles when it is posted.
+     * `lemely/web/routers/admin_tutoring_reports.py` is the only route that
+     * returns a thread to an administrator, and it writes a
+     * `report_thread_view` row (`TutoringAdminAction`) each time. Nothing
+     * else in this code reads note text, which is why the sentence says
+     * "only when a note is reported".
+     */
+    body: "Each booking has a notes thread between the student and the tutor. Notes can be posted for 7 days after the session. Linked parents can read the notes and cannot post. When a note is posted, the text is checked for phone numbers, email addresses, links and social handles, and a determined person can still spell one out. Lemely staff read a thread only when a note is reported, and each time a platform administrator opens a reported thread, that view is logged.",
+  },
+  {
+    heading: "Emails about bookings",
+    /*
+     * `lemely/web/tutoring_email.py`: a queued row in `email_outbox`
+     * (`lemely/db/email_outbox_repo.py`) is handled once, by the 60-second
+     * sweeper. A placeholder address, an unconfirmed recipient or a switched-off
+     * notice type is `skipped`; with the mock provider a row is `skipped` with
+     * `last_error='mock_provider'` and never `sent`; a failed send is never
+     * retried. `lemely/runtime/config.py`: `TutoringSettings.email_daily_cap`
+     * (60). `lemely/io/notify_email.py` is the provider seam.
+     */
+    body: "Booking and safeguarding events queue an email, and the same job that sends other notifications delivers it once. Emails go only to addresses the recipient has confirmed, and at most 60 a day are sent. If no email provider key is set, queued emails are recorded as skipped and nothing is sent. A failed email is not retried. An email can wait in the queue while no server is running, and a crash at the wrong moment can send one twice.",
+  },
+  {
+    heading: "Reviews of a tutor",
+    /*
+     * `lemely/db/tutor_review_repo.py` and `TutorReview` in
+     * `lemely/db/models/tutoring.py`: one review per completed booking, by that
+     * booking's student. `lemely/core/tutor_ratings.py`: `REVIEW_EDIT_WINDOW`
+     * (14 days) and `REVIEW_MIN_ACCOUNT_AGE` (14 days). Review text and a
+     * tutor's reply are held until an administrator approves them
+     * (`lemely/web/routers/admin_tutoring_moderation.py`). The public reviewer
+     * label is the fixed "A student" (`ReviewDTO` in
+     * `lemely/web/schemas_tutoring.py`); the count shown is distinct students,
+     * so a tutor with few students can still sometimes guess a reviewer.
+     */
+    body: "A student who completed a session can review it once and edit the review for 14 days. Review text, and the tutor's one reply, are read by a Lemely administrator before they are public. A review shows \"A student\" and a season, not a name or a date, but a tutor with few students can sometimes guess who wrote it. Any signed-in student with a confirmed email address can read reviews.",
+  },
+  {
+    heading: "Parent links and class joins",
+    /*
+     * `lemely/db/parent_repo.py`: `ParentLinkService.unlink` writes a
+     * `parent_link_events` row and tells the unlinked parent once;
+     * `MAX_LINKED_PARENTS` (4) is the cap, enforced in `link_in_session`.
+     * `lemely/db/invite_repo.py` (`_redeem_parent_invite`) tells the parents
+     * already linked when another links. `lemely/db/class_repo.py`
+     * (`join_by_code_outcome`): joining a class that has no school and whose
+     * teacher holds a tutor profile sends the student's linked parents a
+     * notice. These notices are information, not approvals.
+     */
+    body: "A student can remove a parent link at any time. The parent is told once, when it happens, and nothing after that. A child can have at most 4 linked parents, and parents already linked are told when another links. When a student joins a class that has no school and is taught by someone who is also a tutor, the student's linked parents are told. These notices are not approvals, and a parent cannot stop the join.",
+  },
+  {
+    heading: "Sharing your progress with a tutor",
+    /*
+     * `lemely/core/tutor_grants.py` and `lemely/db/tutor_grant_repo.py`: a
+     * grant is made by the student alone, minors included, covers all subjects
+     * and lasts until the student stops it; validity is computed when read.
+     * `lemely/web/student_detail_view.py` (`project_for_tutor`): derived
+     * analytics only, dates without times of day, no question ids, no answer
+     * sheets. `TutorAccessAudit` in `lemely/db/models/tutoring.py` is the
+     * append-only log of every read, shown to the student;
+     * `lemely/web/routers/parent_tutor_access.py` shows linked parents the
+     * grants and the log, read-only, with no revoke. Decision rows 3b and 10
+     * (`BUILD/tutoring/decision-log.md`) and ADR-T02 record that this is
+     * allowed without a parent's approval.
+     */
+    body: "Only the student can share their progress with a listed tutor, at any age, and only the student can stop it. Sharing covers all subjects until it is stopped. The tutor sees derived figures such as grades, predicted and target grades, marks, weak topics, trend, warnings and the days the student was active. They never see answer sheets or the time of day a student used Lemely. Every time a tutor looks, a record is kept that the student can read. Linked parents can see who the student shares with and each time a tutor looked, but they cannot stop it.",
+  },
+  {
+    heading: "Past-student results and counting",
+    /*
+     * `lemely/core/tutor_outcomes.py`: `OUTCOME_K_MIN` (5), `DURING_WINDOW`
+     * (120 days from the first session), `BEFORE_LOOKBACK` (180 days) and
+     * `OPT_CHANGE_HOLD` (90 days). `lemely/db/tutor_outcomes_repo.py` builds
+     * the cohort; `StudentTutoringPreferences.outcome_stats_opt_out` defaults
+     * to counted. Grades worked out from estimated boundaries are left out
+     * (ADR-T04). The caveats are the ones the profile screen shows; the
+     * residual that a tutor can sometimes compare a figure over time is
+     * decision row 13 and ADR-T04 R5, stated in `docs/tutoring/SPEC.md`
+     * section g (5.7), so it is stated here too.
+     */
+    body: "A tutor's profile can show grades of past students, without names. A student who has a session with that tutor is counted unless they opt out. Grades come from papers uploaded in the 120 days from the first session, compared with the latest grade before it. A figure appears only when at least 5 students have a marked paper, and only when no single student's grade could be worked out from it. It is hidden for 90 days after anyone's counting choice changes. The grades come from Lemely's automatic marking and leave out grades from estimated boundaries. The figure does not show what the tutor caused, because students choose their tutors. A tutor can sometimes work out one student's grade by comparing the figure over time, and this is an accepted limit.",
+  },
+  {
+    heading: "Reports and blocks",
+    /*
+     * `lemely/db/tutoring_reports_repo.py`: a report keeps a snapshot of what
+     * was reported (`TutoringReport.target_snapshot`), `safety_concern` reports
+     * freeze the notes of the booking, and a platform administrator resolves
+     * them. `lemely/db/tutoring_blocks_repo.py`: a student or a tutor can block
+     * the other; a block ends any sharing and cancels sessions between them
+     * (`lemely/db/tutoring_sweeps.py`). Rows are never deleted
+     * (`TutoringBlock` in `lemely/db/models/tutoring.py`), so a past block
+     * stays on record.
+     */
+    body: "Students, linked parents and tutors can report what they can see in tutoring, such as a tutor profile, a booking, a note, a review or a reply. A report keeps a copy of what was reported, and a platform administrator reads it and the thread it came from. A safety concern pauses the notes of that booking until it is resolved. A student or a tutor can block the other: a block ends sharing and cancels upcoming sessions between them. Block and report records are kept and not deleted.",
+  },
+  {
+    heading: "Teachers who can see your progress through a class",
+    /*
+     * A class teacher sees a student through the roster gate described under
+     * "Who else can see your work"; the tutor grant is a separate gate and
+     * never unions with it (ADR-T03). `lemely/web/routers/student_tutor_access.py`
+     * (S16, S17) lists the classes whose teacher also has a tutor profile and
+     * lets a student leave a class that has no school. A class at a school is
+     * left through the school, so the screen says to ask the school.
+     */
+    body: "If a student is in a class taught by a teacher who is also a tutor, that teacher can see the student's progress through the class, as any class teacher can, even when the student has not shared anything as a tutoring student. A student can leave a class that has no school from the tutoring data screen. A class at a school is left through the school.",
+  },
+]
+
 /** The public shape of the deletion feature, for `DataHandlingDeletion` below. */
 export interface DataHandlingDeletion {
   tag: string

@@ -602,3 +602,91 @@ def test_a_sweeper_with_storage_also_runs_the_purge_job(
         "purge_expired_papers": 0,
         "purge_expired_teacher_papers": 0,
     }
+
+
+# -- the tutoring email job (SPEC §b.4) ----------------------------------------
+
+
+def test_sweep_once_without_provider_keeps_existing_job_set(
+    pg_sessionmaker: sessionmaker[Session],
+    notifications: NotificationService,
+    transport: RecordingPushTransport,
+) -> None:
+    """A sweeper built without an email provider runs exactly the pre-tutoring jobs, in order."""
+    from lemely.db.announcement_repo import AnnouncementService
+    from lemely.db.class_repo import ClassService
+    from lemely.runtime.config import NotificationsSettings
+    from tests.storage_fakes import FakeStorageBackend
+
+    sweeper = Sweeper(
+        sessionmaker=pg_sessionmaker,
+        announcements=AnnouncementService(pg_sessionmaker, ClassService(pg_sessionmaker)),
+        notifications=notifications,
+        transport=transport,
+        settings=NotificationsSettings(),
+        now=lambda: CAIRO_EVENING,
+        storage=FakeStorageBackend(),
+        bucket="lemely-uploads-test",
+    )
+
+    assert list(sweeper.sweep_once()) == [
+        "publish_due_announcements",
+        "warn_streaks",
+        "remind_study_plans",
+        "purge_expired_papers",
+        "purge_expired_teacher_papers",
+    ]
+
+
+def test_sweep_once_runs_email_job_only_with_provider(
+    pg_sessionmaker: sessionmaker[Session],
+    notifications: NotificationService,
+    transport: RecordingPushTransport,
+) -> None:
+    """With a provider the pass gains ``deliver_tutoring_email`` and it delivers a pending row."""
+    from lemely.db.announcement_repo import AnnouncementService
+    from lemely.db.class_repo import ClassService
+    from lemely.db.email_outbox_repo import enqueue_in_session
+    from lemely.db.models.enums import EmailOutboxStatus
+    from lemely.db.models.tutoring import EmailOutbox
+    from lemely.runtime.config import NotificationsSettings
+    from tests.test_email_outbox_repo import RecordingProvider
+    from tests.test_notify_email import VALID
+
+    recipient = _seed_user(pg_sessionmaker, role=Role.teacher)
+    with pg_sessionmaker.begin() as session:
+        session.execute(
+            sa.update(User).where(User.id == recipient).values(email_verified_at=CAIRO_EVENING)
+        )
+        enqueue_in_session(
+            session,
+            recipient_user_id=recipient,
+            template="booking_requested",
+            context=VALID["booking_requested"],
+            dedupe_key="sweep-job",
+        )
+    provider = RecordingProvider()
+
+    sweeper = Sweeper(
+        sessionmaker=pg_sessionmaker,
+        announcements=AnnouncementService(pg_sessionmaker, ClassService(pg_sessionmaker)),
+        notifications=notifications,
+        transport=transport,
+        settings=NotificationsSettings(),
+        now=lambda: CAIRO_EVENING,
+        email_provider=provider,
+        email_daily_cap=5,
+    )
+
+    assert sweeper.sweep_once() == {
+        "publish_due_announcements": 0,
+        "warn_streaks": 0,
+        "remind_study_plans": 0,
+        "deliver_tutoring_email": 1,
+    }
+    assert len(provider.calls) == 1
+    with pg_sessionmaker() as session:
+        assert session.scalar(sa.select(EmailOutbox.status)) is EmailOutboxStatus.sent
+    # The second pass has nothing left to do and sends nothing again.
+    assert sweeper.sweep_once()["deliver_tutoring_email"] == 0
+    assert len(provider.calls) == 1

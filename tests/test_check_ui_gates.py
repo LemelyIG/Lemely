@@ -17,7 +17,16 @@ from typing import Protocol
 import pytest
 
 from scripts import check_ui_gates
-from scripts.check_ui_gates import PERF_GATED_TEACHER_SLUGS, is_perf_gated_route, is_student_route
+from scripts.check_ui_gates import (
+    PERF_GATED_TEACHER_SLUGS,
+    PERF_GATED_TUTORING_SLUGS,
+    is_perf_gated_route,
+    is_student_route,
+)
+
+REGISTRY_MODULE = (
+    Path(__file__).resolve().parent.parent / "web" / "scripts" / "audit_tutoring_registry.mjs"
+)
 
 RouteRow = dict[str, object]
 
@@ -163,5 +172,96 @@ class TestPerformanceFloorEndToEnd:
             lighthouse_rows=[
                 _lh_row(slug="student-correct", path="/student/correct", performance=79)
             ]
+        )
+        assert check_ui_gates.main() == 1
+
+
+class TestTutoringPerformanceGate:
+    """T33 (SPEC §d, "Accessibility and performance gate routes"): Lighthouse performance
+    >= 80 on ``/tutors``, ``/tutors/:id`` and every ``/student/*`` route. The two public
+    pages sit outside the ``/student`` subtree, so they are gated by slug."""
+
+    def test_public_directory_is_gated(self) -> None:
+        assert is_perf_gated_route(_route(path="/tutors", slug="tutors-directory"))
+
+    def test_public_card_is_gated(self) -> None:
+        card = _route(
+            path="/tutors/6f6b9baf-5c31-41ab-ba1b-5e2bde560fbb", slug="tutors-public-card"
+        )
+        assert is_perf_gated_route(card)
+
+    def test_student_tutoring_routes_are_gated_by_path(self) -> None:
+        for path in (
+            "/student/tutors",
+            "/student/tutors/abc",
+            "/student/tutors/abc/book",
+            "/student/sessions",
+            "/student/sessions/abc",
+            "/student/tutor-access",
+        ):
+            assert is_perf_gated_route(_route(path=path, slug="any-slug-at-all")), path
+
+    def test_teacher_parent_and_admin_tutoring_routes_are_not_gated(self) -> None:
+        for path, slug in (
+            ("/teacher/tutoring", "teacher-tutoring-home"),
+            ("/parent/tutors", "parent-tutors"),
+            ("/platform/tutors", "platform-tutors"),
+        ):
+            assert not is_perf_gated_route(_route(path=path, slug=slug)), path
+
+    def test_gated_slugs_are_exactly_the_two_public_pages(self) -> None:
+        assert set(PERF_GATED_TUTORING_SLUGS) == {"tutors-directory", "tutors-public-card"}
+
+    def test_gated_slugs_are_the_ones_the_audit_registers(self) -> None:
+        # A slug the gate names but the audit never writes would gate nothing (the gate only
+        # reads rows that exist), so the names are checked against the registry's own text.
+        registry = REGISTRY_MODULE.read_text(encoding="utf-8")
+        for slug in PERF_GATED_TUTORING_SLUGS:
+            assert f'slug: "{slug}"' in registry, slug
+
+    def test_directory_below_floor_fails(self, report_dir: WriteReport) -> None:
+        report_dir(
+            lighthouse_rows=[_lh_row(slug="tutors-directory", path="/tutors", performance=79)]
+        )
+        assert check_ui_gates.main() == 1
+
+    def test_directory_at_floor_passes(self, report_dir: WriteReport) -> None:
+        report_dir(
+            lighthouse_rows=[_lh_row(slug="tutors-directory", path="/tutors", performance=80)]
+        )
+        assert check_ui_gates.main() == 0
+
+    def test_student_tutor_profile_below_floor_fails(self, report_dir: WriteReport) -> None:
+        report_dir(
+            lighthouse_rows=[
+                _lh_row(slug="student-tutor-profile", path="/student/tutors/abc", performance=79)
+            ]
+        )
+        assert check_ui_gates.main() == 1
+
+    def test_teacher_tutoring_home_at_50_is_not_gated(self, report_dir: WriteReport) -> None:
+        report_dir(
+            lighthouse_rows=[
+                _lh_row(slug="teacher-tutoring-home", path="/teacher/tutoring", performance=50)
+            ]
+        )
+        assert check_ui_gates.main() == 0
+
+    def test_a_route_that_died_mid_run_fails_the_gate(self, report_dir: WriteReport) -> None:
+        # P28: an entry whose `ready` never matched (a login redirect, an error page) is a
+        # route failure, and the gate reads route-failures.json.
+        report_dir(
+            lighthouse_rows=[_lh_row(slug="tutors-directory", path="/tutors", performance=95)]
+        )
+        check_ui_gates.ROUTE_FAILURES.write_text(
+            json.dumps(
+                [
+                    {
+                        "screenId": "G-16",
+                        "path": "/tutors",
+                        "error": "Waiting failed: 20000ms exceeded",
+                    }
+                ]
+            )
         )
         assert check_ui_gates.main() == 1

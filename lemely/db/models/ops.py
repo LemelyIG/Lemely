@@ -483,6 +483,24 @@ class NotificationPreference(TimestampMixin, Base):
     review_withdrawn: Mapped[bool] = mapped_column(
         sa.Boolean, nullable=False, server_default=sa.true()
     )
+    # The eight tutoring types (migration 0044_tutoring_enums_ext, SPEC §a.1).
+    # Which roles see and set each toggle is decided in lemely.web.routers.me.
+    booking_request: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.true()
+    )
+    booking_update: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.true()
+    )
+    booking_note: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.true())
+    tutor_access: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.true())
+    tutor_review: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.true())
+    tutor_listing: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.true()
+    )
+    parent_link: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.true())
+    tutoring_report: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.true()
+    )
     quiet_hours_start: Mapped[time | None] = mapped_column(sa.Time(), nullable=True)
     quiet_hours_end: Mapped[time | None] = mapped_column(sa.Time(), nullable=True)
 

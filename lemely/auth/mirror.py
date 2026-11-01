@@ -14,7 +14,7 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Protocol
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from lemely.db.models import User
 from lemely.db.models.enums import Role
@@ -71,7 +71,7 @@ class UserMirror(Protocol):
         ...
 
     def mark_email_verified(self, user_id: uuid.UUID, *, verified_at: datetime) -> None:
-        """Stamp ``users.email_verified_at`` for ``user_id`` (D7.4).
+        """Stamp ``users.email_verified_at`` for ``user_id`` (D7.4), keeping the first instant.
 
         Called by both halves of §4.4's link-and-code pair —
         :meth:`~lemely.auth.service.AuthService.verify_email` (having redeemed
@@ -79,10 +79,13 @@ class UserMirror(Protocol):
         :meth:`~lemely.auth.service.AuthService.verify_email_code` (having
         verified the email-channel OTP) — each immediately after establishing
         the fact for this exact ``user_id``. The two credentials are
-        independent, so an account may legitimately reach here twice; the
-        write is a plain overwrite and therefore idempotent. This method does
-        no further checking of its own and simply writes the timestamp it is
-        given. A ``user_id`` with no
+        independent, and a resend mints new ones, so an account may
+        legitimately reach here more than once. **Only the first call writes:**
+        the stamp is set while it is ``NULL`` and never moved afterwards,
+        because tutoring outcome statistics count a student only if their email
+        was verified at or before their first session (ADR-T04), and a later
+        re-verification must not change that. Idempotent either way. A
+        ``user_id`` with no
         mirrored row is a silent no-op rather than a raised error: it should
         be unreachable in practice (verification always names a user
         :meth:`~lemely.auth.service.AuthService.signup` itself just mirrored),
@@ -189,11 +192,17 @@ class DbUserMirror:
             return user
 
     def mark_email_verified(self, user_id: uuid.UUID, *, verified_at: datetime) -> None:
-        """Stamp ``users.email_verified_at`` for ``user_id``, if the row exists."""
+        """Stamp ``users.email_verified_at`` for ``user_id`` unless it is already set.
+
+        One conditional ``UPDATE … WHERE email_verified_at IS NULL``: two
+        verifications racing cannot both write, and the first instant is kept.
+        """
         with session_scope(self._settings) as session:
-            user = session.get(User, user_id)
-            if user is not None:
-                user.email_verified_at = verified_at
+            session.execute(
+                update(User)
+                .where(User.id == user_id, User.email_verified_at.is_(None))
+                .values(email_verified_at=verified_at)
+            )
 
     def set_avatar_path(self, user_id: uuid.UUID, path: str | None) -> None:
         """Set or clear ``users.avatar_path`` for ``user_id``, if the row exists."""

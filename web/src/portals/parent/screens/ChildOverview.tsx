@@ -8,6 +8,7 @@ import { WeaknessChip } from "@/components/ui/weakness-chip"
 import { QueryState } from "@/components/ui/query-state"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { parentLoadFailureMessage } from "@/lib/parentOutcome"
+import { parentChildTutoringHref } from "@/lib/tutoring/parentTutoring"
 import { subjectIdentifier } from "@/lib/subjectIdentifier"
 import { useReference } from "@/lib/hooks/useReferenceApi"
 import { accuracyTone, TONE_TO_SEVERITY } from "@/lib/severity"
@@ -251,6 +252,16 @@ export function ChildOverview() {
                 <p className="text-body-md text-ink-muted">
                   How they're getting on, from their marked papers.
                 </p>
+                {/* T27 · P-05. Quiet on purpose: tutoring is not this page's
+                    subject, so it is one link, not a section, and it adds no
+                    heading to the page. */}
+                <Link
+                  to={parentChildTutoringHref(childId)}
+                  className="mt-1 inline-flex w-fit items-center gap-1.5 rounded-md text-body-md text-accent-ink underline underline-offset-4 transition-colors hover:text-accent-hover active:text-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring pointer-coarse:min-h-11"
+                >
+                  Tutoring
+                  <CaretRight size={14} aria-hidden="true" />
+                </Link>
               </div>
 
               {/* "Activity summary (how much they've been working — parents ask this
