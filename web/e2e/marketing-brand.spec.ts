@@ -66,7 +66,10 @@ test('walkthrough, review and FAQ work with the keyboard', async ({ page }) => {
   await page
     .getByRole('textbox', { name: 'Ask anything else' })
     .fill('Can we arrange a demo?')
-  // Send is disabled until both fields are valid; sending only writes into the chat.
+  // Send is disabled until both fields are valid; the API is route-mocked.
+  await page.route('**/api/contact', (route) =>
+    route.fulfill({ status: 202, json: { accepted: true } }),
+  )
   const send = page.getByRole('button', { name: 'Send', exact: true })
   await expect(send).toBeDisabled()
   await page.getByRole('textbox', { name: 'Your email' }).fill('a@b.co')
@@ -102,7 +105,7 @@ test('responsive layout and accessible mobile navigation', async ({
   const header = page.locator('.brand-header')
   await expect(header.getByRole('link', { name: 'Sign in' })).toBeVisible()
   await expect(header.getByRole('link', { name: 'Sign up' })).toBeHidden()
-  await expect(header.getByRole('button', { name: 'Open menu' })).toBeHidden()
+  await expect(header.getByRole('button', { name: 'Open menu' })).toBeVisible()
   await page.setViewportSize({ width: 768, height: 900 })
   await page.getByRole('button', { name: 'Open menu' }).click()
   await expect(page.getByRole('dialog')).toBeVisible()
@@ -111,6 +114,7 @@ test('responsive layout and accessible mobile navigation', async ({
     .getByRole('link', { name: 'Features', exact: true })
     .click()
   await expect(page.getByRole('dialog')).not.toBeVisible()
+  await expect(page).toHaveURL(/#features$/)
   const results = await new AxeBuilder({ page }).analyze()
   expect(results.violations).toEqual([])
   await page.screenshot({

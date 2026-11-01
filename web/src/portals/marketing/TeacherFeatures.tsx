@@ -17,8 +17,8 @@ const icons = {
 export function TeacherFeatures() {
   return (
     <section
+      id="teachers"
       className="brand-teachers brand-section"
-      data-nav-section="teachers"
     >
       <div className="brand-wrap">
         <h2>Built for independent teachers.</h2>

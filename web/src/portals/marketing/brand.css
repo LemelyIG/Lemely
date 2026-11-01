@@ -3,7 +3,9 @@
 .marketing-brand *, .marketing-brand *::before, .marketing-brand *::after { box-sizing:border-box; }
 .marketing-brand a { text-decoration:none; }
 .marketing-brand a:hover { opacity:.85; }
-.marketing-brand :focus-visible { outline:2.5px solid var(--brand-tide); outline-offset:4px; }
+.marketing-brand :focus-visible { outline:2.5px solid var(--brand-focus,var(--brand-abyss)); outline-offset:3px; }
+/* Dark surfaces take the tide ring (6.6:1 on abyss); light surfaces take abyss (12.9:1). The tide ring on paper was 2.1:1. */
+.brand-proof,.brand-teachers,.brand-closing,.brand-feature-core,.brand-school,.brand-accuracy { --brand-focus:var(--brand-tide); }
 .marketing-brand h1,.marketing-brand h2,.marketing-brand h3,.marketing-brand p,.marketing-brand figure { margin:0; }
 .marketing-brand h1,.marketing-brand h2 { font-family:var(--brand-display); font-weight:800; letter-spacing:-.045em; line-height:.95; text-wrap:balance; }
 .marketing-brand h2 { font-size:clamp(40px,5vw,68px); margin:16px 0 48px; }
@@ -11,17 +13,33 @@
 .marketing-brand p { text-wrap:pretty; }
 .marketing-brand .brand-wrap { max-width:1304px; margin-inline:auto; padding-inline:32px; }
 .brand-section { padding-block:112px; scroll-margin-top:80px; }
-.brand-label,.brand-fine { font-family:var(--brand-mono); font-size:11px; line-height:1.6; letter-spacing:.065em; color:var(--brand-muted); }
+.brand-label,.brand-fine { font-family:var(--brand-mono); font-size:12px; line-height:1.6; letter-spacing:.065em; color:var(--brand-muted); }
 .brand-label { display:block; }
 .brand-header { position:sticky; top:0; z-index:var(--z-index-nav); background:color-mix(in oklch,var(--brand-paper) 86%,transparent); backdrop-filter:blur(14px); border-bottom:1px solid var(--brand-line); }
 .brand-nav { height:64px; display:flex; align-items:center; justify-content:space-between; gap:28px; }
 .clip-wordmark { display:inline-flex; align-items:flex-end; color:var(--brand-abyss); }
 .clip-wordmark span { font:800 26px/.82 var(--brand-display); letter-spacing:-.04em; color:var(--brand-ink); }
+/* Header logo: sized in em so the clip keeps the base 12:29 box ratio against the 26px text. */
+/* Lift so the letter bodies (not the clip tops or the y descender) line up with the nav text. */
+.brand-nav .clip-wordmark { font-size:42px; transform:translateY(-.14em); }
+.brand-nav .clip-wordmark span { font-size:1em; }
+.brand-nav .clip-wordmark svg { width:.4615em; height:1.115em; }
+@media(max-width:759px) { .brand-nav .clip-wordmark { font-size:34px; } }
+/* Desktop header wrap is 1240px, hero wrap 1304px: slide only the logo out by the difference so it lines up with the hero headline. */
+@media(min-width:1051px) { .brand-nav > a:first-child { transform:translateX(calc((min(100vw, 1240px) - min(100vw, 1304px)) / 2)); } }
 .brand-desktop-nav,.brand-nav-actions { display:flex; align-items:center; gap:28px; font-size:14px; font-weight:600; }
 .marketing-brand .brand-nav-actions>a:last-of-type { border-radius:10px; font-family:var(--brand-body); color:var(--brand-white); }
 .marketing-brand .brand-menu-trigger { display:none; }
 .brand-desktop-nav a { color:var(--brand-nav-link); transition:color .2s; }
+.marketing-brand .brand-menu-trigger { min-width:44px; min-height:44px; }
 .brand-menu { padding:28px; }
+.brand-menu .brand-menu-close { position:absolute; top:12px; inset-inline-end:12px; display:inline-flex; align-items:center; justify-content:center; width:44px; height:44px; border-radius:10px; color:var(--brand-abyss); background:transparent; }
+.brand-menu .brand-menu-close:hover { background:var(--brand-subtle); }
+.brand-menu .brand-menu-close:focus-visible { outline:2px solid var(--brand-abyss); outline-offset:2px; }
+.brand-menu nav a { display:flex; align-items:center; min-height:44px; }
+.brand-menu nav a[aria-current=location] { color:var(--brand-abyss); font-weight:700; }
+.brand-menu nav a.brand-menu-signup { justify-content:center; margin-top:12px; }
+body[data-scroll-locked] .brand-mobile-upload { display:none; }
 .brand-menu nav { display:flex; flex-direction:column; gap:12px; }
 .brand-menu nav a { padding:12px; }
 .brand-menu [data-slot=sheet-header] { padding:0 0 24px; }
@@ -40,7 +58,7 @@
 .brand-chart { position:relative; background:var(--brand-white); border:1px solid var(--brand-border); box-shadow:var(--brand-shadow); border-radius:28px; padding:22px 22px 14px; }
 .brand-chart-head { display:flex; align-items:center; gap:12px; }
 .brand-chart-head strong { font-size:14px; }
-.brand-chart-head .brand-label { font-size:9px; }
+.brand-chart-head .brand-label { font-size:12px; }
 .brand-avatar { display:grid; place-items:center; width:40px; height:40px; background:var(--brand-wash); color:var(--brand-abyss); border-radius:50%; font-weight:800; flex-shrink:0; }
 .brand-predicted { margin-left:auto; text-align:center; }
 .brand-predicted b { display:block; border-radius:10px; background:var(--brand-ok); color:var(--brand-white); font:800 26px var(--brand-display); padding:0 12px; }
@@ -65,7 +83,7 @@
 .brand-teacher-icon { display:flex; justify-content:space-between; align-items:center; color:var(--brand-tide); margin-bottom:24px; }
 .brand-teacher-grid h3 { margin-bottom:12px; }
 .brand-teacher-grid p { font-size:15px; color:var(--brand-night-muted); }
-.brand-coming { position:absolute; top:-20px; font:600 9px var(--brand-mono); color:var(--brand-ink); background:var(--brand-gold); padding:3px 7px; border-radius:5px; }
+.brand-coming { position:absolute; top:-20px; font:600 12px var(--brand-mono); color:var(--brand-ink); background:var(--brand-gold); padding:3px 7px; border-radius:5px; }
 .brand-school { display:flex; justify-content:space-between; gap:32px; align-items:center; border-top:1px solid var(--brand-border); padding-top:28px; margin-top:48px; }
 .brand-school p { font-weight:700; max-width:760px; }
 .brand-school p span { font-weight:400; color:var(--brand-night-muted); }
@@ -115,6 +133,7 @@
 .brand-contact-sent { display:flex; align-items:center; gap:12px; font-size:15px; line-height:1.45; animation:walkthrough-up 300ms ease-out both; }
 .brand-contact-sent>span:first-child { width:28px; height:28px; flex-shrink:0; border-radius:50%; background:var(--brand-sent-badge); color:var(--brand-white); display:flex; align-items:center; justify-content:center; }
 .brand-contact-alt { font-size:13px; color:var(--brand-hint); }
+.brand-contact-error { font-size:13px; font-weight:700; color:var(--brand-error); }
 .brand-contact-alt a { font-weight:700; text-decoration:none; }
 .brand-closing { text-align:center; position:relative; overflow:clip; background:var(--brand-wash); padding-block:128px; }
 .marketing-brand .brand-closing h2 { font-size:clamp(64px,8vw,112px); margin:0 0 28px; }
@@ -126,7 +145,7 @@
 .brand-footer-grid>div>p { color:var(--brand-muted); font-size:13px; margin-top:20px; }
 .brand-footer .clip-wordmark span { font-size:22px; }
 .brand-footer .clip-wordmark svg { width:10px; height:24px; }
-.brand-footer-bottom { display:flex; justify-content:space-between; flex-wrap:wrap; gap:16px; border-top:1px solid var(--brand-border); margin-top:48px; padding-top:24px; font:400 10px var(--brand-mono); color:var(--brand-muted); }
+.brand-footer-bottom { display:flex; justify-content:space-between; flex-wrap:wrap; gap:16px; border-top:1px solid var(--brand-border); margin-top:48px; padding-top:24px; font:400 12px var(--brand-mono); color:var(--brand-muted); }
 .brand-deck-controls { display:flex; align-items:center; gap:12px; margin-top:20px; }
 .brand-deck-controls .brand-label { margin-right:auto; }
 .brand-deck-controls button { position:static; transform:none; width:44px; height:44px; background:var(--brand-white); color:var(--brand-abyss); }
@@ -145,7 +164,7 @@
   .brand-hero-grid { gap:36px; }
   .marketing-brand .brand-hero h1 { font-size:72px; }
   .brand-actions a { width:100%; }
-  .brand-chart-head .brand-label { font-size:7px; }
+  .brand-chart-head .brand-label { font-size:12px; }
   .brand-teacher-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:48px; }
   .brand-walkthrough { grid-template-columns:minmax(0,1fr); }
   .brand-faq-grid { gap:40px; }
@@ -156,7 +175,8 @@
   .brand-section { padding-block:72px; }
   .marketing-brand h2 { font-size:12vw; margin-bottom:32px; }
   .brand-nav { gap:12px; }
-  .brand-desktop-nav,.brand-demo,.marketing-brand .brand-menu-trigger,.marketing-brand .brand-nav-actions>a:last-of-type { display:none; }
+  .brand-desktop-nav,.brand-demo,.marketing-brand .brand-nav-actions>a:last-of-type { display:none; }
+  .marketing-brand .brand-menu-trigger { display:inline-flex; }
   .marketing-brand .brand-signin { display:inline-block; font-size:15px; font-weight:700; color:var(--brand-abyss); padding:8px 12px; border-radius:10px; white-space:nowrap; }
   .brand-nav-actions { gap:8px; }
   .brand-hero { padding-block:40px 72px; }
@@ -170,13 +190,13 @@
   .brand-chart-head { gap:12px; }
   .brand-chart-head strong { display:block; font-size:16px; line-height:21px; margin-bottom:2px; }
   .brand-chart-head>div:nth-child(2) { flex:1; min-width:0; }
-  .brand-chart-head .brand-label { font-size:11px; letter-spacing:.06em; line-height:14px; }
+  .brand-chart-head .brand-label { font-size:12px; letter-spacing:.06em; line-height:14px; }
   .brand-predicted { display:flex; align-items:center; gap:8px; margin-left:0; text-align:start; }
   .brand-predicted .brand-label { white-space:nowrap; letter-spacing:.03em; }
   .brand-predicted b { display:flex; align-items:center; justify-content:center; min-width:56px; height:44px; padding-inline:10px; border-radius:12px; }
-  .brand-chart-foot { justify-content:flex-end; font-size:11px; }
+  .brand-chart-foot { justify-content:flex-end; font-size:12px; }
   .brand-chart-foot>span:not(.brand-label) { display:none; }
-  .brand-chart-foot .brand-label { font-size:11px; letter-spacing:.06em; color:var(--brand-abyss); }
+  .brand-chart-foot .brand-label { font-size:12px; letter-spacing:.06em; color:var(--brand-abyss); }
   .brand-deck [data-slot=carousel-item] { height:auto; }
   .brand-metrics .stack-viewport { grid-template-rows:200px; }
   .brand-metric { height:100%; min-height:0; justify-content:flex-end; padding:28px; border-radius:24px; box-shadow:0 20px 34px -20px var(--brand-metric-drop), inset 0 0 0 1px var(--brand-night-ring); }

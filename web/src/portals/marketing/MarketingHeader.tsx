@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { List } from '@phosphor-icons/react'
+import { Link, useLocation } from 'react-router-dom'
+import { List, X } from '@phosphor-icons/react'
 import { BrandLockup } from '@/components/ui/brand-lockup'
 import { Button, buttonVariants } from '@/components/ui/button'
 import {
@@ -16,14 +16,29 @@ import {
 import { marketingLinks } from './content'
 
 export const sectionLinks = [
-  { href: '/landing#how', label: 'How it works' },
-  { href: '/landing#features', label: 'Features' },
-  { href: '/landing#teachers', label: 'For teachers' },
+  { id: 'how', href: '/landing#how', label: 'How it works' },
+  { id: 'features', href: '/landing#features', label: 'Features' },
+  { id: 'teachers', href: '/landing#teachers', label: 'For teachers' },
 ] as const
+
+/** The honest affordance for the demo link: it opens the mail app. */
+export const DEMO_LABEL = 'Book a Demo (opens your email app)'
+
+/**
+ * Section links stay on whichever route the visitor is on (`/` or `/landing`)
+ * so a click is a router navigation, never a full reload; from any other
+ * marketing page they go to the canonical landing route.
+ */
+function useSectionTo() {
+  const { pathname } = useLocation()
+  const base = pathname === '/' || pathname === '/landing' ? pathname : '/landing'
+  return (id: string) => ({ pathname: base, hash: `#${id}` })
+}
 
 export function MarketingHeader() {
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState('')
+  const sectionTo = useSectionTo()
   const progress = useRef<HTMLDivElement>(null)
   useEffect(() => {
     let frame = 0
@@ -35,11 +50,7 @@ export function MarketingHeader() {
         progress.current.style.transform = `scaleX(${Math.min(1, window.scrollY / max)})`
       let current = ''
       for (const id of ['teachers', 'how', 'features']) {
-        // A nav target can span several sections (Proof plus the teacher
-        // features), so measure the union of every element that claims it.
-        const parts = document.querySelectorAll(
-          `#${id}, [data-nav-section="${id}"]`,
-        )
+        const parts = document.querySelectorAll(`#${id}`)
         if (!parts.length) continue
         let top = Infinity
         let bottom = -Infinity
@@ -77,19 +88,21 @@ export function MarketingHeader() {
         </Link>
         <nav className="brand-desktop-nav" aria-label="Main">
           {sectionLinks.map((x) => (
-            <a
-              key={x.href}
-              href={x.href}
-              aria-current={
-                x.href.endsWith(`#${active}`) ? 'location' : undefined
-              }
+            <Link
+              key={x.id}
+              to={sectionTo(x.id)}
+              aria-current={x.id === active ? 'location' : undefined}
             >
               {x.label}
-            </a>
+            </Link>
           ))}
         </nav>
         <div className="brand-nav-actions">
-          <a className="brand-demo" href={marketingLinks.demo}>
+          <a
+            className="brand-demo"
+            href={marketingLinks.demo}
+            aria-label={DEMO_LABEL}
+          >
             Book a Demo
           </a>
           <Link className="brand-signin" to={marketingLinks.login}>
@@ -111,22 +124,49 @@ export function MarketingHeader() {
                 <List aria-hidden="true" size={22} />
               </Button>
             </SheetTrigger>
-            <SheetContent className="marketing-brand brand-menu">
+            <SheetContent
+              className="marketing-brand brand-menu"
+              showCloseButton={false}
+            >
+              <SheetClose asChild>
+                <button
+                  type="button"
+                  className="brand-menu-close"
+                  aria-label="Close menu"
+                >
+                  <X aria-hidden="true" size={22} />
+                </button>
+              </SheetClose>
               <SheetHeader>
                 <SheetTitle>Explore Lemely</SheetTitle>
                 <SheetDescription>Every mark, explained.</SheetDescription>
               </SheetHeader>
               <nav aria-label="Mobile navigation">
                 {sectionLinks.map((x) => (
-                  <SheetClose key={x.href} asChild>
-                    <a href={x.href}>{x.label}</a>
+                  <SheetClose key={x.id} asChild>
+                    <Link
+                      to={sectionTo(x.id)}
+                      aria-current={x.id === active ? 'location' : undefined}
+                    >
+                      {x.label}
+                    </Link>
                   </SheetClose>
                 ))}
                 <SheetClose asChild>
-                  <a href={marketingLinks.demo}>Book a Demo</a>
+                  <a href={marketingLinks.demo} aria-label={DEMO_LABEL}>
+                    Book a Demo
+                  </a>
                 </SheetClose>
                 <SheetClose asChild>
                   <Link to={marketingLinks.login}>Sign in</Link>
+                </SheetClose>
+                <SheetClose asChild>
+                  <Link
+                    className={`${buttonVariants({ variant: 'primary', size: 'lg' })} brand-menu-signup`}
+                    to={marketingLinks.signup}
+                  >
+                    Sign up
+                  </Link>
                 </SheetClose>
               </nav>
             </SheetContent>

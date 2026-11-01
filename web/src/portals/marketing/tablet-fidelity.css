@@ -49,11 +49,11 @@
   .brand-avatar { font-size: 14px; }
   .brand-chart-head>div:nth-child(2) { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
   .brand-chart-head strong { font-size: 16px; line-height: normal; }
-  .brand-chart-head .brand-label { font-size: 11px; line-height: normal; letter-spacing: .06em; color: var(--brand-hint); }
+  .brand-chart-head .brand-label { font-size: 12px; line-height: normal; letter-spacing: .06em; color: var(--brand-hint); }
   .brand-predicted { margin-inline-start: 0; display: flex; align-items: center; gap: 10px; text-align: start; }
   .brand-predicted b { display: flex; align-items: center; justify-content: center; min-width: 56px; height: 44px; padding: 0 10px; border-radius: 12px; font-size: 26px; line-height: normal; }
   .brand-chart-foot { justify-content: flex-end; padding: 0 4px; }
-  .brand-chart-foot .brand-label { font-size: 11px; line-height: normal; letter-spacing: .06em; color: var(--brand-abyss); }
+  .brand-chart-foot .brand-label { font-size: 12px; line-height: normal; letter-spacing: .06em; color: var(--brand-abyss); }
 
   /* Features */
   .brand-feature-grid [data-slot=carousel-content]>div { gap: 16px; }
@@ -73,7 +73,7 @@
   .brand-feature-content { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: center; }
   .brand-feature-content .brand-feature-text { display: flex; flex-direction: column; gap: 10px; }
   .brand-feature-core { border-radius: 28px; padding: 32px; gap: 20px; }
-  .brand-feature-core .brand-label { font-size: 11px; line-height: normal; letter-spacing: .08em; }
+  .brand-feature-core .brand-label { font-size: 12px; line-height: normal; letter-spacing: .08em; }
   .brand-feature-core h3 { font: 800 40px/1 var(--brand-display); letter-spacing: -.03em; }
   .brand-feature-core p { font-size: 16px; line-height: 1.5; color: var(--brand-closing-text); max-width: 460px; }
   .brand-feature-core .brand-feature-art { flex: 1; height: auto; min-height: 280px; background: var(--brand-core-art); padding: 20px; }
@@ -84,7 +84,7 @@
   .brand-metric>span { color: var(--brand-night-body); }
   .brand-accuracy { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px; margin-top: 48px; }
   .brand-accuracy>div:first-child { display: flex; flex-direction: column; gap: 12px; }
-  .brand-accuracy .brand-label { font-size: 11px; line-height: normal; letter-spacing: .08em; color: var(--brand-tide); }
+  .brand-accuracy .brand-label { font-size: 12px; line-height: normal; letter-spacing: .08em; color: var(--brand-tide); }
   .marketing-brand .brand-accuracy h3 { font: 800 40px/1.05 var(--brand-display); letter-spacing: -.03em; margin: 0; }
   .brand-accuracy p { font-size: 15px; line-height: 1.5; color: var(--brand-night-body); max-width: none; }
   .brand-dot-grid { gap: 8px; padding: 0; }
@@ -97,7 +97,7 @@
   .brand-teacher-icon { display: contents; }
   .brand-teacher-icon svg { display: none; }
   .brand-teacher-icon .brand-label { grid-column: 1; grid-row: 1; font-size: 12px; line-height: normal; letter-spacing: 0; color: var(--brand-tide); }
-  .brand-coming { position: static; grid-column: 2; grid-row: 1; justify-self: start; font: 400 10px/normal var(--brand-mono); letter-spacing: .08em; padding: 3px 7px; }
+  .brand-coming { position: static; grid-column: 2; grid-row: 1; justify-self: start; font: 400 12px/normal var(--brand-mono); letter-spacing: .08em; padding: 3px 7px; }
   .marketing-brand .brand-teacher-grid h3 { grid-column: 1 / -1; font: 800 20px/normal var(--brand-body); margin: 0; }
   .brand-teacher-grid p { grid-column: 1 / -1; font-size: 15px; line-height: 1.5; color: var(--brand-night-body); }
   .brand-school { margin-top: 48px; padding: 24px 28px; gap: 24px; background: var(--brand-night-card); flex-wrap: wrap; }
@@ -137,7 +137,7 @@
   .brand-footer-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 40px; align-items: start; }
   .brand-footer-grid>div:first-child { grid-column: span 2; }
   .brand-footer-grid nav { gap: 12px; font-size: 15px; color: var(--brand-lead); }
-  .brand-footer-grid .brand-label { font-size: 11px; line-height: normal; letter-spacing: .08em; color: var(--brand-hint); }
+  .brand-footer-grid .brand-label { font-size: 12px; line-height: normal; letter-spacing: .08em; color: var(--brand-hint); }
   .brand-footer-grid>div>p { font-size: 15px; line-height: normal; margin-top: 12px; color: var(--brand-hint); }
   .brand-footer-bottom { font: 400 14px/normal var(--brand-body); align-items: center; margin-top: 40px; border-top-color: var(--brand-line); padding-top: 24px; color: var(--brand-hint); }
 }
@@ -190,4 +190,26 @@
   .marketing-brand .brand-menu-trigger { display: inline-flex; }
   .brand-nav { gap: 16px; }
   .brand-nav-actions { gap: 12px; }
+}
+
+/* ---- 760-1099px: real-size reflow (no shrunken desktop) ---- */
+@media (min-width: 760px) and (max-width: 1099px) {
+  /* Hero: one column all the way to the desktop breakpoint. Side by side would squeeze the 640-unit
+     chart under 480px and shrink its axis labels below 10px. Stacked, the chart is capped at its
+     native 640px so labels render at 13px and the card stays near 520px tall. */
+  .brand-hero { padding-block: 56px 64px; }
+  .brand-hero-grid { grid-template-columns: minmax(0, 1fr); gap: 48px; }
+  .brand-hero-art { width: 100%; max-width: 640px; justify-self: center; }
+  .brand-hero-art::before { inset: -20px -16px -20px 20px; }
+
+  /* Features: two even columns. The core tile spans both and drops its two-row span; content generation
+     closes the grid as a full-width tile. (3 tracks left XP and Content generation unbalanced.) */
+  .brand-feature-grid [data-slot=carousel-content]>div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .brand-feature-grid [data-slot=carousel-item]:first-child { grid-row: auto; grid-column: span 2; }
+  .brand-feature-core .brand-feature-art { min-height: 300px; justify-content: center; align-items: center; }
+}
+
+/* Teachers: four items read as 2 x 2 until four 240px tracks genuinely fit (1108px). Auto-fit left item 04 alone. */
+@media (min-width: 760px) and (max-width: 1107px) {
+  .brand-teacher-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 40px 48px; }
 }

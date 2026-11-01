@@ -21,8 +21,8 @@
   --brand-art-4: oklch(0.92 0.01 240);
   --brand-art-5: #042f4f;
   --brand-art-6: #ffffff;
-  --brand-art-7: oklch(0.63 0.12 88);
-  --brand-art-8: oklch(0.58 0.12 110);
+  --brand-art-7: oklch(0.56 0.12 88); /* grade chip C: white text 4.69:1 (was 0.63, 3.5:1) */
+  --brand-art-8: oklch(0.55 0.12 110); /* grade chip B: white text 4.77:1 (was 0.58, 4.2:1) */
   --brand-art-9: oklch(0.52 0.12 132);
   --brand-art-10: oklch(0.46 0.12 155);
   --brand-art-11: oklch(0.8 0.13 80);
@@ -69,7 +69,7 @@
   --brand-wash: oklch(0.92 0.035 235);
   --brand-border: oklch(0.88 0.02 240);
   --brand-muted: oklch(0.45 0.02 240);
-  --brand-idle-control: oklch(0.75 0.03 240);
+  --brand-idle-control: oklch(0.6 0.04 240); /* disabled Send: white label 3.9:1 (was 0.75, 2.2:1) */
   --brand-typing-dot: oklch(0.6 0.03 240);
   --brand-night: oklch(0.22 0.03 264);
   --brand-night-panel: oklch(0.27 0.035 264);

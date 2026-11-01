@@ -14,6 +14,7 @@ export function ConversionActions() {
       </Link>
       <a
         href={marketingLinks.demo}
+        aria-label="Book a Demo (opens your email app)"
         className={buttonVariants({ variant: 'secondary', size: 'lg' })}
       >
         Book a Demo

@@ -10,6 +10,7 @@ import {
 import { useSceneMotion } from "./useSceneMotion";
 import { MobileHow } from "./MobileHow";
 import "./walkthrough-motion.css";
+import "./walkthrough-tablet.css";
 import { Check } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsPanel } from "@/components/ui/tabs";
@@ -201,9 +202,9 @@ function MarkedPaper({
         selected={pick("a")}
         onSelect={onSelect}
         lines={[
-          { text: "v = d / t", mark: "M1", right: true, at: [0.3, 0.7, 0.1] },
-          { text: "= 1200 / 240", mark: "M1", right: true, at: [1, 0.8, 0.35] },
-          { text: "= 5", mark: "A0", right: false, at: [1.8, 0.4, 0.6] },
+          { text: "v = d / t", mark: "M1", right: true, at: [0.1, 0.4, 0.05] },
+          { text: "= 1200 / 240", mark: "M1", right: true, at: [0.35, 0.45, 0.12] },
+          { text: "= 5", mark: "A0", right: false, at: [0.6, 0.25, 0.19] },
         ]}
       />
       <PaperQuestion
@@ -218,7 +219,7 @@ function MarkedPaper({
             text: "velocity has a direction",
             mark: "B1",
             right: true,
-            at: [2.3, 0.9, 0.85],
+            at: [0.8, 0.5, 0.26],
           },
         ]}
       />
@@ -234,17 +235,47 @@ function MarkedPaper({
             text: "a = v / t = 5 / 10",
             mark: "M1",
             right: true,
-            at: [3.2, 0.8, 1.1],
+            at: [1.05, 0.45, 0.33],
           },
           {
             text: "= 0.5 m/s",
             mark: reviewed ? "A1" : "A0",
             right: reviewed,
-            at: [4, 0.5, 1.25],
+            at: [1.3, 0.3, 0.4],
           },
         ]}
       />
     </div>
+  );
+}
+
+// Step bands run from the moment the wrap pins (progress 0) to the moment it releases (1). Step 1 owns the
+// first quarter (about 21vh of an 85vh pin) so the scene responds soon after it locks; tab clicks land
+// inside each band.
+const STEP_BANDS = [0.25, 0.62] as const;
+const STEP_TARGET: Record<string, number> = {
+  upload: 0.1,
+  marked: 0.45,
+  insights: 0.82,
+};
+const stepAt = (progress: number) =>
+  progress < STEP_BANDS[0]
+    ? "upload"
+    : progress < STEP_BANDS[1]
+      ? "marked"
+      : "insights";
+function pinGeometry(section: HTMLElement) {
+  const wrap = section.firstElementChild as HTMLElement;
+  return {
+    top: parseFloat(getComputedStyle(wrap).top) || 64,
+    range: Math.max(1, section.offsetHeight - wrap.offsetHeight),
+  };
+}
+function pinProgress(section: HTMLElement) {
+  const { top, range } = pinGeometry(section);
+  return Math.max(
+    0,
+    Math.min(1, (top - section.getBoundingClientRect().top) / range),
   );
 }
 
@@ -277,8 +308,13 @@ function WalkthroughPanel({
   );
 }
 
+/** Tablet widths cannot pin a 1180px scene at a readable size, so they get the real-size reflow in walkthrough-tablet.css. */
+const TABLET = "(min-width: 760px) and (max-width: 1099px)";
+
 export function MarkingWalkthrough() {
-  const [step, setStep] = useState("upload");
+  const [tablet, setTablet] = useState(() => window.matchMedia(TABLET).matches);
+  // Without a scroll scene the visitor lands on the step that carries the claim.
+  const [step, setStep] = useState(() => (tablet ? "marked" : "upload"));
   const [mobile, setMobile] = useState(
     () => window.matchMedia("(max-width: 759px)").matches,
   );
@@ -305,6 +341,15 @@ export function MarkingWalkthrough() {
   }, []);
 
   useEffect(() => {
+    const media = window.matchMedia(TABLET);
+    const change = () => setTablet(media.matches);
+    media.addEventListener("change", change);
+    return () => media.removeEventListener("change", change);
+  }, []);
+  // No pin, no scale: the scene flows in the page and the tabs drive the step.
+  const unpinned = reducedMotion || tablet;
+
+  useEffect(() => {
     const element = ref.current;
     if (!element || !pageVisible) return;
     if (mobile) {
@@ -327,25 +372,16 @@ export function MarkingWalkthrough() {
     }
     // Scroll position, not visibility, decides the step: the reference recomputes it on every
     // scroll, so leaving and re-entering the section must land on the step for that position.
-    if (reducedMotion) return;
+    if (unpinned) return;
     let frame = 0;
     const update = () => {
       frame = 0;
       const bounds = element.getBoundingClientRect();
       if (bounds.bottom <= 0 || bounds.top >= window.innerHeight)
         interacting.current = false;
-      const progress = Math.max(
-        0,
-        Math.min(
-          1,
-          -bounds.top / Math.max(1, bounds.height - window.innerHeight),
-        ),
-      );
-      if (fill.current) fill.current.style.width = `${(progress * 100).toFixed(1)}%`;
-      if (!interacting.current)
-        setStep(
-          progress < 0.34 ? "upload" : progress < 0.7 ? "marked" : "insights",
-        );
+      const progress = pinProgress(element);
+      if (fill.current) fill.current.style.transform = `scaleX(${progress.toFixed(3)})`;
+      if (!interacting.current) setStep(stepAt(progress));
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(update);
@@ -395,11 +431,11 @@ export function MarkingWalkthrough() {
       window.removeEventListener("resize", schedule);
       cancelAnimationFrame(frame);
     };
-  }, [reducedMotion, mobile, pageVisible, ref]);
+  }, [unpinned, mobile, pageVisible, ref]);
 
   useEffect(() => {
     const grid = ref.current?.querySelector<HTMLElement>(".brand-walkthrough");
-    if (!grid || mobile || reducedMotion) return;
+    if (!grid || mobile || unpinned) return;
     const host = grid.parentElement;
     let fitK = 1;
     const fit = () => {
@@ -426,19 +462,15 @@ export function MarkingWalkthrough() {
       window.removeEventListener("resize", fit);
       grid.style.removeProperty("--walkthrough-scale");
     };
-  }, [mobile, reducedMotion, ref]);
+  }, [mobile, unpinned, ref]);
 
   const selectStep = (value: string) => {
     setStep(value);
-    if (mobile || reducedMotion || !ref.current) return;
+    if (mobile || unpinned || !ref.current) return;
     const bounds = ref.current.getBoundingClientRect();
-    const progress =
-      value === "upload" ? 0.08 : value === "marked" ? 0.5 : 0.85;
+    const { top, range } = pinGeometry(ref.current);
     window.scrollTo({
-      top:
-        window.scrollY +
-        bounds.top +
-        Math.max(0, bounds.height - window.innerHeight) * progress,
+      top: window.scrollY + bounds.top - top + range * STEP_TARGET[value],
       behavior: "instant",
     });
   };
@@ -449,7 +481,7 @@ export function MarkingWalkthrough() {
   const stage = step as Stage;
   const stepIndex = steps.findIndex((x) => x.value === step);
   const holdMarked = () => {
-    if (!mobile && !reducedMotion && step === "marked")
+    if (!mobile && !unpinned && step === "marked")
       interacting.current = true;
   };
   return (
@@ -460,6 +492,7 @@ export function MarkingWalkthrough() {
       data-motion={enabled}
       data-primed={primed && pageVisible}
       data-reduced={reducedMotion}
+      data-tablet={tablet}
     >
       <div className="brand-wrap">
         <Tabs
@@ -471,7 +504,9 @@ export function MarkingWalkthrough() {
           className="brand-walkthrough"
         >
           <div className="brand-step-nav">
-            <span className="brand-label">HOW IT WORKS · SCROLL</span>
+            <span className="brand-label">
+              {tablet ? "HOW IT WORKS" : "HOW IT WORKS · SCROLL"}
+            </span>
             <h2>
               Upload.
               <br />
@@ -514,7 +549,7 @@ export function MarkingWalkthrough() {
               question={question}
               onSelect={(value) => {
                 setQuestion(value);
-                if (!mobile && !reducedMotion && step === "marked")
+                if (!mobile && !unpinned && step === "marked")
                   selectStep("marked");
               }}
             />
@@ -533,19 +568,19 @@ export function MarkingWalkthrough() {
                     <span />
                   </div>
                   <ul className="wt-checks">
-                    <li style={{ "--d": "0.6s" } as CSSProperties}>
+                    <li style={{ "--d": "0.1s" } as CSSProperties}>
                       <span className="wt-dot wt-dot-ok" aria-hidden="true">
                         <Check weight="bold" />
                       </span>
                       3 pages received
                     </li>
-                    <li style={{ "--d": "1.4s" } as CSSProperties}>
+                    <li style={{ "--d": "0.18s" } as CSSProperties}>
                       <span className="wt-dot wt-dot-ok" aria-hidden="true">
                         <Check weight="bold" />
                       </span>
                       Handwriting read · 6 answers
                     </li>
-                    <li style={{ "--d": "2.2s" } as CSSProperties}>
+                    <li style={{ "--d": "0.26s" } as CSSProperties}>
                       <span className="wt-dot wt-dot-wait" aria-hidden="true" />
                       Matching to the 0625 mark scheme…
                     </li>
@@ -633,7 +668,7 @@ export function MarkingWalkthrough() {
                         onValueChange={(v) => {
                           if (v) {
                             setReview(v);
-                            if (!mobile && !reducedMotion)
+                            if (!mobile && !unpinned)
                               selectStep("marked");
                           }
                         }}
@@ -661,13 +696,13 @@ export function MarkingWalkthrough() {
                   <div className="wt-weak">
                     <strong>Units &amp; SI</strong>
                     <div className="brand-topic-list">
-                      <span style={{ "--dx": "-160px", "--dy": "-120px", "--r": "-14deg", "--d": "0.3s" } as CSSProperties}>
+                      <span style={{ "--dx": "-160px", "--dy": "-120px", "--r": "-14deg", "--d": "0.05s" } as CSSProperties}>
                         P4 Q3(a) <b>−1</b>
                       </span>
-                      <span style={{ "--dx": "-120px", "--dy": "-30px", "--r": "10deg", "--d": "0.5s" } as CSSProperties}>
+                      <span style={{ "--dx": "-120px", "--dy": "-30px", "--r": "10deg", "--d": "0.12s" } as CSSProperties}>
                         P4 Q3(c) <b>−1</b>
                       </span>
-                      <span style={{ "--dx": "80px", "--dy": "90px", "--r": "-8deg", "--d": "0.7s" } as CSSProperties}>
+                      <span style={{ "--dx": "80px", "--dy": "90px", "--r": "-8deg", "--d": "0.19s" } as CSSProperties}>
                         P2 Q5 <b>−2</b>
                       </span>
                     </div>

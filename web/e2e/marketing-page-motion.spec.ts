@@ -75,10 +75,12 @@ test('mobile upload shortcut follows scrolling and disappears at the closing act
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/landing')
   const upload = page.getByRole('link', { name: 'Upload free', exact: true })
-  await expect(upload).toHaveAttribute('href', '/signup')
+  // The hero's own primary action is on screen, so the shortcut stays hidden.
+  await expect(upload).toHaveCount(0)
   await page.locator('#features').scrollIntoViewIfNeeded()
   await page.mouse.wheel(0, -100)
   await expect(upload).toBeVisible()
+  await expect(upload).toHaveAttribute('href', '/signup')
   await page.locator('#start').scrollIntoViewIfNeeded()
   await expect(upload).not.toBeVisible()
 })

@@ -1,0 +1,54 @@
+/* Accessibility floor for the landing: hit areas (WCAG 2.5.8 AA 24px, 44px on touch widths), small-phone wrap and clipping.
+   Imported last in Landing.tsx so it wins over the fidelity sheets at equal specificity.
+   --hit is the minimum hit-area edge. A ::after sized by the formula below grows a small control to --hit
+   without changing its look or layout; controls already larger get no extension. */
+.marketing-brand { --hit: 24px; }
+@media (max-width: 1100px), (pointer: coarse) { .marketing-brand { --hit: 44px; } }
+
+.brand-demo { position: relative; }
+.brand-demo::after {
+  content: ''; position: absolute;
+  inset: min(0px, calc((100% - var(--hit)) / 2)) min(0px, calc((100% - var(--hit)) / 2));
+}
+
+/* Header */
+.brand-nav > a:first-child { display: inline-flex; align-items: center; min-height: var(--hit); }
+.brand-desktop-nav a { display: inline-flex; align-items: center; min-height: var(--hit); }
+.marketing-brand .brand-signin { display: inline-flex; align-items: center; min-height: var(--hit); }
+
+/* Footer: links sit on a full-height row; the row gap that used to separate them is now the hit area itself. */
+.brand-footer-grid nav a,
+.brand-footer-grid > div > a { display: inline-flex; align-items: center; min-height: var(--hit); }
+@media (min-width: 1101px) and (pointer: fine) { .brand-footer-grid nav { gap: 7px; } }
+@media (max-width: 1100px), (pointer: coarse) {
+  .brand-footer-grid nav { gap: 0; }
+}
+@media (max-width: 759px) { .brand-footer-grid { row-gap: 0; } }
+
+/* FAQ composer fallback address */
+.brand-contact-alt { display: flex; flex-wrap: wrap; align-items: center; column-gap: .3em; }
+.brand-contact-alt a { display: inline-flex; align-items: center; min-height: var(--hit); }
+
+/* Walkthrough question picker, (a)/(b)/(c). The scene is scaled, so the 24px floor is divided by the scale. */
+.walkthrough-motion .walkthrough-paper-question { position: relative; --hit: calc(24px / var(--walkthrough-scale, 1)); }
+@media (max-width: 1100px), (pointer: coarse) { .walkthrough-motion .walkthrough-paper-question { --hit: 44px; } }
+.walkthrough-motion .walkthrough-paper-question::after {
+  content: ''; position: absolute;
+  inset: min(0px, calc((100% - var(--hit)) / 2)) min(0px, calc((100% - var(--hit)) / 2));
+}
+
+/* Tablet nav is a one-row clip; the row grows with the links so the visible link keeps its 44px target. */
+@media (min-width: 760px) and (max-width: 1050px) { .brand-desktop-nav { height: var(--hit); align-content: flex-start; } }
+
+/* Small phones: the proof heading ran to four lines ending in one word. Let the two sentences flow into one balanced block. */
+.brand-break-phone { display: inline; }
+@media (max-width: 759px) {
+  .brand-break-phone { display: none; }
+  .marketing-brand .brand-proof h2 { font-size: clamp(34px, 10.4vw, 64px); text-wrap: balance; }
+}
+
+/* Real reading copy on phones is 14px or more (it was 12 to 13). */
+@media (max-width: 759px) {
+  .brand-mobile-copy, .brand-contact-alt, .brand-contact-alt a { font-size: 14px; }
+  .brand-hero-copy > .brand-fine, .marketing-brand .brand-hero-copy > .brand-fine { font-size: 14px; }
+}

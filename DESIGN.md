@@ -230,6 +230,7 @@ A cool-neutral field with one deep-blue primary, one sky accent for dark surface
 ### Functional
 - **Correct Green** (oklch(0.44 0.12 150)): Awarded marks, predicted-grade chip, correct working.
 - **Error Red** (oklch(0.48 0.19 25)): Lost marks and genuine errors only.
+- **Grade chip ramp** (art tokens 7 to 10: oklch(0.56 0.12 88), oklch(0.55 0.12 110), oklch(0.52 0.12 132), oklch(0.46 0.12 155)): the C, B, A and A* chips in the hero chart and walkthrough. Every step holds white text at 4.5:1 or better; C and B were darkened from 0.63 and 0.58 lightness to get there.
 
 ### Named Rules
 **The Dark-Surface Swap Rule.** On Night or Abyss backgrounds, accent roles move from Abyss to Tide. Abyss text or icons on a dark surface are forbidden.

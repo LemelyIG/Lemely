@@ -143,7 +143,7 @@ export function MobileHow() {
           <br />
           <span>Insights.</span>
         </h2>
-        <StackDeck label="How it works" controls="label">
+        <StackDeck label="How it works">
           {cards.map((card) => (
             <article className="how-card" key={card.n}>
               {card.art}

@@ -17,6 +17,7 @@ import { BinnyPeek } from './Binny'
 import './page-motion.css'
 import './desktop-fidelity.css'
 import './tablet-fidelity.css'
+import './a11y-fixes.css'
 
 export function Landing() {
   const ref = useRef<HTMLDivElement>(null)
@@ -57,7 +58,10 @@ export function Landing() {
         </div>
       </section>
       {createPortal(
-        <div className="marketing-brand brand-mobile-upload-host">
+        <aside
+          className="marketing-brand brand-mobile-upload-host"
+          aria-label="Upload your first paper"
+        >
           <Link
             to="/signup"
             className="brand-mobile-upload"
@@ -67,7 +71,7 @@ export function Landing() {
             <UploadSimple aria-hidden="true" size={20} weight="bold" />
             Upload free
           </Link>
-        </div>,
+        </aside>,
         document.body,
       )}
     </div>
