@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input'
 import { faqItems, marketingLinks } from './content'
 import { faqClosingNote, sendReply } from './faq-content'
 import { useSceneMotion } from './useSceneMotion'
+import { contactFailureCopy, sendContactMessage } from './contact-api'
 import { Binny, type BinnyMood } from './Binny'
 
 const moods: BinnyMood[] = ['nerd', 'open', 'wink', 'happy', 'happy']
@@ -52,6 +53,8 @@ export function BinnyFaq() {
     (turn) => isQuestion(turn) && !turn.answered,
   )
   const [sentTo, setSentTo] = useState('')
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState('')
   const [mobileAnswer, setMobileAnswer] = useState('')
   const chatId = useId()
   const chatRef = useRef<HTMLDivElement>(null)
@@ -91,9 +94,18 @@ export function BinnyFaq() {
     (turn) => isQuestion(turn) && turn.answered,
   ) as { id: string } | undefined
   const canSend = /.+@.+\..+/.test(replyTo) && question.trim() !== ''
-  // As in the reference there is no backend: Send only writes into the chat, and nothing leaves the page.
-  const send = () => {
-    if (!canSend) return
+  const send = async () => {
+    if (!canSend || sending) return
+    setSending(true)
+    setSendError('')
+    try {
+      await sendContactMessage(replyTo, question.trim())
+    } catch (error) {
+      setSendError(contactFailureCopy(error))
+      setSending(false)
+      return
+    }
+    setSending(false)
     setChat((previous) => ({
       ...previous,
       turns: [...previous.turns, { sent: question }],
@@ -244,12 +256,18 @@ export function BinnyFaq() {
                     type="button"
                     variant="primary"
                     className="brand-contact-send"
-                    disabled={!canSend}
-                    onClick={send}
+                    disabled={!canSend || sending}
+                    aria-busy={sending}
+                    onClick={() => void send()}
                   >
                     Send
                   </Button>
                 </div>
+                {sendError !== '' && (
+                  <span className="brand-contact-error" role="alert">
+                    {sendError}
+                  </span>
+                )}
                 <span className="brand-contact-alt">
                   Or email us at{' '}
                   <a href={marketingLinks.contact}>contact@lemelyig.com</a>

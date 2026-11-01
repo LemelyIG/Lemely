@@ -138,7 +138,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/parent/children/{child_id}"): PARENT,
     ("GET", "/api/parent/children/{child_id}/subjects/{code}"): PARENT,
     ("GET", "/api/parent/children/{child_id}/weaknesses"): PARENT,
-    # ── PUBLIC (12) ────────────────────
+    # ── PUBLIC (13) ────────────────────
     ("POST", "/api/auth/login"): PUBLIC,
     # spec §4: the child-issued parent signup, replacing the retired
     # `/api/auth/otp/*` pair. Public by the same necessity as `/auth/signup`
@@ -169,6 +169,9 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # — a signed-out login-page crash must still be reportable, and the route
     # is rate-limited + size-capped instead (see its own module docstring).
     ("POST", "/api/client-errors"): PUBLIC,
+    # Landing-page FAQ composer: anonymous visitor, rate-limited + size-capped
+    # (see lemely/web/routers/contact.py).
+    ("POST", "/api/contact"): PUBLIC,
     # D7.3/spec §1.2: G-08's pre-account preview. Public and unauthenticated
     # by design - a visitor sees what a code joins *before* creating an
     # account, and `InviteService.preview` is written to be paranoid about
@@ -559,7 +562,7 @@ def test_the_sweeps_actually_cover_the_surface() -> None:
     # routes, plus issue #10's verify-email, password-reset/request,
     # password-reset/confirm) + /api/health + invite preview + PR 1 chunk C's
     # client-error sink.
-    assert len(_NON_PUBLIC) == len(ROUTES) - 12
+    assert len(_NON_PUBLIC) == len(ROUTES) - 13
     assert len(_ROLE_GATED) > 300
     assert len(_REPRESENTATIVE) == 6
     assert len(_REAL_TOKEN_CASES) >= 20

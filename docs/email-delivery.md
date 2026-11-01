@@ -159,7 +159,14 @@ export LEMELY_EMAIL__APP_BASE_URL="https://staging.lemelyig.com"
 export LEMELY_EMAIL__FROM_ADDRESS="noreply@lemelyig.com"
 export LEMELY_EMAIL__FROM_NAME="Lemely"
 export LEMELY_EMAIL__REPLY_TO="support@lemelyig.com"
+export LEMELY_EMAIL__CONTACT_ADDRESS="contact@lemelyig.com"
 ```
+
+`CONTACT_ADDRESS` is the inbox that receives questions typed into the landing
+page FAQ composer (`POST /api/contact`, `lemely/web/routers/contact.py`). The
+visitor's address is set as `Reply-To` on that mail, so replying answers them
+directly. The route is anonymous and capped at 3 messages per IP per 10 minutes
+and 60 per day overall, which keeps it inside Resend's 100/day free tier.
 
 ### 5. Confirm
 
