@@ -43,15 +43,13 @@
     "mark-partial": "tertiary",
     "mark-partial-bg": "tertiary-container",
     "mark-wrong": "error",
-    "mark-wrong-bg": "error-container",
-    "secondary": "on-surface-variant"
+    "mark-wrong-bg": "error-container"
   },
   "overrides": {
     "bg-ink": "bg-inverse-surface",
     "text-paper": "text-inverse-on-surface",
     "text-paper-raised": "text-inverse-on-surface",
     "text-warn": "text-on-tertiary-container",
-    "text-ok": "text-success",
     "text-confidence-medium": "text-on-tertiary-container",
     "text-mark-partial": "text-on-tertiary-container"
   },
@@ -62,6 +60,7 @@
     "border": "outline-variant",
     "t1": "on-surface",
     "t2": "on-surface-variant",
-    "t3": "on-surface-variant"
+    "t3": "on-surface-variant",
+    "secondary": "on-surface-variant"
   }
 }
