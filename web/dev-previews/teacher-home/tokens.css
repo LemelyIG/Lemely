@@ -1,0 +1,114 @@
+/* Lemely design system v5 (Abyss), copied from the Claude Design project
+   "Lemely Brand Identity Workshop": tokens/colors, typography, spacing, motion. */
+:root {
+  --abyss: #042f4f;
+  --abyss-hover: #0a3d62;
+  --abyss-lip: #021f36;
+  --tide: #7fb8e0;
+  --tide-hover: #9ccaea;
+  --mist: oklch(0.92 0.035 235);
+  --night: #130e10;
+  --gold: oklch(0.80 0.13 80);
+  --success: oklch(0.60 0.12 150);
+  --error: oklch(0.55 0.20 25);
+  --white: #ffffff;
+
+  --grade-astar: oklch(0.46 0.12 155);
+  --grade-a: oklch(0.52 0.12 132);
+  --grade-b: oklch(0.58 0.12 110);
+  --grade-c: oklch(0.63 0.12 88);
+  --grade-d: oklch(0.59 0.125 62);
+  --grade-e: oklch(0.54 0.13 38);
+  --grade-u: oklch(0.50 0.14 15);
+
+  --md-surface: oklch(0.985 0.004 240);
+  --md-surface-lowest: #ffffff;
+  --md-surface-low: oklch(0.97 0.006 240);
+  --md-surface-container: oklch(0.955 0.008 240);
+  --md-surface-high: oklch(0.94 0.01 240);
+  --md-surface-highest: oklch(0.92 0.012 240);
+  --md-on-surface: #130e10;
+  --md-on-surface-variant: oklch(0.47 0.02 240);
+  --md-outline: oklch(0.87 0.012 240);
+  --md-outline-subtle: oklch(0.92 0.01 240);
+  --md-primary: #042f4f;
+  --md-on-primary: #ffffff;
+  --md-primary-hover: #0a3d62;
+  --md-primary-container: oklch(0.92 0.035 235);
+  --md-on-primary-container: #042f4f;
+  --md-tertiary: oklch(0.80 0.13 80);
+  --md-error: oklch(0.55 0.20 25);
+  --md-success: oklch(0.60 0.12 150);
+
+  /* Material 3 roles completed from the Lemely palette (Abyss primary, Tide secondary). */
+  --md-secondary: oklch(0.52 0.07 240);
+  --md-on-secondary: #ffffff;
+  --md-secondary-container: oklch(0.88 0.05 238);
+  --md-on-secondary-container: #042f4f;
+  --md-inverse-primary: #7fb8e0;
+  --md-on-primary-muted: oklch(0.86 0.03 235);
+  --md-error-container: oklch(0.93 0.04 25);
+  --md-on-error-container: oklch(0.38 0.14 25);
+  --md-inverse-error: oklch(0.72 0.15 25);
+  --md-scrim: oklch(0.2 0.03 242 / 0.4);
+  --md-shadow: oklch(0.3 0.06 242);
+
+  --text-body: var(--md-on-surface);
+  --text-secondary: oklch(0.42 0.02 240);
+  --text-muted: var(--md-on-surface-variant);
+  --surface-page: var(--md-surface);
+  --surface-section: var(--md-surface-low);
+  --surface-card: var(--md-surface-lowest);
+  --surface-row: var(--md-surface-low);
+  --surface-hover-tint: oklch(0.95 0.015 240);
+  --border-subtle: var(--md-outline-subtle);
+  --border-default: var(--md-outline);
+  --border-control: oklch(0.85 0.03 240);
+  --track: oklch(0.94 0.01 240);
+
+  --font-display: 'Bricolage Grotesque Variable', 'Schibsted Grotesk Variable', sans-serif;
+  --font-ui: 'Schibsted Grotesk Variable', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+
+  --fs-display: 64px;
+  --fs-display-sm: 40px;
+  --fs-headline: 32px;
+  --fs-title: 21px;
+  --fs-body: 16px;
+  --fs-body-sm: 14px;
+  --fs-data: 14px;
+  --fs-label: 11px;
+  --ls-display: -0.05em;
+  --ls-headline-ui: -0.02em;
+  --ls-label: 0.08em;
+  --lh-body: 1.5;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+  --space-12: 48px;
+
+  --radius-board: 32px;
+  --radius-card: 24px;
+  --radius-tile: 20px;
+  --radius-inner: 18px;
+  --radius-button: 14px;
+  --radius-chip: 12px;
+  --radius-pill: 999px;
+
+  --shadow-hover: 0 22px 40px -26px oklch(0.3 0.06 242 / 0.4);
+  --shadow-panel: 0 30px 60px -40px oklch(0.3 0.06 242 / 0.45), 0 0 0 1px oklch(0.92 0.01 240);
+
+  --ease-out: cubic-bezier(.2,.8,.2,1);
+  --dur-fast: .15s;
+  --dur-base: .2s;
+  --dur-slow: .35s;
+}
+
+@keyframes lmUp { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important } }
