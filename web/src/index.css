@@ -1,432 +1,204 @@
 @import "tailwindcss";
 
-/* The four faces of DESIGN.md §4. Each has exactly one job; see §4.1 for the
-   hard rule on Caveat, which is decorative and must never carry information. */
-@import "@fontsource-variable/newsreader"; /* display */
-@import "@fontsource-variable/geist"; /* UI + body */
-@import "@fontsource-variable/jetbrains-mono"; /* data, tabular */
-@import "@fontsource-variable/caveat"; /* marginalia only */
+/* v5 Abyss faces (DESIGN.md §3). Each has one job. */
+@import "@fontsource-variable/bricolage-grotesque"; /* T1 display, 28px and above */
+@import "@fontsource-variable/schibsted-grotesk"; /* T2 UI and text */
+@import "@fontsource-variable/jetbrains-mono"; /* data */
 
 /* ============================================================================
- * Lemely design tokens — "The Study Notebook".
- *
- * SOURCE OF TRUTH: DESIGN.md at the repo root. This file is its implementation
- * and nothing more. If a value here disagrees with DESIGN.md, DESIGN.md is
- * right and this file is a bug.
- *
- * Replaces the build-era "Academic Warmth" tokens, which were a Material-3
- * palette generated before the Study Notebook direction existed. Every colour
- * value is new. The old *semantic names* are deliberately kept alive in the
- * compatibility layer at the bottom, so the ~20 components already written
- * against `bg-surface` / `text-t2` / `border-border` keep compiling and pick up
- * the new palette immediately, instead of the whole product breaking at once.
- * Phase 4 migrates those call sites surface by surface; the aliases die when
- * the last one is gone.
- *
- * ── Colour discipline ───────────────────────────────────────────────────
- * Raw hex / rgb() / oklch() written inline in a component is a gate failure
- * (REDESIGN-MISSION §9 gate 3). Every literal in the product lives in the
- * `:root` block below and nowhere else. If a new value is needed, it goes in
- * DESIGN.md first, then here, then it is used.
- *
- * ── Contrast ────────────────────────────────────────────────────────────
- * Every text/background pair in this file is measured, not estimated, and the
- * measurements are pinned by `tests/test_design_tokens.py`. Two of them were
- * wrong in the first draft and the test is what caught them:
- *   - `--ink-faint` at L 0.575 measured 3.80:1 on `--paper-sunk` (AA needs
- *     4.5). It went to L 0.529, and in P6.4 to L 0.52 — see below.
- *   - L 0.529 cleared all three paper rungs and missed EIGHT of the eleven
- *     tinted fills the product also paints text on (worst `--err-wash` at
- *     4.36), because until P6.4 this file only ever measured ink on paper.
- *     L 0.52 clears 4.5 on all fourteen (worst `--err-wash` 4.53). D6.7.
- *   - `--ok/--warn/--err` all sat near L 0.45, so they were three identical
- *     greys once hue was removed. They now form a real descending ladder.
- * Do not nudge a colour here to make a screen look nicer without re-running
- * that test.
- * ==========================================================================
- */
-
+ * Lemely tokens, v5 "Abyss". SOURCE OF TRUTH: DESIGN.md frontmatter.
+ * tests/test_design_tokens.py pins every value below against DESIGN.md and
+ * measures AA contrast. Do not change a value here without changing DESIGN.md.
+ * ========================================================================== */
 :root {
-  /* ── §3.1 Paper ──────────────────────────────────────────────────────── */
-  /* Never pure #FFF and never pure #000: both read sterile and break the
-     paper illusion instantly. `--paper-raised` is deliberately LIGHTER than
-     the canvas, the way a sheet laid on a desk catches more light. */
-  --paper: oklch(0.976 0.004 85);
-  --paper-raised: oklch(0.992 0.003 85);
-  --paper-sunk: oklch(0.952 0.006 85);
-  --paper-inverse: oklch(0.28 0.008 250);
+  --md-primary: #042f4f;
+  --md-primary-hover: #0a3d62;
+  --md-on-primary: #ffffff;
+  --md-primary-container: oklch(0.92 0.035 235);
+  --md-on-primary-container: #042f4f;
+  --md-secondary: oklch(0.40 0.010 235);
+  --md-on-secondary: #ffffff;
+  --md-secondary-container: oklch(0.90 0.037 235);
+  --md-on-secondary-container: oklch(0.10 0.006 235);
+  --md-tertiary: oklch(0.80 0.13 80);
+  --md-on-tertiary: oklch(0.20 0.019 80);
+  --md-tertiary-container: oklch(0.95 0.098 80);
+  --md-on-tertiary-container: oklch(0.30 0.022 80);
+  --md-error: oklch(0.53 0.20 25);
+  --md-on-error: #ffffff;
+  --md-error-container: oklch(0.95 0.067 25);
+  --md-on-error-container: oklch(0.30 0.117 25);
+  --md-success: oklch(0.60 0.12 150);
+  --md-success-container: oklch(0.95 0.04 150);
+  --md-on-success-container: oklch(0.32 0.08 150);
+  --md-surface: oklch(0.985 0.004 240);
+  --md-surface-container-lowest: #ffffff;
+  --md-surface-container-low: oklch(0.97 0.006 240);
+  --md-surface-container: oklch(0.955 0.008 240);
+  --md-surface-container-high: oklch(0.94 0.01 240);
+  --md-surface-container-highest: oklch(0.92 0.012 240);
+  --md-on-surface: #130e10;
+  --md-on-surface-variant: oklch(0.47 0.02 240);
+  --md-outline: oklch(0.87 0.012 240);
+  --md-outline-variant: oklch(0.92 0.01 240);
+  --md-inverse-surface: #130e10;
+  --md-inverse-on-surface: oklch(0.95 0.006 240);
+  --md-inverse-primary: #7fb8e0;
+  --md-scrim: oklch(0.20 0.03 242 / 0.4);
+  --md-shadow: oklch(0.30 0.06 242);
 
-  /* ── §3.2 Ink ────────────────────────────────────────────────────────── */
-  /* `--ink` is the logo's #2F3437 converted to OKLCH, so the mark and the
-     interface are the same colour by construction rather than by eye.
-     Measured on --paper: 11.77 / 6.09 / 5.13. `--ink-faint` is the FLOOR —
-     there is deliberately no lighter text step (DESIGN.md §3.2), and it is
-     now floored by the WORST tint rather than by paper (D6.7). */
-  --ink: oklch(0.321 0.009 234);
-  --ink-muted: oklch(0.48 0.006 240);
-  --ink-faint: oklch(0.52 0.006 240);
-  --ink-inverse: oklch(0.97 0.004 85);
+  --grade-a-star: oklch(0.46 0.12 155);
+  --grade-a: oklch(0.52 0.12 132);
+  --grade-b: oklch(0.58 0.12 110);
+  --grade-c: oklch(0.63 0.12 88);
+  --grade-d: oklch(0.59 0.125 62);
+  --grade-e: oklch(0.54 0.13 38);
+  --grade-u: oklch(0.50 0.14 15);
 
-  /* ── §3.3 Rules ──────────────────────────────────────────────────────── */
-  /* Borders are the containment strategy. Shadows are not (§7). */
-  --rule: oklch(0.905 0.004 85);
-  --rule-strong: oklch(0.845 0.005 85);
-  --rule-faint: oklch(0.945 0.003 85);
+  --shadow-hover: 0 22px 40px -26px oklch(0.3 0.06 242 / 0.4);
+  --shadow-panel: 0 30px 60px -40px oklch(0.3 0.06 242 / 0.45), 0 0 0 1px oklch(0.92 0.01 240);
 
-  /* ── §3.4 Accent ─────────────────────────────────────────────────────── */
-  /* Derived from the logo's #C0523D. Three values because three jobs have
-     three different contrast requirements:
-       --accent      4.34:1 on paper — fills, marks, large text only
-       --accent-ink  9.75:1 on paper — any accent-coloured small text
-       --accent-on   4.65:1 on the accent fill — the ONE permitted pure white.
-     --ink-inverse was tried for --accent-on and measures 4.27:1, which fails.
-     Do not substitute it back. */
-  --accent: oklch(0.576 0.146 33);
-  --accent-hover: oklch(0.505 0.132 34);
-  --accent-wash: oklch(0.945 0.028 34);
-  --accent-ink: oklch(0.38 0.1 34);
-  --accent-on: #ffffff;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 150ms;
+  --dur-base: 200ms;
+  --dur-slow: 350ms;
 
-  /* ── §3.5 Pastels ────────────────────────────────────────────────────── */
-  /* The sticker set: tags, subject coding, inline highlights. Every pair is
-     AA on its own fill (7.05:1 to 7.54:1) and AA on --paper. */
-  --pastel-rose: oklch(0.94 0.032 20);
-  --pastel-rose-ink: oklch(0.42 0.11 20);
-  --pastel-amber: oklch(0.945 0.045 85);
-  --pastel-amber-ink: oklch(0.42 0.08 70);
-  --pastel-sage: oklch(0.94 0.032 155);
-  --pastel-sage-ink: oklch(0.4 0.07 160);
-  --pastel-sky: oklch(0.94 0.03 235);
-  --pastel-sky-ink: oklch(0.42 0.08 240);
-  --pastel-lilac: oklch(0.94 0.03 300);
-  --pastel-lilac-ink: oklch(0.42 0.08 300);
-  --pastel-clay: oklch(0.94 0.022 55);
-  --pastel-clay-ink: oklch(0.42 0.06 50);
+  color-scheme: light;
+}
 
-  /* ── §3.6 Semantic states ────────────────────────────────────────────── */
-  /* Teal, not green: teal-vs-red stays distinguishable under deuteranopia and
-     protanopia where green-vs-red does not. AND the three descend in relative
-     luminance (0.117 -> 0.089 -> 0.048) so the ladder survives greyscale for a
-     reader who gets no hue at all. Both properties are tested. */
-  --ok: oklch(0.48 0.075 175);
-  --ok-wash: oklch(0.945 0.03 175);
-  --warn: oklch(0.45 0.085 70);
-  --warn-wash: oklch(0.945 0.045 85);
-  --err: oklch(0.38 0.145 27);
-  --err-wash: oklch(0.94 0.035 27);
-  /* P8 (audit-dossier remediation): was hue 240/235, identical to
-     --pastel-sky-ink's hue (240) and --focus-ring's hue (240), and
-     --info-wash was byte-identical to --pastel-sky. A neutral notice painted
-     in the Math subject's colour, or in the focus ring's colour, reads as a
-     false cue. Hue 265 clears both by >=25deg while keeping L/C unchanged, so
-     the AA measurements below are unaffected. */
-  --info: oklch(0.44 0.08 265);
-  --info-wash: oklch(0.94 0.03 265);
+:root[data-theme="dark"] {
+  --md-primary: #7fb8e0;
+  --md-primary-hover: #9ccaea;
+  --md-on-primary: #042f4f;
+  --md-primary-container: oklch(0.34 0.07 242);
+  --md-on-primary-container: oklch(0.92 0.035 235);
+  --md-secondary: oklch(0.80 0.037 235);
+  --md-on-secondary: oklch(0.20 0.006 235);
+  --md-secondary-container: oklch(0.30 0.006 235);
+  --md-on-secondary-container: oklch(0.90 0.037 235);
+  --md-tertiary: oklch(0.80 0.13 80);
+  --md-on-tertiary: oklch(0.20 0.019 80);
+  --md-tertiary-container: oklch(0.30 0.022 80);
+  --md-on-tertiary-container: oklch(0.90 0.108 80);
+  --md-error: oklch(0.72 0.15 25);
+  --md-on-error: oklch(0.20 0.083 25);
+  --md-error-container: oklch(0.30 0.117 25);
+  --md-on-error-container: oklch(0.90 0.083 25);
+  --md-success: oklch(0.72 0.12 150);
+  --md-success-container: oklch(0.30 0.06 150);
+  --md-on-success-container: oklch(0.90 0.06 150);
+  --md-surface: #130e10;
+  --md-surface-container-lowest: oklch(0.12 0.006 240);
+  --md-surface-container-low: oklch(0.19 0.01 240);
+  --md-surface-container: oklch(0.215 0.014 240);
+  --md-surface-container-high: oklch(0.25 0.018 240);
+  --md-surface-container-highest: oklch(0.29 0.022 240);
+  --md-on-surface: oklch(0.95 0.006 240);
+  --md-on-surface-variant: oklch(0.77 0.015 240);
+  --md-outline: oklch(0.38 0.02 240);
+  --md-outline-variant: oklch(0.30 0.018 240);
+  --md-inverse-surface: oklch(0.95 0.006 240);
+  --md-inverse-on-surface: #130e10;
+  --md-inverse-primary: #042f4f;
 
-  /* ── §3.7 Product scales ─────────────────────────────────────────────── */
-  /* Load-bearing product semantics, not decoration. They alias the semantic
-     states, which means they inherit the greyscale ladder for free. */
-  --confidence-high: var(--ok);
-  --confidence-high-bg: var(--ok-wash);
-  --confidence-medium: var(--warn);
-  --confidence-medium-bg: var(--warn-wash);
-  --confidence-low: var(--err);
-  --confidence-low-bg: var(--err-wash);
+  color-scheme: dark;
+}
 
-  --mark-correct: var(--ok);
-  --mark-correct-bg: var(--ok-wash);
-  --mark-partial: var(--warn);
-  --mark-partial-bg: var(--warn-wash);
-  --mark-wrong: var(--err);
-  --mark-wrong-bg: var(--err-wash);
-
-  /* Grade bands never use --accent: a grade badge must not read as a button. */
-  --grade-top: var(--ok);
-  --grade-top-bg: var(--ok-wash);
-  --grade-mid: var(--pastel-clay-ink);
-  --grade-mid-bg: var(--pastel-clay);
-  --grade-borderline: var(--warn);
-  --grade-borderline-bg: var(--warn-wash);
-  --grade-fail: var(--err);
-  --grade-fail-bg: var(--err-wash);
-
-  /* ── §3.8 Subject colours ────────────────────────────────────────────── */
-  /* Semantic: a student should find Physics by colour before reading. Never
-     pick a subject colour at a call site; extend this list instead. */
-  --subject-math: var(--pastel-sky);
-  --subject-math-ink: var(--pastel-sky-ink);
-  --subject-physics: var(--pastel-lilac);
-  --subject-physics-ink: var(--pastel-lilac-ink);
-  --subject-chemistry: var(--pastel-sage);
-  --subject-chemistry-ink: var(--pastel-sage-ink);
-  --subject-biology: var(--pastel-clay);
-  --subject-biology-ink: var(--pastel-clay-ink);
-  --subject-english: var(--pastel-amber);
-  --subject-english-ink: var(--pastel-amber-ink);
-  --subject-other: var(--pastel-rose);
-  --subject-other-ink: var(--pastel-rose-ink);
-
-  /* ── §3.9 Focus ──────────────────────────────────────────────────────── */
-  /* Deliberately blue, not the accent: focus must be distinguishable from the
-     accent's own hover and selected states, and must read as "the browser is
-     talking to you" rather than as brand. 5.37:1 on --paper. */
-  --focus-ring: oklch(0.5 0.14 240);
-
-  /* ── §7 Elevation ────────────────────────────────────────────────────── */
-  /* Resting cards have NO shadow, ever. This exists for floating layers only:
-     popovers, dropdowns, modals, toasts. */
-  --shadow-float:
-    0 4px 16px oklch(0.321 0.009 234 / 0.05), 0 1px 3px oklch(0.321 0.009 234 / 0.04);
-  --scrim: oklch(0.321 0.009 234 / 0.28);
-
-  /* ── §9.1 Motion, durations ──────────────────────────────────────────── */
-  /* The easings live in the @theme block below rather than here, so Tailwind
-     generates real `ease-*` utilities from them. Defining them in both places
-     under the same name would be a circular var() reference. */
+/* Non-colour tokens carried over from the build era. Read by
+   vite/preMountShell.ts (loading tiers) and the motion rules below. */
+:root {
+  --focus-ring: var(--md-primary);
   --dur-instant: 120ms;
-  --dur-fast: 200ms;
-  --dur-base: 320ms;
-  --dur-slow: 600ms;
   --dur-celebrate: 900ms;
-
-  /* ── §12 Loading tiers (PR 2 part B) ────────────────────────────────────
-     Every full-page wait has three tiers. Tier 1, 0 to --loading-tier-skeleton:
-     warm paper only, nothing visible (a `role="status"` "Loading" announcement
-     stays, visually hidden). Tier 2, --loading-tier-skeleton to
-     --loading-tier-slow: a skeleton matching the layout being waited for.
-     Tier 3, after --loading-tier-slow: the brand mark drawing itself, "Still
-     loading", and a reload button. Both thresholds are tokens so
-     `vite/preMountShell.ts` can
-     read them out of this file rather than a second, driftable copy — the
-     pre-mount shell in index.html stages on the same two numbers `RouteFallback`
-     does. See the `.lm-tier-*` classes below for the mechanism. */
   --loading-tier-skeleton: 200ms;
   --loading-tier-slow: 5000ms;
-
-  /* ── §4.2 Type scale (raw values) ────────────────────────────────────── */
-  /* Bundled into composite classes below, because Tailwind v4's --text-* can
-     carry line-height/tracking/weight but NOT font-family, and every rung here
-     is family-specific. */
-  --fs-display-hero: 60px;
-  --fs-display-xl: 44px;
-  --fs-display-lg: 32px;
-  --fs-display-md: 24px;
-  --fs-display-sm: 19px;
-  --fs-body-lg: 15px;
-  --fs-body-md: 14px;
-  --fs-body-sm: 13px;
-  --fs-label: 13px;
-  --fs-eyebrow: 11px;
-  --fs-data-lg: 32px;
-  --fs-data-md: 15px;
-  --fs-data-sm: 11px;
-  --fs-hand: 19px;
-  /* Not a §4.2 type rung: iOS Safari auto-zooms the viewport on focusing any
-     text input under 16px, so this is a platform floor for native form
-     fields, applied via `.text-field` regardless of what the surrounding
-     copy scale would otherwise call for. */
+  /* iOS Safari auto-zooms on focusing a text input under 16px, so this is a
+     platform floor for native form fields, applied via `.text-field`. */
   --fs-field: 16px;
 }
 
-/* ============================================================================
- * DARK LADDER (Phase C, task C5a) — DESIGN.md §3.10 is the measured record.
- *
- * A token swap, nothing more. Every name below already has a job assigned in
- * the light `:root` block above; nothing here is a new colour concept, and no
- * component file changes for this to work. `--bg`/`--surface`/`--t1` (the
- * compatibility layer, `:root, [data-portal="..."]` below) and `--grade-*` /
- * `--mark-*` / `--confidence-*` / `--subject-*` (the alias layer, §3.7–3.8
- * above) are all `var(--paper)`-style references, resolved against whatever
- * is cascaded on the element — so the instant `data-theme="dark"` lands on
- * `<html>`, they repaint for free. `@theme inline` (below) maps Tailwind
- * utilities to `var(--token)` the same way and needs no changes either.
- *
- * Hue and chroma are kept from the light ladder for every token except where
- * a comment below says otherwise; every value here is transcribed into
- * DESIGN.md §3.10 exactly as shipped, and `tests/test_design_tokens.py` runs
- * every contrast guarantee the light ladder makes against this one too.
- *
- * Out of scope for C5a, deliberately: `--shadow-float` and `--scrim` (§7).
- * Resting cards carry no shadow in either theme, floating layers (popovers,
- * modals, toasts) are the only consumers, and neither is a text/surface
- * contrast pair this task's AA gate covers — a dark-appropriate elevation
- * treatment (shadows read as "holes" on a dark surface; Material's answer is
- * lighter panels, not darker shadows) is a design decision for whichever
- * task first ships a floating layer against this ladder, not a token-value
- * nudge. `tests/unit/design-tokens.test.ts`'s "same token set" check
- * excludes both by construction: neither is a plain `oklch(L C H)` triple.
- * ==========================================================================
- */
-:root[data-theme="dark"] {
-  color-scheme: dark;
+@theme inline {
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-current: currentColor;
+  --color-white: var(--md-surface-container-lowest);
 
-  /* ── §3.1 Paper ──────────────────────────────────────────────────────── */
-  --paper: oklch(0.2 0.004 85);
-  --paper-raised: oklch(0.24 0.003 85);
-  --paper-sunk: oklch(0.17 0.006 85);
-  --paper-inverse: oklch(0.92 0.008 250);
+  --color-primary: var(--md-primary);
+  --color-primary-hover: var(--md-primary-hover);
+  --color-on-primary: var(--md-on-primary);
+  --color-primary-container: var(--md-primary-container);
+  --color-on-primary-container: var(--md-on-primary-container);
+  --color-secondary: var(--md-secondary);
+  --color-on-secondary: var(--md-on-secondary);
+  --color-secondary-container: var(--md-secondary-container);
+  --color-on-secondary-container: var(--md-on-secondary-container);
+  --color-tertiary: var(--md-tertiary);
+  --color-on-tertiary: var(--md-on-tertiary);
+  --color-tertiary-container: var(--md-tertiary-container);
+  --color-on-tertiary-container: var(--md-on-tertiary-container);
+  --color-error: var(--md-error);
+  --color-on-error: var(--md-on-error);
+  --color-error-container: var(--md-error-container);
+  --color-on-error-container: var(--md-on-error-container);
+  --color-success: var(--md-success);
+  --color-success-container: var(--md-success-container);
+  --color-on-success-container: var(--md-on-success-container);
+  --color-surface: var(--md-surface);
+  --color-surface-container-lowest: var(--md-surface-container-lowest);
+  --color-surface-container-low: var(--md-surface-container-low);
+  --color-surface-container: var(--md-surface-container);
+  --color-surface-container-high: var(--md-surface-container-high);
+  --color-surface-container-highest: var(--md-surface-container-highest);
+  --color-on-surface: var(--md-on-surface);
+  --color-on-surface-variant: var(--md-on-surface-variant);
+  --color-outline: var(--md-outline);
+  --color-outline-variant: var(--md-outline-variant);
+  --color-inverse-surface: var(--md-inverse-surface);
+  --color-inverse-on-surface: var(--md-inverse-on-surface);
+  --color-inverse-primary: var(--md-inverse-primary);
+  --color-scrim: var(--md-scrim);
 
-  /* ── §3.2 Ink ────────────────────────────────────────────────────────── */
-  --ink: oklch(0.93 0.009 234);
-  --ink-muted: oklch(0.78 0.006 240);
-  --ink-faint: oklch(0.72 0.006 240);
-  --ink-inverse: oklch(0.25 0.004 85);
+  --color-grade-a-star: var(--grade-a-star);
+  --color-grade-a: var(--grade-a);
+  --color-grade-b: var(--grade-b);
+  --color-grade-c: var(--grade-c);
+  --color-grade-d: var(--grade-d);
+  --color-grade-e: var(--grade-e);
+  --color-grade-u: var(--grade-u);
 
-  /* ── §3.3 Rules ──────────────────────────────────────────────────────── */
-  --rule: oklch(0.3 0.004 85);
-  --rule-strong: oklch(0.36 0.005 85);
-  --rule-faint: oklch(0.26 0.003 85);
+  --font-display: "Bricolage Grotesque Variable", "Schibsted Grotesk Variable", sans-serif;
+  --font-sans: "Schibsted Grotesk Variable", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+  --font-serif: var(--font-display);
 
-  /* ── §3.4 Accent ─────────────────────────────────────────────────────── */
-  /* Chroma nudged down from the light ladder's 0.146/0.132/0.028/0.10 (still
-     the same hues) so the fill does not glow past legibility at this
-     lightness. `--accent-on`: pure white measures 2.61:1 on this accent
-     (fails AA); the dark `--paper` measures 6.93:1 and reads as the fill
-     "recessing" into the page rather than sitting on it, so it aliases
-     `--paper` instead of carrying a second literal. */
-  --accent: oklch(0.72 0.13 33);
-  --accent-hover: oklch(0.78 0.13 34);
-  --accent-wash: oklch(0.28 0.05 34);
-  --accent-ink: oklch(0.8 0.1 34);
-  --accent-on: var(--paper);
+  --radius-bar: 4px;
+  --radius-row: 10px;
+  --radius-chip: 12px;
+  --radius-button: 14px;
+  --radius-inner: 18px;
+  --radius-tile: 20px;
+  --radius-card: 24px;
+  --radius-board: 32px;
+  --radius-pill: 999px;
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-2xl: 24px;
+  --radius: 12px;
 
-  /* ── §3.5 Pastels ────────────────────────────────────────────────────── */
-  --pastel-rose: oklch(0.3 0.032 20);
-  --pastel-rose-ink: oklch(0.85 0.11 20);
-  --pastel-amber: oklch(0.3 0.045 85);
-  --pastel-amber-ink: oklch(0.85 0.08 70);
-  --pastel-sage: oklch(0.3 0.032 155);
-  --pastel-sage-ink: oklch(0.85 0.07 160);
-  --pastel-sky: oklch(0.3 0.03 235);
-  --pastel-sky-ink: oklch(0.85 0.08 240);
-  --pastel-lilac: oklch(0.3 0.03 300);
-  --pastel-lilac-ink: oklch(0.85 0.08 300);
-  --pastel-clay: oklch(0.3 0.022 55);
-  --pastel-clay-ink: oklch(0.85 0.06 50);
+  --shadow-float: var(--shadow-panel);
+  --shadow-hover: var(--shadow-hover);
+  --shadow-panel: var(--shadow-panel);
 
-  /* ── §3.6 Semantic states ────────────────────────────────────────────── */
-  /* The §3.6 greyscale guarantee survives the theme swap but the ladder
-     flips direction: light DESCENDS (ok > warn > err — darkest reads
-     loudest against white paper); dark ASCENDS (ok < warn < err — brightest
-     reads loudest against near-black paper). `ok`/`warn` sit a little below
-     the 0.78-0.82 starting band (0.74/0.77) because at equal L the higher
-     chroma on `err` (0.145 vs 0.075/0.085) suppresses its luminance enough
-     to break monotonicity; nudging ok/warn down instead of touching any
-     hue/chroma keeps the full step >=0.02 in relative luminance, the same
-     floor §3.6 sets for the light ladder. `info` is not part of the ladder
-     (it never was, in either theme) and sits at the band's midpoint. */
-  --ok: oklch(0.74 0.075 175);
-  --ok-wash: oklch(0.28 0.03 175);
-  --warn: oklch(0.77 0.085 70);
-  --warn-wash: oklch(0.28 0.045 85);
-  --err: oklch(0.82 0.145 27);
-  --err-wash: oklch(0.27 0.035 27);
-  --info: oklch(0.8 0.08 265);
-  --info-wash: oklch(0.29 0.03 265);
-
-  /* ── §3.9 Focus ──────────────────────────────────────────────────────── */
-  --focus-ring: oklch(0.72 0.14 240);
+  --ease-out: var(--ease-out);
+  --ease-expo: var(--ease-expo);
 }
 
+/* Layout, motion and breakpoint tokens carried over unchanged from the build
+   era. Colours, faces and radii live in the block above. */
 @theme inline {
-  /* ── Colours ─────────────────────────────────────────────────────────── */
-  --color-paper: var(--paper);
-  --color-paper-raised: var(--paper-raised);
-  --color-paper-sunk: var(--paper-sunk);
-  --color-paper-inverse: var(--paper-inverse);
-
-  --color-ink: var(--ink);
-  --color-ink-muted: var(--ink-muted);
-  --color-ink-faint: var(--ink-faint);
-  --color-ink-inverse: var(--ink-inverse);
-
-  --color-rule: var(--rule);
-  --color-rule-strong: var(--rule-strong);
-  --color-rule-faint: var(--rule-faint);
-
-  --color-accent: var(--accent);
-  --color-accent-hover: var(--accent-hover);
-  --color-accent-wash: var(--accent-wash);
-  --color-accent-ink: var(--accent-ink);
-  --color-accent-on: var(--accent-on);
-
-  --color-pastel-rose: var(--pastel-rose);
-  --color-pastel-rose-ink: var(--pastel-rose-ink);
-  --color-pastel-amber: var(--pastel-amber);
-  --color-pastel-amber-ink: var(--pastel-amber-ink);
-  --color-pastel-sage: var(--pastel-sage);
-  --color-pastel-sage-ink: var(--pastel-sage-ink);
-  --color-pastel-sky: var(--pastel-sky);
-  --color-pastel-sky-ink: var(--pastel-sky-ink);
-  --color-pastel-lilac: var(--pastel-lilac);
-  --color-pastel-lilac-ink: var(--pastel-lilac-ink);
-  --color-pastel-clay: var(--pastel-clay);
-  --color-pastel-clay-ink: var(--pastel-clay-ink);
-
-  --color-ok: var(--ok);
-  --color-ok-wash: var(--ok-wash);
-  --color-warn: var(--warn);
-  --color-warn-wash: var(--warn-wash);
-  --color-err: var(--err);
-  --color-err-wash: var(--err-wash);
-  --color-info: var(--info);
-  --color-info-wash: var(--info-wash);
-
-  --color-confidence-high: var(--confidence-high);
-  --color-confidence-high-bg: var(--confidence-high-bg);
-  --color-confidence-medium: var(--confidence-medium);
-  --color-confidence-medium-bg: var(--confidence-medium-bg);
-  --color-confidence-low: var(--confidence-low);
-  --color-confidence-low-bg: var(--confidence-low-bg);
-
-  --color-mark-correct: var(--mark-correct);
-  --color-mark-correct-bg: var(--mark-correct-bg);
-  --color-mark-partial: var(--mark-partial);
-  --color-mark-partial-bg: var(--mark-partial-bg);
-  --color-mark-wrong: var(--mark-wrong);
-  --color-mark-wrong-bg: var(--mark-wrong-bg);
-
-  --color-grade-top: var(--grade-top);
-  --color-grade-top-bg: var(--grade-top-bg);
-  --color-grade-mid: var(--grade-mid);
-  --color-grade-mid-bg: var(--grade-mid-bg);
-  --color-grade-borderline: var(--grade-borderline);
-  --color-grade-borderline-bg: var(--grade-borderline-bg);
-  --color-grade-fail: var(--grade-fail);
-  --color-grade-fail-bg: var(--grade-fail-bg);
-
-  --color-subject-math: var(--subject-math);
-  --color-subject-math-ink: var(--subject-math-ink);
-  --color-subject-physics: var(--subject-physics);
-  --color-subject-physics-ink: var(--subject-physics-ink);
-  --color-subject-chemistry: var(--subject-chemistry);
-  --color-subject-chemistry-ink: var(--subject-chemistry-ink);
-  --color-subject-biology: var(--subject-biology);
-  --color-subject-biology-ink: var(--subject-biology-ink);
-  --color-subject-english: var(--subject-english);
-  --color-subject-english-ink: var(--subject-english-ink);
-  --color-subject-other: var(--subject-other);
-  --color-subject-other-ink: var(--subject-other-ink);
-
-  --color-focus-ring: var(--focus-ring);
-
-  /* ── §4 Faces ────────────────────────────────────────────────────────── */
-  /* Inter / Roboto / Arial / Open Sans / Helvetica are banned product-wide
-     (REDESIGN-MISSION §3.2 item 2), which is why the fallbacks below reach for
-     the generic family rather than naming a "safe" system face. */
-  --font-display: "Newsreader Variable", Georgia, serif;
-  --font-sans: "Geist Variable", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
-  --font-hand: "Caveat Variable", cursive;
-
-  /* ── §6 Radius ───────────────────────────────────────────────────────── */
-  /* radius-full on an interactive element is a gate failure: buttons are never
-     pills (§3.2 item 4). Legal only on tags/badges, avatars are squircles. */
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
-
   /* ── §5 Spacing ──────────────────────────────────────────────────────── */
   /* Tailwind's 4px base scale is untouched (p-1/p-2/gap-6 all still work).
      These are the named rungs DESIGN.md calls out for section rhythm. */
@@ -572,97 +344,8 @@
   /* Ambient status pulse. Deliberately NOT part of the --dur-* family: those
      are one-shot transition durations, this is an infinite loop. */
   --animate-lm-pulse: lm-pulse 1.6s infinite;
-}
 
-/* ============================================================================
- * COMPATIBILITY LAYER — build-era token names.
- *
- * These are the names the existing ~20 components were written against. They
- * are kept so nothing breaks mid-redesign, and they now resolve to Study
- * Notebook values, so every un-migrated screen picks up the new palette for
- * free instead of staying Material-3 until its Phase 4 turn.
- *
- * THIS BLOCK IS TEMPORARY. Do not write new code against these names. Each
- * Phase 4 surface migration deletes its own call sites, and the block is
- * removed when the last one is gone.
- *
- * The build-era system also scoped the accent HUE per portal (terracotta for
- * students, teal for teachers, rose for parents). That is gone: the Study
- * Notebook has one accent, and REDESIGN-MISSION §4 records the user decision
- * that teacher and parent views "share the exact same language, slightly
- * denser". Density, not hue, is what varies now — so `[data-portal]` still
- * works, and only shifts surface and border weight.
- * ==========================================================================
- */
-:root,
-[data-portal="student"],
-[data-portal="parent"] {
-  --bg: var(--paper);
-  --surface: var(--paper-raised);
-  --surface-2: var(--paper-sunk);
-  --border: var(--rule);
-
-  --ink-hover: var(--ink-muted);
-
-  --accent-subtle: var(--accent-wash);
-  --accent-subtle-on: var(--accent-ink);
-
-  --secondary: var(--ink-muted);
-  --secondary-hover: var(--ink);
-  --secondary-subtle: var(--paper-sunk);
-  --secondary-on: var(--ink-inverse);
-
-  --t1: var(--ink);
-  --t2: var(--ink-muted);
-  --t3: var(--ink-faint);
-
-  --ok-bg: var(--ok-wash);
-  --warn-bg: var(--warn-wash);
-  --err-bg: var(--err-wash);
-}
-
-/* Teacher: same language, denser. Only the border firms up. */
-[data-portal="teacher"] {
-  --border: var(--rule-strong);
-}
-
-@theme inline {
-  --color-bg: var(--bg);
-  --color-surface: var(--surface);
-  --color-surface-2: var(--surface-2);
-  --color-border: var(--border);
-  --color-ink-hover: var(--ink-hover);
-  --color-accent-subtle: var(--accent-subtle);
-  --color-accent-subtle-on: var(--accent-subtle-on);
-  --color-secondary: var(--secondary);
-  --color-secondary-hover: var(--secondary-hover);
-  --color-secondary-subtle: var(--secondary-subtle);
-  --color-secondary-on: var(--secondary-on);
-  --color-t1: var(--t1);
-  --color-t2: var(--t2);
-  --color-t3: var(--t3);
-  --color-ok-bg: var(--ok-bg);
-  --color-warn-bg: var(--warn-bg);
-  --color-err-bg: var(--err-bg);
-
-  /* `font-serif` was never a token in this system, so it was resolving to
-     Tailwind's own default stack — `ui-serif, Georgia, Cambria, "Times New
-     Roman", Times, serif`. Verified in the shipped bundle, not inferred:
-     `dist/assets/index-*.css` carries that literal value, and the ~20
-     `font-serif` call sites across Landing, Subject, QuizBuilder,
-     FlashcardReview and the primitives were therefore rendering **Georgia**,
-     not Newsreader. The product's display face was not on screen anywhere it
-     was reached by this name.
-
-     Pointing the alias at `--font-display` fixes every one of those sites at
-     once, which is the whole reason it goes here rather than being swept:
-     Phase 4 migrates surfaces one at a time, and the un-migrated ones should
-     not spend the intervening phases in the wrong typeface. Each surface
-     replaces its own `font-serif` with `font-display` as it lands, and this
-     line dies with the rest of the block. */
-  --font-serif: var(--font-display);
-
-  /* Build-era spacing rungs, still referenced by un-migrated screens. */
+  /* Build-era spacing rungs, still referenced by screens. */
   --spacing-container-desktop: 34px;
   --spacing-container-mobile: 22px;
   --spacing-gutter-grid: 24px;
@@ -679,8 +362,8 @@
   --spacing-26px: 26px;
   --spacing-30px: 30px;
   --breakpoint-tablet: 1180px;
-  --radius: 8px;
 }
+
 
 /* The student Overview's subject ledger (P4.1). A named utility rather than an
    arbitrary `grid-cols-[...]` so the template is stated once and reviewable.
@@ -728,13 +411,12 @@
    attention.'" A red background on the one screen a student reads right
    after seeing their score would be exactly that. Scoped to the expanded
    explanation slot only (question-row.tsx) — never the row, never the
-   feedback panel's own bg-paper-sunk — and it carries no Caveat: this is
+   feedback panel's own bg-paper-sunk — and it carries no handwriting face: this is
    state the reader needs, not marginalia they can lose (§4.1). See
    DESIGN.md §3.6. */
 .lm-red-pen {
-  color: var(--mark-wrong);
-  font-weight: 500;
-  border-inline-start: 2px solid var(--mark-wrong);
+  color: var(--md-error);
+  border-inline-start: 2px solid var(--md-error);
   padding-inline-start: var(--space-3);
 }
 
@@ -761,14 +443,14 @@ body {
 
 body {
   margin: 0;
-  background: var(--paper);
-  color: var(--ink);
+  background: var(--md-surface);
+  color: var(--md-on-surface);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
 
 ::selection {
-  background: var(--accent-wash);
+  background: var(--md-primary-container);
 }
 
 /* Focus is never removed, on any element, for any reason (DESIGN.md §3.9).
@@ -859,69 +541,39 @@ body {
 }
 
 /* ── §4.2 Type scale ───────────────────────────────────────────────────── */
-/* Composite classes rather than Tailwind --text-* rungs, because each rung is
-   family-specific and Tailwind v4's font-size tokens cannot carry a family.
-   Every one is registered with tailwind-merge in lib/utils.ts — without that,
-   twMerge treats an unrecognised `text-*` class as a COLOUR utility and
-   silently drops any real text colour beside it. That caused a live contrast
-   regression during the build era; see the note in lib/utils.ts. */
+/* v5 Abyss ramp (DESIGN.md §3). Composite classes rather than Tailwind --text-*
+   rungs, because each rung is family-specific. Bricolage Grotesque (T1) is
+   only used at 28px and above. Every class is registered with tailwind-merge
+   in lib/utils.ts; without that, twMerge treats an unrecognised `text-*` class
+   as a COLOUR utility and silently drops any real text colour beside it. */
 .text-display-hero {
-  font-family: var(--font-display);
-  font-size: var(--fs-display-hero);
-  font-weight: 400;
-  line-height: 1.05;
-  letter-spacing: -0.015em;
+  font: 800 64px/1 var(--font-display);
+  letter-spacing: -0.03em;
 }
 .text-display-xl {
-  font-family: var(--font-display);
-  font-size: var(--fs-display-xl);
-  font-weight: 400;
-  line-height: 1.08;
-  letter-spacing: -0.01em;
+  font: 800 64px/1 var(--font-display);
+  letter-spacing: -0.03em;
 }
 .text-display-lg {
-  font-family: var(--font-display);
-  font-size: var(--fs-display-lg);
-  font-weight: 400;
-  line-height: 1.12;
-  letter-spacing: -0.005em;
+  font: 800 40px/1.05 var(--font-display);
+  letter-spacing: -0.03em;
 }
 .text-display-md {
-  font-family: var(--font-display);
-  font-size: var(--fs-display-md);
-  font-weight: 500;
-  line-height: 1.18;
+  font: 800 32px/1.15 var(--font-sans);
+  letter-spacing: -0.02em;
 }
 .text-display-sm {
-  font-family: var(--font-display);
-  font-size: var(--fs-display-sm);
-  font-weight: 500;
-  line-height: 1.25;
+  font: 700 21px/1.25 var(--font-sans);
+  letter-spacing: -0.01em;
 }
-/* Hallmark mobile non-negotiable: `overflow-wrap: anywhere` on display headers.
-   Stated once for all five rungs rather than repeated in each.
-
-   This is the rule that `overflow-x: clip` was hiding. A display heading is the
-   largest type on the page and the most likely to hold something unbreakable —
-   a school name, an email address, a subject title with no spaces — and at
-   320px a single long token is wider than the viewport. Without this the token
-   overflows; because html and body clip rather than scroll, the reader does not
-   get a scrollbar, they get a heading with the end cut off and nothing saying
-   so. The two non-negotiables interact: implementing one alone makes the
-   absence of the other invisible.
-
-   `anywhere` rather than `break-word` deliberately. Only `anywhere` is taken
-   into account when computing a box's min-content size, which is what lets a
-   heading inside a grid or flex track actually shrink; `break-word` breaks the
-   glyphs but leaves the track sized to the unbroken word, so the overflow it is
-   supposed to prevent survives.
-
-   The data rungs are deliberately NOT included. They carry marks, percentages
-   and XP, where a break would put "12" and "8" on two lines and read as a
-   different number, and no value that short can overflow. If a data rung ever
-   holds something long, the geometric overflow check in
-   `scripts/adapt_audit.mjs` reports it as overflow, which is the honest signal;
-   a wrap rule there would silently make a wrong number look intentional. */
+.text-display-xs {
+  font: 700 16px/1.3 var(--font-sans);
+}
+/* `overflow-wrap: anywhere` on display headers: a school name or email at 320px
+   is wider than the viewport, and html/body clip rather than scroll. Only
+   `anywhere` counts toward min-content size, so a heading in a grid or flex
+   track can actually shrink. The data rungs are deliberately excluded: a break
+   would turn "12" into "1" and "2" and read as a different number. */
 .text-display-hero,
 .text-display-xl,
 .text-display-lg,
@@ -931,212 +583,67 @@ body {
 }
 
 .text-body-lg {
-  font-family: var(--font-sans);
-  font-size: var(--fs-body-lg);
-  font-weight: 400;
-  line-height: 1.6;
+  font: 400 16px/1.5 var(--font-sans);
 }
 .text-body-md {
-  font-family: var(--font-sans);
-  font-size: var(--fs-body-md);
-  font-weight: 400;
-  line-height: 1.55;
+  font: 400 16px/1.5 var(--font-sans);
 }
 .text-body-sm {
-  font-family: var(--font-sans);
-  font-size: var(--fs-body-sm);
-  font-weight: 400;
-  line-height: 1.5;
+  font: 400 14px/1.45 var(--font-sans);
 }
-/* The `--fs-field` platform floor (see its token comment). A standalone
-   override, not a modifier meant to combine with a `.text-body-*` class:
-   both live in the same twMerge font-size group (lib/utils.ts), so
-   cn("text-body-md", "text-field") always collapses to "text-field" alone —
-   a field using it gets family/weight/line-height from whatever it inherits,
-   not from a `.text-body-*` rung. */
+/* The `--fs-field` platform floor (iOS zooms on inputs under 16px). Standalone:
+   it shares a twMerge font-size group with `.text-body-*`, so the two never
+   combine and a field inherits family and weight from its context. */
 .text-field {
   font-size: var(--fs-field);
+  font-weight: 600;
+  line-height: 1.3;
+  font-family: var(--font-sans);
 }
 .text-label {
-  font-family: var(--font-sans);
-  font-size: var(--fs-label);
-  font-weight: 500;
-  line-height: 1;
+  font: 600 14px/1.3 var(--font-sans);
+}
+/* Eyebrow without the uppercase transform, for tags and status sentences.
+   `normal-case` cannot do this job: a Tailwind utility of equal specificity is
+   emitted before this block, so `.text-eyebrow`'s own transform would win. */
+.text-label-sm {
+  font: 600 11px/1.2 var(--font-mono);
+  letter-spacing: 0.08em;
 }
 .text-eyebrow {
-  font-family: var(--font-sans);
-  font-size: var(--fs-eyebrow);
-  font-weight: 600;
-  line-height: 1;
-  letter-spacing: 0.1em;
+  font: 600 11px/1.2 var(--font-mono);
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
-
-/* `eyebrow` at the same scale, weight and tracking, WITHOUT the uppercase
-   transform. P4.5 promoted this out of the build-era block, where it had been
-   parked as legacy despite being the rung the system actually needs.
-
-   §4.2 defines `eyebrow` for "uppercase kickers above headings" — one or two
-   words, set once — and §12 asks tags and badges for "eyebrow type". Those two
-   are only compatible while every tag is a word. `Chip` also renders status
-   *sentences* ("Possible AI-written answer"), and uppercasing those wraps them
-   to two lines, costs the acronym its distinction, and reads as shouting.
-
-   Note that `normal-case` cannot do this job: it is a Tailwind utility of equal
-   specificity emitted BEFORE this block, so `.text-eyebrow`'s own
-   `text-transform` wins the cascade. Verified in `dist/assets/*.css` by byte
-   offset, not assumed. A named rung is the fix; an override utility is not. */
-.text-label-sm {
-  font-family: var(--font-sans);
-  font-size: var(--fs-eyebrow);
-  font-weight: 600;
-  line-height: 1;
-  letter-spacing: 0.1em;
+.text-metadata {
+  font: 400 14px/1.45 var(--font-sans);
+  color: var(--md-on-surface-variant);
 }
-/* All data rungs are tabular by construction, so a score can never jitter as
-   it counts up and a column of marks always aligns. */
+/* All data rungs are tabular by construction, so a score never jitters as it
+   counts up and a column of marks always aligns. */
 .text-data-lg {
-  font-family: var(--font-mono);
-  font-size: var(--fs-data-lg);
-  font-weight: 500;
-  line-height: 1;
-  letter-spacing: -0.01em;
+  font: 600 16px/1.3 var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 .text-data-md {
-  font-family: var(--font-mono);
-  font-size: var(--fs-data-md);
-  font-weight: 500;
-  line-height: 1.2;
+  font: 600 14px/1.3 var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 .text-data-sm {
-  font-family: var(--font-mono);
-  font-size: var(--fs-data-sm);
-  font-weight: 500;
-  line-height: 1;
-  letter-spacing: 0.05em;
-  font-variant-numeric: tabular-nums;
-}
-/* Marginalia ONLY. Never a heading, button, label, form field, table cell,
-   error message, or anything a screen reader must announce (DESIGN.md §4.1).
-   If losing the text would be a problem, it is not this class. */
-.text-hand {
-  font-family: var(--font-hand);
-  font-size: var(--fs-hand);
-  font-weight: 400;
-  line-height: 1.35;
-}
-
-/* Mobile display rungs (§4.2). Body scale deliberately holds: shrinking body
-   copy is how learning platforms become unreadable on the device students
-   actually use. */
-@media (max-width: 767px) {
-  .text-display-hero {
-    font-size: 38px;
-  }
-  .text-display-xl {
-    font-size: 30px;
-  }
-  .text-display-lg {
-    font-size: 26px;
-  }
-}
-
-/* Build-era type classes, kept alive for un-migrated screens. */
-.text-display-xs {
-  font-family: var(--font-display);
-  font-size: var(--fs-display-sm);
-  font-weight: 500;
-  line-height: 1.25;
-}
-.text-metadata {
-  font-family: var(--font-mono);
-  font-size: var(--fs-data-sm);
-  font-weight: 500;
-  line-height: 1;
-  letter-spacing: 0.05em;
+  font: 600 11px/1.2 var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 .btn-text {
-  font-family: var(--font-sans);
-  font-size: var(--fs-label);
-  font-weight: 500;
-  line-height: 1;
+  font: 700 14px/1 var(--font-sans);
 }
 .btn-text-sm {
-  font-family: var(--font-sans);
-  font-size: 12.5px;
-  font-weight: 500;
-  line-height: 1;
+  font: 700 14px/1 var(--font-sans);
 }
 .btn-text-lg {
-  font-family: var(--font-sans);
-  font-size: 13.5px;
-  font-weight: 500;
-  line-height: 1;
+  font: 700 16px/1 var(--font-sans);
 }
 
-/* ── §8 The notebook texture layer ─────────────────────────────────────── */
-/* This is how the one protected quality survives contact with a dashboard, and
-   it is also the easiest thing in the system to overdo.
-   THE RESTRAINT RULE: marginalia decorates, never carries meaning alone.
-   Remove every one of these and the product must still be fully usable. */
-
-/* Paper grain. Fixed and pointer-events:none, so it never repaints on scroll
-   and never eats a click. Opacity is capped at 0.04 by DESIGN.md. */
-.paper-grain::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-index-base);
-  pointer-events: none;
-  opacity: 0.035;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
-}
-
-/* Ruled paper, 32px. For the Read lane and section backgrounds. */
-.ruled-bg {
-  background-image: repeating-linear-gradient(
-    to bottom,
-    transparent 0,
-    transparent 31px,
-    var(--rule-faint) 31px,
-    var(--rule-faint) 32px
-  );
-}
-
-/* Dot grid, 24px. */
-.dotted-bg {
-  background-image: radial-gradient(var(--rule-faint) 1px, transparent 1px);
-  background-size: 24px 24px;
-}
-
-/* The margin rule: a single hairline at the content's inline start, echoing
-   the logo. The cheapest and most on-brand texture available; prefer it over a
-   doodle. Logical property, so it survives a future dir="rtl" flip. */
-.margin-rule {
-  border-inline-start: 1px solid var(--rule);
-  padding-inline-start: 24px;
-}
-
-/* Sticker badge: a slight rotation for genuinely decorative badges only.
-   NEVER on a status chip that has to be scanned. */
-.sticker {
-  transform: rotate(-2deg);
-}
-
-/* Texture is decorative, so it never survives into print. */
 @media print {
-  .paper-grain::after,
-  .ruled-bg,
-  .dotted-bg,
-  .sticker {
-    display: none;
-    background-image: none;
-    transform: none;
-  }
-
   /* Chrome that exists to navigate the app, not to be read on paper: portal
      sidebars/headers, bottom nav, drawers, toasts, banners, tab strips. Any
      component that should not print sets this attribute; the removal itself
@@ -1154,55 +661,30 @@ body {
   }
 
   /*
-   * §14 rule 3 ("tokens only") is deliberately broken here, and only here:
-   * dark mode (Phase C5) re-themes `--paper*`/`--ink*`/`--rule*`/semantic
-   * per `data-theme`, but ink on physical paper must stay legible regardless
-   * of which theme was active on screen when the student printed. Forcing
-   * the literal, not a token, guarantees that even if a future dark-mode
-   * token swap runs *inside* this block by mistake, print still resolves to
-   * a light page.
-   *
-   * C4/C5 review fix: `@media` adds no specificity, so a bare `:root` here
-   * (0,1,0) loses the cascade to the dark ladder's `:root[data-theme="dark"]`
-   * (0,2,0) regardless of source order — printing while the theme preference
-   * was dark left the print surface on the dark `--paper`/`--ink` pair,
-   * which is near-white ink on white paper (browsers don't print
-   * backgrounds by default). The selector below now also matches
-   * `:root[data-theme="dark"]` directly, at the SAME (0,2,0) specificity the
-   * dark ladder uses, and wins there by source order (this block comes
-   * after it in the file) — and it now resets `--ink*` and `--rule` too,
-   * not just `--paper*`, since PaperResult.tsx/question-row.tsx print real
-   * ink-coloured text and `--rule`-based borders.
-   *
-   * Re-verification review fix: `--ok`/`--warn`/`--err` are ALSO re-themed
-   * by the dark ladder (index.css:318-323) and ALSO print — PaperResult.tsx's
-   * `IntegrityMark` (border-ok/text-ok, border-warn/text-warn) and its
-   * "Needs review" copy (text-warn) sit on the print surface with no
-   * `data-print="hide"`. Same bug, one tier milder (washed out, not
-   * invisible: dark `--warn` measures 2.10:1 on forced white paper vs light
-   * `--warn`'s 7.58:1) — reset alongside the paper/ink/rule triple for the
-   * same reason.
-   *
-   * Values are the light ladder's own (§3.1/§3.2/§3.3 above), literal
-   * rather than `var()`, for the same "survives a future mistake inside
-   * this block" reason `--paper*` already relied on.
+   * Literals, not tokens, deliberately: ink on physical paper must stay
+   * legible whichever theme was active on screen when the student printed.
+   * `:root[data-theme="dark"]` is matched at the same specificity as the dark
+   * block above and wins by source order (this block comes after it), so a
+   * dark preference prints as the light scheme. Values are the light scheme's
+   * own (DESIGN.md frontmatter).
    */
   :root,
   :root[data-theme="dark"] {
     color-scheme: light;
-    --paper: #fff;
-    --paper-raised: #fff;
-    --paper-sunk: #fff;
-    --ink: oklch(0.321 0.009 234);
-    --ink-muted: oklch(0.48 0.006 240);
-    --ink-faint: oklch(0.52 0.006 240);
-    --rule: oklch(0.905 0.004 85);
-    --ok: oklch(0.48 0.075 175);
-    --ok-wash: oklch(0.945 0.03 175);
-    --warn: oklch(0.45 0.085 70);
-    --warn-wash: oklch(0.945 0.045 85);
-    --err: oklch(0.38 0.145 27);
-    --err-wash: oklch(0.94 0.035 27);
+    --md-surface: #fff;
+    --md-surface-container-lowest: #fff;
+    --md-surface-container-low: #fff;
+    --md-surface-container: #fff;
+    --md-surface-container-high: #fff;
+    --md-surface-container-highest: #fff;
+    --md-on-surface: #130e10;
+    --md-on-surface-variant: oklch(0.47 0.02 240);
+    --md-outline: oklch(0.87 0.012 240);
+    --md-outline-variant: oklch(0.92 0.01 240);
+    --md-primary: #042f4f;
+    --md-error: oklch(0.53 0.20 25);
+    --md-success: oklch(0.60 0.12 150);
+    --md-tertiary: oklch(0.80 0.13 80);
   }
 }
 
@@ -1720,7 +1202,7 @@ html[data-direction="back"]::view-transition-new(root) {
   height: 10px;
 }
 .lm-scroll::-webkit-scrollbar-thumb {
-  background: var(--rule);
+  background: var(--md-outline);
   border-radius: 6px;
   border: 3px solid transparent;
   background-clip: content-box;

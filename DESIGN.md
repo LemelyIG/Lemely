@@ -13,10 +13,11 @@ colors:
   white: "#ffffff"
   gold: "oklch(0.80 0.13 80)"
   success: "oklch(0.60 0.12 150)"
-  crimson: "oklch(0.55 0.20 25)"
+  crimson: "oklch(0.53 0.20 25)"
   crimson-on-dark: "oklch(0.72 0.15 25)"
   # Material 3 roles, light scheme
   primary: "#042f4f"
+  primary-hover: "#0a3d62"
   on-primary: "#ffffff"
   primary-container: "oklch(0.92 0.035 235)"
   on-primary-container: "#042f4f"
@@ -28,10 +29,12 @@ colors:
   on-tertiary: "oklch(0.20 0.019 80)"
   tertiary-container: "oklch(0.95 0.098 80)"
   on-tertiary-container: "oklch(0.30 0.022 80)"
-  error: "oklch(0.55 0.20 25)"
+  error: "oklch(0.53 0.20 25)"
   on-error: "#ffffff"
   error-container: "oklch(0.95 0.067 25)"
   on-error-container: "oklch(0.30 0.117 25)"
+  success-container: "oklch(0.95 0.04 150)"
+  on-success-container: "oklch(0.32 0.08 150)"
   surface: "oklch(0.985 0.004 240)"
   surface-container-lowest: "#ffffff"
   surface-container-low: "oklch(0.97 0.006 240)"
@@ -49,6 +52,7 @@ colors:
   shadow: "oklch(0.30 0.06 242)"
   # Material 3 roles, dark scheme
   dark-primary: "#7fb8e0"
+  dark-primary-hover: "#9ccaea"
   dark-on-primary: "#042f4f"
   dark-primary-container: "oklch(0.34 0.07 242)"
   dark-on-primary-container: "oklch(0.92 0.035 235)"
@@ -64,6 +68,9 @@ colors:
   dark-on-error: "oklch(0.20 0.083 25)"
   dark-error-container: "oklch(0.30 0.117 25)"
   dark-on-error-container: "oklch(0.90 0.083 25)"
+  dark-success: "oklch(0.72 0.12 150)"
+  dark-success-container: "oklch(0.30 0.06 150)"
+  dark-on-success-container: "oklch(0.90 0.06 150)"
   dark-surface: "#130e10"
   dark-surface-container-lowest: "oklch(0.12 0.006 240)"
   dark-surface-container-low: "oklch(0.19 0.01 240)"
@@ -258,7 +265,7 @@ All values come from the five tonal palettes in the brand guidelines (tone = OKL
 
 ### Custom colours (marking confidence)
 - **Success** (`oklch(0.60 0.12 150)`): correct answers, high confidence, positive deltas such as "+4 vs last".
-- **Crimson** (`oklch(0.55 0.20 25)` light, `oklch(0.72 0.15 25)` dark): the `error` role. Lost marks, low confidence and genuine errors only.
+- **Crimson** (`oklch(0.53 0.20 25)` light, `oklch(0.72 0.15 25)` dark): the `error` role. Lost marks, low confidence and genuine errors only.
 
 ### Grade scale: "Jewel"
 Green through yellow to red in even hue and lightness steps. Every chip uses white text and always shows the letter. Colour is never the only signal.
