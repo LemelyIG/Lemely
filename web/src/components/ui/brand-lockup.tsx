@@ -43,7 +43,12 @@ export function BrandLockup({
   // The Clip Letters wordmark: the two paperclips stand in for the "l" strokes
   // of "Lemely". Self-contained so it renders outside the marketing portal.
   const clip = (
-    <svg aria-hidden="true" width="12" height="29" viewBox="28 4 46 94" className="shrink-0">
+    <svg
+      aria-hidden="true"
+      viewBox="28 4 46 94"
+      preserveAspectRatio="xMidYMax meet"
+      className="h-[1.1em] w-auto shrink-0"
+    >
       <path
         d="M58 34 V72 A8 8 0 0 1 42 72 V20 A14 14 0 0 1 70 20 V78 A18 18 0 0 1 34 78 V36"
         fill="none"
@@ -53,22 +58,22 @@ export function BrandLockup({
       />
     </svg>
   )
-  const letters = cn(
-    "font-display font-extrabold leading-[.82] tracking-tight text-on-surface",
-    size === "sm" ? "text-display-sm" : "text-display-md",
-  )
   return (
     <Wrapper
-      className={cn("clip-wordmark inline-flex flex-col items-start text-primary", className)}
+      className={cn(
+        "wordmark inline-flex flex-col items-start text-primary",
+        size === "sm" ? "wordmark-sm" : "wordmark-md",
+        className,
+      )}
       aria-label={casing === "lower" ? "lemely" : "Lemely"}
     >
       <span className="inline-flex items-end">
         {clip}
-        <span aria-hidden="true" className={letters}>
+        <span aria-hidden="true" className="wordmark-letters text-on-surface">
           eme
         </span>
         {clip}
-        <span aria-hidden="true" className={letters}>
+        <span aria-hidden="true" className="wordmark-letters text-on-surface">
           y
         </span>
       </span>

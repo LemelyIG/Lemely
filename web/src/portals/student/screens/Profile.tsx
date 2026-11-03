@@ -62,7 +62,7 @@ import type { XpDay, XpProfile, XpSource } from "@/lib/xpTypes"
  *    the account has held since yesterday, on the one screen whose whole claim
  *    is that it measures work actually done.
  *
- * 3. **The streak milestone is a sticker, and the streak is also a plain
+ * 3. **The streak milestone is a chip, and the streak is also a plain
  *    number beside it.** §8 item 4 allows the ±2° rotation on decorative
  *    badges only; the badge here is genuinely decorative because removing it
  *    loses nothing a reader cannot get from the figure next to it.

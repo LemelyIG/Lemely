@@ -35,21 +35,23 @@ import type { PartialTheme } from "@nivo/theming"
 /* ── Token names ────────────────────────────────────────────────────────── */
 
 /**
- * The six categorical series colours, drawn from the Abyss roles.
+ * The six categorical series colours: the brand primary plus five theme-stable
+ * Jewel grade tokens, chosen for distinct hue (blue, amber, green, yellow,
+ * teal, orange-red).
  *
- * Roles that are legible as a 2px line on `surface-container-lowest`: the
- * brand primary first, then secondary, success, the neutral on-surface-variant,
- * the dark-mode-lifted inverse-primary, and outline. Crimson (`error`) and gold
- * (`tertiary`) are deliberately absent: they mean lost marks / low confidence
- * and XP / streaks everywhere else, and a series must not spend those meanings.
+ * Every one is at least 3:1 against `surface-container-lowest` in both themes
+ * (min 3.04:1, `grade-a-star` in dark). Pairs are separated mostly by hue, not
+ * lightness: neighbouring series sit 1.2 to 3:1 apart, so a chart must also
+ * label or direct-label series, never rely on colour alone. `error` and
+ * `tertiary` are excluded because they mean lost marks and XP elsewhere.
  */
 export const SERIES_TOKENS = [
   "--md-primary",
-  "--md-secondary",
-  "--md-success",
-  "--md-on-surface-variant",
-  "--md-inverse-primary",
-  "--md-outline",
+  "--grade-d",
+  "--grade-a",
+  "--grade-c",
+  "--grade-a-star",
+  "--grade-e",
 ] as const
 
 /**
@@ -66,6 +68,8 @@ export const CHART_TOKENS = [
   "--md-surface-container",
   "--md-surface-container-high",
   "--md-on-surface",
+  "--md-on-surface-variant",
+  "--md-outline",
   "--md-outline-variant",
   "--font-mono",
   "--font-sans",
@@ -77,14 +81,10 @@ export const CHART_TOKENS = [
    * shows (the same seven tokens `gradeChipClass` uses), and re-colouring it
    * from `SERIES_TOKENS` would break the one colour relationship in this
    * product a teacher actually learns. They are listed here so the gate checks
-   * them like every other chart token.
+   * them like every other chart token. The five already in `SERIES_TOKENS`
+   * are not repeated.
    */
-  "--grade-a-star",
-  "--grade-a",
   "--grade-b",
-  "--grade-c",
-  "--grade-d",
-  "--grade-e",
   "--grade-u",
 ] as const
 

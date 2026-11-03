@@ -124,7 +124,7 @@
   --color-*: initial;
   --color-transparent: transparent;
   --color-current: currentColor;
-  --color-white: var(--md-surface-container-lowest);
+  --color-white: #ffffff;
 
   --color-primary: var(--md-primary);
   --color-primary-hover: var(--md-primary-hover);
@@ -585,6 +585,24 @@ body {
 .text-display-md,
 .text-display-sm {
   overflow-wrap: anywhere;
+}
+
+/* The Clip Letters wordmark (BrandLockup). Its own class, not `text-display-*`:
+   those set `font:` with the UI face and win over layered utilities. Size comes
+   from `--wm-size`; the clip SVGs are sized in em off the same value. DESIGN.md
+   logo spec: wordmark at least 20px tall. */
+.wordmark-sm {
+  --wm-size: 26px;
+}
+.wordmark-md {
+  --wm-size: 34px;
+}
+.wordmark-letters {
+  font: 800 var(--wm-size, 26px) / 0.82 var(--font-display);
+  letter-spacing: -0.04em;
+}
+.wordmark {
+  font-size: var(--wm-size, 26px);
 }
 
 .text-body-lg {

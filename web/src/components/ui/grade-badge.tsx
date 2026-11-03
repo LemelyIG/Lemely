@@ -45,20 +45,20 @@ export function gradeBand(grade: string): GradeBand {
 }
 
 /*
- * Provisional (outlined) chips need the tone as text and border colour, and
+ * Provisional (outlined) chips carry the tone as border colour only (letters are small text, so they stay `text-on-surface`), and
  * Tailwind only emits classes it sees as literals, so the full table is spelled
  * out. Achieved chips use `gradeChipClass` (Jewel fill, white letter).
  */
 const toneOutline: Record<GradeTone, string> = {
-  "a-star": "text-grade-a-star border-grade-a-star",
-  a: "text-grade-a border-grade-a",
-  b: "text-grade-b border-grade-b",
-  c: "text-grade-c border-grade-c",
-  d: "text-grade-d border-grade-d",
-  e: "text-grade-e border-grade-e",
-  u: "text-grade-u border-grade-u",
+  "a-star": "border-grade-a-star",
+  a: "border-grade-a",
+  b: "border-grade-b",
+  c: "border-grade-c",
+  d: "border-grade-d",
+  e: "border-grade-e",
+  u: "border-grade-u",
 }
-const NO_TONE_OUTLINE = "text-on-surface-variant border-outline"
+const NO_TONE_OUTLINE = "border-outline"
 
 /*
  * P4.2: the grade letter is mono, not serif.
@@ -140,7 +140,7 @@ export function GradeBadge({
         padSize[size],
         provisional
           ? cn(
-              "bg-surface-container-lowest",
+              "bg-surface-container-lowest text-on-surface",
               tone ? toneOutline[tone] : NO_TONE_OUTLINE,
               estimated && "border-dashed",
             )

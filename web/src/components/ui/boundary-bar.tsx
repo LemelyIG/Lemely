@@ -37,7 +37,8 @@ export interface BoundaryBarProps extends Omit<HTMLAttributes<HTMLDivElement>, "
 
 /*
  * Each band of the scale is that grade's Jewel fill; the grade letters under
- * the bar carry the meaning in text, so colour is never the only signal.
+ * the bar are neutral text (small text never takes a Jewel colour), so colour
+ * is never the only signal.
  */
 const toneBg: Record<GradeTone, string> = {
   "a-star": "bg-grade-a-star",
@@ -48,14 +49,9 @@ const toneBg: Record<GradeTone, string> = {
   e: "bg-grade-e",
   u: "bg-grade-u",
 }
-const toneText: Record<GradeTone, string> = {
-  "a-star": "text-grade-a-star",
-  a: "text-grade-a",
-  b: "text-grade-b",
-  c: "text-grade-c",
-  d: "text-grade-d",
-  e: "text-grade-e",
-  u: "text-grade-u",
+function bandFill(grade: string): string {
+  const tone = gradeTone(grade)
+  return tone ? toneBg[tone] : "bg-surface-container-high"
 }
 
 export function BoundaryBar({
@@ -126,7 +122,7 @@ export function BoundaryBar({
                   key={b.grade}
                   className={cn(
                     "absolute top-0 h-full",
-                    (gradeTone(b.grade) ? toneBg[gradeTone(b.grade)!] : "bg-surface-container-high"),
+                    bandFill(b.grade),
                     estimated && "opacity-70",
                   )}
                   style={{ left: `${start}%`, width: `${Math.max(0, end - start)}%` }}
@@ -143,7 +139,7 @@ export function BoundaryBar({
                 style={{ left: `${clampPct(b.minMark)}%` }}
               >
                 <div className="w-px h-2 bg-outline-variant" aria-hidden />
-                <div className={cn("text-metadata mt-1", (gradeTone(b.grade) ? toneText[gradeTone(b.grade)!] : "text-on-surface-variant"))}>
+                <div className={cn("text-metadata mt-1", "text-on-surface-variant")}>
                   {b.grade}
                 </div>
               </div>

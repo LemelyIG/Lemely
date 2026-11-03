@@ -145,11 +145,11 @@ export interface CelebrateProps {
 }
 
 /**
- * Wraps a figure or badge so it springs (1 → 1.08 → 1) and, optionally, springs
- * when its value grows. No confetti (PRODUCT.md anti-reference).
+ * Wraps a figure or badge so it springs (1 → 1.08 → 1) when its value grows.
+ * No confetti (PRODUCT.md anti-reference).
  *
- * The wrapper is `inline-block` and `relative` so the scale has an origin, but it introduces no layout of its
- * own: the spring is a `transform`, so it cannot move anything around it (§9.2).
+ * The wrapper is `inline-block` and `relative` so the scale has an origin, but
+ * it introduces no layout of its own: the spring is a `transform`, so it cannot move anything around it (§9.2).
  */
 export function Celebrate({
   value,

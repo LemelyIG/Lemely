@@ -90,6 +90,11 @@ const GRADE_TONE_TOKEN: Record<GradeTone, string> = {
   u: "--grade-u",
 }
 
+function gradeToken(grade: string): string {
+  const tone = gradeTone(grade)
+  return tone ? GRADE_TONE_TOKEN[tone] : "--md-outline"
+}
+
 /**
  * Grade distribution (`gradeDistribution`), as a horizontal bar per grade.
  *
@@ -145,10 +150,7 @@ function GradeDistributionPanel({
         showValues
         height={Math.max(180, buckets.length * 26)}
         axisBottomLegend="Students"
-        colorFor={(point) => {
-          const tone = gradeTone(point.label)
-          return tone ? (tokens[GRADE_TONE_TOKEN[tone]] ?? "") : (tokens["--md-outline"] ?? "")
-        }}
+        colorFor={(point) => tokens[gradeToken(point.label)] ?? ""}
         formatValue={(v) => String(Math.round(v))}
         tooltipDetail={(point) =>
           total === 0
