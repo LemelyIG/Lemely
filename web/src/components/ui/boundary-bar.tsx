@@ -2,7 +2,7 @@
 import type { HTMLAttributes } from "react"
 import { cn } from "@/lib/utils"
 import { Eyebrow } from "./primitives"
-import { gradeBand } from "./grade-badge"
+import { gradeTone, type GradeTone } from "@/lib/grade"
 
 /*
  * C-3 Boundary bar. "The single most motivating object in the product"
@@ -35,17 +35,27 @@ export interface BoundaryBarProps extends Omit<HTMLAttributes<HTMLDivElement>, "
   label?: string
 }
 
-const bandBg: Record<string, string> = {
-  top: "bg-grade-top",
-  mid: "bg-grade-mid",
-  borderline: "bg-grade-borderline",
-  fail: "bg-grade-fail",
+/*
+ * Each band of the scale is that grade's Jewel fill; the grade letters under
+ * the bar carry the meaning in text, so colour is never the only signal.
+ */
+const toneBg: Record<GradeTone, string> = {
+  "a-star": "bg-grade-a-star",
+  a: "bg-grade-a",
+  b: "bg-grade-b",
+  c: "bg-grade-c",
+  d: "bg-grade-d",
+  e: "bg-grade-e",
+  u: "bg-grade-u",
 }
-const bandText: Record<string, string> = {
-  top: "text-grade-top",
-  mid: "text-grade-mid",
-  borderline: "text-grade-borderline",
-  fail: "text-grade-fail",
+const toneText: Record<GradeTone, string> = {
+  "a-star": "text-grade-a-star",
+  a: "text-grade-a",
+  b: "text-grade-b",
+  c: "text-grade-c",
+  d: "text-grade-d",
+  e: "text-grade-e",
+  u: "text-grade-u",
 }
 
 export function BoundaryBar({
@@ -116,7 +126,7 @@ export function BoundaryBar({
                   key={b.grade}
                   className={cn(
                     "absolute top-0 h-full",
-                    bandBg[gradeBand(b.grade)],
+                    (gradeTone(b.grade) ? toneBg[gradeTone(b.grade)!] : "bg-surface-container-high"),
                     estimated && "opacity-70",
                   )}
                   style={{ left: `${start}%`, width: `${Math.max(0, end - start)}%` }}
@@ -133,7 +143,7 @@ export function BoundaryBar({
                 style={{ left: `${clampPct(b.minMark)}%` }}
               >
                 <div className="w-px h-2 bg-outline-variant" aria-hidden />
-                <div className={cn("text-metadata mt-1", bandText[gradeBand(b.grade)])}>
+                <div className={cn("text-metadata mt-1", (gradeTone(b.grade) ? toneText[gradeTone(b.grade)!] : "text-on-surface-variant"))}>
                   {b.grade}
                 </div>
               </div>

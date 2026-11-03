@@ -213,7 +213,7 @@ export function LineChart({
         enableGridY
         lineWidth={2}
         pointSize={7}
-        pointColor={tokens["--paper-raised"]}
+        pointColor={tokens["--md-surface-container-lowest"]}
         pointBorderWidth={2}
         pointBorderColor={{ from: "seriesColor" }}
         enableArea={enableArea && !multi}

@@ -11,7 +11,7 @@ import { LineChart } from "@/components/ui/line-chart"
 import { BarChart } from "@/components/ui/bar-chart"
 import { WeaknessChip } from "@/components/ui/weakness-chip"
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
-import { gradeBand } from "@/components/ui/grade-badge"
+import { gradeTone, type GradeTone } from "@/lib/grade"
 import { topGradeCount } from "@/lib/gradeSummary"
 import { useNivoTheme } from "@/lib/nivoTheme"
 import { cn, downloadCsv } from "@/lib/utils"
@@ -75,16 +75,19 @@ import { useClassDetailContext } from "./ClassDetail"
  * react-spring, which parses it, so a `var()` string arrives as nothing).
  *
  * These are `--grade-*`, not `SERIES_TOKENS`. A grade distribution's colour is
- * not a series key: it is the same four-band scale the `GradeBadge` on every
+ * not a series key: it is the same seven-grade Jewel scale the `GradeBadge` on every
  * other teacher screen uses, and it is the one colour relationship in this
  * product a teacher genuinely learns. Recolouring it from the categorical
  * palette would make the bars prettier and the page less legible.
  */
-const GRADE_BAND_TOKEN: Record<string, string> = {
-  top: "--grade-top",
-  mid: "--grade-mid",
-  borderline: "--grade-borderline",
-  fail: "--grade-fail",
+const GRADE_TONE_TOKEN: Record<GradeTone, string> = {
+  "a-star": "--grade-a-star",
+  a: "--grade-a",
+  b: "--grade-b",
+  c: "--grade-c",
+  d: "--grade-d",
+  e: "--grade-e",
+  u: "--grade-u",
 }
 
 /**
@@ -142,7 +145,10 @@ function GradeDistributionPanel({
         showValues
         height={Math.max(180, buckets.length * 26)}
         axisBottomLegend="Students"
-        colorFor={(point) => tokens[GRADE_BAND_TOKEN[gradeBand(point.label)]] ?? ""}
+        colorFor={(point) => {
+          const tone = gradeTone(point.label)
+          return tone ? (tokens[GRADE_TONE_TOKEN[tone]] ?? "") : (tokens["--md-outline"] ?? "")
+        }}
         formatValue={(v) => String(Math.round(v))}
         tooltipDetail={(point) =>
           total === 0

@@ -1,6 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { HTMLAttributes } from "react"
 import { cn } from "@/lib/utils"
+import { gradeChipClass, gradeTone, type GradeTone } from "@/lib/grade"
 
 /*
  * C-1 Grade badge. Letter grade (A*–G/U) at three sizes, with a hard visual
@@ -43,16 +44,21 @@ export function gradeBand(grade: string): GradeBand {
   return "fail"
 }
 
-const bandClasses: Record<GradeBand, { text: string; bg: string; border: string }> = {
-  top: { text: "text-grade-top", bg: "bg-grade-top-bg", border: "border-grade-top" },
-  mid: { text: "text-grade-mid", bg: "bg-grade-mid-bg", border: "border-grade-mid" },
-  borderline: {
-    text: "text-grade-borderline",
-    bg: "bg-grade-borderline-bg",
-    border: "border-grade-borderline",
-  },
-  fail: { text: "text-grade-fail", bg: "bg-grade-fail-bg", border: "border-grade-fail" },
+/*
+ * Provisional (outlined) chips need the tone as text and border colour, and
+ * Tailwind only emits classes it sees as literals, so the full table is spelled
+ * out. Achieved chips use `gradeChipClass` (Jewel fill, white letter).
+ */
+const toneOutline: Record<GradeTone, string> = {
+  "a-star": "text-grade-a-star border-grade-a-star",
+  a: "text-grade-a border-grade-a",
+  b: "text-grade-b border-grade-b",
+  c: "text-grade-c border-grade-c",
+  d: "text-grade-d border-grade-d",
+  e: "text-grade-e border-grade-e",
+  u: "text-grade-u border-grade-u",
 }
+const NO_TONE_OUTLINE = "text-on-surface-variant border-outline"
 
 /*
  * P4.2: the grade letter is mono, not serif.
@@ -115,7 +121,7 @@ export function GradeBadge({
   className,
   ...props
 }: GradeBadgeProps) {
-  const band = bandClasses[gradeBand(grade)]
+  const tone = gradeTone(grade)
   const provisional = estimated || basis !== "achieved"
   const label = estimated
     ? "Estimated"
@@ -133,8 +139,12 @@ export function GradeBadge({
         "inline-flex flex-col items-center justify-center leading-none border",
         padSize[size],
         provisional
-          ? cn("bg-surface-container-lowest", band.text, band.border, estimated && "border-dashed")
-          : cn(band.bg, band.text, "border-transparent"),
+          ? cn(
+              "bg-surface-container-lowest",
+              tone ? toneOutline[tone] : NO_TONE_OUTLINE,
+              estimated && "border-dashed",
+            )
+          : cn(gradeChipClass(grade), "border-transparent"),
         className,
       )}
       {...props}

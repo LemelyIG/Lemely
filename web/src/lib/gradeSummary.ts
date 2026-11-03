@@ -8,7 +8,7 @@ import { gradeBand } from "@/components/ui/grade-badge"
  * into "top", so this is genuinely "students on A*, A or B", not literally just
  * "A* or A" (the ledger's/DESIGN's own shorthand for "the top band").
  * Reuses the exact same band function the bar chart already colors its bars
- * with (`GRADE_BAND_TOKEN[gradeBand(...)]` in `ClassAnalytics.tsx`), so the
+ * with (`GRADE_TONE_TOKEN[gradeTone(...)]` in `ClassAnalytics.tsx`), so the
  * headline number and "which bars are the top-band color" can never
  * disagree about where the line sits.
  */

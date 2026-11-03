@@ -190,7 +190,7 @@ export function BarChart({
         // accessible table still carry every value.
         labelSkipWidth={horizontal ? 28 : 0}
         labelSkipHeight={horizontal ? 0 : 18}
-        labelTextColor={tokens["--paper-raised"]}
+        labelTextColor={tokens["--md-surface-container-lowest"]}
         enableGridX={horizontal}
         enableGridY={!horizontal}
         axisTop={null}
