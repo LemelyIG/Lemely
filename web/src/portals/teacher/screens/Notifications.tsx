@@ -58,7 +58,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
   }
 
   return (
-    <Card className={cn("transition-colors", unread && "border-s-2 border-s-accent")}>
+    <Card className={cn("transition-colors", unread && "border-s-2 border-s-primary")}>
       <CardBody className="flex flex-col gap-2">
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
