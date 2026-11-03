@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils"
  * animating anything but `transform`/`opacity`, and a pulse reads as "still
  * working" without implying motion that doesn't exist yet.
  *
- * Base fill is `bg-paper-sunk`: the "well" surface (§3.1), one step down from
+ * Base fill is `bg-surface-container-low`: the "well" surface (§3.1), one step down from
  * the card it sits in, so the placeholder reads as an indentation rather than
  * as a competing element with its own weight.
  */
@@ -37,7 +37,7 @@ function SkeletonBase({
     <div
       role={announce ? "status" : undefined}
       aria-label={announce ? "Loading" : undefined}
-      className={cn("animate-lm-pulse rounded-md bg-paper-sunk", className)}
+      className={cn("animate-lm-pulse rounded-md bg-surface-container-low", className)}
       style={style}
       {...props}
     />

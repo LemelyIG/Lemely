@@ -45,10 +45,10 @@ export function OfflineBannerView({ onRetry }: { onRetry?: () => void }) {
   return (
     <div
       role="status"
-      className="mb-6 flex flex-wrap items-center gap-2.5 rounded-md border border-rule bg-paper-sunk px-3.5 py-2.5"
+      className="mb-6 flex flex-wrap items-center gap-2.5 rounded-md border border-outline-variant bg-surface-container-low px-3.5 py-2.5"
     >
-      <WifiSlash size={16} className="text-ink-muted" aria-hidden="true" />
-      <p className="min-w-0 flex-1 text-body-sm text-ink">
+      <WifiSlash size={16} className="text-on-surface-variant" aria-hidden="true" />
+      <p className="min-w-0 flex-1 text-body-sm text-on-surface">
         <span className="font-medium">You're offline.</span> Showing what loaded last. This page
         will refresh by itself when you're back online.
       </p>
@@ -56,7 +56,7 @@ export function OfflineBannerView({ onRetry }: { onRetry?: () => void }) {
         <button
           type="button"
           onClick={onRetry}
-          className="shrink-0 text-body-sm text-accent-ink underline decoration-1 underline-offset-2 transition-[color,transform] hover:text-accent-hover active:scale-[0.98]"
+          className="shrink-0 text-body-sm text-on-primary-container underline decoration-1 underline-offset-2 transition-[color,transform] hover:text-primary-hover active:scale-[0.98]"
         >
           Try again
         </button>

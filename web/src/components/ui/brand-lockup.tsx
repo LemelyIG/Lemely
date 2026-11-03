@@ -61,7 +61,7 @@ export function BrandLockup({
       />
       <span
         className={cn(
-          size === "sm" ? "text-display-sm text-ink" : "text-display-md text-ink",
+          size === "sm" ? "text-display-sm text-on-surface" : "text-display-md text-on-surface",
           children && "flex flex-col min-w-0",
         )}
       >

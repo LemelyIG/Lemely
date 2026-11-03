@@ -270,19 +270,19 @@ export function LineChart({
           const ctx = contextOf(point)
           const detail = tooltipDetail?.(ctx)
           return (
-            <div className="flex flex-col gap-0.5 rounded-sm border border-rule bg-paper-raised px-2.5 py-1.5">
+            <div className="flex flex-col gap-0.5 rounded-sm border border-outline-variant bg-surface-container-lowest px-2.5 py-1.5">
               {/* The series name is text, not a swatch. A tooltip that
                   identified its series by a coloured dot alone would put the
                   one fact a multi-series chart most needs into the colour
                   channel a second time. */}
               {multi ? (
-                <span className="text-label text-ink-muted">{ctx.seriesId}</span>
+                <span className="text-label text-on-surface-variant">{ctx.seriesId}</span>
               ) : null}
-              <span className="text-data-md text-ink">
+              <span className="text-data-md text-on-surface">
                 {ctx.x}: {formatValue(ctx.y)}
               </span>
               {detail ? (
-                <span className="text-body-sm text-ink-muted">{detail}</span>
+                <span className="text-body-sm text-on-surface-variant">{detail}</span>
               ) : null}
             </div>
           )

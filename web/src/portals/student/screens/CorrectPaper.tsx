@@ -263,7 +263,7 @@ function SourceToggle({
     <div
       role="group"
       aria-label="Scan source"
-      className="inline-flex rounded-md border border-rule bg-paper-sunk p-0.5"
+      className="inline-flex rounded-md border border-outline-variant bg-surface-container-low p-0.5"
     >
       {options.map((option) => {
         const Glyph = option.icon
@@ -280,8 +280,8 @@ function SourceToggle({
               "transition-colors duration-[var(--dur-instant)] ease-out-soft",
               "disabled:cursor-not-allowed disabled:opacity-50",
               active
-                ? "bg-paper-raised text-ink"
-                : "text-ink-muted hover:text-ink",
+                ? "bg-surface-container-lowest text-on-surface"
+                : "text-on-surface-variant hover:text-on-surface",
             )}
           >
             <Glyph size={16} aria-hidden="true" />
@@ -313,14 +313,14 @@ function StrandedRunPanel({ run, onRetry }: { run: UploadRun; onRetry: () => voi
   const stopped = phase === "stopped"
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-pretty text-body-sm text-ink-muted">
+      <p className="text-pretty text-body-sm text-on-surface-variant">
         {waiting
           ? "This paper was already being marked when you opened this page, and it is still going. Marking carries on even if you close the tab, so you can leave this open or come back later."
           : "This paper was being marked and the run stopped before it finished. Nothing was marked, and your scan is still here."}
       </p>
       {run.filename ? (
-        <p className="text-body-sm text-ink">
-          <span className="text-ink-muted">Paper</span>{" "}
+        <p className="text-body-sm text-on-surface">
+          <span className="text-on-surface-variant">Paper</span>{" "}
           <span className="break-words">{run.filename}</span>
         </p>
       ) : null}
@@ -741,12 +741,12 @@ export function CorrectPaper() {
   const busy = running || waitingOnServer
 
   const panel = running
-    ? { tone: "bg-accent", title: "Marking now" }
+    ? { tone: "bg-primary", title: "Marking now" }
     : waitingOnServer
-      ? { tone: "bg-accent", title: "Still marking" }
+      ? { tone: "bg-primary", title: "Still marking" }
       : error || strandedStopped
-        ? { tone: "bg-err", title: "Marking stopped" }
-        : { tone: "bg-ok", title: "Ready when you are" }
+        ? { tone: "bg-error", title: "Marking stopped" }
+        : { tone: "bg-success", title: "Ready when you are" }
 
   return (
     <div className="flex flex-col gap-8">
@@ -754,11 +754,11 @@ export function CorrectPaper() {
           header carries. The Operate lane runs texture low (§13). */}
       <header className="margin-rule flex flex-wrap items-end gap-5">
         <div className="flex flex-col gap-1">
-          <h1 className="text-display-lg text-ink">Correct a paper</h1>
+          <h1 className="text-display-lg text-on-surface">Correct a paper</h1>
           {/* max-w-[60ch] kept: a reading-measure width (character-count
            * based, not a pixel spacing value) — genuinely out of scope for
            * the 4px pixel scale, same reasoning as line-height ratios. */}
-          <p className="max-w-[60ch] text-pretty text-body-md text-ink-muted">
+          <p className="max-w-[60ch] text-pretty text-body-md text-on-surface-variant">
             Scan or drop the paper. Lemely reads page one, identifies the exam,
             fetches the official mark scheme, and marks it.
           </p>
@@ -812,14 +812,14 @@ export function CorrectPaper() {
                 hint="One paper per upload. Choose every page's photo at once, in order - or a single PDF."
               />
             ) : busy ? (
-              <div className="rounded-lg border border-rule bg-paper-sunk px-4 py-3 text-body-sm text-ink-muted">
+              <div className="rounded-lg border border-outline-variant bg-surface-container-low px-4 py-3 text-body-sm text-on-surface-variant">
                 {scanFile
                   ? `Scanned paper ready · ${scanFile.name}`
                   : "Marking in progress."}
               </div>
             ) : scanFile ? (
-              <div className="flex flex-wrap items-center gap-3 rounded-lg border border-rule bg-paper-raised px-4 py-3">
-                <span className="min-w-0 flex-1 truncate text-body-sm text-ink">
+              <div className="flex flex-wrap items-center gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest px-4 py-3">
+                <span className="min-w-0 flex-1 truncate text-body-sm text-on-surface">
                   Scan ready · {scanFile.name}
                 </span>
                 <Button
@@ -888,7 +888,7 @@ export function CorrectPaper() {
                 aria-hidden="true"
                 className={cn("h-2 w-2 rounded-full", panel.tone, busy && "animate-lm-pulse")}
               />
-              <h2 className="text-display-sm text-ink">{panel.title}</h2>
+              <h2 className="text-display-sm text-on-surface">{panel.title}</h2>
             </div>
 
             {/*
@@ -964,7 +964,7 @@ export function CorrectPaper() {
                           the failure is. This says what to do about it, which
                           is the part the audit found missing (M5) — not a
                           second copy of the error text. */}
-                      <p className="text-body-sm text-ink-muted">
+                      <p className="text-body-sm text-on-surface-variant">
                         {retryable
                           ? "Your scan is already uploaded. Starting again re-marks the same file."
                           : "Nothing was uploaded, so starting again sends the file fresh."}
@@ -991,8 +991,8 @@ export function CorrectPaper() {
 
           <Card className="flex flex-col gap-4 p-6">
             <div className="flex flex-col gap-0.5">
-              <h2 className="text-display-sm text-ink">How this gets marked</h2>
-              <p className="text-body-sm text-ink-muted">
+              <h2 className="text-display-sm text-on-surface">How this gets marked</h2>
+              <p className="text-body-sm text-on-surface-variant">
                 Worth knowing before you trust the number
               </p>
             </div>
@@ -1001,9 +1001,9 @@ export function CorrectPaper() {
                 <li key={r.t} className="flex items-start gap-3">
                   <span
                     aria-hidden="true"
-                    className="mt-2 h-1.5 w-1.5 flex-none rounded-full bg-accent"
+                    className="mt-2 h-1.5 w-1.5 flex-none rounded-full bg-primary"
                   />
-                  <span className="text-pretty text-body-sm text-ink-muted">{r.t}</span>
+                  <span className="text-pretty text-body-sm text-on-surface-variant">{r.t}</span>
                 </li>
               ))}
             </ul>

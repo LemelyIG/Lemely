@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils"
  * Rewritten in Phase 2 from the build-era version, which carried three real
  * defects against the new system rather than merely old colours:
  *
- * 1. **It focused with `outline-accent`.** DESIGN.md §3.9 requires the focus
+ * 1. **It focused with `outline-primary`.** DESIGN.md §3.9 requires the focus
  *    ring to be the blue `--focus-ring` precisely so it is distinguishable
  *    from the accent's own hover and selected states. An accent-coloured ring
  *    on an accent-filled button is very nearly invisible, which is the one
@@ -60,7 +60,7 @@ const button = cva(
   {
     variants: {
       variant: {
-        primary: "border-0 bg-accent text-accent-on hover:bg-accent-hover",
+        primary: "border-0 bg-primary text-on-primary hover:bg-primary-hover",
         /**
          * Alias of `primary`, kept because 26 existing call sites say
          * `variant="accent"`. DESIGN.md §12 names the ROLE "primary" and the
@@ -69,11 +69,11 @@ const button = cva(
          * mid-redesign. Phase 4 migrates the call sites surface by surface and
          * this alias goes with the last one.
          */
-        accent: "border-0 bg-accent text-accent-on hover:bg-accent-hover",
-        ink: "border-0 bg-paper-inverse text-ink-inverse hover:bg-ink",
+        accent: "border-0 bg-primary text-on-primary hover:bg-primary-hover",
+        ink: "border-0 bg-inverse-surface text-inverse-on-surface hover:bg-inverse-surface",
         secondary:
-          "border border-rule bg-paper-raised text-ink hover:border-rule-strong hover:bg-paper-sunk",
-        ghost: "border-0 bg-transparent text-ink-muted hover:bg-paper-sunk hover:text-ink",
+          "border border-outline-variant bg-surface-container-lowest text-on-surface hover:border-outline hover:bg-surface-container-low",
+        ghost: "border-0 bg-transparent text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface",
       },
       size: {
         sm: "text-body-sm px-3 py-1.5 font-medium",

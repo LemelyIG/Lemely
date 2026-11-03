@@ -87,7 +87,7 @@ export function PracticePrint() {
           ) : (
             <>
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <h1 className="text-display-lg text-ink">{data.title}</h1>
+                <h1 className="text-display-lg text-on-surface">{data.title}</h1>
                 <div className="flex flex-wrap gap-3 print:hidden">
                   <Button variant="accent" onClick={() => window.print()}>
                     Print
@@ -106,23 +106,23 @@ export function PracticePrint() {
                   {data.questions.map((q) => (
                     <div
                       key={q.questionRef}
-                      className="flex flex-col gap-2 border-b border-rule pb-5 last:border-b-0 print:break-inside-avoid"
+                      className="flex flex-col gap-2 border-b border-outline-variant pb-5 last:border-b-0 print:break-inside-avoid"
                     >
-                      <div className="flex items-center gap-3 text-body-sm text-ink-faint">
-                        <span className="text-data-sm text-ink-muted">Q{q.position}</span>
-                        <span className="text-data-sm text-ink-muted">
+                      <div className="flex items-center gap-3 text-body-sm text-on-surface-variant">
+                        <span className="text-data-sm text-on-surface-variant">Q{q.position}</span>
+                        <span className="text-data-sm text-on-surface-variant">
                           {q.totalMarks} mark{q.totalMarks === 1 ? "" : "s"}
                         </span>
                         <span>{formatQuestionTopic(q.topic)}</span>
                       </div>
-                      <p className="lm-prose whitespace-pre-line text-body-lg text-ink">
+                      <p className="lm-prose whitespace-pre-line text-body-lg text-on-surface">
                         {q.prompt}
                       </p>
                       {q.mcqOptions ? (
                         // `ps-4`, not `pl-4`: logical inline-start padding, so
                         // the option indent follows the reading direction
                         // (P3.4).
-                        <ul className="flex flex-col gap-1 ps-4 text-body-lg text-ink">
+                        <ul className="flex flex-col gap-1 ps-4 text-body-lg text-on-surface">
                           {q.mcqOptions.map((option) => (
                             <li key={option}>{option}</li>
                           ))}

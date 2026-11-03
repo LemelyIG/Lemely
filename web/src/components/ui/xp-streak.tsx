@@ -85,28 +85,28 @@ export function XPStreak({
   if (variant === "expanded") {
     return (
       <div
-        className={cn("rounded-lg border border-rule bg-paper-raised p-5", className)}
+        className={cn("rounded-lg border border-outline-variant bg-surface-container-lowest p-5", className)}
         {...props}
       >
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
             <StreakGlyph frozen={frozen} size={26} />
             <div>
-              <div className="text-data-lg text-ink">{streakDays}</div>
+              <div className="text-data-lg text-on-surface">{streakDays}</div>
               <Eyebrow className="mt-0.5">Day streak</Eyebrow>
             </div>
           </div>
           {typeof level === "number" ? (
             <div className="text-end">
               <Eyebrow>Level</Eyebrow>
-              <div className="text-data-lg text-ink">{level}</div>
+              <div className="text-data-lg text-on-surface">{level}</div>
             </div>
           ) : null}
         </div>
 
         {frozen ? (
-          <div className="mt-3 flex items-center gap-1.5 rounded-md bg-paper-sunk px-2.5 py-1.5 text-body-sm text-ink-muted">
-            <Snowflake size={12} className="text-ink-muted" />
+          <div className="mt-3 flex items-center gap-1.5 rounded-md bg-surface-container-low px-2.5 py-1.5 text-body-sm text-on-surface-variant">
+            <Snowflake size={12} className="text-on-surface-variant" />
             Streak freeze active. Today is protected.
           </div>
         ) : null}
@@ -120,14 +120,14 @@ export function XPStreak({
         ) : null}
 
         {typeof xpTotal === "number" ? (
-          <div className="mt-5 flex items-center gap-2 border-t border-rule pt-4">
-            <Lightning size={16} weight="fill" className="text-accent" />
-            <span className="text-data-md text-ink">
+          <div className="mt-5 flex items-center gap-2 border-t border-outline-variant pt-4">
+            <Lightning size={16} weight="fill" className="text-primary" />
+            <span className="text-data-md text-on-surface">
               {xpTotal.toLocaleString()}
             </span>
-            <span className="text-body-md text-ink-muted">XP</span>
+            <span className="text-body-md text-on-surface-variant">XP</span>
             {typeof weeklyXp === "number" ? (
-              <span className="text-body-sm text-ink-faint">
+              <span className="text-body-sm text-on-surface-variant">
                 +{weeklyXp} this week
               </span>
             ) : null}
@@ -141,8 +141,8 @@ export function XPStreak({
                 key={s.label}
                 className="flex items-center justify-between text-body-md"
               >
-                <span className="text-ink-muted">{s.label}</span>
-                <span className="text-data-sm text-ink">{s.xp} XP</span>
+                <span className="text-on-surface-variant">{s.label}</span>
+                <span className="text-data-sm text-on-surface">{s.xp} XP</span>
               </div>
             ))}
           </div>
@@ -155,7 +155,7 @@ export function XPStreak({
   return (
     <div
       className={cn(
-        "inline-flex items-center gap-7px rounded-md border border-rule bg-paper-raised px-11px py-7px",
+        "inline-flex items-center gap-7px rounded-md border border-outline-variant bg-surface-container-lowest px-11px py-7px",
         className,
       )}
       {...props}
@@ -166,17 +166,17 @@ export function XPStreak({
           screen (§9.3, "XP gained"). No flourish: the header is chrome, and
           confetti in the chrome would fire over whatever the student is
           actually reading. */}
-      <span className="text-data-sm text-ink">
+      <span className="text-data-sm text-on-surface">
         <CountUp value={streakDays} />
       </span>
-      <span className="text-body-sm text-ink-muted">
+      <span className="text-body-sm text-on-surface-variant">
         {frozen ? "streak frozen" : "day streak"}
       </span>
       {typeof xpTotal === "number" ? (
         <>
-          <span className="h-3 w-px bg-rule" />
-          <Lightning size={12} weight="fill" className="text-accent" />
-          <span className="text-data-sm text-ink">
+          <span className="h-3 w-px bg-outline-variant" />
+          <Lightning size={12} weight="fill" className="text-primary" />
+          <span className="text-data-sm text-on-surface">
             <CountUp value={xpTotal} />
           </span>
         </>
@@ -191,7 +191,7 @@ function StreakGlyph({ frozen, size }: { frozen: boolean; size: number }) {
       <Snowflake
         size={size}
         weight="bold"
-        className="text-ink-muted"
+        className="text-on-surface-variant"
         aria-label="Streak frozen"
       />
     )
@@ -200,7 +200,7 @@ function StreakGlyph({ frozen, size }: { frozen: boolean; size: number }) {
     <Fire
       size={size}
       weight="fill"
-      className="text-accent"
+      className="text-primary"
       aria-label="Streak active"
     />
   )
@@ -210,7 +210,7 @@ function DayDot({ status }: { status: XPStreakDaily["status"] }) {
   if (status === "active") {
     return (
       <span
-        className="h-2.5 w-2.5 rounded-full bg-accent"
+        className="h-2.5 w-2.5 rounded-full bg-primary"
         role="img"
         aria-label="Active"
       />
@@ -219,7 +219,7 @@ function DayDot({ status }: { status: XPStreakDaily["status"] }) {
   if (status === "frozen") {
     return (
       <span
-        className="h-2.5 w-2.5 rounded-full border-2 border-ink-faint bg-paper-sunk"
+        className="h-2.5 w-2.5 rounded-full border-2 border-on-surface-variant bg-surface-container-low"
         role="img"
         aria-label="Frozen"
       />
@@ -228,7 +228,7 @@ function DayDot({ status }: { status: XPStreakDaily["status"] }) {
   if (status === "missed") {
     return (
       <span
-        className="h-2.5 w-2.5 rounded-full border border-rule"
+        className="h-2.5 w-2.5 rounded-full border border-outline-variant"
         role="img"
         aria-label="Missed"
       />
@@ -236,7 +236,7 @@ function DayDot({ status }: { status: XPStreakDaily["status"] }) {
   }
   return (
     <span
-      className="h-2.5 w-2.5 rounded-full border border-dashed border-rule"
+      className="h-2.5 w-2.5 rounded-full border border-dashed border-outline-variant"
       role="img"
       aria-label="Upcoming"
     />

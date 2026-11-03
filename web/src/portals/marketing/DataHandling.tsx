@@ -31,9 +31,9 @@ export function DataHandling() {
       <div className="lm-read flex flex-col gap-10">
         <Reveal>
           <header className="flex flex-col gap-4">
-            <div className="text-eyebrow text-accent-ink">{dataHandlingIntro.eyebrow}</div>
-            <h1 className="text-display-lg text-ink">{dataHandlingIntro.title}</h1>
-            <p className="lm-prose text-body-lg text-ink-muted">
+            <div className="text-eyebrow text-on-primary-container">{dataHandlingIntro.eyebrow}</div>
+            <h1 className="text-display-lg text-on-surface">{dataHandlingIntro.title}</h1>
+            <p className="lm-prose text-body-lg text-on-surface-variant">
               {dataHandlingIntro.standfirst}
             </p>
           </header>
@@ -52,9 +52,9 @@ export function DataHandling() {
         <div className="flex flex-col">
           {dataHandlingSections.map((section, i) => (
             <Reveal key={section.heading} delay={i * 40}>
-              <section className="border-t border-rule py-7">
-                <h2 className="text-display-sm text-ink">{section.heading}</h2>
-                <p className="lm-prose mt-2.5 text-body-md text-ink-muted">{section.body}</p>
+              <section className="border-t border-outline-variant py-7">
+                <h2 className="text-display-sm text-on-surface">{section.heading}</h2>
+                <p className="lm-prose mt-2.5 text-body-md text-on-surface-variant">{section.body}</p>
               </section>
             </Reveal>
           ))}
@@ -80,17 +80,17 @@ export function DataHandling() {
           <Card className="p-8">
             <div className="flex flex-col gap-2.5">
               <Badge tone="info">{deletion.tag}</Badge>
-              <h2 className="mt-1 text-display-sm text-ink">{deletion.heading}</h2>
-              <p className="lm-prose text-body-md text-ink-muted">{deletion.removes}</p>
-              <p className="lm-prose text-body-md text-ink-muted">{deletion.keeps}</p>
-              <p className="lm-prose text-body-md text-ink-muted">{deletion.window}</p>
-              <p className="lm-prose mt-1 text-body-sm text-ink-faint">{deletion.hold}</p>
+              <h2 className="mt-1 text-display-sm text-on-surface">{deletion.heading}</h2>
+              <p className="lm-prose text-body-md text-on-surface-variant">{deletion.removes}</p>
+              <p className="lm-prose text-body-md text-on-surface-variant">{deletion.keeps}</p>
+              <p className="lm-prose text-body-md text-on-surface-variant">{deletion.window}</p>
+              <p className="lm-prose mt-1 text-body-sm text-on-surface-variant">{deletion.hold}</p>
             </div>
           </Card>
         </Reveal>
 
         <Reveal>
-          <p className="lm-prose text-body-sm text-ink-faint">{dataHandlingClose}</p>
+          <p className="lm-prose text-body-sm text-on-surface-variant">{dataHandlingClose}</p>
         </Reveal>
       </div>
     </div>

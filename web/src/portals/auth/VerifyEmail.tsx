@@ -116,24 +116,24 @@ const RESEND_COOLDOWN_SECONDS = 30
  */
 function DevPanel({ link, code }: { link: string; code: string | null }) {
   return (
-    <div className="rounded-md border border-dashed border-rule bg-paper-sunk p-4">
-      <div className="text-eyebrow text-ink-faint">Developer only · no email was sent</div>
+    <div className="rounded-md border border-dashed border-outline-variant bg-surface-container-low p-4">
+      <div className="text-eyebrow text-on-surface-variant">Developer only · no email was sent</div>
       <div className="mt-1.5 flex flex-wrap items-baseline gap-x-4 gap-y-1">
         <a
           href={link}
           target="_blank"
           rel="noopener noreferrer"
-          className="block truncate rounded-sm text-data-sm text-ink underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          className="block truncate rounded-sm text-data-sm text-on-surface underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         >
           {link}
         </a>
         {code !== null ? (
-          <span className="flex items-baseline gap-1.5 text-body-sm text-ink-muted">
-            Code <span className="text-data-md text-ink">{code}</span>
+          <span className="flex items-baseline gap-1.5 text-body-sm text-on-surface-variant">
+            Code <span className="text-data-md text-on-surface">{code}</span>
           </span>
         ) : null}
       </div>
-      <p className="mt-1.5 text-body-sm text-ink-muted">
+      <p className="mt-1.5 text-body-sm text-on-surface-variant">
         This appears because Lemely is running with the offline mock email provider. With a
         real provider configured, neither the link nor the code is ever shown here.
       </p>
@@ -151,10 +151,10 @@ function DevPanel({ link, code }: { link: string; code: string | null }) {
  */
 function SignedOutPending() {
   return (
-    <div className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-rule bg-paper-raised p-8">
+    <div className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-outline-variant bg-surface-container-lowest p-8">
       <div className="flex flex-col gap-1.5">
-        <h1 className="text-display-lg text-ink">Sign in to check your verification status</h1>
-        <p className="text-body-md text-ink-muted">
+        <h1 className="text-display-lg text-on-surface">Sign in to check your verification status</h1>
+        <p className="text-body-md text-on-surface-variant">
           We can only show whether your email is verified while you are signed in.
         </p>
       </div>
@@ -256,9 +256,9 @@ function SignedInPending({ session }: { session: Session }) {
 
   return (
     <div className="flex w-full max-w-100 flex-col gap-6">
-      <div className="flex flex-col gap-5 rounded-lg border border-rule bg-paper-raised p-8">
+      <div className="flex flex-col gap-5 rounded-lg border border-outline-variant bg-surface-container-lowest p-8">
         <div className="flex flex-col gap-1.5">
-          <h1 className="text-display-lg text-ink">Verify your email</h1>
+          <h1 className="text-display-lg text-on-surface">Verify your email</h1>
           {/*
            * Deliberately NOT routed through `<QueryState>`, and the screen
            * stays on that gate's allowlist saying so.
@@ -278,15 +278,15 @@ function SignedInPending({ session }: { session: Session }) {
            * that was an improvement, and it costs nothing here.
            */}
           {profile.isPending ? (
-            <div className="flex flex-wrap items-center gap-1.5 text-body-md text-ink-muted">
+            <div className="flex flex-wrap items-center gap-1.5 text-body-md text-on-surface-variant">
               <span>Confirm</span>
               <SkeletonLine announce={false} width="9rem" className="h-4" />
               <span>to unlock everything Lemely does.</span>
             </div>
           ) : (
-            <p className="text-body-md text-ink-muted">
+            <p className="text-body-md text-on-surface-variant">
               Confirm{" "}
-              <span className="text-data-md text-ink">
+              <span className="text-data-md text-on-surface">
                 {profile.data?.email ?? "the email on your account"}
               </span>{" "}
               to unlock everything Lemely does.
@@ -300,8 +300,8 @@ function SignedInPending({ session }: { session: Session }) {
          * once, plainly: submitting a paper for marking is the *only* thing
          * behind this gate — uploads, browsing and onboarding are not.
          */}
-        <div className="rounded-md border border-rule bg-paper-sunk p-4">
-          <p className="text-body-sm text-ink-muted">
+        <div className="rounded-md border border-outline-variant bg-surface-container-low p-4">
+          <p className="text-body-sm text-on-surface-variant">
             Browsing Lemely does not need a verified email. Submitting a paper for marking
             does, so verify when you are ready.
           </p>
@@ -339,13 +339,13 @@ function SignedInPending({ session }: { session: Session }) {
         </div>
 
         {outcome.kind === "error" ? (
-          <p role="status" aria-live="polite" className="text-body-sm text-warn">
+          <p role="status" aria-live="polite" className="text-body-sm text-on-tertiary-container">
             {outcome.message}
           </p>
         ) : outcome.kind === "devLink" ? (
           <DevPanel link={outcome.link} code={outcome.code} />
         ) : outcome.kind === "sentByProvider" ? (
-          <p role="status" aria-live="polite" className="text-body-sm text-ok">
+          <p role="status" aria-live="polite" className="text-body-sm text-success-text">
             A new verification link is on its way to your inbox.
           </p>
         ) : null}
@@ -385,7 +385,7 @@ function SignedInPending({ session }: { session: Session }) {
       <button
         type="button"
         onClick={handleWrongAddress}
-        className="self-start rounded-sm pointer-coarse:min-h-11 text-body-sm text-ink-muted underline underline-offset-2 transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+        className="self-start rounded-sm pointer-coarse:min-h-11 text-body-sm text-on-surface-variant underline underline-offset-2 transition-colors hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
       >
         Wrong address? Change it
       </button>
@@ -420,15 +420,15 @@ function ConfirmScreen({ token }: { token: string }) {
   }, [token, verifyEmail, session, navigate])
 
   return (
-    <div className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-rule bg-paper-raised p-8">
-      <h1 className="text-display-lg text-ink">
+    <div className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-outline-variant bg-surface-container-lowest p-8">
+      <h1 className="text-display-lg text-on-surface">
         {verifyEmail.isError ? "We could not verify that link" : "Verifying your email"}
       </h1>
       <p role="status" aria-live="polite" className="text-body-md">
         {verifyEmail.isError ? (
-          <span className="text-warn">{verificationFailureMessage(verifyEmail.error)}</span>
+          <span className="text-on-tertiary-container">{verificationFailureMessage(verifyEmail.error)}</span>
         ) : (
-          <span className="text-ink-muted">One moment…</span>
+          <span className="text-on-surface-variant">One moment…</span>
         )}
       </p>
       {/*

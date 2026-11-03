@@ -68,7 +68,7 @@ export function Table({
     <TableDensityContext.Provider value={density}>
       <div
         className={cn(
-          "w-full overflow-x-auto overscroll-x-contain rounded-lg border border-rule bg-paper-raised",
+          "w-full overflow-x-auto overscroll-x-contain rounded-lg border border-outline-variant bg-surface-container-lowest",
           className,
         )}
         {...props}
@@ -99,7 +99,7 @@ export function THead({
   return (
     <thead
       className={cn(
-        "bg-paper-sunk",
+        "bg-surface-container-low",
         sticky && "sticky top-0 z-sticky",
         className,
       )}
@@ -149,14 +149,14 @@ export function TR({ className, selected, disabled, onClick, onKeyDown, ...props
   return (
     <tr
       className={cn(
-        "border-b border-rule last:border-b-0",
+        "border-b border-outline-variant last:border-b-0",
         interactive &&
           cn(
             "cursor-pointer transition-colors duration-[var(--dur-instant)] ease-out-soft",
-            "hover:bg-paper-sunk/60 active:bg-paper-sunk",
-            "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-focus-ring",
+            "hover:bg-surface-container-low/60 active:bg-surface-container-low",
+            "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary",
           ),
-        selected && "bg-accent-wash hover:bg-accent-wash",
+        selected && "bg-primary-container hover:bg-primary-container",
         disabled && "pointer-events-none opacity-50",
         className,
       )}
@@ -188,7 +188,7 @@ export function TH({ className, numeric, scope = "col", ...props }: THProps) {
     <th
       scope={scope}
       className={cn(
-        "whitespace-nowrap text-eyebrow text-ink-muted",
+        "whitespace-nowrap text-eyebrow text-on-surface-variant",
         CELL_PADDING[density],
         numeric ? "text-end tabular-nums" : "text-start",
         className,
@@ -214,7 +214,7 @@ export function TD({ className, numeric, children, ...props }: TDProps) {
     <td
       className={cn(
         CELL_PADDING[density],
-        "text-body-md text-ink",
+        "text-body-md text-on-surface",
         numeric ? "text-end text-data-md" : "text-start",
         className,
       )}

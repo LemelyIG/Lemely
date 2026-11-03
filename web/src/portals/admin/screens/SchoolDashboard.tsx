@@ -45,8 +45,8 @@ export function SchoolDashboard() {
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1.5">
         <Eyebrow>School admin</Eyebrow>
-        <h1 className="text-display-lg text-ink">Your school</h1>
-        <p className="max-w-prose text-body-md text-ink-muted">
+        <h1 className="text-display-lg text-on-surface">Your school</h1>
+        <p className="max-w-prose text-body-md text-on-surface-variant">
           Seats, staff and how the school is doing, from the papers students have had marked.
         </p>
       </header>
@@ -92,7 +92,7 @@ function SchoolPanel({ school }: { school: SchoolOverview }) {
 
   return (
     <section className="flex flex-col gap-4" aria-label={school.schoolName}>
-      <h2 className="text-display-sm text-ink">{school.schoolName}</h2>
+      <h2 className="text-display-sm text-on-surface">{school.schoolName}</h2>
 
       <div className="grid items-stretch gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
@@ -106,8 +106,8 @@ function SchoolPanel({ school }: { school: SchoolOverview }) {
               {atQuota ? <Badge tone="warn">At capacity</Badge> : null}
             </div>
             <div className="flex items-baseline gap-1.5">
-              <span className="text-data-lg tabular-nums text-ink">{school.seatsUsed}</span>
-              <span className="text-body-sm text-ink-muted">of {school.quota} used</span>
+              <span className="text-data-lg tabular-nums text-on-surface">{school.seatsUsed}</span>
+              <span className="text-body-sm text-on-surface-variant">of {school.quota} used</span>
             </div>
             <Meter
               value={seatPct}
@@ -116,9 +116,9 @@ function SchoolPanel({ school }: { school: SchoolOverview }) {
               // brand colour and appears on this very card; using it for the
               // alarm too made the two indistinguishable. The warn token is the
               // alert register, and it now matches the badge above.
-              fillClassName={atQuota ? "bg-warn" : "bg-ink-faint"}
+              fillClassName={atQuota ? "bg-tertiary" : "bg-on-surface-variant"}
             />
-            <p className="text-body-sm text-ink-muted">
+            <p className="text-body-sm text-on-surface-variant">
               {atQuota
                 ? "Every seat is taken. Revoke one to free it, or ask us for more."
                 : `${school.seatsAvailable} free.`}
@@ -129,7 +129,7 @@ function SchoolPanel({ school }: { school: SchoolOverview }) {
                 rules in §6. Same reason on every card below. */}
             <Link
               to="/school/seats"
-              className="mt-auto pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-accent-ink hover:underline"
+              className="mt-auto pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-on-primary-container hover:underline"
             >
               Manage seats
             </Link>
@@ -166,8 +166,8 @@ function SchoolPanel({ school }: { school: SchoolOverview }) {
           <Eyebrow>How the school is doing</Eyebrow>
           {school.averageLatestPercentage === null ? (
             <>
-              <p className="text-body-lg text-ink">No papers marked yet</p>
-              <p className="max-w-prose text-body-sm text-ink-muted">
+              <p className="text-body-lg text-on-surface">No papers marked yet</p>
+              <p className="max-w-prose text-body-sm text-on-surface-variant">
                 This figure is the average of each student's most recent past paper. Nobody here
                 has had one marked, so there is nothing to average. It will appear on its own.
               </p>
@@ -175,15 +175,15 @@ function SchoolPanel({ school }: { school: SchoolOverview }) {
           ) : (
             <>
               <div className="flex items-baseline gap-2">
-                <span className="text-data-lg tabular-nums text-ink">
+                <span className="text-data-lg tabular-nums text-on-surface">
                   {Math.round(school.averageLatestPercentage)}%
                 </span>
-                <span className="text-body-sm text-ink-muted">
+                <span className="text-body-sm text-on-surface-variant">
                   averaged over {school.studentsWithAPaper} of {school.enrolledStudentCount}{" "}
                   {school.enrolledStudentCount === 1 ? "student" : "students"}
                 </span>
               </div>
-              <p className="max-w-prose text-body-sm text-ink-muted">
+              <p className="max-w-prose text-body-sm text-on-surface-variant">
                 Each student's most recent past paper, averaged. Quizzes are left out because a
                 quiz percentage is not comparable to a paper's. Students who have not had a paper
                 marked are not in the figure at all, rather than counted as zero.
@@ -220,9 +220,9 @@ function StatCard({
           the copy above them happens to end. */}
       <CardBody className={cn("flex h-full flex-col gap-3", className)}>
         <Eyebrow>{eyebrow}</Eyebrow>
-        <span className="text-data-lg tabular-nums text-ink">{value}</span>
-        <p className="text-body-sm text-ink-muted">{note}</p>
-        <Link to={to} className="mt-auto pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-accent-ink hover:underline">
+        <span className="text-data-lg tabular-nums text-on-surface">{value}</span>
+        <p className="text-body-sm text-on-surface-variant">{note}</p>
+        <Link to={to} className="mt-auto pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-on-primary-container hover:underline">
           {linkLabel}
         </Link>
       </CardBody>

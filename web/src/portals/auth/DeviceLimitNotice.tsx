@@ -56,17 +56,17 @@ export function DeviceLimitNotice({
   return (
     <section
       aria-labelledby="device-limit-heading"
-      className="flex w-full max-w-120 flex-col gap-5 rounded-lg border border-rule bg-paper-raised p-8"
+      className="flex w-full max-w-120 flex-col gap-5 rounded-lg border border-outline-variant bg-surface-container-lowest p-8"
     >
       <div className="flex flex-col gap-2">
-        <h1 id="device-limit-heading" className="text-display-md text-ink">
+        <h1 id="device-limit-heading" className="text-display-md text-on-surface">
           You&rsquo;re signed in on {challenge.maxDevices} devices
         </h1>
-        <p className="text-body-md text-ink-muted">
+        <p className="text-body-md text-on-surface-variant">
           An account can stay signed in on {challenge.maxDevices} devices at a time, so one
           password can&rsquo;t quietly spread across a year group. Signing in here will sign
           out{" "}
-          <strong className="font-medium text-ink">
+          <strong className="font-medium text-on-surface">
             {selected ? deviceTitle(selected) : "the device you pick below"}
           </strong>
           . We&rsquo;ve picked the one you used least recently, but choose a different one if
@@ -83,9 +83,9 @@ export function DeviceLimitNotice({
               key={device.deviceId}
               className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-md border px-4 py-3 ${
                 // The row takes a firmer border, not the wash: `Chip tone="warn"`
-                // is itself `bg-warn-wash`, so washing the row too would hide
+                // is itself `bg-tertiary-container`, so washing the row too would hide
                 // the chip inside its own colour.
-                willSignOut ? "border-warn cursor-pointer" : "border-rule cursor-pointer"
+                willSignOut ? "border-tertiary cursor-pointer" : "border-outline-variant cursor-pointer"
               }`}
             >
               <span className="flex min-w-0 items-center gap-3">
@@ -96,16 +96,16 @@ export function DeviceLimitNotice({
                   checked={willSignOut}
                   onChange={() => setSelectedId(device.deviceId)}
                   disabled={isPending}
-                  className="size-4 shrink-0 accent-warn"
+                  className="size-4 shrink-0 accent-tertiary"
                   aria-label={`Sign out ${deviceTitle(device)}`}
                 />
                 <span className="flex min-w-0 flex-col">
-                  <span className="text-body-md text-ink" title={device.userAgent ?? undefined}>
+                  <span className="text-body-md text-on-surface" title={device.userAgent ?? undefined}>
                     {deviceTitle(device)}
                   </span>
                   {/* A last-seen time is a timestamp, so it sets in the data
                       face (§4) like every other one in the product. */}
-                  <span className="text-data-sm text-ink-faint">
+                  <span className="text-data-sm text-on-surface-variant">
                     {lastActiveLabel(device.lastActiveAt)}
                   </span>
                 </span>
@@ -117,7 +117,7 @@ export function DeviceLimitNotice({
       </fieldset>
 
       {error ? (
-        <p role="alert" className="text-body-sm text-err">
+        <p role="alert" className="text-body-sm text-error">
           {error}
         </p>
       ) : null}
@@ -137,7 +137,7 @@ export function DeviceLimitNotice({
         </Button>
       </div>
 
-      <p className="text-body-sm text-ink-faint">
+      <p className="text-body-sm text-on-surface-variant">
         You can see and sign out your devices any time from Account &amp; devices.
       </p>
     </section>

@@ -67,7 +67,7 @@ export function BoundaryBar({
     <div
       className={cn(
         "w-full rounded-lg border p-4",
-        estimated ? "border-dashed border-rule" : "border-transparent",
+        estimated ? "border-dashed border-outline-variant" : "border-transparent",
         className,
       )}
       {...props}
@@ -81,7 +81,7 @@ export function BoundaryBar({
             for every other call site. */}
         <Eyebrow>{label ?? (estimated ? "Estimated boundaries" : "Grade boundaries")}</Eyebrow>
         {sorted.length > 0 && (
-          <span className="text-body-sm text-ink-muted">
+          <span className="text-body-sm text-on-surface-variant">
             {next && distance !== null
               ? `${distance} mark${distance === 1 ? "" : "s"} from ${next.grade}`
               : "Top grade reached"}
@@ -90,7 +90,7 @@ export function BoundaryBar({
       </div>
 
       {sorted.length === 0 ? (
-        <p className="text-body-md text-ink-faint m-0">
+        <p className="text-body-md text-on-surface-variant m-0">
           Boundary data isn't available for this paper yet.
         </p>
       ) : (
@@ -100,14 +100,14 @@ export function BoundaryBar({
               className="absolute bottom-0 flex flex-col items-center -translate-x-1/2"
               style={{ left: `${scorePct}%` }}
             >
-              <div className="bg-ink text-accent-on text-data-sm px-2 py-1 rounded-md whitespace-nowrap mb-1">
+              <div className="bg-inverse-surface text-on-primary text-data-sm px-2 py-1 rounded-md whitespace-nowrap mb-1">
                 You, {score}/{maxScore}
               </div>
-              <div className="w-0.5 h-2 bg-ink" aria-hidden />
+              <div className="w-0.5 h-2 bg-inverse-surface" aria-hidden />
             </div>
           </div>
 
-          <div className="relative h-2 rounded-full overflow-hidden bg-surface-2">
+          <div className="relative h-2 rounded-full overflow-hidden bg-surface-container-low">
             {sorted.map((b, i) => {
               const start = clampPct(b.minMark)
               const end = i + 1 < sorted.length ? clampPct(sorted[i + 1].minMark) : 100
@@ -132,7 +132,7 @@ export function BoundaryBar({
                 className="absolute top-0 flex flex-col items-center -translate-x-1/2"
                 style={{ left: `${clampPct(b.minMark)}%` }}
               >
-                <div className="w-px h-2 bg-border" aria-hidden />
+                <div className="w-px h-2 bg-outline-variant" aria-hidden />
                 <div className={cn("text-metadata mt-1", bandText[gradeBand(b.grade)])}>
                   {b.grade}
                 </div>

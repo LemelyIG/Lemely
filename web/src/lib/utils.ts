@@ -9,7 +9,7 @@ import { extendTailwindMerge } from "tailwind-merge"
  * the trap `index.css` documents above `.btn-text*`, which was only ever
  * worked around for the button rungs by renaming them out of the `text-`
  * namespace. The composite type-scale classes were left in it, and the bug
- * was live: `twMerge("text-display-md text-t1")` returned `"text-t1"`,
+ * was live: `twMerge("text-display-md text-on-surface")` returned `"text-on-surface"`,
  * silently dropping the font-size/family/line-height, and
  * `twMerge("text-metadata mt-1", <a color>)` dropped the type class the same
  * way. Five shared C-* components hit exactly that shape (trend-sparkline x2,

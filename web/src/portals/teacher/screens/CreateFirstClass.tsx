@@ -58,16 +58,16 @@ function CreatedClassPanel({ created }: { created: ClassSummary }) {
     <Card>
       <CardBody className="flex flex-col items-start gap-4">
         <div>
-          <div className="text-eyebrow text-ink-faint">You're set up</div>
+          <div className="text-eyebrow text-on-surface-variant">You're set up</div>
           <h1 className="text-display-md mt-1.5 text-pretty">"{created.label}" is ready</h1>
         </div>
-        <p className="text-body-md text-ink-muted max-w-prose">
+        <p className="text-body-md text-on-surface-variant max-w-prose">
           Share this code with your students so they can join. You'll find it again on the class
           page any time you need it.
         </p>
         {created.joinCode ? (
           <div className="flex flex-col items-start gap-1.5">
-            <span className="text-eyebrow text-ink-faint">Invite code</span>
+            <span className="text-eyebrow text-on-surface-variant">Invite code</span>
             <JoinCodeChip code={created.joinCode} />
           </div>
         ) : (
@@ -76,7 +76,7 @@ function CreatedClassPanel({ created }: { created: ClassSummary }) {
           // independent, per D7.2 — should always receive one, since for this
           // teacher the code is their only invite path. If it is ever absent,
           // saying so plainly beats a silently blank slot.
-          <p className="text-body-sm text-ink-faint">
+          <p className="text-body-sm text-on-surface-variant">
             We couldn't generate an invite code just now. Open the class page below to find it
             once it appears.
           </p>
@@ -129,10 +129,10 @@ export function CreateFirstClass() {
   return (
     <div className="flex flex-col gap-5 min-w-0 max-w-[680px]">
       <div>
-        <div className="text-eyebrow text-ink-faint">One quick step</div>
+        <div className="text-eyebrow text-on-surface-variant">One quick step</div>
         <h1 className="text-display-md mt-1.5">Create your first class</h1>
       </div>
-      <p className="text-body-md text-ink-muted max-w-prose">
+      <p className="text-body-md text-on-surface-variant max-w-prose">
         A class is where your students' work lands. It's where you'll see their marks, their weak
         topics, and who needs attention. Give it a name and you're ready to start marking.
       </p>
@@ -161,7 +161,7 @@ export function CreateFirstClass() {
               Create class
             </Button>
             {createClass.isError ? (
-              <p className="text-body-sm text-err" role="alert">
+              <p className="text-body-sm text-error" role="alert">
                 Couldn't create the class: {teacherMutationFailureMessage(createClass.error)}
               </p>
             ) : null}

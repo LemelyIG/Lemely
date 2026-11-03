@@ -259,10 +259,10 @@ export function NotificationSettingsSection({
     <>
       <section aria-labelledby="types-heading" className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
-          <h2 id="types-heading" className="text-display-sm text-ink">
+          <h2 id="types-heading" className="text-display-sm text-on-surface">
             What you get told about
           </h2>
-          <p className="max-w-[65ch] text-body-sm text-ink-muted">
+          <p className="max-w-[65ch] text-body-sm text-on-surface-variant">
             Switching one off stops it reaching you at all. It will not appear in your inbox
             either.
           </p>
@@ -312,7 +312,7 @@ export function NotificationSettingsSection({
                 .map((toggle) => (
                 <li
                   key={toggle.key}
-                  className="rounded-lg border border-rule bg-paper-raised p-4 sm:p-5"
+                  className="rounded-lg border border-outline-variant bg-surface-container-lowest p-4 sm:p-5"
                 >
                   <Switch
                     label={toggle.label}
@@ -337,16 +337,16 @@ export function NotificationSettingsSection({
 
       <section aria-labelledby="quiet-heading" className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
-          <h2 id="quiet-heading" className="text-display-sm text-ink">
+          <h2 id="quiet-heading" className="text-display-sm text-on-surface">
             Quiet hours
           </h2>
-          <p className="max-w-[65ch] text-body-sm text-ink-muted">
+          <p className="max-w-[65ch] text-body-sm text-on-surface-variant">
             Nothing pops up on your device between these times. Notifications still arrive in
             your inbox, so you will see them when you next look.
           </p>
         </div>
 
-        <div className="flex flex-col gap-4 rounded-lg border border-rule bg-paper-raised p-4 sm:p-5">
+        <div className="flex flex-col gap-4 rounded-lg border border-outline-variant bg-surface-container-lowest p-4 sm:p-5">
           <div className="flex flex-wrap items-start gap-3">
             <Input
               label="From"
@@ -381,18 +381,18 @@ export function NotificationSettingsSection({
               the capture round showed it is a full sentence wearing the mono
               face, and a sentence set in tabular numerals reads as machine
               output. The times inside it are already unambiguous. */}
-          {summary ? <p className="text-body-sm text-ink-faint">{summary}</p> : null}
+          {summary ? <p className="text-body-sm text-on-surface-variant">{summary}</p> : null}
         </div>
       </section>
 
       <section aria-labelledby="device-heading" className="flex flex-col gap-4">
-        <h2 id="device-heading" className="text-display-sm text-ink">
+        <h2 id="device-heading" className="text-display-sm text-on-surface">
           This device
         </h2>
-        <div className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-4 sm:p-5">
+        <div className="flex flex-col gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest p-4 sm:p-5">
           <div className="flex flex-col gap-1">
-            <p className="text-body-md text-ink">{copy.heading}</p>
-            <p className="max-w-[65ch] text-body-sm text-ink-muted">{copy.body}</p>
+            <p className="text-body-md text-on-surface">{copy.heading}</p>
+            <p className="max-w-[65ch] text-body-sm text-on-surface-variant">{copy.body}</p>
           </div>
 
           {pushState.kind === "prompt" ? (
@@ -422,7 +422,7 @@ export function NotificationSettingsSection({
                   worker and the operating system — the half that actually breaks. */}
               {/* Prose, so the body rung rather than the data face: this is a
                   sentence about what the button proves, not a value. */}
-              <p className="text-body-sm text-ink-faint">
+              <p className="text-body-sm text-on-surface-variant">
                 A test notification is shown by this device itself. It does not check that the
                 server can reach you.
               </p>
@@ -430,12 +430,12 @@ export function NotificationSettingsSection({
           ) : null}
 
           {testResult ? (
-            <p role="status" className="text-body-sm text-ink-muted">
+            <p role="status" className="text-body-sm text-on-surface-variant">
               {testResult}
             </p>
           ) : null}
           {pushError ? (
-            <p role="status" className="text-body-sm text-err">
+            <p role="status" className="text-body-sm text-error">
               {pushError}
             </p>
           ) : null}

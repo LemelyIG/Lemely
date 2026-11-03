@@ -72,7 +72,7 @@ import type {
  * member tariffs are not all 1.
  *
  * Re-derived Variety (pre-emit critique, was V3): every group card in both
- * states rendered as the same undifferentiated `bg-paper-sunk` box regardless
+ * states rendered as the same undifferentiated `bg-surface-container-low` box regardless
  * of what it held, even though `RevealedOutcome` already computes a per-point
  * severity via `OUTCOME_TONE`. `groupSeverity` below rolls that up per group
  * (worst outcome wins: pending > kept > changed > agreed) and the group card
@@ -295,8 +295,8 @@ function PendingForm({
       }}
     >
       <div className="flex flex-col gap-1">
-        <h3 className="text-label text-ink">Mark your own answer first</h3>
-        <p className="max-w-[56ch] text-pretty text-body-sm text-ink-muted">
+        <h3 className="text-label text-on-surface">Mark your own answer first</h3>
+        <p className="max-w-[56ch] text-pretty text-body-sm text-on-surface-variant">
           {evidenceHint(view.evidenceRequired, view.bindingDoubt ?? false)} The marker's verdict is revealed once you submit,
           and you can only do this once.
         </p>
@@ -304,10 +304,10 @@ function PendingForm({
       {groups.map((group) => (
         <div
           key={group.key ?? group.points[0]!.markPointId}
-          className="flex flex-col gap-3 rounded-md bg-paper-sunk px-3.5 py-3"
+          className="flex flex-col gap-3 rounded-md bg-surface-container-low px-3.5 py-3"
         >
           {group.kind !== "single" ? (
-            <p className="text-label text-ink">{groupLabel(group)}</p>
+            <p className="text-label text-on-surface">{groupLabel(group)}</p>
           ) : null}
           {group.points.map((point) => (
             <div key={point.markPointId} className="flex flex-col gap-2">
@@ -367,7 +367,7 @@ function RevealedOutcome({ view }: { view: SelfReviewRevealed }) {
   const pendingSummary = view.pendingTeacher ? outcomeSummary(view) : null
   return (
     <div className="flex flex-col gap-3" data-testid="self-review-outcome">
-      <p className="text-body-md text-ink">{summaryLine(view)}</p>
+      <p className="text-body-md text-on-surface">{summaryLine(view)}</p>
       <ul className="flex flex-col gap-2">
         {groups.map((group) => {
           const severity = groupSeverity(group.points, view)
@@ -375,12 +375,12 @@ function RevealedOutcome({ view }: { view: SelfReviewRevealed }) {
             <li
               key={group.key ?? group.points[0]!.markPointId}
               className={cn(
-                "flex flex-col gap-2 rounded-md bg-paper-sunk px-3.5 py-3",
+                "flex flex-col gap-2 rounded-md bg-surface-container-low px-3.5 py-3",
                 severity ? GROUP_ACCENT[severity] : null,
               )}
             >
               {group.kind !== "single" ? (
-                <p className="text-label text-ink">{groupLabel(group)}</p>
+                <p className="text-label text-on-surface">{groupLabel(group)}</p>
               ) : null}
               <div className="flex flex-col gap-1.5">
                 {group.points.map((point) => {
@@ -389,10 +389,10 @@ function RevealedOutcome({ view }: { view: SelfReviewRevealed }) {
                   return (
                     <div key={point.markPointId} className="flex flex-col gap-1.5">
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="text-body-md text-ink">{point.pointText}</span>
+                        <span className="text-body-md text-on-surface">{point.pointText}</span>
                         <Chip tone={OUTCOME_TONE[outcome]}>{OUTCOME_LABEL[outcome]}</Chip>
                       </div>
-                      <div className="flex flex-wrap gap-3 text-body-sm text-ink-muted">
+                      <div className="flex flex-wrap gap-3 text-body-sm text-on-surface-variant">
                         <span>Marker: {point.awarded ? "awarded" : "not awarded"}</span>
                         <span>You: {point.studentSelfmark ? "earned" : "not earned"}</span>
                       </div>
@@ -403,13 +403,13 @@ function RevealedOutcome({ view }: { view: SelfReviewRevealed }) {
                         <Chip tone="info">Carried forward, so one earlier slip did not cost you twice</Chip>
                       ) : null}
                       {point.evidenceSpan ? (
-                        <p className="text-body-sm text-ink-muted m-0 whitespace-pre-wrap">
+                        <p className="text-body-sm text-on-surface-variant m-0 whitespace-pre-wrap">
                           "{point.evidenceSpan}"
                         </p>
                       ) : null}
-                      {detail ? <p className="text-body-sm text-ink-muted">{detail}</p> : null}
+                      {detail ? <p className="text-body-sm text-on-surface-variant">{detail}</p> : null}
                       {point.studentEvidence ? (
-                        <p className="text-body-sm text-ink-faint">
+                        <p className="text-body-sm text-on-surface-variant">
                           Your reason: {point.studentEvidence}
                         </p>
                       ) : null}
@@ -422,7 +422,7 @@ function RevealedOutcome({ view }: { view: SelfReviewRevealed }) {
         })}
       </ul>
       {pendingSummary ? (
-        <p className="text-body-sm text-info">
+        <p className="text-body-sm text-primary">
           {pendingSummary.pending === 1
             ? "One point is waiting for a teacher."
             : `${pendingSummary.pending} points are waiting for a teacher.`}

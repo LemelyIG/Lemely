@@ -11,17 +11,17 @@ import type { VizColor } from "../data"
 export function vizText(color: VizColor): string {
   switch (color) {
     case "accent":
-      return "text-accent"
+      return "text-primary"
     case "ok":
-      return "text-ok"
+      return "text-success-text"
     case "warn":
-      return "text-warn"
+      return "text-on-tertiary-container"
     case "t1":
-      return "text-ink"
+      return "text-on-surface"
     case "t2":
-      return "text-ink-muted"
+      return "text-on-surface-variant"
     case "t3":
-      return "text-ink-faint"
+      return "text-on-surface-variant"
   }
 }
 
@@ -29,16 +29,16 @@ export function vizText(color: VizColor): string {
 export function vizBg(color: VizColor): string {
   switch (color) {
     case "accent":
-      return "bg-accent"
+      return "bg-primary"
     case "ok":
-      return "bg-ok"
+      return "bg-success"
     case "warn":
-      return "bg-warn"
+      return "bg-tertiary"
     case "t1":
-      return "bg-ink"
+      return "bg-inverse-surface"
     case "t2":
-      return "bg-ink-muted"
+      return "bg-on-surface-variant"
     case "t3":
-      return "bg-ink-faint"
+      return "bg-on-surface-variant"
   }
 }

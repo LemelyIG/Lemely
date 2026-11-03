@@ -32,7 +32,7 @@ import { MARK_MIRROR, MARK_OUTLINE, MARK_TILT, MARK_VIEW_BOX_TIGHT } from "@/lib
  *
  * ── Why the colours are `var()` and not Tailwind classes ───────────────────
  *
- * The previous version set `text-ink` / `text-accent` and painted with
+ * The previous version set `text-on-surface` / `text-primary` and painted with
  * `currentColor`. Driving that from the geometry module would mean building the
  * class name — `text-${stroke}` — and Tailwind's scanner only sees class names
  * that appear literally in the source, so those two utilities would silently

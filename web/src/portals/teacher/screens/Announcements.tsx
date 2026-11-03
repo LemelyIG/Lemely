@@ -87,17 +87,17 @@ function AnnouncementRow({
   otherDeleting: boolean
 }) {
   return (
-    <li className="bg-paper-raised border border-rule rounded-lg px-4 py-3.5 flex items-start gap-3">
+    <li className="bg-surface-container-lowest border border-outline-variant rounded-lg px-4 py-3.5 flex items-start gap-3">
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-body-md text-ink font-medium">{announcement.title}</span>
+          <span className="text-body-md text-on-surface font-medium">{announcement.title}</span>
           <Chip tone="neutral">{audienceLabel}</Chip>
           {announcement.publishAt ? <Chip tone="warn">Dated</Chip> : null}
         </div>
-        <p className="text-body-md text-ink-muted m-0 mt-1 whitespace-pre-wrap text-pretty">
+        <p className="text-body-md text-on-surface-variant m-0 mt-1 whitespace-pre-wrap text-pretty">
           {announcement.body}
         </p>
-        <div className="text-body-sm text-ink-muted mt-1.5">
+        <div className="text-body-sm text-on-surface-variant mt-1.5">
           Written {relativeTime(announcement.createdAt)}
           {announcement.publishAt
             ? ` · dated ${new Date(announcement.publishAt).toLocaleString()}`
@@ -204,8 +204,8 @@ export function Announcements() {
   return (
     <div className="flex flex-col gap-6 min-w-0">
       <header>
-        <h1 className="text-display-md text-ink m-0">Announcements</h1>
-        <p className="text-body-md text-ink-muted m-0 mt-1 max-w-[640px] text-pretty">
+        <h1 className="text-display-md text-on-surface m-0">Announcements</h1>
+        <p className="text-body-md text-on-surface-variant m-0 mt-1 max-w-[640px] text-pretty">
           Write a note for one or more of your classes. Students see it in their announcements
           list and get a notification. A dated announcement stays hidden and unsent until the
           date you set.
@@ -214,7 +214,7 @@ export function Announcements() {
 
       <form
         onSubmit={handleSubmit}
-        className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-4 max-w-[720px]"
+        className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px] flex flex-col gap-4 max-w-[720px]"
       >
         <Input
           label="Title"
@@ -234,17 +234,17 @@ export function Announcements() {
         />
 
         <fieldset className="border-0 p-0 m-0 flex flex-col gap-2">
-          <legend className="text-eyebrow text-ink-faint p-0 mb-1">
+          <legend className="text-eyebrow text-on-surface-variant p-0 mb-1">
             Audience
           </legend>
-          <label className="flex items-center gap-2 text-body-md text-ink">
+          <label className="flex items-center gap-2 text-body-md text-on-surface">
             <input
               type="radio"
               name="audience"
               value="classes"
               checked={audience === "classes"}
               onChange={() => setAudience("classes")}
-              className="accent-accent"
+              className="accent-primary"
               data-kit-field="radio"
             />
             My classes
@@ -268,13 +268,13 @@ export function Announcements() {
           {audience === "classes" ? (
             <div className="ps-6 flex flex-col gap-1.5">
               {classesQuery.isPending ? (
-                <span className="text-body-sm text-ink-muted">Loading your classes…</span>
+                <span className="text-body-sm text-on-surface-variant">Loading your classes…</span>
               ) : classesQuery.isError ? (
-                <span className="text-body-sm text-err">
+                <span className="text-body-sm text-error">
                   Couldn't load your classes: {teacherLoadFailureMessage(classesQuery.error)}
                 </span>
               ) : classes.length === 0 ? (
-                <span className="text-body-sm text-ink-muted">
+                <span className="text-body-sm text-on-surface-variant">
                   You have no classes yet. Create one before writing an announcement.
                 </span>
               ) : (
@@ -292,14 +292,14 @@ export function Announcements() {
 
           {isSchoolAdmin ? (
             <>
-              <label className="flex items-center gap-2 text-body-md text-ink">
+              <label className="flex items-center gap-2 text-body-md text-on-surface">
                 <input
                   type="radio"
                   name="audience"
                   value="school"
                   checked={audience === "school"}
                   onChange={() => setAudience("school")}
-                  className="accent-accent"
+                  className="accent-primary"
                   data-kit-field="radio"
                 />
                 Whole school
@@ -307,9 +307,9 @@ export function Announcements() {
               {audience === "school" ? (
                 <div className="ps-6">
                   {schoolsQuery.isPending ? (
-                    <span className="text-body-sm text-ink-muted">Loading your schools…</span>
+                    <span className="text-body-sm text-on-surface-variant">Loading your schools…</span>
                   ) : schoolsQuery.isError ? (
-                    <span className="text-body-sm text-err">
+                    <span className="text-body-sm text-error">
                       Couldn't load your schools: {teacherLoadFailureMessage(schoolsQuery.error)}
                     </span>
                   ) : (
@@ -334,7 +334,7 @@ export function Announcements() {
               ) : null}
             </>
           ) : null}
-          <p className="text-body-sm text-ink-muted m-0 mt-0.5 text-pretty">
+          <p className="text-body-sm text-on-surface-variant m-0 mt-0.5 text-pretty">
             One audience or the other. A class announcement and a school-wide one would reach the
             same student twice.
           </p>
@@ -354,16 +354,16 @@ export function Announcements() {
             {createAnnouncement.isPending ? "Saving…" : "Save announcement"}
           </Button>
           {sentCount != null ? (
-            <span role="status" className="text-body-sm text-ok">
+            <span role="status" className="text-body-sm text-success-text">
               Saved to {sentCount} class{sentCount === 1 ? "" : "es"}.
             </span>
           ) : null}
         </div>
 
         {createAnnouncement.isError ? (
-          <div role="alert" className="text-body-sm text-err">
+          <div role="alert" className="text-body-sm text-error">
             Couldn't save it: {teacherMutationFailureMessage(createAnnouncement.error)}
-            <span className="block text-ink-muted mt-0.5">
+            <span className="block text-on-surface-variant mt-0.5">
               Nothing was written. An announcement is saved for every class you picked or for
               none of them.
             </span>
@@ -376,24 +376,24 @@ export function Announcements() {
           ordering, and a second rendering of it here would drift. */}
       {title.trim() || body.trim() ? (
         <section className="max-w-[720px]">
-          <h2 className="text-eyebrow text-ink-faint m-0 mb-2">
+          <h2 className="text-eyebrow text-on-surface-variant m-0 mb-2">
             Preview
           </h2>
-          <div className="bg-paper-sunk border border-rule rounded-lg p-4">
+          <div className="bg-surface-container-low border border-outline-variant rounded-lg p-4">
             <div className="flex items-center gap-2">
-              <span className="h-7 w-7 rounded-full bg-accent-wash text-accent-ink flex items-center justify-center text-data-sm">
+              <span className="h-7 w-7 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center text-data-sm">
                 {initialsOf(profileQuery.data?.displayName ?? profileQuery.data?.email ?? "?")}
               </span>
-              <span className="text-body-sm text-ink-muted">
+              <span className="text-body-sm text-on-surface-variant">
                 {profileQuery.data?.displayName ?? profileQuery.data?.email ?? "You"}
               </span>
             </div>
-            <div className="text-display-sm text-ink mt-2.5">{title || "Untitled"}</div>
-            <p className="text-body-lg text-ink-muted m-0 mt-1 whitespace-pre-wrap text-pretty">
+            <div className="text-display-sm text-on-surface mt-2.5">{title || "Untitled"}</div>
+            <p className="text-body-lg text-on-surface-variant m-0 mt-1 whitespace-pre-wrap text-pretty">
               {body || "No message yet."}
             </p>
           </div>
-          <p className="text-body-sm text-ink-muted mt-1.5 m-0 text-pretty">
+          <p className="text-body-sm text-on-surface-variant mt-1.5 m-0 text-pretty">
             This shows what gets stored. Students read it in their own announcements list, which
             lays it out differently.
           </p>
@@ -401,7 +401,7 @@ export function Announcements() {
       ) : null}
 
       <section>
-        <h2 className="text-eyebrow text-ink-faint m-0 mb-2.5">
+        <h2 className="text-eyebrow text-on-surface-variant m-0 mb-2.5">
           Your announcements
         </h2>
         {/*
@@ -471,7 +471,7 @@ export function Announcements() {
           }}
         />
         {deleteAnnouncement.isError ? (
-          <div role="alert" className="text-body-sm text-err mt-2">
+          <div role="alert" className="text-body-sm text-error mt-2">
             Couldn't delete it: {teacherMutationFailureMessage(deleteAnnouncement.error)}
           </div>
         ) : null}

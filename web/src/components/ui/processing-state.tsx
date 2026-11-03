@@ -93,14 +93,14 @@ export function StageGlyph({ status }: { status: ProcessingStageStatus }) {
   /* One ring geometry for all four states, so the badges line up on the
    * connector and only their colour/contents change between stages. */
   const ring =
-    "flex h-7 w-7 flex-none items-center justify-center rounded-full border-2 bg-paper-raised"
+    "flex h-7 w-7 flex-none items-center justify-center rounded-full border-2 bg-surface-container-lowest"
 
   if (status === "done") {
     return (
       <span
         className={cn(
           ring,
-          "border-ok text-ok",
+          "border-success text-success-text",
           "transition-transform duration-[var(--dur-fast)] ease-out-soft hover:scale-110",
         )}
       >
@@ -114,7 +114,7 @@ export function StageGlyph({ status }: { status: ProcessingStageStatus }) {
        * and the centre dot are one indicator, and announcing the arc alone
        * would name a decoration rather than the state. */
       <span
-        className="relative flex h-7 w-7 flex-none items-center justify-center text-accent"
+        className="relative flex h-7 w-7 flex-none items-center justify-center text-primary"
         role="img"
         aria-label="In progress"
       >
@@ -125,7 +125,7 @@ export function StageGlyph({ status }: { status: ProcessingStageStatus }) {
          * (a bare `*` selector) without any component-level handling. */}
         <span
           aria-hidden="true"
-          className="absolute inset-0 rounded-full bg-accent-wash animate-ping"
+          className="absolute inset-0 rounded-full bg-primary-container animate-ping"
         />
         <CircleNotch
           size={28}
@@ -133,19 +133,19 @@ export function StageGlyph({ status }: { status: ProcessingStageStatus }) {
           aria-hidden="true"
           className="absolute inset-0 animate-spin"
         />
-        <span aria-hidden="true" className="relative h-1.5 w-1.5 rounded-full bg-accent" />
+        <span aria-hidden="true" className="relative h-1.5 w-1.5 rounded-full bg-primary" />
       </span>
     )
   }
   if (status === "error") {
     return (
-      <span className={cn(ring, "border-err text-err")}>
+      <span className={cn(ring, "border-error text-error")}>
         <X size={15} weight="bold" role="img" aria-label="Failed" />
       </span>
     )
   }
   return (
-    <span className={cn(ring, "border-rule text-ink-faint")}>
+    <span className={cn(ring, "border-outline-variant text-on-surface-variant")}>
       <DotsThree size={16} weight="bold" role="img" aria-label="Not started" />
     </span>
   )
@@ -192,8 +192,8 @@ function StageProgressBar({ progress }: { progress: ProcessingStageProgress }) {
 
   if (progress.total === undefined) {
     return (
-      <div className="mt-3 rounded-md border border-rule bg-paper-sunk p-3">
-        <span className="text-data-sm text-ink-muted">
+      <div className="mt-3 rounded-md border border-outline-variant bg-surface-container-low p-3">
+        <span className="text-data-sm text-on-surface-variant">
           {progress.label ?? `${unit} ${progress.current}`}
         </span>
       </div>
@@ -203,10 +203,10 @@ function StageProgressBar({ progress }: { progress: ProcessingStageProgress }) {
   const pct = Math.max(0, Math.min(100, Math.round((progress.current / progress.total) * 100)))
   const label = progress.label ?? `${unit} ${progress.current} of ${progress.total}`
   return (
-    <div className="mt-3 rounded-md border border-rule bg-paper-sunk p-3">
+    <div className="mt-3 rounded-md border border-outline-variant bg-surface-container-low p-3">
       <div className="mb-2 flex items-center justify-between gap-2 text-data-sm">
-        <span className="text-ink-muted">{label}</span>
-        <span className="flex-none text-accent-ink">{pct}%</span>
+        <span className="text-on-surface-variant">{label}</span>
+        <span className="flex-none text-on-primary-container">{pct}%</span>
       </div>
       <ProgressBar value={pct} tone="accent" ariaLabel={label} />
     </div>
@@ -232,7 +232,7 @@ export function ProcessingState({
                 <span
                   className={cn(
                     "min-h-4 w-px flex-1 transition-colors duration-[var(--dur-slow)] ease-out-soft",
-                    stage.status === "done" ? "bg-ok" : "bg-rule",
+                    stage.status === "done" ? "bg-success" : "bg-outline-variant",
                   )}
                 />
               ) : null}
@@ -242,10 +242,10 @@ export function ProcessingState({
                 <span
                   className={cn(
                     "block text-eyebrow transition-colors duration-[var(--dur-fast)]",
-                    stage.status === "pending" && "text-ink-faint",
-                    stage.status === "active" && "text-accent-ink",
-                    stage.status === "done" && "text-ink-muted",
-                    stage.status === "error" && "text-err",
+                    stage.status === "pending" && "text-on-surface-variant",
+                    stage.status === "active" && "text-on-primary-container",
+                    stage.status === "done" && "text-on-surface-variant",
+                    stage.status === "error" && "text-error",
                   )}
                 >
                   {kicker}
@@ -255,18 +255,18 @@ export function ProcessingState({
                 className={cn(
                   "block text-body-md transition-colors duration-[var(--dur-fast)]",
                   kicker && "mt-1.5",
-                  stage.status === "pending" && "font-medium text-ink-faint",
-                  stage.status === "active" && "font-semibold text-ink",
+                  stage.status === "pending" && "font-medium text-on-surface-variant",
+                  stage.status === "active" && "font-semibold text-on-surface",
                   (stage.status === "done" || stage.status === "error") &&
-                    "font-medium text-ink",
+                    "font-medium text-on-surface",
                 )}
               >
                 {stage.label}
               </span>
               {stage.status === "error" && stage.errorMessage ? (
-                <p className="mt-1 text-body-md text-err">{stage.errorMessage}</p>
+                <p className="mt-1 text-body-md text-error">{stage.errorMessage}</p>
               ) : stage.detail ? (
-                <p className="mt-1 text-body-sm text-ink-faint">{stage.detail}</p>
+                <p className="mt-1 text-body-sm text-on-surface-variant">{stage.detail}</p>
               ) : null}
               {/* The animated bar is scoped to the one stage carrying a real
                * counter (S-14's "no fake progress bar" — see header comment).
@@ -278,7 +278,7 @@ export function ProcessingState({
           </div>
         )
       })}
-      {footer ? <div className="mt-2 border-t border-rule pt-4">{footer}</div> : null}
+      {footer ? <div className="mt-2 border-t border-outline-variant pt-4">{footer}</div> : null}
     </div>
   )
 }

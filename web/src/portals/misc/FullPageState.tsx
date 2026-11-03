@@ -94,9 +94,9 @@ export interface FullPageStateProps {
 }
 
 const HEALTH_DOT: Record<"unknown" | "responding" | "not-responding", string> = {
-  responding: "bg-ok",
-  "not-responding": "bg-warn",
-  unknown: "bg-rule",
+  responding: "bg-success",
+  "not-responding": "bg-tertiary",
+  unknown: "bg-outline-variant",
 }
 
 const HEALTH_LABEL: Record<"unknown" | "responding" | "not-responding", string> = {
@@ -203,9 +203,9 @@ export function FullPageStateBody({
       {variant === "slow-load" ? <Mark size={96} animated /> : <Doodle kind={variant} />}
 
       <div className="flex flex-col gap-2">
-        {copy.kicker ? <p className="text-data-sm text-ink-faint">{copy.kicker}</p> : null}
-        <h1 className="text-display-md text-ink">{copy.heading}</h1>
-        <p className="text-body-md text-ink-muted">{copy.body}</p>
+        {copy.kicker ? <p className="text-data-sm text-on-surface-variant">{copy.kicker}</p> : null}
+        <h1 className="text-display-md text-on-surface">{copy.heading}</h1>
+        <p className="text-body-md text-on-surface-variant">{copy.body}</p>
       </div>
 
       {variant === "offline" ? (
@@ -213,15 +213,15 @@ export function FullPageStateBody({
         // moment, not an event to interrupt over (the same reasoning
         // `state-views.tsx` gives `OfflineState`'s own role).
         <div role="status" className="flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-warn animate-lm-pulse" aria-hidden="true" />
-          <p className="text-data-sm text-ink-muted">Waiting for a connection</p>
+          <span className="h-2 w-2 rounded-full bg-tertiary animate-lm-pulse" aria-hidden="true" />
+          <p className="text-data-sm text-on-surface-variant">Waiting for a connection</p>
         </div>
       ) : null}
 
       {variant === "service-trouble" && health ? (
-        <div className="flex items-center gap-2 rounded-md border border-rule bg-paper-raised px-3 py-2">
+        <div className="flex items-center gap-2 rounded-md border border-outline-variant bg-surface-container-lowest px-3 py-2">
           <span className={cn("h-2 w-2 rounded-full", HEALTH_DOT[health.status])} aria-hidden="true" />
-          <p className="text-data-sm text-ink-muted">
+          <p className="text-data-sm text-on-surface-variant">
             Marking service · {HEALTH_LABEL[health.status]} ·{" "}
             {health.checkedSecondsAgo === null
               ? "not checked yet"
@@ -231,7 +231,7 @@ export function FullPageStateBody({
       ) : null}
 
       {variant === "too-many-requests" && retryAfterSeconds !== undefined ? (
-        <p className="text-data-md text-ink-muted">Try again in {formatCountdown(retryAfterSeconds)}</p>
+        <p className="text-data-md text-on-surface-variant">Try again in {formatCountdown(retryAfterSeconds)}</p>
       ) : null}
 
       {copy.primary || copy.secondary || (variant === "crash" && onRetry) ? (
@@ -279,7 +279,7 @@ export function FullPageState({
 
   if (frame === "standalone") {
     return (
-      <div className="flex min-h-dvh flex-col bg-paper">
+      <div className="flex min-h-dvh flex-col bg-surface">
         <SkipLink />
         <main
           id={MAIN_CONTENT_ID}

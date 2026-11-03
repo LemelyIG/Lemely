@@ -57,12 +57,12 @@ export function InstallSettingsSection() {
   const variant = installSettingsVariant({ isStandalone, hasPromptEvent, isIos })
 
   return (
-    <div className="flex flex-col gap-4 rounded-lg border border-rule bg-paper-raised p-4 sm:p-5">
+    <div className="flex flex-col gap-4 rounded-lg border border-outline-variant bg-surface-container-lowest p-4 sm:p-5">
       {variant === "standalone" ? (
-        <p className="text-body-sm text-ink-muted">Lemely is already installed on this device.</p>
+        <p className="text-body-sm text-on-surface-variant">Lemely is already installed on this device.</p>
       ) : variant === "install" ? (
         <>
-          <p className="text-body-sm text-ink-muted">
+          <p className="text-body-sm text-on-surface-variant">
             Install Lemely as an app for faster access and offline marking.
           </p>
           <Button
@@ -75,12 +75,12 @@ export function InstallSettingsSection() {
           </Button>
         </>
       ) : variant === "ios" ? (
-        <p className="flex items-start gap-2 text-body-sm text-ink-muted">
+        <p className="flex items-start gap-2 text-body-sm text-on-surface-variant">
           <Export size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
           Tap the Share icon in Safari's toolbar, then choose "Add to Home Screen".
         </p>
       ) : (
-        <p className="text-body-sm text-ink-muted">
+        <p className="text-body-sm text-on-surface-variant">
           Your browser doesn't support installing Lemely as an app yet. You can still use every
           feature from a regular browser tab.
         </p>

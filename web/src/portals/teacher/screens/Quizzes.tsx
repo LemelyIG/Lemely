@@ -206,12 +206,12 @@ export function Quizzes() {
 
           return (
             <>
-              <div className="flex items-end gap-[18px] pb-5 border-b border-rule flex-wrap gap-y-3">
+              <div className="flex items-end gap-[18px] pb-5 border-b border-outline-variant flex-wrap gap-y-3">
                 <div>
-                  <div className="text-eyebrow text-ink-faint">
+                  <div className="text-eyebrow text-on-surface-variant">
                     {quizzes.length} quiz{quizzes.length === 1 ? "" : "zes"}
                   </div>
-                  <h1 className="text-display-lg text-ink mt-1.5">AI quizzes</h1>
+                  <h1 className="text-display-lg text-on-surface mt-1.5">AI quizzes</h1>
                 </div>
                 <div className="flex-1" />
                 {/* The kit's `<Input>`, which requires a label by type rather than by
@@ -237,7 +237,7 @@ export function Quizzes() {
               {showCreate ? (
                 <form
                   onSubmit={handleCreate}
-                  className="bg-paper-raised border border-rule rounded-lg p-6 flex flex-wrap items-end gap-3"
+                  className="bg-surface-container-lowest border border-outline-variant rounded-lg p-6 flex flex-wrap items-end gap-3"
                 >
                   <Input
                     required
@@ -259,7 +259,7 @@ export function Quizzes() {
                     {createQuiz.isPending ? "Creating…" : "Create draft"}
                   </Button>
                   {createQuiz.isError ? (
-                    <div className="text-body-sm text-err w-full">
+                    <div className="text-body-sm text-error w-full">
                       Couldn't create the quiz: {teacherMutationFailureMessage(createQuiz.error)}
                     </div>
                   ) : null}
@@ -307,7 +307,7 @@ export function Quizzes() {
                               // a sort control the second line looks like a separate
                               // header. The column can be wider; the label cannot
                               // break.
-                              className="inline-flex items-center gap-1 whitespace-nowrap text-eyebrow text-ink-faint transition-colors hover:text-ink cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                              className="inline-flex items-center gap-1 whitespace-nowrap text-eyebrow text-on-surface-variant transition-colors hover:text-on-surface cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                             >
                               {col.label}
                               {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
@@ -323,7 +323,7 @@ export function Quizzes() {
                   <TBody>
                     {sorted.length === 0 ? (
                       <TR>
-                        <TD colSpan={COLUMNS.length + 1} className="py-6 text-ink-muted text-body-md">
+                        <TD colSpan={COLUMNS.length + 1} className="py-6 text-on-surface-variant text-body-md">
                           No quizzes match "{search}".
                         </TD>
                       </TR>
@@ -338,17 +338,17 @@ export function Quizzes() {
                             <Link
                               to={`/teacher/quizzes/${q.id}`}
                               data-wraps-content-title
-                              className="text-ink hover:underline"
+                              className="text-on-surface hover:underline"
                             >
                               {q.title}
                             </Link>
                             {q.status === "draft" ? (
-                              <div className="text-body-sm text-ink-faint mt-1">
+                              <div className="text-body-sm text-on-surface-variant mt-1">
                                 Step {q.builderStep} of 6
                               </div>
                             ) : null}
                           </TD>
-                          <TD className="text-data-sm text-ink-faint">{q.subjectCode}</TD>
+                          <TD className="text-data-sm text-on-surface-variant">{q.subjectCode}</TD>
                           <TD>
                             <Chip tone={statusTone(q.status)}>{statusLabel(q.status)}</Chip>
                           </TD>
@@ -357,7 +357,7 @@ export function Quizzes() {
                             {q.targetGrade ? (
                               <GradeBadge grade={q.targetGrade} size="inline" basis="target" />
                             ) : (
-                              <span className="text-body-sm text-ink-faint">Not set</span>
+                              <span className="text-body-sm text-on-surface-variant">Not set</span>
                             )}
                           </TD>
                           <TD className="text-end whitespace-nowrap">

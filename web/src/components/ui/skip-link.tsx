@@ -38,10 +38,10 @@ export function SkipLink({ className }: { className?: string }) {
         // properties (`start-*`, not `left-*`) per P3.4.
         "focus:start-3 focus:top-3 focus:h-auto focus:w-auto focus:overflow-visible",
         "focus:[clip-path:none]",
-        "focus:rounded-md focus:border focus:border-rule focus:bg-paper-raised",
-        "focus:px-4 focus:py-2.5 focus:text-body-md focus:font-medium focus:text-ink",
+        "focus:rounded-md focus:border focus:border-outline-variant focus:bg-surface-container-lowest",
+        "focus:px-4 focus:py-2.5 focus:text-body-md focus:font-medium focus:text-on-surface",
         "focus:shadow-[var(--shadow-float)]",
-        "focus:outline-2 focus:outline-offset-2 focus:outline-accent",
+        "focus:outline-2 focus:outline-offset-2 focus:outline-primary",
         className,
       )}
     >

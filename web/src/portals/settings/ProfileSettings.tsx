@@ -156,7 +156,7 @@ export function ProfileSettingsSection() {
   return (
     <>
       <section aria-labelledby="identity-heading" className="flex flex-col gap-4">
-        <h2 id="identity-heading" className="text-display-sm text-ink">
+        <h2 id="identity-heading" className="text-display-sm text-on-surface">
           Your profile
         </h2>
 
@@ -175,12 +175,12 @@ export function ProfileSettingsSection() {
           {(data) => {
             const name = data.displayName ?? data.email.split("@")[0]
             return (
-              <div className="flex items-center gap-3 rounded-lg border border-rule bg-paper-raised p-4 sm:p-5">
+              <div className="flex items-center gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest p-4 sm:p-5">
                 <Avatar name={name} src={data.avatarUrl ?? undefined} size="lg" />
                 <div className="min-w-0">
-                  <p className="truncate text-body-lg font-medium text-ink">{name}</p>
-                  <p className="truncate text-body-sm text-ink-muted">{data.email}</p>
-                  <p className="text-body-sm text-ink-faint">{roleLabel(data.role)}</p>
+                  <p className="truncate text-body-lg font-medium text-on-surface">{name}</p>
+                  <p className="truncate text-body-sm text-on-surface-variant">{data.email}</p>
+                  <p className="text-body-sm text-on-surface-variant">{roleLabel(data.role)}</p>
                 </div>
               </div>
             )
@@ -190,15 +190,15 @@ export function ProfileSettingsSection() {
 
       <section aria-labelledby="picture-heading" className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
-          <h2 id="picture-heading" className="text-display-sm text-ink">
+          <h2 id="picture-heading" className="text-display-sm text-on-surface">
             Profile picture
           </h2>
-          <p className="max-w-[65ch] text-body-sm text-ink-muted">
+          <p className="max-w-[65ch] text-body-sm text-on-surface-variant">
             PNG, JPEG, or WEBP, up to 5 MB. Shown next to your name in the sidebar.
           </p>
         </div>
 
-        <div className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-4 sm:p-5">
+        <div className="flex flex-col gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest p-4 sm:p-5">
           <div className="flex flex-wrap items-center gap-4">
             <Avatar
               name={profile.data ? (profile.data.displayName ?? profile.data.email.split("@")[0]) : undefined}
@@ -245,12 +245,12 @@ export function ProfileSettingsSection() {
           {/* Adjacent to the control that produced it, same as the other two
               settings screens' row-level notices. */}
           {validationError ? (
-            <p role="status" className="text-body-sm text-err">
+            <p role="status" className="text-body-sm text-error">
               {validationError}
             </p>
           ) : null}
           {actionError ? (
-            <p role="status" className="text-body-sm text-err">
+            <p role="status" className="text-body-sm text-error">
               {actionError}
             </p>
           ) : null}
@@ -259,16 +259,16 @@ export function ProfileSettingsSection() {
 
       <section aria-labelledby="timezone-heading" className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
-          <h2 id="timezone-heading" className="text-display-sm text-ink">
+          <h2 id="timezone-heading" className="text-display-sm text-on-surface">
             Time zone
           </h2>
-          <p className="max-w-[65ch] text-body-sm text-ink-muted">
+          <p className="max-w-[65ch] text-body-sm text-on-surface-variant">
             Quiet hours, streak days and daily reminders follow this. Following your device
             keeps it up to date when you travel.
           </p>
         </div>
 
-        <div className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-4 sm:p-5">
+        <div className="flex flex-col gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest p-4 sm:p-5">
           <Select
             label="Your time zone"
             value={pickerValue(profile.data)}
@@ -285,7 +285,7 @@ export function ProfileSettingsSection() {
             ))}
           </Select>
           {timezoneError ? (
-            <p role="status" className="text-body-sm text-err">
+            <p role="status" className="text-body-sm text-error">
               {timezoneError}
             </p>
           ) : null}
@@ -294,16 +294,16 @@ export function ProfileSettingsSection() {
 
       <section aria-labelledby="appearance-heading" className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
-          <h2 id="appearance-heading" className="text-display-sm text-ink">
+          <h2 id="appearance-heading" className="text-display-sm text-on-surface">
             Appearance
           </h2>
-          <p className="max-w-[65ch] text-body-sm text-ink-muted">
+          <p className="max-w-[65ch] text-body-sm text-on-surface-variant">
             Applies immediately on this device. System follows your OS setting and switches
             automatically if it changes.
           </p>
         </div>
 
-        <div className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-4 sm:p-5">
+        <div className="flex flex-col gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest p-4 sm:p-5">
           <RadioGroup
             label="Theme"
             value={themePreference}

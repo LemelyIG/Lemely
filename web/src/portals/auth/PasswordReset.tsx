@@ -150,7 +150,7 @@ function BackToSignIn({ label }: { label: string }) {
   return (
     <Link
       to="/login"
-      className="flex w-full max-w-100 items-center gap-1.5 rounded-sm pointer-coarse:min-h-11 text-body-sm text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+      className="flex w-full max-w-100 items-center gap-1.5 rounded-sm pointer-coarse:min-h-11 text-body-sm text-on-surface-variant transition-colors hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
     >
       {/* Direction-dependent: points at the reading start, mirrors under
           `dir="rtl"` (matches the identical control in ParentLogin.tsx). */}
@@ -177,10 +177,10 @@ function BackToSignIn({ label }: { label: string }) {
  */
 function DeveloperResetLinkPanel({ link }: { link: string }) {
   return (
-    <div className="rounded-md border border-dashed border-rule bg-paper-sunk p-4">
-      <div className="text-eyebrow text-ink-faint">Developer only · no email was sent</div>
-      <div className="mt-1.5 break-all text-data-sm text-ink">{link}</div>
-      <p className="mt-1.5 text-body-sm text-ink-muted">
+    <div className="rounded-md border border-dashed border-outline-variant bg-surface-container-low p-4">
+      <div className="text-eyebrow text-on-surface-variant">Developer only · no email was sent</div>
+      <div className="mt-1.5 break-all text-data-sm text-on-surface">{link}</div>
+      <p className="mt-1.5 text-body-sm text-on-surface-variant">
         This appears because Lemely is running with the offline mock email provider. With a
         real provider configured, this panel never appears.
       </p>
@@ -220,13 +220,13 @@ export function PasswordResetRequest() {
     const panel = passwordResetDevPanel(devLink)
     return (
       <AuthFrame footer={<BackToSignIn label="Remembered it? Sign in" />}>
-        <div className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-rule bg-paper-raised p-8">
+        <div className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-outline-variant bg-surface-container-lowest p-8">
           <div className="flex flex-col gap-1.5">
-            <h1 className="text-display-lg text-ink">Check your email</h1>
-            <p className="text-body-md text-ink-muted">{passwordResetSentBody(sentEmail)}</p>
+            <h1 className="text-display-lg text-on-surface">Check your email</h1>
+            <p className="text-body-md text-on-surface-variant">{passwordResetSentBody(sentEmail)}</p>
           </div>
 
-          <p className="text-body-sm text-ink-faint">
+          <p className="text-body-sm text-on-surface-variant">
             Check your spam folder if you do not see it soon.
           </p>
 
@@ -256,11 +256,11 @@ export function PasswordResetRequest() {
     <AuthFrame footer={<BackToSignIn label="Remembered it? Sign in" />}>
       <form
         onSubmit={handleSubmit}
-        className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-rule bg-paper-raised p-8"
+        className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-outline-variant bg-surface-container-lowest p-8"
       >
         <div className="flex flex-col gap-1.5">
-          <h1 className="text-display-lg text-ink">Reset your password</h1>
-          <p className="text-body-md text-ink-muted">
+          <h1 className="text-display-lg text-on-surface">Reset your password</h1>
+          <p className="text-body-md text-on-surface-variant">
             Enter the email you use to sign in. If we find a match, we&rsquo;ll help you set a
             new one.
           </p>
@@ -276,7 +276,7 @@ export function PasswordResetRequest() {
         />
 
         {requestPasswordReset.isError ? (
-          <p role="alert" className="text-body-sm text-err">
+          <p role="alert" className="text-body-sm text-error">
             {resetFailureMessage(requestPasswordReset.error)}
           </p>
         ) : null}
@@ -319,14 +319,14 @@ export function PasswordResetConfirm() {
   if (succeeded) {
     return (
       <AuthFrame>
-        <div className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-rule bg-paper-raised p-8">
+        <div className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-outline-variant bg-surface-container-lowest p-8">
           <div className="flex flex-col gap-1.5">
-            <h1 className="text-display-lg text-ink">Password changed</h1>
+            <h1 className="text-display-lg text-on-surface">Password changed</h1>
             {/* Requirement 2 — see PASSWORD_RESET_SUCCESS_BODY's own
                 docstring in passwordResetLogic.ts for why this is stated
                 plainly rather than left to be discovered later as an
                 unexplained sign-out on someone's phone. */}
-            <p className="text-body-md text-ink-muted">{PASSWORD_RESET_SUCCESS_BODY}</p>
+            <p className="text-body-md text-on-surface-variant">{PASSWORD_RESET_SUCCESS_BODY}</p>
           </div>
           <Link to="/login" className={buttonVariants({ variant: "accent", size: "lg" })}>
             Sign in
@@ -340,11 +340,11 @@ export function PasswordResetConfirm() {
     <AuthFrame footer={<BackToSignIn label="Remembered your password? Sign in" />}>
       <form
         onSubmit={handleSubmit}
-        className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-rule bg-paper-raised p-8"
+        className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-outline-variant bg-surface-container-lowest p-8"
       >
         <div className="flex flex-col gap-1.5">
-          <h1 className="text-display-lg text-ink">Set a new password</h1>
-          <p className="text-body-md text-ink-muted">Choose a new password for your account.</p>
+          <h1 className="text-display-lg text-on-surface">Set a new password</h1>
+          <p className="text-body-md text-on-surface-variant">Choose a new password for your account.</p>
         </div>
 
         <Input
@@ -357,7 +357,7 @@ export function PasswordResetConfirm() {
         />
 
         {confirmPasswordReset.isError ? (
-          <p role="alert" className="text-body-sm text-err">
+          <p role="alert" className="text-body-sm text-error">
             {resetFailureMessage(confirmPasswordReset.error)}
           </p>
         ) : null}

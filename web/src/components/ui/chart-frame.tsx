@@ -80,18 +80,18 @@ export function ChartFrame({
   return (
     <div
       className={cn(
-        "flex flex-col gap-4 rounded-lg border border-rule bg-paper-raised p-6",
+        "flex flex-col gap-4 rounded-lg border border-outline-variant bg-surface-container-lowest p-6",
         className,
       )}
       {...props}
     >
       <div className="flex items-start justify-between gap-4">
         <div className="flex flex-col gap-0.5">
-          <Heading className="text-display-sm text-ink">{title}</Heading>
-          {subtitle ? <p className="text-body-sm text-ink-muted">{subtitle}</p> : null}
+          <Heading className="text-display-sm text-on-surface">{title}</Heading>
+          {subtitle ? <p className="text-body-sm text-on-surface-variant">{subtitle}</p> : null}
         </div>
         {legend && !isEmpty ? (
-          <div className="flex shrink-0 items-center gap-3 text-body-sm text-ink-muted">
+          <div className="flex shrink-0 items-center gap-3 text-body-sm text-on-surface-variant">
             {legend}
           </div>
         ) : null}
@@ -99,11 +99,11 @@ export function ChartFrame({
 
       {isEmpty ? (
         <div className="flex flex-col items-center gap-2 px-4 py-10 text-center">
-          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-paper-sunk">
-            <ChartBar size={20} weight="regular" className="text-ink-faint" aria-hidden="true" />
+          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-surface-container-low">
+            <ChartBar size={20} weight="regular" className="text-on-surface-variant" aria-hidden="true" />
           </div>
-          <p className="text-hand text-ink-muted">{emptyMarginalia}</p>
-          {emptyBody ? <p className="max-w-xs text-body-sm text-ink-muted">{emptyBody}</p> : null}
+          <p className="text-hand text-on-surface-variant">{emptyMarginalia}</p>
+          {emptyBody ? <p className="max-w-xs text-body-sm text-on-surface-variant">{emptyBody}</p> : null}
           {emptyAction ? <div className="mt-1">{emptyAction}</div> : null}
         </div>
       ) : (

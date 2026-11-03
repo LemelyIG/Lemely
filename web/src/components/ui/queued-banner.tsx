@@ -58,10 +58,10 @@ export function QueuedBanner({ count, onRetry }: QueuedBannerProps) {
   return (
     <div
       role="status"
-      className="flex flex-wrap items-center gap-3 rounded-lg border border-rule bg-info-wash px-4 py-3"
+      className="flex flex-wrap items-center gap-3 rounded-lg border border-outline-variant bg-primary-container px-4 py-3"
     >
-      <WifiSlash size={18} weight="bold" className="flex-none text-info" aria-hidden="true" />
-      <p className="min-w-0 flex-1 text-pretty text-body-sm text-info">{message}</p>
+      <WifiSlash size={18} weight="bold" className="flex-none text-primary" aria-hidden="true" />
+      <p className="min-w-0 flex-1 text-pretty text-body-sm text-primary">{message}</p>
       {onRetry ? (
         <Button
           variant="secondary"

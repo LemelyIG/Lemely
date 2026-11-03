@@ -19,7 +19,7 @@ export function Eyebrow({ className, ...props }: HTMLAttributes<HTMLDivElement>)
   return (
     <div
       className={cn(
-        "font-mono text-3xs tracking-widest uppercase text-ink-faint",
+        "font-mono text-3xs tracking-widest uppercase text-on-surface-variant",
         className,
       )}
       {...props}
@@ -37,7 +37,7 @@ export function Display({
 }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn("font-display leading-display text-ink", className)}
+      className={cn("font-display leading-display text-on-surface", className)}
       {...props}
     />
   )
@@ -64,7 +64,7 @@ export function Meter({
 }) {
   return (
     <div
-      className={cn("h-1.5 rounded-full bg-paper-sunk overflow-hidden", className)}
+      className={cn("h-1.5 rounded-full bg-surface-container-low overflow-hidden", className)}
       role="progressbar"
       aria-valuenow={Math.round(value)}
       aria-valuemin={0}
@@ -72,7 +72,7 @@ export function Meter({
       aria-label={label}
     >
       <div
-        className={cn("h-full rounded-full bg-accent", fillClassName)}
+        className={cn("h-full rounded-full bg-primary", fillClassName)}
         style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
       />
     </div>

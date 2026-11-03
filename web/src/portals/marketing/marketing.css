@@ -113,7 +113,7 @@
 /* :not(.nav__cta) is the one deviation from the verbatim port in this file:
  * the design's generic "every link in .nav__links is muted ink" rule (class +
  * element selector, specificity 0,1,1) was overriding the "Get started"
- * button's own `text-accent-on` Tailwind utility (specificity 0,1,0),
+ * button's own `text-on-primary` Tailwind utility (specificity 0,1,0),
  * repainting its label in the muted-ink tone on the coral accent fill, a
  * 1.4:1 contrast ratio, an axe `color-contrast` failure against WCAG's
  * 4.5:1 floor. The

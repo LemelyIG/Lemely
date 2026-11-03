@@ -41,12 +41,12 @@ export function Readings() {
             aria-label={panel.label}
             className="readings__panel"
           >
-            <h3 className="text-display-md text-ink text-balance">{panel.title}</h3>
+            <h3 className="text-display-md text-on-surface text-balance">{panel.title}</h3>
             <p className="readings__body text-body-lg text-pretty">{panel.body}</p>
             <ul className="readings__points">
               {panel.points.map((point) => (
                 <li key={point}>
-                  <Check size={16} weight="bold" className="text-ok" aria-hidden />
+                  <Check size={16} weight="bold" className="text-success-text" aria-hidden />
                   <span className="text-body-md">{point}</span>
                 </li>
               ))}

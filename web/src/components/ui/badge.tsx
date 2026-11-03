@@ -41,10 +41,10 @@ const toneClasses: Record<BadgeTone, string> = {
   sky: "bg-pastel-sky text-pastel-sky-ink",
   lilac: "bg-pastel-lilac text-pastel-lilac-ink",
   clay: "bg-pastel-clay text-pastel-clay-ink",
-  ok: "bg-ok-wash text-ok",
-  warn: "bg-warn-wash text-warn",
-  err: "bg-err-wash text-err",
-  info: "bg-info-wash text-info",
+  ok: "bg-success-container text-success-text",
+  warn: "bg-tertiary-container text-on-tertiary-container",
+  err: "bg-error-container text-error",
+  info: "bg-primary-container text-primary",
 }
 
 /**

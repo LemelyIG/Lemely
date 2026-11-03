@@ -83,9 +83,9 @@ const padSize: Record<GradeBadgeSize, string> = {
 }
 
 const labelSize: Record<GradeBadgeSize, string> = {
-  hero: "text-eyebrow text-ink-muted",
-  medium: "text-eyebrow text-ink-muted",
-  inline: "text-data-sm text-ink-faint",
+  hero: "text-eyebrow text-on-surface-variant",
+  medium: "text-eyebrow text-on-surface-variant",
+  inline: "text-data-sm text-on-surface-variant",
 }
 
 export interface GradeBadgeProps extends Omit<HTMLAttributes<HTMLDivElement>, "children"> {
@@ -133,7 +133,7 @@ export function GradeBadge({
         "inline-flex flex-col items-center justify-center leading-none border",
         padSize[size],
         provisional
-          ? cn("bg-paper-raised", band.text, band.border, estimated && "border-dashed")
+          ? cn("bg-surface-container-lowest", band.text, band.border, estimated && "border-dashed")
           : cn(band.bg, band.text, "border-transparent"),
         className,
       )}

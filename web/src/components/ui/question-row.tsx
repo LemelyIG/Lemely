@@ -35,9 +35,9 @@ interface StateMeta {
 }
 
 const stateMeta: Record<MarkState, StateMeta> = {
-  correct: { icon: CheckCircle, text: "text-mark-correct", label: "Correct" },
-  partial: { icon: CircleHalf, text: "text-mark-partial", label: "Partial credit" },
-  wrong: { icon: XCircle, text: "text-mark-wrong", label: "Incorrect" },
+  correct: { icon: CheckCircle, text: "text-success-text", label: "Correct" },
+  partial: { icon: CircleHalf, text: "text-on-tertiary-container", label: "Partial credit" },
+  wrong: { icon: XCircle, text: "text-error", label: "Incorrect" },
 }
 
 export interface QuestionRowProps {
@@ -118,7 +118,7 @@ export function QuestionRow({
       renderTrigger={({ triggerProps }) => (
         <div
           className={cn(
-            "border-b border-border last:border-b-0 lm-print-avoid-break",
+            "border-b border-outline-variant last:border-b-0 lm-print-avoid-break",
             className,
           )}
           {...(hasMenu ? longPress : {})}
@@ -137,18 +137,18 @@ export function QuestionRow({
               aria-expanded={open}
               className={cn(
                 "flex-1 min-w-0 flex items-center gap-3 text-start rounded-md cursor-pointer",
-                "hover:bg-surface-2 active:scale-[0.98] transition-[background-color,transform]",
-                "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                "hover:bg-surface-container-low active:scale-[0.98] transition-[background-color,transform]",
+                "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
               )}
             >
-              <span className="font-mono text-metadata w-8 h-8 flex-none flex items-center justify-center border border-border rounded-md text-t2">
+              <span className="font-mono text-metadata w-8 h-8 flex-none flex items-center justify-center border border-outline-variant rounded-md text-on-surface-variant">
                 {number}
               </span>
               <Icon weight="fill" className={cn("w-5 h-5 flex-none", meta.text)} aria-hidden />
               <span className="sr-only">{meta.label}.</span>
               <MarkDisplay awarded={awarded} available={available} size="inline" />
               {topic && (
-                <span className="hidden sm:inline text-sm text-t3 truncate min-w-0">{topic}</span>
+                <span className="hidden sm:inline text-sm text-on-surface-variant truncate min-w-0">{topic}</span>
               )}
             </button>
             <span className="ms-auto flex items-center gap-2 flex-none">
@@ -159,8 +159,8 @@ export function QuestionRow({
                   {...triggerProps}
                   aria-label="More actions"
                   className={cn(
-                    "p-1.5 rounded-md text-t3 hover:bg-surface-2 hover:text-t2 active:scale-[0.98] transition-[background-color,color,transform] cursor-pointer",
-                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                    "p-1.5 rounded-md text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface-variant active:scale-[0.98] transition-[background-color,color,transform] cursor-pointer",
+                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
                   )}
                 >
                   <DotsThreeVertical className="w-4 h-4" aria-hidden />
@@ -172,8 +172,8 @@ export function QuestionRow({
                 aria-expanded={open}
                 aria-label={open ? "Collapse question detail" : "Expand question detail"}
                 className={cn(
-                  "p-1.5 rounded-md text-t3 hover:bg-surface-2 hover:text-t2 active:scale-[0.98] transition-[background-color,color,transform] cursor-pointer",
-                  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                  "p-1.5 rounded-md text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface-variant active:scale-[0.98] transition-[background-color,color,transform] cursor-pointer",
+                  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
                 )}
               >
                 <CaretDown
@@ -195,7 +195,7 @@ export function QuestionRow({
         <Link
           to={practiceHref}
           onClick={() => setMenuOpen(false)}
-          className="block rounded-md px-3 py-2 text-body-sm text-ink transition-[background-color,transform] hover:bg-paper-sunk active:scale-[0.98]"
+          className="block rounded-md px-3 py-2 text-body-sm text-on-surface transition-[background-color,transform] hover:bg-surface-container-low active:scale-[0.98]"
         >
           Practice this topic
         </Link>
@@ -207,7 +207,7 @@ export function QuestionRow({
             setMenuOpen(false)
             onShare()
           }}
-          className="block w-full rounded-md px-3 py-2 text-start text-body-sm text-ink transition-[background-color,transform] hover:bg-paper-sunk active:scale-[0.98]"
+          className="block w-full rounded-md px-3 py-2 text-start text-body-sm text-on-surface transition-[background-color,transform] hover:bg-surface-container-low active:scale-[0.98]"
         >
           Share
         </button>

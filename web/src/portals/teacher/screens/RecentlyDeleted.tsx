@@ -51,8 +51,8 @@ function DeletedPaperRow({ paper, now }: { paper: DeletedTeacherPaper; now: stri
     <Card className="flex flex-col gap-3 px-4 py-3.5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
-          <span className="truncate text-body-md text-ink">{paper.label}</span>
-          <span className="text-data-sm text-ink-muted">
+          <span className="truncate text-body-md text-on-surface">{paper.label}</span>
+          <span className="text-data-sm text-on-surface-variant">
             {teacherPaperCountdownLabel(daysLeft)}
           </span>
         </div>
@@ -68,7 +68,7 @@ function DeletedPaperRow({ paper, now }: { paper: DeletedTeacherPaper; now: stri
         </Button>
       </div>
       {error ? (
-        <p role="alert" className="text-body-sm text-err">
+        <p role="alert" className="text-body-sm text-error">
           {error}
         </p>
       ) : null}
@@ -95,8 +95,8 @@ export function RecentlyDeleted() {
           <>
             <header className="flex flex-col gap-1">
               <Eyebrow>Recently deleted</Eyebrow>
-              <h1 className="text-display-md text-ink">Recently deleted</h1>
-              <p className="max-w-[56ch] text-pretty text-body-md text-ink-muted">
+              <h1 className="text-display-md text-on-surface">Recently deleted</h1>
+              <p className="max-w-[56ch] text-pretty text-body-md text-on-surface-variant">
                 A paper you delete from the grading console stays here for{" "}
                 {data.retentionDays} days, in case you want it back.
               </p>

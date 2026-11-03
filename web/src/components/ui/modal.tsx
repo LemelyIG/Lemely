@@ -199,7 +199,7 @@ export function Modal({
             : undefined
         }
         className={cn(
-          "relative z-modal flex max-h-[85vh] w-full flex-col gap-4 rounded-xl border border-rule bg-paper-raised p-6 shadow-[var(--shadow-float)]",
+          "relative z-modal flex max-h-[85vh] w-full flex-col gap-4 rounded-xl border border-outline-variant bg-surface-container-lowest p-6 shadow-[var(--shadow-float)]",
           phase === "closing"
             ? "lm-out"
             : "motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-spring)_both]",
@@ -209,11 +209,11 @@ export function Modal({
       >
         <div className="flex items-start justify-between gap-4">
           <div className="flex min-w-0 flex-col gap-1">
-            <h2 id={titleId} className="text-display-sm text-ink">
+            <h2 id={titleId} className="text-display-sm text-on-surface">
               {title}
             </h2>
             {description ? (
-              <p id={descriptionId} className="text-body-md text-ink-muted">
+              <p id={descriptionId} className="text-body-md text-on-surface-variant">
                 {description}
               </p>
             ) : null}
@@ -224,8 +224,8 @@ export function Modal({
               onClick={onClose}
               aria-label="Close dialog"
               className={cn(
-                "-me-1 -mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink-muted transition-colors",
-                "hover:bg-paper-sunk hover:text-ink",
+                "-me-1 -mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-on-surface-variant transition-colors",
+                "hover:bg-surface-container-low hover:text-on-surface",
                 "active:scale-[0.98]",
               )}
             >
@@ -235,7 +235,7 @@ export function Modal({
         </div>
         <div className="min-h-0 overflow-y-auto lm-scroll">{children}</div>
         {footer ? (
-          <div className="flex items-center justify-end gap-2 border-t border-rule pt-4">
+          <div className="flex items-center justify-end gap-2 border-t border-outline-variant pt-4">
             {footer}
           </div>
         ) : null}

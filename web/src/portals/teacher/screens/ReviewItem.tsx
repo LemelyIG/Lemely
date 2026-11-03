@@ -195,16 +195,16 @@ function SelfReviewPoints({ points }: { points: ReviewItemPoint[] }) {
   return (
     <section className="flex flex-col gap-3">
       <div className="text-display-sm">Student's self-review</div>
-      <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-4">
+      <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px] flex flex-col gap-4">
         {reviewed.map((point, index) => (
           <div
             key={point.markPointId}
             className={
-              index === 0 ? "flex flex-col gap-2" : "flex flex-col gap-2 border-t border-rule pt-4"
+              index === 0 ? "flex flex-col gap-2" : "flex flex-col gap-2 border-t border-outline-variant pt-4"
             }
           >
-            <div className="text-eyebrow text-ink-faint">{point.markPointId}</div>
-            <p className="text-body-md text-ink m-0 text-pretty">{point.pointText}</p>
+            <div className="text-eyebrow text-on-surface-variant">{point.markPointId}</div>
+            <p className="text-body-md text-on-surface m-0 text-pretty">{point.pointText}</p>
             <div className="flex flex-wrap items-center gap-2">
               <Chip tone="neutral">
                 Student claims: {point.studentSelfmark ? "earned" : "not earned"}
@@ -218,7 +218,7 @@ function SelfReviewPoints({ points }: { points: ReviewItemPoint[] }) {
               )}
             </div>
             {point.studentEvidence ? (
-              <p className="text-body-md text-ink-muted leading-[1.5] m-0 text-pretty whitespace-pre-wrap">
+              <p className="text-body-md text-on-surface-variant leading-[1.5] m-0 text-pretty whitespace-pre-wrap">
                 "{point.studentEvidence}"
               </p>
             ) : null}
@@ -265,17 +265,17 @@ function MarkerVerdicts({ points }: { points: ReviewItemPoint[] }) {
   return (
     <section className="flex flex-col gap-3" role="region" aria-label="Marker's per-point verdicts">
       <div className="text-display-sm">Marker's per-point verdicts</div>
-      <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-4">
+      <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px] flex flex-col gap-4">
         {points.map((point, index) => (
           <div
             key={point.markPointId}
             data-testid="marker-verdict-row"
             className={
-              index === 0 ? "flex flex-col gap-2" : "flex flex-col gap-2 border-t border-rule pt-4"
+              index === 0 ? "flex flex-col gap-2" : "flex flex-col gap-2 border-t border-outline-variant pt-4"
             }
           >
-            <div className="text-eyebrow text-ink-faint">{point.markPointId}</div>
-            <p className="text-body-md text-ink m-0 text-pretty">{point.pointText}</p>
+            <div className="text-eyebrow text-on-surface-variant">{point.markPointId}</div>
+            <p className="text-body-md text-on-surface m-0 text-pretty">{point.pointText}</p>
             <div className="flex flex-wrap items-center gap-2">
               {point.verdict ? (
                 <Chip tone={POINT_VERDICT_TONE[point.verdict]}>{POINT_VERDICT_LABEL[point.verdict]}</Chip>
@@ -287,13 +287,13 @@ function MarkerVerdicts({ points }: { points: ReviewItemPoint[] }) {
               {point.ecfApplied ? <Chip tone="info">Carried forward from a prior point (ECF)</Chip> : null}
             </div>
             {point.evidenceSpan ? (
-              <p className="text-body-md text-ink-muted leading-[1.5] m-0 text-pretty whitespace-pre-wrap">
+              <p className="text-body-md text-on-surface-variant leading-[1.5] m-0 text-pretty whitespace-pre-wrap">
                 "{point.evidenceSpan}"
               </p>
             ) : null}
             {point.rationale ? (
               <p
-                className="text-body-sm text-ink-faint leading-[1.5] m-0 text-pretty line-clamp-3"
+                className="text-body-sm text-on-surface-variant leading-[1.5] m-0 text-pretty line-clamp-3"
                 title={point.rationale}
               >
                 {point.rationale}
@@ -310,7 +310,7 @@ function AwardedMarks({ detail }: { detail: ReviewItemDetail }) {
   return (
     <div className="text-display-md">
       {detail.aiAwardedMarks ?? "—"}
-      <span className="text-base text-ink-muted">/{detail.maximumMarks ?? "—"}</span>
+      <span className="text-base text-on-surface-variant">/{detail.maximumMarks ?? "—"}</span>
     </div>
   )
 }
@@ -340,7 +340,7 @@ function DismissForm({ itemId, onDone }: { itemId: string; onDone: () => void })
         </Button>
       </div>
       {dismiss.isError ? (
-        <div role="alert" className="text-body-sm text-err">
+        <div role="alert" className="text-body-sm text-error">
           Couldn't dismiss: {teacherMutationFailureMessage(dismiss.error)}
         </div>
       ) : null}
@@ -420,7 +420,7 @@ function ResolveControls({
   return (
     <section className="flex flex-col gap-3">
       <div className="text-display-sm">Your decision</div>
-      <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-4">
+      <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px] flex flex-col gap-4">
         {mode === "accept" ? (
           <>
             <Textarea
@@ -497,7 +497,7 @@ function ResolveControls({
               className="resize-none"
             />
             {validationError ? (
-              <div role="alert" className="text-body-sm text-err">
+              <div role="alert" className="text-body-sm text-error">
                 {validationError}
               </div>
             ) : null}
@@ -512,7 +512,7 @@ function ResolveControls({
           </form>
         )}
         {resolve.isError ? (
-          <div role="alert" className="text-body-sm text-err">
+          <div role="alert" className="text-body-sm text-error">
             Couldn't save: {teacherMutationFailureMessage(resolve.error)}
           </div>
         ) : null}
@@ -542,7 +542,7 @@ function QueueStrip({
 }) {
   const suffix = filterQs ? `?${filterQs}` : ""
   return (
-    <div className="flex items-center justify-between gap-3 text-body-sm text-ink-faint">
+    <div className="flex items-center justify-between gap-3 text-body-sm text-on-surface-variant">
       <span>
         Item {position.index + 1} of {total}
       </span>
@@ -551,7 +551,7 @@ function QueueStrip({
           <Link
             to={`/teacher/review/${position.prevId}${suffix}`}
             viewTransition
-            className="flex items-center gap-1 text-ink-muted transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            className="flex items-center gap-1 text-on-surface-variant transition-colors hover:text-on-surface rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             <BackArrow /> Prev
           </Link>
@@ -560,7 +560,7 @@ function QueueStrip({
           <Link
             to={`/teacher/review/${position.nextId}${suffix}`}
             viewTransition
-            className="flex items-center gap-1 text-ink-muted transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            className="flex items-center gap-1 text-on-surface-variant transition-colors hover:text-on-surface rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             Next <ForwardArrow />
           </Link>
@@ -702,7 +702,7 @@ export function ReviewItem() {
                 <button
                   type="button"
                   onClick={goToQueue}
-                  className="text-body-sm text-ink-faint transition-colors hover:text-ink w-fit bg-transparent border-0 p-0 cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                  className="text-body-sm text-on-surface-variant transition-colors hover:text-on-surface w-fit bg-transparent border-0 p-0 cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                 >
                   <BackArrow /> Back to queue
                 </button>
@@ -718,7 +718,7 @@ export function ReviewItem() {
                     <h1 className="text-display-sm text-pretty">
                       {detail.studentDisplayName}
                     </h1>
-                    <div className="text-body-sm text-ink-muted mt-0.5">
+                    <div className="text-body-sm text-on-surface-variant mt-0.5">
                       {isConsolePaperItem(detail) ? "Grading console" : detail.className} ·{" "}
                       {paperIdentityLabel(detail)}
                       {detail.questionId ? ` · Q${detail.questionId}` : ""}
@@ -744,8 +744,8 @@ export function ReviewItem() {
                 />
               ) : null}
 
-              <div className="flex items-center justify-between gap-3 flex-wrap border-y border-rule py-2.5">
-                <div className="flex items-center gap-4 flex-wrap text-data-sm text-ink-faint">
+              <div className="flex items-center justify-between gap-3 flex-wrap border-y border-outline-variant py-2.5">
+                <div className="flex items-center gap-4 flex-wrap text-data-sm text-on-surface-variant">
                   <span className="flex items-center gap-1.5">
                     <Kbd>A</Kbd>
                     accept as-is
@@ -775,7 +775,7 @@ export function ReviewItem() {
                   of its own source is backwards. */}
               <section className="flex flex-col gap-3">
                 <div className="text-display-sm">What Lemely saw</div>
-                <div className="text-body-sm text-ink-muted bg-paper-sunk border border-rule rounded-md px-3.5 py-3 text-pretty">
+                <div className="text-body-sm text-on-surface-variant bg-surface-container-low border border-outline-variant rounded-md px-3.5 py-3 text-pretty">
                   {scanCropUrl
                     ? "This screen shows the region of the student's scan this answer was read from, alongside Lemely's own transcription of it."
                     : "This screen does not display the original scan. What's below is Lemely's own transcription of the student's answer."}
@@ -796,22 +796,22 @@ export function ReviewItem() {
                     bordered card around a broken-image icon, exactly the
                     fallback-image affordance this task was told never to add. */}
                 {scanCropUrl ? (
-                  <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-2 min-w-0">
+                  <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px] flex flex-col gap-2 min-w-0">
                     <img
                       src={scanCropUrl}
                       alt="The region of the student's scan this question's answer was read from"
-                      className="rounded-md border border-rule max-h-[420px] w-auto max-w-full object-contain"
+                      className="rounded-md border border-outline-variant max-h-[420px] w-auto max-w-full object-contain"
                       decoding="async"
                       onError={onCropDecodeError}
                     />
-                    <div className="text-body-sm text-ink-faint">
+                    <div className="text-body-sm text-on-surface-variant">
                       The region of the student's scan this answer was read from
                     </div>
                   </div>
                 ) : null}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-2 min-w-0">
-                    <div className="text-eyebrow text-ink-faint">
+                  <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px] flex flex-col gap-2 min-w-0">
+                    <div className="text-eyebrow text-on-surface-variant">
                       Lemely's transcription of the student's answer, not the scan
                     </div>
                     {detail.studentAnswer ? (
@@ -819,11 +819,11 @@ export function ReviewItem() {
                         {detail.studentAnswer}
                       </p>
                     ) : (
-                      <p className="text-body-md text-ink-faint m-0">No transcription recorded for this question.</p>
+                      <p className="text-body-md text-on-surface-variant m-0">No transcription recorded for this question.</p>
                     )}
                   </div>
-                  <div className="bg-paper-raised border border-rule rounded-lg p-[18px] min-w-0">
-                    <div className="text-eyebrow text-ink-faint">
+                  <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px] min-w-0">
+                    <div className="text-eyebrow text-on-surface-variant">
                       Expected answer
                     </div>
                     {detail.expectedAnswer ? (
@@ -831,17 +831,17 @@ export function ReviewItem() {
                         {detail.expectedAnswer}
                       </p>
                     ) : (
-                      <p className="text-body-md text-ink-faint mt-1 mb-0">No expected answer recorded.</p>
+                      <p className="text-body-md text-on-surface-variant mt-1 mb-0">No expected answer recorded.</p>
                     )}
                   </div>
                 </div>
-                {detail.topic ? <div className="text-body-sm text-ink-faint">Topic: {detail.topic}</div> : null}
+                {detail.topic ? <div className="text-body-sm text-on-surface-variant">Topic: {detail.topic}</div> : null}
               </section>
 
               {/* What Lemely awarded, and why this needs a look */}
               <section className="flex flex-col gap-3">
                 <div className="text-display-sm">What Lemely awarded</div>
-                <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-4">
+                <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px] flex flex-col gap-4">
                   <div className="flex items-center gap-4 flex-wrap">
                     <AwardedMarks detail={detail} />
                     {detail.confidenceScore != null ? (
@@ -853,21 +853,21 @@ export function ReviewItem() {
                     )}
                   </div>
                   {detail.reviewReason ? (
-                    <div className="border-t border-rule pt-3">
-                      <div className="text-eyebrow text-ink-faint">
+                    <div className="border-t border-outline-variant pt-3">
+                      <div className="text-eyebrow text-on-surface-variant">
                         Why this needs review
                       </div>
-                      <p className="text-body-md text-ink-muted leading-[1.5] mt-1.5 mb-0 text-pretty">
+                      <p className="text-body-md text-on-surface-variant leading-[1.5] mt-1.5 mb-0 text-pretty">
                         {detail.reviewReason}
                       </p>
                     </div>
                   ) : null}
                   {detail.feedback ? (
-                    <div className="border-t border-rule pt-3">
-                      <div className="text-eyebrow text-ink-faint">
+                    <div className="border-t border-outline-variant pt-3">
+                      <div className="text-eyebrow text-on-surface-variant">
                         Lemely's feedback
                       </div>
-                      <p className="text-body-md text-ink-muted leading-[1.5] mt-1.5 mb-0 text-pretty">
+                      <p className="text-body-md text-on-surface-variant leading-[1.5] mt-1.5 mb-0 text-pretty">
                         {detail.feedback}
                       </p>
                     </div>
@@ -884,7 +884,7 @@ export function ReviewItem() {
                   at all still has `matchedPointIds` and nothing else. */}
               {detail.matchedPointIds.length > 0 ? (
                 <section className="flex flex-col gap-1.5">
-                  <div className="text-eyebrow text-ink-faint">
+                  <div className="text-eyebrow text-on-surface-variant">
                     Matched mark-scheme point identifiers
                   </div>
                   <div className="flex flex-wrap gap-1.5">
@@ -897,10 +897,10 @@ export function ReviewItem() {
                 </section>
               ) : detail.points.length === 0 ? (
                 <section className="flex flex-col gap-1.5">
-                  <div className="text-eyebrow text-ink-faint">
+                  <div className="text-eyebrow text-on-surface-variant">
                     Matched mark-scheme point identifiers
                   </div>
-                  <p className="text-body-md text-ink-faint m-0">No points matched.</p>
+                  <p className="text-body-md text-on-surface-variant m-0">No points matched.</p>
                 </section>
               ) : null}
 
@@ -908,12 +908,12 @@ export function ReviewItem() {
 
               {/* Integrity flag: distinct, non-inflammatory, dismiss-only on this item */}
               {integrity ? (
-                <section className="border border-warn rounded-lg p-[18px] bg-warn-wash flex flex-col gap-3">
+                <section className="border border-tertiary rounded-lg p-[18px] bg-tertiary-container flex flex-col gap-3">
                   <div className="flex items-center gap-2.5">
-                    <Flag weight="fill" className="w-[18px] h-[18px] text-warn flex-none" aria-hidden />
-                    <div className="font-medium text-body-md text-ink">Flagged: {reasonLabel(detail.reason)}</div>
+                    <Flag weight="fill" className="w-[18px] h-[18px] text-on-tertiary-container flex-none" aria-hidden />
+                    <div className="font-medium text-body-md text-on-surface">Flagged: {reasonLabel(detail.reason)}</div>
                   </div>
-                  <p className="text-body-sm text-ink-muted leading-[1.5] m-0 text-pretty">
+                  <p className="text-body-sm text-on-surface-variant leading-[1.5] m-0 text-pretty">
                     This is a signal for you to look at, not a conclusion about the student. If you
                     dismiss it, nothing about this flag reaches the student: dismissing never touches
                     their mark or their result.
@@ -921,7 +921,7 @@ export function ReviewItem() {
                   {detail.status === "open" ? (
                     <DismissForm itemId={detail.itemId} onDone={goNext} />
                   ) : (
-                    <div className="text-body-sm text-ink-faint">
+                    <div className="text-body-sm text-on-surface-variant">
                       {detail.status === "dismissed" ? "Dismissed" : "Resolved"}
                       {detail.resolutionNote ? `: "${detail.resolutionNote}"` : "."}
                     </div>
@@ -935,22 +935,22 @@ export function ReviewItem() {
               ) : null}
 
               {!integrity && detail.status !== "open" && detail.resolutionNote ? (
-                <div className="text-body-sm text-ink-muted">Resolution note: "{detail.resolutionNote}"</div>
+                <div className="text-body-sm text-on-surface-variant">Resolution note: "{detail.resolutionNote}"</div>
               ) : null}
 
               {detail.isOverridden ? (
                 <section className="flex flex-col gap-3">
                   <div className="text-display-sm">Teacher correction on record</div>
-                  <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-2">
+                  <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px] flex flex-col gap-2">
                     <div className="text-display-sm">
                       {detail.teacherAwardedMarks}
-                      <span className="text-body-md text-ink-muted">/{detail.maximumMarks ?? "—"}</span>
+                      <span className="text-body-md text-on-surface-variant">/{detail.maximumMarks ?? "—"}</span>
                     </div>
                     {detail.teacherNote ? (
-                      <p className="text-body-md text-ink-muted m-0 text-pretty">"{detail.teacherNote}"</p>
+                      <p className="text-body-md text-on-surface-variant m-0 text-pretty">"{detail.teacherNote}"</p>
                     ) : null}
                     {detail.overriddenAt ? (
-                      <div className="text-body-sm text-ink-faint">{relativeTime(detail.overriddenAt)}</div>
+                      <div className="text-body-sm text-on-surface-variant">{relativeTime(detail.overriddenAt)}</div>
                     ) : null}
                   </div>
                 </section>

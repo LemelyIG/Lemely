@@ -182,8 +182,8 @@ function NotificationRow({ notification }: { notification: Notification }) {
                     does have "Notices"/"Calendar" <h2>s above them. Do not
                     normalize the two to the same level; the level has to describe
                     the actual outline, not match a sibling screen. */}
-                <h2 className="text-body-lg font-medium text-ink">{notification.title}</h2>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-ink-faint">
+                <h2 className="text-body-lg font-medium text-on-surface">{notification.title}</h2>
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-on-surface-variant">
                   <Chip tone={notification.type === "at_risk_alert" ? "warn" : "neutral"}>
                     {typeLabel(notification.type)}
                   </Chip>
@@ -198,7 +198,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
             </div>
 
             {notification.body !== null ? (
-              <p className="max-w-[65ch] text-body-md text-ink-muted">{notification.body}</p>
+              <p className="max-w-[65ch] text-body-md text-on-surface-variant">{notification.body}</p>
             ) : null}
 
             <div className="flex flex-wrap gap-2">
@@ -228,7 +228,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
           setMenuOpen(false)
           markRead.mutate(notification.notificationId)
         }}
-        className="block w-full rounded-md px-3 py-2 text-start text-body-sm text-ink transition-[background-color,transform] hover:bg-paper-sunk active:scale-[0.98]"
+        className="block w-full rounded-md px-3 py-2 text-start text-body-sm text-on-surface transition-[background-color,transform] hover:bg-surface-container-low active:scale-[0.98]"
       >
         Mark read
       </button>
@@ -255,7 +255,7 @@ function InboxHeading() {
   return (
     <div>
       <Eyebrow>Inbox</Eyebrow>
-      <h1 className="text-display-md text-ink">Notifications</h1>
+      <h1 className="text-display-md text-on-surface">Notifications</h1>
     </div>
   )
 }
@@ -348,7 +348,7 @@ export function Notifications() {
                       the only route to it. */}
                   <Link
                     to="/student/settings/notifications"
-                    className="text-body-sm text-accent-ink hover:underline"
+                    className="text-body-sm text-on-primary-container hover:underline"
                   >
                     Notification settings
                   </Link>

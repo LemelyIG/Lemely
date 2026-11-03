@@ -87,11 +87,11 @@ function FailedGradesBanner({
   return (
     <div
       role="alert"
-      className="flex flex-col gap-2.5 rounded-md border border-err/40 bg-err/5 p-3.5"
+      className="flex flex-col gap-2.5 rounded-md border border-error/40 bg-error/5 p-3.5"
     >
       {failed.map((f) => (
         <div key={f.cardId} className="flex items-center justify-between gap-3">
-          <p className="text-body-sm text-err">"{f.front}" didn't save. This card is still waiting.</p>
+          <p className="text-body-sm text-error">"{f.front}" didn't save. This card is still waiting.</p>
           <Button variant="secondary" size="sm" onClick={() => onRetry(f)}>
             Retry
           </Button>
@@ -321,16 +321,16 @@ export function FlashcardReview() {
     return (
       <div className="lm-read flex flex-col gap-6">
         <div className="flex flex-col gap-2">
-          <h1 className="text-display-lg text-ink">Session complete</h1>
-          <p className="lm-prose text-body-lg text-ink-muted">
-            <span className="text-data-md text-ink">{summary.reviewed}</span> card
+          <h1 className="text-display-lg text-on-surface">Session complete</h1>
+          <p className="lm-prose text-body-lg text-on-surface-variant">
+            <span className="text-data-md text-on-surface">{summary.reviewed}</span> card
             {summary.reviewed === 1 ? "" : "s"} reviewed
             {totalDue > summary.reviewed
               ? `, ${totalDue - summary.reviewed} still due today.`
               : "."}
           </p>
           {session.inFlight > 0 ? (
-            <p className="text-body-sm text-ink-faint">
+            <p className="text-body-sm text-on-surface-variant">
               {session.inFlight} grade{session.inFlight === 1 ? "" : "s"} still saving
             </p>
           ) : null}
@@ -340,12 +340,12 @@ export function FlashcardReview() {
 
         <Card>
           <CardBody className="flex flex-col gap-3">
-            <h2 className="text-eyebrow text-ink-faint">Grades</h2>
+            <h2 className="text-eyebrow text-on-surface-variant">Grades</h2>
             <div className="flex flex-wrap gap-2">
               {GRADE_BUTTONS.map((g) => (
                 <span key={g.grade} className="flex items-center gap-1.5">
                   <Badge tone="sage">{g.label}</Badge>
-                  <span className="text-data-md text-ink">{summary.gradeCounts[g.grade]}</span>
+                  <span className="text-data-md text-on-surface">{summary.gradeCounts[g.grade]}</span>
                 </span>
               ))}
             </div>
@@ -355,7 +355,7 @@ export function FlashcardReview() {
         <Card>
           <CardBody className="flex flex-col gap-2 p-0">
             {summary.intervalChanges.length === 0 ? (
-              <p className="p-5 text-body-sm text-ink-faint">
+              <p className="p-5 text-body-sm text-on-surface-variant">
                 No cards were graded this session.
               </p>
             ) : (
@@ -363,10 +363,10 @@ export function FlashcardReview() {
                 {summary.intervalChanges.map((change, i) => (
                   <li
                     key={change.cardId}
-                    className="flex items-center justify-between gap-3 border-b border-rule px-5 py-3 last:border-b-0"
+                    className="flex items-center justify-between gap-3 border-b border-outline-variant px-5 py-3 last:border-b-0"
                   >
-                    <span className="text-body-sm text-ink-muted">Card {i + 1}</span>
-                    <span className="text-data-md text-ink">
+                    <span className="text-body-sm text-on-surface-variant">Card {i + 1}</span>
+                    <span className="text-data-md text-on-surface">
                       {intervalChangeLabel(change)}
                     </span>
                   </li>
@@ -404,10 +404,10 @@ export function FlashcardReview() {
     <div className="lm-read flex flex-col gap-6 md:min-h-[68vh] md:justify-center">
       <h1 className="sr-only">Flashcard review for {subjectName}</h1>
       <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between text-body-sm text-ink-muted">
+        <div className="flex items-center justify-between text-body-sm text-on-surface-variant">
           <span>
-            Card <span className="text-data-md text-ink">{progress.current}</span> of{" "}
-            <span className="text-data-md text-ink">{progress.total}</span>
+            Card <span className="text-data-md text-on-surface">{progress.current}</span> of{" "}
+            <span className="text-data-md text-on-surface">{progress.total}</span>
           </span>
           <span>{progress.remaining} remaining</span>
         </div>
@@ -438,7 +438,7 @@ export function FlashcardReview() {
               <Badge tone={current.source === "ai" ? "lilac" : "sage"}>
                 {cardSourceLabel(current.source)}
               </Badge>
-              <div className="lm-prose text-display-md text-ink">{current.front}</div>
+              <div className="lm-prose text-display-md text-on-surface">{current.front}</div>
 
               {revealed ? (
                 /* `display-sm`, not `body-lg`. The answer is the entire payload
@@ -447,7 +447,7 @@ export function FlashcardReview() {
                    question it was the quietest element on the card. It stays a
                    rung below the question, because the question is what orients
                    you, but it is no longer an afterthought. */
-                <div className="lm-prose w-full border-t border-rule pt-5 text-display-sm text-ink">
+                <div className="lm-prose w-full border-t border-outline-variant pt-5 text-display-sm text-on-surface">
                   {current.back}
                 </div>
               ) : (

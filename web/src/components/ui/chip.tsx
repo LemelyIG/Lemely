@@ -10,8 +10,8 @@ import { cn } from "@/lib/utils"
  *   neutral = queued / muted, accent = brand emphasis.
  *
  * **P4.5 migrated this to Study Notebook names and added `info`.** It was the
- * last heavy consumer of the compat aliases (`bg-ok-bg`, `bg-surface-2`,
- * `text-t2`, `bg-accent-subtle`), carried forward through D4.3 and D4.4 on the
+ * last heavy consumer of the compat aliases (`bg-success-container`, `bg-surface-container-low`,
+ * `text-on-surface-variant`, `bg-primary-container`), carried forward through D4.3 and D4.4 on the
  * grounds that un-migrated screens still consume it. The rename is
  * pixel-identical by definition — `index.css` defines `--ok-bg: var(--ok-wash)`
  * and so on — so those screens are unaffected, which is the same argument that
@@ -48,12 +48,12 @@ const chip = cva(
   {
     variants: {
       tone: {
-        ok: "bg-ok-wash text-ok",
-        warn: "bg-warn-wash text-warn",
-        err: "bg-err-wash text-err",
-        info: "bg-info-wash text-info",
-        neutral: "bg-paper-sunk text-ink-muted",
-        accent: "bg-accent-wash text-accent-ink",
+        ok: "bg-success-container text-success-text",
+        warn: "bg-tertiary-container text-on-tertiary-container",
+        err: "bg-error-container text-error",
+        info: "bg-primary-container text-primary",
+        neutral: "bg-surface-container-low text-on-surface-variant",
+        accent: "bg-primary-container text-on-primary-container",
       },
     },
     defaultVariants: { tone: "neutral" },

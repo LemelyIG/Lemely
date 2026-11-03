@@ -25,9 +25,9 @@ import { cn } from "@/lib/utils"
 export type ProgressTone = "accent" | "ok" | "err"
 
 const toneClasses: Record<ProgressTone, string> = {
-  accent: "bg-accent",
-  ok: "bg-ok",
-  err: "bg-err",
+  accent: "bg-primary",
+  ok: "bg-success",
+  err: "bg-error",
 }
 
 export interface ProgressBarProps extends Omit<HTMLAttributes<HTMLDivElement>, "children"> {
@@ -71,10 +71,10 @@ export function ProgressBar({
   return (
     <div className={cn("flex flex-col gap-1.5", className)} {...props}>
       {label ? (
-        <div id={labelId} className="flex items-center justify-between text-body-sm text-ink-muted">
+        <div id={labelId} className="flex items-center justify-between text-body-sm text-on-surface-variant">
           <span>{label}</span>
           {!isIndeterminate ? (
-            <span className="text-data-sm text-ink-faint">{Math.round(clamped)}%</span>
+            <span className="text-data-sm text-on-surface-variant">{Math.round(clamped)}%</span>
           ) : null}
         </div>
       ) : null}
@@ -85,7 +85,7 @@ export function ProgressBar({
         aria-valuemax={100}
         aria-labelledby={label ? labelId : undefined}
         aria-label={!label ? ariaLabel : undefined}
-        className="relative h-1.5 w-full overflow-hidden rounded-full bg-paper-sunk"
+        className="relative h-1.5 w-full overflow-hidden rounded-full bg-surface-container-low"
       >
         {isIndeterminate ? (
           <div

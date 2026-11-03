@@ -112,10 +112,10 @@ export function PracticeResult() {
           if (view.kind === "marking") {
             return (
               <div className="flex flex-col gap-5 py-12">
-                <h1 className="text-display-lg text-ink">
+                <h1 className="text-display-lg text-on-surface">
                   Marking your {subjectName} practice set
                 </h1>
-                <p className="lm-prose text-body-lg text-ink-muted">
+                <p className="lm-prose text-body-lg text-on-surface-variant">
                   This usually only takes a moment. The page updates on its own, so there's no
                   need to refresh.
                 </p>
@@ -145,12 +145,12 @@ export function PracticeResult() {
           return (
             <>
               <div className="flex flex-col gap-3">
-                <h1 className="text-display-lg text-ink">Your {subjectName} practice set</h1>
+                <h1 className="text-display-lg text-on-surface">Your {subjectName} practice set</h1>
                 {/* The data face, per §4 and §4.2's `data-lg` rung ("the big
                     number: a score"). This is the figure the screen exists to
                     deliver. */}
                 <p className="flex items-baseline gap-2">
-                  <span className="text-data-lg text-ink">
+                  <span className="text-data-lg text-on-surface">
                     {/* §9.3's result reveal, on the same rule the paper
                         result uses: the mark counts up only when it arrived
                         while the student was waiting for it. Opening this
@@ -161,7 +161,7 @@ export function PracticeResult() {
                     {justSubmitted ? <CountUp value={awardedMarks} from={0} /> : awardedMarks}/
                     {maximumMarks}
                   </span>
-                  <span className="text-body-lg text-ink-muted">
+                  <span className="text-body-lg text-on-surface-variant">
                     mark{maximumMarks === 1 ? "" : "s"}
                   </span>
                 </p>
@@ -177,7 +177,7 @@ export function PracticeResult() {
               <Card>
                 <CardBody className="flex flex-col p-0">
                   {questions.length === 0 ? (
-                    <p className="p-5 text-body-sm text-ink-faint">No questions in this set.</p>
+                    <p className="p-5 text-body-sm text-on-surface-variant">No questions in this set.</p>
                   ) : (
                     <div className="px-5">
                       {questions.map((q) => (

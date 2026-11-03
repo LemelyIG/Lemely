@@ -263,31 +263,31 @@ function OverviewLoaded({
       />
 
       {/* 1. Needs you — the permanent top item */}
-      <div className="bg-paper-raised border border-rule rounded-lg overflow-hidden w-full">
+      <div className="bg-surface-container-lowest border border-outline-variant rounded-lg overflow-hidden w-full">
         <div className="px-6 pt-5 pb-3.5">
           <SectionHead title="Needs you" kicker="Flagged by trajectory, not by one bad day" rung="display-md" />
         </div>
         {atRisk.length === 0 ? (
-          <div className="border-t border-rule px-6 py-4 text-body-md text-ok">
+          <div className="border-t border-outline-variant px-6 py-4 text-body-md text-success-text">
             No students flagged right now.
           </div>
         ) : (
           atRisk.map((r) => (
             <div
               key={r.name}
-              className="border-t border-rule px-6 py-4 flex gap-[13px] items-start"
+              className="border-t border-outline-variant px-6 py-4 flex gap-[13px] items-start"
             >
               <Avatar name={r.name} size="sm" />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-[9px] flex-wrap gap-y-1">
-                  <div className="text-body-lg font-medium text-ink">{r.name}</div>
-                  <div className="text-body-sm text-ink-muted">Grade {r.grade}</div>
+                  <div className="text-body-lg font-medium text-on-surface">{r.name}</div>
+                  <div className="text-body-sm text-on-surface-variant">Grade {r.grade}</div>
                   <div className="flex-1" />
                   {r.delta !== null ? (
                     <div
                       className={cn(
                         "text-data-md",
-                        r.delta < 0 ? "text-err" : r.delta > 0 ? "text-ok" : "text-ink-muted",
+                        r.delta < 0 ? "text-error" : r.delta > 0 ? "text-success-text" : "text-on-surface-variant",
                       )}
                     >
                       {r.delta > 0 ? "+" : ""}
@@ -296,7 +296,7 @@ function OverviewLoaded({
                   ) : null}
                 </div>
                 {r.weakTopic ? (
-                  <div className="text-body-sm text-ink-muted mt-1.5 text-pretty">
+                  <div className="text-body-sm text-on-surface-variant mt-1.5 text-pretty">
                     Weakest topic: {r.weakTopic}
                   </div>
                 ) : null}
@@ -305,11 +305,11 @@ function OverviewLoaded({
                     {r.flags.map((f) => (
                       <div
                         key={f.reason}
-                        className="flex items-start gap-2 flex-wrap text-body-sm text-ink-muted"
+                        className="flex items-start gap-2 flex-wrap text-body-sm text-on-surface-variant"
                       >
                         <span
                           aria-hidden="true"
-                          className="text-err mt-[6px] w-[5px] h-[5px] rounded-full bg-err flex-none"
+                          className="text-error mt-[6px] w-[5px] h-[5px] rounded-full bg-error flex-none"
                         />
                         <span className="flex-1 min-w-[24ch] text-pretty">{f.summary}</span>
                         {f.acknowledged ? (
@@ -344,14 +344,14 @@ function OverviewLoaded({
         ))}
       </div>
       {needsEyesCount === 0 ? (
-        <div className="text-body-md text-ok -mt-2">
+        <div className="text-body-md text-success-text -mt-2">
           Nothing needs your review right now. Good news.
         </div>
       ) : null}
 
       {/* 3. Class summary cards */}
       <div>
-        <div className="text-display-md text-ink mb-3">Your classes</div>
+        <div className="text-display-md text-on-surface mb-3">Your classes</div>
         {classes.length === 0 ? (
           <EmptyState
             heading="Add your first class"
@@ -365,12 +365,12 @@ function OverviewLoaded({
               <Link
                 key={c.id}
                 to={`/teacher/classes/${c.id}`}
-                className="block bg-paper-raised border border-rule rounded-lg p-6 hover:bg-paper-sunk transition-colors"
+                className="block bg-surface-container-lowest border border-outline-variant rounded-lg p-6 hover:bg-surface-container-low transition-colors"
               >
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <div className="text-display-sm text-ink">{c.label}</div>
-                    <div className="text-data-sm text-ink-faint mt-1">
+                    <div className="text-display-sm text-on-surface">{c.label}</div>
+                    <div className="text-data-sm text-on-surface-variant mt-1">
                       {c.subjectCode ?? "No subject set"} · {c.studentCount} student
                       {c.studentCount === 1 ? "" : "s"}
                     </div>
@@ -383,7 +383,7 @@ function OverviewLoaded({
                 </div>
                 <div className="grid grid-cols-2 gap-3 mt-3">
                   <div>
-                    <div className="text-eyebrow text-ink-faint">
+                    <div className="text-eyebrow text-on-surface-variant">
                       Average mark
                     </div>
                     {/* A percentage, so the data face, for the same reason
@@ -391,20 +391,20 @@ function OverviewLoaded({
                         and mark in the product. These sit in a card grid where
                         the eye compares one class against the next, which is
                         exactly what tabular numerals are for. */}
-                    <div className="text-data-md text-ink mt-1">
+                    <div className="text-data-md text-on-surface mt-1">
                       {c.average != null ? `${Math.round(c.average)}%` : "—"}
                     </div>
                   </div>
                   <div>
-                    <div className="text-eyebrow text-ink-faint">
+                    <div className="text-eyebrow text-on-surface-variant">
                       Top weakness
                     </div>
-                    <div className="text-body-md text-ink mt-1 text-pretty">
+                    <div className="text-body-md text-on-surface mt-1 text-pretty">
                       {c.topWeakness ?? "Not enough data yet"}
                     </div>
                   </div>
                 </div>
-                <div className="text-body-sm text-ink-faint mt-3">
+                <div className="text-body-sm text-on-surface-variant mt-3">
                   {c.lastActivityAt ? `Active ${relativeTime(c.lastActivityAt)}` : "No activity yet"}
                 </div>
               </Link>
@@ -414,34 +414,34 @@ function OverviewLoaded({
       </div>
 
       {/* 4. Recent activity */}
-      <div className="bg-paper-raised border border-rule rounded-lg overflow-hidden">
+      <div className="bg-surface-container-lowest border border-outline-variant rounded-lg overflow-hidden">
         <div className="px-6 pt-5 pb-3.5">
-          <div className="text-display-md text-ink">Recent activity</div>
-          <div className="text-eyebrow text-ink-faint mt-1.5">
+          <div className="text-display-md text-on-surface">Recent activity</div>
+          <div className="text-eyebrow text-on-surface-variant mt-1.5">
             Submissions across your classes
           </div>
         </div>
         {recentActivity.length === 0 ? (
-          <div className="border-t border-rule px-6 py-4 text-body-md text-ink-muted">
+          <div className="border-t border-outline-variant px-6 py-4 text-body-md text-on-surface-variant">
             No submissions yet.
           </div>
         ) : (
           recentActivity.map((a) => (
             <div
               key={`${a.studentId}-${a.subjectCode}-${a.recordedAt}`}
-              className="border-t border-rule px-6 py-3.5 flex items-center gap-3 flex-wrap gap-y-1.5"
+              className="border-t border-outline-variant px-6 py-3.5 flex items-center gap-3 flex-wrap gap-y-1.5"
             >
               <Avatar name={a.studentName} size="sm" />
-              <div className="text-body-md text-ink">{a.studentName}</div>
-              <div className="text-data-sm text-ink-faint">{a.subjectCode}</div>
+              <div className="text-body-md text-on-surface">{a.studentName}</div>
+              <div className="text-data-sm text-on-surface-variant">{a.subjectCode}</div>
               <div className="flex-1" />
-              <div className="text-data-md text-ink">{Math.round(a.percentage)}%</div>
+              <div className="text-data-md text-on-surface">{Math.round(a.percentage)}%</div>
               {a.grade ? (
                 <GradeBadge grade={a.grade} size="inline" basis="achieved" />
               ) : (
-                <span className="text-data-sm text-ink-faint">{ORIGIN_LABEL[a.origin]}</span>
+                <span className="text-data-sm text-on-surface-variant">{ORIGIN_LABEL[a.origin]}</span>
               )}
-              <div className="text-data-sm text-ink-faint w-[72px] text-end">{relativeTime(a.recordedAt)}</div>
+              <div className="text-data-sm text-on-surface-variant w-[72px] text-end">{relativeTime(a.recordedAt)}</div>
             </div>
           ))
         )}

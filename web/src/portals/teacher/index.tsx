@@ -173,16 +173,16 @@ function ClassesNavSection() {
 
   return (
     <div>
-      <div className="text-eyebrow text-ink-faint px-2 pb-[9px]">Your classes</div>
+      <div className="text-eyebrow text-on-surface-variant px-2 pb-[9px]">Your classes</div>
       <div className="flex flex-col gap-px">
         {isPending ? (
-          <div className="px-2 py-[7px] text-body-sm text-ink-faint">Loading…</div>
+          <div className="px-2 py-[7px] text-body-sm text-on-surface-variant">Loading…</div>
         ) : isError ? (
-          <div className="px-2 py-[7px] text-body-sm text-ink-faint">Couldn't load classes.</div>
+          <div className="px-2 py-[7px] text-body-sm text-on-surface-variant">Couldn't load classes.</div>
         ) : data.classes.length === 0 ? (
           <Link
             to="/teacher/classes"
-            className="px-2 py-[7px] pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-accent-ink hover:underline rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            className="px-2 py-[7px] pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-on-primary-container hover:underline rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             Add your first class <ForwardArrow />
           </Link>
@@ -203,10 +203,10 @@ function ClassesNavSection() {
                 className={({ isActive }) =>
                   cn(
                     "flex items-center gap-2.5 px-2 py-[7px] pointer-coarse:min-h-11 rounded-md border-s-2 transition-colors duration-[var(--dur-instant)] ease-out-soft",
-                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
+                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
                     isActive
-                      ? "border-accent bg-paper-raised text-ink"
-                      : "border-transparent bg-transparent text-ink-muted hover:bg-paper hover:text-ink",
+                      ? "border-primary bg-surface-container-lowest text-on-surface"
+                      : "border-transparent bg-transparent text-on-surface-variant hover:bg-surface hover:text-on-surface",
                   )
                 }
               >
@@ -215,7 +215,7 @@ function ClassesNavSection() {
                     <span
                       className={cn(
                         "w-1.5 h-1.5 rounded-full flex-none",
-                        isActive ? "bg-accent" : "bg-rule-strong",
+                        isActive ? "bg-primary" : "bg-outline",
                       )}
                     />
                     <span className="truncate">{c.label}</span>
@@ -226,7 +226,7 @@ function ClassesNavSection() {
             {data.classes.length > 5 ? (
               <Link
                 to="/teacher/classes"
-                className="px-2 py-[7px] pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-ink-faint transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                className="px-2 py-[7px] pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-on-surface-variant transition-colors hover:text-on-surface rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
               >
                 See all {data.classes.length} <ForwardArrow />
               </Link>
@@ -256,7 +256,7 @@ function UserBlock() {
 
   if (isPending || isError || !data) {
     return (
-      <div className="flex items-center gap-2.5 px-0.5 text-body-sm text-ink-faint">
+      <div className="flex items-center gap-2.5 px-0.5 text-body-sm text-on-surface-variant">
         {isPending ? "Loading…" : "Signed in"}
       </div>
     )
@@ -272,8 +272,8 @@ function UserBlock() {
     <div className="flex items-center gap-2.5">
       <Avatar name={name} src={data.avatarUrl ?? undefined} size="sm" />
       <div className="min-w-0">
-        <div className="truncate text-body-sm font-medium text-ink">{name}</div>
-        <div className="text-body-sm text-ink-faint">{roleLabel}</div>
+        <div className="truncate text-body-sm font-medium text-on-surface">{name}</div>
+        <div className="text-body-sm text-on-surface-variant">{roleLabel}</div>
       </div>
     </div>
   )
@@ -348,14 +348,14 @@ function Sidebar() {
   return (
     // A well, per DESIGN.md §3.1: `--paper-sunk` is the token whose stated use
     // is "sidebars, table headers, code blocks, inset areas".
-    <aside className="hidden sidebar:flex w-sidebar flex-none bg-paper-sunk border-e border-rule px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
+    <aside className="hidden sidebar:flex w-sidebar flex-none bg-surface-container-low border-e border-outline-variant px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
       <BrandLockup className="px-2" />
 
       <div className="lm-scroll min-h-0 flex-1 overflow-y-auto">
         <TeacherNav />
       </div>
 
-      <div className="mt-auto border-t border-rule pt-[14px]">
+      <div className="mt-auto border-t border-outline-variant pt-[14px]">
         <SidebarFooter />
       </div>
     </aside>
@@ -386,7 +386,7 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
     // exists below `md`, so it belongs on the nav layer with the sidebar rather
     // than on the sticky-table-header layer beneath it — and DESIGN.md §7 wants
     // the rung named, not reached through an arbitrary value.
-    <div className="lm-app-header lm-app-header-pt-2.5 lm-nav-chrome sticky top-0 z-nav flex min-h-14 items-center gap-3 border-b border-rule bg-paper/80 px-page-mobile pb-2.5 backdrop-blur-nav md:px-page-desktop">
+    <div className="lm-app-header lm-app-header-pt-2.5 lm-nav-chrome sticky top-0 z-nav flex min-h-14 items-center gap-3 border-b border-outline-variant bg-surface/80 px-page-mobile pb-2.5 backdrop-blur-nav md:px-page-desktop">
       <NavDrawerTrigger
         onClick={onOpenNav}
         label="Open teacher navigation"
@@ -510,9 +510,9 @@ function TeacherLayout() {
     // carrier of the one protected quality (§1). The student shell has had it
     // since surface 1; the teacher portal had none of the texture layer at all,
     // which is why it read as the generic dashboard the anti-references name.
-    // `bg-paper`: the shell owns its own ground rather than depending on
+    // `bg-surface`: the shell owns its own ground rather than depending on
     // `body`'s paint showing through beneath the fixed grain overlay.
-    <div data-portal="teacher" className="paper-grain flex min-h-dvh bg-paper">
+    <div data-portal="teacher" className="paper-grain flex min-h-dvh bg-surface">
       <SkipLink />
       {/* Task 7 (B5a): see student/index.tsx's own comment on this line —
           same reason, same shape. */}

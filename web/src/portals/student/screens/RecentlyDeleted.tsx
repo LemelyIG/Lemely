@@ -73,9 +73,9 @@ function DeletedPaperRow({
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">
             {paper.subjectCode != null ? <Chip tone="neutral">{paper.subjectCode}</Chip> : null}
-            <span className="truncate text-body-md text-ink">{paper.paperLabel}</span>
+            <span className="truncate text-body-md text-on-surface">{paper.paperLabel}</span>
           </div>
-          <span className="text-data-sm text-ink-muted">{countdownLabel(daysLeft)}</span>
+          <span className="text-data-sm text-on-surface-variant">{countdownLabel(daysLeft)}</span>
         </div>
         <Button
           variant="secondary"
@@ -89,7 +89,7 @@ function DeletedPaperRow({
         </Button>
       </div>
       {error ? (
-        <p role="alert" className="text-body-sm text-err">
+        <p role="alert" className="text-body-sm text-error">
           {error}
         </p>
       ) : null}
@@ -116,8 +116,8 @@ export function RecentlyDeleted() {
           <>
             <header className="flex flex-col gap-1">
               <Eyebrow>Recently deleted</Eyebrow>
-              <h1 className="text-display-md text-ink">Recently deleted</h1>
-              <p className="max-w-[56ch] text-pretty text-body-md text-ink-muted">
+              <h1 className="text-display-md text-on-surface">Recently deleted</h1>
+              <p className="max-w-[56ch] text-pretty text-body-md text-on-surface-variant">
                 A deleted paper stays here for {data.retentionDays} days, in case you want it back.
               </p>
             </header>

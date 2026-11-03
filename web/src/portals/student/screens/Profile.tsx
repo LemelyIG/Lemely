@@ -178,7 +178,7 @@ function LevelCard({ profile }: { profile: XpProfile }) {
                 takes the flourish; the XP total beside it springs without
                 confetti, because two fans firing at once on one card reads as
                 a slot machine rather than as two facts. */}
-            <Celebrate value={profile.level} className="text-data-lg text-ink">
+            <Celebrate value={profile.level} className="text-data-lg text-on-surface">
               <CountUp value={profile.level} />
             </Celebrate>
           </div>
@@ -187,7 +187,7 @@ function LevelCard({ profile }: { profile: XpProfile }) {
             <Celebrate
               value={profile.totalXp}
               flourish={false}
-              className="text-data-lg text-ink"
+              className="text-data-lg text-on-surface"
             >
               <CountUp value={profile.totalXp} />
             </Celebrate>
@@ -197,7 +197,7 @@ function LevelCard({ profile }: { profile: XpProfile }) {
           value={progress}
           label={`Progress to level ${profile.level + 1}: ${Math.round(progress)}%`}
         />
-        <p className="text-body-sm text-ink-faint">
+        <p className="text-body-sm text-on-surface-variant">
           {remaining.toLocaleString()} XP to level {profile.level + 1}
         </p>
       </CardBody>
@@ -214,7 +214,7 @@ function StreakCard({ profile }: { profile: XpProfile }) {
           <Fire
             size={26}
             weight="fill"
-            className="flex-none text-accent"
+            className="flex-none text-primary"
             aria-hidden="true"
           />
           {/* Label above value, matching `LevelCard`. The two cards sit side
@@ -225,7 +225,7 @@ function StreakCard({ profile }: { profile: XpProfile }) {
               Operate mode puts consistency ahead of variety (§2). */}
           <div role="group" aria-label="Day streak">
             <Eyebrow>Day streak</Eyebrow>
-            <Celebrate value={current} className="text-data-lg text-ink">
+            <Celebrate value={current} className="text-data-lg text-on-surface">
               <CountUp value={current} />
             </Celebrate>
           </div>
@@ -246,7 +246,7 @@ function StreakCard({ profile }: { profile: XpProfile }) {
           ) : null}
         </div>
 
-        <p className="text-body-sm text-ink-faint">
+        <p className="text-body-sm text-on-surface-variant">
           {lastActiveOn === null
             ? "Your streak starts the first day you earn XP."
             : `Last earned XP on ${formatDay(lastActiveOn)}.`}
@@ -306,7 +306,7 @@ function CalendarPanel({ profile }: { profile: XpProfile }) {
         tooltipDetail={(point) => (point.value === 0 ? "No XP earned" : null)}
         ariaLabel="XP earned per day over the last four weeks"
       />
-      <p className="lm-prose text-body-sm text-ink-faint">
+      <p className="lm-prose text-body-sm text-on-surface-variant">
         {formatDay(profile.calendarStart)} – {formatDay(profile.calendarEnd)}.
         {total === 0
           ? " Nothing here yet. The first day you earn XP is the first bar on this chart."
@@ -327,13 +327,13 @@ function WeekPanel({ profile }: { profile: XpProfile }) {
             stays in the body face. Surface 3 found the inverse of this — a
             whole sentence set in the mono face — and §4 gives that face
             figures, not the prose around them. */}
-        <span className="text-ink">
+        <span className="text-on-surface">
           <Celebrate value={week.total} flourish={false} className="text-data-md">
             <CountUp value={week.total} />
           </Celebrate>
-          <span className="ms-1 text-body-md text-ink-muted">XP this week</span>
+          <span className="ms-1 text-body-md text-on-surface-variant">XP this week</span>
         </span>
-        <span className="text-body-sm text-ink-faint">
+        <span className="text-body-sm text-on-surface-variant">
           {formatDay(week.start)} – {formatDay(week.end)}
         </span>
       </div>
@@ -341,7 +341,7 @@ function WeekPanel({ profile }: { profile: XpProfile }) {
       <div className="flex flex-col gap-2.5">
         {week.bySource.map((s) => (
           <div key={s.source} className="flex items-center gap-3">
-            <span className="w-36 flex-none text-body-md text-ink-muted">
+            <span className="w-36 flex-none text-body-md text-on-surface-variant">
               {sourceLabel(s.source)}
             </span>
             <span className="min-w-0 flex-1">
@@ -352,9 +352,9 @@ function WeekPanel({ profile }: { profile: XpProfile }) {
             </span>
             {/* Labelled "XP", never bare: this is XP from a source, not a count
                 of times the student did that thing (D5.13 §3). */}
-            <span className="w-16 flex-none text-end text-data-md text-ink">
+            <span className="w-16 flex-none text-end text-data-md text-on-surface">
               {s.xp}
-              <span className="ms-1 text-body-sm text-ink-faint">XP</span>
+              <span className="ms-1 text-body-sm text-on-surface-variant">XP</span>
             </span>
           </div>
         ))}
@@ -410,8 +410,8 @@ export function Profile() {
             is therefore invisible to every gate that looks at rendered output.
             `tests/unit/utilityExistence.test.ts` is the gate that now catches
             it. */}
-        <h1 className="text-display-lg text-ink">{name}</h1>
-        <p className="lm-prose text-body-lg text-ink-muted">
+        <h1 className="text-display-lg text-on-surface">{name}</h1>
+        <p className="lm-prose text-body-lg text-on-surface-variant">
           Everything here measures work done, never how well you did it.
         </p>
       </header>
@@ -446,7 +446,7 @@ export function Profile() {
             </div>
 
             <section className="flex flex-col gap-3" aria-labelledby="s31-week">
-              <h2 id="s31-week" className="text-display-sm text-ink">
+              <h2 id="s31-week" className="text-display-sm text-on-surface">
                 This week, by source
               </h2>
               <Card>
@@ -457,7 +457,7 @@ export function Profile() {
             </section>
 
             <section className="flex flex-col gap-3" aria-labelledby="s31-calendar">
-              <h2 id="s31-calendar" className="text-display-sm text-ink">
+              <h2 id="s31-calendar" className="text-display-sm text-on-surface">
                 The last four weeks
               </h2>
               <Card>

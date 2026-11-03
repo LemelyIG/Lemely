@@ -50,7 +50,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
 
   return (
     <div className={cn("flex flex-col gap-1.5", wrapperClassName)}>
-      <label htmlFor={selectId} className={cn("text-label text-ink", labelClassName)}>
+      <label htmlFor={selectId} className={cn("text-label text-on-surface", labelClassName)}>
         {label}
       </label>
       <div className="relative">
@@ -63,12 +63,12 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
           aria-describedby={cn(errorId, hintId) || undefined}
           data-kit-field="select"
           className={cn(
-            "w-full appearance-none rounded-md border bg-paper-raised ps-3 pe-9 py-2 text-body-md text-ink",
+            "w-full appearance-none rounded-md border bg-surface-container-lowest ps-3 pe-9 py-2 text-body-md text-on-surface",
             "transition-colors duration-[var(--dur-instant)] ease-out-soft",
-            "border-rule hover:border-rule-strong focus-visible:border-rule-strong active:border-rule-strong",
-            "disabled:cursor-not-allowed disabled:bg-paper-sunk disabled:text-ink-faint disabled:hover:border-rule",
-            resolvedState === "error" && "border-err hover:border-err focus-visible:border-err",
-            resolvedState === "success" && "border-ok hover:border-ok focus-visible:border-ok",
+            "border-outline-variant hover:border-outline focus-visible:border-outline active:border-outline",
+            "disabled:cursor-not-allowed disabled:bg-surface-container-low disabled:text-on-surface-variant disabled:hover:border-outline-variant",
+            resolvedState === "error" && "border-error hover:border-error focus-visible:border-error",
+            resolvedState === "success" && "border-success hover:border-success focus-visible:border-success",
             className,
           )}
           {...props}
@@ -78,28 +78,28 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
         {isLoading ? (
           <CircleNotch
             aria-hidden
-            className="pointer-events-none absolute inset-y-0 end-3 my-auto h-4 w-4 animate-spin text-ink-faint"
+            className="pointer-events-none absolute inset-y-0 end-3 my-auto h-4 w-4 animate-spin text-on-surface-variant"
           />
         ) : resolvedState === "error" ? (
           <WarningCircle
             aria-hidden
             weight="regular"
-            className="pointer-events-none absolute inset-y-0 end-3 my-auto h-4 w-4 text-err"
+            className="pointer-events-none absolute inset-y-0 end-3 my-auto h-4 w-4 text-error"
           />
         ) : (
           <CaretDown
             aria-hidden
             weight="regular"
-            className="pointer-events-none absolute inset-y-0 end-3 my-auto h-4 w-4 text-ink-faint"
+            className="pointer-events-none absolute inset-y-0 end-3 my-auto h-4 w-4 text-on-surface-variant"
           />
         )}
       </div>
       {error ? (
-        <p id={errorId} className="text-body-sm text-err">
+        <p id={errorId} className="text-body-sm text-error">
           {error}
         </p>
       ) : hint ? (
-        <p id={hintId} className="text-body-sm text-ink-muted">
+        <p id={hintId} className="text-body-sm text-on-surface-variant">
           {hint}
         </p>
       ) : null}

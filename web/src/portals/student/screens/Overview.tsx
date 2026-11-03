@@ -112,26 +112,26 @@ function trendOf(row: SubjectRow): {
   // falling back to the flag is worse than nothing only when we can do better.
   if (!Number.isFinite(delta)) {
     return row.trendUp
-      ? { icon: ArrowUpRight, tone: "text-ok", spoken: "Up since your first paper" }
-      : { icon: ArrowDownRight, tone: "text-err", spoken: "Down since your first paper" }
+      ? { icon: ArrowUpRight, tone: "text-success-text", spoken: "Up since your first paper" }
+      : { icon: ArrowDownRight, tone: "text-error", spoken: "Down since your first paper" }
   }
 
   if (delta === 0) {
     return {
       icon: Minus,
-      tone: "text-ink-muted",
+      tone: "text-on-surface-variant",
       spoken: "No change since your first paper",
     }
   }
   return delta > 0
     ? {
         icon: ArrowUpRight,
-        tone: "text-ok",
+        tone: "text-success-text",
         spoken: `Up ${delta} percentage points since your first paper`,
       }
     : {
         icon: ArrowDownRight,
-        tone: "text-err",
+        tone: "text-error",
         spoken: `Down ${Math.abs(delta)} percentage points since your first paper`,
       }
 }
@@ -157,11 +157,11 @@ function SubjectLedgerRow({ row }: { row: SubjectRow }) {
        * pointing at. Reserved transparent at rest so it cannot shift the row.
        */
       className={cn(
-        "group flex flex-col gap-3 w-full text-start border-t border-rule px-6 py-4",
+        "group flex flex-col gap-3 w-full text-start border-t border-outline-variant px-6 py-4",
         "md:grid md:grid-subject-ledger md:items-center md:gap-4",
-        "border-s-2 border-s-transparent hover:border-s-accent hover:bg-paper-sunk",
+        "border-s-2 border-s-transparent hover:border-s-accent hover:bg-surface-container-low",
         "transition-colors duration-[var(--dur-instant)] ease-out-soft",
-        "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-focus-ring",
+        "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary",
       )}
     >
       <div className="flex items-center gap-3 md:contents">
@@ -192,7 +192,7 @@ function SubjectLedgerRow({ row }: { row: SubjectRow }) {
                     flex container directly. */}
                 <span className="truncate">{primary}</span>
               </span>
-              <span className="truncate text-body-sm text-ink-faint">
+              <span className="truncate text-body-sm text-on-surface-variant">
                 {[secondary, row.detail].filter(Boolean).join(" · ")}
               </span>
             </span>
@@ -216,7 +216,7 @@ function SubjectLedgerRow({ row }: { row: SubjectRow }) {
         {/* "62% · 3 papers". The separator was a spaced hyphen, which the copy
             gate's own classifier calls a dash used as punctuation (audit N1);
             a middle dot is what this is. */}
-        <span className="text-data-sm text-ink-faint">
+        <span className="text-data-sm text-on-surface-variant">
           {row.pct}% · {row.papers} {row.papers === 1 ? "paper" : "papers"}
         </span>
       </span>
@@ -360,8 +360,8 @@ function JoinClassPrompt() {
   return (
     <Card className="flex flex-wrap items-center justify-between gap-3 p-5">
       <div className="flex flex-col gap-1">
-        <h2 className="text-body-md font-medium text-ink">Join your teacher's class</h2>
-        <p className="text-body-sm text-ink-muted">
+        <h2 className="text-body-md font-medium text-on-surface">Join your teacher's class</h2>
+        <p className="text-body-sm text-on-surface-variant">
           Enter the code your teacher gave you to see their announcements and join their roster.
         </p>
       </div>
@@ -478,7 +478,7 @@ export function Overview() {
           if (subjects.length === 0) {
             return (
               <>
-                <h1 className="text-display-lg text-ink">
+                <h1 className="text-display-lg text-on-surface">
                   {greeting}, {greetingName}.
                 </h1>
                 <GettingStarted
@@ -546,7 +546,7 @@ export function Overview() {
               </header>
 
               <Card className="overflow-hidden">
-                <h2 className="px-6 pt-5 pb-4 text-display-md text-ink">Subjects this session</h2>
+                <h2 className="px-6 pt-5 pb-4 text-display-md text-on-surface">Subjects this session</h2>
                 {subjects.map((row) => (
                   <SubjectLedgerRow key={row.code} row={row} />
                 ))}
@@ -566,8 +566,8 @@ export function Overview() {
                     {weakGlobal.map((thread) => (
                       <div key={thread.topic} className="flex flex-col gap-1.5">
                         <div className="flex items-baseline justify-between gap-3">
-                          <span className="min-w-0 truncate text-body-md text-ink">{thread.topic}</span>
-                          <span className="shrink-0 text-data-sm text-ink-muted">{thread.acc}</span>
+                          <span className="min-w-0 truncate text-body-md text-on-surface">{thread.topic}</span>
+                          <span className="shrink-0 text-data-sm text-on-surface-variant">{thread.acc}</span>
                         </div>
                         <Meter
                           value={thread.width}

@@ -135,10 +135,10 @@ export function DeviceSettingsSection() {
     <>
       <section aria-labelledby="devices-heading" className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
-          <h2 id="devices-heading" className="text-display-sm text-ink">
+          <h2 id="devices-heading" className="text-display-sm text-on-surface">
             Signed-in devices
           </h2>
-          <p className="max-w-[65ch] text-body-sm text-ink-muted">{intro}</p>
+          <p className="max-w-[65ch] text-body-sm text-on-surface-variant">{intro}</p>
         </div>
 
         {/* No `srHeading`: the page's own `<h1>` is rendered above this
@@ -182,7 +182,7 @@ export function DeviceSettingsSection() {
                 return (
                   <li
                     key={device.deviceId}
-                    className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-4 sm:p-5"
+                    className="flex flex-col gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest p-4 sm:p-5"
                   >
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <span className="flex min-w-0 flex-col gap-1">
@@ -191,14 +191,14 @@ export function DeviceSettingsSection() {
                               wants to know exactly what we hold about a device
                               can see it, rather than only our summary of it. */}
                           <span
-                            className="text-body-md text-ink"
+                            className="text-body-md text-on-surface"
                             title={device.userAgent ?? undefined}
                           >
                             {deviceTitle(device)}
                           </span>
                           {device.isCurrent ? <Chip>This device</Chip> : null}
                         </span>
-                        <span className="text-data-sm text-ink-faint">
+                        <span className="text-data-sm text-on-surface-variant">
                           {lastActiveLabel(device.lastActiveAt)}
                         </span>
                       </span>
@@ -223,7 +223,7 @@ export function DeviceSettingsSection() {
                         a reader who pressed a button and got no visible change
                         is exactly who needs to be told. */}
                     {notice ? (
-                      <p role="status" className="text-body-sm text-ink-muted">
+                      <p role="status" className="text-body-sm text-on-surface-variant">
                         {notice}
                       </p>
                     ) : null}

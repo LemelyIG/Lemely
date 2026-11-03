@@ -213,12 +213,12 @@ export function BarChart({
           const label = String(indexValue)
           const detail = tooltipDetail?.(byLabel.get(label) ?? { label, value })
           return (
-            <div className="flex flex-col gap-0.5 rounded-sm border border-rule bg-paper-raised px-2.5 py-1.5">
-              <span className="text-data-md text-ink">
+            <div className="flex flex-col gap-0.5 rounded-sm border border-outline-variant bg-surface-container-lowest px-2.5 py-1.5">
+              <span className="text-data-md text-on-surface">
                 {label}: {formatValue(value)}
               </span>
               {detail ? (
-                <span className="text-body-sm text-ink-muted">{detail}</span>
+                <span className="text-body-sm text-on-surface-variant">{detail}</span>
               ) : null}
             </div>
           )

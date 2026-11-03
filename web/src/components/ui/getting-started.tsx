@@ -82,12 +82,12 @@ export function GettingStarted({
   return (
     <section
       className={cn(
-        "relative overflow-hidden rounded-lg border border-rule bg-paper-raised",
+        "relative overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest",
         className,
       )}
     >
       <div className="flex flex-col gap-2 px-6 pb-5 pt-6 sm:px-8 sm:pt-8">
-        <h2 className="relative inline-block self-start text-display-md text-ink">
+        <h2 className="relative inline-block self-start text-display-md text-on-surface">
           {heading}
           {/* Hand-drawn underline, the notebook register's lightest touch.
               Purely decorative: the heading reads identically without it. */}
@@ -95,7 +95,7 @@ export function GettingStarted({
             viewBox="0 0 200 8"
             preserveAspectRatio="none"
             aria-hidden="true"
-            className="absolute start-0 -bottom-1 h-2 w-full text-accent-subtle"
+            className="absolute start-0 -bottom-1 h-2 w-full text-primary-container"
           >
             <path
               d="M2 5.5c38-3 62-3.6 98-2.2 34 1.3 62 2.6 98 1"
@@ -106,12 +106,12 @@ export function GettingStarted({
             />
           </svg>
         </h2>
-        <p className="max-w-[60ch] text-body-md text-ink-muted">{body}</p>
+        <p className="max-w-[60ch] text-body-md text-on-surface-variant">{body}</p>
       </div>
 
       {/* `<ol>` because the order is the message: these steps happen in
           sequence, and a screen reader should say "3 items, item 1 of 3". */}
-      <ol className="flex flex-col border-t border-rule">
+      <ol className="flex flex-col border-t border-outline-variant">
         {steps.map((step, index) => {
           const isDone = step.status === "done"
           const isNow = step.status === "now"
@@ -120,10 +120,10 @@ export function GettingStarted({
             <li
               key={step.title}
               className={cn(
-                "flex items-start gap-4 border-b border-rule px-6 py-5 last:border-b-0 sm:px-8",
+                "flex items-start gap-4 border-b border-outline-variant px-6 py-5 last:border-b-0 sm:px-8",
                 // The current step is the only one lifted off the paper. The
                 // others recede rather than compete with it.
-                isNow && "bg-paper-sunk",
+                isNow && "bg-surface-container-low",
               )}
             >
               {/* Step number in the margin. `done` swaps the number for a
@@ -132,9 +132,9 @@ export function GettingStarted({
               <span
                 className={cn(
                   "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-metadata",
-                  isDone && "border-ok bg-ok-wash text-ok",
-                  isNow && "border-accent bg-accent text-accent-on",
-                  !isDone && !isNow && "border-rule bg-paper text-ink-faint",
+                  isDone && "border-success bg-success-container text-success-text",
+                  isNow && "border-primary bg-primary text-on-primary",
+                  !isDone && !isNow && "border-outline-variant bg-surface text-on-surface-variant",
                 )}
               >
                 {isDone ? (
@@ -149,7 +149,7 @@ export function GettingStarted({
                   <h3
                     className={cn(
                       "text-body-lg font-medium",
-                      isDone ? "text-ink-muted" : "text-ink",
+                      isDone ? "text-on-surface-variant" : "text-on-surface",
                     )}
                   >
                     {step.title}
@@ -157,12 +157,12 @@ export function GettingStarted({
                   {isDone ? (
                     // A visible word, not colour alone: the tick and the green
                     // are both unavailable to a reader who cannot see them.
-                    <span className="text-metadata uppercase tracking-wide text-ok">
+                    <span className="text-metadata uppercase tracking-wide text-success-text">
                       Done
                     </span>
                   ) : null}
                 </div>
-                <p className="max-w-[60ch] text-body-md text-ink-muted">{step.body}</p>
+                <p className="max-w-[60ch] text-body-md text-on-surface-variant">{step.body}</p>
 
                 {isNow && step.to && step.actionLabel ? (
                   <Link
@@ -182,7 +182,7 @@ export function GettingStarted({
       </ol>
 
       {footnote ? (
-        <div className="border-t border-rule px-6 py-4 text-body-sm text-ink-faint sm:px-8">
+        <div className="border-t border-outline-variant px-6 py-4 text-body-sm text-on-surface-variant sm:px-8">
           {footnote}
         </div>
       ) : null}

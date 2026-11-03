@@ -105,7 +105,7 @@ function UserBlock() {
 
   if (isPending || isError || !data) {
     return (
-      <div className="flex items-center gap-2.5 px-0.5 text-body-sm text-ink-faint">
+      <div className="flex items-center gap-2.5 px-0.5 text-body-sm text-on-surface-variant">
         {isPending ? "Loading…" : "Signed in"}
       </div>
     )
@@ -121,8 +121,8 @@ function UserBlock() {
     <div className="flex items-center gap-2.5">
       <Avatar name={name} src={data.avatarUrl ?? undefined} size="sm" />
       <div className="min-w-0">
-        <div className="truncate text-body-sm font-medium text-ink">{name}</div>
-        <div className="text-body-sm text-ink-faint">{roleLabel}</div>
+        <div className="truncate text-body-sm font-medium text-on-surface">{name}</div>
+        <div className="text-body-sm text-on-surface-variant">{roleLabel}</div>
       </div>
     </div>
   )
@@ -208,20 +208,20 @@ function SidebarFooter({ lane }: { lane: AdminLane }) {
            destination they have never visited. */
         <Link
           to="/teacher"
-          className="flex flex-col justify-center gap-0.5 rounded-sm px-0.5 pointer-coarse:min-h-11 text-body-sm text-ink-faint transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          className="flex flex-col justify-center gap-0.5 rounded-sm px-0.5 pointer-coarse:min-h-11 text-body-sm text-on-surface-variant transition-colors hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         >
           <span className="whitespace-nowrap">Teaching tools &rarr;</span>
-          <span className="text-body-sm text-ink-faint">
+          <span className="text-body-sm text-on-surface-variant">
             Marking, review, announcements
           </span>
         </Link>
       ) : null}
       <Link
         to="/settings/devices"
-        className="flex flex-col justify-center gap-0.5 rounded-sm px-0.5 pointer-coarse:min-h-11 text-body-sm text-ink-faint transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+        className="flex flex-col justify-center gap-0.5 rounded-sm px-0.5 pointer-coarse:min-h-11 text-body-sm text-on-surface-variant transition-colors hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
       >
         <span className="whitespace-nowrap">Your account &rarr;</span>
-        <span className="text-body-sm text-ink-faint">Devices and notifications</span>
+        <span className="text-body-sm text-on-surface-variant">Devices and notifications</span>
       </Link>
       <UserBlock />
     </div>
@@ -232,14 +232,14 @@ function Sidebar({ lane }: { lane: AdminLane }) {
   return (
     // A well, per DESIGN.md §3.1: `--paper-sunk`'s stated use is "sidebars,
     // table headers, code blocks, inset areas".
-    <aside className="hidden sidebar:flex w-sidebar flex-none bg-paper-sunk border-e border-rule px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
+    <aside className="hidden sidebar:flex w-sidebar flex-none bg-surface-container-low border-e border-outline-variant px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
       {/* The lane name sits under the wordmark rather than replacing it. An
           administrator needs to know which console they are in — the two
           look alike and the nav lists are short — but they are still in
           Lemely, and a sidebar that says only "Platform" reads like a
           different application. */}
       <BrandLockup className="px-2">
-        <div className="text-eyebrow text-ink-faint">
+        <div className="text-eyebrow text-on-surface-variant">
           {lane === "school" ? "School admin" : "Platform admin"}
         </div>
       </BrandLockup>
@@ -248,7 +248,7 @@ function Sidebar({ lane }: { lane: AdminLane }) {
         <AdminNav lane={lane} />
       </div>
 
-      <div className="mt-auto border-t border-rule pt-[14px]">
+      <div className="mt-auto border-t border-outline-variant pt-[14px]">
         <SidebarFooter lane={lane} />
       </div>
     </aside>
@@ -267,7 +267,7 @@ function AdminTopBar({ lane, onOpenNav }: { lane: AdminLane; onOpenNav: () => vo
   const trail = resolveAdminTrail(location.pathname, lane)
 
   return (
-    <div className="lm-app-header lm-app-header-pt-2.5 lm-nav-chrome sticky top-0 z-nav flex min-h-14 items-center gap-3 border-b border-rule bg-paper/80 px-page-mobile pb-2.5 backdrop-blur-nav md:px-page-desktop">
+    <div className="lm-app-header lm-app-header-pt-2.5 lm-nav-chrome sticky top-0 z-nav flex min-h-14 items-center gap-3 border-b border-outline-variant bg-surface/80 px-page-mobile pb-2.5 backdrop-blur-nav md:px-page-desktop">
       <NavDrawerTrigger
         onClick={onOpenNav}
         label={lane === "school" ? "Open school admin navigation" : "Open platform navigation"}
@@ -291,9 +291,9 @@ function AdminLayout({ lane }: { lane: AdminLane }) {
     // `paper-grain` is DESIGN.md §8's first texture element and the cheapest
     // carrier of the one protected quality (§1). Even the utilitarian console
     // gets it: "consistent with the system" is 4.10's own instruction.
-    // `bg-paper`: the shell owns its own ground rather than depending on
+    // `bg-surface`: the shell owns its own ground rather than depending on
     // `body`'s paint showing through beneath the fixed grain overlay.
-    <div data-portal="teacher" className="paper-grain flex min-h-dvh bg-paper">
+    <div data-portal="teacher" className="paper-grain flex min-h-dvh bg-surface">
       <SkipLink />
       <Sidebar lane={lane} />
 

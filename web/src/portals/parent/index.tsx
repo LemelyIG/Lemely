@@ -81,7 +81,7 @@ function ChildSwitcher() {
   if (!childId || children.length < 2) return null
 
   return (
-    <div className="flex items-center gap-2 text-body-sm text-ink-muted">
+    <div className="flex items-center gap-2 text-body-sm text-on-surface-variant">
       {/* The visible word is hidden at mobile for width, so the accessible
           name has to come from somewhere that is never hidden — otherwise the
           select is an unlabelled control below 640px. `Select`'s own
@@ -208,11 +208,11 @@ function Header() {
   const navigate = useNavigate()
 
   return (
-    <header className="border-b border-rule bg-paper-raised">
+    <header className="border-b border-outline-variant bg-surface-container-lowest">
       <div className="mx-auto flex w-full max-w-240 flex-wrap items-center gap-x-4 gap-y-2 px-4 py-4 md:px-8">
         <Link
           to="/parent"
-          className="flex items-center gap-2.5 rounded-md pointer-coarse:min-h-11 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          className="flex items-center gap-2.5 rounded-md pointer-coarse:min-h-11 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         >
           <BrandLockup as="span" className="contents" />
         </Link>
@@ -241,7 +241,7 @@ function Header() {
           <Link
             to="/parent/notifications"
             aria-label="Notifications"
-            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center text-body-sm text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center text-body-sm text-on-surface-variant transition-colors hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             <Bell size={16} aria-hidden="true" />
             <span className="hidden sm:inline">Notifications</span>
@@ -250,7 +250,7 @@ function Header() {
           <Link
             to="/settings/devices"
             aria-label="Settings"
-            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center text-body-sm text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center text-body-sm text-on-surface-variant transition-colors hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             <Gear size={16} aria-hidden="true" />
             <span className="hidden sm:inline">Settings</span>
@@ -271,7 +271,7 @@ function Header() {
               logout()
               navigate("/login", { replace: true })
             }}
-            className="flex cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2 py-1.5 text-body-sm text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            className="flex cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2 py-1.5 text-body-sm text-on-surface-variant transition-colors hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             <SignOut size={16} aria-hidden="true" />
             <span className="hidden sm:inline">Sign out</span>
@@ -299,7 +299,7 @@ function ParentLayout() {
     // the same gap surface 5 found in the teacher portal, and it is the whole
     // mechanism by which §1's protected quality survives a screen made of
     // rows and numbers.
-    <div data-portal="parent" className="paper-grain flex min-h-dvh flex-col bg-paper">
+    <div data-portal="parent" className="paper-grain flex min-h-dvh flex-col bg-surface">
       <SkipLink />
       {/* Task 7 (B5a): see student/index.tsx's own comment on this line —
           same reason, same shape. */}

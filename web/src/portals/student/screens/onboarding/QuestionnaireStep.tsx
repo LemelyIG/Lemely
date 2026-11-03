@@ -91,12 +91,12 @@ function SkippableSlider({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-baseline justify-between gap-3">
-        <span className="text-body-sm text-ink-muted">{ariaLabel}</span>
+        <span className="text-body-sm text-on-surface-variant">{ariaLabel}</span>
         {/* The data face, and never the accent: a set value here is neutral or
             good news, and accent is this palette's alert register. Weight and
             the mono face carry "this is your answer" instead. */}
         <span
-          className={touched ? "text-data-sm font-medium text-ink" : "text-body-sm text-ink-faint"}
+          className={touched ? "text-data-sm font-medium text-on-surface" : "text-body-sm text-on-surface-variant"}
         >
           {touched ? formatValue(value) : unsetLabel}
         </span>
@@ -192,7 +192,7 @@ function QuestionShell({ question, children }: { question: string; children: Rea
        * `display-md` alone, not `font-serif text-display-md`: the rung already
        * names the display face, and pairing it with `font-serif` set
        * `font-family` twice on one element (D4.2). */}
-      <h1 id={QUESTION_HEADING_ID} className="text-display-md text-ink">
+      <h1 id={QUESTION_HEADING_ID} className="text-display-md text-on-surface">
         {question}
       </h1>
       {children}
@@ -228,9 +228,9 @@ function PlacementChoiceRow({
     <QueryState
       query={query}
       skeleton={
-        <div className="flex flex-col gap-1 rounded-lg border border-rule p-4">
-          <span className="text-body-md font-medium text-ink">{subjectName}</span>
-          <span className="text-body-sm text-ink-faint">Checking availability…</span>
+        <div className="flex flex-col gap-1 rounded-lg border border-outline-variant p-4">
+          <span className="text-body-md font-medium text-on-surface">{subjectName}</span>
+          <span className="text-body-sm text-on-surface-variant">Checking availability…</span>
         </div>
       }
       // Inline (`compact`), not the full centred panel: this is one row among
@@ -246,11 +246,11 @@ function PlacementChoiceRow({
           const message = unavailableMessage(data.reason)
           return (
             <div
-              className="flex flex-col gap-1 rounded-lg border border-rule bg-paper-sunk p-4 opacity-70"
+              className="flex flex-col gap-1 rounded-lg border border-outline-variant bg-surface-container-low p-4 opacity-70"
               aria-disabled="true"
             >
-              <span className="text-body-md font-medium text-ink">{subjectName}</span>
-              <span className="text-body-sm text-ink-muted">{message.heading}</span>
+              <span className="text-body-md font-medium text-on-surface">{subjectName}</span>
+              <span className="text-body-sm text-on-surface-variant">{message.heading}</span>
             </div>
           )
         }
@@ -262,12 +262,12 @@ function PlacementChoiceRow({
             onClick={onSelect}
             className={`flex flex-col gap-1 rounded-lg border p-4 text-start transition-colors ${
               selected
-                ? "border-accent bg-paper-raised"
-                : "border-rule bg-paper-raised hover:border-rule-strong"
+                ? "border-primary bg-surface-container-lowest"
+                : "border-outline-variant bg-surface-container-lowest hover:border-outline"
             }`}
           >
-            <span className="text-body-md font-medium text-ink">{subjectName}</span>
-            <span className="text-body-sm text-ink-muted">
+            <span className="text-body-md font-medium text-on-surface">{subjectName}</span>
+            <span className="text-body-sm text-on-surface-variant">
               {data.questionCount} question{data.questionCount === 1 ? "" : "s"} · about{" "}
               {Math.round(data.estimatedMinutes)} minute
               {Math.round(data.estimatedMinutes) === 1 ? "" : "s"}
@@ -472,7 +472,7 @@ export function QuestionnaireStep({
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1.5">
         <Meter value={progressPct} label={`Question ${stepIndex + 1} of ${total}`} />
-        <span className="text-data-sm text-ink-faint">
+        <span className="text-data-sm text-on-surface-variant">
           Question {stepIndex + 1} of {total}
         </span>
       </div>
@@ -481,7 +481,7 @@ export function QuestionnaireStep({
 
       {/* Above the buttons, which is where §12 puts a form-level error. */}
       {error ? (
-        <p role="alert" className="text-body-sm text-err">
+        <p role="alert" className="text-body-sm text-error">
           {error}
         </p>
       ) : null}

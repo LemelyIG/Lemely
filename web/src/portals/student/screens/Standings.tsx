@@ -113,7 +113,7 @@ function Monogram({ name }: { name: string }) {
   return (
     <span
       aria-hidden="true"
-      className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-paper-sunk text-eyebrow text-ink-muted"
+      className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-surface-container-low text-eyebrow text-on-surface-variant"
     >
       {monogram(name)}
     </span>
@@ -130,8 +130,8 @@ function Monogram({ name }: { name: string }) {
 function StreakBadge({ streak }: { streak: number | null }) {
   if (streak === null) return null
   return (
-    <span className="flex items-center gap-1 text-data-sm text-ink-faint">
-      <Fire size={12} weight="fill" className="text-accent" aria-hidden="true" />
+    <span className="flex items-center gap-1 text-data-sm text-on-surface-variant">
+      <Fire size={12} weight="fill" className="text-primary" aria-hidden="true" />
       <span>
         {streak}
         <span className="sr-only"> day streak</span>
@@ -168,7 +168,7 @@ function BoardRow({
    * caught it: the pairing that fails only exists on one variant of this row.
    * `--ink-muted` is 5.51:1 on the wash and stays de-emphasised.
    */
-  const faint = isViewer ? "text-ink-muted" : "text-ink-faint"
+  const faint = isViewer ? "text-on-surface-variant" : "text-on-surface-variant"
 
   return (
     <Root
@@ -179,7 +179,7 @@ function BoardRow({
         // by a stripe. An earlier cut added a left accent border as a third
         // channel; it was redundant with both and is the single most
         // recognisable tell of a generated interface, so the tint stands alone.
-        isViewer && "-mx-3 rounded-md bg-accent-wash px-3",
+        isViewer && "-mx-3 rounded-md bg-primary-container px-3",
       )}
     >
       <span className={cn("w-7 flex-none text-data-sm", faint)}>
@@ -189,14 +189,14 @@ function BoardRow({
         {row.rank === null ? "—" : row.rank}
       </span>
       <Monogram name={row.displayName} />
-      <span className="min-w-0 flex-1 truncate text-body-md text-ink">
+      <span className="min-w-0 flex-1 truncate text-body-md text-on-surface">
         {row.displayName}
         {isViewer ? (
           <span className={cn("ms-2 text-body-sm", faint)}>You</span>
         ) : null}
       </span>
       <StreakBadge streak={row.streak} />
-      <span className="w-16 flex-none text-end text-data-md text-ink">
+      <span className="w-16 flex-none text-end text-data-md text-on-surface">
         {/* Only the viewer's own figure counts up — see this file's header on
             why the rest of the board holds still. */}
         {isViewer ? <CountUp value={row.xp} /> : row.xp.toLocaleString()}
@@ -246,7 +246,7 @@ function BoardBody({
           body="Correct a paper, review flashcards or finish a study session. The board fills as soon as anyone does."
         />
       ) : (
-        <ol className="divide-y divide-rule">
+        <ol className="divide-y divide-outline-variant">
           {board.rows.map((row) => (
             <BoardRow
               key={row.userId}
@@ -263,10 +263,10 @@ function BoardBody({
           they are already visible above, which would otherwise show them
           twice. */}
       {board.viewer !== null && !viewerInRows ? (
-        <div className="mt-2 border-t border-rule pt-2">
+        <div className="mt-2 border-t border-outline-variant pt-2">
           <BoardRow row={board.viewer} isViewer />
           {board.viewerOptedOut ? (
-            <p className="pt-1 text-body-sm text-ink-faint">
+            <p className="pt-1 text-body-sm text-on-surface-variant">
               Your XP is still counted and still yours to see. You are just
               hidden from everyone else's board.
             </p>
@@ -330,15 +330,15 @@ function OptOutControl() {
       aria-hidden={pending || undefined}
       inert={pending || undefined}
       className={cn(
-        "flex flex-wrap items-center justify-between gap-3 rounded-md border border-rule bg-paper-sunk px-3.5 py-3",
+        "flex flex-wrap items-center justify-between gap-3 rounded-md border border-outline-variant bg-surface-container-low px-3.5 py-3",
         pending && "invisible",
       )}
     >
       <div className="min-w-0">
-        <p className="text-body-md text-ink">
+        <p className="text-body-md text-on-surface">
           {optedOut ? "You are hidden from other students" : "You appear on public boards"}
         </p>
-        <p className="text-body-sm text-ink-faint">
+        <p className="text-body-sm text-on-surface-variant">
           {optedOut
             ? "Nobody else sees your name or XP. You still see every board, and you still earn XP."
             : "Other students can see your display name, weekly XP and streak. Never your marks or grades."}
@@ -362,7 +362,7 @@ function OptOutControl() {
           reading the old value with no explanation, and the student reasonably
           concludes they are hidden when they are not. */}
       {patch.isError ? (
-        <p role="alert" className="w-full text-body-sm text-err">
+        <p role="alert" className="w-full text-body-sm text-error">
           Your visibility could not be changed, so it is still as it was. Check
           your connection and try again.
         </p>
@@ -401,8 +401,8 @@ function TabButton({
         // controls on the screen that did not respond to being pressed.
         "rounded-md border px-3 py-1.5 text-label transition-colors duration-[var(--dur-instant)] ease-out-soft active:scale-[0.98]",
         active
-          ? "border-accent bg-accent-wash text-accent-ink"
-          : "border-rule bg-paper-raised text-ink-muted hover:bg-paper-sunk",
+          ? "border-primary bg-primary-container text-on-primary-container"
+          : "border-outline-variant bg-surface-container-lowest text-on-surface-variant hover:bg-surface-container-low",
       )}
     >
       {children}
@@ -439,8 +439,8 @@ export function Standings() {
         <Eyebrow>Standings</Eyebrow>
         {/* `text-display` was the class here and it resolves to nothing — see
             the note in `Profile.tsx`. */}
-        <h1 className="text-display-lg text-ink">Effort, not marks</h1>
-        <p className="lm-prose text-body-lg text-ink-muted">
+        <h1 className="text-display-lg text-on-surface">Effort, not marks</h1>
+        <p className="lm-prose text-body-lg text-on-surface-variant">
           Boards rank XP: the work you put in. Nobody here can see anyone's
           grades.
         </p>
@@ -450,7 +450,7 @@ export function Standings() {
 
       <section className="flex flex-col gap-4" aria-labelledby="s29-board">
         <div className="flex flex-wrap items-baseline justify-between gap-3">
-          <h2 id="s29-board" className="text-display-sm text-ink">
+          <h2 id="s29-board" className="text-display-sm text-on-surface">
             This week
           </h2>
           {board.data ? (
@@ -642,7 +642,7 @@ export function Standings() {
       {/* Kept from the screen this replaced: real `subjectRanks` data, and a
           different question from the weekly boards. */}
       <section className="flex flex-col gap-3" aria-labelledby="s29-subjects">
-        <h2 id="s29-subjects" className="text-display-sm text-ink">
+        <h2 id="s29-subjects" className="text-display-sm text-on-surface">
           Your subjects
         </h2>
         <Card>
@@ -674,7 +674,7 @@ export function Standings() {
                 <div className="flex flex-col gap-2.5">
                   <div
                     aria-hidden="true"
-                    className="flex items-center gap-3 border-b border-rule pb-1.5 text-eyebrow text-ink-faint"
+                    className="flex items-center gap-3 border-b border-outline-variant pb-1.5 text-eyebrow text-on-surface-variant"
                   >
                     <span className="w-11 flex-none">Code</span>
                     <span className="min-w-0 flex-1">Subject</span>
@@ -683,13 +683,13 @@ export function Standings() {
                   </div>
                   {data.subjectRanks.map((s) => (
                     <div key={s.code} className="flex items-center gap-3">
-                      <span className="w-11 flex-none text-data-sm text-ink-faint">
+                      <span className="w-11 flex-none text-data-sm text-on-surface-variant">
                         {s.code}
                       </span>
-                      <span className="min-w-0 flex-1 truncate text-body-md text-ink">
+                      <span className="min-w-0 flex-1 truncate text-body-md text-on-surface">
                         {s.name}
                       </span>
-                      <span className="text-body-sm text-ink-faint">
+                      <span className="text-body-sm text-on-surface-variant">
                         {s.papers} papers
                       </span>
                       <span

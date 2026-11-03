@@ -56,7 +56,7 @@ export function SectionHead({
         <Display className={RUNG_CLASS[rung]}>
           <Tag>{title}</Tag>
         </Display>
-        {kicker ? <p className="text-body-md text-ink-muted">{kicker}</p> : null}
+        {kicker ? <p className="text-body-md text-on-surface-variant">{kicker}</p> : null}
       </div>
       {action ? <div className="shrink-0">{action}</div> : null}
     </div>

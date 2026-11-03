@@ -66,7 +66,7 @@ export function CardGridSkeleton({
       {Array.from({ length: count }, (_, index) => (
         <div
           key={index}
-          className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-[18px]"
+          className="flex flex-col gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest p-[18px]"
         >
           <SkeletonLine announce={false} className="h-5" width="70%" />
           <SkeletonLine announce={false} width="45%" />
@@ -98,12 +98,12 @@ export function ListSkeleton({
     <div
       role="status"
       aria-label="Loading"
-      className={cn("overflow-hidden rounded-lg border border-rule bg-paper-raised", className)}
+      className={cn("overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest", className)}
     >
       {Array.from({ length: rows }, (_, index) => (
         <div
           key={index}
-          className="flex items-center gap-3 border-b border-rule px-5 py-3.5 last:border-b-0"
+          className="flex items-center gap-3 border-b border-outline-variant px-5 py-3.5 last:border-b-0"
         >
           {avatar ? <SkeletonCircle announce={false} className="h-7 w-7" /> : null}
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
@@ -134,7 +134,7 @@ export function PanelSkeleton({
       role="status"
       aria-label="Loading"
       className={cn(
-        "flex flex-col gap-4 rounded-lg border border-rule bg-paper-raised px-5 py-[18px]",
+        "flex flex-col gap-4 rounded-lg border border-outline-variant bg-surface-container-lowest px-5 py-[18px]",
         className,
       )}
     >

@@ -43,30 +43,30 @@ function ChildCard({ child }: { child: ChildSummary }) {
   return (
     <Link
       to={`/parent/children/${child.childId}`}
-      className="group flex items-start gap-4 rounded-lg border border-rule bg-paper-raised p-6 transition-colors hover:border-rule-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+      className="group flex items-start gap-4 rounded-lg border border-outline-variant bg-surface-container-lowest p-6 transition-colors hover:border-outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
     >
       <div className="flex min-w-0 flex-1 flex-col gap-2">
-        <div className="text-display-sm text-ink">{child.displayName}</div>
+        <div className="text-display-sm text-on-surface">{child.displayName}</div>
 
         {child.classes.length > 0 ? (
-          <div className="text-body-sm text-ink-faint">
+          <div className="text-body-sm text-on-surface-variant">
             {child.classes
               .map((c) => (c.schoolName ? `${c.name} · ${c.schoolName}` : c.name))
               .join(" · ")}
           </div>
         ) : null}
 
-        <p className="text-body-md text-ink">{child.statusLine}</p>
+        <p className="text-body-md text-on-surface">{child.statusLine}</p>
 
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-body-sm text-ink-muted">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-body-sm text-on-surface-variant">
           {trend ? (
             // Direction is never colour alone: the icon differs in shape and
             // the sentence names it ("Up" / "Down") in words.
             <span className="flex items-center gap-1.5">
               {trend.up ? (
-                <TrendUp size={15} className="text-ok" aria-hidden="true" />
+                <TrendUp size={15} className="text-success-text" aria-hidden="true" />
               ) : (
-                <TrendDown size={15} className="text-warn" aria-hidden="true" />
+                <TrendDown size={15} className="text-on-tertiary-container" aria-hidden="true" />
               )}
               {trend.text}
             </span>
@@ -84,7 +84,7 @@ function ChildCard({ child }: { child: ChildSummary }) {
           long status line never reflows under the pointer. */}
       <CaretRight
         size={18}
-        className="mt-1 flex-none text-ink-faint transition-transform ease-out-soft group-hover:translate-x-px"
+        className="mt-1 flex-none text-on-surface-variant transition-transform ease-out-soft group-hover:translate-x-px"
         aria-hidden="true"
       />
     </Link>
@@ -126,15 +126,15 @@ function ChildCard({ child }: { child: ChildSummary }) {
  */
 function NoChildrenLinked() {
   return (
-    <div className="mx-auto flex max-w-140 flex-col gap-6 rounded-lg border border-rule bg-paper-raised p-8">
+    <div className="mx-auto flex max-w-140 flex-col gap-6 rounded-lg border border-outline-variant bg-surface-container-lowest p-8">
       <div className="margin-rule flex flex-col gap-2">
-        <p className="text-hand text-ink-muted">Almost there</p>
+        <p className="text-hand text-on-surface-variant">Almost there</p>
         {/* `h1`, not `h2`: in this state it IS the page's heading, and there is
             no other one on the screen — so as an `h2` the empty state shipped
             with no level-one heading at all (axe `page-has-heading-one`, found
             by P3.10 chunk e2a's per-state pass). */}
-        <h1 className="text-display-lg text-ink">You're signed in. One step to go.</h1>
-        <p className="text-body-md text-ink-muted">
+        <h1 className="text-display-lg text-on-surface">You're signed in. One step to go.</h1>
+        <p className="text-body-md text-on-surface-variant">
           Nobody has shared their results with you yet. Your child adds you from their own
           Lemely account, so they stay in control of who sees their marks.
         </p>
@@ -149,16 +149,16 @@ function NoChildrenLinked() {
           <li key={index} className="flex items-start gap-3">
             <span
               aria-hidden="true"
-              className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-accent-wash text-data-sm text-accent-ink"
+              className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-primary-container text-data-sm text-on-primary-container"
             >
               {index + 1}
             </span>
-            <span className="text-body-md text-ink">{step}</span>
+            <span className="text-body-md text-on-surface">{step}</span>
           </li>
         ))}
       </ol>
 
-      <p className="rounded-md bg-paper-sunk p-4 text-body-sm text-ink-muted">
+      <p className="rounded-md bg-surface-container-low p-4 text-body-sm text-on-surface-variant">
         Signing in first is what makes this work. Your child can only add a parent who
         already has an account, so nobody can be added by mistake.
       </p>
@@ -205,8 +205,8 @@ export function Children() {
           return (
             <>
               <div className="margin-rule flex flex-col gap-1">
-                <h1 className="text-display-lg text-ink">Your children</h1>
-                <p className="text-body-md text-ink-muted">Tap a name to see how they're doing.</p>
+                <h1 className="text-display-lg text-on-surface">Your children</h1>
+                <p className="text-body-md text-on-surface-variant">Tap a name to see how they're doing.</p>
               </div>
               <div className="flex flex-col gap-3">
                 {children.map((child) => (

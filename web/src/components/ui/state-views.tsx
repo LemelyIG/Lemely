@@ -20,7 +20,7 @@ import { FullPageState, FullPageStateBody } from "@/portals/misc/FullPageState"
  * still available via the `tone` override for a caller that genuinely needs
  * it (e.g. a destructive/blocking failure), but nothing here defaults to it.
  *
- * P4.2 moved the colour names off the build-era `text-t1`/`bg-surface-2`
+ * P4.2 moved the colour names off the build-era `text-on-surface`/`bg-surface-container-low`
  * aliases onto the names DESIGN.md defines (identical values), and added the
  * optional `marginalia` line. §12 is specific about what an empty state is
  * made of — "a line of Caveat marginalia, a one-sentence explanation, and the
@@ -74,8 +74,8 @@ import { FullPageState, FullPageStateBody } from "@/portals/misc/FullPageState"
  * states audit) ─────────────────────────────────────────────────────────
  *
  * `FullPageState.tsx` (the nine full-page states) was built straight off the
- * approved canvas: a line-drawn `Doodle`, a mono `text-data-sm text-ink-faint`
- * kicker, and a `text-display-md text-ink` heading. This file's full
+ * approved canvas: a line-drawn `Doodle`, a mono `text-data-sm text-on-surface-variant`
+ * kicker, and a `text-display-md text-on-surface` heading. This file's full
  * (non-`compact`) layout never adopted that language — it kept the build-era
  * 48px tone-washed icon circle and a `text-body-lg font-medium` heading — even
  * though every in-screen empty/error/offline state in the product, including
@@ -108,10 +108,10 @@ export interface StateViewProps extends HTMLAttributes<HTMLDivElement> {
   icon?: ReactNode
   /** Override the default tone (icon/badge color) for this kind. Only visible
    * in `compact`, or in the full layout when `icon` is also supplied — the
-   * doodle itself is always `text-rule`/`text-accent`, not tone-driven. */
+   * doodle itself is always `text-outline-variant`/`text-primary`, not tone-driven. */
   tone?: StateViewTone
   /** Mono kicker above the heading in the full layout, mirroring
-   * `FullPageState`'s (`text-data-sm text-ink-faint`) — "Error", "Offline",
+   * `FullPageState`'s (`text-data-sm text-on-surface-variant`) — "Error", "Offline",
    * "Empty". Defaults per `kind` via `kindKicker`; pass `null` to omit it
    * entirely rather than "" (an empty string still renders an empty `<p>`).
    * No effect on `compact`, which has never carried one. */
@@ -162,9 +162,9 @@ const kindKicker: Record<StateViewKind, string> = {
 }
 
 const toneClasses: Record<StateViewTone, { icon: string; bg: string }> = {
-  neutral: { icon: "text-ink-faint", bg: "bg-paper-sunk" },
-  warn: { icon: "text-warn", bg: "bg-warn-wash" },
-  err: { icon: "text-err", bg: "bg-err-wash" },
+  neutral: { icon: "text-on-surface-variant", bg: "bg-surface-container-low" },
+  warn: { icon: "text-on-tertiary-container", bg: "bg-tertiary-container" },
+  err: { icon: "text-error", bg: "bg-error-container" },
 }
 
 export function StateView({
@@ -210,7 +210,7 @@ export function StateView({
       <div
         role={regionRole}
         className={cn(
-          "flex items-start gap-2 rounded-md border border-rule px-3 py-2.5",
+          "flex items-start gap-2 rounded-md border border-outline-variant px-3 py-2.5",
           toneCls.bg,
           className,
         )}
@@ -220,9 +220,9 @@ export function StateView({
           {icon ?? <Glyph size={16} className={toneCls.icon} aria-hidden="true" />}
         </div>
         <div className="flex min-w-0 flex-col gap-1">
-          {marginalia ? <p className="text-hand text-ink-muted">{marginalia}</p> : null}
-          <p className="text-body-sm font-medium text-ink">{heading}</p>
-          {body ? <p className="text-body-sm text-ink-muted">{body}</p> : null}
+          {marginalia ? <p className="text-hand text-on-surface-variant">{marginalia}</p> : null}
+          <p className="text-body-sm font-medium text-on-surface">{heading}</p>
+          {body ? <p className="text-body-sm text-on-surface-variant">{body}</p> : null}
           {action || secondaryAction ? (
             <div className="mt-0.5 flex flex-wrap items-center gap-3">
               {action ? (
@@ -230,8 +230,8 @@ export function StateView({
                   type="button"
                   onClick={action.onClick}
                   className={cn(
-                    "self-start text-label text-accent-ink underline decoration-1 underline-offset-2 transition-[color,transform] active:scale-[0.98]",
-                    "hover:text-accent-hover",
+                    "self-start text-label text-on-primary-container underline decoration-1 underline-offset-2 transition-[color,transform] active:scale-[0.98]",
+                    "hover:text-primary-hover",
                   )}
                 >
                   {action.label}
@@ -242,8 +242,8 @@ export function StateView({
                   type="button"
                   onClick={secondaryAction.onClick}
                   className={cn(
-                    "self-start text-label text-ink-muted underline decoration-1 underline-offset-2 transition-[color,transform] active:scale-[0.98]",
-                    "hover:text-ink",
+                    "self-start text-label text-on-surface-variant underline decoration-1 underline-offset-2 transition-[color,transform] active:scale-[0.98]",
+                    "hover:text-on-surface",
                   )}
                 >
                   {secondaryAction.label}
@@ -287,16 +287,16 @@ export function StateView({
         <Doodle kind={kindDoodle[kind]} />
       )}
       <div className="flex flex-col gap-2">
-        {marginalia ? <p className="text-hand text-ink-muted">{marginalia}</p> : null}
-        {resolvedKicker ? <p className="text-data-sm text-ink-faint">{resolvedKicker}</p> : null}
+        {marginalia ? <p className="text-hand text-on-surface-variant">{marginalia}</p> : null}
+        {resolvedKicker ? <p className="text-data-sm text-on-surface-variant">{resolvedKicker}</p> : null}
         {/* A `div`, not `<h1>`: unlike `FullPageState` (always the whole
          * page), this renders inline inside an already-headinged screen —
          * `QueryState`'s error branch inside a dashboard section, say — where
          * a second `<h1>` would be a real landmark regression, not just a
          * style mismatch. Same visual weight as the canvas's heading, same
          * non-heading semantics the old `text-body-lg` div already had. */}
-        <div className="text-display-md text-ink">{heading}</div>
-        {body ? <p className="text-body-md text-ink-muted">{body}</p> : null}
+        <div className="text-display-md text-on-surface">{heading}</div>
+        {body ? <p className="text-body-md text-on-surface-variant">{body}</p> : null}
       </div>
       {action || secondaryAction ? (
         // Two actions with `whitespace-nowrap` labels ("Take the placement
@@ -388,7 +388,7 @@ export function OfflineState(props: Omit<StateViewProps, "kind">) {
  *
  * Tier 2 and tier 3 occupy the same CSS grid cell (`col-start-1 row-start-1`)
  * rather than each running its own exit animation: `.lm-tier-slow`'s child
- * carries a `bg-paper`, so once it fades in at 5s it simply paints over
+ * carries a `bg-surface`, so once it fades in at 5s it simply paints over
  * whatever tier 2 rendered underneath, in source order. That is one keyframe
  * (`lm-appear`, shared by both classes) instead of two, and no coordination
  * needed between a tier arriving and a previous one leaving — the simpler of
@@ -442,7 +442,7 @@ export function RouteFallback({
           ))
         ) : null}
       </div>
-      <div className="lm-tier-slow col-start-1 row-start-1 bg-paper">
+      <div className="lm-tier-slow col-start-1 row-start-1 bg-surface">
         {frame === "content" ? (
           // `FullPageStateBody` has no `frame` prop — it is the frameless
           // content `FullPageState`'s own `frame="portal"` branch wraps in

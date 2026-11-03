@@ -189,9 +189,9 @@ export function Classes() {
 
           return (
             <>
-              <div className="flex items-end gap-[18px] pb-[18px] border-b border-rule flex-wrap gap-y-3">
+              <div className="flex items-end gap-[18px] pb-[18px] border-b border-outline-variant flex-wrap gap-y-3">
               <div>
-                <div className="text-eyebrow text-ink-faint">
+                <div className="text-eyebrow text-on-surface-variant">
                   {classes.length} class{classes.length === 1 ? "" : "es"}
                 </div>
                 <h1 className="text-display-md mt-1.5">Classes</h1>
@@ -214,7 +214,7 @@ export function Classes() {
             {showCreate ? (
               <form
                 onSubmit={handleCreate}
-                className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-wrap items-end gap-3"
+                className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px] flex flex-wrap items-end gap-3"
               >
                 <Input
                   label="Class name"
@@ -235,7 +235,7 @@ export function Classes() {
                   {createClass.isPending ? "Creating…" : "Create class"}
                 </Button>
                 {createClass.isError ? (
-                  <div className="text-body-sm text-err w-full">
+                  <div className="text-body-sm text-error w-full">
                     Couldn't create the class: {teacherMutationFailureMessage(createClass.error)}
                   </div>
                 ) : null}
@@ -274,7 +274,7 @@ export function Classes() {
                           <button
                             type="button"
                             onClick={() => toggleSort(col.key)}
-                            className="inline-flex items-center gap-1 text-eyebrow text-ink-faint transition-colors hover:text-ink cursor-pointer bg-transparent border-0 p-0"
+                            className="inline-flex items-center gap-1 text-eyebrow text-on-surface-variant transition-colors hover:text-on-surface cursor-pointer bg-transparent border-0 p-0"
                           >
                             {col.label}
                             {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
@@ -290,7 +290,7 @@ export function Classes() {
                 <TBody>
                   {sorted.length === 0 ? (
                     <TR>
-                      <TD colSpan={COLUMNS.length + 1} className="py-6 text-ink-muted text-body-md">
+                      <TD colSpan={COLUMNS.length + 1} className="py-6 text-on-surface-variant text-body-md">
                         No classes match "{search}".
                       </TD>
                     </TR>
@@ -331,15 +331,15 @@ export function Classes() {
                               </Button>
                             </div>
                           ) : (
-                            <Link to={`/teacher/classes/${c.id}`} className="text-ink hover:underline">
+                            <Link to={`/teacher/classes/${c.id}`} className="text-on-surface hover:underline">
                               {c.label}
                             </Link>
                           )}
                         </TD>
-                        <TD className="text-data-sm text-ink-faint">
+                        <TD className="text-data-sm text-on-surface-variant">
                           {c.subjectCode ? (
                             <div className="flex flex-col gap-0.5">
-                              <span className="text-body-sm text-ink">{c.subjectName ?? c.subjectCode}</span>
+                              <span className="text-body-sm text-on-surface">{c.subjectName ?? c.subjectCode}</span>
                               {/* Omitted when the name has resolved to the code
                                   itself — a class's `subjectCode` is free text a
                                   teacher typed, so most classes hit the det
@@ -347,25 +347,25 @@ export function Classes() {
                                   `subjectIdentifier`'s docstring) and this element
                                   would otherwise print the same code twice. */}
                               {(c.subjectName ?? c.subjectCode) !== c.subjectCode ? (
-                                <span className="text-data-sm text-ink-faint">{c.subjectCode}</span>
+                                <span className="text-data-sm text-on-surface-variant">{c.subjectCode}</span>
                               ) : null}
                             </div>
                           ) : (
-                            <span className="text-body-sm text-ink-faint">Not set</span>
+                            <span className="text-body-sm text-on-surface-variant">Not set</span>
                           )}
                         </TD>
                         <TD className="text-data-sm">{c.studentCount}</TD>
                         <TD className="text-data-sm">
                           {c.average != null ? `${Math.round(c.average)}%` : "—"}
                         </TD>
-                        <TD className="text-body-sm text-ink-muted">
+                        <TD className="text-body-sm text-on-surface-variant">
                           {c.lastActivityAt ? relativeTime(c.lastActivityAt) : "No activity yet"}
                         </TD>
                         <TD>
                           {c.atRiskCount ? (
                             <Chip tone="err">{c.atRiskCount}</Chip>
                           ) : (
-                            <span className="text-data-sm text-ink-faint">0</span>
+                            <span className="text-data-sm text-on-surface-variant">0</span>
                           )}
                         </TD>
                         <TD className="text-end whitespace-nowrap">
@@ -377,7 +377,7 @@ export function Classes() {
                               <Button
                                 size="sm"
                                 variant="ghost"
-                                className={cn("text-err", deleteClass.isPending && "opacity-50")}
+                                className={cn("text-error", deleteClass.isPending && "opacity-50")}
                                 disabled={deleteClass.isPending}
                                 onClick={() => setPendingDelete(c)}
                               >
@@ -408,12 +408,12 @@ export function Classes() {
               }}
             />
             {deleteClass.isError ? (
-              <div className="text-body-sm text-err">
+              <div className="text-body-sm text-error">
                 Couldn't delete the class: {teacherMutationFailureMessage(deleteClass.error)}
               </div>
             ) : null}
             {updateClass.isError ? (
-              <div className="text-body-sm text-err">
+              <div className="text-body-sm text-error">
                 Couldn't rename the class: {teacherMutationFailureMessage(updateClass.error)}
               </div>
             ) : null}

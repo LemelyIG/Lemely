@@ -54,12 +54,12 @@ function SubjectRow({ childId, subject }: { childId: string; subject: SubjectOve
   return (
     <Link
       to={`/parent/children/${childId}/subjects/${subject.subjectCode}`}
-      className="group flex items-center gap-4 rounded-lg border border-rule bg-paper-raised p-5 transition-colors hover:border-rule-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+      className="group flex items-center gap-4 rounded-lg border border-outline-variant bg-surface-container-lowest p-5 transition-colors hover:border-outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
     >
       <GradeBadge grade={subject.predictedGrade} size="inline" basis="predicted" />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="text-body-lg font-medium text-ink">{primary}</div>
-        <div className="text-body-sm text-ink-muted">
+        <div className="text-body-lg font-medium text-on-surface">{primary}</div>
+        <div className="text-body-sm text-on-surface-variant">
           {/* `secondary` is "" for an unregistered subject code (name === code,
               see `subjectIdentifier`) — omitted entirely rather than leaving a
               leading " · " with nothing before it. */}
@@ -80,7 +80,7 @@ function SubjectRow({ childId, subject }: { childId: string; subject: SubjectOve
          * which promised a feature with no date and no route. Saying only what
          * is true today is shorter and does not have to be taken back.
          */}
-        <div className="text-body-sm text-ink-faint">
+        <div className="text-body-sm text-on-surface-variant">
           {subject.target ? `Target ${subject.target}` : "No target grade set yet."}
         </div>
       </div>
@@ -92,7 +92,7 @@ function SubjectRow({ childId, subject }: { childId: string; subject: SubjectOve
       ) : null}
       <CaretRight
         size={16}
-        className="flex-none text-ink-faint transition-transform ease-out-soft group-hover:translate-x-px"
+        className="flex-none text-on-surface-variant transition-transform ease-out-soft group-hover:translate-x-px"
         aria-hidden="true"
       />
     </Link>
@@ -161,27 +161,27 @@ function AtRiskPanel({ flags }: { flags: ParentAtRiskFlag[] }) {
   if (flags.length === 0) return null
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="text-display-md text-ink">Worth a conversation</h2>
+      <h2 className="text-display-md text-on-surface">Worth a conversation</h2>
       {flags.map((flag) => {
         const copy = atRiskCopy(flag)
         return (
           <div
             key={flag.reason}
-            className="flex items-start gap-3 rounded-lg border border-rule bg-warn-wash p-5"
+            className="flex items-start gap-3 rounded-lg border border-outline-variant bg-tertiary-container p-5"
           >
             {/* The wash is a second signal, never the only one: the icon and
                 the sentence both say this needs attention (§3.6). */}
-            <WarningCircle size={20} className="mt-0.5 flex-none text-warn" aria-hidden="true" />
+            <WarningCircle size={20} className="mt-0.5 flex-none text-on-tertiary-container" aria-hidden="true" />
             <div className="flex min-w-0 flex-col gap-1">
-              <div className="text-body-lg font-medium text-ink">{copy.title}</div>
-              <p className="text-body-md text-ink">{copy.body}</p>
+              <div className="text-body-lg font-medium text-on-surface">{copy.title}</div>
+              <p className="text-body-md text-on-surface">{copy.body}</p>
             </div>
           </div>
         )
       })}
       {/* UI spec §1.4: flags are signals, not verdicts. Said plainly, to the
           audience most likely to read one as a verdict. */}
-      <p className="text-body-sm text-ink-muted">
+      <p className="text-body-sm text-on-surface-variant">
         These are signals to look into, not conclusions. Their teacher sees the same ones.
       </p>
     </section>
@@ -193,7 +193,7 @@ function WeakTopicList({ topics, childId }: { topics: WeakTopic[]; childId: stri
   return (
     <section className="flex flex-col gap-3">
       <div className="flex items-baseline justify-between gap-4">
-        <h2 className="text-display-md text-ink">Topics they're finding hard</h2>
+        <h2 className="text-display-md text-on-surface">Topics they're finding hard</h2>
         <Link
           to={`/parent/children/${childId}/weaknesses`}
           // `whitespace-nowrap` and `shrink-0` (P6.1): at 320px the heading
@@ -205,7 +205,7 @@ function WeakTopicList({ topics, childId }: { topics: WeakTopic[]; childId: stri
           // rather than `justify-center`, because this link sits at the end of
           // its row and centring would shift the text 3px off the edge the
           // heading beside it aligns to.
-          className="shrink-0 whitespace-nowrap rounded-sm pointer-coarse:flex pointer-coarse:items-center pointer-coarse:justify-end pointer-coarse:min-h-11 pointer-coarse:min-w-11 text-body-sm text-accent-ink transition-colors hover:text-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          className="shrink-0 whitespace-nowrap rounded-sm pointer-coarse:flex pointer-coarse:items-center pointer-coarse:justify-end pointer-coarse:min-h-11 pointer-coarse:min-w-11 text-body-sm text-on-primary-container transition-colors hover:text-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         >
           See all
         </Link>
@@ -247,8 +247,8 @@ export function ChildOverview() {
           return (
             <>
               <div className="margin-rule flex flex-col gap-1">
-                <h1 className="text-display-lg text-ink">{data.displayName}</h1>
-                <p className="text-body-md text-ink-muted">
+                <h1 className="text-display-lg text-on-surface">{data.displayName}</h1>
+                <p className="text-body-md text-on-surface-variant">
                   How they're getting on, from their marked papers.
                 </p>
               </div>
@@ -257,15 +257,15 @@ export function ChildOverview() {
                   first)." So it is first. Absence is stated as absence: a child with
                   no records reads "nothing yet", never "0 days ago". */}
               <section className="flex flex-wrap gap-4">
-                <div className="min-w-40 flex-1 rounded-lg border border-rule bg-paper-raised p-6">
-                  <div className="text-eyebrow text-ink-faint">Papers marked</div>
+                <div className="min-w-40 flex-1 rounded-lg border border-outline-variant bg-surface-container-lowest p-6">
+                  <div className="text-eyebrow text-on-surface-variant">Papers marked</div>
                   {/* A count is a figure, so it is set in the data face (§4). It used
                       to sit on the display rung, which is the same category error
                       surface 2 found on the student's mark and grade. */}
-                  <div className="mt-2 text-data-lg text-ink">{activity.totalPapers}</div>
+                  <div className="mt-2 text-data-lg text-on-surface">{activity.totalPapers}</div>
                 </div>
-                <div className="min-w-40 flex-1 rounded-lg border border-rule bg-paper-raised p-6">
-                  <div className="text-eyebrow text-ink-faint">Last worked</div>
+                <div className="min-w-40 flex-1 rounded-lg border border-outline-variant bg-surface-container-lowest p-6">
+                  <div className="text-eyebrow text-on-surface-variant">Last worked</div>
                   {/*
                    * One figure, not two. This card used to print `relativeTime(...)`
                    * and `daysSinceLastActivity` on consecutive lines, and the capture
@@ -284,7 +284,7 @@ export function ChildOverview() {
                    * `daysSinceLastActivity` is still read, but only for the fact
                    * `relativeTime` cannot express, which is that today is today.
                    */}
-                  <div className="mt-2 text-body-lg text-ink">
+                  <div className="mt-2 text-body-lg text-on-surface">
                     {activity.lastActiveAt === null
                       ? "Nothing yet"
                       : activity.daysSinceLastActivity === 0
@@ -297,7 +297,7 @@ export function ChildOverview() {
               <AtRiskPanel flags={atRiskFlags} />
 
               <section className="flex flex-col gap-3">
-                <h2 className="text-display-md text-ink">Subjects</h2>
+                <h2 className="text-display-md text-on-surface">Subjects</h2>
                 {subjects.length === 0 ? (
                   // Composed, not blank (§12): a line of marginalia, the explanation,
                   // and what fills it. There is no action to offer here on purpose —
@@ -310,9 +310,9 @@ export function ChildOverview() {
                   // for its greeting, and `empty` renders a fixed `ReactNode` that
                   // cannot reach the loaded payload — see `Overview.tsx`'s own comment
                   // for the same rule.
-                  <div className="flex flex-col gap-1 rounded-lg border border-rule bg-paper-raised p-6">
-                    <p className="text-hand text-ink-muted">Nothing to read yet</p>
-                    <p className="text-body-md text-ink-muted">
+                  <div className="flex flex-col gap-1 rounded-lg border border-outline-variant bg-surface-container-lowest p-6">
+                    <p className="text-hand text-on-surface-variant">Nothing to read yet</p>
+                    <p className="text-body-md text-on-surface-variant">
                       No marked papers yet. Subjects appear here once {data.displayName} has had a
                       paper marked.
                     </p>
@@ -328,26 +328,26 @@ export function ChildOverview() {
 
               {recentPapers.length > 0 ? (
                 <section className="flex flex-col gap-3">
-                  <h2 className="text-display-md text-ink">Recent papers</h2>
+                  <h2 className="text-display-md text-on-surface">Recent papers</h2>
                   <div className="flex flex-col gap-2">
                     {recentPapers.map((paper) => (
                       <div
                         key={`${paper.paperId}-${paper.recordedAt}`}
-                        className="flex items-center gap-4 rounded-lg border border-rule bg-paper-raised p-5"
+                        className="flex items-center gap-4 rounded-lg border border-outline-variant bg-surface-container-lowest p-5"
                       >
                         <GradeBadge grade={paper.grade} size="inline" basis="achieved" />
                         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                          <div className="text-body-lg font-medium text-ink">
+                          <div className="text-body-lg font-medium text-on-surface">
                             {paper.subjectName}
                           </div>
                           {/* Code as secondary detail, per the §4.8 design note. */}
-                          <div className="text-body-sm text-ink-muted">
+                          <div className="text-body-sm text-on-surface-variant">
                             <span className="text-data-sm">{paper.paperId}</span> · marked{" "}
                             {relativeTime(paper.recordedAt)}
                           </div>
                         </div>
                         {/* A mark is data, not prose (§4). */}
-                        <div className="flex-none text-data-md text-ink">{paper.marks}</div>
+                        <div className="flex-none text-data-md text-on-surface">{paper.marks}</div>
                       </div>
                     ))}
                   </div>

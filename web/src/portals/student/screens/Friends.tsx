@@ -101,9 +101,9 @@ function FriendRow({
   return (
     <div className="flex flex-wrap items-center gap-3 py-3">
       <div className="min-w-0 flex-1">
-        <p className="truncate text-body-md text-ink">{friend.displayName}</p>
+        <p className="truncate text-body-md text-on-surface">{friend.displayName}</p>
         {since ? (
-          <p className="text-body-sm text-ink-faint">Friends since {since}</p>
+          <p className="text-body-sm text-on-surface-variant">Friends since {since}</p>
         ) : null}
       </div>
 
@@ -114,11 +114,11 @@ function FriendRow({
       ) : (
         <div className="flex items-center gap-3">
           {friend.streak !== null ? (
-            <span className="flex items-center gap-1 text-data-sm text-ink-faint">
+            <span className="flex items-center gap-1 text-data-sm text-on-surface-variant">
               <Fire
                 size={12}
                 weight="fill"
-                className="text-accent"
+                className="text-primary"
                 aria-hidden="true"
               />
               {friend.streak}
@@ -126,15 +126,15 @@ function FriendRow({
             </span>
           ) : null}
           {friend.xp !== null ? (
-            <span className="flex items-center gap-1 text-data-md text-ink">
+            <span className="flex items-center gap-1 text-data-md text-on-surface">
               <Lightning
                 size={12}
                 weight="fill"
-                className="text-accent"
+                className="text-primary"
                 aria-hidden="true"
               />
               {friend.xp.toLocaleString()}
-              <span className="text-body-sm text-ink-faint">XP</span>
+              <span className="text-body-sm text-on-surface-variant">XP</span>
             </span>
           ) : null}
         </div>
@@ -167,7 +167,7 @@ function RequestRow({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-3 py-3">
-      <p className="min-w-0 flex-1 truncate text-body-md text-ink">
+      <p className="min-w-0 flex-1 truncate text-body-md text-on-surface">
         {request.displayName}
       </p>
       {direction === "incoming" ? (
@@ -212,7 +212,7 @@ function RequestRow({
  */
 function ActionError({ error }: { error: unknown }) {
   return (
-    <p role="alert" className="text-body-sm text-err">
+    <p role="alert" className="text-body-sm text-error">
       {friendActionFailureMessage(error)}
     </p>
   )
@@ -250,8 +250,8 @@ function AddFriend({ friendCode }: { friendCode: string }) {
               `font-mono text-display-sm`, two competing font-family
               declarations resolved by stylesheet order — the same defect
               corrected on the training log. */}
-          <p className="text-data-lg tracking-[0.14em] text-ink">{friendCode}</p>
-          <p className="lm-prose text-body-sm text-ink-faint">
+          <p className="text-data-lg tracking-[0.14em] text-on-surface">{friendCode}</p>
+          <p className="lm-prose text-body-sm text-on-surface-variant">
             Share this with a friend and they can add you. It is the only way
             anyone can find you here. Nobody can search for you by name or
             email.
@@ -308,12 +308,12 @@ function AddFriend({ friendCode }: { friendCode: string }) {
               next step. `friendActionFailureMessage` keeps that and replaces
               only the machine wording behind it. */}
           {send.isError ? (
-            <p id="s30-code-error" role="alert" className="text-body-sm text-err">
+            <p id="s30-code-error" role="alert" className="text-body-sm text-error">
               {friendActionFailureMessage(send.error)}
             </p>
           ) : null}
           {notice ? (
-            <p role="status" className="text-body-sm text-ok">
+            <p role="status" className="text-body-sm text-success-text">
               {notice}
             </p>
           ) : null}
@@ -358,8 +358,8 @@ export function Friends() {
               <Eyebrow>Friends</Eyebrow>
               {/* `text-display` was the class here and it resolves to nothing
                   — see the note in `Profile.tsx`. */}
-              <h1 className="text-display-lg text-ink">Who you are studying with</h1>
-              <p className="lm-prose text-body-lg text-ink-muted">
+              <h1 className="text-display-lg text-on-surface">Who you are studying with</h1>
+              <p className="lm-prose text-body-lg text-on-surface-variant">
                 Friends see your display name, XP and streak. They never see
                 your marks, your grades or which papers you have corrected.
               </p>
@@ -369,11 +369,11 @@ export function Friends() {
 
             {data.incoming.length > 0 ? (
               <section className="flex flex-col gap-3" aria-labelledby="s30-incoming">
-                <h2 id="s30-incoming" className="text-display-sm text-ink">
+                <h2 id="s30-incoming" className="text-display-sm text-on-surface">
                   Wants to be your friend
                 </h2>
                 <Card>
-                  <CardBody className="divide-y divide-rule py-0">
+                  <CardBody className="divide-y divide-outline-variant py-0">
                     {data.incoming.map((request) => (
                       <RequestRow
                         key={request.friendshipId}
@@ -393,11 +393,11 @@ export function Friends() {
             ) : null}
 
             <section className="flex flex-col gap-3" aria-labelledby="s30-friends">
-              <h2 id="s30-friends" className="text-display-sm text-ink">
+              <h2 id="s30-friends" className="text-display-sm text-on-surface">
                 Your friends
               </h2>
               <Card>
-                <CardBody className={data.friends.length > 0 ? "divide-y divide-rule py-0" : ""}>
+                <CardBody className={data.friends.length > 0 ? "divide-y divide-outline-variant py-0" : ""}>
                   {data.friends.length === 0 ? (
                     <EmptyState
                       marginalia="Your code is above"
@@ -426,11 +426,11 @@ export function Friends() {
 
             {data.outgoing.length > 0 ? (
               <section className="flex flex-col gap-3" aria-labelledby="s30-outgoing">
-                <h2 id="s30-outgoing" className="text-display-sm text-ink">
+                <h2 id="s30-outgoing" className="text-display-sm text-on-surface">
                   Waiting on them
                 </h2>
                 <Card>
-                  <CardBody className="divide-y divide-rule py-0">
+                  <CardBody className="divide-y divide-outline-variant py-0">
                     {data.outgoing.map((request) => (
                       <RequestRow
                         key={request.friendshipId}

@@ -73,7 +73,7 @@ export function Breadcrumbs({ items, collapse = true, className }: BreadcrumbsPr
           codes, IDs, timestamps, metadata" — crumb labels are none of those,
           they are words a reader reads. Phase 4 migrates the student header to
           match this rather than the reverse. */}
-      <ol className="flex min-w-0 items-center gap-1.5 text-body-sm text-ink-muted">
+      <ol className="flex min-w-0 items-center gap-1.5 text-body-sm text-on-surface-variant">
         {items.map((item, index) => {
           const isLast = index === items.length - 1
           return (
@@ -105,7 +105,7 @@ export function Breadcrumbs({ items, collapse = true, className }: BreadcrumbsPr
                 <CaretRight
                   size={12}
                   aria-hidden="true"
-                  className="shrink-0 text-rule rtl:-scale-x-100"
+                  className="shrink-0 text-outline-variant rtl:-scale-x-100"
                 />
               ) : null}
               {/* Only the final crumb truncates. `truncate` on every crumb
@@ -121,8 +121,8 @@ export function Breadcrumbs({ items, collapse = true, className }: BreadcrumbsPr
                   to={item.to}
                   viewTransition
                   className={cn(
-                    "whitespace-nowrap rounded-sm transition-colors hover:text-ink",
-                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                    "whitespace-nowrap rounded-sm transition-colors hover:text-on-surface",
+                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
                     /* §6.1's 44px floor; a crumb measured 65x20. The `<li>` is
                        a flex container, so this link is a flex item and its
                        computed display is `block` rather than `inline` — which
@@ -146,7 +146,7 @@ export function Breadcrumbs({ items, collapse = true, className }: BreadcrumbsPr
               ) : (
                 <span
                   className={cn(
-                    isLast ? "truncate text-ink" : "whitespace-nowrap",
+                    isLast ? "truncate text-on-surface" : "whitespace-nowrap",
                   )}
                   aria-current={isLast ? "page" : undefined}
                 >
@@ -170,8 +170,8 @@ export function Breadcrumbs({ items, collapse = true, className }: BreadcrumbsPr
               to={parent.to!}
               viewTransition
               className={cn(
-                "-ms-2 flex min-h-11 min-w-0 items-center gap-1 px-2 py-1 text-ink-muted transition-colors",
-                "hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                "-ms-2 flex min-h-11 min-w-0 items-center gap-1 px-2 py-1 text-on-surface-variant transition-colors",
+                "hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
               )}
             >
               {/* Points back against the reading direction, so it mirrors too. */}

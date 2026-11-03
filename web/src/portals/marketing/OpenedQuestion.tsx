@@ -80,7 +80,7 @@ export function OpenedQuestion() {
 
       <div className="spec__body" key={selected.id}>
         <div className="spec__q">
-          <h3 className="text-display-sm text-ink">{selected.title}</h3>
+          <h3 className="text-display-sm text-on-surface">{selected.title}</h3>
           <span className="spec__mark">
             <MarkDisplay awarded={selected.awarded} available={selected.available} size="inline" />
           </span>

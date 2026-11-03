@@ -12,15 +12,15 @@ import type { StatCard as StatCardData } from "../data"
  * mapping table is for.
  */
 const VALUE_TONE = {
-  t1: "text-ink",
-  accent: "text-accent-ink",
-  err: "text-err",
+  t1: "text-on-surface",
+  accent: "text-on-primary-container",
+  err: "text-error",
 } as const
 
 const FOOT_TONE = {
-  t2: "text-ink-muted",
-  ok: "text-ok",
-  err: "text-err",
+  t2: "text-on-surface-variant",
+  ok: "text-success-text",
+  err: "text-error",
 } as const
 
 /**
@@ -42,13 +42,13 @@ const FOOT_TONE = {
  */
 export function StatCard({ stat }: { stat: StatCardData }) {
   return (
-    <div className="bg-paper-raised border border-rule rounded-lg px-6 py-5">
-      <div className="text-eyebrow text-ink-faint">{stat.k}</div>
+    <div className="bg-surface-container-lowest border border-outline-variant rounded-lg px-6 py-5">
+      <div className="text-eyebrow text-on-surface-variant">{stat.k}</div>
       <div className="flex items-baseline gap-1.5 mt-2">
         <div className={cn("text-data-lg", VALUE_TONE[stat.valueTone ?? "t1"])}>
           {stat.v}
         </div>
-        {stat.unit ? <div className="text-body-sm text-ink-muted">{stat.unit}</div> : null}
+        {stat.unit ? <div className="text-body-sm text-on-surface-variant">{stat.unit}</div> : null}
       </div>
       {stat.foot ? (
         <div className={cn("text-data-sm mt-2", FOOT_TONE[stat.footTone ?? "t2"])}>

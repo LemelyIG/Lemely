@@ -178,20 +178,20 @@ function PoolCountPanel({ data, suggestions }: { data: QuizPoolCount; suggestion
     <div
       className={cn(
         "border rounded-md p-4 flex flex-col gap-2.5",
-        attention ? "border-warn bg-warn-wash" : "border-rule bg-paper-raised",
+        attention ? "border-tertiary bg-tertiary-container" : "border-outline-variant bg-surface-container-lowest",
       )}
     >
       <div className="flex items-baseline gap-2 flex-wrap">
         <span className="text-display-sm">{data.matching}</span>
-        <span className="text-body-sm text-ink-faint">
+        <span className="text-body-sm text-on-surface-variant">
           matching question{data.matching === 1 ? "" : "s"} available · {data.requested} requested
         </span>
       </div>
-      {data.message ? <p className="text-body-sm text-ink m-0 text-pretty">{data.message}</p> : null}
+      {data.message ? <p className="text-body-sm text-on-surface m-0 text-pretty">{data.message}</p> : null}
       {data.shortfall ? (
         <div className="flex flex-col gap-1.5">
-          <div className="text-body-sm text-ink">Short by band:</div>
-          <ul className="m-0 ps-4 text-body-sm text-ink-faint list-disc">
+          <div className="text-body-sm text-on-surface">Short by band:</div>
+          <ul className="m-0 ps-4 text-body-sm text-on-surface-variant list-disc">
             {Object.entries(data.shortfall).map(([band, deficit]) => (
               <li key={band}>
                 {band}: {deficit} short
@@ -200,8 +200,8 @@ function PoolCountPanel({ data, suggestions }: { data: QuizPoolCount; suggestion
           </ul>
           {suggestions.length > 0 ? (
             <>
-              <div className="text-body-sm text-ink mt-1">To fix this, try one of:</div>
-              <ul className="m-0 ps-4 text-body-sm text-ink-faint list-disc">
+              <div className="text-body-sm text-on-surface mt-1">To fix this, try one of:</div>
+              <ul className="m-0 ps-4 text-body-sm text-on-surface-variant list-disc">
                 {suggestions.map((s) => (
                   <li key={s}>{s}</li>
                 ))}
@@ -210,10 +210,10 @@ function PoolCountPanel({ data, suggestions }: { data: QuizPoolCount; suggestion
           ) : null}
         </div>
       ) : !data.message ? (
-        <div className="text-body-sm text-ok">Enough questions available for this quiz.</div>
+        <div className="text-body-sm text-success-text">Enough questions available for this quiz.</div>
       ) : null}
       {data.difficultyEstimated ? (
-        <div className="text-body-sm text-ink-faint">
+        <div className="text-body-sm text-on-surface-variant">
           Difficulty for some of these questions is estimated from mark allocation, not measured.
         </div>
       ) : null}
@@ -233,16 +233,16 @@ function QuestionCard({
   removedLabel?: boolean
 }) {
   return (
-    <div className="bg-paper-raised border border-rule rounded-md px-[18px] py-4 flex flex-col gap-2">
+    <div className="bg-surface-container-lowest border border-outline-variant rounded-md px-[18px] py-4 flex flex-col gap-2">
       <div className="flex items-center gap-2.5 flex-wrap">
-        <span className="text-data-sm text-ink-faint">Q{question.position}</span>
+        <span className="text-data-sm text-on-surface-variant">Q{question.position}</span>
         <Chip tone="neutral">{question.difficulty}</Chip>
         {question.topic ? <Chip tone="accent">{question.topic}</Chip> : null}
         {removedLabel ? <Chip tone="err">Removed</Chip> : null}
         <span className="flex-1" />
-        <span className="text-data-sm text-ink-faint">[{question.totalMarks}]</span>
+        <span className="text-data-sm text-on-surface-variant">[{question.totalMarks}]</span>
         {onRemove ? (
-          <Button size="sm" variant="ghost" className="text-err" disabled={removing} onClick={onRemove}>
+          <Button size="sm" variant="ghost" className="text-error" disabled={removing} onClick={onRemove}>
             Remove
           </Button>
         ) : null}
@@ -253,9 +253,9 @@ function QuestionCard({
           italic. §4.2 makes italic body-copy-only and this is body copy a
           teacher reads closely, so it is now plain `body-lg` in the UI face at
           the measure §4.2 gives it. */}
-      <div className="text-body-lg text-ink text-pretty">{question.prompt}</div>
+      <div className="text-body-lg text-on-surface text-pretty">{question.prompt}</div>
       {question.mcqOptions && question.mcqOptions.length > 0 ? (
-        <ul className="m-0 ps-4 text-body-md text-ink-faint list-disc">
+        <ul className="m-0 ps-4 text-body-md text-on-surface-variant list-disc">
           {question.mcqOptions.map((opt, i) => (
             <li key={i}>{opt}</li>
           ))}
@@ -289,9 +289,9 @@ function StepBasics({
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-5 max-w-[520px]">
       <div>
-        <div className="text-eyebrow text-ink-faint mb-2">Subject</div>
-        <div className="text-data-md text-ink-faint">
-          {quiz.subjectCode} <span className="text-ink-faint">(fixed when the quiz was created)</span>
+        <div className="text-eyebrow text-on-surface-variant mb-2">Subject</div>
+        <div className="text-data-md text-on-surface-variant">
+          {quiz.subjectCode} <span className="text-on-surface-variant">(fixed when the quiz was created)</span>
         </div>
       </div>
       <Input
@@ -365,7 +365,7 @@ function StepContent({
 
   return (
     <div className="flex flex-col gap-5 max-w-[620px]">
-      <p className="text-body-md text-ink-faint text-pretty m-0">
+      <p className="text-body-md text-on-surface-variant text-pretty m-0">
         Topics narrow the question pool the next two steps draw from. Leave this empty to draw
         from the whole subject.
       </p>
@@ -385,7 +385,7 @@ function StepContent({
       ) : null}
       <div className="flex flex-wrap gap-2">
         {topics.length === 0 ? (
-          <span className="text-body-sm text-ink-faint">
+          <span className="text-body-sm text-on-surface-variant">
             No topics added, so every topic in the subject is eligible.
           </span>
         ) : null}
@@ -407,7 +407,7 @@ function StepContent({
       </div>
       {isDraft && suggestions.length > 0 ? (
         <div>
-          <div className="text-eyebrow text-ink-faint mb-1.5">
+          <div className="text-eyebrow text-on-surface-variant mb-1.5">
             Suggested from your classes' weak topics
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -416,7 +416,7 @@ function StepContent({
                 key={s}
                 type="button"
                 onClick={() => addTopic(s)}
-                className="border border-dashed border-rule rounded-md px-3 py-1 text-body-sm text-ink-faint transition-colors hover:bg-paper-sunk cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                className="border border-dashed border-outline-variant rounded-md px-3 py-1 text-body-sm text-on-surface-variant transition-colors hover:bg-surface-container-low cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
               >
                 + {s}
               </button>
@@ -471,19 +471,19 @@ function StepDifficulty({
 
   return (
     <div className="flex flex-col gap-5 max-w-[620px]">
-      <p className="text-body-md text-ink-faint text-pretty m-0">
+      <p className="text-body-md text-on-surface-variant text-pretty m-0">
         Lemely mixes question difficulty to suit the grade you're targeting. A quiz aimed at a C
         student made entirely of "standard" questions can't tell who's nearly a B from who's
         slipping to a D, so every target keeps at least two difficulty bands in play.
       </p>
       <div>
-        <div className="text-eyebrow text-ink-faint mb-2">
+        <div className="text-eyebrow text-on-surface-variant mb-2">
           Target grade
         </div>
         <div
           role="radiogroup"
           aria-label="Target grade"
-          className="flex flex-wrap gap-1 bg-paper-sunk p-[5px] rounded-md w-fit"
+          className="flex flex-wrap gap-1 bg-surface-container-low p-[5px] rounded-md w-fit"
         >
           {grades.map((g) => {
             const on = grade === g
@@ -502,8 +502,8 @@ function StepDifficulty({
                   // removed on any element, and a bare `<button role="radio">`
                   // had only the browser default.
                   "border cursor-pointer text-data-md w-11 py-2 rounded disabled:cursor-not-allowed",
-                  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
-                  on ? "border-rule bg-paper-raised text-ink" : "border-transparent bg-transparent text-ink-faint",
+                  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+                  on ? "border-outline-variant bg-surface-container-lowest text-on-surface" : "border-transparent bg-transparent text-on-surface-variant",
                 )}
               >
                 {g}
@@ -518,7 +518,7 @@ function StepDifficulty({
             onClick={() => setGrade(null)}
             className={cn(
               "border cursor-pointer text-body-sm px-3 py-2 rounded disabled:cursor-not-allowed",
-              grade === null ? "border-rule bg-paper-raised text-ink" : "border-transparent text-ink-faint",
+              grade === null ? "border-outline-variant bg-surface-container-lowest text-on-surface" : "border-transparent text-on-surface-variant",
             )}
           >
             No target
@@ -526,7 +526,7 @@ function StepDifficulty({
         </div>
       </div>
       <div>
-        <div className="text-eyebrow text-ink-faint mb-2">
+        <div className="text-eyebrow text-on-surface-variant mb-2">
           Example mix for a {previewCount}-question quiz at this target
         </div>
         {/* Stays hand-rolled rather than a nested `<QueryState>` — see the
@@ -535,9 +535,9 @@ function StepDifficulty({
             the full centred `ErrorState`, too heavy for it. Already routed
             through `teacherLoadFailureMessage`, never a raw `error.message`. */}
         {poolCountQuery.isPending ? (
-          <div className="text-body-sm text-ink-faint">Loading…</div>
+          <div className="text-body-sm text-on-surface-variant">Loading…</div>
         ) : poolCountQuery.isError ? (
-          <div className="text-body-sm text-err">
+          <div className="text-body-sm text-error">
             Couldn't load the difficulty mix: {teacherLoadFailureMessage(poolCountQuery.error)}
           </div>
         ) : (
@@ -547,18 +547,18 @@ function StepDifficulty({
               const total = poolCountQuery.data.requested
               return (
                 <div key={band} className="flex items-center gap-3">
-                  <span className="w-[76px] flex-none text-body-sm text-ink-faint capitalize">{band}</span>
+                  <span className="w-[76px] flex-none text-body-sm text-on-surface-variant capitalize">{band}</span>
                   <Meter
                     value={total > 0 ? (value / total) * 100 : 0}
                     label={`${band}: ${value} of ${total} questions`}
                     className="flex-1"
                   />
-                  <span className="w-8 flex-none text-end text-data-sm text-ink-faint">{value}</span>
+                  <span className="w-8 flex-none text-end text-data-sm text-on-surface-variant">{value}</span>
                 </div>
               )
             })}
             {quiz.requestedCount == null || quiz.requestedCount <= 0 ? (
-              <p className="text-body-sm text-ink-faint m-0">
+              <p className="text-body-sm text-on-surface-variant m-0">
                 This is an example. You'll choose the real question count in the next step.
               </p>
             ) : null}
@@ -617,7 +617,7 @@ function StepPool({
   return (
     <div className="flex flex-col gap-5 max-w-[640px]">
       <div>
-        <div className="text-eyebrow text-ink-faint mb-2">
+        <div className="text-eyebrow text-on-surface-variant mb-2">
           Question source
         </div>
         <div role="radiogroup" aria-label="Question source" className="flex flex-col gap-2.5">
@@ -632,21 +632,21 @@ function StepPool({
                 disabled={!isDraft}
                 onClick={() => setPoolSource(opt.value)}
                 className={cn(
-                  "flex flex-col items-start gap-0.5 text-start border bg-paper-raised rounded-md px-4 py-3 cursor-pointer disabled:cursor-not-allowed",
-                  on ? "border-accent" : "border-rule transition-colors hover:bg-paper-sunk",
+                  "flex flex-col items-start gap-0.5 text-start border bg-surface-container-lowest rounded-md px-4 py-3 cursor-pointer disabled:cursor-not-allowed",
+                  on ? "border-primary" : "border-outline-variant transition-colors hover:bg-surface-container-low",
                 )}
               >
-                <span className="text-body-md text-ink">{opt.label}</span>
-                <span className="text-body-sm text-ink-faint">{opt.detail}</span>
+                <span className="text-body-md text-on-surface">{opt.label}</span>
+                <span className="text-body-sm text-on-surface-variant">{opt.detail}</span>
               </button>
             )
           })}
         </div>
       </div>
       <div className="flex flex-col gap-1.5 w-[280px]">
-        <label className="text-label text-ink" htmlFor="quiz-length-slider">
+        <label className="text-label text-on-surface" htmlFor="quiz-length-slider">
           Number of questions:{" "}
-          <span className="text-data-md text-ink">{requestedCount}</span>
+          <span className="text-data-md text-on-surface">{requestedCount}</span>
         </label>
         <Slider
           id="quiz-length-slider"
@@ -657,7 +657,7 @@ function StepPool({
           disabled={!isDraft}
           aria-label="Number of questions"
         />
-        <span className="text-body-sm text-ink-faint">
+        <span className="text-body-sm text-on-surface-variant">
           ~{estimateQuizMinutes(requestedCount)} min
         </span>
       </div>
@@ -666,13 +666,13 @@ function StepPool({
           call as `StepDifficulty`'s own `poolCountQuery` block — see the
           module header. */}
       {poolSource == null ? (
-        <p className="text-body-sm text-ink-faint m-0">
+        <p className="text-body-sm text-on-surface-variant m-0">
           Choose a source above to see how many matching questions are available.
         </p>
       ) : poolCountQuery.isPending ? (
-        <div className="text-body-sm text-ink-faint">Checking the question pool…</div>
+        <div className="text-body-sm text-on-surface-variant">Checking the question pool…</div>
       ) : poolCountQuery.isError ? (
-        <div className="text-body-sm text-err">
+        <div className="text-body-sm text-error">
           Couldn't check the pool: {teacherLoadFailureMessage(poolCountQuery.error)}
         </div>
       ) : (
@@ -746,7 +746,7 @@ function StepPreview({
                 ? "Generate more questions"
                 : "Generate questions"}
           </Button>
-          <span className="text-body-sm text-ink-faint">
+          <span className="text-body-sm text-on-surface-variant">
             {quiz.requestedCount != null
               ? `${included.length} of ${quiz.requestedCount} requested`
               : `${included.length} question${included.length === 1 ? "" : "s"} so far`}
@@ -754,15 +754,15 @@ function StepPreview({
         </div>
       ) : null}
       {!canGenerate && isDraft ? (
-        <p className="text-body-sm text-ink-faint m-0">Choose a question source in step 4 before generating.</p>
+        <p className="text-body-sm text-on-surface-variant m-0">Choose a question source in step 4 before generating.</p>
       ) : null}
       {generate.isError ? (
-        <div role="alert" className="text-body-sm text-err">
+        <div role="alert" className="text-body-sm text-error">
           Couldn't generate questions: {teacherMutationFailureMessage(generate.error)}
         </div>
       ) : null}
       {lastGenerated ? (
-        <div className="text-body-sm text-ink-faint bg-paper-sunk border border-rule rounded-md px-3.5 py-3">
+        <div className="text-body-sm text-on-surface-variant bg-surface-container-low border border-outline-variant rounded-md px-3.5 py-3">
           Added {lastGenerated.created.length} question{lastGenerated.created.length === 1 ? "" : "s"}.
           {lastGenerated.shortfall ? (
             <ul className="m-0 mt-1.5 ps-4 list-disc">
@@ -795,7 +795,7 @@ function StepPreview({
         </div>
       )}
       {removeQuestion.isError ? (
-        <div role="alert" className="text-body-sm text-err">
+        <div role="alert" className="text-body-sm text-error">
           Couldn't remove that question: {teacherMutationFailureMessage(removeQuestion.error)}
         </div>
       ) : null}
@@ -805,7 +805,7 @@ function StepPreview({
           <button
             type="button"
             onClick={() => setShowRemoved((v) => !v)}
-            className="text-body-sm text-ink-faint transition-colors hover:text-ink bg-transparent border-0 p-0 cursor-pointer"
+            className="text-body-sm text-on-surface-variant transition-colors hover:text-on-surface bg-transparent border-0 p-0 cursor-pointer"
           >
             {showRemoved ? "Hide" : "Show"} {removed.length} removed question
             {removed.length === 1 ? "" : "s"} (kept for audit, not part of the quiz)
@@ -891,18 +891,18 @@ function StepAssign({
   return (
     <div className="flex flex-col gap-5 max-w-[640px]">
       {quiz.questionCount === 0 ? (
-        <p className="text-body-sm text-warn m-0">
+        <p className="text-body-sm text-on-tertiary-container m-0">
           Add at least one question in step 5 before assigning this quiz.
         </p>
       ) : quiz.status === "closed" || quiz.status === "archived" ? (
-        <p className="text-body-sm text-ink-faint m-0">
+        <p className="text-body-sm text-on-surface-variant m-0">
           This quiz is {statusLabel(quiz.status).toLowerCase()}, so it can no longer be assigned
           to any class.
         </p>
       ) : canAssign ? (
         <form
           onSubmit={handleAssign}
-          className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-3"
+          className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px] flex flex-col gap-3"
         >
           {/* The label used to wrap all three branches, so while the classes
               were loading or had failed there was a `<label>` pointing at no
@@ -912,9 +912,9 @@ function StepAssign({
               for the same "too small for a full ErrorState" reason as the
               two `poolCountQuery` panels — see the module header. */}
           {classesQuery.isPending ? (
-            <div className="text-body-sm text-ink-faint">Loading your classes…</div>
+            <div className="text-body-sm text-on-surface-variant">Loading your classes…</div>
           ) : classesQuery.isError ? (
-            <div className="text-body-sm text-err">
+            <div className="text-body-sm text-error">
               Couldn't load your classes: {teacherLoadFailureMessage(classesQuery.error)}
             </div>
           ) : (
@@ -954,7 +954,7 @@ function StepAssign({
             </Button>
           </div>
           {createAssignment.isError ? (
-            <div role="alert" className="text-body-sm text-err">
+            <div role="alert" className="text-body-sm text-error">
               Couldn't assign: {teacherMutationFailureMessage(createAssignment.error)}
             </div>
           ) : null}
@@ -962,48 +962,48 @@ function StepAssign({
       ) : null}
 
       <div>
-        <div className="text-eyebrow text-ink-faint mb-2">
+        <div className="text-eyebrow text-on-surface-variant mb-2">
           Assigned to
         </div>
         {/* Same "too small for a full ErrorState" call as the other three
             panel-level queries on this screen — see the module header. */}
         {assignmentsQuery.isPending ? (
-          <div className="text-body-sm text-ink-faint">Loading assignments…</div>
+          <div className="text-body-sm text-on-surface-variant">Loading assignments…</div>
         ) : assignmentsQuery.isError ? (
-          <div className="text-body-sm text-err">
+          <div className="text-body-sm text-error">
             Couldn't load assignments: {teacherLoadFailureMessage(assignmentsQuery.error)}
           </div>
         ) : assignmentsQuery.data.assignments.length === 0 ? (
-          <div className="text-body-sm text-ink-faint">Not assigned to any class yet.</div>
+          <div className="text-body-sm text-on-surface-variant">Not assigned to any class yet.</div>
         ) : (
           <ul className="flex flex-col gap-2 m-0 p-0 list-none">
             {assignmentsQuery.data.assignments.map((a) => (
               <li
                 key={a.id}
-                className="bg-paper-raised border border-rule rounded-md px-4 py-3 flex items-center gap-3 flex-wrap"
+                className="bg-surface-container-lowest border border-outline-variant rounded-md px-4 py-3 flex items-center gap-3 flex-wrap"
               >
-                <Link to={`/teacher/classes/${a.classId}`} className="text-ink hover:underline text-body-lg">
+                <Link to={`/teacher/classes/${a.classId}`} className="text-on-surface hover:underline text-body-lg">
                   {a.className}
                 </Link>
-                <span className="text-body-sm text-ink-faint">
+                <span className="text-body-sm text-on-surface-variant">
                   {a.rosterSize} student{a.rosterSize === 1 ? "" : "s"}
                 </span>
                 {a.dueAt ? (
-                  <span className="text-body-sm text-ink-faint">Due {new Date(a.dueAt).toLocaleString()}</span>
+                  <span className="text-body-sm text-on-surface-variant">Due {new Date(a.dueAt).toLocaleString()}</span>
                 ) : null}
                 <span className="flex-1" />
                 {/* T-09's exit to T-10. Results are per assignment, so the
                     link carries this assignment's id, not just the quiz's. */}
                 <Link
                   to={`/teacher/quizzes/${quizId}/assignments/${a.id}/results`}
-                  className="text-body-sm text-ink hover:underline"
+                  className="text-body-sm text-on-surface hover:underline"
                 >
                   View results <ForwardArrow />
                 </Link>
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="text-err"
+                  className="text-error"
                   disabled={deleteAssignment.isPending}
                   onClick={() => setUnassigning({ id: a.id, className: a.className })}
                 >
@@ -1136,13 +1136,13 @@ export function QuizBuilder() {
               <div className="flex flex-col gap-1">
                 <Link
                   to="/teacher/quizzes"
-                  className="text-body-sm text-ink-faint transition-colors hover:text-ink w-fit"
+                  className="text-body-sm text-on-surface-variant transition-colors hover:text-on-surface w-fit"
                 >
                   <BackArrow /> All quizzes
                 </Link>
                 <div className="flex items-start gap-3 flex-wrap gap-y-2 mt-1">
                   <div className="min-w-0">
-                    <div className="text-eyebrow text-ink-faint">
+                    <div className="text-eyebrow text-on-surface-variant">
                       {loadedQuiz.subjectCode}
                     </div>
                     <h1 className="text-display-md mt-1 text-pretty">
@@ -1155,7 +1155,7 @@ export function QuizBuilder() {
               </div>
 
               {!isDraft ? (
-                <div className="text-body-sm text-ink-faint bg-paper-sunk border border-rule rounded-md px-3.5 py-3 text-pretty">
+                <div className="text-body-sm text-on-surface-variant bg-surface-container-low border border-outline-variant rounded-md px-3.5 py-3 text-pretty">
                   This quiz is {statusLabel(loadedQuiz.status).toLowerCase()}, so its title, topics,
                   difficulty, source and questions can no longer be changed. What follows is
                   read-only, showing exactly what was configured and (below) who it's assigned to.
@@ -1188,13 +1188,13 @@ export function QuizBuilder() {
                       <dl className="m-0 flex flex-col gap-2">
                         {soFar.map((item) => (
                           <div key={item.label} className="flex items-baseline justify-between gap-3">
-                            <dt className="text-body-sm text-ink-faint">{item.label}</dt>
-                            <dd className="m-0 text-body-sm text-ink text-end truncate">{item.value}</dd>
+                            <dt className="text-body-sm text-on-surface-variant">{item.label}</dt>
+                            <dd className="m-0 text-body-sm text-on-surface text-end truncate">{item.value}</dd>
                           </div>
                         ))}
                       </dl>
                     </aside>
-                    <div className="sidebar:hidden text-body-sm text-ink-faint text-pretty">
+                    <div className="sidebar:hidden text-body-sm text-on-surface-variant text-pretty">
                       So far: {soFar.map((item) => `${item.label} ${item.value}`).join(" · ")}
                     </div>
                   </>
@@ -1202,7 +1202,7 @@ export function QuizBuilder() {
               </div>
 
               {isDraft && patchDraft.isError ? (
-                <div role="alert" className="text-body-sm text-err">
+                <div role="alert" className="text-body-sm text-error">
                   Couldn't save your progress: {teacherMutationFailureMessage(patchDraft.error)}
                 </div>
               ) : null}

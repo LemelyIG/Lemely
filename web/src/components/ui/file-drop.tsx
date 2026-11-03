@@ -165,10 +165,10 @@ export function FileDrop({
   return (
     <div className={cn("flex flex-col gap-2", className)}>
       <div className="flex items-baseline gap-2">
-        <label htmlFor={inputId} className="text-label text-ink">
+        <label htmlFor={inputId} className="text-label text-on-surface">
           {label}
         </label>
-        {labelNote ? <span className="text-body-sm text-ink-faint">{labelNote}</span> : null}
+        {labelNote ? <span className="text-body-sm text-on-surface-variant">{labelNote}</span> : null}
       </div>
 
       <div
@@ -180,14 +180,14 @@ export function FileDrop({
           "relative rounded-lg border border-dashed transition-colors",
           "duration-[var(--dur-instant)] ease-out-soft",
           locked
-            ? "cursor-not-allowed border-rule bg-paper-raised opacity-60"
+            ? "cursor-not-allowed border-outline-variant bg-surface-container-lowest opacity-60"
             : dragging
-              ? "border-accent bg-accent-wash"
+              ? "border-primary bg-primary-container"
               : hasError
-                ? "border-err bg-paper-raised hover:border-err"
+                ? "border-error bg-surface-container-lowest hover:border-error"
                 : file
-                  ? "border-rule-strong bg-paper-raised"
-                  : "border-rule bg-paper-raised hover:border-rule-strong hover:bg-paper-sunk",
+                  ? "border-outline bg-surface-container-lowest"
+                  : "border-outline-variant bg-surface-container-lowest hover:border-outline hover:bg-surface-container-low",
         )}
       >
         {/*
@@ -223,7 +223,7 @@ export function FileDrop({
             "flex flex-col items-center gap-2 rounded-lg text-center",
             size === "compact" ? "px-4 py-4" : "px-6 py-8",
             "peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2",
-            "peer-focus-visible:outline-focus-ring",
+            "peer-focus-visible:outline-primary",
             // §9.2's press. Only when the control can actually be pressed: a
             // locked target that springs back would be telling the reader it
             // accepted a tap it is going to ignore.
@@ -233,19 +233,19 @@ export function FileDrop({
           )}
         >
           {file ? (
-            <CheckCircle size={glyph} weight="fill" className="text-ok" aria-hidden="true" />
+            <CheckCircle size={glyph} weight="fill" className="text-success-text" aria-hidden="true" />
           ) : hasError ? (
-            <WarningCircle size={glyph} className="text-err" aria-hidden="true" />
+            <WarningCircle size={glyph} className="text-error" aria-hidden="true" />
           ) : (
-            <FilePlus size={glyph} className="text-ink-faint" aria-hidden="true" />
+            <FilePlus size={glyph} className="text-on-surface-variant" aria-hidden="true" />
           )}
 
           {file ? (
             <span className="flex flex-col items-center gap-0.5">
-              <span className="max-w-full truncate text-body-md font-medium text-ink">
+              <span className="max-w-full truncate text-body-md font-medium text-on-surface">
                 {file.name}
               </span>
-              <span className="text-data-sm text-ink-faint">{formatFileSize(file.size)}</span>
+              <span className="text-data-sm text-on-surface-variant">{formatFileSize(file.size)}</span>
             </span>
           ) : (
             <span className="flex flex-col items-center gap-0.5">
@@ -255,21 +255,21 @@ export function FileDrop({
               <span
                 className={
                   size === "compact"
-                    ? "text-body-sm text-ink-muted"
-                    : "text-body-md font-medium text-ink"
+                    ? "text-body-sm text-on-surface-variant"
+                    : "text-body-md font-medium text-on-surface"
                 }
               >
                 {prompt}
               </span>
               {size === "compact" ? null : (
-                <span className="text-body-sm text-ink-muted">PDF or photo</span>
+                <span className="text-body-sm text-on-surface-variant">PDF or photo</span>
               )}
             </span>
           )}
         </label>
 
         {file && !locked ? (
-          <div className="flex justify-center border-t border-rule px-4 py-3">
+          <div className="flex justify-center border-t border-outline-variant px-4 py-3">
             <Button
               type="button"
               variant="ghost"
@@ -288,11 +288,11 @@ export function FileDrop({
       </div>
 
       {error ? (
-        <p id={describedById} className="text-body-sm text-err">
+        <p id={describedById} className="text-body-sm text-error">
           {error}
         </p>
       ) : hint ? (
-        <p id={describedById} className="text-body-sm text-ink-muted">
+        <p id={describedById} className="text-body-sm text-on-surface-variant">
           {hint}
         </p>
       ) : null}

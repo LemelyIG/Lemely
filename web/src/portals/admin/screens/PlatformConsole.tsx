@@ -38,8 +38,8 @@ export function PlatformConsole() {
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1.5">
         <Eyebrow>Platform admin</Eyebrow>
-        <h1 className="text-display-lg text-ink">Console</h1>
-        <p className="max-w-prose text-body-md text-ink-muted">
+        <h1 className="text-display-lg text-on-surface">Console</h1>
+        <p className="max-w-prose text-body-md text-on-surface-variant">
           What the platform is carrying right now, counted from the database on every load.
         </p>
       </header>
@@ -90,7 +90,7 @@ function WorkPanel({ counts }: { counts: PlatformCounts }) {
 
   return (
     <section className="flex flex-col gap-3" aria-label="Marking and queues">
-      <h2 className="text-display-sm text-ink">Marking and queues</h2>
+      <h2 className="text-display-sm text-on-surface">Marking and queues</h2>
       <div className="grid items-stretch gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Figure
           eyebrow="Marked, last 24h"
@@ -135,7 +135,7 @@ function WorkPanel({ counts }: { counts: PlatformCounts }) {
 function PeoplePanel({ counts }: { counts: PlatformCounts }) {
   return (
     <section className="flex flex-col gap-3" aria-label="Accounts">
-      <h2 className="text-display-sm text-ink">Accounts</h2>
+      <h2 className="text-display-sm text-on-surface">Accounts</h2>
       <div className="grid items-stretch gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Figure eyebrow="Students" value={counts.students} note="With an account, on any plan." />
         <Figure eyebrow="Parents" value={counts.parents} note="Linked to at least one account." />
@@ -172,23 +172,23 @@ function HealthPanel({ health }: { health: SystemHealth }) {
         <Eyebrow>System</Eyebrow>
         <dl className="grid gap-3 sm:grid-cols-3">
           <div className="flex flex-col gap-1">
-            <dt className="text-body-sm text-ink-muted">Database</dt>
-            <dd className="text-body-sm text-ink">
+            <dt className="text-body-sm text-on-surface-variant">Database</dt>
+            <dd className="text-body-sm text-on-surface">
               {health.databaseReachable ? "Answered this request" : "Did not answer"}
             </dd>
           </div>
           <div className="flex flex-col gap-1">
-            <dt className="text-body-sm text-ink-muted">Marking API key</dt>
-            <dd className="text-body-sm text-ink">
+            <dt className="text-body-sm text-on-surface-variant">Marking API key</dt>
+            <dd className="text-body-sm text-on-surface">
               {health.geminiKeyConfigured ? "Configured" : "Missing, so marking cannot run"}
             </dd>
           </div>
           <div className="flex flex-col gap-1">
-            <dt className="text-body-sm text-ink-muted">Version</dt>
-            <dd className="text-body-sm tabular-nums text-ink">{health.version}</dd>
+            <dt className="text-body-sm text-on-surface-variant">Version</dt>
+            <dd className="text-body-sm tabular-nums text-on-surface">{health.version}</dd>
           </div>
         </dl>
-        <p className="max-w-prose text-body-sm text-ink-faint">
+        <p className="max-w-prose text-body-sm text-on-surface-variant">
           These are the only checks this page can make from inside a request. There is no uptime
           or worker heartbeat here because nothing records one.
         </p>
@@ -203,21 +203,21 @@ function SignupsPanel({ signups }: { signups: Signup[] }) {
       <CardBody className="flex flex-col gap-3">
         <Eyebrow>Recent signups</Eyebrow>
         {signups.length === 0 ? (
-          <p className="text-body-sm text-ink-muted">Nobody has signed up yet.</p>
+          <p className="text-body-sm text-on-surface-variant">Nobody has signed up yet.</p>
         ) : (
-          <ul className="flex flex-col divide-y divide-rule">
+          <ul className="flex flex-col divide-y divide-outline-variant">
             {signups.map((signup) => (
               <li
                 key={signup.userId}
                 className="flex flex-wrap items-baseline justify-between gap-2 py-2 first:pt-0 last:pb-0"
               >
-                <span className="text-body-sm text-ink">
+                <span className="text-body-sm text-on-surface">
                   {signup.displayName ?? signup.email}{" "}
-                  <span className="text-ink-faint">{signup.role.replace(/_/g, " ")}</span>
+                  <span className="text-on-surface-variant">{signup.role.replace(/_/g, " ")}</span>
                 </span>
                 <time
                   dateTime={signup.createdAt}
-                  className="text-body-sm tabular-nums text-ink-muted"
+                  className="text-body-sm tabular-nums text-on-surface-variant"
                 >
                   {formatAdminDate(signup.createdAt)}
                 </time>
@@ -257,10 +257,10 @@ function Figure({
           <Eyebrow>{eyebrow}</Eyebrow>
           {badge ? <Badge tone="warn">{badge}</Badge> : null}
         </div>
-        <span className="text-data-lg tabular-nums text-ink">{value}</span>
-        <p className="text-body-sm text-ink-muted">{note}</p>
+        <span className="text-data-lg tabular-nums text-on-surface">{value}</span>
+        <p className="text-body-sm text-on-surface-variant">{note}</p>
         {to && linkLabel ? (
-          <Link to={to} className="mt-auto pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-accent-ink hover:underline">
+          <Link to={to} className="mt-auto pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-on-primary-container hover:underline">
             {linkLabel}
           </Link>
         ) : null}

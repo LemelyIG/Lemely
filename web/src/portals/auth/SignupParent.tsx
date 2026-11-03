@@ -110,7 +110,7 @@ const CODE_LENGTH = 6
  * file's own docstring for why it's gated to touch/coarse pointers rather
  * than unconditional. */
 const LINK_CLASS =
-  "pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:min-h-11 rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+  "pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:min-h-11 rounded-sm text-on-primary-container underline underline-offset-2 transition-colors hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
 
 /** The "this invite doesn't work" panel — rendered instead of the whole
  * three-step form when `?code=` is missing, or once any of the three calls
@@ -119,10 +119,10 @@ function InviteMissingPanel() {
   const copy = parentInviteMissingCopy()
   return (
     <AuthFrame dataPortal="parent">
-      <div className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-rule bg-paper-raised p-8">
+      <div className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-outline-variant bg-surface-container-lowest p-8">
         <div className="flex flex-col gap-1.5">
-          <h1 className="text-display-lg text-ink">{copy.heading}</h1>
-          <p className="text-body-md text-ink-muted">{copy.body}</p>
+          <h1 className="text-display-lg text-on-surface">{copy.heading}</h1>
+          <p className="text-body-md text-on-surface-variant">{copy.body}</p>
         </div>
         <Link to="/join" className={buttonVariants({ variant: "accent", size: "lg" })}>
           {copy.actionLabel}
@@ -297,7 +297,7 @@ export function SignupParent() {
     if (!requestFailure || requestFailure.deadInvite) return null
     return (
       <div className="flex flex-col gap-1.5">
-        <p role="alert" className="text-body-sm text-err">
+        <p role="alert" className="text-body-sm text-error">
           {requestFailure.message}
         </p>
         {requestFailure.hasAccount ? (
@@ -313,7 +313,7 @@ export function SignupParent() {
     <AuthFrame
       dataPortal="parent"
       footer={
-        <p className="text-body-sm text-ink-muted">
+        <p className="text-body-sm text-on-surface-variant">
           Already have an account?{" "}
           <Link to={signInHref} className={LINK_CLASS}>
             Sign in
@@ -322,12 +322,12 @@ export function SignupParent() {
       }
     >
       <div className="flex w-full max-w-100 flex-col gap-6">
-        <div className="rounded-lg border border-rule bg-paper-raised p-8">
+        <div className="rounded-lg border border-outline-variant bg-surface-container-lowest p-8">
           {step === "email" ? (
             <form onSubmit={handleEmailSubmit} className="flex flex-col gap-5" noValidate>
               <div className="flex flex-col gap-1.5">
-                <h1 className="text-display-lg text-ink">Create your parent account</h1>
-                <p className="text-body-md text-ink-muted">
+                <h1 className="text-display-lg text-on-surface">Create your parent account</h1>
+                <p className="text-body-md text-on-surface-variant">
                   We'll send a code to your email to confirm it's you.
                 </p>
               </div>
@@ -363,10 +363,10 @@ export function SignupParent() {
           ) : step === "code" ? (
             <div className="flex flex-col gap-5">
               <div className="flex flex-col gap-1.5">
-                <h1 className="text-display-lg text-ink">Enter your code</h1>
-                <p className="text-body-md text-ink-muted">
+                <h1 className="text-display-lg text-on-surface">Enter your code</h1>
+                <p className="text-body-md text-on-surface-variant">
                   We sent a {CODE_LENGTH}-digit code to{" "}
-                  <span className="text-data-md text-ink">{sentTo}</span>.
+                  <span className="text-data-md text-on-surface">{sentTo}</span>.
                 </p>
               </div>
 
@@ -385,7 +385,7 @@ export function SignupParent() {
               />
 
               {verifyCode.isPending ? (
-                <p role="status" aria-live="polite" className="text-body-md text-ink-muted">
+                <p role="status" aria-live="polite" className="text-body-md text-on-surface-variant">
                   Checking your code…
                 </p>
               ) : null}
@@ -410,12 +410,12 @@ export function SignupParent() {
                 ? (() => {
                     const panel = parentSignupDevPanel(devCode)
                     return panel.visible ? (
-                      <div className="rounded-md border border-dashed border-rule bg-paper-sunk p-4">
-                        <div className="text-eyebrow text-ink-faint">
+                      <div className="rounded-md border border-dashed border-outline-variant bg-surface-container-low p-4">
+                        <div className="text-eyebrow text-on-surface-variant">
                           Developer only · no email was sent
                         </div>
-                        <div className="mt-1.5 text-data-lg text-ink">{panel.code}</div>
-                        <p className="mt-1.5 text-body-sm text-ink-muted">
+                        <div className="mt-1.5 text-data-lg text-on-surface">{panel.code}</div>
+                        <p className="mt-1.5 text-body-sm text-on-surface-variant">
                           This appears because Lemely is running with the offline mock email
                           provider. With a real provider configured, the code is never shown here.
                         </p>
@@ -462,8 +462,8 @@ export function SignupParent() {
           ) : (
             <form onSubmit={handlePasswordSubmit} noValidate className="flex flex-col gap-5">
               <div className="flex flex-col gap-1.5">
-                <h1 className="text-display-lg text-ink">Set a password</h1>
-                <p className="text-body-md text-ink-muted">
+                <h1 className="text-display-lg text-on-surface">Set a password</h1>
+                <p className="text-body-md text-on-surface-variant">
                   One more step, and you'll be able to see how your child is doing.
                 </p>
               </div>
@@ -491,15 +491,15 @@ export function SignupParent() {
                           <span
                             key={segment}
                             className={`h-1 flex-1 rounded-full transition-colors duration-[var(--dur-instant)] ease-out-soft ${
-                              segment < strength.score ? strengthFillClass(strength.score) : "bg-rule"
+                              segment < strength.score ? strengthFillClass(strength.score) : "bg-outline-variant"
                             }`}
                           />
                         ))}
                       </div>
-                      <span className="text-body-sm text-ink-faint">{strength.label}</span>
+                      <span className="text-body-sm text-on-surface-variant">{strength.label}</span>
                     </div>
                   ) : (
-                    <span className="flex-1 text-body-sm text-ink-faint">
+                    <span className="flex-1 text-body-sm text-on-surface-variant">
                       At least {MIN_PASSWORD_LENGTH} characters.
                     </span>
                   )}
@@ -507,7 +507,7 @@ export function SignupParent() {
                     type="button"
                     disabled={parentSignup.isPending}
                     onClick={() => setShowPassword((previous) => !previous)}
-                    className="inline-flex shrink-0 items-center gap-1 rounded-sm text-body-sm text-ink-muted transition-[color,transform] duration-[var(--dur-fast)] ease-out-soft hover:text-ink active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100"
+                    className="inline-flex shrink-0 items-center gap-1 rounded-sm text-body-sm text-on-surface-variant transition-[color,transform] duration-[var(--dur-fast)] ease-out-soft hover:text-on-surface active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100"
                   >
                     <span>{showPassword ? "Hide password" : "Show password"}</span>
                   </button>
@@ -530,7 +530,7 @@ export function SignupParent() {
                       if (event.target.checked) setConsentError(false)
                     }}
                   />
-                  <p id="parent-signup-consent-copy" className="text-body-sm text-ink-muted">
+                  <p id="parent-signup-consent-copy" className="text-body-sm text-on-surface-variant">
                     I agree to how Lemely handles my data, described on the{" "}
                     <Link to="/data" target="_blank" rel="noopener noreferrer" className={LINK_CLASS}>
                       data handling page
@@ -539,7 +539,7 @@ export function SignupParent() {
                   </p>
                 </div>
                 {consentError ? (
-                  <p id="parent-signup-consent-error" role="alert" className="text-body-sm text-err">
+                  <p id="parent-signup-consent-error" role="alert" className="text-body-sm text-error">
                     Agree to how Lemely handles your data before continuing.
                   </p>
                 ) : null}
@@ -547,7 +547,7 @@ export function SignupParent() {
 
               {parentSignup.isError ? (
                 <div className="flex flex-col gap-1.5">
-                  <p role="alert" className="text-body-sm text-err">
+                  <p role="alert" className="text-body-sm text-error">
                     {parentSignupFailureMessage(parentSignup.error)}
                   </p>
                   {parentSignup.error instanceof ApiError && parentSignup.error.status === 401 ? (

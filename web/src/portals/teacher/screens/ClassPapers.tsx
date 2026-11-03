@@ -59,7 +59,7 @@ function UnshareControl({ classId, row }: { classId: string; row: ClassPaperRow 
           Reshare
         </Button>
         {error ? (
-          <p role="alert" className="text-body-sm text-err">
+          <p role="alert" className="text-body-sm text-error">
             {error}
           </p>
         ) : null}
@@ -148,7 +148,7 @@ export function ClassPapers() {
                 <TR key={row.attemptId}>
                   <TD className="text-data-sm">{row.studentName}</TD>
                   <TD className="whitespace-nowrap text-data-sm">{classPaperLabel(row)}</TD>
-                  <TD className="whitespace-nowrap text-ink-muted">
+                  <TD className="whitespace-nowrap text-on-surface-variant">
                     {relativeTime(row.recordedAt)}
                   </TD>
                   <TD>

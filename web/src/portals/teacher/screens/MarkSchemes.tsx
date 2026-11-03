@@ -35,9 +35,9 @@ import type { SchemeStatus } from "@/lib/teacherTypes"
  */
 
 const STATUS_CHIP: Record<SchemeStatus, string> = {
-  parsed: "bg-ok-wash text-ok",
-  pending: "bg-accent-wash text-accent-ink",
-  custom: "bg-paper-sunk text-ink-muted",
+  parsed: "bg-success-container text-success-text",
+  pending: "bg-primary-container text-on-primary-container",
+  custom: "bg-surface-container-low text-on-surface-variant",
 }
 
 export function MarkSchemes() {
@@ -67,7 +67,7 @@ export function MarkSchemes() {
         // this pending/error/empty sweep does not make.
         skeleton={<ListSkeleton rows={5} />}
         // The pre-conversion branch here was one of the plain, un-retryable
-        // error lines the PR3 brief calls out: `text-accent-ink` (not even
+        // error lines the PR3 brief calls out: `text-on-primary-container` (not even
         // the amber/neutral failure tone DESIGN.md asks for) with no retry
         // action at all. `QueryState` gives this a real `ErrorState` with a
         // `refetch`-backed retry for free.
@@ -75,9 +75,9 @@ export function MarkSchemes() {
       >
         {({ schemes, stats }) => (
           <>
-            <div className="flex items-end gap-[18px] pb-[18px] border-b border-rule flex-wrap gap-y-2.5">
+            <div className="flex items-end gap-[18px] pb-[18px] border-b border-outline-variant flex-wrap gap-y-2.5">
               <div>
-                <div className="text-eyebrow text-ink-faint">
+                <div className="text-eyebrow text-on-surface-variant">
                   Library · {schemes.length} scheme{schemes.length === 1 ? "" : "s"}
                 </div>
                 {/* A real h1, not a styled div — same `page-has-heading-one`
@@ -107,7 +107,7 @@ export function MarkSchemes() {
             </div>
 
             {uploadScheme.isError ? (
-              <div className="text-body-md text-accent-ink">
+              <div className="text-body-md text-on-primary-container">
                 Couldn't parse that mark scheme: {teacherMutationFailureMessage(uploadScheme.error)}
               </div>
             ) : null}
@@ -150,12 +150,12 @@ export function MarkSchemes() {
                     <TD className="min-w-0 max-w-[280px] overflow-hidden text-ellipsis whitespace-nowrap text-data-sm">
                       {m.doc}
                     </TD>
-                    <TD className="text-body-md text-ink-muted">{m.paper}</TD>
-                    <TD className="text-body-md text-ink-muted">{m.session}</TD>
+                    <TD className="text-body-md text-on-surface-variant">{m.paper}</TD>
+                    <TD className="text-body-md text-on-surface-variant">{m.session}</TD>
                     <TD numeric className="text-data-sm">
                       {m.maxMarks ?? "-"}
                     </TD>
-                    <TD numeric className="text-data-sm text-ink-faint">
+                    <TD numeric className="text-data-sm text-on-surface-variant">
                       {m.questionCount ?? "-"}
                     </TD>
                     <TD>

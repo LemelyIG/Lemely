@@ -113,7 +113,7 @@ export function BottomNav({ items, emphasisId, className, ...props }: BottomNavP
         // P6.3: `z-nav`. The raw `z-30` put a *navigation* bar in the dropdown
         // band, above every menu and popover that would ever need to open over
         // it — the exact inversion the §7 scale exists to prevent.
-        "lm-nav-chrome lm-safe-bottom fixed inset-x-0 bottom-0 z-nav flex items-stretch border-t border-border bg-surface",
+        "lm-nav-chrome lm-safe-bottom fixed inset-x-0 bottom-0 z-nav flex items-stretch border-t border-outline-variant bg-surface-container-lowest",
         className,
       )}
       {...props}
@@ -126,8 +126,8 @@ export function BottomNav({ items, emphasisId, className, ...props }: BottomNavP
             item={item}
             className={(isActive) =>
               cn(
-                "flex min-h-14 flex-1 flex-col items-center justify-center gap-1 py-2.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent active:scale-[0.98]",
-                isActive && !emphasis ? "text-accent" : "text-t3 hover:text-t2",
+                "flex min-h-14 flex-1 flex-col items-center justify-center gap-1 py-2.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.98]",
+                isActive && !emphasis ? "text-primary" : "text-on-surface-variant hover:text-on-surface-variant",
               )
             }
           >
@@ -137,12 +137,12 @@ export function BottomNav({ items, emphasisId, className, ...props }: BottomNavP
                   className={cn(
                     "relative flex items-center justify-center",
                     emphasis &&
-                      "-mt-5 h-11 w-11 rounded-full bg-accent text-accent-on shadow-[var(--shadow-float)]",
+                      "-mt-5 h-11 w-11 rounded-full bg-primary text-on-primary shadow-[var(--shadow-float)]",
                   )}
                 >
                   {item.icon}
                   {item.badge ? (
-                    <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-err px-0.5 text-metadata leading-none text-accent-on">
+                    <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-error px-0.5 text-metadata leading-none text-on-primary">
                       {item.badge}
                     </span>
                   ) : null}
@@ -191,7 +191,7 @@ export function SidebarNav({ items, groups, className, ...props }: SidebarNavPro
         // reordering list.
         <div key={section.label ?? index} className="flex flex-col gap-0.5">
           {section.label ? (
-            <div className="text-eyebrow text-ink-faint px-2 pb-[7px]">{section.label}</div>
+            <div className="text-eyebrow text-on-surface-variant px-2 pb-[7px]">{section.label}</div>
           ) : null}
           {section.items.map((item) => (
             <NavShellLink
@@ -203,10 +203,10 @@ export function SidebarNav({ items, groups, className, ...props }: SidebarNavPro
                   // tall on every mobile width, and this is the control a student on
                   // a phone touches most. Safe as a min because the row already
                   // centres its content.
-                  "flex w-full items-center gap-2.5 rounded-md px-9px py-2 pointer-coarse:min-h-11 text-start text-body-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent active:scale-[0.98]",
+                  "flex w-full items-center gap-2.5 rounded-md px-9px py-2 pointer-coarse:min-h-11 text-start text-body-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.98]",
                   isActive
-                    ? "bg-surface-2 font-medium text-t1"
-                    : "font-normal text-t2 hover:bg-surface-2",
+                    ? "bg-surface-container-low font-medium text-on-surface"
+                    : "font-normal text-on-surface-variant hover:bg-surface-container-low",
                 )
               }
             >
@@ -214,7 +214,7 @@ export function SidebarNav({ items, groups, className, ...props }: SidebarNavPro
                 <>
                   <span className="flex-none">{item.icon}</span>
                   <span className="flex-1">{item.label}</span>
-                  {item.badge ? <span className="text-metadata text-t3">{item.badge}</span> : null}
+                  {item.badge ? <span className="text-metadata text-on-surface-variant">{item.badge}</span> : null}
                 </>
               )}
             </NavShellLink>
