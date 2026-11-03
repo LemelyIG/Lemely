@@ -33,6 +33,7 @@ colors:
   on-error: "#ffffff"
   error-container: "oklch(0.95 0.067 25)"
   on-error-container: "oklch(0.30 0.117 25)"
+  success-text: "oklch(0.49 0.12 150)"
   success-container: "oklch(0.95 0.04 150)"
   on-success-container: "oklch(0.32 0.08 150)"
   surface: "oklch(0.985 0.004 240)"
@@ -69,6 +70,7 @@ colors:
   dark-error-container: "oklch(0.30 0.117 25)"
   dark-on-error-container: "oklch(0.90 0.083 25)"
   dark-success: "oklch(0.72 0.12 150)"
+  dark-success-text: "oklch(0.72 0.12 150)"
   dark-success-container: "oklch(0.30 0.06 150)"
   dark-on-success-container: "oklch(0.90 0.06 150)"
   dark-surface: "#130e10"
@@ -264,7 +266,7 @@ All values come from the five tonal palettes in the brand guidelines (tone = OKL
 - **Gold** (`oklch(0.80 0.13 80)`): XP, streaks, reward moments, and medium marking confidence. Same value in both schemes. Text on gold is `oklch(0.20 0.019 80)`. Gold never appears on teacher, parent or school surfaces except as a medium-confidence indicator.
 
 ### Custom colours (marking confidence)
-- **Success** (`oklch(0.60 0.12 150)`): correct answers, high confidence, positive deltas such as "+4 vs last".
+- **Success** (`oklch(0.60 0.12 150)`): correct answers, high confidence, positive deltas such as "+4 vs last". Success fills, dots and bars use `success`; success text uses `success-text` (`oklch(0.49 0.12 150)` light, `oklch(0.72 0.12 150)` dark), because `success` measures only 2.96:1 as text on light surfaces.
 - **Crimson** (`oklch(0.53 0.20 25)` light, `oklch(0.72 0.15 25)` dark): the `error` role. Lost marks, low confidence and genuine errors only.
 
 ### Grade scale: "Jewel"

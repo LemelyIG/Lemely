@@ -41,7 +41,6 @@ const CUSTOM_FONT_SIZE_CLASSES = [
   "data-lg",
   "data-md",
   "data-sm",
-  "hand",
   // ── Platform floors — not §4.2 type rungs, see the token's own comment ──
   "field",
   // ── Build-era names, still live until Phase 4 migrates the last call site ──

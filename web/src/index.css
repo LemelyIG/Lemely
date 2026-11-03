@@ -29,6 +29,7 @@
   --md-error-container: oklch(0.95 0.067 25);
   --md-on-error-container: oklch(0.30 0.117 25);
   --md-success: oklch(0.60 0.12 150);
+  --md-success-text: oklch(0.49 0.12 150);
   --md-success-container: oklch(0.95 0.04 150);
   --md-on-success-container: oklch(0.32 0.08 150);
   --md-surface: oklch(0.985 0.004 240);
@@ -86,6 +87,7 @@
   --md-error-container: oklch(0.30 0.117 25);
   --md-on-error-container: oklch(0.90 0.083 25);
   --md-success: oklch(0.72 0.12 150);
+  --md-success-text: oklch(0.72 0.12 150);
   --md-success-container: oklch(0.30 0.06 150);
   --md-on-success-container: oklch(0.90 0.06 150);
   --md-surface: #130e10;
@@ -142,6 +144,7 @@
   --color-error-container: var(--md-error-container);
   --color-on-error-container: var(--md-on-error-container);
   --color-success: var(--md-success);
+  --color-success-text: var(--md-success-text);
   --color-success-container: var(--md-success-container);
   --color-on-success-container: var(--md-on-success-container);
   --color-surface: var(--md-surface);
@@ -405,13 +408,13 @@
 }
 
 /* ── §3.6 The red-pen register (C3a) ──────────────────────────────────────
-   A wrong answer's expanded explanation reads in --mark-wrong ink at weight
-   500 with a 2px left rule — ink and a rule, never a fill. PRODUCT.md is
+   A wrong answer's expanded explanation reads in --md-error ink with a 2px
+   left rule — ink and a rule, never a fill. PRODUCT.md is
    explicit: "avoid red-heavy error states; prefer amber/neutral for 'needs
    attention.'" A red background on the one screen a student reads right
    after seeing their score would be exactly that. Scoped to the expanded
    explanation slot only (question-row.tsx) — never the row, never the
-   feedback panel's own bg-paper-sunk — and it carries no handwriting face: this is
+   feedback panel's own surface-container fill — and it carries no handwriting face: this is
    state the reader needs, not marginalia they can lose (§4.1). See
    DESIGN.md §3.6. */
 .lm-red-pen {
@@ -684,6 +687,7 @@ body {
     --md-primary: #042f4f;
     --md-error: oklch(0.53 0.20 25);
     --md-success: oklch(0.60 0.12 150);
+    --md-success-text: oklch(0.49 0.12 150);
     --md-tertiary: oklch(0.80 0.13 80);
   }
 }

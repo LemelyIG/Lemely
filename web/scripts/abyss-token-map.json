@@ -51,7 +51,10 @@
     "text-paper-raised": "text-inverse-on-surface",
     "text-warn": "text-on-tertiary-container",
     "text-confidence-medium": "text-on-tertiary-container",
-    "text-mark-partial": "text-on-tertiary-container"
+    "text-mark-partial": "text-on-tertiary-container",
+    "text-ok": "text-success-text",
+    "text-confidence-high": "text-success-text",
+    "text-mark-correct": "text-success-text"
   },
   "compat": {
     "surface": "surface-container-lowest",

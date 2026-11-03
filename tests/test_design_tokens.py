@@ -69,7 +69,7 @@ SURFACES = [
     "surface-container-high",
     "surface-container-highest",
 ]
-TEXT_ON_SURFACES = ["on-surface", "on-surface-variant", "primary", "error"]
+TEXT_ON_SURFACES = ["on-surface", "on-surface-variant", "primary", "error", "success-text"]
 PAIRS = [
     ("on-primary", "primary"),
     ("on-primary-container", "primary-container"),
