@@ -184,11 +184,7 @@ function LevelCard({ profile }: { profile: XpProfile }) {
           </div>
           <div role="group" aria-label="Total XP" className="text-end">
             <Eyebrow>Total XP</Eyebrow>
-            <Celebrate
-              value={profile.totalXp}
-              flourish={false}
-              className="text-data-lg text-on-surface"
-            >
+            <Celebrate value={profile.totalXp} className="text-data-lg text-on-surface">
               <CountUp value={profile.totalXp} />
             </Celebrate>
           </div>
@@ -328,7 +324,7 @@ function WeekPanel({ profile }: { profile: XpProfile }) {
             whole sentence set in the mono face — and §4 gives that face
             figures, not the prose around them. */}
         <span className="text-on-surface">
-          <Celebrate value={week.total} flourish={false} className="text-data-md">
+          <Celebrate value={week.total} className="text-data-md">
             <CountUp value={week.total} />
           </Celebrate>
           <span className="ms-1 text-body-md text-on-surface-variant">XP this week</span>

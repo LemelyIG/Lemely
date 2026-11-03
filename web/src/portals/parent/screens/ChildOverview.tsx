@@ -246,7 +246,7 @@ export function ChildOverview() {
 
           return (
             <>
-              <div className="margin-rule flex flex-col gap-1">
+              <div className="flex flex-col gap-1">
                 <h1 className="text-display-lg text-on-surface">{data.displayName}</h1>
                 <p className="text-body-md text-on-surface-variant">
                   How they're getting on, from their marked papers.
@@ -311,7 +311,7 @@ export function ChildOverview() {
                   // cannot reach the loaded payload — see `Overview.tsx`'s own comment
                   // for the same rule.
                   <div className="flex flex-col gap-1 rounded-lg border border-outline-variant bg-surface-container-lowest p-6">
-                    <p className="text-hand text-on-surface-variant">Nothing to read yet</p>
+                    <p className="text-body-sm text-on-surface-variant">Nothing to read yet</p>
                     <p className="text-body-md text-on-surface-variant">
                       No marked papers yet. Subjects appear here once {data.displayName} has had a
                       paper marked.

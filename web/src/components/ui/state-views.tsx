@@ -220,7 +220,7 @@ export function StateView({
           {icon ?? <Glyph size={16} className={toneCls.icon} aria-hidden="true" />}
         </div>
         <div className="flex min-w-0 flex-col gap-1">
-          {marginalia ? <p className="text-hand text-on-surface-variant">{marginalia}</p> : null}
+          {marginalia ? <p className="text-body-sm text-on-surface-variant">{marginalia}</p> : null}
           <p className="text-body-sm font-medium text-on-surface">{heading}</p>
           {body ? <p className="text-body-sm text-on-surface-variant">{body}</p> : null}
           {action || secondaryAction ? (
@@ -287,7 +287,7 @@ export function StateView({
         <Doodle kind={kindDoodle[kind]} />
       )}
       <div className="flex flex-col gap-2">
-        {marginalia ? <p className="text-hand text-on-surface-variant">{marginalia}</p> : null}
+        {marginalia ? <p className="text-body-sm text-on-surface-variant">{marginalia}</p> : null}
         {resolvedKicker ? <p className="text-data-sm text-on-surface-variant">{resolvedKicker}</p> : null}
         {/* A `div`, not `<h1>`: unlike `FullPageState` (always the whole
          * page), this renders inline inside an already-headinged screen —

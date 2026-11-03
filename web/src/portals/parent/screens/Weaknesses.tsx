@@ -114,7 +114,7 @@ export function Weaknesses() {
 
           return (
             <>
-              <div className="margin-rule flex flex-col gap-2">
+              <div className="flex flex-col gap-2">
                 <h1 className="text-display-lg text-on-surface">What to work on next</h1>
                 <p className="max-w-prose text-body-md text-on-surface-variant">
                   Every student has a list like this. It is what marking is for. These are the

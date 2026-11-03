@@ -773,18 +773,9 @@ function StudentLayout() {
   }
 
   return (
-    // `paper-grain` (DESIGN.md §8.1): one fixed, pointer-events-none noise
-    // overlay at 0.035 opacity across the whole portal. This is the cheapest
-    // and most durable way the one protected quality — the notebook feel —
-    // reaches every student screen, including the ~20 this surface does not
-    // touch. It is fixed rather than scrolled precisely so it never repaints
-    // on scroll on the mid-range Android phones §7 keeps naming.
-    //
     // `bg-surface` is load-bearing here, not decoration: the shell must own its
-    // own ground rather than depend on what is behind it (`body`'s own paint,
-    // in this case — correct today, but a fragile thing for a portal root to
-    // lean on) matching the warm `--paper` token by coincidence.
-    <div data-portal="student" className="paper-grain flex min-h-dvh bg-surface">
+    // own ground rather than depend on what is behind it (`body`'s own paint).
+    <div data-portal="student" className="flex min-h-dvh bg-surface">
       <SkipLink />
       {/* Task 7 (B5a): renders nothing, same "mount inside the authenticated
           layout" shape as the rest of this file's chrome — `useNotificationCounts`

@@ -506,13 +506,9 @@ function TeacherLayout() {
   }
 
   return (
-    // `paper-grain` is DESIGN.md §8's first texture element and the cheapest
-    // carrier of the one protected quality (§1). The student shell has had it
-    // since surface 1; the teacher portal had none of the texture layer at all,
-    // which is why it read as the generic dashboard the anti-references name.
     // `bg-surface`: the shell owns its own ground rather than depending on
-    // `body`'s paint showing through beneath the fixed grain overlay.
-    <div data-portal="teacher" className="paper-grain flex min-h-dvh bg-surface">
+    // `body`'s paint showing through.
+    <div data-portal="teacher" className="flex min-h-dvh bg-surface">
       <SkipLink />
       {/* Task 7 (B5a): see student/index.tsx's own comment on this line —
           same reason, same shape. */}

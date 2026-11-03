@@ -752,7 +752,7 @@ export function CorrectPaper() {
     <div className="flex flex-col gap-8">
       {/* §8.5's margin rule, the same single texture element the dashboard
           header carries. The Operate lane runs texture low (§13). */}
-      <header className="margin-rule flex flex-wrap items-end gap-5">
+      <header className="flex flex-wrap items-end gap-5">
         <div className="flex flex-col gap-1">
           <h1 className="text-display-lg text-on-surface">Correct a paper</h1>
           {/* max-w-[60ch] kept: a reading-measure width (character-count

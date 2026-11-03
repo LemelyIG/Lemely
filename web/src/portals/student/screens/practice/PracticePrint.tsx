@@ -133,7 +133,7 @@ export function PracticePrint() {
                            student nowhere to write, which defeats the one
                            thing this screen is for.
 
-                           Deliberately blank rather than `ruled-bg`: §8's
+                           Deliberately blank rather than ruled: §8's
                            print rule strips every texture class from print
                            output, so ruling here would silently render as
                            nothing. The space is functional and the ruling

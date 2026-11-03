@@ -102,7 +102,7 @@ export function ChartFrame({
           <div className="flex h-11 w-11 items-center justify-center rounded-full bg-surface-container-low">
             <ChartBar size={20} weight="regular" className="text-on-surface-variant" aria-hidden="true" />
           </div>
-          <p className="text-hand text-on-surface-variant">{emptyMarginalia}</p>
+          <p className="text-body-sm text-on-surface-variant">{emptyMarginalia}</p>
           {emptyBody ? <p className="max-w-xs text-body-sm text-on-surface-variant">{emptyBody}</p> : null}
           {emptyAction ? <div className="mt-1">{emptyAction}</div> : null}
         </div>

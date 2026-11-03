@@ -92,7 +92,7 @@ export function SubjectDetail() {
 
           return (
             <>
-              <div className="margin-rule flex flex-col gap-3">
+              <div className="flex flex-col gap-3">
                 <div className="flex flex-wrap items-center gap-4">
                   <GradeBadge grade={data.predictedGrade} size="medium" basis="predicted" />
                   <div className="flex flex-col gap-0.5">

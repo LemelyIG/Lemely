@@ -690,7 +690,7 @@ export function FlashcardDecks() {
                         real work — it is what visually binds a topic's decks
                         to the topic heading above them. */}
                     <h2 className="text-display-sm text-on-surface">{group.topic ?? "Untopiced"}</h2>
-                    <div className="margin-rule flex flex-col gap-2">
+                    <div className="flex flex-col gap-2">
                       {group.decks.map((deck) => (
                         <DeckRow
                           key={deck.id}

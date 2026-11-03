@@ -288,12 +288,9 @@ function AdminLayout({ lane }: { lane: AdminLane }) {
   const queryClient = useQueryClient()
 
   return (
-    // `paper-grain` is DESIGN.md §8's first texture element and the cheapest
-    // carrier of the one protected quality (§1). Even the utilitarian console
-    // gets it: "consistent with the system" is 4.10's own instruction.
     // `bg-surface`: the shell owns its own ground rather than depending on
-    // `body`'s paint showing through beneath the fixed grain overlay.
-    <div data-portal="teacher" className="paper-grain flex min-h-dvh bg-surface">
+    // `body`'s paint showing through.
+    <div data-portal="teacher" className="flex min-h-dvh bg-surface">
       <SkipLink />
       <Sidebar lane={lane} />
 

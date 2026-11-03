@@ -159,7 +159,7 @@ function SubjectLedgerRow({ row }: { row: SubjectRow }) {
       className={cn(
         "group flex flex-col gap-3 w-full text-start border-t border-outline-variant px-6 py-4",
         "md:grid md:grid-subject-ledger md:items-center md:gap-4",
-        "border-s-2 border-s-transparent hover:border-s-accent hover:bg-surface-container-low",
+        "border-s-2 border-s-transparent hover:border-s-primary hover:bg-surface-container-low",
         "transition-colors duration-[var(--dur-instant)] ease-out-soft",
         "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary",
       )}
@@ -518,7 +518,7 @@ export function Overview() {
                   this header — the Operate lane runs texture low (§13), and
                   the paper grain on the portal shell is already carrying the
                   notebook feel underneath. */}
-              <header className="margin-rule">
+              <header>
                 <SectionHead
                   title={`${greeting}, ${greetingName}.`}
                   // Both numbers are counted from the rows on this page, so

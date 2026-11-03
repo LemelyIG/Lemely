@@ -294,12 +294,7 @@ function ParentLayout() {
   const location = useLocation()
   const queryClient = useQueryClient()
   return (
-    // `paper-grain` (DESIGN.md §8.1): one fixed, pointer-events-none noise
-    // overlay at 0.03 opacity. The parent portal had no texture layer at all,
-    // the same gap surface 5 found in the teacher portal, and it is the whole
-    // mechanism by which §1's protected quality survives a screen made of
-    // rows and numbers.
-    <div data-portal="parent" className="paper-grain flex min-h-dvh flex-col bg-surface">
+    <div data-portal="parent" className="flex min-h-dvh flex-col bg-surface">
       <SkipLink />
       {/* Task 7 (B5a): see student/index.tsx's own comment on this line —
           same reason, same shape. */}

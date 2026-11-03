@@ -90,7 +90,7 @@ export function AuthFrame({
   return (
     <main
       data-portal={dataPortal}
-      className="paper-grain flex min-h-dvh flex-col items-center justify-start gap-6 bg-surface px-4 pt-20 pb-12 sm:pt-28"
+      className="flex min-h-dvh flex-col items-center justify-start gap-6 bg-surface px-4 pt-20 pb-12 sm:pt-28"
     >
       <BrandLockup size="md" />
       {children}

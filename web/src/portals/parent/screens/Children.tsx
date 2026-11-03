@@ -127,8 +127,8 @@ function ChildCard({ child }: { child: ChildSummary }) {
 function NoChildrenLinked() {
   return (
     <div className="mx-auto flex max-w-140 flex-col gap-6 rounded-lg border border-outline-variant bg-surface-container-lowest p-8">
-      <div className="margin-rule flex flex-col gap-2">
-        <p className="text-hand text-on-surface-variant">Almost there</p>
+      <div className="flex flex-col gap-2">
+        <p className="text-body-sm text-on-surface-variant">Almost there</p>
         {/* `h1`, not `h2`: in this state it IS the page's heading, and there is
             no other one on the screen — so as an `h2` the empty state shipped
             with no level-one heading at all (axe `page-has-heading-one`, found
@@ -204,7 +204,7 @@ export function Children() {
 
           return (
             <>
-              <div className="margin-rule flex flex-col gap-1">
+              <div className="flex flex-col gap-1">
                 <h1 className="text-display-lg text-on-surface">Your children</h1>
                 <p className="text-body-md text-on-surface-variant">Tap a name to see how they're doing.</p>
               </div>

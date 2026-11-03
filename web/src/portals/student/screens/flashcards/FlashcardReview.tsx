@@ -430,11 +430,7 @@ export function FlashcardReview() {
       {current ? (
         <div ref={cardSurfaceRef}>
           <Card>
-            {/* `ruled-bg`: DESIGN.md §8 item 2 names ruled paper for the Read
-                lane, and this card face is the one place in the product that is
-                literally a piece of paper with a question on it. It is the only
-                texture element on the viewport, well inside §8's budget of two. */}
-            <CardBody className="ruled-bg flex flex-col items-center gap-5 py-12 text-center">
+            <CardBody className="flex flex-col items-center gap-5 py-12 text-center">
               <Badge tone={current.source === "ai" ? "lilac" : "sage"}>
                 {cardSourceLabel(current.source)}
               </Badge>

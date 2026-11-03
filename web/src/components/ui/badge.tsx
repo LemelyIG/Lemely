@@ -2,8 +2,8 @@ import type { HTMLAttributes, ReactNode } from "react"
 import { cn } from "@/lib/utils"
 
 /*
- * The sticker set (DESIGN.md §3.5/§12): "Tags and badges. Pastel fill with
- * its paired text colour, `radius-full`, `eyebrow` type, tight padding. This
+ * The tag set (DESIGN.md §3.5/§12): "Tags and badges. Secondary-container fill
+ * with its paired text colour, `radius-full`, `eyebrow` type, tight padding. This
  * is the ONLY place pills are legal." Everywhere else in the system
  * `radius-full` on anything is a gate failure (§6) — this file is the single
  * legal exception, which is also why it exists as its own component rather
@@ -34,13 +34,15 @@ export type BadgeTone =
   | "err"
   | "info"
 
+const PASTEL_TONES: ReadonlySet<BadgeTone> = new Set(["rose", "amber", "sage", "sky", "lilac", "clay"])
+
 const toneClasses: Record<BadgeTone, string> = {
-  rose: "bg-pastel-rose text-pastel-rose-ink",
-  amber: "bg-pastel-amber text-pastel-amber-ink",
-  sage: "bg-pastel-sage text-pastel-sage-ink",
-  sky: "bg-pastel-sky text-pastel-sky-ink",
-  lilac: "bg-pastel-lilac text-pastel-lilac-ink",
-  clay: "bg-pastel-clay text-pastel-clay-ink",
+  rose: "bg-secondary-container text-on-secondary-container",
+  amber: "bg-secondary-container text-on-secondary-container",
+  sage: "bg-secondary-container text-on-secondary-container",
+  sky: "bg-secondary-container text-on-secondary-container",
+  lilac: "bg-secondary-container text-on-secondary-container",
+  clay: "bg-secondary-container text-on-secondary-container",
   ok: "bg-success-container text-success-text",
   warn: "bg-tertiary-container text-on-tertiary-container",
   err: "bg-error-container text-error",
@@ -60,13 +62,15 @@ const toneClasses: Record<BadgeTone, string> = {
  * pill, which is the wrong reading of a paper code.
  *
  * Exported so those call sites reuse this table rather than writing
- * `bg-pastel-lilac text-pastel-lilac-ink` inline, which is the "picked a
+ * `bg-primary-container text-on-primary-container` inline, which is the "picked a
  * colour at the call site" pattern §3.8 forbids — the pairing is the part
  * that must not drift, since each fill has exactly one AA-measured text
  * partner.
  */
 export function toneFill(tone: BadgeTone): string {
-  return toneClasses[tone]
+  // Subjects are not colour-coded in v5: every categorical tone renders as the
+  // one subject fill (DESIGN.md), semantic tones keep their status pairing.
+  return PASTEL_TONES.has(tone) ? "bg-primary-container text-on-primary-container" : toneClasses[tone]
 }
 
 export interface BadgeProps extends Omit<HTMLAttributes<HTMLSpanElement>, "children"> {
@@ -91,7 +95,7 @@ export function Badge({ tone = "info", icon, children, className, ...props }: Ba
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-full px-9px py-3px text-eyebrow leading-none",
+        "inline-flex items-center gap-1 rounded-pill px-9px py-3px text-eyebrow leading-none",
         toneClasses[tone],
         className,
       )}

@@ -1,5 +1,6 @@
 import type { BadgeProps, BadgeTone } from "@/components/ui/badge"
 import { Badge } from "@/components/ui/badge"
+import { cn } from "@/lib/utils"
 import { subjectGlyphFor } from "@/components/ui/subject-glyph"
 
 /*
@@ -95,7 +96,12 @@ export function SubjectTag({ subject, icon, ...props }: SubjectTagProps) {
   const tone = subjectTone(subject)
   const Glyph = icon ? subjectGlyphFor(tone) : null
   return (
-    <Badge tone={tone} icon={Glyph ? <Glyph size={12} /> : undefined} {...props}>
+    <Badge
+      tone={tone}
+      icon={Glyph ? <Glyph size={12} /> : undefined}
+      {...props}
+      className={cn("bg-primary-container text-on-primary-container", props.className)}
+    >
       {subject}
     </Badge>
   )
