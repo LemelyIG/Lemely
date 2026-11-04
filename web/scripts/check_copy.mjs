@@ -590,7 +590,8 @@ export function findBannedWords(source) {
 
   lines.forEach((line, lineIndex) => {
     // `easy A` is the one phrase where case carries the meaning ("easy a" is
-    // not the claim), so it is matched case-sensitively on the capital A.
+    // not the claim), so the grade letter is matched on its capital A while
+    // the word before it is matched in any case ("EASY A", "Easy A").
     for (const span of proseSpans(line)) {
       if (hasBannedPhrase(span)) flaggedLines.add(lineIndex + 1)
     }
@@ -608,7 +609,9 @@ export function findBannedWords(source) {
 
 function hasBannedPhrase(span) {
   const text = typeof span === "string" ? span : (span.text ?? "")
-  if (/\beasy\s+A\b/.test(text)) return true
+  // Before the generic pattern below, which is case-insensitive and would
+  // otherwise see "EASY A" as the lowercase "easy a" it deliberately lets pass.
+  if (/\b[Ee][Aa][Ss][Yy]\s+A\b/.test(text)) return true
   return BANNED_PATTERN.test(text.replace(/\beasy\s+a\b/gi, " "))
 }
 
