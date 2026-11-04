@@ -28,6 +28,7 @@ import {
   type Icon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
+import { gradeChipClass } from "@/lib/grade"
 import { Avatar } from "@/components/ui/avatar"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
 import { portalErrorFallback } from "@/components/route-error"
@@ -201,8 +202,8 @@ function ClassesNavSection() {
               // default (non-exact) match is deliberate, since this row must
               // also read as current on the class's `/analytics` child.
               //
-              // No grade chip: `ClassSummary` carries `average` (a percentage)
-              // and no grade, and a grade is not something to invent here. The
+              // The grade chip is the server's median latest paper grade
+              // (`ClassSummary.grade`), shown only when it exists. The
               // trailing figure is the real `studentCount`.
               <NavLink
                 key={c.id}
@@ -219,7 +220,15 @@ function ClassesNavSection() {
                 }
               >
                 <span className="truncate">{c.label}</span>
-                <span className="ms-auto flex-none text-data-sm text-on-surface-variant">{c.studentCount}</span>
+                {c.grade ? (
+                  <span className={cn("ms-auto inline-flex flex-none items-center rounded-md px-1.5 text-data-sm font-bold", gradeChipClass(c.grade, { size: "small" }))}>
+                    <span className="sr-only">Median grade </span>
+                    {c.grade}
+                  </span>
+                ) : null}
+                <span className={cn("flex-none text-data-sm text-on-surface-variant", !c.grade && "ms-auto")}>
+                  {c.studentCount}
+                </span>
               </NavLink>
             ))}
             {data.classes.length > 5 ? (
@@ -385,6 +394,27 @@ function Sidebar() {
 const TOP_BAR_ICON_BUTTON =
   "relative flex h-9 w-9 flex-none items-center justify-center rounded-chip text-on-surface-variant transition-colors hover:bg-surface-container hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:h-11 pointer-coarse:w-11"
 
+/**
+ * The signed-in teacher's avatar at the end of the top bar: their photo when
+ * the profile has `avatarUrl`, otherwise initials from the same name
+ * `UserBlock` shows. Links to profile settings (the settings index). Renders
+ * nothing until the profile resolves rather than a placeholder person.
+ */
+function TopBarAvatar() {
+  const { data } = useProfile()
+  if (!data) return null
+  const name = data.displayName ?? data.email.split("@")[0]
+  return (
+    <Link
+      to="/teacher/settings"
+      aria-label={`Your profile, ${name}`}
+      className="flex-none rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+    >
+      <Avatar name={name} src={data.avatarUrl ?? undefined} size="sm" className="h-9 w-9 pointer-coarse:h-11 pointer-coarse:w-11" />
+    </Link>
+  )
+}
+
 function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
   const location = useLocation()
   const trail = resolveTrail(location.pathname)
@@ -439,6 +469,7 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
         <Link to="/teacher/settings" aria-label="Settings" className={TOP_BAR_ICON_BUTTON}>
           <Gear size={20} aria-hidden="true" />
         </Link>
+        <TopBarAvatar />
       </div>
       {/* The D1.5 back affordance: one crumb is just the page's own name, which
           the title already says, so the trail renders only when drilled in. */}
