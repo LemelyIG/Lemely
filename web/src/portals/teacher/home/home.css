@@ -7,3 +7,4 @@
 @media (prefers-reduced-motion: reduce) {
   .th-received .th-big, .th-received .th-big path, .th-received .th-got { animation: none; }
 }
+@keyframes em-nudge { 0%, 100% { transform: none; } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }

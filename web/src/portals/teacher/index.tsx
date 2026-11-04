@@ -9,7 +9,7 @@ import { BadgeSync } from "@/components/badge-sync"
 import { BrandLockup } from "@/components/ui/brand-lockup"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { ScreenOutlet } from "@/components/ui/screen-outlet"
-import { Link, Navigate, NavLink, useLocation } from "react-router-dom"
+import { Link, NavLink, useLocation } from "react-router-dom"
 import {
   SquaresFour,
   FileText,
@@ -48,7 +48,7 @@ import { ForwardArrow } from "@/components/ui/inline-arrow"
 // are heavy screens that most teacher sessions (grading, review) never open;
 // they no longer ride along in the bundle every route pays for. Named
 // exports (not default), hence the `.then((m) => ({ default: m.X }))` shape.
-const Overview = lazy(() => import("./screens/Overview").then((m) => ({ default: m.Overview })))
+const Overview = lazy(() => import("./home/TeacherHome").then((m) => ({ default: m.TeacherHome })))
 const Grading = lazy(() => import("./screens/Grading").then((m) => ({ default: m.Grading })))
 const RecentlyDeleted = lazy(() =>
   import("./screens/RecentlyDeleted").then((m) => ({ default: m.RecentlyDeleted })),
@@ -66,8 +66,8 @@ const ClassAnalytics = lazy(() =>
 const ClassPapers = lazy(() =>
   import("./screens/ClassPapers").then((m) => ({ default: m.ClassPapers })),
 )
-// D7.10 / Task 21 — the create-first-class step `teacherFirstClassRedirect`
-// (below) sends a zero-class teacher to. Lazy for the same reason as every
+// D7.10 / Task 21 — the create-first-class step the teacher setup screen
+// (`home/TeacherSetup`) links to. Lazy for the same reason as every
 // other screen here (P6.1b): most sessions, most of the time, never mount it.
 const CreateFirstClass = lazy(() =>
   import("./screens/CreateFirstClass").then((m) => ({ default: m.CreateFirstClass })),
@@ -400,56 +400,6 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
   )
 }
 
-/**
- * D7.10 — is a redirect to `/teacher/first-class` owed on this render?
- *
- * The teacher-side mirror of `studentOnboardingRedirect` (D7.9,
- * `portals/student/index.tsx`), pulled out of `TeacherLayout` as a pure
- * function for the identical reason: `vitest.config.ts` runs this repo's
- * unit suite under Node with no jsdom and no renderer (D3.20), so nothing
- * that requires mounting `TeacherLayout` — a hook call, `useLocation()`
- * itself — is reachable from a unit test here. The *decision* the gate makes
- * is reachable, once it is something callable on its own:
- * `web/tests/unit/teacherFirstRun.test.ts` pins it directly, all four states.
- *
- * `status` is `useTeacherClasses()`'s own three-way react-query status, not a
- * boolean the caller reduces it to first — the same defence D7.9's version
- * takes, for the same reason. The two states that must NEVER redirect are
- * exactly the two non-`"success"` ones, and a caller left holding only a
- * class count cannot tell "the list hasn't loaded yet" (`undefined`,
- * mid-flight) apart from "the list loaded and it is empty" (`0`, resolved) —
- * both look like "nothing" to a careless `!count` check. Firing on the
- * pending state would bounce a returning teacher who has real classes on
- * every cold load; firing on error would trap an account whenever
- * `GET /teacher/classes` hiccups. Requiring the real status up front makes
- * both structurally impossible here, rather than a discipline every call
- * site has to keep separately.
- *
- * The third guard, `pathname === "/teacher/first-class"`, is what keeps this
- * a redirect and not a trap: the step this gate sends a teacher to is itself
- * a route under `/teacher`, so without this guard a teacher standing on
- * it — which is every such teacher, immediately after the gate has already
- * sent them there once — would be told to redirect to the exact page they
- * are already on, on every render.
- *
- * Unlike onboarding, there is deliberately no "skip for now" reachable from
- * here. D7.10's own rationale is why: the review queue, the at-risk list,
- * class analytics and the join code itself all have nothing to scope to
- * without at least one class, so there is nowhere useful for a skip to land.
- */
-export type TeacherClassesQueryStatus = "pending" | "error" | "success"
-
-export function teacherFirstClassRedirect(
-  status: TeacherClassesQueryStatus,
-  classCount: number,
-  pathname: string,
-): string | null {
-  if (status !== "success") return null
-  if (classCount > 0) return null
-  if (pathname === "/teacher/first-class") return null
-  return "/teacher/first-class"
-}
-
 /** The four route-backed BottomNav tabs, exported so `navigation.test.ts` can
  * assert each `to` resolves to a mounted route without rendering the shell.
  * Labels declared in tab order ("Overview", "Grading", "Review", "Classes")
@@ -475,7 +425,7 @@ function TeacherLayout() {
   const queryClient = useQueryClient()
 
   /*
-   * The wiring for `teacherFirstClassRedirect` above. Reads the same query
+   * Reads the same query
    * `ClassesNavSection` already subscribes to (`useTeacherClasses()`,
    * `GET /teacher/classes`) — react-query dedupes by queryKey
    * (`["teacher", "classes"]`), so this adds no second network request, only
@@ -485,25 +435,14 @@ function TeacherLayout() {
    * whole shell — sidebar and all — rather than the shell with a fallback
    * inside it. Packet B1 corrects that the same way it does for the student
    * portal: the shell renders regardless, with `<RouteSkeleton />` standing
-   * in for the content below. `teacherFirstClassRedirect` already returns
-   * `null` for any non-`"success"` status, so calling it unconditionally
-   * here is exactly as safe as the old early return was — an errored query
-   * still falls through to the portal exactly as before, and a pending one
-   * still never redirects.
+   * in for the content below. A zero-class teacher is no longer redirected:
+   * the home route shows the setup screen instead.
    */
   const classesQuery = useTeacherClasses()
   // Task 9 (C3d): shares its cache/request with `TeacherNav`'s own
   // `useReviewQueueCount()` subscriber (same query key) — mounting both the
   // desktop sidebar and this bottom bar costs one network request, not two.
   const reviewQueueCount = useReviewQueueCount()
-  const firstClassRedirect = teacherFirstClassRedirect(
-    classesQuery.status,
-    classesQuery.data?.classes.length ?? 0,
-    location.pathname,
-  )
-  if (firstClassRedirect) {
-    return <Navigate to={firstClassRedirect} replace />
-  }
 
   return (
     // `bg-surface`: the shell owns its own ground rather than depending on
@@ -685,7 +624,7 @@ export const teacherRoute: RouteObject = {
     // `/student/onboard`'s exclusion from the student nav for the identical
     // reason: this is a gate destination, not a standing section a teacher
     // with classes already has any reason to navigate to. It stays mounted
-    // and deep-linkable regardless — `teacherFirstClassRedirect` above only
+    // and deep-linkable regardless — the setup screen only
     // ever sends a teacher here, it does not gate this route itself, so a
     // teacher who already has classes can still open it directly (e.g. to
     // create a second class the same way) without being bounced.
