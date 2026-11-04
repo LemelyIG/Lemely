@@ -1,4 +1,5 @@
 import type { AtRiskStudent, ClassSummary, Overview } from "@/lib/teacherTypes"
+import { relativeTime } from "@/lib/utils"
 
 /** Used only when an older server omits `reviewConfidenceThreshold`; mirrors REVIEW_CONFIDENCE_THRESHOLD. */
 export const FALLBACK_REVIEW_THRESHOLD = 0.9
@@ -67,21 +68,52 @@ export function atRiskRowModel(s: AtRiskStudent): AtRiskRowModel {
   }
 }
 
+export interface ClassCardTrend {
+  /** Signed percentage-point change, one decimal ("+0.4", "-1.2", "0.0"). */
+  text: string
+  tone: "up" | "down" | "flat"
+}
+
 export interface ClassCardModel {
   id: string
   title: string
   meta: string
   average: string | null
   weakTopic: string | null
+  /** Median latest paper grade. */
+  grade: string | null
+  trend: ClassCardTrend | null
+  /** Last paper and when the class was last active, e.g. "P4 · 3d ago". */
+  meta2: string | null
+  /** The weak topic's accuracy as a whole percentage. */
+  weakPct: string | null
+  /** The same accuracy, 0-1, for the bar. */
+  weakBar: number | null
+}
+
+function trendOf(delta: number | null | undefined): ClassCardTrend | null {
+  if (typeof delta !== "number" || !Number.isFinite(delta)) return null
+  const text = delta.toFixed(1)
+  if (text === "0.0" || text === "-0.0") return { text: "0.0", tone: "flat" }
+  return delta > 0 ? { text: `+${text}`, tone: "up" } : { text, tone: "down" }
 }
 
 export function classCardModel(c: ClassSummary): ClassCardModel {
   const students = `${c.studentCount} ${c.studentCount === 1 ? "student" : "students"}`
+  const accuracy = c.topWeakness && typeof c.topWeaknessAccuracy === "number" && Number.isFinite(c.topWeaknessAccuracy)
+    ? Math.min(1, Math.max(0, c.topWeaknessAccuracy))
+    : null
+  const meta2 = [c.lastPaper, c.lastActivityAt ? relativeTime(c.lastActivityAt) : null].filter(Boolean).join(" · ")
   return {
     id: c.id,
     title: c.label,
     meta: c.subjectCode ? `${c.subjectCode} · ${students}` : students,
     average: c.average === null ? null : `${Math.round(c.average)}%`,
     weakTopic: c.topWeakness,
+    grade: c.grade || null,
+    trend: trendOf(c.delta),
+    meta2: meta2 || null,
+    weakPct: accuracy === null ? null : `${Math.round(accuracy * 100)}%`,
+    weakBar: accuracy,
   }
 }

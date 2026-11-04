@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { atRiskRowModel, classCardModel, reviewQueueModel } from "@/portals/teacher/home/models"
+import type { ClassSummary } from "@/lib/teacherTypes"
 
 describe("reviewQueueModel", () => {
   it("scales bars to the largest bucket and marks bands under the server threshold as low", () => {
@@ -100,7 +101,7 @@ describe("classCardModel", () => {
   it("formats meta from real fields only", () => {
     const m = classCardModel({ id: "c1", label: "Year 11 Chemistry", studentCount: 52, average: 61.4, subjectCode: "0620",
       subjectName: "Chemistry", schoolId: null, joinCode: "K7M4QX", atRiskCount: 2, lastActivityAt: null, topWeakness: "Electrolysis" })
-    expect(m).toEqual({ id: "c1", title: "Year 11 Chemistry", meta: "0620 · 52 students", average: "61%", weakTopic: "Electrolysis" })
+    expect(m).toMatchObject({ id: "c1", title: "Year 11 Chemistry", meta: "0620 · 52 students", average: "61%", weakTopic: "Electrolysis" })
   })
 
   it("omits what the class does not have", () => {
@@ -108,5 +109,51 @@ describe("classCardModel", () => {
       subjectName: null, schoolId: null, joinCode: null, atRiskCount: null, lastActivityAt: null, topWeakness: null })
     expect(m.meta).toBe("1 student")
     expect(m.average).toBeNull()
+    expect(m.grade).toBeNull()
+    expect(m.trend).toBeNull()
+    expect(m.meta2).toBeNull()
+    expect(m.weakPct).toBeNull()
+    expect(m.weakBar).toBeNull()
+  })
+})
+
+describe("classCardModel grade and trend", () => {
+  const base: ClassSummary = { id: "c3", label: "11P", studentCount: 3, average: 62, subjectCode: "0625", subjectName: "Physics",
+    schoolId: null, joinCode: null, atRiskCount: 0, lastActivityAt: null, topWeakness: "Waves" }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date("2026-11-05T12:00:00Z"))
+  })
+  afterEach(() => vi.useRealTimers())
+
+  it("carries the median grade, a signed upward trend and the last paper with its date", () => {
+    const m = classCardModel({ ...base, grade: "B", delta: 0.4, lastPaper: "P4", lastActivityAt: "2026-11-02T12:00:00Z" })
+    expect(m.grade).toBe("B")
+    expect(m.trend).toEqual({ text: "+0.4", tone: "up" })
+    expect(m.meta2).toBe("P4 · 3d ago")
+  })
+
+  it("marks a fall as down without a plus sign and no change as flat", () => {
+    expect(classCardModel({ ...base, delta: -2.25 }).trend).toEqual({ text: "-2.3", tone: "down" })
+    expect(classCardModel({ ...base, delta: 0 }).trend).toEqual({ text: "0.0", tone: "flat" })
+  })
+
+  it("shows whichever of the paper and date exists", () => {
+    expect(classCardModel({ ...base, lastPaper: "P2" }).meta2).toBe("P2")
+    expect(classCardModel({ ...base, lastActivityAt: "2026-11-05T11:30:00Z" }).meta2).toBe("30m ago")
+  })
+
+  it("turns the weak topic accuracy into a percentage and a clamped bar", () => {
+    const m = classCardModel({ ...base, topWeaknessAccuracy: 0.384 })
+    expect(m.weakPct).toBe("38%")
+    expect(m.weakBar).toBe(0.384)
+    expect(classCardModel({ ...base, topWeaknessAccuracy: 1.2 }).weakBar).toBe(1)
+  })
+
+  it("drops a weak accuracy that has no topic to belong to", () => {
+    const m = classCardModel({ ...base, topWeakness: null, topWeaknessAccuracy: 0.5 })
+    expect(m.weakPct).toBeNull()
+    expect(m.weakBar).toBeNull()
   })
 })
