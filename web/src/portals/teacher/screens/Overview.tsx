@@ -13,6 +13,7 @@ export function Overview({ overview, classes, onFiles }: { overview: OverviewDTO
   const lastUpload = last ? `${last.subjectCode} · ${relativeTime(last.recordedAt)}` : null
   return (
     <div className="grid gap-8">
+      <h1 className="sr-only">Overview</h1>
       <div className="grid gap-6 lg:grid-cols-2">
         <ReviewQueueTile overview={overview} />
         <MarkClassSet lastUpload={lastUpload} onFiles={onFiles} />

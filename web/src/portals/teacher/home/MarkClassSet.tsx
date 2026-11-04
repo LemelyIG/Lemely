@@ -54,7 +54,7 @@ export function MarkClassSet({ lastUpload, onFiles }: { lastUpload: string | nul
       className={`relative rounded-card bg-surface-container-lowest p-6 shadow-panel ${received ? "th-received" : ""}`}
     >
       <div className="flex items-baseline justify-between">
-        <h2 id="mcs-h" className="text-eyebrow text-on-surface-variant">Mark a class set</h2>
+        <h2 id="mcs-h" className="text-eyebrow text-on-surface-variant">Mark papers</h2>
         {received ? (
           <span className="th-got inline-flex items-center gap-1 text-data-md text-success-text"><Check size={14} weight="bold" />Received</span>
         ) : (
@@ -63,8 +63,8 @@ export function MarkClassSet({ lastUpload, onFiles }: { lastUpload: string | nul
       </div>
       <div className="mt-4 grid place-items-center gap-3 rounded-tile border border-dashed border-outline p-8 text-center">
         <span aria-hidden className="grid size-11 place-items-center rounded-chip bg-primary-container text-on-primary-container"><UploadSimple size={20} /></span>
-        <p className="text-display-xs">Drop papers anywhere on this page</p>
-        <p className="max-w-[44ch] text-body-sm text-on-surface-variant">One PDF per student. Lemely reads each student's name off the paper.</p>
+        <p className="text-display-xs">Drop a paper anywhere on this page</p>
+        <p className="max-w-[44ch] text-body-sm text-on-surface-variant">One PDF per student, marked one at a time. Lemely reads the student's name off the paper.</p>
         <button
           type="button"
           onClick={() => input.current?.click()}
