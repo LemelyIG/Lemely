@@ -53,13 +53,13 @@ export function TeacherSetup({ progress, firstClass, onFiles }: { progress: Setu
 
   return (
     <div className="grid gap-8">
-      <header className="rounded-card bg-inverse-surface p-8 text-inverse-on-surface">
-        <p className="text-eyebrow text-inverse-primary">Every mark, explained.</p>
+      <header className="rounded-card bg-primary p-8 text-on-primary dark:bg-primary-container dark:text-on-primary-container">
+        <p className="text-eyebrow text-inverse-primary dark:text-primary">Every mark, explained.</p>
         <h1 className="mt-2 text-display-lg">Mark your first papers</h1>
         <div className="mt-6 flex flex-wrap gap-3">
-          <Link to="/teacher/first-class" className="inline-flex items-center gap-2 rounded-button bg-inverse-primary px-5 py-3 btn-text text-primary transition-colors hover:bg-inverse-primary/85">Create a class</Link>
+          <Link to="/teacher/first-class" className="inline-flex items-center gap-2 rounded-button bg-inverse-primary px-5 py-3 btn-text text-primary transition-colors hover:bg-inverse-primary/85 dark:bg-primary dark:text-on-primary dark:hover:bg-primary-hover">Create a class</Link>
           <button type="button" onClick={() => (progress.created ? input.current?.click() : setNudge((n) => n + 1))}
-            className="rounded-button border border-inverse-on-surface/40 px-5 py-3 btn-text transition-colors hover:bg-inverse-on-surface/10">Upload papers</button>
+            className="rounded-button border border-on-primary/40 px-5 py-3 btn-text transition-colors hover:bg-on-primary/10 dark:border-on-primary-container/40 dark:hover:bg-on-primary-container/10">Upload papers</button>
         </div>
       </header>
 
