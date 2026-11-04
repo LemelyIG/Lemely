@@ -1,0 +1,339 @@
+/* Student home, variant C: "Training log".
+   Binny, level and the week lead the page; a short Today list follows; the
+   record (subjects, weak topics, latest result) sits quieter below.
+   Tokens only: every colour is a role from tokens.css. */
+
+.tl {
+  --tl-pad: 48px;
+  --tl-line: var(--border-default);
+  --tl-ease-x: cubic-bezier(0.16, 1, 0.3, 1);
+  font: 400 16px/1.5 var(--font-ui);
+}
+.sh-root.tl[data-theme="dark"] { --tl-line: transparent }
+
+.tl ::selection { background: var(--md-primary-container); color: var(--md-on-primary-container) }
+.tl :is(a, button):focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px }
+.tl p { margin: 0 }
+
+.tl-vh {
+  position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+}
+.tl-ico {
+  inline-size: 22px; block-size: 22px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round;
+}
+.tl-ico-sm { inline-size: 16px; block-size: 16px; stroke-width: 2 }
+/* Direction-dependent arrow: mirrors in a right-to-left layout. */
+.tl-flip:dir(rtl) { transform: scaleX(-1) }
+
+.tl-page {
+  max-inline-size: 1184px; margin-inline: auto;
+  padding: 36px var(--tl-pad) 72px;
+}
+.tl-card {
+  background: var(--surface-card);
+  border: 1.5px solid var(--tl-line);
+  border-radius: var(--radius-card);
+}
+
+/* Greeting */
+.tl-greet { margin-block-end: 24px }
+.tl-greet h1 { margin: 0; font: 800 32px/1.15 var(--font-ui); letter-spacing: var(--ls-headline-ui); text-wrap: balance }
+.tl-greet-sub { margin-block-start: 6px; color: var(--text-secondary) }
+
+/* Hero: Binny tall on the start side, level on top, the week below. */
+.tl-hero {
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr);
+  grid-template-areas: "binny level" "binny week";
+  column-gap: 40px; row-gap: 28px;
+  padding: 28px;
+  border-radius: var(--radius-board);
+}
+.tl-binny { grid-area: binny; margin: 0; display: flex; flex-direction: column; gap: 12px }
+.tl-binny-tile {
+  flex: 1; min-block-size: 240px;
+  display: grid; place-items: center; padding: 16px;
+  border-radius: var(--radius-card);
+  background: var(--md-primary-container);
+}
+.tl-binny-tile svg { display: block; inline-size: 176px; block-size: auto; animation: tlBob 3.6s ease-in-out infinite }
+.tl-say {
+  padding: 10px 14px; border-radius: var(--radius-button);
+  background: var(--surface-row);
+  font: 600 15px/1.35 var(--font-ui); color: var(--text-body); text-wrap: pretty;
+}
+
+.tl-level { grid-area: level; align-self: end }
+.tl-level-row { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px }
+.tl-level-n { font: 800 64px/0.9 var(--font-display); letter-spacing: -0.04em; font-variant-numeric: lining-nums }
+.tl-xp { display: flex; align-items: center; gap: 10px }
+.tl-xp-n { font: 600 40px/1 var(--font-mono); letter-spacing: -0.03em; font-variant-numeric: tabular-nums }
+.tl-xp-u {
+  padding: 6px 9px; border-radius: 8px;
+  background: var(--md-tertiary); color: var(--sh-gold-text);
+  font: 700 13px/1 var(--font-mono); letter-spacing: var(--ls-label);
+}
+.tl-bar {
+  margin-block-start: 20px; block-size: 12px; overflow: hidden;
+  border-radius: var(--radius-pill); background: var(--track);
+}
+.tl-bar-fill {
+  display: block; block-size: 100%; inline-size: 48%;
+  border-radius: inherit; background: var(--md-primary);
+  transform-origin: 0 50%;
+  animation: tlFill 900ms var(--tl-ease-x) 200ms both;
+}
+.tl-bar-fill:dir(rtl) { transform-origin: 100% 50% }
+.tl-bar-label { margin-block-start: 8px; font: 600 14px/1.4 var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums }
+
+.tl-week { grid-area: week; padding-block-start: 24px; border-block-start: 1px solid var(--border-subtle) }
+.tl-week-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; margin-block-end: 16px }
+.tl-week-n { font: 800 40px/1 var(--font-display); letter-spacing: -0.04em; text-wrap: balance }
+.tl-week-meta { font: 600 14px/1.4 var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums }
+.tl-week-body { margin-block: -4px 16px; max-inline-size: 60ch; color: var(--text-secondary) }
+
+.tl-strip { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px }
+.tl-day {
+  display: flex; flex-direction: column; justify-content: space-between; gap: 10px;
+  min-block-size: 96px; padding: 12px 14px;
+  border-radius: var(--radius-inner);
+  background: var(--surface-row); color: var(--text-muted);
+}
+.tl-day-w { font: 600 11px/1 var(--font-mono); letter-spacing: var(--ls-label); text-transform: uppercase }
+.tl-day-d { font: 600 32px/1 var(--font-mono); letter-spacing: -0.03em; font-variant-numeric: tabular-nums }
+.tl-day.is-earned { background: var(--md-tertiary); color: var(--sh-gold-text) }
+.tl-day.is-today { outline: 2px solid var(--md-primary); outline-offset: 3px }
+.tl-day.is-today.is-earned { animation: tlPop 600ms var(--tl-ease-x) 700ms both }
+.tl-narrow { display: none }
+
+/* Today list */
+.tl-today { margin-block-start: 48px }
+.tl-h2 { margin: 0 0 16px; font: 800 32px/1.15 var(--font-ui); letter-spacing: var(--ls-headline-ui) }
+.tl-today-card { padding: 8px }
+.tl-today-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px }
+.tl-item { align-items: center; gap: 20px; padding: 18px 20px; border-radius: var(--radius-tile) }
+.tl-item-ico {
+  display: grid; place-items: center; flex: none;
+  inline-size: 44px; block-size: 44px; border-radius: var(--radius-button);
+  background: var(--surface-row); color: var(--md-primary);
+}
+.tl-item-text { flex: 1; min-inline-size: 0 }
+.tl-item-title { margin: 0; font: 700 21px/1.25 var(--font-ui); letter-spacing: -0.01em; text-wrap: balance }
+.tl-item-meta { margin-block-start: 4px; font: 600 13px/1.4 var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums }
+.tl-item-body { margin-block-start: 6px; max-inline-size: 62ch; font-size: 15px; color: var(--text-secondary); text-wrap: pretty }
+.tl-item-act { flex: none }
+
+/* The first item in data-today is the lead: tonal block, filled button. */
+:is(
+  .sh-root[data-today^="marking"] [data-today-item="marking"],
+  .sh-root[data-today^="session"] [data-today-item="session"],
+  .sh-root[data-today^="practice"] [data-today-item="practice"],
+  .sh-root[data-today^="correct"] [data-today-item="correct"],
+  .sh-root[data-today^="first-paper"] [data-today-item="first-paper"]
+) {
+  padding-block: 24px;
+  background: var(--md-primary-container); color: var(--md-on-primary-container);
+
+  & .tl-item-ico { background: var(--md-primary); color: var(--md-on-primary) }
+  & :is(.tl-item-meta, .tl-item-body) { color: color-mix(in oklch, var(--md-on-primary-container) 80%, var(--md-primary-container)) }
+  & .tl-item-title { font-size: 24px }
+  & .tl-btn { background: var(--md-primary); color: var(--md-on-primary) }
+  & .tl-btn:hover { background: var(--md-primary-hover) }
+}
+
+/* Buttons and links */
+.tl-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; flex: none;
+  min-block-size: 48px; padding: 0 20px; border: 0; border-radius: var(--radius-button);
+  background: var(--md-primary-container); color: var(--md-on-primary-container);
+  font: 700 15px/1 var(--font-ui); text-decoration: none; white-space: nowrap; cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+.tl-btn:hover { background: color-mix(in oklch, var(--md-primary-container), var(--md-primary) 12%) }
+.tl-btn:active { transform: scale(0.97) }
+.tl-btn-pri { background: var(--md-primary); color: var(--md-on-primary) }
+.tl-btn-pri:hover { background: var(--md-primary-hover) }
+.tl-link {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--md-primary); font-weight: 700; font-size: 15px;
+  text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 3px;
+}
+.tl-link:hover { text-decoration-thickness: 2.5px }
+
+.tl-note { align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; margin: 8px; padding: 12px 16px; border-radius: var(--radius-inner); background: var(--surface-row); font-size: 15px; color: var(--text-secondary) }
+.sh-root[data-state="no-plan"] .tl-note[data-only-state="no-plan"],
+.sh-root[data-exams="no"] .tl-note[data-only-state="no-exams"] { display: flex }
+
+/* The record: subjects ledger, weak topics, latest result. */
+.tl-record {
+  margin-block-start: 48px;
+  display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 24px; align-items: start;
+}
+.tl-record-side { display: grid; gap: 24px }
+.tl-ledger, .tl-weak, .tl-result { padding: 20px 22px }
+.tl-ledger .tl-note { margin: 12px 0 0 }
+.tl-h3 { margin: 0 0 10px; font: 800 18px/1.2 var(--font-ui); letter-spacing: var(--ls-headline-ui) }
+.tl-code { font: 600 14px var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums }
+.tl-num { font-variant-numeric: tabular-nums }
+
+.tl-rows, .tl-marks { list-style: none; margin: 0; padding: 0 }
+.tl-rows li + li, .tl-marks li + li { border-block-start: 1px solid var(--border-subtle) }
+.tl-subj {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto auto;
+  grid-template-areas: "chip name papers exam" "chip delta papers exam";
+  align-items: center; column-gap: 16px; row-gap: 2px;
+  margin-inline: -10px; padding: 12px 10px; border-radius: 12px;
+  color: inherit; text-decoration: none;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.tl-subj:hover { background: var(--surface-hover-tint) }
+.tl-chip {
+  grid-area: chip; display: grid; place-items: center; flex: none;
+  inline-size: 36px; block-size: 36px; border-radius: 10px;
+  color: var(--white); font: 800 20px/1 var(--font-ui);
+}
+.sh-root[data-state="one-paper"] .tl-chip[data-only-state="one-paper"] { display: grid }
+.tl-g-a { background: var(--sh-grade-a) }
+.tl-g-b { background: var(--sh-grade-b) }
+.tl-g-c { background: var(--sh-grade-c) }
+.tl-subj-name { grid-area: name; font: 700 16px/1.3 var(--font-ui) }
+.tl-subj-name .tl-code { margin-inline-end: 6px }
+.tl-subj-delta { grid-area: delta; display: inline-flex; align-items: center; gap: 4px; font-size: 14px; color: var(--text-secondary) }
+.tl-subj-delta.is-up .tl-ico { color: var(--md-success) }
+.tl-subj-papers, .tl-subj-exam { font: 600 13px/1.4 var(--font-mono); color: var(--text-secondary); text-align: end; white-space: nowrap }
+.tl-subj-papers { grid-area: papers }
+.tl-subj-exam { grid-area: exam }
+
+.tl-mark {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto 5ch; align-items: baseline; gap: 14px;
+  margin-inline: -8px; padding: 10px 8px; border-radius: 10px;
+  color: inherit; text-decoration: none; font-size: 15px;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.tl-mark:hover { background: var(--surface-hover-tint) }
+.tl-mark-t { font-weight: 600 }
+.tl-mark-v { font: 600 14px var(--font-mono); text-align: end; font-variant-numeric: tabular-nums }
+
+.tl-result-body { display: grid; gap: 8px; justify-items: start }
+.tl-result-paper { font: 600 14px/1.4 var(--font-mono); color: var(--text-secondary) }
+.tl-result-score { display: flex; align-items: center; gap: 14px }
+.tl-score { font: 600 32px/1 var(--font-mono); letter-spacing: -0.03em; font-variant-numeric: tabular-nums }
+
+/* New student */
+.tl-hero-new { grid-template-areas: "binny body" }
+.tl-new-body { grid-area: body; display: grid; gap: 24px; align-content: center }
+.tl-steps { list-style: none; margin: 0; padding: 0 }
+.tl-step { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 12px 4px; color: var(--text-secondary) }
+.tl-step + .tl-step { border-block-start: 1px solid var(--border-subtle) }
+.tl-step-dot { inline-size: 12px; block-size: 12px; border-radius: 50%; border: 2px solid var(--border-control) }
+.tl-step-t { font-weight: 600 }
+.tl-step-when { font: 600 11px/1 var(--font-mono); letter-spacing: var(--ls-label); text-transform: uppercase }
+.tl-step.is-now { color: var(--text-body) }
+.tl-step.is-now .tl-step-dot { border-color: var(--md-primary); background: var(--md-primary) }
+.tl-step.is-now .tl-step-when { color: var(--md-primary) }
+
+/* Error */
+.tl-error {
+  display: grid; justify-items: center; gap: 10px;
+  max-inline-size: 520px; margin: 48px auto 0; padding: 36px 28px;
+  text-align: center;
+}
+.tl-error-ico { inline-size: 32px; block-size: 32px; color: var(--md-error) }
+.tl-error-h { margin: 4px 0 0; font: 700 21px/1.25 var(--font-ui) }
+.tl-error-p { margin-block-end: 10px; color: var(--text-secondary) }
+
+/* Loading */
+.tl-skel { border-radius: 12px; background: var(--md-surface-high); animation: tlPulse 1.2s ease-in-out infinite alternate }
+.tl-skel-line { block-size: 32px }
+.tl-skel-greet { inline-size: 320px; max-inline-size: 70%; margin-block-end: 24px }
+.tl-skel-hero { background: var(--surface-card); border: 1.5px solid var(--tl-line) }
+.tl-skel-binny { grid-area: binny; min-block-size: 280px; border-radius: var(--radius-card) }
+.tl-skel-stack { grid-area: level / level / week / week; display: grid; gap: 20px; align-content: end }
+.tl-skel-level { inline-size: 240px; block-size: 56px }
+.tl-skel-bar { block-size: 12px; border-radius: var(--radius-pill) }
+.tl-skel-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px }
+.tl-skel-week span { block-size: 96px; border-radius: var(--radius-inner) }
+.tl-skel-block { block-size: 220px; margin-block-start: 48px; border-radius: var(--radius-card) }
+.tl-skel-ledger { block-size: 200px; margin-block-start: 24px; border-radius: var(--radius-card) }
+
+/* Mobile: Binny small, then level, the week, today, the record. */
+@container home (max-width: 760px) {
+  .tl { --tl-pad: 16px }
+  .tl-page { padding-block: 20px 48px }
+  .tl-greet { margin-block-end: 16px }
+  .tl-greet h1 { font-size: 26px }
+  .tl-greet-sub { font-size: 15px }
+
+  .tl-hero, .tl-hero-new {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "binny" "level" "week";
+    row-gap: 20px; padding: 18px;
+    border-radius: var(--radius-card);
+  }
+  .tl-hero-new { grid-template-areas: "binny" "body" }
+  .tl-binny { flex-direction: row; align-items: center; gap: 14px }
+  .tl-binny-tile { flex: none; inline-size: 112px; block-size: 112px; min-block-size: 0; padding: 8px; border-radius: 50% }
+  .tl-binny-tile svg { inline-size: 80px }
+  .tl-say { flex: 1 }
+
+  .tl-level-n { font-size: 48px }
+  .tl-xp-n { font-size: 28px }
+  .tl-bar { margin-block-start: 16px }
+  .tl-week { padding-block-start: 18px }
+  .tl-week-n { font-size: 30px }
+  .tl-week-head { margin-block-end: 12px }
+  .tl-strip { gap: 5px }
+  .tl-day { min-block-size: 64px; padding: 8px 2px; align-items: center; gap: 6px; border-radius: 12px }
+  .tl-day-w { font-size: 10px; letter-spacing: 0.04em }
+  .tl-day-d { font-size: 20px }
+  .tl-day.is-today { outline-offset: 2px }
+  .tl-wide { display: none }
+  .tl-narrow { display: inline }
+
+  .tl-today { margin-block-start: 32px }
+  .tl-h2 { font-size: 26px; margin-block-end: 12px }
+  .tl-today-card { padding: 6px }
+  .tl-item { flex-wrap: wrap; gap: 12px 14px; padding: 14px }
+  .tl-item-text { flex: 1 1 calc(100% - 58px) }
+  .tl-item-title { font-size: 18px }
+  .tl-item > .tl-btn, .tl-item-act { margin-inline-start: 58px }
+  .tl-item .tl-item-body { display: none }
+  :is(
+    .sh-root[data-today^="marking"] [data-today-item="marking"],
+    .sh-root[data-today^="session"] [data-today-item="session"],
+    .sh-root[data-today^="practice"] [data-today-item="practice"],
+    .sh-root[data-today^="correct"] [data-today-item="correct"],
+    .sh-root[data-today^="first-paper"] [data-today-item="first-paper"]
+  ) {
+    padding-block: 18px;
+    & .tl-item-title { font-size: 21px }
+    & .tl-item-body { display: block }
+    & .tl-btn { inline-size: calc(100% - 58px) }
+  }
+
+  .tl-record { grid-template-columns: minmax(0, 1fr); margin-block-start: 32px; gap: 16px }
+  .tl-record-side { gap: 16px }
+  .tl-ledger, .tl-weak, .tl-result { padding: 16px 18px }
+  .tl-subj {
+    grid-template-columns: 36px auto minmax(0, 1fr);
+    grid-template-areas: "chip name name" "chip delta delta" "chip papers exam";
+    align-items: start; column-gap: 12px; row-gap: 2px;
+  }
+  .tl-chip { align-self: center }
+  .tl-subj-papers, .tl-subj-exam { text-align: start; margin-block-start: 2px }
+  .tl-skel-binny { min-block-size: 112px; inline-size: 112px; border-radius: 50% }
+  .tl-skel-stack { grid-area: auto }
+  .tl-skel-week span { block-size: 64px }
+}
+
+@media (pointer: coarse) {
+  .tl :is(.tl-link, .tl-subj, .tl-mark) { min-block-size: 44px }
+}
+
+@keyframes tlBob { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-7px) } }
+@keyframes tlFill { from { transform: scaleX(0) } }
+@keyframes tlPop { from { transform: scale(0.88) } }
+@keyframes tlPulse { from { opacity: 1 } to { opacity: 0.55 } }
