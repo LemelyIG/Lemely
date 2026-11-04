@@ -5,7 +5,7 @@ import { stripComments } from "./support/jsxSource"
 
 /*
  * C3a (Task 6) · the red-pen register: the per-question wrong-answer
- * explanation reads in `--mark-wrong` ink with a left rule, never a fill.
+ * explanation reads in `--md-error` ink with a left rule, never a fill.
  * Source-text pins (D3.20 — no jsdom, so component *rendering* is not
  * exercised here; Playwright covers the rendered result).
  */
@@ -29,9 +29,9 @@ describe("index.css .lm-red-pen", () => {
     expect(match![1]).not.toMatch(/background/)
   })
 
-  it("colors the ink with --mark-wrong and adds a left rule", () => {
+  it("colors the ink with --md-error and adds a left rule", () => {
     const match = css.match(/\.lm-red-pen\s*\{([^}]*)\}/)
-    expect(match![1]).toContain("var(--mark-wrong)")
+    expect(match![1]).toContain("var(--md-error)")
     expect(match![1]).toContain("border-inline-start")
   })
 })
@@ -64,7 +64,7 @@ describe("PaperResult.tsx", () => {
     expect(source).toMatch(/register=\{markState\(q\) === "wrong" \? "red-pen" : "plain"\}/)
   })
 
-  it("keeps the feedback panel on bg-paper-sunk (the register never touches it)", () => {
-    expect(source).toContain("bg-paper-sunk")
+  it("keeps the feedback panel on bg-surface-container-low (the register never touches it)", () => {
+    expect(source).toContain("bg-surface-container-low")
   })
 })

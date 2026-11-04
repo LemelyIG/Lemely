@@ -13,12 +13,11 @@ import { QueryState } from "@/components/ui/query-state"
 import { GettingStarted } from "@/components/ui/getting-started"
 import { PullIndicator } from "@/components/ui/pull-indicator"
 import { usePullToRefresh } from "@/lib/gestures/usePullToRefresh"
-import { subjectToneForCode } from "@/components/ui/subject-tag"
+import { SUBJECT_FILL } from "@/components/ui/subject-glyph"
 import { subjectIdentifier } from "@/lib/subjectIdentifier"
 import { useReference } from "@/lib/hooks/useReferenceApi"
 import { useXpProfile } from "@/lib/hooks/useXpApi"
 import { XPStreak } from "@/components/ui/xp-streak"
-import { toneFill } from "@/components/ui/badge"
 import {
   PageHeaderSkeleton,
   ListSkeleton,
@@ -175,15 +174,14 @@ function SubjectLedgerRow({ row }: { row: SubjectRow }) {
           return (
             <span className="flex flex-col gap-0.5 flex-1 min-w-0 md:flex-none">
               {/* The name is the row's identity now, so it is the element that
-                  carries the pastel tone (§3.8's single lookup table, still
-                  resolved from the code) rather than a separate code chip —
-                  colour is a stronger signal than font-weight, and the two must
-                  not disagree about which text is the headline. */}
+                  carries the subject fill (`primary-container`, shared by every
+                  subject in v5) rather than a separate code chip, so
+                  the fill and the weight agree about which text is the headline. */}
               <span
                 className={cn(
                   "inline-flex w-fit max-w-full items-center rounded-sm px-2 py-1",
                   "text-body-md font-medium",
-                  toneFill(subjectToneForCode(row.code)),
+                  SUBJECT_FILL,
                 )}
               >
                 {/* `truncate` moved onto this inner span: `text-overflow:

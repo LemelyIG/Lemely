@@ -571,6 +571,51 @@ export function findExclamationMarks(source) {
 }
 
 /*
+ * The never-say list (DESIGN.md voice, shared constraints): words that promise
+ * a shortcut or a result Lemely cannot guarantee. Whole words only, case
+ * insensitive, and only inside UI copy (string literals and JSX text), never in
+ * identifiers or comments.
+ */
+export const BANNED_PHRASES = ["cram", "hack", "easy A", "guaranteed grade"]
+
+const BANNED_PATTERN = new RegExp(
+  `\\b(?:${BANNED_PHRASES.map((phrase) => phrase.replace(/ /g, "\\s+")).join("|")})(?:s|ming|med|ing|ed)?\\b`,
+  "i",
+)
+
+export function findBannedWords(source) {
+  const stripped = stripComments(source)
+  const lines = stripped.split("\n")
+  const flaggedLines = new Set()
+
+  lines.forEach((line, lineIndex) => {
+    // `easy A` is the one phrase where case carries the meaning ("easy a" is
+    // not the claim), so the grade letter is matched on its capital A while
+    // the word before it is matched in any case ("EASY A", "Easy A").
+    for (const span of proseSpans(line)) {
+      if (hasBannedPhrase(span)) flaggedLines.add(lineIndex + 1)
+    }
+  })
+
+  const lineStarts = lineStartOffsets(stripped)
+  for (const { start, text } of jsxTextSpans(stripped)) {
+    if (hasBannedPhrase(text)) flaggedLines.add(lineForOffset(lineStarts, start))
+  }
+
+  return [...flaggedLines]
+    .sort((a, b) => a - b)
+    .map((lineNum) => ({ line: lineNum, text: lines[lineNum - 1].trim().slice(0, 120) }))
+}
+
+function hasBannedPhrase(span) {
+  const text = typeof span === "string" ? span : (span.text ?? "")
+  // Before the generic pattern below, which is case-insensitive and would
+  // otherwise see "EASY A" as the lowercase "easy a" it deliberately lets pass.
+  if (/\b[Ee][Aa][Ss][Yy]\s+A\b/.test(text)) return true
+  return BANNED_PATTERN.test(text.replace(/\beasy\s+a\b/gi, " "))
+}
+
+/*
  * CLI entry, guarded.
  *
  * The unit suite imports the classifier above, and an unguarded module body
@@ -586,11 +631,15 @@ const invokedDirectly =
 if (invokedDirectly) {
   const emDashFindings = []
   const exclamationFindings = []
+  const bannedFindings = []
   for (const file of sourceFiles(SRC)) {
     const rel = relative(ROOT, file)
     const source = readFileSync(file, "utf8")
     for (const hit of findEmDashes(source)) {
       emDashFindings.push({ file: rel, ...hit })
+    }
+    for (const hit of findBannedWords(source)) {
+      bannedFindings.push({ file: rel, ...hit })
     }
     if (!EXCLAMATION_ALLOWLIST.includes(rel)) {
       for (const hit of findExclamationMarks(source)) {
@@ -601,7 +650,7 @@ if (invokedDirectly) {
 
   if (process.argv.includes("--count")) {
     const perFile = new Map()
-    for (const f of [...emDashFindings, ...exclamationFindings]) {
+    for (const f of [...emDashFindings, ...exclamationFindings, ...bannedFindings]) {
       perFile.set(f.file, (perFile.get(f.file) ?? 0) + 1)
     }
     const sorted = [...perFile.entries()].sort((a, b) => b[1] - a[1])
@@ -613,8 +662,8 @@ if (invokedDirectly) {
     process.exit(0)
   }
 
-  if (emDashFindings.length === 0 && exclamationFindings.length === 0) {
-    console.log("check_copy: no em-dashes or exclamation marks in UI copy.")
+  if (emDashFindings.length === 0 && exclamationFindings.length === 0 && bannedFindings.length === 0) {
+    console.log("check_copy: no em-dashes, exclamation marks or never-say words in UI copy.")
     process.exit(0)
   }
 
@@ -637,6 +686,18 @@ if (invokedDirectly) {
     )
     console.error("Rewrite without the exclamation mark.\n")
     for (const f of exclamationFindings) {
+      console.error(`  ${f.file}:${f.line}`)
+      console.error(`    ${f.text}`)
+    }
+  }
+
+  if (bannedFindings.length > 0) {
+    if (emDashFindings.length > 0 || exclamationFindings.length > 0) console.error("")
+    console.error(
+      `check_copy: ${bannedFindings.length} never-say word(s) in UI copy (${BANNED_PHRASES.join(", ")}).`,
+    )
+    console.error("Lemely does not promise shortcuts or guaranteed grades. Rewrite the line.\n")
+    for (const f of bannedFindings) {
       console.error(`  ${f.file}:${f.line}`)
       console.error(`    ${f.text}`)
     }

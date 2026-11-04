@@ -9,6 +9,11 @@ import { describe, expect, it } from "vitest"
  * them means the decision is written down and findable, not merely "closed"
  * in the ledger with nothing behind it.
  *
+ * v5 Abyss: DESIGN.md was rewritten with six sections (Overview, Colors,
+ * Typography, Elevation, Components, Do's and Don'ts), so the old "§16 Recorded
+ * decisions", "§12 Cards" and "§13 knobs" assertions are replaced by a check on
+ * the new structure. The ledger ids stay asserted in docs/design-canvas-notes.md.
+ *
  * Source-text assertions only, against the repo root (not `web/`): both
  * files this test reads live outside the `web/` package.
  */
@@ -24,19 +29,31 @@ const LEDGER_IDS = [
   "student-home-no-hero-grade",
 ] as const
 
-describe("DESIGN.md §16 Recorded decisions", () => {
+describe("DESIGN.md has the six sections of the v5 Abyss system", () => {
   const designMd = read("DESIGN.md")
+  const headings = [...designMd.matchAll(/^## (\d+)\. (.+)$/gm)].map((m) => `${m[1]}. ${m[2]}`)
 
-  it("has a '## 16. Recorded decisions' heading", () => {
-    expect(designMd).toMatch(/## 16\. Recorded decisions/)
+  it("has exactly Overview, Colors, Typography, Elevation, Components, Do's and Don'ts, in order", () => {
+    expect(headings).toEqual([
+      "1. Overview",
+      "2. Colors",
+      "3. Typography",
+      "4. Elevation",
+      "5. Components",
+      "6. Do's and Don'ts",
+    ])
   })
 
-  it("points at docs/design-canvas-notes.md", () => {
-    expect(designMd).toMatch(/docs\/design-canvas-notes\.md/)
+  it("declares the system in frontmatter with colours, typography, rounded and spacing", () => {
+    const frontmatter = designMd.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? ""
+    for (const key of ["name:", "colors:", "typography:", "rounded:", "spacing:", "components:"]) {
+      expect(frontmatter).toContain(key)
+    }
   })
 
-  it.each(LEDGER_IDS)("mentions ledger id %s", (id) => {
-    expect(designMd).toContain(id)
+  it("states the card padding as 28px outer and 22px inner", () => {
+    const components = designMd.match(/## 5\. Components[\s\S]*?(?=\n## 6\.)/)?.[0] ?? ""
+    expect(components).toMatch(/Internal Padding[^\n]*28px[^\n]*22px/)
   })
 })
 
@@ -48,24 +65,5 @@ describe("docs/design-canvas-notes.md", () => {
   it.each(LEDGER_IDS)("names ledger id %s", (id) => {
     const notes = read("docs/design-canvas-notes.md")
     expect(notes).toContain(id)
-  })
-})
-
-describe("DESIGN.md §13 card padding range", () => {
-  const designMd = read("DESIGN.md")
-  const section13 = designMd.match(/## 13\. Variation knobs[\s\S]*?(?=\n## 14\.)/)?.[0] ?? ""
-
-  it("Card padding row uses space-6 … space-8, not space-5 … space-10", () => {
-    expect(section13).toMatch(/Card padding[^\n]*space-6[^\n]*space-8/)
-    expect(section13).not.toMatch(/Card padding[^\n]*space-5[^\n]*space-10/)
-  })
-})
-
-describe("DESIGN.md §12 Cards rule", () => {
-  const designMd = read("DESIGN.md")
-  const section12 = designMd.match(/## 12\. Component rules[\s\S]*?(?=\n## 13\.)/)?.[0] ?? ""
-
-  it("notes that marketing cards turn the knob to space-8", () => {
-    expect(section12).toMatch(/[Mm]arketing cards[^\n]*space-8/)
   })
 })

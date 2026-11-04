@@ -353,6 +353,7 @@
   /* Ambient status pulse. Deliberately NOT part of the --dur-* family: those
      are one-shot transition durations, this is an infinite loop. */
   --animate-lm-pulse: lm-pulse 1.6s infinite;
+  --animate-lm-breathe: lm-breathe 2.4s ease-in-out infinite;
 
   /* Build-era spacing rungs, still referenced by screens. */
   --spacing-container-desktop: 34px;
@@ -753,100 +754,21 @@ body {
     opacity: 1;
   }
 }
+/* The identity's loading motion: the "lm" icon breathing in place. Opacity only
+   (§9.2). Under reduced motion the global rule below ends the loop at once and
+   there is no fill, so the icon settles at full opacity. */
+@keyframes lm-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
 @keyframes lm-spin {
   to {
     transform: rotate(360deg);
-  }
-}
-
-/* ── §9.2 exception: the mark's draw-on (`Mark`, `animated`) ─────────────
-   The ONE documented exception to "animate only transform and opacity" (§9.2):
-   `stroke-dashoffset` on the mark's silhouette. The product owner granted it
-   for this one loading mark specifically, because "the interface is quietly
-   still working" is the entire content of the animation and a
-   transform/opacity treatment cannot draw a line being drawn, which is the one
-   thing this state needs to say. DESIGN.md §9.2 records the exception itself.
-
-   The four steps share one 2.8s loop so the mark reads as being drawn once, in
-   the order a hand would draw it — right page, left page, coil, tick — then
-   held before it repeats. The steps overlap slightly so the line never stops
-   moving between them.
-
-   There is no `stroke-dasharray` length here, and there must not be one. Each
-   path carries `pathLength="1"` (set in `components/ui/mark.tsx` and in the
-   pre-mount shell), which renormalises its length for every stroke-dash
-   calculation, so `1` is "the whole path" whatever its real length is. The
-   previous version of this block hardcoded 36, 24 and 42 — three measurements
-   of three specific paths, copied into two files, and wrong the moment a curve
-   moved.
-
-   Reduced motion still holds without a separate rule here: the existing
-   blanket rule below forces `animation-duration` to ~0 and
-   `animation-iteration-count` to 1, so the animation completes instantly and
-   fill:`both` holds its LAST frame — which is why every 100% keyframe here
-   must be, and is, the fully drawn state (`stroke-dashoffset: 0`). A
-   reduced-motion viewer sees the complete mark immediately, never a stalled or
-   half-drawn stroke. */
-.lm-draw-page-right,
-.lm-draw-page-left,
-.lm-draw-coil,
-.lm-draw-tick {
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  animation-duration: 2.8s;
-  animation-timing-function: var(--ease-out-soft);
-  animation-iteration-count: infinite;
-  animation-fill-mode: both;
-}
-.lm-draw-page-right {
-  animation-name: lm-draw-page-right;
-}
-.lm-draw-page-left {
-  animation-name: lm-draw-page-left;
-}
-.lm-draw-coil {
-  animation-name: lm-draw-coil;
-}
-.lm-draw-tick {
-  animation-name: lm-draw-tick;
-}
-@keyframes lm-draw-page-right {
-  0% {
-    stroke-dashoffset: 1;
-  }
-  20%,
-  100% {
-    stroke-dashoffset: 0;
-  }
-}
-@keyframes lm-draw-page-left {
-  0%,
-  18% {
-    stroke-dashoffset: 1;
-  }
-  38%,
-  100% {
-    stroke-dashoffset: 0;
-  }
-}
-@keyframes lm-draw-coil {
-  0%,
-  36% {
-    stroke-dashoffset: 1;
-  }
-  56%,
-  100% {
-    stroke-dashoffset: 0;
-  }
-}
-@keyframes lm-draw-tick {
-  0%,
-  54% {
-    stroke-dashoffset: 1;
-  }
-  76%,
-  100% {
-    stroke-dashoffset: 0;
   }
 }
 

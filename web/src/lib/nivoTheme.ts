@@ -73,7 +73,6 @@ export const CHART_TOKENS = [
   "--md-outline-variant",
   "--font-mono",
   "--font-sans",
-  "--fs-data-sm",
   "--radius-sm",
   /*
    * The Jewel grade scale, for the one chart whose colour is not a series

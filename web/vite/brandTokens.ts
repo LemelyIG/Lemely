@@ -91,6 +91,25 @@ export function oklchToSrgb(lightness: number, chroma: number, hueDeg: number): 
   return [encode(linear[0]), encode(linear[1]), encode(linear[2])]
 }
 
+/**
+ * `#rrggbb` to OKLCH, the inverse of `oklchToSrgb`. The Abyss token layer
+ * declares its key colours (`--md-primary: #042f4f`) as hex, so the reader
+ * must accept them; converting here keeps one tuple shape for every caller and
+ * round-trips to the same hex through `toHex`.
+ */
+export function hexToOklch(hex: string): [number, number, number] {
+  const channels = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+  const [r, g, b] = channels.map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+  const coneL = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+  const coneM = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+  const coneS = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+  const lightness = 0.2104542553 * coneL + 0.793617785 * coneM - 0.0040720468 * coneS
+  const a = 1.9779984951 * coneL - 2.428592205 * coneM + 0.4505937099 * coneS
+  const bb = 0.0259040371 * coneL + 0.7827717662 * coneM - 0.808675766 * coneS
+  const hue = ((Math.atan2(bb, a) * 180) / Math.PI + 360) % 360
+  return [lightness, Math.hypot(a, bb), hue]
+}
+
 /** `#rrggbb`, lowercase. */
 export function toHex(rgb: readonly [number, number, number]): string {
   return (
@@ -104,6 +123,9 @@ export function toHex(rgb: readonly [number, number, number]): string {
       .join("")
   )
 }
+
+/** Names `readTokenBlock` skipped because they declare an alpha, per returned map. */
+const ALPHA_TOKENS = new WeakMap<Map<string, [number, number, number]>, Set<string>>()
 
 /**
  * Parses every `--name: oklch(L C H)` declaration out of a top-level CSS
@@ -136,9 +158,24 @@ export function readTokenBlock(css: string, selector: string): Map<string, [numb
   const block = css.slice(start, end === -1 ? undefined : end)
 
   const tokens = new Map<string, [number, number, number]>()
-  const pattern = /--([\w-]+):\s*oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\)/g
+  const withAlpha = new Set<string>()
+  ALPHA_TOKENS.set(tokens, withAlpha)
+  const pattern =
+    /--([\w-]+):\s*(?:oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*(\/\s*[\d.]+%?\s*)?\)|(#[0-9a-fA-F]{6})\b)/g
   for (const match of block.matchAll(pattern)) {
-    tokens.set(match[1], [Number(match[2]), Number(match[3]), Number(match[4])])
+    // A token with an alpha is left out of the map, not parsed with its alpha
+    // dropped: the consumers (manifest, theme-color meta, icons, the pre-mount
+    // shell) need an opaque `#rrggbb`, and silently turning a translucent token
+    // (`--md-scrim`) into an opaque colour is a bug. `tokenHex` throws on a
+    // request for one; other tokens in the same block stay readable.
+    if (match[5]) {
+      withAlpha.add(match[1])
+      continue
+    }
+    tokens.set(
+      match[1],
+      match[6] ? hexToOklch(match[6]) : [Number(match[2]), Number(match[3]), Number(match[4])],
+    )
   }
   return tokens
 }
@@ -161,7 +198,7 @@ const SELECTOR_FOR_THEME: Readonly<Record<"light" | "dark", string>> = {
  * dev server that keeps serving a stale colour after `index.css` is edited.
  *
  * `theme` defaults to `"light"` so every pre-existing call site (the PWA
- * manifest, `markOutlineMarkup`'s stroke colours, the light `theme-color`
+ * manifest, the pre-mount shell's light colours, the light `theme-color`
  * meta) keeps resolving exactly the value it always has — Task 13 (C5b) is
  * the first caller that ever needs the dark ladder instead.
  */
@@ -169,9 +206,15 @@ export function tokenHex(name: string, theme: "light" | "dark" = "light"): strin
   const selector = SELECTOR_FOR_THEME[theme]
   const tokens = readTokenBlock(readFileSync(INDEX_CSS, "utf8"), selector)
   const value = tokens.get(name)
+  if (!value && ALPHA_TOKENS.get(tokens)?.has(name)) {
+    throw new Error(
+      `brandTokens: \`--${name}\` in ${selector} of ${INDEX_CSS} declares an alpha, and build-time ` +
+        "colours are opaque hex. Read a token without alpha, or resolve the alpha against its backdrop first.",
+    )
+  }
   if (!value) {
     throw new Error(
-      `brandTokens: \`--${name}\` is not declared as an oklch() value in ${selector} of ` +
+      `brandTokens: \`--${name}\` is not declared as an oklch() or #rrggbb value in ${selector} of ` +
         `${INDEX_CSS}. The PWA manifest, the theme-color meta tag and the generated app ` +
         `icons all read it from there. If the token was renamed, update the callers; ` +
         `do not transcribe a hex, which is the drift this module exists to remove.`,

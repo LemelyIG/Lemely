@@ -10,9 +10,10 @@ import { prefersReducedMotion } from "@/lib/celebration"
  * (`vitest.config.ts`, D3.20), so without the injection point this decision
  * could only ever be covered by the Playwright suite.
  *
- * The default parameter keeps every production call site (`useCountUp`,
- * `Flourish` in `components/ui/celebration.tsx`) unchanged: both still call
- * `prefersReducedMotion()` with no argument.
+ * The default parameter keeps the production call site (`useCountUp` in
+ * `components/ui/celebration.tsx`) unchanged: it still calls
+ * `prefersReducedMotion()` with no argument. (`Flourish`, the confetti burst,
+ * was retired with the Study Notebook kit; DESIGN.md bans confetti.)
  */
 describe("prefersReducedMotion", () => {
   it("returns true when the injected query matches", () => {
@@ -41,12 +42,5 @@ describe("production call sites stay on the zero-arg form", () => {
 
   it("useCountUp calls prefersReducedMotion()", () => {
     expect(src).toMatch(/prefersReducedMotion\(\)/)
-  })
-
-  it("Flourish calls prefersReducedMotion()", () => {
-    const flourishStart = src.indexOf("function Flourish")
-    expect(flourishStart).toBeGreaterThan(-1)
-    const afterFlourish = src.slice(flourishStart)
-    expect(afterFlourish).toMatch(/prefersReducedMotion\(\)/)
   })
 })

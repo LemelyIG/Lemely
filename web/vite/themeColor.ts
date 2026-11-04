@@ -2,7 +2,7 @@ import type { Plugin } from "vite"
 import { tokenHex } from "./brandTokens.ts"
 
 /*
- * Substitutes `%LEMELY_THEME_COLOR%` in `index.html` with the real `--paper`
+ * Substitutes `%LEMELY_THEME_COLOR%` in `index.html` with the real `--md-surface`
  * token (P6.5).
  *
  * `<meta name="theme-color">` is what a mobile browser paints its own chrome
@@ -19,7 +19,7 @@ import { tokenHex } from "./brandTokens.ts"
  * rendered by the OS rather than by the app, and therefore invisible to every
  * gate here, none of which photograph browser chrome.
  *
- * **`--paper`, not `--ink`.** The value should continue the page rather than
+ * **`--md-surface`, not `--md-on-surface`.** The value should continue the page rather than
  * frame it: the marketing header, all four portal shells and the auth frame are
  * `bg-paper`, so a paper-coloured browser bar makes the page appear to run to
  * the top of the screen. That is the whole point of the tag.
@@ -55,21 +55,21 @@ export function fillThemeColor(html: string): string {
   if (!html.includes(PLACEHOLDER)) {
     throw new Error(
       `themeColor: index.html no longer contains ${PLACEHOLDER}. The theme-color meta ` +
-        "tag is injected from the --paper token at build time; a hardcoded hex there " +
+        "tag is injected from the --md-surface token at build time; a hardcoded hex there " +
         "would drift silently, which is what P6.5 found it had already done.",
     )
   }
   if (!html.includes(PLACEHOLDER_DARK)) {
     throw new Error(
       `themeColor: index.html no longer contains ${PLACEHOLDER_DARK}. The dark ` +
-        "theme-color value is injected from the dark --paper token (index.css's " +
+        "theme-color value is injected from the dark --md-surface token (index.css's " +
         '`:root[data-theme="dark"]` block, Task 12) the same way the light one is, ' +
         "for shell-init.js and applyTheme.ts to swap the meta's content between at runtime.",
     )
   }
   return html
-    .replaceAll(PLACEHOLDER_DARK, tokenHex("paper", "dark"))
-    .replaceAll(PLACEHOLDER, tokenHex("paper"))
+    .replaceAll(PLACEHOLDER_DARK, tokenHex("md-surface", "dark"))
+    .replaceAll(PLACEHOLDER, tokenHex("md-surface"))
 }
 
 export function themeColor(): Plugin {

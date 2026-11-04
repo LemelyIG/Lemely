@@ -2,8 +2,7 @@
 import { Link } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
 import { Eyebrow } from "@/components/ui/primitives"
-import { Badge } from "@/components/ui/badge"
-import { subjectToneForCode } from "@/components/ui/subject-tag"
+import { SubjectTag } from "@/components/ui/subject-tag"
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table"
 import { EmptyState } from "@/components/ui/state-views"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
@@ -110,14 +109,8 @@ export function Classes() {
                   </TD>
                   <TD>
                     {schoolClass.subjectCode ? (
-                      // A bare syllabus code, so the tone comes from
-                      // `subjectToneForCode` rather than `SubjectTag`'s
-                      // name-based lookup, which would fall back to "other" for
-                      // every class in the school.
                       <div className="flex items-center gap-2">
-                        <Badge tone={subjectToneForCode(schoolClass.subjectCode)}>
-                          {schoolClass.subjectName ?? schoolClass.subjectCode}
-                        </Badge>
+                        <SubjectTag subject={schoolClass.subjectName ?? schoolClass.subjectCode} />
                         {/* Omitted when the name has resolved to the code
                             itself — a class's `subjectCode` is free text a
                             teacher typed, so most classes hit the det

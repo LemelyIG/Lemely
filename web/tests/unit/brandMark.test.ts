@@ -1,38 +1,23 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
-import { COIL, LEFT_FACE, RIGHT_FACE, STACK_EDGES, type MarkPath } from "../../src/lib/brandMark"
 import { tokenHex } from "../../vite/brandTokens"
+import { stripComments } from "./support/jsxSource"
 
 /**
- * The brand mark, as a gate.
+ * The brand identity, as a gate (v5 Abyss, DESIGN.md "Logo: Clip Letters").
  *
- * The mark is drawn twice by two renderers that cannot share code — inline in
- * `components/ui/brand-mark.tsx`, and as standalone files in `public/brand/` —
- * and it animates in one of them and must not in the other. Three things can go
- * wrong there, and none of them is visible in a diff:
+ * Two renderers draw it and cannot share code: the inline `BrandLockup`
+ * wordmark in React, and the standalone "lm" icon files in `public/brand/`
+ * that the favicon link and `npm run icons` read. Three things can go wrong
+ * there, and none of them is visible in a diff:
  *
- * 1. Somebody edits a curve in `public/brand/mark.svg` by hand. It is a
- *    generated file, so the next `npm run mark` silently reverts them, and in
- *    the meantime the favicon and the header show different marks.
+ * 1. Somebody edits a curve in a generated file by hand; the next
+ *    `npm run mark` silently reverts it.
  * 2. Somebody transcribes a colour into the generated files instead of letting
- *    `vite/brandTokens.ts` resolve it, and the mark stops tracking DESIGN.md.
- * 3. Somebody adds the animation back into `mark.svg`, where it looks correct
- *    and cannot be switched off. That is the whole finding this redesign turns
- *    on: an SVG in an `<img>` is a separate document, index.css's global
- *    reduced-motion block cannot reach it, and Chromium does not propagate
- *    `prefers-reduced-motion` into an SVG-as-image either — measured, with a
- *    probe SVG whose fill changes under the query and an `<img>` on a page
- *    whose own `matchMedia` for it returns true. A media query written inside
- *    the file would be a rule with no reader, and the logo would move in every
- *    header for a reader who had asked it not to.
- *
- * `mark-favicon.svg` is deliberately absent from the drift checks: it is a
- * hand-authored optical cut for 16x16, a different drawing rather than a
- * different rendering, and its own comment says which features of the parent it
- * drops and why each measurably fails at four viewBox units per device pixel.
- * It is still checked for animation, because the reasoning about `<img>` is the
- * same wherever the file is loaded.
+ *    `vite/brandTokens.ts` resolve it, and the icon stops tracking DESIGN.md.
+ * 3. Somebody adds an animation to an SVG loaded through `<img>`, where the
+ *    global `prefers-reduced-motion` block cannot reach it.
  */
 
 const BRAND = join(import.meta.dirname, "..", "..", "public", "brand")
@@ -42,43 +27,61 @@ const COLOUR = read("mark.svg")
 const MONO = read("mark-mono.svg")
 const FAVICON = read("mark-favicon.svg")
 
-const ALL_PATHS: MarkPath[] = [...STACK_EDGES, ...LEFT_FACE, ...RIGHT_FACE, ...COIL]
+/** DESIGN.md "Logo: Clip Letters": the one clip path, written out in full. */
+const DESIGN_MD_CLIP =
+  "M58 34 V72 A8 8 0 0 1 42 72 V20 A14 14 0 0 1 70 20 V78 A18 18 0 0 1 34 78 V36"
 
-/** The `d` attribute as the generator writes it: whitespace collapsed. */
-const compact = (d: string): string => d.replace(/\s+/g, " ").trim()
-
-describe("the generated mark cuts carry the geometry module's coordinates", () => {
-  it.each(["mark.svg", "mark-mono.svg"])("%s has every path from lib/brandMark.ts", (file) => {
-    const svg = read(file)
-    const missing = ALL_PATHS.map((path) => compact(path.d)).filter((d) => !svg.includes(d))
-    expect(missing, `${file} is stale or hand-edited — run \`npm run mark\``).toEqual([])
+describe("the generated 'lm' icon carries DESIGN.md's clip geometry", () => {
+  it("the generator's clip is the path DESIGN.md prints", () => {
+    // Read, not imported: importing the script would run it and rewrite the SVGs.
+    const generator = readFileSync(join(import.meta.dirname, "..", "..", "scripts", "generate_mark_svg.mjs"), "utf8")
+    expect(generator).toContain(DESIGN_MD_CLIP.replace(/ /g, " "))
+    const design = readFileSync(join(import.meta.dirname, "..", "..", "..", "DESIGN.md"), "utf8")
+    expect(design).toContain(DESIGN_MD_CLIP)
   })
 
-  it.each(["mark.svg", "mark-mono.svg"])("%s has no path the module does not define", (file) => {
-    const known = new Set(ALL_PATHS.map((path) => compact(path.d)))
-    const drawn = [...read(file).matchAll(/<path d="([^"]+)"/g)].map((match) => match[1])
-    // The stack edges are drawn twice — once per page — which is the only
-    // path in the mark that appears more than once in a cut.
-    expect(drawn.length).toBe(ALL_PATHS.length + STACK_EDGES.length)
-    expect(drawn.filter((d) => !known.has(d))).toEqual([])
+  it.each(["mark.svg", "mark-favicon.svg", "mark-mono.svg"])(
+    "%s draws that clip at stroke 5 with round caps and no fill",
+    (file) => {
+      const svg = read(file)
+      expect(svg, `${file} is stale or hand-edited, run \`npm run mark\``).toContain(`d="${DESIGN_MD_CLIP}"`)
+      const clip = svg.slice(svg.indexOf(`d="${DESIGN_MD_CLIP}"`)).split("/>")[0]
+      expect(clip).toContain('stroke-width="5"')
+      expect(clip).toContain('stroke-linecap="round"')
+      expect(clip).toContain('fill="none"')
+    },
+  )
+
+  it("the coloured cuts sit on a rounded square with rx 24 of 100", () => {
+    for (const svg of [COLOUR, FAVICON]) {
+      expect(svg).toContain('viewBox="0 0 100 100"')
+      expect(svg).toMatch(/<rect width="100" height="100" rx="24"/)
+    }
+  })
+
+  it("the favicon is the same drawing as mark.svg", () => {
+    expect(FAVICON).toBe(COLOUR)
   })
 })
 
 describe("colour reaches the generated cuts through the tokens, never transcribed", () => {
-  it("mark.svg paints only DESIGN.md token values", () => {
-    const allowed = new Set(
-      ALL_PATHS.flatMap(({ fill, stroke }) => [fill, stroke])
-        .filter((token) => token !== "none")
-        .map((token) => tokenHex(token)),
-    )
+  const ABYSS = tokenHex("md-primary")
+  const TIDE = tokenHex("md-inverse-primary")
+  const WHITE = tokenHex("md-on-primary")
+
+  it("mark.svg paints only Abyss, Tide and white", () => {
     const painted = [...COLOUR.matchAll(/(?:fill|stroke)="(#[0-9A-Fa-f]{6})"/g)].map((m) => m[1])
     expect(painted.length).toBeGreaterThan(0)
-    expect([...new Set(painted)].filter((hex) => !allowed.has(hex))).toEqual([])
+    expect([...new Set(painted)].filter((hex) => ![ABYSS, TIDE, WHITE].includes(hex))).toEqual([])
   })
 
-  it("the accent and the ink in mark.svg are the tokens, not a near miss", () => {
-    expect(COLOUR).toContain(`stroke="${tokenHex("accent")}"`)
-    expect(COLOUR).toContain(`stroke="${tokenHex("ink")}"`)
+  it("the tile is Abyss, the clip is Tide and the m is white, as tokens resolve them", () => {
+    expect(ABYSS).toBe("#042f4f")
+    expect(TIDE).toBe("#7fb8e0")
+    expect(WHITE).toBe("#ffffff")
+    expect(COLOUR).toContain(`rx="24" fill="${ABYSS}"`)
+    expect(COLOUR).toContain(`stroke="${TIDE}"`)
+    expect(COLOUR).toContain(`stroke="${WHITE}"`)
   })
 
   it("mark-mono.svg is one colour and it is the caller's", () => {
@@ -100,28 +103,33 @@ describe("the standalone cuts do not animate, because they could not be stopped"
   })
 })
 
-describe("the inline mark's motion obeys §9.2 and can be reduced", () => {
+describe("the inline Clip Letters wordmark (BrandLockup) follows DESIGN.md", () => {
+  const lockup = stripComments(readFileSync(join(import.meta.dirname, "..", "..", "src", "components", "ui", "brand-lockup.tsx"), "utf8"))
   const CSS = readFileSync(join(import.meta.dirname, "..", "..", "src", "index.css"), "utf8")
-  const turn = CSS.slice(
-    CSS.indexOf("/* ── The brand mark's page turn"),
-    CSS.indexOf("/* ── §9.3 The celebration register"),
-  ).replace(/\/\*[\s\S]*?\*\//g, "")
+  const letters = CSS.slice(CSS.indexOf(".wordmark-letters {"), CSS.indexOf("}", CSS.indexOf(".wordmark-letters {")))
 
-  it("is present in index.css, where the global reduced-motion block reaches it", () => {
-    expect(turn).toContain("@keyframes lm-leaf-front")
-    expect(turn).toContain("@keyframes lm-leaf-back")
+  it("draws the clip from DESIGN.md's path at stroke 5, round caps, no fill", () => {
+    expect(lockup).toContain(DESIGN_MD_CLIP)
+    expect(lockup).toContain('viewBox="28 4 46 94"')
+    expect(lockup).toContain('strokeWidth="5"')
+    expect(lockup).toContain('strokeLinecap="round"')
+    expect(lockup).toContain('fill="none"')
   })
 
-  it("animates transform and opacity and nothing else", () => {
-    const properties = [...turn.matchAll(/^\s*([a-z-]+)\s*:/gm)].map((match) => match[1])
-    const animatable = properties.filter(
-      (property) => !property.startsWith("animation") && !property.startsWith("transform"),
-    )
-    expect([...new Set(animatable)].filter((p) => !["opacity", "display"].includes(p))).toEqual([])
+  it("colours the clip with the primary role and the letters with on-surface", () => {
+    expect(lockup).toContain("text-primary")
+    expect(lockup).toContain('stroke="currentColor"')
+    expect(lockup).toContain("wordmark-letters text-on-surface")
   })
 
-  it("names a §9.1 easing rather than inheriting a browser default", () => {
-    expect(turn).toMatch(/animation-timing-function:\s*var\(--ease-in-soft\)/)
-    expect(turn).toMatch(/animation-timing-function:\s*var\(--ease-out-soft\)/)
+  it("sets the letters in Bricolage 800 at line-height 0.82 and -0.04em tracking", () => {
+    expect(letters).toMatch(/font:\s*800\s+var\(--wm-size[^)]*\)\s*\/\s*0\.82\s+var\(--font-display\)/)
+    expect(letters).toMatch(/letter-spacing:\s*-0\.04em/)
+  })
+
+  it("never sizes the wordmark below DESIGN.md's 20px minimum height", () => {
+    const sizes = [...CSS.matchAll(/\.wordmark-(?:sm|md)\s*\{\s*--wm-size:\s*(\d+)px/g)].map((m) => Number(m[1]))
+    expect(sizes.length).toBe(2)
+    expect(Math.min(...sizes)).toBeGreaterThanOrEqual(20)
   })
 })

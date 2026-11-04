@@ -30,10 +30,13 @@ export const SQUARE_SCALE = 0.72
 /**
  * How much of a maskable icon's width the mark spans.
  *
- * `0.6` against a measured ceiling (see `maxMaskableScale`) — the margin is
- * for launcher shapes that crop harder than a circle.
+ * `0.5` against a measured ceiling (see `maxMaskableScale`). The "lm" icon is a
+ * full square tile, so its drawn extent is the whole artboard and the ceiling
+ * is `0.8 / sqrt(2)`; the tile sits on an Abyss canvas, so only the glyph inside
+ * it is visible, and the margin is for launcher shapes that crop harder than a
+ * circle.
  */
-export const MASKABLE_SCALE = 0.6
+export const MASKABLE_SCALE = 0.5
 
 export interface DrawnExtent {
   width: number

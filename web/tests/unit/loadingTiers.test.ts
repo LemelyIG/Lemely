@@ -3,10 +3,10 @@ import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 
 /*
- * DESIGN.md §12's loading tiers, pinned across the places they have to agree
+ * The loading tiers, pinned across the places they have to agree
  * (PR 2 part B; routes.tsx block rewritten for packet B1).
  *
- * Four checks, one per surface that can silently drift from the others:
+ * Three checks, one per surface that can silently drift from the others:
  *
  *   - `index.css` declares the two tokens at the approved values — the single
  *     source `RouteFallback` and the pre-mount shell (`preMountShell.ts`) both
@@ -21,11 +21,6 @@ import { describe, expect, it } from "vitest"
  *     packet-B1 assertions (the `handle.skeleton` pairing checks, the
  *     `skeletonForMatches` unit tests); this file keeps only the two checks
  *     that were already here.
- *   - `DESIGN.md` §9.2 states the mark's self-drawing stroke as the one
- *     documented exception to "animate only transform and opacity" — the rest
- *     of this system's gates (`motionDefaults.test.ts`, `a11yRules.test.ts`)
- *     enforce that rule; this is what keeps them from having to special-case
- *     `stroke-dashoffset` without a documented reason to point at.
  *   - `lm-appear` and its two tier classes stage on `visibility`, not just
  *     `opacity` (adversarial-review BLOCKER 1) — `opacity: 0` alone leaves an
  *     element in the accessibility tree and the tab order, and both tiers sit
@@ -85,10 +80,13 @@ describe("index.css declares the loading-tier tokens", () => {
     }
   })
 
-  it("names DESIGN.md §12 near the tokens", () => {
+  it("says who reads the tokens, next to them", () => {
+    // v5 DESIGN.md has no numbered sections, so the provenance is the comment
+    // that names the pre-mount shell reader instead of a section number.
     const start = css.indexOf("--loading-tier-skeleton")
     const context = css.slice(Math.max(0, start - 800), start)
-    expect(context).toContain("§12")
+    expect(context).toContain("preMountShell")
+    expect(context).toContain("loading tiers")
   })
 })
 
@@ -137,24 +135,5 @@ describe("index.css: lm-appear keyframe and tier classes are visibility:hidden u
       expect(rule).toMatch(/visibility:\s*hidden/)
       expect(rule).toMatch(/animation:\s*lm-appear/)
     }
-  })
-})
-
-describe("DESIGN.md §9.2 documents the self-drawing-stroke exception", () => {
-  const designDoc = readFileSync(join(ROOT, "..", "DESIGN.md"), "utf8")
-
-  it("contains the exception sentence", () => {
-    const section92Start = designDoc.indexOf("### 9.2 Rules")
-    const section93Start = designDoc.indexOf("### 9.3", section92Start)
-    const section92 = designDoc.slice(section92Start, section93Start)
-    expect(section92).toContain("stroke-dashoffset")
-    expect(section92).toMatch(/one (permitted|documented) (non-transform\/opacity )?(exception|animation)/)
-  })
-
-  it("names the slow-load tier as the reason for the exception", () => {
-    const section92Start = designDoc.indexOf("### 9.2 Rules")
-    const section93Start = designDoc.indexOf("### 9.3", section92Start)
-    const section92 = designDoc.slice(section92Start, section93Start)
-    expect(section92.toLowerCase()).toContain("slow-load")
   })
 })
