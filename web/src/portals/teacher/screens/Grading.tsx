@@ -384,6 +384,7 @@ export function Grading() {
    * at a time), then the router state is cleared so a reload cannot
    * re-submit. Nothing is uploaded here; the teacher still presses upload.
    */
+  const [handedOver, setHandedOver] = useState<{ count: number; name: string } | null>(null)
   const handedOverRead = useRef(false)
   useEffect(() => {
     if (handedOverRead.current) return
@@ -391,6 +392,7 @@ export function Grading() {
     const files = (location.state as { files?: File[] } | null)?.files
     if (!files?.length) return
     setScanFile(files[0])
+    if (files.length > 1) setHandedOver({ count: files.length, name: files[0].name })
     navigate(".", { replace: true, state: null })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -688,6 +690,12 @@ export function Grading() {
                           onCancel={() => setShowCamera(false)}
                         />
                       ) : scanFile ? (
+                        <>
+                        {handedOver && handedOver.name === scanFile.name ? (
+                          <p role="status" className="mb-2 rounded-chip bg-secondary-container p-3 text-body-sm text-on-secondary-container">
+                            You added {handedOver.count} papers. This screen marks one at a time, so only {handedOver.name} is loaded.
+                          </p>
+                        ) : null}
                         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest px-4 py-3">
                           <span className="min-w-0 flex-1 truncate text-body-sm text-on-surface">
                             Scan ready · {scanFile.name}
@@ -702,6 +710,7 @@ export function Grading() {
                             Choose a different scan
                           </Button>
                         </div>
+                        </>
                       ) : (
                         <input
                           id="grading-scan-file"

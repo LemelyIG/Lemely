@@ -19,25 +19,35 @@ export function TeacherSetup({ progress, firstClass, onFiles }: { progress: Setu
   const [copied, setCopied] = useState(false)
   const current = STEPS.findIndex((s) => !progress[s.key])
 
+  const copyTimer = useRef<number | null>(null)
+
   const upload = (list: FileList | File[] | null) => {
     const pdfs = [...(list ?? [])].filter(isPdf)
     if (!pdfs.length) return
     if (!progress.created) { setNudge((n) => n + 1); return }
     onFiles(pdfs)
   }
+  // The window listener is mounted once and always calls the latest `upload`.
+  const uploadRef = useRef(upload)
+  uploadRef.current = upload
 
   useEffect(() => {
     const over = (e: DragEvent) => e.preventDefault()
-    const drop = (e: DragEvent) => { e.preventDefault(); upload(e.dataTransfer?.files ?? null) }
+    const drop = (e: DragEvent) => { e.preventDefault(); uploadRef.current(e.dataTransfer?.files ?? null) }
     window.addEventListener("dragover", over)
     window.addEventListener("drop", drop)
-    return () => { window.removeEventListener("dragover", over); window.removeEventListener("drop", drop) }
-  })
+    return () => {
+      window.removeEventListener("dragover", over)
+      window.removeEventListener("drop", drop)
+      if (copyTimer.current !== null) window.clearTimeout(copyTimer.current)
+    }
+  }, [])
 
   const copy = async (code: string) => {
     try { await navigator.clipboard.writeText(code) } catch { /* clipboard blocked: the code is still visible */ }
     setCopied(true)
-    window.setTimeout(() => setCopied(false), 1600)
+    if (copyTimer.current !== null) window.clearTimeout(copyTimer.current)
+    copyTimer.current = window.setTimeout(() => { copyTimer.current = null; setCopied(false) }, 1600)
   }
 
   return (
@@ -55,7 +65,7 @@ export function TeacherSetup({ progress, firstClass, onFiles }: { progress: Setu
       <section aria-labelledby="gs-h">
         <div className="flex items-baseline justify-between">
           <h2 id="gs-h" className="text-display-xs">Get started</h2>
-          <span aria-live="polite" className="text-data-md text-on-surface-variant">{progress.complete ? "All set" : `${progress.done} of 3 done`}</span>
+          <span aria-live="polite" className="text-data-md text-on-surface-variant">{`${progress.done} of 3 done`}</span>
         </div>
         <div aria-hidden className="mt-3 h-2 overflow-hidden rounded-bar bg-surface-container-high">
           <i className="block h-full origin-left bg-primary transition-transform duration-350 ease-expo" style={{ transform: `scaleX(${progress.done / 3})` }} />
@@ -88,9 +98,6 @@ export function TeacherSetup({ progress, firstClass, onFiles }: { progress: Setu
                       <button type="button" onClick={() => input.current?.click()} className="inline-flex items-center gap-2 rounded-button bg-primary px-4 py-2.5 btn-text text-on-primary hover:bg-primary-hover"><UploadSimple size={16} />Upload papers</button>
                       <span className="text-body-sm text-on-surface-variant">or drop them anywhere on this page</span>
                     </div>
-                  )}
-                  {now && s.key === "reviewed" && (
-                    <Link to="/teacher/review" className="mt-3 inline-flex rounded-button bg-primary px-4 py-2.5 btn-text text-on-primary hover:bg-primary-hover">Open review queue</Link>
                   )}
                 </div>
               </li>

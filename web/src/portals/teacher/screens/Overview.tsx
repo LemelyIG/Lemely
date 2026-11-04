@@ -1,3 +1,4 @@
+import { relativeTime } from "@/lib/utils"
 import type { ClassSummary, Overview as OverviewDTO } from "@/lib/teacherTypes"
 import { ReviewQueueTile } from "../home/ReviewQueueTile"
 import { MarkClassSet } from "../home/MarkClassSet"
@@ -6,8 +7,9 @@ import { AtRiskTable } from "../home/AtRiskTable"
 
 /** Teacher home (T-01), v5 Abyss. Data comes from TeacherHome; this file only lays it out. */
 export function Overview({ overview, classes, onFiles }: { overview: OverviewDTO; classes: ClassSummary[]; onFiles: (files: File[]) => void }) {
-  const last = overview.recentActivity[0]
-  const lastUpload = last ? `${last.subjectCode} · ${new Date(last.recordedAt).toLocaleDateString(undefined, { weekday: "short" })}` : null
+  // A quiz attempt is not an upload, so "Last:" skips those rows.
+  const last = overview.recentActivity.find((a) => a.origin !== "quiz")
+  const lastUpload = last ? `${last.subjectCode} · ${relativeTime(last.recordedAt)}` : null
   return (
     <div className="grid gap-8">
       <div className="grid gap-6 lg:grid-cols-2">

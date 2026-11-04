@@ -219,7 +219,7 @@ function ClassesNavSection() {
                 }
               >
                 <span className="truncate">{c.label}</span>
-                <span className="ml-auto flex-none text-data-sm text-on-surface-variant">{c.studentCount}</span>
+                <span className="ms-auto flex-none text-data-sm text-on-surface-variant">{c.studentCount}</span>
               </NavLink>
             ))}
             {data.classes.length > 5 ? (
@@ -437,7 +437,7 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
         >
           <Bell size={20} aria-hidden="true" />
           {unread ? (
-            <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-pill bg-primary px-1 text-metadata leading-none text-on-primary">
+            <span className="absolute -end-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-pill bg-primary px-1 text-metadata leading-none text-on-primary">
               {unread}
             </span>
           ) : null}

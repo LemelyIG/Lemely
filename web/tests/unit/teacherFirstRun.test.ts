@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { teacherHomeView } from "@/portals/teacher/home/TeacherHome"
+import { teacherHomeView } from "@/portals/teacher/home/setup"
 
 /*
  * The teacher home chooses between the setup screen and the overview. The

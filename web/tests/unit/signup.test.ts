@@ -22,8 +22,7 @@ import type { SelfServiceRole } from "@/lib/auth/AuthContext"
  * `react/only-export-components`) while `buildSignupPayload`/
  * `validateSignupFields`/`passwordStrength` stay real, exported, pure
  * functions — the same shape `studentOnboardingRedirect`
- * (`portals/student/index.tsx`) and `teacherFirstClassRedirect`
- * (`portals/teacher/index.tsx`) already use for exactly this reason.
+ * (`portals/student/index.tsx`) already uses for exactly this reason.
  *
  * The two behaviours this task names explicitly get the most scrutiny:
  * consent unticked must never produce a submittable payload (D7.11), and

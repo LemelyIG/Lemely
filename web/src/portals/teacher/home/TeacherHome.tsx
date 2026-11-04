@@ -1,23 +1,10 @@
 import { useNavigate } from "react-router-dom"
 import { useTeacherClasses, useTeacherOverview } from "@/lib/hooks/useTeacherApi"
-import type { Overview } from "@/lib/teacherTypes"
+import { teacherLoadFailureMessage } from "@/lib/teacherOutcome"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
-import { deriveSetup } from "./setup"
+import { deriveSetup, teacherHomeView } from "./setup"
 import { TeacherSetup } from "./TeacherSetup"
 import { Overview as OverviewScreen } from "../screens/Overview"
-
-type Status = "pending" | "error" | "success"
-export type HomeView = "loading" | "error" | "setup" | "overview"
-
-export function teacherHomeView(
-  classesStatus: Status, classCount: number, overviewStatus: Status,
-  overview: Pick<Overview, "paperCount" | "pendingReviewCount"> | undefined,
-): HomeView {
-  if (classesStatus === "error" || overviewStatus === "error") return "error"
-  if (classesStatus === "pending" || overviewStatus === "pending" || !overview) return "loading"
-  const s = deriveSetup(classCount, overview)
-  return s.created && s.uploaded ? "overview" : "setup"
-}
 
 export function TeacherHome() {
   const navigate = useNavigate()
@@ -30,7 +17,8 @@ export function TeacherHome() {
     return (
       <div role="alert" className="rounded-card bg-error-container p-6 text-on-error-container">
         <p className="font-bold">We couldn't load your overview.</p>
-        <button type="button" className="mt-3 font-bold underline" onClick={() => { void classes.refetch(); void overview.refetch() }}>Try again</button>
+        <p className="mt-1 text-body-sm">{teacherLoadFailureMessage(classes.error ?? overview.error)}</p>
+        <button type="button" disabled={classes.isFetching || overview.isFetching} className="mt-3 font-bold underline disabled:opacity-50 disabled:no-underline" onClick={() => { void classes.refetch(); void overview.refetch() }}>Try again</button>
       </div>
     )
   }

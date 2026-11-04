@@ -104,6 +104,8 @@ export function JoinCodeChip({ code, settle = false }: { code: string; settle?: 
       onClick={copy}
       className="inline-flex items-center gap-2 border border-outline-variant bg-surface-container-lowest rounded-lg px-3 py-1.5 text-data-md tracking-[0.06em] transition-colors hover:bg-surface-container-low cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
       title="Copy join code"
+      // While the glyphs are still settling, the button's name is the real code.
+      aria-label={shown !== code ? code : undefined}
     >
       {shown}
       <span className="text-body-sm text-on-surface-variant">{copied ? "Copied" : "Copy"}</span>

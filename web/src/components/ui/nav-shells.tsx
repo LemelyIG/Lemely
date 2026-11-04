@@ -233,7 +233,7 @@ export function SidebarNav({ items, groups, variant = "default", className, ...p
                     variant === "abyss" ? (
                       <span
                         className={cn(
-                          "ml-auto rounded-pill px-1.5 text-data-sm",
+                          "ms-auto rounded-pill px-1.5 text-data-sm",
                           isActive || item.urgent
                             ? "bg-primary text-on-primary"
                             : "bg-surface-container-high text-on-surface",

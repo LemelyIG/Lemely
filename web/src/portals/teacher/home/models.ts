@@ -28,6 +28,10 @@ export interface AtRiskRowModel {
   reason: string
   from: string | null
   to: string | null
+  /** The shown flag has been acknowledged by a teacher. */
+  acknowledged: boolean
+  /** Further flags beyond the one shown. */
+  moreReasons: number
 }
 
 export function atRiskRowModel(s: AtRiskStudent): AtRiskRowModel {
@@ -37,10 +41,14 @@ export function atRiskRowModel(s: AtRiskStudent): AtRiskRowModel {
     .slice(0, 2)
     .map((w) => w[0]!.toUpperCase())
     .join("")
+  // An unacknowledged flag still needs a teacher, so it leads over acknowledged ones.
+  const shown = s.flags.find((f) => f.acknowledged === null) ?? s.flags[0]
   return {
     initials,
     name: s.name,
-    reason: s.flags[0]?.summary ?? "",
+    reason: shown?.summary ?? "",
+    acknowledged: !!shown && shown.acknowledged !== null,
+    moreReasons: Math.max(0, s.flags.length - 1),
     from: s.grade ? (s.previousGrade ?? null) : null,
     to: s.grade || null,
   }

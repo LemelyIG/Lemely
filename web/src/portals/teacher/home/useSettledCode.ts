@@ -13,7 +13,7 @@ export function settleFrame(code: string, fixed: number, rand: () => number = Ma
  */
 export function useSettledCode(code: string, enabled: boolean): string {
   const calm = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
-  const [text, setText] = useState(enabled && !calm ? settleFrame(code, 0) : code)
+  const [text, setText] = useState(() => (enabled && !calm ? settleFrame(code, 0) : code))
   useEffect(() => {
     if (!enabled || calm) {
       setText(code)
