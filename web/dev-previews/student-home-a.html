@@ -22,6 +22,10 @@
       <symbol id="a-i-chev" viewBox="0 0 20 20"><path d="M8 5l5 5-5 5" /></symbol>
       <symbol id="a-i-up" viewBox="0 0 20 20"><path d="M10 15.5V5M5.5 9.5 10 5l4.5 4.5" /></symbol>
       <symbol id="a-i-flame" viewBox="0 0 20 20"><path d="M10 2.5c.6 2.6 3.9 4.4 3.9 8.3A3.9 3.9 0 0 1 10 14.7a3.9 3.9 0 0 1-3.9-3.9c0-1.7.8-2.8 1.7-3.8.3 1.3 1 2 1.8 2.2-.5-2.6.3-4.9.4-6.7Z" /><path d="M5 17.5h10" /></symbol>
+      <symbol id="a-i-home" viewBox="0 0 20 20"><path d="M3.5 9 10 3.5 16.5 9v6.5a1 1 0 0 1-1 1h-3.5v-4.5h-4v4.5H4.5a1 1 0 0 1-1-1Z" /></symbol>
+      <symbol id="a-i-camera" viewBox="0 0 20 20"><path d="M3 7.5a1.5 1.5 0 0 1 1.5-1.5h2L8 4h4l1.5 2h2A1.5 1.5 0 0 1 17 7.5v7a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5Z" /><circle cx="10" cy="11" r="3" /></symbol>
+      <symbol id="a-i-class" viewBox="0 0 20 20"><circle cx="7.5" cy="7" r="2.75" /><path d="M2.5 16c.4-2.8 2.4-4.5 5-4.5s4.6 1.7 5 4.5" /><path d="M13 4.5a2.6 2.6 0 0 1 0 5M14.5 11.6c1.7.5 2.8 2 3 4.4" /></symbol>
+      <symbol id="a-i-user" viewBox="0 0 20 20"><circle cx="10" cy="7" r="3.25" /><path d="M3.75 17c.5-3.3 3-5.25 6.25-5.25s5.75 1.95 6.25 5.25" /></symbol>
     </svg>
 
     <nav class="sh-toolbar" aria-label="Preview controls">
@@ -80,15 +84,15 @@
         <header class="a-head">
           <div class="a-head-text">
             <h1 class="a-greet">Good morning, Mariam.</h1>
-            <p class="a-kicker">3 subjects, 22 papers corrected so far.</p>
+            <p class="a-kicker"><span data-needs="many-papers">3 subjects, 22 papers corrected so far.</span><span data-only-state="one-paper">1 subject, 1 paper corrected so far.</span></p>
           </div>
           <p class="a-pill" aria-label="Level and streak">
-            <span class="a-pill-lv">Level <b>7</b></span>
+            <span class="a-pill-lv">Level <b data-needs="many-papers">7</b><b data-only-state="one-paper">1</b></span>
             <span class="a-pill-st" data-when-streak="kept"><svg class="a-ico" aria-hidden="true"><use href="#a-i-flame" /></svg><b>9</b>-day streak</span>
           </p>
         </header>
 
-        <div class="a-today">
+        <div class="a-today a-band">
           <div class="a-lead">
             <article class="a-hero" aria-labelledby="a-hero-label">
               <h2 id="a-hero-label" class="a-vh">Your next step</h2>
@@ -150,13 +154,25 @@
           </div>
 
           <section class="a-reward" aria-labelledby="a-level">
-            <div class="a-level">
-              <h2 id="a-level" class="a-level-n">Level 7</h2>
-              <p class="a-xp">2,340 XP</p>
+            <div class="a-levelset" data-needs="many-papers">
+              <div class="a-level">
+                <h2 id="a-level" class="a-level-n">Level 7</h2>
+                <p class="a-xp">2,340 XP</p>
+              </div>
+              <div class="a-progress">
+                <div class="a-bar" role="progressbar" aria-label="Progress to level 8" aria-valuemin="0" aria-valuemax="500" aria-valuenow="240"><i style="inline-size: 48%"></i></div>
+                <p class="a-progress-t"><span class="a-mono">240 / 500 XP</span> to level 8</p>
+              </div>
             </div>
-            <div class="a-progress">
-              <div class="a-bar" role="progressbar" aria-label="Progress to level 8" aria-valuemin="0" aria-valuemax="500" aria-valuenow="240"><i style="inline-size: 48%"></i></div>
-              <p class="a-progress-t"><span class="a-mono">240 / 500 XP</span> to level 8</p>
+            <div class="a-levelset" data-only-state="one-paper">
+              <div class="a-level">
+                <p class="a-level-n">Level 1</p>
+                <p class="a-xp">50 XP</p>
+              </div>
+              <div class="a-progress">
+                <div class="a-bar" role="progressbar" aria-label="Progress to level 2" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"><i style="inline-size: 50%"></i></div>
+                <p class="a-progress-t"><span class="a-mono">50 / 100 XP</span> to level 2</p>
+              </div>
             </div>
 
             <div class="a-streak" data-when-streak="kept">
@@ -184,7 +200,7 @@
                 <li class="is-earned"><span class="a-wd">F</span><span class="a-dd">30</span><span class="a-vh">30 Oct, XP earned</span></li>
                 <li class="is-earned"><span class="a-wd">S</span><span class="a-dd">31</span><span class="a-vh">31 Oct, XP earned</span></li>
                 <li class="is-earned"><span class="a-wd">S</span><span class="a-dd">1</span><span class="a-vh">1 Nov, XP earned</span></li>
-                <li class="is-earned"><span class="a-wd">M</span><span class="a-dd">2</span><span class="a-vh">2 Nov, XP earned</span></li>
+                <li class="is-earned is-op-earned"><span class="a-wd">M</span><span class="a-dd">2</span><span class="a-vh">2 Nov, XP earned</span></li>
                 <li class="is-earned"><span class="a-wd">T</span><span class="a-dd">3</span><span class="a-vh">3 Nov, XP earned</span></li>
                 <li><span class="a-wd">W</span><span class="a-dd">4</span><span class="a-vh">4 Nov, no XP</span></li>
                 <li class="is-today" aria-current="date"><span class="a-wd">T</span><span class="a-dd">5</span><span class="a-vh">Today, 5 Nov, no XP yet</span></li>
@@ -192,6 +208,117 @@
             </div>
           </section>
         </div>
+
+        <section class="a-results" aria-labelledby="a-results-h">
+          <h2 id="a-results-h" class="a-vh">Your results</h2>
+          <div class="a-results-main">
+            <div class="a-latest" data-needs="many-papers">
+            <a class="a-latest-link" href="/student/result/0580-42-mj2024">
+              <span class="a-latest-cap"><span class="a-mono">0580/42 · m/j 2024</span><span class="a-latest-when">Marked <span class="a-mono">4 Nov</span></span></span>
+              <span class="a-latest-score"><span class="a-vh">Score </span><b>61</b><span class="a-latest-of">/80</span></span>
+              <span class="a-latest-grade">
+                <span class="a-grade a-grade-lg" data-grade="A" aria-label="Grade A">A</span>
+                <span class="a-latest-meta"><span class="a-change is-up"><svg class="a-ico" aria-hidden="true"><use href="#a-i-up" /></svg>up from B</span><span class="a-mono a-latest-pc">76%</span></span>
+              </span>
+              <span class="a-latest-go">See full marking <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></span>
+            </a>
+            </div>
+            <div class="a-latest" data-only-state="one-paper">
+            <a class="a-latest-link" href="/student/result/0580-42-mj2024">
+              <span class="a-latest-cap"><span class="a-mono">0580/42 · m/j 2024</span><span class="a-latest-when">Marked <span class="a-mono">2 Nov</span></span></span>
+              <span class="a-latest-score"><span class="a-vh">Score </span><b>52</b><span class="a-latest-of">/80</span></span>
+              <span class="a-latest-grade">
+                <span class="a-grade a-grade-lg" data-grade="B" aria-label="Grade B">B</span>
+                <span class="a-latest-meta"><span class="a-mono a-latest-pc">65%</span></span>
+              </span>
+              <span class="a-latest-go">See full marking <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></span>
+            </a>
+            </div>
+            <div class="a-trail" data-needs="many-papers">
+              <p class="a-panel-h">Last 5 papers</p>
+              <ul class="a-plist" aria-label="Last 5 marked papers, newest first">
+                <li><a href="/student/result/0580-42-mj2024"><span class="a-mono a-pl">0580/42 · m/j 2024</span><span class="a-mono a-pm">61/80</span><span class="a-grade a-grade-sm" data-grade="A">A</span><span class="a-mono a-pd">4 Nov</span></a></li>
+                <li><a href="/student/result/0625-42-on2023"><span class="a-mono a-pl">0625/42 · o/n 2023</span><span class="a-mono a-pm">38/80</span><span class="a-grade a-grade-sm" data-grade="C">C</span><span class="a-mono a-pd">31 Oct</span></a></li>
+                <li><a href="/student/result/0580-22-on2023"><span class="a-mono a-pl">0580/22 · o/n 2023</span><span class="a-mono a-pm">49/80</span><span class="a-grade a-grade-sm" data-grade="B">B</span><span class="a-mono a-pd">27 Oct</span></a></li>
+                <li><a href="/student/result/0606-12-mj2024"><span class="a-mono a-pl">0606/12 · m/j 2024</span><span class="a-mono a-pm">47/80</span><span class="a-grade a-grade-sm" data-grade="B">B</span><span class="a-mono a-pd">22 Oct</span></a></li>
+                <li><a href="/student/result/0580-41-mj2023"><span class="a-mono a-pl">0580/41 · m/j 2023</span><span class="a-mono a-pm">45/80</span><span class="a-grade a-grade-sm" data-grade="B">B</span><span class="a-mono a-pd">15 Oct</span></a></li>
+              </ul>
+            </div>
+          </div>
+          <div class="a-momentum">
+            <div class="a-panel-head">
+              <h3 class="a-panel-title">Momentum</h3>
+              <p class="a-panel-sub">Score per paper against each subject's grade bands</p>
+            </div>
+            <div data-needs="many-papers">
+              <div class="a-mo a-mo-lg">
+                <p class="a-mo-t"><span class="a-code">0580</span> Mathematics <span class="a-mo-sub">last 8 of 14 papers</span></p>
+                <div class="a-chart" role="img" aria-label="0580 Mathematics, score per paper oldest to newest: 49%, 52%, 55%, 53%, 58%, 61%, 63%, 76%. Latest 76%, grade A.">
+                  <div class="a-plot">
+                    <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                      <rect class="a-band-as" x="0" y="0.0" width="100" height="9.09" /><rect class="a-band-a" x="0" y="9.09" width="100" height="27.27" /><rect class="a-band-b" x="0" y="36.36" width="100" height="27.28" /><rect class="a-band-c" x="0" y="63.64" width="100" height="23.63" />
+                      <polyline points="0.0,74.55 14.29,69.09 28.57,63.64 42.86,67.27 57.14,58.18 71.43,52.73 85.71,49.09 100.0,25.45" vector-effect="non-scaling-stroke" />
+                      <g class="a-hit"><circle cx="0.0" cy="74.55" r="3"><title>Paper 1 of 8: 49%</title></circle><circle cx="14.29" cy="69.09" r="3"><title>Paper 2 of 8: 52%</title></circle><circle cx="28.57" cy="63.64" r="3"><title>Paper 3 of 8: 55%</title></circle><circle cx="42.86" cy="67.27" r="3"><title>Paper 4 of 8: 53%</title></circle><circle cx="57.14" cy="58.18" r="3"><title>Paper 5 of 8: 58%</title></circle><circle cx="71.43" cy="52.73" r="3"><title>Paper 6 of 8: 61%</title></circle><circle cx="85.71" cy="49.09" r="3"><title>Paper 7 of 8: 63%</title></circle><circle cx="100.0" cy="25.45" r="3"><title>Paper 8 of 8: 76%</title></circle></g>
+                    </svg>
+                    <span class="a-dot" style="inset-inline-start: 100.0%; inset-block-start: 25.45%"></span>
+                    <span class="a-pt-l " style="inset-inline-start: 100.0%; inset-block-start: 25.45%">76% · A</span>
+                  </div>
+                  <span class="a-band-l" style="inset-block-start: 4.54%">A*</span><span class="a-band-l" style="inset-block-start: 22.73%">A</span><span class="a-band-l" style="inset-block-start: 50.0%">B</span><span class="a-band-l" style="inset-block-start: 75.45%">C</span>
+                </div>
+              </div>
+              <div class="a-mo-row">
+                <div class="a-mo a-mo-sm">
+                <p class="a-mo-t"><span class="a-code">0606</span> Additional Mathematics <span class="a-mo-sub">6 papers</span></p>
+                <div class="a-chart" role="img" aria-label="0606 Additional Mathematics, score per paper oldest to newest: 44%, 50%, 53%, 57%, 55%, 59%. Latest 59%, grade B.">
+                  <div class="a-plot">
+                    <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                      <rect class="a-band-as" x="0" y="0.0" width="100" height="14.55" /><rect class="a-band-a" x="0" y="14.55" width="100" height="25.45" /><rect class="a-band-b" x="0" y="40.0" width="100" height="25.45" /><rect class="a-band-c" x="0" y="65.45" width="100" height="25.46" />
+                      <polyline points="0.0,83.64 20.0,72.73 40.0,67.27 60.0,60.0 80.0,63.64 100.0,56.36" vector-effect="non-scaling-stroke" />
+                      <g class="a-hit"><circle cx="0.0" cy="83.64" r="3"><title>Paper 1 of 6: 44%</title></circle><circle cx="20.0" cy="72.73" r="3"><title>Paper 2 of 6: 50%</title></circle><circle cx="40.0" cy="67.27" r="3"><title>Paper 3 of 6: 53%</title></circle><circle cx="60.0" cy="60.0" r="3"><title>Paper 4 of 6: 57%</title></circle><circle cx="80.0" cy="63.64" r="3"><title>Paper 5 of 6: 55%</title></circle><circle cx="100.0" cy="56.36" r="3"><title>Paper 6 of 6: 59%</title></circle></g>
+                    </svg>
+                    <span class="a-dot" style="inset-inline-start: 100.0%; inset-block-start: 56.36%"></span>
+                    <span class="a-pt-l " style="inset-inline-start: 100.0%; inset-block-start: 56.36%">59% · B</span>
+                  </div>
+                  <span class="a-band-l" style="inset-block-start: 7.28%">A*</span><span class="a-band-l" style="inset-block-start: 27.27%">A</span><span class="a-band-l" style="inset-block-start: 52.73%">B</span><span class="a-band-l" style="inset-block-start: 78.18%">C</span>
+                </div>
+              </div>
+                <div class="a-mo a-mo-sm">
+                <p class="a-mo-t"><span class="a-code">0625</span> Physics <span class="a-mo-sub">2 papers</span></p>
+                <div class="a-chart" role="img" aria-label="0625 Physics, score per paper oldest to newest: 41%, 48%. Latest 48%, grade C.">
+                  <div class="a-plot">
+                    <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                      <rect class="a-band-as" x="0" y="0.0" width="100" height="18.18" /><rect class="a-band-a" x="0" y="18.18" width="100" height="25.46" /><rect class="a-band-b" x="0" y="43.64" width="100" height="25.45" /><rect class="a-band-c" x="0" y="69.09" width="100" height="12.73" /><rect class="a-band-d" x="0" y="81.82" width="100" height="12.73" />
+                      <polyline points="0.0,89.09 100.0,76.36" vector-effect="non-scaling-stroke" />
+                      <g class="a-hit"><circle cx="0.0" cy="89.09" r="3"><title>Paper 1 of 2: 41%</title></circle><circle cx="100.0" cy="76.36" r="3"><title>Paper 2 of 2: 48%</title></circle></g>
+                    </svg>
+                    <span class="a-dot" style="inset-inline-start: 100.0%; inset-block-start: 76.36%"></span>
+                    <span class="a-pt-l " style="inset-inline-start: 100.0%; inset-block-start: 76.36%">48% · C</span>
+                  </div>
+                  <span class="a-band-l" style="inset-block-start: 9.09%">A*</span><span class="a-band-l" style="inset-block-start: 30.91%">A</span><span class="a-band-l" style="inset-block-start: 56.37%">B</span><span class="a-band-l" style="inset-block-start: 75.45%">C</span><span class="a-band-l" style="inset-block-start: 88.19%">D</span>
+                </div>
+              </div>
+              </div>
+            </div>
+            <div data-only-state="one-paper">
+              <div class="a-mo a-mo-lg">
+                <p class="a-mo-t"><span class="a-code">0580</span> Mathematics <span class="a-mo-sub">1 paper</span></p>
+                <div class="a-chart" role="img" aria-label="0580 Mathematics: one paper so far, 65%, grade B.">
+                  <div class="a-plot">
+                    <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                      <rect class="a-band-as" x="0" y="0.0" width="100" height="9.09" /><rect class="a-band-a" x="0" y="9.09" width="100" height="27.27" /><rect class="a-band-b" x="0" y="36.36" width="100" height="27.28" /><rect class="a-band-c" x="0" y="63.64" width="100" height="23.63" />
+
+                      <g class="a-hit"><circle cx="0.0" cy="45.45" r="3"><title>Paper 1 of 1: 65%</title></circle></g>
+                    </svg>
+                    <span class="a-dot" style="inset-inline-start: 0.0%; inset-block-start: 45.45%"></span>
+                    <span class="a-pt-l is-start" style="inset-inline-start: 0.0%; inset-block-start: 45.45%">65% · B</span>
+                  </div>
+                  <span class="a-band-l" style="inset-block-start: 4.54%">A*</span><span class="a-band-l" style="inset-block-start: 22.73%">A</span><span class="a-band-l" style="inset-block-start: 50.0%">B</span><span class="a-band-l" style="inset-block-start: 75.45%">C</span>
+                </div>
+              </div>
+              <p class="a-mo-empty">One paper so far — the line starts with your second</p>
+            </div>
+          </div>
+        </section>
 
         <section class="a-sec a-subjects" aria-labelledby="a-subjects-h">
           <h2 id="a-subjects-h" class="a-sec-h">Subjects</h2>
@@ -247,31 +374,75 @@
           </ul>
         </section>
 
-        <div class="a-pair">
-          <section class="a-sec a-weak" aria-labelledby="a-weak-h">
-            <h2 id="a-weak-h" class="a-sec-h">Weak topics</h2>
-            <ul class="a-marks">
-              <li data-needs="many-papers"><a href="/student/practice/0625"><span class="a-topic">Waves</span><span class="a-code">0625</span><span class="a-meter" aria-hidden="true"><i style="inline-size: 54%"></i></span><span class="a-acc">54%</span></a></li>
-              <li data-needs="many-papers"><a href="/student/practice/0606"><span class="a-topic">Quadratic inequalities</span><span class="a-code">0606</span><span class="a-meter" aria-hidden="true"><i style="inline-size: 58%"></i></span><span class="a-acc">58%</span></a></li>
-              <li data-needs="many-papers"><a href="/student/practice/0580"><span class="a-topic">Vectors</span><span class="a-code">0580</span><span class="a-meter" aria-hidden="true"><i style="inline-size: 63%"></i></span><span class="a-acc">63%</span></a></li>
-              <li data-only-state="one-paper"><a href="/student/practice/0580"><span class="a-topic">Vectors</span><span class="a-code">0580</span><span class="a-meter" aria-hidden="true"><i style="inline-size: 50%"></i></span><span class="a-acc">50%</span></a></li>
-              <li data-needs="many-papers"><a href="/student/practice/0625"><span class="a-topic">Moments</span><span class="a-code">0625</span><span class="a-meter" aria-hidden="true"><i style="inline-size: 66%"></i></span><span class="a-acc">66%</span></a></li>
-            </ul>
-          </section>
-
-          <section class="a-sec a-latest" aria-labelledby="a-latest-h">
-            <h2 id="a-latest-h" class="a-sec-h">Latest result</h2>
-            <div class="a-result">
-              <p class="a-paper a-mono">0580/42 · m/j 2024</p>
-              <div class="a-score">
-                <p class="a-score-n"><span class="a-vh">Score </span>61/80</p>
-                <span class="a-grade a-grade-lg" data-grade="A" aria-label="Grade A">A</span>
-              </div>
-              <a class="a-btn a-btn-tonal" href="/student/result/demo">See full marking <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+        <section class="a-sec a-weak" aria-labelledby="a-weak-h">
+          <h2 id="a-weak-h" class="a-sec-h">Weak topics</h2>
+          <div class="a-ruler">
+            <div class="a-callout" data-needs="many-papers">
+              <p class="a-callout-t"><b>Waves</b> <span class="a-code">0625</span> is your weakest topic.</p>
+              <p class="a-callout-b"><span class="a-mono">54%</span>, up 7 since your last paper. <span class="a-mono">9</span> marks dropped in the last 3 papers.</p>
+              <a class="a-btn a-btn-tonal" href="/student/practice/0625">Practise waves <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
             </div>
-          </section>
-        </div>
+            <div class="a-callout" data-only-state="one-paper">
+              <p class="a-callout-t"><b>Vectors</b> <span class="a-code">0580</span> is your weakest topic.</p>
+              <p class="a-callout-b"><span class="a-mono">50%</span> on your first paper. <span class="a-mono">4</span> marks dropped.</p>
+              <a class="a-btn a-btn-tonal" href="/student/practice/0580">Practise vectors <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+            </div>
+            <div class="a-scale" aria-hidden="true">
+              <span class="a-scale-gap"></span>
+              <span class="a-scale-axis"><span style="inset-inline-start: 0%">0%</span><span style="inset-inline-start: 50%">50%</span><span class="is-secure" style="inset-inline-start: 70%">70% secure</span><span style="inset-inline-start: 100%">100%</span></span>
+            </div>
+            <ul class="a-lanes" aria-label="Topic accuracy against the 70% secure line">
+            <li data-needs="many-papers">
+              <a href="/student/practice/0625" aria-label="Waves, 0625: 54%, up 7 from 47%, 9 marks dropped in the last 3 papers. Practise waves.">
+                <span class="a-lane-name"><b>Waves</b><span class="a-code">0625</span></span>
+                <span class="a-lane-track" aria-hidden="true"><span class="a-tail is-up" style="inset-inline-start: 47%; inline-size: 7%"></span><span class="a-marker" style="inset-inline-start: 54%"></span><span class="a-marker-l" style="inset-inline-start: 54%">54%</span></span>
+                <span class="a-chg is-up"><svg class="a-ico" aria-hidden="true"><use href="#a-i-up" /></svg>up 7</span>
+                <span class="a-drop a-mono">9 marks dropped</span>
+              </a>
+            </li>
+            <li data-needs="many-papers">
+              <a href="/student/practice/0606" aria-label="Quadratic inequalities, 0606: 58%, down 3 from 61%, 6 marks dropped in the last 3 papers. Practise quadratic inequalities.">
+                <span class="a-lane-name"><b>Quadratic inequalities</b><span class="a-code">0606</span></span>
+                <span class="a-lane-track" aria-hidden="true"><span class="a-tail is-down" style="inset-inline-start: 58%; inline-size: 3%"></span><span class="a-marker" style="inset-inline-start: 58%"></span><span class="a-marker-l" style="inset-inline-start: 58%">58%</span></span>
+                <span class="a-chg is-down"><svg class="a-ico a-ico-down" aria-hidden="true"><use href="#a-i-up" /></svg>down 3</span>
+                <span class="a-drop a-mono">6 marks dropped</span>
+              </a>
+            </li>
+            <li data-needs="many-papers">
+              <a href="/student/practice/0580" aria-label="Vectors, 0580: 63%, up 8 from 55%, 5 marks dropped in the last 3 papers. Practise vectors.">
+                <span class="a-lane-name"><b>Vectors</b><span class="a-code">0580</span></span>
+                <span class="a-lane-track" aria-hidden="true"><span class="a-tail is-up" style="inset-inline-start: 55%; inline-size: 8%"></span><span class="a-marker" style="inset-inline-start: 63%"></span><span class="a-marker-l" style="inset-inline-start: 63%">63%</span></span>
+                <span class="a-chg is-up"><svg class="a-ico" aria-hidden="true"><use href="#a-i-up" /></svg>up 8</span>
+                <span class="a-drop a-mono">5 marks dropped</span>
+              </a>
+            </li>
+            <li data-needs="many-papers">
+              <a href="/student/practice/0625" aria-label="Moments, 0625: 66%, first seen this paper, 3 marks dropped in the last 3 papers. Practise moments.">
+                <span class="a-lane-name"><b>Moments</b><span class="a-code">0625</span></span>
+                <span class="a-lane-track" aria-hidden="true"><span class="a-marker" style="inset-inline-start: 66%"></span><span class="a-marker-l" style="inset-inline-start: 66%">66%</span></span>
+                <span class="a-chg">first seen</span>
+                <span class="a-drop a-mono">3 marks dropped</span>
+              </a>
+            </li>
+            <li data-only-state="one-paper">
+              <a href="/student/practice/0580" aria-label="Vectors, 0580: 50%, first seen this paper, 4 marks dropped in the last 3 papers. Practise vectors.">
+                <span class="a-lane-name"><b>Vectors</b><span class="a-code">0580</span></span>
+                <span class="a-lane-track" aria-hidden="true"><span class="a-marker" style="inset-inline-start: 50%"></span><span class="a-marker-l" style="inset-inline-start: 50%">50%</span></span>
+                <span class="a-chg">first paper</span>
+                <span class="a-drop a-mono">4 marks dropped</span>
+              </a>
+            </li>
+            </ul>
+          </div>
+        </section>
       </div>
+
+      <nav class="a-bottombar" aria-label="Student">
+        <a href="/student" aria-current="page"><svg class="a-ico" aria-hidden="true"><use href="#a-i-home" /></svg><span>Overview</span></a>
+        <a href="/student/correct"><svg class="a-ico" aria-hidden="true"><use href="#a-i-camera" /></svg><span>Correct</span></a>
+        <a href="/student/classes"><svg class="a-ico" aria-hidden="true"><use href="#a-i-class" /></svg><span>Classes</span></a>
+        <a href="/student/profile"><svg class="a-ico" aria-hidden="true"><use href="#a-i-user" /></svg><span>Profile</span></a>
+      </nav>
     </main>
   </body>
 </html>
