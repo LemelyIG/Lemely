@@ -108,6 +108,10 @@
   --md-inverse-on-surface: #130e10;
   --md-inverse-primary: #042f4f;
 
+  /* The floating-panel ring is outline-variant in dark: the light value is a
+     near-white hairline that would glow on a dark surface. */
+  --shadow-panel: 0 30px 60px -40px oklch(0.3 0.06 242 / 0.45), 0 0 0 1px var(--md-outline-variant);
+
   color-scheme: dark;
 }
 
