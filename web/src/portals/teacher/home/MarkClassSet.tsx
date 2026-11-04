@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Check, UploadSimple } from "@phosphor-icons/react"
 import "./home.css"
 
@@ -7,18 +7,35 @@ const isPdf = (f: File) => f.type === "application/pdf" || /\.pdf$/i.test(f.name
 export function MarkClassSet({ lastUpload, onFiles }: { lastUpload: string | null; onFiles: (files: File[]) => void }) {
   const input = useRef<HTMLInputElement>(null)
   const [received, setReceived] = useState(false)
-  const take = (list: FileList | null) => {
+  const timer = useRef<number | null>(null)
+  const onFilesRef = useRef(onFiles)
+  onFilesRef.current = onFiles
+  const clear = () => { if (timer.current !== null) { window.clearTimeout(timer.current); timer.current = null } }
+  const take = (list: FileList | File[] | null) => {
     const pdfs = [...(list ?? [])].filter(isPdf)
     if (!pdfs.length) return
+    clear()
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) { onFilesRef.current(pdfs); return }
     setReceived(true)
-    window.setTimeout(() => onFiles(pdfs), 600)
+    timer.current = window.setTimeout(() => {
+      timer.current = null
+      setReceived(false)
+      onFilesRef.current(pdfs)
+    }, 600)
   }
+  const takeRef = useRef(take)
+  takeRef.current = take
+  useEffect(() => {
+    const over = (e: DragEvent) => e.preventDefault()
+    const drop = (e: DragEvent) => { e.preventDefault(); takeRef.current(e.dataTransfer?.files ?? null) }
+    window.addEventListener("dragover", over)
+    window.addEventListener("drop", drop)
+    return () => { window.removeEventListener("dragover", over); window.removeEventListener("drop", drop); clear() }
+  }, [])
   return (
     <section
       aria-labelledby="mcs-h"
       className={`relative rounded-card bg-surface-container-lowest p-6 shadow-panel ${received ? "th-received" : ""}`}
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={(e) => { e.preventDefault(); take(e.dataTransfer.files) }}
     >
       <div className="flex items-baseline justify-between">
         <h2 id="mcs-h" className="text-eyebrow text-on-surface-variant">Mark a class set</h2>
