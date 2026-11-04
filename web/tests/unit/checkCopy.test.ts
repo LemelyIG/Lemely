@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  BANNED_PHRASES,
+  findBannedWords,
   findEmDashes,
   findExclamationMarks,
   isClosedCompound,
@@ -377,5 +379,35 @@ describe("aria attributes: spoken ones are copy, referential ones are not", () =
     ['<div aria-describedby="note! x" />'],
   ])("allows %s", (source) => {
     expect(findBangs(source)).toHaveLength(0)
+  })
+})
+
+describe("never-say list", () => {
+  const findBanned = (source: string) => findBannedWords(source) as { line: number; text: string }[]
+
+  it("names exactly the four banned phrases", () => {
+    expect([...BANNED_PHRASES]).toEqual(["cram", "hack", "easy A", "guaranteed grade"])
+  })
+
+  it.each([
+    ['const a = "Cram the night before"'],
+    ['const a = "A study hack that works"'],
+    ['const a = "It is an easy A"'],
+    ['const a = "A guaranteed grade for every paper"'],
+    ["const a = <p>Stop cramming</p>"],
+    ['const a = "A crammed timetable"'],
+    ["const a = <p>\n  Guaranteed   grade\n</p>"],
+  ])("flags %s", (source) => {
+    expect(findBanned(source).length).toBeGreaterThan(0)
+  })
+
+  it.each([
+    ['const hackathon = "Hackathon results"'],
+    ["// a cram comment is not UI copy\nconst a = 1"],
+    ["const crammer = 1"],
+    ['const a = "an easy a"'],
+    ['const a = "Every mark, explained."'],
+  ])("allows %s", (source) => {
+    expect(findBanned(source)).toHaveLength(0)
   })
 })

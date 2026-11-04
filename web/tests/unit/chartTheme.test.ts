@@ -77,31 +77,33 @@ describe("chart tokens exist", () => {
     expect(isDefinedInCss(token)).toBe(true)
   })
 
-  it("keeps DESIGN.md §11's series order: sky, sage, amber, clay, lilac, rose", () => {
-    expect([...SERIES_TOKENS]).toEqual([
-      "--pastel-sky-ink",
-      "--pastel-sage-ink",
-      "--pastel-amber-ink",
-      "--pastel-clay-ink",
-      "--pastel-lilac-ink",
-      "--pastel-rose-ink",
-    ])
+  it("keeps the v5 series rules: six distinct tokens, primary first", () => {
+    // DESIGN.md v5: the brand primary leads, then the Jewel grade hues and the
+    // neutral, ordered so neighbours sit far apart in hue (see nivoTheme.ts).
+    expect(new Set(SERIES_TOKENS).size).toBe(6)
+    expect(SERIES_TOKENS[0]).toBe("--md-primary")
   })
 
-  it("draws series in the -ink half of each pastel pair, never the wash", () => {
-    // The wash sits at L≈0.94 against a paper surface at L≈0.99. A 2px line in
-    // it is, for practical purposes, not on the screen. This is the assertion
-    // that stops someone "fixing" the theme to match §11's hue names literally.
+  it("draws series only in tokens that exist in the Abyss layer", () => {
+    // A series token must be an M3 role (`--md-*`) or a Jewel grade (`--grade-*`).
+    // The retired pastel `-ink` pairs are gone, and a wash would be invisible.
     for (const token of SERIES_TOKENS) {
-      expect(token.endsWith("-ink")).toBe(true)
+      expect(token).toMatch(/^--(md-|grade-)/)
+      expect(token).not.toMatch(/-(wash|container)$/)
     }
   })
 
-  it("keeps the accent out of the categorical series", () => {
-    // §11: accent means "the teacher's mark" everywhere else in this product.
-    // It is the single-series colour and must never become "series 1".
-    expect(SERIES_TOKENS as readonly string[]).not.toContain(SINGLE_SERIES_TOKEN)
-    expect(SINGLE_SERIES_TOKEN).toBe("--accent")
+  it("keeps crimson and gold out of the categorical series", () => {
+    // DESIGN.md: `error` means lost marks and low confidence, `tertiary` means XP,
+    // streaks and medium confidence. Neither may become "series N".
+    for (const token of SERIES_TOKENS) {
+      expect(token).not.toMatch(/error|tertiary/)
+    }
+  })
+
+  it("uses the primary role as the single-series colour, and leads the series with it", () => {
+    expect(SINGLE_SERIES_TOKEN).toBe("--md-primary")
+    expect(SERIES_TOKENS[0]).toBe(SINGLE_SERIES_TOKEN)
   })
 })
 

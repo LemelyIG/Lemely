@@ -42,9 +42,9 @@ describe("the @media print block", () => {
   })
 
   it("forces the paper surface to white, independent of the on-screen theme", () => {
-    expect(printBlock).toMatch(/--paper:\s*#fff/)
-    expect(printBlock).toMatch(/--paper-raised:\s*#fff/)
-    expect(printBlock).toMatch(/--paper-sunk:\s*#fff/)
+    expect(printBlock).toMatch(/--md-surface:\s*#fff/)
+    expect(printBlock).toMatch(/--md-surface-container-lowest:\s*#fff/)
+    expect(printBlock).toMatch(/--md-surface-container-low:\s*#fff/)
   })
 
   /*
@@ -62,11 +62,11 @@ describe("the @media print block", () => {
 
   /*
    * Specificity alone is not enough: the pre-fix block reset only
-   * `--paper*`, never `--ink*` — so even where the override DID apply, dark
+   * `--md-surface*`, never `--md-on-surface*` — so even where the override DID apply, dark
    * mode's near-white `--ink` would have survived onto the printed page.
    * This asserts the `:root` and `:root[data-theme="dark"]` selectors reset
    * an EQUIVALENT set of custom properties (not just that the dark selector
-   * exists), so a future edit that adds a new `--paper-*`/`--ink-*` variant
+   * exists), so a future edit that adds a new `--md-surface*`/`--md-on-surface*` variant
    * to one but not the other fails here rather than shipping silently.
    */
   it("resets the same custom properties for :root and :root[data-theme=\"dark\"]", () => {
@@ -85,14 +85,17 @@ describe("the @media print block", () => {
     const lightProps = [...new Set(lightRootRules.flatMap((r) => r.props))].sort()
     const darkProps = [...new Set(darkRootRules.flatMap((r) => r.props))].sort()
 
-    // At minimum, the paper, ink AND semantic (ok/warn/err) triples travel
-    // together — PaperResult.tsx's IntegrityMark and "Needs review" copy
-    // print in --ok/--warn, unhidden by data-print="hide", and re-verification
-    // review found they washed out under the same specificity bug (dark
-    // --warn measured 2.10:1 on forced white paper vs light's 7.58:1).
-    expect(lightProps).toEqual(expect.arrayContaining(["--paper", "--paper-raised", "--paper-sunk"]))
-    expect(lightProps).toEqual(expect.arrayContaining(["--ink", "--ink-muted", "--ink-faint"]))
-    expect(lightProps).toEqual(expect.arrayContaining(["--ok", "--warn", "--err"]))
+    // At minimum, the surface, on-surface AND semantic (success/tertiary/error)
+    // groups travel together: PaperResult.tsx's marks and "Needs review" copy
+    // print in the semantic roles, unhidden by data-print="hide", and they
+    // washed out under the same specificity bug in dark mode.
+    expect(lightProps).toEqual(
+      expect.arrayContaining(["--md-surface", "--md-surface-container-lowest", "--md-surface-container-low"]),
+    )
+    expect(lightProps).toEqual(
+      expect.arrayContaining(["--md-on-surface", "--md-on-surface-variant", "--md-outline"]),
+    )
+    expect(lightProps).toEqual(expect.arrayContaining(["--md-success", "--md-tertiary", "--md-error"]))
     expect(darkProps).toEqual(lightProps)
   })
 

@@ -70,11 +70,11 @@ function DirectionLabel({
 }) {
   return (
     <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
-      <span className="text-data-sm rounded-md bg-paper-inverse px-2 py-1 text-ink-inverse">
+      <span className="text-data-sm rounded-md bg-inverse-surface px-2 py-1 text-inverse-on-surface">
         {letter}
       </span>
-      <span className="text-label text-ink">{title}</span>
-      <span className="text-body-sm text-ink-muted">{note}</span>
+      <span className="text-label text-on-surface">{title}</span>
+      <span className="text-body-sm text-on-surface-variant">{note}</span>
       {/*
         The status a reader of a gallery actually needs, and the thing this
         screen did not say anywhere: which of these three is the product. It
@@ -83,7 +83,7 @@ function DirectionLabel({
       */}
       <span
         className={`text-label-sm rounded-full px-2.5 py-1 ${
-          status === "shipped" ? "bg-ok-wash text-ok" : "bg-paper-sunk text-ink-faint"
+          status === "shipped" ? "bg-success-container text-success-text" : "bg-surface-container-low text-on-surface-variant"
         }`}
       >
         {status === "shipped" ? "In the product" : "Ruled out"}
@@ -99,13 +99,13 @@ export function Directions() {
         {/* The gallery's own title, as an <h1> — this route had no
             audit-registry entry until P5.11, so its missing page heading had
             never been looked at. */}
-        <h1 className="text-display-lg text-ink">{directionsIntro.title}</h1>
-        <p className="text-body-md lm-prose mt-3 text-pretty text-ink-muted">
+        <h1 className="text-display-lg text-on-surface">{directionsIntro.title}</h1>
+        <p className="text-body-md lm-prose mt-3 text-pretty text-on-surface-variant">
           The result header is the emotional moment of the product, the screen a student opens
           after a mock. The app uses <Link to="/student/result">A and B together</Link>: the ledger
           reading, with the boundary rail underneath it.
         </p>
-        <p className="text-body-sm lm-prose mt-2 text-pretty text-ink-faint">
+        <p className="text-body-sm lm-prose mt-2 text-pretty text-on-surface-variant">
           Internal reference. This page is not linked from anywhere a student navigates.
         </p>
       </div>
@@ -118,30 +118,30 @@ export function Directions() {
           status="shipped"
         />
         <Card className="px-7 py-6">
-          <div className="text-data-sm text-ink-muted">
+          <div className="text-data-sm text-on-surface-variant">
             0625 / Paper 1 Variant 2 / May-June 2020
           </div>
-          <div className="text-display-md mt-2.5 text-ink">Thirty-eight out of forty.</div>
+          <div className="text-display-md mt-2.5 text-on-surface">Thirty-eight out of forty.</div>
           <div className="mt-5 flex flex-wrap items-end gap-6">
             <div>
-              <div className="text-eyebrow text-ink-faint">Marks</div>
+              <div className="text-eyebrow text-on-surface-variant">Marks</div>
               {/* The mark and the grade in the data face, not the display
                   face — DESIGN.md §4, and D4.2's finding on the real result
                   screen, which had the same two figures in the same wrong
                   place. A gallery demonstrating the treatment has to get this
                   right or it teaches the mistake. */}
-              <div className="text-data-lg mt-1.5 text-ink">
-                38<span className="text-data-md text-ink-faint">/40</span>
+              <div className="text-data-lg mt-1.5 text-on-surface">
+                38<span className="text-data-md text-on-surface-variant">/40</span>
               </div>
             </div>
             <div>
-              <div className="text-eyebrow text-ink-faint">Grade</div>
-              <div className="text-data-lg mt-1.5 text-accent">A</div>
+              <div className="text-eyebrow text-on-surface-variant">Grade</div>
+              <div className="text-data-lg mt-1.5 text-primary">A</div>
             </div>
             {/* `margin-rule` (§8), not a hand-written `border-s` plus padding:
                 it is the project's own hairline-in-the-margin utility and it
                 is already RTL-safe by construction. */}
-            <div className="text-body-sm margin-rule max-w-[44ch] flex-1 text-pretty text-ink-muted">
+            <div className="text-body-sm margin-rule max-w-[44ch] flex-1 text-pretty text-on-surface-variant">
               Above the 2020 A boundary by 15 marks. Two dropped, both single-mark recall.
             </div>
           </div>
@@ -155,11 +155,11 @@ export function Directions() {
         />
         <Card className="px-7 py-6">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <div className="text-display-sm text-ink">Physics, Paper 1</div>
-            <div className="text-data-sm text-ink-muted">2020 boundaries, 95%</div>
+            <div className="text-display-sm text-on-surface">Physics, Paper 1</div>
+            <div className="text-data-sm text-on-surface-variant">2020 boundaries, 95%</div>
           </div>
           <BoundaryBar score={95} maxScore={100} boundaries={directionsBoundaries} />
-          <p className="text-body-sm mt-3 text-pretty text-ink-muted">
+          <p className="text-body-sm mt-3 text-pretty text-on-surface-variant">
             Fifteen marks of headroom above A. Even a bad day keeps you in the band.
           </p>
         </Card>
@@ -171,7 +171,7 @@ export function Directions() {
           status="ruled-out"
         />
         {/*
-          Rendered on `--paper-inverse`, the token, rather than `bg-ink`, which
+          Rendered on `--paper-inverse`, the token, rather than `bg-inverse-surface`, which
           is the *text* colour and was being used as a background: close enough
           in value to look right and wrong by name, so changing the ink colour
           would have repainted this panel.
@@ -181,13 +181,13 @@ export function Directions() {
           marketing band, and the reason it cannot be a result header is a
           system rule rather than a judgement about the design.
         */}
-        <div className="rounded-xl bg-paper-inverse px-8 py-9">
-          <div className="text-display-lg max-w-[26ch] text-ink-inverse">
+        <div className="rounded-xl bg-inverse-surface px-8 py-9">
+          <div className="text-display-lg max-w-[26ch] text-inverse-on-surface">
             You are marking at grade A, and the only two marks you lost were the same kind of
             question.
           </div>
           <div className="mt-7 flex flex-wrap items-center gap-6">
-            <div className="text-data-sm text-ink-inverse/60">0625/12, 38/40, 95%</div>
+            <div className="text-data-sm text-inverse-on-surface/60">0625/12, 38/40, 95%</div>
             <div className="flex-1" />
             {/* The kit's Button, not a hand-rolled one with its own border
                 recipe — on the screen whose subject is the design system. */}

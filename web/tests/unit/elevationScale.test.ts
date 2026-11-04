@@ -194,7 +194,10 @@ describe("no z-index outside the scale", () => {
     const declarations = [
       ...stripCssComments(INDEX_CSS).matchAll(/^\s*z-index\s*:\s*([^;]+);/gm),
     ].map((m) => m[1].trim())
-    expect(declarations.length).toBeGreaterThan(0)
+    // v5 Abyss: the stylesheet no longer sets a z-index on any rule of its own
+    // (layering lives in the `z-*` utilities, which the test above checks), so
+    // an empty list is valid. The vacuity guard is the scale test at the top of
+    // this file: if the rungs vanish, that one fails.
     for (const value of declarations) {
       expect(value).toMatch(/^var\(--z-index-[a-z-]+\)$/)
     }

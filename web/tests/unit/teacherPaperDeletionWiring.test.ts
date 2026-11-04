@@ -66,7 +66,7 @@ describe("Grading.tsx — the delete control is not trapped inside the open cont
     const body = functionBody(source, "PaperCard")
     expect(body).not.toMatch(/focus-visible:outline/)
     expect(body).toMatch(/has-\[\[data-open-trigger\]:focus-visible\]:ring-2/)
-    expect(body).toMatch(/has-\[\[data-open-trigger\]:focus-visible\]:ring-focus-ring/)
+    expect(body).toMatch(/has-\[\[data-open-trigger\]:focus-visible\]:ring-primary/)
   })
 
   it("the ring selector names the open button specifically, not any focused descendant", () => {

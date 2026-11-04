@@ -49,8 +49,12 @@ describe("brand-lockup.tsx", () => {
     expect(source).toContain('"lemely"')
   })
 
-  it("renders BrandMark", () => {
-    expect(source).toContain("<BrandMark")
+  it("draws the Clip Letters wordmark inline", () => {
+    // v5: the notebook BrandMark is retired; the lockup carries its own clip SVG
+    // (DESIGN.md "Logo: Clip Letters") and renders no BrandMark component.
+    expect(source).toContain("wordmark-letters")
+    expect(source).toContain('viewBox="28 4 46 94"')
+    expect(source).not.toContain("<BrandMark")
   })
 })
 
