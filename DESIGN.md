@@ -10,6 +10,7 @@ colors:
   tide-hover: "#9ccaea"
   mist-blue: "oklch(0.92 0.035 235)"
   night: "#130e10"
+  night-surface: "oklch(0.16 0.014 245)"
   white: "#ffffff"
   gold: "oklch(0.80 0.13 80)"
   success: "oklch(0.60 0.12 150)"
@@ -46,7 +47,7 @@ colors:
   on-surface-variant: "oklch(0.47 0.02 240)"
   outline: "oklch(0.87 0.012 240)"
   outline-variant: "oklch(0.92 0.01 240)"
-  inverse-surface: "#130e10"
+  inverse-surface: "oklch(0.16 0.014 245)"
   inverse-on-surface: "oklch(0.95 0.006 240)"
   inverse-primary: "#7fb8e0"
   scrim: "oklch(0.20 0.03 242 / 0.4)"
@@ -73,12 +74,12 @@ colors:
   dark-success-text: "oklch(0.72 0.12 150)"
   dark-success-container: "oklch(0.30 0.06 150)"
   dark-on-success-container: "oklch(0.90 0.06 150)"
-  dark-surface: "#130e10"
-  dark-surface-container-lowest: "oklch(0.12 0.006 240)"
-  dark-surface-container-low: "oklch(0.19 0.01 240)"
-  dark-surface-container: "oklch(0.215 0.014 240)"
-  dark-surface-container-high: "oklch(0.25 0.018 240)"
-  dark-surface-container-highest: "oklch(0.29 0.022 240)"
+  dark-surface: "oklch(0.16 0.014 245)"
+  dark-surface-container-lowest: "oklch(0.12 0.010 245)"
+  dark-surface-container-low: "oklch(0.19 0.014 245)"
+  dark-surface-container: "oklch(0.215 0.016 245)"
+  dark-surface-container-high: "oklch(0.25 0.020 245)"
+  dark-surface-container-highest: "oklch(0.29 0.024 245)"
   dark-on-surface: "oklch(0.95 0.006 240)"
   dark-on-surface-variant: "oklch(0.77 0.015 240)"
   dark-outline: "oklch(0.38 0.02 240)"
@@ -256,7 +257,7 @@ All values come from the five tonal palettes in the brand guidelines (tone = OKL
 
 ### Primary
 - **Abyss** (`#042f4f`): primary in light mode. Filled buttons, the active nav item's text, progress fills, the clip in the wordmark on light backgrounds, the app icon tile, and Binny's body. Hover is `#0a3d62`.
-- **Tide** (`#7fb8e0`): primary in dark mode and `inverse-primary` in light mode. The clip in the wordmark on dark backgrounds. Use it as the accent on any Abyss or Night surface. Hover is `#9ccaea`.
+- **Tide** (`#7fb8e0`): primary in dark mode and `inverse-primary` in light mode. The clip in the wordmark on dark backgrounds. Use it as the accent on any Abyss or Night-surface fill. Hover is `#9ccaea`.
 - **Mist Blue** (`oklch(0.92 0.035 235)`): `primary-container` in light mode. Tonal secondary actions, tags, streak pills, the active nav item, and the Binny avatar background. In dark mode the container becomes `oklch(0.34 0.07 242)`.
 
 ### Secondary
@@ -277,19 +278,20 @@ Green through yellow to red in even hue and lightness steps. Every chip uses whi
 | `oklch(0.46 0.12 155)` | `oklch(0.52 0.12 132)` | `oklch(0.58 0.12 110)` | `oklch(0.63 0.12 88)` | `oklch(0.59 0.125 62)` | `oklch(0.54 0.13 38)` | `oklch(0.50 0.14 15)` |
 
 ### Neutral
-- **Night** (`#130e10`): `on-surface` in light mode and `surface` in dark mode. The letters of the wordmark on light backgrounds.
+- **Night** (`#130e10`): the text ink. `on-surface` in light mode and `inverse-on-surface` in dark mode, and the letters of the wordmark on light backgrounds. Night is never a fill: its warm undertone clashes with the blues as a background.
+- **Night surface** (`oklch(0.16 0.014 245)`): the cool near-black that replaces Night as a background. `surface` in dark mode and `inverse-surface` in light mode.
 - **Surface ladder, light** (hue 240): surface `oklch(0.985 0.004 240)` · lowest `#ffffff` · low `oklch(0.97 0.006 240)` · container `oklch(0.955 0.008 240)` · high `oklch(0.94 0.01 240)` · highest `oklch(0.92 0.012 240)`.
-- **Surface ladder, dark**: surface `#130e10` · lowest `oklch(0.12 0.006 240)` · low `oklch(0.19 0.01 240)` · container `oklch(0.215 0.014 240)` · high `oklch(0.25 0.018 240)` · highest `oklch(0.29 0.022 240)`.
+- **Surface ladder, dark** (hue 245): surface `oklch(0.16 0.014 245)` (Night surface) · lowest `oklch(0.12 0.010 245)` · low `oklch(0.19 0.014 245)` · container `oklch(0.215 0.016 245)` · high `oklch(0.25 0.020 245)` · highest `oklch(0.29 0.024 245)`.
 - **On-surface-variant** (`oklch(0.47 0.02 240)` light, `oklch(0.77 0.015 240)` dark): secondary text, metadata, captions.
 - **Outline** (`oklch(0.87 0.012 240)` light, `oklch(0.38 0.02 240)` dark): input borders and white-on-white card edges. **Outline-variant** (`oklch(0.92 0.01 240)` light, `oklch(0.30 0.018 240)` dark): dividers between rows.
 
 ### Scheme mapping
-Light: page on `surface`, cards on `surface-container-lowest` (white) with an outline, rows inside cards on `surface-container-low`. Dark: page on `surface` (Night), raised cards on `surface-container-high`, rows inside them on `surface-container`. Dark cards need no outline.
+Light: page on `surface`, cards on `surface-container-lowest` (white) with an outline, rows inside cards on `surface-container-low`. Dark: page on `surface` (Night surface, the cool near-black), raised cards on `surface-container-high`, rows inside them on `surface-container`. Dark cards need no outline. The inverse panel in light mode is the same Night surface. Night itself stays the text ink in both schemes, never a background.
 
 ### Named Rules
 **The Roles Only Rule.** UI code uses Material 3 roles (`--md-primary`, `--md-surface-container-low`, ...), never raw values. Theme switching swaps role values, not component code.
 
-**The Never Abyss On Dark Rule.** On Night or any dark surface, the brand accent is Tide. Abyss on dark reads as a hole.
+**The Never Abyss On Dark Rule.** On the Night surface or any dark surface, the brand accent is Tide. Abyss on dark reads as a hole.
 
 **The Red Means Lost Rule.** Crimson appears only on lost marks, low confidence and genuine errors. Never as decoration, a background wash, or a heading colour.
 
@@ -352,7 +354,7 @@ Components are confident and rounded: big radii, heavy weights on buttons, gener
 
 ### Cards / Containers
 - **Corner Style:** board sections 32px, cards 24px, tiles 20px, inner cards 18px.
-- **Background:** light: outer card on `surface` with a 1.5px `outline`, inner card on `surface-container-lowest` with a 1px `outline`. Dark: outer card on Night, inner card on `surface-container-high`, no outline.
+- **Background:** light: outer card on `surface` with a 1.5px `outline`, inner card on `surface-container-lowest` with a 1px `outline`. Dark: outer card on the Night surface, inner card on `surface-container-high`, no outline.
 - **Shadow Strategy:** flat at rest. Hover lift only on cards that are links (see Elevation).
 - **Internal Padding:** 28px for outer cards, 22px for inner cards, 16 to 20px for tiles.
 

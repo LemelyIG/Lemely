@@ -145,12 +145,12 @@
   --success: oklch(0.72 0.12 150);
   --sh-success-text: oklch(0.72 0.12 150);
   --error: oklch(0.72 0.15 25);
-  --md-surface: #130e10;
-  --md-surface-lowest: oklch(0.12 0.006 240);
-  --md-surface-low: oklch(0.19 0.01 240);
-  --md-surface-container: oklch(0.215 0.014 240);
-  --md-surface-high: oklch(0.25 0.018 240);
-  --md-surface-highest: oklch(0.29 0.022 240);
+  --md-surface: oklch(0.16 0.014 245);
+  --md-surface-lowest: oklch(0.12 0.010 245);
+  --md-surface-low: oklch(0.19 0.014 245);
+  --md-surface-container: oklch(0.215 0.016 245);
+  --md-surface-high: oklch(0.25 0.020 245);
+  --md-surface-highest: oklch(0.29 0.024 245);
   --md-on-surface: oklch(0.95 0.006 240);
   --md-on-surface-variant: oklch(0.77 0.015 240);
   --md-outline: oklch(0.38 0.02 240);
