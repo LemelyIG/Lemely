@@ -208,7 +208,7 @@ export function SidebarNav({ items, groups, variant = "default", className, ...p
               className={(isActive) =>
                 variant === "abyss"
                   ? cn(
-                      "flex w-full items-center gap-2.5 rounded-chip px-2.5 py-2 pointer-coarse:min-h-11 text-start text-[14px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+                      "flex w-full items-center gap-2.5 rounded-chip px-2.5 py-2 pointer-coarse:min-h-11 text-start text-label transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
                       isActive
                         ? "bg-primary-container text-primary"
                         : "text-on-surface-variant hover:bg-surface-container hover:text-on-surface",

@@ -12,7 +12,7 @@ export function ReviewQueueTile({ overview }: { overview: Overview }) {
       <h2 id="rq-h" className="text-eyebrow text-inverse-primary">Review queue</h2>
       <div className="mt-3 grid grid-cols-[auto_1fr] items-end gap-6">
         <div>
-          <p className="font-display text-[64px] font-extrabold leading-none tracking-[-0.03em] tabular-nums">{m.count}</p>
+          <p className="text-display-xl tabular-nums">{m.count}</p>
           {m.empty ? (
             <p className="mt-2 text-body-md">Nothing needs your eyes.</p>
           ) : (

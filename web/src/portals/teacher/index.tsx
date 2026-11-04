@@ -210,7 +210,7 @@ function ClassesNavSection() {
                 // §6.1's 44px floor on coarse pointers.
                 className={({ isActive }) =>
                   cn(
-                    "flex items-center gap-2.5 rounded-chip px-2.5 py-1.5 pointer-coarse:min-h-11 text-[14px] font-semibold transition-colors",
+                    "flex items-center gap-2.5 rounded-chip px-2.5 py-1.5 pointer-coarse:min-h-11 text-label transition-colors",
                     "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
                     isActive
                       ? "bg-primary-container text-primary"
@@ -346,7 +346,7 @@ function SidebarFooter() {
     <div className="flex flex-col gap-3">
       <Link
         to="/teacher/grading"
-        className="inline-flex h-9 w-full items-center justify-center gap-[7px] rounded-chip bg-primary px-3.5 text-[14px] font-bold text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+        className="inline-flex h-9 w-full items-center justify-center gap-[7px] rounded-chip bg-primary px-3.5 btn-text text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
       >
         <UploadSimple size={16} aria-hidden="true" />
         Upload papers
@@ -410,13 +410,13 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
           label="Open teacher navigation"
           className="-ms-1 sidebar:hidden"
         />
-        <p className="min-w-0 truncate text-[19px] font-extrabold leading-none tracking-[-0.04em] text-on-surface">
+        <p className="min-w-0 truncate text-display-sm text-on-surface">
           {title}
         </p>
         <div className="flex-1" />
         <Link
           to="/teacher/first-class"
-          className="inline-flex h-9 flex-none items-center gap-[7px] rounded-chip bg-secondary-container px-3 text-[14px] font-bold text-on-secondary-container transition-colors hover:bg-secondary-container/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:px-3.5 pointer-coarse:h-11"
+          className="inline-flex h-9 flex-none items-center gap-[7px] rounded-chip bg-secondary-container px-3 btn-text text-on-secondary-container transition-colors hover:bg-secondary-container/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:px-3.5 pointer-coarse:h-11"
         >
           <Plus size={16} aria-hidden="true" />
           <span className="hidden sm:inline">Create</span>
@@ -424,7 +424,7 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
         </Link>
         <Link
           to="/teacher/grading"
-          className="me-2.5 inline-flex h-9 flex-none items-center gap-[7px] rounded-chip bg-primary px-3 text-[14px] font-bold text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:px-3.5 pointer-coarse:h-11"
+          className="me-2.5 inline-flex h-9 flex-none items-center gap-[7px] rounded-chip bg-primary px-3 btn-text text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:px-3.5 pointer-coarse:h-11"
         >
           <UploadSimple size={16} aria-hidden="true" />
           <span className="hidden sm:inline">Upload papers</span>
@@ -442,7 +442,7 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
             </span>
           ) : null}
         </Link>
-        <Link to="/teacher/settings" aria-label="Settings" className={cn(TOP_BAR_ICON_BUTTON, "hidden sm:flex")}>
+        <Link to="/teacher/settings" aria-label="Settings" className={TOP_BAR_ICON_BUTTON}>
           <Gear size={20} aria-hidden="true" />
         </Link>
       </div>

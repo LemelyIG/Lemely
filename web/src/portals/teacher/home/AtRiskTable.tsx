@@ -8,7 +8,7 @@ export function AtRiskTable({ students }: { students: AtRiskStudent[] }) {
   return (
     <section aria-labelledby="ar-h" className="rounded-card bg-surface-container-lowest p-6 shadow-panel">
       <div className="flex items-baseline justify-between">
-        <h2 id="ar-h" className="font-display text-[28px] font-extrabold tracking-[-0.03em]">
+        <h2 id="ar-h" className="text-display-md">
           At-risk students<span className="sr-only">, {students.length} this week</span>{" "}
           <span aria-hidden className="text-eyebrow text-on-surface-variant">{students.length} this week</span>
         </h2>

@@ -54,7 +54,7 @@ export function TeacherSetup({ progress, firstClass, onFiles }: { progress: Setu
     <div className="grid gap-8">
       <header className="rounded-card bg-inverse-surface p-8 text-inverse-on-surface">
         <p className="text-eyebrow text-inverse-primary">Every mark, explained.</p>
-        <h1 className="mt-2 font-display text-[40px] font-extrabold leading-[1.05] tracking-[-0.03em]">Mark your first class set</h1>
+        <h1 className="mt-2 text-display-lg">Mark your first class set</h1>
         <div className="mt-6 flex flex-wrap gap-3">
           <Link to="/teacher/first-class" className="inline-flex items-center gap-2 rounded-button bg-inverse-primary px-5 py-3 btn-text text-primary">Create a class</Link>
           <button type="button" onClick={() => (progress.created ? input.current?.click() : setNudge((n) => n + 1))}
