@@ -57,9 +57,9 @@ export function TeacherSetup({ progress, firstClass, onFiles }: { progress: Setu
         <p className="text-eyebrow text-inverse-primary">Every mark, explained.</p>
         <h1 className="mt-2 text-display-lg">Mark your first class set</h1>
         <div className="mt-6 flex flex-wrap gap-3">
-          <Link to="/teacher/first-class" className="inline-flex items-center gap-2 rounded-button bg-inverse-primary px-5 py-3 btn-text text-primary">Create a class</Link>
+          <Link to="/teacher/first-class" className="inline-flex items-center gap-2 rounded-button bg-inverse-primary px-5 py-3 btn-text text-primary transition-colors hover:bg-inverse-primary/85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-inverse-primary">Create a class</Link>
           <button type="button" onClick={() => (progress.created ? input.current?.click() : setNudge((n) => n + 1))}
-            className="rounded-button border border-inverse-on-surface/40 px-5 py-3 btn-text">Upload papers</button>
+            className="rounded-button border border-inverse-on-surface/40 px-5 py-3 btn-text transition-colors hover:bg-inverse-on-surface/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-inverse-primary">Upload papers</button>
         </div>
       </header>
 
@@ -86,7 +86,7 @@ export function TeacherSetup({ progress, firstClass, onFiles }: { progress: Setu
                   {s.key === "created" && done && firstClass?.joinCode ? (
                     <p className="text-body-sm text-on-surface-variant">
                       {firstClass.label} · join code <code className="text-data-md text-on-surface">{firstClass.joinCode}</code>{" "}
-                      <button type="button" onClick={() => void copy(firstClass.joinCode!)} className="font-bold text-primary">{copied ? "Copied" : "Copy"}</button>
+                      <button type="button" onClick={() => void copy(firstClass.joinCode!)} className="font-bold text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">{copied ? "Copied" : "Copy"}</button>
                     </p>
                   ) : (
                     <p className="text-body-sm text-on-surface-variant">{s.what}</p>
