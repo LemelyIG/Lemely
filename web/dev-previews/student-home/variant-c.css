@@ -202,7 +202,7 @@
 .tl-subj-name { grid-area: name; font: 700 16px/1.3 var(--font-ui) }
 .tl-subj-name .tl-code { margin-inline-end: 6px }
 .tl-subj-delta { grid-area: delta; display: inline-flex; align-items: center; gap: 4px; font-size: 14px; color: var(--text-secondary) }
-.tl-subj-delta.is-up .tl-ico { color: var(--md-success) }
+.tl-subj-delta.is-up { color: var(--sh-success-text) }
 .tl-subj-papers, .tl-subj-exam { font: 600 13px/1.4 var(--font-mono); color: var(--text-secondary); text-align: end; white-space: nowrap }
 .tl-subj-papers { grid-area: papers }
 .tl-subj-exam { grid-area: exam }
@@ -259,10 +259,28 @@
 .tl-skel-block { block-size: 220px; margin-block-start: 48px; border-radius: var(--radius-card) }
 .tl-skel-ledger { block-size: 200px; margin-block-start: 24px; border-radius: var(--radius-card) }
 
+/* Student bottom bar: mobile frame only, in every state. */
+.tl-tabs { display: none }
+.sh-root[data-width="mobile"] .tl-tabs {
+  position: sticky; inset-block-end: 0; z-index: 5;
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px;
+  padding: 8px 10px 10px;
+  background: var(--md-surface-low);
+  border-block-start: 1px solid var(--border-subtle);
+}
+.tl-tab {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  min-block-size: 52px; border-radius: 12px;
+  color: var(--text-secondary); font: 600 12px/1.2 var(--font-ui); text-decoration: none;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.tl-tab:hover { background: var(--surface-hover-tint); color: var(--text-body) }
+.tl-tab[aria-current="page"] { background: var(--md-primary-container); color: var(--md-primary) }
+
 /* Mobile: Binny small, then level, the week, today, the record. */
 @container home (max-width: 760px) {
   .tl { --tl-pad: 16px }
-  .tl-page { padding-block: 20px 48px }
+  .tl-page { padding-block: 20px 96px }
   .tl-greet { margin-block-end: 16px }
   .tl-greet h1 { font-size: 26px }
   .tl-greet-sub { font-size: 15px }
@@ -287,7 +305,7 @@
   .tl-week-head { margin-block-end: 12px }
   .tl-strip { gap: 5px }
   .tl-day { min-block-size: 64px; padding: 8px 2px; align-items: center; gap: 6px; border-radius: 12px }
-  .tl-day-w { font-size: 10px; letter-spacing: 0.04em }
+  .tl-day-w { letter-spacing: 0 }
   .tl-day-d { font-size: 20px }
   .tl-day.is-today { outline-offset: 2px }
   .tl-wide { display: none }
