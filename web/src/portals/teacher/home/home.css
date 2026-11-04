@@ -1,0 +1,9 @@
+@keyframes th-big { 0% { opacity: 0; transform: scale(0.6); } 40% { opacity: 1; transform: scale(1.05); } 100% { opacity: 0; transform: scale(1); } }
+@keyframes th-draw { from { stroke-dashoffset: 30; } to { stroke-dashoffset: 0; } }
+@keyframes th-chip { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.th-received .th-big { animation: th-big 900ms var(--ease-expo) both; }
+.th-received .th-big path { stroke-dasharray: 30; animation: th-draw 500ms 120ms var(--ease-expo) both; }
+.th-received .th-got { animation: th-chip 350ms var(--ease-expo) both; }
+@media (prefers-reduced-motion: reduce) {
+  .th-received .th-big, .th-received .th-big path, .th-received .th-got { animation: none; }
+}
