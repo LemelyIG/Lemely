@@ -70,6 +70,13 @@ Schools are not part of billing. A teacher leases seats to students instead.
   teacher's classes uses the same seat.
 - The teacher sets each seat's scope: the subjects and the actions the seat covers. Subjects
   default to the subjects of the teacher's classes the student joined.
+- Weekly study plans are an optional seat action, off by default. When the teacher turns on
+  `study_plan` for a seat, the student can generate their own weekly plan for that seat's
+  subjects, paid by the seat. Study plans are already one per (student, subject, week)
+  (`lemely/db/models/study_plan.py`), so they route per subject like papers. The seat pays for
+  the first generation per subject per week; regenerating in the same week draws from the
+  student's own balance. With the action off, the student can still generate plans from their
+  own plan or credits.
 - Each seat carries its own monthly allowance (set by the teacher's tier). The teacher can let a
   student overflow into the teacher's credits, up to a per-student cap.
 - Spend order for a seated student's in-scope action: seat allowance, then teacher credits
@@ -415,7 +422,7 @@ filter and an optional cap.
 - If two seats cover the same subject and action, the older seat pays first. Its teacher's
   credits are not tried before the second seat's allowance: the chain is all seat allowances in
   age order, then each seat's teacher credits in the same order, then the student's own balance.
-- An action with no subject (for example a cross-subject study plan) uses no seat. It draws only
+- An action with no subject uses no seat. It draws only
   from the student's own allowance and credits.
 - A payer is skipped if its owner has debt, except a `seat_allowance` grant, which stays usable
   while the student has debt on their own balance.
@@ -552,6 +559,8 @@ TDD. Locally, run only the test files touched; CI runs the full suite.
   - Spend order and payer-chain building for each row of the §5.6 table.
   - Per-subject seat routing: maths work charges the maths seat, physics work the physics seat,
     subject-less work charges no seat; two seats on one subject follow the §5.6 order.
+  - Study plan on a seat: charged to the seat only when `study_plan` is in scope, and only for
+    the first generation per subject per week.
 - **Repository (Postgres).**
   - Concurrent jobs on one balance: reservations prevent both starting when only one is covered.
   - Settle under, at and over the reservation; over-reservation draws down the chain, then
