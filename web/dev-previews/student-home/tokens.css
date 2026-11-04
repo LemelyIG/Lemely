@@ -116,6 +116,7 @@
 /* Student home additions. Text on gold is the same dark ink in both schemes. */
 .sh-root {
   --sh-gold-text: oklch(0.20 0.019 80);
+  --sh-success-text: oklch(0.49 0.12 150);
   --sh-grade-astar: var(--grade-astar);
   --sh-grade-a: var(--grade-a);
   --sh-grade-b: var(--grade-b);
@@ -142,6 +143,7 @@
   --md-on-error-container: oklch(0.90 0.083 25);
   --md-success: oklch(0.72 0.12 150);
   --success: oklch(0.72 0.12 150);
+  --sh-success-text: oklch(0.72 0.12 150);
   --error: oklch(0.72 0.15 25);
   --md-surface: #130e10;
   --md-surface-lowest: oklch(0.12 0.006 240);
