@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import { relativeTime } from "@/lib/utils"
 import type { ClassSummary, Overview as OverviewDTO } from "@/lib/teacherTypes"
 import { ReviewQueueTile } from "../home/ReviewQueueTile"

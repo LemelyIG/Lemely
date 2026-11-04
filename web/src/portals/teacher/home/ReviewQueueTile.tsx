@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H5 E4 S4 R4 V4 */
 import { Link } from "react-router-dom"
 import type { Overview } from "@/lib/teacherTypes"
 import { ForwardArrow } from "@/components/ui/inline-arrow"

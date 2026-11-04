@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R3 V4 */
 import { useEffect, useRef, useState } from "react"
 import { Check, UploadSimple } from "@phosphor-icons/react"
 import "./home.css"
@@ -67,7 +68,7 @@ export function MarkClassSet({ lastUpload, onFiles }: { lastUpload: string | nul
         <button
           type="button"
           onClick={() => input.current?.click()}
-          className="inline-flex items-center gap-2 rounded-button bg-primary px-5 py-3 btn-text text-on-primary hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          className="inline-flex items-center gap-2 rounded-button bg-primary px-5 py-3 btn-text text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         >
           <UploadSimple size={16} />Upload papers
         </button>

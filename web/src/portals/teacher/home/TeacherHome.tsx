@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import { useNavigate } from "react-router-dom"
 import { useTeacherClasses, useTeacherOverview } from "@/lib/hooks/useTeacherApi"
 import { teacherLoadFailureMessage } from "@/lib/teacherOutcome"

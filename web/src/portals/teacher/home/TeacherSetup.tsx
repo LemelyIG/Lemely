@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R3 V4 */
 import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { Check, Plus, UploadSimple } from "@phosphor-icons/react"
@@ -91,11 +92,11 @@ export function TeacherSetup({ progress, firstClass, onFiles }: { progress: Setu
                     <p className="text-body-sm text-on-surface-variant">{s.what}</p>
                   )}
                   {now && s.key === "created" && (
-                    <Link to="/teacher/first-class" className="mt-3 inline-flex items-center gap-2 rounded-button bg-primary px-4 py-2.5 btn-text text-on-primary hover:bg-primary-hover"><Plus size={16} />Create a class</Link>
+                    <Link to="/teacher/first-class" className="mt-3 inline-flex items-center gap-2 rounded-button bg-primary px-4 py-2.5 btn-text text-on-primary transition-colors hover:bg-primary-hover"><Plus size={16} />Create a class</Link>
                   )}
                   {now && s.key === "uploaded" && (
                     <div className="mt-3 flex flex-wrap items-center gap-3">
-                      <button type="button" onClick={() => input.current?.click()} className="inline-flex items-center gap-2 rounded-button bg-primary px-4 py-2.5 btn-text text-on-primary hover:bg-primary-hover"><UploadSimple size={16} />Upload papers</button>
+                      <button type="button" onClick={() => input.current?.click()} className="inline-flex items-center gap-2 rounded-button bg-primary px-4 py-2.5 btn-text text-on-primary transition-colors hover:bg-primary-hover"><UploadSimple size={16} />Upload papers</button>
                       <span className="text-body-sm text-on-surface-variant">or drop them anywhere on this page</span>
                     </div>
                   )}
