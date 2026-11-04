@@ -2,8 +2,26 @@
 import { Link } from "react-router-dom"
 import type { AtRiskStudent } from "@/lib/teacherTypes"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
-import { gradeChipClass } from "@/lib/grade"
+import { gradeTone, type GradeTone } from "@/lib/grade"
 import { atRiskRowModel } from "./models"
+
+// Small chips (16px letter) fail AA as white-on-Jewel, so the Jewel colour moves to
+// a border around a dark letter. Matches gradeChipClass's small variant; literal
+// class names so Tailwind generates them.
+const SMALL_CHIP_BORDER: Record<GradeTone, string> = {
+  "a-star": "border-grade-a-star",
+  a: "border-grade-a",
+  b: "border-grade-b",
+  c: "border-grade-c",
+  d: "border-grade-d",
+  e: "border-grade-e",
+  u: "border-grade-u",
+}
+
+function smallGradeChipClass(grade: string): string {
+  const tone = gradeTone(grade)
+  return `border-2 ${tone ? SMALL_CHIP_BORDER[tone] : "border-outline-variant"} bg-surface-container-lowest text-on-surface`
+}
 
 export function AtRiskTable({ students }: { students: AtRiskStudent[] }) {
   return (
@@ -37,9 +55,9 @@ export function AtRiskTable({ students }: { students: AtRiskStudent[] }) {
                   </span>
                   {m.to && (
                     <span className="flex items-center gap-2" role="img" aria-label={m.from ? `${m.from} to ${m.to}` : m.to}>
-                      {m.from && <span className={`grid size-9 place-items-center rounded-row font-bold ${gradeChipClass(m.from)}`}>{m.from}</span>}
+                      {m.from && <span className={`grid size-9 place-items-center rounded-row font-bold ${smallGradeChipClass(m.from)}`}>{m.from}</span>}
                       {m.from && <span aria-hidden className="text-on-surface-variant"><ForwardArrow /></span>}
-                      <span className={`grid size-9 place-items-center rounded-row font-bold ${gradeChipClass(m.to)}`}>{m.to}</span>
+                      <span className={`grid size-9 place-items-center rounded-row font-bold ${smallGradeChipClass(m.to)}`}>{m.to}</span>
                     </span>
                   )}
                 </Link>
