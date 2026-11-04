@@ -309,7 +309,7 @@ function ParentLayout() {
       <main
         id={MAIN_CONTENT_ID}
         tabIndex={-1}
-        className="mx-auto w-full min-w-0 max-w-240 flex-1 overflow-x-hidden px-4 pb-16 pt-2 focus:outline-none md:px-8"
+        className="mx-auto w-full min-w-0 max-w-240 flex-1 overflow-x-hidden px-4 pb-16 pt-6 focus:outline-none md:px-8 lg:pt-8"
       >
         {/* PR 2 part C: offline recovery banner, above the Suspense/
             ErrorBoundary content it sits over — it renders nothing while

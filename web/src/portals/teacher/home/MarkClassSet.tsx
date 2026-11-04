@@ -51,7 +51,7 @@ export function MarkClassSet({ lastUpload, onFiles }: { lastUpload: string | nul
   return (
     <section
       aria-labelledby="mcs-h"
-      className={`relative rounded-card bg-surface-container-lowest p-6 shadow-panel ${received ? "th-received" : ""}`}
+      className={`relative min-w-0 rounded-card bg-surface-container-lowest p-6 shadow-panel ${received ? "th-received" : ""}`}
     >
       <div className="flex items-baseline justify-between">
         <h2 id="mcs-h" className="text-eyebrow text-on-surface-variant">Mark papers</h2>
@@ -68,7 +68,7 @@ export function MarkClassSet({ lastUpload, onFiles }: { lastUpload: string | nul
         <button
           type="button"
           onClick={() => input.current?.click()}
-          className="inline-flex items-center gap-2 rounded-button bg-primary px-5 py-3 btn-text text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          className="inline-flex items-center gap-2 rounded-button bg-primary px-5 py-3 btn-text text-on-primary transition-colors hover:bg-primary-hover"
         >
           <UploadSimple size={16} />Upload papers
         </button>

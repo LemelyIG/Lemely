@@ -5,7 +5,8 @@ import { gradeChipClass, gradeTone, type GradeChipSize, type GradeTone } from "@
 
 /*
  * C-1 Grade badge. Letter grade (A*–G/U) at three sizes, with a hard visual
- * split between an *achieved* result (solid fill — confident, final) and a
+ * split between an *achieved* result (confident, final: solid Jewel fill
+ * where the letter is large text, a solid 2px Jewel border elsewhere) and a
  * *predicted* one (outlined on surface — provisional by construction, per
  * LEMELY_UI_SPEC "predicted should read as provisional"). `estimated` layers
  * on top of either basis: a dashed border plus an always-visible "Estimated"
@@ -113,7 +114,10 @@ export interface GradeBadgeProps extends Omit<HTMLAttributes<HTMLDivElement>, "c
   grade: string
   size?: GradeBadgeSize
   /**
-   * achieved = a confident final result (solid fill). predicted = a forecast,
+   * achieved = a confident final result: a solid Jewel fill at `medium`, the
+   * one size whose letter is large text; a solid 2px Jewel border around an
+   * `on-surface` letter at `hero` and `inline`, where white on Jewel would fail
+   * AA (see CHIP_SIZE). predicted = a forecast,
    * provisional (outlined). target = a grade someone is aiming for, also
    * outlined, and never to be confused with either of the other two.
    */

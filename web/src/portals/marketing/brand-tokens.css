@@ -43,6 +43,11 @@
   --brand-art-34: var(--grade-e);
   --brand-art-35: var(--grade-d);
   --brand-art-36: var(--md-surface-container-highest);
+  /* Weak-topic cluster tiles: a cluster is a grouping, not a loss, so it sits on
+     secondary-container; only the lost-mark chips inside carry the error role. */
+  --brand-art-37: var(--md-secondary-container);
+  --brand-art-38: var(--md-on-secondary-container);
+  --brand-art-39: var(--md-error);
   --brand-abyss: var(--md-primary);
   --brand-abyss-hover: var(--md-primary-hover);
   --brand-tide: var(--md-inverse-primary);
