@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import {
   FULL_PAGE_STATE_COPY,
@@ -125,5 +127,30 @@ describe("FULL_PAGE_STATE_VARIANTS", () => {
     const listed = [...FULL_PAGE_STATE_VARIANTS].sort()
     expect(listed).toEqual(keys)
     expect(new Set(FULL_PAGE_STATE_VARIANTS).size).toBe(FULL_PAGE_STATE_VARIANTS.length)
+  })
+})
+
+describe("the slow-load identity is the v5 'lm' icon", () => {
+  const root = join(import.meta.dirname, "..", "..")
+  const source = readFileSync(join(root, "src/portals/misc/FullPageState.tsx"), "utf8")
+  const css = readFileSync(join(root, "src/index.css"), "utf8")
+
+  it("renders the generated lm icon, not the retired notebook Mark", () => {
+    expect(source).toContain('src="/brand/mark.svg"')
+    expect(source).not.toMatch(/<Mark\b|ui\/mark"|brandMark/)
+  })
+
+  it("pulses with the opacity-only breathe animation", () => {
+    expect(source).toContain("animate-lm-breathe")
+    const keyframes = css.match(/@keyframes lm-breathe\s*\{([\s\S]*?)\n\}/)
+    expect(keyframes, "lm-breathe keyframes").not.toBeNull()
+    const properties = [...keyframes![1].matchAll(/([a-z-]+)\s*:/g)].map((m) => m[1])
+    expect(new Set(properties)).toEqual(new Set(["opacity"]))
+  })
+
+  it("is covered by the global prefers-reduced-motion rule", () => {
+    const block = css.match(/@media \(prefers-reduced-motion: reduce\)\s*\{\s*\*,[\s\S]*?\n\}/)
+    expect(block?.[0]).toMatch(/animation-duration:\s*0\.001ms !important/)
+    expect(block?.[0]).toMatch(/animation-iteration-count:\s*1 !important/)
   })
 })

@@ -6,7 +6,6 @@ import { peekExpiredRole } from "@/lib/auth/storage"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { Doodle } from "@/components/ui/doodle"
-import { Mark } from "@/components/ui/mark"
 import { cn } from "@/lib/utils"
 import { withNext } from "@/lib/nextPath"
 import {
@@ -200,7 +199,17 @@ export function FullPageStateBody({
 
   return (
     <>
-      {variant === "slow-load" ? <Mark size={96} animated /> : <Doodle kind={variant} />}
+      {variant === "slow-load" ? (
+        // The "lm" icon (DESIGN.md "Logo: Clip Letters"), breathing. Decorative:
+        // the heading below names the state.
+        <img
+          src="/brand/mark.svg"
+          alt=""
+          width={96}
+          height={96}
+          className="size-24 animate-lm-breathe"
+        />
+      ) : <Doodle kind={variant} />}
 
       <div className="flex flex-col gap-2">
         {copy.kicker ? <p className="text-data-sm text-on-surface-variant">{copy.kicker}</p> : null}

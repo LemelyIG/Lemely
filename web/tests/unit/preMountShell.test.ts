@@ -33,12 +33,10 @@ const COLOR_PLACEHOLDERS = [
   "%LEMELY_COLOR_RULE%",
   "%LEMELY_COLOR_INK%",
   "%LEMELY_COLOR_INK_MUTED%",
-  "%LEMELY_COLOR_ACCENT%",
+  "%LEMELY_COLOR_PRIMARY%",
 ]
 
-// Task 13 (C5b): the dark counterpart of every COLOR_PLACEHOLDERS entry
-// except %LEMELY_COLOR_ACCENT% (which, per that entry's own comment above,
-// was never a real placeholder in index.html to begin with).
+// Task 13 (C5b): the dark counterpart of every COLOR_PLACEHOLDERS entry.
 const COLOR_PLACEHOLDERS_DARK = [
   "%LEMELY_COLOR_DARK_PAPER%",
   "%LEMELY_COLOR_DARK_PAPER_SUNK%",
@@ -46,6 +44,7 @@ const COLOR_PLACEHOLDERS_DARK = [
   "%LEMELY_COLOR_DARK_RULE%",
   "%LEMELY_COLOR_DARK_INK%",
   "%LEMELY_COLOR_DARK_INK_MUTED%",
+  "%LEMELY_COLOR_DARK_PRIMARY%",
 ]
 
 const DURATION_PLACEHOLDERS = ["%LEMELY_LOADING_TIER_SKELETON%", "%LEMELY_LOADING_TIER_SLOW%"]
@@ -125,6 +124,15 @@ describe("fillPreMountShell", () => {
     expect(darkPaperMatch?.[1]).toBeDefined()
     expect(lightPaperMatch?.[1]).toBeDefined()
     expect(darkPaperMatch![1]).not.toBe(lightPaperMatch![1])
+  })
+
+  it("paints the shell's clip mark per theme: a dark colour that differs from the light one", () => {
+    const filled = fillPreMountShell(REAL_INDEX_HTML)
+    const light = filled.match(/\n\s*\.lm-shell-mark\s*\{[^}]*?color:\s*(#[0-9a-f]{6})/)
+    const dark = filled.match(/\[data-theme="dark"\]\s*\.lm-shell-mark\s*\{[^}]*?color:\s*(#[0-9a-f]{6})/)
+    expect(light?.[1], "light .lm-shell-mark colour").toBeDefined()
+    expect(dark?.[1], "dark .lm-shell-mark colour").toBeDefined()
+    expect(dark![1]).not.toBe(light![1])
   })
 
   it("substitutes the real durations for the duration placeholders", () => {
@@ -209,8 +217,8 @@ describe("index.html source: no hex colour literal outside comments", () => {
    * The shell's colours are ONLY the seven placeholders above — see
    * `fillPreMountShell`'s own doc comment for why a literal hex here would be
    * the same silent-drift failure `themeColor.ts` exists to prevent. Existing
-   * documentation comments in this file's `<head>` DO name two historical
-   * hexes (`#863bff`, `#1e1310`) as part of explaining why those colours were
+   * documentation comments in this file's `<head>` DO name a historical
+   * hex (`#1e1310`) as part of explaining why those colours were
    * wrong; those are prose, not colour, so they are stripped before this
    * checks, the same way `scripts/check_copy.mjs` strips comments before
    * scanning for em-dashes.
@@ -227,7 +235,6 @@ describe("index.html source: no hex colour literal outside comments", () => {
   it("still names the historical hexes inside the theme-color comments", () => {
     // Confirms stripHtmlComments is actually finding and blanking comments,
     // rather than this test passing because the source has no hex anywhere.
-    expect(REAL_INDEX_HTML).toContain("#863bff")
     expect(REAL_INDEX_HTML).toContain("#1e1310")
   })
 })
@@ -405,5 +412,35 @@ describe("NIT (c): index.html's tier 3 copy matches FULL_PAGE_STATE_COPY[\"slow-
       expect(text).not.toMatch(/[—–]/)
       expect(text).not.toMatch(/!/)
     }
+  })
+})
+
+describe("the shell's brand mark is the v5 Clip Letters paperclip, not the retired notebook", () => {
+  const clipPath = "M58 34 V72 A8 8 0 0 1 42 72 V20 A14 14 0 0 1 70 20 V78 A18 18 0 0 1 34 78 V36"
+
+  it("carries no notebook-mark placeholder, class or generator reference", () => {
+    expect(REAL_INDEX_HTML).not.toMatch(/LEMELY_MARK|brandMark|lm-shell-(?:page|coil|tick)|stroke-dash/)
+  })
+
+  it("draws DESIGN.md's clip in currentColor, in both the sidebar and the slow-load screen", () => {
+    const occurrences = REAL_INDEX_HTML.split(`d="${clipPath}"`).length - 1
+    expect(occurrences).toBe(2)
+    expect(REAL_INDEX_HTML).toMatch(/viewBox="28 4 46 94"/)
+    expect(REAL_INDEX_HTML).not.toMatch(/<path[^>]*stroke="#/)
+  })
+
+  it("pulses by opacity alone, and switches the pulse off under prefers-reduced-motion", () => {
+    const keyframes = REAL_INDEX_HTML.match(/@keyframes lm-shell-breathe\s*\{([\s\S]*?)\n\s{6}\}/)
+    expect(keyframes, "lm-shell-breathe keyframes").not.toBeNull()
+    const properties = [...keyframes![1].matchAll(/([a-z-]+)\s*:/g)].map((m) => m[1])
+    expect(new Set(properties)).toEqual(new Set(["opacity"]))
+    const reduced = REAL_INDEX_HTML.match(/@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\s{6}\}/)
+    expect(reduced?.[1]).toMatch(/\.lm-shell-mark-pulse\s*\{\s*animation:\s*none/)
+  })
+
+  it("does not repeat the 24px sidebar clip's pulse: only the tier-3 mark animates", () => {
+    expect(REAL_INDEX_HTML.match(/lm-shell-mark-pulse/g)?.length).toBeGreaterThanOrEqual(3)
+    const sidebarSvg = REAL_INDEX_HTML.match(/<svg\s+class="lm-shell-mark"[\s\S]*?<\/svg>/)
+    expect(sidebarSvg?.[0]).not.toContain("lm-shell-mark-pulse")
   })
 })
