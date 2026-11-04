@@ -469,11 +469,14 @@ class AtRiskStudentDTO(ApiModel):
     no backend source and are omitted. ``flags`` (added D3.3/P3.2) is the real
     reason-labelled output of ``lemely.core.at_risk.assess_at_risk`` — every
     student in this list has at least one flag; additive field, defaults to
-    empty so older callers still deserialise.
+    empty so older callers still deserialise. ``previousGrade`` (additive, spec
+    2026-11-02) is the grade of the paper before the latest, ``None`` with fewer
+    than two.
     """
 
     name: str
     grade: str
+    previousGrade: str | None = None
     delta: float | None = None
     weakTopic: str | None = None
     flags: list[AtRiskFlagDTO] = Field(default_factory=list)
@@ -511,13 +514,19 @@ class OverviewDTO(ApiModel):
     reproducing the mock's bar heights. ``recentActivity`` (added P3.7 chunk
     a, D3.12) is T-01 item 4, "submissions across their classes" — see
     :class:`RecentActivityDTO`. Additive, defaults to empty so an older
-    client still deserialises.
+    client still deserialises. ``paperCount``, ``pendingReviewCount``,
+    ``reviewConfidenceBuckets`` (ten 10% bands) and ``reviewEstimateMinutes`` are
+    additive fields for the teacher home (spec 2026-11-02).
     """
 
     stats: list[StatCardDTO] = Field(default_factory=list)
     atRisk: list[AtRiskStudentDTO] = Field(default_factory=list)
     retention: list[int] = Field(default_factory=list)
     recentActivity: list[RecentActivityDTO] = Field(default_factory=list)
+    paperCount: int = 0
+    pendingReviewCount: int = 0
+    reviewConfidenceBuckets: list[int] = Field(default_factory=lambda: [0] * 10)
+    reviewEstimateMinutes: int = 0
 
 
 class AcknowledgeAtRiskRequestDTO(ApiModel):
