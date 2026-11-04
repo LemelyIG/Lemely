@@ -5,7 +5,7 @@
 
 .sh-root {
   --a-ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
-  --a-success-text: var(--sh-success-text, color-mix(in oklch, var(--md-success), var(--md-on-surface) 32%));
+  --a-success-text: var(--sh-success-text);
   --a-card-edge: 0 0 0 1.5px var(--border-subtle);
   --a-band-ink: var(--md-on-primary-container);
   line-height: var(--lh-body);
