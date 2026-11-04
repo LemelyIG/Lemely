@@ -1,6 +1,7 @@
 /* Preview chrome and state switching shared by variants A, B and C. */
 *, *::before, *::after { box-sizing: border-box }
 body { margin: 0; -webkit-font-smoothing: antialiased; background: oklch(0.90 0.01 240) }
+body:has(.sh-root[data-theme="dark"]) { background: #0b090a }
 
 .sh-toolbar {
   position: sticky; inset-block-start: 0; z-index: 10;
@@ -55,10 +56,12 @@ body { margin: 0; -webkit-font-smoothing: antialiased; background: oklch(0.90 0.
 .sh-root[data-mood="streak-kept"] [data-when-mood="streak-kept"],
 .sh-root[data-mood="idle"] [data-when-mood="idle"] { display: inline }
 
-/* Streak block: earned streak versus zero streak. */
+/* Streak block: earned streak versus zero streak. The one-paper fixture has
+   no recent XP, which is why it shares the zero-streak block. */
 .sh-root [data-when-streak] { display: none }
-.sh-root:not([data-state="streak-zero"]) [data-when-streak="kept"],
-.sh-root[data-state="streak-zero"] [data-when-streak="zero"] { display: block }
+.sh-root:not([data-state="streak-zero"], [data-state="one-paper"]) [data-when-streak="kept"],
+.sh-root[data-state="streak-zero"] [data-when-streak="zero"],
+.sh-root[data-state="one-paper"] [data-when-streak="zero"] { display: block }
 
 /* Study plan, exam dates and the no-plan or one-paper differences. */
 .sh-root[data-state="no-plan"] [data-needs="plan"],
