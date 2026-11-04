@@ -7,11 +7,9 @@ import { cn } from "@/lib/utils"
  * build-era aliases already resolve to these same tokens), so no screen still
  * on this file changes appearance.
  *
- * `Eyebrow` is the deliberate exception left alone: DESIGN.md §4.2 puts the
- * `eyebrow` rung in Geist, not mono, and this component is mono. Changing the
- * *face* would restyle a dozen screens this surface does not gate and cannot
- * see, which is the opposite of the surface-at-a-time rule. It moves when a
- * surface that renders it is the one under review.
+ * `Eyebrow` was the deliberate exception left alone at the time: the retired
+ * type scale set the `eyebrow` rung in the UI face, not mono. The v5 ramp
+ * (DESIGN.md) makes the eyebrow mono, so this component now matches it.
  */
 
 /** Mono uppercase eyebrow / metadata label (mock: t3, tracked, 10.5–11px). */
@@ -27,10 +25,10 @@ export function Eyebrow({ className, ...props }: HTMLAttributes<HTMLDivElement>)
   )
 }
 
-/** Newsreader display heading. (Was documented as Instrument Serif, which
- * DESIGN.md §4 replaced — and was in fact rendering neither, because the
- * `font-serif` class it used has never been a token in this system and
- * resolved to Tailwind's default Georgia stack.) */
+/** Display heading in the v5 display face (DESIGN.md: Bricolage Grotesque,
+ * 28px and above). Historically documented as Instrument Serif, then
+ * Newsreader; the `font-serif` class it once used was never a token here and
+ * resolved to Tailwind's default Georgia stack. */
 export function Display({
   className,
   ...props

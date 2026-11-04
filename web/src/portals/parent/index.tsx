@@ -40,7 +40,7 @@ const ParentNotifications = lazy(() =>
 )
 
 /*
- * Parent portal shell — the Study Notebook (P4.6, redesign surface 6).
+ * Parent portal shell (P4.6 redesign surface 6, now v5 Abyss).
  *
  * UI spec §4.8: "Total depth from login to the answer a parent came for: two
  * taps. Design for navigation depth and no interest in learning an interface."

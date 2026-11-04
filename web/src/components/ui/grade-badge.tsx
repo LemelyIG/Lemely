@@ -166,7 +166,7 @@ export function GradeBadge({
       {...props}
     >
       {/* `medium` stays on the display rung: it is a section-heading-sized
-          badge inside cards whose titles are Newsreader, and a 24px mono
+          badge inside cards whose titles are display type, and a 32px mono
           letter there reads as a paper code. The two rungs that carry a grade
           as a *figure* — hero and inline — are mono. */}
       <span className={cn(size === "medium" && "font-display", letterSize[size])}>{grade}</span>

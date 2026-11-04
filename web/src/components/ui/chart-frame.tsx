@@ -34,8 +34,8 @@ export interface ChartFrameProps extends Omit<HTMLAttributes<HTMLDivElement>, "t
   /** True when the underlying dataset has no rows to plot. Forces the
    * mandatory empty state regardless of what `children` contains. */
   isEmpty?: boolean
-  /** Marginalia line for the empty state, e.g. "Nothing marked yet". Caveat
-   * per DESIGN.md §4.1 — decorative only, so `emptyBody` below carries the
+  /** Marginalia line for the empty state, e.g. "Nothing marked yet".
+   * Decorative only, so `emptyBody` below carries the
    * actual explanation for anyone who can't read it. */
   emptyMarginalia?: string
   /** One-sentence explanation of why the chart is empty and, ideally, what

@@ -27,7 +27,7 @@ import { extendTailwindMerge } from "tailwind-merge"
  * list without removing the class from `index.css` too.
  */
 const CUSTOM_FONT_SIZE_CLASSES = [
-  // ── Study Notebook type scale (DESIGN.md §4.2) ──
+  // ── v5 Abyss type ramp (DESIGN.md, Typography) ──
   "display-hero",
   "display-xl",
   "display-lg",

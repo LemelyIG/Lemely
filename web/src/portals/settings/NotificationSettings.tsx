@@ -37,7 +37,7 @@ import {
 import { SettingsFrame } from "./SettingsFrame"
 
 /*
- * G-12 · Notification preferences, in the Study Notebook (P4.10).
+ * G-12 · Notification preferences (P4.10, now v5 Abyss).
  *
  * Top-level at `/settings/notifications` rather than inside a portal subtree,
  * for the same reason G-11 is: the API is role-agnostic. Every role has these

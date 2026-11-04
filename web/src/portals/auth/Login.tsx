@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils"
 import { DeviceLimitNotice } from "./DeviceLimitNotice"
 
 /*
- * G-04 · Sign in with email and password — the Study Notebook (P4.7).
+ * G-04 · Sign in with email and password (Study Notebook pass P4.7, now v5 Abyss).
  *
  * This file's own module docstring used to open "infrastructure to exercise
  * the auth plumbing …, not final UI. Screen polish is P2.7/P2.8's job." Those

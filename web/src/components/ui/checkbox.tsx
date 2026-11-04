@@ -18,9 +18,9 @@ import type { FieldState } from "@/components/ui/input"
  * find). Caller must supply either a visible `label` or its own
  * `aria-label` — this component renders no default text.
  *
- * Restyled onto the Study Notebook tokens (DESIGN.md §3, §12): `border`/
- * `bg`/`text` now come from `--rule` / `--paper-raised` / `--ink-muted`
- * rather than the build-era compatibility names, and the focus ring is
+ * Styled on the v5 Abyss roles (DESIGN.md): `border`/`bg`/`text` come from
+ * the `outline-variant` / `surface-container-lowest` / `on-surface-variant` roles
+ * (it was first restyled onto the retired Study Notebook names), and the focus ring is
  * `--focus-ring` (blue, "the browser is talking to you") rather than
  * `--accent` — DESIGN.md §3.9 is explicit that focus must stay
  * distinguishable from the accent's own checked-state fill, which the old

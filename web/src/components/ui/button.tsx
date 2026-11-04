@@ -4,7 +4,7 @@ import { CircleNotch } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 
 /**
- * The Study Notebook button (DESIGN.md §12).
+ * The v5 Abyss button (DESIGN.md "Buttons").
  *
  * Four variants:
  *   - `primary`   accent fill, the one obvious action on a screen

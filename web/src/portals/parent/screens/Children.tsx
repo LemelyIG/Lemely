@@ -120,8 +120,7 @@ function ChildCard({ child }: { child: ChildSummary }) {
  * buttons that go nowhere.
  *
  * P4.6 changed the surface and not the structure: tokens, the margin rule
- * (§8.5), the step numbers on the data face, and one line of Caveat marginalia
- * (§12). The marginalia is the only decorative element and it carries nothing:
+ * (§8.5), the step numbers on the data face, and one line of marginalia. The marginalia is the only decorative element and it carries nothing:
  * remove it and the screen still says everything it said.
  */
 function NoChildrenLinked() {

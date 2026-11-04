@@ -22,12 +22,12 @@ import { FullPageState, FullPageStateBody } from "@/portals/misc/FullPageState"
  *
  * P4.2 moved the colour names off the build-era `text-on-surface`/`bg-surface-container-low`
  * aliases onto the names DESIGN.md defines (identical values), and added the
- * optional `marginalia` line. §12 is specific about what an empty state is
- * made of — "a line of Caveat marginalia, a one-sentence explanation, and the
+ * optional `marginalia` line. The retired DESIGN.md defined an empty state as
+ * "a line of marginalia, a one-sentence explanation, and the
  * action that fills it" — and this component had the second and third and no
  * way to supply the first, which is why `ChartFrame` grew its own
  * `emptyMarginalia` rather than reusing this. It is optional, not defaulted:
- * per §4.1 Caveat decorates and never carries, so a state view without one is
+ * marginalia decorates and never carries, so a state view without one is
  * still complete, and a generic default ("Nothing here yet") on every empty
  * state in the product would be decoration pretending to be voice.
  *
@@ -116,8 +116,8 @@ export interface StateViewProps extends HTMLAttributes<HTMLDivElement> {
    * entirely rather than "" (an empty string still renders an empty `<p>`).
    * No effect on `compact`, which has never carried one. */
   kicker?: string | null
-  /** Optional Caveat line above the kicker (§12). Decorative: never put
-   * anything here that the reader would lose by not seeing it (§4.1). */
+  /** Optional marginalia line above the kicker. Decorative: never put
+   * anything here that the reader would lose by not seeing it. */
   marginalia?: string
   heading: string
   body?: string

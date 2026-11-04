@@ -18,8 +18,7 @@ import {
 import { SettingsFrame } from "./SettingsFrame"
 
 /*
- * G-11 · Account and devices — the devices section, in the Study Notebook
- * (P4.10).
+ * G-11 · Account and devices — the devices section (P4.10, now v5 Abyss).
  *
  * Role-agnostic by design: every account is subject to the same 3-device limit
  * (D1.11), so this route is reachable by all five roles rather than living

@@ -13,7 +13,7 @@ import { AuthFrame } from "./Login"
 import { canSubmitCode, postVerifyPath, resendButtonLabel } from "./verifyEmailLogic"
 
 /*
- * G-07 · Email verification, pending and confirm — the Study Notebook.
+ * G-07 · Email verification, pending and confirm (v5 Abyss).
  *
  * One file serves both routes spec §4.4 lists: `/verify-email` (this screen
  * with no `:token`) and `/verify-email/:token` (the same screen, with one).

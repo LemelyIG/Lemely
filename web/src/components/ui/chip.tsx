@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils"
  * retired `lib/severity.ts`'s three aliases.
  *
  * `accent` also stopped meaning "live", which is the substantive part. On the
- * Study Notebook palette the accent is a warm coral-red, so an "Assigned" quiz
+ * retired Study Notebook palette the accent was a warm coral-red, so an "Assigned" quiz
  * — the healthy, working state — was rendering in the product's alert register
  * while "Closed" sat beside it in `ok` teal. A teacher scanning the list read
  * alarm on the live rows and success on the finished ones, which is backwards.
