@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Student home: variant A</title>
+    <link rel="stylesheet" href="./student-home/tokens.css" />
+    <link rel="stylesheet" href="./student-home/shell.css" />
+    <link rel="stylesheet" href="./student-home/variant-a.css" />
+    <script type="module">
+      import "@fontsource-variable/bricolage-grotesque"
+      import "@fontsource-variable/schibsted-grotesk"
+      import "@fontsource-variable/jetbrains-mono"
+      import { mountHome } from "./student-home/controller.ts"
+      mountHome("a")
+    </script>
+  </head>
+  <body>
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="a-i-arrow" viewBox="0 0 20 20"><path d="M4 10h11M11 5.5 15.5 10 11 14.5" /></symbol>
+      <symbol id="a-i-chev" viewBox="0 0 20 20"><path d="M8 5l5 5-5 5" /></symbol>
+      <symbol id="a-i-up" viewBox="0 0 20 20"><path d="M10 15.5V5M5.5 9.5 10 5l4.5 4.5" /></symbol>
+      <symbol id="a-i-flame" viewBox="0 0 20 20"><path d="M10 2.5c.6 2.6 3.9 4.4 3.9 8.3A3.9 3.9 0 0 1 10 14.7a3.9 3.9 0 0 1-3.9-3.9c0-1.7.8-2.8 1.7-3.8.3 1.3 1 2 1.8 2.2-.5-2.6.3-4.9.4-6.7Z" /><path d="M5 17.5h10" /></symbol>
+    </svg>
+
+    <nav class="sh-toolbar" aria-label="Preview controls">
+      <a data-variant-link="a">A</a> <a data-variant-link="b">B</a> <a data-variant-link="c">C</a>
+      <label>State <select data-control="state"></select></label>
+      <label>Theme <select data-control="theme"></select></label>
+      <label>Motion <select data-control="motion"></select></label>
+      <label>Width <select data-control="width"></select></label>
+      <span class="sh-demo">Demo data</span>
+    </nav>
+
+    <main id="sh-root" class="sh-root">
+      <section data-when-state="loading" aria-busy="true" aria-label="Loading your overview" class="a-page">
+        <div class="a-skel a-skel-title"></div>
+        <div class="a-skel a-skel-line"></div>
+        <div class="a-today">
+          <div class="a-skel a-skel-hero"></div>
+          <div class="a-skel a-skel-reward"></div>
+        </div>
+        <div class="a-skel a-skel-ledger"></div>
+      </section>
+
+      <section data-when-state="error" role="alert" class="a-page">
+        <div class="a-error">
+          <h1 class="a-error-title">Couldn't load your overview.</h1>
+          <p>Check your connection and try again.</p>
+          <button type="button" class="a-btn a-btn-primary" onclick="location.reload()">Try again</button>
+        </div>
+      </section>
+
+      <section data-when-state="new" class="a-page">
+        <header class="a-head">
+          <div class="a-head-text">
+            <h1 class="a-greet">Good morning, there.</h1>
+          </div>
+        </header>
+        <article class="a-hero a-hero-new">
+          <div class="a-action">
+            <h2 class="a-title">Let's get your first paper marked</h2>
+            <p class="a-body">Photograph or upload a paper you have already sat. Lemely finds the session and variant, pulls the official mark scheme, and marks it question by question.</p>
+            <a class="a-btn a-btn-primary" href="/student/correct">Correct a paper <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+          </div>
+          <figure class="a-binny">
+            <div class="a-binny-art" data-binny></div>
+            <figcaption>Ready when you are.</figcaption>
+          </figure>
+        </article>
+        <ol class="a-steps" aria-label="How Lemely works for you">
+          <li aria-current="step"><span class="a-step-n">1</span><span class="a-step-t">Correct your first paper</span><span class="a-step-s">Now</span></li>
+          <li><span class="a-step-n">2</span><span class="a-step-t">See where you stand</span><span class="a-step-s">Later</span></li>
+          <li><span class="a-step-n">3</span><span class="a-step-t">Get a study plan built from your own mistakes</span><span class="a-step-s">Later</span></li>
+        </ol>
+      </section>
+
+      <div data-when-state="ready" class="a-page">
+        <header class="a-head">
+          <div class="a-head-text">
+            <h1 class="a-greet">Good morning, Mariam.</h1>
+            <p class="a-kicker">3 subjects, 22 papers corrected so far.</p>
+          </div>
+          <p class="a-pill" aria-label="Level and streak">
+            <span class="a-pill-lv">Level <b>7</b></span>
+            <span class="a-pill-st" data-when-streak="kept"><svg class="a-ico" aria-hidden="true"><use href="#a-i-flame" /></svg><b>9</b>-day streak</span>
+          </p>
+        </header>
+
+        <div class="a-today">
+          <div class="a-lead">
+            <article class="a-hero" aria-labelledby="a-hero-label">
+              <h2 id="a-hero-label" class="a-vh">Your next step</h2>
+              <div class="a-action">
+                <div data-when-action="marking">
+                  <p class="a-meta-line"><span>Marking now</span><span class="a-code">0625</span></p>
+                  <h3 class="a-title">0625/42 is being marked</h3>
+                  <p class="a-body">Lemely is reading your answers and checking each one against the official mark scheme.</p>
+                  <a class="a-btn a-btn-primary" href="/student/correct">See progress <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+                </div>
+                <div data-when-action="session">
+                  <p class="a-meta-line"><span>Today's session</span><span class="a-code">0606</span></p>
+                  <h3 class="a-title">Quadratic inequalities</h3>
+                  <p class="a-facts"><span class="a-mono">25 min</span></p>
+                  <p class="a-body">Next in your study plan for Additional Mathematics.</p>
+                  <a class="a-btn a-btn-primary" href="/student/plan/0606/session/s1">Start session <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+                </div>
+                <div data-when-action="first-paper">
+                  <h3 class="a-title">Let's get your first paper marked</h3>
+                  <p class="a-body">Photograph or upload a paper you have already sat. Lemely finds the session and variant, pulls the official mark scheme, and marks it question by question.</p>
+                  <a class="a-btn a-btn-primary" href="/student/correct">Correct a paper <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+                </div>
+                <div data-when-action="practice">
+                  <div data-needs="many-papers">
+                    <p class="a-meta-line"><span>Practise next</span><span class="a-code">0625</span></p>
+                    <h3 class="a-title">Waves</h3>
+                    <p class="a-facts"><span class="a-mono">54% accuracy</span></p>
+                    <p class="a-body">Your weakest topic right now. A short set shows whether it is improving.</p>
+                    <a class="a-btn a-btn-primary" href="/student/practice/0625">Practise waves <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+                  </div>
+                  <div data-only-state="one-paper">
+                    <p class="a-meta-line"><span>Practise next</span><span class="a-code">0580</span></p>
+                    <h3 class="a-title">Vectors</h3>
+                    <p class="a-facts"><span class="a-mono">50% accuracy</span></p>
+                    <p class="a-body">Your weakest topic right now. A short set shows whether it is improving.</p>
+                    <a class="a-btn a-btn-primary" href="/student/practice/0580">Practise vectors <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+                  </div>
+                </div>
+                <div data-when-action="correct">
+                  <h3 class="a-title">Ready for another paper?</h3>
+                  <p class="a-body">Each paper sharpens your predicted grade.</p>
+                  <a class="a-btn a-btn-primary" href="/student/correct">Correct a paper <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+                </div>
+              </div>
+              <figure class="a-binny">
+                <div class="a-binny-art" data-binny></div>
+                <figcaption>
+                  <span data-when-mood="marking">Reading your answers.</span>
+                  <span data-when-mood="grade-improved">A in 0580, up from B.</span>
+                  <span data-when-mood="paper-marked">Your 0580/42 result is in.</span>
+                  <span data-when-mood="streak-kept">Day 9. Streak kept.</span>
+                  <span data-when-mood="idle">Ready when you are.</span>
+                </figcaption>
+              </figure>
+            </article>
+
+            <p class="a-note" data-only-state="no-plan">No study plan this week. Build one from your weak topics. <a href="/student/plan">Build a plan <svg class="a-ico" aria-hidden="true"><use href="#a-i-chev" /></svg></a></p>
+            <p class="a-note" data-only-state="no-exams">Add your exam dates to see how long you have for each subject. <a href="/student/profile">Add exam dates <svg class="a-ico" aria-hidden="true"><use href="#a-i-chev" /></svg></a></p>
+          </div>
+
+          <section class="a-reward" aria-labelledby="a-level">
+            <div class="a-level">
+              <h2 id="a-level" class="a-level-n">Level 7</h2>
+              <p class="a-xp">2,340 XP</p>
+            </div>
+            <div class="a-progress">
+              <div class="a-bar" role="progressbar" aria-label="Progress to level 8" aria-valuemin="0" aria-valuemax="500" aria-valuenow="240"><i style="inline-size: 48%"></i></div>
+              <p class="a-progress-t"><span class="a-mono">240 / 500 XP</span> to level 8</p>
+            </div>
+
+            <div class="a-streak" data-when-streak="kept">
+              <div class="a-streak-head">
+                <p class="a-streak-n">9-day streak</p>
+                <p class="a-streak-sub a-mono">Longest 14 · 1 freeze</p>
+              </div>
+              <ol class="a-week" aria-label="Last 7 days">
+                <li class="is-earned"><span class="a-wd">F</span><span class="a-dd">30</span><span class="a-vh">30 Oct, XP earned</span></li>
+                <li class="is-earned"><span class="a-wd">S</span><span class="a-dd">31</span><span class="a-vh">31 Oct, XP earned</span></li>
+                <li class="is-earned"><span class="a-wd">S</span><span class="a-dd">1</span><span class="a-vh">1 Nov, XP earned</span></li>
+                <li class="is-earned"><span class="a-wd">M</span><span class="a-dd">2</span><span class="a-vh">2 Nov, XP earned</span></li>
+                <li class="is-earned"><span class="a-wd">T</span><span class="a-dd">3</span><span class="a-vh">3 Nov, XP earned</span></li>
+                <li class="is-earned"><span class="a-wd">W</span><span class="a-dd">4</span><span class="a-vh">4 Nov, XP earned</span></li>
+                <li class="is-earned is-today" aria-current="date"><span class="a-wd">T</span><span class="a-dd">5</span><span class="a-vh">Today, 5 Nov, XP earned</span></li>
+              </ol>
+            </div>
+
+            <div class="a-streak" data-when-streak="zero">
+              <div class="a-streak-head">
+                <p class="a-streak-zero">No streak yet this week.</p>
+                <p class="a-streak-body">Correct a paper, finish a session, take a quiz or review flashcards to start one.</p>
+              </div>
+              <ol class="a-week" aria-label="Last 7 days">
+                <li class="is-earned"><span class="a-wd">F</span><span class="a-dd">30</span><span class="a-vh">30 Oct, XP earned</span></li>
+                <li class="is-earned"><span class="a-wd">S</span><span class="a-dd">31</span><span class="a-vh">31 Oct, XP earned</span></li>
+                <li class="is-earned"><span class="a-wd">S</span><span class="a-dd">1</span><span class="a-vh">1 Nov, XP earned</span></li>
+                <li class="is-earned"><span class="a-wd">M</span><span class="a-dd">2</span><span class="a-vh">2 Nov, XP earned</span></li>
+                <li class="is-earned"><span class="a-wd">T</span><span class="a-dd">3</span><span class="a-vh">3 Nov, XP earned</span></li>
+                <li><span class="a-wd">W</span><span class="a-dd">4</span><span class="a-vh">4 Nov, no XP</span></li>
+                <li class="is-today" aria-current="date"><span class="a-wd">T</span><span class="a-dd">5</span><span class="a-vh">Today, 5 Nov, no XP yet</span></li>
+              </ol>
+            </div>
+          </section>
+        </div>
+
+        <section class="a-sec a-subjects" aria-labelledby="a-subjects-h">
+          <h2 id="a-subjects-h" class="a-sec-h">Subjects</h2>
+          <ul class="a-ledger">
+            <li data-needs="many-papers">
+              <a class="a-row" href="/student/subject/0580">
+                <span class="a-grade" data-grade="A">A</span>
+                <span class="a-subj"><b>Mathematics</b><span class="a-code">0580</span></span>
+                <span class="a-row-meta">
+                  <span class="a-change is-up"><svg class="a-ico" aria-hidden="true"><use href="#a-i-up" /></svg>up from B</span>
+                  <span class="a-papers"><b class="a-mono">14</b> papers</span>
+                  <span class="a-exam" data-needs="exams">exam in <b class="a-mono">188</b> days</span>
+                </span>
+                <svg class="a-ico a-row-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
+              </a>
+            </li>
+            <li data-only-state="one-paper">
+              <a class="a-row" href="/student/subject/0580">
+                <span class="a-grade" data-grade="B">B</span>
+                <span class="a-subj"><b>Mathematics</b><span class="a-code">0580</span></span>
+                <span class="a-row-meta">
+                  <span class="a-change"></span>
+                  <span class="a-papers"><b class="a-mono">1</b> paper</span>
+                  <span class="a-exam" data-needs="exams">exam in <b class="a-mono">188</b> days</span>
+                </span>
+                <svg class="a-ico a-row-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
+              </a>
+            </li>
+            <li data-needs="many-papers">
+              <a class="a-row" href="/student/subject/0606">
+                <span class="a-grade" data-grade="B">B</span>
+                <span class="a-subj"><b>Additional Mathematics</b><span class="a-code">0606</span></span>
+                <span class="a-row-meta">
+                  <span class="a-change">no change</span>
+                  <span class="a-papers"><b class="a-mono">6</b> papers</span>
+                  <span class="a-exam" data-needs="exams">exam in <b class="a-mono">194</b> days</span>
+                </span>
+                <svg class="a-ico a-row-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
+              </a>
+            </li>
+            <li data-needs="many-papers">
+              <a class="a-row" href="/student/subject/0625">
+                <span class="a-grade" data-grade="C">C</span>
+                <span class="a-subj"><b>Physics</b><span class="a-code">0625</span><span class="a-est">estimated</span></span>
+                <span class="a-row-meta">
+                  <span class="a-change is-up"><svg class="a-ico" aria-hidden="true"><use href="#a-i-up" /></svg>up from D</span>
+                  <span class="a-papers"><b class="a-mono">2</b> papers</span>
+                  <span class="a-exam" data-needs="exams">exam in <b class="a-mono">180</b> days</span>
+                </span>
+                <svg class="a-ico a-row-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
+              </a>
+            </li>
+          </ul>
+        </section>
+
+        <div class="a-pair">
+          <section class="a-sec a-weak" aria-labelledby="a-weak-h">
+            <h2 id="a-weak-h" class="a-sec-h">Weak topics</h2>
+            <ul class="a-marks">
+              <li data-needs="many-papers"><a href="/student/practice/0625"><span class="a-topic">Waves</span><span class="a-code">0625</span><span class="a-meter" aria-hidden="true"><i style="inline-size: 54%"></i></span><span class="a-acc">54%</span></a></li>
+              <li data-needs="many-papers"><a href="/student/practice/0606"><span class="a-topic">Quadratic inequalities</span><span class="a-code">0606</span><span class="a-meter" aria-hidden="true"><i style="inline-size: 58%"></i></span><span class="a-acc">58%</span></a></li>
+              <li data-needs="many-papers"><a href="/student/practice/0580"><span class="a-topic">Vectors</span><span class="a-code">0580</span><span class="a-meter" aria-hidden="true"><i style="inline-size: 63%"></i></span><span class="a-acc">63%</span></a></li>
+              <li data-only-state="one-paper"><a href="/student/practice/0580"><span class="a-topic">Vectors</span><span class="a-code">0580</span><span class="a-meter" aria-hidden="true"><i style="inline-size: 50%"></i></span><span class="a-acc">50%</span></a></li>
+              <li data-needs="many-papers"><a href="/student/practice/0625"><span class="a-topic">Moments</span><span class="a-code">0625</span><span class="a-meter" aria-hidden="true"><i style="inline-size: 66%"></i></span><span class="a-acc">66%</span></a></li>
+            </ul>
+          </section>
+
+          <section class="a-sec a-latest" aria-labelledby="a-latest-h">
+            <h2 id="a-latest-h" class="a-sec-h">Latest result</h2>
+            <div class="a-result">
+              <p class="a-paper a-mono">0580/42 · m/j 2024</p>
+              <div class="a-score">
+                <p class="a-score-n"><span class="a-vh">Score </span>61/80</p>
+                <span class="a-grade a-grade-lg" data-grade="A" aria-label="Grade A">A</span>
+              </div>
+              <a class="a-btn a-btn-tonal" href="/student/result/demo">See full marking <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>
