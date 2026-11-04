@@ -122,11 +122,11 @@
                 <p class="rb-streak-meta">Longest 14 · 1 freeze</p>
                 <ol class="rb-days7" aria-label="Last 7 days">
                   <li class="is-earned"><span>30</span><small>Oct</small></li>
-                  <li class="is-earned"><span>31</span><small>Oct</small></li>
+                  <li class="is-earned"><span>31</span><small></small></li>
                   <li class="is-earned"><span>1</span><small>Nov</small></li>
-                  <li class="is-earned"><span>2</span><small>Nov</small></li>
-                  <li class="is-earned"><span>3</span><small>Nov</small></li>
-                  <li class="is-earned"><span>4</span><small>Nov</small></li>
+                  <li class="is-earned"><span>2</span><small></small></li>
+                  <li class="is-earned"><span>3</span><small></small></li>
+                  <li class="is-earned"><span>4</span><small></small></li>
                   <li class="is-earned is-today" aria-current="date"><span>5</span><small>Today</small></li>
                 </ol>
               </div>
@@ -135,16 +135,16 @@
                 <p class="rb-streak-meta">Correct a paper, finish a session, take a quiz or review flashcards to start one.</p>
                 <ol class="rb-days7" aria-label="Last 7 days">
                   <li class="is-earned" data-needs="many-papers"><span>30</span><small>Oct</small></li>
-                  <li class="is-earned" data-needs="many-papers"><span>31</span><small>Oct</small></li>
+                  <li class="is-earned" data-needs="many-papers"><span>31</span><small></small></li>
                   <li class="is-earned" data-needs="many-papers"><span>1</span><small>Nov</small></li>
-                  <li class="is-earned" data-needs="many-papers"><span>2</span><small>Nov</small></li>
-                  <li class="is-earned" data-needs="many-papers"><span>3</span><small>Nov</small></li>
+                  <li class="is-earned" data-needs="many-papers"><span>2</span><small></small></li>
+                  <li class="is-earned" data-needs="many-papers"><span>3</span><small></small></li>
                   <li data-only-state="one-paper"><span>30</span><small>Oct</small></li>
-                  <li data-only-state="one-paper"><span>31</span><small>Oct</small></li>
+                  <li data-only-state="one-paper"><span>31</span><small></small></li>
                   <li data-only-state="one-paper"><span>1</span><small>Nov</small></li>
-                  <li class="is-earned" data-only-state="one-paper"><span>2</span><small>Nov</small></li>
-                  <li data-only-state="one-paper"><span>3</span><small>Nov</small></li>
-                  <li><span>4</span><small>Nov</small></li>
+                  <li class="is-earned" data-only-state="one-paper"><span>2</span><small></small></li>
+                  <li data-only-state="one-paper"><span>3</span><small></small></li>
+                  <li><span>4</span><small></small></li>
                   <li class="is-today" aria-current="date"><span>5</span><small>Today</small></li>
                 </ol>
               </div>
@@ -223,22 +223,23 @@
               <span class="rb-tick rb-tick--may" style="--d: 177">May</span>
               <span class="rb-window" style="--d: 180; --to: 194"></span>
             </div>
+            <p class="rb-days-cap" aria-hidden="true">Days left</p>
             <p class="rb-exams-cap" aria-hidden="true"><span>Exam</span><span>Days left</span></p>
-            <ol class="rb-exams" aria-label="Exam dates, closest first">
+            <ol class="rb-exams" aria-label="Exams, closest first: date, subject and days left">
               <li class="rb-exam is-closest" style="--d: 180" data-needs="many-papers">
                 <time class="rb-exam-date" datetime="2027-05-04">4 May</time>
                 <span class="rb-exam-subj"><span class="rb-mono">0625</span> Physics</span>
-                <span class="rb-exam-days"><span class="rb-mono">180</span><span class="rb-unit"> days</span></span>
+                <span class="rb-exam-days rb-mono">180</span>
               </li>
               <li class="rb-exam" style="--d: 188">
                 <time class="rb-exam-date" datetime="2027-05-12">12 May</time>
                 <span class="rb-exam-subj"><span class="rb-mono">0580</span> Mathematics</span>
-                <span class="rb-exam-days"><span class="rb-mono">188</span><span class="rb-unit"> days</span></span>
+                <span class="rb-exam-days rb-mono">188</span>
               </li>
               <li class="rb-exam" style="--d: 194" data-needs="many-papers">
                 <time class="rb-exam-date" datetime="2027-05-18">18 May</time>
                 <span class="rb-exam-subj"><span class="rb-mono">0606</span> Additional Mathematics</span>
-                <span class="rb-exam-days"><span class="rb-mono">194</span><span class="rb-unit"> days</span></span>
+                <span class="rb-exam-days rb-mono">194</span>
               </li>
             </ol>
           </div>
@@ -247,75 +248,110 @@
             <li class="rb-lane is-closest" data-needs="many-papers">
               <div class="rb-lane-subj">
                 <p class="rb-lane-name"><a class="rb-lane-link" href="/student/subject/0625"><span class="rb-mono">0625</span> Physics</a></p>
-                <p class="rb-lane-grade">
-                  <span class="rb-chip" data-grade="C">C</span>
-                  <span class="rb-up"><svg class="rb-ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15V5M5 10l5-5 5 5" /></svg>up from D</span>
-                  <span class="rb-est">estimated</span>
-                </p>
-                <p class="rb-lane-next"><span class="rb-lbl">Weakest topic</span> Waves <span class="rb-mono">54%</span></p>
+                <p class="rb-lane-grade"><span class="rb-chip" data-grade="C">C</span><span class="rb-up"><svg class="rb-ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15V5M5 10l5-5 5 5" /></svg>up from D</span><span class="rb-est">estimated</span></p>
+                <div class="rb-fix">
+                  <a class="rb-topic" href="/student/practice/0625"><svg class="rb-ring" viewBox="0 0 24 24" aria-hidden="true"><circle class="rb-ring-t" cx="12" cy="12" r="9" /><circle class="rb-ring-v" cx="12" cy="12" r="9" pathLength="100" style="--acc: 54" /></svg><span class="rb-topic-t">Waves</span><span class="rb-topic-v">54%</span><span class="rb-topic-d is-up"><svg class="rb-ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15V5M5 10l5-5 5 5" /></svg><span class="rb-sr">up </span>7</span></a>
+                  <a class="rb-btn rb-btn--tonal rb-btn--sm" href="/student/practice/0625">Practise waves
+                    <svg class="rb-ico rb-ico--dir" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5" /></svg></a>
+                </div>
               </div>
-              <div class="rb-track" style="--d: 180">
-                <span class="rb-bar"></span>
-                <time class="rb-pin" datetime="2027-05-04">4 May</time>
+              <div class="rb-journey">
+                <div class="rb-track" style="--d: 180">
+                  <span class="rb-bar"></span>
+                  <time class="rb-pin" datetime="2027-05-04">4 May</time>
+                </div>
+                <figure class="rb-spark">
+                  <div class="rb-spark-plot">
+                    <svg viewBox="0 0 196 56" role="img" aria-label="0625 Physics, both papers: 41% then 48%. 4 points from a B.">
+                      <line class="rb-spark-band" x1="6" x2="150" y1="38.4" y2="38.4" />
+                      <polyline class="rb-spark-line" points="6,47.2 150,41.6" />
+                      <circle class="rb-spark-dot" cx="150" cy="41.6" r="4" />
+                      <text class="rb-spark-v" x="158" y="46.1">48%</text>
+                    </svg>
+                    <a class="rb-tip" href="/student/result/0625-42-on23" style="--x: 150px; --y: 41.6px">
+                      <span class="rb-tip-box"><span class="rb-lbl">Last result</span> <span class="rb-tip-paper">0625/42 · o/n 2023</span> <span class="rb-tip-marks">38/80</span> <span class="rb-chip rb-chip--sm" data-grade="C">C</span></span>
+                    </a>
+                  </div>
+                  <figcaption class="rb-spark-cap"><strong class="rb-spark-to">4 points from a B</strong></figcaption>
+                </figure>
               </div>
-              <a class="rb-last" href="/student/result/0625-42-on23">
-                <span class="rb-lbl">Last result</span>
-                <span class="rb-last-paper">0625/42 · o/n 2023</span>
-                <span class="rb-last-marks">38/80</span>
-                <span class="rb-chip rb-chip--sm" data-grade="C">C</span>
-              </a>
-              <p class="rb-days"><span class="rb-days-n">180</span><span class="rb-days-u">days</span></p>
+              <p class="rb-days"><span class="rb-days-n">180</span></p>
             </li>
             <li class="rb-lane">
               <div class="rb-lane-subj">
                 <p class="rb-lane-name"><a class="rb-lane-link" href="/student/subject/0580"><span class="rb-mono">0580</span> Mathematics</a></p>
-                <p class="rb-lane-grade" data-needs="many-papers">
-                  <span class="rb-chip" data-grade="A">A</span>
-                  <span class="rb-up"><svg class="rb-ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15V5M5 10l5-5 5 5" /></svg>up from B</span>
-                </p>
-                <p class="rb-lane-grade" data-only-state="one-paper">
-                  <span class="rb-chip" data-grade="B">B</span>
-                  <span class="rb-flat">1 paper</span>
-                </p>
-                <p class="rb-lane-next rb-lane-next--session" data-needs="plan"><span class="rb-lbl">Next session</span> Vectors <span class="rb-mono">20 min · 6 Nov</span></p>
-                <p class="rb-lane-next" data-only-state="no-plan"><span class="rb-lbl">Weakest topic</span> Vectors <span class="rb-mono">63%</span></p>
-                <p class="rb-lane-next" data-only-state="one-paper"><span class="rb-lbl">Weakest topic</span> Vectors <span class="rb-mono">50%</span></p>
+                <p class="rb-lane-grade" data-needs="many-papers"><span class="rb-chip" data-grade="A">A</span><span class="rb-up"><svg class="rb-ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15V5M5 10l5-5 5 5" /></svg>up from B</span></p>
+                <p class="rb-lane-grade" data-only-state="one-paper"><span class="rb-chip" data-grade="B">B</span><span class="rb-flat">1 paper</span></p>
+                <div class="rb-fix">
+                  <a class="rb-topic" href="/student/practice/0580" data-needs="many-papers"><svg class="rb-ring" viewBox="0 0 24 24" aria-hidden="true"><circle class="rb-ring-t" cx="12" cy="12" r="9" /><circle class="rb-ring-v" cx="12" cy="12" r="9" pathLength="100" style="--acc: 63" /></svg><span class="rb-topic-t">Vectors</span><span class="rb-topic-v">63%</span><span class="rb-topic-d is-up"><svg class="rb-ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15V5M5 10l5-5 5 5" /></svg><span class="rb-sr">up </span>8</span></a>
+                  <a class="rb-topic" href="/student/practice/0580" data-only-state="one-paper"><svg class="rb-ring" viewBox="0 0 24 24" aria-hidden="true"><circle class="rb-ring-t" cx="12" cy="12" r="9" /><circle class="rb-ring-v" cx="12" cy="12" r="9" pathLength="100" style="--acc: 50" /></svg><span class="rb-topic-t">Vectors</span><span class="rb-topic-v">50%</span><span class="rb-topic-d">first paper</span></a>
+                </div>
               </div>
-              <div class="rb-track" style="--d: 188">
-                <span class="rb-bar"></span>
-                <time class="rb-pin" datetime="2027-05-12">12 May</time>
+              <div class="rb-journey">
+                <div class="rb-track" style="--d: 188">
+                  <span class="rb-bar"></span>
+                  <time class="rb-pin" datetime="2027-05-12">12 May</time>
+                </div>
+                <figure class="rb-spark" data-needs="many-papers">
+                  <div class="rb-spark-plot">
+                    <svg viewBox="0 0 196 56" role="img" aria-label="0580 Mathematics, last 8 papers: from 49% up to 76%. 9 points from an A*.">
+                      <line class="rb-spark-band" x1="6" x2="150" y1="12.0" y2="12.0" />
+                      <polyline class="rb-spark-line" points="6,40.8 26.6,38.4 47.1,36.0 67.7,37.6 88.3,33.6 108.9,31.2 129.4,29.6 150,19.2" />
+                      <circle class="rb-spark-dot" cx="150" cy="19.2" r="4" />
+                      <text class="rb-spark-v" x="158" y="23.7">76%</text>
+                    </svg>
+                    <a class="rb-tip" href="/student/result/0580-42-mj24" style="--x: 150px; --y: 19.2px">
+                      <span class="rb-tip-box"><span class="rb-lbl">Last result</span> <span class="rb-tip-paper">0580/42 · m/j 2024</span> <span class="rb-tip-marks">61/80</span> <span class="rb-chip rb-chip--sm" data-grade="A">A</span></span>
+                    </a>
+                  </div>
+                  <figcaption class="rb-spark-cap"><strong class="rb-spark-to">9 points from an A*</strong></figcaption>
+                </figure>
+                <figure class="rb-spark" data-only-state="one-paper">
+                  <div class="rb-spark-plot">
+                    <svg viewBox="0 0 196 56" role="img" aria-label="0580 Mathematics, one paper: 65%. 5 points from an A.">
+                      <line class="rb-spark-band" x1="6" x2="150" y1="24.0" y2="24.0" />
+
+                      <circle class="rb-spark-dot" cx="150" cy="28.0" r="4" />
+                      <text class="rb-spark-v" x="158" y="32.5">65%</text>
+                    </svg>
+                    <a class="rb-tip" href="/student/result/0580-42-mj24" style="--x: 150px; --y: 28.0px">
+                      <span class="rb-tip-box"><span class="rb-lbl">Last result</span> <span class="rb-tip-paper">0580/42 · m/j 2024</span> <span class="rb-tip-marks">52/80</span> <span class="rb-chip rb-chip--sm" data-grade="B">B</span></span>
+                    </a>
+                  </div>
+                  <figcaption class="rb-spark-cap"><strong class="rb-spark-to">5 points from an A</strong> <span class="rb-spark-n">One paper so far — the line starts with your second</span></figcaption>
+                </figure>
               </div>
-              <a class="rb-last" href="/student/result/0580-42-mj24">
-                <span class="rb-lbl">Last result</span>
-                <span class="rb-last-paper">0580/42 · m/j 2024</span>
-                <span class="rb-last-marks" data-needs="many-papers">61/80</span>
-                <span class="rb-chip rb-chip--sm" data-grade="A" data-needs="many-papers">A</span>
-                <span class="rb-last-marks" data-only-state="one-paper">52/80</span>
-                <span class="rb-chip rb-chip--sm" data-grade="B" data-only-state="one-paper">B</span>
-              </a>
-              <p class="rb-days"><span class="rb-days-n">188</span><span class="rb-days-u">days</span></p>
+              <p class="rb-days"><span class="rb-days-n">188</span></p>
             </li>
             <li class="rb-lane" data-needs="many-papers">
               <div class="rb-lane-subj">
                 <p class="rb-lane-name"><a class="rb-lane-link" href="/student/subject/0606"><span class="rb-mono">0606</span> Additional Mathematics</a></p>
-                <p class="rb-lane-grade">
-                  <span class="rb-chip" data-grade="B">B</span>
-                  <span class="rb-flat">no change</span>
-                </p>
-                <p class="rb-lane-next" data-needs="plan"><span class="rb-lbl">Next session</span> Quadratic inequalities <span class="rb-mono">25 min · today</span></p>
-                <p class="rb-lane-next" data-only-state="no-plan"><span class="rb-lbl">Weakest topic</span> Quadratic inequalities <span class="rb-mono">58%</span></p>
+                <p class="rb-lane-grade"><span class="rb-chip" data-grade="B">B</span><span class="rb-flat">no change</span></p>
+                <div class="rb-fix">
+                  <a class="rb-topic" href="/student/practice/0606"><svg class="rb-ring" viewBox="0 0 24 24" aria-hidden="true"><circle class="rb-ring-t" cx="12" cy="12" r="9" /><circle class="rb-ring-v" cx="12" cy="12" r="9" pathLength="100" style="--acc: 58" /></svg><span class="rb-topic-t">Quadratic inequalities</span><span class="rb-topic-v">58%</span><span class="rb-topic-d"><svg class="rb-ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 5v10M5 10l5 5 5-5" /></svg><span class="rb-sr">down </span>3</span></a>
+                </div>
               </div>
-              <div class="rb-track" style="--d: 194">
-                <span class="rb-bar"></span>
-                <time class="rb-pin" datetime="2027-05-18">18 May</time>
+              <div class="rb-journey">
+                <div class="rb-track" style="--d: 194">
+                  <span class="rb-bar"></span>
+                  <time class="rb-pin" datetime="2027-05-18">18 May</time>
+                </div>
+                <figure class="rb-spark">
+                  <div class="rb-spark-plot">
+                    <svg viewBox="0 0 196 56" role="img" aria-label="0606 Additional Mathematics, all 6 papers: from 44% up to 59%. 9 points from an A.">
+                      <line class="rb-spark-band" x1="6" x2="150" y1="25.6" y2="25.6" />
+                      <polyline class="rb-spark-line" points="6,44.8 34.8,40.0 63.6,37.6 92.4,34.4 121.2,36.0 150,32.8" />
+                      <circle class="rb-spark-dot" cx="150" cy="32.8" r="4" />
+                      <text class="rb-spark-v" x="158" y="37.3">59%</text>
+                    </svg>
+                    <a class="rb-tip" href="/student/result/0606-12-mj24" style="--x: 150px; --y: 32.8px">
+                      <span class="rb-tip-box"><span class="rb-lbl">Last result</span> <span class="rb-tip-paper">0606/12 · m/j 2024</span> <span class="rb-tip-marks">47/80</span> <span class="rb-chip rb-chip--sm" data-grade="B">B</span></span>
+                    </a>
+                  </div>
+                  <figcaption class="rb-spark-cap"><strong class="rb-spark-to">9 points from an A</strong></figcaption>
+                </figure>
               </div>
-              <a class="rb-last" href="/student/result/0606-12-mj24">
-                <span class="rb-lbl">Last result</span>
-                <span class="rb-last-paper">0606/12 · m/j 2024</span>
-                <span class="rb-last-marks">47/80</span>
-                <span class="rb-chip rb-chip--sm" data-grade="B">B</span>
-              </a>
-              <p class="rb-days"><span class="rb-days-n">194</span><span class="rb-days-u">days</span></p>
+              <p class="rb-days"><span class="rb-days-n">194</span></p>
             </li>
           </ul>
         </section>
@@ -336,6 +372,14 @@
                 <span class="rb-chip rb-chip--sm" data-grade="B" data-only-state="one-paper">B</span>
               </a>
               <span class="rb-row-exam" data-needs="exams">exam in <span class="rb-mono">188</span> days</span>
+              <div class="rb-fix rb-row-fix">
+                <a class="rb-topic" href="/student/practice/0580">
+                  <svg class="rb-ring" viewBox="0 0 24 24" aria-hidden="true"><circle class="rb-ring-t" cx="12" cy="12" r="9" /><circle class="rb-ring-v" cx="12" cy="12" r="9" pathLength="100" style="--acc: 63" /></svg>
+                  <span class="rb-topic-t">Vectors</span>
+                  <span class="rb-topic-v">63%</span>
+                  <span class="rb-topic-d is-up"><svg class="rb-ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15V5M5 10l5-5 5 5" /></svg><span class="rb-sr">up </span>8</span>
+                </a>
+              </div>
             </li>
             <li class="rb-row" data-needs="many-papers">
               <a class="rb-row-subj rb-lane-link" href="/student/subject/0606"><span class="rb-mono">0606</span> Additional Mathematics</a>
@@ -347,6 +391,14 @@
                 <span class="rb-chip rb-chip--sm" data-grade="B">B</span>
               </a>
               <span class="rb-row-exam" data-needs="exams">exam in <span class="rb-mono">194</span> days</span>
+              <div class="rb-fix rb-row-fix">
+                <a class="rb-topic" href="/student/practice/0606">
+                  <svg class="rb-ring" viewBox="0 0 24 24" aria-hidden="true"><circle class="rb-ring-t" cx="12" cy="12" r="9" /><circle class="rb-ring-v" cx="12" cy="12" r="9" pathLength="100" style="--acc: 58" /></svg>
+                  <span class="rb-topic-t">Quadratic inequalities</span>
+                  <span class="rb-topic-v">58%</span>
+                  <span class="rb-topic-d"><svg class="rb-ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 5v10M5 10l5 5 5-5" /></svg><span class="rb-sr">down </span>3</span>
+                </a>
+              </div>
             </li>
             <li class="rb-row" data-needs="many-papers">
               <a class="rb-row-subj rb-lane-link" href="/student/subject/0625"><span class="rb-mono">0625</span> Physics</a>
@@ -358,17 +410,15 @@
                 <span class="rb-chip rb-chip--sm" data-grade="C">C</span>
               </a>
               <span class="rb-row-exam" data-needs="exams">exam in <span class="rb-mono">180</span> days</span>
+              <div class="rb-fix rb-row-fix">
+                <a class="rb-topic" href="/student/practice/0625">
+                  <svg class="rb-ring" viewBox="0 0 24 24" aria-hidden="true"><circle class="rb-ring-t" cx="12" cy="12" r="9" /><circle class="rb-ring-v" cx="12" cy="12" r="9" pathLength="100" style="--acc: 54" /></svg>
+                  <span class="rb-topic-t">Waves</span>
+                  <span class="rb-topic-v">54%</span>
+                  <span class="rb-topic-d is-up"><svg class="rb-ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15V5M5 10l5-5 5 5" /></svg><span class="rb-sr">up </span>7</span>
+                </a>
+              </div>
             </li>
-          </ul>
-        </section>
-
-        <section class="rb-weak" aria-labelledby="rb-weak-h">
-          <h2 class="rb-sec-h" id="rb-weak-h">Weak topics</h2>
-          <ul class="rb-rows rb-rows--two">
-            <li data-needs="many-papers"><a class="rb-mrow" href="/student/practice/0625"><span class="rb-mrow-t">Waves</span><span class="rb-mono rb-mrow-c">0625</span><span class="rb-mono rb-mrow-v">54%</span></a></li>
-            <li data-needs="many-papers"><a class="rb-mrow" href="/student/practice/0606"><span class="rb-mrow-t">Quadratic inequalities</span><span class="rb-mono rb-mrow-c">0606</span><span class="rb-mono rb-mrow-v">58%</span></a></li>
-            <li><a class="rb-mrow" href="/student/practice/0580"><span class="rb-mrow-t">Vectors</span><span class="rb-mono rb-mrow-c">0580</span><span class="rb-mono rb-mrow-v" data-needs="many-papers">63%</span><span class="rb-mono rb-mrow-v" data-only-state="one-paper">50%</span></a></li>
-            <li data-needs="many-papers"><a class="rb-mrow" href="/student/practice/0625"><span class="rb-mrow-t">Moments</span><span class="rb-mono rb-mrow-c">0625</span><span class="rb-mono rb-mrow-v">66%</span></a></li>
           </ul>
         </section>
       </div>

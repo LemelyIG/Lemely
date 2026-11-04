@@ -13,8 +13,10 @@
   ::selection { background: var(--md-primary-container); color: var(--md-on-primary-container); }
   :focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
 }
+/* No link is underlined at rest; rows tint on hover and every link shows the focus ring. */
+.sh-root a { text-decoration: none; }
 /* Resets at zero specificity, so every component rule below wins over them. */
-:where(.sh-root[data-variant="b"]) :where(a) { color: inherit; }
+:where(.sh-root[data-variant="b"]) :where(a) { color: inherit; text-decoration: none; }
 :where(.sh-root[data-variant="b"]) :where(p, h1, h2, ol, ul) { margin: 0; }
 :where(.sh-root[data-variant="b"]) :where(ol, ul) { padding: 0; list-style: none; }
 
@@ -41,12 +43,12 @@
 }
 
 /* Cards: white on a near-white page takes an outline in light mode, none in dark. */
-.rb-hero, .rb-runway, .rb-ledger, .rb-weak, .rb-error, .rb-steps {
+.rb-hero, .rb-runway, .rb-ledger, .rb-error, .rb-steps {
   background: var(--surface-card);
   border: 1.5px solid var(--border-subtle);
   border-radius: var(--radius-card);
 }
-.sh-root[data-theme="dark"] :is(.rb-hero, .rb-runway, .rb-ledger, .rb-weak, .rb-error, .rb-steps, .rb-skel-hero, .rb-skel-runway) {
+.sh-root[data-theme="dark"] :is(.rb-hero, .rb-runway, .rb-ledger, .rb-error, .rb-steps, .rb-skel-hero, .rb-skel-runway) {
   border-color: transparent;
 }
 
@@ -162,7 +164,7 @@
 }
 .rb-days7 .is-earned span { background: var(--md-tertiary); color: var(--sh-gold-text); }
 .rb-days7 .is-today span { outline: 2px solid var(--md-primary); outline-offset: 2px; }
-.rb-days7 small { font: 500 10px/1 var(--font-mono); color: var(--text-muted); }
+.rb-days7 small { min-block-size: 10px; font: 500 10px/1 var(--font-mono); color: var(--text-muted); }
 .rb-days7 .is-today small { color: var(--text-body); font-weight: 700; }
 
 /* ---------- next action (hero) ---------- */
@@ -209,8 +211,9 @@
 }
 .rb-note a {
   margin-inline-start: var(--space-2); font-weight: 700; color: var(--md-primary);
-  text-underline-offset: 3px; text-decoration-thickness: 1.5px;
+  text-decoration: none; text-underline-offset: 3px; text-decoration-thickness: 1.5px;
 }
+.rb-note a:hover { text-decoration: underline; }
 
 /* ---------- runway ---------- */
 .rb-runway { --span: 194; padding: var(--space-7) var(--space-6) var(--space-4); }
@@ -246,7 +249,7 @@
   background: color-mix(in oklch, var(--md-primary) 45%, var(--surface-card));
 }
 .rb-exam.is-closest { background: var(--md-primary); }
-.rb-exam > *, .rb-unit {
+.rb-exam > *, .rb-sr {
   position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden;
   clip-path: inset(50%); white-space: nowrap;
 }
@@ -256,18 +259,15 @@
    the last-result link sits above it. */
 .rb-lane {
   position: relative;
-  display: grid; grid-template-columns: var(--rb-lane-cols); grid-template-rows: auto auto;
-  column-gap: var(--space-8); row-gap: var(--space-2);
+  display: grid; grid-template-columns: var(--rb-lane-cols);
+  column-gap: var(--space-8);
   align-items: center;
-  padding: var(--space-4);
+  padding: var(--space-6) var(--space-4);
   border-radius: var(--radius-tile);
   color: var(--text-body);
   transition: background var(--dur-fast) var(--ease-out);
 }
-.rb-lane-subj { grid-column: 1; grid-row: 1 / span 2; }
-.rb-lane .rb-track { grid-column: 2; grid-row: 1; align-self: end; }
-.rb-lane .rb-last { grid-column: 2; grid-row: 2; justify-self: start; align-self: start; }
-.rb-lane .rb-days { grid-column: 3; grid-row: 1 / span 2; }
+.rb-journey { display: grid; gap: var(--space-3); min-inline-size: 0; }
 .rb-lane + .rb-lane { border-block-start: 1px solid var(--border-subtle); }
 .rb-lane.is-closest + .rb-lane { border-block-start-color: transparent; }
 .rb-lane:has(.rb-lane-link:hover) { background: var(--surface-hover-tint); }
@@ -284,11 +284,7 @@
 .rb-lane-name .rb-mono { font-size: 15px; margin-inline-end: var(--space-1); color: var(--text-secondary); }
 .rb-lane.is-closest .rb-lane-name .rb-mono { color: inherit; }
 .rb-lane-grade { margin-block-start: var(--space-2); }
-.rb-lane-next { margin-block-start: var(--space-3); font-size: var(--fs-body-sm); line-height: 1.4; color: var(--text-secondary); }
-.rb-lane.is-closest :is(.rb-lane-next, .rb-lbl, .rb-flat) { color: inherit; }
-.rb-lane-next .rb-mono { margin-inline-start: var(--space-1); font-size: 13px; color: var(--text-body); white-space: nowrap; }
-.rb-lane.is-closest .rb-lane-next .rb-mono { color: inherit; }
-.sh-root[data-state="one-paper"] .rb-lane-next--session { display: none; }
+.rb-lane.is-closest :is(.rb-lbl, .rb-flat) { color: inherit; }
 
 .rb-track { position: relative; block-size: 48px; }
 .rb-track::before {
@@ -317,33 +313,17 @@
 }
 .rb-lane.is-closest .rb-pin { color: inherit; font-weight: 700; }
 
-/* Last result: paper · marks · grade, one link to the result page. */
-.rb-last {
-  position: relative; z-index: 1;
-  display: inline-flex; align-items: center; gap: var(--space-2);
-  padding: 5px 6px 5px 10px; border-radius: var(--radius-chip);
-  background: var(--surface-row); color: var(--text-body); text-decoration: none;
-  transition: background var(--dur-fast) var(--ease-out);
-}
-.rb-last:hover { background: var(--surface-hover-tint); }
-.rb-last .rb-lbl { margin-inline-end: 0; }
-.rb-last-paper { font: 500 13px/1.2 var(--font-mono); color: var(--text-secondary); white-space: nowrap; }
-.rb-last-marks { font: 700 var(--fs-data)/1.2 var(--font-mono); font-variant-numeric: tabular-nums; }
-.rb-lane.is-closest .rb-last { background: var(--surface-card); }
-.rb-lane.is-closest .rb-last:hover { background: var(--surface-row); }
-.sh-root[data-theme="dark"] .rb-lane.is-closest .rb-last { background: var(--md-surface-low); }
-
-.rb-days { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; text-align: end; }
+.rb-days { display: flex; flex-direction: column; align-items: flex-end; text-align: end; }
 .rb-days-n { font: 700 34px/1 var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: -0.03em; }
-.rb-days-u {
+.rb-days-cap {
+  grid-column: 3; grid-row: 1; align-self: end; text-align: end; padding-block-end: 8px;
   font: 600 var(--fs-label)/1 var(--font-mono); letter-spacing: var(--ls-label); text-transform: uppercase;
   color: var(--text-muted);
 }
-.rb-lane.is-closest .rb-days-u { color: inherit; }
 
 /* ---------- subjects ledger (no-exams fallback) ---------- */
-.rb-ledger, .rb-weak { padding: var(--space-6); }
-:is(.rb-ledger, .rb-weak) .rb-sec-h { padding-inline: var(--space-2); }
+.rb-ledger { padding: var(--space-6); }
+.rb-ledger .rb-sec-h { padding-inline: var(--space-2); }
 .rb-rows > li + li { border-block-start: 1px solid var(--border-subtle); }
 .rb-row {
   position: relative;
@@ -358,19 +338,90 @@
 .rb-row-papers { font-size: 13px; color: var(--text-secondary); }
 .rb-row-exam { font-size: var(--fs-body-sm); color: var(--text-secondary); }
 
-/* ---------- weak topics ---------- */
-.rb-rows--two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: var(--space-8); }
-.rb-rows--two > li + li { border-block-start: 0; }
-.rb-rows--two > li { border-block-end: 1px solid var(--border-subtle); }
-.rb-mrow {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto 56px; align-items: center; column-gap: var(--space-4);
-  padding: 12px var(--space-2); text-decoration: none; border-radius: var(--radius-chip);
+/* ---------- per-lane fix chips ---------- */
+.rb-fix { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-block-start: var(--space-3); }
+.rb-topic {
+  position: relative; z-index: 1;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px 4px 5px; border-radius: var(--radius-pill);
+  background: var(--surface-card); border: 1px solid var(--border-default);
+  color: var(--text-body); text-decoration: none;
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast);
+}
+.rb-topic:hover { background: var(--surface-hover-tint); border-color: var(--border-control); }
+.rb-lane.is-closest .rb-topic { border-color: transparent; }
+.sh-root[data-theme="dark"] .rb-topic { background: var(--md-surface-container); border-color: transparent; }
+.sh-root[data-theme="dark"] .rb-lane.is-closest .rb-topic { background: var(--md-surface-low); }
+.rb-ring { inline-size: 24px; block-size: 24px; flex: none; transform: rotate(-90deg); }
+.rb-ring circle { fill: none; stroke-width: 3.5; }
+.rb-ring-t { stroke: var(--track); }
+.rb-ring-v { stroke: var(--md-primary); stroke-linecap: round; stroke-dasharray: var(--acc) 100; }
+.rb-topic-t { font: 600 var(--fs-body-sm)/1.2 var(--font-ui); }
+.rb-topic-v { font: 700 13px/1 var(--font-mono); font-variant-numeric: tabular-nums; }
+.rb-topic-d {
+  display: inline-flex; align-items: center; gap: 1px;
+  font: 600 12px/1 var(--font-mono); font-variant-numeric: tabular-nums; color: var(--text-secondary);
+}
+.rb-topic-d .rb-ico { inline-size: 13px; block-size: 13px; stroke-width: 2.2; }
+.rb-topic-d.is-up { color: var(--rb-up); }
+.rb-btn--tonal { position: relative; z-index: 1; background: var(--md-primary); color: var(--md-on-primary); }
+.rb-btn--tonal:hover { background: var(--md-primary-hover); }
+.rb-btn--sm { min-block-size: 34px; padding: 0 var(--space-3); border-radius: var(--radius-chip); font-size: var(--fs-body-sm); }
+.rb-btn--sm .rb-ico { inline-size: 15px; block-size: 15px; }
+.rb-row-fix { grid-column: 1 / -1; margin-block-start: var(--space-2); }
+.sh-root[data-state="one-paper"] .rb-topic[data-only-state="one-paper"] { display: inline-flex; }
+
+/* ---------- momentum sparkline: line, latest point, a bare dashed target line, one plain sentence ---------- */
+.rb-spark { position: relative; z-index: 1; display: flex; align-items: center; gap: var(--space-4); margin: 0; }
+.rb-spark-plot { position: relative; flex: none; }
+.rb-spark svg { display: block; inline-size: 196px; block-size: 56px; overflow: visible; }
+.rb-spark-band { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.7; }
+.rb-spark-line { fill: none; stroke: var(--md-primary); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.rb-spark-dot { fill: var(--md-primary); stroke: var(--surface-card); stroke-width: 2; }
+.rb-lane.is-closest .rb-spark-dot { stroke: var(--md-primary-container); }
+.rb-spark-v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 700; fill: var(--text-body); }
+.rb-lane.is-closest .rb-spark-v { fill: var(--md-on-primary-container); }
+.rb-lane.is-closest .rb-spark-band { stroke: var(--md-on-primary-container); }
+.rb-spark-cap { display: grid; gap: 2px; font: 500 12px/1.35 var(--font-ui); color: var(--text-muted); }
+.rb-spark-to { font: 700 var(--fs-body)/1.3 var(--font-ui); color: var(--text-body); }
+.rb-lane.is-closest :is(.rb-spark-cap, .rb-spark-to) { color: inherit; }
+.rb-spark-n { max-inline-size: 26ch; }
+.sh-root[data-state="one-paper"] .rb-spark[data-only-state="one-paper"] { display: flex; }
+/* Less data per lane: only the closest-exam lane draws its line; the others keep the plain sentence. */
+.rb-lane:not(.is-closest) .rb-spark-plot { display: none; }
+.sh-root[data-state="one-paper"] .rb-lane:not([data-needs]) .rb-spark-plot { display: block; }
+
+/* Last result lives on the sparkline's end point: hover or focus shows it, the point links to the result. */
+.rb-tip {
+  position: absolute; inline-size: 28px; block-size: 28px; border-radius: 50%;
+  inset-inline-start: calc(var(--x) - 14px); inset-block-start: calc(var(--y) - 14px);
+}
+.rb-tip:dir(rtl) { inset-inline-start: auto; inset-inline-end: calc(var(--x) - 14px); }
+.rb-tip-box {
+  position: absolute; inset-block-end: calc(100% + 6px); inset-inline-end: -8px;
+  display: inline-flex; align-items: center; gap: var(--space-2); white-space: nowrap;
+  padding: 6px 6px 6px 10px; border-radius: var(--radius-chip);
+  background: var(--surface-card); color: var(--text-body); box-shadow: var(--shadow-panel);
+  opacity: 0; transform: translateY(4px); pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+.sh-root[data-theme="dark"] .rb-tip-box { background: var(--md-surface-highest); }
+.rb-tip:is(:hover, :focus-visible) .rb-tip-box { opacity: 1; transform: none; }
+.rb-tip-paper { font: 500 13px/1.2 var(--font-mono); color: var(--text-secondary); }
+.rb-tip-marks { font: 700 var(--fs-data)/1.2 var(--font-mono); font-variant-numeric: tabular-nums; }
+.rb-tip-box .rb-lbl { margin-inline-end: 0; }
+
+/* Last result inside the no-exams ledger rows. */
+.rb-last {
+  position: relative; z-index: 1;
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: 5px 6px 5px 10px; border-radius: var(--radius-chip);
+  background: var(--surface-row); color: var(--text-body); text-decoration: none;
   transition: background var(--dur-fast) var(--ease-out);
 }
-.rb-mrow:hover { background: var(--surface-hover-tint); }
-.rb-mrow-t { font: 600 15px/1.3 var(--font-ui); }
-.rb-mrow-c { color: var(--text-muted); font-size: 13px; }
-.rb-mrow-v { text-align: end; font-size: var(--fs-data); color: var(--text-body); }
+.rb-last:hover { background: var(--surface-hover-tint); }
+.rb-last-paper { font: 500 13px/1.2 var(--font-mono); color: var(--text-secondary); white-space: nowrap; }
+.rb-last-marks { font: 700 var(--fs-data)/1.2 var(--font-mono); font-variant-numeric: tabular-nums; }
 
 /* Inline and flex children the shell would otherwise show as blocks in one-paper. */
 .sh-root[data-state="one-paper"] .rb-last [data-only-state="one-paper"] { display: inline; }
@@ -426,6 +477,9 @@
   border-block-start: 1px solid var(--border-subtle);
 }
 .sh-root[data-width="desktop"] .rb-tabbar { display: none; }
+/* Short states (error, new) still put the bar at the bottom of the frame. */
+.sh-root[data-variant="b"][data-width="mobile"] { display: flex; flex-direction: column; }
+.sh-root[data-variant="b"][data-width="mobile"] .rb-tabbar { margin-block-start: auto; }
 .sh-root[data-width="mobile"] .rb-page { padding-block-end: var(--space-6); }
 .rb-tab {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
@@ -440,9 +494,19 @@
 
 /* ---------- touch ---------- */
 @media (pointer: coarse) {
-  .rb-btn, .rb-lane-link, .rb-last, .rb-mrow, .rb-note a, .rb-tab { min-block-size: 44px; }
+  .rb-btn, .rb-lane-link, .rb-last, .rb-topic, .rb-note a, .rb-tab { min-block-size: 44px; }
+  .rb-tip { inline-size: 44px; block-size: 44px; inset-inline-start: calc(var(--x) - 22px); inset-block-start: calc(var(--y) - 22px); }
   .rb-note a, .rb-lane-link { display: inline-flex; align-items: center; }
 }
+
+/* one-paper: 0580 is the only exam, so its lane takes the closest-exam treatment. */
+.sh-root[data-state="one-paper"] .rb-lane:not([data-needs]) { background: var(--md-primary-container); color: var(--md-on-primary-container); }
+.sh-root[data-state="one-paper"] .rb-lane:not([data-needs]) :is(.rb-flat, .rb-pin, .rb-spark-cap, .rb-spark-to, .rb-lane-name .rb-mono) { color: inherit; }
+.sh-root[data-state="one-paper"] .rb-lane:not([data-needs]) .rb-spark-v { fill: var(--md-on-primary-container); }
+.sh-root[data-state="one-paper"] .rb-lane:not([data-needs]) .rb-bar { background: var(--md-primary); }
+.sh-root[data-state="one-paper"] .rb-lane:not([data-needs]) .rb-bar::after { border-color: var(--md-primary); background: var(--md-primary-container); }
+.sh-root[data-state="one-paper"] .rb-lane:not([data-needs]) .rb-topic { background: var(--surface-card); border-color: transparent; }
+.sh-root[data-theme="dark"][data-state="one-paper"] .rb-lane:not([data-needs]) .rb-topic { background: var(--md-surface-low); }
 
 /* ---------- narrow desktop (761–1120px): the four band columns no longer fit in one row,
    so greeting + Binny share the first row and level + streak the second. 1121px and up is untouched. ---------- */
@@ -481,13 +545,13 @@
   .rb-streak-h { white-space: nowrap; }
   .rb-level-xp { font-size: 12px; }
   .rb-meter { margin-block-start: var(--space-2); }
-  .rb-level-to { font-size: 11px; }
+  .rb-level-to { font-size: 12px; }
   .rb-streak-meta { font-size: 12px; }
   .rb-streak-zero { font-size: 16px; }
   .rb-days7 { gap: 3px; margin-block-start: var(--space-2); }
   .rb-days7 span { inline-size: 22px; block-size: 22px; font-size: 11px; }
   .rb-days7 .is-today span { outline-offset: 1px; }
-  .rb-days7 small { font-size: 9px; }
+  .rb-days7 small { font-size: 10px; }
 
   .rb-hero { grid-template-columns: minmax(0, 1fr); padding: var(--space-5); row-gap: var(--space-4); }
   .rb-hero-why { margin-block-end: var(--space-2); }
@@ -527,21 +591,20 @@
 
   /* The vertical exam list carries days left on mobile, so the lanes drop their copy. */
   .rb-lane {
-    grid-template-columns: minmax(0, 1fr); grid-template-rows: auto;
-    row-gap: var(--space-3); padding: var(--space-4) var(--space-3);
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: var(--space-4); padding: var(--space-5) var(--space-3);
   }
-  .rb-lane-subj, .rb-lane .rb-last { grid-column: 1; grid-row: auto; }
+  .rb-spark { gap: var(--space-3); }
+  .rb-days-cap { display: none; }
   .rb-lane .rb-track, .rb-lane .rb-days { display: none; }
   .rb-lane-name { font-size: 18px; }
-  .rb-last { flex-wrap: wrap; row-gap: var(--space-1); }
 
   .rb-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: var(--space-2); }
   .rb-row-subj, .rb-row-papers { grid-column: 1; }
   .rb-row-grade { grid-column: 2; grid-row: 1 / span 2; }
   .rb-row .rb-last { grid-column: 1 / -1; justify-self: start; }
 
-  .rb-rows--two { grid-template-columns: minmax(0, 1fr); }
-  .rb-ledger, .rb-weak { padding: var(--space-5); }
+  .rb-ledger { padding: var(--space-5); }
 
   .rb-band--new { display: flex; }
   .rb-steps { padding: var(--space-2) var(--space-4); }
