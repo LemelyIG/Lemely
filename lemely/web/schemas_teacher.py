@@ -22,6 +22,7 @@ from typing import Literal
 from pydantic import Field
 
 from lemely.core.history import PaperOrigin
+from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD
 from lemely.web.schemas import ApiModel, QuestionResultDTO, WeakAreaDTO
 
 #: Lifecycle of a tracked paper. ``queued`` means "waiting for the grading
@@ -517,6 +518,8 @@ class OverviewDTO(ApiModel):
     client still deserialises. ``paperCount``, ``pendingReviewCount``,
     ``reviewConfidenceBuckets`` (ten 10% bands) and ``reviewEstimateMinutes`` are
     additive fields for the teacher home (spec 2026-11-02).
+    ``reviewConfidenceThreshold`` is the auto-grade cut-off (0-1) below which a
+    mark is queued for review, so the UI never hardcodes it.
     """
 
     stats: list[StatCardDTO] = Field(default_factory=list)
@@ -527,6 +530,7 @@ class OverviewDTO(ApiModel):
     pendingReviewCount: int = 0
     reviewConfidenceBuckets: list[int] = Field(default_factory=lambda: [0] * 10)
     reviewEstimateMinutes: int = 0
+    reviewConfidenceThreshold: float = REVIEW_CONFIDENCE_THRESHOLD
 
 
 class AcknowledgeAtRiskRequestDTO(ApiModel):
