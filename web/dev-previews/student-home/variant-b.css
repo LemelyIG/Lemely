@@ -1,0 +1,487 @@
+/* Student home, variant B: Exam runway.
+   Header band (greeting, Binny, level, streak) on --surface-section, one next action,
+   then one lane per subject on a shared scale from today to the last exam.
+   Built on tokens.css and shell.css; role tokens only, no raw colour values. */
+
+.sh-root[data-variant="b"] {
+  --rb-ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Positive change text; the color-mix fallback holds 4.5:1 until --sh-success-text loads. */
+  --rb-up: var(--sh-success-text, color-mix(in oklch, var(--md-success) 72%, var(--md-on-surface)));
+  --rb-lane-cols: minmax(280px, 360px) minmax(0, 1fr) 112px;
+  --rb-gap: 24px;
+
+  ::selection { background: var(--md-primary-container); color: var(--md-on-primary-container); }
+  :focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+}
+/* Resets at zero specificity, so every component rule below wins over them. */
+:where(.sh-root[data-variant="b"]) :where(a) { color: inherit; }
+:where(.sh-root[data-variant="b"]) :where(p, h1, h2, ol, ul) { margin: 0; }
+:where(.sh-root[data-variant="b"]) :where(ol, ul) { padding: 0; list-style: none; }
+
+/* ---------- page frame ---------- */
+.rb-page { padding: var(--space-8) 40px var(--space-12); }
+.rb-page > * + * { margin-block-start: var(--rb-gap); }
+
+.rb-mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 600; }
+.rb-ico {
+  inline-size: 18px; block-size: 18px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+}
+/* Direction-dependent arrows point the other way under dir="rtl". */
+.rb-ico--dir:dir(rtl) { transform: scaleX(-1); }
+
+.rb-sec-h {
+  font: 800 21px/1.2 var(--font-ui); letter-spacing: var(--ls-headline-ui);
+  color: var(--text-body); margin-block-end: var(--space-4);
+}
+.rb-lbl {
+  font: 600 var(--fs-label)/1.2 var(--font-mono); letter-spacing: var(--ls-label);
+  text-transform: uppercase; color: var(--text-muted);
+  margin-inline-end: var(--space-1);
+}
+
+/* Cards: white on a near-white page takes an outline in light mode, none in dark. */
+.rb-hero, .rb-runway, .rb-ledger, .rb-weak, .rb-latest, .rb-error, .rb-steps {
+  background: var(--surface-card);
+  border: 1.5px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+}
+.sh-root[data-theme="dark"] :is(.rb-hero, .rb-runway, .rb-ledger, .rb-weak, .rb-latest, .rb-error, .rb-steps) {
+  border-color: transparent;
+}
+
+/* ---------- buttons ---------- */
+.rb-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  min-block-size: 44px; padding: 0 var(--space-5);
+  border: 0; border-radius: var(--radius-button);
+  font: 700 var(--fs-body)/1 var(--font-ui); text-decoration: none; cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+.rb-btn:active { transform: scale(0.97); }
+.rb-btn--pri { background: var(--md-primary); color: var(--md-on-primary); }
+.rb-btn--pri:hover { background: var(--md-primary-hover); }
+.rb-btn--lg { min-block-size: 56px; padding: 0 var(--space-6); font-size: 17px; }
+
+/* ---------- grade chip, change, estimated ---------- */
+.rb-chip {
+  display: inline-grid; place-items: center;
+  min-inline-size: 34px; block-size: 32px; padding: 0 var(--space-2);
+  border-radius: 10px; vertical-align: middle;
+  background: var(--sh-grade-c); color: var(--white);
+  font: 800 19px/1 var(--font-ui); letter-spacing: -0.01em;
+}
+.rb-chip[data-grade="A*"] { background: var(--sh-grade-astar); }
+.rb-chip[data-grade="A"] { background: var(--sh-grade-a); }
+.rb-chip[data-grade="B"] { background: var(--sh-grade-b); }
+.rb-chip[data-grade="C"] { background: var(--sh-grade-c); }
+.rb-chip[data-grade="D"] { background: var(--sh-grade-d); }
+.rb-chip[data-grade="E"] { background: var(--sh-grade-e); }
+.rb-chip[data-grade="U"] { background: var(--sh-grade-u); }
+.rb-chip--lg { min-inline-size: 44px; block-size: 44px; font-size: 24px; border-radius: var(--radius-chip); }
+
+.rb-up {
+  display: inline-flex; align-items: center; gap: 2px; vertical-align: middle;
+  margin-inline-start: var(--space-2);
+  font: 600 var(--fs-body-sm)/1 var(--font-ui); color: var(--rb-up);
+}
+.rb-up .rb-ico { inline-size: 15px; block-size: 15px; stroke-width: 2.2; }
+.rb-flat {
+  vertical-align: middle; margin-inline-start: var(--space-2);
+  font: 500 var(--fs-body-sm)/1 var(--font-ui); color: var(--text-muted);
+}
+.rb-est {
+  display: inline-block; vertical-align: middle; margin-inline-start: var(--space-2);
+  padding: 3px 8px; border: 1px solid var(--border-default); border-radius: var(--radius-pill);
+  font: 600 12px/1.2 var(--font-ui); color: var(--text-secondary);
+}
+
+/* ---------- header band ---------- */
+.rb-band {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) auto minmax(190px, 0.8fr) minmax(250px, 1fr);
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-7) var(--space-8);
+  background: var(--surface-section);
+  border-radius: var(--radius-board);
+}
+.rb-greet-h {
+  font: 800 var(--fs-display-sm)/1.02 var(--font-display); letter-spacing: -0.04em;
+  color: var(--text-body); text-wrap: balance;
+}
+.rb-greet-p { margin-block-start: var(--space-3); font-size: var(--fs-body-sm); color: var(--text-secondary); }
+
+.rb-binny { display: flex; align-items: center; gap: var(--space-3); }
+.rb-binny-art { flex: none; inline-size: 84px; }
+.rb-binny-art svg { display: block; inline-size: 100%; block-size: auto; }
+.rb-binny-say {
+  position: relative; max-inline-size: 170px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-card); border-radius: var(--radius-button);
+  font: 600 var(--fs-body-sm)/1.35 var(--font-ui); color: var(--text-body);
+}
+
+.rb-level, .rb-streak {
+  align-self: stretch; display: flex; flex-direction: column; justify-content: center;
+  padding-inline-start: var(--space-8);
+  border-inline-start: 1px solid var(--border-default);
+}
+.rb-level-h, .rb-streak-h {
+  font: 800 var(--fs-headline)/1 var(--font-display); letter-spacing: -0.035em; color: var(--text-body);
+}
+.rb-level-xp { margin-block-start: var(--space-1); font: 600 var(--fs-data)/1.3 var(--font-mono); font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.rb-meter {
+  position: relative; block-size: 8px; margin-block-start: var(--space-3);
+  background: var(--track); border-radius: 4px; overflow: hidden;
+}
+.rb-meter-fill {
+  position: absolute; inset-block: 0; inset-inline-start: 0;
+  inline-size: calc(var(--fill) * 100%);
+  background: var(--md-primary); border-radius: 4px;
+  transform-origin: left center;
+  animation: rb-fill var(--dur-slow) var(--rb-ease-expo) 0.25s both;
+}
+.rb-meter-fill:dir(rtl) { transform-origin: right center; }
+@keyframes rb-fill { from { transform: scaleX(0); } }
+.rb-level-to { margin-block-start: var(--space-2); font: 500 12px/1.3 var(--font-mono); font-variant-numeric: tabular-nums; color: var(--text-muted); }
+
+.rb-streak-meta { margin-block-start: var(--space-1); font-size: 13px; line-height: 1.4; color: var(--text-secondary); }
+.rb-streak-zero { font: 800 var(--fs-title)/1.2 var(--font-ui); letter-spacing: -0.01em; color: var(--text-body); }
+.rb-days7 { display: flex; gap: 6px; margin-block-start: var(--space-3); }
+.rb-days7 li { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.rb-days7 span {
+  display: grid; place-items: center; inline-size: 30px; block-size: 30px; border-radius: 50%;
+  background: var(--track); color: var(--text-muted);
+  font: 600 12px/1 var(--font-mono); font-variant-numeric: tabular-nums;
+}
+.rb-days7 .is-earned span { background: var(--md-tertiary); color: var(--sh-gold-text); }
+.rb-days7 .is-today span { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+.rb-days7 small { font: 500 10px/1 var(--font-mono); color: var(--text-muted); }
+.rb-days7 .is-today small { color: var(--text-body); font-weight: 700; }
+
+/* ---------- next action (hero) ---------- */
+/* Shell shows the matching hero as display:block; lay it out as a grid instead. */
+.sh-root[data-action="marking"] .rb-hero[data-when-action="marking"],
+.sh-root[data-action="session"] .rb-hero[data-when-action="session"],
+.sh-root[data-action="first-paper"] .rb-hero[data-when-action="first-paper"],
+.sh-root[data-action="practice"] .rb-hero[data-when-action="practice"],
+.sh-root[data-action="correct"] .rb-hero[data-when-action="correct"] { display: grid; }
+.rb-hero {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end; column-gap: var(--space-8); row-gap: var(--space-5);
+  padding: var(--space-7) var(--space-8);
+}
+.rb-hero-why {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin-block-end: var(--space-3);
+  font: 600 12px/1.2 var(--font-mono); letter-spacing: var(--ls-label); text-transform: uppercase;
+  color: var(--md-primary);
+}
+.rb-hero-h {
+  font: 800 var(--fs-display-sm)/1.05 var(--font-display); letter-spacing: -0.035em;
+  color: var(--text-body); text-wrap: balance;
+}
+.rb-hero-meta {
+  display: inline-block; vertical-align: middle; margin-inline-start: var(--space-2);
+  padding: 5px 10px; border-radius: var(--radius-pill);
+  background: var(--md-primary-container); color: var(--md-on-primary-container);
+  font: 600 var(--fs-data)/1 var(--font-mono); letter-spacing: 0; font-variant-numeric: tabular-nums;
+}
+.rb-hero-p { margin-block-start: var(--space-3); max-inline-size: 60ch; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--text-secondary); }
+.rb-pulse {
+  inline-size: 8px; block-size: 8px; border-radius: 50%; background: var(--md-primary);
+  animation: rb-pulse 1.6s var(--ease-out) infinite;
+}
+@keyframes rb-pulse { 50% { opacity: 0.35; transform: scale(0.8); } }
+
+/* ---------- notes ---------- */
+.rb-note {
+  padding: var(--space-4) var(--space-5);
+  background: var(--surface-section); border-radius: var(--radius-inner);
+  font-size: var(--fs-body-sm); line-height: 1.5; color: var(--text-body);
+}
+.rb-note a {
+  margin-inline-start: var(--space-2); font-weight: 700; color: var(--md-primary);
+  text-underline-offset: 3px; text-decoration-thickness: 1.5px;
+}
+
+/* ---------- runway ---------- */
+.rb-runway { --span: 194; padding: var(--space-7) var(--space-6) var(--space-4); }
+.sh-root[data-state="one-paper"] .rb-runway { --span: 188; }
+.rb-runway .rb-sec-h { padding-inline: var(--space-3); }
+
+.rb-scale {
+  display: grid; grid-template-columns: var(--rb-lane-cols); column-gap: var(--space-8);
+  padding-inline: var(--space-4); margin-block-end: var(--space-2);
+}
+.rb-axis, .rb-exams { grid-column: 2; grid-row: 1; position: relative; block-size: 34px; }
+.rb-axis { border-block-end: 1px solid var(--border-default); }
+.rb-tick {
+  position: absolute; inset-block-end: 0;
+  inset-inline-start: calc(var(--d) / var(--span) * 100%);
+  padding-inline-start: 6px; padding-block-end: 8px;
+  border-inline-start: 1px solid var(--border-default);
+  font: 500 11px/1 var(--font-mono); color: var(--text-muted); white-space: nowrap;
+}
+.rb-tick--today { color: var(--text-body); font-weight: 700; border-inline-start: 2px solid var(--md-primary); }
+/* Desktop: each exam is a marker on the axis; the lanes carry the words. */
+.rb-exam {
+  position: absolute; inset-block-end: -6px;
+  inset-inline-start: calc(var(--d) / var(--span) * 100% - 6px);
+  inline-size: 12px; block-size: 12px; border-radius: 50%;
+  background: var(--surface-card);
+  border: 2.5px solid color-mix(in oklch, var(--md-primary) 45%, var(--surface-card));
+}
+.rb-exam.is-closest { border-color: var(--md-primary); background: var(--md-primary); }
+.rb-exam > *, .rb-unit {
+  position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+}
+.rb-exams-cap { display: none; }
+
+.rb-lane {
+  display: grid; grid-template-columns: var(--rb-lane-cols); column-gap: var(--space-8);
+  align-items: center;
+  padding: var(--space-4);
+  border-radius: var(--radius-tile);
+  text-decoration: none; color: var(--text-body);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.rb-lane:hover { background: var(--surface-hover-tint); }
+.rb-lane-wrap + .rb-lane-wrap { border-block-start: 1px solid var(--border-subtle); }
+.rb-lane.is-closest { background: var(--md-primary-container); color: var(--md-on-primary-container); }
+.rb-lane.is-closest:hover { background: color-mix(in oklch, var(--md-primary-container), var(--md-primary) 6%); }
+.rb-lane-wrap:has(.is-closest) + .rb-lane-wrap { border-block-start-color: transparent; }
+
+.rb-lane-name { font: 700 var(--fs-title)/1.2 var(--font-ui); letter-spacing: -0.01em; }
+.rb-lane-name .rb-mono { font-size: 15px; margin-inline-end: var(--space-1); color: var(--text-secondary); }
+.rb-lane.is-closest .rb-lane-name .rb-mono { color: inherit; }
+.rb-lane-grade { margin-block-start: var(--space-2); }
+.rb-lane-next { margin-block-start: var(--space-3); font-size: var(--fs-body-sm); line-height: 1.4; color: var(--text-secondary); }
+.rb-lane.is-closest :is(.rb-lane-next, .rb-lbl, .rb-flat) { color: inherit; }
+.rb-lane-next .rb-mono { margin-inline-start: var(--space-1); font-size: 13px; color: var(--text-body); white-space: nowrap; }
+.rb-lane.is-closest .rb-lane-next .rb-mono { color: inherit; }
+.sh-root[data-state="one-paper"] .rb-lane-next--session { display: none; }
+
+.rb-track { position: relative; block-size: 52px; }
+.rb-track::before {
+  content: ""; position: absolute; inset-inline: 0; inset-block-start: 34px;
+  block-size: 2px; border-radius: 1px; background: var(--border-subtle);
+}
+.rb-bar {
+  position: absolute; inset-inline-start: 0; inset-block-start: 32px;
+  inline-size: calc(var(--d) / var(--span) * 100%);
+  block-size: 6px; border-radius: 3px;
+  background: color-mix(in oklch, var(--md-primary) 32%, var(--surface-card));
+}
+.rb-bar::after {
+  content: ""; position: absolute; inset-inline-end: -7px; inset-block-start: -4px;
+  inline-size: 14px; block-size: 14px; border-radius: 50%;
+  background: var(--surface-card);
+  border: 3px solid color-mix(in oklch, var(--md-primary) 55%, var(--surface-card));
+}
+.rb-lane.is-closest .rb-bar { background: var(--md-primary); }
+.rb-lane.is-closest .rb-bar::after { border-color: var(--md-primary); background: var(--md-primary-container); }
+.rb-pin {
+  position: absolute; inset-block-start: 4px;
+  inset-inline-end: calc((1 - var(--d) / var(--span)) * 100%);
+  font: 600 13px/1 var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap;
+  color: var(--text-secondary);
+}
+.rb-lane.is-closest .rb-pin { color: inherit; font-weight: 700; }
+
+.rb-days { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; text-align: end; }
+.rb-days-n { font: 700 34px/1 var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: -0.03em; }
+.rb-days-u {
+  font: 600 var(--fs-label)/1 var(--font-mono); letter-spacing: var(--ls-label); text-transform: uppercase;
+  color: var(--text-muted);
+}
+.rb-lane.is-closest .rb-days-u { color: inherit; }
+
+/* ---------- subjects ledger (no-exams fallback) and lower row ---------- */
+.rb-ledger, .rb-weak, .rb-latest { padding: var(--space-6); }
+:is(.rb-ledger, .rb-weak, .rb-latest) .rb-sec-h { padding-inline: var(--space-2); }
+.rb-rows > li + li { border-block-start: 1px solid var(--border-subtle); }
+.rb-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 260px 96px auto;
+  align-items: center; column-gap: var(--space-6);
+  padding: var(--space-3) var(--space-2); text-decoration: none;
+}
+.rb-row:hover, .rb-mrow:hover { background: var(--surface-hover-tint); }
+.rb-row-subj { font: 700 var(--fs-body)/1.3 var(--font-ui); }
+.rb-row-subj .rb-mono { margin-inline-end: var(--space-1); }
+.rb-row-subj .rb-mono, .rb-mrow-c { color: var(--text-muted); font-size: 13px; }
+.rb-row-papers { font-size: 13px; color: var(--text-secondary); }
+.rb-row-exam { font-size: var(--fs-body-sm); color: var(--text-secondary); }
+
+.rb-lower { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: var(--rb-gap); align-items: stretch; }
+.rb-mrow {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto 56px; align-items: center; column-gap: var(--space-4);
+  padding: 10px var(--space-2); text-decoration: none;
+}
+.rb-mrow-t { font: 600 15px/1.3 var(--font-ui); }
+.rb-mrow-v { text-align: end; font-size: var(--fs-data); color: var(--text-body); }
+
+.rb-result {
+  display: grid; gap: var(--space-3); padding: var(--space-4);
+  border-radius: var(--radius-inner); background: var(--surface-row); text-decoration: none;
+  transition: box-shadow var(--dur-base) var(--ease-out);
+}
+.rb-result:hover { box-shadow: var(--shadow-hover); }
+.rb-result-paper { font-size: 13px; color: var(--text-secondary); }
+.rb-result-score { display: flex; align-items: center; gap: var(--space-4); }
+.rb-result-n {
+  font: 800 var(--fs-display-sm)/1 var(--font-display); letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.rb-result-go { display: inline-flex; align-items: center; gap: var(--space-1); font-weight: 700; font-size: var(--fs-body-sm); color: var(--md-primary); }
+
+/* ---------- loading ---------- */
+.rb-skel :is(span) { display: block; background: var(--track); border-radius: var(--radius-chip); animation: rb-breathe 1.4s ease-in-out infinite; }
+.rb-skel-band { display: grid; grid-template-columns: 1.3fr 0.5fr 0.8fr 1fr; gap: var(--space-8); padding: var(--space-7) var(--space-8); background: var(--surface-section); border-radius: var(--radius-board); }
+.rb-skel-band span { block-size: 96px; }
+.rb-skel-hero { display: grid; gap: var(--space-3); padding: var(--space-7) var(--space-8); border: 1.5px solid var(--border-subtle); border-radius: var(--radius-card); }
+.rb-skel-hero span:nth-child(1) { inline-size: 180px; block-size: 14px; }
+.rb-skel-hero span:nth-child(2) { inline-size: min(420px, 80%); block-size: 40px; }
+.rb-skel-hero span:nth-child(3) { inline-size: min(560px, 90%); block-size: 16px; }
+.rb-skel-runway { display: grid; gap: var(--space-3); padding: var(--space-6); border: 1.5px solid var(--border-subtle); border-radius: var(--radius-card); }
+.rb-skel-runway span { block-size: 84px; border-radius: var(--radius-tile); }
+.rb-skel-runway span:first-child { block-size: 28px; inline-size: 120px; }
+@keyframes rb-breathe { 50% { opacity: 0.55; } }
+
+/* ---------- error ---------- */
+.rb-error {
+  display: grid; justify-items: start; gap: var(--space-3);
+  max-inline-size: 560px; margin-inline: auto; margin-block-start: var(--space-12);
+  padding: var(--space-8);
+}
+.rb-error-ico { inline-size: 28px; block-size: 28px; color: var(--md-error); }
+.rb-error-h { font: 800 var(--fs-title)/1.25 var(--font-ui); color: var(--text-body); }
+.rb-error-p { color: var(--text-secondary); margin-block-end: var(--space-2); }
+
+/* ---------- new student ---------- */
+.rb-band--new { grid-template-columns: minmax(0, 1fr) auto; }
+.rb-steps { padding: var(--space-3) var(--space-6); }
+.rb-step {
+  display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; column-gap: var(--space-4);
+  padding: var(--space-3) 0; color: var(--text-secondary);
+}
+.rb-step + .rb-step { border-block-start: 1px solid var(--border-subtle); }
+.rb-step-n {
+  display: grid; place-items: center; inline-size: 32px; block-size: 32px; border-radius: 50%;
+  background: var(--track); font: 600 13px/1 var(--font-mono);
+}
+.rb-step-t { font: 600 var(--fs-body)/1.35 var(--font-ui); }
+.rb-step-tag { font: 600 var(--fs-label)/1 var(--font-mono); letter-spacing: var(--ls-label); text-transform: uppercase; color: var(--text-muted); }
+.rb-step.is-now { color: var(--text-body); }
+.rb-step.is-now .rb-step-n { background: var(--md-primary); color: var(--md-on-primary); }
+.rb-step.is-now .rb-step-tag { color: var(--md-primary); }
+
+/* ---------- touch ---------- */
+@media (pointer: coarse) {
+  .rb-btn, .rb-lane, .rb-row, .rb-mrow, .rb-result, .rb-note a { min-block-size: 44px; }
+  .rb-note a { display: inline-flex; align-items: center; }
+}
+
+/* ---------- mobile: lanes stack, the scale becomes a vertical list ---------- */
+@container home (max-width: 760px) {
+  .sh-root[data-variant="b"] { --rb-gap: 16px; }
+  .rb-page { padding: var(--space-4) var(--space-4) var(--space-8); }
+
+  .rb-band {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-5) var(--space-4);
+    padding: var(--space-5);
+    border-radius: var(--radius-card);
+  }
+  .rb-greet-h { font-size: 30px; }
+  .rb-greet, .rb-binny { grid-column: 1 / -1; }
+  .rb-binny-art { inline-size: 60px; }
+  .rb-binny-say { max-inline-size: none; }
+  .rb-level, .rb-streak {
+    grid-column: 1 / -1; padding-inline-start: 0; padding-block-start: var(--space-4);
+    border-inline-start: 0; border-block-start: 1px solid var(--border-default);
+  }
+  .rb-level-h, .rb-streak-h { font-size: 28px; }
+
+  .rb-hero { grid-template-columns: minmax(0, 1fr); padding: var(--space-5); }
+  .rb-hero-h { font-size: 32px; }
+  .rb-hero-go .rb-btn { inline-size: 100%; }
+
+  .rb-runway { padding: var(--space-5) var(--space-3) var(--space-2); }
+  .rb-scale { display: block; padding-inline: var(--space-3); margin-block-end: var(--space-3); }
+  .rb-axis { display: none; }
+  .rb-exams { block-size: auto; display: grid; gap: 0; }
+  .rb-exam {
+    position: relative; inset: auto; inline-size: auto; block-size: auto;
+    border: 0; border-radius: 0; background: none;
+    display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; align-items: baseline; column-gap: var(--space-3);
+    padding-block: var(--space-2); padding-inline-start: var(--space-5);
+  }
+  .rb-exam::before {
+    content: ""; position: absolute; inset-inline-start: 0; inset-block-start: 50%; translate: 0 -50%;
+    inline-size: 10px; block-size: 10px; border-radius: 50%;
+    border: 2.5px solid color-mix(in oklch, var(--md-primary) 45%, var(--surface-card));
+    background: var(--surface-card);
+  }
+  .rb-exam.is-closest { background: none; }
+  .rb-exam.is-closest .rb-exam-date { color: var(--md-primary); }
+  .rb-exam.is-closest::before { border-color: var(--md-primary); background: var(--md-primary); }
+  .rb-exam + .rb-exam { border-block-start: 1px solid var(--border-subtle); }
+  .rb-exam > * { position: static; inline-size: auto; block-size: auto; overflow: visible; clip-path: none; }
+  .rb-exam-date { font: 700 14px/1.3 var(--font-mono); font-variant-numeric: tabular-nums; }
+  .rb-exam-subj { font-size: var(--fs-body-sm); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rb-exam-days { font-size: 13px; color: var(--text-secondary); text-align: end; }
+  .rb-exam-days .rb-mono { color: var(--text-body); font-size: 15px; }
+  .rb-exam > .rb-exam-days .rb-unit {
+    position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%);
+  }
+  .rb-exams-cap {
+    display: flex; justify-content: space-between; padding-block-end: var(--space-1);
+    font: 600 var(--fs-label)/1.2 var(--font-mono); letter-spacing: var(--ls-label); text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  /* The vertical exam list carries days left on mobile, so the lanes drop their copy. */
+  .rb-days { display: none; }
+
+  .rb-lane { grid-template-columns: minmax(0, 1fr) auto; align-items: start; column-gap: var(--space-3); padding: var(--space-4) var(--space-3); }
+  .rb-track { display: none; }
+  .rb-lane-name { font-size: 18px; }
+  .rb-days-n { font-size: 28px; }
+
+  .rb-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: var(--space-1); }
+  .rb-row-papers, .rb-row-exam { grid-column: 1; }
+  .rb-row-grade { grid-column: 2; grid-row: 1 / span 2; }
+
+  .rb-lower { grid-template-columns: minmax(0, 1fr); }
+  .rb-ledger, .rb-weak, .rb-latest { padding: var(--space-5); }
+
+  .rb-band--new { grid-template-columns: minmax(0, 1fr) auto; }
+  .rb-steps { padding: var(--space-2) var(--space-4); }
+
+  .rb-skel-band { grid-template-columns: 1fr; padding: var(--space-5); border-radius: var(--radius-card); }
+  .rb-skel-band span { block-size: 56px; }
+}
+
+/* ---------- student bottom bar (mobile frame only, every state) ---------- */
+.rb-tabbar {
+  position: sticky; inset-block-end: 0; z-index: 5;
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-1);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  background: var(--md-surface-low);
+  border-block-start: 1px solid var(--border-subtle);
+}
+.sh-root[data-width="desktop"] .rb-tabbar { display: none; }
+.sh-root[data-width="mobile"] .rb-page { padding-block-end: var(--space-6); }
+.rb-tab {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  min-block-size: 52px; border-radius: var(--radius-chip);
+  font: 600 12px/1 var(--font-ui); color: var(--md-on-surface-variant); text-decoration: none;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast);
+}
+.rb-tab .rb-ico { inline-size: 22px; block-size: 22px; }
+.rb-tab:hover { background: var(--surface-hover-tint); color: var(--text-body); }
+.rb-tab[aria-current="page"] { background: var(--md-primary-container); color: var(--md-primary); }
+.sh-root[data-theme="dark"] .rb-tab[aria-current="page"] { color: var(--md-on-primary-container); }
+.sh-root[data-state="one-paper"] .rb-result[data-only-state="one-paper"] { display: grid; }
