@@ -291,16 +291,20 @@ function TeacherNav() {
   // the classes list already in flight (or cached).
   const { data } = useTeacherClasses()
   const visibleClassIds = data?.classes.slice(0, 5).map((c) => c.id) ?? []
-  // Same query `BadgeSync` (the app badge) already subscribes to — no second
-  // request, only a second subscriber to the one query.
-  const { data: counts } = useNotificationCounts()
-  const unread = unreadBadgeLabel(counts) ?? undefined
   // Task 9 (C3d): the sidebar's own subscriber to `useReviewQueueCount` —
   // `BottomNav`'s Review tab below subscribes to the same hook, so the two
   // badges share one deduped `limit: 1` request (see that hook's own doc
   // comment on why).
   const reviewQueueCount = useReviewQueueCount()
   const reviewBadge = reviewQueueCount && reviewQueueCount > 0 ? reviewQueueCount : undefined
+  // At-risk total from the classes list already loaded above (no new request).
+  // A null per-class count is treated as 0; when every count is null the total
+  // is unknown, so no badge is shown.
+  const riskCounts = data?.classes.map((c) => c.atRiskCount) ?? []
+  const atRiskTotal = riskCounts.some((n) => n !== null)
+    ? riskCounts.reduce<number>((a, n) => a + (n ?? 0), 0)
+    : null
+  const atRiskBadge = atRiskTotal && atRiskTotal > 0 ? atRiskTotal : undefined
 
   const toShell = (item: NavItem) =>
     toNavShellItem(item, {
@@ -309,10 +313,10 @@ function TeacherNav() {
           ? classesItemActive(location.pathname, visibleClassIds)
           : undefined,
       badge:
-        item.badge === "unread-notifications"
-          ? unread
-          : item.badge === "review-queue"
-            ? reviewBadge
+        item.badge === "review-queue"
+          ? reviewBadge
+          : item.icon === "atRisk"
+            ? atRiskBadge
             : undefined,
       urgent: item.badge === "review-queue",
     })
@@ -404,7 +408,7 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
           `sidebar` breakpoint, so it belongs on the nav layer with the
           sidebar (DESIGN.md §7). Side margins are 16px on mobile, 28px from
           `md`; the page well below carries its own 72px at `lg`. */}
-      <div className="lm-app-header lm-nav-chrome sticky top-2 z-nav mx-4 mb-6 mt-2 flex h-14 items-center gap-2 rounded-inner bg-surface-container-lowest pe-3 ps-3 ring-1 ring-outline-variant shadow-[var(--shadow-float)] md:mx-7 md:ps-[18px]">
+      <div className="lm-app-header lm-app-header-pt-2.5 lm-nav-chrome sticky top-2 z-nav mx-4 mb-6 mt-2 flex min-h-14 items-center pb-2.5 gap-2 rounded-inner bg-surface-container-lowest pe-3 ps-3 ring-1 ring-outline-variant shadow-[var(--shadow-float)] md:mx-7 md:ps-[18px]">
         <NavDrawerTrigger
           onClick={onOpenNav}
           label="Open teacher navigation"
@@ -424,7 +428,7 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
         </Link>
         <Link
           to="/teacher/grading"
-          className="me-2.5 inline-flex h-9 flex-none items-center gap-[7px] rounded-chip bg-primary px-3 btn-text text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:px-3.5 pointer-coarse:h-11"
+          className="me-0 sm:me-2.5 inline-flex h-9 flex-none items-center gap-[7px] rounded-chip bg-primary px-3 btn-text text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:px-3.5 pointer-coarse:h-11"
         >
           <UploadSimple size={16} aria-hidden="true" />
           <span className="hidden sm:inline">Upload papers</span>
@@ -437,7 +441,7 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
         >
           <Bell size={20} aria-hidden="true" />
           {unread ? (
-            <span className="absolute -end-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-pill bg-primary px-1 text-metadata leading-none text-on-primary">
+            <span className="absolute -end-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-pill bg-primary px-1 text-data-sm text-on-primary">
               {unread}
             </span>
           ) : null}
@@ -449,7 +453,7 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
       {/* The D1.5 back affordance: one crumb is just the page's own name, which
           the title already says, so the trail renders only when drilled in. */}
       {trail.length > 1 ? (
-        <div className="-mt-3 mb-4 px-4 md:px-7 lg:px-[72px]">
+        <div className="-mt-3 mb-4 px-4 md:px-page-tablet lg:px-[72px]">
           <Breadcrumbs items={trail} />
         </div>
       ) : null}

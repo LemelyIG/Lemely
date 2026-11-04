@@ -45,6 +45,7 @@ export function MarkClassSet({ lastUpload, onFiles }: { lastUpload: string | nul
     window.addEventListener("dragover", over)
     window.addEventListener("drop", drop)
     return () => { window.removeEventListener("dragover", over); window.removeEventListener("drop", drop); clear() }
+    // Leaving the page within the 600ms window cancels the pending hand-over (intended).
   }, [])
   return (
     <section

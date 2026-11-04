@@ -386,6 +386,14 @@ export function Grading() {
    */
   const [handedOver, setHandedOver] = useState<{ count: number; name: string } | null>(null)
   const handedOverRead = useRef(false)
+  // The status region mounts empty; its text arrives a tick later so screen
+  // readers announce the change.
+  const [noticeLive, setNoticeLive] = useState(false)
+  useEffect(() => {
+    if (!handedOver) return
+    const t = window.setTimeout(() => setNoticeLive(true), 0)
+    return () => window.clearTimeout(t)
+  }, [handedOver])
   useEffect(() => {
     if (handedOverRead.current) return
     handedOverRead.current = true
@@ -691,11 +699,11 @@ export function Grading() {
                         />
                       ) : scanFile ? (
                         <>
-                        {handedOver && handedOver.name === scanFile.name ? (
-                          <p role="status" className="mb-2 rounded-chip bg-secondary-container p-3 text-body-sm text-on-secondary-container">
-                            You added {handedOver.count} papers. This screen marks one at a time, so only {handedOver.name} is loaded.
-                          </p>
-                        ) : null}
+                        <p role="status" className={noticeLive && handedOver && handedOver.name === scanFile.name ? "mb-2 rounded-chip bg-secondary-container p-3 text-body-sm text-on-secondary-container" : "sr-only"}>
+                          {noticeLive && handedOver && handedOver.name === scanFile.name
+                            ? `You added ${handedOver.count} papers. This screen marks one at a time, so only ${handedOver.name} is loaded.`
+                            : null}
+                        </p>
                         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest px-4 py-3">
                           <span className="min-w-0 flex-1 truncate text-body-sm text-on-surface">
                             Scan ready · {scanFile.name}
