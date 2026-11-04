@@ -145,7 +145,7 @@ export function BottomNav({ items, emphasisId, className, ...props }: BottomNavP
                 >
                   {item.icon}
                   {item.badge ? (
-                    <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-error px-0.5 text-metadata leading-none text-on-primary">
+                    <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-error px-0.5 text-data-sm leading-none text-on-error">
                       {item.badge}
                     </span>
                   ) : null}

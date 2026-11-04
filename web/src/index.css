@@ -643,9 +643,14 @@ body {
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
+/* Mono metadata (paper codes, sessions, step numbers, badges): the `data-sm`
+   rung at medium weight with a little tracking. Deliberately colourless: this
+   block is unlayered, so a `color` here would beat every text-colour utility
+   placed beside it (the BottomNav badge once rendered grey on crimson). */
 .text-metadata {
-  font: 400 14px/1.45 var(--font-sans);
-  color: var(--md-on-surface-variant);
+  font: 500 11px/1.2 var(--font-mono);
+  letter-spacing: 0.05em;
+  font-variant-numeric: tabular-nums;
 }
 /* All data rungs are tabular by construction, so a score never jitters as it
    counts up and a column of marks always aligns. */

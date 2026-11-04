@@ -33,6 +33,35 @@ describe("token layer", () => {
 })
 
 /*
+ * The composite type classes are unlayered, so any `color` they declare beats
+ * every Tailwind text-colour utility beside them. `.text-metadata` once carried
+ * `color: on-surface-variant` and painted the BottomNav badge grey on crimson
+ * (1.16:1). Type classes set type only; colour comes from a utility.
+ */
+const TYPE_CLASS = /^\.(?:text-(?:display|body|label|eyebrow|data|metadata|field)[\w-]*|btn-text[\w-]*|wordmark-letters)$/
+
+export function colouredTypeClasses(source: string): string[] {
+  const hits: string[] = []
+  for (const m of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const selectors = m[1].split(",").map((s) => s.trim().split("\n").pop()!.trim())
+    if (!/(?:^|;|\s)color\s*:/.test(m[2])) continue
+    hits.push(...selectors.filter((s) => TYPE_CLASS.test(s)))
+  }
+  return hits
+}
+
+describe("composite type classes are colourless", () => {
+  it("catches a planted colour (proves the guard can go red)", () => {
+    expect(colouredTypeClasses(".text-metadata {\n  font: 500 11px/1.2 x;\n  color: red;\n}")).toEqual([".text-metadata"])
+    expect(colouredTypeClasses(".text-metadata {\n  background-color: red;\n}")).toEqual([])
+  })
+
+  it("finds no colour declared on a type class in index.css", () => {
+    expect(colouredTypeClasses(css)).toEqual([])
+  })
+})
+
+/*
  * twMerge classification guard. Every custom `text-*` font-size class must be
  * registered in lib/utils.ts, or cn() treats it as a text COLOUR and silently
  * drops it (or the colour beside it). Checked in both directions.
