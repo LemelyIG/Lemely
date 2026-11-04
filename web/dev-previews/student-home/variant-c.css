@@ -169,9 +169,9 @@
 /* The record: subjects ledger, weak topics, latest result. */
 .tl-record {
   margin-block-start: 48px;
-  display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 24px; align-items: start;
+  display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 32px; align-items: stretch;
 }
-.tl-record-side { display: grid; gap: 24px }
+.tl-record-side { display: grid; gap: 32px; align-content: start }
 .tl-ledger, .tl-weak, .tl-result { padding: 20px 22px }
 .tl-ledger .tl-note { margin: 12px 0 0 }
 .tl-h3 { margin: 0 0 10px; font: 800 18px/1.2 var(--font-ui); letter-spacing: var(--ls-headline-ui) }
@@ -332,8 +332,8 @@
     & .tl-btn { inline-size: calc(100% - 58px) }
   }
 
-  .tl-record { grid-template-columns: minmax(0, 1fr); margin-block-start: 32px; gap: 16px }
-  .tl-record-side { gap: 16px }
+  .tl-record { grid-template-columns: minmax(0, 1fr); margin-block-start: 32px; gap: 20px }
+  .tl-record-side { gap: 20px }
   .tl-ledger, .tl-weak, .tl-result { padding: 16px 18px }
   .tl-subj {
     grid-template-columns: 36px auto minmax(0, 1fr);
