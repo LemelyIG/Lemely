@@ -297,14 +297,9 @@ function TeacherNav() {
   // comment on why).
   const reviewQueueCount = useReviewQueueCount()
   const reviewBadge = reviewQueueCount && reviewQueueCount > 0 ? reviewQueueCount : undefined
-  // At-risk total from the classes list already loaded above (no new request).
-  // A null per-class count is treated as 0; when every count is null the total
-  // is unknown, so no badge is shown.
-  const riskCounts = data?.classes.map((c) => c.atRiskCount) ?? []
-  const atRiskTotal = riskCounts.some((n) => n !== null)
-    ? riskCounts.reduce<number>((a, n) => a + (n ?? 0), 0)
-    : null
-  const atRiskBadge = atRiskTotal && atRiskTotal > 0 ? atRiskTotal : undefined
+  // No at-risk badge: summing per-class `atRiskCount` double-counts a student
+  // in several classes, and the layout has no deduplicated student count. A
+  // missing number beats a wrong one.
 
   const toShell = (item: NavItem) =>
     toNavShellItem(item, {
@@ -312,12 +307,7 @@ function TeacherNav() {
         item.to === "/teacher/classes"
           ? classesItemActive(location.pathname, visibleClassIds)
           : undefined,
-      badge:
-        item.badge === "review-queue"
-          ? reviewBadge
-          : item.icon === "atRisk"
-            ? atRiskBadge
-            : undefined,
+      badge: item.badge === "review-queue" ? reviewBadge : undefined,
       urgent: item.badge === "review-queue",
     })
 
@@ -692,7 +682,7 @@ export const teacherRoute: RouteObject = {
     {
       path: "first-class",
       element: <CreateFirstClass />,
-      handle: { title: "Create your first class", skeleton: "page-header" },
+      handle: { title: "Create a class", skeleton: "page-header" },
     },
     {
       path: "students/:studentId",

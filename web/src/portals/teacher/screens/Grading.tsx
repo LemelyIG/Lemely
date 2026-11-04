@@ -392,7 +392,11 @@ export function Grading() {
   useEffect(() => {
     if (!handedOver) return
     const t = window.setTimeout(() => setNoticeLive(true), 0)
-    return () => window.clearTimeout(t)
+    // A new or cleared hand-over starts silent again, so its text is announced afresh.
+    return () => {
+      window.clearTimeout(t)
+      setNoticeLive(false)
+    }
   }, [handedOver])
   useEffect(() => {
     if (handedOverRead.current) return
