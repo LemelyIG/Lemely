@@ -33,7 +33,7 @@ export function SchemeExcerpt() {
           </div>
         ))}
       </dl>
-      <p className="scheme__hand text-hand" aria-hidden="true">
+      <p className="scheme__hand text-body-sm text-on-surface-variant">
         {schemeExcerpt.hand}
       </p>
     </div>

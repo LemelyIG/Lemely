@@ -5,7 +5,6 @@ import { Card } from "@/components/ui/card"
 import { Chip } from "@/components/ui/chip"
 import { MarkDisplay } from "@/components/ui/mark-display"
 import { PaperIdentity } from "@/components/ui/paper-identity"
-import { cn } from "@/lib/utils"
 import { openedQuestion, type LineTone, type MarkState } from "./data"
 
 /*
@@ -104,7 +103,7 @@ export function OpenedQuestion() {
           <Chip tone={selected.confidenceTier === "confident" ? "ok" : "warn"}>
             {selected.confidence}
           </Chip>
-          <span className={cn("spec__hand text-hand")} aria-hidden="true">
+          <span className="spec__hand text-body-sm text-on-surface-variant">
             {openedQuestion.hand}
           </span>
         </div>

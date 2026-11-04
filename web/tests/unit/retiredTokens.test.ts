@@ -18,12 +18,8 @@ export function retiredHits(source: string): string[] {
   })
 }
 
-/**
- * Directories excluded from the scan. marketing is migrated in Task 7 of
- * docs/superpowers/plans/2026-11-02-abyss-design-system-migration.md; remove
- * this exclusion then. dev-previews is dev scratch.
- */
-const EXCLUDED_DIRS = ["src/portals/marketing/", "src/dev-previews/"]
+/** Directories excluded from the scan. dev-previews is dev scratch. */
+const EXCLUDED_DIRS = ["src/dev-previews/"]
 
 describe("retired token guard", () => {
   it("catches a planted retired name (proves the guard can go red)", () => {
