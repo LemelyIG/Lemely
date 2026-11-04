@@ -10,8 +10,8 @@ import type { ClassSummary } from "@/lib/teacherTypes"
 import { JoinCodeChip } from "./ClassDetail"
 
 /*
- * D7.10 · the create-first-class step. `TeacherLayout`'s gate
- * (`teacherFirstClassRedirect`, `../index.tsx`) sends a teacher with zero
+ * D7.10 · the create-first-class step. The teacher setup
+ * screen (`../home/TeacherSetup`) sends a teacher with zero
  * classes here, mounted at `/teacher/first-class`. Every downstream teacher
  * screen — the review queue, the at-risk list, class analytics — reads data
  * scoped to a class, and the join code a teacher needs to hand to students
@@ -68,7 +68,7 @@ function CreatedClassPanel({ created }: { created: ClassSummary }) {
         {created.joinCode ? (
           <div className="flex flex-col items-start gap-1.5">
             <span className="text-eyebrow text-on-surface-variant">Invite code</span>
-            <JoinCodeChip code={created.joinCode} />
+            <JoinCodeChip code={created.joinCode} settle />
           </div>
         ) : (
           // Honestly nullable in the type (see `ClassDetail.tsx`'s own note on

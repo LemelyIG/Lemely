@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V4 */
 import { useEffect, useRef, useState, type ChangeEvent } from "react"
-import { useNavigate } from "react-router-dom"
+import { useLocation, useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { Camera, Trash } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
@@ -337,6 +337,7 @@ function PaperCard({
 
 export function Grading() {
   const navigate = useNavigate()
+  const location = useLocation()
   const queryClient = useQueryClient()
 
   const [tab, setTab] = useState<TabId>("all")
@@ -373,6 +374,24 @@ export function Grading() {
         // Best-effort — a non-secure context (no `caches`) must not surface
         // as an unhandled promise rejection on every mount.
       })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /*
+   * Files handed over from the teacher home (`navigate("/teacher/grading",
+   * { state: { files } })`). Read once on mount, set exactly as the native
+   * input's `onChange` would (first file only: this console uploads one scan
+   * at a time), then the router state is cleared so a reload cannot
+   * re-submit. Nothing is uploaded here; the teacher still presses upload.
+   */
+  const handedOverRead = useRef(false)
+  useEffect(() => {
+    if (handedOverRead.current) return
+    handedOverRead.current = true
+    const files = (location.state as { files?: File[] } | null)?.files
+    if (!files?.length) return
+    setScanFile(files[0])
+    navigate(".", { replace: true, state: null })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
