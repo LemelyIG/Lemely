@@ -52,12 +52,19 @@ const PUBLIC = path.resolve(HERE, "../public")
 const MARK = path.join(PUBLIC, "brand/mark.svg")
 
 /*
- * The canvas colour, read from `--paper` rather than transcribed. An icon sits
+ * The canvas colour, read from `--md-surface` rather than transcribed. An icon sits
  * against the OS's own background, so it needs an opaque field of its own; the
  * product's page colour is the honest choice, and `brandTokens` means it cannot
  * drift from the page the icon opens into.
  */
-const PAPER = tokenHex("paper")
+const PAPER = tokenHex("md-surface")
+/*
+ * The icon canvas is Abyss, not the page colour: `mark.svg` is the "lm" tile
+ * (an Abyss rounded square), and the OS rounds or crops an app icon itself, so
+ * the canvas has to be the tile's own colour or a surface-coloured margin would
+ * show around it. Splash screens and the OG card keep the page colour.
+ */
+const ABYSS = tokenHex("md-primary")
 
 /*
  * `SQUARE_SCALE`, `MASKABLE_SCALE`, and the safe-zone arithmetic
@@ -114,9 +121,9 @@ if (MASKABLE_SCALE > MAX_MASKABLE_SCALE) {
  * The Open Graph card (P6.5), 1200x630 as every scraper expects.
  *
  * **It carries no text, deliberately.** The obvious card sets "Lemely" in
- * Newsreader beside the mark — and it cannot be built here honestly. @fontsource
+ * Bricolage beside the mark — and it cannot be built here honestly. @fontsource
  * ships woff2 only, which librvsg (and so sharp) cannot load, so an SVG asking
- * for `font-family: Newsreader` would silently render in whatever fontconfig
+ * for `font-family: Bricolage Grotesque` would silently render in whatever fontconfig
  * picks, most likely DejaVu Sans. §3.2 item 2 bans Arial-class defaults
  * outright, and a wrong face in a generated binary is invisible to every gate
  * in this repo: nobody diffs a PNG, and the file only ever renders inside
@@ -130,7 +137,7 @@ if (MASKABLE_SCALE > MAX_MASKABLE_SCALE) {
 const OG = { file: "brand/og-card.png", width: 1200, height: 630 }
 
 const ogRules = `<svg xmlns="http://www.w3.org/2000/svg" width="${OG.width}" height="${OG.height}">
-  <g stroke="${tokenHex("rule")}" stroke-width="1.5">
+  <g stroke="${tokenHex("md-outline-variant")}" stroke-width="1.5">
     ${[...Array(7)].map((_, i) => `<path d="M0 ${95 + i * 72}H${OG.width}" />`).join("\n    ")}
   </g>
 </svg>`
@@ -190,7 +197,7 @@ for (const { file, size, scale, alpha } of ICONS) {
       width: size,
       height: size,
       channels: 4,
-      background: PAPER,
+      background: ABYSS,
     },
   }).composite([{ input: mark, gravity: "centre" }])
   // `alpha: false` (the store-listing icon): drop the alpha channel entirely
@@ -201,7 +208,7 @@ for (const { file, size, scale, alpha } of ICONS) {
   const out = await pipeline.png({ compressionLevel: 9 }).toBuffer()
 
   writeFileSync(path.join(PUBLIC, file), out)
-  console.log(`${file}  ${size}x${size}  mark ${markPx}px on ${PAPER}${alpha === false ? "  (no alpha)" : ""}`)
+  console.log(`${file}  ${size}x${size}  mark ${markPx}px on ${ABYSS}${alpha === false ? "  (no alpha)" : ""}`)
 }
 
 /*
@@ -218,14 +225,14 @@ const faviconMark = await sharp(markSvg, { density: 384 })
   .png()
   .toBuffer()
 const faviconPng = await sharp({
-  create: { width: FAVICON_SIZE, height: FAVICON_SIZE, channels: 4, background: PAPER },
+  create: { width: FAVICON_SIZE, height: FAVICON_SIZE, channels: 4, background: ABYSS },
 })
   .composite([{ input: faviconMark, gravity: "centre" }])
   .png({ compressionLevel: 9 })
   .toBuffer()
 const faviconIco = pngToIco(faviconPng, FAVICON_SIZE)
 writeFileSync(path.join(PUBLIC, "favicon.ico"), faviconIco)
-console.log(`favicon.ico  ${FAVICON_SIZE}x${FAVICON_SIZE}  mark ${faviconMarkPx}px on ${PAPER}`)
+console.log(`favicon.ico  ${FAVICON_SIZE}x${FAVICON_SIZE}  mark ${faviconMarkPx}px on ${ABYSS}`)
 
 /*
  * packet B1 (`no-ios-splash-screens`): the 32 iOS boot-time splash PNGs

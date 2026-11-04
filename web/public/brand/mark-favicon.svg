@@ -1,90 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"
      role="img" aria-label="Lemely">
   <title>Lemely</title>
   <!--
-    Lemely mark, favicon cut.
+    Lemely "lm" icon (DESIGN.md, Logo: Clip Letters): Abyss tile, Tide clip, white m.
 
-    HAND-AUTHORED, unlike its two siblings. `mark.svg` and `mark-mono.svg` are
-    written by `npm run mark` from `src/lib/brandMark.ts`; this one is not,
-    because it is a different drawing rather than a different rendering of the
-    same one. A browser tab is 16 device pixels wide, which is four units of
-    this viewBox per pixel, and at that scale most of the parent mark does not
-    shrink — it fails.
-
-    What is dropped, and why:
-
-    - The eleven lines of ruling. At 0.95 units they are under a quarter of a
-      pixel each, in a grey four steps from the paper behind them. They render
-      as nothing, or as one smear across each page, which is worse than nothing.
-    - The margin rule, for the same arithmetic at 0.8.
-    - The stack edges. Their 1-unit offsets are a quarter of a pixel, so the pad
-      cannot read; all three outlines land in the same pixel column and the
-      outer edges just go muddy.
-    - The dog-ear. The flap is about six units across, a pixel and a half, and it
-      needs its one step of tone against the page behind it to read as a fold. At
-      a pixel and a half there is no tone, only a chipped corner.
-    - The coil, as rings. At 16px a ring is four device pixels across and the
-      gap between two is one, so four of them render as a dotted bar with the
-      dots landing wherever the rounding falls — and stacked against the tick
-      they merge into a single red blob, which is what the first attempt at this
-      file did. What ships is a solid accent bar in the gutter: the same
-      silhouette at this size, without pretending to a detail that cannot
-      resolve.
-    - The two-degree tilt. It is what makes the parent a doodle at 24px and up.
-      Here it only takes the outline off the pixel grid and greys every edge.
-      The wobble left in the paths is what carries the hand at this size.
-
-    What is kept: the open notebook, an accent binding down its gutter, and the
-    tick on the left page. Three marks is the budget here — the version of this
-    file with four was unreadable. The parent's weight ratio (sheet 1.15, coil
-    1.5, tick 1.9) is preserved as 4 : 4.5 : 5.5 rather than its absolute
-    widths, which is the same argument the previous favicon cut made about its
-    own hairlines.
-
-    The gutter is off-centre, at x=35 rather than 32. The parent's is centred;
-    here the left page has to hold a tick that cannot shrink below about five
-    pixels and still read as a tick, so the page is given the room. An optical
-    cut is allowed to move a line the parent does not.
-
-    The tick is drawn larger here relative to the page than in the parent. That
-    is not drift: there it is small because five lines of writing sit beside it
-    and it has a margin to sit in. With the writing gone there is no margin to
-    be marginal in, and a tick scaled to match would be three pixels of red in
-    an empty box.
-
-    Geometry snapped to the 16px pixel grid. One viewBox unit is exactly 0.25px
-    at 16x16, so a stroke of 4 is exactly one device pixel — but a stroke is
-    centred on its path, so the coordinate matters as much as the width. The
-    gutter sits at x=32 (spanning 30..34 at width 4, i.e. pixel 8 exactly) and
-    the pages meet it there. The coil and the tick are left to antialias, which
-    is correct for curves and diagonals.
-
-    Keep in step with `src/lib/brandMark.ts` if the parent's composition ever
-    changes. Nothing enforces that: this file is the one piece of the mark a
-    generator cannot write, which is the price of it being a real optical cut.
-
-    The comment sits inside the svg element: libvips (and so sharp, and so the
-    screenshot tooling) sniffs only the first bytes to detect SVG, so a long
-    leading comment pushes the opening tag out of that window and the file is
-    rejected as an unknown format.
+    GENERATED FILE. Do not edit by hand: `npm run mark` overwrites it.
+    The geometry lives in `web/scripts/generate_mark_svg.mjs`; the colours are
+    resolved from the Material 3 role tokens in `src/index.css` by `vite/brandTokens.ts`.
   -->
-  <!-- The open notebook. -->
-  <path d="M8 13 C22 12.4, 44 13.4, 57 12.8
-           C57.6 26, 56.8 40, 57.2 51.4
-           C43 52, 21 51, 8 51.6 Z"
-        fill="#FDFCFA" stroke="#2F3437" stroke-width="4"
-        stroke-linecap="round" stroke-linejoin="round" />
-  <!-- The binding, in the gutter. Not four rings, not three: at 16px a ring is
-       four pixels across and its gap is one, so a coil renders as a dotted bar
-       with the dots in the wrong places. A solid accent bar is the same
-       silhouette without the lie. It sits at x=35 rather than at the centre so
-       the tick has a page to fit on. -->
-  <path d="M35.2 15.6 C34.8 27, 35.6 39, 35.2 48.6"
-        fill="none" stroke="#C0523D" stroke-width="4.5" stroke-linecap="round" />
-  <!-- The correction, on the page that has been turned. -->
-  <path d="M13.6 33.4 C15.2 35.6, 16.8 37.8, 18.2 39.8
-           C20.8 35.2, 23.8 29.8, 26.6 24.8"
-        fill="none" stroke="#C0523D" stroke-width="5.5"
-        stroke-linecap="round" stroke-linejoin="round" />
+  <rect width="100" height="100" rx="24" fill="#042f4f" />
+  <path d="M58 34 V72 A8 8 0 0 1 42 72 V20 A14 14 0 0 1 70 20 V78 A18 18 0 0 1 34 78 V36" transform="translate(22 27.5) scale(0.5) translate(-34 -6)"
+        fill="none" stroke="#7fb8e0" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M49 72 V51 M49 58 A7 7 0 0 1 63 58 V72 M63 58 A7 7 0 0 1 77 58 V72"
+        fill="none" stroke="#ffffff" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round" />
 </svg>
