@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { HTMLAttributes } from "react"
 import { cn } from "@/lib/utils"
-import { gradeChipClass, gradeTone, type GradeTone } from "@/lib/grade"
+import { gradeChipClass, gradeTone, type GradeChipSize, type GradeTone } from "@/lib/grade"
 
 /*
  * C-1 Grade badge. Letter grade (A*–G/U) at three sizes, with a hard visual
@@ -47,7 +47,7 @@ export function gradeBand(grade: string): GradeBand {
 /*
  * Provisional (outlined) chips carry the tone as border colour only (letters are small text, so they stay `text-on-surface`), and
  * Tailwind only emits classes it sees as literals, so the full table is spelled
- * out. Achieved chips use `gradeChipClass` (Jewel fill, white letter).
+ * out. Achieved chips use `gradeChipClass` (see `CHIP_SIZE` below).
  */
 const toneOutline: Record<GradeTone, string> = {
   "a-star": "border-grade-a-star",
@@ -80,6 +80,20 @@ const letterSize: Record<GradeBadgeSize, string> = {
   hero: "text-data-lg",
   medium: "text-display-md",
   inline: "text-data-md",
+}
+
+/*
+ * White letters on a Jewel fill clear only large-text AA (3:1), so an achieved
+ * badge keeps its fill only where the letter is large text (>= 18.66px bold):
+ * `medium` (32px display rung). `hero` and `inline` letters are 16px and 14px
+ * mono, so their achieved badge is the outlined small chip (2px Jewel border,
+ * `on-surface` letter); the thicker solid border still separates it from the
+ * 1px provisional outline, and provisional badges always carry a caption.
+ */
+const CHIP_SIZE: Record<GradeBadgeSize, GradeChipSize> = {
+  hero: "small",
+  medium: "large",
+  inline: "small",
 }
 
 const padSize: Record<GradeBadgeSize, string> = {
@@ -144,7 +158,9 @@ export function GradeBadge({
               tone ? toneOutline[tone] : NO_TONE_OUTLINE,
               estimated && "border-dashed",
             )
-          : cn(gradeChipClass(grade), "border-transparent"),
+          : CHIP_SIZE[size] === "large"
+            ? cn(gradeChipClass(grade, { size: "large" }), "border-transparent")
+            : gradeChipClass(grade, { size: "small" }),
         className,
       )}
       {...props}
