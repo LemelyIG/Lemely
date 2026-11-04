@@ -75,6 +75,10 @@ Schools are not part of billing. A teacher leases seats to students instead.
 - Spend order for a seated student's in-scope action: seat allowance, then teacher credits
   (within the cap), then the student's own allowance, then the student's own credits.
   Out-of-scope actions use only the student's own plan and credits.
+- Routing is per subject. A student seated with a maths teacher and a physics teacher who
+  uploads a maths paper uses the maths teacher's seat; a physics paper uses the physics
+  teacher's seat. The action's subject comes from the server-side record it works on (the paper,
+  quiz or class), never from client input.
 - Removing a student frees the seat at the end of the current month, not at once. Seat
   allowances are monthly, so this stops seat swapping from multiplying allowances.
 
@@ -404,8 +408,15 @@ filter and an optional cap.
 | Assistant acting for a lead teacher | teacher allowance → teacher credits (cap from the assistant row) |
 | Anyone else | own allowance → own credits |
 
-- A student seated with several teachers uses the first matching seat, ordered by when the seat
-  was created.
+- Seat selection is per subject: the chain uses the seat whose `scope_subjects` contains the
+  action's subject and whose `scope_actions` contains the action. A student seated with several
+  teachers therefore draws from the maths teacher for maths work and the physics teacher for
+  physics work.
+- If two seats cover the same subject and action, the older seat pays first. Its teacher's
+  credits are not tried before the second seat's allowance: the chain is all seat allowances in
+  age order, then each seat's teacher credits in the same order, then the student's own balance.
+- An action with no subject (for example a cross-subject study plan) uses no seat. It draws only
+  from the student's own allowance and credits.
 - A payer is skipped if its owner has debt, except a `seat_allowance` grant, which stays usable
   while the student has debt on their own balance.
 - A cap counts settled `usage_entries` drawn from the teacher's grants with that
@@ -539,6 +550,8 @@ TDD. Locally, run only the test files touched; CI runs the full suite.
   - Pricing: USD to units, rounding, estimate ranges per input kind.
   - Proration for plans and seats.
   - Spend order and payer-chain building for each row of the §5.6 table.
+  - Per-subject seat routing: maths work charges the maths seat, physics work the physics seat,
+    subject-less work charges no seat; two seats on one subject follow the §5.6 order.
 - **Repository (Postgres).**
   - Concurrent jobs on one balance: reservations prevent both starting when only one is covered.
   - Settle under, at and over the reservation; over-reservation draws down the chain, then
