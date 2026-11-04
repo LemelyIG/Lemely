@@ -182,7 +182,7 @@ export const close = {
   heading: "Mark a script you have already marked.",
   sub: "That is the fastest way to judge it. Mark a paper yourself, run the same script through Lemely, and compare it line by line.",
   cta: { label: "Get started", to: "/signup" } satisfies CtaLink,
-  /* Marginalia (§8): `<span className="text-hand">`, aria-hidden — a nudge
+  /* Aside: `text-body-sm text-on-surface-variant`, a nudge
      beside a button whose own label already says what to do. */
   aside: "one script is enough to judge it",
   needs: [

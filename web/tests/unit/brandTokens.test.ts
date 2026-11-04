@@ -29,11 +29,34 @@ describe("SQUARE_SCALE", () => {
 })
 
 describe("tokenHex", () => {
-  it("resolves --paper to a real 6-digit hex colour", () => {
-    expect(tokenHex("paper")).toMatch(/^#[0-9a-f]{6}$/)
+  it("resolves --md-surface to a real 6-digit hex colour", () => {
+    expect(tokenHex("md-surface")).toMatch(/^#[0-9a-f]{6}$/)
   })
 
   it("throws on a token that isn't declared as oklch() in :root", () => {
     expect(() => tokenHex("definitely-not-a-real-token")).toThrow(/not declared as an oklch/)
   })
+})
+
+describe("marketing brand-tokens.css", () => {
+  const css = readFileSync(fileURLToPath(new URL("../../src/portals/marketing/brand-tokens.css", import.meta.url)), "utf8")
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, "")
+
+  it("holds no colour literal, so the Material 3 roles stay the one source", () => {
+    expect(code).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
+    expect(code).not.toMatch(/oklch\(/)
+  })
+
+  it("has no @theme block that could override the global utilities", () => {
+    expect(code).not.toMatch(/@theme/)
+    expect(code).not.toMatch(/--color-/)
+  })
+
+  it.each(["background", "foreground", "primary", "primary-foreground", "secondary-foreground", "muted", "muted-foreground", "ring", "border"])(
+    "resolves --%s to a --md- role",
+    (name) => {
+      const m = code.match(new RegExp(`^\\s*--${name}:\\s*([^;]+);`, "m"))
+      expect(m?.[1]).toMatch(/^var\(--md-[a-z-]+\)$/)
+    },
+  )
 })

@@ -56,6 +56,10 @@
   --grade-e: oklch(0.54 0.13 38);
   --grade-u: oklch(0.50 0.14 15);
 
+  /* Mascot only (student surfaces and the marketing page) */
+  --binny-steel: oklch(0.80 0.01 240);
+  --binny-cheek: oklch(0.72 0.10 15);
+
   --shadow-hover: 0 22px 40px -26px oklch(0.3 0.06 242 / 0.4);
   --shadow-panel: 0 30px 60px -40px oklch(0.3 0.06 242 / 0.45), 0 0 0 1px oklch(0.92 0.01 240);
 
