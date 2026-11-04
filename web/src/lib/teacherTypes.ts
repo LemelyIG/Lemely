@@ -277,6 +277,8 @@ export interface Overview {
   reviewConfidenceBuckets: number[]
   /** ceil(pending x 20s / 60); a heuristic, rendered as "about N min". */
   reviewEstimateMinutes: number
+  /** Auto-grade cut-off (0-1); marks below it are queued for review. */
+  reviewConfidenceThreshold: number
 }
 
 // ── Classes ───────────────────────────────────────────────────────────────

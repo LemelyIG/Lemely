@@ -4,7 +4,7 @@ import { Link } from "react-router-dom"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { useCreateClass } from "@/lib/hooks/useTeacherApi"
+import { useCreateClass, useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import { teacherMutationFailureMessage } from "@/lib/teacherOutcome"
 import type { ClassSummary } from "@/lib/teacherTypes"
 import { JoinCodeChip } from "./ClassDetail"
@@ -99,6 +99,10 @@ function CreatedClassPanel({ created }: { created: ClassSummary }) {
 
 export function CreateFirstClass() {
   const createClass = useCreateClass()
+  // The top bar's "Create" links here too, so a teacher who already has classes
+  // must not be told this is their first.
+  const { data: classesData } = useTeacherClasses()
+  const hasClasses = (classesData?.classes.length ?? 0) > 0
   const [created, setCreated] = useState<ClassSummary | null>(null)
   const [name, setName] = useState("")
   const [subjectCode, setSubjectCode] = useState("")
@@ -129,8 +133,8 @@ export function CreateFirstClass() {
   return (
     <div className="flex flex-col gap-5 min-w-0 max-w-[680px]">
       <div>
-        <div className="text-eyebrow text-on-surface-variant">One quick step</div>
-        <h1 className="text-display-md mt-1.5">Create your first class</h1>
+        {!hasClasses && <div className="text-eyebrow text-on-surface-variant">One quick step</div>}
+        <h1 className="text-display-md mt-1.5">{hasClasses ? "Create a class" : "Create your first class"}</h1>
       </div>
       <p className="text-body-md text-on-surface-variant max-w-prose">
         A class is where your students' work lands. It's where you'll see their marks, their weak

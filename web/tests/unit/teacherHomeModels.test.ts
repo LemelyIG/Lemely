@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest"
 import { atRiskRowModel, classCardModel, reviewQueueModel } from "@/portals/teacher/home/models"
 
 describe("reviewQueueModel", () => {
-  it("scales bars to the largest bucket and marks bands under 70% as low", () => {
-    const m = reviewQueueModel({ pendingReviewCount: 6, reviewConfidenceBuckets: [0, 0, 0, 0, 0, 2, 4, 0, 0, 0], reviewEstimateMinutes: 2 })
+  it("scales bars to the largest bucket and marks bands under the server threshold as low", () => {
+    const m = reviewQueueModel({ pendingReviewCount: 6, reviewConfidenceBuckets: [0, 0, 0, 0, 0, 2, 4, 0, 0, 0], reviewEstimateMinutes: 2, reviewConfidenceThreshold: 0.7 })
     expect(m.count).toBe(6)
     expect(m.bars[6]).toEqual({ band: 6, height: 1, low: true })
     expect(m.bars[5]).toEqual({ band: 5, height: 0.5, low: true })
@@ -20,8 +20,32 @@ describe("reviewQueueModel", () => {
   })
 
   it("tolerates a short or missing bucket list from an older server", () => {
-    const m = reviewQueueModel({ pendingReviewCount: 1, reviewConfidenceBuckets: [], reviewEstimateMinutes: 1 })
+    const m = reviewQueueModel({ pendingReviewCount: 1, reviewConfidenceBuckets: [], reviewEstimateMinutes: 1, reviewConfidenceThreshold: 0.9 })
     expect(m.bars).toHaveLength(10)
+    expect(m.lowCount).toBe(0)
+  })
+
+  it("derives the threshold band and low count from the DTO threshold", () => {
+    const m = reviewQueueModel({ pendingReviewCount: 9, reviewConfidenceBuckets: [1, 0, 0, 0, 0, 2, 0, 0, 3, 2], reviewEstimateMinutes: 3, reviewConfidenceThreshold: 0.9 })
+    expect(m.thresholdPct).toBe(90)
+    expect(m.bars[8].low).toBe(true)
+    expect(m.bars[9].low).toBe(false)
+    // Below 90%: bands 0..8 = 1 + 2 + 3. The headline count stays the server's
+    // pendingReviewCount, which also includes rows with no confidence score.
+    expect(m.lowCount).toBe(6)
+    expect(m.count).toBe(9)
+  })
+
+  it("follows a different server threshold", () => {
+    const m = reviewQueueModel({ pendingReviewCount: 5, reviewConfidenceBuckets: [0, 0, 0, 0, 0, 2, 1, 1, 1, 0], reviewEstimateMinutes: 2, reviewConfidenceThreshold: 0.7 })
+    expect(m.thresholdPct).toBe(70)
+    expect(m.lowCount).toBe(3)
+  })
+
+  it("falls back to 90% when an older server omits the threshold", () => {
+    const m = reviewQueueModel({ pendingReviewCount: 2, reviewConfidenceBuckets: [0, 0, 0, 0, 0, 0, 0, 0, 1, 1], reviewEstimateMinutes: 1 })
+    expect(m.thresholdPct).toBe(90)
+    expect(m.lowCount).toBe(1)
   })
 })
 

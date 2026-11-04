@@ -2,12 +2,11 @@
 import { Link } from "react-router-dom"
 import type { Overview } from "@/lib/teacherTypes"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
-import { REVIEW_THRESHOLD_BAND, reviewQueueModel } from "./models"
+import { reviewQueueModel } from "./models"
 
 export function ReviewQueueTile({ overview }: { overview: Overview }) {
   const m = reviewQueueModel(overview)
-  const thresholdPct = REVIEW_THRESHOLD_BAND * 10
-  const lowCount = (overview.reviewConfidenceBuckets ?? []).slice(0, REVIEW_THRESHOLD_BAND).reduce((a, n) => a + n, 0)
+  const { thresholdPct, lowCount } = m
   return (
     <section aria-labelledby="rq-h" className="rounded-card bg-inverse-surface p-6 text-inverse-on-surface">
       <h2 id="rq-h" className="text-eyebrow text-inverse-primary">Review queue</h2>
@@ -18,13 +17,15 @@ export function ReviewQueueTile({ overview }: { overview: Overview }) {
             <p className="mt-2 text-body-md">Nothing needs your eyes.</p>
           ) : (
             <p className="mt-2 text-body-md">
-              answers below <span className="text-inverse-primary">{thresholdPct}%</span> confidence.
-              <span className="block text-body-sm opacity-80">None count until you confirm.</span>
+              {m.count === 1 ? "answer waiting" : "answers waiting"} for your review.
+              <span className="block text-body-sm opacity-80">
+                <span className="tabular-nums">{lowCount}</span> below <span className="text-inverse-primary">{thresholdPct}%</span> confidence. None count until you confirm.
+              </span>
             </p>
           )}
         </div>
         <figure aria-label="Pending answers by confidence" className="relative h-40">
-          <span className="sr-only">{lowCount} of {m.count} pending answers below {thresholdPct}% confidence</span>
+          <span className="sr-only">{m.count} answers waiting for review; {lowCount} of them scored below {thresholdPct}% confidence</span>
           <div className="flex h-full items-end gap-1">
             {m.bars.map((b) => (
               <span

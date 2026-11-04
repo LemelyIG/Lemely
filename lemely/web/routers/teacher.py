@@ -1989,8 +1989,8 @@ def teacher_overview(
     ]
 
     average = _mean([r.percentage for r in latest])
-    # Per-review-queue-item granularity (one row per flagged question per reason),
-    # see the P3.4 note formerly on ``_count_review_items``.
+    # ``total`` counts review-queue items, not papers: the queue holds one row
+    # per flagged question per reason, so one paper can contribute several.
     queue_page = review_service.list_queue(auth.user_id, auth.role)
     needs_review = queue_page.total
     buckets = _confidence_buckets(row.confidence_score for row in queue_page.rows)
@@ -2044,6 +2044,7 @@ def teacher_overview(
         pendingReviewCount=needs_review,
         reviewConfidenceBuckets=buckets,
         reviewEstimateMinutes=_review_estimate_minutes(needs_review),
+        reviewConfidenceThreshold=REVIEW_CONFIDENCE_THRESHOLD,
     )
 
 
@@ -2092,10 +2093,13 @@ SECONDS_PER_REVIEW = 20
 
 
 def _confidence_buckets(confidences: Iterable[float | None]) -> list[int]:
-    """Count pending review items per 10% confidence band (band 9 includes 1.0)."""
+    """Count pending review items per 10% confidence band (band 9 includes 1.0).
+
+    Missing and non-finite (NaN, infinite) confidences belong to no band.
+    """
     buckets = [0] * 10
     for value in confidences:
-        if value is None:
+        if value is None or not math.isfinite(value):
             continue
         buckets[min(9, max(0, int(value * 10)))] += 1
     return buckets
@@ -2108,11 +2112,17 @@ def _review_estimate_minutes(pending: int) -> int:
 def _previous_grade(records: Sequence[PaperRecord]) -> str | None:
     """Grade of the grade-bearing paper before the latest one, or None.
 
-    ``grade_bearing`` keeps records oldest first (``latest_grade_bearing`` takes
-    ``[-1]``), so the previous paper is ``[-2]``.
+    Only papers of the latest paper's subject count: a Maths grade is not a
+    "previous" Physics grade. ``grade_bearing`` keeps records oldest first
+    (``latest_grade_bearing`` takes ``[-1]``), so the previous paper is ``[-2]``.
+    An unchanged grade is still returned; the UI decides how to show it.
     """
     bearing = grade_bearing(records)
-    return bearing[-2].grade if len(bearing) >= 2 else None
+    if not bearing:
+        return None
+    subject = bearing[-1].metadata.subject_code
+    same_subject = [r for r in bearing if r.metadata.subject_code == subject]
+    return same_subject[-2].grade if len(same_subject) >= 2 else None
 
 
 def _at_risk(
