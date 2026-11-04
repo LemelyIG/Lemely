@@ -147,10 +147,27 @@ def test_focus_ring_clears_3_to_1_on_every_surface_it_can_sit_on(theme: str) -> 
     """WCAG 1.4.11: the focus indicator needs 3:1 against what it is drawn on."""
     s = _scheme(theme)
     default_ring = _focus_ring_role(":root")
-    inverse_ring = _focus_ring_role(".bg-inverse-surface :focus-visible")
+    inverse_ring = _focus_ring_role(".bg-inverse-surface *")
     failures = _ring_failures(s, default_ring, RING_SURFACES)
     failures += _ring_failures(s, inverse_ring, ["inverse-surface"])
+    # A ring inside a `primary` fill (the review tile in light mode).
+    primary_ring = _focus_ring_role(".bg-primary *")
+    failures += _ring_failures(s, primary_ring, ["primary"])
+    if theme == "dark":
+        # The review tile is `primary` in light and `primary-container` in dark;
+        # the dark override must clear 3:1 on the container.
+        tile_ring = _focus_ring_role(':root[data-theme="dark"] .dark\\:bg-primary-container *')
+        failures += _ring_failures(s, tile_ring, ["primary-container"])
     assert not failures, f"{theme}: " + "; ".join(failures)
+
+
+def test_ring_check_goes_red_on_a_primary_fill_without_the_override() -> None:
+    # Without the `.bg-primary *` override, the default `primary` ring would sit on
+    # a `primary` fill: identical colours, 1:1.
+    for theme in ("light", "dark"):
+        assert _ring_failures(_scheme(theme), "primary", ["primary"])
+    # And the dark tile must not inherit the light override's `inverse-primary`.
+    assert _ring_failures(_scheme("dark"), "inverse-primary", ["primary-container"])
 
 
 @pytest.mark.parametrize("grade", ["a-star", "a", "b", "c", "d", "e", "u"])
@@ -173,6 +190,7 @@ def test_css_declares_the_design_md_values(theme: str, selector: str) -> None:
             "tide-hover",
             "mist-blue",
             "night",
+            "night-surface",
             "white",
             "gold",
             "crimson",
