@@ -91,6 +91,25 @@ export function oklchToSrgb(lightness: number, chroma: number, hueDeg: number): 
   return [encode(linear[0]), encode(linear[1]), encode(linear[2])]
 }
 
+/**
+ * `#rrggbb` to OKLCH, the inverse of `oklchToSrgb`. The Abyss token layer
+ * declares its key colours (`--md-primary: #042f4f`) as hex, so the reader
+ * must accept them; converting here keeps one tuple shape for every caller and
+ * round-trips to the same hex through `toHex`.
+ */
+export function hexToOklch(hex: string): [number, number, number] {
+  const channels = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+  const [r, g, b] = channels.map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+  const coneL = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+  const coneM = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+  const coneS = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+  const lightness = 0.2104542553 * coneL + 0.793617785 * coneM - 0.0040720468 * coneS
+  const a = 1.9779984951 * coneL - 2.428592205 * coneM + 0.4505937099 * coneS
+  const bb = 0.0259040371 * coneL + 0.7827717662 * coneM - 0.808675766 * coneS
+  const hue = ((Math.atan2(bb, a) * 180) / Math.PI + 360) % 360
+  return [lightness, Math.hypot(a, bb), hue]
+}
+
 /** `#rrggbb`, lowercase. */
 export function toHex(rgb: readonly [number, number, number]): string {
   return (
@@ -136,9 +155,13 @@ export function readTokenBlock(css: string, selector: string): Map<string, [numb
   const block = css.slice(start, end === -1 ? undefined : end)
 
   const tokens = new Map<string, [number, number, number]>()
-  const pattern = /--([\w-]+):\s*oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\)/g
+  const pattern =
+    /--([\w-]+):\s*(?:oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*(?:\/\s*[\d.]+%?\s*)?\)|(#[0-9a-fA-F]{6})\b)/g
   for (const match of block.matchAll(pattern)) {
-    tokens.set(match[1], [Number(match[2]), Number(match[3]), Number(match[4])])
+    tokens.set(
+      match[1],
+      match[5] ? hexToOklch(match[5]) : [Number(match[2]), Number(match[3]), Number(match[4])],
+    )
   }
   return tokens
 }
@@ -171,7 +194,7 @@ export function tokenHex(name: string, theme: "light" | "dark" = "light"): strin
   const value = tokens.get(name)
   if (!value) {
     throw new Error(
-      `brandTokens: \`--${name}\` is not declared as an oklch() value in ${selector} of ` +
+      `brandTokens: \`--${name}\` is not declared as an oklch() or #rrggbb value in ${selector} of ` +
         `${INDEX_CSS}. The PWA manifest, the theme-color meta tag and the generated app ` +
         `icons all read it from there. If the token was renamed, update the callers; ` +
         `do not transcribe a hex, which is the drift this module exists to remove.`,

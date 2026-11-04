@@ -116,8 +116,8 @@ export function buildManifest(mode: string) {
     // `background_color` paints the splash screen shown before the first
     // frame renders, so making them the page colour means the launch reads
     // as the app appearing rather than as a flash of some other colour.
-    theme_color: tokenHex("paper"),
-    background_color: tokenHex("paper"),
+    theme_color: tokenHex("md-surface"),
+    background_color: tokenHex("md-surface"),
     icons: [
       {
         src: "pwa-192x192.png",

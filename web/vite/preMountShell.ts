@@ -14,7 +14,7 @@ import { INDEX_CSS, tokenHex } from "./brandTokens.ts"
  * app exists at all, as static markup inside `<div id="root">` that
  * `createRoot(...).render()` throws away the instant React's first commit
  * lands. That second copy paints before `index.css` has been requested, so it
- * cannot reach `var(--paper)` or `var(--loading-tier-slow)` — same shape of
+ * cannot reach `var(--md-surface)` or `var(--loading-tier-slow)` — same shape of
  * problem `themeColor.ts` solves for `<meta name="theme-color">`, one more
  * consumer that is not the CSS cascade.
  *
@@ -57,12 +57,12 @@ import { INDEX_CSS, tokenHex } from "./brandTokens.ts"
  */
 
 const COLOR_PLACEHOLDERS: Readonly<Record<string, string>> = {
-  "%LEMELY_COLOR_PAPER%": "paper",
-  "%LEMELY_COLOR_PAPER_SUNK%": "paper-sunk",
-  "%LEMELY_COLOR_PAPER_RAISED%": "paper-raised",
-  "%LEMELY_COLOR_RULE%": "rule",
-  "%LEMELY_COLOR_INK%": "ink",
-  "%LEMELY_COLOR_INK_MUTED%": "ink-muted",
+  "%LEMELY_COLOR_PAPER%": "md-surface",
+  "%LEMELY_COLOR_PAPER_SUNK%": "md-surface-container-low",
+  "%LEMELY_COLOR_PAPER_RAISED%": "md-surface-container-lowest",
+  "%LEMELY_COLOR_RULE%": "md-outline-variant",
+  "%LEMELY_COLOR_INK%": "md-on-surface",
+  "%LEMELY_COLOR_INK_MUTED%": "md-on-surface-variant",
   // No `%LEMELY_COLOR_ACCENT%`. The accent's only use in the shell was the
   // mark's tick, and the mark is now injected whole by `markOutlineMarkup`,
   // which resolves its own colours through `tokenHex` — the same guarantee by
@@ -73,7 +73,7 @@ const COLOR_PLACEHOLDERS: Readonly<Record<string, string>> = {
 /**
  * Task 13 (C5b): the dark counterpart of `COLOR_PLACEHOLDERS` above, one
  * `%LEMELY_COLOR_DARK_*%` per light placeholder, resolved from the dark
- * `--paper`/`--ink`/etc. ladder (`tokenHex(name, "dark")` — index.css's
+ * `--md-surface`/`--md-on-surface`/etc. ladder (`tokenHex(name, "dark")` — index.css's
  * `:root[data-theme="dark"]` block, Task 12). The shell cannot reach
  * `var(...)` in either theme (see this file's header), so it needs its own
  * literal dark values the same way it needs its own literal light ones —
@@ -83,12 +83,12 @@ const COLOR_PLACEHOLDERS: Readonly<Record<string, string>> = {
  * is even parsed.
  */
 const COLOR_PLACEHOLDERS_DARK: Readonly<Record<string, string>> = {
-  "%LEMELY_COLOR_DARK_PAPER%": "paper",
-  "%LEMELY_COLOR_DARK_PAPER_SUNK%": "paper-sunk",
-  "%LEMELY_COLOR_DARK_PAPER_RAISED%": "paper-raised",
-  "%LEMELY_COLOR_DARK_RULE%": "rule",
-  "%LEMELY_COLOR_DARK_INK%": "ink",
-  "%LEMELY_COLOR_DARK_INK_MUTED%": "ink-muted",
+  "%LEMELY_COLOR_DARK_PAPER%": "md-surface",
+  "%LEMELY_COLOR_DARK_PAPER_SUNK%": "md-surface-container-low",
+  "%LEMELY_COLOR_DARK_PAPER_RAISED%": "md-surface-container-lowest",
+  "%LEMELY_COLOR_DARK_RULE%": "md-outline-variant",
+  "%LEMELY_COLOR_DARK_INK%": "md-on-surface",
+  "%LEMELY_COLOR_DARK_INK_MUTED%": "md-on-surface-variant",
 }
 
 /**
@@ -112,6 +112,17 @@ const MARK_PLACEHOLDERS: Readonly<Record<string, { animated: boolean }>> = {
   "%LEMELY_MARK_DRAWN%": { animated: true },
 }
 
+/** `brandMark.ts` still names its paints by the retired token names; the shell
+ * resolves each to the M3 role that replaced it (see `scripts/abyss-token-map.json`). */
+const MARK_PAINT_TOKEN: Readonly<Record<string, string>> = {
+  ink: "md-on-surface",
+  accent: "md-primary",
+  paper: "md-surface",
+  "paper-raised": "md-surface-container-lowest",
+  "paper-sunk": "md-surface-container-low",
+  "rule-strong": "md-outline",
+}
+
 /**
  * The mark's silhouette as SVG markup, for inlining into the shell.
  *
@@ -126,7 +137,7 @@ export function markOutlineMarkup(animated: boolean): string {
       .map(
         (d) =>
           `<path${animated ? ` class="lm-shell-${step}"` : ""} d="${d.replace(/\s+/g, " ").trim()}" ` +
-          `pathLength="1" stroke="${tokenHex(stroke)}" stroke-width="${width}" ` +
+          `pathLength="1" stroke="${tokenHex(MARK_PAINT_TOKEN[stroke])}" stroke-width="${width}" ` +
           `stroke-linecap="round" stroke-linejoin="round" />`,
       )
       .join("")
