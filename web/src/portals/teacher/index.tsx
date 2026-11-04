@@ -23,7 +23,6 @@ import {
   Gear,
   List,
   Trash,
-  Plus,
   UploadSimple,
   type Icon,
 } from "@phosphor-icons/react"
@@ -45,6 +44,8 @@ import { useReviewQueueCount } from "@/lib/hooks/useReviewQueueCount"
 import { unreadBadgeLabel } from "@/lib/staffInbox"
 import { navItems, resolveTrail, classesItemActive, type NavItem } from "./data"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
+import { CreateSheet, ProfileSheet } from "./components/TopBarSheets"
+import { roleLabel } from "./components/topBarActions"
 
 // P6.1b: screens are `React.lazy`, not static imports — see the same note in
 // `portals/student/index.tsx`. QuizBuilder and ClassAnalytics in particular
@@ -271,17 +272,12 @@ function UserBlock() {
   }
 
   const name = data.displayName ?? data.email.split("@")[0]
-  const roleLabel = data.role
-    .split("_")
-    .map((w) => w[0].toUpperCase() + w.slice(1))
-    .join(" ")
-
   return (
     <div className="flex items-center gap-2.5">
       <Avatar name={name} src={data.avatarUrl ?? undefined} size="sm" />
       <div className="min-w-0">
         <div className="truncate text-body-sm font-medium text-on-surface">{name}</div>
-        <div className="text-body-sm text-on-surface-variant">{roleLabel}</div>
+        <div className="text-body-sm text-on-surface-variant">{roleLabel(data.role)}</div>
       </div>
     </div>
   )
@@ -326,7 +322,9 @@ function TeacherNav() {
   const toolItems = navItems.filter((i) => SIDEBAR_TOOLS.includes(i.icon)).map(toShell)
 
   return (
-    <div className="flex flex-col gap-[18px]">
+    // `gap-8`: the three groups (sections, your classes, tools) read as
+    // separate blocks rather than one long list.
+    <div className="flex flex-col gap-8">
       <SidebarNav variant="abyss" aria-label="Teacher sections" items={primaryItems} />
       <ClassesNavSection />
       <SidebarNav variant="abyss" aria-label="Teacher tools" groups={[{ label: "Tools", items: toolItems }]} />
@@ -394,27 +392,6 @@ function Sidebar() {
 const TOP_BAR_ICON_BUTTON =
   "relative flex h-9 w-9 flex-none items-center justify-center rounded-chip text-on-surface-variant transition-colors hover:bg-surface-container hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:h-11 pointer-coarse:w-11"
 
-/**
- * The signed-in teacher's avatar at the end of the top bar: their photo when
- * the profile has `avatarUrl`, otherwise initials from the same name
- * `UserBlock` shows. Links to profile settings (the settings index). Renders
- * nothing until the profile resolves rather than a placeholder person.
- */
-function TopBarAvatar() {
-  const { data } = useProfile()
-  if (!data) return null
-  const name = data.displayName ?? data.email.split("@")[0]
-  return (
-    <Link
-      to="/teacher/settings"
-      aria-label={`Your profile, ${name}`}
-      className="flex-none rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-    >
-      <Avatar name={name} src={data.avatarUrl ?? undefined} size="sm" className="h-9 w-9 pointer-coarse:h-11 pointer-coarse:w-11" />
-    </Link>
-  )
-}
-
 function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
   const location = useLocation()
   const trail = resolveTrail(location.pathname)
@@ -438,14 +415,7 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
           {title}
         </p>
         <div className="flex-1" />
-        <Link
-          to="/teacher/first-class"
-          className="inline-flex h-9 flex-none items-center gap-[7px] rounded-chip bg-secondary-container px-3 btn-text text-on-secondary-container transition-colors hover:bg-secondary-container/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:px-3.5 pointer-coarse:h-11"
-        >
-          <Plus size={16} aria-hidden="true" />
-          <span className="hidden sm:inline">Create</span>
-          <span className="sr-only sm:hidden">Create a class</span>
-        </Link>
+        <CreateSheet triggerClassName="inline-flex h-9 flex-none cursor-pointer items-center gap-[7px] rounded-chip bg-secondary-container px-3 btn-text text-on-secondary-container transition-colors hover:bg-secondary-container/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:px-3.5 pointer-coarse:h-11" />
         <Link
           to="/teacher/grading"
           className="me-0 sm:me-2.5 inline-flex h-9 flex-none items-center gap-[7px] rounded-chip bg-primary px-3 btn-text text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:px-3.5 pointer-coarse:h-11"
@@ -469,7 +439,7 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
         <Link to="/teacher/settings" aria-label="Settings" className={TOP_BAR_ICON_BUTTON}>
           <Gear size={20} aria-hidden="true" />
         </Link>
-        <TopBarAvatar />
+        <ProfileSheet triggerClassName="cursor-pointer" />
       </div>
       {/* The D1.5 back affordance: one crumb is just the page's own name, which
           the title already says, so the trail renders only when drilled in. */}

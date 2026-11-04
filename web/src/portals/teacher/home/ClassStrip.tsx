@@ -20,7 +20,13 @@ export function ClassStrip({ classes }: { classes: ClassSummary[] }) {
         <h2 id="cs-h" className="text-display-xs">Your classes</h2>
         <Link to="/teacher/classes" className="font-bold text-primary">All classes</Link>
       </div>
-      <ul className="mt-3 flex min-w-0 snap-x gap-4 overflow-x-auto pb-2">
+      {/* A scroller clips at its padding box, so the cards' panel shadow
+          (about 20px wide, 50px deep) gets room inside it: padding on three
+          sides, cancelled by matching negative margins so the first card
+          still lines up with the heading. `-mx-4` stays within the page's
+          own 16px gutter, so nothing overflows at 375. */}
+      <ul className="-mx-4 -mb-10 mt-1 flex min-w-0 snap-x scroll-px-4 gap-4 overflow-x-auto px-4 pb-12 pt-2">
+
         {classes.map((c) => {
           const m = classCardModel(c)
           const trendLine = m.trend || m.meta2
