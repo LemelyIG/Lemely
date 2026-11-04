@@ -198,7 +198,7 @@ const SELECTOR_FOR_THEME: Readonly<Record<"light" | "dark", string>> = {
  * dev server that keeps serving a stale colour after `index.css` is edited.
  *
  * `theme` defaults to `"light"` so every pre-existing call site (the PWA
- * manifest, `markOutlineMarkup`'s stroke colours, the light `theme-color`
+ * manifest, the pre-mount shell's light colours, the light `theme-color`
  * meta) keeps resolving exactly the value it always has — Task 13 (C5b) is
  * the first caller that ever needs the dark ladder instead.
  */

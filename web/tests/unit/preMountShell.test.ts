@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import { fillPreMountShell, readLoadingTierDurations, readSidebarTokens } from "../../vite/preMountShell.ts"
+import { tokenHex } from "../../vite/brandTokens.ts"
 import { FULL_PAGE_STATE_COPY } from "../../src/portals/misc/fullPageStateCopy.ts"
 
 /*
@@ -126,13 +127,20 @@ describe("fillPreMountShell", () => {
     expect(darkPaperMatch![1]).not.toBe(lightPaperMatch![1])
   })
 
-  it("paints the shell's clip mark per theme: a dark colour that differs from the light one", () => {
+  it("paints the clip in md-primary per theme (Abyss in light, Tide in dark) and the letters in on-surface", () => {
     const filled = fillPreMountShell(REAL_INDEX_HTML)
-    const light = filled.match(/\n\s*\.lm-shell-mark\s*\{[^}]*?color:\s*(#[0-9a-f]{6})/)
-    const dark = filled.match(/\[data-theme="dark"\]\s*\.lm-shell-mark\s*\{[^}]*?color:\s*(#[0-9a-f]{6})/)
-    expect(light?.[1], "light .lm-shell-mark colour").toBeDefined()
-    expect(dark?.[1], "dark .lm-shell-mark colour").toBeDefined()
-    expect(dark![1]).not.toBe(light![1])
+    const colourOf = (selector: string): string | undefined =>
+      filled.match(new RegExp(`${selector}\\s*\\{[^}]*?\\bcolor:\\s*(#[0-9a-f]{6})`))?.[1]
+    expect(colourOf("\\n\\s*\\.lm-shell-mark")).toBe(tokenHex("md-primary"))
+    expect(colourOf("\\n\\s*\\.lm-shell-clip")).toBe(tokenHex("md-primary"))
+    expect(colourOf('\\[data-theme="dark"\\]\\s*\\.lm-shell-mark,\\s*\\[data-theme="dark"\\]\\s*\\.lm-shell-clip')).toBe(
+      tokenHex("md-primary", "dark"),
+    )
+    expect(tokenHex("md-primary", "dark")).not.toBe(tokenHex("md-primary"))
+    expect(colourOf("\\n\\s*\\.lm-shell-wordmark")).toBe(tokenHex("md-on-surface"))
+    expect(filled).toMatch(
+      new RegExp(`\\[data-theme="dark"\\]\\s*\\.lm-shell-wordmark,[^{]*\\{\\s*color:\\s*${tokenHex("md-on-surface", "dark")}`),
+    )
   })
 
   it("substitutes the real durations for the duration placeholders", () => {
@@ -424,7 +432,7 @@ describe("the shell's brand mark is the v5 Clip Letters paperclip, not the retir
 
   it("draws DESIGN.md's clip in currentColor, in both the sidebar and the slow-load screen", () => {
     const occurrences = REAL_INDEX_HTML.split(`d="${clipPath}"`).length - 1
-    expect(occurrences).toBe(2)
+    expect(occurrences).toBe(3) // the two l's of the sidebar wordmark, and the tier-3 mark
     expect(REAL_INDEX_HTML).toMatch(/viewBox="28 4 46 94"/)
     expect(REAL_INDEX_HTML).not.toMatch(/<path[^>]*stroke="#/)
   })
@@ -438,9 +446,20 @@ describe("the shell's brand mark is the v5 Clip Letters paperclip, not the retir
     expect(reduced?.[1]).toMatch(/\.lm-shell-mark-pulse\s*\{\s*animation:\s*none/)
   })
 
-  it("does not repeat the 24px sidebar clip's pulse: only the tier-3 mark animates", () => {
-    expect(REAL_INDEX_HTML.match(/lm-shell-mark-pulse/g)?.length).toBeGreaterThanOrEqual(3)
-    const sidebarSvg = REAL_INDEX_HTML.match(/<svg\s+class="lm-shell-mark"[\s\S]*?<\/svg>/)
-    expect(sidebarSvg?.[0]).not.toContain("lm-shell-mark-pulse")
+  it("renders the sidebar brand as the lowercase Clip Letters wordmark with the name Lemely", () => {
+    const wordmark = REAL_INDEX_HTML.match(/<span class="lm-shell-wordmark"[\s\S]*?<\/span>\s*<\/span>/)?.[0] ?? ""
+    expect(wordmark).toContain('aria-label="Lemely"')
+    expect(wordmark).toContain('role="img"')
+    expect(wordmark.match(/class="lm-shell-clip"/g)).toHaveLength(2)
+    expect(wordmark).toContain(">eme<")
+    expect(wordmark).toContain(">y<")
+    expect(wordmark).not.toContain("Lemely</span>")
+    expect(REAL_INDEX_HTML).toMatch(/\.lm-shell-wordmark\s*\{[^}]*letter-spacing:\s*-0\.04em[^}]*\}/)
+  })
+
+  it("pulses only the tier-3 mark, not the sidebar wordmark", () => {
+    const wordmark = REAL_INDEX_HTML.match(/<span class="lm-shell-wordmark"[\s\S]*?<\/span>\s*<\/span>/)?.[0] ?? ""
+    expect(wordmark).not.toContain("lm-shell-mark-pulse")
+    expect(REAL_INDEX_HTML.match(/class="lm-shell-mark lm-shell-mark-pulse"/g)).toHaveLength(1)
   })
 })

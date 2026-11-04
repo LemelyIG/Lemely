@@ -114,19 +114,28 @@ interface WeakRole {
 /** Text-capable roles under 4.5:1 on the surfaces they sit on, either theme. */
 function weakRoles(css: string): WeakRole[] {
   const roles = roleTokens(css)
+  const light = readTokenBlock(css, ":root")
+  const dark = readTokenBlock(css, ':root[data-theme="dark"]')
+  // The dark block redeclares only some tokens (the `--grade-*` ramp is declared
+  // once, in :root, and inherited), so a token it omits resolves to its light
+  // value and is still measured on the dark surfaces. Dark cards sit on
+  // surface-container-high (DESIGN.md).
   const themes = [
-    { tokens: readTokenBlock(css, ":root"), surfaces: ["md-surface", "md-surface-container-lowest"] },
-    { tokens: readTokenBlock(css, ':root[data-theme="dark"]'), surfaces: ["md-surface", "md-surface-container-low"] },
+    { resolve: (n: string) => light.get(n), surfaces: ["md-surface", "md-surface-container-lowest"] },
+    {
+      resolve: (n: string) => dark.get(n) ?? light.get(n),
+      surfaces: ["md-surface", "md-surface-container-low", "md-surface-container-high"],
+    },
   ]
   const out: WeakRole[] = []
   for (const [role, token] of roles) {
     if (NOT_TEXT_ROLE.test(role)) continue
     let worst = Infinity
-    for (const { tokens, surfaces } of themes) {
-      const fg = tokens.get(token)
-      if (!fg) continue // the dark block only redeclares some tokens
+    for (const { resolve, surfaces } of themes) {
+      const fg = resolve(token)
+      if (!fg) continue
       for (const surface of surfaces) {
-        const bg = tokens.get(surface)
+        const bg = resolve(surface)
         if (!bg) continue
         worst = Math.min(worst, contrast(oklchToSrgb(...fg), oklchToSrgb(...bg)))
       }
@@ -146,15 +155,16 @@ function largeTypeClasses(css: string): string[] {
   return out
 }
 
-/** True when a class expression carries a >= 24px size: a ramp rung, `text-[Npx]`, or `text-2xl` and up. */
+/** True when a class expression carries a >= 24px size at the BASE breakpoint: a
+ * ramp rung, `text-[Npx]`, or `text-2xl` and up, with no variant prefix. A
+ * `md:`-only large class still renders small on mobile. */
 function hasLargeType(text: string, ramp: readonly string[]): boolean {
-  if (ramp.some((cls) => hasClass(text, cls))) return true
-  if (/(?:^|[\s:"'`])text-\[(\d+(?:\.\d+)?)px\](?![\w-])/.test(text)) {
-    for (const m of text.matchAll(/(?:^|[\s:"'`])text-\[(\d+(?:\.\d+)?)px\](?![\w-])/g)) {
-      if (Number(m[1]) >= 24) return true
-    }
+  const bare = (name: string) => new RegExp(`(?:^|[\\s"'\`])${name}(?![\\w:-])`)
+  if (ramp.some((cls) => bare(cls).test(text))) return true
+  for (const m of text.matchAll(/(?:^|[\s"'`])text-\[(\d+(?:\.\d+)?)px\](?![\w:-])/g)) {
+    if (Number(m[1]) >= 24) return true
   }
-  return /(?:^|[\s:"'`])text-(?:[2-9]xl)(?![\w-])/.test(text)
+  return bare("text-[2-9]xl").test(text)
 }
 
 /** Offenders in `source`, as `line — reason`, for the given weak roles. */
@@ -178,21 +188,27 @@ describe("the weak-role list is derived from index.css", () => {
   const byRole = new Map(WEAK.map((w) => [w.role, w]))
 
   it("finds the roles v5 is known to ship under 4.5:1", () => {
-    for (const role of ["success", "tertiary", "grade-b", "grade-c", "grade-d"]) {
+    for (const role of ["success", "tertiary", "grade-a-star", "grade-a", "grade-b", "grade-c", "grade-d", "grade-e", "grade-u"]) {
       expect(byRole.has(role), `${role} should be weak`).toBe(true)
     }
   })
 
   it("does not flag the roles that carry text on purpose", () => {
-    for (const role of ["primary", "success-text", "error", "on-surface", "on-surface-variant", "grade-a-star", "grade-a", "grade-e", "grade-u"]) {
+    for (const role of ["primary", "success-text", "error", "on-surface", "on-surface-variant"]) {
       expect(byRole.has(role), `${role} should not be weak`).toBe(false)
     }
   })
 
-  it("bans success and tertiary outright and lets the grade ramp through at 24px+", () => {
-    expect(byRole.get("success")?.bannedOutright).toBe(true)
-    expect(byRole.get("tertiary")?.bannedOutright).toBe(true)
-    for (const role of ["grade-b", "grade-c", "grade-d"]) {
+  it("measures inherited tokens on the dark surfaces too", () => {
+    // `--grade-*` is declared only in :root. On dark surfaces grade-a-star is ~2.4:1.
+    expect(byRole.get("grade-a-star")?.worst).toBeLessThan(3)
+  })
+
+  it("bans success, tertiary and the sub-3:1 grades outright and lets the rest through at 24px+", () => {
+    for (const role of ["success", "tertiary", "grade-a-star", "grade-e", "grade-u"]) {
+      expect(byRole.get(role)?.bannedOutright, role).toBe(true)
+    }
+    for (const role of ["grade-a", "grade-b", "grade-c", "grade-d"]) {
       expect(byRole.get(role)?.bannedOutright).toBe(false)
     }
   })
@@ -227,6 +243,13 @@ describe("the rule goes red on a planted offender", () => {
   it("flags text-grade-c on small text", () => {
     expect(offendersIn(planted("text-grade-c text-body-md"), WEAK, RAMP)).toHaveLength(1)
     expect(offendersIn(planted("hover:text-grade-b"), WEAK, RAMP)).toHaveLength(1)
+  })
+  it("does not accept a breakpoint-prefixed large class as the exemption", () => {
+    expect(offendersIn(planted("text-grade-c md:text-display-lg"), WEAK, RAMP)).toHaveLength(1)
+    expect(offendersIn(planted("text-grade-c md:text-[32px]"), WEAK, RAMP)).toHaveLength(1)
+  })
+  it("flags text-grade-u even at a large size (under 3:1 on dark)", () => {
+    expect(offendersIn(planted("text-grade-u text-display-lg"), WEAK, RAMP)).toHaveLength(1)
   })
   it("allows text-grade-c beside a 24px+ type class and text-success-text anywhere", () => {
     expect(offendersIn(planted("text-grade-c text-display-lg"), WEAK, RAMP)).toEqual([])

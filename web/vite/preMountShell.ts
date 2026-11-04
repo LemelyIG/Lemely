@@ -18,7 +18,7 @@ import { INDEX_CSS, tokenHex } from "./brandTokens.ts"
  * consumer that is not the CSS cascade.
  *
  * So `index.html` carries seven colour placeholders (`%LEMELY_COLOR_PAPER%`
- * and six siblings), two duration placeholders
+ * and six siblings, light), plus a dark counterpart of each, two duration placeholders
  * (`%LEMELY_LOADING_TIER_SKELETON%` / `%LEMELY_LOADING_TIER_SLOW%`), and, as
  * of Packet B3 (Task 4), two size placeholders (`%LEMELY_SIDEBAR_WIDTH%` /
  * `%LEMELY_SIDEBAR_BREAKPOINT%`), and this plugin is the one place that
