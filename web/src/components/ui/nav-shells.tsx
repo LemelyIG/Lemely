@@ -50,6 +50,9 @@ export interface NavShellItem {
   active?: boolean
   /** Small trailing marker — unread count, review-queue depth, etc. */
   badge?: string | number
+  /** Rendered in the filled badge style (Abyss variant only): a count that
+   * asks for action, such as the review-queue depth. */
+  urgent?: boolean
   /** Wired by Task 11 (B6): prefetch the destination's chunk on hover/focus. */
   prefetch?: () => void
 }
@@ -168,19 +171,22 @@ export interface SidebarNavProps extends HTMLAttributes<HTMLElement> {
   items?: NavShellItem[]
   /** Labelled sections — the student sidebar's "Student"/"Marking" split. */
   groups?: SidebarNavGroup[]
+  /** `abyss` is the teacher shell's Material 3 row: chip radius, primary
+   * container when current, a pill count. `default` is the student/admin row. */
+  variant?: "default" | "abyss"
   className?: string
 }
 
 /** Desktop student/teacher/admin vertical nav list — a current-section
  * indicator, not a full sidebar shell (identity block, "Your classes", the
  * subject accordion all stay in each portal's own `Sidebar`). */
-export function SidebarNav({ items, groups, className, ...props }: SidebarNavProps) {
+export function SidebarNav({ items, groups, variant = "default", className, ...props }: SidebarNavProps) {
   const sections: SidebarNavGroup[] = groups ?? [{ items: items ?? [] }]
 
   return (
     <nav
       aria-label="Primary"
-      className={cn("flex flex-col", groups ? "gap-[22px]" : "gap-0.5", className)}
+      className={cn("flex flex-col", groups ? "gap-[22px]" : variant === "abyss" ? "gap-px" : "gap-0.5", className)}
       {...props}
     >
       {sections.map((section, index) => (
@@ -191,14 +197,23 @@ export function SidebarNav({ items, groups, className, ...props }: SidebarNavPro
         // reordering list.
         <div key={section.label ?? index} className="flex flex-col gap-0.5">
           {section.label ? (
-            <div className="text-eyebrow text-on-surface-variant px-2 pb-[7px]">{section.label}</div>
+            <div className={cn("text-eyebrow text-on-surface-variant pb-[7px]", variant === "abyss" ? "px-2.5" : "px-2")}>
+              {section.label}
+            </div>
           ) : null}
           {section.items.map((item) => (
             <NavShellLink
               key={item.id}
               item={item}
               className={(isActive) =>
-                cn(
+                variant === "abyss"
+                  ? cn(
+                      "flex w-full items-center gap-2.5 rounded-chip px-2.5 py-2 pointer-coarse:min-h-11 text-start text-label transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+                      isActive
+                        ? "bg-primary-container text-primary"
+                        : "text-on-surface-variant hover:bg-surface-container hover:text-on-surface",
+                    )
+                  : cn(
                   // `pointer-coarse:min-h-11` is §6.1's touch floor: measured at 32px
                   // tall on every mobile width, and this is the control a student on
                   // a phone touches most. Safe as a min because the row already
@@ -210,11 +225,26 @@ export function SidebarNav({ items, groups, className, ...props }: SidebarNavPro
                 )
               }
             >
-              {() => (
+              {(isActive) => (
                 <>
                   <span className="flex-none">{item.icon}</span>
                   <span className="flex-1">{item.label}</span>
-                  {item.badge ? <span className="text-metadata text-on-surface-variant">{item.badge}</span> : null}
+                  {item.badge ? (
+                    variant === "abyss" ? (
+                      <span
+                        className={cn(
+                          "ms-auto rounded-pill px-1.5 text-data-sm",
+                          isActive || item.urgent
+                            ? "bg-primary text-on-primary"
+                            : "bg-surface-container-high text-on-surface",
+                        )}
+                      >
+                        {item.badge}
+                      </span>
+                    ) : (
+                      <span className="text-metadata text-on-surface-variant">{item.badge}</span>
+                    )
+                  ) : null}
                 </>
               )}
             </NavShellLink>

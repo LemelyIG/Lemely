@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V4 */
 import { useEffect, useRef, useState, type ChangeEvent } from "react"
-import { useNavigate } from "react-router-dom"
+import { useLocation, useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { Camera, Trash } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
@@ -337,6 +337,7 @@ function PaperCard({
 
 export function Grading() {
   const navigate = useNavigate()
+  const location = useLocation()
   const queryClient = useQueryClient()
 
   const [tab, setTab] = useState<TabId>("all")
@@ -373,6 +374,34 @@ export function Grading() {
         // Best-effort — a non-secure context (no `caches`) must not surface
         // as an unhandled promise rejection on every mount.
       })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /*
+   * Files handed over from the teacher home (`navigate("/teacher/grading",
+   * { state: { files } })`). Read once on mount, set exactly as the native
+   * input's `onChange` would (first file only: this console uploads one scan
+   * at a time), then the router state is cleared so a reload cannot
+   * re-submit. Nothing is uploaded here; the teacher still presses upload.
+   */
+  const [handedOver, setHandedOver] = useState<{ count: number; name: string } | null>(null)
+  const handedOverRead = useRef(false)
+  // The status region mounts empty; its text arrives a tick later so screen
+  // readers announce the change.
+  const [noticeLive, setNoticeLive] = useState(false)
+  useEffect(() => {
+    if (!handedOver) return
+    const t = window.setTimeout(() => setNoticeLive(true), 0)
+    return () => window.clearTimeout(t)
+  }, [handedOver])
+  useEffect(() => {
+    if (handedOverRead.current) return
+    handedOverRead.current = true
+    const files = (location.state as { files?: File[] } | null)?.files
+    if (!files?.length) return
+    setScanFile(files[0])
+    if (files.length > 1) setHandedOver({ count: files.length, name: files[0].name })
+    navigate(".", { replace: true, state: null })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -669,6 +698,12 @@ export function Grading() {
                           onCancel={() => setShowCamera(false)}
                         />
                       ) : scanFile ? (
+                        <>
+                        <p role="status" className={noticeLive && handedOver && handedOver.name === scanFile.name ? "mb-2 rounded-chip bg-secondary-container p-3 text-body-sm text-on-secondary-container" : "sr-only"}>
+                          {noticeLive && handedOver && handedOver.name === scanFile.name
+                            ? `You added ${handedOver.count} papers. This screen marks one at a time, so only ${handedOver.name} is loaded.`
+                            : null}
+                        </p>
                         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest px-4 py-3">
                           <span className="min-w-0 flex-1 truncate text-body-sm text-on-surface">
                             Scan ready · {scanFile.name}
@@ -683,6 +718,7 @@ export function Grading() {
                             Choose a different scan
                           </Button>
                         </div>
+                        </>
                       ) : (
                         <input
                           id="grading-scan-file"

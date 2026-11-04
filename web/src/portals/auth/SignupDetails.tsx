@@ -142,7 +142,7 @@ import {
  * warnings" is one of this task's binding gates. This task's own instruction
  * is equally explicit that the payload/validation logic must be "a pure
  * exported function" tested directly by `web/tests/unit/signup.test.ts` —
- * naming `studentOnboardingRedirect`/`teacherFirstClassRedirect` as the
+ * naming `studentOnboardingRedirect` as the
  * pattern — so it cannot simply stay private the way it could if no test
  * required it. `onboardingData.ts` (the S-01/S-02 wizard) and
  * `verifyEmailLogic.ts` (Task 16, `VerifyEmail.tsx` — the very screen this

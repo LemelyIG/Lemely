@@ -241,6 +241,7 @@ export interface AtRiskStudent {
   delta: number | null
   weakTopic: string | null
   flags: AtRiskFlag[]
+  previousGrade: string | null
 }
 
 /**
@@ -270,6 +271,12 @@ export interface Overview {
   atRisk: AtRiskStudent[]
   retention: number[]
   recentActivity: RecentActivity[]
+  paperCount: number
+  pendingReviewCount: number
+  /** 10 counts, one per 10% confidence band over pending review items. */
+  reviewConfidenceBuckets: number[]
+  /** ceil(pending x 20s / 60); a heuristic, rendered as "about N min". */
+  reviewEstimateMinutes: number
 }
 
 // ── Classes ───────────────────────────────────────────────────────────────
