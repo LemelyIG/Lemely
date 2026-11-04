@@ -28,7 +28,7 @@ export function ReviewQueueTile({ overview }: { overview: Overview }) {
             {m.bars.map((b) => (
               <span
                 key={b.band}
-                className={b.low ? "flex-1 rounded-t-bar border border-error bg-error-container" : "flex-1 rounded-t-bar bg-inverse-primary"}
+                className={b.low ? `flex-1 rounded-t-bar bg-error-container ${Math.round(b.height * 100) > 0 ? "border border-error" : ""}` : "flex-1 rounded-t-bar bg-inverse-primary"}
                 style={{ height: `${Math.round(b.height * 100)}%` }}
               />
             ))}

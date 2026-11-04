@@ -10,17 +10,31 @@ export function MarkClassSet({ lastUpload, onFiles }: { lastUpload: string | nul
   const timer = useRef<number | null>(null)
   const onFilesRef = useRef(onFiles)
   onFilesRef.current = onFiles
-  const clear = () => { if (timer.current !== null) { window.clearTimeout(timer.current); timer.current = null } }
+  const pending = useRef<File[]>([])
+  const raf = useRef<number | null>(null)
+  const clear = () => {
+    if (timer.current !== null) { window.clearTimeout(timer.current); timer.current = null }
+    if (raf.current !== null) { window.cancelAnimationFrame(raf.current); raf.current = null }
+  }
+  const flush = () => {
+    const files = pending.current
+    pending.current = []
+    if (files.length) onFilesRef.current(files)
+  }
   const take = (list: FileList | File[] | null) => {
     const pdfs = [...(list ?? [])].filter(isPdf)
     if (!pdfs.length) return
+    // Every batch inside the window is kept: append, then re-arm the one timer.
+    pending.current = [...pending.current, ...pdfs]
     clear()
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) { onFilesRef.current(pdfs); return }
-    setReceived(true)
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) { flush(); return }
+    // Toggle off then on so a later drop replays the received animation.
+    setReceived(false)
+    raf.current = window.requestAnimationFrame(() => { raf.current = null; setReceived(true) })
     timer.current = window.setTimeout(() => {
       timer.current = null
       setReceived(false)
-      onFilesRef.current(pdfs)
+      flush()
     }, 600)
   }
   const takeRef = useRef(take)
@@ -56,7 +70,7 @@ export function MarkClassSet({ lastUpload, onFiles }: { lastUpload: string | nul
         >
           <UploadSimple size={16} />Upload papers
         </button>
-        <input ref={input} type="file" accept="application/pdf" multiple hidden onChange={(e) => take(e.target.files)} />
+        <input ref={input} type="file" accept="application/pdf" multiple hidden onChange={(e) => { take(e.target.files); e.target.value = "" }} />
       </div>
       <span aria-hidden className="pointer-events-none absolute inset-0 grid place-items-center">
         <svg className="th-big size-24 opacity-0" viewBox="0 0 24 24" fill="none" stroke="var(--md-success)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
