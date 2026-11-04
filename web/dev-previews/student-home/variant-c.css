@@ -42,41 +42,41 @@
 .tl-greet h1 { margin: 0; font: 800 32px/1.15 var(--font-ui); letter-spacing: var(--ls-headline-ui); text-wrap: balance }
 .tl-greet-sub { margin-block-start: 6px; color: var(--text-secondary) }
 
-/* Hero: Binny tall on the start side, level on top, the week below. */
+/* Hero: one compact row. Binny with its caption, level and XP, the week as a calendar strip. */
 .tl-hero {
   display: grid;
-  grid-template-columns: 232px minmax(0, 1fr);
-  grid-template-areas: "binny level" "binny week";
-  column-gap: 40px; row-gap: 28px;
-  padding: 28px;
+  grid-template-columns: 160px minmax(0, 1fr) auto;
+  grid-template-areas: "binny level week";
+  align-items: center; column-gap: 36px;
+  padding: 24px 28px;
   border-radius: var(--radius-board);
 }
-.tl-binny { grid-area: binny; margin: 0; display: flex; flex-direction: column; gap: 12px }
+.tl-binny { grid-area: binny; margin: 0; display: flex; flex-direction: column; gap: 8px }
 .tl-binny-tile {
-  flex: 1; min-block-size: 240px;
-  display: grid; place-items: center; padding: 16px;
-  border-radius: var(--radius-card);
+  block-size: 104px;
+  display: grid; place-items: center; padding: 8px;
+  border-radius: var(--radius-tile);
   background: var(--md-primary-container);
 }
-.tl-binny-tile svg { display: block; inline-size: 176px; block-size: auto; animation: tlBob 3.6s ease-in-out infinite }
+.tl-binny-tile svg { display: block; inline-size: auto; block-size: 88px; animation: tlBob 3.6s ease-in-out infinite }
 .tl-say {
-  padding: 10px 14px; border-radius: var(--radius-button);
+  padding: 7px 10px; border-radius: 10px;
   background: var(--surface-row);
-  font: 600 15px/1.35 var(--font-ui); color: var(--text-body); text-wrap: pretty;
+  font: 600 13px/1.35 var(--font-ui); color: var(--text-body); text-wrap: pretty;
 }
 
-.tl-level { grid-area: level; align-self: end }
-.tl-level-row { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px }
-.tl-level-n { font: 800 64px/0.9 var(--font-display); letter-spacing: -0.04em; font-variant-numeric: lining-nums }
-.tl-xp { display: flex; align-items: center; gap: 10px }
-.tl-xp-n { font: 600 40px/1 var(--font-mono); letter-spacing: -0.03em; font-variant-numeric: tabular-nums }
+.tl-level { grid-area: level }
+.tl-level-row { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 20px }
+.tl-level-n { font: 800 var(--fs-display-sm)/1 var(--font-display); letter-spacing: -0.04em; font-variant-numeric: lining-nums }
+.tl-xp { display: flex; align-items: center; gap: 8px }
+.tl-xp-n { font: 600 26px/1 var(--font-mono); letter-spacing: -0.02em; font-variant-numeric: tabular-nums }
 .tl-xp-u {
-  padding: 6px 9px; border-radius: 8px;
+  padding: 4px 7px; border-radius: 7px;
   background: var(--md-tertiary); color: var(--sh-gold-text);
-  font: 700 13px/1 var(--font-mono); letter-spacing: var(--ls-label);
+  font: 700 12px/1 var(--font-mono); letter-spacing: var(--ls-label);
 }
 .tl-bar {
-  margin-block-start: 20px; block-size: 12px; overflow: hidden;
+  margin-block-start: 14px; block-size: 10px; overflow: hidden;
   border-radius: var(--radius-pill); background: var(--track);
 }
 .tl-bar-fill {
@@ -86,27 +86,43 @@
   animation: tlFill 900ms var(--tl-ease-x) 200ms both;
 }
 .tl-bar-fill:dir(rtl) { transform-origin: 100% 50% }
-.tl-bar-label { margin-block-start: 8px; font: 600 14px/1.4 var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums }
+.tl-bar-label { margin-block-start: 6px; font: 600 13px/1.4 var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums }
 
-.tl-week { grid-area: week; padding-block-start: 24px; border-block-start: 1px solid var(--border-subtle) }
-.tl-week-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; margin-block-end: 16px }
-.tl-week-n { font: 800 40px/1 var(--font-display); letter-spacing: -0.04em; text-wrap: balance }
-.tl-week-meta { font: 600 14px/1.4 var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums }
-.tl-week-body { margin-block: -4px 16px; max-inline-size: 60ch; color: var(--text-secondary) }
+.tl-week { grid-area: week; inline-size: auto; padding-inline-start: 36px; border-inline-start: 1px solid var(--border-subtle) }
+.tl-week-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; margin-block-end: 12px }
+.tl-week-n { font: 800 28px/1 var(--font-display); letter-spacing: -0.04em; text-wrap: balance }
+.tl-week-meta { font: 600 13px/1.4 var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums }
+.tl-week-body { margin-block: -4px 12px; font-size: 14px; color: var(--text-secondary); text-wrap: pretty }
 
-.tl-strip { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px }
-.tl-day {
-  display: flex; flex-direction: column; justify-content: space-between; gap: 10px;
-  min-block-size: 96px; padding: 12px 14px;
-  border-radius: var(--radius-inner);
-  background: var(--surface-row); color: var(--text-muted);
+/* Calendar strip: weekday above, date inside a compact square. */
+.tl-strip { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(7, 52px); justify-content: space-between; gap: 8px }
+.tl-day { display: flex; flex-direction: column; align-items: center; gap: 6px; color: var(--text-secondary) }
+.tl-day-w { font: 600 11px/1 var(--font-mono); letter-spacing: 0.04em; text-transform: uppercase }
+.tl-day-d {
+  display: grid; place-items: center; inline-size: 52px; aspect-ratio: 1;
+  border-radius: 14px; background: var(--surface-row); color: var(--text-muted);
+  font: 600 20px/1 var(--font-mono); letter-spacing: -0.02em; font-variant-numeric: tabular-nums;
 }
-.tl-day-w { font: 600 11px/1 var(--font-mono); letter-spacing: var(--ls-label); text-transform: uppercase }
-.tl-day-d { font: 600 32px/1 var(--font-mono); letter-spacing: -0.03em; font-variant-numeric: tabular-nums }
-.tl-day.is-earned { background: var(--md-tertiary); color: var(--sh-gold-text) }
-.tl-day.is-today { outline: 2px solid var(--md-primary); outline-offset: 3px }
-.tl-day.is-today.is-earned { animation: tlPop 600ms var(--tl-ease-x) 700ms both }
+.tl-day.is-earned .tl-day-d { background: var(--md-tertiary); color: var(--sh-gold-text) }
+.tl-day.is-today .tl-day-w { color: var(--md-primary) }
+.tl-day.is-today .tl-day-d { outline: 2px solid var(--md-primary); outline-offset: 2px }
+.tl-day.is-today.is-earned .tl-day-d { animation: tlPop 600ms var(--tl-ease-x) 700ms both }
+/* Daily XP bars above each day: one shared scale (120 XP peak = 32px), gold only where XP was earned. */
+.tl-xp-col {
+  display: flex; flex-direction: column; justify-content: flex-end; align-items: center;
+  inline-size: 100%; block-size: 46px;
+  border-block-end: 1px solid var(--border-subtle);
+}
+.tl-xp-bar { inline-size: 14px; block-size: calc(var(--xp, 0) * 32px); border-radius: 4px 4px 0 0; background: var(--md-tertiary) }
+.tl-xp-val { margin-block-end: 3px; font: 600 11px/1 var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums }
+.tl-day:not(.is-earned) :is(.tl-xp-bar, .tl-xp-val) { display: none }
+.sh-root[data-state="one-paper"] .tl-op-empty :is(.tl-xp-bar, .tl-xp-val) { display: none }
 .tl-narrow { display: none }
+.tl-bar-fill.tl-bar-half { inline-size: 50% }
+/* One-paper: only 2 Nov has XP in the zero-streak strip. */
+.sh-root[data-state="one-paper"] .tl-day.tl-op-empty .tl-day-d { background: var(--surface-row); color: var(--text-muted) }
+/* One-paper lists hold a single row: no divider above it. */
+.sh-root[data-state="one-paper"] .tl-results li { border-block-start: 0 }
 
 /* Today list */
 .tl-today { margin-block-start: 48px }
@@ -166,24 +182,54 @@
 .sh-root[data-state="no-plan"] .tl-note[data-only-state="no-plan"],
 .sh-root[data-exams="no"] .tl-note[data-only-state="no-exams"] { display: flex }
 
-/* The record: subjects ledger, weak topics, latest result. */
+/* Fix next: an ordered row of compact topic cards, most marks dropped first. */
+.tl-fixnext { margin-block-start: 48px }
+.tl-sec-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; margin-block-end: 14px }
+.tl-sec-head .tl-h2 { margin: 0 }
+.tl-h2-sm { font-size: 24px }
+.tl-sec-note { font: 600 13px/1.4 var(--font-mono); color: var(--text-secondary) }
+.tl-fix-row { position: relative; list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; align-items: stretch }
+.tl-fix {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 16px; border-radius: var(--radius-tile);
+  background: var(--surface-card); border: 1.5px solid var(--tl-line);
+}
+.sh-root[data-state="one-paper"] .tl-fix[data-only-state="one-paper"] { display: flex }
+.tl-fix-top { display: flex; align-items: center; gap: 12px; margin-block-end: 2px }
+.tl-fix-name { min-inline-size: 0 }
+.tl-fix-t { margin: 0; font: 700 16px/1.25 var(--font-ui); text-wrap: balance }
+.tl-fix-name .tl-code { font-size: 12px }
+.tl-ring { flex: none; inline-size: 52px; block-size: 52px }
+.tl-ring-track { fill: none; stroke: var(--border-default); stroke-width: 4 }
+.tl-ring-arc { fill: none; stroke: var(--md-primary); stroke-width: 4; stroke-linecap: round }
+.tl-ring-tick { stroke: var(--text-muted); stroke-width: 1.5; stroke-linecap: round }
+.tl-ring text { fill: var(--text-body); font: 600 12px var(--font-mono); font-variant-numeric: tabular-nums }
+.tl-fix-change { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--text-secondary) }
+.tl-fix-change.is-up { color: var(--sh-success-text) }
+.tl-fix-drop { font: 600 13px/1.4 var(--font-mono); color: var(--text-body); font-variant-numeric: tabular-nums }
+.tl-btn-sm { margin-block-start: auto; min-block-size: 40px; padding: 0 14px; font-size: 14px; border-radius: 12px }
+
+/* The record: subjects (with momentum sparklines) beside recent results, equal height. */
 .tl-record {
   margin-block-start: 48px;
-  display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 32px; align-items: stretch;
+  display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 32px; align-items: stretch;
 }
-.tl-record-side { display: grid; gap: 32px; align-content: start }
-.tl-ledger, .tl-weak, .tl-result { padding: 20px 22px }
+.tl-record-side { display: grid }
+.tl-ledger, .tl-recent { padding: 20px 22px; display: flex; flex-direction: column }
+/* Lists flex to fill their card, so equal-height cards carry no dead space. */
+.tl-fill { flex: 1; display: flex; flex-direction: column }
+.tl-fill > li { flex: 1; display: grid }
 .tl-ledger .tl-note { margin: 12px 0 0 }
 .tl-h3 { margin: 0 0 10px; font: 800 18px/1.2 var(--font-ui); letter-spacing: var(--ls-headline-ui) }
 .tl-code { font: 600 14px var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums }
 .tl-num { font-variant-numeric: tabular-nums }
 
-.tl-rows, .tl-marks { list-style: none; margin: 0; padding: 0 }
-.tl-rows li + li, .tl-marks li + li { border-block-start: 1px solid var(--border-subtle) }
+.tl-rows, .tl-marks, .tl-results { list-style: none; margin: 0; padding: 0 }
+.tl-rows li + li, .tl-marks li + li, .tl-results li + li { border-block-start: 1px solid var(--border-subtle) }
 .tl-subj {
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) auto auto;
-  grid-template-areas: "chip name papers exam" "chip delta papers exam";
+  grid-template-columns: 36px minmax(0, 1fr) 132px 124px;
+  grid-template-areas: "chip name spark papers" "chip delta spark exam";
   align-items: center; column-gap: 16px; row-gap: 2px;
   margin-inline: -10px; padding: 12px 10px; border-radius: 12px;
   color: inherit; text-decoration: none;
@@ -207,23 +253,28 @@
 .tl-subj-papers { grid-area: papers }
 .tl-subj-exam { grid-area: exam }
 
-.tl-mark {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto 5ch; align-items: baseline; gap: 14px;
-  margin-inline: -8px; padding: 10px 8px; border-radius: 10px;
-  color: inherit; text-decoration: none; font-size: 15px;
+.tl-res {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto 6ch 28px; align-items: center; gap: 14px;
+  margin-inline: -8px; padding: 7px 8px; border-radius: 10px;
+  color: inherit; text-decoration: none;
   transition: background var(--dur-fast) var(--ease-out);
 }
-.tl-mark:hover { background: var(--surface-hover-tint) }
-.tl-mark-t { font-weight: 600 }
-.tl-mark-v { font: 600 14px var(--font-mono); text-align: end; font-variant-numeric: tabular-nums }
-
-.tl-result-body { display: grid; gap: 8px; justify-items: start }
-.tl-result-paper { font: 600 14px/1.4 var(--font-mono); color: var(--text-secondary) }
-.tl-result-score { display: flex; align-items: center; gap: 14px }
-.tl-score { font: 600 32px/1 var(--font-mono); letter-spacing: -0.03em; font-variant-numeric: tabular-nums }
+.tl-res:hover { background: var(--surface-hover-tint) }
+.tl-res-paper { font: 600 14px/1.4 var(--font-mono); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.tl-res-date { font: 500 13px/1.4 var(--font-mono); color: var(--text-secondary); text-align: end; white-space: nowrap }
+.tl-res-marks { font: 600 14px/1.4 var(--font-mono); text-align: end; font-variant-numeric: tabular-nums }
+.tl-res .tl-chip { grid-area: auto }
+.tl-chip-sm { inline-size: 28px; block-size: 28px; border-radius: 9px; font-size: 19px }
+/* Subject sparkline: shared 30–90% scale, last 8 papers right-aligned, next grade band dashed. */
+.tl-spark { grid-area: spark; inline-size: 132px; block-size: 40px; overflow: visible }
+.sh-root[data-state="one-paper"] .tl-spark[data-only-state="one-paper"] { display: block }
+.tl-spark polyline { fill: none; stroke: var(--md-primary); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round }
+.tl-spark circle { fill: var(--md-primary); stroke: var(--surface-card); stroke-width: 2 }
+.tl-spark-band { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3 3 }
+.tl-spark-label { fill: var(--text-secondary); font: 600 11px var(--font-mono) }
 
 /* New student */
-.tl-hero-new { grid-template-areas: "binny body" }
+.tl-hero-new { grid-template-columns: 160px minmax(0, 1fr); grid-template-areas: "binny body"; align-items: start }
 .tl-new-body { grid-area: body; display: grid; gap: 24px; align-content: center }
 .tl-steps { list-style: none; margin: 0; padding: 0 }
 .tl-step { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 12px 4px; color: var(--text-secondary) }
@@ -250,12 +301,12 @@
 .tl-skel-line { block-size: 32px }
 .tl-skel-greet { inline-size: 320px; max-inline-size: 70%; margin-block-end: 24px }
 .tl-skel-hero { background: var(--surface-card); border: 1.5px solid var(--tl-line) }
-.tl-skel-binny { grid-area: binny; min-block-size: 280px; border-radius: var(--radius-card) }
-.tl-skel-stack { grid-area: level / level / week / week; display: grid; gap: 20px; align-content: end }
-.tl-skel-level { inline-size: 240px; block-size: 56px }
+.tl-skel-binny { grid-area: binny; min-block-size: 148px; border-radius: var(--radius-tile) }
+.tl-skel-stack { grid-column: 2 / -1; display: grid; gap: 14px; align-content: center }
+.tl-skel-level { inline-size: 200px; block-size: 40px }
 .tl-skel-bar { block-size: 12px; border-radius: var(--radius-pill) }
 .tl-skel-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px }
-.tl-skel-week span { block-size: 96px; border-radius: var(--radius-inner) }
+.tl-skel-week span { block-size: 52px; border-radius: 14px }
 .tl-skel-block { block-size: 220px; margin-block-start: 48px; border-radius: var(--radius-card) }
 .tl-skel-ledger { block-size: 200px; margin-block-start: 24px; border-radius: var(--radius-card) }
 
@@ -280,44 +331,56 @@
 /* Mobile: Binny small, then level, the week, today, the record. */
 @container home (max-width: 760px) {
   .tl { --tl-pad: 16px }
-  .tl-page { padding-block: 20px 96px }
-  .tl-greet { margin-block-end: 16px }
-  .tl-greet h1 { font-size: 26px }
-  .tl-greet-sub { font-size: 15px }
+  /* Compact reward hero so the lead Today item (title and button) fits the first 390x844 screen. */
+  .tl-page { padding-block: 16px 96px }
+  .tl-greet { margin-block-end: 12px }
+  .tl-greet h1 { font-size: 24px }
+  .tl-greet-sub { margin-block-start: 2px; font-size: 14px }
 
   .tl-hero, .tl-hero-new {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas: "binny" "level" "week";
-    row-gap: 20px; padding: 18px;
+    row-gap: 14px; padding: 14px 16px 16px;
     border-radius: var(--radius-card);
   }
-  .tl-hero-new { grid-template-areas: "binny" "body" }
-  .tl-binny { flex-direction: row; align-items: center; gap: 14px }
-  .tl-binny-tile { flex: none; inline-size: 112px; block-size: 112px; min-block-size: 0; padding: 8px; border-radius: 50% }
-  .tl-binny-tile svg { inline-size: 80px }
-  .tl-say { flex: 1 }
+  .tl-hero-new { grid-template-areas: "binny" "body"; row-gap: 18px }
+  .tl-binny { flex-direction: row; align-items: center; gap: 12px }
+  .tl-binny-tile { flex: none; inline-size: 64px; block-size: 64px; min-block-size: 0; padding: 6px; border-radius: 50% }
+  .tl-binny-tile svg { block-size: 50px }
+  .tl-say { flex: 1; padding: 8px 12px; font-size: 14px }
 
-  .tl-level-n { font-size: 48px }
-  .tl-xp-n { font-size: 28px }
-  .tl-bar { margin-block-start: 16px }
-  .tl-week { padding-block-start: 18px }
-  .tl-week-n { font-size: 30px }
-  .tl-week-head { margin-block-end: 12px }
-  .tl-strip { gap: 5px }
-  .tl-day { min-block-size: 64px; padding: 8px 2px; align-items: center; gap: 6px; border-radius: 12px }
+  .tl-level-row { flex-wrap: nowrap; align-items: baseline }
+  .tl-level-n { font-size: 40px }
+  .tl-xp { gap: 6px }
+  .tl-xp-n { font-size: 24px }
+  .tl-xp-u { padding: 4px 6px; font-size: 11px }
+  .tl-bar { margin-block-start: 12px; block-size: 10px }
+  .tl-bar-label { margin-block-start: 6px; font-size: 13px }
+  .tl-week {
+    inline-size: auto; padding-inline-start: 0; padding-block-start: 14px;
+    border-inline-start: 0; border-block-start: 1px solid var(--border-subtle);
+  }
+  .tl-week-n { font-size: 28px }
+  .tl-week-meta { font-size: 12px; white-space: nowrap }
+  .tl-week-head { margin-block-end: 10px; gap: 2px 12px }
+  .tl-week-body { margin-block: -2px 10px; font-size: 14px }
+  .tl-strip { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px }
+  .tl-day { gap: 5px }
+  .tl-xp-col { block-size: 34px }
+  .tl-xp-bar { inline-size: 10px; block-size: calc(var(--xp, 0) * 22px) }
   .tl-day-w { letter-spacing: 0 }
-  .tl-day-d { font-size: 20px }
-  .tl-day.is-today { outline-offset: 2px }
+  .tl-day-d { inline-size: 100%; max-inline-size: 44px; border-radius: 12px; font-size: 17px }
   .tl-wide { display: none }
   .tl-narrow { display: inline }
 
-  .tl-today { margin-block-start: 32px }
-  .tl-h2 { font-size: 26px; margin-block-end: 12px }
+  .tl-today { margin-block-start: 24px }
+  .tl-h2 { font-size: 22px; margin-block-end: 8px }
   .tl-today-card { padding: 6px }
-  .tl-item { flex-wrap: wrap; gap: 12px 14px; padding: 14px }
-  .tl-item-text { flex: 1 1 calc(100% - 58px) }
+  .tl-item { flex-wrap: wrap; align-items: flex-start; gap: 12px; padding: 14px 12px }
+  .tl-item-ico { inline-size: 36px; block-size: 36px; border-radius: 11px }
+  .tl-item-text { flex: 1 1 calc(100% - 48px) }
   .tl-item-title { font-size: 18px }
-  .tl-item > .tl-btn, .tl-item-act { margin-inline-start: 58px }
+  .tl-item > .tl-btn, .tl-item-act { margin-inline-start: 48px }
   .tl-item .tl-item-body { display: none }
   :is(
     .sh-root[data-today^="marking"] [data-today-item="marking"],
@@ -326,29 +389,50 @@
     .sh-root[data-today^="correct"] [data-today-item="correct"],
     .sh-root[data-today^="first-paper"] [data-today-item="first-paper"]
   ) {
-    padding-block: 18px;
-    & .tl-item-title { font-size: 21px }
-    & .tl-item-body { display: block }
-    & .tl-btn { inline-size: calc(100% - 58px) }
+    padding-block: 16px;
+    & .tl-item-title { font-size: 19px; text-wrap: wrap }
+    & .tl-item-meta { font-size: 12px }
+    & .tl-btn { inline-size: calc(100% - 48px) }
   }
 
+  .tl-fixnext { margin-block-start: 32px }
+  .tl-h2-sm { font-size: 22px }
+  .tl-sec-head { margin-block-end: 10px }
+  /* Fix-next cards scroll sideways with snap; the row bleeds to the frame edge. */
+  .tl-fix-row {
+    grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 74%;
+    gap: 12px; overflow-x: auto; overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory; scroll-padding-inline: var(--tl-pad);
+    margin-inline: calc(var(--tl-pad) * -1); padding: 2px var(--tl-pad) 8px;
+    scrollbar-width: thin; scrollbar-color: var(--border-control) transparent;
+  }
+  .tl-fix { scroll-snap-align: start }
+
   .tl-record { grid-template-columns: minmax(0, 1fr); margin-block-start: 32px; gap: 20px }
-  .tl-record-side { gap: 20px }
-  .tl-ledger, .tl-weak, .tl-result { padding: 16px 18px }
+  .tl-ledger, .tl-recent { padding: 16px 18px }
+  .tl-res {
+    grid-template-columns: minmax(0, 1fr) auto 28px;
+    grid-template-areas: "paper marks chip" "date marks chip";
+    column-gap: 12px; row-gap: 0;
+  }
+  .tl-res-paper { grid-area: paper }
+  .tl-res-date { grid-area: date; text-align: start }
+  .tl-res-marks { grid-area: marks }
+  .tl-res .tl-chip { grid-area: chip }
   .tl-subj {
     grid-template-columns: 36px auto minmax(0, 1fr);
-    grid-template-areas: "chip name name" "chip delta delta" "chip papers exam";
+    grid-template-areas: "chip name name" "chip delta delta" "chip papers exam" "chip spark spark";
     align-items: start; column-gap: 12px; row-gap: 2px;
   }
   .tl-chip { align-self: center }
   .tl-subj-papers, .tl-subj-exam { text-align: start; margin-block-start: 2px }
-  .tl-skel-binny { min-block-size: 112px; inline-size: 112px; border-radius: 50% }
-  .tl-skel-stack { grid-area: auto }
-  .tl-skel-week span { block-size: 64px }
+  .tl-skel-binny { min-block-size: 72px; inline-size: 72px; border-radius: 50% }
+  .tl-skel-stack { grid-column: auto }
+  .tl-skel-week span { block-size: 44px }
 }
 
 @media (pointer: coarse) {
-  .tl :is(.tl-link, .tl-subj, .tl-mark) { min-block-size: 44px }
+  .tl :is(.tl-link, .tl-subj, .tl-res, .tl-btn-sm) { min-block-size: 44px }
 }
 
 @keyframes tlBob { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-7px) } }
