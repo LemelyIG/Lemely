@@ -124,6 +124,9 @@ export function toHex(rgb: readonly [number, number, number]): string {
   )
 }
 
+/** Names `readTokenBlock` skipped because they declare an alpha, per returned map. */
+const ALPHA_TOKENS = new WeakMap<Map<string, [number, number, number]>, Set<string>>()
+
 /**
  * Parses every `--name: oklch(L C H)` declaration out of a top-level CSS
  * block, located by its selector text (e.g. `:root` or
@@ -155,12 +158,23 @@ export function readTokenBlock(css: string, selector: string): Map<string, [numb
   const block = css.slice(start, end === -1 ? undefined : end)
 
   const tokens = new Map<string, [number, number, number]>()
+  const withAlpha = new Set<string>()
+  ALPHA_TOKENS.set(tokens, withAlpha)
   const pattern =
-    /--([\w-]+):\s*(?:oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*(?:\/\s*[\d.]+%?\s*)?\)|(#[0-9a-fA-F]{6})\b)/g
+    /--([\w-]+):\s*(?:oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*(\/\s*[\d.]+%?\s*)?\)|(#[0-9a-fA-F]{6})\b)/g
   for (const match of block.matchAll(pattern)) {
+    // A token with an alpha is left out of the map, not parsed with its alpha
+    // dropped: the consumers (manifest, theme-color meta, icons, the pre-mount
+    // shell) need an opaque `#rrggbb`, and silently turning a translucent token
+    // (`--md-scrim`) into an opaque colour is a bug. `tokenHex` throws on a
+    // request for one; other tokens in the same block stay readable.
+    if (match[5]) {
+      withAlpha.add(match[1])
+      continue
+    }
     tokens.set(
       match[1],
-      match[5] ? hexToOklch(match[5]) : [Number(match[2]), Number(match[3]), Number(match[4])],
+      match[6] ? hexToOklch(match[6]) : [Number(match[2]), Number(match[3]), Number(match[4])],
     )
   }
   return tokens
@@ -192,6 +206,12 @@ export function tokenHex(name: string, theme: "light" | "dark" = "light"): strin
   const selector = SELECTOR_FOR_THEME[theme]
   const tokens = readTokenBlock(readFileSync(INDEX_CSS, "utf8"), selector)
   const value = tokens.get(name)
+  if (!value && ALPHA_TOKENS.get(tokens)?.has(name)) {
+    throw new Error(
+      `brandTokens: \`--${name}\` in ${selector} of ${INDEX_CSS} declares an alpha, and build-time ` +
+        "colours are opaque hex. Read a token without alpha, or resolve the alpha against its backdrop first.",
+    )
+  }
   if (!value) {
     throw new Error(
       `brandTokens: \`--${name}\` is not declared as an oklch() or #rrggbb value in ${selector} of ` +
