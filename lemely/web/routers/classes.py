@@ -26,6 +26,7 @@ authenticated student's own id, never a caller-supplied one (D1.6).
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, NoReturn
 
@@ -42,7 +43,13 @@ from lemely.core.class_analytics import (
     rank_topic_weaknesses,
     topic_student_heatmap,
 )
-from lemely.core.history import HistoryStoreProtocol, StudentHistory, latest_grade_bearing
+from lemely.core.history import (
+    HistoryStoreProtocol,
+    PaperRecord,
+    StudentHistory,
+    grade_bearing,
+    latest_grade_bearing,
+)
 from lemely.db.at_risk_repo import AtRiskAcknowledgementRow, AtRiskAckService
 from lemely.db.class_exclusion_repo import ClassExclusionRepository, ExclusionTargetNotFoundError
 from lemely.db.class_history import ClassScopedHistoryStore, load_roster_histories
@@ -185,6 +192,83 @@ def _latest_activity(histories: list[StudentHistory]) -> str | None:
     )
 
 
+def _median_grade(grades: list[str]) -> str | None:
+    """Median of CAIE letter grades, or ``None`` for an empty list.
+
+    Grades are ordered best first (``A*`` .. ``U``). With an even count the two
+    middle grades can differ; this takes the *lower* of them, the conservative
+    reading: a class card should never claim a better typical grade than half
+    its graded students actually reached. A median of letters (unlike a mean)
+    is always one of the grades a student really holds, so it adds no invented
+    precision (D3.12's objection to averaging letter grades).
+    """
+    if not grades:
+        return None
+    ordered = sorted(grades, key=_GRADE_ORDER.index)
+    return ordered[len(ordered) // 2]
+
+
+@dataclass(frozen=True)
+class _ClassCardTrend:
+    """The teacher-home class-card fields derived from one roster-history pass."""
+
+    grade: str | None
+    delta: float | None
+    last_paper: str | None
+    top_weakness_accuracy: float | None
+
+
+def _class_card_trend(histories: list[StudentHistory], top_weakness: str | None) -> _ClassCardTrend:
+    """Grade chip, trend and weak-topic accuracy for one class card.
+
+    Grade-bearing papers only, the same filter ``_average_for`` applies, so a
+    quiz never moves a grade, a delta or the "last paper" label:
+
+    - ``grade``: :func:`_median_grade` of each student's latest paper grade.
+    - ``delta``: mean of the latest papers minus mean of the previous papers,
+      in percentage points to 1 dp, over students who have a previous paper in
+      the latest paper's subject (``_previous_grade``'s rule: a Maths paper is
+      not a "previous" Physics paper). ``None`` when no student has two.
+    - ``last_paper``: ``"P<n>"`` of the class's most recent paper.
+    - ``top_weakness_accuracy``: mean ``WeakArea.accuracy`` (0-1, 3 dp) of
+      ``top_weakness`` across the latest papers that list it.
+    """
+    latest: list[PaperRecord] = []
+    latest_pairs: list[tuple[float, float]] = []
+    for history in histories:
+        bearing = grade_bearing(history.records)
+        if not bearing:
+            continue
+        newest = bearing[-1]
+        latest.append(newest)
+        same_subject = [
+            r for r in bearing if r.metadata.subject_code == newest.metadata.subject_code
+        ]
+        if len(same_subject) >= 2:
+            latest_pairs.append((newest.percentage, same_subject[-2].percentage))
+
+    delta = None
+    if latest_pairs:
+        now_mean = sum(pair[0] for pair in latest_pairs) / len(latest_pairs)
+        before_mean = sum(pair[1] for pair in latest_pairs) / len(latest_pairs)
+        delta = round(now_mean - before_mean, 1)
+
+    most_recent = max(latest, key=lambda r: r.recorded_at, default=None)
+
+    accuracies = [
+        area.accuracy
+        for record in latest
+        for area in record.weak_areas
+        if top_weakness is not None and area.topic == top_weakness
+    ]
+    return _ClassCardTrend(
+        grade=_median_grade([r.grade for r in latest]),
+        delta=delta,
+        last_paper=f"P{most_recent.metadata.paper_number}" if most_recent else None,
+        top_weakness_accuracy=(round(sum(accuracies) / len(accuracies), 3) if accuracies else None),
+    )
+
+
 def _class_subject_name(code: str | None) -> str | None:
     """Human name for a class's subject code, or ``None`` when the class has none set.
 
@@ -231,6 +315,8 @@ def _class_row_to_summary(
         if assess_at_risk(h, now=now, targets=targets_by_student.get(h.student_id)).flags
     )
     ranked = rank_topic_weaknesses(histories)
+    top_weakness = ranked[0].topic if ranked else None
+    card = _class_card_trend(histories, top_weakness)
     return ClassSummaryDTO(
         id=str(row.class_id),
         label=row.name,
@@ -242,7 +328,11 @@ def _class_row_to_summary(
         joinCode=row.join_code,
         atRiskCount=at_risk_count,
         lastActivityAt=_latest_activity(histories),
-        topWeakness=ranked[0].topic if ranked else None,
+        topWeakness=top_weakness,
+        grade=card.grade,
+        delta=card.delta,
+        lastPaper=card.last_paper,
+        topWeaknessAccuracy=card.top_weakness_accuracy,
     )
 
 

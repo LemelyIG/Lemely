@@ -422,6 +422,17 @@ class ClassSummaryDTO(ApiModel):
     atRiskCount: int | None = None
     lastActivityAt: str | None = None
     topWeakness: str | None = None
+    # Teacher-home class-card fields (``_class_card_trend``), grade-bearing
+    # papers only. ``grade`` is the median of each student's latest paper
+    # grade (lower middle on an even count), not an average of letters;
+    # ``delta`` is percentage points between the latest and previous papers'
+    # means over students with both; ``lastPaper`` is "P<n>" of the class's
+    # newest paper; ``topWeaknessAccuracy`` is 0-1 over the latest papers
+    # listing ``topWeakness``. ``None`` whenever the data is absent.
+    grade: str | None = None
+    delta: float | None = None
+    lastPaper: str | None = None
+    topWeaknessAccuracy: float | None = None
 
 
 class ClassListDTO(ApiModel):
