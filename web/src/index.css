@@ -470,6 +470,15 @@ body {
   outline-offset: 2px;
   border-radius: 2px;
 }
+/* Inside an inverse panel the ring sits on inverse-surface, where `primary`
+   is the same hue family as the fill and all but vanishes; `inverse-primary`
+   is the role built for that surface. Descendants only: an element that IS
+   the inverse fill (the `ink` button) draws its ring on the page surface
+   outside it, where `primary` is still right. Pinned by
+   tests/test_design_tokens.py (focus ring clears 3:1 where it can sit). */
+.bg-inverse-surface :focus-visible {
+  --focus-ring: var(--md-inverse-primary);
+}
 
 /* ── §6.1 touch-target floor ───────────────────────────────────────────────
    Hallmark mobile non-negotiable: touch targets >=44x44.

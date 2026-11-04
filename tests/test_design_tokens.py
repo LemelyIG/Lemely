@@ -78,6 +78,19 @@ PAIRS = [
     ("on-tertiary-container", "tertiary-container"),
     ("on-error-container", "error-container"),
     ("inverse-on-surface", "inverse-surface"),
+    ("inverse-primary", "inverse-surface"),
+    ("on-success-container", "success-container"),
+    ("on-error", "error"),
+]
+# Surfaces a focus ring can be drawn on (the ring is offset 2px outside the
+# element, so it lands on whatever the element sits on).
+RING_SURFACES = [
+    *SURFACES,
+    "primary-container",
+    "secondary-container",
+    "tertiary-container",
+    "error-container",
+    "success-container",
 ]
 
 
@@ -103,6 +116,41 @@ def test_on_roles_clear_aa_on_their_fill(theme: str, text: str, fill: str) -> No
     s = _scheme(theme)
     ratio = _contrast(s[text], s[fill])
     assert ratio >= 4.5, f"{theme}: {text} on {fill} is {ratio:.2f}:1"
+
+
+def _focus_ring_role(selector: str) -> str:
+    """The ``--md-*`` role a CSS rule assigns to ``--focus-ring``."""
+    css = INDEX_CSS.read_text()
+    for match in re.finditer(re.escape(selector) + r"\s*\{(.*?)\}", css, re.S):
+        role = re.search(r"--focus-ring:\s*var\(--md-([a-z0-9-]+)\)", match.group(1))
+        if role:
+            return role.group(1)
+    raise AssertionError(f"no --focus-ring: var(--md-*) under {selector} in index.css")
+
+
+def _ring_failures(scheme: dict[str, str], ring: str, surfaces: list[str]) -> list[str]:
+    return [
+        f"{ring} ring on {surface} is {_contrast(scheme[ring], scheme[surface]):.2f}:1"
+        for surface in surfaces
+        if _contrast(scheme[ring], scheme[surface]) < 3.0
+    ]
+
+
+def test_ring_check_goes_red_for_a_low_contrast_ring() -> None:
+    # The default ring on an inverse panel is the case the inverse rule exists for.
+    s = _scheme("light")
+    assert _ring_failures(s, "primary", ["inverse-surface"])
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_focus_ring_clears_3_to_1_on_every_surface_it_can_sit_on(theme: str) -> None:
+    """WCAG 1.4.11: the focus indicator needs 3:1 against what it is drawn on."""
+    s = _scheme(theme)
+    default_ring = _focus_ring_role(":root")
+    inverse_ring = _focus_ring_role(".bg-inverse-surface :focus-visible")
+    failures = _ring_failures(s, default_ring, RING_SURFACES)
+    failures += _ring_failures(s, inverse_ring, ["inverse-surface"])
+    assert not failures, f"{theme}: " + "; ".join(failures)
 
 
 @pytest.mark.parametrize("grade", ["a-star", "a", "b", "c", "d", "e", "u"])
