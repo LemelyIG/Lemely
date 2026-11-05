@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
+import { createElement } from "react"
+import { renderToStaticMarkup } from "react-dom/server"
+import { MemoryRouter } from "react-router-dom"
 import { describe, expect, it } from "vitest"
+
+import { backgroundState, underlyingPathname } from "@/lib/nav/backgroundLocation"
+import { useOverlayState } from "@/lib/nav/useOverlayState"
+import { resolveTrail } from "@/portals/teacher/data"
 
 import { teacherRoute } from "@/portals/teacher"
 import {
@@ -89,5 +96,41 @@ describe("teacher profile sheet", () => {
     ["platform_admin", "Platform Admin"],
   ])("labels role %s as %s", (role, label) => {
     expect(roleLabel(role)).toBe(label)
+  })
+})
+
+describe("settings opens over the current page", () => {
+  it("Edit profile and Settings both open the default (Profile) tab", () => {
+    expect(PROFILE_EDIT_TO).toBe("/teacher/settings")
+    expect(SETTINGS_TO).toBe("/teacher/settings")
+  })
+
+  it("useOverlayState carries the current page as the background location", () => {
+    let seen: unknown = null
+    function Probe() {
+      seen = useOverlayState()
+      return null
+    }
+    renderToStaticMarkup(
+      createElement(MemoryRouter, { initialEntries: ["/teacher/classes?x=1#top"] }, createElement(Probe)),
+    )
+    expect(seen).toEqual({
+      backgroundLocation: { pathname: "/teacher/classes", search: "?x=1", hash: "#top" },
+    })
+  })
+
+  it("the top-bar title follows the page under the dialog, not Settings", () => {
+    const state = backgroundState({ pathname: "/teacher", search: "", hash: "" })
+    const under = underlyingPathname({ pathname: SETTINGS_TO, state, overlayBase: "/teacher/settings" })
+    expect(under).toBe("/teacher")
+    expect(resolveTrail(under)).toEqual([{ label: "Overview" }])
+    // A direct load has no background: the trail falls back to Settings itself.
+    expect(
+      underlyingPathname({ pathname: SETTINGS_TO, state: null, overlayBase: "/teacher/settings" }),
+    ).toBe(SETTINGS_TO)
+    // Outside the overlay the pathname is untouched, state or not.
+    expect(
+      underlyingPathname({ pathname: "/teacher/classes", state, overlayBase: "/teacher/settings" }),
+    ).toBe("/teacher/classes")
   })
 })

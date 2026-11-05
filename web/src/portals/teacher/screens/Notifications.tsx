@@ -22,6 +22,7 @@ import {
   staffTypeLabel,
 } from "@/lib/staffInbox"
 import { formatAge } from "@/portals/student/screens/Notifications"
+import { useOverlayState } from "@/lib/nav/useOverlayState"
 import { cn } from "@/lib/utils"
 
 /*
@@ -107,6 +108,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
 
 export function TeacherNotifications() {
   const query = useNotifications()
+  const overlayState = useOverlayState()
   const markAll = useMarkAllNotificationsRead()
 
   return (
@@ -125,6 +127,7 @@ export function TeacherNotifications() {
         </div>
         <Link
           to="/teacher/settings/notifications"
+          state={overlayState}
           className="text-body-sm text-on-primary-container hover:underline"
         >
           Notification settings

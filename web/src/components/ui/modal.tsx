@@ -176,7 +176,7 @@ export function Modal({
       {/* Scrim: DESIGN.md §7's exact token, one step below the panel on the
           fixed z-scale (§7's z-scrim), click-to-dismiss. */}
       <div
-        className="fixed inset-0 z-scrim bg-[var(--scrim)] motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
+        className="fixed inset-0 z-scrim bg-scrim motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
         aria-hidden="true"
         onClick={dismissible ? onClose : undefined}
       />

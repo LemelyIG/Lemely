@@ -44,8 +44,10 @@ import { useReviewQueueCount } from "@/lib/hooks/useReviewQueueCount"
 import { unreadBadgeLabel } from "@/lib/staffInbox"
 import { navItems, resolveTrail, classesItemActive, type NavItem } from "./data"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
-import { CreateSheet, ProfileSheet } from "./components/TopBarSheets"
+import { CreateSheet } from "./components/TopBarSheets"
 import { roleLabel } from "./components/topBarActions"
+import { underlyingPathname } from "@/lib/nav/backgroundLocation"
+import { useOverlayState } from "@/lib/nav/useOverlayState"
 import { TEACHER_SETTINGS_TABS } from "@/portals/settings/settingsTabs"
 
 const TEACHER_SETTINGS_BASE = "/teacher/settings"
@@ -99,6 +101,10 @@ const TeacherNotifications = lazy(() =>
 // barrel: importing them all through one barrel module means a chunk
 // containing any one of them pulls in the code for all of them, defeating the
 // per-screen splitting this whole file otherwise does.
+// Loaded on its own so Radix's menu stays out of the entry chunk's budget.
+const ProfileMenu = lazy(() =>
+  import("./components/ProfileMenu").then((m) => ({ default: m.ProfileMenu })),
+)
 const SettingsModalRoute = lazy(() =>
   import("@/portals/settings/SettingsModal").then((m) => ({
     default: m.SettingsModalRoute,
@@ -403,7 +409,16 @@ const TOP_BAR_ICON_BUTTON =
 
 function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
   const location = useLocation()
-  const trail = resolveTrail(location.pathname)
+  const overlayState = useOverlayState()
+  // While Settings is a dialog, the page underneath is still the page: the
+  // title and trail follow the background location, not "/teacher/settings".
+  const trail = resolveTrail(
+    underlyingPathname({
+      pathname: location.pathname,
+      state: location.state,
+      overlayBase: TEACHER_SETTINGS_BASE,
+    }),
+  )
   const title = trail[trail.length - 1]?.label ?? "Overview"
   const { data: counts } = useNotificationCounts()
   const unread = unreadBadgeLabel(counts)
@@ -445,10 +460,12 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
             </span>
           ) : null}
         </Link>
-        <Link to="/teacher/settings" aria-label="Settings" className={TOP_BAR_ICON_BUTTON}>
+        <Link to="/teacher/settings" state={overlayState} aria-label="Settings" className={TOP_BAR_ICON_BUTTON}>
           <Gear size={20} aria-hidden="true" />
         </Link>
-        <ProfileSheet triggerClassName="cursor-pointer" />
+        <Suspense fallback={null}>
+          <ProfileMenu triggerClassName="cursor-pointer" />
+        </Suspense>
       </div>
       {/* The D1.5 back affordance: one crumb is just the page's own name, which
           the title already says, so the trail renders only when drilled in. */}

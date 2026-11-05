@@ -87,6 +87,24 @@ export function resolveBackground(input: {
   return { location: { pathname: input.fallbackPath, search: "", hash: "" }, source: "fallback" }
 }
 
+/**
+ * The pathname that names "the page" for chrome such as a title or trail.
+ * While an overlay is open that is the page underneath it (from router
+ * state), not the overlay's own URL; otherwise it is `pathname` itself.
+ */
+export function underlyingPathname(input: {
+  pathname: string
+  state: unknown
+  overlayBase: string
+}): string {
+  if (!isWithinBase(input.pathname, input.overlayBase)) return input.pathname
+  const background = readBackgroundLocation(input.state)
+  if (background && !isWithinBase(background.pathname, input.overlayBase)) {
+    return background.pathname
+  }
+  return input.pathname
+}
+
 export type OverlayCloseAction = { kind: "back" } | { kind: "replace"; to: string }
 
 /**

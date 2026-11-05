@@ -1,20 +1,15 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import type { ReactNode } from "react"
-import { Link, useNavigate } from "react-router-dom"
+import { Link } from "react-router-dom"
 import {
   Books,
-  Gear,
-  Lifebuoy,
   Megaphone,
   Plus,
-  SignOut,
   Sparkle,
-  UserCircle,
   UsersThree,
   X,
   type Icon,
 } from "@phosphor-icons/react"
-import { Avatar } from "@/components/ui/avatar"
 import {
   Sheet,
   SheetClose,
@@ -22,15 +17,9 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet"
-import { useAuth } from "@/lib/auth/AuthContext"
-import { useProfile } from "@/lib/hooks/useMeApi"
 import { cn } from "@/lib/utils"
 import {
   CREATE_ACTIONS,
-  HELP_HREF,
-  PROFILE_EDIT_TO,
-  SETTINGS_TO,
-  roleLabel,
   type CreateActionIcon,
 } from "./topBarActions"
 
@@ -41,7 +30,7 @@ const ACTION_ICON: Record<CreateActionIcon, Icon> = {
   class: UsersThree,
 }
 
-const FOCUS_RING =
+export const FOCUS_RING =
   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
 
 /** Light: the lowest container, like every panel. Dark: one step up so it lifts off the page. */
@@ -66,7 +55,7 @@ function CloseButton() {
   )
 }
 
-function IconTile({ children }: { children: ReactNode }) {
+export function IconTile({ children }: { children: ReactNode }) {
   return (
     <span className="flex h-10 w-10 flex-none items-center justify-center rounded-md bg-primary-container text-primary">
       {children}
@@ -111,82 +100,6 @@ export function CreateSheet({ triggerClassName }: { triggerClassName: string }) 
               </li>
             )
           })}
-        </ul>
-      </SheetContent>
-    </Sheet>
-  )
-}
-
-/**
- * The signed-in teacher's avatar at the end of the top bar, opening their
- * account sheet. Name, email and role all come from `GET /api/me/profile`;
- * nothing renders until it resolves rather than a placeholder person.
- */
-export function ProfileSheet({ triggerClassName }: { triggerClassName?: string }) {
-  const { data } = useProfile()
-  const { logout } = useAuth()
-  const navigate = useNavigate()
-  if (!data) return null
-  const name = data.displayName ?? data.email.split("@")[0]
-
-  return (
-    <Sheet>
-      <SheetTrigger
-        aria-label={`Your profile and account, ${name}`}
-        className={cn("flex-none rounded-lg", FOCUS_RING, triggerClassName)}
-      >
-        <Avatar name={name} src={data.avatarUrl ?? undefined} size="sm" className="h-9 w-9 pointer-coarse:h-11 pointer-coarse:w-11" />
-      </SheetTrigger>
-      <SheetContent side="adaptive" showCloseButton={false} aria-describedby={undefined} className={SHEET_SURFACE}>
-        <CloseButton />
-        <p className="text-eyebrow text-on-surface-variant">Account</p>
-        <div className="mb-3 mt-1 flex items-center gap-3 pe-12">
-          <Avatar name={name} src={data.avatarUrl ?? undefined} size="md" />
-          <div className="min-w-0">
-            <SheetTitle className="truncate text-display-xs">{name}</SheetTitle>
-            <p className="truncate text-body-sm text-on-surface-variant">{data.email}</p>
-            <p className="text-body-sm text-on-surface-variant">{roleLabel(data.role)}</p>
-          </div>
-        </div>
-        <ul className="flex flex-col gap-1 border-t border-outline-variant pt-3">
-          <li>
-            <SheetClose asChild>
-              <Link to={PROFILE_EDIT_TO} className={ROW}>
-                <IconTile><UserCircle size={20} aria-hidden="true" /></IconTile>
-                <span className="text-label">Edit profile</span>
-              </Link>
-            </SheetClose>
-          </li>
-          <li>
-            <SheetClose asChild>
-              <Link to={SETTINGS_TO} className={ROW}>
-                <IconTile><Gear size={20} aria-hidden="true" /></IconTile>
-                <span className="text-label">Settings</span>
-              </Link>
-            </SheetClose>
-          </li>
-          <li>
-            <a href={HELP_HREF} className={ROW}>
-              <IconTile><Lifebuoy size={20} aria-hidden="true" /></IconTile>
-              <span className="min-w-0">
-                <span className="block text-label">Help and feedback</span>
-                <span className="block text-body-sm text-on-surface-variant">Email the Lemely team</span>
-              </span>
-            </a>
-          </li>
-          <li>
-            <button
-              type="button"
-              onClick={() => {
-                logout()
-                navigate("/login", { replace: true })
-              }}
-              className={cn(ROW, "w-full cursor-pointer border-0 bg-transparent text-start")}
-            >
-              <IconTile><SignOut size={20} aria-hidden="true" /></IconTile>
-              <span className="text-label">Sign out</span>
-            </button>
-          </li>
         </ul>
       </SheetContent>
     </Sheet>
