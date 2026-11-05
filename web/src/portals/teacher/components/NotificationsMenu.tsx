@@ -35,7 +35,7 @@ function Row({ notification }: { notification: Notification }) {
     >
       <IconTile><Glyph size={20} aria-hidden="true" /></IconTile>
       <span className="min-w-0 flex-1">
-        <span className={cn("block truncate text-label", unread ? "font-bold" : "font-medium")}>{notification.title}</span>
+        <span className={cn("line-clamp-2 text-label", unread ? "font-bold" : "font-medium")}>{notification.title}</span>
         {notification.body ? (
           <span className="block truncate text-body-sm text-on-surface-variant">{notification.body}</span>
         ) : null}
