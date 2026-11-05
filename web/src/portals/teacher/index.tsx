@@ -429,11 +429,11 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
           `sidebar` breakpoint, so it belongs on the nav layer with the
           sidebar (DESIGN.md §7). Side margins are 16px on mobile, 28px from
           `md`; the page well below carries its own 72px at `lg`. */}
-      <div className="lm-app-header lm-app-header-pt-2.5 lm-nav-chrome sticky top-2 z-nav mx-4 mb-6 mt-2 flex min-h-14 items-center pb-2.5 gap-2 rounded-inner bg-surface-container-lowest pe-3 ps-3 ring-1 ring-outline-variant shadow-[var(--shadow-float)] md:mx-7 md:ps-[18px]">
+      <div className="lm-app-header lm-app-header-pt-2.5 lm-nav-chrome sticky top-2 z-nav mx-4 mb-6 mt-2 flex min-h-14 items-center pb-2.5 gap-0.5 rounded-inner sm:gap-2 bg-surface-container-lowest pe-1 ps-2 ring-1 ring-outline-variant shadow-[var(--shadow-float)] md:mx-7 sm:pe-3 sm:ps-3 md:ps-[18px]">
         <NavDrawerTrigger
           onClick={onOpenNav}
           label="Open teacher navigation"
-          className="-ms-1 sidebar:hidden"
+          className="-ms-2 sidebar:hidden"
         />
         <p className="min-w-0 truncate text-display-sm text-on-surface">
           {title}
@@ -442,7 +442,7 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
         <CreateSheet triggerClassName="inline-flex h-9 flex-none cursor-pointer items-center gap-[7px] rounded-chip bg-secondary-container px-3 btn-text text-on-secondary-container transition-colors hover:bg-secondary-container/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:px-3.5 pointer-coarse:h-11" />
         <Link
           to="/teacher/grading"
-          className="me-0 sm:me-2.5 inline-flex h-9 flex-none items-center gap-[7px] rounded-chip bg-primary px-3 btn-text text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:px-3.5 pointer-coarse:h-11"
+          className="me-0 sm:me-2.5 inline-flex h-9 flex-none items-center gap-[7px] rounded-chip bg-primary px-3 btn-text text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary max-sm:justify-center sm:px-3.5 pointer-coarse:h-11 max-sm:pointer-coarse:w-11 max-sm:pointer-coarse:px-0"
         >
           <UploadSimple size={16} aria-hidden="true" />
           <span className="hidden sm:inline">Upload papers</span>
@@ -460,7 +460,9 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
             </span>
           ) : null}
         </Link>
-        <Link to="/teacher/settings" state={overlayState} aria-label="Settings" className={TOP_BAR_ICON_BUTTON}>
+        {/* Below `sm` the bar has no room for a title beside six 44px targets, so
+            the gear folds into the profile menu (which carries Settings). */}
+        <Link to="/teacher/settings" state={overlayState} aria-label="Settings" className={cn(TOP_BAR_ICON_BUTTON, "max-sm:hidden")}>
           <Gear size={20} aria-hidden="true" />
         </Link>
         <Suspense fallback={null}>
