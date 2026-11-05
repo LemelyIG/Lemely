@@ -343,7 +343,7 @@
 .rb-topic {
   position: relative; z-index: 1;
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 4px 10px 4px 5px; border-radius: var(--radius-pill);
+  padding-block: 4px; padding-inline-start: 5px; padding-inline-end: 10px; border-radius: var(--radius-pill);
   background: var(--surface-card); border: 1px solid var(--border-default);
   color: var(--text-body); text-decoration: none;
   transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast);
@@ -364,8 +364,11 @@
 }
 .rb-topic-d .rb-ico { inline-size: 13px; block-size: 13px; stroke-width: 2.2; }
 .rb-topic-d.is-up { color: var(--rb-up); }
-.rb-btn--tonal { position: relative; z-index: 1; background: var(--md-primary); color: var(--md-on-primary); }
-.rb-btn--tonal:hover { background: var(--md-primary-hover); }
+/* DESIGN.md tonal button: the hero keeps the only filled primary. */
+.rb-btn--tonal { position: relative; z-index: 1; background: var(--md-primary-container); color: var(--md-on-primary-container); }
+.rb-btn--tonal:hover { background: color-mix(in oklch, var(--md-primary-container), var(--md-primary) 10%); }
+.rb-lane.is-closest .rb-btn--tonal { background: var(--surface-card); color: var(--md-primary); }
+.sh-root[data-theme="dark"] .rb-lane.is-closest .rb-btn--tonal { background: var(--md-surface-low); color: var(--md-on-primary-container); }
 .rb-btn--sm { min-block-size: 34px; padding: 0 var(--space-3); border-radius: var(--radius-chip); font-size: var(--fs-body-sm); }
 .rb-btn--sm .rb-ico { inline-size: 15px; block-size: 15px; }
 .rb-row-fix { grid-column: 1 / -1; margin-block-start: var(--space-2); }
@@ -391,31 +394,15 @@
 .rb-lane:not(.is-closest) .rb-spark-plot { display: none; }
 .sh-root[data-state="one-paper"] .rb-lane:not([data-needs]) .rb-spark-plot { display: block; }
 
-/* Last result lives on the sparkline's end point: hover or focus shows it, the point links to the result. */
-.rb-tip {
-  position: absolute; inline-size: 28px; block-size: 28px; border-radius: 50%;
-  inset-inline-start: calc(var(--x) - 14px); inset-block-start: calc(var(--y) - 14px);
-}
-.rb-tip:dir(rtl) { inset-inline-start: auto; inset-inline-end: calc(var(--x) - 14px); }
-.rb-tip-box {
-  position: absolute; inset-block-end: calc(100% + 6px); inset-inline-end: -8px;
-  display: inline-flex; align-items: center; gap: var(--space-2); white-space: nowrap;
-  padding: 6px 6px 6px 10px; border-radius: var(--radius-chip);
-  background: var(--surface-card); color: var(--text-body); box-shadow: var(--shadow-panel);
-  opacity: 0; transform: translateY(4px); pointer-events: none;
-  transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
-}
-.sh-root[data-theme="dark"] .rb-tip-box { background: var(--md-surface-highest); }
-.rb-tip:is(:hover, :focus-visible) .rb-tip-box { opacity: 1; transform: none; }
-.rb-tip-paper { font: 500 13px/1.2 var(--font-mono); color: var(--text-secondary); }
-.rb-tip-marks { font: 700 var(--fs-data)/1.2 var(--font-mono); font-variant-numeric: tabular-nums; }
-.rb-tip-box .rb-lbl { margin-inline-end: 0; }
+/* Last result: a small always-visible link beside the plain sentence (lanes) or in the row (ledger). */
+.rb-spark-cap .rb-last { justify-self: start; margin-block-start: var(--space-1); }
+.rb-lane.is-closest .rb-last { background: var(--surface-card); }
+.sh-root[data-theme="dark"] .rb-lane.is-closest .rb-last { background: var(--md-surface-low); }
 
-/* Last result inside the no-exams ledger rows. */
 .rb-last {
   position: relative; z-index: 1;
   display: inline-flex; align-items: center; gap: var(--space-2);
-  padding: 5px 6px 5px 10px; border-radius: var(--radius-chip);
+  padding-block: 4px; padding-inline-start: 10px; padding-inline-end: 4px; border-radius: var(--radius-chip);
   background: var(--surface-row); color: var(--text-body); text-decoration: none;
   transition: background var(--dur-fast) var(--ease-out);
 }
@@ -495,7 +482,6 @@
 /* ---------- touch ---------- */
 @media (pointer: coarse) {
   .rb-btn, .rb-lane-link, .rb-last, .rb-topic, .rb-note a, .rb-tab { min-block-size: 44px; }
-  .rb-tip { inline-size: 44px; block-size: 44px; inset-inline-start: calc(var(--x) - 22px); inset-block-start: calc(var(--y) - 22px); }
   .rb-note a, .rb-lane-link { display: inline-flex; align-items: center; }
 }
 
