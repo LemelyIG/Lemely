@@ -1,7 +1,8 @@
 /* Student home, variant C (round 2): "Binny's morning brief".
    The page opens as a short, plain-spoken brief from Binny. Its reply chips are the
    day's actions; progress follows as three "since October" story cards; weak topics are
-   one line of chips; the ledger closes the page quietly. Tokens only, roles only. */
+   one line of chips; the ledger closes the page quietly. Tokens only, roles only.
+   Sizes and radii stay on DESIGN.md's scales (type 64/40/32/21/16/14/11; radii 32/24/20/18/14/12/10/pill). */
 
 .bf {
   --bf-pad: 56px;
@@ -30,18 +31,18 @@
 }
 .bf-binny svg { display: block; inline-size: auto; block-size: 104px; animation: bfBob 3.6s ease-in-out infinite }
 .bf-by { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center }
-.bf-by-name { font: 700 15px/1.3 var(--font-ui); color: var(--text-body) }
-.bf-by-date { font: 600 13px/1.3 var(--font-mono); color: var(--text-secondary) }
+.bf-by-name { font: 700 16px/1.3 var(--font-ui); color: var(--text-body) }
+.bf-by-date { font: 600 14px/1.3 var(--font-mono); color: var(--text-secondary) }
 
 .bf-text { max-inline-size: 820px }
-.bf-hello { font: 600 18px/1.4 var(--font-ui); color: var(--text-secondary) }
+.bf-hello { font: 600 16px/1.4 var(--font-ui); color: var(--text-secondary) }
 .bf-say {
   margin: 10px 0 0;
   font: 800 64px/1.02 var(--font-display); letter-spacing: -0.04em; text-wrap: balance;
   color: var(--text-body);
 }
 .bf-say .bf-code { font-size: 0.8em; letter-spacing: -0.04em }
-.bf-body { margin-block-start: 28px; max-inline-size: 40ch; font: 400 24px/1.45 var(--font-ui); color: var(--text-body); text-wrap: pretty }
+.bf-body { margin-block-start: 28px; max-inline-size: 40ch; font: 400 21px/1.45 var(--font-ui); color: var(--text-body); text-wrap: pretty }
 .bf-body strong { font-weight: 700 }
 .bf-body .bf-code { font-size: 0.86em }
 .bf-inline {
@@ -72,7 +73,7 @@
 }
 .bf-chip:hover { background: var(--surface-hover-tint); border-color: var(--border-control) }
 .bf-chip:active { transform: scale(0.97) }
-.bf-chip-meta { font: 600 13px/1 var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums }
+.bf-chip-meta { font: 600 14px/1 var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums }
 .sh-root[data-state="one-paper"] .bf-chip[data-only-state="one-paper"] { display: inline-flex }
 :is(
   .sh-root[data-today^="marking"] [data-today-item="marking"],
@@ -88,7 +89,7 @@
 }
 
 /* ---------- Since October: three story cards ---------- */
-.bf-h2 { margin: 0 0 20px; font: 800 24px/1.2 var(--font-ui); letter-spacing: var(--ls-headline-ui) }
+.bf-h2 { margin: 0 0 20px; font: 800 21px/1.2 var(--font-ui); letter-spacing: var(--ls-headline-ui) }
 .bf-since { margin-block-start: 88px }
 .bf-stories { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: stretch }
 .bf-story {
@@ -103,8 +104,8 @@ a.bf-story:hover { background: var(--surface-hover-tint) }
 .sh-root:not([data-state="streak-zero"], [data-state="one-paper"]) .bf-story-streak [data-when-streak="kept"],
 .sh-root:is([data-state="streak-zero"], [data-state="one-paper"]) .bf-story-streak [data-when-streak="zero"] { display: flex }
 .bf-story-t { font: 700 21px/1.3 var(--font-ui); letter-spacing: -0.01em; text-wrap: balance }
-.bf-story-sub { margin-block-start: -18px; font-size: 15px; color: var(--text-secondary); text-wrap: pretty }
-.bf-story-foot { font: 600 13px/1.3 var(--font-mono); color: var(--text-secondary) }
+.bf-story-sub { margin-block-start: -18px; font-size: 14px; color: var(--text-secondary); text-wrap: pretty }
+.bf-story-foot { font: 600 14px/1.3 var(--font-mono); color: var(--text-secondary) }
 
 /* Grade journey stones: past, now, next (dashed, the goal). */
 .bf-stones { position: relative; list-style: none; margin: auto 0 0; padding: 0; display: flex; justify-content: space-between; align-items: flex-end; max-inline-size: 260px }
@@ -113,14 +114,14 @@ a.bf-story:hover { background: var(--surface-hover-tint) }
   border-block-start: 2px dashed var(--border-control);
 }
 .bf-gstone { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 8px }
-.bf-gstone-l { font: 600 12px/1.2 var(--font-mono); color: var(--text-secondary); white-space: nowrap }
+.bf-gstone-l { font: 600 11px/1.2 var(--font-mono); color: var(--text-secondary); white-space: nowrap }
 .bf-gstone.is-next .bf-gstone-l { color: var(--text-body) }
 .bf-g {
   display: grid; place-items: center; flex: none;
-  inline-size: 44px; block-size: 44px; border-radius: 12px;
-  color: var(--white); font: 800 22px/1 var(--font-ui);
+  inline-size: 44px; block-size: 44px; border-radius: 10px;
+  color: var(--white); font: 800 21px/1 var(--font-ui);
 }
-.bf-gstone.is-past .bf-g { inline-size: 36px; block-size: 36px; margin-block-start: 4px; font-size: 19px }
+.bf-gstone.is-past .bf-g { inline-size: 36px; block-size: 36px; margin-block-start: 4px; font-size: 21px }
 .bf-g-a { background: var(--sh-grade-a) }
 .bf-g-b { background: var(--sh-grade-b) }
 .bf-g-c { background: var(--sh-grade-c) }
@@ -129,7 +130,7 @@ a.bf-story:hover { background: var(--surface-hover-tint) }
 
 /* Before / after pair. */
 .bf-pair { margin-block-start: auto; display: flex; align-items: center; gap: 14px }
-.bf-pair-chip { padding: 10px 16px; border-radius: 14px; font: 600 22px/1 var(--font-mono); font-variant-numeric: tabular-nums }
+.bf-pair-chip { padding: 10px 16px; border-radius: 14px; font: 600 21px/1 var(--font-mono); font-variant-numeric: tabular-nums }
 .bf-pair-chip.is-before { color: var(--text-secondary); border: 1.5px dashed var(--border-control) }
 .bf-pair-chip.is-after { background: var(--md-primary-container); color: var(--md-on-primary-container) }
 .bf-pair-arrow { color: var(--text-muted) }
@@ -143,7 +144,7 @@ a.bf-story:hover { background: var(--surface-hover-tint) }
 .bf-step { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 8px; min-block-size: 82px }
 .bf-bar {
   position: relative; inline-size: 10px; block-size: calc(var(--xp, 0) * 40px);
-  border-radius: 4px 4px 0 0; background: var(--md-tertiary);
+  border-radius: var(--radius-pill) var(--radius-pill) 0 0; background: var(--md-tertiary);
   transform-origin: 50% 100%; animation: bfGrow 700ms var(--bf-ease-x) 250ms both;
 }
 .bf-bar-v { margin-block-end: -4px; font: 600 11px/1 var(--font-mono); color: var(--text-secondary) }
@@ -151,7 +152,7 @@ a.bf-story:hover { background: var(--surface-hover-tint) }
 .bf-step-d {
   display: grid; place-items: center; inline-size: 28px; block-size: 28px; border-radius: 50%;
   background: var(--surface-card); color: var(--text-muted); border: 1.5px solid var(--border-default);
-  font: 600 12px/1 var(--font-mono);
+  font: 600 11px/1 var(--font-mono);
 }
 .bf-step.is-earned .bf-step-d { background: var(--md-tertiary); border-color: var(--md-tertiary); color: var(--sh-gold-text) }
 .sh-root[data-state="one-paper"] .bf-op-empty .bf-step-d { background: var(--surface-card); border-color: var(--border-default); color: var(--text-muted) }
@@ -159,35 +160,35 @@ a.bf-story:hover { background: var(--surface-hover-tint) }
 
 /* ---------- Weak topics: one line and chips ---------- */
 .bf-line-sec { margin-block-start: 56px; display: flex; flex-wrap: wrap; align-items: center; gap: 14px 20px }
-.bf-line { font: 700 18px/1.4 var(--font-ui) }
+.bf-line { font: 700 16px/1.4 var(--font-ui) }
 .bf-topics { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 10px }
 .bf-topic {
   display: inline-flex; align-items: center; gap: 10px; min-block-size: 40px; padding: 0 16px;
   border-radius: var(--radius-pill); background: var(--md-primary-container); color: var(--md-on-primary-container);
-  font: 600 15px/1 var(--font-ui); text-decoration: none;
+  font: 600 14px/1 var(--font-ui); text-decoration: none;
   transition: background var(--dur-fast) var(--ease-out);
 }
 .bf-topic:hover { background: color-mix(in oklch, var(--md-primary-container), var(--md-primary) 12%) }
-.bf-topic-m { font: 600 12px/1 var(--font-mono); color: color-mix(in oklch, var(--md-on-primary-container) 75%, var(--md-primary-container)) }
+.bf-topic-m { font: 600 11px/1 var(--font-mono); color: color-mix(in oklch, var(--md-on-primary-container) 75%, var(--md-primary-container)) }
 
 /* ---------- Ledger: where you stand, recent papers, level ---------- */
 .bf-ledger {
   margin-block-start: 72px; padding-block-start: 36px; border-block-start: 1px solid var(--border-subtle);
   display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 0.75fr); gap: 56px; align-items: start;
 }
-.bf-h3 { margin: 0 0 14px; font: 600 12px/1.2 var(--font-mono); letter-spacing: var(--ls-label); text-transform: uppercase; color: var(--text-secondary) }
+.bf-h3 { margin: 0 0 14px; font: 600 11px/1.2 var(--font-mono); letter-spacing: var(--ls-label); text-transform: uppercase; color: var(--text-secondary) }
 .bf-subjects, .bf-papers { list-style: none; margin: 0; padding: 0 }
 .bf-subjects li + li, .bf-papers li + li { border-block-start: 1px solid var(--border-subtle) }
 .bf-subj { display: grid; grid-template-columns: 32px minmax(0, 1fr); grid-template-areas: "g t" "g m"; column-gap: 14px; align-items: center; padding-block: 11px; color: inherit; text-decoration: none }
 .bf-subj > .bf-g { grid-area: g }
 .sh-root[data-state="one-paper"] .bf-g[data-only-state="one-paper"] { display: grid }
-.bf-g-sm, .bf-g-xs { inline-size: 32px; block-size: 32px; border-radius: 9px; font-size: 19px }
-.bf-g-xs { inline-size: 28px; block-size: 28px; border-radius: 8px }
+.bf-g-sm, .bf-g-xs { inline-size: 32px; block-size: 32px; border-radius: 10px; font-size: 21px }
+.bf-g-xs { inline-size: 28px; block-size: 28px; border-radius: 10px }
 .bf-subj-t { grid-area: t; font: 700 16px/1.3 var(--font-ui); transition: color var(--dur-fast) var(--ease-out) }
-.bf-subj-t .bf-code, .bf-paper-l { font-size: 13px; color: var(--text-secondary) }
+.bf-subj-t .bf-code, .bf-paper-l { font-size: 14px; color: var(--text-secondary) }
 .bf-subj-t .bf-code { margin-inline-end: 4px }
 .bf-subj-m { grid-area: m; font-size: 14px; color: var(--text-secondary) }
-.bf-subj-m .bf-code { font-size: 13px }
+.bf-subj-m .bf-code { font-size: 14px }
 .bf-subj-m .is-up { color: var(--sh-success-text); font-weight: 600 }
 .bf-subj:hover .bf-subj-t { color: var(--md-primary) }
 .bf-note { margin-block-start: 12px; font-size: 14px; color: var(--text-secondary) }
@@ -196,10 +197,10 @@ a.bf-story:hover { background: var(--surface-hover-tint) }
 .bf-paper:hover .bf-paper-l { color: var(--md-primary) }
 .bf-paper-s { font: 600 14px/1 var(--font-mono); font-variant-numeric: tabular-nums }
 .bf-level-n { font: 800 32px/1 var(--font-display); letter-spacing: -0.04em }
-.bf-level-xp { margin-block-start: 6px; font: 600 15px/1.3 var(--font-mono) }
-.bf-meter { margin-block-start: 16px; block-size: 8px; border-radius: 4px; background: var(--track); overflow: hidden }
+.bf-level-xp { margin-block-start: 6px; font: 600 16px/1.3 var(--font-mono) }
+.bf-meter { margin-block-start: 16px; block-size: 8px; border-radius: var(--radius-pill); background: var(--track); overflow: hidden }
 .bf-meter span { display: block; block-size: 100%; inline-size: calc(var(--p, 0) * 100%); border-radius: inherit; background: var(--md-primary) }
-.bf-meter-l { margin-block-start: 8px; font: 600 13px/1.3 var(--font-mono); color: var(--text-secondary) }
+.bf-meter-l { margin-block-start: 8px; font: 600 14px/1.3 var(--font-mono); color: var(--text-secondary) }
 
 /* ---------- New student ---------- */
 .bf-path-sec { margin-block-start: 80px }
@@ -211,15 +212,15 @@ a.bf-story:hover { background: var(--surface-hover-tint) }
 .bf-stone { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 8px; color: var(--text-secondary) }
 .bf-stone-dot { inline-size: 20px; block-size: 20px; border-radius: 50%; background: var(--surface-page); border: 2px solid var(--border-control) }
 .bf-stone.is-now .bf-stone-dot { background: var(--md-primary); border-color: var(--md-primary) }
-.bf-stone-when { font: 600 12px/1 var(--font-mono); letter-spacing: var(--ls-label); text-transform: uppercase }
+.bf-stone-when { font: 600 11px/1 var(--font-mono); letter-spacing: var(--ls-label); text-transform: uppercase }
 .bf-stone.is-now .bf-stone-when { color: var(--md-primary) }
-.bf-stone-t { font: 600 18px/1.35 var(--font-ui); text-wrap: balance }
+.bf-stone-t { font: 600 16px/1.35 var(--font-ui); text-wrap: balance }
 .bf-stone.is-now .bf-stone-t { color: var(--text-body) }
 
 /* ---------- Error and loading ---------- */
 .bf-error { display: grid; justify-items: center; gap: 10px; max-inline-size: 520px; margin: 64px auto 0; text-align: center }
 .bf-error-ico { inline-size: 32px; block-size: 32px; color: var(--md-error) }
-.bf-error-h { margin: 4px 0 0; font: 700 24px/1.25 var(--font-ui) }
+.bf-error-h { margin: 4px 0 0; font: 700 21px/1.25 var(--font-ui) }
 .bf-error-p { margin-block-end: 12px; color: var(--text-secondary); text-wrap: balance }
 .bf-skel { border-radius: 14px; background: var(--md-surface-high); animation: bfPulse 1.2s ease-in-out infinite alternate }
 .bf-skel-binny { inline-size: 132px; block-size: 132px; border-radius: 50%; justify-self: center }
@@ -245,7 +246,7 @@ a.bf-story:hover { background: var(--surface-hover-tint) }
 }
 .bf-tab {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
-  min-block-size: 52px; border-radius: 12px; color: var(--text-secondary); font: 600 12px/1.2 var(--font-ui); text-decoration: none;
+  min-block-size: 52px; border-radius: 12px; color: var(--text-secondary); font: 600 11px/1.2 var(--font-ui); text-decoration: none;
   transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .bf-tab:hover { background: var(--surface-hover-tint); color: var(--text-body) }
@@ -260,18 +261,18 @@ a.bf-story:hover { background: var(--surface-hover-tint) }
   .bf-binny svg { block-size: 46px }
   .bf-by { align-items: flex-start; text-align: start }
   .bf-hello { font-size: 16px }
-  .bf-say { margin-block-start: 6px; font-size: 36px; line-height: 1.05 }
-  .bf-body { margin-block-start: 14px; font-size: 18px; line-height: 1.5 }
+  .bf-say { margin-block-start: 6px; font-size: 40px; line-height: 1.05 }
+  .bf-body { margin-block-start: 14px; font-size: 16px; line-height: 1.5 }
   .bf-replies { margin-block-start: 22px; flex-direction: column; gap: 10px }
   .bf-reply { flex-direction: column }
   .bf-chip { justify-content: space-between; inline-size: 100% }
   .bf-error .bf-chip { inline-size: auto; justify-content: center }
 
   .bf-since { margin-block-start: 56px }
-  .bf-h2 { font-size: 22px; margin-block-end: 14px }
+  .bf-h2 { font-size: 21px; margin-block-end: 14px }
   .bf-stories { grid-template-columns: minmax(0, 1fr); gap: 14px }
   .bf-story { padding: 22px; gap: 22px }
-  .bf-story-t { font-size: 19px }
+  .bf-story-t { font-size: 21px }
 
   .bf-line-sec { margin-block-start: 40px }
   .bf-ledger { grid-template-columns: minmax(0, 1fr); gap: 36px; margin-block-start: 48px }
