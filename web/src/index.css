@@ -460,6 +460,23 @@ body {
   overscroll-behavior-y: contain;
 }
 
+/* Dialogs and sheets lock page scroll by setting `overflow: hidden` on body
+   (react-remove-scroll, attribute `data-scroll-locked`). That makes body a
+   scroll container, so every `position: sticky` shell element (sidebar, top
+   bar) re-anchors to body and jumps by the current scroll offset. Lock the
+   viewport on html instead and clip body, which creates no scroll container,
+   so sticky chrome stays put while the overlay is open. The scrollbar's space
+   stays reserved (scrollbar-gutter) instead of the library's body margin, so
+   the layout does not shift sideways either. */
+html:has(body[data-scroll-locked]) {
+  overflow: hidden;
+  scrollbar-gutter: stable;
+}
+html body[data-scroll-locked] {
+  overflow: clip !important;
+  margin-right: 0 !important;
+}
+
 body {
   margin: 0;
   background: var(--md-surface);

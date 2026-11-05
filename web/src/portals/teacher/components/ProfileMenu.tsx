@@ -34,7 +34,7 @@ export function ProfileMenu({ triggerClassName }: { triggerClassName?: string })
   const name = data.displayName ?? data.email.split("@")[0]
 
   return (
-    <DropdownMenu.Root>
+    <DropdownMenu.Root modal={false}>
       <DropdownMenu.Trigger
         aria-label={`Your profile and account, ${name}`}
         className={cn("flex-none rounded-lg", FOCUS_RING, triggerClassName)}
