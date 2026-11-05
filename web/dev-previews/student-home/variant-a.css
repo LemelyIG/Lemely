@@ -832,7 +832,7 @@
   display: grid; place-items: center; flex: none; inline-size: 32px; block-size: 32px; border-radius: var(--radius-pill);
   background: var(--md-primary-container); color: var(--md-primary); font: 800 var(--fs-body-sm) / 1 var(--font-ui);
 }
-.as-who { display: flex; flex-direction: column; gap: 2px; min-inline-size: 0 }
+.as-who { display: flex; flex-direction: column; gap: var(--space-1); min-inline-size: 0 }
 .as-who b { font: 700 var(--fs-body-sm) / 1.3 var(--font-ui); color: var(--text-body) }
 .as-who small { font: 400 var(--as-fs-nav) / 1.3 var(--font-ui); color: var(--text-muted) }
 
@@ -897,12 +897,12 @@
   display: grid; place-items: center; inline-size: 32px; block-size: 32px; border-radius: var(--radius-chip);
   background: var(--md-primary-container); color: var(--md-primary);
 }
-.as-item-t { display: flex; flex-direction: column; gap: 2px; min-inline-size: 0 }
+.as-item-t { display: flex; flex-direction: column; gap: var(--space-1); min-inline-size: 0 }
 .as-item-t b { font: 600 var(--fs-body-sm) / 1.35 var(--font-ui); color: var(--text-body); text-wrap: pretty }
 .as-item-t small { font: 400 var(--as-fs-nav) / 1.35 var(--font-ui); color: var(--text-muted) }
 .as-item time {
   display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-2);
-  padding-block-start: 2px; font: 600 var(--fs-label) / 1.2 var(--font-mono); color: var(--text-muted);
+  padding-block-start: var(--space-1); font: 600 var(--fs-label) / 1.2 var(--font-mono); color: var(--text-muted);
 }
 .as-item.is-unread b { font-weight: 700 }
 .as-item.is-unread time::after { content: ""; inline-size: 8px; block-size: 8px; border-radius: var(--radius-pill); background: var(--md-primary) }
@@ -950,7 +950,7 @@
 }
 .a-bottombar :is(a, button):hover { background: var(--md-surface-container); color: var(--text-body) }
 .a-bottombar a[aria-current="page"] { background: var(--md-primary-container); color: var(--md-primary) }
-.a-bottombar button[aria-expanded="true"] { background: var(--md-surface-container); color: var(--text-body) }
+.as-app:has(.as-side:popover-open) .a-bottombar button { background: var(--md-surface-container); color: var(--text-body) }
 .a-bottombar .a-ico { inline-size: 22px; block-size: 22px }
 .a-bottombar .as-n { position: absolute; inset-block-start: var(--space-1); inset-inline-start: calc(50% + var(--space-2)); margin: 0; box-shadow: 0 0 0 2px var(--md-surface-low) }
 
@@ -964,14 +964,39 @@
   .a-head-correct { display: none }
 }
 
+/* The sidebar as a floating drawer (drawer range); the mobile query turns it into a sheet. */
+.as-side:popover-open {
+  position: fixed; inset-block: var(--space-2); inset-inline: var(--space-2) auto; margin: 0;
+  inline-size: 280px; max-inline-size: calc(100cqi - var(--space-4)); block-size: auto; max-block-size: none;
+  padding: var(--space-5) var(--space-3) var(--space-3);
+  border: 0; border-radius: var(--radius-card); box-shadow: var(--shadow-panel);
+}
+.as-side:popover-open .as-side-close { display: grid }
+.as-side::backdrop { background: var(--md-scrim) }
+.a-motion .as-side:popover-open { animation: asDrawer var(--dur-slow) var(--a-ease-expo) both }
+.a-motion .as-side:popover-open:dir(rtl) { animation-name: asDrawerRtl }
+.a-motion .as-pop[open] .as-pop-panel { animation: asPanel var(--dur-base) var(--ease-out) both }
+
+/* Drawer range: under 1248px of shell (sidebar 248px + a 1000px page) the page needs
+   its full width, so the sidebar becomes a drawer behind a menu button (the teacher
+   pattern). Container queries cannot read custom properties, hence the literal. */
+.as-menu { display: none; margin-inline-start: calc(var(--space-2) * -1) }
+@container ashell (max-width: 1247px) {
+  .as-app { grid-template-columns: minmax(0, 1fr) }
+  .as-side:not(:popover-open) { display: none }
+  .as-bar { justify-content: flex-start }
+  .as-menu { display: grid }
+  .as-bar-wm { display: inline-flex; margin-inline-end: auto }
+}
+
 /* Mobile: no sidebar. A slim top bar (wordmark, bell, account) scrolls away; the bottom
    bar stays; "More" opens the sidebar as a sheet. */
 @container ashell (max-width: 760px) {
-  .as-app { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto }
-  .as-side:not(:popover-open) { display: none }
+  .as-app { grid-template-rows: minmax(0, 1fr) auto }
+  .as-menu { display: none }
   .as-bar { position: relative; inset-block-start: auto; block-size: 44px; padding-inline: var(--space-3) var(--space-2) }
   .as-bar.is-stuck { box-shadow: none }
-  .as-bar-wm { display: inline-flex; margin-inline-end: auto; padding-inline: var(--space-1) }
+  .as-bar-wm { padding-inline: var(--space-1) }
   .as-pop { position: static }
   .as-pop-panel, .as-pop-me .as-pop-panel { inset-inline: var(--space-2); inset-block-start: calc(100% - var(--space-1)); inline-size: auto }
   .as-main .a-page { padding-block: var(--space-2) var(--space-8) }
@@ -981,24 +1006,22 @@
     padding: var(--space-1) var(--space-2) calc(var(--space-1) + env(safe-area-inset-bottom));
     background: var(--md-surface-low); box-shadow: 0 -1px 0 var(--border-subtle);
   }
+  /* The "More" sheet: the same nav, docked to the bottom of the frame. */
+  .as-side:popover-open {
+    inset-block: auto 0; inset-inline: 0; margin-inline: auto;
+    inline-size: 100cqi; max-inline-size: none; max-block-size: 85dvh;
+    padding: var(--space-3) var(--space-3) calc(var(--space-4) + env(safe-area-inset-bottom));
+    border-radius: var(--radius-card) var(--radius-card) 0 0;
+  }
+  .as-side:popover-open .as-side-head { margin-block-end: var(--space-2) }
+  .as-side:popover-open .as-side-head .as-wm { visibility: hidden }
+  .as-side:popover-open .as-label { margin-block-start: var(--space-5) }
+  .as-side:popover-open .as-foot { margin-block-start: var(--space-5) }
+  .a-motion .as-side:popover-open, .a-motion .as-side:popover-open:dir(rtl) { animation-name: asSheet }
 }
 
-/* The "More" sheet: the same nav, docked to the bottom of the frame. */
-.as-side:popover-open {
-  position: fixed; inset: auto 0 0; margin-inline: auto;
-  inline-size: 100cqi; block-size: auto; max-block-size: 85dvh;
-  padding: var(--space-3) var(--space-3) calc(var(--space-4) + env(safe-area-inset-bottom));
-  border: 0; border-start-start-radius: var(--radius-card); border-start-end-radius: var(--radius-card);
-  box-shadow: var(--shadow-panel);
-}
-.as-side:popover-open .as-side-head { margin-block-end: var(--space-2) }
-.as-side:popover-open .as-side-head .as-wm { visibility: hidden }
-.as-side:popover-open .as-side-close { display: grid }
-.as-side:popover-open .as-label { margin-block-start: var(--space-5) }
-.as-side:popover-open .as-foot { margin-block-start: var(--space-5) }
-.as-side::backdrop { background: var(--md-scrim) }
-.a-motion .as-side:popover-open { animation: asSheet var(--dur-slow) var(--a-ease-expo) both }
-.a-motion .as-pop[open] .as-pop-panel { animation: asPanel var(--dur-base) var(--ease-out) both }
+@keyframes asDrawer { from { transform: translateX(calc(var(--space-8) * -1)); opacity: 0 } }
+@keyframes asDrawerRtl { from { transform: translateX(var(--space-8)); opacity: 0 } }
 @keyframes asSheet { from { transform: translateY(var(--space-12)); opacity: 0 } }
 @keyframes asPanel { from { transform: translateY(calc(var(--space-2) * -1)); opacity: 0 } }
 

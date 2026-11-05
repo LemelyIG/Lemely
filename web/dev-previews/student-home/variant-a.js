@@ -322,9 +322,11 @@ document.addEventListener("keydown", (e) => {
   open.querySelector("summary").focus()
 })
 
-// The "More" sheet is the sidebar as a popover; it only exists in the mobile shell.
+// Below 1248px the sidebar is a popover: a drawer behind the top bar's menu button, or on
+// mobile the "More" sheet. Once the full sidebar is back, an open popover closes.
+const SIDEBAR_MIN = 1248
 function closeSheetIfWide() {
-  if (side?.matches(":popover-open") && root.clientWidth > 760) side.hidePopover()
+  if (side?.matches(":popover-open") && root.clientWidth >= SIDEBAR_MIN) side.hidePopover()
 }
 window.addEventListener("resize", closeSheetIfWide)
 // Opening moves focus into the sheet; closing (Esc, scrim, close button) hands it back
