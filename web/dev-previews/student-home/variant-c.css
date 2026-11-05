@@ -83,7 +83,7 @@
 ) .bf-chip, .bf-chip.bf-chip-lead {
   background: var(--md-primary); border-color: var(--md-primary); color: var(--md-on-primary);
 
-  & .bf-chip-meta { color: color-mix(in oklch, var(--md-on-primary) 78%, var(--md-primary)) }
+  & .bf-chip-meta { color: var(--md-on-primary) }
   &:hover { background: var(--md-primary-hover); border-color: var(--md-primary-hover) }
 }
 
@@ -146,7 +146,7 @@ a.bf-story:hover { background: var(--surface-hover-tint) }
   border-radius: 4px 4px 0 0; background: var(--md-tertiary);
   transform-origin: 50% 100%; animation: bfGrow 700ms var(--bf-ease-x) 250ms both;
 }
-.bf-bar-v { position: absolute; inset-block-end: calc(100% + 4px); inset-inline-start: 50%; transform: translateX(-50%); font: 600 11px/1 var(--font-mono); color: var(--text-secondary) }
+.bf-bar-v { margin-block-end: -4px; font: 600 11px/1 var(--font-mono); color: var(--text-secondary) }
 .bf-step:not(.is-earned) .bf-bar, .sh-root[data-state="one-paper"] .bf-op-empty .bf-bar { display: none }
 .bf-step-d {
   display: grid; place-items: center; inline-size: 28px; block-size: 28px; border-radius: 50%;
@@ -235,10 +235,13 @@ a.bf-story:hover { background: var(--surface-hover-tint) }
 
 /* ---------- Student bottom bar: mobile frame only, every state ---------- */
 .bf-tabs { display: none }
+/* Short states (error, new) keep the bar at the frame's foot: the frame is a column and the bar takes the slack. */
+.sh-root.bf[data-width="mobile"] { display: flex; flex-direction: column }
+.sh-root.bf[data-width="mobile"] > [data-when-state] { inline-size: 100% }
 .sh-root[data-width="mobile"] .bf-tabs {
   position: sticky; inset-block-end: 0; z-index: 5;
   display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px;
-  padding: 8px 10px 10px; background: var(--md-surface-low); border-block-start: 1px solid var(--border-subtle);
+  margin-block-start: auto; padding: 8px 10px 10px; background: var(--md-surface-low); border-block-start: 1px solid var(--border-subtle);
 }
 .bf-tab {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
@@ -262,6 +265,7 @@ a.bf-story:hover { background: var(--surface-hover-tint) }
   .bf-replies { margin-block-start: 22px; flex-direction: column; gap: 10px }
   .bf-reply { flex-direction: column }
   .bf-chip { justify-content: space-between; inline-size: 100% }
+  .bf-error .bf-chip { inline-size: auto; justify-content: center }
 
   .bf-since { margin-block-start: 56px }
   .bf-h2 { font-size: 22px; margin-block-end: 14px }
@@ -274,7 +278,7 @@ a.bf-story:hover { background: var(--surface-hover-tint) }
 
   .bf-path-sec { margin-block-start: 48px }
   .bf-path { grid-template-columns: minmax(0, 1fr); gap: 18px }
-  .bf-path::before { inset-inline: 9px auto; inset-block: 10px 30px; border-block-start: 0; border-inline-start: 2px dashed var(--border-control) }
+  .bf-path::before { inset-inline: 9px auto; inset-block: 10px 52px; border-block-start: 0; border-inline-start: 2px dashed var(--border-control) }
   .bf-stone { display: grid; grid-template-columns: 20px minmax(0, 1fr); grid-template-areas: "dot when" "dot t"; column-gap: 14px; row-gap: 4px }
   .bf-stone-dot { grid-area: dot }
   .bf-stone-when { grid-area: when }
