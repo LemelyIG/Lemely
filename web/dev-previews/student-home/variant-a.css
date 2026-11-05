@@ -1,7 +1,7 @@
-/* Variant A, "Today's page". A Mist focal band holds the next action, Binny
-   and the reward block; a tonal results band shows the latest score with the
-   trail of recent papers; subjects and weak topics follow. Token values only;
-   layout responds to the home container, not the viewport. */
+/* Variant A, the main version. Greeting, the reward header (Binny, level, the
+   week), the Today list, the featured grade journey, the latest result as the end
+   of the trail beside other subjects' journeys, the exam countdown, subjects and
+   the mastery ruler. Token values only; layout responds to the home container. */
 
 .sh-root {
   --a-ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
@@ -49,28 +49,6 @@
   letter-spacing: -0.04em; color: var(--text-body); text-wrap: balance;
 }
 .a-kicker { margin: var(--space-2) 0 0; font-size: var(--fs-body); color: var(--text-secondary) }
-.a-pill {
-  display: inline-flex; align-items: center; gap: var(--space-1);
-  margin: 0; padding: var(--space-1); border-radius: var(--radius-pill);
-  background: var(--md-primary-container); color: var(--md-on-primary-container);
-  font: 600 13px / 1 var(--font-ui); white-space: nowrap;
-}
-.a-pill > span { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: var(--radius-pill) }
-.a-pill b { font-family: var(--font-mono); font-variant-numeric: tabular-nums }
-.a-pill-st { background: var(--md-tertiary); color: var(--sh-gold-text) }
-.a-pill-st .a-ico { inline-size: 16px; block-size: 16px; margin-block-start: -2px }
-
-/* Focal band: next action and reward on Mist. Rows keep equal heights. */
-.a-today {
-  display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  gap: var(--space-5); align-items: stretch;
-}
-.a-band {
-  padding: var(--space-6); border-radius: var(--radius-board);
-  background: var(--md-primary-container);
-}
-.a-lead { display: flex; flex-direction: column; gap: var(--space-3); min-inline-size: 0 }
-.a-lead > .a-hero { flex: 1 }
 
 .a-hero {
   display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-6);
@@ -78,7 +56,6 @@
   padding: var(--space-6); border-radius: var(--radius-card);
   background: var(--surface-card); box-shadow: var(--a-card-edge);
 }
-.a-band .a-hero { background: transparent; box-shadow: none; padding: var(--space-4) var(--space-4) var(--space-3) }
 .a-action { min-inline-size: 0 }
 .a-meta-line {
   display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-4);
@@ -96,11 +73,8 @@
   margin: var(--space-3) 0 var(--space-6); max-inline-size: 48ch;
   font-size: var(--fs-body); color: var(--text-secondary); text-wrap: pretty;
 }
-.a-band .a-title { font-size: 52px; line-height: 0.98; color: var(--a-band-ink) }
-.a-band :is(.a-body, .a-meta-line, .a-facts) { color: var(--a-band-ink) }
-.a-band .a-meta-line .a-code { background: var(--surface-card); color: var(--text-body) }
 
-/* Buttons. The hero button is the only filled primary in the ready view. */
+/* Buttons. In the ready view only the lead Today row's button is filled. */
 .a-btn {
   display: inline-flex; align-items: center; gap: var(--space-2);
   min-block-size: 48px; padding: 12px 22px; border: 0; border-radius: var(--radius-button);
@@ -113,7 +87,218 @@
 .a-btn-primary { background: var(--md-primary); color: var(--md-on-primary) }
 .a-btn-primary:hover { background: var(--md-primary-hover) }
 
-/* Binny stands beside the action. */
+/* Today list: one white surface, rows divided by hairlines. The first kind in
+   data-today is the lead row: tinted Mist, the page's only filled button. */
+.a-todaysec { margin-block-start: var(--space-12) }
+.a-today-h {
+  margin: 0 0 var(--space-4);
+  font: 800 32px / 1.1 var(--font-display); letter-spacing: -0.035em; color: var(--text-body);
+}
+.a-tl {
+  margin: 0; padding: var(--space-2); list-style: none; display: flex; flex-direction: column;
+  border-radius: var(--radius-card); background: var(--surface-card); box-shadow: var(--a-card-edge);
+}
+.a-tl > li { flex-direction: column; border-radius: var(--radius-tile) }
+.a-tl > li + li { border-block-start: 1px solid var(--border-subtle) }
+.a-tl-in {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2) var(--space-6);
+  padding: var(--space-4) var(--space-5);
+}
+.a-tl .a-meta-line { margin-block-end: var(--space-1); font-size: 13px }
+.a-tl .a-title { font: 700 18px / 1.25 var(--font-ui); letter-spacing: -0.01em; color: var(--text-body) }
+.a-tl .a-facts { display: inline; margin: 0 }
+.a-tl .a-body { display: none }
+.a-tl-btn { background: var(--md-primary-container); color: var(--md-on-primary-container); font-size: var(--fs-body-sm); min-block-size: 44px; padding: 10px 16px }
+.a-tl-btn:hover { background: color-mix(in oklch, var(--md-primary-container), var(--md-primary) 10%) }
+
+.a-tl > li:is(
+  .sh-root[data-today^="marking"] [data-today-item="marking"],
+  .sh-root[data-today^="session"] [data-today-item="session"],
+  .sh-root[data-today^="practice"] [data-today-item="practice"],
+  .sh-root[data-today^="correct"] [data-today-item="correct"],
+  .sh-root[data-today^="first-paper"] [data-today-item="first-paper"]
+) {
+  background: var(--md-primary-container); color: var(--md-on-primary-container);
+  & + li { border-block-start: 0 }
+  & .a-tl-in { grid-template-columns: minmax(0, 1fr) auto; align-items: end; padding: var(--space-7) var(--space-7) var(--space-6) }
+  & .a-meta-line { margin-block-end: var(--space-3); font-size: var(--fs-body-sm); color: var(--md-on-primary-container) }
+  & .a-meta-line .a-code { background: var(--surface-card); color: var(--text-body) }
+  & .a-title { font: 800 40px / 1.02 var(--font-display); letter-spacing: -0.04em; color: var(--md-on-primary-container) }
+  & .a-facts { display: block; margin-block-start: var(--space-2); color: var(--md-on-primary-container) }
+  & .a-body { display: block; max-inline-size: 52ch; margin: var(--space-3) 0 0; color: var(--md-on-primary-container) }
+  & .a-tl-btn { min-block-size: 48px; padding: 12px 22px; font-size: var(--fs-body); background: var(--md-primary); color: var(--md-on-primary) }
+  & .a-tl-btn:hover { background: var(--md-primary-hover) }
+}
+.sh-root[data-state="one-paper"] .a-tl-alt[data-only-state] { display: block }
+
+/* Reward header, ported from variant C (committed d0a49d24) at the user's request:
+   Binny tile, level and XP, and the week of XP bars over gold day tiles. */
+.sh-root { --ah-line: var(--border-default); --ah-ease-x: cubic-bezier(0.16, 1, 0.3, 1) }
+.sh-root[data-theme="dark"] { --ah-line: transparent }
+.ah-hero p { margin: 0 }
+.ah-vh {
+  position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+}
+.ah-card {
+  background: var(--surface-card);
+  border: 1.5px solid var(--ah-line);
+  border-radius: var(--radius-card);
+}
+
+/* Hero: one compact row. Binny with its caption, level and XP, the week as a calendar strip. */
+.ah-hero {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr) auto;
+  grid-template-areas: "binny level week";
+  align-items: center; column-gap: 36px;
+  padding: 24px 28px;
+  border-radius: var(--radius-board);
+}
+.ah-binny { grid-area: binny; margin: 0; display: flex; flex-direction: column; gap: 8px }
+.ah-binny-tile {
+  block-size: 104px;
+  display: grid; place-items: center; padding: 8px;
+  border-radius: var(--radius-tile);
+  background: var(--md-primary-container);
+}
+.ah-binny-tile svg { display: block; inline-size: auto; block-size: 88px; animation: ahBob 3.6s ease-in-out infinite }
+.ah-say {
+  padding: 7px 10px; border-radius: 10px;
+  background: var(--surface-row);
+  font: 600 13px/1.35 var(--font-ui); color: var(--text-body); text-wrap: pretty;
+}
+
+.ah-level { grid-area: level }
+.ah-level-row { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 20px }
+.ah-level-n { font: 800 var(--fs-display-sm)/1 var(--font-display); letter-spacing: -0.04em; font-variant-numeric: lining-nums }
+.ah-xp { display: flex; align-items: center; gap: 8px }
+.ah-xp-n { font: 600 26px/1 var(--font-mono); letter-spacing: -0.02em; font-variant-numeric: tabular-nums }
+.ah-xp-u {
+  padding: 4px 7px; border-radius: 7px;
+  background: var(--md-tertiary); color: var(--sh-gold-text);
+  font: 700 12px/1 var(--font-mono); letter-spacing: var(--ls-label);
+}
+.ah-bar {
+  margin-block-start: 14px; block-size: 10px; overflow: hidden;
+  border-radius: var(--radius-pill); background: var(--track);
+}
+.ah-bar-fill {
+  display: block; block-size: 100%; inline-size: 48%;
+  border-radius: inherit; background: var(--md-primary);
+  transform-origin: 0 50%;
+  animation: ahFill 900ms var(--ah-ease-x) 200ms both;
+}
+.ah-bar-fill:dir(rtl) { transform-origin: 100% 50% }
+.ah-bar-label { margin-block-start: 6px; font: 600 13px/1.4 var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums }
+
+.ah-week { grid-area: week; inline-size: auto; padding-inline-start: 36px; border-inline-start: 1px solid var(--border-subtle) }
+.ah-week-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; margin-block-end: 12px }
+.ah-week-n { font: 800 28px/1 var(--font-display); letter-spacing: -0.04em; text-wrap: balance }
+.ah-week-meta { font: 600 13px/1.4 var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums }
+.ah-week-body { max-inline-size: 46ch; margin-block: -4px 12px; font-size: 14px; color: var(--text-secondary); text-wrap: pretty }
+
+/* Calendar strip: weekday above, date inside a compact square. */
+.ah-strip { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(7, 52px); justify-content: space-between; gap: 8px }
+.ah-day { display: flex; flex-direction: column; align-items: center; gap: 6px; color: var(--text-secondary) }
+.ah-day-w { font: 600 11px/1 var(--font-mono); letter-spacing: 0.04em; text-transform: uppercase }
+.ah-day-d {
+  display: grid; place-items: center; inline-size: 52px; aspect-ratio: 1;
+  border-radius: 14px; background: var(--surface-row); color: var(--text-muted);
+  font: 600 20px/1 var(--font-mono); letter-spacing: -0.02em; font-variant-numeric: tabular-nums;
+}
+.ah-day.is-earned .ah-day-d { background: var(--md-tertiary); color: var(--sh-gold-text) }
+.ah-day.is-today .ah-day-w { color: var(--md-primary) }
+.ah-day.is-today .ah-day-d { outline: 2px solid var(--md-primary); outline-offset: 2px }
+.ah-day.is-today.is-earned .ah-day-d { animation: ahPop 600ms var(--ah-ease-x) 700ms both }
+/* Daily XP bars above each day: one shared scale (120 XP peak = 32px), gold only where XP was earned. */
+.ah-xp-col {
+  display: flex; flex-direction: column; justify-content: flex-end; align-items: center;
+  inline-size: 100%; block-size: 46px;
+  border-block-end: 1px solid var(--border-subtle);
+}
+.ah-xp-bar { inline-size: 14px; block-size: calc(var(--xp, 0) * 32px); border-radius: 4px 4px 0 0; background: var(--md-tertiary) }
+.ah-xp-val { margin-block-end: 3px; font: 600 11px/1 var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums }
+.ah-day:not(.is-earned) :is(.ah-xp-bar, .ah-xp-val) { display: none }
+.sh-root[data-state="one-paper"] .ah-op-empty :is(.ah-xp-bar, .ah-xp-val) { display: none }
+.ah-narrow { display: none }
+.ah-bar-fill.ah-bar-half { inline-size: 50% }
+/* One-paper: only 2 Nov has XP in the zero-streak strip. */
+.sh-root[data-state="one-paper"] .ah-day.ah-op-empty .ah-day-d { background: var(--surface-row); color: var(--text-muted) }
+
+@keyframes ahBob { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-7px) } }
+@keyframes ahFill { from { transform: scaleX(0) } }
+@keyframes ahPop { from { transform: scale(0.88) } }
+
+@container home (max-width: 760px) {
+  .ah-hero {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "binny" "level" "week";
+    row-gap: 14px; padding: 14px 16px 16px;
+    border-radius: var(--radius-card);
+  }
+  .ah-binny { flex-direction: row; align-items: center; gap: 12px }
+  .ah-binny-tile { flex: none; inline-size: 64px; block-size: 64px; min-block-size: 0; padding: 6px; border-radius: 50% }
+  .ah-binny-tile svg { block-size: 50px }
+  .ah-say { flex: 1; padding: 8px 12px; font-size: 14px }
+
+  .ah-level-row { flex-wrap: nowrap; align-items: baseline }
+  .ah-level-n { font-size: 40px }
+  .ah-xp { gap: 6px }
+  .ah-xp-n { font-size: 24px }
+  .ah-xp-u { padding: 4px 6px; font-size: 11px }
+  .ah-bar { margin-block-start: 12px; block-size: 10px }
+  .ah-bar-label { margin-block-start: 6px; font-size: 13px }
+  .ah-week {
+    inline-size: auto; padding-inline-start: 0; padding-block-start: 14px;
+    border-inline-start: 0; border-block-start: 1px solid var(--border-subtle);
+  }
+  .ah-week-n { font-size: 28px }
+  .ah-week-meta { font-size: 12px; white-space: nowrap }
+  .ah-week-head { margin-block-end: 10px; gap: 2px 12px }
+  .ah-week-body { margin-block: -2px 10px; font-size: 14px }
+  .ah-strip { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px }
+  .ah-day { gap: 5px }
+  .ah-xp-col { block-size: 34px }
+  .ah-xp-bar { inline-size: 10px; block-size: calc(var(--xp, 0) * 22px) }
+  .ah-day-w { letter-spacing: 0 }
+  .ah-day-d { inline-size: 100%; max-inline-size: 44px; border-radius: 12px; font-size: 17px }
+  .ah-wide { display: none }
+  .ah-narrow { display: inline }
+}
+
+/* The trail is the result: older grade chips on one vertical line that runs
+   into the expanded latest result. */
+.a-rtrail, .a-rtrail-one { margin: 0; padding: 0; list-style: none }
+.sh-root[data-state="one-paper"] .a-rtrail-one[data-only-state] { display: block }
+.a-rt-old { position: relative }
+.a-rt-old::before {
+  content: ""; position: absolute; inset-inline-start: 31px; inset-block: 50% -50%; inline-size: 2px;
+  background: var(--border-default);
+}
+.a-rt-old a {
+  position: relative; display: grid; grid-template-columns: 64px auto; align-items: center; gap: var(--space-3);
+  min-block-size: 44px; border-radius: 12px; color: var(--text-secondary);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.a-rt-old a:hover { background: var(--surface-hover-tint) }
+.a-rt-axis { position: relative; z-index: 1; display: grid; place-items: center; inline-size: 64px }
+.a-rt-axis .a-grade { box-shadow: 0 0 0 4px var(--surface-card) }
+.a-rt-d { font-size: 13px }
+.a-rt-now { position: relative; margin-block-start: var(--space-2) }
+.a-rt-unit {
+  display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: var(--space-4); align-items: start;
+  padding-block: var(--space-2); border-radius: var(--radius-tile); color: var(--text-body);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.a-rt-unit:hover { background: var(--surface-hover-tint) }
+.a-rt-body { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); padding-block-start: 2px }
+.a-rt-body .a-latest-score b { font-size: 80px }
+.a-rt-body .a-latest-of { font-size: 36px }
+.a-rt-body .a-change { font-size: var(--fs-body) }
+.a-rt-body .a-latest-go { margin-block-start: var(--space-2) }
+
+/* New-student hero: Binny stands beside the first-paper action. */
 .a-binny {
   margin: 0; display: flex; flex-direction: column; align-items: center; gap: var(--space-3);
   inline-size: 208px;
@@ -123,7 +308,6 @@
   inline-size: 192px; block-size: 192px; padding-block-end: var(--space-3);
   border-radius: 50%; background: var(--md-primary-container); overflow: hidden;
 }
-.a-band .a-binny-art { background: var(--surface-card) }
 .a-binny-art svg {
   inline-size: 146px; block-size: auto;
   animation: a-bob 3.6s ease-in-out infinite alternate;
@@ -133,14 +317,13 @@
   background: var(--surface-section); text-align: center;
   font: 700 var(--fs-body) / 1.3 var(--font-ui); color: var(--text-body); text-wrap: balance;
 }
-.a-band .a-binny figcaption { background: var(--surface-card) }
 .a-binny figcaption::before {
   content: ""; position: absolute; inset-block-start: -6px; inset-inline-start: calc(50% - 6px);
   inline-size: 12px; block-size: 12px; background: inherit; transform: rotate(45deg); border-radius: 2px;
 }
 @keyframes a-bob { from { transform: translateY(0) } to { transform: translateY(-5px) } }
 
-/* Notes under the hero */
+/* Notes under the Today list */
 .a-note {
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3);
   margin: 0; padding: var(--space-3) var(--space-5); border-radius: var(--radius-tile);
@@ -152,71 +335,9 @@
 }
 .a-note .a-ico { inline-size: 16px; block-size: 16px }
 
-/* Reward block: an inner card on the band. */
-.a-reward {
-  display: flex; flex-direction: column; gap: var(--space-6);
-  padding: var(--space-7); border-radius: var(--radius-card);
-  background: var(--surface-card);
-  animation: lmUp var(--dur-slow) var(--a-ease-expo) both;
-}
-.a-levelset { display: flex; flex-direction: column; gap: var(--space-5) }
-.sh-root[data-state="one-paper"] .a-levelset[data-only-state] { display: flex }
-.a-level { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap }
-.a-level-n {
-  margin: 0; font: 800 var(--fs-display) / 0.9 var(--font-display); letter-spacing: -0.05em;
-  color: var(--text-body); font-variant-numeric: tabular-nums;
-}
-.a-xp {
-  margin: 0; font: 800 28px / 1 var(--font-display); letter-spacing: -0.03em;
-  color: var(--text-secondary); font-variant-numeric: tabular-nums;
-}
-.a-progress { display: flex; flex-direction: column; gap: var(--space-2) }
-.a-bar { block-size: 8px; border-radius: 4px; background: var(--track); overflow: hidden }
-.a-bar i { display: block; block-size: 100%; border-radius: 4px; background: var(--md-primary) }
-.a-progress-t { margin: 0; font-size: var(--fs-body-sm); color: var(--text-secondary) }
-.a-progress-t .a-mono { color: var(--text-body) }
-
-.a-streak { padding-block-start: var(--space-5); border-block-start: 1px solid var(--border-subtle) }
-.a-streak-head { margin-block-end: var(--space-4) }
-.a-streak-n { margin: 0; font: 800 28px / 1 var(--font-display); letter-spacing: -0.03em; color: var(--text-body) }
-.a-streak-sub { margin: var(--space-2) 0 0; font-size: 13px; color: var(--text-muted) }
-.a-streak-zero { margin: 0; font: 700 var(--fs-title) / 1.25 var(--font-ui); color: var(--text-body) }
-.a-streak-body { margin: var(--space-1) 0 0; font-size: var(--fs-body-sm); color: var(--text-secondary); text-wrap: pretty }
-
-.a-week {
-  display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px;
-  margin: 0; padding: 0; list-style: none;
-}
-.a-week li {
-  display: flex; flex-direction: column; align-items: center; gap: 6px;
-  padding: 8px 4px 10px; border-radius: var(--radius-chip);
-  background: var(--surface-row); color: var(--text-muted);
-}
-.a-week .a-wd { font: 600 var(--fs-label) / 1 var(--font-mono); letter-spacing: 0.04em }
-.a-week .a-dd {
-  display: grid; place-items: center; inline-size: 30px; block-size: 30px; border-radius: 50%;
-  font: 600 13px / 1 var(--font-mono); font-variant-numeric: tabular-nums;
-  box-shadow: inset 0 0 0 1.5px var(--border-default); color: var(--text-secondary);
-}
-.a-week li.is-earned .a-dd { background: var(--md-tertiary); box-shadow: none; color: var(--sh-gold-text) }
-.sh-root[data-state="one-paper"] .a-week li.is-earned:not(.is-op-earned) .a-dd {
-  background: none; box-shadow: inset 0 0 0 1.5px var(--border-default); color: var(--text-secondary);
-}
-.a-week li.is-today { background: var(--md-primary-container); color: var(--md-on-primary-container) }
-.a-week li.is-today .a-wd { font-weight: 800 }
-
 /* Results: one focal row (the featured grade journey on Mist), then one white
    card split into two calm halves. One surface level, separated by air. */
 .a-results { display: flex; flex-direction: column; gap: var(--space-12); margin-block-start: 64px }
-.a-moment-in { display: flex; flex-direction: column; gap: var(--space-6) }
-.sh-root[data-state="one-paper"] .a-moment-in[data-only-state] { display: flex }
-.a-latest-link {
-  display: flex; flex-direction: column; gap: var(--space-4);
-  margin: calc(var(--space-3) * -1); padding: var(--space-3); border-radius: var(--radius-tile);
-  color: var(--text-body);
-  transition: background var(--dur-fast) var(--ease-out);
-}
-.a-latest-link:hover { background: var(--surface-hover-tint) }
 .a-latest-cap { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-3); font-size: var(--fs-data) }
 .a-latest-cap > .a-mono { color: var(--text-body) }
 .a-latest-when { color: var(--text-secondary); font-size: var(--fs-body-sm) }
@@ -224,31 +345,10 @@
 .a-latest-score { display: flex; align-items: baseline; gap: 2px; font-variant-numeric: tabular-nums }
 .a-latest-score b { font: 800 96px / 0.82 var(--font-display); letter-spacing: -0.05em; color: var(--text-body) }
 .a-latest-of { font: 800 44px / 1 var(--font-display); letter-spacing: -0.04em; color: var(--text-secondary) }
-.a-latest-grade { display: flex; align-items: center; gap: var(--space-4) }
-.a-latest-grade .a-change { font-size: var(--fs-body) }
 .a-latest-go { display: inline-flex; align-items: center; gap: var(--space-2); font-weight: 700; color: var(--md-primary) }
 .a-latest-go .a-ico { transition: transform var(--dur-base) var(--ease-out) }
-.a-latest-link:hover .a-latest-go .a-ico { transform: translateX(3px) }
 
 .a-panel-h { margin: 0 0 var(--space-3); font: 700 var(--fs-body-sm) / 1.2 var(--font-ui); color: var(--text-secondary) }
-.a-chiptrail ol {
-  position: relative; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
-  max-inline-size: 360px; margin: 0; padding: 0; list-style: none;
-}
-.a-chiptrail ol::before {
-  content: ""; position: absolute; inset-inline: 10%; inset-block-start: 22px; block-size: 2px;
-  background: var(--md-surface-highest);
-}
-.a-chiptrail a {
-  position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px;
-  padding: 6px 2px; border-radius: 12px; color: var(--text-secondary);
-  transition: background var(--dur-fast) var(--ease-out);
-}
-.a-chiptrail a:hover { background: var(--surface-hover-tint) }
-.a-chiptrail .a-grade { box-shadow: 0 0 0 3px var(--surface-card) }
-.a-ct-d { font-size: 12px }
-.a-chiptrail .is-latest .a-grade { inline-size: 40px; block-size: 40px; margin-block: -4px; font-size: 22px; border-radius: 11px }
-.a-chiptrail .is-latest .a-ct-d { color: var(--text-body); font-weight: 800 }
 
 .a-jfeat {
   display: flex; flex-direction: column; gap: var(--space-6);
@@ -576,25 +676,20 @@
   .a-greet { font-size: 32px }
   .a-kicker { font-size: var(--fs-body-sm); margin-block-start: var(--space-1) }
 
-  .a-today { grid-template-columns: minmax(0, 1fr); gap: var(--space-3) }
-  .a-band { padding: var(--space-3); border-radius: var(--radius-card) }
   .a-sec { margin-block-start: var(--space-8) }
   .a-sec-h { font-size: 26px }
 
   .a-hero { grid-template-columns: minmax(0, 1fr); gap: var(--space-4); padding: var(--space-6) var(--space-5) }
-  .a-band .a-hero { padding: var(--space-3) var(--space-2) var(--space-2) }
   .a-binny { order: -1; flex-direction: row; inline-size: auto; gap: var(--space-3) }
   .a-binny-art { inline-size: 80px; block-size: 80px; padding-block-end: 4px }
   .a-binny-art svg { inline-size: 62px }
   .a-binny figcaption { text-align: start; font-size: var(--fs-body-sm) }
   .a-binny figcaption::before { inset-block-start: calc(50% - 6px); inset-inline-start: -5px }
-  .a-title, .a-band .a-title { font-size: 34px }
+  .a-title { font-size: 34px }
   .a-meta-line { margin-block-end: var(--space-2) }
   .a-body { margin-block-end: var(--space-4) }
   .a-hero .a-btn-primary { inline-size: 100%; justify-content: center }
 
-  .a-reward { padding: var(--space-5); gap: var(--space-5) }
-  .a-level-n { font-size: 48px }
 
   .a-results { gap: var(--space-8); margin-block-start: var(--space-12) }
   .a-jfeat { padding: var(--space-6) var(--space-5); gap: var(--space-5); border-radius: var(--radius-card) }
@@ -653,4 +748,52 @@
 
   .a-steps { grid-template-columns: minmax(0, 1fr) }
   .a-hero-new { padding: var(--space-6) var(--space-5) }
+}
+
+/* Mobile Today list: the lead row's title and button stay in the first screen. */
+@container home (max-width: 760px) {
+  .a-todaysec { margin-block-start: var(--space-6) }
+  .a-today-h { font-size: 26px; margin-block-end: var(--space-3) }
+  .a-tl { padding: var(--space-1) }
+  .a-tl-in { padding: var(--space-3) }
+  .a-tl > li:is(
+    .sh-root[data-today^="marking"] [data-today-item="marking"],
+    .sh-root[data-today^="session"] [data-today-item="session"],
+    .sh-root[data-today^="practice"] [data-today-item="practice"],
+    .sh-root[data-today^="correct"] [data-today-item="correct"],
+    .sh-root[data-today^="first-paper"] [data-today-item="first-paper"]
+  ) {
+    & .a-tl-in { grid-template-columns: minmax(0, 1fr); padding: var(--space-5) var(--space-4) }
+    & .a-title { font-size: 30px }
+    & .a-body { display: none }
+    & .a-tl-btn { justify-content: center; margin-block-start: var(--space-2) }
+  }
+  .a-rt-body .a-latest-score b { font-size: 64px }
+  .a-rt-body .a-latest-of { font-size: 30px }
+}
+
+/* Mobile first screen: tighter greeting and header so the lead Today row's button clears the bottom bar. */
+@container home (max-width: 760px) {
+  .a-page { padding-block-start: var(--space-4) }
+  .a-greet { font-size: 28px }
+  .a-head { margin-block-end: var(--space-3) }
+  .ah-hero { row-gap: 10px; padding: 12px 14px 14px }
+  .ah-binny-tile { inline-size: 56px; block-size: 56px }
+  .ah-binny-tile svg { block-size: 44px }
+  .ah-level-n { font-size: 34px }
+  .ah-bar { margin-block-start: 8px }
+  .ah-week { padding-block-start: 10px }
+  .ah-week-n { font-size: 28px }
+  .ah-week-head { margin-block-end: 6px }
+  .ah-xp-col { block-size: 28px }
+  .ah-xp-bar { block-size: calc(var(--xp, 0) * 18px) }
+  .a-todaysec { margin-block-start: var(--space-5) }
+  .a-today-h { font-size: 28px; margin-block-end: var(--space-2) }
+  .a-tl > li:is(
+    .sh-root[data-today^="marking"] [data-today-item="marking"],
+    .sh-root[data-today^="session"] [data-today-item="session"],
+    .sh-root[data-today^="practice"] [data-today-item="practice"],
+    .sh-root[data-today^="correct"] [data-today-item="correct"],
+    .sh-root[data-today^="first-paper"] [data-today-item="first-paper"]
+  ) .a-tl-in { padding: var(--space-4) }
 }
