@@ -1,9 +1,11 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+import { useRef } from "react"
 import { Link } from "react-router-dom"
 import { gradeChipClass } from "@/lib/grade"
 import type { ClassSummary } from "@/lib/teacherTypes"
 import { cn } from "@/lib/utils"
 import { classCardModel, type ClassCardTrend } from "./models"
+import { useDragScroll } from "./useDragScroll"
 
 const TREND_TONE: Record<ClassCardTrend["tone"], string> = {
   up: "text-success-text",
@@ -13,6 +15,8 @@ const TREND_TONE: Record<ClassCardTrend["tone"], string> = {
 }
 
 export function ClassStrip({ classes }: { classes: ClassSummary[] }) {
+  const listRef = useRef<HTMLUListElement>(null)
+  useDragScroll(listRef, classes.length > 0)
   if (!classes.length) return null
   return (
     <section aria-labelledby="cs-h" className="min-w-0">
@@ -22,17 +26,22 @@ export function ClassStrip({ classes }: { classes: ClassSummary[] }) {
       </div>
       {/* A scroller clips at its padding box, so the cards' panel shadow
           (about 20px wide, 50px deep) gets room inside it: padding on three
-          sides, cancelled by matching negative margins so the first card
-          still lines up with the heading. `-mx-4` stays within the page's
-          own 16px gutter, so nothing overflows at 375. */}
-      <ul className="-mx-4 -mb-10 mt-1 flex min-w-0 snap-x scroll-px-4 gap-4 overflow-x-auto px-4 pb-12 pt-2">
-
+          sides, with negative side margins so the first card still lines up
+          with the heading. `-mx-4` stays within the page's own 16px gutter,
+          so nothing overflows at 375. The bottom padding is real layout
+          space (no negative margin), so the scrollbar sits below it and the
+          next section never covers it. Mouse drag scrolls (useDragScroll);
+          touch and keyboard stay native. */}
+      <ul
+        ref={listRef}
+        className="-mx-4 mt-1 flex min-w-0 cursor-grab snap-x scroll-px-4 gap-4 overflow-x-auto px-4 pb-12 pt-2 [scrollbar-color:var(--color-outline)_transparent] [scrollbar-width:thin] data-[dragging]:cursor-grabbing data-[dragging]:select-none [&[data-dragging]_a]:cursor-grabbing"
+      >
         {classes.map((c) => {
           const m = classCardModel(c)
           const trendLine = m.trend || m.meta2
           return (
             <li key={m.id} className="w-[min(280px,calc(100vw-3rem))] shrink-0 snap-start">
-              <Link to={`/teacher/classes/${m.id}`} className="block h-full rounded-tile bg-surface-container-lowest p-5 shadow-panel transition-shadow duration-150 hover:shadow-hover">
+              <Link to={`/teacher/classes/${m.id}`} draggable={false} className="block h-full rounded-tile bg-surface-container-lowest p-5 shadow-panel transition-shadow duration-150 hover:shadow-hover">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="truncate font-bold">{m.title}</p>
