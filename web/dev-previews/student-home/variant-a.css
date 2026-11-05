@@ -190,13 +190,13 @@
 @keyframes ahFill { from { transform: scaleX(0) } }
 @keyframes ahPop { from { transform: scale(0.88) } }
 
-/* Beside the sidebar the column is narrower: tighter gaps keep "240 / 500 XP to level 8"
-   on one line down to 1024px, and below that the week drops under Binny and the level. */
+/* Beside the sidebar the content is narrower: tighter gaps keep "240 / 500 XP to level 8"
+   on one line down to 960px of content, and below that the week drops under Binny and the level. */
 @container home (max-width: 1100px) {
   .ah-hero { column-gap: var(--space-6) }
   .ah-week { padding-inline-start: var(--space-6) }
 }
-@container home (min-width: 761px) and (max-width: 1023px) {
+@container home (min-width: 761px) and (max-width: 959px) {
   .ah-hero { grid-template-columns: 160px minmax(0, 1fr); grid-template-areas: "binny level" "week week"; row-gap: var(--space-5) }
   .ah-week { padding-inline-start: 0; padding-block-start: var(--space-5); border-inline-start: 0; border-block-start: 1px solid var(--border-subtle) }
 }
@@ -727,27 +727,44 @@
 }
 
 /* ---------- App shell: sidebar, top bar, bottom bar ----------
-   The root is the shell's container (ashell); the main column is the page's container
-   (home), so every page query answers to the column the content actually has.
-   Nav metrics come from DESIGN.md §5 Navigation (13.5px items, 9px 10px padding). */
+   Teacher parity: every shell size, gap, radius, font size, breakpoint and shared-route icon
+   matches web/dev-previews/teacher-home (teacher-home.css). Values the teacher sets off the
+   4px scale are named here once (--as-*). The root is the shell's container (ashell); the
+   padded main is the page's container (home), so the page's queries read the width the
+   content actually gets. */
 .sh-root {
   container-name: ashell;
-  --as-side: 248px;
-  --as-gutter: var(--space-8); /* page inline padding beside the sidebar */
   --as-top: 0px; /* the preview toolbar's height, set by variant-a.js */
-  --as-fs-nav: 13.5px;
-  --as-pad-b: 9px;
+  --as-side: 216px; /* teacher --side */
+  --as-gutter: 72px; /* teacher .main inline padding */
+  --as-gutter-sm: 14px; /* teacher .main inline padding at 1000px and below */
+  --as-side-pad: 18px; /* teacher .side block-start padding */
+  --as-bar-pad: 18px; /* teacher .bar inline-start padding */
+  --as-bar-x: 28px; /* teacher .bar inline margin */
+  --as-pad-b: 9px; /* teacher nav item padding */
   --as-pad-i: 10px;
+  --as-gap: 10px; /* teacher nav item icon gap */
   --as-ico: 18px;
+  --as-radius-row: 10px; /* DESIGN.md rounded.row */
 }
 .as-app {
   display: grid; grid-template-columns: var(--as-side) minmax(0, 1fr);
   min-block-size: calc(100dvh - var(--as-top));
+  background: var(--md-surface-container); /* teacher .th page background */
 }
-.as-col { container: home / inline-size; display: flex; flex-direction: column; min-inline-size: 0 }
-.as-main { min-inline-size: 0 }
+.as-col { display: flex; flex-direction: column; min-inline-size: 0 }
+.as-main {
+  container: home / inline-size; min-inline-size: 0;
+  padding: var(--space-1) var(--as-gutter) 40px; /* teacher .main: 4px 72px 40px */
+}
 .as-main:focus { outline: none }
+.as-main .a-page { padding: 0 }
 .as-list, .as-subjects, .as-sub, .as-items, .as-links { margin: 0; padding: 0; list-style: none }
+.as-ico {
+  inline-size: var(--as-ico); block-size: var(--as-ico); flex: none;
+  fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
+}
+.as-lb { min-inline-size: 0; text-box: trim-both cap alphabetic }
 
 .as-skip {
   position: fixed; inset-block-start: var(--space-3); inset-inline-start: var(--space-3); z-index: 60;
@@ -756,25 +773,27 @@
 }
 .as-skip:not(:focus) { clip-path: inset(50%); inline-size: 1px; block-size: 1px; overflow: hidden; padding: 0; white-space: nowrap }
 
-/* Sidebar. It carries the popover attribute for the mobile sheet, so the UA popover
-   box (fixed, centred, bordered) is undone here. */
+/* Sidebar (teacher .side). It carries the popover attribute for the drawer and the mobile
+   sheet, so the UA popover box (fixed, centred, bordered) is undone here. */
 .as-side {
   position: sticky; inset: auto; inset-block-start: var(--as-top);
-  display: flex; flex-direction: column;
+  display: flex; flex-direction: column; gap: var(--space-4);
   inline-size: auto; block-size: calc(100dvh - var(--as-top)); max-block-size: none;
-  margin: 0; padding: var(--space-5) var(--space-3) var(--space-3);
+  margin: 0; padding: var(--as-side-pad) var(--space-3) var(--space-3);
   overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
-  border: 0; border-inline-end: 1px solid var(--border-subtle);
-  background: var(--md-surface-low); color: var(--text-body);
+  border: 0; box-shadow: 1px 0 0 var(--border-subtle); /* teacher's edge line, outside the 216px */
+  background: var(--md-surface-lowest); color: var(--text-body);
 }
-.as-side-head { display: flex; align-items: center; justify-content: space-between; margin-block-end: var(--space-6) }
+.as-side:dir(rtl) { box-shadow: -1px 0 0 var(--border-subtle) }
+.as-side-head { display: flex; align-items: flex-start; justify-content: space-between }
 .as-side .as-side-close { display: none }
 
-/* Clip Letters wordmark (DESIGN.md Logo): Night letters and an Abyss clip on light,
-   white letters and a Tide clip on dark. Bricolage at 32px, so the mark is 35px tall. */
+/* Clip Letters wordmark (teacher .wm): 32px, Night letters and an Abyss clip on light,
+   white letters and a Tide clip on dark. */
 .as-wm {
-  display: inline-flex; align-items: flex-end; padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-chip); font-size: var(--fs-headline); color: var(--md-on-surface);
+  display: inline-flex; align-items: flex-end; align-self: flex-start;
+  padding: 2px var(--space-2) var(--space-2); border-radius: var(--radius-chip);
+  font-size: var(--fs-headline); color: var(--md-on-surface);
 }
 .as-wm-clip {
   display: block; flex: none; inline-size: 0.451em; block-size: 1.1em;
@@ -783,189 +802,171 @@
 .as-wm span { font: 800 1em / 0.82 var(--font-display); letter-spacing: -0.04em }
 .sh-root[data-theme="dark"] .as-wm { color: var(--white) }
 
-/* Nav items */
-.as-list { display: flex; flex-direction: column; gap: var(--space-1) }
-.as-list a, .as-subj, .as-sub a {
-  display: flex; align-items: center; gap: var(--space-3); inline-size: 100%;
-  padding: var(--as-pad-b) var(--as-pad-i); border: 0; border-radius: var(--radius-chip);
-  background: transparent; color: var(--text-muted); text-align: start; cursor: pointer;
-  font: 600 var(--as-fs-nav) / 1.3 var(--font-ui);
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+/* Nav items (teacher .nav) */
+.as-list, .as-sub { display: flex; flex-direction: column; gap: 1px }
+.as-list a, .as-sub a {
+  display: flex; align-items: center; gap: var(--as-gap);
+  padding: var(--as-pad-b) var(--as-pad-i); border-radius: var(--radius-chip);
+  color: var(--text-muted); font: 600 var(--fs-body-sm) / 1.3 var(--font-ui);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast);
 }
-.as-list a:hover, .as-subj:hover, .as-sub a:hover { background: var(--md-surface-container); color: var(--text-body) }
+.as-list a:hover, .as-sub a:hover, .as-subj:hover { background: var(--surface-hover-tint); color: var(--md-on-surface) }
 .as-list a[aria-current="page"] { background: var(--md-primary-container); color: var(--md-primary) }
-.as-lb { min-inline-size: 0 }
 .as-n {
-  display: inline-grid; place-items: center; min-inline-size: 20px; block-size: 20px; margin-inline-start: auto;
-  padding-inline: var(--space-2); border-radius: var(--radius-pill);
-  background: var(--md-surface-high); color: var(--text-body);
-  font: 600 var(--fs-label) / 1 var(--font-mono); font-variant-numeric: tabular-nums;
+  margin-inline-start: auto; padding: 1px 7px; border-radius: var(--radius-pill);
+  background: var(--md-surface-high); color: var(--md-on-surface);
+  font: 600 var(--fs-label) / normal var(--font-mono); font-variant-numeric: tabular-nums;
 }
 .as-n.is-hot, [aria-current="page"] .as-n { background: var(--md-primary); color: var(--md-on-primary) }
 
+/* Section label (teacher .grp) */
 .as-label {
-  margin: var(--space-7) 0 var(--space-2); padding-inline: var(--as-pad-i);
-  font: 600 var(--fs-label) / 1 var(--font-mono); letter-spacing: var(--ls-label); text-transform: uppercase;
+  margin: 6px var(--as-pad-i) -6px;
+  font: 600 var(--fs-label) / normal var(--font-mono); letter-spacing: var(--ls-label); text-transform: uppercase;
   color: var(--text-muted);
 }
 
-/* Subjects: a small tree. The chevron sits in the icon column, so subject names line up
-   with the nav labels above; the CAIE code sits under the name. */
-.as-subjects { display: flex; flex-direction: column; gap: var(--space-1) }
-.as-subj { color: var(--text-body) }
-.as-subj-t { display: flex; flex-direction: column; gap: var(--space-1); min-inline-size: 0 }
-.as-code {
-  font: 600 var(--fs-label) / 1 var(--font-mono); letter-spacing: 0.04em;
-  font-variant-numeric: tabular-nums; color: var(--text-muted);
+/* Subjects (teacher .grps rows): the chevron sits in the icon column so names line up with
+   the nav labels; the CAIE code trails like the teacher's counts. */
+.as-subjects { display: flex; flex-direction: column; gap: 1px }
+.as-subj {
+  display: flex; align-items: center; gap: var(--as-gap); inline-size: 100%;
+  padding: 6px var(--as-pad-i); border: 0; border-radius: var(--radius-chip); background: transparent;
+  color: var(--md-on-surface); font: 600 var(--fs-body-sm) / 1.3 var(--font-ui); text-align: start; cursor: pointer;
+  transition: background var(--dur-fast);
 }
-.as-chev {
-  inline-size: var(--as-ico); block-size: var(--as-ico); color: var(--text-muted);
-  transition: transform var(--dur-base) var(--ease-out);
-}
+.as-subj .as-lb { flex: 1 }
+.as-code { margin-inline-start: auto; font: 500 var(--fs-label) / normal var(--font-mono); font-variant-numeric: tabular-nums; color: var(--text-muted) }
+.as-chev { color: var(--text-muted); transition: transform var(--dur-base) var(--ease-out) }
 .as-subj:dir(rtl) .as-chev { transform: scaleX(-1) } /* the closed chevron points toward inline-end */
 .as-subj[aria-expanded="true"] .as-chev { transform: rotate(90deg) }
-.as-sub { position: relative; padding-block: var(--space-1) }
-.as-sub::before {
-  content: ""; position: absolute; inset-block: var(--space-2); inline-size: 1px;
-  inset-inline-start: calc(var(--as-pad-i) + var(--as-ico) / 2); background: var(--border-subtle);
-}
-.as-sub a { padding-block: var(--space-2); padding-inline-start: calc(var(--as-pad-i) + var(--as-ico) + var(--space-3)) }
-.as-subj-empty { padding: var(--space-1) var(--as-pad-i); font: 400 var(--as-fs-nav) / 1.45 var(--font-ui); color: var(--text-muted) }
+.as-sub { padding-block: 1px }
+.as-sub[hidden] { display: none }
+.as-sub a { padding-inline-start: calc(var(--as-pad-i) + var(--as-ico) + var(--as-gap)) }
+.as-subj-empty { padding: 6px var(--as-pad-i); font: 400 var(--fs-body-sm) / 1.45 var(--font-ui); color: var(--text-muted) }
 
-/* Identity: who is signed in. Plain text; the account menu lives in the top bar. */
+/* Foot (teacher .foot): the sidebar's Upload. Tonal, so the page's big action stays the
+   only filled button in the content and the bar's Upload is the one filled control in the chrome. */
 .as-foot {
-  display: flex; align-items: center; gap: var(--space-3);
-  margin-block-start: auto; padding: var(--space-4) var(--as-pad-i) var(--space-1);
+  display: flex; flex-direction: column; gap: var(--space-2);
+  margin-block-start: auto; padding-block-start: var(--space-6);
   border-block-start: 1px solid var(--border-subtle);
 }
-.as-subjects { margin-block-end: var(--space-6) }
-.as-avatar {
-  display: grid; place-items: center; flex: none; inline-size: 32px; block-size: 32px; border-radius: var(--radius-pill);
-  background: var(--md-primary-container); color: var(--md-primary); font: 800 var(--fs-body-sm) / 1 var(--font-ui);
-}
-.as-who { display: flex; flex-direction: column; gap: var(--space-1); min-inline-size: 0 }
-.as-who b { font: 700 var(--fs-body-sm) / 1.3 var(--font-ui); color: var(--text-body) }
-.as-who small { font: 400 var(--as-fs-nav) / 1.3 var(--font-ui); color: var(--text-muted) }
+.as-foot .as-btn { justify-content: center }
 
-/* Top bar: a floating card (the teacher pattern), sticky above the page and exactly as
-   wide as the page's content column. Page title on the start side; Upload, bell, settings
-   and account on the end side. Flat at rest (DESIGN.md Elevation): outlined, and it lifts
-   with the hover shadow once the page scrolls under it. */
+/* Top bar (teacher .bar): a floating card, sticky 8px below the top. Flat at rest
+   (DESIGN.md Elevation): outlined, lifting with the hover shadow once the page scrolls. */
 .as-bar {
   position: sticky; inset-block-start: calc(var(--as-top) + var(--space-2)); z-index: 6;
-  display: flex; align-items: center; gap: var(--space-1);
-  inline-size: min(calc(100% - 2 * var(--as-gutter)), calc(1180px - 2 * var(--as-gutter)));
-  block-size: 56px; margin: var(--space-2) auto 0; padding-inline: var(--space-5) var(--space-2);
-  border: 1px solid var(--border-subtle); border-radius: var(--radius-inner); background: var(--surface-card);
+  display: flex; align-items: center; gap: var(--space-2);
+  block-size: 56px; margin: var(--space-2) var(--as-bar-x) var(--space-6);
+  padding-block: 0; padding-inline: var(--as-bar-pad) var(--space-3);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-inner); background: var(--md-surface-lowest);
   transition: box-shadow var(--dur-base) var(--ease-out);
 }
 .as-bar.is-stuck { box-shadow: var(--shadow-hover) }
-.sh-root[data-theme="dark"] .as-bar { border-color: transparent }
+.sh-root[data-theme="dark"] .as-bar { border-color: transparent; background: var(--surface-card) }
 .sh-root[data-theme="dark"] .as-bar.is-stuck { box-shadow: none }
-.as-bar-wm { display: none }
-.as-title {
-  margin: 0; margin-inline-end: auto;
-  font: 800 var(--fs-title) / 1 var(--font-ui); letter-spacing: -0.02em; color: var(--text-body);
-}
-.as-bar-upload { margin-inline-end: var(--space-2) }
+/* Teacher's title size (21px, 800). Schibsted, not Bricolage: Bricolage stays at 28px and up. */
+.as-title { margin: 0; margin-inline-end: auto; font: 800 var(--fs-title) / 1 var(--font-ui); letter-spacing: -0.02em; color: var(--text-body) }
+.as-bar-upload { margin-inline-end: var(--as-pad-i) }
 
-/* Compact buttons (DESIGN.md Buttons: toolbar size, 36px high, 12px radius). */
+/* Buttons (teacher .btn: 36px, 0 14px, 7px gap, 12px radius, 700 14px). */
 .as-btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
-  block-size: 36px; padding-inline: var(--space-4); border: 0; border-radius: var(--radius-chip);
+  display: inline-flex; align-items: center; gap: 7px;
+  block-size: 36px; padding: 0 14px; border: 0; border-radius: var(--radius-chip);
   font: 700 var(--fs-body-sm) / 1 var(--font-ui); white-space: nowrap; cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+  transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast);
 }
 .as-btn:active { transform: scale(0.97) }
 .as-btn-primary { background: var(--md-primary); color: var(--md-on-primary) }
 .as-btn-primary:hover { background: var(--md-primary-hover) }
-.as-btn-tonal { background: var(--md-primary-container); color: var(--md-on-primary-container) }
-.as-btn-tonal:hover { background: color-mix(in oklch, var(--md-primary-container), var(--md-primary) 8%) }
+/* Tonal: the teacher's quiet bar button (secondary-container). */
+.as-btn-tonal { background: var(--md-secondary-container); color: var(--md-on-secondary-container) }
+.as-btn-tonal:hover { background: color-mix(in oklch, var(--md-secondary-container), var(--md-primary) 8%) }
 .as-btn-quiet { background: transparent; color: var(--text-body) }
 .as-btn-quiet:hover { background: var(--surface-row) }
 .as-btn .as-n { margin-inline-start: 0 }
 
-/* The sidebar's Upload: tonal, so the page's big action stays the only filled button in
-   the content and the bar's Upload stays the one filled control in the chrome. */
-.as-side-upload { inline-size: 100%; block-size: 40px; margin-block-end: var(--space-5) }
+/* Icon buttons (teacher .iconbtn: 36px, 12px radius) and the avatar (32px, 800 11px). */
 .as-iconbtn {
-  position: relative; display: grid; place-items: center; flex: none; inline-size: 40px; block-size: 40px;
+  position: relative; display: grid; place-items: center; flex: none; inline-size: 36px; block-size: 36px;
   padding: 0; border: 0; border-radius: var(--radius-chip); background: transparent; color: var(--text-muted);
-  cursor: pointer; list-style: none;
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  cursor: pointer; list-style: none; transition: background var(--dur-fast);
 }
 .as-iconbtn::-webkit-details-marker { display: none }
 .as-iconbtn::marker { content: "" }
-.as-iconbtn .a-ico { inline-size: 20px; block-size: 20px }
-.as-iconbtn:hover, details[open] > .as-iconbtn { background: var(--md-surface-container); color: var(--text-body) }
-.as-me { border-radius: var(--radius-pill) }
-.as-count {
-  position: absolute; inset-block-start: 2px; inset-inline-end: 2px;
-  display: grid; place-items: center; min-inline-size: 18px; block-size: 18px; padding-inline: var(--space-1);
-  border-radius: var(--radius-pill); background: var(--md-primary); color: var(--md-on-primary);
-  font: 600 var(--fs-label) / 1 var(--font-mono); font-variant-numeric: tabular-nums;
-  box-shadow: 0 0 0 2px var(--surface-page);
+.as-iconbtn:hover, details[open] > .as-iconbtn { background: var(--md-surface-low); color: var(--md-on-surface) }
+.as-dot {
+  position: absolute; inset-block-start: 6px; inset-inline-end: 7px; inline-size: 8px; block-size: 8px;
+  border-radius: var(--radius-pill); background: var(--md-primary); box-shadow: 0 0 0 2px var(--md-surface-lowest);
 }
-.as-count:empty { display: none }
+.as-avatar {
+  display: grid; place-items: center; flex: none; inline-size: 32px; block-size: 32px; border-radius: var(--radius-pill);
+  background: var(--md-primary-container); color: var(--md-primary); font: 800 var(--fs-label) / 1 var(--font-ui);
+}
+.as-me { border-radius: var(--radius-pill) }
 
-/* Popovers: floating panels (DESIGN.md Elevation). One open at a time; Esc closes and
-   returns focus to the trigger (variant-a.js). */
+/* Notifications popover (teacher .pop-panel). One open at a time; Esc closes and returns
+   focus to the bell (variant-a.js). */
 .as-pop { position: relative }
 .as-pop-panel {
   position: absolute; inset-block-start: calc(100% + var(--space-2)); inset-inline-end: 0; z-index: 30;
-  inline-size: 360px; padding: var(--space-2); border-radius: var(--radius-inner);
-  background: var(--surface-card); color: var(--text-body); box-shadow: var(--shadow-panel);
+  inline-size: 320px; padding: var(--space-2); border-radius: var(--radius-inner);
+  background: var(--md-surface-lowest); color: var(--text-body); box-shadow: var(--shadow-panel);
 }
 .sh-root[data-theme="dark"] .as-pop-panel { background: var(--md-surface-highest); box-shadow: 0 0 0 1px var(--md-outline) }
-.as-pop-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2) }
-.as-pop-head h2 { margin: 0; font: 700 var(--fs-body) / 1.3 var(--font-ui) }
+.as-pop-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); margin: 6px var(--space-2) }
+.as-pop-head h2 { margin: 0; font: 800 var(--fs-body-sm) / 1.2 var(--font-ui); letter-spacing: -0.01em }
 .as-textbtn {
-  padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius-chip); background: none;
-  color: var(--md-primary); font: 600 var(--fs-body-sm) / 1.3 var(--font-ui); cursor: pointer;
+  margin: calc(var(--space-1) * -1) calc(var(--space-2) * -1); padding: var(--space-1) var(--space-2);
+  border: 0; border-radius: var(--radius-chip); background: none;
+  color: var(--md-primary); font: 600 var(--fs-label) / 1.3 var(--font-ui); cursor: pointer;
   transition: background var(--dur-fast) var(--ease-out);
 }
 .as-textbtn:hover { background: var(--surface-row) }
 .as-textbtn:disabled { color: var(--text-muted); cursor: default; background: none }
-.as-items { display: flex; flex-direction: column; margin-block-start: var(--space-1) }
+.as-items { display: flex; flex-direction: column }
 .as-item {
-  display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: var(--space-3); align-items: start;
-  padding: var(--space-2); border-radius: var(--radius-chip); color: inherit;
+  display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: var(--as-gap); align-items: start;
+  padding: var(--space-2); border-radius: var(--radius-chip); color: inherit; font-size: var(--fs-body-sm);
   transition: background var(--dur-fast) var(--ease-out);
 }
-.as-item:hover { background: var(--surface-row) }
+.as-item:hover { background: var(--md-surface-low) }
 .as-item-ico {
-  display: grid; place-items: center; inline-size: 32px; block-size: 32px; border-radius: var(--radius-chip);
+  display: grid; place-items: center; inline-size: 32px; block-size: 32px; border-radius: var(--as-radius-row);
   background: var(--md-primary-container); color: var(--md-primary);
 }
-.as-item-t { display: flex; flex-direction: column; gap: var(--space-1); min-inline-size: 0 }
-.as-item-t b { font: 600 var(--fs-body-sm) / 1.35 var(--font-ui); color: var(--text-body); text-wrap: pretty }
-.as-item-t small { font: 400 var(--as-fs-nav) / 1.35 var(--font-ui); color: var(--text-muted) }
+.as-item-t { display: flex; flex-direction: column; min-inline-size: 0 }
+.as-item-t b { font-weight: 700; color: var(--text-body); text-wrap: pretty }
+.as-item-t small { font-size: var(--fs-label); color: var(--text-muted) }
 .as-item time {
   display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-2);
-  padding-block-start: var(--space-1); font: 600 var(--fs-label) / 1.2 var(--font-mono); color: var(--text-muted);
+  font: 500 var(--fs-label) / 1.3 var(--font-mono); color: var(--text-muted);
 }
-.as-item.is-unread b { font-weight: 700 }
 .as-item.is-unread time::after { content: ""; inline-size: 8px; block-size: 8px; border-radius: var(--radius-pill); background: var(--md-primary) }
-.as-pop-empty { margin: 0; padding: var(--space-3) var(--space-2) var(--space-4); font: 400 var(--fs-body-sm) / 1.5 var(--font-ui); color: var(--text-muted) }
+.as-pop-empty { margin: 0; padding: var(--space-2) var(--space-2) var(--space-3); font: 400 var(--fs-body-sm) / 1.5 var(--font-ui); color: var(--text-muted) }
 .as-pop-foot {
   display: flex; gap: var(--space-1); margin-block-start: var(--space-1); padding-block-start: var(--space-1);
   border-block-start: 1px solid var(--border-subtle);
 }
 .as-pop-foot a {
   flex: 1; padding: var(--space-2); border-radius: var(--radius-chip); text-align: center;
-  color: var(--md-primary); font: 600 var(--fs-body-sm) / 1.3 var(--font-ui);
+  color: var(--md-primary); font: 600 var(--fs-label) / 1.3 var(--font-ui);
   transition: background var(--dur-fast) var(--ease-out);
 }
-.as-pop-foot a:hover { background: var(--surface-row) }
-.as-links { display: flex; flex-direction: column; padding-block-start: var(--space-1); border-block-start: 1px solid var(--border-subtle) }
+.as-pop-foot a:hover { background: var(--md-surface-low) }
+
+/* Account links (teacher .pop-link: 9px 8px, 10px gap, 600 14px, 12px radius). */
+.as-links { display: flex; flex-direction: column }
 .as-links :is(a, button) {
-  display: flex; align-items: center; gap: var(--space-3); inline-size: 100%;
+  display: flex; align-items: center; gap: var(--as-gap); inline-size: 100%;
   padding: var(--as-pad-b) var(--space-2); border: 0; border-radius: var(--radius-chip); background: none;
   color: var(--text-body); font: 600 var(--fs-body-sm) / 1.3 var(--font-ui); text-align: start; cursor: pointer;
   transition: background var(--dur-fast) var(--ease-out);
 }
-.as-links :is(a, button):hover { background: var(--surface-row) }
-.as-links .a-ico { color: var(--text-muted) }
+.as-links :is(a, button):hover { background: var(--md-surface-low) }
+.as-links .as-ico { color: var(--text-muted) }
 
 /* State-scoped shell content (the shell shows in every page state). */
 .sh-root [data-a-show] { display: none }
@@ -974,57 +975,54 @@
 .sh-root[data-state="marking"] [data-a-show~="marking"] { display: revert }
 .sh-root[data-state="new"] [data-a-hide~="new"],
 .sh-root[data-state="one-paper"] [data-a-hide~="one-paper"] { display: none }
-.sh-root .as-n[data-a-show] { display: none }
-.sh-root[data-state="marking"] .as-n[data-a-show~="marking"] { display: inline-grid }
+.sh-root[data-state="marking"] .as-n[data-a-show~="marking"] { display: inline }
 
-/* Student bottom bar: mobile only (DESIGN.md §5: students get a bottom bar). */
+/* Student bottom bar (teacher .tabbar): mobile only (DESIGN.md §5: students get a bottom bar). */
 .a-bottombar { display: none }
 .a-bottombar :is(a, button) {
-  position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
-  min-block-size: 44px; padding: 0; border: 0; border-radius: var(--radius-chip); background: none; cursor: pointer;
-  font: 600 var(--fs-label) / 1.2 var(--font-ui); color: var(--text-muted); text-decoration: none;
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast);
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 2px 0; border: 0; background: none; cursor: pointer;
+  font: 600 var(--fs-label) / 1.2 var(--font-ui); color: var(--text-muted);
 }
-.a-bottombar :is(a, button):hover { background: var(--md-surface-container); color: var(--text-body) }
-.a-bottombar a[aria-current="page"] { background: var(--md-primary-container); color: var(--md-primary) }
-.as-app:has(.as-side:popover-open) .a-bottombar button { background: var(--md-surface-container); color: var(--text-body) }
-.a-bottombar .a-ico { inline-size: 22px; block-size: 22px }
-.a-bottombar .as-n { position: absolute; inset-block-start: var(--space-1); inset-inline-start: calc(50% + var(--space-2)); margin: 0; box-shadow: 0 0 0 2px var(--md-surface-low) }
-
-/* The page under the shell: the top bar already gives the greeting its air, and the
-   page gutter matches the bar so the bell and the page share an inline-end edge. */
-.as-main .a-page { padding-block-start: var(--space-7); padding-inline: var(--as-gutter) }
-@container home (max-width: 760px) {
-  .as-main .a-page { padding-inline: var(--space-4) }
+.a-bottombar .as-ico {
+  box-sizing: content-box; inline-size: 20px; block-size: 20px; padding: 6px var(--space-4); border-radius: var(--radius-chip);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.a-bottombar :is(a, button):hover .as-ico { background: var(--md-surface-low) }
+.a-bottombar a[aria-current="page"] { color: var(--md-primary); font-weight: 700 }
+.a-bottombar a[aria-current="page"] .as-ico,
+.as-app:has(.as-side:popover-open) .a-bottombar button .as-ico { background: var(--md-secondary-container) }
+.a-bottombar .as-n {
+  position: absolute; inset-block-start: -2px; inset-inline-start: calc(50% + var(--space-1));
+  min-inline-size: 20px; margin: 0; padding: 1px 6px; text-align: center;
+  box-shadow: 0 0 0 2px var(--md-surface-lowest);
 }
 
 /* Settings modal and account drawer: native modal dialogs, so focus stays inside and Esc
-   closes them; closing hands focus back to the gear or the avatar. */
+   closes them; closing hands focus back to the settings button or the avatar. Typography
+   follows the teacher's sheets (32px display title, 14px rows, 11px meta). */
 .as-modal, .as-drawer {
-  padding: 0; border: 0; background: var(--surface-card); color: var(--text-body);
+  padding: 0; border: 0; background: var(--md-surface-lowest); color: var(--text-body);
   box-shadow: var(--shadow-panel); font-family: var(--font-ui);
 }
 .sh-root[data-theme="dark"] :is(.as-modal, .as-drawer) { background: var(--md-surface-high) }
 :is(.as-modal, .as-drawer)::backdrop { background: var(--md-scrim) }
+:is(.as-modal-head, .as-drawer-head) h2 { margin: 0; font: 800 var(--fs-headline) / 1 var(--font-display); letter-spacing: -0.04em }
 .as-modal {
   inline-size: min(560px, calc(100vw - var(--space-6))); max-block-size: min(760px, calc(100dvh - var(--space-8)));
-  padding: var(--space-4) 0; border-radius: var(--radius-card);
+  padding: 22px 0; border-radius: var(--radius-card);
 }
 .as-modal[open] { display: flex }
 .as-modal-in { display: flex; flex-direction: column; flex: 1; min-block-size: 0 }
-.as-modal-head, .as-drawer-head {
-  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
-}
-.as-modal-head { padding: var(--space-1) var(--space-4) var(--space-2) var(--space-7) }
-:is(.as-modal-head, .as-drawer-head) h2 { margin: 0; font: 800 var(--fs-title) / 1.2 var(--font-ui); letter-spacing: -0.02em }
-.as-modal-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 0 var(--space-7) }
+.as-modal-head, .as-drawer-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3) }
+.as-modal-head { padding: 0 var(--space-4) var(--space-2) 22px }
+.as-modal-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 0 22px }
 .as-set { margin: 0; padding: var(--space-5) 0; border: 0; border-block-start: 1px solid var(--border-subtle) }
 .as-set:first-child { border-block-start: 0; padding-block-start: var(--space-3) }
-.as-set :is(h3, legend) { margin: 0 0 var(--space-3); padding: 0; font: 700 var(--fs-body) / 1.3 var(--font-ui) }
+.as-set :is(h3, legend) { margin: 0 0 var(--space-3); padding: 0; font: 800 var(--fs-body) / 1.1 var(--font-ui); letter-spacing: -0.02em }
 .as-set legend { float: inline-start; inline-size: 100% }
 .as-set legend + * { clear: both }
 .as-hint { margin: var(--space-3) 0 0; font: 400 var(--fs-body-sm) / 1.5 var(--font-ui); color: var(--text-muted) }
-.as-devices + .as-hint, .as-hint + .as-devices { margin-block-start: var(--space-3) }
 .as-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4) }
 .as-field { display: flex; flex-direction: column; gap: var(--space-2); font: 600 var(--fs-body-sm) / 1.3 var(--font-ui); color: var(--text-muted) }
 .as-field :is(input, select) {
@@ -1034,14 +1032,11 @@
 }
 .sh-root[data-theme="dark"] .as-field :is(input, select) { background: var(--md-surface-container) }
 .as-field :is(input, select):focus-visible { outline: none; border-color: var(--md-primary); box-shadow: 0 0 0 3px var(--md-primary-container) }
-.as-switch {
-  display: flex; align-items: center; justify-content: space-between; gap: var(--space-4);
-  padding-block: var(--space-3); cursor: pointer;
-}
+.as-switch { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding-block: var(--space-3); cursor: pointer }
 .as-switch + .as-switch { border-block-start: 1px solid var(--border-subtle) }
-.as-switch > span { display: flex; flex-direction: column; gap: var(--space-1) }
-.as-switch b { font: 600 var(--fs-body-sm) / 1.3 var(--font-ui) }
-.as-switch small { font: 400 var(--as-fs-nav) / 1.4 var(--font-ui); color: var(--text-muted) }
+.as-switch > span { display: flex; flex-direction: column; gap: 2px }
+.as-switch b { font: 700 var(--fs-body-sm) / 1.3 var(--font-ui) }
+.as-switch small { font: 400 var(--fs-label) / 1.4 var(--font-ui); color: var(--text-muted) }
 .as-switch input {
   flex: none; position: relative; inline-size: 40px; block-size: 24px; margin: 0;
   border-radius: var(--radius-pill); background: var(--md-surface-highest); appearance: none; cursor: pointer;
@@ -1069,42 +1064,45 @@
 }
 .as-seg input:checked + span { background: var(--md-primary-container); color: var(--md-primary) }
 .as-seg input:focus-visible + span { outline: 2px solid var(--md-primary); outline-offset: 2px }
-.as-devices { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none }
+.as-devices { display: flex; flex-direction: column; margin: var(--space-2) 0 0; padding: 0; list-style: none }
 .as-devices li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding-block: var(--space-3) }
 .as-devices li + li { border-block-start: 1px solid var(--border-subtle) }
-.as-devices li > span:first-child { display: flex; flex-direction: column; gap: var(--space-1) }
-.as-devices b { font: 600 var(--fs-body-sm) / 1.3 var(--font-ui) }
-.as-devices small { font: 400 var(--as-fs-nav) / 1.4 var(--font-ui); color: var(--text-muted) }
+.as-devices li > span:first-child { display: flex; flex-direction: column; gap: 2px }
+.as-devices b { font: 700 var(--fs-body-sm) / 1.3 var(--font-ui) }
+.as-devices small { font: 400 var(--fs-label) / 1.4 var(--font-ui); color: var(--text-muted) }
 .as-tag {
   padding: var(--space-1) var(--space-2); border-radius: var(--radius-pill); background: var(--md-primary-container);
   color: var(--md-on-primary-container); font: 600 var(--fs-label) / 1.2 var(--font-ui);
 }
-.as-modal-foot {
-  display: flex; justify-content: flex-end; gap: var(--space-2);
-  padding: var(--space-4) var(--space-7) 0; border-block-start: 1px solid var(--border-subtle);
-}
+.as-modal-foot { display: flex; justify-content: flex-end; gap: var(--space-2); padding: var(--space-4) 22px 0; border-block-start: 1px solid var(--border-subtle) }
 
+/* Account drawer (teacher .sheet: 10px from the edges, up to 400px, 24px radius, 22px padding). */
 .as-drawer {
-  position: fixed; inset-block: var(--space-2); inset-inline: auto var(--space-2); margin: 0;
-  inline-size: min(360px, calc(100vw - var(--space-4))); block-size: auto; max-block-size: none;
-  padding: var(--space-5) var(--space-4) var(--space-4); border-radius: var(--radius-card);
+  position: fixed; inset-block: var(--as-pad-i); inset-inline: auto var(--as-pad-i); margin: 0;
+  inline-size: min(400px, calc(100vw - 2 * var(--as-pad-i))); block-size: auto; max-block-size: none;
+  padding: 22px; border-radius: var(--radius-card);
 }
-.as-drawer[open] { display: flex; flex-direction: column }
-.as-drawer-head { padding-inline-start: var(--space-2); margin-block-end: var(--space-4) }
-.as-ident { display: flex; align-items: center; gap: var(--space-4); padding: var(--space-2) var(--space-2) var(--space-5) }
-.as-ident .as-avatar { inline-size: 56px; block-size: 56px; font-size: var(--fs-title) }
-.as-ident .as-who b { font-size: var(--fs-body) }
-.as-drawer-foot { margin-block-start: auto; padding-block-start: var(--space-2) }
+.as-drawer[open] { display: flex; flex-direction: column; gap: 6px }
+.as-drawer-head { margin-block-end: 6px }
+.as-drawer-head .as-iconbtn { border-radius: var(--radius-pill); background: var(--md-surface-low) }
+.as-ident {
+  display: flex; align-items: center; gap: var(--as-gap); padding: var(--as-pad-i) var(--space-2) var(--space-3);
+  margin-block-end: var(--space-1); border-block-end: 1px solid var(--border-subtle);
+}
+.as-ident .as-avatar { inline-size: 38px; block-size: 38px; font-size: var(--fs-body-sm) }
+.as-who { display: flex; flex-direction: column; min-inline-size: 0 }
+.as-who b { font: 700 var(--fs-body-sm) / 1.3 var(--font-ui); color: var(--text-body) }
+.as-who small { font: 400 var(--fs-label) / 1.4 var(--font-ui); color: var(--text-muted) }
+.as-drawer-foot { margin-block-start: auto; padding-block-start: var(--space-2); border-block-start: 1px solid var(--border-subtle) }
 .a-motion .as-modal[open] { animation: asPanel var(--dur-base) var(--ease-out) both }
 .a-motion .as-drawer[open] { animation: asDrawerEnd var(--dur-slow) var(--a-ease-expo) both }
 .a-motion .as-drawer[open]:dir(rtl) { animation-name: asDrawer }
-@keyframes asDrawerEnd { from { transform: translateX(var(--space-8)); opacity: 0 } }
 
-/* The sidebar as a floating drawer (drawer range); the mobile query turns it into a sheet. */
+/* The sidebar as the teacher's floating drawer (1000px and below); the mobile query turns it
+   into a bottom sheet. */
 .as-side:popover-open {
-  position: fixed; inset-block: var(--space-2); inset-inline: var(--space-2) auto; margin: 0;
-  inline-size: 280px; max-inline-size: calc(100cqi - var(--space-4)); block-size: auto; max-block-size: none;
-  padding: var(--space-5) var(--space-3) var(--space-3);
+  position: fixed; inset-block: var(--as-pad-i); inset-inline: var(--as-pad-i) auto; margin: 0;
+  inline-size: min(280px, calc(100vw - 2 * var(--as-pad-i))); block-size: auto; max-block-size: none;
   border: 0; border-radius: var(--radius-card); box-shadow: var(--shadow-panel);
 }
 .as-side:popover-open .as-side-close { display: grid }
@@ -1113,58 +1111,53 @@
 .a-motion .as-side:popover-open:dir(rtl) { animation-name: asDrawerRtl }
 .a-motion .as-pop[open] .as-pop-panel { animation: asPanel var(--dur-base) var(--ease-out) both }
 
-/* Drawer range: under 1248px of shell (sidebar 248px + a 1000px page) the page needs
-   its full width, so the sidebar becomes a drawer behind a menu button (the teacher
-   pattern). Container queries cannot read custom properties, hence the literal. */
-.as-menu { display: none; margin-inline-start: calc(var(--space-2) * -1) }
-@container ashell (max-width: 1247px) {
+/* Drawer range (teacher: max-width 1000px). Container queries cannot read custom
+   properties, hence the literals. */
+.as-menu { display: none }
+@container ashell (max-width: 1000px) {
   .as-app { grid-template-columns: minmax(0, 1fr) }
   .as-side:not(:popover-open) { display: none }
   .as-menu { display: grid }
-  .as-bar { padding-inline-start: var(--space-3) }
+  .as-bar { margin-inline: var(--as-pad-i); padding-inline: var(--space-3) var(--as-pad-i) }
+  .as-main { padding: var(--space-1) var(--as-gutter-sm) 36px }
 }
 
-/* Mobile: no sidebar. A slim top bar (wordmark, bell, account) scrolls away; the bottom
-   bar stays; "More" opens the sidebar as a sheet. */
-@container ashell (max-width: 760px) {
+/* Mobile (teacher: max-width 720px): bottom bar, no menu button, no bar Upload. The bar
+   stays flat and slim here: the teacher's floating card and its margins would push the
+   lead action under the bottom bar (DESIGN rule: the first screen shows the lead action). */
+@container ashell (max-width: 720px) {
   .as-app { grid-template-rows: minmax(0, 1fr) auto }
-  .as-menu { display: none }
-  /* Mobile keeps a flat, slim bar: the floating card's insets would cost the first screen. */
+  .as-menu, .as-bar-upload { display: none }
   .as-bar {
-    position: relative; inset-block-start: auto; inline-size: auto; block-size: 44px; margin: 0;
-    padding-inline: var(--space-3) var(--space-2); border: 0; border-radius: 0; background: transparent; box-shadow: none;
+    position: relative; inset-block-start: auto; block-size: 44px; margin: 0;
+    padding-inline: var(--as-gutter-sm) var(--space-2); border: 0; border-radius: 0; background: transparent; box-shadow: none;
   }
-  .as-bar-wm { display: inline-flex; margin-inline-end: auto; padding-inline: var(--space-1) }
-  .as-title, .as-bar-upload { display: none }
   .as-pop { position: static }
-  .as-pop-panel { inset-inline: var(--space-2); inset-block-start: calc(100% - var(--space-1)); inline-size: auto }
-  .as-main .a-page { padding-block: var(--space-2) var(--space-8) }
+  .as-pop-panel { inset-inline: var(--as-pad-i); inset-block-start: calc(100% - var(--space-1)); inline-size: auto }
+  .as-main { padding: var(--space-1) var(--as-gutter-sm) var(--space-8) }
   .as-modal { inline-size: 100vw; max-inline-size: none; max-block-size: calc(100dvh - var(--space-6)); margin-block-end: 0; border-end-start-radius: 0; border-end-end-radius: 0 }
-  .as-modal-head { padding-inline-start: var(--space-5) }
-  .as-modal-body, .as-modal-foot { padding-inline: var(--space-5) }
   .as-fields { grid-template-columns: minmax(0, 1fr) }
   .a-bottombar {
     position: sticky; inset-block-end: 0; z-index: 5;
-    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-1);
-    padding: var(--space-1) var(--space-2) calc(var(--space-1) + env(safe-area-inset-bottom));
-    background: var(--md-surface-low); box-shadow: 0 -1px 0 var(--border-subtle);
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+    padding: 2px 6px calc(2px + env(safe-area-inset-bottom)); /* teacher 8px 6px; trimmed for the first screen */
+    background: var(--md-surface-lowest); border-block-start: 1px solid var(--border-subtle);
   }
   /* The "More" sheet: the same nav, docked to the bottom of the frame. */
   .as-side:popover-open {
     inset-block: auto 0; inset-inline: 0; margin-inline: auto;
-    inline-size: 100cqi; max-inline-size: none; max-block-size: 85dvh;
+    inline-size: 100cqi; max-block-size: 85dvh;
     padding: var(--space-3) var(--space-3) calc(var(--space-4) + env(safe-area-inset-bottom));
     border-radius: var(--radius-card) var(--radius-card) 0 0;
   }
-  .as-side:popover-open .as-side-head { margin-block-end: var(--space-2) }
   .as-side:popover-open .as-side-head .as-wm { visibility: hidden }
-  .as-side:popover-open .as-label { margin-block-start: var(--space-5) }
-  .as-side:popover-open .as-foot { margin-block-start: var(--space-5) }
+  .as-side:popover-open .as-foot { display: none } /* the bottom bar already has Upload */
   .a-motion .as-side:popover-open, .a-motion .as-side:popover-open:dir(rtl) { animation-name: asSheet }
 }
 
 @keyframes asDrawer { from { transform: translateX(calc(var(--space-8) * -1)); opacity: 0 } }
 @keyframes asDrawerRtl { from { transform: translateX(var(--space-8)); opacity: 0 } }
+@keyframes asDrawerEnd { from { transform: translateX(var(--space-8)); opacity: 0 } }
 @keyframes asSheet { from { transform: translateY(var(--space-12)); opacity: 0 } }
 @keyframes asPanel { from { transform: translateY(calc(var(--space-2) * -1)); opacity: 0 } }
 
@@ -1362,4 +1355,55 @@
   .a-prog { margin-block: var(--space-2) var(--space-3) }
   .a-prog-now { margin-block-end: var(--space-1); font-size: var(--fs-body-sm) }
   .a-prog-steps { display: none }
+}
+
+/* ---------- Teacher-scale content (desktop) ----------
+   The overview steps down to the teacher overview's ramp: 32px Bricolage for the biggest
+   headings, 16px/800 section titles, 14px body and card titles, 64px only for the one stat
+   numeral (the result score), cards padded 16 to 24px and sections 20px apart (teacher
+   .main gap). Same components and layout, smaller scale. Mobile keeps its own tuned sizes. */
+@container home (min-width: 761px) {
+  .a-head { margin-block-end: var(--space-4) }
+  .a-greet, .a-title { font-size: var(--fs-headline) }
+  .a-kicker { margin-block-start: var(--space-1); font-size: var(--fs-body-sm) }
+
+  .ah-hero { padding: var(--space-5) var(--space-6); border-radius: var(--radius-card) }
+  .ah-binny-tile { block-size: 80px }
+  .ah-binny-tile svg { block-size: 64px }
+  .ah-level-n { font-size: var(--fs-headline) }
+  .ah-xp-n { font-size: var(--fs-body) }
+  .ah-bar { block-size: 8px; margin-block-start: var(--space-3) }
+  .ah-week-head { margin-block-end: var(--space-2) }
+  .ah-strip { grid-template-columns: repeat(7, 40px) }
+  .ah-day-d { inline-size: 40px; border-radius: var(--radius-chip); font-size: var(--fs-body) }
+  .ah-xp-col { block-size: 36px }
+
+  .a-action-card { margin-block-start: var(--space-5); padding: var(--space-6) var(--space-7); border-radius: var(--radius-card) }
+  .a-act .a-meta-line { margin-block-end: var(--space-3); font-size: var(--fs-body-sm) }
+  .a-act-title { font-size: var(--fs-headline); line-height: 1.05; letter-spacing: -0.04em }
+  .a-act .a-facts { margin-block-start: var(--space-2); font-size: var(--fs-body-sm) }
+  .a-act-body { margin: var(--space-2) 0 var(--space-5); font-size: var(--fs-body-sm) }
+  .a-act-btn { min-block-size: 44px; padding: var(--space-3) var(--space-5); font-size: var(--fs-body-sm) }
+  .a-prog { margin-block: var(--space-4) var(--space-5) }
+  .a-act-result .a-act-paper { font-size: var(--fs-headline) }
+  .a-act-of { font-size: var(--fs-headline) }
+  .a-act-grade { inline-size: 48px; block-size: 48px; border-radius: var(--radius-chip); font-size: var(--fs-headline) }
+  .a-act-up { font-size: var(--fs-body-sm) }
+  .a-hero, .a-hero-new { padding: var(--space-6) }
+
+  .a-sec { margin-block-start: var(--space-5) }
+  .a-sec-h { margin-block-end: var(--space-3); font-size: var(--fs-body) }
+
+  .a-gj-row { min-block-size: 52px }
+  .a-gj-name b, .a-lane-name b, .a-xt-name { font-size: var(--fs-body-sm) }
+  .a-gj .a-journey { block-size: 48px; margin-block-end: var(--space-3) }
+  .a-stone { inline-size: 30px; block-size: 30px } /* the letter stays 21px bold: large text, so the white-on-Jewel chips keep 3:1 */
+
+  .a-ruler { padding: var(--space-4) var(--space-5); border-radius: var(--radius-tile) }
+  .a-lanes a { min-block-size: 44px }
+
+  .a-xcard { padding: var(--space-4) var(--space-5) var(--space-5); border-radius: var(--radius-tile) }
+  .a-xt, .a-xt.is-first { padding: var(--space-4) }
+  .a-xt-n { font-size: var(--fs-headline) }
+  .a-xt.is-first .a-xt-n { font-size: var(--fs-display-sm) }
 }

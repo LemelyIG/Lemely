@@ -377,9 +377,9 @@ document.addEventListener("keydown", (e) => {
   open.querySelector("summary").focus()
 })
 
-// Below 1248px the sidebar is a popover: a drawer behind the top bar's menu button, or on
+// At 1000px and below (the teacher's breakpoint) the sidebar is a popover: a drawer behind the top bar's menu button, or on
 // mobile the "More" sheet. Once the full sidebar is back, an open popover closes.
-const SIDEBAR_MIN = 1248
+const SIDEBAR_MIN = 1001
 function closeSheetIfWide() {
   if (side?.matches(":popover-open") && root.clientWidth >= SIDEBAR_MIN) side.hidePopover()
 }
@@ -418,7 +418,7 @@ document.querySelector(".as-subjects")?.addEventListener("click", (e) => {
 
 // Notifications: unread per state, a count on the bell, "Mark all read".
 const bellSummary = document.querySelector(".as-pop-bell summary")
-const bellCount = document.querySelector(".as-pop-bell .as-count")
+const bellDot = document.querySelector(".as-pop-bell .as-dot")
 const markRead = document.querySelector("[data-a-markread]")
 function setUnread(item, unread) {
   item.classList.toggle("is-unread", unread)
@@ -430,7 +430,7 @@ function syncCount() {
   const n = [...document.querySelectorAll(".as-items > li")].filter(
     (li) => inState(li, state) && li.querySelector(".as-item.is-unread"),
   ).length
-  bellCount.textContent = n ? String(n) : ""
+  bellDot.hidden = n === 0
   bellSummary.setAttribute("aria-label", n ? `Notifications, ${n} unread` : "Notifications")
   markRead.disabled = n === 0
   markRead.hidden = state === "new"
