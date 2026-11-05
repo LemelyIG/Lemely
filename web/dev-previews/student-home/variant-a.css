@@ -768,3 +768,35 @@
   .ah-xp-col { block-size: 28px }
   .ah-xp-bar { block-size: calc(var(--xp, 0) * 18px) }
 }
+
+/* Result hero: an unseen marked paper takes the big-action slot. The score is the moment. */
+.a-act-result .a-act-paper { font-size: 32px; line-height: 1.1; letter-spacing: -0.03em }
+.a-act-score { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); margin: var(--space-4) 0 0 }
+.a-act-marks { font: 800 112px / 0.82 var(--font-display); letter-spacing: -0.05em; font-variant-numeric: tabular-nums lining-nums }
+.a-act-of { margin-inline-start: calc(var(--space-3) * -1); align-self: flex-end; font: 800 44px / 1 var(--font-display); letter-spacing: -0.04em; opacity: 0.72 }
+.a-act-grade {
+  display: inline-grid; place-items: center; inline-size: 64px; block-size: 64px; border-radius: 16px;
+  background: var(--sh-grade-a); color: var(--white); font: 800 36px / 1 var(--font-display); letter-spacing: -0.02em;
+}
+.a-act-grade[data-grade="A*"] { background: var(--sh-grade-astar) }
+.a-act-grade[data-grade="B"] { background: var(--sh-grade-b) }
+.a-act-grade[data-grade="C"] { background: var(--sh-grade-c) }
+.a-act-up {
+  display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px; border-radius: var(--radius-pill);
+  background: var(--surface-card); color: var(--sh-success-text); font: 700 var(--fs-body) / 1 var(--font-ui);
+}
+.a-act-up .a-ico { inline-size: 18px; block-size: 18px; stroke-width: 2.2 }
+.a-motion .a-act-result .a-act-marks { animation: aRise 520ms var(--a-ease-expo) 220ms both }
+.a-motion .a-act-result .a-act-grade { animation: aPop 620ms var(--a-ease-expo) 520ms both }
+.a-motion .a-act-result .a-act-up { animation: aRise 420ms var(--a-ease-expo) 760ms both }
+.a-motion [data-anim] .a-act-result :is(.a-act-marks, .a-act-grade, .a-act-up) { animation-play-state: paused }
+.a-motion [data-anim].is-in .a-act-result :is(.a-act-marks, .a-act-grade, .a-act-up) { animation-play-state: running }
+
+@container home (max-width: 760px) {
+  .a-act-result .a-act-paper { font-size: 26px }
+  .a-act-score { margin-block: var(--space-3) var(--space-4); gap: var(--space-2) var(--space-3) }
+  .a-act-marks { font-size: 72px }
+  .a-act-of { font-size: 30px }
+  .a-act-grade { inline-size: 48px; block-size: 48px; border-radius: 12px; font-size: 28px }
+  .a-act-up { font-size: var(--fs-body-sm) }
+}
