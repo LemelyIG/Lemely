@@ -353,13 +353,13 @@
 /* Exams: framed like the other screen-2 sections. A calm subtitle, then one card:
    a Mist band from Today (Nov to Apr compressed with week ticks, May zoomed) and a
    countdown tile hanging from each exam date. The selected tile takes the tint. */
-.a-sec-sub { margin: calc(var(--space-3) * -1) 0 var(--space-5); font-size: var(--fs-body); color: var(--text-secondary) }
+.a-sec-sub { margin: calc(var(--space-2) * -1) 0 var(--space-4); font-size: var(--fs-body-sm); color: var(--text-secondary) }
 .a-sec-sub .a-mono { color: var(--text-body) }
 .a-xcard {
-  padding: var(--space-8) var(--space-8) var(--space-7); border-radius: var(--radius-card);
+  padding: var(--space-6) var(--space-7) var(--space-7); border-radius: var(--radius-card);
   background: var(--surface-card); box-shadow: var(--a-card-edge);
 }
-.a-xb { position: relative; block-size: 64px; margin-block-start: var(--space-5) }
+.a-xb { position: relative; block-size: 64px; margin-block-start: var(--space-4) }
 .a-xb-today {
   position: absolute; inset-block-end: calc(100% - 14px); inset-inline-start: 0;
   padding: 4px 10px; border-radius: var(--radius-pill);
@@ -372,15 +372,15 @@
   border-radius: var(--radius-pill); background: var(--md-primary-container);
 }
 .a-xb-weeks {
-  position: absolute; inset-block: 3px; inset-inline: 0 70%;
+  position: absolute; inset-block: 3px; inset-inline: 0 86%;
 }
 .a-xb-weeks i { position: absolute; inset-block: 0; inline-size: 1px; background: color-mix(in oklch, var(--md-on-primary-container) 30%, transparent) }
 .a-xb-fill {
-  position: absolute; inset-block: 0; inset-inline-start: 0; inline-size: 44.42%;
+  position: absolute; inset-block: 0; inset-inline-start: 0; inline-size: 30.11%;
   border-radius: inherit; background: color-mix(in oklch, var(--md-primary) 40%, var(--md-primary-container));
   transform-origin: 0 50%;
 }
-.sh-root[data-state="one-paper"] .a-xb-fill { inline-size: 72.21% }
+.sh-root[data-state="one-paper"] .a-xb-fill { inline-size: 65.05% }
 .a-xb-m {
   position: absolute; inset-block-start: 42px; transform: translateX(-50%);
   font: 600 var(--fs-label) / 1 var(--font-mono); letter-spacing: 0.04em; color: var(--text-muted);
@@ -409,11 +409,9 @@
 .a-xb-pin.is-sel::before { background: var(--md-primary); box-shadow: 0 0 0 3px var(--surface-card) }
 
 .a-xt-row {
-  display: grid; grid-template-columns: 34fr 26fr 20fr 20fr; align-items: stretch;
-  margin-block-start: 14px;
+  display: grid; grid-template-columns: 1.3fr 1fr 1fr; align-items: stretch;
+  margin-block-start: 14px; margin-inline: -6px;
 }
-.a-xt-weeks { grid-column: 1; align-self: start; margin: var(--space-6) 0 0; font-size: var(--fs-body-sm); color: var(--text-secondary) }
-.a-xt-weeks b { display: block; font: 800 40px / 1 var(--font-display); letter-spacing: -0.04em; color: var(--text-body) }
 .a-xt {
   grid-column: var(--col); grid-row: 1;
   display: flex; flex-direction: column; gap: var(--space-3);
@@ -538,9 +536,9 @@
 .a-btn-tonal:hover { background: color-mix(in oklch, var(--md-primary-container), var(--md-primary) 10%) }
 
 /* Sections below */
-.a-sec { margin-block-start: 64px }
+.a-sec { margin-block-start: var(--space-12) }
 .a-sec-h {
-  margin: 0 0 var(--space-5); font: 800 32px / 1.15 var(--font-ui);
+  margin: 0 0 var(--space-4); font: 800 21px / 1.2 var(--font-ui);
   letter-spacing: var(--ls-headline-ui); color: var(--text-body);
 }
 
@@ -689,7 +687,6 @@
   .a-kicker { font-size: var(--fs-body-sm); margin-block-start: var(--space-1) }
 
   .a-sec { margin-block-start: var(--space-8) }
-  .a-sec-h { font-size: 26px }
 
   .a-hero { grid-template-columns: minmax(0, 1fr); gap: var(--space-4); padding: var(--space-6) var(--space-5) }
   .a-binny { order: -1; flex-direction: row; inline-size: auto; gap: var(--space-3) }
@@ -703,7 +700,6 @@
   .a-hero .a-btn-primary { inline-size: 100%; justify-content: center }
   .a-stone { inline-size: 30px; block-size: 30px }
 
-  .a-sec-sub { font-size: var(--fs-body-sm) }
   .a-xcard { padding: var(--space-5) var(--space-4) }
   .a-xb { display: none }
   .a-xt-row { position: relative; grid-template-columns: minmax(0, 1fr); row-gap: var(--space-3); margin: 0; padding-inline-start: 28px }
@@ -711,9 +707,7 @@
     content: ""; position: absolute; inset-block: 8px; inset-inline-start: 6px; inline-size: 10px;
     border-radius: var(--radius-pill); background: var(--md-primary-container);
   }
-  .a-xt-weeks { grid-column: 1; grid-row: auto; margin: 0 0 var(--space-1) }
-  .a-xt-weeks b { display: inline; font-size: 28px; margin-inline-end: 4px }
-  .a-xt { position: relative; grid-column: 1; grid-row: auto; margin-inline: 0 }
+      .a-xt { position: relative; grid-column: 1; grid-row: auto; margin-inline: 0 }
   .a-xt::before {
     content: ""; position: absolute; inset-inline-start: -17px; inset-block-start: 30px; inline-size: 17px; block-size: 2px;
     background: var(--border-default);
