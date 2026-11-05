@@ -137,7 +137,7 @@ describe("classCardModel grade and trend", () => {
   afterEach(() => vi.useRealTimers())
 
   it("carries the median grade, a signed upward trend and the last paper with its date", () => {
-    const m = classCardModel({ ...base, grade: "B", delta: 0.4, lastPaper: "P4", lastActivityAt: "2026-11-02T12:00:00Z" })
+    const m = classCardModel({ ...base, grade: "B", delta: 0.4, lastPaper: "P4", lastPaperAt: "2026-11-02T12:00:00Z", lastActivityAt: "2026-11-05T11:00:00Z" })
     expect(m.grade).toBe("B")
     expect(m.trend).toEqual({ text: "+0.4", tone: "up" })
     expect(m.meta2).toBe("P4 · 3d ago")
@@ -148,9 +148,10 @@ describe("classCardModel grade and trend", () => {
     expect(classCardModel({ ...base, delta: 0 }).trend).toEqual({ text: "0.0", tone: "flat" })
   })
 
-  it("shows whichever of the paper and date exists", () => {
+  it("never pairs the paper with a quiz-inclusive activity date", () => {
     expect(classCardModel({ ...base, lastPaper: "P2" }).meta2).toBe("P2")
-    expect(classCardModel({ ...base, lastActivityAt: "2026-11-05T11:30:00Z" }).meta2).toBe("30m ago")
+    expect(classCardModel({ ...base, lastPaper: "P2", lastActivityAt: "2026-11-05T11:30:00Z" }).meta2).toBe("P2")
+    expect(classCardModel({ ...base, lastActivityAt: "2026-11-05T11:30:00Z" }).meta2).toBeNull()
   })
 
   it("turns the weak topic accuracy into a percentage and a clamped bar", () => {

@@ -107,7 +107,7 @@ export function classCardModel(c: ClassSummary): ClassCardModel {
   const accuracy = c.topWeakness && typeof c.topWeaknessAccuracy === "number" && Number.isFinite(c.topWeaknessAccuracy)
     ? Math.min(1, Math.max(0, c.topWeaknessAccuracy))
     : null
-  const meta2 = [c.lastPaper, c.lastActivityAt ? relativeTime(c.lastActivityAt) : null].filter(Boolean).join(" · ")
+  const meta2 = [c.lastPaper, c.lastPaper && c.lastPaperAt ? relativeTime(c.lastPaperAt) : null].filter(Boolean).join(" · ")
   return {
     id: c.id,
     title: c.label,

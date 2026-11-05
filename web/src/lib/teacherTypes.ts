@@ -314,6 +314,8 @@ export interface ClassSummary {
   grade?: string | null
   delta?: number | null
   lastPaper?: string | null
+  /** When that paper was recorded (never a quiz); `lastActivityAt` counts quizzes. */
+  lastPaperAt?: string | null
   topWeaknessAccuracy?: number | null
 }
 

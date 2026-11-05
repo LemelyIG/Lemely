@@ -432,6 +432,9 @@ class ClassSummaryDTO(ApiModel):
     grade: str | None = None
     delta: float | None = None
     lastPaper: str | None = None
+    # ``recorded_at`` of that same paper (never a quiz), so the card's paper
+    # label and date agree; ``lastActivityAt`` counts quizzes and cannot.
+    lastPaperAt: str | None = None
     topWeaknessAccuracy: float | None = None
 
 

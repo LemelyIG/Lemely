@@ -215,6 +215,7 @@ class _ClassCardTrend:
     grade: str | None
     delta: float | None
     last_paper: str | None
+    last_paper_at: str | None
     top_weakness_accuracy: float | None
 
 
@@ -230,6 +231,7 @@ def _class_card_trend(histories: list[StudentHistory], top_weakness: str | None)
       the latest paper's subject (``_previous_grade``'s rule: a Maths paper is
       not a "previous" Physics paper). ``None`` when no student has two.
     - ``last_paper``: ``"P<n>"`` of the class's most recent paper.
+    - ``last_paper_at``: that same paper's ``recorded_at``.
     - ``top_weakness_accuracy``: mean ``WeakArea.accuracy`` (0-1, 3 dp) of
       ``top_weakness`` across the latest papers that list it.
     """
@@ -265,6 +267,7 @@ def _class_card_trend(histories: list[StudentHistory], top_weakness: str | None)
         grade=_median_grade([r.grade for r in latest]),
         delta=delta,
         last_paper=f"P{most_recent.metadata.paper_number}" if most_recent else None,
+        last_paper_at=most_recent.recorded_at if most_recent else None,
         top_weakness_accuracy=(round(sum(accuracies) / len(accuracies), 3) if accuracies else None),
     )
 
@@ -332,6 +335,7 @@ def _class_row_to_summary(
         grade=card.grade,
         delta=card.delta,
         lastPaper=card.last_paper,
+        lastPaperAt=card.last_paper_at,
         topWeaknessAccuracy=card.top_weakness_accuracy,
     )
 

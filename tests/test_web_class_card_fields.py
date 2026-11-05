@@ -130,10 +130,12 @@ def _history(*records: PaperRecord) -> StudentHistory:
 
 def test_trend_single_paper_has_no_delta() -> None:
     sid = str(uuid.uuid4())
-    trend = _class_card_trend([_history(_record(sid, percentage=60, grade="C", days_ago=1))], None)
+    only = _record(sid, percentage=60, grade="C", days_ago=1)
+    trend = _class_card_trend([_history(only)], None)
     assert trend.grade == "C"
     assert trend.delta is None
     assert trend.last_paper == "P4"
+    assert trend.last_paper_at == only.recorded_at
 
 
 def test_trend_delta_uses_only_students_with_two_papers() -> None:
@@ -167,9 +169,11 @@ def test_trend_previous_paper_must_share_the_latest_subject() -> None:
 
 def test_trend_ignores_quizzes_for_grade_delta_and_last_paper() -> None:
     a = str(uuid.uuid4())
+    paper = _record(a, percentage=40, grade="E", days_ago=5, paper_number=2)
+    paper_at = paper.recorded_at
     histories = [
         _history(
-            _record(a, percentage=40, grade="E", days_ago=5, paper_number=2),
+            paper,
             _record(a, percentage=99, grade="A*", days_ago=1, paper_number=6, origin="quiz"),
         )
     ]
@@ -177,6 +181,7 @@ def test_trend_ignores_quizzes_for_grade_delta_and_last_paper() -> None:
     assert trend.grade == "E"
     assert trend.delta is None
     assert trend.last_paper == "P2"
+    assert trend.last_paper_at == paper_at
 
 
 def test_trend_last_paper_is_the_class_wide_most_recent_paper() -> None:
