@@ -7,6 +7,10 @@ import "./home.css"
 
 const isPdf = (f: File) => f.type === "application/pdf" || /\.pdf$/i.test(f.name)
 const hasFiles = (e: DragEvent) => !!e.dataTransfer && [...e.dataTransfer.types].includes("Files")
+/** A dialog (Settings, the Create sheet), a menu (the profile menu) or a
+ * locked page is in front: a drop then belongs to nothing on this card. */
+const OVERLAY_SELECTOR = '[aria-modal="true"], [role="dialog"], [role="menu"]'
+const overlayOpen = () => document.body.style.position === "fixed" || document.querySelector(OVERLAY_SELECTOR) !== null
 const size = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`)
 /** Long enough for the big tick and the Received chip (1.05s + 0.6s) to finish before the hand-off. */
 const HANDOFF_MS = 1700
@@ -63,14 +67,28 @@ export function MarkClassSet({ lastUpload, onFiles }: { lastUpload: string | nul
   useEffect(() => {
     // Page-wide drag and drop. Depth counts nested enter/leave pairs so the veil does not flicker.
     let depth = 0
-    const enter = (e: DragEvent) => { if (!hasFiles(e)) return; e.preventDefault(); depth++; setDragging(true) }
-    const over = (e: DragEvent) => { if (!hasFiles(e)) return; e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = "copy" }
+    const enter = (e: DragEvent) => {
+      if (!hasFiles(e) || overlayOpen()) return
+      e.preventDefault()
+      depth++
+      setDragging(true)
+    }
+    const over = (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      // Always claim a file drag, so a drop over an overlay is refused here
+      // rather than the browser navigating away to open the PDF.
+      e.preventDefault()
+      const blocked = overlayOpen()
+      if (e.dataTransfer) e.dataTransfer.dropEffect = blocked ? "none" : "copy"
+      if (blocked) { depth = 0; setDragging(false) }
+    }
     const leave = (e: DragEvent) => { if (!hasFiles(e)) return; depth = Math.max(0, depth - 1); if (!depth) setDragging(false) }
     const drop = (e: DragEvent) => {
       if (!hasFiles(e)) return
       e.preventDefault()
       depth = 0
       setDragging(false)
+      if (overlayOpen()) return
       takeRef.current(e.dataTransfer?.files ?? null)
       card.current?.scrollIntoView?.({ block: "nearest", behavior: prefersReducedMotion() ? "auto" : "smooth" })
     }
@@ -98,8 +116,8 @@ export function MarkClassSet({ lastUpload, onFiles }: { lastUpload: string | nul
       <header className="flex items-baseline justify-between gap-3 px-1 pt-0.5">
         <h2 id="mcs-h" className="text-eyebrow text-on-surface-variant">Mark papers</h2>
         {state === "queued" ? (
-          <span className="th-got items-center gap-1 rounded-pill bg-primary py-[3px] pr-2.5 pl-1.5 text-label-sm text-on-primary">
-            <svg aria-hidden viewBox="0 0 24 24" className="size-[15px]" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
+          <span className="th-got items-center gap-1 rounded-pill bg-primary py-0.75 pr-2.5 pl-1.5 text-label-sm text-on-primary">
+            <svg aria-hidden viewBox="0 0 24 24" className="size-3.75" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
             Received
           </span>
         ) : (

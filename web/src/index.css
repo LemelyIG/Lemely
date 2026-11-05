@@ -131,6 +131,10 @@
   /* iOS Safari auto-zooms on focusing a text input under 16px, so this is a
      platform floor for native form fields, applied via `.text-field`. */
   --fs-field: 16px;
+  /* The body-sm step of the type ramp, named once so `.text-body-sm` and the
+     placeholder rule cannot drift apart. */
+  --fs-body-sm: 14px;
+  --lh-body-sm: 1.45;
 }
 
 @theme inline {
@@ -516,7 +520,8 @@ body {
      Layered, so a `placeholder:` utility can still override. */
   input::placeholder,
   textarea::placeholder {
-    font-size: 14px;
+    font-size: var(--fs-body-sm);
+    line-height: var(--lh-body-sm);
     font-weight: 400;
   }
 }
@@ -688,7 +693,7 @@ body {
   font: 400 16px/1.5 var(--font-sans);
 }
 .text-body-sm {
-  font: 400 14px/1.45 var(--font-sans);
+  font: 400 var(--fs-body-sm) / var(--lh-body-sm) var(--font-sans);
 }
 /* The `--fs-field` platform floor (iOS zooms on inputs under 16px). Standalone:
    it shares a twMerge font-size group with `.text-body-*`, so the two never

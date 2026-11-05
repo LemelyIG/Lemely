@@ -107,7 +107,8 @@
 .th-dropveil {
   position: fixed;
   inset: 10px;
-  z-index: 60;
+  /* Over the page and its chrome, under any scrim or modal. */
+  z-index: var(--z-index-dropdown);
   display: grid;
   place-content: center;
   justify-items: center;
