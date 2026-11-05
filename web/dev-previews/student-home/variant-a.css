@@ -1,7 +1,7 @@
-/* Variant A, the main version. Greeting, the reward header (Binny, level, the
-   week), the Today list, the featured grade journey, the latest result as the end
-   of the trail beside other subjects' journeys, the exam countdown, subjects and
-   the mastery ruler. Token values only; layout responds to the home container. */
+/* Variant A v2, the main version (from the user interview). Screen 1: greeting, the
+   reward header (Binny, level, the week) and one big action. Screen 2: grade journeys,
+   the mastery ruler and the interactive exam countdown. Token values only; layout
+   responds to the home container. Motion lives in the .a-motion block. */
 
 .sh-root {
   --a-ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
@@ -15,7 +15,8 @@
 .sh-root ::selection { background: var(--md-primary-container); color: var(--md-on-primary-container) }
 .sh-root :focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px }
 .sh-root a { text-decoration: none }
-.sh-root a *, .sh-toolbar a { text-decoration: none }
+.sh-root a *,
+.sh-toolbar a { text-decoration: none }
 .a-note a:hover { color: var(--md-primary-hover) }
 
 .a-vh {
@@ -74,7 +75,7 @@
   font-size: var(--fs-body); color: var(--text-secondary); text-wrap: pretty;
 }
 
-/* Buttons. In the ready view only the lead Today row's button is filled. */
+/* Buttons. In the ready view only the big action's button is filled. */
 .a-btn {
   display: inline-flex; align-items: center; gap: var(--space-2);
   min-block-size: 48px; padding: 12px 22px; border: 0; border-radius: var(--radius-button);
@@ -87,49 +88,6 @@
 .a-btn-primary { background: var(--md-primary); color: var(--md-on-primary) }
 .a-btn-primary:hover { background: var(--md-primary-hover) }
 
-/* Today list: one white surface, rows divided by hairlines. The first kind in
-   data-today is the lead row: tinted Mist, the page's only filled button. */
-.a-todaysec { margin-block-start: var(--space-12) }
-.a-today-h {
-  margin: 0 0 var(--space-4);
-  font: 800 32px / 1.1 var(--font-display); letter-spacing: -0.035em; color: var(--text-body);
-}
-.a-tl {
-  margin: 0; padding: var(--space-2); list-style: none; display: flex; flex-direction: column;
-  border-radius: var(--radius-card); background: var(--surface-card); box-shadow: var(--a-card-edge);
-}
-.a-tl > li { flex-direction: column; border-radius: var(--radius-tile) }
-.a-tl > li + li { border-block-start: 1px solid var(--border-subtle) }
-.a-tl-in {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2) var(--space-6);
-  padding: var(--space-4) var(--space-5);
-}
-.a-tl .a-meta-line { margin-block-end: var(--space-1); font-size: 13px }
-.a-tl .a-title { font: 700 18px / 1.25 var(--font-ui); letter-spacing: -0.01em; color: var(--text-body) }
-.a-tl .a-facts { display: inline; margin: 0 }
-.a-tl .a-body { display: none }
-.a-tl-btn { background: var(--md-primary-container); color: var(--md-on-primary-container); font-size: var(--fs-body-sm); min-block-size: 44px; padding: 10px 16px }
-.a-tl-btn:hover { background: color-mix(in oklch, var(--md-primary-container), var(--md-primary) 10%) }
-
-.a-tl > li:is(
-  .sh-root[data-today^="marking"] [data-today-item="marking"],
-  .sh-root[data-today^="session"] [data-today-item="session"],
-  .sh-root[data-today^="practice"] [data-today-item="practice"],
-  .sh-root[data-today^="correct"] [data-today-item="correct"],
-  .sh-root[data-today^="first-paper"] [data-today-item="first-paper"]
-) {
-  background: var(--md-primary-container); color: var(--md-on-primary-container);
-  & + li { border-block-start: 0 }
-  & .a-tl-in { grid-template-columns: minmax(0, 1fr) auto; align-items: end; padding: var(--space-7) var(--space-7) var(--space-6) }
-  & .a-meta-line { margin-block-end: var(--space-3); font-size: var(--fs-body-sm); color: var(--md-on-primary-container) }
-  & .a-meta-line .a-code { background: var(--surface-card); color: var(--text-body) }
-  & .a-title { font: 800 40px / 1.02 var(--font-display); letter-spacing: -0.04em; color: var(--md-on-primary-container) }
-  & .a-facts { display: block; margin-block-start: var(--space-2); color: var(--md-on-primary-container) }
-  & .a-body { display: block; max-inline-size: 52ch; margin: var(--space-3) 0 0; color: var(--md-on-primary-container) }
-  & .a-tl-btn { min-block-size: 48px; padding: 12px 22px; font-size: var(--fs-body); background: var(--md-primary); color: var(--md-on-primary) }
-  & .a-tl-btn:hover { background: var(--md-primary-hover) }
-}
-.sh-root[data-state="one-paper"] .a-tl-alt[data-only-state] { display: block }
 
 /* Reward header, ported from variant C (committed d0a49d24) at the user's request:
    Binny tile, level and XP, and the week of XP bars over gold day tiles. */
@@ -219,8 +177,10 @@
 }
 .ah-xp-bar { inline-size: 14px; block-size: calc(var(--xp, 0) * 32px); border-radius: 4px 4px 0 0; background: var(--md-tertiary) }
 .ah-xp-val { margin-block-end: 3px; font: 600 11px/1 var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums }
-.ah-day:not(.is-earned) :is(.ah-xp-bar, .ah-xp-val) { display: none }
-.sh-root[data-state="one-paper"] .ah-op-empty :is(.ah-xp-bar, .ah-xp-val) { display: none }
+.ah-day:not(.is-earned) :is(.ah-xp-bar,
+.ah-xp-val) { display: none }
+.sh-root[data-state="one-paper"] .ah-op-empty :is(.ah-xp-bar,
+.ah-xp-val) { display: none }
 .ah-narrow { display: none }
 .ah-bar-fill.ah-bar-half { inline-size: 50% }
 /* One-paper: only 2 Nov has XP in the zero-streak strip. */
@@ -267,37 +227,6 @@
   .ah-narrow { display: inline }
 }
 
-/* The trail is the result: older grade chips on one vertical line that runs
-   into the expanded latest result. */
-.a-rtrail, .a-rtrail-one { margin: 0; padding: 0; list-style: none }
-.sh-root[data-state="one-paper"] .a-rtrail-one[data-only-state] { display: block }
-.a-rt-old { position: relative }
-.a-rt-old::before {
-  content: ""; position: absolute; inset-inline-start: 31px; inset-block: 50% -50%; inline-size: 2px;
-  background: var(--border-default);
-}
-.a-rt-old a {
-  position: relative; display: grid; grid-template-columns: 64px auto; align-items: center; gap: var(--space-3);
-  min-block-size: 44px; border-radius: 12px; color: var(--text-secondary);
-  transition: background var(--dur-fast) var(--ease-out);
-}
-.a-rt-old a:hover { background: var(--surface-hover-tint) }
-.a-rt-axis { position: relative; z-index: 1; display: grid; place-items: center; inline-size: 64px }
-.a-rt-axis .a-grade { box-shadow: 0 0 0 4px var(--surface-card) }
-.a-rt-d { font-size: 13px }
-.a-rt-now { position: relative; margin-block-start: var(--space-2) }
-.a-rt-unit {
-  display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: var(--space-4); align-items: start;
-  padding-block: var(--space-2); border-radius: var(--radius-tile); color: var(--text-body);
-  transition: background var(--dur-fast) var(--ease-out);
-}
-.a-rt-unit:hover { background: var(--surface-hover-tint) }
-.a-rt-body { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); padding-block-start: 2px }
-.a-rt-body .a-latest-score b { font-size: 80px }
-.a-rt-body .a-latest-of { font-size: 36px }
-.a-rt-body .a-change { font-size: var(--fs-body) }
-.a-rt-body .a-latest-go { margin-block-start: var(--space-2) }
-
 /* New-student hero: Binny stands beside the first-paper action. */
 .a-binny {
   margin: 0; display: flex; flex-direction: column; align-items: center; gap: var(--space-3);
@@ -323,7 +252,7 @@
 }
 @keyframes a-bob { from { transform: translateY(0) } to { transform: translateY(-5px) } }
 
-/* Notes under the Today list */
+/* Notes under the big action */
 .a-note {
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3);
   margin: 0; padding: var(--space-3) var(--space-5); border-radius: var(--radius-tile);
@@ -335,60 +264,12 @@
 }
 .a-note .a-ico { inline-size: 16px; block-size: 16px }
 
-/* Results: one focal row (the featured grade journey on Mist), then one white
-   card split into two calm halves. One surface level, separated by air. */
-.a-results { display: flex; flex-direction: column; gap: var(--space-12); margin-block-start: 64px }
-.a-latest-cap { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-3); font-size: var(--fs-data) }
-.a-latest-cap > .a-mono { color: var(--text-body) }
-.a-latest-when { color: var(--text-secondary); font-size: var(--fs-body-sm) }
-.a-latest-when .a-mono { font-size: 13px }
-.a-latest-score { display: flex; align-items: baseline; gap: 2px; font-variant-numeric: tabular-nums }
-.a-latest-score b { font: 800 96px / 0.82 var(--font-display); letter-spacing: -0.05em; color: var(--text-body) }
-.a-latest-of { font: 800 44px / 1 var(--font-display); letter-spacing: -0.04em; color: var(--text-secondary) }
-.a-latest-go { display: inline-flex; align-items: center; gap: var(--space-2); font-weight: 700; color: var(--md-primary) }
-.a-latest-go .a-ico { transition: transform var(--dur-base) var(--ease-out) }
-
-.a-panel-h { margin: 0 0 var(--space-3); font: 700 var(--fs-body-sm) / 1.2 var(--font-ui); color: var(--text-secondary) }
-
-.a-jfeat {
-  display: flex; flex-direction: column; gap: var(--space-6);
-  padding: var(--space-8) 40px; border-radius: var(--radius-board);
-  background: var(--md-primary-container); color: var(--md-on-primary-container);
-}
-.sh-root[data-state="one-paper"] .a-jfeat[data-only-state] { display: flex }
-.a-jfeat-h { margin: 0; font: 800 40px / 1.02 var(--font-display); letter-spacing: -0.04em; text-wrap: balance }
-.a-jfeat-h .a-mono { font-family: var(--font-display); font-weight: 800 }
-.a-jfeat-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3) }
-.a-jnote { margin: 0; font-size: var(--fs-body-sm) }
-.a-jfeat .a-btn-tonal { background: var(--surface-card); color: var(--md-primary) }
-.a-jfeat .a-btn-tonal:hover { background: var(--md-surface-low) }
-
-.a-rcard {
-  display: flex; align-items: stretch;
-  padding: 40px; border-radius: var(--radius-card);
-  background: var(--surface-card); box-shadow: var(--a-card-edge);
-}
-.a-rhalf { flex: 1; min-inline-size: 0 }
-.a-moment { padding-inline-end: var(--space-12) }
-.a-others {
-  display: flex; flex-direction: column; gap: var(--space-7);
-  padding-inline-start: var(--space-12); border-inline-start: 1px solid var(--border-subtle);
-}
-.a-others-h { margin: 0; font: 800 var(--fs-title) / 1.2 var(--font-ui); letter-spacing: var(--ls-headline-ui); color: var(--text-body) }
-.a-jitem { display: flex; flex-direction: column; gap: var(--space-2) }
-.a-jitem-h { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-2); margin: 0; font-size: var(--fs-body) }
-.a-jitem-h b { font-weight: 700 }
-.a-jgap { font-size: var(--fs-body-sm); color: var(--text-secondary) }
-.a-jgap .a-mono { color: var(--text-body) }
-
 /* Grade journey: a soft line, a trail from the first paper, stones at each grade, the student's marker. */
 .a-journey { position: relative; block-size: 64px; margin-inline: 18px }
-.a-jitem .a-journey { block-size: 56px }
 .a-j-line {
   position: absolute; inset-inline: -18px; inset-block-start: calc(68% - 2px); block-size: 4px; border-radius: 2px;
   background: var(--md-surface-highest);
 }
-.a-jfeat .a-j-line { background: var(--surface-card) }
 .a-j-trail {
   position: absolute; inset-block-start: calc(68% - 5px); block-size: 10px; border-radius: 5px;
   background: color-mix(in oklch, var(--md-primary) 30%, transparent);
@@ -417,18 +298,75 @@
   font: 700 12px / 1.2 var(--font-mono); font-variant-numeric: tabular-nums;
 }
 
-/* Exam countdown strip: today on the left, a compressed stretch to April,
-   then May zoomed so the three exams sit apart. */
+/* One big action: the page's focal point and its only filled primary button. */
+.a-action-card {
+  margin-block-start: var(--space-8);
+  padding: 56px 64px 60px; border-radius: var(--radius-board);
+  background: var(--md-primary-container); color: var(--md-on-primary-container);
+}
+.a-act { max-inline-size: 760px }
+.a-act .a-meta-line { margin-block-end: var(--space-4); font-size: 15px; color: var(--md-on-primary-container) }
+.a-act .a-meta-line .a-code { background: var(--surface-card); color: var(--text-body); font-size: 12px }
+.a-act-title {
+  margin: 0; font: 800 64px / 0.98 var(--font-display); letter-spacing: -0.045em; text-wrap: balance;
+}
+.a-act .a-facts { margin: var(--space-3) 0 0; font-size: var(--fs-body); color: var(--md-on-primary-container) }
+.a-act-body { margin: var(--space-4) 0 var(--space-8); max-inline-size: 52ch; font-size: 18px; line-height: 1.5; text-wrap: pretty }
+.a-act-btn {
+  min-block-size: 56px; padding: 16px 28px; font-size: 18px; border-radius: 16px;
+  transition: background var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
+}
+.a-act-btn:hover { transform: translateY(-2px); box-shadow: var(--shadow-hover) }
+.a-act-btn:active { transform: scale(0.97); transition-duration: 80ms }
+.sh-root[data-state="one-paper"] .a-act[data-only-state] { display: block }
+.a-note { margin-block-start: var(--space-3) }
+
+/* Your grades: one compact grade journey per subject, closest exam first. */
+.a-grades .a-gj {
+  margin: 0; padding: var(--space-2); list-style: none;
+  border-radius: var(--radius-card); background: var(--surface-card); box-shadow: var(--a-card-edge);
+}
+.a-gj > li + li { border-block-start: 1px solid var(--border-subtle) }
+.sh-root[data-state="one-paper"] .a-gj > li { border-block-start: 0 }
+.a-gj-row {
+  display: grid; grid-template-columns: 220px 170px minmax(0, 1fr) 18px; align-items: center; gap: var(--space-6);
+  min-block-size: 88px; padding: var(--space-2) var(--space-5); border-radius: var(--radius-tile);
+  color: var(--text-body);
+  transition: background var(--dur-fast) var(--ease-out), transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
+}
+.a-gj-row:hover { position: relative; z-index: 1; background: var(--surface-card); transform: translateY(-2px); box-shadow: var(--shadow-hover) }
+.a-gj-row:focus-visible { outline-offset: -2px }
+.a-gj-name { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px var(--space-2); min-inline-size: 0 }
+.a-gj-name b { font-size: var(--fs-body); font-weight: 700 }
+.a-gj-dist { font-size: var(--fs-body-sm); font-weight: 600; color: var(--text-secondary) }
+.a-gj-dist .a-mono { color: var(--text-body) }
+.a-gj .a-journey { block-size: 56px }
+.a-gj-go { color: var(--text-muted); transition: transform var(--dur-base) var(--ease-out), color var(--dur-fast) }
+.a-gj-row:hover .a-gj-go { transform: translateX(3px); color: var(--text-body) }
+
+/* Mastery ruler rows: lift on hover and reveal the Practise arrow. */
+.a-lanes a { transition: background var(--dur-fast) var(--ease-out), transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out) }
+.a-lanes a:hover { position: relative; z-index: 1; background: var(--surface-card); transform: translateY(-2px); box-shadow: var(--shadow-hover) }
+.a-lane-go { color: var(--md-primary); opacity: 0; transform: translateX(-4px); transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out) }
+.a-lanes a:is(:hover, :focus-visible) .a-lane-go { opacity: 1; transform: none }
+
+/* Exam countdown strip: today on the left, a compressed stretch with week ticks,
+   then May zoomed. Markers are buttons; the selected exam's card shows below. */
 .a-exams { margin-block-start: 64px }
 .a-exams .a-sec-h .a-mono { font-family: inherit; font-weight: inherit; font-variant-numeric: tabular-nums }
 .a-strip { position: relative; block-size: 176px; margin-inline: var(--space-6) }
 .a-strip-far {
   position: absolute; inset-block-start: calc(50% - 1px); inset-inline: 0 48%;
-  border-block-start: 2px dashed var(--border-default);
+  border-block-start: 2px dashed var(--border-default); transform-origin: 0 50%;
+}
+.a-strip-weeks {
+  position: absolute; inset-block-start: calc(50% - 5px); inset-inline: 0 48%; block-size: 10px;
+  background: repeating-linear-gradient(to right, var(--border-default) 0 1px, transparent 1px calc(100% / 25));
+  opacity: 0.7;
 }
 .a-strip-line {
   position: absolute; inset-block-start: calc(50% - 2px); inset-inline: 52% 0; block-size: 4px; border-radius: 2px;
-  background: var(--border-default);
+  background: var(--border-default); transform-origin: 0 50%;
 }
 .a-strip-break {
   position: absolute; inset-block-start: 50%; inline-size: 16px; block-size: 20px; transform: translate(-50%, -50%);
@@ -454,32 +392,133 @@
   position: absolute; inset-block-start: calc(50% + 14px); transform: translateX(-50%);
   font: 600 var(--fs-label) / 1 var(--font-mono); letter-spacing: 0.04em; color: var(--text-muted);
 }
-.a-tick::before {
-  content: ""; position: absolute; inset-block-start: -14px; inset-inline-start: 50%;
-  inline-size: 1px; block-size: 8px; background: var(--border-default);
-}
 .a-tick.is-may { color: var(--text-body); font-weight: 800 }
-.a-ex { position: absolute; inset-block-start: 50% }
+
+.a-ex {
+  position: absolute; inset-block-start: 50%; inline-size: 28px; block-size: 28px;
+  margin-block-start: -14px; margin-inline-start: -14px; padding: 0; border: 0; border-radius: 50%;
+  background: none; color: inherit; font: inherit; cursor: pointer;
+}
+.a-ex:focus-visible { outline: none }
 .a-ex-dot {
   display: block; inline-size: 14px; block-size: 14px; border-radius: 50%;
   background: var(--surface-page); box-shadow: inset 0 0 0 3px var(--text-secondary);
+  transition: transform var(--dur-base) var(--a-ease-expo), background var(--dur-fast);
 }
-.a-ex > .a-ex-dot { position: absolute; transform: translate(-50%, -50%) }
-.a-ex.is-first > .a-ex-dot, .sh-root[data-state="one-paper"] .a-ex[data-code="0580"] > .a-ex-dot {
-  inline-size: 18px; block-size: 18px; background: var(--md-primary); box-shadow: 0 0 0 3px var(--surface-page);
+.a-ex > .a-ex-dot { position: absolute; inset-inline-start: 7px; inset-block-start: 7px }
+.a-ex:hover > .a-ex-dot { transform: scale(1.25) }
+.a-ex:focus-visible > .a-ex-dot { outline: 2px solid var(--md-primary); outline-offset: 3px }
+.a-ex.is-sel > .a-ex-dot {
+  inline-size: 18px; block-size: 18px; inset-inline-start: 5px; inset-block-start: 5px;
+  background: var(--md-primary); box-shadow: 0 0 0 3px var(--surface-page);
 }
 .a-ex-l {
-  position: absolute; inset-inline-start: 0; transform: translateX(-50%);
-  display: flex; flex-direction: column; align-items: center; gap: 2px; white-space: nowrap; text-align: center;
+  position: absolute; inset-inline-start: 14px; transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 8px; border-radius: 10px;
+  white-space: nowrap; text-align: center;
+  transition: background var(--dur-fast) var(--ease-out);
 }
-.a-ex.is-up .a-ex-l { inset-block-end: 20px }
-.a-ex.is-down .a-ex-l { inset-block-start: 20px }
-.a-ex.is-end .a-ex-l { transform: translateX(calc(-100% + 12px)); align-items: flex-end; text-align: end }
+.a-ex:hover .a-ex-l { background: var(--surface-hover-tint) }
+.a-ex.is-up .a-ex-l { inset-block-end: 30px }
+.a-ex.is-down .a-ex-l { inset-block-start: 30px }
+.a-ex.is-end .a-ex-l { transform: translateX(calc(-100% + 16px)); align-items: flex-end; text-align: end }
 .a-ex-l b { display: inline-flex; align-items: baseline; gap: 6px; font-size: var(--fs-body-sm); font-weight: 700; color: var(--text-body) }
 .a-ex-l .a-mono { font-size: 13px; color: var(--text-secondary) }
 .a-ex-k { font: 700 12px / 1.2 var(--font-ui); color: var(--md-primary) }
-.a-ex.is-first .a-ex-l > .a-mono { color: var(--md-primary) }
+.a-ex.is-sel .a-ex-l > .a-mono, .a-ex.is-sel .a-ex-l b { color: var(--md-primary) }
 .a-exlist { display: none; margin: 0; padding: 0; list-style: none }
+
+.a-excard { margin-block-start: var(--space-4) }
+.a-excard-in {
+  display: none; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-6);
+  padding: var(--space-5) var(--space-6); border-radius: var(--radius-tile);
+  background: var(--surface-card); box-shadow: var(--a-card-edge);
+}
+.a-excard-in.is-sel { display: grid }
+.sh-root[data-state="one-paper"] .a-excard-in[data-only-state].is-sel { display: grid }
+.sh-root[data-state="one-paper"] .a-excard-in[data-only-state]:not(.is-sel) { display: none }
+.a-exc-t { margin: 0; display: flex; align-items: baseline; gap: var(--space-2); font-size: var(--fs-body) }
+.a-exc-t b { font-weight: 700 }
+.a-exc-m { margin: 2px 0 0; font-size: var(--fs-body-sm); color: var(--text-secondary) }
+.a-exc-m .a-mono { color: var(--text-body) }
+.a-exc-d { margin: 0; font: 700 var(--fs-body) / 1.3 var(--font-ui); color: var(--text-body) }
+
+/* ---------- Motion ----------
+   Final state is the default. With motion allowed, variant-a.js adds .a-motion to the
+   root; animations then wait (paused, showing their first frame) until their section
+   gets .is-in from an IntersectionObserver, and run once. The shell's reduce rules
+   switch every animation off, which leaves the final state. */
+.a-motion [data-anim] :is(.ah-day-d, .ah-xp-bar, .ah-bar-fill, .a-act, .a-j-me, .a-j-trail, .a-stone, .a-marker, .a-marker-l, .a-tail, .a-strip-far, .a-strip-weeks, .a-strip-line, .a-ex, .a-tick, .a-strip-today) {
+  animation-play-state: paused;
+}
+.a-motion [data-anim].is-in :is(.ah-day-d, .ah-xp-bar, .ah-bar-fill, .a-act, .a-j-me, .a-j-trail, .a-stone, .a-marker, .a-marker-l, .a-tail, .a-strip-far, .a-strip-weeks, .a-strip-line, .a-ex, .a-tick, .a-strip-today) {
+  animation-play-state: running;
+}
+.ah-bar-fill, .ah-day.is-today.is-earned .ah-day-d { animation: none }
+
+/* Header: XP bar fills, bars grow, day tiles pop left to right, today settles last. */
+.a-motion .ah-bar-fill { animation: ahFill 900ms var(--a-ease-expo) 200ms both }
+.a-motion .ah-xp-bar { transform-origin: 50% 100%; animation: aGrow 500ms var(--a-ease-expo) calc(var(--di, 0) * 70ms + 250ms) both }
+.a-motion .ah-day-d { animation: aPop 520ms var(--a-ease-expo) calc(var(--di, 0) * 70ms + 150ms) both }
+.a-motion .ah-day.is-today .ah-day-d { animation: aPop 620ms var(--a-ease-expo) 820ms both }
+.ah-strip > li:nth-child(1) { --di: 0 } .ah-strip > li:nth-child(2) { --di: 1 } .ah-strip > li:nth-child(3) { --di: 2 }
+.ah-strip > li:nth-child(4) { --di: 3 } .ah-strip > li:nth-child(5) { --di: 4 } .ah-strip > li:nth-child(6) { --di: 5 }
+.ah-strip > li:nth-child(7) { --di: 6 }
+
+/* Binny: idle bob (the header's own), blink, a jump on tap, a lean toward the action, a cheer for the streak. */
+.ah-binny-tile { cursor: pointer; transition: transform var(--dur-slow) var(--a-ease-expo) }
+.a-motion .ah-binny-tile .brand-binny-eyes { transform-origin: 100px 140px; animation: aBlink 3.6s linear infinite }
+.ah-binny-tile.is-lean { transform: rotate(-5deg) translateY(-2px) }
+.ah-binny-tile.is-jump svg { animation: aJump 620ms var(--a-ease-expo) }
+.ah-binny-tile.is-cheer svg { animation: aCheer 700ms var(--a-ease-expo) }
+
+/* Big action rises in. */
+.a-motion .a-act { animation: aRise var(--dur-slow) var(--a-ease-expo) 120ms both }
+
+/* Grade journeys: the trail draws, the marker slides from the first paper to now,
+   each stone it passes bounces, the next stone glows once. --from and --bd come from variant-a.js. */
+.a-motion .a-j-trail { transform-origin: 0 50%; animation: aDraw 1100ms var(--a-ease-expo) 200ms both }
+.a-motion .a-j-me { animation: aSlide 1100ms var(--a-ease-expo) 200ms both }
+.a-motion .a-stone.is-passed { animation: aBounce 420ms var(--a-ease-expo) calc(200ms + var(--bd, 0ms)) both }
+.a-motion .a-stone.is-passed[data-pass="0"] { animation: none }
+.a-stone.is-next::after {
+  content: ""; position: absolute; inset: -3px; border-radius: 50%; box-shadow: 0 0 0 3px var(--md-primary); opacity: 0;
+}
+.a-motion [data-anim].is-in .a-stone.is-next::after { animation: aGlow 900ms var(--a-ease-expo) 1300ms both }
+
+/* Mastery ruler: markers slide from the previous value, the tail draws behind them. */
+.a-motion .a-marker { animation: aSlideC 900ms var(--a-ease-expo) calc(var(--li, 0) * 90ms + 150ms) both }
+.a-motion .a-marker-l { animation: aSlideX 900ms var(--a-ease-expo) calc(var(--li, 0) * 90ms + 150ms) both }
+.a-motion .a-tail { animation: aDraw 900ms var(--a-ease-expo) calc(var(--li, 0) * 90ms + 150ms) both }
+.a-tail.is-up { transform-origin: 0 50% } .a-tail.is-down { transform-origin: 100% 50% }
+.a-lanes > li:nth-child(1) { --li: 0 } .a-lanes > li:nth-child(2) { --li: 1 } .a-lanes > li:nth-child(3) { --li: 2 }
+.a-lanes > li:nth-child(4) { --li: 3 } .a-lanes > li:nth-child(5) { --li: 4 }
+
+/* Exam strip: the line draws from Today, ticks fade in, markers pop in order. */
+.a-motion .a-strip-today { animation: aFade 300ms var(--ease-out) both }
+.a-motion .a-strip-far { animation: aDraw 900ms var(--a-ease-expo) 100ms both }
+.a-motion .a-strip-weeks { animation: aFadeTo 600ms var(--ease-out) 500ms both }
+.a-motion .a-strip-line { animation: aDraw 500ms var(--a-ease-expo) 800ms both }
+.a-motion .a-tick { animation: aFade 400ms var(--ease-out) 600ms both }
+.a-motion .a-ex { animation: aPopIn 520ms var(--a-ease-expo) calc(var(--ei, 0) * 120ms + 1000ms) both }
+.a-ex[data-exam="0625"] { --ei: 0 } .a-ex[data-exam="0580"] { --ei: 1 } .a-ex[data-exam="0606"] { --ei: 2 }
+.a-excard-in.is-opening { animation: aRise var(--dur-slow) var(--a-ease-expo) both }
+
+@keyframes aPop { 0% { transform: scale(0.6); opacity: 0 } 70% { transform: scale(1.08); opacity: 1 } 100% { transform: none } }
+@keyframes aPopIn { 0% { transform: scale(0.4); opacity: 0 } 70% { transform: scale(1.1); opacity: 1 } 100% { transform: none } }
+@keyframes aGrow { from { transform: scaleY(0) } }
+@keyframes aRise { from { transform: translateY(8px); opacity: 0 } }
+@keyframes aDraw { from { transform: scaleX(0) } }
+@keyframes aFade { from { opacity: 0 } }
+@keyframes aFadeTo { from { opacity: 0 } to { opacity: 0.7 } }
+@keyframes aSlide { from { transform: translate(calc(-50% + var(--from, 0px)), -50%) } to { transform: translate(-50%, -50%) } }
+@keyframes aSlideC { from { transform: translate(calc(-50% + var(--from, 0px)), -50%) } to { transform: translate(-50%, -50%) } }
+@keyframes aSlideX { from { transform: translate(calc(-50% + var(--from, 0px)), calc(-100% - 11px)) } to { transform: translate(-50%, calc(-100% - 11px)) } }
+@keyframes aBounce { 0%, 100% { transform: translate(-50%, -50%) } 40% { transform: translate(-50%, calc(-50% - 7px)) } }
+@keyframes aGlow { 0% { opacity: 0.9; transform: scale(1) } 100% { opacity: 0; transform: scale(1.6) } }
+@keyframes aBlink { 0%, 94%, 100% { transform: scaleY(1) } 97% { transform: scaleY(0.1) } }
+@keyframes aJump { 0% { transform: none } 25% { transform: translateY(4px) scaleY(0.9) } 55% { transform: translateY(-24px) scaleY(1.05) } 80% { transform: translateY(2px) scaleY(0.96) } 100% { transform: none } }
+@keyframes aCheer { 0%, 100% { transform: none } 30% { transform: translateY(-10px) rotate(-6deg) } 60% { transform: translateY(-4px) rotate(5deg) } }
 
 /* Tonal button: second action, never filled. */
 .a-btn-tonal { background: var(--md-primary-container); color: var(--md-on-primary-container); font-size: var(--fs-body-sm); min-block-size: 44px; padding: 10px 16px }
@@ -492,53 +531,10 @@
   letter-spacing: var(--ls-headline-ui); color: var(--text-body);
 }
 
-.a-ledger { margin: 0; padding: 0; list-style: none }
-.a-ledger {
-  border-radius: var(--radius-card); background: var(--surface-card); box-shadow: var(--a-card-edge);
-  overflow: hidden;
-}
-.a-ledger > li + li { border-block-start: 1px solid var(--border-subtle) }
-.a-row {
-  display: grid; align-items: center; gap: var(--space-5);
-  grid-template-columns: 40px minmax(0, 2.4fr) minmax(0, 1.2fr) minmax(0, 1fr) 18px;
-  padding: var(--space-4) var(--space-6); color: var(--text-body); text-decoration: none;
-  transition: background var(--dur-fast) var(--ease-out);
-}
-.a-row:hover { background: var(--surface-hover-tint) }
-.a-row:focus-visible { outline-offset: -3px }
-.a-row-go { color: var(--text-muted); transition: transform var(--dur-base) var(--ease-out) }
-.a-row:hover .a-row-go { transform: translateX(3px); color: var(--text-body) }
-
-.a-grade {
-  display: grid; place-items: center; inline-size: 40px; block-size: 40px; border-radius: 10px;
-  font: 800 var(--fs-title) / 1 var(--font-display); letter-spacing: -0.02em; color: var(--white);
-  background: var(--sh-grade-c);
-}
-.a-grade-lg { inline-size: 64px; block-size: 64px; border-radius: 16px; font-size: 36px }
-.a-grade-sm { inline-size: 32px; block-size: 32px; border-radius: 9px; font: 800 19px / 1 var(--font-ui) }
-.a-grade[data-grade="A*"] { background: var(--sh-grade-astar) }
-.a-grade[data-grade="A"] { background: var(--sh-grade-a) }
-.a-grade[data-grade="B"] { background: var(--sh-grade-b) }
-.a-grade[data-grade="C"] { background: var(--sh-grade-c) }
-.a-grade[data-grade="D"] { background: var(--sh-grade-d) }
-
-.a-subj { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px var(--space-2); min-inline-size: 0 }
-.a-subj b { font-weight: 700; font-size: var(--fs-body) }
-.a-est {
-  padding: 2px 8px; border-radius: var(--radius-pill); background: var(--md-surface-highest);
-  font: 600 12px / 1.4 var(--font-ui); color: var(--text-secondary);
-}
-.a-change { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-body-sm); color: var(--text-muted) }
-.a-change.is-up { color: var(--a-success-text); font-weight: 600 }
-.a-change .a-ico { inline-size: 16px; block-size: 16px; stroke-width: 2.2 }
-.a-row-meta { display: contents }
-.a-papers { font-size: var(--fs-body-sm); color: var(--text-secondary) }
-.a-papers b { color: var(--text-body) }
-
 /* Weak topics: the mastery ruler. One shared 0-100% scale, a lane per topic,
    a tail from the previous value to now, and the 70% secure line. */
 .a-ruler {
-  --lane-cols: 240px minmax(0, 1fr) 112px 150px;
+  --lane-cols: 240px minmax(0, 1fr) 112px 150px 18px;
   display: flex; flex-direction: column; gap: var(--space-4);
   padding: var(--space-6); border-radius: var(--radius-card);
   background: var(--surface-card); box-shadow: var(--a-card-edge);
@@ -574,7 +570,8 @@
   color: var(--text-body); text-decoration: none;
   transition: background var(--dur-fast) var(--ease-out);
 }
-.a-lanes a, .a-lanes a * { text-decoration: none }
+.a-lanes a,
+.a-lanes a * { text-decoration: none }
 .a-lanes a:hover { background: var(--surface-hover-tint) }
 .a-lanes a:focus-visible { outline-offset: -2px }
 .a-lane-name { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px var(--space-2); min-inline-size: 0 }
@@ -640,7 +637,8 @@
 .a-skel { border-radius: var(--radius-tile); background: var(--md-surface-high); animation: a-pulse 1.4s ease-in-out infinite alternate }
 .a-skel-title { inline-size: 360px; max-inline-size: 80%; block-size: 40px; border-radius: 12px }
 .a-skel-line { inline-size: 260px; max-inline-size: 60%; block-size: 16px; margin-block: var(--space-3) var(--space-6); border-radius: 8px }
-.a-skel-hero, .a-skel-reward { block-size: 300px; border-radius: var(--radius-card) }
+.a-skel-hero,
+.a-skel-reward { block-size: 300px; border-radius: var(--radius-card) }
 .a-skel-ledger { block-size: 240px; margin-block-start: var(--space-6); border-radius: var(--radius-board) }
 @keyframes a-pulse { from { opacity: 1 } to { opacity: 0.55 } }
 
@@ -666,7 +664,8 @@
 .sh-root[data-width="mobile"] .a-page { padding-block-end: var(--space-8) }
 
 @media (pointer: coarse) {
-  .a-note a, .a-row, .a-lanes a,   .a-note a { padding-block: 10px }
+  .a-note a, .a-lanes a, .a-gj-row, .a-ex-btn { min-block-size: 44px }
+  .a-note a { padding-block: 10px }
 }
 
 /* Mobile: one column in reading order. */
@@ -689,36 +688,45 @@
   .a-meta-line { margin-block-end: var(--space-2) }
   .a-body { margin-block-end: var(--space-4) }
   .a-hero .a-btn-primary { inline-size: 100%; justify-content: center }
-
-
-  .a-results { gap: var(--space-8); margin-block-start: var(--space-12) }
-  .a-jfeat { padding: var(--space-6) var(--space-5); gap: var(--space-5); border-radius: var(--radius-card) }
-  .a-jfeat-h { font-size: 30px }
-  .a-rcard { flex-direction: column; padding: var(--space-6) var(--space-5) }
-  .a-moment { padding-inline-end: 0 }
-  .a-others { padding-inline-start: 0; border-inline-start: 0; border-block-start: 1px solid var(--border-subtle); padding-block-start: var(--space-6); margin-block-start: var(--space-6); gap: var(--space-6) }
-  .a-latest-score b { font-size: 72px }
-  .a-latest-of { font-size: 34px }
   .a-stone { inline-size: 30px; block-size: 30px }
 
   .a-exams { margin-block-start: var(--space-12) }
   .a-strip { display: none }
   .a-exlist { display: block }
-  .a-exlist li {
-    display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: var(--space-3);
-    padding-block: var(--space-4);
-  }
   .a-exlist li + li { border-block-start: 1px solid var(--border-subtle) }
-  .a-exlist .a-ex-dot { justify-self: center }
-  .a-exlist li.is-first .a-ex-dot, .sh-root[data-state="one-paper"] .a-exlist li[data-code="0580"] .a-ex-dot {
-    inline-size: 18px; block-size: 18px; background: var(--md-primary); box-shadow: none;
+  .a-exlist-b {
+    display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: var(--space-3);
+    inline-size: 100%; min-block-size: 56px; padding: var(--space-3) var(--space-2); border: 0; border-radius: 12px;
+    background: none; color: inherit; font: inherit; text-align: start; cursor: pointer;
   }
+  .a-exlist-b:hover { background: var(--surface-hover-tint) }
+  .a-exlist-b .a-ex-dot { justify-self: center }
+  .a-exlist-b.is-sel .a-ex-dot { inline-size: 18px; block-size: 18px; background: var(--md-primary); box-shadow: none }
   .a-exlist-n { display: flex; flex-direction: column; gap: 2px; min-inline-size: 0 }
   .a-exlist-n b { display: inline-flex; align-items: baseline; gap: 6px; font-weight: 700 }
   .a-exlist-n .a-mono { font-size: 13px; color: var(--text-secondary) }
   .a-exlist-d { font-size: var(--fs-body-sm); color: var(--text-secondary) }
   .a-exlist-d b { font-size: var(--fs-body); color: var(--text-body) }
-  .a-exlist li.is-first .a-exlist-d b { color: var(--md-primary) }
+  .a-exlist-b.is-sel .a-exlist-d b { color: var(--md-primary) }
+  .a-excard-in, .sh-root[data-state="one-paper"] .a-excard-in[data-only-state].is-sel { grid-template-columns: minmax(0, 1fr); gap: var(--space-3); padding: var(--space-5) }
+  .a-excard-in .a-btn { justify-self: start }
+
+  .a-action-card { margin-block-start: var(--space-4); padding: var(--space-5) var(--space-5) var(--space-5) }
+  .a-act .a-facts { margin-block: var(--space-1) var(--space-4) }
+  .a-act .a-meta-line { margin-block-end: var(--space-2); font-size: var(--fs-body-sm) }
+  .a-act-title { font-size: 34px }
+  .a-act-body { display: none }
+  .a-act-btn { inline-size: 100%; justify-content: center }
+
+  .a-gj-row {
+    grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "n d" "j j";
+    row-gap: var(--space-1); padding: var(--space-3) var(--space-4) var(--space-2);
+  }
+  .a-gj-name { grid-area: n }
+  .a-gj-dist { grid-area: d }
+  .a-gj .a-journey { grid-area: j }
+  .a-gj-go { display: none }
+  .a-lane-go { display: none }
 
   .a-ruler { padding: var(--space-4) var(--space-3); gap: var(--space-3) }
   .a-callout { grid-template-columns: minmax(0, 1fr); padding: var(--space-4) }
@@ -735,44 +743,12 @@
   .a-chg { grid-area: c }
   .a-drop { grid-area: d }
 
-  .a-row {
-    grid-template-columns: 40px minmax(0, 1fr) 18px; grid-template-areas: "g s go" "g m go";
-    row-gap: 2px; column-gap: var(--space-4); padding: var(--space-4);
-  }
-  .a-row .a-grade { grid-area: g }
-  .a-row .a-subj { grid-area: s }
-  .a-row .a-row-go { grid-area: go }
-  .a-row-meta { grid-area: m; display: flex; flex-wrap: wrap; gap: 2px var(--space-3) }
-  .a-change:empty { display: none }
-
-
   .a-steps { grid-template-columns: minmax(0, 1fr) }
   .a-hero-new { padding: var(--space-6) var(--space-5) }
 }
 
-/* Mobile Today list: the lead row's title and button stay in the first screen. */
-@container home (max-width: 760px) {
-  .a-todaysec { margin-block-start: var(--space-6) }
-  .a-today-h { font-size: 26px; margin-block-end: var(--space-3) }
-  .a-tl { padding: var(--space-1) }
-  .a-tl-in { padding: var(--space-3) }
-  .a-tl > li:is(
-    .sh-root[data-today^="marking"] [data-today-item="marking"],
-    .sh-root[data-today^="session"] [data-today-item="session"],
-    .sh-root[data-today^="practice"] [data-today-item="practice"],
-    .sh-root[data-today^="correct"] [data-today-item="correct"],
-    .sh-root[data-today^="first-paper"] [data-today-item="first-paper"]
-  ) {
-    & .a-tl-in { grid-template-columns: minmax(0, 1fr); padding: var(--space-5) var(--space-4) }
-    & .a-title { font-size: 30px }
-    & .a-body { display: none }
-    & .a-tl-btn { justify-content: center; margin-block-start: var(--space-2) }
-  }
-  .a-rt-body .a-latest-score b { font-size: 64px }
-  .a-rt-body .a-latest-of { font-size: 30px }
-}
 
-/* Mobile first screen: tighter greeting and header so the lead Today row's button clears the bottom bar. */
+/* Mobile first screen: tighter greeting and header so the big action's title and button clear the bottom bar. */
 @container home (max-width: 760px) {
   .a-page { padding-block-start: var(--space-4) }
   .a-greet { font-size: 28px }
@@ -787,13 +763,4 @@
   .ah-week-head { margin-block-end: 6px }
   .ah-xp-col { block-size: 28px }
   .ah-xp-bar { block-size: calc(var(--xp, 0) * 18px) }
-  .a-todaysec { margin-block-start: var(--space-5) }
-  .a-today-h { font-size: 28px; margin-block-end: var(--space-2) }
-  .a-tl > li:is(
-    .sh-root[data-today^="marking"] [data-today-item="marking"],
-    .sh-root[data-today^="session"] [data-today-item="session"],
-    .sh-root[data-today^="practice"] [data-today-item="practice"],
-    .sh-root[data-today^="correct"] [data-today-item="correct"],
-    .sh-root[data-today^="first-paper"] [data-today-item="first-paper"]
-  ) .a-tl-in { padding: var(--space-4) }
 }

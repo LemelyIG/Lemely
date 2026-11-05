@@ -14,6 +14,7 @@
       import "@fontsource-variable/jetbrains-mono"
       import { mountHome } from "./student-home/controller.ts"
       mountHome("a")
+      import("./student-home/variant-a.js")
     </script>
   </head>
   <body>
@@ -88,7 +89,7 @@
           </div>
         </header>
 
-        <section class="ah-hero ah-card" aria-label="Level and streak">
+        <section class="ah-hero ah-card" data-anim aria-label="Level and streak">
           <figure class="ah-binny">
             <div class="ah-binny-tile" data-binny></div>
             <figcaption class="ah-say">
@@ -154,224 +155,95 @@
           </div>
         </section>
 
-        <section class="a-todaysec" aria-labelledby="a-today-h">
-          <h2 id="a-today-h" class="a-today-h">Today</h2>
-            <ol class="a-tl">
-              <li data-today-item="marking">
-                <div class="a-tl-in">
-                  <div class="a-tl-text">
-                    <p class="a-meta-line"><span>Marking now</span><span class="a-code">0625</span></p>
-                    <h3 class="a-title">0625/42 is being marked</h3>
+        <section class="a-action-card" data-anim aria-labelledby="a-act-h">
+          <h2 id="a-act-h" class="a-vh">Your next step</h2>
+          <div class="a-act" data-when-action="marking">
+            <p class="a-meta-line"><span>Marking now</span><span class="a-code">0625</span></p>
+            <h3 class="a-act-title">0625/42 is being marked</h3>
 
-                    <p class="a-body">Lemely is reading your answers and checking each one against the official mark scheme.</p>
-                  </div>
-                  <a class="a-btn a-tl-btn" href="/student/correct">See progress <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
-                </div>
-              </li>
-              <li data-today-item="session">
-                <div class="a-tl-in">
-                  <div class="a-tl-text">
-                    <p class="a-meta-line"><span>Today's session</span><span class="a-code">0606</span></p>
-                    <h3 class="a-title">Quadratic inequalities</h3>
-                    <p class="a-facts"><span class="a-mono">25 min</span></p>
-                    <p class="a-body">Next in your study plan for Additional Mathematics.</p>
-                  </div>
-                  <a class="a-btn a-tl-btn" href="/student/plan/0606/session/s1">Start session <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
-                </div>
-              </li>
-              <li data-today-item="practice">
-                <div class="a-tl-alt" data-needs="many-papers">
-                <div class="a-tl-in">
-                  <div class="a-tl-text">
-                    <p class="a-meta-line"><span>Practise next</span><span class="a-code">0625</span></p>
-                    <h3 class="a-title">Waves</h3>
-                    <p class="a-facts"><span class="a-mono">54% accuracy</span></p>
-                    <p class="a-body">Your weakest topic right now. A short set shows whether it is improving.</p>
-                  </div>
-                  <a class="a-btn a-tl-btn" href="/student/practice/0625">Practise waves <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
-                </div>
-                </div>
-                <div class="a-tl-alt" data-only-state="one-paper">
-                <div class="a-tl-in">
-                  <div class="a-tl-text">
-                    <p class="a-meta-line"><span>Practise next</span><span class="a-code">0580</span></p>
-                    <h3 class="a-title">Vectors</h3>
-                    <p class="a-facts"><span class="a-mono">50% accuracy</span></p>
-                    <p class="a-body">Your weakest topic right now. A short set shows whether it is improving.</p>
-                  </div>
-                  <a class="a-btn a-tl-btn" href="/student/practice/0580">Practise vectors <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
-                </div>
-                </div>
-              </li>
-              <li data-today-item="correct">
-                <div class="a-tl-in">
-                  <div class="a-tl-text">
-
-                    <h3 class="a-title">Ready for another paper?</h3>
-
-                    <p class="a-body">Each paper sharpens your predicted grade.</p>
-                  </div>
-                  <a class="a-btn a-tl-btn" href="/student/correct">Correct a paper <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
-                </div>
-              </li>
-              <li data-today-item="first-paper">
-                <div class="a-tl-in">
-                  <div class="a-tl-text">
-
-                    <h3 class="a-title">Let's get your first paper marked</h3>
-
-                    <p class="a-body">Photograph or upload a paper you have already sat. Lemely finds the session and variant, pulls the official mark scheme, and marks it question by question.</p>
-                  </div>
-                  <a class="a-btn a-tl-btn" href="/student/correct">Correct a paper <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
-                </div>
-              </li>
-            </ol>
-          <p class="a-note" data-only-state="no-plan">No study plan this week. Build one from your weak topics. <a href="/student/plan">Build a plan <svg class="a-ico" aria-hidden="true"><use href="#a-i-chev" /></svg></a></p>
-          <p class="a-note" data-only-state="no-exams">Add your exam dates to see how long you have for each subject. <a href="/student/profile">Add exam dates <svg class="a-ico" aria-hidden="true"><use href="#a-i-chev" /></svg></a></p>
-        </section>
-
-        <section class="a-results" aria-labelledby="a-results-h">
-          <h2 id="a-results-h" class="a-vh">Your results</h2>
-          <div class="a-jfeat" data-needs="many-papers">
-            <h3 class="a-jfeat-h">Physics is <span class="a-mono">4</span> points from a B.</h3>
-            <div class="a-journey" role="img" aria-label="Physics: started at 41%, now 48%, grade C. 4 points to B."><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 7.2%; inline-size: 15.51%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-next" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-ahead" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 22.71%"><span class="a-j-me-l">48%</span></span></div>
-            <div class="a-jfeat-foot">
-              <p class="a-jnote">From <span class="a-mono">41%</span> on your first paper to <span class="a-mono">48%</span> now.</p>
-              <a class="a-btn a-btn-tonal" href="/student/practice/0625">Practise Physics <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
-            </div>
+            <p class="a-act-body">Lemely is reading your answers and checking each one against the official mark scheme.</p>
+            <a class="a-btn a-btn-primary a-act-btn" href="/student/correct">See progress <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
           </div>
-          <div class="a-jfeat" data-only-state="one-paper">
-            <h3 class="a-jfeat-h">Mathematics is <span class="a-mono">5</span> points from an A.</h3>
-            <div class="a-journey" role="img" aria-label="Mathematics: now 65%, grade B. 5 points to A."><span class="a-j-line"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-passed" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-next" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 53.67%"><span class="a-j-me-l">65%</span></span></div>
-            <div class="a-jfeat-foot">
-              <p class="a-jnote">One paper so far — the trail starts with your second.</p>
-              <a class="a-btn a-btn-tonal" href="/student/correct">Correct a paper <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
-            </div>
+          <div class="a-act" data-when-action="session">
+            <p class="a-meta-line"><span>Today's session</span><span class="a-code">0606</span></p>
+            <h3 class="a-act-title">Quadratic inequalities</h3>
+            <p class="a-facts"><span class="a-mono">25 min</span></p>
+            <p class="a-act-body">Next in your study plan for Additional Mathematics.</p>
+            <a class="a-btn a-btn-primary a-act-btn" href="/student/plan/0606/session/s1">Start session <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
           </div>
+          <div class="a-act" data-when-action="first-paper">
 
-          <div class="a-rcard">
-            <div class="a-rhalf a-moment">
-              <p class="a-panel-h" data-needs="many-papers">Your last 5 papers</p>
-              <ol class="a-rtrail" data-needs="many-papers" aria-label="Last 5 marked papers, oldest to newest">
-                  <li class="a-rt-old"><a href="/student/result/0580-41-mj2023" aria-label="0580/41 · m/j 2023, 45/80, grade B, 15 Oct"><span class="a-rt-axis"><span class="a-grade a-grade-sm" data-grade="B">B</span></span><span class="a-mono a-rt-d">15 Oct</span></a></li>
-                  <li class="a-rt-old"><a href="/student/result/0606-12-mj2024" aria-label="0606/12 · m/j 2024, 47/80, grade B, 22 Oct"><span class="a-rt-axis"><span class="a-grade a-grade-sm" data-grade="B">B</span></span><span class="a-mono a-rt-d">22 Oct</span></a></li>
-                  <li class="a-rt-old"><a href="/student/result/0580-22-on2023" aria-label="0580/22 · o/n 2023, 49/80, grade B, 27 Oct"><span class="a-rt-axis"><span class="a-grade a-grade-sm" data-grade="B">B</span></span><span class="a-mono a-rt-d">27 Oct</span></a></li>
-                  <li class="a-rt-old"><a href="/student/result/0625-42-on2023" aria-label="0625/42 · o/n 2023, 38/80, grade C, 31 Oct"><span class="a-rt-axis"><span class="a-grade a-grade-sm" data-grade="C">C</span></span><span class="a-mono a-rt-d">31 Oct</span></a></li>
-                  <li class="a-rt-now">
-                    <a class="a-rt-unit" href="/student/result/0580-42-mj2024">
-                      <span class="a-rt-axis"><span class="a-grade a-grade-lg" data-grade="A" aria-label="Grade A">A</span></span>
-                      <span class="a-rt-body">
-                        <span class="a-latest-score"><span class="a-vh">Score </span><b>61</b><span class="a-latest-of">/80</span></span>
-                        <span class="a-latest-cap"><span class="a-mono">0580/42 · m/j 2024</span><span class="a-latest-when">Marked <span class="a-mono">4 Nov</span></span></span>
-                        <span class="a-change is-up"><svg class="a-ico" aria-hidden="true"><use href="#a-i-up" /></svg>up from B</span>
-                        <span class="a-latest-go">See full marking <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></span>
-                      </span>
-                    </a>
-                  </li>
-              </ol>
-              <div class="a-rtrail-one" data-only-state="one-paper">
-                <div class="a-rt-now">
-                    <a class="a-rt-unit" href="/student/result/0580-42-mj2024">
-                      <span class="a-rt-axis"><span class="a-grade a-grade-lg" data-grade="B" aria-label="Grade B">B</span></span>
-                      <span class="a-rt-body">
-                        <span class="a-latest-score"><span class="a-vh">Score </span><b>52</b><span class="a-latest-of">/80</span></span>
-                        <span class="a-latest-cap"><span class="a-mono">0580/42 · m/j 2024</span><span class="a-latest-when">Marked <span class="a-mono">2 Nov</span></span></span>
+            <h3 class="a-act-title">Let's get your first paper marked</h3>
 
-                        <span class="a-latest-go">See full marking <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></span>
-                      </span>
-                    </a>
-                </div>
-              </div>
-            </div>
-            <div class="a-rhalf a-others" data-needs="many-papers">
-              <h3 class="a-others-h">Other subjects</h3>
-              <div class="a-jitem">
-                <p class="a-jitem-h"><b>Mathematics</b> <span class="a-jgap"><span class="a-mono">9</span> points to A*</span></p>
-                <div class="a-journey" role="img" aria-label="Mathematics: started at 49%, now 76%, grade A. 9 points to A*."><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 25.46%; inline-size: 46.54%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-passed" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-passed" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-next" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 72.0%"><span class="a-j-me-l">76%</span></span></div>
-              </div>
-              <div class="a-jitem">
-                <p class="a-jitem-h"><b>Additional Mathematics</b> <span class="a-jgap"><span class="a-mono">9</span> points to A</span></p>
-                <div class="a-journey" role="img" aria-label="Additional Mathematics: started at 44%, now 59%, grade B. 9 points to A."><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 19.14%; inline-size: 26.79%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-passed" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-next" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 45.93%"><span class="a-j-me-l">59%</span></span></div>
-              </div>
-            </div>
+            <p class="a-act-body">Photograph or upload a paper you have already sat. Lemely finds the session and variant, pulls the official mark scheme, and marks it question by question.</p>
+            <a class="a-btn a-btn-primary a-act-btn" href="/student/correct">Correct a paper <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+          </div>
+          <div data-when-action="practice">
+          <div class="a-act" data-needs="many-papers">
+            <p class="a-meta-line"><span>Practise next</span><span class="a-code">0625</span></p>
+            <h3 class="a-act-title">Waves</h3>
+            <p class="a-facts"><span class="a-mono">54% accuracy</span></p>
+            <p class="a-act-body">Your weakest topic right now. A short set shows whether it is improving.</p>
+            <a class="a-btn a-btn-primary a-act-btn" href="/student/practice/0625">Practise waves <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+          </div>
+          <div class="a-act" data-only-state="one-paper">
+            <p class="a-meta-line"><span>Practise next</span><span class="a-code">0580</span></p>
+            <h3 class="a-act-title">Vectors</h3>
+            <p class="a-facts"><span class="a-mono">50% accuracy</span></p>
+            <p class="a-act-body">Your weakest topic right now. A short set shows whether it is improving.</p>
+            <a class="a-btn a-btn-primary a-act-btn" href="/student/practice/0580">Practise vectors <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+          </div>
+          </div>
+          <div class="a-act" data-when-action="correct">
+
+            <h3 class="a-act-title">Ready for another paper?</h3>
+
+            <p class="a-act-body">Each paper sharpens your predicted grade.</p>
+            <a class="a-btn a-btn-primary a-act-btn" href="/student/correct">Correct a paper <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
           </div>
         </section>
+        <p class="a-note" data-only-state="no-plan">No study plan this week. Build one from your weak topics. <a href="/student/plan">Build a plan <svg class="a-ico" aria-hidden="true"><use href="#a-i-chev" /></svg></a></p>
+        <p class="a-note" data-only-state="no-exams">Add your exam dates to see how long you have for each subject. <a href="/student/profile">Add exam dates <svg class="a-ico" aria-hidden="true"><use href="#a-i-chev" /></svg></a></p>
 
-        <section class="a-exams" data-needs="exams" aria-labelledby="a-exams-h">
-          <h2 id="a-exams-h" class="a-sec-h"><span data-needs="many-papers"><span class="a-mono">180</span> days to your first exam.</span><span data-only-state="one-paper"><span class="a-mono">188</span> days to your first exam.</span></h2>
-          <div class="a-strip" aria-hidden="true">
-            <span class="a-strip-line"></span>
-            <span class="a-strip-far"></span>
-            <span class="a-strip-today"><span class="a-strip-dot"></span><span class="a-strip-tl"><b>Today</b><span class="a-mono">5 Nov</span></span></span>
-            <span class="a-tick" style="inset-inline-start: 14%">Dec</span>
-            <span class="a-tick" style="inset-inline-start: 22%">Jan</span>
-            <span class="a-tick" style="inset-inline-start: 30%">Feb</span>
-            <span class="a-tick" style="inset-inline-start: 38%">Mar</span>
-            <span class="a-tick" style="inset-inline-start: 46%">Apr</span>
-            <span class="a-strip-break" style="inset-inline-start: 52%"></span>
-            <span class="a-tick is-may" style="inset-inline-start: 56%">May</span>
-            <span class="a-ex is-first is-up" data-needs="many-papers" style="inset-inline-start: 62.9%"><span class="a-ex-dot"></span><span class="a-ex-l"><span class="a-ex-k">First exam</span><b><span class="a-code">0625</span> Physics</b><span class="a-mono">4 May · 180 days</span></span></span>
-            <span class="a-ex is-down" data-code="0580" style="inset-inline-start: 81.5%"><span class="a-ex-dot"></span><span class="a-ex-l"><b><span class="a-code">0580</span> Mathematics</b><span class="a-mono">12 May · 188 days</span></span></span>
-            <span class="a-ex is-up is-end" data-needs="many-papers" style="inset-inline-start: 95.4%"><span class="a-ex-dot"></span><span class="a-ex-l"><b><span class="a-code">0606</span> Additional Mathematics</b><span class="a-mono">18 May · 194 days</span></span></span>
-          </div>
-          <ol class="a-exlist" aria-label="Your exams, soonest first">
-            <li class="is-first" data-needs="many-papers"><span class="a-ex-dot"></span><span class="a-exlist-n"><b><span class="a-code">0625</span> Physics</b><span class="a-mono">4 May</span></span><span class="a-exlist-d"><b class="a-mono">180</b> days</span></li>
-            <li data-code="0580"><span class="a-ex-dot"></span><span class="a-exlist-n"><b><span class="a-code">0580</span> Mathematics</b><span class="a-mono">12 May</span></span><span class="a-exlist-d"><b class="a-mono">188</b> days</span></li>
-            <li data-needs="many-papers"><span class="a-ex-dot"></span><span class="a-exlist-n"><b><span class="a-code">0606</span> Additional Mathematics</b><span class="a-mono">18 May</span></span><span class="a-exlist-d"><b class="a-mono">194</b> days</span></li>
-          </ol>
-        </section>
-
-        <section class="a-sec a-subjects" aria-labelledby="a-subjects-h">
-          <h2 id="a-subjects-h" class="a-sec-h">Subjects</h2>
-          <ul class="a-ledger">
+        <section class="a-sec a-grades" data-anim aria-labelledby="a-grades-h">
+          <h2 id="a-grades-h" class="a-sec-h">Your grades</h2>
+          <ul class="a-gj">
             <li data-needs="many-papers">
-              <a class="a-row" href="/student/subject/0580">
-                <span class="a-grade" data-grade="A">A</span>
-                <span class="a-subj"><b>Mathematics</b><span class="a-code">0580</span></span>
-                <span class="a-row-meta">
-                  <span class="a-change is-up"><svg class="a-ico" aria-hidden="true"><use href="#a-i-up" /></svg>up from B</span>
-                  <span class="a-papers"><b class="a-mono">14</b> papers</span>
-                </span>
-                <svg class="a-ico a-row-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
+              <a class="a-gj-row" href="/student/subject/0625">
+                <span class="a-gj-name"><b>Physics</b><span class="a-code">0625</span></span>
+                <span class="a-gj-dist"><span class="a-mono">4</span> points from a B</span>
+                <div class="a-journey" role="img" aria-label="Physics: started at 41%, now 48%, grade C. 4 points to B."><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 7.2%; inline-size: 15.51%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-next" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-ahead" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 22.71%"><span class="a-j-me-l">48%</span></span></div>
+                <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
+              </a>
+            </li>
+            <li data-needs="many-papers">
+              <a class="a-gj-row" href="/student/subject/0580">
+                <span class="a-gj-name"><b>Mathematics</b><span class="a-code">0580</span></span>
+                <span class="a-gj-dist"><span class="a-mono">9</span> points to A*</span>
+                <div class="a-journey" role="img" aria-label="Mathematics: started at 49%, now 76%, grade A. 9 points to A*."><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 25.46%; inline-size: 46.54%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-passed" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-passed" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-next" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 72.0%"><span class="a-j-me-l">76%</span></span></div>
+                <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
+              </a>
+            </li>
+            <li data-needs="many-papers">
+              <a class="a-gj-row" href="/student/subject/0606">
+                <span class="a-gj-name"><b>Additional Mathematics</b><span class="a-code">0606</span></span>
+                <span class="a-gj-dist"><span class="a-mono">9</span> points to A</span>
+                <div class="a-journey" role="img" aria-label="Additional Mathematics: started at 44%, now 59%, grade B. 9 points to A."><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 19.14%; inline-size: 26.79%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-passed" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-next" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 45.93%"><span class="a-j-me-l">59%</span></span></div>
+                <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
               </a>
             </li>
             <li data-only-state="one-paper">
-              <a class="a-row" href="/student/subject/0580">
-                <span class="a-grade" data-grade="B">B</span>
-                <span class="a-subj"><b>Mathematics</b><span class="a-code">0580</span></span>
-                <span class="a-row-meta">
-                  <span class="a-change"></span>
-                  <span class="a-papers"><b class="a-mono">1</b> paper</span>
-                </span>
-                <svg class="a-ico a-row-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
-              </a>
-            </li>
-            <li data-needs="many-papers">
-              <a class="a-row" href="/student/subject/0606">
-                <span class="a-grade" data-grade="B">B</span>
-                <span class="a-subj"><b>Additional Mathematics</b><span class="a-code">0606</span></span>
-                <span class="a-row-meta">
-                  <span class="a-change">no change</span>
-                  <span class="a-papers"><b class="a-mono">6</b> papers</span>
-                </span>
-                <svg class="a-ico a-row-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
-              </a>
-            </li>
-            <li data-needs="many-papers">
-              <a class="a-row" href="/student/subject/0625">
-                <span class="a-grade" data-grade="C">C</span>
-                <span class="a-subj"><b>Physics</b><span class="a-code">0625</span><span class="a-est">estimated</span></span>
-                <span class="a-row-meta">
-                  <span class="a-change is-up"><svg class="a-ico" aria-hidden="true"><use href="#a-i-up" /></svg>up from D</span>
-                  <span class="a-papers"><b class="a-mono">2</b> papers</span>
-                </span>
-                <svg class="a-ico a-row-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
+              <a class="a-gj-row" href="/student/subject/0580">
+                <span class="a-gj-name"><b>Mathematics</b><span class="a-code">0580</span></span>
+                <span class="a-gj-dist"><span class="a-mono">5</span> points to A</span>
+                <div class="a-journey" role="img" aria-label="Mathematics: now 65%, grade B. 5 points to A."><span class="a-j-line"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-passed" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-next" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 53.67%"><span class="a-j-me-l">65%</span></span></div>
+                <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
               </a>
             </li>
           </ul>
         </section>
 
-        <section class="a-sec a-weak" aria-labelledby="a-weak-h">
+        <section class="a-sec a-weak" data-anim aria-labelledby="a-weak-h">
           <h2 id="a-weak-h" class="a-sec-h">Weak topics</h2>
           <div class="a-ruler">
             <div class="a-callout" data-needs="many-papers">
@@ -395,6 +267,7 @@
                 <span class="a-lane-track" aria-hidden="true"><span class="a-tail is-up" style="inset-inline-start: 47%; inline-size: 7%"></span><span class="a-marker" style="inset-inline-start: 54%"></span><span class="a-marker-l" style="inset-inline-start: 54%">54%</span></span>
                 <span class="a-chg is-up"><svg class="a-ico" aria-hidden="true"><use href="#a-i-up" /></svg>up 7</span>
                 <span class="a-drop a-mono">9 marks dropped</span>
+                <svg class="a-ico a-lane-go" aria-hidden="true"><use href="#a-i-arrow" /></svg>
               </a>
             </li>
             <li data-needs="many-papers">
@@ -403,6 +276,7 @@
                 <span class="a-lane-track" aria-hidden="true"><span class="a-tail is-down" style="inset-inline-start: 58%; inline-size: 3%"></span><span class="a-marker" style="inset-inline-start: 58%"></span><span class="a-marker-l" style="inset-inline-start: 58%">58%</span></span>
                 <span class="a-chg is-down"><svg class="a-ico a-ico-down" aria-hidden="true"><use href="#a-i-up" /></svg>down 3</span>
                 <span class="a-drop a-mono">6 marks dropped</span>
+                <svg class="a-ico a-lane-go" aria-hidden="true"><use href="#a-i-arrow" /></svg>
               </a>
             </li>
             <li data-needs="many-papers">
@@ -411,6 +285,7 @@
                 <span class="a-lane-track" aria-hidden="true"><span class="a-tail is-up" style="inset-inline-start: 55%; inline-size: 8%"></span><span class="a-marker" style="inset-inline-start: 63%"></span><span class="a-marker-l" style="inset-inline-start: 63%">63%</span></span>
                 <span class="a-chg is-up"><svg class="a-ico" aria-hidden="true"><use href="#a-i-up" /></svg>up 8</span>
                 <span class="a-drop a-mono">5 marks dropped</span>
+                <svg class="a-ico a-lane-go" aria-hidden="true"><use href="#a-i-arrow" /></svg>
               </a>
             </li>
             <li data-needs="many-papers">
@@ -419,6 +294,7 @@
                 <span class="a-lane-track" aria-hidden="true"><span class="a-marker" style="inset-inline-start: 66%"></span><span class="a-marker-l" style="inset-inline-start: 66%">66%</span></span>
                 <span class="a-chg">first seen</span>
                 <span class="a-drop a-mono">3 marks dropped</span>
+                <svg class="a-ico a-lane-go" aria-hidden="true"><use href="#a-i-arrow" /></svg>
               </a>
             </li>
             <li data-only-state="one-paper">
@@ -427,9 +303,57 @@
                 <span class="a-lane-track" aria-hidden="true"><span class="a-marker" style="inset-inline-start: 50%"></span><span class="a-marker-l" style="inset-inline-start: 50%">50%</span></span>
                 <span class="a-chg">first paper</span>
                 <span class="a-drop a-mono">4 marks dropped</span>
+                <svg class="a-ico a-lane-go" aria-hidden="true"><use href="#a-i-arrow" /></svg>
               </a>
             </li>
             </ul>
+          </div>
+        </section>
+
+        <section class="a-exams" data-needs="exams" data-anim aria-labelledby="a-exams-h">
+          <h2 id="a-exams-h" class="a-sec-h" aria-live="polite"><span data-needs="many-papers"><span class="a-mono">180</span> days to your first exam.</span><span data-only-state="one-paper"><span class="a-mono">188</span> days to your first exam.</span></h2>
+          <div class="a-strip" role="group" aria-label="Exam dates">
+            <span class="a-strip-far" aria-hidden="true"></span>
+            <span class="a-strip-weeks" aria-hidden="true"></span>
+            <span class="a-strip-line" aria-hidden="true"></span>
+            <span class="a-strip-today" aria-hidden="true"><span class="a-strip-dot"></span><span class="a-strip-tl"><b>Today</b><span class="a-mono">5 Nov</span></span></span>
+            <span class="a-tick" aria-hidden="true" style="inset-inline-start: 14%">Dec</span>
+            <span class="a-tick" aria-hidden="true" style="inset-inline-start: 22%">Jan</span>
+            <span class="a-tick" aria-hidden="true" style="inset-inline-start: 30%">Feb</span>
+            <span class="a-tick" aria-hidden="true" style="inset-inline-start: 38%">Mar</span>
+            <span class="a-tick" aria-hidden="true" style="inset-inline-start: 46%">Apr</span>
+            <span class="a-strip-break" aria-hidden="true" style="inset-inline-start: 52%"></span>
+            <span class="a-tick is-may" aria-hidden="true" style="inset-inline-start: 56%">May</span>
+            <button type="button" class="a-ex is-up is-sel" data-exam="0625" data-code="0625" data-needs="many-papers" aria-pressed="true" aria-controls="a-excard" style="inset-inline-start: 62.9%"><span class="a-ex-dot" aria-hidden="true"></span><span class="a-ex-l"><span class="a-ex-k">First exam</span><b><span class="a-code">0625</span> Physics</b><span class="a-mono">4 May · 180 days</span></span></button>
+            <button type="button" class="a-ex is-down" data-exam="0580" data-code="0580" aria-pressed="false" aria-controls="a-excard" style="inset-inline-start: 81.5%"><span class="a-ex-dot" aria-hidden="true"></span><span class="a-ex-l"><b><span class="a-code">0580</span> Mathematics</b><span class="a-mono">12 May · 188 days</span></span></button>
+            <button type="button" class="a-ex is-up is-end" data-exam="0606" data-code="0606" data-needs="many-papers" aria-pressed="false" aria-controls="a-excard" style="inset-inline-start: 95.4%"><span class="a-ex-dot" aria-hidden="true"></span><span class="a-ex-l"><b><span class="a-code">0606</span> Additional Mathematics</b><span class="a-mono">18 May · 194 days</span></span></button>
+          </div>
+          <ol class="a-exlist" aria-label="Your exams, soonest first">
+            <li data-needs="many-papers"><button type="button" class="a-exlist-b is-sel" data-exam="0625" data-code="0625" aria-pressed="true" aria-controls="a-excard"><span class="a-ex-dot" aria-hidden="true"></span><span class="a-exlist-n"><b><span class="a-code">0625</span> Physics</b><span class="a-mono">4 May</span></span><span class="a-exlist-d"><b class="a-mono">180</b> days</span></button></li>
+            <li><button type="button" class="a-exlist-b" data-exam="0580" data-code="0580" aria-pressed="false" aria-controls="a-excard"><span class="a-ex-dot" aria-hidden="true"></span><span class="a-exlist-n"><b><span class="a-code">0580</span> Mathematics</b><span class="a-mono">12 May</span></span><span class="a-exlist-d"><b class="a-mono">188</b> days</span></button></li>
+            <li data-needs="many-papers"><button type="button" class="a-exlist-b" data-exam="0606" data-code="0606" aria-pressed="false" aria-controls="a-excard"><span class="a-ex-dot" aria-hidden="true"></span><span class="a-exlist-n"><b><span class="a-code">0606</span> Additional Mathematics</b><span class="a-mono">18 May</span></span><span class="a-exlist-d"><b class="a-mono">194</b> days</span></button></li>
+          </ol>
+          <div class="a-excard" id="a-excard">
+            <div class="a-excard-in is-sel" data-exam="0625" data-needs="many-papers">
+              <div class="a-exc-main"><p class="a-exc-t"><span class="a-code">0625</span> <b>Physics</b></p><p class="a-exc-m"><span class="a-mono">4 May</span> · <span class="a-mono">180</span> days left</p></div>
+              <p class="a-exc-d">4 points from a B</p>
+              <a class="a-btn a-btn-tonal" href="/student/practice/0625">Practise Physics <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+            </div>
+            <div class="a-excard-in" data-exam="0580" data-needs="many-papers">
+              <div class="a-exc-main"><p class="a-exc-t"><span class="a-code">0580</span> <b>Mathematics</b></p><p class="a-exc-m"><span class="a-mono">12 May</span> · <span class="a-mono">188</span> days left</p></div>
+              <p class="a-exc-d">9 points to A*</p>
+              <a class="a-btn a-btn-tonal" href="/student/practice/0580">Practise Mathematics <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+            </div>
+            <div class="a-excard-in" data-exam="0606" data-needs="many-papers">
+              <div class="a-exc-main"><p class="a-exc-t"><span class="a-code">0606</span> <b>Additional Mathematics</b></p><p class="a-exc-m"><span class="a-mono">18 May</span> · <span class="a-mono">194</span> days left</p></div>
+              <p class="a-exc-d">9 points to A</p>
+              <a class="a-btn a-btn-tonal" href="/student/practice/0606">Practise Additional Mathematics <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+            </div>
+            <div class="a-excard-in" data-exam="0580" data-only-state="one-paper">
+              <div class="a-exc-main"><p class="a-exc-t"><span class="a-code">0580</span> <b>Mathematics</b></p><p class="a-exc-m"><span class="a-mono">12 May</span> · <span class="a-mono">188</span> days left</p></div>
+              <p class="a-exc-d">5 points to A</p>
+              <a class="a-btn a-btn-tonal" href="/student/practice/0580">Practise Mathematics <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+            </div>
           </div>
         </section>
       </div>
