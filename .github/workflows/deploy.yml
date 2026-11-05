@@ -583,12 +583,45 @@ jobs:
             exit 1
           fi
 
+  # Runs in parallel with deploy-backend (needs `migrate` only), so the SPA
+  # build and Worker deploy overlap the image build and rollout instead of
+  # queueing behind them. The Worker only needs the backend's canonical URL,
+  # which is a property of the Cloud Run SERVICE and does not change per
+  # revision, so it is read from the service directly rather than from
+  # deploy-backend's output. The smoke test still waits for both jobs. The
+  # price is a short window in which the new SPA can be live while the old
+  # backend still serves; the smoke test proves the pair converged.
   deploy-frontend:
-    needs: [resolve-env, deploy-backend]
+    needs: [resolve-env, migrate]
     runs-on: ubuntu-latest
     environment: ${{ needs.resolve-env.outputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      # Same canonical-URL rule as deploy-backend's "Resolve the canonical
+      # backend URL" step: never a tag URL (`<tag>---<service>-...`).
+      - name: Resolve the canonical backend URL
+        id: backend-url
+        run: |
+          set -euo pipefail
+          SERVICE="lemely-backend-${{ needs.resolve-env.outputs.environment }}"
+          URL="$(gcloud run services describe "$SERVICE" --region=us-central1 --format='value(status.url)')"
+          case "$URL" in
+            "") echo "::error::gcloud returned no status.url for $SERVICE (first deploy? run deploy-backend once first)."; exit 1 ;;
+            *---*) echo "::error::status.url for $SERVICE is a tag URL ($URL)."; exit 1 ;;
+          esac
+          echo "backend url: $URL"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-node@v4
         with:
@@ -620,7 +653,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: web
-          command: deploy --env ${{ needs.resolve-env.outputs.environment }} --var BACKEND_URL:${{ needs.deploy-backend.outputs.url }}
+          command: deploy --env ${{ needs.resolve-env.outputs.environment }} --var BACKEND_URL:${{ steps.backend-url.outputs.url }}
 
   # End-to-end proof the whole chain works — DNS, the Worker's /api/* proxy,
   # and the backend it points at — through the real public domain, not just

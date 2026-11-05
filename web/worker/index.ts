@@ -140,4 +140,14 @@ export default {
 		applySecurityHeaders(out.headers);
 		return out;
 	},
+
+	// Cron Trigger (wrangler.jsonc `triggers.crons`): keeps the Cloud Run
+	// instance from scaling to zero. The backend deploys with min-instances=0,
+	// and a cold start there costs ~55s. Cloud Run's request-based billing only
+	// charges while a request is being handled, so a health ping every few
+	// minutes costs milliseconds of billable time and ~9k requests a month,
+	// far under the free tier, unlike min-instances=1.
+	async scheduled(_controller: ScheduledController, env: Env, ctx: BackgroundWork): Promise<void> {
+		ctx.waitUntil(fetch(new URL("/api/health", env.BACKEND_URL)).then((res) => res.arrayBuffer()));
+	},
 } satisfies ExportedHandler<Env>;

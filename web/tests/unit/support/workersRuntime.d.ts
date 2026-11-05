@@ -24,6 +24,12 @@ interface ExecutionContext {
   passThroughOnException(): void
 }
 
+interface ScheduledController {
+  readonly cron: string
+  readonly scheduledTime: number
+}
+
 interface ExportedHandler<Env = unknown> {
   fetch?: (request: Request, env: Env, ctx: ExecutionContext) => Response | Promise<Response>
+  scheduled?: (controller: ScheduledController, env: Env, ctx: ExecutionContext) => void | Promise<void>
 }
