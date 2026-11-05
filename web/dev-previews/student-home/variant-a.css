@@ -190,6 +190,17 @@
 @keyframes ahFill { from { transform: scaleX(0) } }
 @keyframes ahPop { from { transform: scale(0.88) } }
 
+/* Beside the sidebar the column is narrower: tighter gaps keep "240 / 500 XP to level 8"
+   on one line down to 1024px, and below that the week drops under Binny and the level. */
+@container home (max-width: 1100px) {
+  .ah-hero { column-gap: var(--space-6) }
+  .ah-week { padding-inline-start: var(--space-6) }
+}
+@container home (min-width: 761px) and (max-width: 1023px) {
+  .ah-hero { grid-template-columns: 160px minmax(0, 1fr); grid-template-areas: "binny level" "week week"; row-gap: var(--space-5) }
+  .ah-week { padding-inline-start: 0; padding-block-start: var(--space-5); border-inline-start: 0; border-block-start: 1px solid var(--border-subtle) }
+}
+
 @container home (max-width: 760px) {
   .ah-hero {
     grid-template-columns: minmax(0, 1fr);
@@ -836,17 +847,47 @@
 .as-who b { font: 700 var(--fs-body-sm) / 1.3 var(--font-ui); color: var(--text-body) }
 .as-who small { font: 400 var(--as-fs-nav) / 1.3 var(--font-ui); color: var(--text-muted) }
 
-/* Top bar: utilities only, aligned with the page's inline-end edge. Flat; a hairline
-   appears once content scrolls under it. */
+/* Top bar: a floating card (the teacher pattern), sticky above the page and exactly as
+   wide as the page's content column. Page title on the start side; Upload, bell, settings
+   and account on the end side. Flat at rest (DESIGN.md Elevation): outlined, and it lifts
+   with the hover shadow once the page scrolls under it. */
 .as-bar {
-  position: sticky; inset-block-start: var(--as-top); z-index: 6;
-  display: flex; align-items: center; justify-content: flex-end; gap: var(--space-1);
-  block-size: 64px; padding-inline: var(--as-gutter);
-  background: var(--surface-page);
+  position: sticky; inset-block-start: calc(var(--as-top) + var(--space-2)); z-index: 6;
+  display: flex; align-items: center; gap: var(--space-1);
+  inline-size: min(calc(100% - 2 * var(--as-gutter)), calc(1180px - 2 * var(--as-gutter)));
+  block-size: 56px; margin: var(--space-2) auto 0; padding-inline: var(--space-5) var(--space-2);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-inner); background: var(--surface-card);
   transition: box-shadow var(--dur-base) var(--ease-out);
 }
-.as-bar.is-stuck { box-shadow: 0 1px 0 var(--border-subtle) }
+.as-bar.is-stuck { box-shadow: var(--shadow-hover) }
+.sh-root[data-theme="dark"] .as-bar { border-color: transparent }
+.sh-root[data-theme="dark"] .as-bar.is-stuck { box-shadow: none }
 .as-bar-wm { display: none }
+.as-title {
+  margin: 0; margin-inline-end: auto;
+  font: 800 var(--fs-title) / 1 var(--font-ui); letter-spacing: -0.02em; color: var(--text-body);
+}
+.as-bar-upload { margin-inline-end: var(--space-2) }
+
+/* Compact buttons (DESIGN.md Buttons: toolbar size, 36px high, 12px radius). */
+.as-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  block-size: 36px; padding-inline: var(--space-4); border: 0; border-radius: var(--radius-chip);
+  font: 700 var(--fs-body-sm) / 1 var(--font-ui); white-space: nowrap; cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+.as-btn:active { transform: scale(0.97) }
+.as-btn-primary { background: var(--md-primary); color: var(--md-on-primary) }
+.as-btn-primary:hover { background: var(--md-primary-hover) }
+.as-btn-tonal { background: var(--md-primary-container); color: var(--md-on-primary-container) }
+.as-btn-tonal:hover { background: color-mix(in oklch, var(--md-primary-container), var(--md-primary) 8%) }
+.as-btn-quiet { background: transparent; color: var(--text-body) }
+.as-btn-quiet:hover { background: var(--surface-row) }
+.as-btn .as-n { margin-inline-start: 0 }
+
+/* The sidebar's Upload: tonal, so the page's big action stays the only filled button in
+   the content and the bar's Upload stays the one filled control in the chrome. */
+.as-side-upload { inline-size: 100%; block-size: 40px; margin-block-end: var(--space-5) }
 .as-iconbtn {
   position: relative; display: grid; place-items: center; flex: none; inline-size: 40px; block-size: 40px;
   padding: 0; border: 0; border-radius: var(--radius-chip); background: transparent; color: var(--text-muted);
@@ -876,7 +917,6 @@
   background: var(--surface-card); color: var(--text-body); box-shadow: var(--shadow-panel);
 }
 .sh-root[data-theme="dark"] .as-pop-panel { background: var(--md-surface-highest); box-shadow: 0 0 0 1px var(--md-outline) }
-.as-pop-me .as-pop-panel { inline-size: 272px }
 .as-pop-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2) }
 .as-pop-head h2 { margin: 0; font: 700 var(--fs-body) / 1.3 var(--font-ui) }
 .as-textbtn {
@@ -917,8 +957,6 @@
   transition: background var(--dur-fast) var(--ease-out);
 }
 .as-pop-foot a:hover { background: var(--surface-row) }
-.as-pop-who { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-2) var(--space-3) }
-.as-pop-who .as-avatar { inline-size: 40px; block-size: 40px; font-size: var(--fs-body) }
 .as-links { display: flex; flex-direction: column; padding-block-start: var(--space-1); border-block-start: 1px solid var(--border-subtle) }
 .as-links :is(a, button) {
   display: flex; align-items: center; gap: var(--space-3); inline-size: 100%;
@@ -928,7 +966,6 @@
 }
 .as-links :is(a, button):hover { background: var(--surface-row) }
 .as-links .a-ico { color: var(--text-muted) }
-.as-links-sep { margin-block-start: var(--space-1); padding-block-start: var(--space-1); border-block-start: 1px solid var(--border-subtle) }
 
 /* State-scoped shell content (the shell shows in every page state). */
 .sh-root [data-a-show] { display: none }
@@ -956,13 +993,112 @@
 
 /* The page under the shell: the top bar already gives the greeting its air, and the
    page gutter matches the bar so the bell and the page share an inline-end edge. */
-.as-main .a-page { padding-block-start: var(--space-2); padding-inline: var(--as-gutter) }
+.as-main .a-page { padding-block-start: var(--space-7); padding-inline: var(--as-gutter) }
 @container home (max-width: 760px) {
   .as-main .a-page { padding-inline: var(--space-4) }
-  .as-bar { padding-inline: var(--space-4) }
-  /* The sidebar (or bottom bar) already offers Correct a paper. */
-  .a-head-correct { display: none }
 }
+
+/* Settings modal and account drawer: native modal dialogs, so focus stays inside and Esc
+   closes them; closing hands focus back to the gear or the avatar. */
+.as-modal, .as-drawer {
+  padding: 0; border: 0; background: var(--surface-card); color: var(--text-body);
+  box-shadow: var(--shadow-panel); font-family: var(--font-ui);
+}
+.sh-root[data-theme="dark"] :is(.as-modal, .as-drawer) { background: var(--md-surface-high) }
+:is(.as-modal, .as-drawer)::backdrop { background: var(--md-scrim) }
+.as-modal {
+  inline-size: min(560px, calc(100vw - var(--space-6))); max-block-size: min(760px, calc(100dvh - var(--space-8)));
+  padding: var(--space-4) 0; border-radius: var(--radius-card);
+}
+.as-modal[open] { display: flex }
+.as-modal-in { display: flex; flex-direction: column; flex: 1; min-block-size: 0 }
+.as-modal-head, .as-drawer-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+}
+.as-modal-head { padding: var(--space-1) var(--space-4) var(--space-2) var(--space-7) }
+:is(.as-modal-head, .as-drawer-head) h2 { margin: 0; font: 800 var(--fs-title) / 1.2 var(--font-ui); letter-spacing: -0.02em }
+.as-modal-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 0 var(--space-7) }
+.as-set { margin: 0; padding: var(--space-5) 0; border: 0; border-block-start: 1px solid var(--border-subtle) }
+.as-set:first-child { border-block-start: 0; padding-block-start: var(--space-3) }
+.as-set :is(h3, legend) { margin: 0 0 var(--space-3); padding: 0; font: 700 var(--fs-body) / 1.3 var(--font-ui) }
+.as-set legend { float: inline-start; inline-size: 100% }
+.as-set legend + * { clear: both }
+.as-hint { margin: var(--space-3) 0 0; font: 400 var(--fs-body-sm) / 1.5 var(--font-ui); color: var(--text-muted) }
+.as-devices + .as-hint, .as-hint + .as-devices { margin-block-start: var(--space-3) }
+.as-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4) }
+.as-field { display: flex; flex-direction: column; gap: var(--space-2); font: 600 var(--fs-body-sm) / 1.3 var(--font-ui); color: var(--text-muted) }
+.as-field :is(input, select) {
+  block-size: 44px; padding-inline: var(--space-3); border: 1px solid var(--md-outline); border-radius: var(--radius-chip);
+  background: var(--md-surface-lowest); color: var(--text-body); font: 600 var(--fs-body-sm) / 1 var(--font-ui);
+  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+.sh-root[data-theme="dark"] .as-field :is(input, select) { background: var(--md-surface-container) }
+.as-field :is(input, select):focus-visible { outline: none; border-color: var(--md-primary); box-shadow: 0 0 0 3px var(--md-primary-container) }
+.as-switch {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-4);
+  padding-block: var(--space-3); cursor: pointer;
+}
+.as-switch + .as-switch { border-block-start: 1px solid var(--border-subtle) }
+.as-switch > span { display: flex; flex-direction: column; gap: var(--space-1) }
+.as-switch b { font: 600 var(--fs-body-sm) / 1.3 var(--font-ui) }
+.as-switch small { font: 400 var(--as-fs-nav) / 1.4 var(--font-ui); color: var(--text-muted) }
+.as-switch input {
+  flex: none; position: relative; inline-size: 40px; block-size: 24px; margin: 0;
+  border-radius: var(--radius-pill); background: var(--md-surface-highest); appearance: none; cursor: pointer;
+  transition: background var(--dur-base) var(--ease-out);
+}
+.as-switch input::before {
+  content: ""; position: absolute; inset-block-start: var(--space-1); inset-inline-start: var(--space-1);
+  inline-size: 16px; block-size: 16px; border-radius: var(--radius-pill); background: var(--white);
+  transition: transform var(--dur-base) var(--a-ease-expo);
+}
+.as-switch input:checked { background: var(--md-primary) }
+.as-switch input:checked::before { transform: translateX(var(--space-4)) }
+.as-switch input:checked:dir(rtl)::before { transform: translateX(calc(var(--space-4) * -1)) }
+.sh-root[data-theme="dark"] .as-switch input:checked::before { background: var(--md-on-primary) }
+.as-seg {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-1);
+  padding: var(--space-1); border: 1px solid var(--md-outline); border-radius: var(--radius-button);
+}
+.as-seg label { position: relative; display: grid }
+.as-seg input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer }
+.as-seg span {
+  display: grid; place-items: center; block-size: 36px; border-radius: var(--radius-chip);
+  font: 600 var(--fs-body-sm) / 1 var(--font-ui); color: var(--text-muted);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.as-seg input:checked + span { background: var(--md-primary-container); color: var(--md-primary) }
+.as-seg input:focus-visible + span { outline: 2px solid var(--md-primary); outline-offset: 2px }
+.as-devices { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none }
+.as-devices li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding-block: var(--space-3) }
+.as-devices li + li { border-block-start: 1px solid var(--border-subtle) }
+.as-devices li > span:first-child { display: flex; flex-direction: column; gap: var(--space-1) }
+.as-devices b { font: 600 var(--fs-body-sm) / 1.3 var(--font-ui) }
+.as-devices small { font: 400 var(--as-fs-nav) / 1.4 var(--font-ui); color: var(--text-muted) }
+.as-tag {
+  padding: var(--space-1) var(--space-2); border-radius: var(--radius-pill); background: var(--md-primary-container);
+  color: var(--md-on-primary-container); font: 600 var(--fs-label) / 1.2 var(--font-ui);
+}
+.as-modal-foot {
+  display: flex; justify-content: flex-end; gap: var(--space-2);
+  padding: var(--space-4) var(--space-7) 0; border-block-start: 1px solid var(--border-subtle);
+}
+
+.as-drawer {
+  position: fixed; inset-block: var(--space-2); inset-inline: auto var(--space-2); margin: 0;
+  inline-size: min(360px, calc(100vw - var(--space-4))); block-size: auto; max-block-size: none;
+  padding: var(--space-5) var(--space-4) var(--space-4); border-radius: var(--radius-card);
+}
+.as-drawer[open] { display: flex; flex-direction: column }
+.as-drawer-head { padding-inline-start: var(--space-2); margin-block-end: var(--space-4) }
+.as-ident { display: flex; align-items: center; gap: var(--space-4); padding: var(--space-2) var(--space-2) var(--space-5) }
+.as-ident .as-avatar { inline-size: 56px; block-size: 56px; font-size: var(--fs-title) }
+.as-ident .as-who b { font-size: var(--fs-body) }
+.as-drawer-foot { margin-block-start: auto; padding-block-start: var(--space-2) }
+.a-motion .as-modal[open] { animation: asPanel var(--dur-base) var(--ease-out) both }
+.a-motion .as-drawer[open] { animation: asDrawerEnd var(--dur-slow) var(--a-ease-expo) both }
+.a-motion .as-drawer[open]:dir(rtl) { animation-name: asDrawer }
+@keyframes asDrawerEnd { from { transform: translateX(var(--space-8)); opacity: 0 } }
 
 /* The sidebar as a floating drawer (drawer range); the mobile query turns it into a sheet. */
 .as-side:popover-open {
@@ -984,9 +1120,8 @@
 @container ashell (max-width: 1247px) {
   .as-app { grid-template-columns: minmax(0, 1fr) }
   .as-side:not(:popover-open) { display: none }
-  .as-bar { justify-content: flex-start }
   .as-menu { display: grid }
-  .as-bar-wm { display: inline-flex; margin-inline-end: auto }
+  .as-bar { padding-inline-start: var(--space-3) }
 }
 
 /* Mobile: no sidebar. A slim top bar (wordmark, bell, account) scrolls away; the bottom
@@ -994,12 +1129,20 @@
 @container ashell (max-width: 760px) {
   .as-app { grid-template-rows: minmax(0, 1fr) auto }
   .as-menu { display: none }
-  .as-bar { position: relative; inset-block-start: auto; block-size: 44px; padding-inline: var(--space-3) var(--space-2) }
-  .as-bar.is-stuck { box-shadow: none }
-  .as-bar-wm { padding-inline: var(--space-1) }
+  /* Mobile keeps a flat, slim bar: the floating card's insets would cost the first screen. */
+  .as-bar {
+    position: relative; inset-block-start: auto; inline-size: auto; block-size: 44px; margin: 0;
+    padding-inline: var(--space-3) var(--space-2); border: 0; border-radius: 0; background: transparent; box-shadow: none;
+  }
+  .as-bar-wm { display: inline-flex; margin-inline-end: auto; padding-inline: var(--space-1) }
+  .as-title, .as-bar-upload { display: none }
   .as-pop { position: static }
-  .as-pop-panel, .as-pop-me .as-pop-panel { inset-inline: var(--space-2); inset-block-start: calc(100% - var(--space-1)); inline-size: auto }
+  .as-pop-panel { inset-inline: var(--space-2); inset-block-start: calc(100% - var(--space-1)); inline-size: auto }
   .as-main .a-page { padding-block: var(--space-2) var(--space-8) }
+  .as-modal { inline-size: 100vw; max-inline-size: none; max-block-size: calc(100dvh - var(--space-6)); margin-block-end: 0; border-end-start-radius: 0; border-end-end-radius: 0 }
+  .as-modal-head { padding-inline-start: var(--space-5) }
+  .as-modal-body, .as-modal-foot { padding-inline: var(--space-5) }
+  .as-fields { grid-template-columns: minmax(0, 1fr) }
   .a-bottombar {
     position: sticky; inset-block-end: 0; z-index: 5;
     display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-1);
@@ -1026,7 +1169,7 @@
 @keyframes asPanel { from { transform: translateY(calc(var(--space-2) * -1)); opacity: 0 } }
 
 @media (pointer: coarse) {
-  .as-list a, .as-subj, .as-sub a, .as-links :is(a, button), .as-pop-foot a, .as-textbtn { min-block-size: 44px }
+  .as-list a, .as-subj, .as-sub a, .as-links :is(a, button), .as-pop-foot a, .as-textbtn, .as-btn, .as-seg span { min-block-size: 44px }
   .as-iconbtn { inline-size: 44px; block-size: 44px }
 }
 
@@ -1175,10 +1318,6 @@
 .sh-root .ah-binny.is-cheering .ah-say [data-when-mood] { display: none }
 .sh-root .ah-binny.is-cheering .ah-say [data-when-mood="streak-kept"] { display: inline }
 
-/* Desktop's standing way to correct a paper: quiet and tonal, beside the greeting. Hidden
-   where the big action already is "Correct a paper" and in a narrow column (the sidebar or bottom bar has Correct). */
-.a-head-correct { flex: none }
-.sh-root:is([data-action="correct"], [data-action="first-paper"]) .a-head-correct { display: none }
 
 /* Marking progress: the stage in words (a polite live region), a three-part bar, the
    stage names under it. Demo values; variant-a.js may walk the stages once with motion on. */
@@ -1220,7 +1359,7 @@
 .a-prog[data-stage="3"] [data-step="3"] { font-weight: 700 }
 
 @container home (max-width: 760px) {
-  .a-prog { margin-block: var(--space-3) var(--space-4) }
-  .a-prog-now { margin-block-end: var(--space-2); font-size: var(--fs-body-sm) }
+  .a-prog { margin-block: var(--space-2) var(--space-3) }
+  .a-prog-now { margin-block-end: var(--space-1); font-size: var(--fs-body-sm) }
   .a-prog-steps { display: none }
 }

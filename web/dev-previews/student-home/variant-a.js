@@ -279,11 +279,11 @@ function runMarkingDemo() {
   stageTimers.push(setTimeout(() => setStage(prog, 3), STAGE_MS * 2))
 }
 
-/* ---------- app shell: toolbar offset, stuck bar, popovers, subjects, notifications ---------- */
+/* ---------- app shell: toolbar offset, popovers, dialogs, subjects, notifications ---------- */
 const toolbar = document.querySelector(".sh-toolbar")
-const bar = document.querySelector(".as-bar")
 const side = document.getElementById("as-side")
 const pops = [...document.querySelectorAll("details.as-pop")]
+const dialogs = [...document.querySelectorAll("dialog.as-modal, dialog.as-drawer")]
 
 // The preview toolbar is sticky above the shell; the sidebar and top bar stick below it.
 if (toolbar) {
@@ -292,12 +292,67 @@ if (toolbar) {
   setTop()
 }
 
-function syncStuck() {
-  if (!bar) return
-  const top = toolbar ? toolbar.offsetHeight : 0
-  bar.classList.toggle("is-stuck", window.scrollY > 0 && bar.getBoundingClientRect().top <= top + 1)
+// The floating bar lifts once the page scrolls under it.
+const bar = document.querySelector(".as-bar")
+const syncStuck = () => bar?.classList.toggle("is-stuck", window.scrollY > 0)
+window.addEventListener("scroll", syncStuck, { passive: true })
+syncStuck()
+
+// Settings (modal) and account (drawer): native modal dialogs. The browser keeps focus
+// inside, Esc closes, and closing returns focus to the opener. A click on the backdrop
+// closes too.
+const themeSelect = document.querySelector('select[data-control="theme"]')
+const darkMQ = window.matchMedia("(prefers-color-scheme: dark)")
+let themeChoice = null
+function syncThemeRadios() {
+  const choice = themeChoice ?? root.dataset.theme
+  for (const r of document.querySelectorAll('.as-seg input[name="theme"]')) r.checked = r.value === choice
 }
-window.addEventListener("scroll", () => requestAnimationFrame(syncStuck), { passive: true })
+function applyTheme(choice) {
+  themeChoice = choice === "system" ? "system" : null
+  const theme = choice === "system" ? (darkMQ.matches ? "dark" : "light") : choice
+  if (themeSelect && themeSelect.value !== theme) {
+    themeSelect.value = theme
+    themeSelect.dispatchEvent(new Event("change"))
+  }
+}
+document.addEventListener("click", (e) => {
+  const opener = e.target.closest("[data-a-open]")
+  if (!opener) return
+  const dlg = document.getElementById(opener.dataset.aOpen)
+  closePops()
+  if (side?.matches(":popover-open")) side.hidePopover()
+  if (dlg.id === "as-settings") syncThemeRadios()
+  dlg.showModal()
+})
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+for (const dlg of dialogs) {
+  dlg.addEventListener("keydown", (e) => {
+    if (e.key !== "Tab") return
+    const items = [...dlg.querySelectorAll(FOCUSABLE)].filter((el) => el.checkVisibility())
+    // Radio groups take one Tab stop: skip the unchecked radios.
+    const stops = items.filter((el) => el.type !== "radio" || el.checked)
+    const first = stops[0]
+    const last = stops.at(-1)
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault()
+      last.focus()
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault()
+      first.focus()
+    }
+  })
+  dlg.addEventListener("click", (e) => {
+    if (e.target !== dlg) return
+    const r = dlg.getBoundingClientRect()
+    const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom
+    if (!inside) dlg.close()
+  })
+}
+document.querySelector(".as-seg")?.addEventListener("change", (e) => applyTheme(e.target.value))
+darkMQ.addEventListener("change", () => {
+  if (themeChoice === "system") applyTheme("system")
+})
 
 // Top-bar popovers: one open at a time; outside click or Escape closes, and Escape
 // returns focus to the trigger.
@@ -396,6 +451,7 @@ markRead?.addEventListener("click", () => {
 
 function resetShell() {
   closePops()
+  for (const dlg of dialogs) if (dlg.open) dlg.close()
   if (side?.matches(":popover-open")) side.hidePopover()
   resetSubjects()
   resetNotifications()
@@ -410,7 +466,7 @@ new MutationObserver((records) => {
   }
   if (names.has("data-state")) {
     runMarkingDemo()
-    resetShell()
+    if (records.some((r) => r.attributeName === "data-state" && r.oldValue !== root.dataset.state)) resetShell()
   }
   if (names.has("data-width")) requestAnimationFrame(closeSheetIfWide)
   if (names.has("data-state") || names.has("data-width")) {
@@ -422,7 +478,7 @@ new MutationObserver((records) => {
       observeSections()
     })
   }
-}).observe(root, { attributes: true, attributeFilter: ["data-motion", "data-state", "data-width"] })
+}).observe(root, { attributes: true, attributeOldValue: true, attributeFilter: ["data-motion", "data-state", "data-width"] })
 reduceMQ.addEventListener("change", () => {
   syncMotion()
   if (!motionOn()) runMarkingDemo()
@@ -435,4 +491,3 @@ resetExam()
 observeSections()
 runMarkingDemo()
 resetShell()
-syncStuck()
