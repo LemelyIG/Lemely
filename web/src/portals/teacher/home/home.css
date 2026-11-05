@@ -141,6 +141,10 @@
 }
 @keyframes th-draw { to { stroke-dashoffset: 0; } }
 
+/* Drawn tick: the path is normalised (pathLength=1) so one rule fits every size. */
+.th-tick { fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.th-tick .th-tick-path { stroke-dasharray: 1; stroke-dashoffset: 1; animation: th-draw 0.55s var(--ease-expo) 0.2s forwards; }
+
 @media (prefers-reduced-motion: reduce) {
   .th-queue, .th-zone, .th-zone .th-ic, .th-mark .th-btn { transition: none; }
   .th-queue:has(.th-go:hover), .th-zone[data-over], .th-zone:hover .th-ic, .th-mark .th-btn:active { transform: none; }
@@ -148,6 +152,7 @@
   .th-mark[data-state="queued"] .th-fx,
   .th-dropveil { animation: none; }
   .th-mark[data-state="queued"] .th-fx svg { stroke-dashoffset: 0; }
+  .th-tick .th-tick-path { animation: none; stroke-dashoffset: 0; }
 }
 
 @keyframes em-nudge { 0%, 100% { transform: none; } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }

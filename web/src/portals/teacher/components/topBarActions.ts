@@ -51,6 +51,11 @@ export const CREATE_ACTIONS: readonly CreateAction[] = [
   },
 ]
 
+/** The bell panel's two footer links, and how many rows it previews. */
+export const INBOX_TO = "/teacher/notifications"
+export const ANNOUNCEMENTS_TO = "/teacher/announcements"
+export const NOTIFICATION_PREVIEW_LIMIT = 4
+
 /** Profile settings is the settings index; Settings opens the same place. */
 export const PROFILE_EDIT_TO = "/teacher/settings"
 export const SETTINGS_TO = "/teacher/settings"

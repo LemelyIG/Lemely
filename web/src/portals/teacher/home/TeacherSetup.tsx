@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { Check, Plus, UploadSimple } from "@phosphor-icons/react"
 import type { ClassSummary } from "@/lib/teacherTypes"
+import type { Unlock } from "./growth"
+import { UnlockLadder } from "./NextUp"
 import type { SetupProgress } from "./setup"
 import "./home.css"
 
@@ -14,7 +16,7 @@ const STEPS = [
 
 const isPdf = (f: File) => f.type === "application/pdf" || /\.pdf$/i.test(f.name)
 
-export function TeacherSetup({ progress, firstClass, onFiles }: { progress: SetupProgress; firstClass: ClassSummary | null; onFiles: (files: File[]) => void }) {
+export function TeacherSetup({ progress, firstClass, unlocks, onFiles }: { progress: SetupProgress; firstClass: ClassSummary | null; unlocks: Unlock[]; onFiles: (files: File[]) => void }) {
   const input = useRef<HTMLInputElement>(null)
   const [nudge, setNudge] = useState(0)
   const [copied, setCopied] = useState(false)
@@ -85,7 +87,7 @@ export function TeacherSetup({ progress, firstClass, onFiles }: { progress: Setu
                   <h3 className="font-bold">{s.title}</h3>
                   {s.key === "created" && done && firstClass?.joinCode ? (
                     <p className="text-body-sm text-on-surface-variant">
-                      {firstClass.label} · join code <code className="text-data-md text-on-surface">{firstClass.joinCode}</code>{" "}
+                      {firstClass.label} · {firstClass.studentCount} {firstClass.studentCount === 1 ? "student" : "students"} joined · join code <code className="text-data-md text-on-surface">{firstClass.joinCode}</code>{" "}
                       <button type="button" onClick={() => void copy(firstClass.joinCode!)} className="font-bold text-primary">{copied ? "Copied" : "Copy"}</button>
                     </p>
                   ) : (
@@ -105,6 +107,10 @@ export function TeacherSetup({ progress, firstClass, onFiles }: { progress: Setu
             )
           })}
         </ol>
+      </section>
+
+      <section aria-labelledby="gs-unlock" className="rounded-card bg-surface-container-lowest p-6 shadow-panel">
+        <UnlockLadder unlocks={unlocks} as="h2" headingId="gs-unlock" />
       </section>
       <input ref={input} type="file" accept="application/pdf" multiple hidden onChange={(e) => upload(e.target.files)} />
     </div>

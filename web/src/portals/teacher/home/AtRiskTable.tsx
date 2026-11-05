@@ -5,7 +5,8 @@ import { ForwardArrow } from "@/components/ui/inline-arrow"
 import { gradeChipClass } from "@/lib/grade"
 import { atRiskRowModel } from "./models"
 
-export function AtRiskTable({ students }: { students: AtRiskStudent[] }) {
+/** `trendsReady` is false while no class has two marked papers, so an empty list means "not yet" rather than "all clear". */
+export function AtRiskTable({ students, trendsReady = true }: { students: AtRiskStudent[]; trendsReady?: boolean }) {
   return (
     <section aria-labelledby="ar-h" className="min-w-0 rounded-card bg-surface-container-lowest p-6 shadow-panel">
       <div className="flex items-baseline justify-between">
@@ -16,7 +17,7 @@ export function AtRiskTable({ students }: { students: AtRiskStudent[] }) {
         <Link to="/teacher/at-risk" className="font-bold text-primary">View all</Link>
       </div>
       {students.length === 0 ? (
-        <p className="mt-4 text-body-md text-on-surface-variant">No student is on a falling trend right now.</p>
+        <p className="mt-4 text-body-md text-on-surface-variant">{trendsReady ? "No student is on a falling trend right now." : "Trends start once each student has two marked papers. Then anyone falling behind shows up here."}</p>
       ) : (
         <ul className="mt-2">
           {students.slice(0, 4).map((s, i) => {
