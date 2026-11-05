@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S3 R4 V3 */
 import { Link, useNavigate } from "react-router-dom"
 import { Gear, Lifebuoy, SignOut, UserCircle } from "@phosphor-icons/react"
 import { DropdownMenu } from "radix-ui"
