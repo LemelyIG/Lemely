@@ -2,7 +2,6 @@
 import { Link } from "react-router-dom"
 import type { Overview } from "@/lib/teacherTypes"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
-import { DrawnCheck } from "./NextUp"
 import { reviewQueueModel } from "./models"
 import "./home.css"
 

@@ -18,6 +18,7 @@ import { MarkClassSet } from "@/portals/teacher/home/MarkClassSet"
 import { ReviewQueueTile } from "@/portals/teacher/home/ReviewQueueTile"
 import { TeacherHome } from "@/portals/teacher/home/TeacherHome"
 import { TeacherSetup } from "@/portals/teacher/home/TeacherSetup"
+import { growthModel } from "@/portals/teacher/home/growth"
 import { deriveSetup } from "@/portals/teacher/home/setup"
 import { SettingsModal } from "@/portals/settings/SettingsModal"
 import { TEACHER_SETTINGS_TABS } from "@/portals/settings/settingsTabs"
@@ -67,6 +68,8 @@ const HOME_SEEDS: Record<"overview" | "setup" | "error" | "loading", QuerySeed> 
 }
 
 /** A bar of the real top-bar trigger, so a menu is seen in the context it ships in. */
+const unlocksFor = (classes: typeof FIXTURE_CLASSES) => growthModel(classes, { paperCount: 0, atRisk: [] }).unlocks
+
 function TopBarCell({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-14 w-full items-center justify-end gap-1 rounded-chip border border-outline-variant bg-surface px-3">
@@ -336,17 +339,17 @@ export function TeacherGroup() {
       >
         <StateCell wide state="default" provenance="live" note="TeacherSetup, nothing done yet. Choose a PDF to see the nudge toward creating a class first.">
           <div className="w-full min-w-0">
-            <TeacherSetup progress={deriveSetup(0, { paperCount: 0, pendingReviewCount: 0 })} firstClass={null} onFiles={noop} />
+            <TeacherSetup progress={deriveSetup(0, { paperCount: 0, pendingReviewCount: 0 })} firstClass={null} unlocks={unlocksFor([])} onFiles={noop} />
           </div>
         </StateCell>
         <StateCell wide state="default" provenance="live" note="TeacherSetup, class created, ready for a first upload. Copy the class code.">
           <div className="w-full min-w-0">
-            <TeacherSetup progress={deriveSetup(1, { paperCount: 0, pendingReviewCount: 0 })} firstClass={FIXTURE_CLASSES[0]!} onFiles={noop} />
+            <TeacherSetup progress={deriveSetup(1, { paperCount: 0, pendingReviewCount: 0 })} firstClass={FIXTURE_CLASSES[0]!} unlocks={unlocksFor([FIXTURE_CLASSES[0]!])} onFiles={noop} />
           </div>
         </StateCell>
         <StateCell wide state="default" provenance="prop" note="TeacherSetup, two of three done: papers are in, review is open">
           <div className="w-full min-w-0">
-            <TeacherSetup progress={deriveSetup(1, { paperCount: 12, pendingReviewCount: 5 })} firstClass={FIXTURE_CLASSES[0]!} onFiles={noop} />
+            <TeacherSetup progress={deriveSetup(1, { paperCount: 12, pendingReviewCount: 5 })} firstClass={FIXTURE_CLASSES[0]!} unlocks={unlocksFor([FIXTURE_CLASSES[0]!])} onFiles={noop} />
           </div>
         </StateCell>
       </ComponentSection>
