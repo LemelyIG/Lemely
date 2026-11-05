@@ -238,12 +238,12 @@ function ClassesNavSection() {
               >
                 <span className="truncate">{c.label}</span>
                 {c.grade ? (
-                  <span className={cn("ms-auto inline-flex flex-none items-center rounded-md px-1.5 text-data-sm font-bold", gradeChipClass(c.grade, { size: "small" }))}>
+                  <span className={cn("ms-auto inline-flex h-4.5 min-w-6 flex-none items-center justify-center rounded-md px-1 pt-0.5 text-data-sm font-bold", gradeChipClass(c.grade, { size: "small" }))}>
                     <span className="sr-only">Median grade </span>
                     {c.grade}
                   </span>
                 ) : null}
-                <span className={cn("flex-none text-data-sm text-on-surface-variant", !c.grade && "ms-auto")}>
+                <span className={cn("inline-flex h-4.5 w-6 flex-none items-center justify-end pt-0.5 text-data-sm tabular-nums text-on-surface-variant", !c.grade && "ms-auto")}>
                   {c.studentCount}
                 </span>
               </NavLink>

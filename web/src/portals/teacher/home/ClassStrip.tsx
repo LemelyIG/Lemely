@@ -48,7 +48,7 @@ export function ClassStrip({ classes }: { classes: ClassSummary[] }) {
                     <p className="truncate text-data-sm text-on-surface-variant">{m.meta}</p>
                   </div>
                   {m.grade && (
-                    <span className={cn("inline-flex shrink-0 items-center rounded-md px-2 py-0.5 text-data-sm font-bold", gradeChipClass(m.grade, { size: "small" }))}>
+                    <span className={cn("inline-flex h-6 min-w-7 shrink-0 items-center justify-center rounded-md px-1.5 pt-0.5 text-data-sm font-bold", gradeChipClass(m.grade, { size: "small" }))}>
                       <span className="sr-only">Median grade </span>
                       {m.grade}
                     </span>
