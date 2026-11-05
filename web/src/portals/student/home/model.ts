@@ -35,6 +35,11 @@ export interface WeakTopic {
 export interface LatestResult {
   subjectCode: string
   grade: string
+  paperId: string
+  /** Display label, e.g. "0580/42 · m/j 2024". */
+  paperLabel: string
+  /** True once the student has opened the result. An unseen result takes over the hero. */
+  seen: boolean
   /** UTC ISO-8601 timestamp. */
   recordedAt: string
 }
@@ -57,6 +62,7 @@ export interface HomeFacts {
 
 export type NextAction =
   | { kind: "marking"; paperLabel: string; to: string }
+  | { kind: "result"; result: LatestResult; to: string }
   | { kind: "session"; session: UpcomingSession; to: string }
   | { kind: "first-paper"; to: string }
   | { kind: "practice"; topic: WeakTopic; to: string }
@@ -111,6 +117,7 @@ function byClosestExam<T>(f: HomeFacts, items: T[], codeOf: (item: T) => string)
 }
 
 const markingAction = (paperLabel: string): NextAction => ({ kind: "marking", paperLabel, to: CORRECT_ROUTE })
+const resultAction = (r: LatestResult): NextAction => ({ kind: "result", result: r, to: `/student/result/${r.paperId}` })
 const sessionAction = (s: UpcomingSession): NextAction => ({
   kind: "session",
   session: s,
@@ -122,6 +129,7 @@ const CORRECT_ANOTHER: NextAction = { kind: "correct", to: CORRECT_ROUTE }
 
 export function deriveNextAction(f: HomeFacts, opts: NextActionOptions = {}): NextAction {
   if (f.activeUpload) return markingAction(f.activeUpload.paperLabel)
+  if (f.latestResult && f.latestResult.seen === false) return resultAction(f.latestResult)
   let due = dueSessions(f)
   if (opts.preferClosestExam) due = byClosestExam(f, due, (s) => s.subjectCode)
   if (due.length > 0) return sessionAction(due[0])
@@ -136,6 +144,7 @@ export function deriveNextAction(f: HomeFacts, opts: NextActionOptions = {}): Ne
 export function todayList(f: HomeFacts, max = 3): NextAction[] {
   const out: NextAction[] = []
   if (f.activeUpload) out.push(markingAction(f.activeUpload.paperLabel))
+  if (f.latestResult && f.latestResult.seen === false) out.push(resultAction(f.latestResult))
   out.push(...dueSessions(f).map(sessionAction))
   if (!hasPapers(f)) {
     if (!f.activeUpload) out.push(FIRST_PAPER)

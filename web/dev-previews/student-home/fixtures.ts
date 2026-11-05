@@ -3,10 +3,10 @@
  * uses it says "Demo data". Real CAIE subject codes, plausible paper labels.
  * "Today" is fixed at 2026-11-05 10:00 local so states never drift.
  */
-import type { BinnyMood, HomeFacts, NextActionKind, XpDay } from "@/portals/student/home/model"
+import type { BinnyMood, HomeFacts, LatestResult, NextActionKind, XpDay } from "@/portals/student/home/model"
 
 export const STATES = [
-  "populated", "new", "one-paper", "marking", "no-plan", "no-exams", "streak-zero", "loading", "error",
+  "populated", "result-in", "new", "one-paper", "marking", "no-plan", "no-exams", "streak-zero", "loading", "error",
 ] as const
 export type StateId = (typeof STATES)[number]
 
@@ -18,6 +18,16 @@ const NINE_DAYS: XpDay[] = [
   { day: "2026-10-31", xp: 20 }, { day: "2026-11-01", xp: 35 }, { day: "2026-11-02", xp: 50 },
   { day: "2026-11-03", xp: 30 }, { day: "2026-11-04", xp: 120 }, { day: "2026-11-05", xp: 25 },
 ]
+
+// Yesterday 18:00, 16 h before NOW: grade A, up from B.
+const POPULATED_RESULT: LatestResult = {
+  subjectCode: "0580",
+  grade: "A",
+  paperId: "p-0580-42",
+  paperLabel: "0580/42 · m/j 2024",
+  seen: true,
+  recordedAt: new Date(2026, 10, 4, 18, 0).toISOString(),
+}
 
 const populated: HomeFacts = {
   now: NOW,
@@ -37,8 +47,7 @@ const populated: HomeFacts = {
     { topic: "Vectors", subjectCode: "0580", acc: 63 },
     { topic: "Moments", subjectCode: "0625", acc: 66 },
   ],
-  // Yesterday 18:00, 16 h before NOW: grade A, up from B.
-  latestResult: { subjectCode: "0580", grade: "A", recordedAt: new Date(2026, 10, 4, 18, 0).toISOString() },
+  latestResult: POPULATED_RESULT,
   calendar: NINE_DAYS,
 }
 
@@ -46,6 +55,10 @@ type Fixture = { facts: HomeFacts; expected: { action: NextActionKind; mood: Bin
 
 export const FIXTURES: Record<StateId, Fixture> = {
   populated: { facts: populated, expected: { action: "session", mood: "grade-improved" } },
+  "result-in": {
+    facts: { ...populated, latestResult: { ...POPULATED_RESULT, seen: false } },
+    expected: { action: "result", mood: "grade-improved" },
+  },
   new: {
     facts: { now: NOW, activeUpload: null, subjects: [], upcomingSessions: [], weakTopics: [], latestResult: null, calendar: [] },
     expected: { action: "first-paper", mood: "idle" },
@@ -57,7 +70,14 @@ export const FIXTURES: Record<StateId, Fixture> = {
       subjects: [{ code: "0580", papers: 1, grade: "B", previousGrade: null, nextExamOn: "2027-05-12" }],
       upcomingSessions: [],
       weakTopics: [{ topic: "Vectors", subjectCode: "0580", acc: 50 }],
-      latestResult: { subjectCode: "0580", grade: "B", recordedAt: new Date(2026, 10, 2, 17, 0).toISOString() },
+      latestResult: {
+        subjectCode: "0580",
+        grade: "B",
+        paperId: "p-0580-42",
+        paperLabel: "0580/42 · m/j 2024",
+        seen: true,
+        recordedAt: new Date(2026, 10, 2, 17, 0).toISOString(),
+      },
       calendar: [{ day: "2026-11-02", xp: 50 }],
     },
     expected: { action: "practice", mood: "idle" },
@@ -74,7 +94,14 @@ export const FIXTURES: Record<StateId, Fixture> = {
   "streak-zero": {
     facts: {
       ...populated,
-      latestResult: { subjectCode: "0580", grade: "A", recordedAt: new Date(2026, 10, 1, 18, 0).toISOString() },
+      latestResult: {
+        subjectCode: "0580",
+        grade: "A",
+        paperId: "p-0580-42",
+        paperLabel: "0580/42 · m/j 2024",
+        seen: true,
+        recordedAt: new Date(2026, 10, 1, 18, 0).toISOString(),
+      },
       calendar: NINE_DAYS.filter((d) => d.day <= "2026-11-03"),
     },
     expected: { action: "session", mood: "idle" },

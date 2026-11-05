@@ -6,6 +6,7 @@ import {
   streakStrip,
   todayList,
   type HomeFacts,
+  type LatestResult,
 } from "@/portals/student/home/model"
 
 // 2026-11-05 10:00 local time. Every date below is local, so the tests do not
@@ -32,6 +33,18 @@ function facts(over: Partial<HomeFacts> = {}): HomeFacts {
   }
 }
 
+function result(over: Partial<LatestResult> = {}): LatestResult {
+  return {
+    subjectCode: "0580",
+    grade: "A",
+    recordedAt: hoursAgo(16),
+    paperId: "p-0580-42",
+    paperLabel: "0580/42 · m/j 2024",
+    seen: true,
+    ...over,
+  }
+}
+
 const session = (id: string, code: string, day: string) => ({
   sessionId: id,
   subjectCode: code,
@@ -52,6 +65,32 @@ describe("deriveNextAction", () => {
       facts({ activeUpload: { paperLabel: "0580/42" }, upcomingSessions: [session("s1", "0580", "2026-11-05")] }),
     )
     expect(a).toEqual({ kind: "marking", paperLabel: "0580/42", to: "/student/correct" })
+  })
+
+  it("2. an unseen result beats a due session", () => {
+    const a = deriveNextAction(
+      facts({ latestResult: result({ seen: false }), upcomingSessions: [session("s1", "0606", "2026-11-05")] }),
+    )
+    expect(a.kind).toBe("result")
+    expect(a.to).toBe("/student/result/p-0580-42")
+    if (a.kind === "result") expect(a.result.paperLabel).toBe("0580/42 · m/j 2024")
+  })
+
+  it("2. marking in progress beats an unseen result", () => {
+    const a = deriveNextAction(facts({ activeUpload: { paperLabel: "0625/42" }, latestResult: result({ seen: false }) }))
+    expect(a.kind).toBe("marking")
+  })
+
+  it("2. a seen result falls through to the due session", () => {
+    const a = deriveNextAction(
+      facts({ latestResult: result({ seen: true }), upcomingSessions: [session("s1", "0606", "2026-11-05")] }),
+    )
+    expect(a.kind).toBe("session")
+  })
+
+  it("2. an unseen result beats first-paper and practice too", () => {
+    expect(deriveNextAction(facts({ latestResult: result({ seen: false }) })).kind).toBe("result")
+    expect(deriveNextAction(facts({ subjects: [], weakTopics: [], latestResult: result({ seen: false }) })).kind).toBe("result")
   })
 
   it("2. a session due today is next", () => {
@@ -123,6 +162,19 @@ describe("todayList", () => {
     for (const f of cases) expect(todayList(f)[0]).toEqual(deriveNextAction(f))
   })
 
+  it("starts with the result action right after marking when unseen", () => {
+    const unseen = facts({ latestResult: result({ seen: false }), upcomingSessions: [session("s1", "0580", "2026-11-05")] })
+    expect(todayList(unseen).map((a) => a.kind)).toEqual(["result", "session", "practice"])
+    expect(todayList(unseen)[0]).toEqual(deriveNextAction(unseen))
+    const marking = facts({ activeUpload: { paperLabel: "0580/42" }, latestResult: result({ seen: false }) })
+    expect(todayList(marking).map((a) => a.kind)).toEqual(["marking", "result", "practice"])
+  })
+
+  it("omits the result action once it has been seen", () => {
+    const f = facts({ latestResult: result({ seen: true }), upcomingSessions: [session("s1", "0580", "2026-11-05")] })
+    expect(todayList(f).map((a) => a.kind)).toEqual(["session", "practice", "correct"])
+  })
+
   it("caps the list at three items", () => {
     const f = facts({
       activeUpload: { paperLabel: "0580/42" },
@@ -152,24 +204,24 @@ describe("binnyMood", () => {
   })
 
   it("grade improved: result in the last 24 h above the previous grade", () => {
-    const latestResult = { subjectCode: "0580", grade: "A", recordedAt: hoursAgo(16) }
+    const latestResult = result({ recordedAt: hoursAgo(16) })
     expect(binnyMood(facts({ latestResult }))).toBe("grade-improved")
   })
 
   it("paper marked: result in the last 24 h, same grade as before", () => {
     const subjects = [{ code: "0580", papers: 14, grade: "A", previousGrade: "A", nextExamOn: null }]
-    const latestResult = { subjectCode: "0580", grade: "A", recordedAt: hoursAgo(2) }
+    const latestResult = result({ recordedAt: hoursAgo(2) })
     expect(binnyMood(facts({ subjects, latestResult }))).toBe("paper-marked")
   })
 
   it("paper marked: first paper in a subject has no previous grade", () => {
     const subjects = [{ code: "0580", papers: 1, grade: "B", previousGrade: null, nextExamOn: null }]
-    const latestResult = { subjectCode: "0580", grade: "B", recordedAt: hoursAgo(2) }
+    const latestResult = result({ grade: "B", recordedAt: hoursAgo(2) })
     expect(binnyMood(facts({ subjects, latestResult }))).toBe("paper-marked")
   })
 
   it("a result older than 24 h no longer counts", () => {
-    const latestResult = { subjectCode: "0580", grade: "A", recordedAt: hoursAgo(25) }
+    const latestResult = result({ recordedAt: hoursAgo(25) })
     expect(binnyMood(facts({ latestResult }))).toBe("idle")
   })
 

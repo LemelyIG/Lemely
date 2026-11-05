@@ -35,6 +35,7 @@ body:has(.sh-root[data-theme="dark"]) { background: oklch(0.12 0.010 245) }
 /* Hero: one block per next-action kind. */
 .sh-root [data-when-action] { display: none }
 .sh-root[data-action="marking"] [data-when-action="marking"],
+.sh-root[data-action="result"] [data-when-action="result"],
 .sh-root[data-action="session"] [data-when-action="session"],
 .sh-root[data-action="first-paper"] [data-when-action="first-paper"],
 .sh-root[data-action="practice"] [data-when-action="practice"],

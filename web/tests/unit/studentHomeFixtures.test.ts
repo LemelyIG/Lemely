@@ -5,7 +5,10 @@ import { FIXTURES, STATES } from "../../dev-previews/student-home/fixtures"
 describe("student home preview fixtures", () => {
   it("covers every spec state", () => {
     expect([...STATES].sort()).toEqual(
-      ["error", "loading", "marking", "new", "no-exams", "no-plan", "one-paper", "populated", "streak-zero"],
+      [
+        "error", "loading", "marking", "new", "no-exams", "no-plan", "one-paper", "populated", "result-in",
+        "streak-zero",
+      ],
     )
   })
 
