@@ -104,6 +104,9 @@ const TeacherNotifications = lazy(() =>
 // containing any one of them pulls in the code for all of them, defeating the
 // per-screen splitting this whole file otherwise does.
 // Loaded on its own so Radix's menu stays out of the entry chunk's budget.
+const NotificationsMenu = lazy(() =>
+  import("./components/NotificationsMenu").then((m) => ({ default: m.NotificationsMenu })),
+)
 const ProfileMenu = lazy(() =>
   import("./components/ProfileMenu").then((m) => ({ default: m.ProfileMenu })),
 )
@@ -475,18 +478,15 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
           <span className="hidden sm:inline">Upload papers</span>
           <span className="sr-only sm:hidden">Upload papers</span>
         </Link>
-        <Link
-          to="/teacher/notifications"
-          aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"}
-          className={TOP_BAR_ICON_BUTTON}
+        <Suspense
+          fallback={
+            <Link to="/teacher/notifications" aria-label="Notifications" className={TOP_BAR_ICON_BUTTON}>
+              <Bell size={20} aria-hidden="true" />
+            </Link>
+          }
         >
-          <Bell size={20} aria-hidden="true" />
-          {unread ? (
-            <span className="absolute -end-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-pill bg-primary px-1 text-data-sm text-on-primary">
-              {unread}
-            </span>
-          ) : null}
-        </Link>
+          <NotificationsMenu unread={unread} triggerClassName={TOP_BAR_ICON_BUTTON} />
+        </Suspense>
         {/* Below `sm` the bar has no room for a title beside six 44px targets, so
             the gear folds into the profile menu (which carries Settings). */}
         <Link to="/teacher/settings" state={overlayState} aria-label="Settings" className={cn(TOP_BAR_ICON_BUTTON, "max-sm:hidden")}>

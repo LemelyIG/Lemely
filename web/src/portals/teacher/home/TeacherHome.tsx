@@ -13,13 +13,14 @@ export function TeacherHome() {
   const overview = useTeacherOverview()
   const view = teacherHomeView(classes.status, classes.data?.classes.length ?? 0, overview.status, overview.data)
   const toGrading = (files: File[]) => navigate("/teacher/grading", { state: { files } })
+  const retrying = classes.isFetching || overview.isFetching
   if (view === "loading") return <RouteSkeleton />
   if (view === "error") {
     return (
       <div role="alert" className="rounded-card bg-error-container p-6 text-on-error-container">
         <p className="font-bold">We couldn't load your overview.</p>
         <p className="mt-1 text-body-sm">{teacherLoadFailureMessage(classes.error ?? overview.error)}</p>
-        <button type="button" disabled={classes.isFetching || overview.isFetching} className="mt-3 font-bold underline disabled:opacity-50 disabled:no-underline" onClick={() => { void classes.refetch(); void overview.refetch() }}>Try again</button>
+        <button type="button" aria-busy={retrying} className="mt-3 rounded-md font-bold underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-current" onClick={() => { void classes.refetch(); void overview.refetch() }}>{retrying ? "Trying again…" : "Try again"}</button>
       </div>
     )
   }
