@@ -10,6 +10,8 @@ export interface ReviewQueueModel {
   bars: { band: number; height: number; low: boolean }[]
   /** Items in the confidence bands wholly below the threshold. */
   lowCount: number
+  /** Every open item scored below the threshold, so "answers below N%" is literally true. */
+  allLow: boolean
   /** The server's review threshold as a whole percentage. */
   thresholdPct: number
   estimate: string | null
@@ -26,10 +28,12 @@ export function reviewQueueModel(
   const thresholdBand = Math.floor(threshold * 10 + 1e-9)
   const counts = Array.from({ length: 10 }, (_, i) => o.reviewConfidenceBuckets?.[i] ?? 0)
   const max = Math.max(0, ...counts)
+  const lowCount = counts.slice(0, thresholdBand).reduce((a, n) => a + n, 0)
   return {
     count: o.pendingReviewCount,
     bars: counts.map((c, band) => ({ band, height: max ? c / max : 0, low: band < thresholdBand })),
-    lowCount: counts.slice(0, thresholdBand).reduce((a, n) => a + n, 0),
+    lowCount,
+    allLow: o.pendingReviewCount > 0 && lowCount === o.pendingReviewCount,
     thresholdPct: Math.round(threshold * 100),
     estimate: o.pendingReviewCount > 0 && o.reviewEstimateMinutes > 0 ? `about ${o.reviewEstimateMinutes} min` : null,
     empty: o.pendingReviewCount === 0,

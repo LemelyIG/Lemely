@@ -37,6 +37,15 @@ describe("reviewQueueModel", () => {
     expect(m.count).toBe(9)
   })
 
+  it("says every answer is below the threshold only when the low count is the whole queue", () => {
+    const all = reviewQueueModel({ pendingReviewCount: 3, reviewConfidenceBuckets: [0, 0, 0, 0, 0, 2, 1, 0, 0, 0], reviewEstimateMinutes: 1, reviewConfidenceThreshold: 0.7 })
+    expect(all.allLow).toBe(true)
+    // One pending row has no score in any band, so not every answer is below 70%.
+    const some = reviewQueueModel({ pendingReviewCount: 4, reviewConfidenceBuckets: [0, 0, 0, 0, 0, 2, 1, 0, 0, 0], reviewEstimateMinutes: 1, reviewConfidenceThreshold: 0.7 })
+    expect(some.allLow).toBe(false)
+    expect(reviewQueueModel({ pendingReviewCount: 0, reviewConfidenceBuckets: [], reviewEstimateMinutes: 0 }).allLow).toBe(false)
+  })
+
   it("follows a different server threshold", () => {
     const m = reviewQueueModel({ pendingReviewCount: 5, reviewConfidenceBuckets: [0, 0, 0, 0, 0, 2, 1, 1, 1, 0], reviewEstimateMinutes: 2, reviewConfidenceThreshold: 0.7 })
     expect(m.thresholdPct).toBe(70)

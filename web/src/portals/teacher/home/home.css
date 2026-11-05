@@ -1,10 +1,152 @@
-@keyframes th-big { 0% { opacity: 0; transform: scale(0.6); } 40% { opacity: 1; transform: scale(1.05); } 100% { opacity: 0; transform: scale(1); } }
-@keyframes th-draw { from { stroke-dashoffset: 30; } to { stroke-dashoffset: 0; } }
-@keyframes th-chip { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-.th-received .th-big { animation: th-big 900ms var(--ease-expo) both; }
-.th-received .th-big path { stroke-dasharray: 30; animation: th-draw 500ms 120ms var(--ease-expo) both; }
-.th-received .th-got { animation: th-chip 350ms var(--ease-expo) both; }
-@media (prefers-reduced-motion: reduce) {
-  .th-received .th-big, .th-received .th-big path, .th-received .th-got { animation: none; }
+/* Teacher home: review tile and mark card, ported from web/dev-previews/teacher-home.
+   Colours are roles from index.css, or mixes of two roles; no raw values. */
+
+/* Soft card lift (the prototype's --lift), built from the shadow role. */
+.th-lift {
+  box-shadow:
+    0 1px 2px color-mix(in oklch, var(--md-shadow) 6%, transparent),
+    0 12px 24px -18px color-mix(in oklch, var(--md-shadow) 30%, transparent);
 }
+
+/* ---- Review queue tile ---------------------------------------------------
+   Light: Abyss primary. Dark: primary container. The accent is the role that
+   reads as light blue on that fill; low bars are the light crimson of the
+   error ramp (dark --md-error exactly; a 50/50 error mix in light). */
+.th-queue {
+  --q-bg: var(--md-primary);
+  --q-fg: var(--md-on-primary);
+  --q-accent: var(--md-inverse-primary);
+  --q-muted: color-mix(in oklch, var(--md-on-primary), var(--md-inverse-primary) 40%);
+  --q-lo: color-mix(in oklch, var(--md-error), var(--md-error-container) 50%);
+  color: var(--q-fg);
+  background:
+    radial-gradient(120% 90% at 100% 0%, color-mix(in oklch, var(--q-bg), var(--q-accent) 22%), transparent 60%),
+    var(--q-bg);
+  transition: transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
+}
+:where([data-theme="dark"]) .th-queue {
+  --q-bg: var(--md-primary-container);
+  --q-fg: var(--md-on-primary-container);
+  --q-accent: var(--md-primary);
+  --q-muted: color-mix(in oklch, var(--md-on-primary-container), var(--md-primary) 35%);
+  --q-lo: var(--md-error);
+}
+/* The whole tile is the link's hit area (stretched ::after), so it lifts as one. */
+.th-queue:has(.th-go:hover) {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-hover);
+}
+.th-queue .th-accent { color: var(--q-accent); }
+.th-queue .th-muted { color: var(--q-muted); }
+.th-queue .text-eyebrow { letter-spacing: 0.1em; }
+/* Big condensed numeral: the ramp's display-xl, tightened like the prototype. */
+.th-qnum.text-display-xl {
+  line-height: 0.78;
+  letter-spacing: -0.06em;
+  font-variation-settings: "wdth" 78, "opsz" 96;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.th-queue .th-d { color: var(--q-fg); letter-spacing: -0.03em; line-height: 1.15; }
+.th-queue .th-bar { background: var(--q-accent); }
+.th-queue .th-bar[data-low] { background: var(--q-lo); }
+.th-queue .th-thr { border-left: 1px dashed var(--q-muted); }
+.th-queue .th-ax { letter-spacing: 0.02em; font-variant-numeric: tabular-nums; }
+
+/* ---- Mark card ------------------------------------------------------------ */
+.th-zone {
+  border: 1.5px dashed var(--md-outline);
+  background: color-mix(in oklch, var(--md-primary-container) 38%, var(--md-surface-container-lowest));
+  transition: border-color var(--dur-fast), background var(--dur-fast), transform var(--dur-base) var(--ease-out);
+}
+.th-zone:hover { border-color: var(--md-primary); }
+.th-zone[data-over] {
+  border-color: var(--md-primary);
+  border-style: solid;
+  background: var(--md-primary-container);
+  transform: scale(1.01);
+}
+.th-zone .th-ic { transition: transform var(--dur-base) var(--ease-out); }
+.th-zone:hover .th-ic { transform: translateY(-2px); }
+.th-mark .th-h { font-weight: 800; letter-spacing: -0.02em; }
+.th-mark .th-btn { transition: transform var(--dur-fast) var(--ease-out), background-color var(--dur-fast); }
+.th-mark .th-btn:active { transform: scale(0.97); }
+
+/* Received chip, shown in the header while the dropped batch is queued. */
+.th-got { display: none; }
+.th-mark[data-state="queued"] .th-got { display: inline-flex; animation: th-chip 0.6s 1.05s var(--ease-expo) backwards; }
+.th-mark[data-state="queued"] .th-batch .th-h { animation: th-up 0.6s 0.15s var(--ease-expo) backwards; }
+.th-mark[data-state="queued"] .th-files li { animation: th-up 0.5s var(--ease-expo) backwards; }
+.th-mark[data-state="queued"] .th-files li:nth-child(1) { animation-delay: 310ms; }
+.th-mark[data-state="queued"] .th-files li:nth-child(2) { animation-delay: 370ms; }
+.th-mark[data-state="queued"] .th-files li:nth-child(3) { animation-delay: 430ms; }
+.th-mark[data-state="queued"] .th-files li:nth-child(4) { animation-delay: 490ms; }
+.th-mark[data-state="queued"] .th-files li:nth-child(5) { animation-delay: 550ms; }
+.th-mark[data-state="queued"] .th-files li:nth-child(6) { animation-delay: 610ms; }
+.th-mark[data-state="queued"] .th-files li:nth-child(7) { animation-delay: 670ms; }
+.th-mark[data-state="queued"] .th-files li:nth-child(8) { animation-delay: 730ms; }
+
+/* Big tick: a disc pops over the card, the tick draws itself, then it flies to the chip. */
+.th-fx { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; border-radius: inherit; }
+.th-fx .th-big {
+  display: grid;
+  place-items: center;
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  background: var(--md-primary);
+  color: var(--md-on-primary);
+  box-shadow: 0 20px 40px -14px color-mix(in oklch, var(--md-shadow) 50%, transparent);
+  opacity: 0;
+}
+.th-fx svg { width: 56px; height: 56px; fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 26; stroke-dashoffset: 26; }
+.th-mark[data-state="queued"] .th-fx { animation: th-veil 1.5s ease-out both; }
+.th-mark[data-state="queued"] .th-fx .th-big { animation: th-big 1.5s var(--ease-expo) both; }
+.th-mark[data-state="queued"] .th-fx svg { animation: th-draw 0.55s 0.2s var(--ease-expo) forwards; }
+
+/* Page-wide drop veil while files are dragged over the window. */
+.th-dropveil {
+  position: fixed;
+  inset: 10px;
+  z-index: 60;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  text-align: center;
+  border: 2px dashed var(--md-primary);
+  background: color-mix(in oklch, var(--md-primary-container) 90%, transparent);
+  color: var(--md-primary);
+  pointer-events: none;
+  animation: th-rise var(--dur-base) var(--ease-out);
+}
+.th-dropveil .text-display-md { letter-spacing: -0.04em; line-height: 1; }
+
+@keyframes th-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes th-chip { 0% { opacity: 0; transform: scale(0.4); } 60% { opacity: 1; transform: scale(1.12); } 100% { opacity: 1; transform: scale(1); } }
+@keyframes th-up { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes th-veil {
+  0% { background: transparent; }
+  15% { background: color-mix(in oklch, var(--md-surface-container-lowest) 80%, transparent); }
+  70% { background: color-mix(in oklch, var(--md-surface-container-lowest) 80%, transparent); }
+  100% { background: transparent; }
+}
+@keyframes th-big {
+  0% { opacity: 0; transform: scale(0.5); }
+  18% { opacity: 1; transform: scale(1.06); box-shadow: 0 0 0 0 color-mix(in oklch, var(--md-inverse-primary) 70%, transparent), 0 20px 40px -14px color-mix(in oklch, var(--md-shadow) 50%, transparent); }
+  30% { transform: scale(1); }
+  50% { box-shadow: 0 0 0 36px transparent, 0 20px 40px -14px color-mix(in oklch, var(--md-shadow) 50%, transparent); }
+  72% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: translate(42%, -180%) scale(0.2); }
+}
+@keyframes th-draw { to { stroke-dashoffset: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .th-queue, .th-zone, .th-zone .th-ic, .th-mark .th-btn { transition: none; }
+  .th-queue:has(.th-go:hover), .th-zone[data-over], .th-zone:hover .th-ic, .th-mark .th-btn:active { transform: none; }
+  .th-mark[data-state="queued"] :is(.th-got, .th-batch .th-h, .th-files li, .th-fx, .th-fx .th-big, .th-fx svg),
+  .th-mark[data-state="queued"] .th-fx,
+  .th-dropveil { animation: none; }
+  .th-mark[data-state="queued"] .th-fx svg { stroke-dashoffset: 0; }
+}
+
 @keyframes em-nudge { 0%, 100% { transform: none; } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
