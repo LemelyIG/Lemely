@@ -199,6 +199,9 @@
 @container home (min-width: 761px) and (max-width: 959px) {
   .ah-hero { grid-template-columns: 160px minmax(0, 1fr); grid-template-areas: "binny level" "week week"; row-gap: var(--space-5) }
   .ah-week { padding-inline-start: 0; padding-block-start: var(--space-5); border-inline-start: 0; border-block-start: 1px solid var(--border-subtle) }
+  /* Narrower name, change and marks columns give the track room, so "50%", "70% secure" and
+     "100%" on the axis keep clear of each other. */
+  .a-weak .a-ruler { --lane-cols: 192px minmax(0, 1fr) 72px 152px 18px }
 }
 
 @container home (max-width: 760px) {
@@ -644,9 +647,12 @@
   border-radius: var(--radius-pill); background: var(--md-surface-highest);
 }
 .a-lane-track::after {
-  content: ""; position: absolute; inset-block: 0; inset-inline: 70% 0; border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+  /* A band centred on the track, below the value label, so the 70% line never strikes
+     through a label such as "66%". */
+  content: ""; position: absolute; inset-block-start: calc(72% - 11px); block-size: 22px; inset-inline: 70% 0;
+  border-start-end-radius: var(--radius-pill); border-end-end-radius: var(--radius-pill);
   background: color-mix(in oklch, var(--md-success) 14%, transparent);
-  box-shadow: inset 2px 0 0 var(--a-success-text);
+  border-inline-start: 2px solid var(--a-success-text);
 }
 .a-tail {
   position: absolute; inset-block-start: calc(72% - 3px); block-size: 6px; border-radius: var(--radius-pill);
@@ -697,33 +703,33 @@
 
 /* Loading skeleton: the ready page's boxes at their real sizes (greeting, header,
    big action, three journey rows, ruler, exams), so nothing shifts when data lands. */
-.a-skel { border-radius: var(--radius-tile); background: var(--md-surface-high); animation: a-pulse 1.4s ease-in-out infinite alternate }
-.a-skel-head { block-size: 74px; align-items: flex-start }
-.a-skel-title { inline-size: 360px; max-inline-size: 80%; block-size: 40px; border-radius: var(--radius-chip) }
-.a-skel-line { inline-size: 260px; max-inline-size: 60%; block-size: 16px; margin-block-start: var(--space-3); border-radius: var(--radius-pill) }
-.a-skel-header { block-size: 211px; border-radius: var(--radius-board) }
-.a-skel-action { block-size: 383px; margin-block-start: var(--space-8); border-radius: var(--radius-board) }
-.a-skel-h { inline-size: 140px; block-size: 25px; margin-block-end: var(--space-4); border-radius: 10px }
-.a-skel-sub { inline-size: 300px; max-inline-size: 80%; block-size: 22px; margin-block: calc(var(--space-2) * -1) var(--space-4); border-radius: 10px }
+.a-skel { border-radius: var(--radius-tile); background: var(--md-surface-high) }
+.a-motion .a-skel { animation: a-pulse 1.4s ease-in-out infinite alternate }
+.a-skel-head { block-size: 59px; align-items: flex-start }
+.a-skel-title { inline-size: 360px; max-inline-size: 80%; block-size: 32px; border-radius: var(--radius-chip) }
+.a-skel-line { inline-size: 260px; max-inline-size: 60%; block-size: 16px; margin-block-start: var(--space-2); border-radius: var(--radius-pill) }
+.a-skel-header { block-size: 343px; border-radius: var(--radius-card) }
+.a-skel-action { block-size: 235px; margin-block-start: var(--space-5); border-radius: var(--radius-card) }
+.a-skel-h { inline-size: 140px; block-size: 19px; margin-block-end: var(--space-3); border-radius: var(--radius-chip) }
+.a-skel-sub { inline-size: 300px; max-inline-size: 80%; block-size: 22px; margin-block: calc(var(--space-2) * -1) var(--space-3); border-radius: var(--radius-chip) }
 .a-skel-card {
   display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2);
   border-radius: var(--radius-card); background: var(--surface-card); box-shadow: var(--a-card-edge);
 }
-.a-skel-rows { block-size: 282px }
+.a-skel-rows { block-size: 222px }
 .a-skel-rows .a-skel { flex: 1; border-radius: var(--radius-tile) }
-.a-skel-ruler { block-size: 429px; border-radius: var(--radius-card) }
-.a-skel-exams { block-size: 418px; border-radius: var(--radius-card) }
+.a-skel-ruler { block-size: 264px; border-radius: var(--radius-tile) }
+.a-skel-exams { block-size: 365px; border-radius: var(--radius-tile) }
 @keyframes a-pulse { from { opacity: 1 } to { opacity: 0.55 } }
 @container home (max-width: 760px) {
-  .a-skel-head { block-size: 54px }
   .a-skel-title { block-size: 30px }
-  .a-skel-line { margin-block-start: var(--space-2) }
-  .a-skel-header { block-size: 329px; border-radius: var(--radius-card) }
-  .a-skel-action { block-size: 236px; margin-block-start: var(--space-4) }
-  .a-skel-rows { block-size: 343px }
+  .a-skel-header { block-size: 331px }
+  .a-skel-action { block-size: 199px; margin-block-start: var(--space-4) }
+  .a-skel-h { block-size: 25px }
+  .a-skel-rows { block-size: 391px }
   .a-skel-sub { block-size: 21px }
-  .a-skel-ruler { block-size: 714px }
-  .a-skel-exams { block-size: 664px }
+  .a-skel-ruler { block-size: 561px; border-radius: var(--radius-card) }
+  .a-skel-exams { block-size: 664px; border-radius: var(--radius-card) }
 }
 
 /* ---------- App shell: sidebar, top bar, bottom bar ----------
