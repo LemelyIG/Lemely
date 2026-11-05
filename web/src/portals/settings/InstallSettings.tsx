@@ -3,6 +3,7 @@ import { DownloadSimple, Export } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { useInstallPrompt } from "@/lib/pwa/useInstallPrompt"
 import { SettingsFrame } from "./SettingsFrame"
+import { SettingsCard, SettingsRow, SettingsSection } from "./SettingsRows"
 
 /*
  * Packet A7 — the settings-page route for a reader who dismissed
@@ -57,35 +58,42 @@ export function InstallSettingsSection() {
   const variant = installSettingsVariant({ isStandalone, hasPromptEvent, isIos })
 
   return (
-    <div className="flex flex-col gap-4 rounded-lg border border-outline-variant bg-surface-container-lowest p-4 sm:p-5">
-      {variant === "standalone" ? (
-        <p className="text-body-sm text-on-surface-variant">Lemely is already installed on this device.</p>
-      ) : variant === "install" ? (
-        <>
-          <p className="text-body-sm text-on-surface-variant">
-            Install Lemely as an app for faster access and offline marking.
-          </p>
-          <Button
-            type="button"
-            onClick={() => void promptInstall().catch(() => {})}
-            className="self-start"
-          >
-            <DownloadSimple size={16} aria-hidden="true" />
-            Install Lemely
-          </Button>
-        </>
-      ) : variant === "ios" ? (
-        <p className="flex items-start gap-2 text-body-sm text-on-surface-variant">
-          <Export size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
-          Tap the Share icon in Safari's toolbar, then choose "Add to Home Screen".
-        </p>
-      ) : (
-        <p className="text-body-sm text-on-surface-variant">
-          Your browser doesn't support installing Lemely as an app yet. You can still use every
-          feature from a regular browser tab.
-        </p>
-      )}
-    </div>
+    <SettingsSection title="Install the app">
+      <SettingsCard>
+        {variant === "standalone" ? (
+          <SettingsRow
+            label="Installed"
+            description="Lemely is already installed on this device."
+          />
+        ) : variant === "install" ? (
+          <SettingsRow
+            label="Install on this device"
+            description="Opens like any other app, with faster access and offline marking."
+            control={
+              <Button type="button" onClick={() => void promptInstall().catch(() => {})}>
+                <DownloadSimple size={16} aria-hidden="true" />
+                Install Lemely
+              </Button>
+            }
+          />
+        ) : variant === "ios" ? (
+          <SettingsRow
+            label="Add to your home screen"
+            description={
+              <span className="flex items-start gap-2">
+                <Export size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                Tap the Share icon in Safari's toolbar, then choose "Add to Home Screen".
+              </span>
+            }
+          />
+        ) : (
+          <SettingsRow
+            label="Not available in this browser"
+            description="Your browser doesn't support installing Lemely as an app yet. You can still use every feature from a regular browser tab."
+          />
+        )}
+      </SettingsCard>
+    </SettingsSection>
   )
 }
 

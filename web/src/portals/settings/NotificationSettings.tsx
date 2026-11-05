@@ -35,6 +35,7 @@ import {
   settingsSaveFailureMessage,
 } from "@/lib/settingsOutcome"
 import { SettingsFrame } from "./SettingsFrame"
+import { SettingsCard, SettingsRow, SettingsSection, SettingsStatus } from "./SettingsRows"
 
 /*
  * G-12 · Notification preferences (P4.10, now v5 Abyss).
@@ -148,6 +149,10 @@ export function NotificationSettingsSection({
   const [testResult, setTestResult] = useState<string | null>(null)
   /** Which toggle is mid-flight, so its own switch can show it. */
   const [savingKey, setSavingKey] = useState<NotificationPrefKey | null>(null)
+  /** The last toggle that saved, so its row can say so. */
+  const [savedKey, setSavedKey] = useState<NotificationPrefKey | null>(null)
+  const [quietSaving, setQuietSaving] = useState(false)
+  const [quietSaved, setQuietSaved] = useState(false)
   /** A failed toggle, kept against the key that failed so the message renders
    * beside its own switch rather than under the whole list. */
   const [toggleFailure, setToggleFailure] = useState<{
@@ -179,12 +184,14 @@ export function NotificationSettingsSection({
 
   const handleToggle = (key: NotificationPrefKey, value: boolean) => {
     setSavingKey(key)
+    setSavedKey(null)
     setToggleFailure(null)
     // One key, never the whole object — see `useUpdateNotificationPreferences`.
     update.mutate(
       { [key]: value },
       {
         onError: (error) => setToggleFailure({ key, message: settingsSaveFailureMessage(error) }),
+        onSuccess: () => setSavedKey(key),
         onSettled: () => setSavingKey(null),
       },
     )
@@ -197,8 +204,12 @@ export function NotificationSettingsSection({
       return
     }
     setQuietError(null)
+    setQuietSaved(false)
+    setQuietSaving(true)
     update.mutate(result.update, {
       onError: (error) => setQuietError(settingsSaveFailureMessage(error)),
+      onSuccess: () => setQuietSaved(true),
+      onSettled: () => setQuietSaving(false),
     })
   }
 
@@ -257,35 +268,14 @@ export function NotificationSettingsSection({
 
   return (
     <>
-      <section aria-labelledby="types-heading" className="flex flex-col gap-4">
-        <div className="flex flex-col gap-2">
-          <h2 id="types-heading" className="text-display-sm text-on-surface">
-            What you get told about
-          </h2>
-          <p className="max-w-[65ch] text-body-sm text-on-surface-variant">
-            Switching one off stops it reaching you at all. It will not appear in your inbox
-            either.
-          </p>
-        </div>
-
-        {/* No `srHeading`: the page's own `<h1>` is rendered above this
-            section unconditionally, whether by `SettingsFrame` (the
-            top-level lane) or `PortalSettingsLayout` (the in-portal one), in
-            every query state — an sr-only heading here would duplicate it.
-            No `isEmpty` either: the six toggles are a fixed enum (module
-            note), so there is no "empty data" shape for this query to reach,
-            only the role-based filter below deciding which of the six apply.
-
-            One behaviour changed here and is worth naming. The pre-conversion
-            branches were sibling expressions, not exclusive ones, so a refetch
-            that failed *after* a successful load showed the error panel and
-            kept the list below it. `QueryState` is exclusive by design, so the
-            list goes. That is the honest reading: react-query moves `status`
-            to `"error"` on a failed refetch, and what is on screen at that
-            point is data we can no longer vouch for — after a revoke, a device
-            that is gone may still be listed, which is the one thing this
-            screen must not imply. A retry is a better offer than stale rows
-            presented as current. */}
+      <SettingsSection
+        title="What you get told about"
+        description="Each switch saves as you press it. Switching one off stops it reaching you at all, inbox included."
+      >
+        {/* No `srHeading`: the page's own `<h1>` (page lane) or the dialog
+            title (teacher Settings dialog) sits above this section in every
+            query state. No `isEmpty` either: the toggles are a fixed enum, so
+            there is no empty shape, only the role filter below. */}
         <QueryState
           query={prefs}
           skeleton={<ListSkeleton rows={4} />}
@@ -295,152 +285,143 @@ export function NotificationSettingsSection({
           }}
         >
           {(data) => (
-            <ul className="flex flex-col gap-2">
-              {NOTIFICATION_TOGGLES.filter(
-                // `atRiskAlert` arrives as `null` for every role but teacher and
-                // parent, and that null means "no such preference for you" rather
-                // than "off". Rendering it unchecked would offer a switch the
-                // router answers with a 422.
-                (toggle) => valueFor(data, toggle.key) !== null,
-              )
-                // R10: `reviewWithdrawn` is a `role: "teacher"` toggle (see its
-                // own doc) — the server sends it as a plain boolean for every
-                // role, so the `null` filter above cannot hide it the way it
-                // hides `atRiskAlert`. `showTeacherOnly` is this screen's own
-                // gate instead, mirroring `atRiskAlert`'s role restriction.
-                .filter((toggle) => toggle.role !== "teacher" || showTeacherOnly)
-                .map((toggle) => (
-                <li
-                  key={toggle.key}
-                  className="rounded-lg border border-outline-variant bg-surface-container-lowest p-4 sm:p-5"
-                >
-                  <Switch
-                    label={toggle.label}
-                    description={toggle.description}
-                    checked={valueFor(data, toggle.key) === true}
-                    // Only the switch in flight says so. The rest are disabled
-                    // because the mutation replaces the whole preference object
-                    // on success, so two in-flight changes could clobber each
-                    // other — but "disabled" and "saving" are different facts and
-                    // are now shown differently.
-                    state={savingKey === toggle.key ? "loading" : undefined}
-                    error={toggleFailure?.key === toggle.key ? toggleFailure.message : undefined}
-                    disabled={update.isPending && savingKey !== toggle.key}
-                    onCheckedChange={(next) => handleToggle(toggle.key, next)}
-                  />
-                </li>
-              ))}
-            </ul>
+            <SettingsCard>
+              <ul className="flex flex-col divide-y divide-outline-variant">
+                {NOTIFICATION_TOGGLES.filter(
+                  // `atRiskAlert` arrives as `null` for every role but teacher
+                  // and parent, and that null means "no such preference for
+                  // you" rather than "off". Rendering it unchecked would offer
+                  // a switch the router answers with a 422.
+                  (toggle) => valueFor(data, toggle.key) !== null,
+                )
+                  // R10: `reviewWithdrawn` is a `role: "teacher"` toggle (see
+                  // its own doc). The server sends it as a plain boolean for
+                  // every role, so the `null` filter above cannot hide it;
+                  // `showTeacherOnly` is this screen's own gate instead.
+                  .filter((toggle) => toggle.role !== "teacher" || showTeacherOnly)
+                  .map((toggle) => (
+                    <li key={toggle.key} className="flex flex-col gap-2 px-4 py-4 sm:px-5">
+                      <Switch
+                        layout="row"
+                        label={toggle.label}
+                        description={toggle.description}
+                        checked={valueFor(data, toggle.key) === true}
+                        // Only the switch in flight says so. The rest are
+                        // disabled because the mutation replaces the whole
+                        // preference object on success, so two in-flight
+                        // changes could clobber each other.
+                        state={savingKey === toggle.key ? "loading" : undefined}
+                        error={toggleFailure?.key === toggle.key ? toggleFailure.message : undefined}
+                        disabled={update.isPending && savingKey !== toggle.key}
+                        onCheckedChange={(next) => handleToggle(toggle.key, next)}
+                      />
+                      {savedKey === toggle.key && savingKey === null ? (
+                        <SettingsStatus>Saved.</SettingsStatus>
+                      ) : null}
+                    </li>
+                  ))}
+              </ul>
+            </SettingsCard>
           )}
         </QueryState>
-      </section>
+      </SettingsSection>
 
-      <section aria-labelledby="quiet-heading" className="flex flex-col gap-4">
-        <div className="flex flex-col gap-2">
-          <h2 id="quiet-heading" className="text-display-sm text-on-surface">
-            Quiet hours
-          </h2>
-          <p className="max-w-[65ch] text-body-sm text-on-surface-variant">
-            Nothing pops up on your device between these times. Notifications still arrive in
-            your inbox, so you will see them when you next look.
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-4 rounded-lg border border-outline-variant bg-surface-container-lowest p-4 sm:p-5">
-          <div className="flex flex-wrap items-start gap-3">
-            <Input
-              label="From"
-              type="time"
-              value={quietStart}
-              onChange={(event) => setQuietStart(event.target.value)}
-              wrapperClassName="w-36"
-            />
-            <Input
-              label="To"
-              type="time"
-              value={quietEnd}
-              onChange={(event) => setQuietEnd(event.target.value)}
-              // The error rides the second field rather than the first: an
-              // invalid range is a fact about the pair, and the end time is the
-              // one a reader is most likely to have just typed.
-              error={quietError ?? undefined}
-              wrapperClassName="w-36"
-            />
-            <Button
-              type="button"
-              onClick={handleQuietHoursSave}
-              disabled={update.isPending}
-              // Aligns the button with the fields rather than their labels.
-              className="mt-6"
-            >
-              {update.isPending ? "Saving…" : "Save quiet hours"}
-            </Button>
+      <SettingsSection
+        title="Quiet hours"
+        description="Nothing pops up on your device between these times. Notifications still arrive in your inbox, so you see them when you next look."
+      >
+        <SettingsCard>
+          <div className="flex flex-col gap-3 px-4 py-4 sm:px-5">
+            <div className="flex flex-wrap items-start gap-3">
+              <Input
+                label="From"
+                type="time"
+                value={quietStart}
+                onChange={(event) => {
+                  setQuietStart(event.target.value)
+                  setQuietSaved(false)
+                }}
+                wrapperClassName="w-36"
+              />
+              <Input
+                label="To"
+                type="time"
+                value={quietEnd}
+                onChange={(event) => {
+                  setQuietEnd(event.target.value)
+                  setQuietSaved(false)
+                }}
+                // The error rides the second field: an invalid range is a
+                // fact about the pair, and the end time is the one a reader
+                // most likely just typed.
+                error={quietError ?? undefined}
+                wrapperClassName="w-36"
+              />
+              <Button
+                type="button"
+                onClick={handleQuietHoursSave}
+                disabled={update.isPending}
+                // Aligns the button with the fields rather than their labels.
+                className="mt-6"
+              >
+                {quietSaving ? "Saving…" : "Save quiet hours"}
+              </Button>
+            </div>
+            {/* Body rung, not the data face: this is a sentence, and a
+                sentence set in tabular numerals reads as machine output. */}
+            {quietSaved ? <SettingsStatus>Saved.</SettingsStatus> : null}
+            {summary ? <p className="text-body-sm text-on-surface-variant">{summary}</p> : null}
           </div>
-          {/* Body rung, not the data face. The first pass put this on
-              `data-sm` reasoning that it is "two clock times and a duration";
-              the capture round showed it is a full sentence wearing the mono
-              face, and a sentence set in tabular numerals reads as machine
-              output. The times inside it are already unambiguous. */}
-          {summary ? <p className="text-body-sm text-on-surface-variant">{summary}</p> : null}
-        </div>
-      </section>
+        </SettingsCard>
+      </SettingsSection>
 
-      <section aria-labelledby="device-heading" className="flex flex-col gap-4">
-        <h2 id="device-heading" className="text-display-sm text-on-surface">
-          This device
-        </h2>
-        <div className="flex flex-col gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest p-4 sm:p-5">
-          <div className="flex flex-col gap-1">
-            <p className="text-body-md text-on-surface">{copy.heading}</p>
-            <p className="max-w-[65ch] text-body-sm text-on-surface-variant">{copy.body}</p>
-          </div>
-
-          {pushState.kind === "prompt" ? (
-            <Button
-              type="button"
-              className="self-start"
-              onClick={handleEnablePush}
-              disabled={pushBusy || pushConfig.data?.publicKey == null}
-            >
-              {pushBusy ? "Turning on…" : "Turn on for this device"}
-            </Button>
-          ) : null}
-
-          {pushState.kind === "enabled" ? (
-            <>
-              <div className="flex flex-wrap gap-2">
-                <Button type="button" variant="ghost" onClick={handleDisablePush} disabled={pushBusy}>
+      <SettingsSection
+        title="This device"
+        description="Pop-up notifications on this device. Your inbox gets everything either way."
+      >
+        <SettingsCard>
+          <SettingsRow
+            label={copy.heading}
+            description={copy.body}
+            control={
+              pushState.kind === "prompt" ? (
+                <Button
+                  type="button"
+                  onClick={handleEnablePush}
+                  disabled={pushBusy || pushConfig.data?.publicKey == null}
+                >
+                  {pushBusy ? "Turning on…" : "Turn on for this device"}
+                </Button>
+              ) : pushState.kind === "enabled" ? (
+                <Button type="button" variant="secondary" onClick={handleDisablePush} disabled={pushBusy}>
                   {pushBusy ? "Turning off…" : "Turn off for this device"}
                 </Button>
+              ) : null
+            }
+            status={
+              <>
+                {pushError ? <SettingsStatus tone="error">{pushError}</SettingsStatus> : null}
+              </>
+            }
+          />
+          {pushState.kind === "enabled" ? (
+            // Worded as a device check, not a delivery test: no route in this
+            // backend sends a test push, and on a build with no VAPID keys
+            // none could. What it proves is permission, the service worker and
+            // the operating system, the half that actually breaks.
+            <SettingsRow
+              label="Test notification"
+              description="Shown by this device itself. It does not check that the server can reach you."
+              control={
                 <Button type="button" variant="ghost" onClick={handleTestNotification}>
                   Show a test notification
                 </Button>
-              </div>
-              {/* Deliberately worded as a device check, not a delivery test: no
-                  route in this backend sends a test push, and on a build with no
-                  VAPID keys none could. What it proves is permission, the service
-                  worker and the operating system — the half that actually breaks. */}
-              {/* Prose, so the body rung rather than the data face: this is a
-                  sentence about what the button proves, not a value. */}
-              <p className="text-body-sm text-on-surface-variant">
-                A test notification is shown by this device itself. It does not check that the
-                server can reach you.
-              </p>
-            </>
+              }
+              status={testResult ? <SettingsStatus>{testResult}</SettingsStatus> : null}
+            />
           ) : null}
-
-          {testResult ? (
-            <p role="status" className="text-body-sm text-on-surface-variant">
-              {testResult}
-            </p>
-          ) : null}
-          {pushError ? (
-            <p role="status" className="text-body-sm text-error">
-              {pushError}
-            </p>
-          ) : null}
-        </div>
-      </section>
+        </SettingsCard>
+      </SettingsSection>
     </>
   )
 }

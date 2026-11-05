@@ -45,6 +45,9 @@ import { useReviewQueueCount } from "@/lib/hooks/useReviewQueueCount"
 import { unreadBadgeLabel } from "@/lib/staffInbox"
 import { navItems, resolveTrail, classesItemActive, type NavItem } from "./data"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
+import { TEACHER_SETTINGS_TABS } from "@/portals/settings/settingsTabs"
+
+const TEACHER_SETTINGS_BASE = "/teacher/settings"
 
 // P6.1b: screens are `React.lazy`, not static imports — see the same note in
 // `portals/student/index.tsx`. QuizBuilder and ClassAnalytics in particular
@@ -89,19 +92,15 @@ const Announcements = lazy(() =>
 const TeacherNotifications = lazy(() =>
   import("./screens/Notifications").then((m) => ({ default: m.TeacherNotifications })),
 )
-// Settings' three screens now mount here too, alongside every other lazy
-// screen in this portal, rather than only reaching the top-level
-// `/settings/*` lane from a footer link — see `data.ts`'s `navItems` and the
-// route registration below.
+// Settings is a dialog over the current page (`SettingsModalRoute`), one
+// route per tab, each tab's section lazy on its own.
 // Each imported from its own module rather than the `@/portals/settings`
-// barrel: importing all four through one barrel module means a chunk
-// containing any one of them pulls in the code for all four, defeating the
-// per-screen splitting this whole file otherwise does. The barrel still
-// exists for other consumers (its own header explains why) — this portal
-// just does not use it for the lazy boundary.
-const PortalSettingsLayout = lazy(() =>
-  import("@/portals/settings/PortalSettingsLayout").then((m) => ({
-    default: m.PortalSettingsLayout,
+// barrel: importing them all through one barrel module means a chunk
+// containing any one of them pulls in the code for all of them, defeating the
+// per-screen splitting this whole file otherwise does.
+const SettingsModalRoute = lazy(() =>
+  import("@/portals/settings/SettingsModal").then((m) => ({
+    default: m.SettingsModalRoute,
   })),
 )
 const ProfileSettingsSection = lazy(() =>
@@ -109,12 +108,22 @@ const ProfileSettingsSection = lazy(() =>
     default: m.ProfileSettingsSection,
   })),
 )
-const DeviceSettingsSection = lazy(() =>
-  import("@/portals/settings/DeviceSettings").then((m) => ({ default: m.DeviceSettingsSection })),
+const AccountSettingsSection = lazy(() =>
+  import("@/portals/settings/AccountSettings").then((m) => ({ default: m.AccountSettingsSection })),
 )
 const NotificationSettingsSection = lazy(() =>
   import("@/portals/settings/NotificationSettings").then((m) => ({
     default: m.NotificationSettingsSection,
+  })),
+)
+const AppearanceSettingsSection = lazy(() =>
+  import("@/portals/settings/AppearanceSettings").then((m) => ({
+    default: m.AppearanceSettingsSection,
+  })),
+)
+const ClassesSettingsSection = lazy(() =>
+  import("@/portals/settings/ClassesSettings").then((m) => ({
+    default: m.ClassesSettingsSection,
   })),
 )
 const InstallSettingsSection = lazy(() =>
@@ -603,7 +612,13 @@ function TeacherLayout() {
                 resetKey={location.pathname}
                 fallback={portalErrorFallback}
               >
-                <ScreenOutlet />
+                <ScreenOutlet
+                  overlay={{
+                    routes: teacherContentRoutes(),
+                    overlayBase: TEACHER_SETTINGS_BASE,
+                    fallbackPath: "/teacher",
+                  }}
+                />
               </ErrorBoundary>
             </Suspense>
           )}
@@ -758,18 +773,29 @@ export const teacherRoute: RouteObject = {
       handle: { title: "Notifications", skeleton: "list" },
     },
     {
+      // A dialog over the current page: `ScreenOutlet`'s overlay (in the layout)
+      // renders the page underneath, this route renders the dialog. One child
+      // per entry in `TEACHER_SETTINGS_TABS`; `settingsTabs.test.ts` holds the
+      // two in step. Paths are unchanged from the page-based settings.
       path: "settings",
-      element: <PortalSettingsLayout basePath="/teacher/settings" />,
+      element: (
+        <SettingsModalRoute
+          tabs={TEACHER_SETTINGS_TABS}
+          basePath={TEACHER_SETTINGS_BASE}
+          fallbackPath="/teacher"
+        />
+      ),
       handle: { title: "Settings", skeleton: "page-header" },
       children: [
         {
           index: true,
-          element: <ProfileSettingsSection />,
+          // Appearance has its own tab here, so not inside Profile.
+          element: <ProfileSettingsSection appearance={false} />,
           handle: { title: "Profile settings", skeleton: "page-header" },
         },
         {
           path: "devices",
-          element: <DeviceSettingsSection />,
+          element: <AccountSettingsSection />,
           handle: { title: "Account and devices", skeleton: "page-header" },
         },
         {
@@ -778,6 +804,16 @@ export const teacherRoute: RouteObject = {
           // only for a teacher (Task 9's `_notify_withdrawn_reviewers`).
           element: <NotificationSettingsSection showTeacherOnly />,
           handle: { title: "Notification settings", skeleton: "page-header" },
+        },
+        {
+          path: "appearance",
+          element: <AppearanceSettingsSection />,
+          handle: { title: "Appearance", skeleton: "page-header" },
+        },
+        {
+          path: "classes",
+          element: <ClassesSettingsSection />,
+          handle: { title: "Classes and grading", skeleton: "page-header" },
         },
         {
           path: "install",
@@ -795,4 +831,15 @@ export const teacherRoute: RouteObject = {
       handle: { title: "Page not found", skeleton: "page-header" },
     },
   ],
+}
+
+let contentRoutesCache: RouteObject[] | null = null
+
+/** The portal's child routes minus the settings dialog, matched against the
+ * page underneath while the dialog is open (`ScreenOutlet`'s `overlay`, in
+ * `TeacherLayout`; everywhere else it is the plain screen outlet). Built once, on first use, because
+ * `teacherRoute` is declared after the layout that reads it. */
+function teacherContentRoutes(): RouteObject[] {
+  contentRoutesCache ??= (teacherRoute.children ?? []).filter((route) => route.path !== "settings")
+  return contentRoutesCache
 }
