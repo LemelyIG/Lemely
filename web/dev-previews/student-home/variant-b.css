@@ -1,13 +1,12 @@
-/* Student home, variant B: Exam runway.
-   Header band (greeting, Binny, level, streak) on --surface-section, one next action,
-   then one lane per subject on a shared scale from today to the last exam.
+/* Student home, variant B, round 2: Clipped.
+   The loved header band, today's action as a sheet pulled out of a stack, then one clipped
+   bundle per subject: latest result on the top sheet, earlier papers peeking, weak topics as tabs.
    Built on tokens.css and shell.css; role tokens only, no raw colour values. */
 
 .sh-root[data-variant="b"] {
   --rb-ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
   /* Positive change text; the color-mix fallback holds 4.5:1 if --sh-success-text is absent. */
   --rb-up: var(--sh-success-text, color-mix(in oklch, var(--md-success) 72%, var(--md-on-surface)));
-  --rb-lane-cols: minmax(280px, 360px) minmax(0, 1fr) 112px;
   --rb-gap: 24px;
 
   ::selection { background: var(--md-primary-container); color: var(--md-on-primary-container); }
@@ -43,12 +42,12 @@
 }
 
 /* Cards: white on a near-white page takes an outline in light mode, none in dark. */
-.rb-hero, .rb-runway, .rb-ledger, .rb-error, .rb-steps {
+.rb-hero, .rb-error, .rb-steps {
   background: var(--surface-card);
   border: 1.5px solid var(--border-subtle);
   border-radius: var(--radius-card);
 }
-.sh-root[data-theme="dark"] :is(.rb-hero, .rb-runway, .rb-ledger, .rb-error, .rb-steps, .rb-skel-hero, .rb-skel-runway) {
+.sh-root[data-theme="dark"] :is(.rb-hero, .rb-error, .rb-steps, .rb-skel-hero, .rb-skel-runway) {
   border-color: transparent;
 }
 
@@ -215,204 +214,144 @@
 }
 .rb-note a:hover { text-decoration: underline; }
 
-/* ---------- runway ---------- */
-.rb-runway { --span: 194; padding: var(--space-7) var(--space-6) var(--space-4); }
-.sh-root[data-state="one-paper"] .rb-runway { --span: 188; }
-.rb-runway .rb-sec-h { padding-inline: var(--space-3); }
-
-.rb-scale {
-  display: grid; grid-template-columns: var(--rb-lane-cols); column-gap: var(--space-8);
-  padding-inline: var(--space-4); margin-block-end: var(--space-4);
+/* ---------- the pulled sheet: today's action rises out of a small stack ---------- */
+.rb-next { position: relative; padding-block-end: 18px; }
+/* Two sheets left behind in the bundle, flat tonal layers peeking under the pulled one. */
+.rb-next::before, .rb-next::after {
+  content: ""; position: absolute; border-radius: var(--radius-card);
+  inset-block-end: 0; block-size: 60px;
 }
-.rb-axis, .rb-exams { grid-column: 2; grid-row: 1; position: relative; block-size: 30px; }
-.rb-axis { border-block-end: 1px solid var(--border-default); }
-.rb-tick {
-  position: absolute; inset-block-end: 0;
-  inset-inline-start: calc(var(--d) / var(--span) * 100%);
-  padding-inline-start: 6px; padding-block-end: 8px;
-  border-inline-start: 1px solid var(--border-default);
-  font: 500 11px/1 var(--font-mono); color: var(--text-muted); white-space: nowrap;
-}
-.rb-tick--today { color: var(--text-body); font-weight: 700; border-inline-start: 2px solid var(--md-primary); }
-/* The exam window: a tonal segment under the axis from the first exam to the last;
-   the May label sits above it and the exam markers hang below the line. */
-.rb-window {
-  position: absolute; inset-block-end: -4px; block-size: 7px; border-radius: 4px;
-  inset-inline-start: calc(var(--d) / var(--span) * 100%);
-  inline-size: calc((var(--to) - var(--d)) / var(--span) * 100%);
-  background: var(--md-primary-container);
-}
-.rb-exam {
-  position: absolute; inset-block-end: -12px;
-  inset-inline-start: calc(var(--d) / var(--span) * 100% - 4px);
-  inline-size: 8px; block-size: 8px; border-radius: 50%;
-  background: color-mix(in oklch, var(--md-primary) 45%, var(--surface-card));
-}
-.rb-exam.is-closest { background: var(--md-primary); }
-.rb-exam > *, .rb-sr {
-  position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden;
-  clip-path: inset(50%); white-space: nowrap;
-}
-.rb-exams-cap { display: none; }
-
-/* Lanes: the subject name is the lane's link and stretches over the lane;
-   the last-result link sits above it. */
-.rb-lane {
-  position: relative;
-  display: grid; grid-template-columns: var(--rb-lane-cols);
-  column-gap: var(--space-8);
-  align-items: center;
-  padding: var(--space-6) var(--space-4);
-  border-radius: var(--radius-tile);
-  color: var(--text-body);
-  transition: background var(--dur-fast) var(--ease-out);
-}
-.rb-journey { display: grid; gap: var(--space-3); min-inline-size: 0; }
-.rb-lane + .rb-lane { border-block-start: 1px solid var(--border-subtle); }
-.rb-lane.is-closest + .rb-lane { border-block-start-color: transparent; }
-.rb-lane:has(.rb-lane-link:hover) { background: var(--surface-hover-tint); }
-.rb-lane.is-closest { background: var(--md-primary-container); color: var(--md-on-primary-container); }
-.rb-lane.is-closest:has(.rb-lane-link:hover) { background: color-mix(in oklch, var(--md-primary-container), var(--md-primary) 7%); }
-
-.rb-lane-link { color: inherit; text-decoration: none; }
-.rb-lane-link::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
-.rb-lane-link:focus-visible { outline: none; }
-.rb-lane-link:focus-visible::after { outline: 2px solid var(--md-primary); outline-offset: 2px; }
-.rb-lane { border-radius: var(--radius-tile); }
-
-.rb-lane-name { font: 700 var(--fs-title)/1.2 var(--font-ui); letter-spacing: -0.01em; }
-.rb-lane-name .rb-mono { font-size: 15px; margin-inline-end: var(--space-1); color: var(--text-secondary); }
-.rb-lane.is-closest .rb-lane-name .rb-mono { color: inherit; }
-.rb-lane-grade { margin-block-start: var(--space-2); }
-.rb-lane.is-closest :is(.rb-lbl, .rb-flat) { color: inherit; }
-
-.rb-track { position: relative; block-size: 48px; }
-.rb-track::before {
-  content: ""; position: absolute; inset-inline: 0; inset-block-start: 32px;
-  block-size: 2px; border-radius: 1px; background: var(--border-subtle);
-}
-.rb-bar {
-  position: absolute; inset-inline-start: 0; inset-block-start: 30px;
-  inline-size: calc(var(--d) / var(--span) * 100%);
-  block-size: 6px; border-radius: 3px;
-  background: color-mix(in oklch, var(--md-primary) 32%, var(--surface-card));
-}
-.rb-bar::after {
-  content: ""; position: absolute; inset-inline-end: -7px; inset-block-start: -4px;
-  inline-size: 14px; block-size: 14px; border-radius: 50%;
-  background: var(--surface-card);
-  border: 3px solid color-mix(in oklch, var(--md-primary) 55%, var(--surface-card));
-}
-.rb-lane.is-closest .rb-bar { background: var(--md-primary); }
-.rb-lane.is-closest .rb-bar::after { border-color: var(--md-primary); background: var(--md-primary-container); }
-.rb-pin {
-  position: absolute; inset-block-start: 4px;
-  inset-inline-end: calc((1 - var(--d) / var(--span)) * 100%);
-  font: 600 13px/1 var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap;
-  color: var(--text-secondary);
-}
-.rb-lane.is-closest .rb-pin { color: inherit; font-weight: 700; }
-
-.rb-days { display: flex; flex-direction: column; align-items: flex-end; text-align: end; }
-.rb-days-n { font: 700 34px/1 var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: -0.03em; }
-.rb-days-cap {
-  grid-column: 3; grid-row: 1; align-self: end; text-align: end; padding-block-end: 8px;
-  font: 600 var(--fs-label)/1 var(--font-mono); letter-spacing: var(--ls-label); text-transform: uppercase;
-  color: var(--text-muted);
+.rb-next::before { inset-inline: 40px; background: var(--cb-p2); }
+.rb-next::after { inset-inline: 20px; inset-block-end: 9px; background: var(--cb-p1); }
+.rb-next .rb-hero { position: relative; z-index: 1; animation: rb-pull var(--dur-slow) var(--rb-ease-expo) 0.1s both; }
+@keyframes rb-pull { from { transform: translateY(14px); } }
+.rb-from {
+  position: absolute; z-index: 0; inset-block-end: -16px; inset-inline-end: 64px;
+  padding-block: 18px 5px; padding-inline: 12px;
+  border-end-start-radius: var(--radius-chip); border-end-end-radius: var(--radius-chip);
+  background: var(--cb-tab); color: var(--text-secondary);
+  font-size: 12px;
 }
 
-/* ---------- subjects ledger (no-exams fallback) ---------- */
-.rb-ledger { padding: var(--space-6); }
-.rb-ledger .rb-sec-h { padding-inline: var(--space-2); }
-.rb-rows > li + li { border-block-start: 1px solid var(--border-subtle); }
-.rb-row {
-  position: relative;
-  display: grid; grid-template-columns: minmax(0, 1fr) 230px 88px auto;
-  align-items: center; column-gap: var(--space-6);
-  padding: var(--space-3) var(--space-2);
-  transition: background var(--dur-fast) var(--ease-out);
+/* ---------- bundles ---------- */
+.sh-root[data-variant="b"] {
+  /* Sheets beneath recede down the tonal ladder; tabs sit one step under the top sheet. */
+  --cb-p1: var(--md-surface-container);
+  --cb-p2: var(--md-surface-high);
+  --cb-p3: var(--md-surface-highest);
+  --cb-tab: var(--md-surface-container);
 }
-.rb-row:has(.rb-lane-link:hover) { background: var(--surface-hover-tint); }
-.rb-row-subj { font: 700 var(--fs-body)/1.3 var(--font-ui); }
-.rb-row-subj .rb-mono { margin-inline-end: var(--space-1); color: var(--text-muted); font-size: 13px; }
-.rb-row-papers { font-size: 13px; color: var(--text-secondary); }
-.rb-row-exam { font-size: var(--fs-body-sm); color: var(--text-secondary); }
+.sh-root[data-variant="b"][data-theme="dark"] {
+  --cb-p1: var(--md-surface-container);
+  --cb-p2: var(--md-surface-low);
+  --cb-p3: color-mix(in oklch, var(--md-surface-low) 50%, var(--md-surface));
+  --cb-tab: var(--md-surface-container);
+}
 
-/* ---------- per-lane fix chips ---------- */
-.rb-fix { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-block-start: var(--space-3); }
-.rb-topic {
-  position: relative; z-index: 1;
+.cb-shelf { margin-block-start: var(--space-12); }
+.rb-page > .rb-note + .cb-shelf { margin-block-start: var(--space-8); }
+.cb-shelf-head { display: flex; align-items: baseline; gap: var(--space-4); padding-inline: var(--space-2); margin-block-end: var(--space-2); }
+.cb-shelf-head .rb-sec-h { margin-block-end: 0; }
+.cb-shelf-note { font: 600 var(--fs-label)/1.2 var(--font-mono); letter-spacing: var(--ls-label); text-transform: uppercase; color: var(--text-muted); }
+
+.cb-bundles {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  column-gap: var(--space-8); row-gap: var(--space-8); align-items: stretch;
+}
+.sh-root[data-state="one-paper"] .cb-bundles { grid-template-columns: minmax(0, 400px); }
+.cb-bundle { position: relative; display: flex; flex-direction: column; }
+
+/* Earlier papers: the top edges of the sheets underneath, oldest highest and narrowest. */
+.cb-peeks { display: flex; flex-direction: column; justify-content: flex-end; block-size: 84px; margin: 0; padding: 0; list-style: none; }
+.cb-peek {
+  display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2);
+  block-size: 28px; margin-inline: calc(var(--i) * 12px); padding-inline: var(--space-4);
+  border-start-start-radius: var(--radius-chip); border-start-end-radius: var(--radius-chip);
+  background: var(--cb-p1); color: var(--text-secondary);
+  font: 600 12px/1 var(--font-mono);
+}
+.cb-peek[style*="--i: 2"] { background: var(--cb-p2); }
+.cb-peek[style*="--i: 3"] { background: var(--cb-p3); }
+.cb-peek-g { font: 700 12px/1 var(--font-mono); color: var(--text-body); }
+.cb-peeks--none {
+  display: flex; align-items: flex-end; justify-content: flex-end; padding-inline: var(--space-4); padding-block-end: var(--space-2);
+  font: 500 12px/1.3 var(--font-ui); color: var(--text-muted);
+}
+.sh-root[data-state="one-paper"] .cb-peeks--none { display: flex; }
+
+/* The clip: Clip Letters path, stroke 5, upright, holding the peeks and the top sheet together. */
+.cb-clip {
+  position: absolute; z-index: 2; inset-block-start: 46px; inset-inline-start: 30px;
+  inline-size: 24px; block-size: 49px;
+  fill: none; stroke: var(--md-primary); stroke-width: 5; stroke-linecap: round;
+}
+
+/* The top sheet: the latest result. */
+.cb-sheet {
+  position: relative; z-index: 1; flex: 1;
+  display: flex; flex-direction: column;
+  padding: var(--space-7) var(--space-6) var(--space-6);
+  background: var(--surface-card); border: 1.5px solid var(--border-subtle); border-radius: var(--radius-tile);
+}
+.sh-root[data-theme="dark"] .cb-sheet { border-color: transparent; }
+.cb-top { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); padding-inline-start: var(--space-8); }
+.cb-name { margin: 0; font: 700 var(--fs-title)/1.2 var(--font-ui); letter-spacing: -0.01em; color: var(--text-body); }
+.cb-name a { border-radius: 6px; }
+.cb-name a:hover { color: var(--md-primary); }
+.cb-name .rb-mono { margin-inline-end: var(--space-1); font-size: 15px; color: var(--text-secondary); }
+.cb-label {
+  padding-block: 4px; padding-inline: 8px; border-radius: 6px;
+  border: 1px solid var(--border-default);
+  font: 500 12px/1.2 var(--font-ui); color: var(--text-secondary); white-space: nowrap;
+}
+.cb-label .rb-mono { color: var(--text-body); font-size: 12px; }
+.cb-bundle.is-closest .cb-label { border-color: transparent; background: var(--md-primary-container); color: var(--md-on-primary-container); }
+.cb-bundle.is-closest .cb-label .rb-mono { color: inherit; }
+.sh-root[data-state="one-paper"] .cb-bundle--0580 .cb-label { border-color: transparent; background: var(--md-primary-container); color: var(--md-on-primary-container); }
+
+.cb-paper { margin-block-start: var(--space-6); font: 500 13px/1.2 var(--font-mono); color: var(--text-secondary); }
+.sh-root .cb-score { display: flex; align-items: center; gap: var(--space-3); margin-block-start: var(--space-2); }
+.sh-root[data-state="one-paper"] .cb-score[data-needs="many-papers"] { display: none; }
+.sh-root:not([data-state="one-paper"]) .cb-score[data-only-state="one-paper"] { display: none; }
+.cb-marks {
+  font: 800 var(--fs-display-sm)/1 var(--font-display); letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums lining-nums; color: var(--text-body);
+}
+.cb-move { margin-block-start: var(--space-2); }
+.cb-move > :first-child { margin-inline-start: 0; }
+.cb-to { margin-block-start: var(--space-5); font: 700 var(--fs-body)/1.3 var(--font-ui); color: var(--text-body); }
+.cb-open {
+  display: inline-flex; align-items: center; gap: var(--space-1); align-self: flex-start;
+  margin-block-start: auto; padding-block-start: var(--space-4);
+  font: 700 var(--fs-body-sm)/1.2 var(--font-ui); color: var(--md-primary);
+}
+.cb-open:hover .rb-ico { transform: translateX(2px); }
+.cb-open .rb-ico { transition: transform var(--dur-fast) var(--ease-out); }
+
+/* Weak topics: index tabs sticking out of the bundle's bottom edge. */
+.cb-tabs { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: 0 var(--space-5); list-style: none; }
+.cb-tab {
   display: inline-flex; align-items: center; gap: 6px;
-  padding-block: 4px; padding-inline-start: 5px; padding-inline-end: 10px; border-radius: var(--radius-pill);
-  background: var(--surface-card); border: 1px solid var(--border-default);
-  color: var(--text-body); text-decoration: none;
-  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast);
+  padding-block: 8px 7px; padding-inline: 8px 12px;
+  border-end-start-radius: var(--radius-chip); border-end-end-radius: var(--radius-chip);
+  background: var(--cb-tab); color: var(--text-body);
+  transition: background var(--dur-fast) var(--ease-out);
 }
-.rb-topic:hover { background: var(--surface-hover-tint); border-color: var(--border-control); }
-.rb-lane.is-closest .rb-topic { border-color: transparent; }
-.sh-root[data-theme="dark"] .rb-topic { background: var(--md-surface-container); border-color: transparent; }
-.sh-root[data-theme="dark"] .rb-lane.is-closest .rb-topic { background: var(--md-surface-low); }
-.rb-ring { inline-size: 24px; block-size: 24px; flex: none; transform: rotate(-90deg); }
+.cb-tab:hover { background: var(--surface-hover-tint); }
+.cb-bundle.is-closest .cb-tab { background: var(--md-primary-container); color: var(--md-on-primary-container); }
+.cb-tab-t { font: 600 var(--fs-body-sm)/1.2 var(--font-ui); }
+.cb-tab-v { font: 700 13px/1 var(--font-mono); font-variant-numeric: tabular-nums; }
+.rb-ring { inline-size: 18px; block-size: 18px; flex: none; transform: rotate(-90deg); }
 .rb-ring circle { fill: none; stroke-width: 3.5; }
 .rb-ring-t { stroke: var(--track); }
+.cb-bundle.is-closest .rb-ring-t { stroke: var(--surface-card); }
 .rb-ring-v { stroke: var(--md-primary); stroke-linecap: round; stroke-dasharray: var(--acc) 100; }
-.rb-topic-t { font: 600 var(--fs-body-sm)/1.2 var(--font-ui); }
-.rb-topic-v { font: 700 13px/1 var(--font-mono); font-variant-numeric: tabular-nums; }
-.rb-topic-d {
-  display: inline-flex; align-items: center; gap: 1px;
-  font: 600 12px/1 var(--font-mono); font-variant-numeric: tabular-nums; color: var(--text-secondary);
-}
-.rb-topic-d .rb-ico { inline-size: 13px; block-size: 13px; stroke-width: 2.2; }
-.rb-topic-d.is-up { color: var(--rb-up); }
-/* DESIGN.md tonal button: the hero keeps the only filled primary. */
-.rb-btn--tonal { position: relative; z-index: 1; background: var(--md-primary-container); color: var(--md-on-primary-container); }
-.rb-btn--tonal:hover { background: color-mix(in oklch, var(--md-primary-container), var(--md-primary) 10%); }
-.rb-lane.is-closest .rb-btn--tonal { background: var(--surface-card); color: var(--md-primary); }
-.sh-root[data-theme="dark"] .rb-lane.is-closest .rb-btn--tonal { background: var(--md-surface-low); color: var(--md-on-primary-container); }
-.rb-btn--sm { min-block-size: 34px; padding: 0 var(--space-3); border-radius: var(--radius-chip); font-size: var(--fs-body-sm); }
-.rb-btn--sm .rb-ico { inline-size: 15px; block-size: 15px; }
-.rb-row-fix { grid-column: 1 / -1; margin-block-start: var(--space-2); }
-.sh-root[data-state="one-paper"] .rb-topic[data-only-state="one-paper"] { display: inline-flex; }
 
-/* ---------- momentum sparkline: line, latest point, a bare dashed target line, one plain sentence ---------- */
-.rb-spark { position: relative; z-index: 1; display: flex; align-items: center; gap: var(--space-4); margin: 0; }
-.rb-spark-plot { position: relative; flex: none; }
-.rb-spark svg { display: block; inline-size: 196px; block-size: 56px; overflow: visible; }
-.rb-spark-band { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.7; }
-.rb-spark-line { fill: none; stroke: var(--md-primary); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.rb-spark-dot { fill: var(--md-primary); stroke: var(--surface-card); stroke-width: 2; }
-.rb-lane.is-closest .rb-spark-dot { stroke: var(--md-primary-container); }
-.rb-spark-v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 700; fill: var(--text-body); }
-.rb-lane.is-closest .rb-spark-v { fill: var(--md-on-primary-container); }
-.rb-lane.is-closest .rb-spark-band { stroke: var(--md-on-primary-container); }
-.rb-spark-cap { display: grid; gap: 2px; font: 500 12px/1.35 var(--font-ui); color: var(--text-muted); }
-.rb-spark-to { font: 700 var(--fs-body)/1.3 var(--font-ui); color: var(--text-body); }
-.rb-lane.is-closest :is(.rb-spark-cap, .rb-spark-to) { color: inherit; }
-.rb-spark-n { max-inline-size: 26ch; }
-.sh-root[data-state="one-paper"] .rb-spark[data-only-state="one-paper"] { display: flex; }
-/* Less data per lane: only the closest-exam lane draws its line; the others keep the plain sentence. */
-.rb-lane:not(.is-closest) .rb-spark-plot { display: none; }
-.sh-root[data-state="one-paper"] .rb-lane:not([data-needs]) .rb-spark-plot { display: block; }
+/* New student: the steps sit on an empty bundle, already clipped. */
+.cb-empty { position: relative; padding-block-start: 22px; }
+.cb-empty .cb-clip { inset-block-start: 0; inset-inline-start: 30px; }
+.cb-empty .rb-steps { position: relative; z-index: 1; padding-block-start: var(--space-6); }
 
-/* Last result: a small always-visible link beside the plain sentence (lanes) or in the row (ledger). */
-.rb-spark-cap .rb-last { justify-self: start; margin-block-start: var(--space-1); }
-.rb-lane.is-closest .rb-last { background: var(--surface-card); }
-.sh-root[data-theme="dark"] .rb-lane.is-closest .rb-last { background: var(--md-surface-low); }
-
-.rb-last {
-  position: relative; z-index: 1;
-  display: inline-flex; align-items: center; gap: var(--space-2);
-  padding-block: 4px; padding-inline-start: 10px; padding-inline-end: 4px; border-radius: var(--radius-chip);
-  background: var(--surface-row); color: var(--text-body); text-decoration: none;
-  transition: background var(--dur-fast) var(--ease-out);
-}
-.rb-last:hover { background: var(--surface-hover-tint); }
-.rb-last-paper { font: 500 13px/1.2 var(--font-mono); color: var(--text-secondary); white-space: nowrap; }
-.rb-last-marks { font: 700 var(--fs-data)/1.2 var(--font-mono); font-variant-numeric: tabular-nums; }
-
-/* Inline and flex children the shell would otherwise show as blocks in one-paper. */
-.sh-root[data-state="one-paper"] .rb-last [data-only-state="one-paper"] { display: inline; }
-.sh-root[data-state="one-paper"] .rb-last .rb-chip[data-only-state="one-paper"] { display: inline-grid; }
 
 /* ---------- loading ---------- */
 .rb-skel span { display: block; background: var(--track); border-radius: var(--radius-chip); animation: rb-breathe 1.4s ease-in-out infinite; }
@@ -481,18 +420,9 @@
 
 /* ---------- touch ---------- */
 @media (pointer: coarse) {
-  .rb-btn, .rb-lane-link, .rb-last, .rb-topic, .rb-note a, .rb-tab { min-block-size: 44px; }
-  .rb-note a, .rb-lane-link { display: inline-flex; align-items: center; }
+  .rb-btn, .cb-tab, .cb-open, .cb-name a, .rb-note a, .rb-tab { min-block-size: 44px; }
+  .rb-note a, .cb-name a { display: inline-flex; align-items: center; }
 }
-
-/* one-paper: 0580 is the only exam, so its lane takes the closest-exam treatment. */
-.sh-root[data-state="one-paper"] .rb-lane:not([data-needs]) { background: var(--md-primary-container); color: var(--md-on-primary-container); }
-.sh-root[data-state="one-paper"] .rb-lane:not([data-needs]) :is(.rb-flat, .rb-pin, .rb-spark-cap, .rb-spark-to, .rb-lane-name .rb-mono) { color: inherit; }
-.sh-root[data-state="one-paper"] .rb-lane:not([data-needs]) .rb-spark-v { fill: var(--md-on-primary-container); }
-.sh-root[data-state="one-paper"] .rb-lane:not([data-needs]) .rb-bar { background: var(--md-primary); }
-.sh-root[data-state="one-paper"] .rb-lane:not([data-needs]) .rb-bar::after { border-color: var(--md-primary); background: var(--md-primary-container); }
-.sh-root[data-state="one-paper"] .rb-lane:not([data-needs]) .rb-topic { background: var(--surface-card); border-color: transparent; }
-.sh-root[data-theme="dark"][data-state="one-paper"] .rb-lane:not([data-needs]) .rb-topic { background: var(--md-surface-low); }
 
 /* ---------- narrow desktop (761–1120px): the four band columns no longer fit in one row,
    so greeting + Binny share the first row and level + streak the second. 1121px and up is untouched. ---------- */
@@ -504,7 +434,7 @@
   .rb-streak { padding-inline-start: var(--space-8); }
 }
 
-/* ---------- mobile: band compresses, lanes stack, the scale becomes a vertical list ---------- */
+/* ---------- mobile: band compresses, bundles stack ---------- */
 @container home (max-width: 760px) {
   .sh-root[data-variant="b"] { --rb-gap: 16px; }
   .rb-page { padding: var(--space-4) var(--space-4) var(--space-8); }
@@ -545,52 +475,22 @@
   .rb-hero-p { margin-block-start: var(--space-2); font-size: 15px; }
   .rb-hero-go .rb-btn { inline-size: 100%; }
 
-  .rb-runway { padding: var(--space-5) var(--space-3) var(--space-2); }
-  .rb-scale { display: block; padding-inline: var(--space-3); margin-block-end: var(--space-3); }
-  .rb-axis { display: none; }
-  .rb-exams-cap {
-    display: flex; justify-content: space-between; padding-block-end: var(--space-1);
-    font: 600 var(--fs-label)/1.2 var(--font-mono); letter-spacing: var(--ls-label); text-transform: uppercase;
-    color: var(--text-muted);
-  }
-  .rb-exams { block-size: auto; display: grid; }
-  .rb-exam, .rb-exam.is-closest {
-    position: relative; inset: auto; inline-size: auto; block-size: auto;
-    border-radius: 0; background: none;
-    display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; align-items: baseline; column-gap: var(--space-3);
-    padding-block: var(--space-2); padding-inline-start: var(--space-5);
-  }
-  .rb-exam::before {
-    content: ""; position: absolute; inset-inline-start: 0; inset-block-start: 50%; translate: 0 -50%;
-    inline-size: 10px; block-size: 10px; border-radius: 50%;
-    border: 2.5px solid color-mix(in oklch, var(--md-primary) 45%, var(--surface-card));
-    background: var(--surface-card);
-  }
-  .rb-exam.is-closest::before { border-color: var(--md-primary); background: var(--md-primary); }
-  .rb-exam.is-closest .rb-exam-date { color: var(--md-primary); }
-  .rb-exam + .rb-exam { border-block-start: 1px solid var(--border-subtle); }
-  .rb-exam > * { position: static; inline-size: auto; block-size: auto; overflow: visible; clip-path: none; }
-  .rb-exam-date { font: 700 14px/1.3 var(--font-mono); font-variant-numeric: tabular-nums; }
-  .rb-exam-subj { font-size: var(--fs-body-sm); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .rb-exam-days { text-align: end; }
-  .rb-exam-days .rb-mono { color: var(--text-body); font-size: 15px; }
+  .rb-next::before { inset-inline: 24px; }
+  .rb-next::after { inset-inline: 12px; }
+  .rb-from { inset-inline-end: 40px; }
 
-  /* The vertical exam list carries days left on mobile, so the lanes drop their copy. */
-  .rb-lane {
-    grid-template-columns: minmax(0, 1fr);
-    row-gap: var(--space-4); padding: var(--space-5) var(--space-3);
-  }
-  .rb-spark { gap: var(--space-3); }
-  .rb-days-cap { display: none; }
-  .rb-lane .rb-track, .rb-lane .rb-days { display: none; }
-  .rb-lane-name { font-size: 18px; }
-
-  .rb-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: var(--space-2); }
-  .rb-row-subj, .rb-row-papers { grid-column: 1; }
-  .rb-row-grade { grid-column: 2; grid-row: 1 / span 2; }
-  .rb-row .rb-last { grid-column: 1 / -1; justify-self: start; }
-
-  .rb-ledger { padding: var(--space-5); }
+  .cb-shelf { margin-block-start: var(--space-8); }
+  .cb-bundles { grid-template-columns: minmax(0, 1fr); row-gap: var(--space-6); }
+  .sh-root[data-state="one-paper"] .cb-bundles { grid-template-columns: minmax(0, 1fr); }
+  .cb-peeks { block-size: 72px; }
+  .cb-peek { block-size: 24px; margin-inline: calc(var(--i) * 10px); }
+  .cb-clip { inset-block-start: 36px; inset-inline-start: 22px; inline-size: 22px; block-size: 45px; }
+  .cb-sheet { padding: var(--space-6) var(--space-5) var(--space-5); }
+  .cb-top { padding-inline-start: var(--space-7); }
+  .cb-name { font-size: 18px; }
+  .cb-paper { margin-block-start: var(--space-4); }
+  .cb-to { margin-block-start: var(--space-4); }
+  .cb-tabs { padding-inline: var(--space-4); }
 
   .rb-band--new { display: flex; }
   .rb-steps { padding: var(--space-2) var(--space-4); }
