@@ -11,10 +11,9 @@ import {
 } from "react-router-dom"
 import { screenKey } from "@/lib/nav/screenKey"
 import {
-  backgroundState,
+  historyIndexOf,
   isWithinBase,
-  readBackgroundLocation,
-  resolveBackground,
+  planOverlayOutlet,
   type BackgroundLocation,
 } from "@/lib/nav/backgroundLocation"
 
@@ -79,69 +78,63 @@ function PlainScreenOutlet() {
 /*
  * A portal layout's screen slot that knows about one route-backed overlay.
  *
- * Outside `overlayBase` it is exactly `ScreenOutlet`: the matched screen in a
- * keyed `lm-screen` wrapper. Inside it (e.g. `/teacher/settings/*`), it
- * renders the page the reader came from in that same slot, matched from
- * `routes` against the background location, and the overlay route (the
- * real `<Outlet />`) on top.
+ * The page slot always renders the matched screen through the same element
+ * (`BackgroundScreen`, matching `routes` against `screenLocation`). Outside
+ * `overlayBase` that location is the current one; inside it (e.g.
+ * `/teacher/settings/*`) it is the page the reader came from, and the overlay
+ * route (the real `<Outlet />`) renders on top. Because the element type and
+ * its `screenKey` stay the same when the overlay opens or closes, the page
+ * underneath is never remounted: its local state, its queries and its scroll
+ * position survive the dialog.
  *
  * Which page sits underneath is `resolveBackground`'s call: router state
  * first, then the last page shown in this session, then `fallbackPath`.
  * Links that open the overlay do not have to know about any of this. When a
- * plain link opens it, the remembered page is written back into the entry's
- * state (a replace, same URL), so a refresh keeps the same page underneath
- * and closing can step back to it.
+ * plain link opens it, the remembered page (and its history index) is written
+ * back into the entry's state (a replace, same URL), so a refresh keeps the
+ * same page underneath and closing can walk back to it. The decisions are
+ * `planOverlayOutlet`'s, a pure function with its own unit tests.
  */
 function OverlayScreenOutlet({ routes, overlayBase, fallbackPath }: ScreenOverlay) {
   const location = useLocation()
   const navigate = useNavigate()
-  const inOverlay = isWithinBase(location.pathname, overlayBase)
   const remembered = useRef<BackgroundLocation | null>(null)
+  const rememberedIdx = useRef<number | null>(null)
   // The layout's own path ("/teacher"), which `routes` are relative to.
   const layoutPath = useResolvedPath("").pathname
 
-  if (!inOverlay) {
+  if (!isWithinBase(location.pathname, overlayBase)) {
     remembered.current = {
       pathname: location.pathname,
       search: location.search,
       hash: location.hash,
     }
+    rememberedIdx.current =
+      typeof window === "undefined" ? null : historyIndexOf(window.history.state)
   }
 
-  const background = resolveBackground({
-    state: location.state,
+  const plan = planOverlayOutlet({
+    location,
     remembered: remembered.current,
+    rememberedIdx: rememberedIdx.current,
     overlayBase,
     fallbackPath,
   })
+  // Serialised so the effect runs once per distinct write, not per render.
+  const replaceJson = plan.replaceState ? JSON.stringify(plan.replaceState) : null
+  const { pathname, search, hash } = location
 
   useEffect(() => {
-    if (!inOverlay || background.source !== "remembered") return
-    if (readBackgroundLocation(location.state)) return
-    navigate(
-      { pathname: location.pathname, search: location.search, hash: location.hash },
-      { replace: true, state: backgroundState(background.location) },
-    )
-  }, [inOverlay, background.source, background.location, location, navigate])
+    if (replaceJson === null) return
+    navigate({ pathname, search, hash }, { replace: true, state: JSON.parse(replaceJson) })
+  }, [replaceJson, pathname, search, hash, navigate])
 
   return (
     <>
-      <div
-        key={screenKey(inOverlay ? background.location : location)}
-        className="lm-screen"
-        data-screen
-      >
-        {inOverlay ? (
-          <BackgroundScreen
-            routes={routes}
-            basePath={layoutPath}
-            location={background.location}
-          />
-        ) : (
-          <Outlet />
-        )}
+      <div key={screenKey(plan.screenLocation)} className="lm-screen" data-screen>
+        <BackgroundScreen routes={routes} basePath={layoutPath} location={plan.screenLocation} />
       </div>
-      {inOverlay ? (
+      {plan.inOverlay ? (
         // Its own boundary, so loading the dialog's chunk never blanks the
         // page underneath it.
         <Suspense fallback={null}>
@@ -163,7 +156,8 @@ export function ScreenFrame({ children }: { children: ReactNode }) {
 }
 
 /**
- * The page underneath an overlay, matched from the layout's child routes.
+ * The page in an overlay-hosting slot (the current page, or the one
+ * underneath an open overlay), matched from the layout's child routes.
  *
  * Matched from a clean route context with the routes mounted under the
  * layout's absolute path, rather than from inside the layout's own match:

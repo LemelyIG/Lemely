@@ -22,6 +22,12 @@ export interface BackgroundLocation {
 /** What a link or navigation into an overlay route carries as `state`. */
 export interface BackgroundState {
   backgroundLocation: BackgroundLocation
+  /**
+   * The background entry's react-router history index (`history.state.idx`),
+   * when known. Closing steps back exactly to that entry, however many
+   * entries the reader has walked since (`overlayCloseAction`).
+   */
+  backgroundIdx?: number
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -52,15 +58,36 @@ export function readBackgroundLocation(state: unknown): BackgroundLocation | nul
   }
 }
 
+/** Reads `state.backgroundIdx`, or `null` when it is missing or not a
+ * non-negative integer. */
+export function readBackgroundIdx(state: unknown): number | null {
+  if (!isRecord(state)) return null
+  const idx = state.backgroundIdx
+  return typeof idx === "number" && Number.isInteger(idx) && idx >= 0 ? idx : null
+}
+
+/** react-router's own entry index (`window.history.state.idx`) read from a
+ * `history.state` value, or `null` when it is absent. */
+export function historyIndexOf(historyState: unknown): number | null {
+  if (!isRecord(historyState)) return null
+  const idx = historyState.idx
+  return typeof idx === "number" && Number.isInteger(idx) ? idx : null
+}
+
 /** Builds the `state` a navigation into an overlay route should carry. */
-export function backgroundState(location: BackgroundLocation): BackgroundState {
-  return {
+export function backgroundState(
+  location: BackgroundLocation,
+  backgroundIdx: number | null = null,
+): BackgroundState {
+  const state: BackgroundState = {
     backgroundLocation: {
       pathname: location.pathname,
       search: location.search,
       hash: location.hash,
     },
   }
+  if (backgroundIdx !== null) state.backgroundIdx = backgroundIdx
+  return state
 }
 
 /**
@@ -105,16 +132,18 @@ export function underlyingPathname(input: {
   return input.pathname
 }
 
-export type OverlayCloseAction = { kind: "back" } | { kind: "replace"; to: string }
+export type OverlayCloseAction = { kind: "go"; delta: number } | { kind: "replace"; to: string }
 
 /**
  * What closing the overlay does.
  *
- * With a background in state and an entry behind this one, closing is a
- * history step back: the page underneath is exactly the previous entry, so
- * Back and the close button agree. Otherwise (a deep link, a fresh tab) there
- * is nothing behind to step back to, and closing replaces the overlay entry
- * with the background page or the fallback.
+ * When the state records the background entry's history index and that entry
+ * is behind the current one, closing walks back to it (`go(delta)`, delta
+ * negative): Back and the close button then land on the same entry, even
+ * after the reader left the dialog for another page and came back with Back
+ * (where a blind `go(-1)` would land on that other page). Otherwise (a deep
+ * link, a fresh tab, an index that is not behind us) closing replaces the
+ * overlay entry with the background page, or the fallback when there is none.
  */
 export function overlayCloseAction(input: {
   state: unknown
@@ -124,9 +153,67 @@ export function overlayCloseAction(input: {
 }): OverlayCloseAction {
   const background = readBackgroundLocation(input.state)
   const usable = background && !isWithinBase(background.pathname, input.overlayBase)
-  if (usable && input.historyIndex !== null && input.historyIndex > 0) return { kind: "back" }
-  if (usable) {
-    return { kind: "replace", to: `${background.pathname}${background.search}${background.hash}` }
+  if (!usable) return { kind: "replace", to: input.fallbackPath }
+  const backgroundIdx = readBackgroundIdx(input.state)
+  if (backgroundIdx !== null && input.historyIndex !== null) {
+    const delta = backgroundIdx - input.historyIndex
+    if (delta < 0) return { kind: "go", delta }
   }
-  return { kind: "replace", to: input.fallbackPath }
+  return { kind: "replace", to: `${background.pathname}${background.search}${background.hash}` }
+}
+
+/**
+ * Everything the overlay outlet decides for one render, as data.
+ *
+ * - `screenLocation`: the location the page slot matches its routes
+ *   against. Outside the overlay it is the current location; inside, the
+ *   background. Either way the page renders through one element, so opening
+ *   or closing the overlay never remounts the page underneath.
+ * - `replaceState`: router state to write onto the current (overlay) entry
+ *   with a same-URL replace, or `null`. Written when the entry lacks a
+ *   background (a plain link: the remembered page goes in) or lacks the
+ *   background's history index (a link whose background matches the page we
+ *   just showed), so a refresh keeps the same page underneath and closing can
+ *   walk back to it. Never written on a deep link (nothing to remember).
+ */
+export function planOverlayOutlet(input: {
+  location: BackgroundLocation & { state: unknown }
+  remembered: BackgroundLocation | null
+  rememberedIdx: number | null
+  overlayBase: string
+  fallbackPath: string
+}): {
+  inOverlay: boolean
+  screenLocation: BackgroundLocation
+  background: ReturnType<typeof resolveBackground> | null
+  replaceState: BackgroundState | null
+} {
+  const { location } = input
+  const current = { pathname: location.pathname, search: location.search, hash: location.hash }
+  if (!isWithinBase(location.pathname, input.overlayBase)) {
+    return { inOverlay: false, screenLocation: current, background: null, replaceState: null }
+  }
+  const background = resolveBackground({
+    state: location.state,
+    remembered: input.remembered,
+    overlayBase: input.overlayBase,
+    fallbackPath: input.fallbackPath,
+  })
+  let replaceState: BackgroundState | null = null
+  if (background.source === "remembered") {
+    replaceState = backgroundState(background.location, input.rememberedIdx)
+  } else if (
+    background.source === "state" &&
+    readBackgroundIdx(location.state) === null &&
+    input.rememberedIdx !== null &&
+    input.remembered !== null &&
+    sameLocation(input.remembered, background.location)
+  ) {
+    replaceState = { ...(location.state as object), ...backgroundState(background.location, input.rememberedIdx) }
+  }
+  return { inOverlay: true, screenLocation: background.location, background, replaceState }
+}
+
+function sameLocation(a: BackgroundLocation, b: BackgroundLocation): boolean {
+  return a.pathname === b.pathname && a.search === b.search && a.hash === b.hash
 }

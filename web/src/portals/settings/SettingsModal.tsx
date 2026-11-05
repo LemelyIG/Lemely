@@ -15,7 +15,7 @@ import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
 import { portalErrorFallback } from "@/components/route-error"
 import { lockScroll } from "@/lib/scrollLock"
-import { overlayCloseAction } from "@/lib/nav/backgroundLocation"
+import { historyIndexOf, overlayCloseAction } from "@/lib/nav/backgroundLocation"
 import { cn } from "@/lib/utils"
 import { activeSettingsTab, settingsTabPath, type SettingsTab } from "./settingsTabs"
 import { SettingsHeadingLevel } from "./SettingsRows"
@@ -70,6 +70,21 @@ function tabbable(root: HTMLElement): HTMLElement[] {
   })
 }
 
+/**
+ * Where focus goes back to when the dialog closes. Usually the element that
+ * had focus when it opened. When that element sits in a menu (the profile
+ * menu's Settings item), the menu unmounts as it closes, so the menu's own
+ * trigger (Radix labels a menu by its trigger's id) is kept as the fallback.
+ */
+function returnFocusTarget(active: Element | null): {
+  element: HTMLElement | null
+  fallbackId: string | null
+} {
+  const element = active instanceof HTMLElement && active !== document.body ? active : null
+  const menu = element?.closest('[role="menu"]')
+  return { element, fallbackId: menu?.getAttribute("aria-labelledby") ?? null }
+}
+
 export interface SettingsModalProps {
   title: string
   tabs: readonly SettingsTab[]
@@ -96,9 +111,18 @@ export function SettingsModal({
   const panelRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
 
-  // Focus in on open, back to the opener on close.
+  // One effect for everything the dialog does to the page behind it, so the
+  // teardown runs in a fixed order: page interactive again, scroll restored,
+  // then focus back to the opener (focus into an inert subtree is ignored).
   useEffect(() => {
-    const previouslyFocused = document.activeElement as HTMLElement | null
+    const opener = returnFocusTarget(document.activeElement)
+    const releaseScroll = lockScroll()
+    // The app root is the dialog's sibling (the dialog portals to `body`):
+    // inert, it drops out of the tab order and the accessibility tree, and
+    // nothing behind the scrim takes a click.
+    const appRoot = document.getElementById("root")
+    const wasInert = appRoot?.inert ?? false
+    if (appRoot) appRoot.inert = true
     const raf = requestAnimationFrame(() => {
       const panel = panelRef.current
       if (!panel) return
@@ -113,11 +137,16 @@ export function SettingsModal({
     })
     return () => {
       cancelAnimationFrame(raf)
-      if (previouslyFocused && previouslyFocused.isConnected) previouslyFocused.focus()
+      if (appRoot) appRoot.inert = wasInert
+      releaseScroll()
+      const target = opener.element?.isConnected
+        ? opener.element
+        : opener.fallbackId
+          ? document.getElementById(opener.fallbackId)
+          : null
+      target?.focus({ preventScroll: true })
     }
   }, [])
-
-  useEffect(() => lockScroll(), [])
 
   // A new tab starts at the top of the panel, and the phone tab strip keeps
   // the current tab in view.
@@ -248,15 +277,15 @@ export function SettingsModal({
             <div className="mx-auto flex w-full max-w-180 flex-col gap-8 px-4 pt-6 pb-[max(env(safe-area-inset-bottom),2rem)] md:px-10 md:pt-8 md:pb-10">
               {activeTab ? (
                 <div className="flex flex-col gap-1 md:pe-12">
-                  <h2 id={tabHeadingId} className="text-display-sm text-on-surface">
+                  <h3 id={tabHeadingId} className="text-display-sm text-on-surface">
                     {activeTab.label}
-                  </h2>
+                  </h3>
                   <p className="max-w-[60ch] text-body-sm text-on-surface-variant">
                     {activeTab.description}
                   </p>
                 </div>
               ) : null}
-              <SettingsHeadingLevel level={3}>{children}</SettingsHeadingLevel>
+              <SettingsHeadingLevel level={4}>{children}</SettingsHeadingLevel>
             </div>
           </div>
           {/* Wide screens: the close button sits top-right of the panel. After
@@ -285,12 +314,7 @@ export function SettingsModal({
  * outside a browser history. */
 function historyIndex(): number | null {
   if (typeof window === "undefined") return null
-  const state: unknown = window.history.state
-  if (typeof state === "object" && state !== null && "idx" in state) {
-    const idx = (state as { idx: unknown }).idx
-    return typeof idx === "number" ? idx : null
-  }
-  return null
+  return historyIndexOf(window.history.state)
 }
 
 export interface SettingsModalRouteProps {
@@ -314,7 +338,7 @@ export function SettingsModalRoute({ tabs, basePath, fallbackPath }: SettingsMod
       overlayBase: basePath,
       fallbackPath,
     })
-    if (action.kind === "back") navigate(-1)
+    if (action.kind === "go") navigate(action.delta)
     else navigate(action.to, { replace: true })
   }, [location.state, basePath, fallbackPath, navigate])
 
