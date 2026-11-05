@@ -9,6 +9,7 @@ import {
   readBackgroundLocation,
   resolveBackground,
 } from "@/lib/nav/backgroundLocation"
+import { screenKey } from "@/lib/nav/screenKey"
 
 const BASE = "/teacher/settings"
 const classes = { pathname: "/teacher/classes", search: "?sort=name", hash: "" }
@@ -175,9 +176,29 @@ describe("planOverlayOutlet", () => {
     })
     expect(plan).toEqual({
       inOverlay: false,
-      screenLocation: classes,
+      screenLocation: { ...classes, state: null },
       background: null,
       replaceState: null,
+    })
+  })
+
+  it("outside the overlay, the page keeps the entry's router state and key", () => {
+    // The teacher home hands dropped papers to Grading as
+    // `navigate("/teacher/grading", { state: { files } })`; the page reads
+    // them from `useLocation().state`, which is this location.
+    const files = [{ name: "paper1.pdf" }]
+    const plan = planOverlayOutlet({
+      ...base,
+      location: { ...at("/teacher/grading", { files }), key: "k1" },
+      remembered: null,
+      rememberedIdx: null,
+    })
+    expect(plan.screenLocation).toEqual({
+      pathname: "/teacher/grading",
+      search: "",
+      hash: "",
+      state: { files },
+      key: "k1",
     })
   })
 
@@ -195,7 +216,9 @@ describe("planOverlayOutlet", () => {
       rememberedIdx: 2,
     })
     expect(open.inOverlay).toBe(true)
-    expect(open.screenLocation).toEqual(closed.screenLocation)
+    // The page slot is keyed by `screenKey`; router state may differ.
+    expect(screenKey(open.screenLocation)).toBe(screenKey(closed.screenLocation))
+    expect(open.screenLocation).toMatchObject(classes)
   })
 
   it("deep link: falls back to the portal home and writes nothing", () => {

@@ -166,7 +166,9 @@ export function overlayCloseAction(input: {
  * Everything the overlay outlet decides for one render, as data.
  *
  * - `screenLocation`: the location the page slot matches its routes
- *   against. Outside the overlay it is the current location; inside, the
+ *   against, and what that page's `useLocation()` returns. Outside the
+ *   overlay it is the current location, router state and key included (the
+ *   teacher home hands dropped papers to Grading in `state`); inside, the
  *   background. Either way the page renders through one element, so opening
  *   or closing the overlay never remounts the page underneath.
  * - `replaceState`: router state to write onto the current (overlay) entry
@@ -177,21 +179,21 @@ export function overlayCloseAction(input: {
  *   walk back to it. Never written on a deep link (nothing to remember).
  */
 export function planOverlayOutlet(input: {
-  location: BackgroundLocation & { state: unknown }
+  location: BackgroundLocation & { state: unknown; key?: string }
   remembered: BackgroundLocation | null
   rememberedIdx: number | null
   overlayBase: string
   fallbackPath: string
 }): {
   inOverlay: boolean
-  screenLocation: BackgroundLocation
+  screenLocation: BackgroundLocation & { state?: unknown; key?: string }
   background: ReturnType<typeof resolveBackground> | null
   replaceState: BackgroundState | null
 } {
   const { location } = input
-  const current = { pathname: location.pathname, search: location.search, hash: location.hash }
   if (!isWithinBase(location.pathname, input.overlayBase)) {
-    return { inOverlay: false, screenLocation: current, background: null, replaceState: null }
+    const { pathname, search, hash, state, key } = location
+    return { inOverlay: false, screenLocation: { pathname, search, hash, state, key }, background: null, replaceState: null }
   }
   const background = resolveBackground({
     state: location.state,
