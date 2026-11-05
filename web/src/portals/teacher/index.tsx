@@ -221,7 +221,7 @@ function toNavShellItem(
  * real "current class" concept anywhere in the app to back it). Capped at 5
  * with a link to the full list rather than an unbounded sidebar.
  */
-function ClassesNavSection() {
+export function ClassesNavSection() {
   const { data, isPending, isError } = useTeacherClasses()
 
   return (
@@ -434,7 +434,7 @@ function Sidebar() {
  * route back on a laptop too. The *bar* is mobile-only because above `md` the
  * sidebar already carries the logo and the menu button has nothing to open.
  */
-const TOP_BAR_ICON_BUTTON =
+export const TOP_BAR_ICON_BUTTON =
   "relative flex h-9 w-9 flex-none items-center justify-center rounded-chip text-on-surface-variant transition-colors hover:bg-surface-container hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:h-11 pointer-coarse:w-11"
 
 function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {

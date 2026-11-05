@@ -33,6 +33,9 @@ const previewEntry = (name: string) =>
   fileURLToPath(new URL(`./dev-previews/${name}.html`, import.meta.url))
 export default defineConfig({
   root: fileURLToPath(new URL("./dev-previews", import.meta.url)),
+  /* The app's own `public/`, so the Brand group loads /brand/*.svg, the app
+     icons and the favicon from the same URLs the product serves them at. */
+  publicDir: fileURLToPath(new URL("./public", import.meta.url)),
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {

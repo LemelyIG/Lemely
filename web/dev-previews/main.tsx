@@ -1,10 +1,16 @@
 import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
-import { MemoryRouter } from "react-router-dom"
+import { RouterProvider, createMemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { AuthProvider } from "@/lib/auth/AuthContext"
 import "./preview.css"
 import { App } from "./App"
+import { blockApiFetch } from "./harness"
+
+/* No API exists behind this page. Any `/api` request hangs rather than failing,
+   so a component that reads a hook the cell did not seed shows its honest
+   loading state instead of a spurious error. See `Seeded` in harness.tsx. */
+blockApiFetch()
 
 const root = document.getElementById("root")
 if (!root) throw new Error("preview root element is missing")
@@ -30,14 +36,27 @@ if (!root) throw new Error("preview root element is missing")
  */
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 
+/*
+ * A data router (`createMemoryRouter`) rather than `<MemoryRouter>`: the
+ * teacher home's loading view is the real `RouteSkeleton`, which reads
+ * `useMatches()`, and that hook throws outside a data router. One catch-all
+ * route, so a click on any link is still a no-op that stays on this page.
+ */
+const router = createMemoryRouter([
+  {
+    path: "*",
+    element: (
+      <AuthProvider>
+        <App />
+      </AuthProvider>
+    ),
+  },
+])
+
 createRoot(root).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <MemoryRouter>
-          <App />
-        </MemoryRouter>
-      </AuthProvider>
+      <RouterProvider router={router} />
     </QueryClientProvider>
   </StrictMode>,
 )
