@@ -644,14 +644,36 @@
 .a-error-title { margin: 0; font: 800 var(--fs-title) / 1.25 var(--font-ui); color: var(--text-body) }
 .a-error p { margin: var(--space-2) 0 var(--space-6); color: var(--text-secondary) }
 
-/* Loading skeleton */
+/* Loading skeleton: the ready page's boxes at their real sizes (greeting, header,
+   big action, three journey rows, ruler, exams), so nothing shifts when data lands. */
 .a-skel { border-radius: var(--radius-tile); background: var(--md-surface-high); animation: a-pulse 1.4s ease-in-out infinite alternate }
+.a-skel-head { block-size: 74px; align-items: flex-start }
 .a-skel-title { inline-size: 360px; max-inline-size: 80%; block-size: 40px; border-radius: 12px }
-.a-skel-line { inline-size: 260px; max-inline-size: 60%; block-size: 16px; margin-block: var(--space-3) var(--space-6); border-radius: 8px }
-.a-skel-hero,
-.a-skel-reward { block-size: 300px; border-radius: var(--radius-card) }
-.a-skel-ledger { block-size: 240px; margin-block-start: var(--space-6); border-radius: var(--radius-board) }
+.a-skel-line { inline-size: 260px; max-inline-size: 60%; block-size: 16px; margin-block-start: var(--space-3); border-radius: 8px }
+.a-skel-header { block-size: 211px; border-radius: var(--radius-board) }
+.a-skel-action { block-size: 383px; margin-block-start: var(--space-8); border-radius: var(--radius-board) }
+.a-skel-h { inline-size: 140px; block-size: 25px; margin-block-end: var(--space-4); border-radius: 8px }
+.a-skel-sub { inline-size: 300px; max-inline-size: 80%; block-size: 22px; margin-block: calc(var(--space-2) * -1) var(--space-4); border-radius: 8px }
+.a-skel-card {
+  display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2);
+  border-radius: var(--radius-card); background: var(--surface-card); box-shadow: var(--a-card-edge);
+}
+.a-skel-rows { block-size: 282px }
+.a-skel-rows .a-skel { flex: 1; border-radius: var(--radius-tile) }
+.a-skel-ruler { block-size: 429px; border-radius: var(--radius-card) }
+.a-skel-exams { block-size: 418px; border-radius: var(--radius-card) }
 @keyframes a-pulse { from { opacity: 1 } to { opacity: 0.55 } }
+@container home (max-width: 760px) {
+  .a-skel-head { block-size: 54px }
+  .a-skel-title { block-size: 30px }
+  .a-skel-line { margin-block-start: var(--space-2) }
+  .a-skel-header { block-size: 329px; border-radius: var(--radius-card) }
+  .a-skel-action { block-size: 236px; margin-block-start: var(--space-4) }
+  .a-skel-rows { block-size: 343px }
+  .a-skel-sub { block-size: 21px }
+  .a-skel-ruler { block-size: 714px }
+  .a-skel-exams { block-size: 664px }
+}
 
 /* Student bottom bar: mobile frame only, pinned to the frame's bottom. */
 .a-bottombar { display: none }
@@ -799,4 +821,76 @@
   .a-act-of { font-size: 30px }
   .a-act-grade { inline-size: 48px; block-size: 48px; border-radius: 12px; font-size: 28px }
   .a-act-up { font-size: var(--fs-body-sm) }
+}
+
+/* ---------- Hardening ---------- */
+
+/* Binny and the streak are real buttons: reset them to their tiles' looks. */
+.ah-binny-tile { margin: 0; border: 0; color: inherit; font: inherit; appearance: none }
+.ah-binny-tile:focus-visible { outline-offset: 3px }
+.ah-streak {
+  margin: 0; padding: 0; border: 0; border-radius: 8px; background: none; appearance: none;
+  font: inherit; letter-spacing: inherit; color: inherit; text-align: start; cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.ah-streak:hover { color: var(--md-primary) }
+.ah-streak:focus-visible { outline-offset: 4px }
+@media (pointer: coarse) {
+  .ah-streak { padding-block: 8px; margin-block: -8px }
+}
+
+/* While Binny cheers for the streak, the caption says so, then the mood caption returns. */
+.sh-root .ah-binny.is-cheering .ah-say [data-when-mood] { display: none }
+.sh-root .ah-binny.is-cheering .ah-say [data-when-mood="streak-kept"] { display: inline }
+
+/* Desktop's standing way to correct a paper: quiet and tonal, beside the greeting. Hidden
+   where the big action already is "Correct a paper" and in the mobile frame (its bottom bar has Correct). */
+.a-head-correct { flex: none }
+.sh-root:is([data-action="correct"], [data-action="first-paper"]) .a-head-correct,
+.sh-root[data-width="mobile"] .a-head-correct { display: none }
+
+/* Marking progress: the stage in words (a polite live region), a three-part bar, the
+   stage names under it. Demo values; variant-a.js may walk the stages once with motion on. */
+.a-prog { max-inline-size: 640px; margin-block-start: var(--space-6) }
+.a-prog-now { margin: 0 0 var(--space-3); font: 700 var(--fs-body) / 1.3 var(--font-ui); color: var(--md-on-primary-container) }
+.a-prog-now .a-mono { font-weight: 700 }
+.a-prog [data-stage-text] { display: none }
+.a-prog[data-stage="1"] [data-stage-text="1"],
+.a-prog[data-stage="2"] [data-stage-text="2"],
+.a-prog[data-stage="3"] [data-stage-text="3"] { display: inline }
+.a-prog-bar { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px }
+.a-prog-seg {
+  block-size: 8px; overflow: hidden; border-radius: var(--radius-pill);
+  background: color-mix(in oklch, var(--md-on-primary-container) 16%, transparent);
+}
+.a-prog-fill {
+  display: block; block-size: 100%; border-radius: inherit; background: var(--md-primary);
+  transform: scaleX(0); transform-origin: 0 50%;
+  transition: transform 900ms var(--a-ease-expo);
+}
+.a-prog-fill:dir(rtl) { transform-origin: 100% 50% }
+.a-prog[data-stage="1"] [data-seg="1"] .a-prog-fill { transform: scaleX(0.55) }
+.a-prog[data-stage="2"] [data-seg="1"] .a-prog-fill,
+.a-prog[data-stage="3"] :is([data-seg="1"], [data-seg="2"]) .a-prog-fill { transform: none }
+.a-prog[data-stage="2"] [data-seg="2"] .a-prog-fill { transform: scaleX(0.5) }
+.a-prog[data-stage="3"] [data-seg="3"] .a-prog-fill { transform: scaleX(0.583) }
+.a-prog-steps {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px;
+  margin: var(--space-2) 0 0; padding: 0; list-style: none;
+  font: 600 13px / 1.3 var(--font-ui); color: var(--md-on-primary-container);
+}
+.a-prog-steps li { opacity: 0.62; transition: opacity var(--dur-base) var(--ease-out) }
+.a-prog-steps .a-mono { font-size: 12px }
+.a-prog[data-stage="1"] [data-step="1"],
+.a-prog[data-stage="2"] :is([data-step="1"], [data-step="2"]),
+.a-prog[data-stage="3"] li { opacity: 1 }
+.a-prog[data-stage="1"] [data-step="1"],
+.a-prog[data-stage="2"] [data-step="2"],
+.a-prog[data-stage="3"] [data-step="3"] { font-weight: 700 }
+.a-act[data-when-action="marking"] .a-act-body { margin-block-start: var(--space-5) }
+
+@container home (max-width: 760px) {
+  .a-prog { margin-block: var(--space-3) var(--space-4) }
+  .a-prog-now { margin-block-end: var(--space-2); font-size: var(--fs-body-sm) }
+  .a-prog-steps { display: none }
 }

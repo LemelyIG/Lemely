@@ -209,38 +209,82 @@ for (const btn of document.querySelectorAll(".a-act-btn")) {
   btn.addEventListener("blur", () => lean(false))
 }
 
+/* The streak cheer: hovering the week, focusing the streak button or pressing it makes
+   Binny cheer and say "Day 9. Streak kept." for a moment, then the mood caption returns. */
 const week = document.querySelector('[data-when-state="ready"] .ah-week')
+const CHEER_MS = 2400
 let cheering = false
-function cheer(on) {
+let cheerTimer = 0
+function endCheer() {
+  clearTimeout(cheerTimer)
+  cheerTimer = 0
+  const tile = binnyTile()
+  if (!cheering || !tile) return
+  cheering = false
+  tile.closest(".ah-binny")?.classList.remove("is-cheering")
+  renderBinny(tile, root.dataset.mood)
+}
+function cheer() {
   const tile = binnyTile()
   const kept = !["streak-zero", "one-paper"].includes(root.dataset.state)
   if (!tile || !kept) return
-  if (on && !cheering) {
+  if (!cheering) {
     cheering = true
+    tile.closest(".ah-binny")?.classList.add("is-cheering")
     renderBinny(tile, "streak-kept")
-    if (motionOn()) {
-      tile.classList.remove("is-cheer")
-      void tile.offsetWidth
-      tile.classList.add("is-cheer")
-    }
-  } else if (!on && cheering) {
-    cheering = false
-    renderBinny(tile, root.dataset.mood)
   }
+  if (motionOn()) {
+    tile.classList.remove("is-cheer")
+    void tile.offsetWidth
+    tile.classList.add("is-cheer")
+  }
+  clearTimeout(cheerTimer)
+  cheerTimer = setTimeout(endCheer, CHEER_MS)
 }
 if (week) {
-  week.addEventListener("pointerenter", () => cheer(true))
-  week.addEventListener("pointerleave", () => cheer(false))
-  week.addEventListener("focusin", () => cheer(true))
-  week.addEventListener("focusout", () => cheer(false))
+  week.addEventListener("pointerenter", cheer)
+  week.addEventListener("focusin", cheer)
+  week.addEventListener("click", (e) => {
+    if (e.target.closest(".ah-streak")) cheer()
+  })
+}
+
+/* ---------- marking: walk the demo stages once, ending on "Marking question 7 of 12" ---------- */
+const STAGE_MS = 1500
+let stageTimers = []
+function setStage(prog, n) {
+  prog.dataset.stage = String(n)
+  const bar = prog.querySelector(".a-prog-bar")
+  const text = prog.querySelector(`[data-stage-text="${n}"]`)?.textContent.trim() ?? ""
+  if (bar) {
+    bar.setAttribute("aria-valuenow", n === 3 ? "7" : "0")
+    bar.setAttribute("aria-valuetext", text)
+  }
+}
+function runMarkingDemo() {
+  for (const t of stageTimers) clearTimeout(t)
+  stageTimers = []
+  const prog = document.querySelector('[data-when-action="marking"] .a-prog')
+  if (!prog) return
+  if (!motionOn() || root.dataset.action !== "marking") {
+    setStage(prog, 3)
+    return
+  }
+  setStage(prog, 1)
+  stageTimers.push(setTimeout(() => setStage(prog, 2), STAGE_MS))
+  stageTimers.push(setTimeout(() => setStage(prog, 3), STAGE_MS * 2))
 }
 
 /* ---------- wiring ---------- */
 new MutationObserver((records) => {
   const names = new Set(records.map((r) => r.attributeName))
-  if (names.has("data-motion")) syncMotion()
+  if (names.has("data-motion")) {
+    syncMotion()
+    if (!motionOn()) runMarkingDemo()
+  }
+  if (names.has("data-state")) runMarkingDemo()
   if (names.has("data-state") || names.has("data-width")) {
-    cheering = false
+    endCheer()
     requestAnimationFrame(() => {
       measure()
       resetExam()
@@ -248,10 +292,14 @@ new MutationObserver((records) => {
     })
   }
 }).observe(root, { attributes: true, attributeFilter: ["data-motion", "data-state", "data-width"] })
-reduceMQ.addEventListener("change", syncMotion)
+reduceMQ.addEventListener("change", () => {
+  syncMotion()
+  if (!motionOn()) runMarkingDemo()
+})
 window.addEventListener("resize", () => requestAnimationFrame(measure))
 
 syncMotion()
 measure()
 resetExam()
 observeSections()
+runMarkingDemo()

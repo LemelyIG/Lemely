@@ -40,13 +40,27 @@
 
     <main id="sh-root" class="sh-root">
       <section data-when-state="loading" aria-busy="true" aria-label="Loading your overview" class="a-page">
-        <div class="a-skel a-skel-title"></div>
-        <div class="a-skel a-skel-line"></div>
-        <div class="a-today">
-          <div class="a-skel a-skel-hero"></div>
-          <div class="a-skel a-skel-reward"></div>
+        <div class="a-head a-skel-head">
+          <div class="a-head-text">
+            <div class="a-skel a-skel-title"></div>
+            <div class="a-skel a-skel-line"></div>
+          </div>
         </div>
-        <div class="a-skel a-skel-ledger"></div>
+        <div class="a-skel a-skel-header"></div>
+        <div class="a-skel a-skel-action"></div>
+        <div class="a-sec">
+          <div class="a-skel a-skel-h"></div>
+          <div class="a-skel-card a-skel-rows"><span class="a-skel"></span><span class="a-skel"></span><span class="a-skel"></span></div>
+        </div>
+        <div class="a-sec">
+          <div class="a-skel a-skel-h"></div>
+          <div class="a-skel a-skel-ruler"></div>
+        </div>
+        <div class="a-sec">
+          <div class="a-skel a-skel-h"></div>
+          <div class="a-skel a-skel-sub"></div>
+          <div class="a-skel a-skel-exams"></div>
+        </div>
       </section>
 
       <section data-when-state="error" role="alert" class="a-page">
@@ -87,12 +101,13 @@
             <h1 class="a-greet">Good morning, Mariam.</h1>
             <p class="a-kicker"><span data-needs="many-papers">3 subjects, 22 papers corrected so far.</span><span data-only-state="one-paper">1 subject, 1 paper corrected so far.</span></p>
           </div>
+          <a class="a-btn a-btn-tonal a-head-correct" href="/student/correct"><svg class="a-ico" aria-hidden="true"><use href="#a-i-camera" /></svg>Correct a paper</a>
         </header>
 
         <section class="ah-hero ah-card" data-anim aria-label="Level and streak">
           <figure class="ah-binny">
-            <div class="ah-binny-tile" data-binny></div>
-            <figcaption class="ah-say">
+            <button type="button" class="ah-binny-tile" data-binny aria-label="Binny"></button>
+            <figcaption class="ah-say" aria-live="polite">
               <span data-when-mood="marking">Reading your answers.</span>
               <span data-when-mood="grade-improved">A in 0580, up from B.</span>
               <span data-when-mood="paper-marked">Your 0580/42 result is in.</span>
@@ -124,8 +139,8 @@
           <div class="ah-week">
             <div data-when-streak="kept">
               <div class="ah-week-head">
-                <p class="ah-week-n">9-day streak</p>
-                <p class="ah-week-meta">Longest 14 · 1 freeze · XP per day</p>
+                <p class="ah-week-n"><button type="button" class="ah-streak" aria-describedby="ah-week-meta">9-day streak</button></p>
+                <p class="ah-week-meta" id="ah-week-meta">Longest 14 · 1 freeze · XP per day</p>
               </div>
               <ol class="ah-strip" aria-label="XP per day, last 7 days. Peak 120 XP on 4 November.">
                 <li class="ah-day is-earned" title="30 Oct · 60 XP"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.5"></span></span><span class="ah-day-w">Fri</span><span class="ah-day-d">30</span><span class="ah-vh">30 October, 60 XP</span></li>
@@ -167,7 +182,19 @@
           <div class="a-act" data-when-action="marking">
             <p class="a-meta-line"><span>Marking now</span><span class="a-code">0625</span></p>
             <h3 class="a-act-title">0625/42 is being marked</h3>
-
+            <div class="a-prog" data-stage="3">
+              <p class="a-prog-now" role="status" aria-live="polite"><span data-stage-text="1">Finding the paper and mark scheme</span><span data-stage-text="2">Reading your answers</span><span data-stage-text="3">Marking question <span class="a-mono">7</span> of <span class="a-mono">12</span></span></p>
+              <div class="a-prog-bar" role="progressbar" aria-label="Marking progress" aria-valuemin="0" aria-valuemax="12" aria-valuenow="7" aria-valuetext="Question 7 of 12">
+                <span class="a-prog-seg" data-seg="1"><span class="a-prog-fill"></span></span>
+                <span class="a-prog-seg" data-seg="2"><span class="a-prog-fill"></span></span>
+                <span class="a-prog-seg" data-seg="3"><span class="a-prog-fill"></span></span>
+              </div>
+              <ol class="a-prog-steps" aria-hidden="true">
+                <li data-step="1">Paper and mark scheme</li>
+                <li data-step="2">Your answers</li>
+                <li data-step="3">Questions <span class="a-mono">7/12</span></li>
+              </ol>
+            </div>
             <p class="a-act-body">Lemely is reading your answers and checking each one against the official mark scheme.</p>
             <a class="a-btn a-btn-primary a-act-btn" href="/student/correct">See progress <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
           </div>
@@ -216,34 +243,34 @@
           <h2 id="a-grades-h" class="a-sec-h">Your grades</h2>
           <ul class="a-gj">
             <li data-needs="many-papers">
-              <a class="a-gj-row" href="/student/subject/0625">
+              <a class="a-gj-row" href="/student/subject/0625" aria-label="Physics, 0625: 48%, grade C, 4 points from a B. Started at 41%.">
                 <span class="a-gj-name"><b>Physics</b><span class="a-code">0625</span></span>
                 <span class="a-gj-dist"><span class="a-mono">4</span> points from a B</span>
-                <div class="a-journey" role="img" aria-label="Physics: started at 41%, now 48%, grade C. 4 points to B."><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 7.2%; inline-size: 15.51%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-next" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-ahead" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 22.71%"><span class="a-j-me-l">48%</span></span></div>
+                <div class="a-journey" aria-hidden="true"><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 7.2%; inline-size: 15.51%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-next" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-ahead" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 22.71%"><span class="a-j-me-l">48%</span></span></div>
                 <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
               </a>
             </li>
             <li data-needs="many-papers">
-              <a class="a-gj-row" href="/student/subject/0580">
+              <a class="a-gj-row" href="/student/subject/0580" aria-label="Mathematics, 0580: 76%, grade A, 9 points to A*. Started at 49%.">
                 <span class="a-gj-name"><b>Mathematics</b><span class="a-code">0580</span></span>
                 <span class="a-gj-dist"><span class="a-mono">9</span> points to A*</span>
-                <div class="a-journey" role="img" aria-label="Mathematics: started at 49%, now 76%, grade A. 9 points to A*."><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 25.46%; inline-size: 46.54%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-passed" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-passed" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-next" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 72.0%"><span class="a-j-me-l">76%</span></span></div>
+                <div class="a-journey" aria-hidden="true"><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 25.46%; inline-size: 46.54%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-passed" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-passed" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-next" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 72.0%"><span class="a-j-me-l">76%</span></span></div>
                 <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
               </a>
             </li>
             <li data-needs="many-papers">
-              <a class="a-gj-row" href="/student/subject/0606">
+              <a class="a-gj-row" href="/student/subject/0606" aria-label="Additional Mathematics, 0606: 59%, grade B, 9 points to A. Started at 44%.">
                 <span class="a-gj-name"><b>Additional Mathematics</b><span class="a-code">0606</span></span>
                 <span class="a-gj-dist"><span class="a-mono">9</span> points to A</span>
-                <div class="a-journey" role="img" aria-label="Additional Mathematics: started at 44%, now 59%, grade B. 9 points to A."><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 19.14%; inline-size: 26.79%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-passed" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-next" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 45.93%"><span class="a-j-me-l">59%</span></span></div>
+                <div class="a-journey" aria-hidden="true"><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 19.14%; inline-size: 26.79%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-passed" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-next" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 45.93%"><span class="a-j-me-l">59%</span></span></div>
                 <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
               </a>
             </li>
             <li data-only-state="one-paper">
-              <a class="a-gj-row" href="/student/subject/0580">
+              <a class="a-gj-row" href="/student/subject/0580" aria-label="Mathematics, 0580: 65%, grade B, 5 points to A.">
                 <span class="a-gj-name"><b>Mathematics</b><span class="a-code">0580</span></span>
                 <span class="a-gj-dist"><span class="a-mono">5</span> points to A</span>
-                <div class="a-journey" role="img" aria-label="Mathematics: now 65%, grade B. 5 points to A."><span class="a-j-line"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-passed" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-next" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 53.67%"><span class="a-j-me-l">65%</span></span></div>
+                <div class="a-journey" aria-hidden="true"><span class="a-j-line"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-passed" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-next" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 53.67%"><span class="a-j-me-l">65%</span></span></div>
                 <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
               </a>
             </li>
