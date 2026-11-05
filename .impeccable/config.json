@@ -38,6 +38,15 @@
         "value": "cubic-bezier(.3, 1.5, .5, 1)",
         "createdAt": "2026-10-30T12:24:31.911Z",
         "reason": "User confirmed: copied verbatim from the Lemely Landing Page reference (Binny closing peek)"
+      },
+      {
+        "rule": "design-system-font",
+        "value": "newsreader variable",
+        "files": [
+          "web/tests/unit/retiredTokens.test.ts"
+        ],
+        "createdAt": "2026-11-04T22:47:19.459Z",
+        "reason": "controller: planted retired-font fixture in the retired-token guard test, which asserts the font is banned; not product UI"
       }
     ]
   }
