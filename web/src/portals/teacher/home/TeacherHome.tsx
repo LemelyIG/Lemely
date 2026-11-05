@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { useTeacherClasses, useTeacherOverview } from "@/lib/hooks/useTeacherApi"
 import { teacherLoadFailureMessage } from "@/lib/teacherOutcome"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
+import { growthModel } from "./growth"
 import { deriveSetup, teacherHomeView } from "./setup"
 import { TeacherSetup } from "./TeacherSetup"
 import { Overview as OverviewScreen } from "../screens/Overview"
@@ -25,7 +26,7 @@ export function TeacherHome() {
     )
   }
   if (view === "setup") {
-    return <TeacherSetup progress={deriveSetup(classes.data!.classes.length, overview.data!)} firstClass={classes.data!.classes[0] ?? null} onFiles={toGrading} />
+    return <TeacherSetup progress={deriveSetup(classes.data!.classes.length, overview.data!)} firstClass={classes.data!.classes[0] ?? null} unlocks={growthModel(classes.data!.classes, overview.data!).unlocks} onFiles={toGrading} />
   }
   return <OverviewScreen overview={overview.data!} classes={classes.data!.classes} onFiles={toGrading} />
 }
