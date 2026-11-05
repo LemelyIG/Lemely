@@ -5,8 +5,8 @@
  * prefers-reduced-motion and the preview's data-motion is not "reduce"), the
  * root gets .a-motion: CSS animations then wait on their first frame until the
  * section scrolls into view (.is-in) and run once. This script measures the
- * distances the markers travel, drives the exam strip's selection and keyboard
- * movement, and gives Binny its small reactions.
+ * distances the markers travel, drives the exam tiles' selection, keyboard
+ * movement and count-down, and gives Binny its small reactions.
  */
 import { renderBinny } from "./binny-island"
 
@@ -85,6 +85,7 @@ const seen = new IntersectionObserver(
       if (!e.isIntersecting) continue
       e.target.classList.add("is-in")
       seen.unobserve(e.target)
+      if (e.target.classList.contains("a-exams")) countDown()
     }
   },
   { threshold: 0.2 },
@@ -96,84 +97,85 @@ function observeSections() {
   }
 }
 
-/* ---------- exam strip: select an exam, show its card, follow it in the headline ---------- */
+/* ---------- exams: select a countdown tile; the subtitle follows it ---------- */
 const exams = document.querySelector(".a-exams")
-const headline = document.getElementById("a-exams-h")
-const defaultHeadline = headline ? headline.innerHTML : ""
+const subtitle = document.getElementById("a-exams-sub")
+const defaultSubtitle = subtitle ? subtitle.innerHTML : ""
 
-const visible = (el) => el.getClientRects().length > 0
-
-function allowedCard(card) {
+function allowed(el) {
   const state = root.dataset.state
-  if (card.matches('[data-only-state="one-paper"]')) return state === "one-paper"
-  if (card.matches('[data-needs="many-papers"]')) return state !== "one-paper"
+  if (el.matches('[data-only-state="one-paper"]')) return state === "one-paper"
+  if (el.matches('[data-needs="many-papers"]')) return state !== "one-paper"
   return true
 }
 
-function markers(selector) {
-  return [...exams.querySelectorAll(selector)].filter((b) => {
-    const state = root.dataset.state
-    if (b.matches('[data-needs="many-papers"]') && state === "one-paper") return false
-    return true
-  })
-}
+const tiles = () => (exams ? [...exams.querySelectorAll(".a-xt")].filter(allowed) : [])
 
-function selectExam(code, { focus = false, announce = true } = {}) {
+function selectExam(code, { focus = false } = {}) {
   if (!exams) return
-  for (const b of exams.querySelectorAll("[data-exam]:is(button)")) {
-    const on = b.dataset.exam === code
-    b.classList.toggle("is-sel", on)
-    b.setAttribute("aria-pressed", String(on))
-  }
   let shown = null
-  for (const card of exams.querySelectorAll(".a-excard-in")) {
-    const on = card.dataset.exam === code && allowedCard(card)
-    card.classList.toggle("is-sel", on)
-    card.classList.remove("is-opening")
-    if (on) shown = card
+  for (const t of exams.querySelectorAll(".a-xt")) {
+    const on = t.dataset.exam === code && allowed(t)
+    t.classList.toggle("is-sel", on)
+    t.querySelector(".a-xt-sel")?.setAttribute("aria-pressed", String(on))
+    if (on) shown = t
   }
-  if (shown && motionOn() && announce) {
-    void shown.offsetWidth
-    shown.classList.add("is-opening")
-  }
-  const first = markers(".a-ex")[0]
-  if (headline) {
-    if (!first || first.dataset.exam === code || !shown) {
-      headline.innerHTML = defaultHeadline
+  for (const p of exams.querySelectorAll(".a-xb-pin")) p.classList.toggle("is-sel", p.dataset.exam === code && allowed(p))
+  const first = tiles()[0]
+  if (subtitle) {
+    if (!shown || !first || first === shown) {
+      subtitle.innerHTML = defaultSubtitle
     } else {
-      const name = shown.querySelector(".a-exc-t b")?.textContent ?? ""
-      const days = shown.querySelectorAll(".a-exc-m .a-mono")[1]?.textContent ?? ""
-      headline.innerHTML = `<span class="a-mono">${days}</span> days to ${name}.`
+      const days = shown.querySelector(".a-xt-n")?.dataset.n ?? ""
+      const name = shown.querySelector(".a-xt-name")?.lastChild?.textContent.trim() ?? ""
+      const date = shown.querySelector(".a-xt-date")?.textContent ?? ""
+      subtitle.innerHTML = `<span class="a-mono">${days}</span> days to ${name} · <span class="a-mono">${date}</span>`
     }
   }
-  if (focus) {
-    const target = [...exams.querySelectorAll(`[data-exam="${code}"]:is(button)`)].find(visible)
-    target?.focus()
-  }
+  if (focus) shown?.querySelector(".a-xt-sel")?.focus()
 }
 
 function resetExam() {
-  if (!exams) return
-  const first = markers(".a-ex")[0]
-  if (first) selectExam(first.dataset.exam, { announce: false })
+  const first = tiles()[0]
+  if (first) selectExam(first.dataset.exam)
+}
+
+/* Day counts tick down from +10 to their value, once, as the tiles pop in. */
+function countDown() {
+  if (!motionOn() || !exams) return
+  for (const [i, t] of tiles().entries()) {
+    const n = t.querySelector(".a-xt-n")
+    const target = Number(n.dataset.n)
+    const start = performance.now() + 820 + i * 140
+    const dur = 900
+    n.textContent = String(target + 10)
+    const step = (now) => {
+      const k = Math.min(1, Math.max(0, (now - start) / dur))
+      const eased = 1 - (1 - k) ** 3
+      n.textContent = String(Math.round(target + 10 - 10 * eased))
+      if (k < 1) requestAnimationFrame(step)
+    }
+    requestAnimationFrame(step)
+  }
 }
 
 if (exams) {
   exams.addEventListener("click", (e) => {
-    const b = e.target.closest("button[data-exam]")
+    const b = e.target.closest(".a-xt-sel")
     if (b) selectExam(b.dataset.exam)
   })
   exams.addEventListener("keydown", (e) => {
-    const b = e.target.closest("button[data-exam]")
+    const b = e.target.closest(".a-xt-sel")
     if (!b) return
-    const horizontal = b.classList.contains("a-ex")
-    const next = horizontal ? "ArrowRight" : "ArrowDown"
-    const prev = horizontal ? "ArrowLeft" : "ArrowUp"
-    if (e.key !== next && e.key !== prev) return
+    const forward = ["ArrowRight", "ArrowDown"]
+    const back = ["ArrowLeft", "ArrowUp"]
+    if (![...forward, ...back].includes(e.key)) return
     e.preventDefault()
-    const group = markers(horizontal ? ".a-ex" : ".a-exlist-b")
-    const i = group.indexOf(b)
-    const step = (e.key === next) === (getComputedStyle(b).direction !== "rtl") ? 1 : -1
+    const group = tiles()
+    const i = group.findIndex((t) => t.contains(b))
+    const horizontal = e.key === "ArrowRight" || e.key === "ArrowLeft"
+    const rtl = horizontal && getComputedStyle(b).direction === "rtl"
+    const step = (forward.includes(e.key) ? 1 : -1) * (rtl ? -1 : 1)
     const to = group[(i + step + group.length) % group.length]
     if (to) selectExam(to.dataset.exam, { focus: true })
   })

@@ -350,108 +350,121 @@
 .a-lane-go { color: var(--md-primary); opacity: 0; transform: translateX(-4px); transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out) }
 .a-lanes a:is(:hover, :focus-visible) .a-lane-go { opacity: 1; transform: none }
 
-/* Exam countdown strip: today on the left, a compressed stretch with week ticks,
-   then May zoomed. Markers are buttons; the selected exam's card shows below. */
-.a-exams { margin-block-start: 64px }
-.a-exams .a-sec-h .a-mono { font-family: inherit; font-weight: inherit; font-variant-numeric: tabular-nums }
-.a-strip { position: relative; block-size: 176px; margin-inline: var(--space-6) }
-.a-strip-far {
-  position: absolute; inset-block-start: calc(50% - 1px); inset-inline: 0 48%;
-  border-block-start: 2px dashed var(--border-default); transform-origin: 0 50%;
-}
-.a-strip-weeks {
-  position: absolute; inset-block-start: calc(50% - 5px); inset-inline: 0 48%; block-size: 10px;
-  background: repeating-linear-gradient(to right, var(--border-default) 0 1px, transparent 1px calc(100% / 25));
-  opacity: 0.7;
-}
-.a-strip-line {
-  position: absolute; inset-block-start: calc(50% - 2px); inset-inline: 52% 0; block-size: 4px; border-radius: 2px;
-  background: var(--border-default); transform-origin: 0 50%;
-}
-.a-strip-break {
-  position: absolute; inset-block-start: 50%; inline-size: 16px; block-size: 20px; transform: translate(-50%, -50%);
-  background: var(--surface-page);
-}
-.a-strip-break::before, .a-strip-break::after {
-  content: ""; position: absolute; inset-block-start: 2px; inline-size: 2px; block-size: 16px; border-radius: 1px;
-  background: var(--text-muted); transform: rotate(22deg);
-}
-.a-strip-break::before { inset-inline-start: 4px }
-.a-strip-break::after { inset-inline-start: 10px }
-.a-strip-today { position: absolute; inset-block-start: 50%; inset-inline-start: 0 }
-.a-strip-dot {
-  position: absolute; inline-size: 12px; block-size: 12px; border-radius: 50%; transform: translate(-50%, -50%);
-  background: var(--text-body); box-shadow: 0 0 0 3px var(--surface-page);
-}
-.a-strip-tl {
-  position: absolute; inset-block-start: 18px; inset-inline-start: -6px; display: flex; flex-direction: column; gap: 2px;
-  white-space: nowrap; font-size: var(--fs-body-sm); color: var(--text-secondary);
-}
-.a-strip-tl b { color: var(--text-body) }
-.a-tick {
-  position: absolute; inset-block-start: calc(50% + 14px); transform: translateX(-50%);
-  font: 600 var(--fs-label) / 1 var(--font-mono); letter-spacing: 0.04em; color: var(--text-muted);
-}
-.a-tick.is-may { color: var(--text-body); font-weight: 800 }
-
-.a-ex {
-  position: absolute; inset-block-start: 50%; inline-size: 28px; block-size: 28px;
-  margin-block-start: -14px; margin-inline-start: -14px; padding: 0; border: 0; border-radius: 50%;
-  background: none; color: inherit; font: inherit; cursor: pointer;
-}
-.a-ex:focus-visible { outline: none }
-.a-ex-dot {
-  display: block; inline-size: 14px; block-size: 14px; border-radius: 50%;
-  background: var(--surface-page); box-shadow: inset 0 0 0 3px var(--text-secondary);
-  transition: transform var(--dur-base) var(--a-ease-expo), background var(--dur-fast);
-}
-.a-ex > .a-ex-dot { position: absolute; inset-inline-start: 7px; inset-block-start: 7px }
-.a-ex:hover > .a-ex-dot { transform: scale(1.25) }
-.a-ex:focus-visible > .a-ex-dot { outline: 2px solid var(--md-primary); outline-offset: 3px }
-.a-ex.is-sel > .a-ex-dot {
-  inline-size: 18px; block-size: 18px; inset-inline-start: 5px; inset-block-start: 5px;
-  background: var(--md-primary); box-shadow: 0 0 0 3px var(--surface-page);
-}
-.a-ex-l {
-  position: absolute; inset-inline-start: 14px; transform: translateX(-50%);
-  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 8px; border-radius: 10px;
-  white-space: nowrap; text-align: center;
-  transition: background var(--dur-fast) var(--ease-out);
-}
-.a-ex:hover .a-ex-l { background: var(--surface-hover-tint) }
-.a-ex.is-up .a-ex-l { inset-block-end: 30px }
-.a-ex.is-down .a-ex-l { inset-block-start: 30px }
-.a-ex.is-end .a-ex-l { transform: translateX(calc(-100% + 16px)); align-items: flex-end; text-align: end }
-.a-ex-l b { display: inline-flex; align-items: baseline; gap: 6px; font-size: var(--fs-body-sm); font-weight: 700; color: var(--text-body) }
-.a-ex-l .a-mono { font-size: 13px; color: var(--text-secondary) }
-.a-ex-k { font: 700 12px / 1.2 var(--font-ui); color: var(--md-primary) }
-.a-ex.is-sel .a-ex-l > .a-mono, .a-ex.is-sel .a-ex-l b { color: var(--md-primary) }
-.a-exlist { display: none; margin: 0; padding: 0; list-style: none }
-
-.a-excard { margin-block-start: var(--space-4) }
-.a-excard-in {
-  display: none; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-6);
-  padding: var(--space-5) var(--space-6); border-radius: var(--radius-tile);
+/* Exams: framed like the other screen-2 sections. A calm subtitle, then one card:
+   a Mist band from Today (Nov to Apr compressed with week ticks, May zoomed) and a
+   countdown tile hanging from each exam date. The selected tile takes the tint. */
+.a-sec-sub { margin: calc(var(--space-3) * -1) 0 var(--space-5); font-size: var(--fs-body); color: var(--text-secondary) }
+.a-sec-sub .a-mono { color: var(--text-body) }
+.a-xcard {
+  padding: var(--space-8) var(--space-8) var(--space-7); border-radius: var(--radius-card);
   background: var(--surface-card); box-shadow: var(--a-card-edge);
 }
-.a-excard-in.is-sel { display: grid }
-.sh-root[data-state="one-paper"] .a-excard-in[data-only-state].is-sel { display: grid }
-.sh-root[data-state="one-paper"] .a-excard-in[data-only-state]:not(.is-sel) { display: none }
-.a-exc-t { margin: 0; display: flex; align-items: baseline; gap: var(--space-2); font-size: var(--fs-body) }
-.a-exc-t b { font-weight: 700 }
-.a-exc-m { margin: 2px 0 0; font-size: var(--fs-body-sm); color: var(--text-secondary) }
-.a-exc-m .a-mono { color: var(--text-body) }
-.a-exc-d { margin: 0; font: 700 var(--fs-body) / 1.3 var(--font-ui); color: var(--text-body) }
+.a-xb { position: relative; block-size: 64px; margin-block-start: var(--space-5) }
+.a-xb-today {
+  position: absolute; inset-block-end: calc(100% - 14px); inset-inline-start: 0;
+  padding: 4px 10px; border-radius: var(--radius-pill);
+  background: var(--text-body); color: var(--surface-card);
+  font: 700 12px / 1.2 var(--font-ui); white-space: nowrap;
+}
+.a-xb-today .a-mono { font-weight: 600 }
+.a-xb-track {
+  position: absolute; inset-inline: 0; inset-block-start: 20px; block-size: 14px; overflow: hidden;
+  border-radius: var(--radius-pill); background: var(--md-primary-container);
+}
+.a-xb-weeks {
+  position: absolute; inset-block: 3px; inset-inline: 0 70%;
+  background: repeating-linear-gradient(to right, color-mix(in oklch, var(--md-on-primary-container) 30%, transparent) 0 1px, transparent 1px calc(100% / 25));
+}
+.a-xb-fill {
+  position: absolute; inset-block: 0; inset-inline-start: 0; inline-size: 44.42%;
+  border-radius: inherit; background: color-mix(in oklch, var(--md-primary) 40%, var(--md-primary-container));
+  transform-origin: 0 50%;
+}
+.sh-root[data-state="one-paper"] .a-xb-fill { inline-size: 72.21% }
+.a-xb-m {
+  position: absolute; inset-block-start: 42px; transform: translateX(-50%);
+  font: 600 var(--fs-label) / 1 var(--font-mono); letter-spacing: 0.04em; color: var(--text-muted);
+}
+.a-xb-m.is-may { transform: none; color: var(--text-body); font-weight: 800 }
+.a-xb-break {
+  position: absolute; inset-block-start: 18px; inline-size: 14px; block-size: 18px; transform: translateX(-50%);
+  background: var(--surface-card);
+}
+.a-xb-break::before, .a-xb-break::after {
+  content: ""; position: absolute; inset-block-start: 1px; inline-size: 2px; block-size: 16px; border-radius: 1px;
+  background: var(--text-muted); transform: rotate(22deg);
+}
+.a-xb-break::before { inset-inline-start: 3px }
+.a-xb-break::after { inset-inline-start: 9px }
+.a-xb-pin { position: absolute; inset-block-start: 20px; inline-size: 0 }
+.a-xb-pin::before {
+  content: ""; position: absolute; inset-block-start: 1px; inset-inline-start: -6px; inline-size: 12px; block-size: 12px;
+  border-radius: 50%; background: var(--surface-card); box-shadow: inset 0 0 0 3px var(--md-primary);
+}
+.a-xb-stem {
+  position: absolute; inset-block-start: 14px; inset-inline-start: -1px; inline-size: 2px; block-size: 36px;
+  background: var(--border-default); transform-origin: 50% 0;
+}
+.a-xb-pin.is-sel .a-xb-stem { background: var(--md-primary) }
+.a-xb-pin.is-sel::before { background: var(--md-primary); box-shadow: 0 0 0 3px var(--surface-card) }
+
+.a-xt-row {
+  display: grid; grid-template-columns: 34fr 26fr 20fr 20fr; align-items: stretch;
+  margin-block-start: 14px;
+}
+.a-xt-weeks { grid-column: 1; align-self: start; margin: var(--space-6) 0 0; font-size: var(--fs-body-sm); color: var(--text-secondary) }
+.a-xt-weeks b { display: block; font: 800 40px / 1 var(--font-display); letter-spacing: -0.04em; color: var(--text-body) }
+.a-xt {
+  grid-column: var(--col); grid-row: 1;
+  display: flex; flex-direction: column; gap: var(--space-3);
+  margin-inline: 6px; padding: var(--space-4); border-radius: var(--radius-tile);
+  background: var(--surface-card); box-shadow: inset 0 0 0 1.5px var(--border-default);
+  transition: background var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), transform var(--dur-base) var(--a-ease-expo);
+}
+.sh-root[data-state="one-paper"] .a-xt[data-only-state] { display: flex }
+.a-xt:hover { transform: translateY(-2px) }
+.a-xt.is-sel { background: var(--md-primary-container); box-shadow: none }
+.a-xt.is-first { padding: var(--space-5) }
+.a-xt-sel {
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1);
+  margin: 0; padding: 0; border: 0; background: none; color: var(--text-body); font: inherit; text-align: start; cursor: pointer;
+}
+.a-xt-sel:focus-visible { outline-offset: 6px; border-radius: 6px }
+.a-xt.is-sel .a-xt-sel { color: var(--md-on-primary-container) }
+.a-xt-k { font: 700 12px / 1.2 var(--font-ui); color: var(--md-primary); margin-block-end: var(--space-1) }
+.a-xt-days { display: flex; align-items: baseline; gap: 6px; font-size: var(--fs-body-sm); font-weight: 600 }
+.a-xt-n { font: 800 40px / 1 var(--font-display); letter-spacing: -0.04em; font-variant-numeric: tabular-nums lining-nums }
+.a-xt.is-first .a-xt-n { font-size: 56px }
+.a-xt-name { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 6px; margin-block-start: var(--space-1); font-weight: 700; font-size: 15px }
+.a-xt-date { font-size: 13px; color: var(--text-secondary) }
+.a-xt.is-sel .a-xt-date { color: var(--md-on-primary-container) }
+.a-xt-grades { display: flex; align-items: center; gap: 6px; margin-block-start: var(--space-2) }
+.a-xt-grades .a-ico { inline-size: 16px; block-size: 16px; color: var(--text-muted) }
+.a-grade-chip, .a-grade-next {
+  display: inline-grid; place-items: center; inline-size: 34px; block-size: 32px; border-radius: 10px;
+  font: 800 19px / 1 var(--font-ui); letter-spacing: -0.01em;
+}
+.a-grade-chip { color: var(--white); background: var(--sh-grade-c) }
+.a-grade-chip[data-grade="A*"] { background: var(--sh-grade-astar) }
+.a-grade-chip[data-grade="A"] { background: var(--sh-grade-a) }
+.a-grade-chip[data-grade="B"] { background: var(--sh-grade-b) }
+.a-grade-chip[data-grade="C"] { background: var(--sh-grade-c) }
+.a-grade-next { color: var(--text-body); background: var(--surface-card); outline: 2px dashed var(--sh-grade-b); outline-offset: -2px }
+.a-grade-next[data-grade="A*"] { outline-color: var(--sh-grade-astar) }
+.a-grade-next[data-grade="A"] { outline-color: var(--sh-grade-a) }
+.a-grade-next[data-grade="B"] { outline-color: var(--sh-grade-b) }
+.a-xt-act { align-self: flex-start; margin-block-start: auto }
+.a-xt.is-sel .a-xt-act { background: var(--surface-card); color: var(--md-primary) }
 
 /* ---------- Motion ----------
    Final state is the default. With motion allowed, variant-a.js adds .a-motion to the
    root; animations then wait (paused, showing their first frame) until their section
    gets .is-in from an IntersectionObserver, and run once. The shell's reduce rules
    switch every animation off, which leaves the final state. */
-.a-motion [data-anim] :is(.ah-day-d, .ah-xp-bar, .ah-bar-fill, .a-act, .a-j-me, .a-j-trail, .a-stone, .a-marker, .a-marker-l, .a-tail, .a-strip-far, .a-strip-weeks, .a-strip-line, .a-ex, .a-tick, .a-strip-today) {
+.a-motion [data-anim] :is(.ah-day-d, .ah-xp-bar, .ah-bar-fill, .a-act, .a-j-me, .a-j-trail, .a-stone, .a-marker, .a-marker-l, .a-tail, .a-xb-fill, .a-xb-weeks, .a-xb-stem, .a-xt) {
   animation-play-state: paused;
 }
-.a-motion [data-anim].is-in :is(.ah-day-d, .ah-xp-bar, .ah-bar-fill, .a-act, .a-j-me, .a-j-trail, .a-stone, .a-marker, .a-marker-l, .a-tail, .a-strip-far, .a-strip-weeks, .a-strip-line, .a-ex, .a-tick, .a-strip-today) {
+.a-motion [data-anim].is-in :is(.ah-day-d, .ah-xp-bar, .ah-bar-fill, .a-act, .a-j-me, .a-j-trail, .a-stone, .a-marker, .a-marker-l, .a-tail, .a-xb-fill, .a-xb-weeks, .a-xb-stem, .a-xt) {
   animation-play-state: running;
 }
 .ah-bar-fill, .ah-day.is-today.is-earned .ah-day-d { animation: none }
@@ -494,21 +507,21 @@
 .a-lanes > li:nth-child(1) { --li: 0 } .a-lanes > li:nth-child(2) { --li: 1 } .a-lanes > li:nth-child(3) { --li: 2 }
 .a-lanes > li:nth-child(4) { --li: 3 } .a-lanes > li:nth-child(5) { --li: 4 }
 
-/* Exam strip: the line draws from Today, ticks fade in, markers pop in order. */
-.a-motion .a-strip-today { animation: aFade 300ms var(--ease-out) both }
-.a-motion .a-strip-far { animation: aDraw 900ms var(--a-ease-expo) 100ms both }
-.a-motion .a-strip-weeks { animation: aFadeTo 600ms var(--ease-out) 500ms both }
-.a-motion .a-strip-line { animation: aDraw 500ms var(--a-ease-expo) 800ms both }
-.a-motion .a-tick { animation: aFade 400ms var(--ease-out) 600ms both }
-.a-motion .a-ex { animation: aPopIn 520ms var(--a-ease-expo) calc(var(--ei, 0) * 120ms + 1000ms) both }
-.a-ex[data-exam="0625"] { --ei: 0 } .a-ex[data-exam="0580"] { --ei: 1 } .a-ex[data-exam="0606"] { --ei: 2 }
-.a-excard-in.is-opening { animation: aRise var(--dur-slow) var(--a-ease-expo) both }
+/* Exams: the band fills from Today to the first exam, stems drop, tiles pop in order;
+   the day counts tick down from +10 (variant-a.js). */
+.a-motion .a-xb-fill { animation: aDraw 1100ms var(--a-ease-expo) 150ms both }
+.a-motion .a-xb-weeks { animation: aFade 500ms var(--ease-out) 300ms both }
+.a-motion .a-xb-stem { animation: aDrop 420ms var(--a-ease-expo) calc(var(--ei, 0) * 140ms + 700ms) both }
+.a-motion .a-xt { animation: aPopIn 560ms var(--a-ease-expo) calc(var(--ei, 0) * 140ms + 820ms) both }
+:is(.a-xt, .a-xb-pin)[data-exam="0625"] { --ei: 0 } :is(.a-xt, .a-xb-pin)[data-exam="0580"] { --ei: 1 } :is(.a-xt, .a-xb-pin)[data-exam="0606"] { --ei: 2 }
+.sh-root[data-state="one-paper"] :is(.a-xt, .a-xb-pin)[data-exam="0580"] { --ei: 0 }
 
 @keyframes aPop { 0% { transform: scale(0.6); opacity: 0 } 70% { transform: scale(1.08); opacity: 1 } 100% { transform: none } }
 @keyframes aPopIn { 0% { transform: scale(0.4); opacity: 0 } 70% { transform: scale(1.1); opacity: 1 } 100% { transform: none } }
 @keyframes aGrow { from { transform: scaleY(0) } }
 @keyframes aRise { from { transform: translateY(8px); opacity: 0 } }
 @keyframes aDraw { from { transform: scaleX(0) } }
+@keyframes aDrop { from { transform: scaleY(0) } }
 @keyframes aFade { from { opacity: 0 } }
 @keyframes aFadeTo { from { opacity: 0 } to { opacity: 0.7 } }
 @keyframes aSlide { from { transform: translate(calc(-50% + var(--from, 0px)), -50%) } to { transform: translate(-50%, -50%) } }
@@ -664,7 +677,7 @@
 .sh-root[data-width="mobile"] .a-page { padding-block-end: var(--space-8) }
 
 @media (pointer: coarse) {
-  .a-note a, .a-lanes a, .a-gj-row, .a-ex-btn { min-block-size: 44px }
+  .a-note a, .a-lanes a, .a-gj-row { min-block-size: 44px }
   .a-note a { padding-block: 10px }
 }
 
@@ -690,26 +703,23 @@
   .a-hero .a-btn-primary { inline-size: 100%; justify-content: center }
   .a-stone { inline-size: 30px; block-size: 30px }
 
-  .a-exams { margin-block-start: var(--space-12) }
-  .a-strip { display: none }
-  .a-exlist { display: block }
-  .a-exlist li + li { border-block-start: 1px solid var(--border-subtle) }
-  .a-exlist-b {
-    display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: var(--space-3);
-    inline-size: 100%; min-block-size: 56px; padding: var(--space-3) var(--space-2); border: 0; border-radius: 12px;
-    background: none; color: inherit; font: inherit; text-align: start; cursor: pointer;
+  .a-sec-sub { font-size: var(--fs-body-sm) }
+  .a-xcard { padding: var(--space-5) var(--space-4) }
+  .a-xb { display: none }
+  .a-xt-row { position: relative; grid-template-columns: minmax(0, 1fr); row-gap: var(--space-3); margin: 0; padding-inline-start: 28px }
+  .a-xt-row::before {
+    content: ""; position: absolute; inset-block: 8px; inset-inline-start: 6px; inline-size: 10px;
+    border-radius: var(--radius-pill); background: var(--md-primary-container);
   }
-  .a-exlist-b:hover { background: var(--surface-hover-tint) }
-  .a-exlist-b .a-ex-dot { justify-self: center }
-  .a-exlist-b.is-sel .a-ex-dot { inline-size: 18px; block-size: 18px; background: var(--md-primary); box-shadow: none }
-  .a-exlist-n { display: flex; flex-direction: column; gap: 2px; min-inline-size: 0 }
-  .a-exlist-n b { display: inline-flex; align-items: baseline; gap: 6px; font-weight: 700 }
-  .a-exlist-n .a-mono { font-size: 13px; color: var(--text-secondary) }
-  .a-exlist-d { font-size: var(--fs-body-sm); color: var(--text-secondary) }
-  .a-exlist-d b { font-size: var(--fs-body); color: var(--text-body) }
-  .a-exlist-b.is-sel .a-exlist-d b { color: var(--md-primary) }
-  .a-excard-in, .sh-root[data-state="one-paper"] .a-excard-in[data-only-state].is-sel { grid-template-columns: minmax(0, 1fr); gap: var(--space-3); padding: var(--space-5) }
-  .a-excard-in .a-btn { justify-self: start }
+  .a-xt-weeks { grid-column: 1; grid-row: auto; margin: 0 0 var(--space-1) }
+  .a-xt-weeks b { display: inline; font-size: 28px; margin-inline-end: 4px }
+  .a-xt { position: relative; grid-column: 1; grid-row: auto; margin-inline: 0 }
+  .a-xt::before {
+    content: ""; position: absolute; inset-inline-start: -17px; inset-block-start: 30px; inline-size: 17px; block-size: 2px;
+    background: var(--border-default);
+  }
+  .a-xt.is-sel::before { background: var(--md-primary) }
+  .a-xt.is-first .a-xt-n { font-size: 44px }
 
   .a-action-card { margin-block-start: var(--space-4); padding: var(--space-5) var(--space-5) var(--space-5) }
   .a-act .a-facts { margin-block: var(--space-1) var(--space-4) }
