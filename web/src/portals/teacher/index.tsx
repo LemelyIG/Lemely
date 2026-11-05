@@ -45,6 +45,7 @@ import { unreadBadgeLabel } from "@/lib/staffInbox"
 import { navItems, resolveTrail, classesItemActive, type NavItem } from "./data"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
 import { CreateSheet } from "./components/TopBarSheets"
+import { ProfileAvatarPlaceholder } from "./components/ProfileAvatar"
 import { roleLabel } from "./components/topBarActions"
 import { underlyingPathname } from "@/lib/nav/backgroundLocation"
 import { useOverlayState } from "@/lib/nav/useOverlayState"
@@ -465,7 +466,7 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
         <Link to="/teacher/settings" state={overlayState} aria-label="Settings" className={cn(TOP_BAR_ICON_BUTTON, "max-sm:hidden")}>
           <Gear size={20} aria-hidden="true" />
         </Link>
-        <Suspense fallback={null}>
+        <Suspense fallback={<ProfileAvatarPlaceholder />}>
           <ProfileMenu triggerClassName="cursor-pointer" />
         </Suspense>
       </div>
