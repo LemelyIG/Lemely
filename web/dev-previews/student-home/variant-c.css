@@ -92,7 +92,7 @@
 .tl-week-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; margin-block-end: 12px }
 .tl-week-n { font: 800 28px/1 var(--font-display); letter-spacing: -0.04em; text-wrap: balance }
 .tl-week-meta { font: 600 13px/1.4 var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums }
-.tl-week-body { margin-block: -4px 12px; font-size: 14px; color: var(--text-secondary); text-wrap: pretty }
+.tl-week-body { max-inline-size: 46ch; margin-block: -4px 12px; font-size: 14px; color: var(--text-secondary); text-wrap: pretty }
 
 /* Calendar strip: weekday above, date inside a compact square. */
 .tl-strip { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(7, 52px); justify-content: space-between; gap: 8px }
@@ -229,7 +229,7 @@
 .tl-subj {
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr) 132px 124px;
-  grid-template-areas: "chip name spark papers" "chip delta spark exam";
+  grid-template-areas: "chip name spark papers" "chip delta cap exam";
   align-items: center; column-gap: 16px; row-gap: 2px;
   margin-inline: -10px; padding: 12px 10px; border-radius: 12px;
   color: inherit; text-decoration: none;
@@ -265,13 +265,13 @@
 .tl-res-marks { font: 600 14px/1.4 var(--font-mono); text-align: end; font-variant-numeric: tabular-nums }
 .tl-res .tl-chip { grid-area: auto }
 .tl-chip-sm { inline-size: 28px; block-size: 28px; border-radius: 9px; font-size: 19px }
-/* Subject sparkline: shared 30–90% scale, last 8 papers right-aligned, next grade band dashed. */
-.tl-spark { grid-area: spark; inline-size: 132px; block-size: 40px; overflow: visible }
+/* Subject sparkline: shared 30–90% scale, last 8 papers right-aligned, no axes or bands.
+   A plain-words line under it says how far the next grade is. */
+.tl-spark { grid-area: spark; align-self: end; inline-size: 112px; block-size: auto; aspect-ratio: 132 / 40; overflow: visible }
 .sh-root[data-state="one-paper"] .tl-spark[data-only-state="one-paper"] { display: block }
-.tl-spark polyline { fill: none; stroke: var(--md-primary); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round }
-.tl-spark circle { fill: var(--md-primary); stroke: var(--surface-card); stroke-width: 2 }
-.tl-spark-band { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3 3 }
-.tl-spark-label { fill: var(--text-secondary); font: 600 11px var(--font-mono) }
+.tl-spark polyline { fill: none; stroke: var(--md-primary); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke }
+.tl-spark circle { fill: var(--md-primary); stroke: var(--surface-card); stroke-width: 2; vector-effect: non-scaling-stroke }
+.tl-spark-cap { grid-area: cap; align-self: start; font-size: 13px; font-weight: 600; color: var(--text-body); white-space: nowrap }
 
 /* New student */
 .tl-hero-new { grid-template-columns: 160px minmax(0, 1fr); grid-template-areas: "binny body"; align-items: start }
@@ -294,7 +294,7 @@
 }
 .tl-error-ico { inline-size: 32px; block-size: 32px; color: var(--md-error) }
 .tl-error-h { margin: 4px 0 0; font: 700 21px/1.25 var(--font-ui) }
-.tl-error-p { margin-block-end: 10px; color: var(--text-secondary) }
+.tl-error-p { margin-block-end: 10px; color: var(--text-secondary); text-wrap: balance }
 
 /* Loading */
 .tl-skel { border-radius: 12px; background: var(--md-surface-high); animation: tlPulse 1.2s ease-in-out infinite alternate }
@@ -305,7 +305,7 @@
 .tl-skel-stack { grid-column: 2 / -1; display: grid; gap: 14px; align-content: center }
 .tl-skel-level { inline-size: 200px; block-size: 40px }
 .tl-skel-bar { block-size: 12px; border-radius: var(--radius-pill) }
-.tl-skel-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px }
+.tl-skel-week { display: grid; grid-template-columns: repeat(7, 52px); justify-content: space-between; gap: 8px }
 .tl-skel-week span { block-size: 52px; border-radius: 14px }
 .tl-skel-block { block-size: 220px; margin-block-start: 48px; border-radius: var(--radius-card) }
 .tl-skel-ledger { block-size: 200px; margin-block-start: 24px; border-radius: var(--radius-card) }
@@ -330,7 +330,7 @@
 
 /* Mobile: Binny small, then level, the week, today, the record. */
 @container home (max-width: 760px) {
-  .tl { --tl-pad: 16px }
+  .tl-page { --tl-pad: 16px }
   /* Compact reward hero so the lead Today item (title and button) fits the first 390x844 screen. */
   .tl-page { padding-block: 16px 96px }
   .tl-greet { margin-block-end: 12px }
@@ -382,6 +382,7 @@
   .tl-item-title { font-size: 18px }
   .tl-item > .tl-btn, .tl-item-act { margin-inline-start: 48px }
   .tl-item .tl-item-body { display: none }
+  .tl-today-new .tl-item .tl-item-body { display: block }
   :is(
     .sh-root[data-today^="marking"] [data-today-item="marking"],
     .sh-root[data-today^="session"] [data-today-item="session"],
@@ -390,9 +391,11 @@
     .sh-root[data-today^="first-paper"] [data-today-item="first-paper"]
   ) {
     padding-block: 16px;
-    & .tl-item-title { font-size: 19px; text-wrap: wrap }
+    & .tl-item-title { font-size: 19px }
     & .tl-item-meta { font-size: 12px }
     & .tl-btn { inline-size: calc(100% - 48px) }
+    & .tl-item-act { flex: 1 1 calc(100% - 48px) }
+    & .tl-item-act .tl-btn { inline-size: 100% }
   }
 
   .tl-fixnext { margin-block-start: 32px }
@@ -420,15 +423,17 @@
   .tl-res-marks { grid-area: marks }
   .tl-res .tl-chip { grid-area: chip }
   .tl-subj {
-    grid-template-columns: 36px auto minmax(0, 1fr);
-    grid-template-areas: "chip name name" "chip delta delta" "chip papers exam" "chip spark spark";
+    grid-template-columns: 36px 112px minmax(0, 1fr);
+    grid-template-areas: "chip name name" "chip delta delta" "chip papers exam" "chip spark cap";
     align-items: start; column-gap: 12px; row-gap: 2px;
   }
   .tl-chip { align-self: center }
   .tl-subj-papers, .tl-subj-exam { text-align: start; margin-block-start: 2px }
+  .tl-spark, .tl-spark-cap { align-self: center; margin-block-start: 6px }
   .tl-skel-binny { min-block-size: 72px; inline-size: 72px; border-radius: 50% }
   .tl-skel-stack { grid-column: auto }
-  .tl-skel-week span { block-size: 44px }
+  .tl-skel-week { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px }
+  .tl-skel-week span { block-size: 40px }
 }
 
 @media (pointer: coarse) {
