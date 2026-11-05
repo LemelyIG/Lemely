@@ -75,7 +75,7 @@ import { useClassDetailContext } from "./ClassDetail"
  * react-spring, which parses it, so a `var()` string arrives as nothing).
  *
  * These are `--grade-*`, not `SERIES_TOKENS`. A grade distribution's colour is
- * not a series key: it is the same seven-grade Jewel scale the `GradeBadge` on every
+ * not a series key: it is the same nine-grade Jewel scale the `GradeBadge` on every
  * other teacher screen uses, and it is the one colour relationship in this
  * product a teacher genuinely learns. Recolouring it from the categorical
  * palette would make the bars prettier and the page less legible.
@@ -87,6 +87,8 @@ const GRADE_TONE_TOKEN: Record<GradeTone, string> = {
   c: "--grade-c",
   d: "--grade-d",
   e: "--grade-e",
+  f: "--grade-f",
+  g: "--grade-g",
   u: "--grade-u",
 }
 

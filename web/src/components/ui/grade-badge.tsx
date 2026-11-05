@@ -57,6 +57,8 @@ const toneOutline: Record<GradeTone, string> = {
   c: "border-grade-c",
   d: "border-grade-d",
   e: "border-grade-e",
+  f: "border-grade-f",
+  g: "border-grade-g",
   u: "border-grade-u",
 }
 const NO_TONE_OUTLINE = "border-outline"

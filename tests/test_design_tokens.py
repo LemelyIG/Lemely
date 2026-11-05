@@ -170,7 +170,7 @@ def test_ring_check_goes_red_on_a_primary_fill_without_the_override() -> None:
     assert _ring_failures(_scheme("dark"), "inverse-primary", ["primary-container"])
 
 
-@pytest.mark.parametrize("grade", ["a-star", "a", "b", "c", "d", "e", "u"])
+@pytest.mark.parametrize("grade", ["a-star", "a", "b", "c", "d", "e", "f", "g", "u"])
 def test_white_grade_letters_clear_large_text_contrast(grade: str) -> None:
     fm = _frontmatter()
     assert _contrast(fm["white"], fm[f"grade-{grade}"]) >= 3.0

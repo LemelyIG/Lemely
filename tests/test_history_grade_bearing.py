@@ -90,3 +90,21 @@ def test_grade_off_the_ladder_is_not_grade_bearing(grade: str) -> None:
     "b" is not "B", and silently upper-casing would invent a grade the marking
     path never asserted."""
     assert not is_grade_bearing(_record(grade=grade))
+
+
+# ---------------------------------------------------------------------------
+# Core-tier grades F and G (Cambridge IGCSE/O Level Core papers run C to G).
+# ---------------------------------------------------------------------------
+
+
+def test_grade_order_is_the_full_caie_letter_ladder() -> None:
+    """``F`` and ``G`` sit between ``E`` and ``U``, worst-but-one and ``U`` last."""
+    assert GRADE_ORDER == ["A*", "A", "B", "C", "D", "E", "F", "G", "U"]
+    assert GRADE_ORDER.index("E") < GRADE_ORDER.index("F") < GRADE_ORDER.index("G")
+    assert GRADE_ORDER[-1] == "U"
+
+
+@pytest.mark.parametrize("grade", ["F", "G"])
+def test_core_tier_paper_is_grade_bearing(grade: str) -> None:
+    """A Core-tier past paper graded F or G backs grade claims like any other."""
+    assert is_grade_bearing(_record(grade=grade)) is True

@@ -196,13 +196,12 @@ def _latest_activity(histories: list[StudentHistory]) -> str | None:
     )
 
 
-_MEDIAN_GRADE_LADDER: tuple[str, ...] = ("A*", "A", "B", "C", "D", "E", "F", "G", "U")
+_MEDIAN_GRADE_LADDER: tuple[str, ...] = tuple(_GRADE_ORDER)
 """Every CAIE letter grade best first, Core-tier ``F``/``G`` included.
 
-``GRADE_ORDER`` (``lemely.core.history``) stops at ``E``/``U``; ordering a
-median against it raised ``ValueError`` for a Core-tier ``F`` or ``G`` and took
-``GET /api/teacher/classes`` down with a 500. The median orders against this
-full ladder instead.
+An alias of the single ladder ``GRADE_ORDER`` (``lemely.core.history``), never
+re-literalised: a median ordered against a shorter ladder raised ``ValueError``
+for a Core-tier ``F`` or ``G`` and took ``GET /api/teacher/classes`` down.
 """
 
 

@@ -70,8 +70,8 @@
       "kind": "chip",
       "refersTo": "grade-chip",
       "description": "Jewel grade colour, white letter, always labelled.",
-      "html": "<span class=\"ds-grade ds-grade-astar\">A*</span> <span class=\"ds-grade ds-grade-a\">A</span> <span class=\"ds-grade ds-grade-c\">C</span> <span class=\"ds-grade ds-grade-u\">U</span>",
-      "css": ".ds-grade { display: inline-block; color: #ffffff; font: 800 20px 'Bricolage Grotesque', sans-serif; padding: 4px 12px; border-radius: 10px; } .ds-grade-astar { background: oklch(0.46 0.12 155); } .ds-grade-a { background: oklch(0.52 0.12 132); } .ds-grade-c { background: oklch(0.63 0.12 88); } .ds-grade-u { background: oklch(0.50 0.14 15); }"
+      "html": "<span class=\"ds-grade ds-grade-astar\">A*</span> <span class=\"ds-grade ds-grade-a\">A</span> <span class=\"ds-grade ds-grade-c\">C</span> <span class=\"ds-grade ds-grade-f\">F</span> <span class=\"ds-grade ds-grade-g\">G</span> <span class=\"ds-grade ds-grade-u\">U</span>",
+      "css": ".ds-grade { display: inline-block; color: #ffffff; font: 800 20px 'Bricolage Grotesque', sans-serif; padding: 4px 12px; border-radius: 10px; } .ds-grade-astar { background: oklch(0.46 0.12 155); } .ds-grade-a { background: oklch(0.52 0.12 132); } .ds-grade-c { background: oklch(0.63 0.12 88); } .ds-grade-f { background: oklch(0.53 0.135 30); } .ds-grade-g { background: oklch(0.52 0.138 22); } .ds-grade-u { background: oklch(0.50 0.14 15); }"
     },
     {
       "name": "Result Card",

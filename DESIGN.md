@@ -94,6 +94,8 @@ colors:
   grade-c: "oklch(0.63 0.12 88)"
   grade-d: "oklch(0.59 0.125 62)"
   grade-e: "oklch(0.54 0.13 38)"
+  grade-f: "oklch(0.53 0.135 30)"
+  grade-g: "oklch(0.52 0.138 22)"
   grade-u: "oklch(0.50 0.14 15)"
   # Mascot only (student surfaces)
   binny-steel: "oklch(0.80 0.01 240)"
@@ -271,11 +273,11 @@ All values come from the five tonal palettes in the brand guidelines (tone = OKL
 - **Crimson** (`oklch(0.53 0.20 25)` light, `oklch(0.72 0.15 25)` dark): the `error` role. Lost marks, low confidence and genuine errors only.
 
 ### Grade scale: "Jewel"
-Green through yellow to red in even hue and lightness steps. Every chip uses white text and always shows the letter. Colour is never the only signal.
+Green through yellow to red in even hue and lightness steps. Every chip uses white text and always shows the letter. Colour is never the only signal. F and G are the Cambridge IGCSE Core-tier grades (Core papers run C to G); they step between E and U.
 
-| A* | A | B | C | D | E | U |
-|---|---|---|---|---|---|---|
-| `oklch(0.46 0.12 155)` | `oklch(0.52 0.12 132)` | `oklch(0.58 0.12 110)` | `oklch(0.63 0.12 88)` | `oklch(0.59 0.125 62)` | `oklch(0.54 0.13 38)` | `oklch(0.50 0.14 15)` |
+| A* | A | B | C | D | E | F | G | U |
+|---|---|---|---|---|---|---|---|---|
+| `oklch(0.46 0.12 155)` | `oklch(0.52 0.12 132)` | `oklch(0.58 0.12 110)` | `oklch(0.63 0.12 88)` | `oklch(0.59 0.125 62)` | `oklch(0.54 0.13 38)` | `oklch(0.53 0.135 30)` | `oklch(0.52 0.138 22)` | `oklch(0.50 0.14 15)` |
 
 ### Neutral
 - **Night** (`#130e10`): the text ink. `on-surface` in light mode and `inverse-on-surface` in dark mode, and the letters of the wordmark on light backgrounds. Night is never a fill: its warm undertone clashes with the blues as a background.

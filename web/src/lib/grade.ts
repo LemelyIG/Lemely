@@ -1,7 +1,7 @@
 /** Maps a CAIE letter grade to its Jewel scale token (DESIGN.md "Grade scale"). */
-export type GradeTone = "a-star" | "a" | "b" | "c" | "d" | "e" | "u"
+export type GradeTone = "a-star" | "a" | "b" | "c" | "d" | "e" | "f" | "g" | "u"
 
-const TONES: Record<string, GradeTone> = { "A*": "a-star", A: "a", B: "b", C: "c", D: "d", E: "e", U: "u" }
+const TONES: Record<string, GradeTone> = { "A*": "a-star", A: "a", B: "b", C: "c", D: "d", E: "e", F: "f", G: "g", U: "u" }
 
 export function gradeTone(grade: string): GradeTone | null {
   return TONES[grade.trim().toUpperCase()] ?? null
@@ -25,6 +25,8 @@ const FILL: Record<GradeTone, string> = {
   c: "bg-grade-c",
   d: "bg-grade-d",
   e: "bg-grade-e",
+  f: "bg-grade-f",
+  g: "bg-grade-g",
   u: "bg-grade-u",
 }
 const BORDER: Record<GradeTone, string> = {
@@ -34,6 +36,8 @@ const BORDER: Record<GradeTone, string> = {
   c: "border-grade-c",
   d: "border-grade-d",
   e: "border-grade-e",
+  f: "border-grade-f",
+  g: "border-grade-g",
   u: "border-grade-u",
 }
 

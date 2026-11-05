@@ -59,6 +59,8 @@
   --grade-c: oklch(0.63 0.12 88);
   --grade-d: oklch(0.59 0.125 62);
   --grade-e: oklch(0.54 0.13 38);
+  --grade-f: oklch(0.53 0.135 30);
+  --grade-g: oklch(0.52 0.138 22);
   --grade-u: oklch(0.50 0.14 15);
 
   /* Mascot only (student surfaces and the marketing page) */
@@ -185,6 +187,8 @@
   --color-grade-c: var(--grade-c);
   --color-grade-d: var(--grade-d);
   --color-grade-e: var(--grade-e);
+  --color-grade-f: var(--grade-f);
+  --color-grade-g: var(--grade-g);
   --color-grade-u: var(--grade-u);
 
   --font-display: "Bricolage Grotesque Variable", "Schibsted Grotesk Variable", sans-serif;
@@ -216,7 +220,7 @@
   --ease-expo: var(--ease-expo);
 }
 
-@source inline("bg-grade-{a-star,a,b,c,d,e,u}");
+@source inline("bg-grade-{a-star,a,b,c,d,e,f,g,u}");
 
 /* Layout, motion and breakpoint tokens carried over unchanged from the build
    era. Colours, faces and radii live in the block above. */

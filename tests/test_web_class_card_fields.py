@@ -378,3 +378,31 @@ def test_route_core_tier_grades_do_not_break_the_class_list(
     response = client.get("/api/teacher/classes")
     assert response.status_code == 200
     assert len(response.json()["classes"]) == 1
+
+
+def test_route_core_tier_grades_count_in_average_median_and_distribution(
+    client: TestClient,  # noqa: F811
+    pg_sessionmaker: sessionmaker[Session],  # noqa: F811
+    class_service: ClassService,  # noqa: F811
+    history_store: HistoryStore,  # noqa: F811
+) -> None:
+    """F and G papers are grade-bearing: they move the average, median and buckets."""
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    b_student, f_student, g_student = _enrol(pg_sessionmaker, class_service, teacher, 3)
+    history_store.append(str(b_student), _record(b_student, percentage=70, grade="B", days_ago=1))
+    history_store.append(str(f_student), _record(f_student, percentage=30, grade="F", days_ago=1))
+    history_store.append(str(g_student), _record(g_student, percentage=20, grade="G", days_ago=1))
+
+    summary = _summary(client, teacher)
+    assert summary["average"] == 40.0
+    assert summary["grade"] == "F"
+
+    detail = client.get(f"/api/classes/{summary['id']}").json()
+    buckets = {bar["grade"]: bar["count"] for bar in detail["distribution"]}
+    assert buckets["F"] == 1
+    assert buckets["G"] == 1
+    assert buckets["B"] == 1
+    badges = {row["studentId"]: row["gradeAtRisk"] for row in detail["students"]}
+    assert badges[str(f_student)] is True
+    assert badges[str(g_student)] is True
+    assert badges[str(b_student)] is False

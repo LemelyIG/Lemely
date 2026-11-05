@@ -47,6 +47,8 @@ const toneBg: Record<GradeTone, string> = {
   c: "bg-grade-c",
   d: "bg-grade-d",
   e: "bg-grade-e",
+  f: "bg-grade-f",
+  g: "bg-grade-g",
   u: "bg-grade-u",
 }
 function bandFill(grade: string): string {
