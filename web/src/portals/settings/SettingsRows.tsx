@@ -11,14 +11,23 @@ import { cn } from "@/lib/utils"
  *
  * The heading level is contextual. On the page-based lane the page's own
  * `<h1>` sits above, so sections are `<h2>`; inside the Settings dialog the
- * dialog title is the `<h2>` and the tab heading follows it, so sections step
- * down to `<h3>`. `SettingsHeadingLevel` carries that without every section
+ * dialog title is the `<h2>` and the tab heading the `<h3>`, so sections step
+ * down to `<h4>`. `SettingsHeadingLevel` carries that without every section
  * taking a prop.
+ *
+ * No section or card is coloured crimson, destructive ones included: red is
+ * for lost marks and genuine errors, never a heading (DESIGN.md, "The Red
+ * Means Lost Rule"). A destructive action's danger is carried by the
+ * confirmation dialog it opens.
  */
 
-const HeadingLevelContext = createContext<2 | 3>(2)
+type HeadingLevel = 2 | 3 | 4
 
-export function SettingsHeadingLevel({ level, children }: { level: 2 | 3; children: ReactNode }) {
+const HeadingLevelContext = createContext<HeadingLevel>(2)
+
+const HEADING_TAG = { 2: "h2", 3: "h3", 4: "h4" } as const
+
+export function SettingsHeadingLevel({ level, children }: { level: HeadingLevel; children: ReactNode }) {
   return <HeadingLevelContext.Provider value={level}>{children}</HeadingLevelContext.Provider>
 }
 
@@ -26,8 +35,6 @@ export interface SettingsSectionProps {
   title: string
   /** One short sentence under the heading. */
   description?: ReactNode
-  /** `danger` sets the section apart for destructive actions only. */
-  tone?: "default" | "danger"
   children: ReactNode
   className?: string
 }
@@ -35,20 +42,16 @@ export interface SettingsSectionProps {
 export function SettingsSection({
   title,
   description,
-  tone = "default",
   children,
   className,
 }: SettingsSectionProps) {
   const level = useContext(HeadingLevelContext)
   const headingId = useId()
-  const Heading = level === 3 ? "h3" : "h2"
+  const Heading = HEADING_TAG[level]
   return (
     <section aria-labelledby={headingId} className={cn("flex flex-col gap-3", className)}>
       <div className="flex flex-col gap-1">
-        <Heading
-          id={headingId}
-          className={cn("text-display-xs", tone === "danger" ? "text-error" : "text-on-surface")}
-        >
+        <Heading id={headingId} className="text-display-xs text-on-surface">
           {title}
         </Heading>
         {description ? (
@@ -62,22 +65,11 @@ export function SettingsSection({
 
 /** The card a section's rows sit in. Rows are divided by hairlines rather
  * than each being its own card, so a group reads as one group. */
-export function SettingsCard({
-  children,
-  tone = "default",
-  className,
-}: {
-  children: ReactNode
-  tone?: "default" | "danger"
-  className?: string
-}) {
+export function SettingsCard({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <div
       className={cn(
-        "flex flex-col divide-y rounded-tile border bg-surface-container-lowest",
-        tone === "danger"
-          ? "divide-outline-variant border-error/40"
-          : "divide-outline-variant border-outline-variant",
+        "flex flex-col divide-y divide-outline-variant rounded-tile border border-outline-variant bg-surface-container-lowest",
         className,
       )}
     >

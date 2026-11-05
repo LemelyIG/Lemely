@@ -136,11 +136,10 @@ function SignOutEverywhereSection() {
 
   return (
     <SettingsSection
-      tone="danger"
       title="Sign out everywhere"
       description="For when you think someone else is using your account."
     >
-      <SettingsCard tone="danger">
+      <SettingsCard>
         <SettingsRow
           label="Sign out of every device"
           description="Ends every session on this account, this one included. You sign in again on each device you use."
@@ -148,7 +147,6 @@ function SignOutEverywhereSection() {
             <Button
               type="button"
               variant="secondary"
-              className="border-error/40 text-error transition-colors hover:border-error hover:bg-error-container hover:text-on-error-container"
               disabled={!devices.data || pending}
               onClick={() => setConfirming(true)}
             >
