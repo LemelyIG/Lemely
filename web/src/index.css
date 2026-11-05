@@ -507,6 +507,14 @@ body {
   * {
     outline-color: var(--focus-ring);
   }
+  /* Placeholders are hints, not values: body-sm regular, never the field's
+     16px semibold (the 16px floor is for typed text, which stops iOS zoom).
+     Layered, so a `placeholder:` utility can still override. */
+  input::placeholder,
+  textarea::placeholder {
+    font-size: 14px;
+    font-weight: 400;
+  }
 }
 /* Inside an inverse panel the ring sits on inverse-surface, where `primary`
    is the same hue family as the fill and all but vanishes; `inverse-primary`
