@@ -288,6 +288,18 @@
 .a-stone.is-passed[data-grade="A*"] { background: var(--sh-grade-astar) }
 .a-stone.is-next[data-grade="A"] { box-shadow: inset 0 0 0 3px var(--sh-grade-a) }
 .a-stone.is-next[data-grade="A*"] { box-shadow: inset 0 0 0 3px var(--sh-grade-astar) }
+/* Each grade's real threshold under its stone; quiet so the stones stay the read. */
+.a-j-b {
+  position: absolute; inset-block-start: calc(68% + 20px); transform: translateX(-50%); white-space: nowrap;
+  font: 600 var(--fs-label) / 1 var(--font-mono); letter-spacing: 0.02em; font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+/* "estimated": the boundaries behind this grade are inferred from past sessions, not published. */
+.a-est {
+  display: inline-block; padding: 2px var(--space-2); border-radius: var(--radius-pill);
+  font: 600 var(--fs-label) / 1.2 var(--font-mono); letter-spacing: 0.04em; color: var(--text-secondary);
+  box-shadow: inset 0 0 0 1px var(--border-default); cursor: help;
+}
 .a-j-me {
   position: absolute; z-index: 2; inset-block-start: 68%; inline-size: 18px; block-size: 18px; border-radius: 50%;
   background: var(--md-primary); box-shadow: 0 0 0 3px var(--surface-card); transform: translate(-50%, -50%);
@@ -340,7 +352,7 @@
 .a-gj-name b { font-size: var(--fs-body); font-weight: 700 }
 .a-gj-dist { font-size: var(--fs-body-sm); font-weight: 600; color: var(--text-secondary) }
 .a-gj-dist .a-mono { color: var(--text-body) }
-.a-gj .a-journey { block-size: 56px }
+.a-gj .a-journey { block-size: 56px; margin-block-end: var(--space-4) }
 .a-gj-go { color: var(--text-muted); transition: transform var(--dur-base) var(--ease-out), color var(--dur-fast) }
 .a-gj-row:hover .a-gj-go { transform: translateX(3px); color: var(--text-body) }
 
@@ -407,6 +419,12 @@
 }
 .a-xb-pin.is-sel .a-xb-stem { background: var(--md-primary) }
 .a-xb-pin.is-sel::before { background: var(--md-primary); box-shadow: 0 0 0 3px var(--surface-card) }
+.a-xb-code {
+  position: absolute; inset-block-start: 36px; inset-inline-start: 6px; white-space: nowrap;
+  font: 600 var(--fs-label) / 1 var(--font-mono); letter-spacing: 0.04em; font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.a-xb-pin.is-sel .a-xb-code { color: var(--md-primary); font-weight: 800 }
 
 .a-xt-row {
   display: grid; grid-template-columns: 1.3fr 1fr 1fr; align-items: stretch;
