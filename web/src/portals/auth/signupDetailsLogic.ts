@@ -119,9 +119,9 @@ export function passwordStrength(password: string): PasswordStrength {
  * matches DESIGN.md §3.6's descending err/warn/ok relative luminance, so the
  * meter stays readable in greyscale, not only by hue. */
 export function strengthFillClass(score: number): string {
-  if (score <= 1) return "bg-err"
-  if (score === 2) return "bg-warn"
-  return "bg-ok"
+  if (score <= 1) return "bg-error"
+  if (score === 2) return "bg-tertiary"
+  return "bg-success"
 }
 
 /**

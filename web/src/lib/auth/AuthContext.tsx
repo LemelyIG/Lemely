@@ -130,7 +130,8 @@ interface AuthContextValue {
     Error,
     { token: string; newPassword: string }
   >
-  logout: () => void
+  /** Ends the session now; resolves once the session caches are cleared. */
+  logout: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -271,8 +272,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // scan bytes too, the same as `RequireAuth.tsx`'s stranded-session
     // redirect and `api.ts`'s refused silent refresh now do. See
     // `endSession`'s own doc comment for the full guard.
-    endSession()
+    const cleared = endSession()
     setSessionState(null)
+    return cleared
   }
 
   const value: AuthContextValue = {

@@ -60,8 +60,8 @@ function PlanBasis() {
   return (
     <Card>
       <CardBody className="flex flex-col gap-1.5">
-        <h2 className="text-display-sm text-ink">What this plan is based on</h2>
-        <p className="lm-prose text-body-md text-ink-muted">
+        <h2 className="text-display-sm text-on-surface">What this plan is based on</h2>
+        <p className="lm-prose text-body-md text-on-surface-variant">
           Three things, weighted: topics you have lost marks on, your placement test result, and
           the confidence ratings you gave during onboarding. Whichever of those you have is what
           gets used, and a missing one is left out rather than guessed at.
@@ -102,14 +102,14 @@ function WeekHeader({
           </Button>
         }
       />
-      <p className="text-body-md text-ink-muted">Week of {formatDayHeading(plan.weekStart)}</p>
+      <p className="text-body-md text-on-surface-variant">Week of {formatDayHeading(plan.weekStart)}</p>
 
       <Card>
         <CardBody className="flex flex-col gap-3">
           <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
-            <span className="text-body-lg text-ink">
-              <span className="text-data-md text-ink">{progress.completedCount}</span> of{" "}
-              <span className="text-data-md text-ink">{progress.sessionCount}</span> session
+            <span className="text-body-lg text-on-surface">
+              <span className="text-data-md text-on-surface">{progress.completedCount}</span> of{" "}
+              <span className="text-data-md text-on-surface">{progress.sessionCount}</span> session
               {progress.sessionCount === 1 ? "" : "s"} done
             </span>
             {/* Planned and stated are two different facts and stay two
@@ -123,12 +123,12 @@ function WeekHeader({
                 face "scores, grades, marks, XP, timers" — figures, not the
                 sentence around them — and a full line of Geist Mono read as a
                 code string sitting inside a paragraph. */}
-            <span className="text-body-sm text-ink-muted">
-              <span className="text-data-sm text-ink-muted">
+            <span className="text-body-sm text-on-surface-variant">
+              <span className="text-data-sm text-on-surface-variant">
                 {formatDuration(progress.plannedMinutes)}
               </span>{" "}
               planned of the{" "}
-              <span className="text-data-sm text-ink-muted">
+              <span className="text-data-sm text-on-surface-variant">
                 {formatDuration(progress.statedMinutes)}
               </span>{" "}
               you said you had
@@ -151,7 +151,7 @@ function WeekHeader({
             label={`${formatDuration(progress.completedMinutes)} of ${formatDuration(progress.plannedMinutes)} planned study time done`}
           />
           {progress.fullyComplete ? (
-            <p className="text-body-md text-ok">
+            <p className="text-body-md text-success-text">
               Every session this week is done. Nothing left to do here.
             </p>
           ) : null}
@@ -175,11 +175,11 @@ function SessionRow({
   const done = session.completedAt !== null
   const Icon = activityIcon(session.activityType)
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-rule px-5 py-3.5 first:border-t-0">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-outline-variant px-5 py-3.5 first:border-t-0">
       {/* Decorative: `activityLabel` beside it already carries the meaning
           in text (§8's restraint rule), so the glyph carries no `aria-label`
           of its own and is never the only way to tell activities apart. */}
-      <Icon size={20} className="shrink-0 text-ink-muted" aria-hidden />
+      <Icon size={20} className="shrink-0 text-on-surface-variant" aria-hidden />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         {/* Opts out of §6.1's two-line-clickable rule: the label is a syllabus
             topic name ("2.1 Thermal physics"), which is content, not a control
@@ -194,18 +194,18 @@ function SessionRow({
           // floor, and the gate rounded it to "44" in its own report until it
           // started printing tenths. A min states the rule; padding restates an
           // arithmetic result that depends on the rung's line-height.
-          className="text-body-md font-medium text-ink no-underline hover:underline focus-visible:underline pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11"
+          className="text-body-md font-medium text-on-surface no-underline hover:underline focus-visible:underline pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11"
         >
           {session.topic}
         </Link>
-        <span className="text-body-sm text-ink-muted">
+        <span className="text-body-sm text-on-surface-variant">
           {activityLabel(session.activityType)} · {formatDuration(session.durationMinutes)}
         </span>
       </div>
       {done ? (
         // A completed session states the fact and stops. No XP, no points —
         // `completedAt` is P5's seam (see the module docstring).
-        <span className="text-body-sm text-ok">Completed</span>
+        <span className="text-body-sm text-success-text">Completed</span>
       ) : (
         <Button
           variant="secondary"
@@ -286,12 +286,12 @@ export function StudyPlanWeek() {
              because both can fail on this one screen, and a reader told only
              that something went wrong has to guess which. */
           const rebuildError = rebuild.isError ? (
-            <p className="text-body-md text-err">
+            <p className="text-body-md text-error">
               {studentActionFailureMessage(rebuild.error, "rebuild your plan")}
             </p>
           ) : null
           const completeError = complete.isError ? (
-            <p className="text-body-md text-err">
+            <p className="text-body-md text-error">
               {studentActionFailureMessage(complete.error, "mark that session as done")}
             </p>
           ) : null
@@ -321,7 +321,7 @@ export function StudyPlanWeek() {
             const message = planUnavailableMessage(view.reason)
             return (
               <>
-                <h1 className="text-display-lg text-ink">{heading}</h1>
+                <h1 className="text-display-lg text-on-surface">{heading}</h1>
                 <EmptyState
                   marginalia="Not enough to go on yet"
                   heading={message.heading}
@@ -374,7 +374,7 @@ export function StudyPlanWeek() {
                 <div className="flex flex-col gap-5">
                   {days.map((day) => (
                     <section key={day.date} className="flex flex-col gap-2">
-                      <h2 className="text-display-sm text-ink">{formatDayHeading(day.date)}</h2>
+                      <h2 className="text-display-sm text-on-surface">{formatDayHeading(day.date)}</h2>
                       <Card className="overflow-hidden">
                         {day.sessions.map((session) => (
                           <SessionRow

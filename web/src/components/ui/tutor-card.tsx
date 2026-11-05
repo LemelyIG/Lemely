@@ -43,12 +43,12 @@ export function TutorCard({ tutor, to, headingAs: Heading = "h3", className }: T
       className={cn(
         "relative flex flex-col gap-3 p-5",
         "transition-colors duration-[var(--dur-instant)] ease-out-soft",
-        to && "hover:border-rule-strong focus-within:border-rule-strong active:bg-paper-sunk",
+        to && "hover:border-outline focus-within:border-outline active:bg-surface-container-low",
         className,
       )}
     >
       <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
-        <Heading className="m-0 min-w-0 text-display-sm text-ink">
+        <Heading className="m-0 min-w-0 text-display-sm text-on-surface">
           {to ? (
             <Link to={to} className="after:absolute after:inset-0">
               {tutor.publicName}
@@ -60,7 +60,7 @@ export function TutorCard({ tutor, to, headingAs: Heading = "h3", className }: T
         <RatingSummary rating={tutor.rating} />
       </div>
 
-      <p className="m-0 line-clamp-2 text-body-md text-ink-muted">{tutor.headline}</p>
+      <p className="m-0 line-clamp-2 text-body-md text-on-surface-variant">{tutor.headline}</p>
 
       <ul className="m-0 flex list-none flex-wrap gap-1.5 p-0" aria-label="Subjects">
         {tutor.subjects.map((subject) => (
@@ -70,7 +70,7 @@ export function TutorCard({ tutor, to, headingAs: Heading = "h3", className }: T
         ))}
       </ul>
 
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-body-sm text-ink-muted">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-body-sm text-on-surface-variant">
         <ul className="m-0 flex list-none flex-wrap gap-x-3 gap-y-1 p-0" aria-label="Ways to meet">
           {tutor.modes.map((mode) => {
             const { label, icon: ModeIcon } = MODE[mode]

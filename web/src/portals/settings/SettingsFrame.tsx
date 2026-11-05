@@ -92,14 +92,14 @@ export function SettingsNav({ items }: { items: readonly SettingsNavItem[] }) {
           to={item.to}
           className={({ isActive }) =>
             cn(
-              "rounded-md px-3 py-1.5 text-body-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
+              "rounded-md px-3 py-1.5 text-body-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
               // §6.1's 44px floor; these pills measured 32px. They are flex
               // items of the `<nav>` above, so they blockify and need their
               // own centring with the min.
               "pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11",
               isActive
-                ? "bg-paper-sunk font-medium text-ink"
-                : "text-ink-muted hover:bg-paper-sunk hover:text-ink",
+                ? "bg-surface-container-low font-medium text-on-surface"
+                : "text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface",
             )
           }
           // `aria-current="page"` is what tells a screen reader which of
@@ -146,14 +146,14 @@ export function SettingsFrame({ title, intro, children }: SettingsFrameProps) {
   const homeLabel = session ? portalLabelForRole(session.role) : "Sign in"
 
   return (
-    <div className="paper-grain flex min-h-dvh flex-col bg-paper">
+    <div className="flex min-h-dvh flex-col bg-surface">
       <SkipLink />
 
-      <header className="border-b border-rule bg-paper-raised">
+      <header className="border-b border-outline-variant bg-surface-container-lowest">
         <div className="mx-auto flex w-full max-w-200 items-center gap-4 px-4 py-4 md:px-8">
           <Link
             to={home}
-            className="flex items-center gap-2.5 rounded-md pointer-coarse:min-h-11 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            className="flex items-center gap-2.5 rounded-md pointer-coarse:min-h-11 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             <BrandLockup as="span" className="contents" />
           </Link>
@@ -182,8 +182,8 @@ export function SettingsFrame({ title, intro, children }: SettingsFrameProps) {
           <SettingsNav items={SETTINGS_NAV} />
 
           <div className="flex flex-col gap-2">
-            <h1 className="text-display-md text-ink">{title}</h1>
-            <p className="max-w-[65ch] text-body-md text-ink-muted">{intro}</p>
+            <h1 className="text-display-md text-on-surface">{title}</h1>
+            <p className="max-w-[65ch] text-body-md text-on-surface-variant">{intro}</p>
           </div>
         </div>
 

@@ -90,7 +90,7 @@ export function RadioGroup({
       aria-busy={isLoading || undefined}
       aria-describedby={cn(errorId, hintId) || undefined}
     >
-      <legend className="mb-1 flex items-center gap-2 p-0 text-label text-ink">
+      <legend className="mb-1 flex items-center gap-2 p-0 text-label text-on-surface">
         {label}
         {/* The status glyph sits on the legend rather than beside an option,
             because the state belongs to the whole group, not to one radio.
@@ -98,11 +98,11 @@ export function RadioGroup({
             aria-invalid and aria-busy on the fieldset, and repeating it as an
             icon label would double up for a screen-reader user. */}
         {isLoading ? (
-          <CircleNotch className="animate-spin text-ink-faint" size={14} aria-hidden />
+          <CircleNotch className="animate-spin text-on-surface-variant" size={14} aria-hidden />
         ) : resolvedState === "success" ? (
-          <CheckCircle className="text-ok" size={14} weight="regular" aria-hidden />
+          <CheckCircle className="text-success-text" size={14} weight="regular" aria-hidden />
         ) : resolvedState === "error" ? (
-          <WarningCircle className="text-err" size={14} weight="regular" aria-hidden />
+          <WarningCircle className="text-error" size={14} weight="regular" aria-hidden />
         ) : null}
       </legend>
       <RadioGroupContext.Provider value={{ name: groupName, value, onValueChange, disabled }}>
@@ -116,11 +116,11 @@ export function RadioGroup({
         </div>
       </RadioGroupContext.Provider>
       {error ? (
-        <p id={errorId} className="text-body-sm text-err">
+        <p id={errorId} className="text-body-sm text-error">
           {error}
         </p>
       ) : hint ? (
-        <p id={hintId} className="text-body-sm text-ink-muted">
+        <p id={hintId} className="text-body-sm text-on-surface-variant">
           {hint}
         </p>
       ) : null}
@@ -171,10 +171,10 @@ export const Radio = forwardRef<HTMLInputElement, RadioProps>(function Radio(
     >
       <span
         className={cn(
-          "relative mt-0.5 inline-flex h-[18px] w-[18px] flex-none items-center justify-center rounded-full border border-rule bg-paper-raised",
+          "relative mt-0.5 inline-flex h-[18px] w-[18px] flex-none items-center justify-center rounded-full border border-outline-variant bg-surface-container-lowest",
           "transition-colors duration-[var(--dur-instant)] ease-out-soft",
-          "hover:border-rule-strong has-checked:border-accent has-checked:hover:border-accent-hover",
-          "has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-focus-ring",
+          "hover:border-outline has-checked:border-primary has-checked:hover:border-primary-hover",
+          "has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-primary",
         )}
       >
         <input
@@ -197,12 +197,12 @@ export const Radio = forwardRef<HTMLInputElement, RadioProps>(function Radio(
         />
         <span
           aria-hidden
-          className="pointer-events-none hidden h-2 w-2 rounded-full bg-accent peer-checked:block"
+          className="pointer-events-none hidden h-2 w-2 rounded-full bg-primary peer-checked:block"
         />
       </span>
       <span className="flex flex-col">
-        <span className="text-body-md text-ink">{label}</span>
-        {description ? <span className="text-body-sm text-ink-muted">{description}</span> : null}
+        <span className="text-body-md text-on-surface">{label}</span>
+        {description ? <span className="text-body-sm text-on-surface-variant">{description}</span> : null}
       </span>
     </label>
   )

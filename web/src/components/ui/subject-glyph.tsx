@@ -9,46 +9,36 @@ import {
   type Icon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
-import { toneFill, type BadgeTone } from "@/components/ui/badge"
-import { subjectTone } from "@/components/ui/subject-tag"
 
 /*
- * The glyph half of DESIGN.md §3.8's pastel table. `subject-tag.tsx` already
- * fixes subject -> tone; this file fixes tone -> shape, so a subject reads
- * before a student parses the label even in greyscale or for a colour-blind
- * reader — colour alone is never the only signal (§3.6).
+ * A subject's shape. Subjects are not colour-coded in v5 (DESIGN.md), so the
+ * glyph is the one thing besides the label that tells them apart, and every
+ * subject shares the same fill: `primary-container` with `on-primary-container`.
  *
- * `student/data.ts` had already grown its own version of this table
- * (`subjectIcon(code)`: Atom for 0625, Calculator for 0580/0606, Books
- * otherwise) because `SubjectRow` carries no icon field and the nav needed
- * one. Picking `Calculator` there and `MathOperations` here is exactly the
- * "the next physics tag in the codebase has no reason to also be lilac"
- * drift subject-tag.tsx's own header warns about — a second table nothing
- * keeps in step with the first. This file is the one lookup; `student/data.ts`
- * stops maintaining its own.
+ * Keyed by lowercase subject name or bare CAIE syllabus code. Which glyph means
+ * Physics is a design decision and lives here; what "0625" is called is product
+ * data, with its home in `lemely/db/seed.py::DEMO_SUBJECTS`, so names are not
+ * duplicated for the codes. Additional Mathematics (0606) shares Mathematics'
+ * glyph, and neither is rendered without its own label beside it.
  */
 
-const TONE_GLYPHS: Record<BadgeTone, Icon> = {
-  sky: MathOperations,
-  lilac: Atom,
-  sage: Flask,
-  clay: Leaf,
-  amber: BookOpen,
-  rose: GraduationCap,
-  // The four semantic (non-subject) tones have no curriculum meaning; they
-  // fall back to the same "unassigned" glyph `rose` already uses so a caller
-  // that somehow reaches this table with a status tone still gets a shape,
-  // not a blank tile.
-  ok: GraduationCap,
-  warn: GraduationCap,
-  err: GraduationCap,
-  info: GraduationCap,
+/** The one fill every subject uses. */
+export const SUBJECT_FILL = "bg-primary-container text-on-primary-container"
+
+const SUBJECT_GLYPHS: Record<string, Icon> = {
+  mathematics: MathOperations,
+  "0580": MathOperations,
+  "0606": MathOperations,
+  physics: Atom,
+  "0625": Atom,
+  chemistry: Flask,
+  biology: Leaf,
+  english: BookOpen,
 }
 
-/** Subject glyph for a pastel tone. Falls back to `GraduationCap` (the same
- * "unassigned / other" glyph as `rose`) for a tone with no subject affinity. */
-export function subjectGlyphFor(tone: BadgeTone): Icon {
-  return TONE_GLYPHS[tone] ?? GraduationCap
+/** Glyph for a subject name or syllabus code; `GraduationCap` for any other. */
+export function subjectGlyphFor(subject: string): Icon {
+  return SUBJECT_GLYPHS[subject.trim().toLowerCase()] ?? GraduationCap
 }
 
 const SIZE_CLASSES = {
@@ -62,15 +52,14 @@ const GLYPH_PX = {
 } as const
 
 export interface SubjectGlyphProps {
-  /** Subject name (or bare syllabus code — see `subjectTone`'s docstring),
-   * resolved to a pastel tone the same way `SubjectTag` does. */
+  /** Subject name or bare syllabus code, resolved to a glyph by `subjectGlyphFor`. */
   subject: string
   size?: "sm" | "md"
   className?: string
 }
 
 /**
- * A pastel tile carrying one subject's tone and glyph — the tile-shaped
+ * A tile carrying one subject's glyph on the shared subject fill — the tile-shaped
  * sibling to `SubjectTag`'s pill. Used wherever a subject needs to read as a
  * standalone mark (a page header, a sidebar row) rather than inline with its
  * own label text, which is what `SubjectTag` is for.
@@ -81,8 +70,7 @@ export interface SubjectGlyphProps {
  * `ProgressRing` below uses for the same reason.
  */
 export function SubjectGlyph({ subject, size = "md", className }: SubjectGlyphProps) {
-  const tone = subjectTone(subject)
-  const Glyph = subjectGlyphFor(tone)
+  const Glyph = subjectGlyphFor(subject)
 
   return (
     <span
@@ -90,7 +78,7 @@ export function SubjectGlyph({ subject, size = "md", className }: SubjectGlyphPr
       aria-label={subject}
       className={cn(
         "inline-flex shrink-0 items-center justify-center rounded-md",
-        toneFill(tone),
+        SUBJECT_FILL,
         SIZE_CLASSES[size],
         className,
       )}

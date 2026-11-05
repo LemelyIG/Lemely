@@ -137,7 +137,7 @@ export function DirectoryFilters({
         </div>
 
         <fieldset className="m-0 flex min-w-0 flex-col gap-1 border-0 p-0">
-          <legend className="mb-1 p-0 text-label text-ink">Way of meeting</legend>
+          <legend className="mb-1 p-0 text-label text-on-surface">Way of meeting</legend>
           <div className="flex flex-wrap gap-x-5">
             {MODE_OPTIONS.map((mode) => (
               <Checkbox
@@ -153,7 +153,7 @@ export function DirectoryFilters({
 
         {audience === "member" ? (
           <fieldset className="m-0 flex min-w-0 flex-col gap-3 border-0 p-0">
-            <legend className="mb-1 p-0 text-label text-ink">Usually available</legend>
+            <legend className="mb-1 p-0 text-label text-on-surface">Usually available</legend>
             <div className="flex flex-wrap gap-x-5">
               {WEEKDAYS.map((day) => (
                 <Checkbox
@@ -179,7 +179,7 @@ export function DirectoryFilters({
                 />
               ))}
             </div>
-            <p className="m-0 text-body-sm text-ink-muted">
+            <p className="m-0 text-body-sm text-on-surface-variant">
               Times are on the tutor's own clock. A tutor shows if one of their weekly times falls on a day and in a
               time of day you picked.
             </p>

@@ -59,7 +59,7 @@ function ChildNotFound({ srHeading }: { srHeading: string }) {
       >
         <Link
           to="/parent"
-          className="inline-flex min-h-11 items-center rounded-md text-body-md text-accent-ink underline underline-offset-4"
+          className="inline-flex min-h-11 items-center rounded-md text-body-md text-on-primary-container underline underline-offset-4"
         >
           Your children
         </Link>
@@ -116,7 +116,7 @@ function useParentBookingsPage(scope: BookingsScope, cursor: string | null) {
 }
 
 const ROW_CLASS =
-  "relative flex flex-col gap-2 border-b border-rule px-4 py-4 transition-colors duration-[var(--dur-instant)] ease-out-soft last:border-b-0 hover:bg-paper-sunk focus-within:bg-paper-sunk active:bg-paper-sunk"
+  "relative flex flex-col gap-2 border-b border-outline-variant px-4 py-4 transition-colors duration-[var(--dur-instant)] ease-out-soft last:border-b-0 hover:bg-surface-container-low focus-within:bg-surface-container-low active:bg-surface-container-low"
 
 function SessionRow({ childId, row }: { childId: string; row: SessionRowView }) {
   return (
@@ -125,14 +125,14 @@ function SessionRow({ childId, row }: { childId: string; row: SessionRowView }) 
         <Link
           to={parentSessionHref(childId, row.bookingId)}
           aria-label={row.ariaLabel}
-          className="min-w-0 break-words text-body-lg font-medium text-ink after:absolute after:inset-0"
+          className="min-w-0 break-words text-body-lg font-medium text-on-surface after:absolute after:inset-0"
         >
           {row.subjectName} with {row.tutorName}
         </Link>
         <BookingStatus state={row.state} />
       </div>
-      <p className="m-0 text-body-md text-ink-muted">{row.timeLabel}</p>
-      <p className="m-0 text-body-sm text-ink-muted">{row.modeLabel}</p>
+      <p className="m-0 text-body-md text-on-surface-variant">{row.timeLabel}</p>
+      <p className="m-0 text-body-sm text-on-surface-variant">{row.modeLabel}</p>
     </li>
   )
 }
@@ -168,13 +168,13 @@ function SessionList({
     >
       {(items) => (
         <div className="flex flex-col gap-4">
-          <ul className="m-0 flex list-none flex-col overflow-hidden rounded-lg border border-rule bg-paper-raised p-0">
+          <ul className="m-0 flex list-none flex-col overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest p-0">
             {items.map((booking) => (
               <SessionRow key={booking.bookingId} childId={childId} row={sessionRowView(booking)} />
             ))}
           </ul>
           {paged.moreFailed ? (
-            <p role="alert" className="m-0 text-body-sm text-err">
+            <p role="alert" className="m-0 text-body-sm text-error">
               We couldn't load more sessions. Press Show more sessions to try again.
             </p>
           ) : null}
@@ -199,7 +199,7 @@ function SessionList({
 // ── The screen ─────────────────────────────────────────────────────────────
 
 const LINK_CLASS =
-  "inline-flex min-h-11 items-center gap-1.5 rounded-md text-body-md text-accent-ink underline underline-offset-4 transition-colors hover:text-accent-hover active:text-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+  "inline-flex min-h-11 items-center gap-1.5 rounded-md text-body-md text-on-primary-container underline underline-offset-4 transition-colors hover:text-primary-hover active:text-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
 
 function ChildTutoringBody({ child }: { child: ChildSummary }) {
   const [params, setParams] = useSearchParams()
@@ -222,7 +222,7 @@ function ChildTutoringBody({ child }: { child: ChildSummary }) {
   return (
     <div className="flex w-full max-w-160 flex-col gap-8">
       <header className="flex flex-col gap-3">
-        <h1 className="m-0 break-words text-display-md text-ink">{child.displayName}'s tutoring</h1>
+        <h1 className="m-0 break-words text-display-md text-on-surface">{child.displayName}'s tutoring</h1>
         <nav aria-label={`Tutoring for ${child.displayName}`} className="flex flex-col items-start sm:flex-row sm:flex-wrap sm:gap-x-6">
           <Link to={parentTutorAccessHref(child.childId)} className={LINK_CLASS}>
             {whoSharesLinkLabel(child.displayName)}
@@ -241,19 +241,19 @@ function ChildTutoringBody({ child }: { child: ChildSummary }) {
         <>
           {tutors.length > 0 ? (
             <section aria-labelledby="child-tutors" className="flex flex-col gap-3">
-              <h2 id="child-tutors" className="m-0 text-display-sm text-ink">
+              <h2 id="child-tutors" className="m-0 text-display-sm text-on-surface">
                 Tutors
               </h2>
-              <ul className="m-0 flex list-none flex-col overflow-hidden rounded-lg border border-rule bg-paper-raised p-0">
+              <ul className="m-0 flex list-none flex-col overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest p-0">
                 {tutors.map((tutor) => (
                   <li key={tutor.tutorId} className={ROW_CLASS}>
                     <Link
                       to={tutor.href}
-                      className="min-w-0 break-words text-body-lg font-medium text-ink after:absolute after:inset-0"
+                      className="min-w-0 break-words text-body-lg font-medium text-on-surface after:absolute after:inset-0"
                     >
                       {tutor.tutorName}
                     </Link>
-                    <p className="m-0 text-body-sm text-ink-muted">{tutor.subjectLine}</p>
+                    <p className="m-0 text-body-sm text-on-surface-variant">{tutor.subjectLine}</p>
                   </li>
                 ))}
               </ul>
@@ -261,7 +261,7 @@ function ChildTutoringBody({ child }: { child: ChildSummary }) {
           ) : null}
 
           <section aria-labelledby="child-sessions" className="flex flex-col gap-3">
-            <h2 id="child-sessions" className="m-0 text-display-sm text-ink">
+            <h2 id="child-sessions" className="m-0 text-display-sm text-on-surface">
               Sessions
             </h2>
             <Tabs

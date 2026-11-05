@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import math
 import queue
 import tempfile
 import threading
@@ -95,7 +96,7 @@ from lemely.db.teacher_paper_repo import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 from lemely.db.review_queue_rules import review_reasons_for
 from lemely.db.review_repo import ReviewService
 from lemely.db.student_profile_repo import StudentProfileService
@@ -276,7 +277,7 @@ _GRADE_ORDER = GRADE_ORDER
 # "this grade is low right now", not "this student is on a declining
 # trajectory" — the two must not be conflated. Kept as its own literal set
 # because it has no analogue in ``lemely.core.at_risk``.
-_AT_RISK_GRADES = {"D", "E", "U"}
+_AT_RISK_GRADES = {"D", "E", "F", "G", "U"}
 
 # The staff triple every route needing per-caller tenancy scoping (overview,
 # student detail, at-risk list, P3.3) authenticates against. Named so the long
@@ -1988,7 +1989,14 @@ def teacher_overview(
     ]
 
     average = _mean([r.percentage for r in latest])
-    needs_review = _count_review_items(review_service, auth)
+    # ``total`` counts review-queue items, not papers: the queue holds one row
+    # per flagged question per reason, so one paper can contribute several.
+    queue_page = review_service.list_queue(auth.user_id, auth.role)
+    needs_review = queue_page.total
+    buckets = _confidence_buckets(row.confidence_score for row in queue_page.rows)
+    paper_count = sum(
+        1 for history, _ in histories for record in history.records if is_paper(record)
+    )
     acks = _acknowledgement_index(ack_service, auth)
     targets_by_student = profile_service.target_grades_for_many(visible.keys())
     at_risk_students = _at_risk(
@@ -2004,9 +2012,7 @@ def teacher_overview(
             # unreadable is still a paper the student sat and this teacher had
             # marked, but a quiz is not a paper and must not inflate the count
             # of a card that says "papers" (``docs/quiz-model.md`` §5).
-            value=str(
-                sum(1 for history, _ in histories for record in history.records if is_paper(record))
-            ),
+            value=str(paper_count),
             unit="papers",
         ),
         StatCardDTO(
@@ -2030,7 +2036,15 @@ def teacher_overview(
         ),
     ]
     return OverviewDTO(
-        stats=stats, atRisk=at_risk_students, retention=[], recentActivity=recent_activity
+        stats=stats,
+        atRisk=at_risk_students,
+        retention=[],
+        recentActivity=recent_activity,
+        paperCount=paper_count,
+        pendingReviewCount=needs_review,
+        reviewConfidenceBuckets=buckets,
+        reviewEstimateMinutes=_review_estimate_minutes(needs_review),
+        reviewConfidenceThreshold=REVIEW_CONFIDENCE_THRESHOLD,
     )
 
 
@@ -2074,32 +2088,41 @@ def _recent_activity(
     ]
 
 
-def _count_review_items(review_service: ReviewService, auth: AuthContext) -> int:
-    """Count OPEN review-queue items scoped to the caller's own students (P3.4).
+SECONDS_PER_REVIEW = 20
+"""Heuristic seconds a teacher spends per review item; the UI labels the result "about"."""
 
-    Previously counted the entire in-process ``papers_store`` with no owner
-    filter at all — every teacher saw a global count including every other
-    teacher's flagged papers (the inherited P3.3 finding this closes). Now
-    sourced from the real, properly-scoped, DB-backed review queue via
-    ``ReviewService.list_queue`` (the same tenancy every other stat on this
-    route uses).
 
-    **This changes the stat's granularity**, not just its scoping: the old
-    count was per-*paper* (a paper with three flagged questions counted once);
-    this one is per-*review-queue-item*, i.e. per flagged question per reason
-    (that same paper can contribute 2-3+ rows — ``persist_correction`` writes
-    one row per (question, reason) pair, so a question flagged for both low
-    confidence and plagiarism contributes two rows). "Need your eyes" now
-    literally means "how many items are waiting in your review queue" (T-07's
-    own framing), which is arguably the more actionable number for a teacher
-    about to open that screen — but it is a real behaviour change from the
-    old paper-count semantics, called out here rather than silently swapped.
+def _confidence_buckets(confidences: Iterable[float | None]) -> list[int]:
+    """Count pending review items per 10% confidence band (band 9 includes 1.0).
 
-    ``auth.user_id`` is already validated as a UUID by ``_visible_students``
-    above (which runs, and raises its 422, before this is called) — no
-    redundant validation here.
+    Missing and non-finite (NaN, infinite) confidences belong to no band.
     """
-    return review_service.list_queue(auth.user_id, auth.role).total
+    buckets = [0] * 10
+    for value in confidences:
+        if value is None or not math.isfinite(value):
+            continue
+        buckets[min(9, max(0, int(value * 10)))] += 1
+    return buckets
+
+
+def _review_estimate_minutes(pending: int) -> int:
+    return math.ceil(pending * SECONDS_PER_REVIEW / 60)
+
+
+def _previous_grade(records: Sequence[PaperRecord]) -> str | None:
+    """Grade of the grade-bearing paper before the latest one, or None.
+
+    Only papers of the latest paper's subject count: a Maths grade is not a
+    "previous" Physics grade. ``grade_bearing`` keeps records oldest first
+    (``latest_grade_bearing`` takes ``[-1]``), so the previous paper is ``[-2]``.
+    An unchanged grade is still returned; the UI decides how to show it.
+    """
+    bearing = grade_bearing(records)
+    if not bearing:
+        return None
+    subject = bearing[-1].metadata.subject_code
+    same_subject = [r for r in bearing if r.metadata.subject_code == subject]
+    return same_subject[-2].grade if len(same_subject) >= 2 else None
 
 
 def _at_risk(
@@ -2153,6 +2176,7 @@ def _at_risk(
             AtRiskStudentDTO(
                 name=display_name,
                 grade=latest.grade if latest is not None else "",
+                previousGrade=_previous_grade(history.records),
                 delta=_student_delta(history),
                 weakTopic=weakest.topic if weakest is not None else None,
                 flags=[

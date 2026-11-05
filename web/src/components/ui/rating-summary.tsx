@@ -37,9 +37,9 @@ export function RatingSummary({ rating, className }: RatingSummaryProps) {
     <span
       role="img"
       aria-label={display.ariaLabel}
-      className={cn("inline-flex items-center gap-1.5 text-data-md text-ink", className)}
+      className={cn("inline-flex items-center gap-1.5 text-data-md text-on-surface", className)}
     >
-      <Star size={16} weight="fill" className="text-pastel-amber-ink" aria-hidden />
+      <Star size={16} weight="fill" className="text-on-tertiary-container" aria-hidden />
       <span aria-hidden>{display.text}</span>
     </span>
   )

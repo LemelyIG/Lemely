@@ -78,8 +78,8 @@ import type { Note, ReportDetail as ReportDetailData, ReportResolution } from "@
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="flex flex-col gap-3 border-t border-rule pt-6">
-      <h2 className="text-display-sm text-ink">{title}</h2>
+    <section className="flex flex-col gap-3 border-t border-outline-variant pt-6">
+      <h2 className="text-display-sm text-on-surface">{title}</h2>
       {children}
     </section>
   )
@@ -88,8 +88,8 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
-      <dt className="text-body-sm text-ink-muted">{label}</dt>
-      <dd className="m-0 break-words text-body-md text-ink">{children}</dd>
+      <dt className="text-body-sm text-on-surface-variant">{label}</dt>
+      <dd className="m-0 break-words text-body-md text-on-surface">{children}</dd>
     </div>
   )
 }
@@ -97,7 +97,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 /** `setTimeout` takes at most 2^31 - 1 ms; a later start is reached in steps. */
 const MAX_TIMER_MS = 2_147_483_647
 
-const TEXT = "m-0 max-w-prose whitespace-pre-wrap break-words text-body-md text-ink"
+const TEXT = "m-0 max-w-prose whitespace-pre-wrap break-words text-body-md text-on-surface"
 
 function BookingSummary({ report }: { report: ReportDetailData }) {
   const booking = report.bookingSummary
@@ -124,28 +124,28 @@ function Thread({ report, notes }: { report: ReportDetailData; notes: readonly N
   const frozen = report.bookingSummary.notesFrozen
   return (
     <Section title="Notes">
-      <p className="m-0 flex max-w-prose items-start gap-2 text-body-sm text-ink-muted">
+      <p className="m-0 flex max-w-prose items-start gap-2 text-body-sm text-on-surface-variant">
         <Info size={16} className="mt-0.5 flex-none" aria-hidden="true" />
         {THREAD_VIEW_NOTICE}
       </p>
       {frozen ? (
-        <p className="m-0 text-body-sm text-ink-muted">Notes are paused for the student and tutor while this report is open.</p>
+        <p className="m-0 text-body-sm text-on-surface-variant">Notes are paused for the student and tutor while this report is open.</p>
       ) : null}
       {rows.length === 0 ? (
-        <p className="m-0 text-body-md text-ink-muted">There are no notes on this booking.</p>
+        <p className="m-0 text-body-md text-on-surface-variant">There are no notes on this booking.</p>
       ) : (
         <ol className="m-0 flex list-none flex-col p-0">
           {rows.map((row) => (
-            <li key={row.noteId} className="flex flex-col gap-1 border-b border-rule py-3 first:pt-0 last:border-b-0">
-              <div className="flex flex-wrap items-center gap-2 text-body-sm text-ink-muted">
-                <span className="font-medium text-ink">{row.label}</span>
+            <li key={row.noteId} className="flex flex-col gap-1 border-b border-outline-variant py-3 first:pt-0 last:border-b-0">
+              <div className="flex flex-wrap items-center gap-2 text-body-sm text-on-surface-variant">
+                <span className="font-medium text-on-surface">{row.label}</span>
                 <time dateTime={row.createdAt} className="tabular-nums">
                   {formatAdminInstant(row.createdAt)}
                 </time>
                 {row.hidden ? <Chip tone="neutral">Hidden from the student and tutor</Chip> : null}
               </div>
               {row.body === null ? (
-                <p className="m-0 text-body-md text-ink-muted">The text is not available.</p>
+                <p className="m-0 text-body-md text-on-surface-variant">The text is not available.</p>
               ) : (
                 <p className={TEXT}>{row.body}</p>
               )}
@@ -258,7 +258,7 @@ function ResolveForm({
             <Radio key={option.value} value={option.value} label={option.label} description={option.help} />
           ))}
         </RadioGroup>
-        {unavailable ? <p className="m-0 text-body-sm text-ink-muted">{unavailable}</p> : null}
+        {unavailable ? <p className="m-0 text-body-sm text-on-surface-variant">{unavailable}</p> : null}
         <Textarea
           label="Note"
           value={note}
@@ -271,10 +271,10 @@ function ResolveForm({
           <Button className="min-h-11" type="submit" variant="primary" loading={resolve.isPending && !confirmOpen} disabled={!ready}>
             Resolve report
           </Button>
-          {hint ? <p className="m-0 text-body-sm text-ink-muted">{hint}</p> : null}
+          {hint ? <p className="m-0 text-body-sm text-on-surface-variant">{hint}</p> : null}
           {resolve.isError && !confirmOpen ? (
             <div role="alert" className="flex flex-col items-start gap-2">
-              <p className="m-0 text-body-sm text-err">
+              <p className="m-0 text-body-sm text-error">
                 {adminFailureMessage(resolve.error, "That didn't go through. Try again.")}
               </p>
               {isAlreadyResolved(resolve.error) ? (
@@ -306,7 +306,7 @@ function ResolveForm({
             </div>
           }
         >
-          <p className="m-0 text-body-md text-ink">{confirm.body}</p>
+          <p className="m-0 text-body-md text-on-surface">{confirm.body}</p>
         </Modal>
       ) : null}
     </Section>
@@ -339,7 +339,7 @@ function Report({
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-2">
         <Eyebrow>Platform admin</Eyebrow>
-        <h1 className="text-display-lg text-ink">{reportTargetLabel(report.targetType)} report</h1>
+        <h1 className="text-display-lg text-on-surface">{reportTargetLabel(report.targetType)} report</h1>
         <div className="flex flex-wrap items-center gap-2">
           {isSafetyConcern(report) ? (
             <Badge tone="err" icon={<Warning weight="fill" />}>
@@ -350,12 +350,12 @@ function Report({
           )}
           <Badge tone={report.state === "open" ? "warn" : "ok"}>{reportStateLabel(report.state)}</Badge>
         </div>
-        <p className="m-0 text-body-md text-ink-muted">
+        <p className="m-0 text-body-md text-on-surface-variant">
           Reported by {reporterLabel(report.reporterParty).toLowerCase()} on{" "}
           <time dateTime={report.createdAt}>{formatAdminDay(report.createdAt)}</time>. Tutor:{" "}
           <Link
             to={`/platform/tutors/${encodeURIComponent(report.tutorId)}`}
-            className="rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent-hover"
+            className="rounded-sm text-on-primary-container underline underline-offset-2 transition-colors hover:text-primary-hover"
           >
             {report.tutorName}
           </Link>
@@ -367,7 +367,7 @@ function Report({
           ref={doneRef}
           tabIndex={-1}
           role="status"
-          className="m-0 rounded-lg border border-rule bg-ok-wash px-4 py-3 text-body-md text-ink"
+          className="m-0 rounded-lg border border-outline-variant bg-success-container px-4 py-3 text-body-md text-on-surface"
         >
           {done}
         </p>
@@ -376,20 +376,20 @@ function Report({
       <Section title="What was reported">
         {report.details ? (
           <div className="flex flex-col gap-1">
-            <h3 className="text-label text-ink-muted">Their words</h3>
+            <h3 className="text-label text-on-surface-variant">Their words</h3>
             <p className={TEXT}>{report.details}</p>
           </div>
         ) : (
-          <p className="m-0 text-body-md text-ink-muted">They added no words.</p>
+          <p className="m-0 text-body-md text-on-surface-variant">They added no words.</p>
         )}
         {rows.length > 0 ? (
           <div className="flex flex-col gap-1">
-            <h3 className="text-label text-ink-muted">As it was when reported</h3>
+            <h3 className="text-label text-on-surface-variant">As it was when reported</h3>
             <dl className="m-0 grid gap-3 sm:grid-cols-2">
               {rows.map((row) => (
                 <div key={row.label} className="flex min-w-0 flex-col gap-0.5">
-                  <dt className="text-body-sm text-ink-muted">{row.label}</dt>
-                  <dd className="m-0 whitespace-pre-wrap break-words text-body-md text-ink">{row.value}</dd>
+                  <dt className="text-body-sm text-on-surface-variant">{row.label}</dt>
+                  <dd className="m-0 whitespace-pre-wrap break-words text-body-md text-on-surface">{row.value}</dd>
                 </div>
               ))}
             </dl>

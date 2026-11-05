@@ -30,21 +30,49 @@ function sourceOf(relative: string): string {
 
 describe("subjectGlyphFor", () => {
   it.each([
-    ["sky", MathOperations],
-    ["lilac", Atom],
-    ["sage", Flask],
-    ["clay", Leaf],
-    ["amber", BookOpen],
-    ["rose", GraduationCap],
-  ] as const)("maps the %s pastel tone to its subject glyph", (tone, icon) => {
-    expect(subjectGlyphFor(tone)).toBe(icon)
+    ["Mathematics", MathOperations],
+    ["0580", MathOperations],
+    ["0606", MathOperations],
+    ["Physics", Atom],
+    ["0625", Atom],
+    ["Chemistry", Flask],
+    ["Biology", Leaf],
+    ["English", BookOpen],
+  ] as const)("maps %s to its subject glyph", (subject, icon) => {
+    expect(subjectGlyphFor(subject)).toBe(icon)
   })
 
-  it("falls back to GraduationCap for a tone with no subject affinity (ok/warn/err/info)", () => {
-    expect(subjectGlyphFor("ok")).toBe(GraduationCap)
-    expect(subjectGlyphFor("warn")).toBe(GraduationCap)
-    expect(subjectGlyphFor("err")).toBe(GraduationCap)
-    expect(subjectGlyphFor("info")).toBe(GraduationCap)
+  it("is case- and whitespace-insensitive", () => {
+    expect(subjectGlyphFor("  pHySiCs ")).toBe(Atom)
+  })
+
+  it("falls back to GraduationCap for a subject it does not know", () => {
+    expect(subjectGlyphFor("Geography")).toBe(GraduationCap)
+    expect(subjectGlyphFor("")).toBe(GraduationCap)
+  })
+})
+
+describe("subjects are not colour-coded in v5 (source)", () => {
+  const glyph = sourceOf("src/components/ui/subject-glyph.tsx")
+  const tag = sourceOf("src/components/ui/subject-tag.tsx")
+
+  it("every subject shares the primary-container fill", () => {
+    expect(glyph).toContain('SUBJECT_FILL = "bg-primary-container text-on-primary-container"')
+    expect(tag).toContain("SUBJECT_FILL")
+    expect(glyph).toContain("SUBJECT_FILL,")
+  })
+
+  it.each(["src/components/ui/subject-glyph.tsx", "src/components/ui/subject-tag.tsx"])(
+    "%s keys nothing on a pastel tone name",
+    (file) => {
+      expect(sourceOf(file)).not.toMatch(/\b(?:sky|lilac|sage|clay|amber|rose)\b|subjectTone|BadgeTone|toneFill/)
+    },
+  )
+
+  it("no screen resolves a subject to a pastel tone any more", () => {
+    for (const file of ["src/portals/student/screens/Overview.tsx", "src/portals/admin/screens/Classes.tsx"]) {
+      expect(sourceOf(file)).not.toMatch(/subjectTone|subjectToneForCode/)
+    }
   })
 })
 

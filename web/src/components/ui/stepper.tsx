@@ -68,17 +68,17 @@ export function Stepper({
               className={cn(
                 "flex h-6 w-6 flex-none items-center justify-center rounded-full font-mono text-2xs",
                 active
-                  ? "bg-ink text-accent-on"
+                  ? "bg-inverse-surface text-on-primary"
                   : done
-                    ? "bg-accent-subtle text-accent"
-                    : "bg-surface-2 text-t3",
+                    ? "bg-primary-container text-primary"
+                    : "bg-surface-container-low text-on-surface-variant",
               )}
             >
               {done ? <Check weight="bold" className="h-3 w-3" /> : step.id}
             </span>
           )
           const label = (
-            <span className={cn("text-dense-sm whitespace-nowrap", active ? "text-t1 font-medium" : "text-t2")}>
+            <span className={cn("text-dense-sm whitespace-nowrap", active ? "text-on-surface font-medium" : "text-on-surface-variant")}>
               {step.label}
             </span>
           )
@@ -97,14 +97,14 @@ export function Stepper({
                   type="button"
                   aria-current={active ? "step" : undefined}
                   onClick={() => onSelect(step.id)}
-                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 transition-[color,background-color,transform] hover:bg-surface-2 active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 transition-[color,background-color,transform] hover:bg-surface-container-low active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                 >
                   {glyph}
                   {label}
                 </button>
               )}
               {step.id < steps.length ? (
-                <span aria-hidden="true" className="w-4 h-px bg-border flex-none" />
+                <span aria-hidden="true" className="w-4 h-px bg-outline-variant flex-none" />
               ) : null}
             </li>
           )

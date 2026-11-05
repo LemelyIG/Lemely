@@ -129,31 +129,31 @@ export function NotesThread({
           <SkeletonBlock announce={false} className="h-16" />
         </div>
       ) : notes.length === 0 ? (
-        <p className="m-0 text-body-md text-ink-muted">No notes yet.</p>
+        <p className="m-0 text-body-md text-on-surface-variant">No notes yet.</p>
       ) : (
         <ol className="m-0 flex list-none flex-col gap-3 p-0">
           {notes.map((note) => (
             <li
               key={note.noteId}
-              className="flex flex-col gap-1.5 rounded-lg border border-rule bg-paper-raised p-4"
+              className="flex flex-col gap-1.5 rounded-lg border border-outline-variant bg-surface-container-lowest p-4"
             >
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span className="text-label text-ink">{note.authorName}</span>
+                <span className="text-label text-on-surface">{note.authorName}</span>
                 <Chip tone={note.authorParty === "tutor" ? "info" : "neutral"}>
                   {note.authorParty === "tutor" ? "Tutor" : "Student"}
                 </Chip>
-                <span className="text-body-sm text-ink-muted">
+                <span className="text-body-sm text-on-surface-variant">
                   {formatTutorInstant(note.createdAt, zone, zoneLabel)}
                 </span>
               </div>
 
               {note.hidden || note.body === null ? (
-                <p className="m-0 flex items-center gap-1.5 text-body-md text-ink-muted">
+                <p className="m-0 flex items-center gap-1.5 text-body-md text-on-surface-variant">
                   <EyeSlash size={16} aria-hidden />
                   {NOTES_HIDDEN_PLACEHOLDER}
                 </p>
               ) : (
-                <p className="m-0 whitespace-pre-wrap break-words text-body-md text-ink">{note.body}</p>
+                <p className="m-0 whitespace-pre-wrap break-words text-body-md text-on-surface">{note.body}</p>
               )}
 
               {onReport && !note.hidden && note.body !== null ? (
@@ -185,9 +185,9 @@ export function NotesThread({
       {foot.frozenLine ? (
         <p
           role="status"
-          className="m-0 flex items-start gap-2 rounded-md border border-rule bg-info-wash px-3 py-2.5 text-body-sm text-ink"
+          className="m-0 flex items-start gap-2 rounded-md border border-outline-variant bg-primary-container px-3 py-2.5 text-body-sm text-on-surface"
         >
-          <PauseCircle size={16} className="mt-0.5 shrink-0 text-info" aria-hidden />
+          <PauseCircle size={16} className="mt-0.5 shrink-0 text-primary" aria-hidden />
           {NOTES_FROZEN_LINE}
         </p>
       ) : null}
@@ -210,14 +210,14 @@ export function NotesThread({
             error={contactRefused ? (errorText ?? undefined) : undefined}
           />
           {errorText && !contactRefused ? (
-            <p role="alert" className="m-0 text-body-sm text-err">
+            <p role="alert" className="m-0 text-body-sm text-error">
               {errorText}
             </p>
           ) : null}
           {/* Always shown with a tutor's composer, error or not (SC-9), so it is
               a line of its own rather than the field's hint, which an error replaces. */}
           {foot.tutorParentsLine ? (
-            <p className="m-0 text-body-sm text-ink-muted">{NOTES_TUTOR_PARENTS_LINE}</p>
+            <p className="m-0 text-body-sm text-on-surface-variant">{NOTES_TUTOR_PARENTS_LINE}</p>
           ) : null}
           <div className="flex justify-end">
             <Button type="submit" variant="primary" size="sm" loading={posting} disabled={trimmed.length === 0}>
@@ -226,11 +226,11 @@ export function NotesThread({
           </div>
         </form>
       ) : foot.closedLine ? (
-        <p className="m-0 text-body-sm text-ink-muted">{TUTORING_ERROR_COPY.notes_closed}</p>
+        <p className="m-0 text-body-sm text-on-surface-variant">{TUTORING_ERROR_COPY.notes_closed}</p>
       ) : null}
 
-      {footnote ? <div className="text-body-sm text-ink-muted">{footnote}</div> : null}
-      <p className="m-0 text-body-sm text-ink-muted">{NOTES_FIXED_LINE}</p>
+      {footnote ? <div className="text-body-sm text-on-surface-variant">{footnote}</div> : null}
+      <p className="m-0 text-body-sm text-on-surface-variant">{NOTES_FIXED_LINE}</p>
     </section>
   )
 }

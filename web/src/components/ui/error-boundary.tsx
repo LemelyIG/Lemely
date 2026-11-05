@@ -148,16 +148,16 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     return (
       <div
         role="alert"
-        className="mx-auto flex w-full max-w-sm flex-col items-center gap-3 rounded-lg border border-rule bg-paper-raised px-6 py-10 text-center"
+        className="mx-auto flex w-full max-w-sm flex-col items-center gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest px-6 py-10 text-center"
       >
-        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-err-wash">
-          <WarningCircle size={22} className="text-err" aria-hidden="true" />
+        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-error-container">
+          <WarningCircle size={22} className="text-error" aria-hidden="true" />
         </div>
         <div className="flex flex-col gap-1.5">
-          <p className="text-body-lg font-medium text-ink">
+          <p className="text-body-lg font-medium text-on-surface">
             {label} ran into a problem
           </p>
-          <p className="text-body-md text-ink-muted">
+          <p className="text-body-md text-on-surface-variant">
             We couldn't display this. Reloading it usually fixes the problem.
           </p>
         </div>

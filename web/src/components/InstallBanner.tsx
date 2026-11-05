@@ -32,14 +32,14 @@ export function InstallBannerView({
   return (
     <div
       role="status"
-      className="mb-6 flex flex-wrap items-center gap-2.5 rounded-md border border-rule bg-paper-sunk px-3.5 py-2.5"
+      className="mb-6 flex flex-wrap items-center gap-2.5 rounded-md border border-outline-variant bg-surface-container-low px-3.5 py-2.5"
     >
       {variant === "prompt" ? (
-        <DownloadSimple size={16} className="text-ink-muted" aria-hidden="true" />
+        <DownloadSimple size={16} className="text-on-surface-variant" aria-hidden="true" />
       ) : (
-        <Export size={16} className="text-ink-muted" aria-hidden="true" />
+        <Export size={16} className="text-on-surface-variant" aria-hidden="true" />
       )}
-      <p className="min-w-0 flex-1 text-body-sm text-ink">
+      <p className="min-w-0 flex-1 text-body-sm text-on-surface">
         {variant === "prompt" ? (
           <>
             <span className="font-medium">Install Lemely.</span> Add it to your home screen for
@@ -56,7 +56,7 @@ export function InstallBannerView({
         <button
           type="button"
           onClick={onInstall}
-          className="shrink-0 text-body-sm text-accent-ink underline decoration-1 underline-offset-2 transition-[color,transform] hover:text-accent-hover active:scale-[0.98]"
+          className="shrink-0 text-body-sm text-on-primary-container underline decoration-1 underline-offset-2 transition-[color,transform] hover:text-primary-hover active:scale-[0.98]"
         >
           Install
         </button>
@@ -65,7 +65,7 @@ export function InstallBannerView({
         type="button"
         onClick={onDismiss}
         aria-label="Dismiss install banner"
-        className="shrink-0 rounded-md p-1 text-ink-faint transition-colors hover:bg-paper-raised hover:text-ink"
+        className="shrink-0 rounded-md p-1 text-on-surface-variant transition-colors hover:bg-surface-container-lowest hover:text-on-surface"
       >
         <X size={14} aria-hidden="true" />
       </button>

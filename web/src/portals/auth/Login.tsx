@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils"
 import { DeviceLimitNotice } from "./DeviceLimitNotice"
 
 /*
- * G-04 · Sign in with email and password — the Study Notebook (P4.7).
+ * G-04 · Sign in with email and password (Study Notebook pass P4.7, now v5 Abyss).
  *
  * This file's own module docstring used to open "infrastructure to exercise
  * the auth plumbing …, not final UI. Screen polish is P2.7/P2.8's job." Those
@@ -23,7 +23,7 @@ import { DeviceLimitNotice } from "./DeviceLimitNotice"
  * user of this product meets spent the whole build era as scaffolding. Three
  * of its defects follow directly from that.
  *
- * **The card was invisible.** The page and the card were both `bg-surface`, so
+ * **The card was invisible.** The page and the card were both `bg-surface-container-lowest`, so
  * a panel sat on a background of its own colour with only a hairline to say it
  * was there. DESIGN.md §3.1's whole tonal system exists for this: the canvas
  * is `--paper` and a card is `--paper-raised`, "the way a sheet laid on a desk
@@ -90,7 +90,7 @@ export function AuthFrame({
   return (
     <main
       data-portal={dataPortal}
-      className="paper-grain flex min-h-dvh flex-col items-center justify-start gap-6 bg-paper px-4 pt-20 pb-12 sm:pt-28"
+      className="flex min-h-dvh flex-col items-center justify-start gap-6 bg-surface px-4 pt-20 pb-12 sm:pt-28"
     >
       <BrandLockup size="md" />
       {children}
@@ -115,7 +115,7 @@ export function AuthFrame({
  * missing, "Sign up" and forgot-password.
  */
 const LINK_CLASS =
-  "pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:min-h-11 rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+  "pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:min-h-11 rounded-sm text-on-primary-container underline underline-offset-2 transition-colors hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
 
 export function Login() {
   const { login } = useAuth()
@@ -197,7 +197,7 @@ export function Login() {
            * (G-02), not a form of its own, so this link costs the reader
            * nothing to follow if it turns out to be the wrong door.
            */}
-          <p className="text-body-sm text-ink-muted">
+          <p className="text-body-sm text-on-surface-variant">
             New to Lemely?{" "}
             <Link to="/signup" className={LINK_CLASS}>
               Create an account
@@ -213,7 +213,7 @@ export function Login() {
            * built for "I have a code" (`JoinWithCode.tsx`), not at a form
            * this product has no way to let a parent reach on their own.
            */}
-          <p className="text-body-sm text-ink-muted">
+          <p className="text-body-sm text-on-surface-variant">
             Are you a parent?{" "}
             <Link to="/join" className={LINK_CLASS}>
               Use the invite from your child
@@ -224,18 +224,18 @@ export function Login() {
     >
       <form
         onSubmit={handleSubmit}
-        className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-rule bg-paper-raised p-8"
+        className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-outline-variant bg-surface-container-lowest p-8"
       >
         <div className="flex flex-col gap-1.5">
-          <h1 className="text-display-lg text-ink">Sign in</h1>
+          <h1 className="text-display-lg text-on-surface">Sign in</h1>
           {expired ? (
             // A status, not an error: nothing went wrong, a session simply ran
             // out. `role="status"` so it is announced without interrupting.
-            <p role="status" className="text-body-md text-ink-muted">
+            <p role="status" className="text-body-md text-on-surface-variant">
               Your session expired. Please sign in again.
             </p>
           ) : (
-            <p className="text-body-md text-ink-muted">
+            <p className="text-body-md text-on-surface-variant">
               Students and teachers sign in here.
             </p>
           )}
@@ -277,7 +277,7 @@ export function Login() {
          * so it belongs here rather than under one of them.
          */}
         {login.isError && !challenge ? (
-          <p role="alert" className="text-body-sm text-err">
+          <p role="alert" className="text-body-sm text-error">
             {signInFailureMessage(login.error)}
           </p>
         ) : null}

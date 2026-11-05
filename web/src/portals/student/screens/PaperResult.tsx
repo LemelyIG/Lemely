@@ -132,10 +132,10 @@ function IntegrityMark({ row }: { row: IntegrityRow }) {
       // (rule) instead of the undocumented border-[1.5px].
       className={`w-4 h-4 flex-none mt-px rounded-full border flex items-center justify-center ${
         row.color === "ok"
-          ? "border-ok text-ok"
+          ? "border-success text-success-text"
           : row.color === "warn"
-            ? "border-warn text-warn"
-            : "border-ink-muted text-ink-muted"
+            ? "border-tertiary text-on-tertiary-container"
+            : "border-on-surface-variant text-on-surface-variant"
       }`}
     >
       <Icon size={9} weight="bold" />
@@ -309,7 +309,7 @@ function ResultHeader({
             </div>
           </div>
           {res.headline ? (
-            <h1 className="mt-2.5 text-display-md text-ink">{res.headline}</h1>
+            <h1 className="mt-2.5 text-display-md text-on-surface">{res.headline}</h1>
           ) : (
             <h1 className="sr-only">
               Paper result: {res.code} {res.paper}
@@ -319,7 +319,7 @@ function ResultHeader({
            * based, not a pixel spacing value) — same reasoning as
            * CorrectPaper's max-w ch value. */}
           {res.summary ? (
-            <p className="mt-2 max-w-[56ch] text-pretty text-body-md text-ink-muted">
+            <p className="mt-2 max-w-[56ch] text-pretty text-body-md text-on-surface-variant">
               {res.summary}
             </p>
           ) : null}
@@ -345,7 +345,7 @@ function ResultHeader({
            * D4.1's "Forecast" removal: the field stays on the DTO, this
            * presentation of it goes.
            */}
-          <div className="mt-8 border-t border-rule pt-6">
+          <div className="mt-8 border-t border-outline-variant pt-6">
             <BoundaryBar
               score={res.awarded}
               maxScore={res.max}
@@ -354,7 +354,7 @@ function ResultHeader({
               className="p-0"
             />
             {res.railNote ? (
-              <p className="mt-2 text-pretty text-body-md text-ink-muted">{res.railNote}</p>
+              <p className="mt-2 text-pretty text-body-md text-on-surface-variant">{res.railNote}</p>
             ) : null}
           </div>
         </div>
@@ -362,10 +362,10 @@ function ResultHeader({
         {/* `border-s`, not `border-l`: this is the divider between the result
             and its sidebar, and under `dir="rtl"` the sidebar moves to the
             other edge with it (P3.4). */}
-        <div className="flex flex-col gap-4 border-s border-rule bg-paper-sunk px-6 py-6">
-          <h2 className="text-label text-ink">Integrity and provenance</h2>
+        <div className="flex flex-col gap-4 border-s border-outline-variant bg-surface-container-low px-6 py-6">
+          <h2 className="text-label text-on-surface">Integrity and provenance</h2>
           {res.integrity.length === 0 ? (
-            <p className="text-body-sm text-ink-muted">
+            <p className="text-body-sm text-on-surface-variant">
               No integrity checks recorded for this paper.
             </p>
           ) : (
@@ -373,8 +373,8 @@ function ResultHeader({
               <div key={i.label} className="flex items-start gap-2.5">
                 <IntegrityMark row={i} />
                 <div>
-                  <div className="text-body-sm text-ink">{i.label}</div>
-                  <div className="mt-0.5 text-body-sm text-ink-muted">{i.detail}</div>
+                  <div className="text-body-sm text-on-surface">{i.label}</div>
+                  <div className="mt-0.5 text-body-sm text-on-surface-variant">{i.detail}</div>
                 </div>
               </div>
             ))
@@ -386,7 +386,7 @@ function ResultHeader({
               the momentum panel: a component pinned to the extremes of a box
               it did not ask to be that tall. */}
           {res.provenance ? (
-            <div className="mt-4 whitespace-pre-line break-all border-t border-rule pt-3 text-data-sm leading-relaxed text-ink-faint">
+            <div className="mt-4 whitespace-pre-line break-all border-t border-outline-variant pt-3 text-data-sm leading-relaxed text-on-surface-variant">
               {res.provenance}
             </div>
           ) : null}
@@ -532,7 +532,7 @@ function QuestionList({
                 {markerSourceLabel(q.markerSource)}
               </Chip>
               {q.feedback ? (
-                <div className="rounded-md bg-paper-sunk px-3.5 py-3 text-pretty text-body-md text-ink-muted">
+                <div className="rounded-md bg-surface-container-low px-3.5 py-3 text-pretty text-body-md text-on-surface-variant">
                   {q.feedback}
                 </div>
               ) : null}
@@ -548,7 +548,7 @@ function QuestionList({
                   decided needs no review. `undefined` (every other
                   `reviewReason`) preserves today's behaviour. */}
               {q.reviewReason && q.needsTeacherReview !== false ? (
-                <div className="text-body-md leading-snug text-warn">
+                <div className="text-body-md leading-snug text-on-tertiary-container">
                   Needs review: {q.reviewReason}
                 </div>
               ) : null}

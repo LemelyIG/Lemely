@@ -104,12 +104,12 @@ export function ConfirmModal({
         </div>
       }
     >
-      <p className="text-body-md text-ink-muted">{consequence}</p>
+      <p className="text-body-md text-on-surface-variant">{consequence}</p>
       {/* The failure renders inside the dialog rather than behind it. A
           confirmation that closes on a failed mutation leaves the reader
           believing the thing happened, which is the shape surface 3 found on
           two silent deletes. */}
-      {error ? <p className="mt-3 text-body-sm text-err">{error}</p> : null}
+      {error ? <p className="mt-3 text-body-sm text-error">{error}</p> : null}
     </Modal>
   )
 }

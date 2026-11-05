@@ -190,7 +190,7 @@ function QuizTakerSkeleton() {
         <SkeletonLine announce={false} className="h-6 rounded-full" width="5rem" />
       </div>
       <SkeletonLine announce={false} className="h-1.5" />
-      <div className="flex flex-col gap-5 rounded-lg border border-rule bg-paper-raised px-5 py-[18px]">
+      <div className="flex flex-col gap-5 rounded-lg border border-outline-variant bg-surface-container-lowest px-5 py-[18px]">
         <div className="flex gap-2">
           <SkeletonLine announce={false} className="h-6 rounded-full" width="4.5rem" />
           <SkeletonLine announce={false} className="h-6 rounded-full" width="6rem" />
@@ -578,14 +578,14 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
               <h1 className="sr-only">{data.header.quizTitle}</h1>
               <div className="flex flex-wrap items-center gap-3">
                 <div className="flex flex-col gap-0.5">
-                  <div className="text-body-sm text-ink-muted">
+                  <div className="text-body-sm text-on-surface-variant">
                     Question {index + 1} of {total}
                   </div>
                   {/* `null` for every placement test (no class, no teacher, D4.6 §3);
                    * populated for a teacher-assigned quiz composing this same
                    * component in P4.9/P5. Never a "—" placeholder for the absent
                    * case — nothing renders here at all. */}
-                  {affiliation ? <div className="text-3xs text-ink-faint">{affiliation}</div> : null}
+                  {affiliation ? <div className="text-3xs text-on-surface-variant">{affiliation}</div> : null}
                 </div>
                 <div className="flex-1" />
                 {!online ? (
@@ -613,7 +613,7 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
               />
 
               {timeNearlyUp ? (
-                <div className="rounded-lg border border-warn bg-warn-wash px-4 py-2.5 text-body-sm text-warn">
+                <div className="rounded-lg border border-tertiary bg-tertiary-container px-4 py-2.5 text-body-sm text-on-tertiary-container">
                   Less than 2 minutes left.
                 </div>
               ) : null}
@@ -642,8 +642,8 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
                           // tall enough for WCAG 2.5.8 AA (24px), which is exactly why no
                           // automated gate flagged it.
                           "flex min-h-[44px] items-center gap-1.5 rounded px-2.5 py-1.5 text-body-sm transition-colors cursor-pointer",
-                          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-                          currentFlagged ? "bg-warn-wash text-warn" : "text-ink-faint hover:bg-paper-sunk",
+                          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+                          currentFlagged ? "bg-tertiary-container text-on-tertiary-container" : "text-on-surface-variant hover:bg-surface-container-low",
                         )}
                       >
                         <Flag weight={currentFlagged ? "fill" : "regular"} size={14} aria-hidden />
@@ -651,7 +651,7 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
                       </button>
                     </div>
 
-                    <p className="whitespace-pre-line text-body-lg leading-relaxed text-ink">
+                    <p className="whitespace-pre-line text-body-lg leading-relaxed text-on-surface">
                       {current.prompt}
                     </p>
 
@@ -669,15 +669,15 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
               </div>
 
               {confirmingSubmit ? (
-                <Card className="border-warn">
+                <Card className="border-tertiary">
                   <CardBody className="flex flex-col gap-3">
-                    <div className="text-body-md font-medium text-ink">
+                    <div className="text-body-md font-medium text-on-surface">
                       You have {unansweredCount} unanswered question{unansweredCount === 1 ? "" : "s"}.
                     </div>
-                    <p className="text-body-sm text-ink-muted">
+                    <p className="text-body-sm text-on-surface-variant">
                       You can still go back and answer them, or submit as-is.
                     </p>
-                    {submitError ? <p className="text-body-sm text-err">{submitError}</p> : null}
+                    {submitError ? <p className="text-body-sm text-error">{submitError}</p> : null}
                     <div className="flex flex-wrap gap-3">
                       <Button variant="secondary" onClick={() => setConfirmingSubmit(false)}>
                         Go back
@@ -705,7 +705,7 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
                     Next
                   </Button>
                   <div className="flex-1" />
-                  {submitError ? <p className="text-body-sm text-err">{submitError}</p> : null}
+                  {submitError ? <p className="text-body-sm text-error">{submitError}</p> : null}
                   <Button variant="accent" disabled={submitQuiz.isPending} onClick={requestSubmit}>
                     {submitQuiz.isPending ? "Submitting…" : "Submit test"}
                   </Button>
@@ -723,7 +723,7 @@ function SaveIndicator({ status, online }: { status: SaveStatus; online: boolean
   if (status === "idle") return null
   if (status === "error") {
     return (
-      <p className="text-body-sm text-err" role="status">
+      <p className="text-body-sm text-error" role="status">
         {online
           ? "We couldn't save this answer. It's kept on this device, and we'll send it again before you submit."
           : "Offline. This will save once you're back online."}
@@ -732,13 +732,13 @@ function SaveIndicator({ status, online }: { status: SaveStatus; online: boolean
   }
   if (status === "saving") {
     return (
-      <p className="text-body-sm text-ink-faint" role="status">
+      <p className="text-body-sm text-on-surface-variant" role="status">
         Saving…
       </p>
     )
   }
   return (
-    <p className="text-body-sm text-ink-faint" role="status">
+    <p className="text-body-sm text-on-surface-variant" role="status">
       Saved
     </p>
   )
@@ -771,17 +771,17 @@ function AnswerInput({
               onClick={() => onAnswerText(option)}
               className={cn(
                 "flex items-center gap-3 rounded-lg border px-4 py-3 text-start text-body-md cursor-pointer transition-colors",
-                "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
                 selected
-                  ? "border-accent bg-accent-wash text-accent-ink"
-                  : "border-rule bg-paper-raised text-ink hover:bg-paper-sunk",
+                  ? "border-primary bg-primary-container text-on-primary-container"
+                  : "border-outline-variant bg-surface-container-lowest text-on-surface hover:bg-surface-container-low",
               )}
             >
               <span
                 aria-hidden
                 className={cn(
                   "flex h-4 w-4 flex-none items-center justify-center rounded-full border",
-                  selected ? "border-accent bg-accent" : "border-rule",
+                  selected ? "border-primary bg-primary" : "border-outline-variant",
                 )}
               />
               {option}
@@ -799,7 +799,7 @@ function AnswerInput({
         value={value.answerText ?? ""}
         onChange={(event) => onAnswerText(event.target.value)}
         placeholder="Your answer"
-        className="min-h-[44px] rounded-lg border border-rule bg-paper-raised px-4 py-3 text-body-lg text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        className="min-h-[44px] rounded-lg border border-outline-variant bg-surface-container-lowest px-4 py-3 text-body-lg text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
       />
     )
   }
@@ -807,7 +807,7 @@ function AnswerInput({
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-1.5">
-        <label className="text-body-sm text-ink-muted" htmlFor={`working-${question.id}`}>
+        <label className="text-body-sm text-on-surface-variant" htmlFor={`working-${question.id}`}>
           Work it out on paper, then type your working here (optional)
         </label>
         <textarea
@@ -816,11 +816,11 @@ function AnswerInput({
           onChange={(event) => onWorkingText(event.target.value)}
           rows={4}
           placeholder="Show your working…"
-          className="rounded-lg border border-rule bg-paper-raised px-4 py-3 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          className="rounded-lg border border-outline-variant bg-surface-container-lowest px-4 py-3 text-body-md text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         />
       </div>
       <div className="flex flex-col gap-1.5">
-        <label className="text-body-sm text-ink-muted" htmlFor={`answer-${question.id}`}>
+        <label className="text-body-sm text-on-surface-variant" htmlFor={`answer-${question.id}`}>
           Your answer
         </label>
         <textarea
@@ -829,7 +829,7 @@ function AnswerInput({
           onChange={(event) => onAnswerText(event.target.value)}
           rows={3}
           placeholder="Your final answer"
-          className="rounded-lg border border-rule bg-paper-raised px-4 py-3 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          className="rounded-lg border border-outline-variant bg-surface-container-lowest px-4 py-3 text-body-md text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         />
       </div>
     </div>

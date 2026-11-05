@@ -54,7 +54,7 @@ function Rows({ items }: { items: readonly AdminTutorItem[] }) {
             <div className="flex min-w-0 flex-col gap-1.5">
               <Link
                 to={`/platform/tutors/${encodeURIComponent(tutor.tutorId)}`}
-                className="inline-flex min-h-11 w-fit items-center rounded-sm text-body-md font-medium text-accent-ink underline underline-offset-2 transition-colors hover:text-accent-hover"
+                className="inline-flex min-h-11 w-fit items-center rounded-sm text-body-md font-medium text-on-primary-container underline underline-offset-2 transition-colors hover:text-primary-hover"
               >
                 {tutor.publicName}
               </Link>
@@ -67,7 +67,7 @@ function Rows({ items }: { items: readonly AdminTutorItem[] }) {
               </ul>
             </div>
           </TD>
-          <TD className="whitespace-nowrap align-top text-body-sm text-ink-muted">
+          <TD className="whitespace-nowrap align-top text-body-sm text-on-surface-variant">
             {tutor.submittedAt ? (
               <time dateTime={tutor.submittedAt} className="tabular-nums">
                 {formatAdminDay(tutor.submittedAt)}
@@ -113,7 +113,7 @@ function NextRows({ state, cursor }: { state: AdminTutorState; cursor: string })
   if (query.isPending) {
     return (
       <SpanRow>
-        <p role="status" className="m-0 text-body-sm text-ink-muted">
+        <p role="status" className="m-0 text-body-sm text-on-surface-variant">
           Loading more tutors
         </p>
       </SpanRow>
@@ -123,7 +123,7 @@ function NextRows({ state, cursor }: { state: AdminTutorState; cursor: string })
     return (
       <SpanRow>
         <div className="flex flex-wrap items-center gap-3">
-          <p role="alert" className="m-0 text-body-sm text-ink">
+          <p role="alert" className="m-0 text-body-sm text-on-surface">
             {adminFailureMessage(query.error, "We couldn't load more tutors.")}
           </p>
           <Button className="min-h-11" size="sm" onClick={() => void query.refetch()}>
@@ -151,8 +151,8 @@ export function TutorQueue() {
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1.5">
         <Eyebrow>Platform admin</Eyebrow>
-        <h1 className="text-display-lg text-ink">Tutors</h1>
-        <p className="max-w-prose text-body-md text-ink-muted">
+        <h1 className="text-display-lg text-on-surface">Tutors</h1>
+        <p className="max-w-prose text-body-md text-on-surface-variant">
           Profiles tutors have submitted, oldest first. Open one to read it and decide.
         </p>
       </header>
@@ -160,12 +160,12 @@ export function TutorQueue() {
       {notice ? (
         <div
           role="status"
-          className="flex items-start gap-3 rounded-lg border border-rule bg-warn-wash px-4 py-3"
+          className="flex items-start gap-3 rounded-lg border border-outline-variant bg-tertiary-container px-4 py-3"
         >
-          <Info size={20} className="mt-0.5 flex-none text-warn" aria-hidden="true" />
+          <Info size={20} className="mt-0.5 flex-none text-on-tertiary-container" aria-hidden="true" />
           <div className="flex min-w-0 flex-col gap-0.5">
-            <p className="m-0 text-body-md font-medium text-ink">{notice.title}</p>
-            <p className="m-0 max-w-prose text-body-sm text-ink-muted">{notice.body}</p>
+            <p className="m-0 text-body-md font-medium text-on-surface">{notice.title}</p>
+            <p className="m-0 max-w-prose text-body-sm text-on-surface-variant">{notice.body}</p>
           </div>
         </div>
       ) : null}

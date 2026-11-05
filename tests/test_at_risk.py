@@ -247,6 +247,27 @@ class TestBelowTargetSubjectKeying:
         assert isinstance(flag.evidence, BelowTargetEvidence)
         assert flag.evidence.target_grade == "A"
 
+    def test_core_tier_f_below_target_c_fires(self) -> None:
+        """A Core-tier student on ``F`` against target ``C`` is 3 rungs below: flagged."""
+        history = _history(_record(30.0, grade="F"))
+        result = assess_at_risk(history, now=_NOW, targets={_SUBJECT: "C"})
+        assert result.target_rule_status == TargetRuleStatus.FIRED
+        flag = next(f for f in result.flags if f.reason == AtRiskReason.BELOW_TARGET)
+        assert isinstance(flag.evidence, BelowTargetEvidence)
+        assert flag.evidence.target_grade == "C"
+        assert flag.evidence.predicted_grade == "F"
+
+    def test_core_tier_g_below_target_e_fires(self) -> None:
+        """``G`` is two rungs under ``E`` on the full ladder: exactly the gap."""
+        history = _history(_record(20.0, grade="G"))
+        result = assess_at_risk(history, now=_NOW, targets={_SUBJECT: "E"})
+        assert result.target_rule_status == TargetRuleStatus.FIRED
+
+    def test_core_tier_f_one_below_target_e_does_not_fire(self) -> None:
+        history = _history(_record(30.0, grade="F"))
+        result = assess_at_risk(history, now=_NOW, targets={_SUBJECT: "E"})
+        assert AtRiskReason.BELOW_TARGET not in {f.reason for f in result.flags}
+
     def test_resolves_against_the_subject_of_the_latest_grade_bearing_record(self) -> None:
         """Interleaved subjects: only the *latest* record's subject is checked.
 

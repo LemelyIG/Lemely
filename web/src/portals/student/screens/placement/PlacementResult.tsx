@@ -103,11 +103,11 @@ export function PlacementResult() {
                     has not finished, so there is no shape to reserve.
                     `animate-spin` is a transform, which is the only thing
                     §9.2 permits. */}
-                <CircleNotch size={28} className="animate-spin text-ink-faint" aria-hidden="true" />
-                <h1 className="text-body-lg font-medium text-ink">
+                <CircleNotch size={28} className="animate-spin text-on-surface-variant" aria-hidden="true" />
+                <h1 className="text-body-lg font-medium text-on-surface">
                   Marking your {subjectName} placement test
                 </h1>
-                <p className="max-w-[55ch] text-body-md text-ink-muted">
+                <p className="max-w-[55ch] text-body-md text-on-surface-variant">
                   This usually only takes a moment. This page will update on its own, so there is
                   no need to refresh.
                 </p>
@@ -123,8 +123,8 @@ export function PlacementResult() {
           return (
             <>
               <div className="flex flex-col gap-2">
-                <h1 className="text-display-md text-ink">Your {subjectName} starting picture</h1>
-                <p className="max-w-[65ch] text-body-md text-ink-muted">
+                <h1 className="text-display-md text-on-surface">Your {subjectName} starting picture</h1>
+                <p className="max-w-[65ch] text-body-md text-on-surface-variant">
                   This is a baseline, not a grade. It is a snapshot of where you're starting from,
                   so your study plan can target what actually needs work. It gets more accurate
                   the more you practise.
@@ -135,9 +135,9 @@ export function PlacementResult() {
                 // `info`, not the accent border it used to carry: this is a fact
                 // about how wide the sample was, and on this palette accent
                 // reads as alarm.
-                <Card className="border-info bg-info-wash">
+                <Card className="border-primary bg-primary-container">
                   <CardBody>
-                    <p className="max-w-[65ch] text-body-sm text-ink-muted">
+                    <p className="max-w-[65ch] text-body-sm text-on-surface-variant">
                       This test covered a narrow slice of the syllabus, so we're not estimating a
                       working level from it yet. Your strongest and weakest topics are below. A
                       wider sample, from practice and future papers, will sharpen this.
@@ -149,9 +149,9 @@ export function PlacementResult() {
               <div className="grid grid-cols-1 gap-5 min-[720px]:grid-cols-2">
                 <Card>
                   <CardBody className="flex flex-col gap-3">
-                    <div className="text-eyebrow text-ink-faint">Strongest topics</div>
+                    <div className="text-eyebrow text-on-surface-variant">Strongest topics</div>
                     {strongest.length === 0 ? (
-                      <p className="text-body-sm text-ink-faint">Not enough data yet.</p>
+                      <p className="text-body-sm text-on-surface-variant">Not enough data yet.</p>
                     ) : (
                       <div className="flex flex-col gap-2">
                         {strongest.map((t) => (
@@ -170,9 +170,9 @@ export function PlacementResult() {
 
                 <Card>
                   <CardBody className="flex flex-col gap-3">
-                    <div className="text-eyebrow text-ink-faint">Weakest topics</div>
+                    <div className="text-eyebrow text-on-surface-variant">Weakest topics</div>
                     {weakest.length === 0 ? (
-                      <p className="text-body-sm text-ink-faint">Not enough data yet.</p>
+                      <p className="text-body-sm text-on-surface-variant">Not enough data yet.</p>
                     ) : (
                       <div className="flex flex-col gap-2">
                         {weakest.map((t) => (

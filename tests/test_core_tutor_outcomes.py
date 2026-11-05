@@ -714,7 +714,7 @@ def test_outcomes_ladder_argument_honoured() -> None:
 
 def test_is_outcome_eligible_truth_table() -> None:
     origins = (ELIGIBLE_ORIGIN, "quiz", "custom_paper")
-    grades = ("A*", "U", "F", None)
+    grades = ("A*", "U", "X", None)
     sources = (ELIGIBLE_BOUNDARY, "subject_default", "global_default", None)
     subjects = ("0625", "0620", None)
     rows = list(itertools.product(origins, grades, sources, subjects, (False, True)))

@@ -38,19 +38,19 @@ function useBookingsPage(when: BookingWhen, cursor: string | null) {
 
 function SessionRow({ row }: { row: SessionRowView }) {
   return (
-    <li className="relative flex flex-col gap-2 border-b border-rule px-4 py-4 transition-colors duration-[var(--dur-instant)] ease-out-soft last:border-b-0 hover:bg-paper-sunk focus-within:bg-paper-sunk active:bg-paper-sunk">
+    <li className="relative flex flex-col gap-2 border-b border-outline-variant px-4 py-4 transition-colors duration-[var(--dur-instant)] ease-out-soft last:border-b-0 hover:bg-surface-container-low focus-within:bg-surface-container-low active:bg-surface-container-low">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <Link
           to={`/student/sessions/${encodeURIComponent(row.bookingId)}`}
           aria-label={row.ariaLabel}
-          className="min-w-0 break-words text-body-lg font-medium text-ink after:absolute after:inset-0"
+          className="min-w-0 break-words text-body-lg font-medium text-on-surface after:absolute after:inset-0"
         >
           {row.subjectName} with {row.tutorName}
         </Link>
         <BookingStatus state={row.state} />
       </div>
-      <p className="m-0 text-body-md text-ink-muted">{row.timeLabel}</p>
-      <p className="m-0 text-body-sm text-ink-muted">{row.modeLabel}</p>
+      <p className="m-0 text-body-md text-on-surface-variant">{row.timeLabel}</p>
+      <p className="m-0 text-body-sm text-on-surface-variant">{row.modeLabel}</p>
     </li>
   )
 }
@@ -79,13 +79,13 @@ function SessionList({ when }: { when: BookingWhen }) {
     >
       {(items) => (
         <div className="flex flex-col gap-4">
-          <ul className="m-0 flex list-none flex-col overflow-hidden rounded-lg border border-rule bg-paper-raised p-0">
+          <ul className="m-0 flex list-none flex-col overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest p-0">
             {items.map((booking) => (
               <SessionRow key={booking.bookingId} row={sessionRowView(booking)} />
             ))}
           </ul>
           {paged.moreFailed ? (
-            <p role="alert" className="m-0 text-body-sm text-err">
+            <p role="alert" className="m-0 text-body-sm text-error">
               We couldn't load more sessions. Press Show more sessions to try again.
             </p>
           ) : null}
@@ -113,7 +113,7 @@ export function Sessions() {
 
   return (
     <div className="flex w-full max-w-160 flex-col gap-6">
-      <h1 className="m-0 text-display-md text-ink">My sessions</h1>
+      <h1 className="m-0 text-display-md text-on-surface">My sessions</h1>
 
       <Tabs
         value={tab}
@@ -134,9 +134,9 @@ export function Sessions() {
         </TabsPanel>
       </Tabs>
 
-      <p className="m-0 max-w-prose text-body-sm text-ink-muted">
+      <p className="m-0 max-w-prose text-body-sm text-on-surface-variant">
         You choose which tutors can see your progress. Manage that in{" "}
-        <Link to="/student/tutor-access" className="text-accent-ink underline">
+        <Link to="/student/tutor-access" className="text-on-primary-container underline">
           Tutors &amp; your data
         </Link>
         .

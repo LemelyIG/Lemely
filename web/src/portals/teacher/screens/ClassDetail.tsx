@@ -1,4 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
+import { useSettledCode } from "../home/useSettledCode"
 import { useState } from "react"
 import { Link, NavLink, Outlet, useNavigate, useOutletContext, useParams } from "react-router-dom"
 import { EmptyState } from "@/components/ui/state-views"
@@ -62,8 +63,8 @@ function classTabClassName({ isActive }: { isActive: boolean }): string {
   return cn(
     "px-4 py-2.5 text-body-lg border-b-2 -mb-px",
     isActive
-      ? "border-accent text-ink font-medium"
-      : "border-transparent text-ink-muted transition-colors hover:text-ink",
+      ? "border-primary text-on-surface font-medium"
+      : "border-transparent text-on-surface-variant transition-colors hover:text-on-surface",
   )
 }
 
@@ -83,8 +84,9 @@ export function useClassDetailContext(): ClassDetailContext {
  * copy-to-clipboard chip — the same artifact, the same affordance, two
  * places it needs to appear.
  */
-export function JoinCodeChip({ code }: { code: string }) {
+export function JoinCodeChip({ code, settle = false }: { code: string; settle?: boolean }) {
   const [copied, setCopied] = useState(false)
+  const shown = useSettledCode(code, settle)
   async function copy() {
     try {
       await navigator.clipboard.writeText(code)
@@ -100,11 +102,13 @@ export function JoinCodeChip({ code }: { code: string }) {
     <button
       type="button"
       onClick={copy}
-      className="inline-flex items-center gap-2 border border-rule bg-paper-raised rounded-lg px-3 py-1.5 text-data-md tracking-[0.06em] transition-colors hover:bg-paper-sunk cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+      className="inline-flex items-center gap-2 border border-outline-variant bg-surface-container-lowest rounded-lg px-3 py-1.5 text-data-md tracking-[0.06em] transition-colors hover:bg-surface-container-low cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
       title="Copy join code"
+      // While the glyphs are still settling, the button's name is the real code.
+      aria-label={shown !== code ? code : undefined}
     >
-      {code}
-      <span className="text-body-sm text-ink-faint">{copied ? "Copied" : "Copy"}</span>
+      {shown}
+      <span className="text-body-sm text-on-surface-variant">{copied ? "Copied" : "Copy"}</span>
     </button>
   )
 }
@@ -129,7 +133,7 @@ function MintClassInvite({ classId }: { classId: string }) {
 
   return (
     <div className="flex flex-col items-end gap-1 max-w-[220px]">
-      <span className="text-eyebrow text-ink-faint">One-time invite</span>
+      <span className="text-eyebrow text-on-surface-variant">One-time invite</span>
       {mint.data ? <JoinCodeChip code={mint.data.code} /> : null}
       <Button
         type="button"
@@ -140,9 +144,9 @@ function MintClassInvite({ classId }: { classId: string }) {
       >
         {mint.data ? "Generate another code" : "Generate an invite code"}
       </Button>
-      <p className="text-body-sm text-ink-faint text-end">Works once, then it's spent.</p>
+      <p className="text-body-sm text-on-surface-variant text-end">Works once, then it's spent.</p>
       {mint.isError ? (
-        <p role="alert" className="text-body-sm text-err text-end">
+        <p role="alert" className="text-body-sm text-error text-end">
           {classInviteCodeFailureMessage(mint.error)}
         </p>
       ) : null}
@@ -196,13 +200,13 @@ export function ClassDetailLayout() {
                   full row, so the floor is the whole of what makes it reachable. */}
               <Link
                 to="/teacher/classes"
-                className="flex w-fit items-center text-body-sm text-ink-faint transition-colors hover:text-ink pointer-coarse:min-h-11"
+                className="flex w-fit items-center text-body-sm text-on-surface-variant transition-colors hover:text-on-surface pointer-coarse:min-h-11"
               >
                 <BackArrow /> All classes
               </Link>
               <div className="flex items-start gap-4 flex-wrap gap-y-2 mt-1">
                 <div className="min-w-0">
-                  <div className="text-eyebrow text-ink-faint">
+                  <div className="text-eyebrow text-on-surface-variant">
                     {/* No " · code" repeat when the name has already resolved to
                         the code itself (free-text `subjectCode`, det registry's
                         default profile — see `subjectIdentifier`'s docstring). */}
@@ -224,16 +228,16 @@ export function ClassDetailLayout() {
                 <div className="flex flex-wrap items-start gap-4">
                   {classDetail.joinCode ? (
                     <div className="flex flex-col items-end gap-1 max-w-[220px]">
-                      <span className="text-eyebrow text-ink-faint">Class code</span>
+                      <span className="text-eyebrow text-on-surface-variant">Class code</span>
                       <JoinCodeChip code={classDetail.joinCode} />
-                      <p className="text-body-sm text-ink-faint text-end">Reusable, by anyone.</p>
+                      <p className="text-body-sm text-on-surface-variant text-end">Reusable, by anyone.</p>
                     </div>
                   ) : null}
                   <MintClassInvite classId={classId!} />
                 </div>
               </div>
-              <div className="flex items-center gap-3 flex-wrap text-body-sm text-ink-muted mt-1">
-                <span>{classDetail.topWeakness ? `Top weakness: ${classDetail.topWeakness}` : "Not enough data for a top weakness yet"}</span>
+              <div className="flex items-center gap-3 flex-wrap text-body-sm text-on-surface-variant mt-1">
+                <span>{classDetail.topWeakness ? `Top weakness on latest papers: ${classDetail.topWeakness}` : "Not enough data for a top weakness yet"}</span>
                 <span aria-hidden="true">·</span>
                 <span>
                   {classDetail.lastActivityAt
@@ -259,7 +263,7 @@ export function ClassDetailLayout() {
               ))}
             </div>
 
-            <nav aria-label="Class detail sections" className="flex gap-1 border-b border-rule">
+            <nav aria-label="Class detail sections" className="flex gap-1 border-b border-outline-variant">
               <NavLink to="." end className={classTabClassName}>
                 Roster
               </NavLink>

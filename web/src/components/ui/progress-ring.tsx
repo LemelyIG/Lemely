@@ -20,9 +20,9 @@ import type { ProgressTone } from "@/components/ui/progress-bar"
  */
 
 const TONE_STROKE_CLASSES: Record<ProgressTone, string> = {
-  accent: "stroke-accent",
-  ok: "stroke-ok",
-  err: "stroke-err",
+  accent: "stroke-primary",
+  ok: "stroke-success",
+  err: "stroke-error",
 }
 
 /**
@@ -81,7 +81,7 @@ export function ProgressRing({
         r={radius}
         fill="none"
         strokeWidth={strokeWidth}
-        className="stroke-border"
+        className="stroke-outline-variant"
       />
       <circle
         cx={size / 2}

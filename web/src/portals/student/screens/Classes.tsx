@@ -66,14 +66,14 @@ export function StudentClasses() {
     <div className="flex w-full max-w-160 flex-col gap-6">
       <div className="flex flex-col gap-1">
         <Eyebrow>Classes</Eyebrow>
-        <h1 className="text-display-md text-ink">Your classes</h1>
+        <h1 className="text-display-md text-on-surface">Your classes</h1>
       </div>
 
       <Card>
         <CardBody className="flex flex-col gap-3">
           <div className="flex flex-col gap-1">
-            <h2 className="text-body-md font-medium text-ink">Join a class</h2>
-            <p className="text-body-sm text-ink-muted">
+            <h2 className="text-body-md font-medium text-on-surface">Join a class</h2>
+            <p className="text-body-sm text-on-surface-variant">
               Your teacher gives you a class code. Enter it here to join.
             </p>
           </div>
@@ -107,7 +107,7 @@ export function StudentClasses() {
             </Button>
           </form>
           {joinedClassName ? (
-            <p role="status" className="text-body-sm text-ok">
+            <p role="status" className="text-body-sm text-success-text">
               You joined {joinedClassName}.
             </p>
           ) : null}
@@ -143,10 +143,10 @@ export function StudentClasses() {
               return (
                 <li
                   key={cls.classId}
-                  className="flex flex-col gap-0.5 rounded-lg border border-rule bg-paper-raised p-4"
+                  className="flex flex-col gap-0.5 rounded-lg border border-outline-variant bg-surface-container-lowest p-4"
                 >
-                  <span className="text-body-md text-ink">{cls.name}</span>
-                  {meta ? <span className="text-body-sm text-ink-faint">{meta}</span> : null}
+                  <span className="text-body-md text-on-surface">{cls.name}</span>
+                  {meta ? <span className="text-body-sm text-on-surface-variant">{meta}</span> : null}
                 </li>
               )
             })}

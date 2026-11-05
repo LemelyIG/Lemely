@@ -41,7 +41,7 @@ import { vizText } from "../components/colors"
  * **The weighted-mean delta was green whatever it said.** `weightedMeanDelta`
  * is built as `f"{'+' if delta >= 0 else ''}{delta} since first paper"`, so it
  * is "-8 since first paper" for a student who has got worse — and it was
- * rendered in `text-ok` unconditionally. A student sliding backwards was shown
+ * rendered in `text-success-text` unconditionally. A student sliding backwards was shown
  * their decline in the product's success colour. This is D4.1's "+0 in teal"
  * finding on a different screen, and the tone is derived from the sign now.
  *
@@ -133,33 +133,33 @@ export function Subject() {
                       to "" (see `subjectIdentifier`'s docstring), and an empty
                       eyebrow `<div>` would still take up a line of vertical rhythm. */}
                   {secondary ? (
-                    <div className="text-data-sm text-ink-muted">{secondary}</div>
+                    <div className="text-data-sm text-on-surface-variant">{secondary}</div>
                   ) : null}
                   <div className="mt-1 flex items-center gap-3">
                     <SubjectGlyph subject={subjectHeader.name} className="mt-0.5" />
-                    <h1 className="text-display-lg text-ink">{primary}</h1>
+                    <h1 className="text-display-lg text-on-surface">{primary}</h1>
                   </div>
-                  <div className="mt-2 max-w-[62ch] text-pretty text-body-md text-ink-muted">
+                  <div className="mt-2 max-w-[62ch] text-pretty text-body-md text-on-surface-variant">
                     {subjectHeader.intro}
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-3">
                   <Card className="min-w-33 px-5 py-4 text-center">
-                    <div className="text-eyebrow text-ink-faint">Forecast grade</div>
+                    <div className="text-eyebrow text-on-surface-variant">Forecast grade</div>
                     {/* The data face for both figures: §4.2 puts grades, scores and
                         percentages on the tabular rung, not the display face. They
                         were `font-serif text-[44px]`, which is the display face wearing
                         a literal size. */}
-                    <div className="text-data-lg text-ink">{subjectHeader.forecast}</div>
-                    <div className="text-body-sm text-ink-muted">at current trajectory</div>
+                    <div className="text-data-lg text-on-surface">{subjectHeader.forecast}</div>
+                    <div className="text-body-sm text-on-surface-variant">at current trajectory</div>
                   </Card>
                   <Card className="min-w-33 px-5 py-4 text-center">
-                    <div className="text-eyebrow text-ink-faint">Weighted mean</div>
-                    <div className="text-data-lg text-ink">
+                    <div className="text-eyebrow text-on-surface-variant">Weighted mean</div>
+                    <div className="text-data-lg text-on-surface">
                       {subjectHeader.weightedMean}
                       <span className="text-data-md">%</span>
                     </div>
-                    <div className={cn("text-body-sm", declining ? "text-ink-muted" : "text-ok")}>
+                    <div className={cn("text-body-sm", declining ? "text-on-surface-variant" : "text-success-text")}>
                       {subjectHeader.weightedMeanDelta}
                     </div>
                   </Card>
@@ -170,10 +170,10 @@ export function Subject() {
                 {papersBreakdown.map((p) => (
                   <Card key={p.title} className="p-5">
                     <div className="flex items-baseline gap-2.5">
-                      <div className="text-body-md font-semibold text-ink">{p.title}</div>
-                      <div className="text-body-sm text-ink-muted">{p.sub}</div>
+                      <div className="text-body-md font-semibold text-on-surface">{p.title}</div>
+                      <div className="text-body-sm text-on-surface-variant">{p.sub}</div>
                       <div className="flex-1" />
-                      <div className="text-data-md text-ink">{p.mean}</div>
+                      <div className="text-data-md text-on-surface">{p.mean}</div>
                     </div>
                     <div className="my-5 mb-2.5 flex h-24 items-end gap-1.5">
                       {p.bars.map((b) => (
@@ -181,12 +181,12 @@ export function Subject() {
                           key={b.label}
                           className="flex h-full flex-1 flex-col items-center justify-end gap-1.5"
                         >
-                          {/* Two fixes in one element. `bg-rule-strong` for the
+                          {/* Two fixes in one element. `bg-outline` for the
                               resting bar, not a raw `oklch()` literal (§3.2 item 13:
                               every colour comes from the token block, and this one
                               bypassed it).
 
-                              And `bg-ink` for the highlighted bar, not `bg-accent`.
+                              And `bg-inverse-surface` for the highlighted bar, not `bg-primary`.
                               `highlight` marks the most recent paper, which is
                               emphasis; the row directly beneath it uses accent to mean
                               "you are short of the boundary". Having one colour carry
@@ -196,25 +196,25 @@ export function Subject() {
                           <div
                             className={cn(
                               "w-full rounded-t-sm",
-                              b.highlight ? "bg-ink" : "bg-rule-strong",
+                              b.highlight ? "bg-inverse-surface" : "bg-outline",
                             )}
                             style={{ height: `${b.value}%` }}
                           />
-                          <div className="text-data-sm text-ink-faint">{b.label}</div>
+                          <div className="text-data-sm text-on-surface-variant">{b.label}</div>
                         </div>
                       ))}
                     </div>
-                    <div className="flex gap-5 border-t border-rule pt-3">
+                    <div className="flex gap-5 border-t border-outline-variant pt-3">
                       <div>
-                        <div className="text-eyebrow text-ink-faint">Predicted boundary</div>
-                        <div className="mt-0.5 text-data-sm text-ink">{p.boundary}</div>
+                        <div className="text-eyebrow text-on-surface-variant">Predicted boundary</div>
+                        <div className="mt-0.5 text-data-sm text-on-surface">{p.boundary}</div>
                       </div>
                       <div>
-                        <div className="text-eyebrow text-ink-faint">Your position</div>
+                        <div className="text-eyebrow text-on-surface-variant">Your position</div>
                         <div
                           className={cn(
                             "mt-0.5 text-data-sm",
-                            p.positionOk ? "text-ok" : "text-accent-ink",
+                            p.positionOk ? "text-success-text" : "text-on-primary-container",
                           )}
                         >
                           {p.position}
@@ -228,19 +228,19 @@ export function Subject() {
               <div className="grid grid-cols-1 items-start gap-5 min-[1180px]:grid-cols-[1.3fr_1fr]">
                 <Card className="overflow-hidden">
                   <div className="flex items-baseline gap-2.5 px-5 pt-4 pb-3">
-                    <div className="text-body-md font-semibold text-ink">Paper history</div>
-                    <div className="text-body-sm text-ink-muted">newest first</div>
+                    <div className="text-body-md font-semibold text-on-surface">Paper history</div>
+                    <div className="text-body-sm text-on-surface-variant">newest first</div>
                   </div>
                   {paperHistory.map((h) => (
                     <button
                       key={h.id}
                       onClick={() => navigate(`/student/result/${h.id}`)}
-                      className="grid w-full cursor-pointer grid-cols-[150px_1fr_90px_70px_44px] items-center gap-3 border-0 border-t border-rule bg-transparent px-5 py-3 text-start transition-colors hover:bg-paper-sunk focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                      className="grid w-full cursor-pointer grid-cols-[150px_1fr_90px_70px_44px] items-center gap-3 border-0 border-t border-outline-variant bg-transparent px-5 py-3 text-start transition-colors hover:bg-surface-container-low focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                     >
-                      <span className="text-data-sm text-ink">{h.paper}</span>
-                      <span className="text-body-sm text-ink-muted">{h.note}</span>
-                      <span className="text-data-sm text-ink-muted">{h.marks}</span>
-                      <span className="text-data-sm text-ink">{h.pct}</span>
+                      <span className="text-data-sm text-on-surface">{h.paper}</span>
+                      <span className="text-body-sm text-on-surface-variant">{h.note}</span>
+                      <span className="text-data-sm text-on-surface-variant">{h.marks}</span>
+                      <span className="text-data-sm text-on-surface">{h.pct}</span>
                       {/* `text-end`, not `text-right`: this column follows `dir`. */}
                       <span className={cn("text-data-md text-end", vizText(h.gradeColor))}>
                         {h.grade}
@@ -250,10 +250,10 @@ export function Subject() {
                 </Card>
 
                 <Card className="p-5">
-                  <div className="text-body-md font-semibold text-ink">Topic map</div>
+                  <div className="text-body-md font-semibold text-on-surface">Topic map</div>
                   {/* Says what the number is. It used to promise "marks earned /
                       marks available", which no field on this DTO supplies. */}
-                  <div className="mb-4 text-body-sm text-ink-muted">
+                  <div className="mb-4 text-body-sm text-on-surface-variant">
                     Your accuracy in each syllabus unit, across every paper you've corrected
                   </div>
                   <div className="grid grid-cols-1 gap-2 min-[1180px]:grid-cols-2">
@@ -261,17 +261,17 @@ export function Subject() {
                       <div
                         key={t.name}
                         className={cn(
-                          "rounded-lg border border-rule px-3 py-2.5",
-                          t.weak ? "bg-accent-wash" : "bg-paper-sunk",
+                          "rounded-lg border border-outline-variant px-3 py-2.5",
+                          t.weak ? "bg-primary-container" : "bg-surface-container-low",
                         )}
                       >
-                        <div className="text-body-sm font-medium text-ink">{t.name}</div>
+                        <div className="text-body-sm font-medium text-on-surface">{t.name}</div>
                         <div className="mt-1.5 flex items-baseline gap-1.5">
                           <div className={cn("text-data-md", vizText(t.color))}>{t.acc}</div>
                           {/* No denominator: `TopicTileDTO` carries none, and the one
                               that used to be here was a hardcoded 24 on every tile of
                               every subject. `acc` is already a percentage. */}
-                          <div className="text-body-sm text-ink-muted">accuracy</div>
+                          <div className="text-body-sm text-on-surface-variant">accuracy</div>
                         </div>
                       </div>
                     ))}

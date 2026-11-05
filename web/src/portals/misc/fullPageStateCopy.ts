@@ -31,7 +31,7 @@ export type FullPageStateVariant = Exclude<DoodleKind, "empty"> | "slow-load"
 export type FullPageStateAction = "home" | "sign-in" | "reload" | "retry"
 
 export interface FullPageStateCopy {
-  /** Small kicker above the heading (`text-data-sm text-ink-faint`). Some
+  /** Small kicker above the heading (`text-data-sm text-on-surface-variant`). Some
    * variants have none — `slow-load` — in which case the caller omits the
    * element entirely rather than rendering an empty one. */
   kicker: string

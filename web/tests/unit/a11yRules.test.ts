@@ -434,16 +434,14 @@ describe("landmarks are named", () => {
  * the element it describes.
  */
 /*
- * Packet A3 (audit-dossier remediation). `--accent-on` is documented directly
- * above its declaration in index.css as "the ONE permitted pure white" —
- * measured at 4.65:1 on a filled surface, where `--ink-inverse` (the other
- * candidate) fails at 4.27:1. A literal `text-white` bypasses that
- * measurement entirely: it happens to be the same hex today, but nothing
- * ties it to the token, so a future edit to `--accent-on` silently stops
+ * Packet A3 (audit-dossier remediation). `--md-on-primary` is the one
+ * permitted pure white (`#ffffff`, DESIGN.md "white"). A literal `text-white`
+ * bypasses the role entirely: it happens to be the same hex today, but nothing
+ * ties it to the token, so a future edit to `--md-on-primary` silently stops
  * covering every raw `text-white` call site.
  */
 describe("no raw white text utility", () => {
-  it("uses a semantic on-fill token (e.g. text-accent-on) instead of text-white anywhere in src", () => {
+  it("uses a semantic on-fill token (e.g. text-on-primary) instead of text-white anywhere in src", () => {
     const offenders: string[] = []
     for (const { file, source } of PARSED) {
       for (const m of source.matchAll(/\btext-white\b/g)) {

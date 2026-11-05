@@ -146,7 +146,7 @@ export function TabsList({ tabs, label, className }: TabsListProps) {
       aria-label={label}
       onKeyDown={handleKeyDown}
       className={cn(
-        "flex items-center gap-1 border-b border-rule",
+        "flex items-center gap-1 border-b border-outline-variant",
         className,
       )}
     >
@@ -173,8 +173,8 @@ export function TabsList({ tabs, label, className }: TabsListProps) {
               "transition-[color,transform] active:scale-[0.98]",
               "disabled:pointer-events-none disabled:opacity-50",
               selected
-                ? "border-b-2 border-accent text-ink"
-                : "border-b-2 border-transparent text-ink-muted hover:text-ink",
+                ? "border-b-2 border-primary text-on-surface"
+                : "border-b-2 border-transparent text-on-surface-variant hover:text-on-surface",
             )}
           >
             {tab.label}

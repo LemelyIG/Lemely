@@ -59,10 +59,10 @@ export interface SlotPickerProps {
 }
 
 const face =
-  "flex min-h-11 min-w-11 flex-col items-center justify-center rounded-md border border-rule bg-paper-raised px-3 py-2 text-center " +
+  "flex min-h-11 min-w-11 flex-col items-center justify-center rounded-md border border-outline-variant bg-surface-container-lowest px-3 py-2 text-center " +
   "transition-colors duration-[var(--dur-instant)] ease-out-soft " +
-  "peer-hover:border-rule-strong peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-focus-ring " +
-  "peer-checked:border-accent peer-checked:bg-accent-wash peer-checked:text-accent-ink " +
+  "peer-hover:border-outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary " +
+  "peer-checked:border-primary peer-checked:bg-primary-container peer-checked:text-on-primary-container " +
   "peer-disabled:cursor-not-allowed peer-disabled:opacity-50"
 
 export function SlotPicker({
@@ -130,7 +130,7 @@ export function SlotPicker({
 
   if (slots.slots.length === 0) {
     return (
-      <p className={cn("m-0 text-body-md text-ink-muted", className)}>
+      <p className={cn("m-0 text-body-md text-on-surface-variant", className)}>
         No times are free in this window. Try later dates.
       </p>
     )
@@ -139,7 +139,7 @@ export function SlotPicker({
   return (
     <div className={cn("flex flex-col gap-4", className)}>
       <fieldset className="m-0 flex min-w-0 flex-col gap-2 border-0 p-0" disabled={disabled}>
-        <legend className="mb-1 p-0 text-label text-ink">Day</legend>
+        <legend className="mb-1 p-0 text-label text-on-surface">Day</legend>
         <div className="flex flex-wrap gap-2">
           {days.map((day) => (
             <label key={day.dayKey} className="relative cursor-pointer has-disabled:cursor-not-allowed">
@@ -153,13 +153,13 @@ export function SlotPicker({
               />
               <span className={face}>
                 <span className="text-label">{day.chipLabel}</span>
-                <span className="text-body-sm text-ink-muted">{dayChipSummary(day.slots.length)}</span>
+                <span className="text-body-sm text-on-surface-variant">{dayChipSummary(day.slots.length)}</span>
               </span>
               <Check
                 size={14}
                 weight="bold"
                 aria-hidden
-                className="absolute end-1.5 top-1.5 hidden text-accent-ink peer-checked:block"
+                className="absolute end-1.5 top-1.5 hidden text-on-primary-container peer-checked:block"
               />
             </label>
           ))}
@@ -168,11 +168,11 @@ export function SlotPicker({
 
       {active ? (
         <fieldset className="m-0 flex min-w-0 flex-col gap-2 border-0 p-0" disabled={disabled}>
-          <legend className="mb-1 p-0 text-label text-ink">
+          <legend className="mb-1 p-0 text-label text-on-surface">
             Times on {active.chipLabel} ({slots.zoneLabel})
           </legend>
           {active.slots.length === 0 ? (
-            <p className="m-0 text-body-md text-ink-muted">No times on this day.</p>
+            <p className="m-0 text-body-md text-on-surface-variant">No times on this day.</p>
           ) : (
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {active.slots.map((slot) => (
@@ -192,7 +192,7 @@ export function SlotPicker({
                     size={14}
                     weight="bold"
                     aria-hidden
-                    className="absolute end-1.5 top-1.5 hidden text-accent-ink peer-checked:block"
+                    className="absolute end-1.5 top-1.5 hidden text-on-primary-container peer-checked:block"
                   />
                 </label>
               ))}
@@ -202,10 +202,10 @@ export function SlotPicker({
       ) : null}
 
       {disabled && disabledReason ? (
-        <p className="m-0 text-body-sm text-ink-muted">{disabledReason}</p>
+        <p className="m-0 text-body-sm text-on-surface-variant">{disabledReason}</p>
       ) : null}
 
-      <p className="m-0 text-body-sm text-ink-muted" aria-live="polite">
+      <p className="m-0 text-body-sm text-on-surface-variant" aria-live="polite">
         {selected ? `Selected: ${selected.fullLabel}` : `Times are in ${slots.zoneLabel}.`}
       </p>
     </div>

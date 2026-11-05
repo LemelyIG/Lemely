@@ -73,7 +73,7 @@ function Section({ id, title, children, action }: { id: string; title: string; c
   return (
     <section aria-labelledby={id} className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 id={id} className="m-0 text-display-sm text-ink">
+        <h2 id={id} className="m-0 text-display-sm text-on-surface">
           {title}
         </h2>
         {action}
@@ -95,9 +95,9 @@ function WeeklyHours({ preview }: { preview: TutorPreview }) {
   }
   return (
     <div className="flex flex-col gap-2">
-      <h3 className="m-0 text-label text-ink">Weekly hours, {zoneLabel}</h3>
+      <h3 className="m-0 text-label text-on-surface">Weekly hours, {zoneLabel}</h3>
       {availability.length === 0 ? (
-        <p className="m-0 text-body-md text-ink-muted">No weekly hours are set, so students can't book you yet.</p>
+        <p className="m-0 text-body-md text-on-surface-variant">No weekly hours are set, so students can't book you yet.</p>
       ) : (
         <Table density="operate" tabIndex={0} role="region" aria-label={`Weekly hours, ${zoneLabel}`}>
           <TBody>
@@ -105,10 +105,10 @@ function WeeklyHours({ preview }: { preview: TutorPreview }) {
               const times = byDay.get(day.iso)
               return (
                 <TR key={day.iso}>
-                  <TH scope="row" className="w-1/3 font-normal text-ink">
+                  <TH scope="row" className="w-1/3 font-normal text-on-surface">
                     {day.label}
                   </TH>
-                  <TD className={times ? "text-ink" : "text-ink-muted"}>{times ? times.join(", ") : "Not available"}</TD>
+                  <TD className={times ? "text-on-surface" : "text-on-surface-variant"}>{times ? times.join(", ") : "Not available"}</TD>
                 </TR>
               )
             })}
@@ -122,19 +122,19 @@ function WeeklyHours({ preview }: { preview: TutorPreview }) {
 function ResultsBlock({ outcomes }: { outcomes: Outcomes | null }) {
   if (outcomes === null) {
     return (
-      <p className="m-0 text-body-md text-ink-muted">
+      <p className="m-0 text-body-md text-on-surface-variant">
         Results appear here once your profile is listed or under review.
       </p>
     )
   }
   if (outcomes.subjects.length === 0) {
-    return <p className="m-0 text-body-md text-ink-muted">There are no subjects to show results for yet.</p>
+    return <p className="m-0 text-body-md text-on-surface-variant">There are no subjects to show results for yet.</p>
   }
   return (
     <div className="flex flex-col gap-6">
       {outcomes.subjects.map((subject) => (
         <div key={subject.subject.code} className="flex flex-col gap-3">
-          <h4 className="m-0 text-label text-ink">{subject.subject.name}</h4>
+          <h4 className="m-0 text-label text-on-surface">{subject.subject.name}</h4>
           <div className={FIGURES}>
             <OrdinalDistribution
               ladder={outcomes.ladder}
@@ -145,7 +145,7 @@ function ResultsBlock({ outcomes }: { outcomes: Outcomes | null }) {
           </div>
         </div>
       ))}
-      <p className="m-0 max-w-prose text-body-sm text-ink-muted">
+      <p className="m-0 max-w-prose text-body-sm text-on-surface-variant">
         {OUTCOMES_CAPTION(outcomes.duringWindowDays, outcomes.beforeLookbackDays)}
       </p>
     </div>
@@ -160,7 +160,7 @@ function ProfilePreview({ preview }: { preview: TutorPreview }) {
       <TutorCard tutor={profile} headingAs="h3" />
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          {since ? <span className="text-body-sm text-ink-muted">Listed since {since}</span> : null}
+          {since ? <span className="text-body-sm text-on-surface-variant">Listed since {since}</span> : null}
           {profile.documentsSeen ? (
             <Chip tone="info" className="gap-1.5">
               <CheckCircle size={14} weight="bold" aria-hidden />
@@ -169,30 +169,30 @@ function ProfilePreview({ preview }: { preview: TutorPreview }) {
           ) : null}
         </div>
         {profile.documentsSeen ? (
-          <p className="m-0 max-w-prose text-body-sm text-ink-muted">{DOCUMENTS_SEEN_DISCLOSURE}</p>
+          <p className="m-0 max-w-prose text-body-sm text-on-surface-variant">{DOCUMENTS_SEEN_DISCLOSURE}</p>
         ) : null}
       </div>
 
       {profile.bio ? (
         <div className="flex flex-col gap-1">
-          <h3 className="m-0 text-label text-ink">About</h3>
-          <p className="m-0 max-w-prose whitespace-pre-wrap break-words text-body-md text-ink">{profile.bio}</p>
+          <h3 className="m-0 text-label text-on-surface">About</h3>
+          <p className="m-0 max-w-prose whitespace-pre-wrap break-words text-body-md text-on-surface">{profile.bio}</p>
         </div>
       ) : (
-        <p className="m-0 text-body-md text-ink-muted">You haven't written an About text yet.</p>
+        <p className="m-0 text-body-md text-on-surface-variant">You haven't written an About text yet.</p>
       )}
       {profile.qualificationNote ? (
         <div className="flex flex-col gap-1">
-          <h3 className="m-0 text-label text-ink">Qualifications</h3>
-          <p className="m-0 max-w-prose whitespace-pre-wrap break-words text-body-md text-ink">
+          <h3 className="m-0 text-label text-on-surface">Qualifications</h3>
+          <p className="m-0 max-w-prose whitespace-pre-wrap break-words text-body-md text-on-surface">
             {profile.qualificationNote}
           </p>
         </div>
       ) : null}
       {profile.otherModeNote ? (
         <div className="flex flex-col gap-1">
-          <h3 className="m-0 text-label text-ink">Meeting another way</h3>
-          <p className="m-0 max-w-prose whitespace-pre-wrap break-words text-body-md text-ink">
+          <h3 className="m-0 text-label text-on-surface">Meeting another way</h3>
+          <p className="m-0 max-w-prose whitespace-pre-wrap break-words text-body-md text-on-surface">
             {profile.otherModeNote}
           </p>
         </div>
@@ -201,11 +201,11 @@ function ProfilePreview({ preview }: { preview: TutorPreview }) {
       <WeeklyHours preview={preview} />
 
       <div className="flex flex-col gap-3">
-        <h3 className="m-0 text-label text-ink">Results with this tutor</h3>
+        <h3 className="m-0 text-label text-on-surface">Results with this tutor</h3>
         <ResultsBlock outcomes={preview.outcomes} />
       </div>
 
-      <p className="m-0 text-body-sm text-ink-muted">Fees are agreed with the tutor, outside Lemely.</p>
+      <p className="m-0 text-body-sm text-on-surface-variant">Fees are agreed with the tutor, outside Lemely.</p>
     </div>
   )
 }
@@ -214,8 +214,8 @@ function VisibilityNote({ own }: { own: TutorOwnProfile }) {
   if (own.listingState === "listed" && !own.paused) return null
   const banner = listingBanner(own.listingState, { paused: own.paused, reviewNote: own.reviewNote })
   return (
-    <p className="m-0 flex items-start gap-2 rounded-md border border-rule bg-paper-sunk px-3 py-2.5 text-body-md text-ink">
-      <WarningCircle size={18} className="mt-0.5 shrink-0 text-warn" aria-hidden />
+    <p className="m-0 flex items-start gap-2 rounded-md border border-outline-variant bg-surface-container-low px-3 py-2.5 text-body-md text-on-surface">
+      <WarningCircle size={18} className="mt-0.5 shrink-0 text-on-tertiary-container" aria-hidden />
       <span>
         <strong className="font-medium">Students can't see this yet.</strong> {banner.title}. {banner.body}
       </span>
@@ -230,10 +230,10 @@ function Stars({ stars }: { stars: number }) {
     <span className="inline-flex items-center gap-1.5">
       <span role="img" aria-label={`${stars} out of 5 stars`} className="inline-flex">
         {Array.from({ length: 5 }, (_, index) => (
-          <Star key={index} size={16} weight={index < stars ? "fill" : "regular"} className="text-ink" aria-hidden />
+          <Star key={index} size={16} weight={index < stars ? "fill" : "regular"} className="text-on-surface" aria-hidden />
         ))}
       </span>
-      <span className="text-body-sm text-ink-muted" aria-hidden>
+      <span className="text-body-sm text-on-surface-variant" aria-hidden>
         {stars} of 5
       </span>
     </span>
@@ -302,11 +302,11 @@ function ReplyComposer({
         }}
       />
       {failure ? (
-        <p role="alert" className="m-0 text-body-sm text-err">
+        <p role="alert" className="m-0 text-body-sm text-error">
           {failure}
         </p>
       ) : null}
-      {!online ? <p className="m-0 text-body-sm text-ink-muted">You're offline. Reconnect to send your reply.</p> : null}
+      {!online ? <p className="m-0 text-body-sm text-on-surface-variant">You're offline. Reconnect to send your reply.</p> : null}
       <div className="flex flex-wrap gap-3">
         <Button type="submit" variant="primary" size="sm" loading={reply.isPending} disabled={!online}>
           Send reply
@@ -338,36 +338,36 @@ function ReviewRow({ review, online }: { review: TutorReviewItem; online: boolea
   const view = review.reply ? replyStateView(review.reply.textState) : null
   const ReplyGlyph = review.reply ? REPLY_ICON[review.reply.textState] : null
   return (
-    <li className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-4">
+    <li className="flex flex-col gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest p-4">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
         <Stars stars={review.stars} />
-        <span className="text-body-sm text-ink-muted">A student, {review.period}</span>
+        <span className="text-body-sm text-on-surface-variant">A student, {review.period}</span>
       </div>
       {review.text ? (
-        <p className="m-0 max-w-prose whitespace-pre-wrap break-words text-body-md text-ink">{review.text}</p>
+        <p className="m-0 max-w-prose whitespace-pre-wrap break-words text-body-md text-on-surface">{review.text}</p>
       ) : note ? (
-        <p className="m-0 text-body-sm text-ink-muted">{note}</p>
+        <p className="m-0 text-body-sm text-on-surface-variant">{note}</p>
       ) : (
-        <p className="m-0 text-body-sm text-ink-muted">Stars only.</p>
+        <p className="m-0 text-body-sm text-on-surface-variant">Stars only.</p>
       )}
 
       {review.reply && view && ReplyGlyph ? (
-        <div className="flex flex-col gap-2 rounded-md bg-paper-sunk p-3">
+        <div className="flex flex-col gap-2 rounded-md bg-surface-container-low p-3">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-label text-ink">Your reply</span>
+            <span className="text-label text-on-surface">Your reply</span>
             <Chip tone={view.tone} className="gap-1.5">
               <ReplyGlyph size={14} weight="bold" aria-hidden />
               {view.label}
             </Chip>
           </div>
-          <p className="m-0 max-w-prose whitespace-pre-wrap break-words text-body-md text-ink">{review.reply.body}</p>
-          <p className="m-0 text-body-sm text-ink-muted">{view.detail}</p>
+          <p className="m-0 max-w-prose whitespace-pre-wrap break-words text-body-md text-on-surface">{review.reply.body}</p>
+          <p className="m-0 text-body-sm text-on-surface-variant">{view.detail}</p>
         </div>
       ) : justSent ? null : (
         <ReplyComposer review={review} online={online} onSent={() => setJustSent(true)} />
       )}
       {justSent ? (
-        <p ref={sentRef} tabIndex={-1} role="status" className="m-0 text-body-sm text-ok focus:outline-none">
+        <p ref={sentRef} tabIndex={-1} role="status" className="m-0 text-body-sm text-success-text focus:outline-none">
           Your reply was sent. Lemely will check it before students see it.
         </p>
       ) : null}
@@ -384,7 +384,7 @@ function ReviewPages({ cursor, online }: { cursor?: string; online: boolean }) {
       skeleton={<ListSkeleton rows={2} />}
       error={{ heading: "Couldn't load your reviews", body: tutorLoadFailureMessage, compact: true }}
       isEmpty={(page) => cursor === undefined && page.items.length === 0}
-      empty={<p className="m-0 text-body-md text-ink-muted">No reviews yet.</p>}
+      empty={<p className="m-0 text-body-md text-on-surface-variant">No reviews yet.</p>}
     >
       {(page) => (
         <>
@@ -443,10 +443,10 @@ export function PreviewReviews() {
 
   return (
     <div className="flex flex-col gap-8 min-w-0">
-      <div className="flex flex-wrap items-end justify-between gap-3 border-b border-rule pb-5">
+      <div className="flex flex-wrap items-end justify-between gap-3 border-b border-outline-variant pb-5">
         <div className="flex flex-col gap-1">
-          <h1 className="m-0 text-display-md text-ink">Profile preview and reviews</h1>
-          <p className="m-0 text-body-md text-ink-muted">
+          <h1 className="m-0 text-display-md text-on-surface">Profile preview and reviews</h1>
+          <p className="m-0 text-body-md text-on-surface-variant">
             This is your profile as a signed-in student reads it, and what students have said about you.
           </p>
         </div>

@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V4 */
 import { useEffect, useRef, useState, type ChangeEvent } from "react"
-import { useNavigate } from "react-router-dom"
+import { useLocation, useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { Camera, Trash } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
@@ -113,14 +113,14 @@ const PIPE_STATUS = {
 } as const satisfies Record<PipelineStep["state"], ProcessingStageStatus>
 
 const CHIP_TONE: Record<PaperKind, string> = {
-  graded: "bg-ok-wash text-ok",
-  review: "bg-err-wash text-err",
-  processing: "bg-accent-wash text-accent-ink",
-  queued: "bg-paper-sunk text-ink-muted",
+  graded: "bg-success-container text-success-text",
+  review: "bg-error-container text-error",
+  processing: "bg-primary-container text-on-primary-container",
+  queued: "bg-surface-container-low text-on-surface-variant",
   // Distinct from `review`'s red: review means "a human should look at these
   // marks", failed means "there are no marks". Reading as the same state would
   // send a teacher hunting for a score that was never produced.
-  failed: "bg-paper-sunk text-err border border-err",
+  failed: "bg-surface-container-low text-error border border-error",
 }
 
 type TabId = "all" | "review" | "graded" | "processing"
@@ -185,9 +185,9 @@ function DeletePaperControl({ paper }: { paper: PaperSummary }) {
           setError(null)
           setOpen(true)
         }}
-        className="group absolute top-2.5 start-2.5 min-w-11 min-h-11 flex items-center justify-center cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+        className="group absolute top-2.5 start-2.5 min-w-11 min-h-11 flex items-center justify-center cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
       >
-        <span className="w-7 h-7 rounded-full bg-paper-raised/90 border border-rule flex items-center justify-center text-ink-faint transition-colors group-hover:text-err group-hover:border-err">
+        <span className="w-7 h-7 rounded-full bg-surface-container-lowest/90 border border-outline-variant flex items-center justify-center text-on-surface-variant transition-colors group-hover:text-error group-hover:border-error">
           <Trash size={14} weight="bold" />
         </span>
       </button>
@@ -226,7 +226,7 @@ function PaperCard({
   const previewUrl = useScanPreview(paper.id, nearViewport)
   const showSpinner = paper.kind === "processing"
   const confTone =
-    paper.kind === "review" ? "text-err" : paper.kind === "graded" ? "text-ink-muted" : "text-ink-faint"
+    paper.kind === "review" ? "text-error" : paper.kind === "graded" ? "text-on-surface-variant" : "text-on-surface-variant"
   const confText = paper.confidence != null ? `conf ${Math.round(paper.confidence * 100)}%` : null
   const scoreText =
     paper.awardedMarks != null && paper.maxMarks != null
@@ -253,8 +253,8 @@ function PaperCard({
         // by its own `overflow-hidden`, which only clips descendants.
         // `[@media(hover:hover)]:has-[:hover]` guards the hover lift so a
         // touch tap's phantom `:hover` doesn't leave the card stuck lifted.
-        "relative rounded-md overflow-hidden bg-paper-raised border transition-transform [@media(hover:hover)]:has-[:hover]:-translate-y-0.5 has-[[data-open-trigger]:focus-visible]:ring-2 has-[[data-open-trigger]:focus-visible]:ring-focus-ring forced-colors:has-[[data-open-trigger]:focus-visible]:outline forced-colors:has-[[data-open-trigger]:focus-visible]:outline-2 forced-colors:has-[[data-open-trigger]:focus-visible]:outline-[CanvasText] forced-colors:has-[[data-open-trigger]:focus-visible]:outline-offset-2",
-        paper.kind === "review" ? "border-err" : "border-rule",
+        "relative rounded-md overflow-hidden bg-surface-container-lowest border transition-transform [@media(hover:hover)]:has-[:hover]:-translate-y-0.5 has-[[data-open-trigger]:focus-visible]:ring-2 has-[[data-open-trigger]:focus-visible]:ring-primary forced-colors:has-[[data-open-trigger]:focus-visible]:outline forced-colors:has-[[data-open-trigger]:focus-visible]:outline-2 forced-colors:has-[[data-open-trigger]:focus-visible]:outline-[CanvasText] forced-colors:has-[[data-open-trigger]:focus-visible]:outline-offset-2",
+        paper.kind === "review" ? "border-error" : "border-outline-variant",
       )}
     >
       <button
@@ -273,7 +273,7 @@ function PaperCard({
         // on focus, but it is permanently clipped by the container.
         className="block w-full rounded-md text-start cursor-pointer"
       >
-        <div className="relative h-[64px] bg-paper-sunk border-b border-rule overflow-hidden">
+        <div className="relative h-[64px] bg-surface-container-low border-b border-outline-variant overflow-hidden">
           {previewUrl ? (
             // Top-anchored: a scan's identifying marks (subject, paper number,
             // candidate box) are at the head of page 1, so a 64px window onto the
@@ -288,13 +288,13 @@ function PaperCard({
             />
           ) : null}
           {paper.kind === "review" ? (
-            <div className="absolute top-2.5 end-2.5 w-5 h-5 rounded-full bg-err text-accent-on text-data-sm flex items-center justify-center">
+            <div className="absolute top-2.5 end-2.5 w-5 h-5 rounded-full bg-error text-on-primary text-data-sm flex items-center justify-center">
               !
             </div>
           ) : null}
           {showSpinner ? (
-            <div className="absolute inset-0 flex items-center justify-center bg-paper-sunk/70">
-              <div className="w-[26px] h-[26px] rounded-full border-[3px] border-rule border-t-accent animate-spin" />
+            <div className="absolute inset-0 flex items-center justify-center bg-surface-container-low/70">
+              <div className="w-[26px] h-[26px] rounded-full border-[3px] border-outline-variant border-t-primary animate-spin" />
             </div>
           ) : null}
         </div>
@@ -321,7 +321,7 @@ function PaperCard({
               <div className={cn("text-data-sm", confTone)}>{confText}</div>
             ) : null}
             <div className="flex-1" />
-            <div className="text-data-md text-ink">{scoreText}</div>
+            <div className="text-data-md text-on-surface">{scoreText}</div>
           </div>
         </div>
       </button>
@@ -337,6 +337,7 @@ function PaperCard({
 
 export function Grading() {
   const navigate = useNavigate()
+  const location = useLocation()
   const queryClient = useQueryClient()
 
   const [tab, setTab] = useState<TabId>("all")
@@ -373,6 +374,38 @@ export function Grading() {
         // Best-effort — a non-secure context (no `caches`) must not surface
         // as an unhandled promise rejection on every mount.
       })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /*
+   * Files handed over from the teacher home (`navigate("/teacher/grading",
+   * { state: { files } })`). Read once on mount, set exactly as the native
+   * input's `onChange` would (first file only: this console uploads one scan
+   * at a time), then the router state is cleared so a reload cannot
+   * re-submit. Nothing is uploaded here; the teacher still presses upload.
+   */
+  const [handedOver, setHandedOver] = useState<{ count: number; name: string } | null>(null)
+  const handedOverRead = useRef(false)
+  // The status region mounts empty; its text arrives a tick later so screen
+  // readers announce the change.
+  const [noticeLive, setNoticeLive] = useState(false)
+  useEffect(() => {
+    if (!handedOver) return
+    const t = window.setTimeout(() => setNoticeLive(true), 0)
+    // A new or cleared hand-over starts silent again, so its text is announced afresh.
+    return () => {
+      window.clearTimeout(t)
+      setNoticeLive(false)
+    }
+  }, [handedOver])
+  useEffect(() => {
+    if (handedOverRead.current) return
+    handedOverRead.current = true
+    const files = (location.state as { files?: File[] } | null)?.files
+    if (!files?.length) return
+    setScanFile(files[0])
+    if (files.length > 1) setHandedOver({ count: files.length, name: files[0].name })
+    navigate(".", { replace: true, state: null })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -469,9 +502,9 @@ export function Grading() {
 
           return (
             <>
-              <div className="flex items-end gap-[18px] pb-[18px] border-b border-rule flex-wrap gap-y-2.5">
+              <div className="flex items-end gap-[18px] pb-[18px] border-b border-outline-variant flex-wrap gap-y-2.5">
                 <div>
-                  <div className="text-eyebrow text-ink-faint">
+                  <div className="text-eyebrow text-on-surface-variant">
                     Grading console
                   </div>
                   {/* A real h1, not a styled div: axe's `page-has-heading-one` fired
@@ -490,19 +523,19 @@ export function Grading() {
               <div className="grid grid-cols-1 xl:grid-cols-[340px_1fr] gap-6 items-start">
                 {/* Left column */}
                 <div className="flex flex-col gap-4">
-                  <div className="bg-paper-raised border border-rule rounded-lg px-5 py-[18px]">
-                    <div className="text-eyebrow text-ink-faint">
+                  <div className="bg-surface-container-lowest border border-outline-variant rounded-lg px-5 py-[18px]">
+                    <div className="text-eyebrow text-on-surface-variant">
                       Detected
                     </div>
                     {!activePaperId ? (
-                      <div className="text-body-md text-ink-muted mt-[18px]">
+                      <div className="text-body-md text-on-surface-variant mt-[18px]">
                         Upload a scan to see detected fields.
                       </div>
                     ) : detectedFields.length === 0 ? (
                       // Detection is the first phase of the server-side run, so an
                       // in-flight paper genuinely has no answer yet — say which of the
                       // two it is rather than reporting "none" for both.
-                      <div className="text-body-md text-ink-muted mt-[18px]">
+                      <div className="text-body-md text-on-surface-variant mt-[18px]">
                         {detail && (detail.kind === "queued" || detail.kind === "processing")
                           ? "Reading this scan's exam details…"
                           : "No metadata detected for this paper."}
@@ -511,17 +544,17 @@ export function Grading() {
                       <div className="grid grid-cols-2 gap-x-[14px] gap-y-4 mt-[18px]">
                         {detectedFields.map((d) => (
                           <div key={d.key}>
-                            <div className="text-eyebrow text-ink-faint">
+                            <div className="text-eyebrow text-on-surface-variant">
                               {d.key}
                             </div>
-                            <div className="text-data-md text-ink mt-1">{d.value}</div>
+                            <div className="text-data-md text-on-surface mt-1">{d.value}</div>
                           </div>
                         ))}
                       </div>
                     )}
                   </div>
 
-                  <div className="bg-paper-raised border border-rule rounded-lg p-5 flex gap-5 items-center">
+                  <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-5 flex gap-5 items-center">
                     <ProgressRing
                       value={progress * 100}
                       tone="accent"
@@ -531,24 +564,24 @@ export function Grading() {
                       className="flex-none"
                     />
                     <div className="flex-1">
-                      <div className="text-display-sm text-ink">Auto-grading</div>
+                      <div className="text-display-sm text-on-surface">Auto-grading</div>
                       {processingCount > 0 ? (
-                        <div className="text-data-sm text-ink-faint mt-[5px]">
+                        <div className="text-data-sm text-on-surface-variant mt-[5px]">
                           {processingCount} processing
                         </div>
                       ) : null}
                       <div className="flex gap-[22px] mt-[14px]">
                         <div>
                           <div className="text-display-sm">{gradedCount}</div>
-                          <div className="text-data-sm text-ink-faint mt-[3px]">
+                          <div className="text-data-sm text-on-surface-variant mt-[3px]">
                             AUTO-CONFIRMED
                           </div>
                         </div>
                         <div>
-                          <div className="text-display-sm text-err">
+                          <div className="text-display-sm text-error">
                             {reviewCount}
                           </div>
-                          <div className="text-data-sm text-ink-faint mt-[3px]">
+                          <div className="text-data-sm text-on-surface-variant mt-[3px]">
                             NEED REVIEW
                           </div>
                         </div>
@@ -556,8 +589,8 @@ export function Grading() {
                     </div>
                   </div>
 
-                  <div className="bg-paper-raised border border-rule rounded-lg px-5 py-[18px]">
-                    <div className="text-eyebrow text-ink-faint mb-[14px]">
+                  <div className="bg-surface-container-lowest border border-outline-variant rounded-lg px-5 py-[18px]">
+                    <div className="text-eyebrow text-on-surface-variant mb-[14px]">
                       Pipeline
                     </div>
                     {/*
@@ -576,11 +609,11 @@ export function Grading() {
                      * reason.
                      */}
                     {!activePaperId ? (
-                      <div className="text-body-md text-ink-muted">Upload a scan to see its pipeline.</div>
+                      <div className="text-body-md text-on-surface-variant">Upload a scan to see its pipeline.</div>
                     ) : paperDetailQuery.isPending ? (
-                      <div className="text-body-md text-ink-muted">Loading…</div>
+                      <div className="text-body-md text-on-surface-variant">Loading…</div>
                     ) : paperDetailQuery.isError ? (
-                      <div className="text-body-md text-accent-ink">
+                      <div className="text-body-md text-on-primary-container">
                         Couldn't load pipeline: {teacherLoadFailureMessage(paperDetailQuery.error)}
                       </div>
                     ) : detail ? (
@@ -593,16 +626,16 @@ export function Grading() {
                             <span
                               className={cn(
                                 "flex-1 text-body-lg",
-                                p.state === "idle" ? "text-ink-faint" : "text-ink",
+                                p.state === "idle" ? "text-on-surface-variant" : "text-on-surface",
                               )}
                             >
                               {p.label}
                             </span>
-                            <span className="text-data-sm text-ink-faint">{p.count}</span>
+                            <span className="text-data-sm text-on-surface-variant">{p.count}</span>
                           </div>
                         ))}
                         {detail.kind === "queued" ? (
-                          <div className="text-body-md text-ink-muted mt-2">
+                          <div className="text-body-md text-on-surface-variant mt-2">
                             Waiting for the marking worker.
                           </div>
                         ) : null}
@@ -610,8 +643,8 @@ export function Grading() {
                           // The specific reason, from the server — never a generic
                           // "something went wrong". A paper that produced no marks has
                           // to say why, or the teacher has nothing to act on.
-                          <div className="mt-3 pt-3 border-t border-rule flex flex-col gap-2.5 items-start">
-                            <div className="text-body-md text-err">{detail.error}</div>
+                          <div className="mt-3 pt-3 border-t border-outline-variant flex flex-col gap-2.5 items-start">
+                            <div className="text-body-md text-error">{detail.error}</div>
                             <Button
                               variant="ink"
                               size="sm"
@@ -621,7 +654,7 @@ export function Grading() {
                               {regrade.isPending ? "Queueing…" : "Try again"}
                             </Button>
                             {regrade.isError ? (
-                              <div className="text-body-md text-err">
+                              <div className="text-body-md text-error">
                                 Couldn't re-queue: {teacherMutationFailureMessage(regrade.error)}
                               </div>
                             ) : null}
@@ -631,7 +664,7 @@ export function Grading() {
                     ) : null}
                   </div>
 
-                  <div className="border border-rule rounded-lg p-5 bg-paper-sunk flex flex-col gap-3">
+                  <div className="border border-outline-variant rounded-lg p-5 bg-surface-container-low flex flex-col gap-3">
                     <div className="text-body-md font-medium">Upload a scan</div>
                     <div>
                       <div className="flex items-center justify-between gap-2 mb-1.5">
@@ -669,8 +702,14 @@ export function Grading() {
                           onCancel={() => setShowCamera(false)}
                         />
                       ) : scanFile ? (
-                        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-rule bg-paper-raised px-4 py-3">
-                          <span className="min-w-0 flex-1 truncate text-body-sm text-ink">
+                        <>
+                        <p role="status" className={noticeLive && handedOver && handedOver.name === scanFile.name ? "mb-2 rounded-chip bg-secondary-container p-3 text-body-sm text-on-secondary-container" : "sr-only"}>
+                          {noticeLive && handedOver && handedOver.name === scanFile.name
+                            ? `You added ${handedOver.count} papers. This screen marks one at a time, so only ${handedOver.name} is loaded.`
+                            : null}
+                        </p>
+                        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest px-4 py-3">
+                          <span className="min-w-0 flex-1 truncate text-body-sm text-on-surface">
                             Scan ready · {scanFile.name}
                           </span>
                           <Button
@@ -683,6 +722,7 @@ export function Grading() {
                             Choose a different scan
                           </Button>
                         </div>
+                        </>
                       ) : (
                         <input
                           id="grading-scan-file"
@@ -690,7 +730,7 @@ export function Grading() {
                           accept={SCAN_ACCEPT}
                           disabled={uploading}
                           onChange={handleScanChange}
-                          className="text-body-sm text-ink-muted file:me-3 file:border file:border-rule file:bg-paper-raised file:rounded-lg file:px-3 file:py-1.5 file:text-body-sm file:cursor-pointer file:font-sans"
+                          className="text-body-sm text-on-surface-variant file:me-3 file:border file:border-outline-variant file:bg-surface-container-lowest file:rounded-lg file:px-3 file:py-1.5 file:text-body-sm file:cursor-pointer file:font-sans"
                           data-kit-field="file"
                         />
                       )}
@@ -708,11 +748,11 @@ export function Grading() {
                         accept={SCHEME_ACCEPT}
                         disabled={uploading}
                         onChange={handleSchemeChange}
-                        className="text-body-sm text-ink-muted file:me-3 file:border file:border-rule file:bg-paper-raised file:rounded-lg file:px-3 file:py-1.5 file:text-body-sm file:cursor-pointer file:font-sans"
+                        className="text-body-sm text-on-surface-variant file:me-3 file:border file:border-outline-variant file:bg-surface-container-lowest file:rounded-lg file:px-3 file:py-1.5 file:text-body-sm file:cursor-pointer file:font-sans"
                         data-kit-field="file"
                       />
                       {!schemeFile ? (
-                        <div className="text-data-sm text-ink-faint mt-1.5">
+                        <div className="text-data-sm text-on-surface-variant mt-1.5">
                           Attach a mark scheme unless you've already uploaded one for this
                           paper. Without either, there is nothing to mark against.
                         </div>
@@ -732,9 +772,9 @@ export function Grading() {
                         separate error line here to contradict it. */}
                     {hasRunStarted ? (
                       <>
-                        <ProcessingState stages={stages} className="border-t border-rule pt-4" />
+                        <ProcessingState stages={stages} className="border-t border-outline-variant pt-4" />
                         {stages.every((s) => s.status === "done") ? (
-                          <div className="text-body-md text-ink-muted">
+                          <div className="text-body-md text-on-surface-variant">
                             Marking runs on the server, so it keeps going if you close this
                             page. Progress is in Pipeline above.
                           </div>
@@ -747,7 +787,7 @@ export function Grading() {
                 {/* Right column: tabs + papers */}
                 <div className="flex flex-col gap-4">
                   <div className="flex items-center gap-[14px] flex-wrap">
-                    <div className="flex gap-1 bg-paper-sunk p-1 rounded-md">
+                    <div className="flex gap-1 bg-surface-container-low p-1 rounded-md">
                       {tabs.map((t) => {
                         const on = tab === t.id
                         return (
@@ -757,15 +797,15 @@ export function Grading() {
                             className={cn(
                               "border-0 cursor-pointer text-body-md px-[14px] py-2 rounded-lg",
                               on
-                                ? "bg-paper-raised text-ink font-medium shadow-sm"
-                                : "bg-transparent text-ink-muted font-normal",
+                                ? "bg-surface-container-lowest text-on-surface font-medium shadow-sm"
+                                : "bg-transparent text-on-surface-variant font-normal",
                             )}
                           >
                             {t.label}{" "}
                             <span
                               className={cn(
                                 "text-data-sm",
-                                on ? "text-accent-ink" : "text-ink-faint",
+                                on ? "text-on-primary-container" : "text-on-surface-variant",
                               )}
                             >
                               {t.count}
@@ -778,7 +818,7 @@ export function Grading() {
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                     {filtered.length === 0 ? (
-                      <div className="text-body-md text-ink-muted">No papers in this view yet.</div>
+                      <div className="text-body-md text-on-surface-variant">No papers in this view yet.</div>
                     ) : (
                       filtered.map((p) => (
                         <PaperCard key={p.id} paper={p} onOpen={() => setSelectedPaperId(p.id)} />

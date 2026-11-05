@@ -83,10 +83,10 @@ export function useToast(): ToastContextValue {
 const DEFAULT_DURATION = 5000
 
 const variantMeta: Record<ToastVariant, { icon: Icon; iconClassName: string }> = {
-  default: { icon: Info, iconClassName: "text-ink-muted" },
-  success: { icon: CheckCircle, iconClassName: "text-ok" },
-  error: { icon: WarningCircle, iconClassName: "text-err" },
-  info: { icon: Info, iconClassName: "text-info" },
+  default: { icon: Info, iconClassName: "text-on-surface-variant" },
+  success: { icon: CheckCircle, iconClassName: "text-success-text" },
+  error: { icon: WarningCircle, iconClassName: "text-error" },
+  info: { icon: Info, iconClassName: "text-primary" },
 }
 
 let idCounter = 0
@@ -227,7 +227,7 @@ export function ToastCard({
       onFocus={onPause}
       onBlur={onResume}
       className={cn(
-        "pointer-events-auto flex items-start gap-2.5 rounded-lg border border-rule bg-paper-raised p-3.5 shadow-[var(--shadow-float)]",
+        "pointer-events-auto flex items-start gap-2.5 rounded-lg border border-outline-variant bg-surface-container-lowest p-3.5 shadow-[var(--shadow-float)]",
         "motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-spring)_both]",
       )}
     >
@@ -237,15 +237,15 @@ export function ToastCard({
         aria-hidden="true"
       />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <p className="text-body-sm font-medium text-ink">{title}</p>
+        <p className="text-body-sm font-medium text-on-surface">{title}</p>
         {description ? (
-          <p className="text-body-sm text-ink-muted">{description}</p>
+          <p className="text-body-sm text-on-surface-variant">{description}</p>
         ) : null}
         {action ? (
           <button
             type="button"
             onClick={action.onClick}
-            className="self-start text-body-sm font-medium text-accent-ink underline decoration-1 underline-offset-2 transition-colors hover:text-accent-hover active:scale-[0.98]"
+            className="self-start text-body-sm font-medium text-on-primary-container underline decoration-1 underline-offset-2 transition-colors hover:text-primary-hover active:scale-[0.98]"
           >
             {action.label}
           </button>
@@ -256,8 +256,8 @@ export function ToastCard({
         onClick={onDismiss}
         aria-label="Dismiss notification"
         className={cn(
-          "-me-1 -mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ink-faint transition-colors",
-          "hover:bg-paper-sunk hover:text-ink",
+          "-me-1 -mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-on-surface-variant transition-colors",
+          "hover:bg-surface-container-low hover:text-on-surface",
           "active:scale-[0.98]",
         )}
       >

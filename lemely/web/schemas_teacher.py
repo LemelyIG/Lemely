@@ -22,6 +22,7 @@ from typing import Literal
 from pydantic import Field
 
 from lemely.core.history import PaperOrigin
+from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD
 from lemely.web.schemas import ApiModel, QuestionResultDTO, WeakAreaDTO
 
 #: Lifecycle of a tracked paper. ``queued`` means "waiting for the grading
@@ -396,10 +397,10 @@ class ClassSummaryDTO(ApiModel):
     ``atRiskCount`` is the number of this class's roster with >=1 fired D3.3
     flag — the one at-risk engine (``lemely.core.at_risk.assess_at_risk``),
     never a second heuristic. ``topWeakness`` is the class's highest-lost-
-    marks topic from the same ranker T-04's analytics screen uses
-    (``lemely.core.class_analytics.rank_topic_weaknesses``) — topic
-    aggregation is deliberately unfiltered by origin (D3.9), so a quiz's
-    evidence counts here even when it cannot back a grade claim.
+    marks topic across each student's latest grade-bearing paper (quizzes
+    excluded), the same population ``topWeaknessAccuracy`` is computed over.
+    T-04's analytics screen still ranks across the whole history and every
+    origin, so the two can name different topics.
     ``lastActivityAt`` is the most recent ``recorded_at`` across the whole
     roster, any origin (a quiz is activity too). An empty class, or one with
     no history at all, reports ``0``/``None`` — never a fabricated
@@ -421,6 +422,23 @@ class ClassSummaryDTO(ApiModel):
     atRiskCount: int | None = None
     lastActivityAt: str | None = None
     topWeakness: str | None = None
+    # Teacher-home class-card fields (``_class_card_trend``), grade-bearing
+    # papers only. ``grade`` is the median of each student's latest paper
+    # grade (lower middle on an even count), not an average of letters;
+    # ``delta`` is percentage points between the latest and previous papers'
+    # means over students with both; ``lastPaper`` is "P<n>" of the class's
+    # newest paper; ``topWeakness`` and ``topWeaknessAccuracy`` both rank
+    # each student's latest paper, the accuracy being marks earned / marks
+    # available on that topic (0-1). ``WeakArea`` rows only exist where marks
+    # were lost, so a student with full marks on the topic is not counted and
+    # the accuracy reads low. ``None`` whenever the data is absent.
+    grade: str | None = None
+    delta: float | None = None
+    lastPaper: str | None = None
+    # ``recorded_at`` of that same paper (never a quiz), so the card's paper
+    # label and date agree; ``lastActivityAt`` counts quizzes and cannot.
+    lastPaperAt: str | None = None
+    topWeaknessAccuracy: float | None = None
 
 
 class ClassListDTO(ApiModel):
@@ -469,11 +487,14 @@ class AtRiskStudentDTO(ApiModel):
     no backend source and are omitted. ``flags`` (added D3.3/P3.2) is the real
     reason-labelled output of ``lemely.core.at_risk.assess_at_risk`` — every
     student in this list has at least one flag; additive field, defaults to
-    empty so older callers still deserialise.
+    empty so older callers still deserialise. ``previousGrade`` (additive, spec
+    2026-11-02) is the grade of the paper before the latest, ``None`` with fewer
+    than two.
     """
 
     name: str
     grade: str
+    previousGrade: str | None = None
     delta: float | None = None
     weakTopic: str | None = None
     flags: list[AtRiskFlagDTO] = Field(default_factory=list)
@@ -511,13 +532,22 @@ class OverviewDTO(ApiModel):
     reproducing the mock's bar heights. ``recentActivity`` (added P3.7 chunk
     a, D3.12) is T-01 item 4, "submissions across their classes" — see
     :class:`RecentActivityDTO`. Additive, defaults to empty so an older
-    client still deserialises.
+    client still deserialises. ``paperCount``, ``pendingReviewCount``,
+    ``reviewConfidenceBuckets`` (ten 10% bands) and ``reviewEstimateMinutes`` are
+    additive fields for the teacher home (spec 2026-11-02).
+    ``reviewConfidenceThreshold`` is the auto-grade cut-off (0-1) below which a
+    mark is queued for review, so the UI never hardcodes it.
     """
 
     stats: list[StatCardDTO] = Field(default_factory=list)
     atRisk: list[AtRiskStudentDTO] = Field(default_factory=list)
     retention: list[int] = Field(default_factory=list)
     recentActivity: list[RecentActivityDTO] = Field(default_factory=list)
+    paperCount: int = 0
+    pendingReviewCount: int = 0
+    reviewConfidenceBuckets: list[int] = Field(default_factory=lambda: [0] * 10)
+    reviewEstimateMinutes: int = 0
+    reviewConfidenceThreshold: float = REVIEW_CONFIDENCE_THRESHOLD
 
 
 class AcknowledgeAtRiskRequestDTO(ApiModel):

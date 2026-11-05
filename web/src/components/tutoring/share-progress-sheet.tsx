@@ -69,8 +69,8 @@ export function ShareProgressSheet({
           </>
         }
       >
-        <p className="m-0 flex items-start gap-2 text-body-md text-ink">
-          <CheckCircle size={20} weight="bold" className="mt-0.5 shrink-0 text-ok" aria-hidden />
+        <p className="m-0 flex items-start gap-2 text-body-md text-on-surface">
+          <CheckCircle size={20} weight="bold" className="mt-0.5 shrink-0 text-success-text" aria-hidden />
           {tutorName} can now see your progress. You can stop sharing at any time in Tutors &amp; your data.
         </p>
       </Modal>
@@ -97,16 +97,16 @@ export function ShareProgressSheet({
       }
     >
       <div className="flex flex-col gap-3">
-        <p className="m-0 text-body-md text-ink">{SHARE_EXPLAINER}</p>
+        <p className="m-0 text-body-md text-on-surface">{SHARE_EXPLAINER}</p>
         <ul className="m-0 flex list-none flex-col gap-2 p-0">
           {shareSheetLines(tutorName).map((line) => (
-            <li key={line} className="text-body-md text-ink">
+            <li key={line} className="text-body-md text-on-surface">
               {line}
             </li>
           ))}
         </ul>
         {errorText ? (
-          <p role="alert" className="m-0 text-body-sm text-err">
+          <p role="alert" className="m-0 text-body-sm text-error">
             {errorText}
           </p>
         ) : null}

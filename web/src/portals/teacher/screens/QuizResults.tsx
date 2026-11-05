@@ -127,10 +127,10 @@ function StatTile({
   detail?: string
 }) {
   return (
-    <div className="bg-paper-raised border border-rule rounded-lg px-4 py-3.5 min-w-0">
-      <div className="text-eyebrow text-ink-faint">{label}</div>
-      <div className="text-display-sm text-ink mt-1 tabular-nums">{value}</div>
-      {detail ? <div className="text-body-sm text-ink-faint mt-0.5 text-pretty">{detail}</div> : null}
+    <div className="bg-surface-container-lowest border border-outline-variant rounded-lg px-4 py-3.5 min-w-0">
+      <div className="text-eyebrow text-on-surface-variant">{label}</div>
+      <div className="text-display-sm text-on-surface mt-1 tabular-nums">{value}</div>
+      {detail ? <div className="text-body-sm text-on-surface-variant mt-0.5 text-pretty">{detail}</div> : null}
     </div>
   )
 }
@@ -142,7 +142,7 @@ function ScoreDistribution({ data }: { data: QuizAssignmentResults }) {
 
   if (marked === 0) {
     return (
-      <p className="text-body-sm text-ink-faint m-0">
+      <p className="text-body-sm text-on-surface-variant m-0">
         No marked submissions yet, so there is nothing to distribute.
       </p>
     )
@@ -160,13 +160,13 @@ function ScoreDistribution({ data }: { data: QuizAssignmentResults }) {
               aria-label={`${label}: ${b.studentCount} student${b.studentCount === 1 ? "" : "s"}`}
               className="flex-1 flex flex-col items-center justify-end gap-1 min-w-0"
             >
-              <span className="text-data-sm text-ink-faint">
+              <span className="text-data-sm text-on-surface-variant">
                 {b.studentCount > 0 ? b.studentCount : ""}
               </span>
               <div
                 className={cn(
                   "w-full rounded-t-[4px]",
-                  b.studentCount > 0 ? TONE_CLASS[accuracyTone(b.lower / 100)] : "bg-paper-sunk",
+                  b.studentCount > 0 ? TONE_CLASS[accuracyTone(b.lower / 100)] : "bg-surface-container-low",
                 )}
                 style={{ height: `${Math.max(2, (b.studentCount / peak) * 88)}px` }}
               />
@@ -178,13 +178,13 @@ function ScoreDistribution({ data }: { data: QuizAssignmentResults }) {
         {buckets.map((b) => (
           <div
             key={`${b.lower}-${b.upper}`}
-            className="flex-1 text-center text-data-sm text-ink-faint min-w-0"
+            className="flex-1 text-center text-data-sm text-on-surface-variant min-w-0"
           >
             {b.lower}
           </div>
         ))}
       </div>
-      <p className="text-body-sm text-ink-faint mt-2 m-0">
+      <p className="text-body-sm text-on-surface-variant mt-2 m-0">
         Ten-point bands of percentage score, not grades. A quiz has no grade boundaries to
         bucket by.
       </p>
@@ -194,7 +194,7 @@ function ScoreDistribution({ data }: { data: QuizAssignmentResults }) {
 
 function QuestionAnalysisTable({ questions }: { questions: QuizQuestionAnalysis[] }) {
   if (questions.length === 0) {
-    return <p className="text-body-sm text-ink-faint m-0">This quiz has no included questions.</p>
+    return <p className="text-body-sm text-on-surface-variant m-0">This quiz has no included questions.</p>
   }
   return (
     <Table density="operate"
@@ -218,14 +218,14 @@ function QuestionAnalysisTable({ questions }: { questions: QuizQuestionAnalysis[
       <TBody>
         {questions.map((q) => (
           <TR key={q.questionRef}>
-            <TD className="text-data-sm text-ink-faint">{q.questionRef}</TD>
-            <TD className="max-w-[320px] text-ink">
+            <TD className="text-data-sm text-on-surface-variant">{q.questionRef}</TD>
+            <TD className="max-w-[320px] text-on-surface">
               <span className="line-clamp-2">{q.prompt}</span>
             </TD>
-            <TD className="text-ink-faint">{q.topic ?? "–"}</TD>
+            <TD className="text-on-surface-variant">{q.topic ?? "–"}</TD>
             <TD numeric className="tabular-nums">
               {q.accuracy == null ? (
-                <span className="text-ink-faint" title="Nobody has been marked on this question yet">
+                <span className="text-on-surface-variant" title="Nobody has been marked on this question yet">
                   –
                 </span>
               ) : (
@@ -239,16 +239,16 @@ function QuestionAnalysisTable({ questions }: { questions: QuizQuestionAnalysis[
                 </span>
               )}
             </TD>
-            <TD numeric className="text-ink-faint tabular-nums">
+            <TD numeric className="text-on-surface-variant tabular-nums">
               {q.averageMarks == null ? "—" : `${q.averageMarks.toFixed(1)} / ${q.totalMarks}`}
             </TD>
-            <TD numeric className="text-ink-faint tabular-nums">
+            <TD numeric className="text-on-surface-variant tabular-nums">
               {q.fullMarksCount}
             </TD>
-            <TD numeric className="text-ink-faint tabular-nums">
+            <TD numeric className="text-on-surface-variant tabular-nums">
               {q.zeroMarksCount}
             </TD>
-            <TD numeric className="text-ink-faint tabular-nums">
+            <TD numeric className="text-on-surface-variant tabular-nums">
               {q.answeredCount}
             </TD>
             <TD>
@@ -298,15 +298,15 @@ function StudentTable({ students }: { students: QuizStudentResult[] }) {
             <TD>
               <Link
                 to={`/teacher/students/${s.studentId}`}
-                className="text-ink no-underline hover:underline"
+                className="text-on-surface no-underline hover:underline"
               >
                 {s.displayName}
               </Link>
             </TD>
-            <TD className="text-ink-faint">{statusLabel(s.status)}</TD>
+            <TD className="text-on-surface-variant">{statusLabel(s.status)}</TD>
             <TD numeric className="tabular-nums">
               {s.percentage == null ? (
-                <span className="text-ink-faint">—</span>
+                <span className="text-on-surface-variant">—</span>
               ) : (
                 <span
                   className={cn(
@@ -318,14 +318,14 @@ function StudentTable({ students }: { students: QuizStudentResult[] }) {
                 </span>
               )}
             </TD>
-            <TD className="text-ink-faint">
+            <TD className="text-on-surface-variant">
               {s.submittedAt ? relativeTime(s.submittedAt) : "—"}
             </TD>
             <TD>
               <div className="flex gap-1 flex-wrap items-center">
                 {s.needsTeacherReview ? <Chip tone="warn">Needs review</Chip> : null}
                 {s.markingError ? (
-                  <span className="inline-flex items-center gap-1 text-body-sm text-err">
+                  <span className="inline-flex items-center gap-1 text-body-sm text-error">
                     <Warning weight="fill" className="h-3.5 w-3.5 flex-none" />
                     Marking failed: {s.markingError}
                   </span>
@@ -393,11 +393,11 @@ export function QuizResults() {
             <>
               <header className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="text-eyebrow text-ink-faint">
+                  <div className="text-eyebrow text-on-surface-variant">
                     {data.subjectCode} · {assignment.className}
                   </div>
-                  <h1 className="text-display-md text-ink m-0 mt-1 text-pretty">{data.quizTitle}</h1>
-                  <p className="text-body-sm text-ink-faint m-0 mt-1">
+                  <h1 className="text-display-md text-on-surface m-0 mt-1 text-pretty">{data.quizTitle}</h1>
+                  <p className="text-body-sm text-on-surface-variant m-0 mt-1">
                     {data.questionCount} question{data.questionCount === 1 ? "" : "s"} · {data.totalMarks}{" "}
                     marks · assigned {relativeTime(assignment.assignedAt)}
                     {assignment.dueAt ? ` · due ${new Date(assignment.dueAt).toLocaleString()}` : ""}
@@ -415,7 +415,7 @@ export function QuizResults() {
                   </Button>
                   <Link
                     to={`/teacher/quizzes/${quizId}?step=6`}
-                    className="text-body-sm text-ink-faint no-underline transition-colors hover:text-ink"
+                    className="text-body-sm text-on-surface-variant no-underline transition-colors hover:text-on-surface"
                   >
                     Back to the quiz
                   </Link>
@@ -424,8 +424,8 @@ export function QuizResults() {
 
               {/* Results are per assignment; say so rather than letting a teacher
                   assume this is every class that got the quiz. */}
-              <p className="text-body-sm text-ink-faint m-0 -mt-3">
-                These results cover <strong className="text-ink font-medium">{assignment.className}</strong>{" "}
+              <p className="text-body-sm text-on-surface-variant m-0 -mt-3">
+                These results cover <strong className="text-on-surface font-medium">{assignment.className}</strong>{" "}
                 only. A quiz assigned to another class has its own separate results.
               </p>
 
@@ -453,7 +453,7 @@ export function QuizResults() {
               </div>
 
               {completion.offRosterSubmissionCount > 0 ? (
-                <p className="text-body-sm text-ink-faint bg-paper-sunk border border-rule rounded-md px-3.5 py-2.5 m-0 text-pretty">
+                <p className="text-body-sm text-on-surface-variant bg-surface-container-low border border-outline-variant rounded-md px-3.5 py-2.5 m-0 text-pretty">
                   {completion.offRosterSubmissionCount} submission
                   {completion.offRosterSubmissionCount === 1 ? "" : "s"} came from{" "}
                   {completion.offRosterSubmissionCount === 1 ? "a student" : "students"} no longer on this
@@ -463,19 +463,19 @@ export function QuizResults() {
               ) : null}
 
               <section>
-                <h2 className="text-eyebrow text-ink-faint m-0 mb-2.5">
+                <h2 className="text-eyebrow text-on-surface-variant m-0 mb-2.5">
                   Score distribution
                 </h2>
-                <div className="bg-paper-raised border border-rule rounded-lg p-[18px]">
+                <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px]">
                   <ScoreDistribution data={data} />
                 </div>
               </section>
 
               <section>
-                <h2 className="text-eyebrow text-ink-faint m-0 mb-2.5">
+                <h2 className="text-eyebrow text-on-surface-variant m-0 mb-2.5">
                   Per-question analysis
                 </h2>
-                <p className="text-body-sm text-ink-faint m-0 mb-2.5 text-pretty">
+                <p className="text-body-sm text-on-surface-variant m-0 mb-2.5 text-pretty">
                   Marks here include your own overrides, so this reads exactly as the student sees it. A
                   dash means nobody has been marked on that question yet, not that they scored zero.
                 </p>
@@ -483,11 +483,11 @@ export function QuizResults() {
               </section>
 
               <section>
-                <h2 className="text-eyebrow text-ink-faint m-0 mb-2.5">
+                <h2 className="text-eyebrow text-on-surface-variant m-0 mb-2.5">
                   What the quiz revealed
                 </h2>
                 {rankedTopics.length === 0 ? (
-                  <p className="text-body-sm text-ink-faint m-0">
+                  <p className="text-body-sm text-on-surface-variant m-0">
                     No class-wide weak topics yet. The questions either carry no topic, or not enough of
                     the class has been marked.
                   </p>
@@ -506,7 +506,7 @@ export function QuizResults() {
               </section>
 
               <section>
-                <h2 className="text-eyebrow text-ink-faint m-0 mb-2.5">
+                <h2 className="text-eyebrow text-on-surface-variant m-0 mb-2.5">
                   Students
                 </h2>
                 <StudentTable students={data.students} />
@@ -514,13 +514,13 @@ export function QuizResults() {
 
               {/* Close/archive lives on this screen, not in the builder: this is where
                   a teacher can actually see everyone has finished. */}
-              <section className="border-t border-rule pt-4">
-                <h2 className="text-eyebrow text-ink-faint m-0 mb-2">
+              <section className="border-t border-outline-variant pt-4">
+                <h2 className="text-eyebrow text-on-surface-variant m-0 mb-2">
                   Quiz status
                 </h2>
                 {confirmingClose ? (
                   <div className="flex flex-col gap-2 max-w-[560px]">
-                    <p className="text-body-sm text-ink-faint m-0 text-pretty">
+                    <p className="text-body-sm text-on-surface-variant m-0 text-pretty">
                       Closing stops any further submissions, on every class this quiz is assigned to, not
                       just {assignment.className}. Students who have already submitted keep their marks.
                       This cannot be undone.
@@ -550,7 +550,7 @@ export function QuizResults() {
                   </Button>
                 )}
                 {setStatus.isError ? (
-                  <div role="alert" className="text-body-sm text-err mt-2">
+                  <div role="alert" className="text-body-sm text-error mt-2">
                     Couldn't change the status: {teacherMutationFailureMessage(setStatus.error)}
                   </div>
                 ) : null}

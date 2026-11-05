@@ -46,8 +46,8 @@ export function Activations() {
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1.5">
         <Eyebrow>Platform admin</Eyebrow>
-        <h1 className="text-display-lg text-ink">Activations</h1>
-        <p className="max-w-prose text-body-md text-ink-muted">
+        <h1 className="text-display-lg text-on-surface">Activations</h1>
+        <p className="max-w-prose text-body-md text-on-surface-variant">
           Subscriptions waiting on a person. Payments are handled outside Lemely, so each of these
           is switched on or turned down by hand.
         </p>
@@ -119,12 +119,12 @@ function QueueRow({
     <Card>
       <CardBody className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 flex-col gap-1">
-          <span className="text-body-md text-ink">{row.displayName ?? row.email}</span>
-          <span className="text-body-sm text-ink-muted">
+          <span className="text-body-md text-on-surface">{row.displayName ?? row.email}</span>
+          <span className="text-body-sm text-on-surface-variant">
             {row.displayName ? `${row.email}, ` : ""}
             {row.role.replace(/_/g, " ")}
           </span>
-          <span className="text-body-sm text-ink-muted">
+          <span className="text-body-sm text-on-surface-variant">
             {row.planName} at <span className="tabular-nums">{price}</span>, asked for on{" "}
             <time dateTime={row.requestedAt} className="tabular-nums">
               {formatAdminDate(row.requestedAt)}
@@ -192,7 +192,7 @@ function DecisionDialog({
       }
     >
       <div className="flex flex-col gap-4">
-        <p className="text-body-sm text-ink-muted">
+        <p className="text-body-sm text-on-surface-variant">
           {activate
             ? "They get the plan straight away, and the decision is recorded against their subscription with your note."
             : "They keep their account and their work. Only this request is turned down, and they can ask again."}
@@ -211,13 +211,13 @@ function DecisionDialog({
         />
 
         {!written ? (
-          <p className="text-body-sm text-ink-faint">
+          <p className="text-body-sm text-on-surface-variant">
             A note is needed before this can be recorded.
           </p>
         ) : null}
 
         {decide.isError ? (
-          <p className="text-body-sm text-err">{activationDecisionFailureMessage(decide.error)}</p>
+          <p className="text-body-sm text-error">{activationDecisionFailureMessage(decide.error)}</p>
         ) : null}
       </div>
     </Modal>

@@ -62,7 +62,7 @@ export function PortalSettingsLayout({ basePath }: PortalSettingsLayoutProps) {
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-2">
         <Eyebrow>Account</Eyebrow>
-        <h1 className="text-display-md text-ink">Settings</h1>
+        <h1 className="text-display-md text-on-surface">Settings</h1>
       </div>
 
       <SettingsNav items={items} />

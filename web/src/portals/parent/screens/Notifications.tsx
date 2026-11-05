@@ -55,12 +55,12 @@ function NotificationRow({ notification }: { notification: Notification }) {
   }
 
   return (
-    <Card className={cn("transition-colors", unread && "border-s-2 border-s-accent")}>
+    <Card className={cn("transition-colors", unread && "border-s-2 border-s-primary")}>
       <CardBody className="flex flex-col gap-2">
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
-            <h2 className="text-body-lg font-medium text-ink">{notification.title}</h2>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-ink-faint">
+            <h2 className="text-body-lg font-medium text-on-surface">{notification.title}</h2>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-on-surface-variant">
               <Chip tone={notification.type === "at_risk_alert" ? "warn" : "neutral"}>
                 {staffTypeLabel(notification.type)}
               </Chip>
@@ -75,7 +75,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
         </div>
 
         {notification.body !== null ? (
-          <p className="max-w-[65ch] text-body-md text-ink-muted">{notification.body}</p>
+          <p className="max-w-[65ch] text-body-md text-on-surface-variant">{notification.body}</p>
         ) : null}
 
         <div className="flex flex-wrap gap-2">
@@ -116,11 +116,11 @@ export function ParentNotifications() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <Eyebrow>Inbox</Eyebrow>
-          <h1 className="text-display-md text-ink">Notifications</h1>
+          <h1 className="text-display-md text-on-surface">Notifications</h1>
         </div>
         <Link
           to="/settings/notifications"
-          className="text-body-sm text-accent-ink hover:underline"
+          className="text-body-sm text-on-primary-container hover:underline"
         >
           Notification settings
         </Link>

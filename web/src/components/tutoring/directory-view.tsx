@@ -50,7 +50,7 @@ function CardSkeleton() {
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2" aria-label="Loading tutors" role="status">
       {[0, 1, 2, 3].map((i) => (
-        <div key={i} className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-5">
+        <div key={i} className="flex flex-col gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest p-5">
           <SkeletonLine announce={false} className="h-5" width="55%" />
           <SkeletonLine announce={false} width="90%" />
           <SkeletonLine announce={false} width="70%" />

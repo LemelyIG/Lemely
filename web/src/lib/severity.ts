@@ -37,7 +37,7 @@ export const TONE_TO_SEVERITY: Record<Tone, WeaknessSeverity> = {
  * `--ok/--warn/--err` scales from index.css; there is no dedicated severity
  * scale and one must not be invented locally. */
 /*
- * P4.5: `bg-ok-bg`/`bg-warn-bg`/`bg-err-bg` were three of the build-era compat
+ * P4.5: `bg-success-container`/`bg-tertiary-container`/`bg-error-container` were three of the build-era compat
  * aliases in `index.css`, which resolve to `--ok-wash`/`--warn-wash`/
  * `--err-wash` by definition. Renaming them here is therefore a pure rename —
  * every pixel is identical — and it retires three alias call sites shared by
@@ -45,7 +45,7 @@ export const TONE_TO_SEVERITY: Record<Tone, WeaknessSeverity> = {
  * the fix rather than repeating it.
  */
 export const TONE_CLASS: Record<Tone, string> = {
-  ok: "bg-ok-wash text-ok",
-  warn: "bg-warn-wash text-warn",
-  err: "bg-err-wash text-err",
+  ok: "bg-success-container text-success-text",
+  warn: "bg-tertiary-container text-on-tertiary-container",
+  err: "bg-error-container text-error",
 }

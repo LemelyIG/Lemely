@@ -128,19 +128,19 @@ function RoleChoiceLink({ to, icon: Glyph, title, description }: RoleChoice) {
   return (
     <Link
       to={to}
-      className="group flex items-start gap-4 rounded-lg border border-rule bg-paper-raised p-6 transition-colors hover:border-rule-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+      className="group flex items-start gap-4 rounded-lg border border-outline-variant bg-surface-container-lowest p-6 transition-colors hover:border-outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
     >
-      <Glyph size={24} className="mt-1 flex-none text-ink-muted" aria-hidden="true" />
+      <Glyph size={24} className="mt-1 flex-none text-on-surface-variant" aria-hidden="true" />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <div className="text-display-sm text-ink">{title}</div>
-        <p className="text-body-md text-ink-muted">{description}</p>
+        <div className="text-display-sm text-on-surface">{title}</div>
+        <p className="text-body-md text-on-surface-variant">{description}</p>
       </div>
       {/* The arrow is what moves on hover, not the whole card (§9.2) — a 1px
           inline shift, transform-only, matching ChildCard's own trailing
           caret rather than inventing a second hover idiom for the same job. */}
       <CaretRight
         size={18}
-        className="mt-1 flex-none text-ink-faint transition-transform ease-out-soft group-hover:translate-x-px"
+        className="mt-1 flex-none text-on-surface-variant transition-transform ease-out-soft group-hover:translate-x-px"
         aria-hidden="true"
       />
     </Link>
@@ -151,11 +151,11 @@ export function SignupRoleSelect() {
   return (
     <AuthFrame
       footer={
-        <p className="text-body-sm text-ink-muted">
+        <p className="text-body-sm text-on-surface-variant">
           Already have an account?{" "}
           <Link
             to="/login"
-            className="rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            className="rounded-sm text-on-primary-container underline underline-offset-2 transition-colors hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             Sign in
           </Link>
@@ -164,8 +164,8 @@ export function SignupRoleSelect() {
     >
       <div className="flex w-full max-w-100 flex-col gap-6">
         <div className="flex flex-col gap-1.5">
-          <h1 className="text-display-lg text-ink">Tell us who you are</h1>
-          <p className="text-body-md text-ink-muted">We'll take it from there.</p>
+          <h1 className="text-display-lg text-on-surface">Tell us who you are</h1>
+          <p className="text-body-md text-on-surface-variant">We'll take it from there.</p>
         </div>
 
         <div className="flex flex-col gap-3">
@@ -182,7 +182,7 @@ export function SignupRoleSelect() {
             a student or teacher with a code, that is for a parent with one. */}
         <Link
           to="/join"
-          className="flex items-center gap-1.5 self-start rounded-sm pointer-coarse:min-h-11 text-body-sm text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          className="flex items-center gap-1.5 self-start rounded-sm pointer-coarse:min-h-11 text-body-sm text-on-surface-variant transition-colors hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         >
           <Ticket size={16} aria-hidden="true" />
           I have an invite code from my school

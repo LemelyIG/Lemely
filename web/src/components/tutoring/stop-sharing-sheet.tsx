@@ -62,12 +62,12 @@ export function StopSharingSheet({ open, grant, onConfirm, onCancel, pending = f
     >
       <div className="flex flex-col gap-3">
         {copy.lines.map((line) => (
-          <p key={line} className="m-0 text-body-md text-ink">
+          <p key={line} className="m-0 text-body-md text-on-surface">
             {line}
           </p>
         ))}
         {errorText ? (
-          <p role="alert" className="m-0 text-body-sm text-err">
+          <p role="alert" className="m-0 text-body-sm text-error">
             {errorText}
           </p>
         ) : null}

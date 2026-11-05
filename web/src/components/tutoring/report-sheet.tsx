@@ -96,12 +96,12 @@ export function ReportSheet({
         }
       >
         <div className="flex flex-col gap-3">
-          <p className="m-0 flex items-start gap-2 text-body-md text-ink">
-            <CheckCircle size={20} weight="bold" className="mt-0.5 shrink-0 text-ok" aria-hidden />
+          <p className="m-0 flex items-start gap-2 text-body-md text-on-surface">
+            <CheckCircle size={20} weight="bold" className="mt-0.5 shrink-0 text-success-text" aria-hidden />
             Thank you. Lemely has your report about {targetLabel}.
           </p>
           {reportShowsHelpline(reason) ? (
-            <p role="note" className="m-0 rounded-md border border-rule bg-warn-wash px-3 py-2.5 text-body-sm text-ink">
+            <p role="note" className="m-0 rounded-md border border-outline-variant bg-tertiary-container px-3 py-2.5 text-body-sm text-on-surface">
               {HELPLINE_LINE}
             </p>
           ) : null}
@@ -149,7 +149,7 @@ export function ReportSheet({
         </RadioGroup>
 
         {reportShowsHelpline(reason) ? (
-          <p role="note" className="m-0 rounded-md border border-rule bg-warn-wash px-3 py-2.5 text-body-sm text-ink">
+          <p role="note" className="m-0 rounded-md border border-outline-variant bg-tertiary-container px-3 py-2.5 text-body-sm text-on-surface">
             {HELPLINE_LINE}
           </p>
         ) : null}
@@ -164,7 +164,7 @@ export function ReportSheet({
         />
 
         {errorText ? (
-          <p role="alert" className="m-0 text-body-sm text-err">
+          <p role="alert" className="m-0 text-body-sm text-error">
             {errorText}
           </p>
         ) : null}

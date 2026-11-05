@@ -115,13 +115,13 @@ function CardRow({
   }
 
   return (
-    <li className="flex items-start justify-between gap-3 rounded-lg border border-rule bg-paper p-3">
+    <li className="flex items-start justify-between gap-3 rounded-lg border border-outline-variant bg-surface p-3">
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         <div className="flex items-center gap-2">
           <Badge tone={card.source === "ai" ? "lilac" : "sage"}>
             {cardSourceLabel(card.source)}
           </Badge>
-          <span className="text-data-sm text-ink-faint">
+          <span className="text-data-sm text-on-surface-variant">
             due {new Date(card.dueAt).toLocaleDateString()}
           </span>
         </div>
@@ -165,10 +165,10 @@ function CardRow({
           </form>
         ) : (
           <>
-            <div className="truncate text-body-md font-medium text-ink">{card.front}</div>
-            <div className="truncate text-body-sm text-ink-muted">{card.back}</div>
+            <div className="truncate text-body-md font-medium text-on-surface">{card.front}</div>
+            <div className="truncate text-body-sm text-on-surface-variant">{card.back}</div>
             {deleteFailedHere ? (
-              <p className="text-body-sm text-err">
+              <p className="text-body-sm text-error">
                 We couldn't delete that card. It's still here, so you can try again.
               </p>
             ) : null}
@@ -237,7 +237,7 @@ function DeckCardEditor({ deckId }: { deckId: string }) {
            this is unreachable in practice, but the hook is conditionally
            enabled and gets an `idle` on that basis rather than an assumption
            about every future caller. */
-        idle={<p className="text-body-sm text-ink-faint">No deck selected.</p>}
+        idle={<p className="text-body-sm text-on-surface-variant">No deck selected.</p>}
         error={{
           heading: "Couldn't load this deck's cards",
           body: studentLoadFailureMessage,
@@ -246,7 +246,7 @@ function DeckCardEditor({ deckId }: { deckId: string }) {
         {({ cards }) => (
           <div className="flex flex-col gap-4">
             {cards.length === 0 ? (
-              <p className="text-body-sm text-ink-faint">No cards in this deck yet.</p>
+              <p className="text-body-sm text-on-surface-variant">No cards in this deck yet.</p>
             ) : (
               <ul className="flex flex-col gap-2">
                 {cards.map((card) => (
@@ -256,7 +256,7 @@ function DeckCardEditor({ deckId }: { deckId: string }) {
             )}
 
             <form
-              className="flex flex-col gap-3 border-t border-rule pt-4"
+              className="flex flex-col gap-3 border-t border-outline-variant pt-4"
               onSubmit={(e) => {
                 e.preventDefault()
                 if (!front.trim() || !back.trim()) return
@@ -349,12 +349,12 @@ function DeckRow({
           <CardBody className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-col gap-1.5">
-                <div className="text-body-lg font-medium text-ink">{deck.title}</div>
+                <div className="text-body-lg font-medium text-on-surface">{deck.title}</div>
                 <div className="flex flex-wrap items-center gap-2">
                   <DeckOriginBadge origin={deck.origin} />
                   {/* One span with an explicit separator, not two adjacent
                       ones — see the original comment this preserves. */}
-                  <span className="text-data-sm text-ink-faint">
+                  <span className="text-data-sm text-on-surface-variant">
                     {deck.cardCount} card{deck.cardCount === 1 ? "" : "s"} ·{" "}
                     {deck.dueCount} due
                   </span>
@@ -400,7 +400,7 @@ function DeckRow({
           setMenuOpen(false)
           onRequestDelete()
         }}
-        className="block w-full rounded-md px-3 py-2 text-start text-body-sm text-ink transition-[background-color,transform] hover:bg-paper-sunk active:scale-[0.98]"
+        className="block w-full rounded-md px-3 py-2 text-start text-body-sm text-on-surface transition-[background-color,transform] hover:bg-surface-container-low active:scale-[0.98]"
       >
         Delete
       </button>
@@ -494,14 +494,14 @@ export function FlashcardDecks() {
           return (
             <>
               <div className="flex flex-col gap-2">
-                <h1 className="text-display-lg text-ink">Flashcards for {subjectName}</h1>
-                <p className="lm-prose text-body-lg text-ink-muted">
+                <h1 className="text-display-lg text-on-surface">Flashcards for {subjectName}</h1>
+                <p className="lm-prose text-body-lg text-on-surface-variant">
                   Decks grouped by topic. Cards you write yourself and cards Lemely generates both
                   live here, and every card always shows which one it is.
                 </p>
               </div>
 
-              {/* No `border-warn` on the "nothing due" case any more. A warn
+              {/* No `border-tertiary` on the "nothing due" case any more. A warn
                   border said "something needs your attention" about a
                   student who is completely up to date, which is the one
                   state on this screen that needs nothing from them (§3.6: a
@@ -509,16 +509,16 @@ export function FlashcardDecks() {
               <Card>
                 <CardBody className="flex flex-col gap-3">
                   {dueQuery.isPending ? (
-                    <p className="text-body-sm text-ink-faint">Checking what's due…</p>
+                    <p className="text-body-sm text-on-surface-variant">Checking what's due…</p>
                   ) : dueQuery.isError ? (
-                    <p className="text-body-sm text-err">
+                    <p className="text-body-sm text-error">
                       We couldn't check what's due. Try again.
                     </p>
                   ) : due?.kind === "due" ? (
                     <>
                       <div className="flex items-baseline gap-2">
-                        <span className="text-data-lg text-ink">{due.totalDue}</span>
-                        <span className="text-body-lg text-ink-muted">
+                        <span className="text-data-lg text-on-surface">{due.totalDue}</span>
+                        <span className="text-body-lg text-on-surface-variant">
                           card{due.totalDue === 1 ? "" : "s"} due today
                         </span>
                       </div>
@@ -534,8 +534,8 @@ export function FlashcardDecks() {
                     </>
                   ) : due?.kind === "none" ? (
                     <>
-                      <div className="text-display-sm text-ink">Nothing due today</div>
-                      <p className="text-body-md text-ink-muted">
+                      <div className="text-display-sm text-on-surface">Nothing due today</div>
+                      <p className="text-body-md text-on-surface-variant">
                         {nextDueMessage(due.nextDueAt)}
                       </p>
                     </>
@@ -545,7 +545,7 @@ export function FlashcardDecks() {
 
               <Card>
                 <CardBody className="flex flex-col gap-4">
-                  <h2 className="text-eyebrow text-ink-faint">New deck</h2>
+                  <h2 className="text-eyebrow text-on-surface-variant">New deck</h2>
                   <div className="flex flex-wrap gap-2">
                     {NEW_DECK_MODES.map((m) => (
                       <Button
@@ -582,7 +582,7 @@ export function FlashcardDecks() {
                         placeholder="e.g. 1.2 Motion"
                       />
                     ) : (
-                      <p className="text-body-sm text-ink-faint">
+                      <p className="text-body-sm text-on-surface-variant">
                         The topic is chosen automatically from your own weakest recorded topic for
                         this subject, so there's no topic field to fill in.
                       </p>
@@ -590,8 +590,8 @@ export function FlashcardDecks() {
 
                     {mode !== "manual" ? (
                       <div className="flex flex-col gap-2">
-                        <label className="text-label text-ink" htmlFor="new-deck-count">
-                          Number of cards: <span className="text-data-md text-ink">{count}</span>
+                        <label className="text-label text-on-surface" htmlFor="new-deck-count">
+                          Number of cards: <span className="text-data-md text-on-surface">{count}</span>
                         </label>
                         {/* C-15 Slider, not a raw `<input type="range">`. The
                             practice generator on this same surface already
@@ -615,9 +615,9 @@ export function FlashcardDecks() {
                     (() => {
                       const msg = flashcardUnavailableMessage(refusal)
                       return (
-                        <div className="rounded-lg border border-warn bg-warn-wash p-4">
-                          <div className="text-display-sm text-ink">{msg.heading}</div>
-                          <p className="mt-1 text-body-md text-ink-muted">{msg.body}</p>
+                        <div className="rounded-lg border border-tertiary bg-tertiary-container p-4">
+                          <div className="text-display-sm text-on-surface">{msg.heading}</div>
+                          <p className="mt-1 text-body-md text-on-surface-variant">{msg.body}</p>
                         </div>
                       )
                     })()
@@ -627,10 +627,10 @@ export function FlashcardDecks() {
                     (() => {
                       const summary = generateDeckSummary(generated)
                       return (
-                        <div className="rounded-lg border border-rule bg-paper p-4">
-                          <div className="text-display-sm text-ink">{summary.headline}</div>
+                        <div className="rounded-lg border border-outline-variant bg-surface p-4">
+                          <div className="text-display-sm text-on-surface">{summary.headline}</div>
                           {summary.shortfall ? (
-                            <p className="mt-1 text-body-md text-ink-muted">
+                            <p className="mt-1 text-body-md text-on-surface-variant">
                               The model returned fewer cards than requested, and nothing was
                               padded to make up the difference.
                             </p>
@@ -642,7 +642,7 @@ export function FlashcardDecks() {
 
                   {(createDeck.isError && refusal === undefined) ||
                   (generateDeck.isError && refusal === undefined) ? (
-                    <p className="text-body-sm text-err">
+                    <p className="text-body-sm text-error">
                       We couldn't create that deck. Try again.
                     </p>
                   ) : null}
@@ -670,7 +670,7 @@ export function FlashcardDecks() {
               </Card>
 
               {deleteDeck.isError ? (
-                <p className="text-body-sm text-err">
+                <p className="text-body-sm text-error">
                   We couldn't delete that deck. It's still in your list, so you can try again.
                 </p>
               ) : null}
@@ -689,8 +689,8 @@ export function FlashcardDecks() {
                         on-brand texture in the system, and here it also does
                         real work — it is what visually binds a topic's decks
                         to the topic heading above them. */}
-                    <h2 className="text-display-sm text-ink">{group.topic ?? "Untopiced"}</h2>
-                    <div className="margin-rule flex flex-col gap-2">
+                    <h2 className="text-display-sm text-on-surface">{group.topic ?? "Untopiced"}</h2>
+                    <div className="flex flex-col gap-2">
                       {group.decks.map((deck) => (
                         <DeckRow
                           key={deck.id}

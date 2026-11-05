@@ -70,14 +70,14 @@ function Item({ item, controls }: { item: ModerationItem; controls: Controls }) 
   const failure = controls.failure?.itemId === item.itemId ? controls.failure : null
   const label = moderationKindLabel(item.kind)
   return (
-    <li className="flex flex-col gap-3 border-b border-rule px-4 py-4 last:border-b-0 sm:px-5">
-      <div className="flex flex-wrap items-center gap-2 text-body-sm text-ink-muted">
+    <li className="flex flex-col gap-3 border-b border-outline-variant px-4 py-4 last:border-b-0 sm:px-5">
+      <div className="flex flex-wrap items-center gap-2 text-body-sm text-on-surface-variant">
         <Chip>{label}</Chip>
         <time dateTime={item.createdAt} className="tabular-nums">
           {formatAdminDay(item.createdAt)}
         </time>
       </div>
-      <p className="m-0 max-w-prose whitespace-pre-wrap break-words text-body-md text-ink">{item.text}</p>
+      <p className="m-0 max-w-prose whitespace-pre-wrap break-words text-body-md text-on-surface">{item.text}</p>
       <div className="flex flex-wrap gap-2">
         <Button
           className="min-h-11"
@@ -102,7 +102,7 @@ function Item({ item, controls }: { item: ModerationItem; controls: Controls }) 
       </div>
       {failure ? (
         <div className="flex flex-wrap items-center gap-3">
-          <p role="alert" className="m-0 text-body-sm text-err">
+          <p role="alert" className="m-0 text-body-sm text-error">
             {failure.message}
           </p>
           {failure.stale ? (
@@ -145,7 +145,7 @@ function NextRows({ kind, cursor, controls }: { kind: Filter; cursor: string; co
   if (query.isPending) {
     return (
       <li className="px-4 py-3 sm:px-5">
-        <p role="status" className="m-0 text-body-sm text-ink-muted">
+        <p role="status" className="m-0 text-body-sm text-on-surface-variant">
           Loading more
         </p>
       </li>
@@ -154,7 +154,7 @@ function NextRows({ kind, cursor, controls }: { kind: Filter; cursor: string; co
   if (query.isError) {
     return (
       <li className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5">
-        <p role="alert" className="m-0 text-body-sm text-ink">
+        <p role="alert" className="m-0 text-body-sm text-on-surface">
           {adminFailureMessage(query.error, "We couldn't load more.")}
         </p>
         <Button className="min-h-11" size="sm" onClick={() => void query.refetch()}>
@@ -223,8 +223,8 @@ export function Moderation() {
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1.5">
         <Eyebrow>Platform admin</Eyebrow>
-        <h1 className="text-display-lg text-ink">Moderation</h1>
-        <p className="max-w-prose text-body-md text-ink-muted">
+        <h1 className="text-display-lg text-on-surface">Moderation</h1>
+        <p className="max-w-prose text-body-md text-on-surface-variant">
           Review texts and tutor replies wait here until you approve them, oldest first.
         </p>
       </header>
@@ -253,13 +253,13 @@ export function Moderation() {
           ref={doneRef}
           tabIndex={-1}
           role="status"
-          className="m-0 rounded-lg border border-rule bg-ok-wash px-4 py-3 text-body-md text-ink"
+          className="m-0 rounded-lg border border-outline-variant bg-success-container px-4 py-3 text-body-md text-on-surface"
         >
           {done}
         </p>
       ) : null}
       {!online ? (
-        <p className="m-0 text-body-sm text-ink-muted">You're offline. Reconnect to approve or reject.</p>
+        <p className="m-0 text-body-sm text-on-surface-variant">You're offline. Reconnect to approve or reject.</p>
       ) : null}
 
       <QueryState
@@ -279,7 +279,7 @@ export function Moderation() {
         }
       >
         {(page) => (
-          <ul className="m-0 list-none overflow-hidden rounded-lg border border-rule bg-paper-raised p-0">
+          <ul className="m-0 list-none overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest p-0">
             <Rows items={page.items} controls={controls} />
             {page.nextCursor ? <MoreRows kind={kind} cursor={page.nextCursor} controls={controls} /> : null}
           </ul>

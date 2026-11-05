@@ -68,7 +68,7 @@ const tierMeta: Record<ConfidenceTier, TierMeta> = {
   // US-039 finding G. Neither a pass nor a warning — no marker (human or AI)
   // formed an opinion here, so this must not borrow the confident tier's
   // "we checked and we're sure" green or the uncertain/needs-review tiers'
-  // "look at this" tones. `text-ink-muted` / `bg-paper-sunk` are the same
+  // "look at this" tones. `text-on-surface-variant` / `bg-surface-container-low` are the same
   // pair `<Chip tone="neutral">` uses, so this reads as the same "quiet,
   // administrative" register as the "not marked" chip already on this
   // screen (`PaperResult.markerSourceLabel`).
@@ -80,10 +80,10 @@ const tierMeta: Record<ConfidenceTier, TierMeta> = {
 }
 
 const tierClasses: Record<ConfidenceTier, string> = {
-  confident: "text-confidence-high hover:bg-confidence-high-bg",
-  uncertain: "text-confidence-medium bg-confidence-medium-bg border-confidence-medium",
-  "needs-review": "text-confidence-low bg-confidence-low-bg border-confidence-low font-medium",
-  "not-marked": "text-ink-muted bg-paper-sunk hover:bg-paper-sunk",
+  confident: "text-success-text hover:bg-success-container",
+  uncertain: "text-on-tertiary-container bg-tertiary-container border-tertiary",
+  "needs-review": "text-error bg-error-container border-error font-medium",
+  "not-marked": "text-on-surface-variant bg-surface-container-low hover:bg-surface-container-low",
 }
 
 export interface ConfidenceIndicatorProps {
@@ -135,7 +135,7 @@ export function ConfidenceIndicator({ tier, className }: ConfidenceIndicatorProp
         aria-label={`Confidence: ${meta.label}. ${meta.explanation}`}
         className={cn(
           "inline-flex items-center gap-1 rounded-full border border-transparent cursor-pointer transition-[color,background-color,transform] active:scale-[0.98]",
-          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
           loud ? "px-2 py-1" : "p-0.5",
           tierClasses[tier],
         )}
@@ -153,7 +153,7 @@ export function ConfidenceIndicator({ tier, className }: ConfidenceIndicatorProp
           // layer in the kit (`popover.tsx`) is already in the dropdown band;
           // this is the only one that was not, and it is live on `PaperResult`
           // and `PracticeResult` via `QuestionRow`.
-          className="absolute z-dropdown top-full mt-1.5 start-0 w-56 rounded-md border border-border bg-surface p-2.5 text-body-md text-t2 shadow-sm"
+          className="absolute z-dropdown top-full mt-1.5 start-0 w-56 rounded-md border border-outline-variant bg-surface-container-lowest p-2.5 text-body-md text-on-surface-variant shadow-sm"
         >
           {meta.explanation}
         </div>
@@ -198,17 +198,17 @@ export function ConfidenceIndicatorSummary({
     <div
       className={cn(
         "rounded-lg border p-3.5",
-        allConfident ? "border-border bg-surface" : "border-confidence-low bg-confidence-low-bg",
+        allConfident ? "border-outline-variant bg-surface-container-lowest" : "border-error bg-error-container",
         className,
       )}
     >
       <div className="flex items-start gap-2.5">
         {allConfident ? (
-          <CheckCircle weight="regular" className="w-4.5 h-4.5 flex-none mt-0.5 text-confidence-high" aria-hidden />
+          <CheckCircle weight="regular" className="w-4.5 h-4.5 flex-none mt-0.5 text-success-text" aria-hidden />
         ) : (
-          <Flag weight="fill" className="w-4.5 h-4.5 flex-none mt-0.5 text-confidence-low" aria-hidden />
+          <Flag weight="fill" className="w-4.5 h-4.5 flex-none mt-0.5 text-error" aria-hidden />
         )}
-        <p className={cn("text-body-md m-0", allConfident ? "text-t1" : "text-confidence-low font-medium")}>
+        <p className={cn("text-body-md m-0", allConfident ? "text-on-surface" : "text-error font-medium")}>
           {scored > 0 ? (
             <>
               We're confident about {confident} of {scored} question{scored === 1 ? "" : "s"}.
@@ -226,13 +226,13 @@ export function ConfidenceIndicatorSummary({
           onClick={() => setOpen((o) => !o)}
           aria-expanded={open}
           aria-label="What does confidence mean?"
-          className="ms-auto flex-none text-t3 transition-[color,transform] hover:text-t2 active:scale-[0.98] cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent rounded-full"
+          className="ms-auto flex-none text-on-surface-variant transition-[color,transform] hover:text-on-surface-variant active:scale-[0.98] cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary rounded-full"
         >
           <Info className="w-4 h-4" aria-hidden />
         </button>
       </div>
       {open && (
-        <p className="text-sm text-t2 mt-2.5 mb-0 ps-7">
+        <p className="text-sm text-on-surface-variant mt-2.5 mb-0 ps-7">
           Confidence tells you how sure we are about each mark. Low-confidence marks are
           flagged for your teacher. Questions left blank have no confidence to report,
           because no marker looked at them.

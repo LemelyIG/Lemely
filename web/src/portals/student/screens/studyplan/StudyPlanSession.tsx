@@ -58,9 +58,9 @@ function DetailRow({
   numeric?: boolean
 }) {
   return (
-    <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 border-t border-rule px-5 py-3 first:border-t-0">
-      <span className="text-body-sm text-ink-muted">{label}</span>
-      <span className={numeric ? "text-data-md text-ink" : "text-body-md text-ink"}>{value}</span>
+    <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 border-t border-outline-variant px-5 py-3 first:border-t-0">
+      <span className="text-body-sm text-on-surface-variant">{label}</span>
+      <span className={numeric ? "text-data-md text-on-surface" : "text-body-md text-on-surface"}>{value}</span>
     </div>
   )
 }
@@ -156,8 +156,8 @@ export function StudyPlanSession() {
           return (
             <>
               <div className="flex flex-col gap-2">
-                <h1 className="text-display-lg text-ink">{session.topic}</h1>
-                <p className="text-body-md text-ink-muted">
+                <h1 className="text-display-lg text-on-surface">{session.topic}</h1>
+                <p className="text-body-md text-on-surface-variant">
                   {activityLabel(session.activityType)} · {formatDuration(session.durationMinutes)}{" "}
                   · {formatDayHeading(session.date)}
                 </p>
@@ -177,8 +177,8 @@ export function StudyPlanSession() {
 
               <Card>
                 <CardBody className="flex flex-col gap-1.5">
-                  <h2 className="text-display-sm text-ink">{why.heading}</h2>
-                  <p className="lm-prose text-body-md text-ink-muted">{why.body}</p>
+                  <h2 className="text-display-sm text-on-surface">{why.heading}</h2>
+                  <p className="lm-prose text-body-md text-on-surface-variant">{why.body}</p>
                 </CardBody>
               </Card>
 
@@ -190,7 +190,7 @@ export function StudyPlanSession() {
                   is whether it stuck, and none of its sentences claims it
                   did. */}
               {complete.isError ? (
-                <p className="text-body-md text-err">
+                <p className="text-body-md text-error">
                   {studentActionFailureMessage(complete.error, "mark this session as done")}
                 </p>
               ) : null}
@@ -206,7 +206,7 @@ export function StudyPlanSession() {
                 ) : null}
                 {done ? (
                   // States the fact and stops — no XP, no points (P5's seam).
-                  <span className="self-center text-body-sm text-ok">Marked complete</span>
+                  <span className="self-center text-body-sm text-success-text">Marked complete</span>
                 ) : (
                   <Button
                     variant="secondary"

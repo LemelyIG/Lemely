@@ -270,7 +270,7 @@ def test_sp4_for_parent_and_student_with_no_store_and_dto_keys(
     assert as_student.content == as_parent.content
     body = as_student.json()
     assert body["tutorId"] == str(tutor.profile_id)
-    assert body["ladder"] == ["A*", "A", "B", "C", "D", "E", "U"]
+    assert body["ladder"] == ["A*", "A", "B", "C", "D", "E", "F", "G", "U"]
     assert (body["duringWindowDays"], body["beforeLookbackDays"]) == (120, 180)
     assert bucket_counts(physics(body)) == BASE_BUCKETS
     # Every key in the response belongs to OutcomesDTO or a DTO it nests, and every such

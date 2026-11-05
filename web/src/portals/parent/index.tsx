@@ -59,7 +59,7 @@ const ParentBookSession = lazy(() =>
 )
 
 /*
- * Parent portal shell — the Study Notebook (P4.6, redesign surface 6).
+ * Parent portal shell (P4.6 redesign surface 6, now v5 Abyss).
  *
  * UI spec §4.8: "Total depth from login to the answer a parent came for: two
  * taps. Design for navigation depth and no interest in learning an interface."
@@ -100,7 +100,7 @@ function ChildSwitcher() {
   if (!childId || children.length < 2) return null
 
   return (
-    <div className="flex items-center gap-2 text-body-sm text-ink-muted">
+    <div className="flex items-center gap-2 text-body-sm text-on-surface-variant">
       {/* The visible word is hidden at mobile for width, so the accessible
           name has to come from somewhere that is never hidden — otherwise the
           select is an unlabelled control below 640px. `Select`'s own
@@ -242,11 +242,11 @@ function Header() {
   const navigate = useNavigate()
 
   return (
-    <header className="border-b border-rule bg-paper-raised">
+    <header className="border-b border-outline-variant bg-surface-container-lowest">
       <div className="mx-auto flex w-full max-w-240 flex-wrap items-center gap-x-4 gap-y-2 px-4 py-4 md:px-8">
         <Link
           to="/parent"
-          className="flex items-center gap-2.5 rounded-md pointer-coarse:min-h-11 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          className="flex items-center gap-2.5 rounded-md pointer-coarse:min-h-11 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         >
           <BrandLockup as="span" className="contents" />
         </Link>
@@ -275,7 +275,7 @@ function Header() {
           <Link
             to="/parent/notifications"
             aria-label="Notifications"
-            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center text-body-sm text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center text-body-sm text-on-surface-variant transition-colors hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             <Bell size={16} aria-hidden="true" />
             <span className="hidden sm:inline">Notifications</span>
@@ -286,7 +286,7 @@ function Header() {
           <Link
             to="/parent/tutors"
             aria-label="Tutors"
-            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center text-body-sm text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center text-body-sm text-on-surface-variant transition-colors hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             <GraduationCap size={16} aria-hidden="true" />
             <span className="hidden sm:inline">Tutors</span>
@@ -294,7 +294,7 @@ function Header() {
           <Link
             to="/settings/devices"
             aria-label="Settings"
-            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center text-body-sm text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center text-body-sm text-on-surface-variant transition-colors hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             <Gear size={16} aria-hidden="true" />
             <span className="hidden sm:inline">Settings</span>
@@ -315,7 +315,7 @@ function Header() {
               logout()
               navigate("/login", { replace: true })
             }}
-            className="flex cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2 py-1.5 text-body-sm text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            className="flex cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2 py-1.5 text-body-sm text-on-surface-variant transition-colors hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             <SignOut size={16} aria-hidden="true" />
             <span className="hidden sm:inline">Sign out</span>
@@ -338,12 +338,7 @@ function ParentLayout() {
   const location = useLocation()
   const queryClient = useQueryClient()
   return (
-    // `paper-grain` (DESIGN.md §8.1): one fixed, pointer-events-none noise
-    // overlay at 0.03 opacity. The parent portal had no texture layer at all,
-    // the same gap surface 5 found in the teacher portal, and it is the whole
-    // mechanism by which §1's protected quality survives a screen made of
-    // rows and numbers.
-    <div data-portal="parent" className="paper-grain flex min-h-dvh flex-col bg-paper">
+    <div data-portal="parent" className="flex min-h-dvh flex-col bg-surface">
       <SkipLink />
       {/* Task 7 (B5a): see student/index.tsx's own comment on this line —
           same reason, same shape. */}
@@ -358,7 +353,7 @@ function ParentLayout() {
       <main
         id={MAIN_CONTENT_ID}
         tabIndex={-1}
-        className="mx-auto w-full min-w-0 max-w-240 flex-1 overflow-x-hidden px-4 pb-16 pt-2 focus:outline-none md:px-8"
+        className="mx-auto w-full min-w-0 max-w-240 flex-1 overflow-x-hidden px-4 pb-16 pt-6 focus:outline-none md:px-8 lg:pt-8"
       >
         {/* PR 2 part C: offline recovery banner, above the Suspense/
             ErrorBoundary content it sits over — it renders nothing while

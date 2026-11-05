@@ -155,7 +155,7 @@ export function TutorProfile() {
         <div className="flex flex-col gap-6">
           <Link
             to="/student/tutors"
-            className="inline-flex min-h-11 w-fit items-center gap-1.5 rounded-md text-body-sm text-ink-muted underline-offset-4 transition-colors hover:text-ink hover:underline active:text-ink"
+            className="inline-flex min-h-11 w-fit items-center gap-1.5 rounded-md text-body-sm text-on-surface-variant underline-offset-4 transition-colors hover:text-on-surface hover:underline active:text-on-surface"
           >
             <ArrowLeft size={16} aria-hidden />
             All tutors

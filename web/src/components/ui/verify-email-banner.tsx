@@ -82,16 +82,16 @@ export function VerifyEmailBannerView({ onDismiss }: { onDismiss?: () => void })
   return (
     <div
       role="status"
-      className="mb-6 flex flex-wrap items-center gap-2.5 rounded-md border border-rule bg-paper-sunk px-3.5 py-2.5"
+      className="mb-6 flex flex-wrap items-center gap-2.5 rounded-md border border-outline-variant bg-surface-container-low px-3.5 py-2.5"
     >
-      <EnvelopeSimple size={16} className="text-ink-muted" aria-hidden="true" />
-      <p className="min-w-0 flex-1 text-body-sm text-ink">
+      <EnvelopeSimple size={16} className="text-on-surface-variant" aria-hidden="true" />
+      <p className="min-w-0 flex-1 text-body-sm text-on-surface">
         <span className="font-medium">Your email isn't verified yet.</span> Marking a paper stays
         locked until you verify it.
       </p>
       <Link
         to="/verify-email"
-        className="shrink-0 text-body-sm text-accent-ink underline decoration-1 underline-offset-2 transition-[color,transform] hover:text-accent-hover active:scale-[0.98]"
+        className="shrink-0 text-body-sm text-on-primary-container underline decoration-1 underline-offset-2 transition-[color,transform] hover:text-primary-hover active:scale-[0.98]"
       >
         Verify now
       </Link>
@@ -100,7 +100,7 @@ export function VerifyEmailBannerView({ onDismiss }: { onDismiss?: () => void })
           type="button"
           onClick={onDismiss}
           aria-label="Dismiss the email verification reminder"
-          className="shrink-0 rounded-sm p-1 text-ink-muted transition-[color,transform] hover:text-ink active:scale-[0.98]"
+          className="shrink-0 rounded-sm p-1 text-on-surface-variant transition-[color,transform] hover:text-on-surface active:scale-[0.98]"
         >
           <X size={14} aria-hidden="true" />
         </button>

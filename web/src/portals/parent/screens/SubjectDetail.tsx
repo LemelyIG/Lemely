@@ -54,7 +54,7 @@ export function gradeArticle(grade: string): "a" | "an" {
 
 function PredictedBasis({ papers }: { papers: number }) {
   return (
-    <p className="max-w-prose text-body-md text-ink-muted">
+    <p className="max-w-prose text-body-md text-on-surface-variant">
       {papers === 1
         ? "Based on the one paper they've had marked in this subject so far."
         : `Based on their most recent of ${papers} marked papers, placed against the official grade boundaries for this paper.`}{" "}
@@ -92,11 +92,11 @@ export function SubjectDetail() {
 
           return (
             <>
-              <div className="margin-rule flex flex-col gap-3">
+              <div className="flex flex-col gap-3">
                 <div className="flex flex-wrap items-center gap-4">
                   <GradeBadge grade={data.predictedGrade} size="medium" basis="predicted" />
                   <div className="flex flex-col gap-0.5">
-                    <h1 className="text-display-lg text-ink">{primary}</h1>
+                    <h1 className="text-display-lg text-on-surface">{primary}</h1>
                     {/* Level + code as secondary detail, never the headline (§4.8 design
                         note), and on the data face, which is what a syllabus code is.
                         Omitted entirely when empty — an unregistered subject code
@@ -104,7 +104,7 @@ export function SubjectDetail() {
                         (see `subjectIdentifier`'s docstring) — rather than an empty
                         data-face line. */}
                     {secondary ? (
-                      <div className="text-data-sm text-ink-faint">{secondary}</div>
+                      <div className="text-data-sm text-on-surface-variant">{secondary}</div>
                     ) : null}
                   </div>
                 </div>
@@ -133,22 +133,22 @@ export function SubjectDetail() {
                  * §3.6 gives it to neutral notices and "how this works", and a
                  * distance to the next boundary is a fact, not a verdict either way.
                  */
-                <section className="rounded-lg border border-rule bg-info-wash p-6">
-                  <div className="text-display-sm text-info">
+                <section className="rounded-lg border border-outline-variant bg-primary-container p-6">
+                  <div className="text-display-sm text-primary">
                     {boundaryDistance.marksNeeded === 0
                       ? `On track for ${gradeArticle(boundaryDistance.nextGrade)} ${boundaryDistance.nextGrade}`
                       : `${boundaryDistance.marksNeeded} more ${
                           boundaryDistance.marksNeeded === 1 ? "mark" : "marks"
                         } for ${gradeArticle(boundaryDistance.nextGrade)} ${boundaryDistance.nextGrade}`}
                   </div>
-                  <p className="mt-1.5 text-body-md text-ink">{boundaryDistance.summary}</p>
+                  <p className="mt-1.5 text-body-md text-on-surface">{boundaryDistance.summary}</p>
                 </section>
               ) : null}
 
               <section className="flex flex-col gap-3">
-                <h2 className="text-display-md text-ink">Papers they've done</h2>
+                <h2 className="text-display-md text-on-surface">Papers they've done</h2>
                 {papers.length === 0 ? (
-                  <p className="rounded-lg border border-rule bg-paper-raised p-5 text-body-md text-ink-muted">
+                  <p className="rounded-lg border border-outline-variant bg-surface-container-lowest p-5 text-body-md text-on-surface-variant">
                     No marked papers in this subject yet.
                   </p>
                 ) : (
@@ -156,14 +156,14 @@ export function SubjectDetail() {
                     {papers.map((paper) => (
                       <div
                         key={`${paper.paperId}-${paper.recordedAt}`}
-                        className="flex items-center gap-4 rounded-lg border border-rule bg-paper-raised p-5"
+                        className="flex items-center gap-4 rounded-lg border border-outline-variant bg-surface-container-lowest p-5"
                       >
                         <GradeBadge grade={paper.grade} size="inline" basis="achieved" />
                         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                           {/* The mark is the row's headline and it is a figure, so it
                               is set in the data face rather than the body face. */}
-                          <div className="text-data-md text-ink">{paper.marks}</div>
-                          <div className="text-body-sm text-ink-muted">
+                          <div className="text-data-md text-on-surface">{paper.marks}</div>
+                          <div className="text-body-sm text-on-surface-variant">
                             <span className="text-data-sm">{paper.paperId}</span> · marked{" "}
                             {relativeTime(paper.recordedAt)}
                           </div>
@@ -176,16 +176,16 @@ export function SubjectDetail() {
 
               <section className="flex flex-col gap-3">
                 <div className="flex items-baseline justify-between gap-4">
-                  <h2 className="text-display-md text-ink">Topics to work on</h2>
+                  <h2 className="text-display-md text-on-surface">Topics to work on</h2>
                   <Link
                     to={`/parent/children/${childId}/weaknesses`}
-                    className="rounded-sm pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-accent-ink transition-colors hover:text-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                    className="rounded-sm pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-on-primary-container transition-colors hover:text-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                   >
                     All subjects
                   </Link>
                 </div>
                 {weakTopics.length === 0 ? (
-                  <p className="rounded-lg border border-rule bg-paper-raised p-5 text-body-md text-ink-muted">
+                  <p className="rounded-lg border border-outline-variant bg-surface-container-lowest p-5 text-body-md text-on-surface-variant">
                     Nothing stands out as a weak topic in this subject yet.
                   </p>
                 ) : (

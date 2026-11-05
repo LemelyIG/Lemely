@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils"
  * repainted via `accent-*`, matching DESIGN.md's "Input Fields" guidance
  * (surface fill, border shifts to primary on focus doesn't apply to a
  * native range thumb, so focus is carried by the shared
- * `focus-visible:outline-accent` ring instead, consistent with every other
+ * `focus-visible:outline-primary` ring instead, consistent with every other
  * interactive control in the library). The wrapping `py-9px` gives the thumb
  * a >=44px vertical hit target on touch per QUALITY-BAR's touch-target rule,
  * without inflating the visible track height past DESIGN.md's 6px meter
@@ -62,7 +62,7 @@ export function Slider({
         value={value}
         onChange={(event) => onValueChange(Number(event.target.value))}
         data-kit-field="slider"
-        className="w-full h-1.5 cursor-pointer appearance-none rounded-full bg-surface-2 accent-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        className="w-full h-1.5 cursor-pointer appearance-none rounded-full bg-surface-container-low accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         {...props}
       />
     </div>

@@ -1,48 +1,55 @@
 /*
- * Maskable-icon safe-zone arithmetic.
+ * Icon safe-zone constants and the mark-shape-aware Android maskable-icon
+ * ceiling.
  *
- * Android crops a maskable icon to whatever shape the launcher wants (circle,
- * squircle, teardrop) and only guarantees the central circle of diameter 0.8w.
- * A drawn rectangle of width x height (as fractions of the icon) is fully
- * inside that circle only when hypot(width, height) <= 0.8, with the rectangle
- * centred on the icon. The artwork (clip and "m", see `appIcon.ts`) is not
- * square and not centred on its own artboard, so its drawn bounds are measured
- * from the rendered alpha rather than assumed, and the maskable icon centres
- * those bounds before scaling.
+ * `MAX_MASKABLE_SCALE` cannot be a fixed constant once the mark's drawn
+ * extent isn't a perfect square: Android's guaranteed-visible region on a
+ * maskable icon is a circle of diameter 0.8w centred on the icon, so a drawn
+ * rectangle of width x height (as fractions of the icon) is fully inside it
+ * only when hypot(width, height) <= 0.8. A square mark's diagonal is
+ * width*sqrt(2), which is why this used to be a fixed `0.8 / sqrt(2)` — but
+ * the mark is an open notebook (landscape), so its own drawn extent has to
+ * be measured against the real SVG, not assumed.
  *
  * `scripts/generate_icons.mjs` and `tests/unit/brandTokens.test.ts` both
- * import this module so the arithmetic and the constant it guards live in one
- * place.
+ * import this module so the safe-zone arithmetic and the constants it
+ * guards live in one place.
  */
 
 import sharp from "sharp"
 
 /**
- * How much the artwork is scaled, relative to its native size on the 100 unit
- * artboard, when it is drawn into the maskable icon.
+ * How much of a square icon's width the mark spans.
  *
- * It must stay under `maxMaskableScale` for the measured bounds. The value is
- * set with a margin below that ceiling for launcher shapes that crop harder
- * than a circle.
+ * `0.72` puts the drawn mark at about 64% of the icon's width and 49% of its
+ * height — a normal figure for an app icon, and one that still leaves the
+ * outer edge clear on a rounded-rectangle mask.
  */
-export const MASKABLE_SCALE = 0.72
+export const SQUARE_SCALE = 0.72
 
-export interface DrawnBounds {
-  /** Left edge, as a fraction of the artboard width. */
-  left: number
-  /** Top edge, as a fraction of the artboard height. */
-  top: number
+/**
+ * How much of a maskable icon's width the mark spans.
+ *
+ * `0.5` against a measured ceiling (see `maxMaskableScale`). The "lm" icon is a
+ * full square tile, so its drawn extent is the whole artboard and the ceiling
+ * is `0.8 / sqrt(2)`; the tile sits on an Abyss canvas, so only the glyph inside
+ * it is visible, and the margin is for launcher shapes that crop harder than a
+ * circle.
+ */
+export const MASKABLE_SCALE = 0.5
+
+export interface DrawnExtent {
   width: number
   height: number
 }
 
 /**
- * The artwork's drawn bounds, as fractions of its artboard, measured from the
- * rendered alpha rather than read off the coordinates.
+ * The mark's drawn extent, as a fraction of its artboard, measured from the
+ * rendered alpha rather than read off the coordinates or assumed square.
  */
-export async function measureDrawnBounds(svg: Buffer | Uint8Array): Promise<DrawnBounds> {
+export async function measureDrawnExtent(markSvg: Buffer | Uint8Array): Promise<DrawnExtent> {
   const N = 512
-  const { data } = await sharp(svg, { density: 384 })
+  const { data } = await sharp(markSvg, { density: 384 })
     .resize(N, N)
     .ensureAlpha()
     .raw()
@@ -61,25 +68,13 @@ export async function measureDrawnBounds(svg: Buffer | Uint8Array): Promise<Draw
       if (y > bottom) bottom = y
     }
   }
-  return { left: left / N, top: top / N, width: (right - left + 1) / N, height: (bottom - top + 1) / N }
+  return { width: (right - left + 1) / N, height: (bottom - top + 1) / N }
 }
 
 /**
- * The safe-zone ceiling `MASKABLE_SCALE` must never exceed, for artwork with
- * the given drawn bounds. See this module's own docstring for the arithmetic.
+ * The safe-zone ceiling `MASKABLE_SCALE` must never exceed, for a mark with
+ * the given drawn extent. See this module's own docstring for the arithmetic.
  */
-export function maxMaskableScale(bounds: Pick<DrawnBounds, "width" | "height">): number {
-  return 0.8 / Math.hypot(bounds.width, bounds.height)
-}
-
-/**
- * The SVG transform (on a 100 unit artboard) that scales the artwork by `scale`
- * and centres its drawn bounds on the artboard centre.
- */
-export function maskableTransform(bounds: DrawnBounds, scale: number): string {
-  const cx = (bounds.left + bounds.width / 2) * 100
-  const cy = (bounds.top + bounds.height / 2) * 100
-  const tx = 50 - cx * scale
-  const ty = 50 - cy * scale
-  return `translate(${tx.toFixed(3)} ${ty.toFixed(3)}) scale(${scale})`
+export function maxMaskableScale(extent: DrawnExtent): number {
+  return 0.8 / Math.hypot(extent.width, extent.height)
 }

@@ -16,10 +16,10 @@ import {
   settingsSaveFailureMessage,
 } from "@/lib/settingsOutcome"
 import { SettingsFrame } from "./SettingsFrame"
+import { SettingsCard, SettingsRow, SettingsSection, SettingsStatus } from "./SettingsRows"
 
 /*
- * G-11 · Account and devices — the devices section, in the Study Notebook
- * (P4.10).
+ * G-11 · Account and devices — the devices section (P4.10, now v5 Abyss).
  *
  * Role-agnostic by design: every account is subject to the same 3-device limit
  * (D1.11), so this route is reachable by all five roles rather than living
@@ -133,31 +133,16 @@ export function DeviceSettingsSection() {
 
   return (
     <>
-      <section aria-labelledby="devices-heading" className="flex flex-col gap-4">
-        <div className="flex flex-col gap-2">
-          <h2 id="devices-heading" className="text-display-sm text-ink">
-            Signed-in devices
-          </h2>
-          <p className="max-w-[65ch] text-body-sm text-ink-muted">{intro}</p>
-        </div>
+      <SettingsSection title="Signed-in devices" description={intro}>
+        {/* No `srHeading`: the page's own `<h1>` (page lane) or the dialog
+            title (teacher Settings dialog) sits above this section in every
+            query state, so an sr-only heading here would duplicate it.
 
-        {/* No `srHeading`: the page's own `<h1>` is rendered above this
-            section unconditionally, whether by `SettingsFrame` (the
-            top-level lane) or `PortalSettingsLayout` (the in-portal one), in
-            every query state — an sr-only heading here would duplicate it.
-            `<h1>` unconditionally, above this section, in every query state —
-            an sr-only heading here would duplicate it.
-
-            One behaviour changed here and is worth naming. The pre-conversion
-            branches were sibling expressions, not exclusive ones, so a refetch
-            that failed *after* a successful load showed the error panel and
-            kept the list below it. `QueryState` is exclusive by design, so the
-            list goes. That is the honest reading: react-query moves `status`
-            to `"error"` on a failed refetch, and what is on screen at that
-            point is data we can no longer vouch for — after a revoke, a device
-            that is gone may still be listed, which is the one thing this
-            screen must not imply. A retry is a better offer than stale rows
-            presented as current. */}
+            `QueryState` is exclusive by design, so a refetch that fails after
+            a successful load drops the list rather than keeping rows we can
+            no longer vouch for: after a revoke, a device that is gone may
+            still be listed, which is the one thing this screen must not
+            imply. A retry is a better offer than stale rows. */}
         <QueryState
           query={devices}
           skeleton={<ListSkeleton rows={3} />}
@@ -175,65 +160,55 @@ export function DeviceSettingsSection() {
           }
         >
           {(data) => (
-            <ul className="flex flex-col gap-2">
-              {data.devices.map((device) => {
-                const notice = rowNotice?.id === device.deviceId ? rowNotice.message : null
-                const busy = pendingId === device.deviceId
-                return (
-                  <li
-                    key={device.deviceId}
-                    className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-4 sm:p-5"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <span className="flex min-w-0 flex-col gap-1">
-                        <span className="flex flex-wrap items-center gap-2">
-                          {/* The raw user-agent stays in `title`: a reader who
-                              wants to know exactly what we hold about a device
-                              can see it, rather than only our summary of it. */}
-                          <span
-                            className="text-body-md text-ink"
-                            title={device.userAgent ?? undefined}
-                          >
-                            {deviceTitle(device)}
+            <SettingsCard>
+              <ul className="flex flex-col divide-y divide-outline-variant">
+                {data.devices.map((device) => {
+                  const notice = rowNotice?.id === device.deviceId ? rowNotice.message : null
+                  const busy = pendingId === device.deviceId
+                  return (
+                    <li key={device.deviceId}>
+                      <SettingsRow
+                        label={
+                          <span className="flex flex-wrap items-center gap-2">
+                            {/* The raw user-agent stays in `title`: a reader
+                                who wants to know exactly what we hold about a
+                                device can see it, not only our summary. */}
+                            <span title={device.userAgent ?? undefined}>{deviceTitle(device)}</span>
+                            {device.isCurrent ? <Chip>This device</Chip> : null}
                           </span>
-                          {device.isCurrent ? <Chip>This device</Chip> : null}
-                        </span>
-                        <span className="text-data-sm text-ink-faint">
-                          {lastActiveLabel(device.lastActiveAt)}
-                        </span>
-                      </span>
-                      <Button
-                        type="button"
-                        // `secondary`, not `ghost`: at rest a ghost button on a
-                        // raised card is indistinguishable from a label, and this
-                        // is the only action on the row.
-                        variant="secondary"
-                        onClick={() => handleSignOut(device.deviceId, device.isCurrent)}
-                        disabled={busy}
-                      >
-                        {busy
-                          ? "Signing out…"
-                          : device.isCurrent
-                            ? "Sign out this device"
-                            : "Sign out"}
-                      </Button>
-                    </div>
-
-                    {/* Adjacent to the row that produced it, and announced:
-                        a reader who pressed a button and got no visible change
-                        is exactly who needs to be told. */}
-                    {notice ? (
-                      <p role="status" className="text-body-sm text-ink-muted">
-                        {notice}
-                      </p>
-                    ) : null}
-                  </li>
-                )
-              })}
-            </ul>
+                        }
+                        description={
+                          <span className="text-data-sm">{lastActiveLabel(device.lastActiveAt)}</span>
+                        }
+                        control={
+                          <Button
+                            type="button"
+                            // `secondary`, not `ghost`: at rest a ghost button
+                            // reads as a label, and this is the row's only action.
+                            variant="secondary"
+                            onClick={() => handleSignOut(device.deviceId, device.isCurrent)}
+                            disabled={busy}
+                          >
+                            {busy
+                              ? "Signing out…"
+                              : device.isCurrent
+                                ? "Sign out this device"
+                                : "Sign out"}
+                          </Button>
+                        }
+                        // Adjacent to the row that produced it, and announced:
+                        // a reader who pressed a button and saw no change is
+                        // exactly who needs to be told.
+                        status={notice ? <SettingsStatus>{notice}</SettingsStatus> : null}
+                      />
+                    </li>
+                  )
+                })}
+              </ul>
+            </SettingsCard>
           )}
         </QueryState>
-      </section>
+      </SettingsSection>
 
       <ConfirmModal
         open={confirmingCurrent !== null}

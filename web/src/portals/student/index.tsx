@@ -201,7 +201,7 @@ function UserBlock() {
 
   if (isPending || isError || !data) {
     return (
-      <div className="flex items-center gap-2.5 px-0.5 text-body-sm text-ink-faint">
+      <div className="flex items-center gap-2.5 px-0.5 text-body-sm text-on-surface-variant">
         {isPending ? "Loading…" : "Signed in"}
       </div>
     )
@@ -224,8 +224,8 @@ function UserBlock() {
           one of them ends up handling a single-word name differently. */}
       <Avatar name={name} src={data.avatarUrl ?? undefined} size="md" />
       <div className="min-w-0">
-        <div className="truncate text-body-sm font-medium text-ink">{name}</div>
-        <div className="text-body-sm text-ink-faint">{roleLabel}</div>
+        <div className="truncate text-body-sm font-medium text-on-surface">{name}</div>
+        <div className="text-body-sm text-on-surface-variant">{roleLabel}</div>
       </div>
     </div>
   )
@@ -287,9 +287,9 @@ function NavRow({
           // deliberately blue so it stays distinguishable from the
           // accent's own hover and selected states — and this nav is
           // exactly where that matters, since its active row is
-          // already accent-marked. The row used `outline-accent`,
+          // already accent-marked. The row used `outline-primary`,
           // which made "focused" and "current" the same colour.
-          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
+          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
           // The active rule is reserved at every state, transparent
           // when inactive, so turning it on cannot nudge the label
           // sideways by 2px as you navigate.
@@ -297,8 +297,8 @@ function NavRow({
           touch && "min-h-11",
           indent && "ps-[30px]",
           isActive
-            ? "border-accent bg-paper-raised text-ink"
-            : "border-transparent bg-transparent text-ink-muted hover:bg-paper hover:text-ink",
+            ? "border-primary bg-surface-container-lowest text-on-surface"
+            : "border-transparent bg-transparent text-on-surface-variant hover:bg-surface hover:text-on-surface",
         )
       }
     >
@@ -318,12 +318,12 @@ function NavRow({
             <Glyph
               size={16}
               weight={isActive ? "fill" : "regular"}
-              className={cn("shrink-0", isActive ? "text-accent" : "text-ink-faint")}
+              className={cn("shrink-0", isActive ? "text-primary" : "text-on-surface-variant")}
               aria-hidden="true"
             />
           )}
           <span className="flex-1">{label}</span>
-          {tag ? <span className="text-data-sm text-ink-faint">{tag}</span> : null}
+          {tag ? <span className="text-data-sm text-on-surface-variant">{tag}</span> : null}
         </>
       )}
     </NavLink>
@@ -381,9 +381,9 @@ function SubjectNavGroup({
           aria-expanded={expanded}
           aria-label={`${expanded ? "Collapse" : "Expand"} ${subject.name}`}
           className={cn(
-            "flex-none rounded-md p-1.5 text-ink-faint transition-colors",
-            "hover:bg-paper hover:text-ink",
-            "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
+            "flex-none rounded-md p-1.5 text-on-surface-variant transition-colors",
+            "hover:bg-surface hover:text-on-surface",
+            "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
             touch && "min-h-11 min-w-11",
           )}
         >
@@ -470,7 +470,7 @@ function NavGroups({ touch = false }: { touch?: boolean }) {
           // always has. The "Marking" group below has none of that and
           // renders through `SidebarNav` instead — see that branch.
           <div key={grp.label} className="flex flex-col gap-0.5">
-            <div className="text-eyebrow text-ink-faint px-2 pb-[7px]">{grp.label}</div>
+            <div className="text-eyebrow text-on-surface-variant px-2 pb-[7px]">{grp.label}</div>
             {grp.items.slice(0, 1).map((it) => (
               <NavRow key={it.to} to={it.to} end={it.end} label={it.label} icon={it.icon} touch={touch} />
             ))}
@@ -527,16 +527,16 @@ function Sidebar() {
   return (
     // A well, per DESIGN.md §3.1: `--paper-sunk` is the token whose stated use
     // is "sidebars, table headers, code blocks, inset areas". Same value the
-    // build-era `bg-surface-2` alias resolved to; this is the name the system
+    // build-era `bg-surface-container-low` alias resolved to; this is the name the system
     // actually defines.
-    <aside className="hidden sidebar:flex w-sidebar flex-none bg-paper-sunk border-e border-rule px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
+    <aside className="hidden sidebar:flex w-sidebar flex-none bg-surface-container-low border-e border-outline-variant px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
       <BrandLockup className="px-2" />
 
       <nav aria-label="Student sections" className="overflow-auto lm-scroll">
         <NavGroups />
       </nav>
 
-      <div className="mt-auto border-t border-rule pt-[14px]">
+      <div className="mt-auto border-t border-outline-variant pt-[14px]">
         <UserBlock />
       </div>
     </aside>
@@ -625,7 +625,7 @@ function Header({ onOpenNav }: { onOpenNav: () => void }) {
     // DESIGN.md §7 permits, and this is that bar. `z-nav` replaces the raw
     // `z-20`: same number, but the z-index scale is a gate and a literal
     // bypasses it.
-    <header className="lm-app-header lm-app-header-pt-4 lm-nav-chrome flex items-center gap-[18px] px-page-mobile min-[640px]:px-page-desktop pb-4 border-b border-rule bg-paper/80 backdrop-blur-nav sticky top-0 z-nav">
+    <header className="lm-app-header lm-app-header-pt-4 lm-nav-chrome flex items-center gap-[18px] px-page-mobile min-[640px]:px-page-desktop pb-4 border-b border-outline-variant bg-surface/80 backdrop-blur-nav sticky top-0 z-nav">
       {/* P3.1: the only navigation entry point below 820px, which is where the
           sidebar stops existing. `-ms-2` pulls the 44px target back level with
           the crumb's text edge without shrinking the target itself. */}
@@ -793,18 +793,9 @@ function StudentLayout() {
   }
 
   return (
-    // `paper-grain` (DESIGN.md §8.1): one fixed, pointer-events-none noise
-    // overlay at 0.035 opacity across the whole portal. This is the cheapest
-    // and most durable way the one protected quality — the notebook feel —
-    // reaches every student screen, including the ~20 this surface does not
-    // touch. It is fixed rather than scrolled precisely so it never repaints
-    // on scroll on the mid-range Android phones §7 keeps naming.
-    //
-    // `bg-paper` is load-bearing here, not decoration: the shell must own its
-    // own ground rather than depend on what is behind it (`body`'s own paint,
-    // in this case — correct today, but a fragile thing for a portal root to
-    // lean on) matching the warm `--paper` token by coincidence.
-    <div data-portal="student" className="paper-grain flex min-h-dvh bg-paper">
+    // `bg-surface` is load-bearing here, not decoration: the shell must own its
+    // own ground rather than depend on what is behind it (`body`'s own paint).
+    <div data-portal="student" className="flex min-h-dvh bg-surface">
       <SkipLink />
       {/* Task 7 (B5a): renders nothing, same "mount inside the authenticated
           layout" shape as the rest of this file's chrome — `useNotificationCounts`

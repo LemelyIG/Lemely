@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Teacher overview, empty state</title>
+    <link rel="stylesheet" href="./teacher-home/tokens.css" />
+    <link rel="stylesheet" href="./teacher-home/teacher-home.css" />
+    <link rel="stylesheet" href="./teacher-home/teacher-empty.css" />
+    <style>
+      *, *::before, *::after { box-sizing: border-box }
+      body { margin: 0; -webkit-font-smoothing: antialiased; }
+    </style>
+    <script type="module">
+      import "@fontsource-variable/bricolage-grotesque"
+      import "@fontsource-variable/schibsted-grotesk"
+      import "@fontsource-variable/jetbrains-mono"
+    </script>
+  </head>
+  <body>
+    <div class="th-app" id="teacher-home">
+      <div class="th">
+        <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+          <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></symbol>
+          <symbol id="i-grade" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z M14 3v5h5 M9 13h7 M9 17h5"/></symbol>
+          <symbol id="i-review" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M8 12l3 3 5-6"/></symbol>
+          <symbol id="i-class" viewBox="0 0 24 24"><path d="M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6 M17 11a2.5 2.5 0 1 0 0-5 M17 14c2.5 0 4 2 4 5"/></symbol>
+          <symbol id="i-risk" viewBox="0 0 24 24"><path d="M12 3l10 18H2z M12 10v5 M12 18v.5"/></symbol>
+          <symbol id="i-scheme" viewBox="0 0 24 24"><path d="M5 4h14v16H5z M9 9h6 M9 13h6 M9 17h3"/></symbol>
+          <symbol id="i-quiz" viewBox="0 0 24 24"><path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/></symbol>
+          <symbol id="i-mega" viewBox="0 0 24 24"><path d="M3 10v4h4l7 4V6l-7 4z M17 9a4 4 0 0 1 0 6"/></symbol>
+          <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 9a6 6 0 0 1 12 0c0 6 2 7 2 7H4s2-1 2-7 M10 20a2 2 0 0 0 4 0"/></symbol>
+          <symbol id="i-set" viewBox="0 0 24 24"><path d="M4 7h10 M18 7h2 M4 17h2 M10 17h10 M16 5v4 M8 15v4"/></symbol>
+          <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+          <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 16V4 M7 9l5-5 5 5 M4 20h16"/></symbol>
+          <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z M14 3v5h5 M12 18v-6 M9.5 14.5L12 12l2.5 2.5"/></symbol>
+          <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z M12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></symbol>
+          <symbol id="i-out" viewBox="0 0 24 24"><path d="M9 4H5v16h4 M16 8l4 4-4 4 M20 12H9"/></symbol>
+          <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 4v16h16 M8 15l3-4 3 2 5-6"/></symbol>
+          <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+          <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+          <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14 M13 6l6 6-6 6"/></symbol>
+        </defs></svg>
+        <input class="vh t-nav" type="checkbox" id="th-nav" aria-label="Navigation" />
+        <input class="vh t-create" type="checkbox" id="th-create" aria-label="Create" />
+        <input class="vh t-topic" type="checkbox" id="th-topic" aria-label="Weak topic detail" />
+
+
+        <aside class="side" aria-label="Teacher navigation">
+                              <a class="wm" href="#" aria-label="lemely"><svg viewBox="28 4 46 94" aria-hidden="true"><path d="M58 34 V72 A8 8 0 0 1 42 72 V20 A14 14 0 0 1 70 20 V78 A18 18 0 0 1 34 78 V36"/></svg><span>eme</span><svg viewBox="28 4 46 94" aria-hidden="true"><path d="M58 34 V72 A8 8 0 0 1 42 72 V20 A14 14 0 0 1 70 20 V78 A18 18 0 0 1 34 78 V36"/></svg><span>y</span></a>
+                              <ul class="nav">
+                                <li><a href="#" aria-current="page"><svg class="ico"><use href="#i-home"/></svg><span class="lb">Overview</span></a></li>
+                                <li><a href="#"><svg class="ico"><use href="#i-grade"/></svg><span class="lb">Grading</span></a></li>
+                                <li><a href="#"><svg class="ico"><use href="#i-review"/></svg><span class="lb">Review</span></a></li>
+                                <li><a href="#"><svg class="ico"><use href="#i-class"/></svg><span class="lb">Classes</span></a></li>
+                                <li><a href="#"><svg class="ico"><use href="#i-risk"/></svg><span class="lb">At-risk students</span></a></li>
+                              </ul>
+                              <div class="grp">Your classes</div>
+                              <p class="grps-empty">Classes you create appear here.</p>
+                              <div class="grp">Tools</div>
+                              <ul class="nav">
+                                <li><a href="#"><svg class="ico"><use href="#i-scheme"/></svg><span class="lb">Mark schemes</span></a></li>
+                                <li><a href="#"><svg class="ico"><use href="#i-quiz"/></svg><span class="lb">AI quizzes</span></a></li>
+                                <li><a href="#"><svg class="ico"><use href="#i-mega"/></svg><span class="lb">Announcements</span></a></li>
+                              </ul>
+                              <div class="foot"><button class="btn pri" id="th-upload-side" type="button"><svg class="ico"><use href="#i-up"/></svg><span class="lb">Upload papers</span></button></div>
+                            </aside>
+
+        <label class="scrim scrim-n" for="th-nav"></label>
+        <label class="scrim scrim-c" for="th-create"></label>
+        <label class="scrim scrim-t" for="th-topic"></label>
+
+        <div class="col-main">
+
+
+          <header class="bar">
+                                                      <label class="menu-btn" for="th-nav" aria-label="Open menu"><svg class="ico"><use href="#i-menu"/></svg></label>
+                                                      <h1>Overview</h1>
+
+                                                      <span class="sp"></span>
+                                                      <label class="btn ghost" for="th-create"><svg class="ico"><use href="#i-plus"/></svg><span>Create</span></label>
+                                                      <button class="btn pri upload-top" id="th-upload" type="button"><svg class="ico"><use href="#i-up"/></svg><span>Upload papers</span></button>
+                                                      <details class="pop">
+                                                        <summary class="iconbtn" aria-label="Notifications, 3 unread"><svg class="ico"><use href="#i-bell"/></svg></summary>
+                                                        <div class="pop-panel">
+                                                          <h2>Notifications<a href="#">Mark all read</a></h2>
+                                                          <a class="pop-item" href="#"><span class="pi"><svg class="ico"><use href="#i-risk"/></svg></span><div><b>At-risk alert</b><small>2 students in IGCSE Physics slipped below C</small></div><time>9:12</time></a>
+                                                          <a class="pop-item" href="#"><span class="pi"><svg class="ico"><use href="#i-review"/></svg></span><div><b>Batch finished</b><small>Paper 4 · Year 11 Chemistry, 23 answers to review</small></div><time>8:40</time></a>
+                                                          <a class="pop-item" href="#"><span class="pi"><svg class="ico"><use href="#i-quiz"/></svg></span><div><b>Quiz draft ready</b><small>Rates of reaction, 12 questions</small></div><time>Mon</time></a>
+                                                        </div>
+                                                      </details>
+                                                      <a class="iconbtn" href="#" aria-label="Settings"><svg class="ico"><use href="#i-set"/></svg></a>
+                                                      <details class="pop profile">
+                                                        <summary class="iconbtn" aria-label="Profile and account"><span class="avatar">HF</span></summary>
+                                                        <div class="pop-panel">
+                                                          <div class="who"><span class="avatar">HF</span><div><b>Hanan Farouk</b><small>hanan.farouk@school.edu · Tutor</small></div></div>
+                                                          <a class="pop-link" href="#"><svg class="ico"><use href="#i-class"/></svg>Edit profile</a>
+                                                          <a class="pop-link" href="#"><svg class="ico"><use href="#i-set"/></svg>Settings</a>
+                                                          <a class="pop-link" href="#"><svg class="ico"><use href="#i-out"/></svg>Sign out</a>
+                                                        </div>
+                                                      </details>
+                                                    </header>
+
+
+
+
+          <div hidden><section class="card mark" id="th-mark" data-state="idle" aria-label="Mark a class set">
+                                                                                              <header><span class="eyebrow">Mark a class set</span><small>Last: Paper 2 · IGCSE Physics · Tue</small><span class="got" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><b>Received</b></span></header>
+                                                                                              <div class="zone" id="th-zone">
+                                                                                                <span class="ic"><svg class="ico"><use href="#i-up"/></svg></span>
+                                                                                                <h2>Drop papers anywhere on this page</h2>
+                                                                                                <p>One PDF per student. Lemely reads each student's name off the paper.</p>
+                                                                                                <div class="acts">
+                                                                                                  <button class="btn pri" id="th-choose" type="button"><svg class="ico"><use href="#i-up"/></svg>Upload papers</button>
+                                                                                                  <button class="btn ghost only-mobile" id="th-camera" type="button"><svg class="ico"><use href="#i-camera"/></svg>Take photo</button>
+                                                                                                </div>
+                                                                                              </div>
+                                                                                              <div class="batch">
+                                                                                                <h2 class="only-queued" id="th-count"></h2>
+                                                                                                <p class="note" id="th-note" hidden></p>
+                                                                                                <ul class="files" id="th-files"></ul>
+                                                                                                <div class="only-queued" style="flex-direction:column">
+                                                                                                  <div class="setup">
+                                                                                                    <label>Group
+                                                                                                      <select aria-label="Group">
+                                                                                                        <option>Year 11 Chemistry</option><option>IGCSE Physics</option><option>AS Chemistry</option><option>Year 10 Chemistry</option><option>Physics group</option>
+                                                                                                      </select>
+                                                                                                    </label>
+                                                                                                    <label>Mark scheme
+                                                                                                      <select aria-label="Mark scheme">
+                                                                                                        <option>Chemistry 0620/42</option><option>Physics 0625/22</option><option>Chemistry 9701/22</option>
+                                                                                                      </select>
+                                                                                                    </label>
+                                                                                                  </div>
+                                                                                                </div>
+                                                                                                <div class="acts only-queued">
+                                                                                                  <button class="btn pri" id="th-start" type="button">Start marking</button>
+                                                                                                  <button class="btn ghost" type="button" data-th-reset>Cancel</button>
+                                                                                                </div>
+                                                                                                <div class="only-marking" style="flex-direction:column;gap:8px">
+                                                                                                  <h2>Marking against the official scheme</h2>
+                                                                                                  <div class="bar-track"><i id="th-bar"></i></div>
+                                                                                                  <span class="mono" id="th-progress"></span>
+                                                                                                </div>
+                                                                                                <div class="only-done" style="flex-direction:column;gap:10px">
+                                                                                                  <h2>Batch marked</h2>
+                                                                                                  <p class="note" id="th-done"></p>
+                                                                                                  <div class="acts"><a class="btn pri" href="#">Open review queue</a><button class="btn ghost" type="button" data-th-reset>Mark another set</button></div>
+                                                                                                </div>
+                                                                                              </div>
+                                                                                              <input type="file" id="th-file" accept="application/pdf,.pdf,image/*" multiple hidden />
+                                                                                              <input type="file" id="th-cam" accept="image/*" capture="environment" hidden />
+                                                            <span class="fx" aria-hidden="true"><span class="big"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></span>
+                            </section></div>
+<main class="main em">
+  <section class="t-hero">
+    <div class="t-copy">
+      <span class="eyebrow">Welcome, Hanan</span>
+      <h1>Mark your first set of papers</h1>
+      <p>Lemely marks each answer and passes the ones it is unsure about to you.</p>
+      <div class="acts"><a class="btn t-go" href="#" data-act="create">Create a class<svg class="ico"><use href="#i-arrow"/></svg></a><button class="btn t-ghost" type="button" data-act="upload">Upload papers</button></div>
+    </div>
+    <div class="t-demo" aria-hidden="true">
+      <div class="t-cap">Example, as it appears in Review</div>
+      <div class="t-paper">
+        <div class="t-ph"><b>Omar Hassan</b><span>Paper 4 · Q3(b)</span></div>
+        <p class="t-ans">Increasing the temperature gives the particles more energy so more collisions have the activation energy.</p>
+        <div class="t-marks"><span class="ok">1 mark<small>more energy</small></span><span class="ok">1 mark<small>more collisions</small></span><span class="lo">64%<small>confidence, for you to check</small></span></div>
+      </div>
+      <div class="t-flow"><span>Upload</span><i></i><span>Mark</span><i></i><span class="hl">Review</span></div>
+    </div>
+  </section>
+
+  <section class="em-setup" aria-label="Get started">
+    <div class="sec-h"><h2>Get started</h2><span class="note" aria-live="polite">0 of 3 done</span></div>
+    <div class="em-prog" aria-hidden="true"><i></i></div>
+    <ol class="r-track">
+      <li class="r-step now">
+        <span class="r-n"><b>1</b><svg class="tick" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+        <div class="r-body">
+          <h2>Create a class</h2>
+          <p class="r-what">Get a join code to share with your students.</p>
+          <p class="r-done">Year 11 Chemistry · join code <code>K7M4QX</code> <button class="r-copy" type="button" data-code="K7M4QX">Copy</button></p>
+          <div class="acts"><a class="btn pri" href="#" data-act="create"><svg class="ico"><use href="#i-plus"/></svg>Create a class</a></div>
+        </div>
+        <div class="r-prev" aria-hidden="true">
+          <span class="chip">Example</span>
+          <b class="cn">Year 11 Chemistry</b>
+          <small class="cs">Subject code 0620</small>
+          <div class="jc"><span>Join code</span><code class="code">K7M4QX</code></div>
+        </div>
+      </li>
+      <li class="r-step">
+        <span class="r-n"><b>2</b><svg class="tick" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+        <div class="r-body">
+          <h2>Upload papers</h2>
+          <p class="r-what">A whole class set at once, as PDFs.</p>
+          <p class="r-done"></p>
+          <div class="acts"><button class="btn pri" type="button" data-act="upload"><svg class="ico"><use href="#i-up"/></svg>Upload papers</button><span class="r-hint">or drop them anywhere on this page</span></div>
+        </div>
+      </li>
+      <li class="r-step">
+        <span class="r-n"><b>3</b><svg class="tick" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+        <div class="r-body">
+          <h2>Review flagged answers</h2>
+          <p class="r-what">Check the answers Lemely is unsure about.</p>
+          <div class="r-run"><div class="bar-track"><i></i></div><span class="mono"></span></div>
+          <p class="r-done">Reviewed. New papers you upload start here.</p>
+          <div class="acts"><a class="btn pri" href="#" data-act="review">Open review queue</a></div>
+        </div>
+        <span class="r-unlock">After your first upload</span>
+      </li>
+    </ol>
+  </section>
+</main>
+
+        </div>
+
+        <aside class="sheet sheet-create" aria-label="Create">
+          <label class="close" for="th-create" aria-label="Close"><svg class="ico"><use href="#i-x"/></svg></label>
+          <span class="eyebrow">Create</span>
+          <h2>Start something</h2>
+          <a class="act" href="#"><span><svg class="ico"><use href="#i-up"/></svg></span><b>Mark a class set</b><small>Upload scans for a group</small></a>
+          <a class="act" href="#"><span><svg class="ico"><use href="#i-scheme"/></svg></span><b>Add a mark scheme</b><small>Parse an official CAIE scheme</small></a>
+          <a class="act" href="#"><span><svg class="ico"><use href="#i-quiz"/></svg></span><b>AI quiz</b><small>Draft from a weak topic</small></a>
+          <a class="act" href="#"><span><svg class="ico"><use href="#i-mega"/></svg></span><b>Announcement</b><small>Post to students and Google Classroom</small></a>
+          <a class="act" href="#"><span><svg class="ico"><use href="#i-class"/></svg></span><b>Group</b><small>Share an invite code</small></a>
+        </aside>
+
+        <aside class="sheet sheet-topic" aria-label="Weak topic">
+          <label class="close" for="th-topic" aria-label="Close"><svg class="ico"><use href="#i-x"/></svg></label>
+          <span class="eyebrow">Weak topic · IGCSE Physics</span>
+          <h2>Half-life</h2>
+          <div class="tbig"><b>22%</b><p>of available marks lost on this topic across the last 3 papers</p></div>
+          <span class="eyebrow">Where marks were lost</span>
+          <div class="lost"><span>Q2(b)</span><div class="bar-track"><i style="--w:44%"></i></div><span>44%</span></div>
+          <div class="lost"><span>Q4(a)</span><div class="bar-track"><i style="--w:31%"></i></div><span>31%</span></div>
+          <div class="lost"><span>Q6(c)</span><div class="bar-track"><i style="--w:18%"></i></div><span>18%</span></div>
+          <p class="tnote"><b>Common mistake:</b> Reading the graph at half the time, not half the activity.</p>
+          <div class="acts"><a class="btn pri" href="#"><svg class="ico"><use href="#i-quiz"/></svg>Quiz on Half-life</a><a class="btn ghost" href="#">Open in Insights</a></div>
+        </aside>
+
+        <nav class="tabbar" aria-label="Primary">
+          <a href="#" aria-current="page"><svg class="ico"><use href="#i-home"/></svg>Home</a>
+          <a href="#"><svg class="ico"><use href="#i-file"/></svg>Mark</a>
+          <a href="#"><svg class="ico"><use href="#i-review"/></svg>Review<span class="n">23</span></a>
+          <a href="#"><svg class="ico"><use href="#i-class"/></svg>Classes</a>
+          <a href="#"><svg class="ico"><use href="#i-chart"/></svg>Insights</a>
+        </nav>
+        <button class="fab" id="th-fab" type="button"><svg class="ico"><use href="#i-up"/></svg>Upload</button>
+
+        <div class="veil" id="th-veil" hidden aria-hidden="true"><b>Drop to start marking</b><span>One PDF per student</span></div>
+      </div>
+    </div>
+    <script type="module" src="./teacher-home/teacher-home.js"></script>
+    <script type="module" src="./teacher-home/teacher-empty.js"></script>
+  </body>
+</html>

@@ -318,7 +318,7 @@ describe("StopSharingSheet draws every line the SPEC lists, the class line only 
     expect(text).toContain(SPEC_LINE_STOPS)
     expect(text).toContain(SPEC_LINE_COUNTED)
     expect(text).not.toMatch(/also teaches/)
-    expect(html.match(/<p class="m-0 text-body-md text-ink">/g)).toHaveLength(2)
+    expect(html.match(/<p class="m-0 text-body-md text-on-surface">/g)).toHaveLength(2)
   })
 
   it("with a class: three lines, in the SPEC's order, naming the class", () => {
@@ -328,7 +328,7 @@ describe("StopSharingSheet draws every line the SPEC lists, the class line only 
     const at = [SPEC_LINE_STOPS, classLine, SPEC_LINE_COUNTED].map((line) => text.indexOf(line))
     expect(at.every((i) => i >= 0), `lines found at ${at.join(",")}`).toBe(true)
     expect([...at].sort((a, b) => a - b)).toEqual(at)
-    expect(html.match(/<p class="m-0 text-body-md text-ink">/g)).toHaveLength(3)
+    expect(html.match(/<p class="m-0 text-body-md text-on-surface">/g)).toHaveLength(3)
   })
 
   it("names several classes in the one line, as plain text", () => {

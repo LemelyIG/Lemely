@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import { fillPreMountShell, readLoadingTierDurations, readSidebarTokens } from "../../vite/preMountShell.ts"
+import { tokenHex } from "../../vite/brandTokens.ts"
 import { FULL_PAGE_STATE_COPY } from "../../src/portals/misc/fullPageStateCopy.ts"
 
 /*
@@ -33,12 +34,10 @@ const COLOR_PLACEHOLDERS = [
   "%LEMELY_COLOR_RULE%",
   "%LEMELY_COLOR_INK%",
   "%LEMELY_COLOR_INK_MUTED%",
-  "%LEMELY_COLOR_ACCENT%",
+  "%LEMELY_COLOR_PRIMARY%",
 ]
 
-// Task 13 (C5b): the dark counterpart of every COLOR_PLACEHOLDERS entry
-// except %LEMELY_COLOR_ACCENT% (which, per that entry's own comment above,
-// was never a real placeholder in index.html to begin with).
+// Task 13 (C5b): the dark counterpart of every COLOR_PLACEHOLDERS entry.
 const COLOR_PLACEHOLDERS_DARK = [
   "%LEMELY_COLOR_DARK_PAPER%",
   "%LEMELY_COLOR_DARK_PAPER_SUNK%",
@@ -46,6 +45,7 @@ const COLOR_PLACEHOLDERS_DARK = [
   "%LEMELY_COLOR_DARK_RULE%",
   "%LEMELY_COLOR_DARK_INK%",
   "%LEMELY_COLOR_DARK_INK_MUTED%",
+  "%LEMELY_COLOR_DARK_PRIMARY%",
 ]
 
 const DURATION_PLACEHOLDERS = ["%LEMELY_LOADING_TIER_SKELETON%", "%LEMELY_LOADING_TIER_SLOW%"]
@@ -125,6 +125,22 @@ describe("fillPreMountShell", () => {
     expect(darkPaperMatch?.[1]).toBeDefined()
     expect(lightPaperMatch?.[1]).toBeDefined()
     expect(darkPaperMatch![1]).not.toBe(lightPaperMatch![1])
+  })
+
+  it("paints the clip in md-primary per theme (Abyss in light, Tide in dark) and the letters in on-surface", () => {
+    const filled = fillPreMountShell(REAL_INDEX_HTML)
+    const colourOf = (selector: string): string | undefined =>
+      filled.match(new RegExp(`${selector}\\s*\\{[^}]*?\\bcolor:\\s*(#[0-9a-f]{6})`))?.[1]
+    expect(colourOf("\\n\\s*\\.lm-shell-mark")).toBe(tokenHex("md-primary"))
+    expect(colourOf("\\n\\s*\\.lm-shell-clip")).toBe(tokenHex("md-primary"))
+    expect(colourOf('\\[data-theme="dark"\\]\\s*\\.lm-shell-mark,\\s*\\[data-theme="dark"\\]\\s*\\.lm-shell-clip')).toBe(
+      tokenHex("md-primary", "dark"),
+    )
+    expect(tokenHex("md-primary", "dark")).not.toBe(tokenHex("md-primary"))
+    expect(colourOf("\\n\\s*\\.lm-shell-wordmark")).toBe(tokenHex("md-on-surface"))
+    expect(filled).toMatch(
+      new RegExp(`\\[data-theme="dark"\\]\\s*\\.lm-shell-wordmark,[^{]*\\{\\s*color:\\s*${tokenHex("md-on-surface", "dark")}`),
+    )
   })
 
   it("substitutes the real durations for the duration placeholders", () => {
@@ -209,8 +225,8 @@ describe("index.html source: no hex colour literal outside comments", () => {
    * The shell's colours are ONLY the seven placeholders above — see
    * `fillPreMountShell`'s own doc comment for why a literal hex here would be
    * the same silent-drift failure `themeColor.ts` exists to prevent. Existing
-   * documentation comments in this file's `<head>` DO name two historical
-   * hexes (`#863bff`, `#1e1310`) as part of explaining why those colours were
+   * documentation comments in this file's `<head>` DO name a historical
+   * hex (`#1e1310`) as part of explaining why those colours were
    * wrong; those are prose, not colour, so they are stripped before this
    * checks, the same way `scripts/check_copy.mjs` strips comments before
    * scanning for em-dashes.
@@ -227,7 +243,6 @@ describe("index.html source: no hex colour literal outside comments", () => {
   it("still names the historical hexes inside the theme-color comments", () => {
     // Confirms stripHtmlComments is actually finding and blanking comments,
     // rather than this test passing because the source has no hex anywhere.
-    expect(REAL_INDEX_HTML).toContain("#863bff")
     expect(REAL_INDEX_HTML).toContain("#1e1310")
   })
 })
@@ -405,5 +420,46 @@ describe("NIT (c): index.html's tier 3 copy matches FULL_PAGE_STATE_COPY[\"slow-
       expect(text).not.toMatch(/[—–]/)
       expect(text).not.toMatch(/!/)
     }
+  })
+})
+
+describe("the shell's brand mark is the v5 Clip Letters paperclip, not the retired notebook", () => {
+  const clipPath = "M58 34 V72 A8 8 0 0 1 42 72 V20 A14 14 0 0 1 70 20 V78 A18 18 0 0 1 34 78 V36"
+
+  it("carries no notebook-mark placeholder, class or generator reference", () => {
+    expect(REAL_INDEX_HTML).not.toMatch(/LEMELY_MARK|brandMark|lm-shell-(?:page|coil|tick)|stroke-dash/)
+  })
+
+  it("draws DESIGN.md's clip in currentColor, in both the sidebar and the slow-load screen", () => {
+    const occurrences = REAL_INDEX_HTML.split(`d="${clipPath}"`).length - 1
+    expect(occurrences).toBe(3) // the two l's of the sidebar wordmark, and the tier-3 mark
+    expect(REAL_INDEX_HTML).toMatch(/viewBox="28 4 46 94"/)
+    expect(REAL_INDEX_HTML).not.toMatch(/<path[^>]*stroke="#/)
+  })
+
+  it("pulses by opacity alone, and switches the pulse off under prefers-reduced-motion", () => {
+    const keyframes = REAL_INDEX_HTML.match(/@keyframes lm-shell-breathe\s*\{([\s\S]*?)\n\s{6}\}/)
+    expect(keyframes, "lm-shell-breathe keyframes").not.toBeNull()
+    const properties = [...keyframes![1].matchAll(/([a-z-]+)\s*:/g)].map((m) => m[1])
+    expect(new Set(properties)).toEqual(new Set(["opacity"]))
+    const reduced = REAL_INDEX_HTML.match(/@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\s{6}\}/)
+    expect(reduced?.[1]).toMatch(/\.lm-shell-mark-pulse\s*\{\s*animation:\s*none/)
+  })
+
+  it("renders the sidebar brand as the lowercase Clip Letters wordmark with the name Lemely", () => {
+    const wordmark = REAL_INDEX_HTML.match(/<span class="lm-shell-wordmark"[\s\S]*?<\/span>\s*<\/span>/)?.[0] ?? ""
+    expect(wordmark).toContain('aria-label="Lemely"')
+    expect(wordmark).toContain('role="img"')
+    expect(wordmark.match(/class="lm-shell-clip"/g)).toHaveLength(2)
+    expect(wordmark).toContain(">eme<")
+    expect(wordmark).toContain(">y<")
+    expect(wordmark).not.toContain("Lemely</span>")
+    expect(REAL_INDEX_HTML).toMatch(/\.lm-shell-wordmark\s*\{[^}]*letter-spacing:\s*-0\.04em[^}]*\}/)
+  })
+
+  it("pulses only the tier-3 mark, not the sidebar wordmark", () => {
+    const wordmark = REAL_INDEX_HTML.match(/<span class="lm-shell-wordmark"[\s\S]*?<\/span>\s*<\/span>/)?.[0] ?? ""
+    expect(wordmark).not.toContain("lm-shell-mark-pulse")
+    expect(REAL_INDEX_HTML.match(/class="lm-shell-mark lm-shell-mark-pulse"/g)).toHaveLength(1)
   })
 })

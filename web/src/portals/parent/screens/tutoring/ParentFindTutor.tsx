@@ -84,12 +84,12 @@ export function ParentFindTutor() {
   return (
     <div className="flex w-full flex-col gap-6 pt-4">
       <div className="flex flex-col gap-2">
-        <h1 className="m-0 text-display-md text-ink">Tutors</h1>
-        <p className="m-0 max-w-prose text-body-md text-ink-muted">{DIRECTORY_INTRO}</p>
+        <h1 className="m-0 text-display-md text-on-surface">Tutors</h1>
+        <p className="m-0 max-w-prose text-body-md text-on-surface-variant">{DIRECTORY_INTRO}</p>
         {child ? (
-          <p className="m-0 max-w-prose text-body-md text-ink">
+          <p className="m-0 max-w-prose text-body-md text-on-surface">
             Looking for a tutor for {child.displayName}.{" "}
-            <Link to={parentChildTutoringHref(child.childId)} className="text-accent-ink underline underline-offset-4">
+            <Link to={parentChildTutoringHref(child.childId)} className="text-on-primary-container underline underline-offset-4">
               Back to {child.displayName}&apos;s tutoring
             </Link>
           </p>
@@ -102,10 +102,10 @@ export function ParentFindTutor() {
         onFiltersChange={change}
         aside={
           <details className="max-w-prose">
-            <summary className="cursor-pointer rounded-md py-3 text-body-sm text-ink-muted underline underline-offset-4">
+            <summary className="cursor-pointer rounded-md py-3 text-body-sm text-on-surface-variant underline underline-offset-4">
               How tutors are ordered
             </summary>
-            <p className="m-0 mt-2 text-body-sm text-ink-muted">{GRADE_RANKING_NOTE}</p>
+            <p className="m-0 mt-2 text-body-sm text-on-surface-variant">{GRADE_RANKING_NOTE}</p>
           </details>
         }
       />
@@ -182,7 +182,7 @@ export function ParentTutorProfile() {
         <div className="flex flex-col gap-6 pt-2">
           <Link
             to={directory}
-            className="inline-flex min-h-11 w-fit items-center gap-1.5 rounded-md text-body-sm text-ink-muted underline-offset-4 transition-colors hover:text-ink hover:underline active:text-ink"
+            className="inline-flex min-h-11 w-fit items-center gap-1.5 rounded-md text-body-sm text-on-surface-variant underline-offset-4 transition-colors hover:text-on-surface hover:underline active:text-on-surface"
           >
             <ArrowLeft size={16} aria-hidden />
             All tutors
@@ -254,8 +254,8 @@ function Booking({ tutor }: { tutor: TutorProfile }) {
   return (
     <div className="flex w-full max-w-160 flex-col gap-6 pt-4">
       <div className="flex flex-col gap-2">
-        <h1 className="m-0 text-display-md text-ink">Book a session with {tutor.publicName}</h1>
-        <p className="m-0 text-body-md text-ink-muted">
+        <h1 className="m-0 text-display-md text-on-surface">Book a session with {tutor.publicName}</h1>
+        <p className="m-0 text-body-md text-on-surface-variant">
           <Link to={parentTutorHref(tutor.tutorId, params.get("child"))} className="underline underline-offset-4">
             Back to their profile
           </Link>

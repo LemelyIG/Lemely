@@ -107,16 +107,16 @@ function ParentCodeCard({ code, url }: { code: string; url: string }) {
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-5">
+    <div className="flex flex-col gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest p-5">
       <div className="flex flex-col gap-1">
-        <div className="text-body-md font-medium text-ink">Your parent code</div>
-        <p className="max-w-[65ch] text-body-sm text-ink-muted">
+        <div className="text-body-md font-medium text-on-surface">Your parent code</div>
+        <p className="max-w-[65ch] text-body-sm text-on-surface-variant">
           Anyone with this code can follow your progress. Reset it if you shared it with the
           wrong person.
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded-md border border-rule bg-paper-sunk px-3 py-1.5 font-mono text-data-md tracking-[0.06em] text-ink">
+        <span className="rounded-md border border-outline-variant bg-surface-container-low px-3 py-1.5 font-mono text-data-md tracking-[0.06em] text-on-surface">
           {code}
         </span>
         {/* Review round 1, Minor finding 6: this used to copy `url` while
@@ -150,7 +150,7 @@ function ParentCodeCard({ code, url }: { code: string; url: string }) {
         </Button>
       </div>
       {rotate.isError ? (
-        <p role="alert" className="text-body-sm text-err">
+        <p role="alert" className="text-body-sm text-error">
           {studentSaveFailureMessage(rotate.error)}
         </p>
       ) : null}
@@ -198,10 +198,10 @@ function OneTimeLinkCard({
   const justMinted = mint.data && !links.some((link) => link.code === mint.data?.code) ? mint.data : null
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-5">
+    <div className="flex flex-col gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest p-5">
       <div className="flex flex-col gap-1">
-        <div className="text-body-md font-medium text-ink">Send a one-time link</div>
-        <p className="max-w-[65ch] text-body-sm text-ink-muted">
+        <div className="text-body-md font-medium text-on-surface">Send a one-time link</div>
+        <p className="max-w-[65ch] text-body-sm text-on-surface-variant">
           A link works once and stops working after 7 days, even if nobody uses it.
         </p>
       </div>
@@ -217,13 +217,13 @@ function OneTimeLinkCard({
         Create a link
       </Button>
       {mint.isError ? (
-        <p role="alert" className="text-body-sm text-err">
+        <p role="alert" className="text-body-sm text-error">
           {studentSaveFailureMessage(mint.error)}
         </p>
       ) : null}
       {justMinted ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-md border border-rule bg-paper-sunk px-3 py-2">
-          <span className="min-w-0 flex-1 truncate text-data-sm text-ink">{justMinted.url}</span>
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-outline-variant bg-surface-container-low px-3 py-2">
+          <span className="min-w-0 flex-1 truncate text-data-sm text-on-surface">{justMinted.url}</span>
           <Button
             type="button"
             variant="secondary"
@@ -236,7 +236,7 @@ function OneTimeLinkCard({
       ) : null}
 
       {links.length === 0 ? (
-        <p className="text-body-sm text-ink-faint">No pending links right now.</p>
+        <p className="text-body-sm text-on-surface-variant">No pending links right now.</p>
       ) : (
         <ul className="flex flex-col gap-2">
           {links.map((link) => {
@@ -244,12 +244,12 @@ function OneTimeLinkCard({
             return (
               <li
                 key={link.code}
-                className="flex flex-col gap-1 rounded-md border border-rule bg-paper-sunk px-3 py-2"
+                className="flex flex-col gap-1 rounded-md border border-outline-variant bg-surface-container-low px-3 py-2"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="min-w-0 flex-1 truncate text-data-sm text-ink">{link.url}</span>
+                  <span className="min-w-0 flex-1 truncate text-data-sm text-on-surface">{link.url}</span>
                   <div className="flex items-center gap-2">
-                    <span className="text-body-sm text-ink-faint">{expiryLabel(link.expiresAt)}</span>
+                    <span className="text-body-sm text-on-surface-variant">{expiryLabel(link.expiresAt)}</span>
                     {/* Review round 1, Minor finding 6: a link minted before
                         a page reload had no way to be retrieved again except
                         reading the truncated URL by eye. */}
@@ -275,7 +275,7 @@ function OneTimeLinkCard({
                   </div>
                 </div>
                 {failed ? (
-                  <p role="alert" className="text-body-sm text-err">
+                  <p role="alert" className="text-body-sm text-error">
                     {failed}
                   </p>
                 ) : null}
@@ -311,8 +311,8 @@ export function Parents() {
   return (
     <div className="flex w-full max-w-160 flex-col gap-6">
       <div className="flex flex-col gap-2">
-        <h1 className="text-display-md text-ink">Parent access</h1>
-        <p className="max-w-[65ch] text-body-md text-ink-muted">
+        <h1 className="text-display-md text-on-surface">Parent access</h1>
+        <p className="max-w-[65ch] text-body-md text-on-surface-variant">
           Share your code or a one-time link so a parent can see your marks, predicted grades
           and weak topics. They can't change anything, and you can remove access at any time.
         </p>
@@ -333,7 +333,7 @@ export function Parents() {
       </QueryState>
 
       <div className="flex flex-col gap-3">
-        <h2 className="text-display-sm text-ink">Linked parents</h2>
+        <h2 className="text-display-sm text-on-surface">Linked parents</h2>
         <QueryState
           query={parents}
           skeleton={<ListSkeleton rows={2} avatar />}
@@ -353,13 +353,13 @@ export function Parents() {
                 return (
                   <li
                     key={parent.parentId}
-                    className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-4"
+                    className="flex flex-col gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest p-4"
                   >
                     <div className="flex items-center gap-3">
                       <Avatar name={parent.displayName} size="md" />
                       <div className="flex min-w-0 flex-1 flex-col">
-                        <span className="text-body-md text-ink">{parent.displayName}</span>
-                        <span className="text-data-sm text-ink-muted">{parent.email}</span>
+                        <span className="text-body-md text-on-surface">{parent.displayName}</span>
+                        <span className="text-data-sm text-on-surface-variant">{parent.email}</span>
                       </div>
                       <Button
                         type="button"
@@ -374,7 +374,7 @@ export function Parents() {
                       </Button>
                     </div>
                     {failed ? (
-                      <p role="alert" className="text-body-sm text-err">
+                      <p role="alert" className="text-body-sm text-error">
                         {failed}
                       </p>
                     ) : null}

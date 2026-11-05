@@ -30,8 +30,8 @@ export function FindTutor() {
   return (
     <div className="flex w-full flex-col gap-6">
       <div className="flex flex-col gap-2">
-        <h1 className="m-0 text-display-md text-ink">Tutors</h1>
-        <p className="m-0 max-w-prose text-body-md text-ink-muted">{DIRECTORY_INTRO}</p>
+        <h1 className="m-0 text-display-md text-on-surface">Tutors</h1>
+        <p className="m-0 max-w-prose text-body-md text-on-surface-variant">{DIRECTORY_INTRO}</p>
       </div>
       <DirectoryView
         audience="member"
@@ -40,10 +40,10 @@ export function FindTutor() {
         onFiltersChange={change}
         aside={
           <details className="max-w-prose">
-            <summary className="cursor-pointer rounded-md py-3 text-body-sm text-ink-muted underline underline-offset-4">
+            <summary className="cursor-pointer rounded-md py-3 text-body-sm text-on-surface-variant underline underline-offset-4">
               How tutors are ordered
             </summary>
-            <p className="m-0 mt-2 text-body-sm text-ink-muted">{GRADE_RANKING_NOTE}</p>
+            <p className="m-0 mt-2 text-body-sm text-on-surface-variant">{GRADE_RANKING_NOTE}</p>
           </details>
         }
       />

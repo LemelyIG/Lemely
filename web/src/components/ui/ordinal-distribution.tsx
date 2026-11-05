@@ -108,7 +108,7 @@ export function OrdinalDistribution({
         compact
         kind="empty"
         tone="neutral"
-        icon={<EyeSlash size={16} className="text-ink-faint" aria-hidden />}
+        icon={<EyeSlash size={16} className="text-on-surface-variant" aria-hidden />}
         heading={INSUFFICIENT_RESULTS_HEADING}
         body={insufficientResultsBody(distribution.k)}
         className={className}
@@ -126,7 +126,7 @@ export function OrdinalDistribution({
   return (
     <figure className={cn("m-0 flex flex-col gap-3", className)}>
       {layout.n === 0 ? (
-        <p className="m-0 text-body-md text-ink-muted">No grades to show yet.</p>
+        <p className="m-0 text-body-md text-on-surface-variant">No grades to show yet.</p>
       ) : (
         <svg
           role="img"
@@ -166,7 +166,7 @@ export function OrdinalDistribution({
                       x2={`${segment.labelPct}%`}
                       y2={BAR_HEIGHT + LEADER_LENGTH}
                       strokeWidth={1}
-                      className="stroke-rule-strong"
+                      className="stroke-outline"
                     />
                     <text
                       x={`${segment.labelPct}%`}
@@ -191,13 +191,13 @@ export function OrdinalDistribution({
         {layout.rungs.map((rung) => (
           <li key={rung.grade} className="flex items-baseline gap-1.5 text-data-sm">
             <span className={bandText[gradeBand(rung.grade)]}>{rung.grade}</span>
-            <span className={rung.count === 0 ? "text-ink-muted" : "text-ink"}>{rung.count}</span>
+            <span className={rung.count === 0 ? "text-on-surface-variant" : "text-on-surface"}>{rung.count}</span>
           </li>
         ))}
       </ul>
 
       <figcaption className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
-        <span className="text-body-sm text-ink-muted">{caption}</span>
+        <span className="text-body-sm text-on-surface-variant">{caption}</span>
         <Button
           variant="ghost"
           size="sm"
@@ -211,7 +211,7 @@ export function OrdinalDistribution({
 
       <div id={tableId} hidden={!showTable}>
         <Table density="operate">
-          <caption className="px-4 py-2 text-start text-body-sm text-ink-muted">{tableCaption}</caption>
+          <caption className="px-4 py-2 text-start text-body-sm text-on-surface-variant">{tableCaption}</caption>
           <THead sticky={false}>
             <tr>
               <TH>Grade</TH>

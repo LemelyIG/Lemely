@@ -47,7 +47,7 @@ import type { Plugin } from "vite"
  * ── Why a plugin rather than a hand-written <link> in index.html ────────────
  *
  * Vite content-hashes the emitted woff2 filenames
- * (`geist-latin-wght-normal-BgDaEnEv.woff2`), so a hand-written href is correct
+ * (`schibsted-grotesk-latin-wght-normal-BgDaEnEv.woff2`), so a hand-written href is correct
  * exactly until the next time a font package updates, and then it 404s while
  * still *looking* right in review. The bundle is the only honest source for
  * these names.
@@ -71,11 +71,11 @@ import type { Plugin } from "vite"
  * waste; the italic files are likewise only fetched when italic text is
  * actually laid out.
  *
- * Caveat is deliberately absent. It is §4's marginalia face, it is the largest
- * latin subset in the product (~73KB against Geist's ~29KB), and it renders on
- * empty states and one landing-page sticker rather than on first paint. Its
- * `unicode-range`-gated download is already the lazy behaviour we want, and
- * preloading it would spend the most bandwidth on the least-seen face.
+ * The three Abyss faces are the whole type system (DESIGN.md Typography), so
+ * the critical set is all three: Schibsted Grotesk for UI and text, Bricolage
+ * Grotesque for display (28px and above), JetBrains Mono for data. The
+ * retired Study Notebook faces (Geist, Newsreader, Caveat) are gone from the
+ * bundle.
  */
 interface CriticalFace {
   /** Matches the emitted asset filename, hash and all. */
@@ -86,11 +86,11 @@ interface CriticalFace {
 
 export const CRITICAL_FACES: readonly CriticalFace[] = [
   {
-    pattern: /^geist-latin-wght-normal-[\w-]+\.woff2$/,
+    pattern: /^schibsted-grotesk-latin-wght-normal-[\w-]+\.woff2$/,
     role: "--font-sans, the UI and body face on every screen",
   },
   {
-    pattern: /^newsreader-latin-wght-normal-[\w-]+\.woff2$/,
+    pattern: /^bricolage-grotesque-latin-wght-normal-[\w-]+\.woff2$/,
     role: "--font-display, every page title and section heading",
   },
   {

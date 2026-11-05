@@ -29,7 +29,7 @@ export function PullIndicator({ progress, refreshing }: PullIndicatorProps) {
       role="status"
       aria-label={refreshing ? "Refreshing" : undefined}
       aria-hidden={refreshing ? undefined : true}
-      className="flex h-11 w-11 items-center justify-center rounded-full border border-border bg-paper text-t2 shadow-sm"
+      className="flex h-11 w-11 items-center justify-center rounded-full border border-outline-variant bg-surface text-on-surface-variant shadow-sm"
       style={{ opacity: refreshing ? 1 : progress }}
     >
       <ArrowClockwise

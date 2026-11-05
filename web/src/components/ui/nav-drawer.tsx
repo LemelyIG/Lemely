@@ -209,7 +209,7 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
   return createPortal(
     <div className="fixed inset-0 z-modal" onKeyDown={handleKeyDown}>
       <div
-        className="fixed inset-0 z-scrim bg-[var(--scrim)] motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
+        className="fixed inset-0 z-scrim bg-scrim motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
         aria-hidden="true"
         onClick={onClose}
       />
@@ -235,14 +235,14 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
         }
         className={cn(
           "lm-nav-chrome fixed inset-y-0 start-0 z-modal flex w-[min(20rem,85vw)] flex-col gap-5",
-          "border-e border-rule bg-paper-raised px-4 py-5 shadow-[var(--shadow-float)]",
+          "border-e border-outline-variant bg-surface-container-lowest px-4 py-5 shadow-[var(--shadow-float)]",
           phase === "closing"
             ? "lm-slide-out-start"
             : "motion-safe:animate-[lm-slide-in-start_var(--dur-base)_var(--ease-spring)_both]",
         )}
       >
         <div className="flex items-center justify-between gap-3">
-          <h2 id={titleId} className="text-display-sm text-ink">
+          <h2 id={titleId} className="text-display-sm text-on-surface">
             {title}
           </h2>
           <button
@@ -250,9 +250,9 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
             onClick={onClose}
             aria-label="Close navigation"
             className={cn(
-              "-me-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-ink-muted transition-colors",
-              "hover:bg-paper-sunk hover:text-ink",
-              "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+              "-me-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-on-surface-variant transition-colors",
+              "hover:bg-surface-container-low hover:text-on-surface",
+              "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
               "active:scale-[0.98]",
             )}
           >
@@ -262,7 +262,7 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
 
         <div className="lm-scroll min-h-0 flex-1 overflow-y-auto">{children}</div>
 
-        {footer ? <div className="border-t border-rule pt-4">{footer}</div> : null}
+        {footer ? <div className="border-t border-outline-variant pt-4">{footer}</div> : null}
       </div>
     </div>,
     document.body,
@@ -290,9 +290,9 @@ export function NavDrawerTrigger({ onClick, label, className }: NavDrawerTrigger
       aria-label={label}
       aria-haspopup="dialog"
       className={cn(
-        "lm-nav-chrome flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-ink-muted transition-colors",
-        "hover:bg-paper-sunk hover:text-ink",
-        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+        "lm-nav-chrome flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-on-surface-variant transition-colors",
+        "hover:bg-surface-container-low hover:text-on-surface",
+        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
         "active:scale-[0.98]",
         className,
       )}

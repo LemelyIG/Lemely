@@ -1,230 +1,268 @@
 /*
- * Regenerates every raster and vector app icon from the Lemely app icon in
- * `vite/appIcon.ts` (the primary "Abyss" icon of the Lemely Brand Guidelines
- * v5): an Abyss field, the Tide paper-clip and a white "m".
+ * Regenerates the PWA / home-screen PNG icons from the real brand mark.
+ *
+ * ── Why this exists (P6.5) ──────────────────────────────────────────────────
+ *
+ * REDESIGN-MISSION §5 Phase 6.5 asks for "favicon (new logo)". The finding
+ * underneath that one line is larger than it sounds: **the browser tab was the
+ * one surface the redesign never reached.** `public/favicon.svg` was the
+ * build-era mark — a `#863bff` purple glyph — and §4 names "purple-blue
+ * gradients" as this redesign's hard anti-reference, so the single most-seen
+ * piece of Lemely's identity was painted in the one colour family the mission
+ * bans outright. The three PNG icons beside it were rasterised from that same
+ * purple mark on 2026-08-12, i.e. before Phase 2 existed.
+ *
+ * Nothing could have caught it. Every gate this build runs reads code or reads
+ * a rendered page; an icon is a binary that no test opens, displayed by an
+ * operating system in a place no screenshot harness captures. It is the same
+ * shape as D6.4's `registerSW.js` (in nobody's diff) and this phase's manifest
+ * colour (read by an OS, not by a test).
+ *
+ * ── Why a checked-in script rather than four checked-in binaries ────────────
+ *
+ * The binaries are checked in too — they have to be, they are served — but a
+ * PNG in a diff is unreviewable, and "regenerate the icons" is otherwise a
+ * piece of knowledge that lives in one person's head until it is lost. This
+ * makes the mark the source and the PNGs the artifact, which is the same
+ * argument `vite/brandTokens.ts` makes about the manifest colours.
  *
  * Run: `npm run icons`
  *
- * Why a checked-in script: the binaries are checked in because they are served,
- * but a PNG in a diff cannot be reviewed, and "regenerate the icons" should not
- * live in one person's head. The icon is the source and the files below are the
- * artifacts, the same argument `vite/brandTokens.ts` makes about manifest colours.
- *
- * Outputs
- *
- * - `brand/mark-favicon.svg`: the icon itself, linked from `index.html`.
- * - `favicon.ico`: 16, 32 and 48px PNG entries, for user agents that ignore
- *   `<link rel="icon">` and ask for `/favicon.ico`.
- * - `pwa-192x192.png`, `pwa-512x512.png`: the rounded icon, transparent corners.
- * - `apple-touch-icon.png` (180) and `store-icon-1024.png`: full-bleed Abyss
- *   squares. iOS and store listings apply their own corner mask, and an opaque
- *   field avoids black corners. The store icon also has no alpha channel at all.
- * - `maskable-icon-512x512.png`: see below.
- * - `shortcut-*-96.png`, `splash/**`, `brand/og-card.png`: the rounded icon on
- *   the page colour (paper), which is also the manifest `background_color`.
- *
- * Nothing here renders text. The "m" is an outline path in `appIcon.ts`, so no
- * system font can change the result.
- *
- * The maskable cut is a different image, not a resize
+ * ── The maskable cut is a different image, not a resize ─────────────────────
  *
  * Android crops a maskable icon to whatever shape the launcher wants (circle,
- * squircle, teardrop) and only guarantees the central circle of diameter 0.8 of
- * the icon width. So the maskable file is a full-bleed Abyss field with the clip
- * and "m" scaled down and centred inside that circle. The drawn bounds are
- * measured from the rendered artwork, and the script throws if the scaled
- * bounds' diagonal would leave the circle. `tests/unit/brandTokens.test.ts`
- * asserts the same bound.
+ * squircle, teardrop), guaranteeing only the central 80% *diameter*. A mark
+ * sized for the square icon loses its corners in that crop. So the maskable
+ * variant paints the same mark smaller, inside the safe circle, on a full-bleed
+ * paper field. Verified arithmetically below rather than by eye.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import sharp from "sharp"
-import { appIconContent, appIconSvg } from "../vite/appIcon.ts"
 import { tokenHex } from "../vite/brandTokens.ts"
-import { MASKABLE_SCALE, maskableTransform, maxMaskableScale, measureDrawnBounds } from "../vite/iconSafeZone.ts"
+import { MASKABLE_SCALE, SQUARE_SCALE, maxMaskableScale, measureDrawnExtent } from "../vite/iconSafeZone.ts"
 import { SPLASHES, splashFilename, splashImagePx } from "../vite/splashScreens.ts"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const PUBLIC = path.resolve(HERE, "../public")
 
-/*
- * The canvas colour for surfaces that put the icon on a page-coloured field
- * (splash, shortcuts, Open Graph card), read from `--paper` rather than
- * transcribed so it cannot drift from the manifest `background_color`.
- */
-const PAPER = tokenHex("paper")
-
-/** Rasterises an icon SVG at its final pixel size (not resampled from a smaller render). */
-async function render(svg, px) {
-  return sharp(Buffer.from(svg), { density: Math.max(72, Math.ceil((72 * px) / 100) * 2) })
-    .resize(px, px)
-    .png()
-    .toBuffer()
-}
-
-const ROUNDED = appIconSvg("rounded")
-const FULL = appIconSvg("full")
+/** The vector the whole identity comes from. */
+const MARK = path.join(PUBLIC, "brand/mark.svg")
 
 /*
- * Maskable: measure the clip and "m" with no field behind them, check the safe
- * circle, then centre them in a full-bleed field.
+ * The canvas colour, read from `--md-surface` rather than transcribed. An icon sits
+ * against the OS's own background, so it needs an opaque field of its own; the
+ * product's page colour is the honest choice, and `brandTokens` means it cannot
+ * drift from the page the icon opens into.
  */
-const CONTENT_ONLY = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">${appIconContent()}</svg>`
-const BOUNDS = await measureDrawnBounds(Buffer.from(CONTENT_ONLY))
-const MAX_MASKABLE_SCALE = maxMaskableScale(BOUNDS)
+const PAPER = tokenHex("md-surface")
+/*
+ * The icon canvas is Abyss, not the page colour: `mark.svg` is the "lm" tile
+ * (an Abyss rounded square), and the OS rounds or crops an app icon itself, so
+ * the canvas has to be the tile's own colour or a surface-coloured margin would
+ * show around it. Splash screens and the OG card keep the page colour.
+ */
+const ABYSS = tokenHex("md-primary")
+
+/*
+ * `SQUARE_SCALE`, `MASKABLE_SCALE`, and the safe-zone arithmetic
+ * (`measureDrawnExtent`/`maxMaskableScale`) live in `vite/iconSafeZone.ts`
+ * rather than being declared here: the maskable ceiling is mark-shape-
+ * dependent (an open notebook is not square), so it has to be measured
+ * against the real SVG rather than assumed. `tests/unit/brandTokens.test.ts`
+ * imports the same module so the two never drift apart.
+ */
+const ICONS = [
+  { file: "pwa-192x192.png", size: 192, scale: SQUARE_SCALE },
+  { file: "pwa-512x512.png", size: 512, scale: SQUARE_SCALE },
+  { file: "maskable-icon-512x512.png", size: 512, scale: MASKABLE_SCALE },
+  // packet A5 (`apple-touch-icon-reuses-192`): a real 180px cut for iOS's own
+  // home-screen icon, rather than `index.html` pointing an
+  // `apple-touch-icon` link at the 192px PWA icon and letting iOS downsample
+  // it itself.
+  { file: "apple-touch-icon.png", size: 180, scale: SQUARE_SCALE },
+  // packet A5 (`no-1024-store-icon`): the 1024px listing icon some install
+  // surfaces (and app-store-style listings) expect. `alpha: false` because a
+  // store icon must be fully opaque with no alpha channel at all — some
+  // validators reject one even when every pixel happens to be opaque.
+  { file: "store-icon-1024.png", size: 1024, scale: SQUARE_SCALE, alpha: false },
+  // packet A5 (`manifest-shortcuts`): the three manifest `shortcuts` entries
+  // (`vite/manifest.ts`) need an icon apiece. Same mark-on-paper treatment as
+  // the square PWA icons for now — these are jump-list glyphs, not full
+  // screenshots, so one shared look is correct rather than three bespoke cuts.
+  { file: "shortcut-mark-96.png", size: 96, scale: SQUARE_SCALE },
+  { file: "shortcut-dashboard-96.png", size: 96, scale: SQUARE_SCALE },
+  { file: "shortcut-notifications-96.png", size: 96, scale: SQUARE_SCALE },
+]
+
+const markSvg = readFileSync(MARK)
+
+/*
+ * Guard the safe-zone arithmetic in the file that depends on it, so a future
+ * edit to `MASKABLE_SCALE` — or to the mark's own proportions — cannot
+ * quietly push it under an Android crop. `tests/unit/brandTokens.test.ts`
+ * asserts the same bound against the real mark; this is the belt to its
+ * braces, and it runs in the one place someone editing the number is
+ * actually looking.
+ */
+const EXTENT = await measureDrawnExtent(markSvg)
+const MAX_MASKABLE_SCALE = maxMaskableScale(EXTENT)
 if (MASKABLE_SCALE > MAX_MASKABLE_SCALE) {
   throw new Error(
     `generate_icons: MASKABLE_SCALE ${MASKABLE_SCALE} exceeds ${MAX_MASKABLE_SCALE.toFixed(3)} ` +
-      `for artwork drawn ${BOUNDS.width.toFixed(3)} x ${BOUNDS.height.toFixed(3)} of its artboard, ` +
+      `for a mark drawn ${EXTENT.width.toFixed(3)} x ${EXTENT.height.toFixed(3)} of its artboard, ` +
       "so its corners fall outside Android's guaranteed-visible circle and will be cropped.",
   )
 }
-const MASKABLE = appIconSvg("full", maskableTransform(BOUNDS, MASKABLE_SCALE))
 
 /*
- * The favicon SVG is written from the same source. The comment sits inside the
- * svg element: libvips (and so sharp) sniffs only the first bytes to detect SVG,
- * so a long leading comment would push the opening tag out of that window.
- */
-const FAVICON_SVG = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="Lemely">
-  <title>Lemely</title>
-  <!--
-    Lemely app icon (Brand Guidelines v5, Abyss, primary). GENERATED by
-    \`npm run icons\` from \`vite/appIcon.ts\`; do not edit by hand.
-
-    The favicon is the full app icon, not a simplified cut: the guidelines show
-    the same icon at 16px. The clip stroke stays 5 and the clip is Tide on the
-    Abyss field. The "m" is an outline path (Bricolage Grotesque 600) so the
-    file renders the same everywhere with no font installed.
-  -->
-  ${ROUNDED.replace(/^<svg[^>]*>/, "").replace(/<\/svg>$/, "")}
-</svg>
-`
-writeFileSync(path.join(PUBLIC, "brand/mark-favicon.svg"), FAVICON_SVG)
-console.log("brand/mark-favicon.svg  100x100 viewBox")
-
-const ICONS = [
-  { file: "pwa-192x192.png", size: 192, svg: ROUNDED },
-  { file: "pwa-512x512.png", size: 512, svg: ROUNDED },
-  { file: "maskable-icon-512x512.png", size: 512, svg: MASKABLE },
-  // A real 180px cut for iOS's home-screen icon. Full-bleed, because iOS
-  // applies its own rounded mask and would show transparent corners as black.
-  { file: "apple-touch-icon.png", size: 180, svg: FULL },
-  // The 1024px listing icon some install surfaces expect. `alpha: false`
-  // because a store icon must be fully opaque with no alpha channel at all;
-  // some validators reject one even when every pixel happens to be opaque.
-  { file: "store-icon-1024.png", size: 1024, svg: FULL, alpha: false },
-]
-
-for (const { file, size, svg, alpha } of ICONS) {
-  let pipeline = sharp(await render(svg, size))
-  if (alpha === false) pipeline = pipeline.removeAlpha()
-  writeFileSync(path.join(PUBLIC, file), await pipeline.png({ compressionLevel: 9 }).toBuffer())
-  console.log(`${file}  ${size}x${size}${alpha === false ? "  (no alpha)" : ""}`)
-}
-
-/** The icon on a paper field, for surfaces that show it small and centred. */
-async function onPaper(width, height, iconPx) {
-  return sharp({ create: { width, height, channels: 4, background: PAPER } })
-    .composite([{ input: await render(ROUNDED, iconPx), gravity: "centre" }])
-    .png({ compressionLevel: 9 })
-    .toBuffer()
-}
-
-/*
- * The three manifest `shortcuts` entries (`vite/manifest.ts`) need an icon
- * apiece. They are jump-list glyphs, so they all share the brand icon rather
- * than three bespoke cuts. Full size, because the launcher draws them on its
- * own background.
- */
-for (const file of ["shortcut-mark-96.png", "shortcut-dashboard-96.png", "shortcut-notifications-96.png"]) {
-  writeFileSync(path.join(PUBLIC, file), await render(ROUNDED, 96))
-  console.log(`${file}  96x96`)
-}
-
-/*
- * The Open Graph card, 1200x630 as every scraper expects. It carries no text,
- * deliberately: the product name travels in `og:title`, in the scraper's own
- * typography. The icon sits centred on paper with the ruled motif.
+ * The Open Graph card (P6.5), 1200x630 as every scraper expects.
+ *
+ * **It carries no text, deliberately.** The obvious card sets "Lemely" in
+ * Bricolage beside the mark — and it cannot be built here honestly. @fontsource
+ * ships woff2 only, which librvsg (and so sharp) cannot load, so an SVG asking
+ * for `font-family: Bricolage Grotesque` would silently render in whatever fontconfig
+ * picks, most likely DejaVu Sans. §3.2 item 2 bans Arial-class defaults
+ * outright, and a wrong face in a generated binary is invisible to every gate
+ * in this repo: nobody diffs a PNG, and the file only ever renders inside
+ * somebody else's chat app.
+ *
+ * So the card is the mark on paper with the ruled motif, and the product's name
+ * is carried by `og:title`, which is real text in the scraper's own typography.
+ * That is a smaller card than a wordmark lockup would be, and it is one that
+ * cannot quietly be wrong.
  */
 const OG = { file: "brand/og-card.png", width: 1200, height: 630 }
+
 const ogRules = `<svg xmlns="http://www.w3.org/2000/svg" width="${OG.width}" height="${OG.height}">
-  <g stroke="${tokenHex("rule")}" stroke-width="1.5">
+  <g stroke="${tokenHex("md-outline-variant")}" stroke-width="1.5">
     ${[...Array(7)].map((_, i) => `<path d="M0 ${95 + i * 72}H${OG.width}" />`).join("\n    ")}
   </g>
 </svg>`
-const ogCard = await sharp({ create: { width: OG.width, height: OG.height, channels: 4, background: PAPER } })
+
+const ogMark = await sharp(markSvg, { density: 384 }).resize(300, 300).png().toBuffer()
+const ogCard = await sharp({
+  create: { width: OG.width, height: OG.height, channels: 4, background: PAPER },
+})
   .composite([
     { input: Buffer.from(ogRules), gravity: "northwest" },
-    { input: await render(ROUNDED, 300), gravity: "centre" },
+    { input: ogMark, gravity: "centre" },
   ])
   .png({ compressionLevel: 9 })
   .toBuffer()
 writeFileSync(path.join(PUBLIC, OG.file), ogCard)
-console.log(`${OG.file}  ${OG.width}x${OG.height}  icon 300px on ${PAPER}, no text`)
+console.log(`${OG.file}  ${OG.width}x${OG.height}  mark 300px on ${PAPER}, no text (see comment)`)
 
 /**
- * Wraps PNG buffers in an ICO container.
+ * Wraps a PNG buffer in a minimal single-image ICO container.
  *
- * ICO has allowed an embedded PNG directly (no BMP re-encoding) since Vista:
- * an `ICONDIRENTRY` whose image data starts with the PNG magic bytes is a PNG.
- * So this needs no image-format dependency beyond the PNG `sharp` already
- * produces: a 6-byte `ICONDIR` header, one 16-byte `ICONDIRENTRY` per image,
- * then the PNG bytes verbatim.
+ * ICO has allowed an embedded PNG directly (no BMP re-encoding) since Vista —
+ * an `ICONDIRENTRY` whose image data starts with the PNG magic bytes is a
+ * PNG, full stop. So this needs no image-format dependency beyond the PNG
+ * `sharp` already produces: a 6-byte `ICONDIR` header, one 16-byte
+ * `ICONDIRENTRY`, then the PNG bytes verbatim.
  */
-function pngsToIco(images) {
+function pngToIco(png, size) {
   const header = Buffer.alloc(6)
   header.writeUInt16LE(0, 0) // reserved
   header.writeUInt16LE(1, 2) // type: 1 = icon
-  header.writeUInt16LE(images.length, 4)
+  header.writeUInt16LE(1, 4) // one image
 
-  let offset = header.length + 16 * images.length
-  const entries = images.map(({ png, size }) => {
-    const entry = Buffer.alloc(16)
-    // Width/height: 0 means "256"; every size here is below 256.
-    entry.writeUInt8(size, 0)
-    entry.writeUInt8(size, 1)
-    entry.writeUInt8(0, 2) // colour count: 0 = not palette-indexed
-    entry.writeUInt8(0, 3) // reserved
-    entry.writeUInt16LE(1, 4) // colour planes
-    entry.writeUInt16LE(32, 6) // bits per pixel (RGBA)
-    entry.writeUInt32LE(png.length, 8) // image data size
-    entry.writeUInt32LE(offset, 12) // offset to image data
-    offset += png.length
-    return entry
-  })
-  return Buffer.concat([header, ...entries, ...images.map(({ png }) => png)])
+  const entry = Buffer.alloc(16)
+  // Width/height: 0 means "256"; this repo's favicon is always <256, so the
+  // literal size is always the correct byte.
+  entry.writeUInt8(size, 0)
+  entry.writeUInt8(size, 1)
+  entry.writeUInt8(0, 2) // colour count: 0 = not palette-indexed
+  entry.writeUInt8(0, 3) // reserved
+  entry.writeUInt16LE(1, 4) // colour planes
+  entry.writeUInt16LE(32, 6) // bits per pixel (RGBA)
+  entry.writeUInt32LE(png.length, 8) // image data size
+  entry.writeUInt32LE(header.length + entry.length, 12) // offset to image data
+
+  return Buffer.concat([header, entry, png])
+}
+
+for (const { file, size, scale, alpha } of ICONS) {
+  // Render the vector at its final pixel size rather than rasterising once and
+  // resampling: the mark is two hairlines and a stroke, and a downsampled
+  // hairline turns grey.
+  const markPx = Math.round(size * scale)
+  const mark = await sharp(markSvg, { density: 384 }).resize(markPx, markPx).png().toBuffer()
+
+  let pipeline = sharp({
+    create: {
+      width: size,
+      height: size,
+      channels: 4,
+      background: ABYSS,
+    },
+  }).composite([{ input: mark, gravity: "centre" }])
+  // `alpha: false` (the store-listing icon): drop the alpha channel entirely
+  // rather than relying on every pixel already being opaque — some store
+  // validators reject a PNG that carries an alpha channel at all.
+  if (alpha === false) pipeline = pipeline.removeAlpha()
+
+  const out = await pipeline.png({ compressionLevel: 9 }).toBuffer()
+
+  writeFileSync(path.join(PUBLIC, file), out)
+  console.log(`${file}  ${size}x${size}  mark ${markPx}px on ${ABYSS}${alpha === false ? "  (no alpha)" : ""}`)
 }
 
 /*
- * `favicon.ico`: a user agent that never looks at `<link rel="icon">` (Firefox
- * reader mode, RSS readers) still asks for `/favicon.ico` by convention. Each
- * size is rendered from the vector at its own pixel size.
+ * packet A5 (`no-favicon-ico-fallback`): a real `favicon.ico` alongside the
+ * SVG favicon `index.html` already links. Firefox reader mode, RSS readers
+ * and other UAs that never look at `<link rel="icon">` still fall back to
+ * `/favicon.ico` by convention — see `pngToIco`'s own docstring for why this
+ * needs no new dependency.
  */
-const ICO_SIZES = [16, 32, 48]
-const icoImages = await Promise.all(ICO_SIZES.map(async (size) => ({ size, png: await render(ROUNDED, size) })))
-writeFileSync(path.join(PUBLIC, "favicon.ico"), pngsToIco(icoImages))
-console.log(`favicon.ico  ${ICO_SIZES.join(", ")}px`)
+const FAVICON_SIZE = 32
+const faviconMarkPx = Math.round(FAVICON_SIZE * SQUARE_SCALE)
+const faviconMark = await sharp(markSvg, { density: 384 })
+  .resize(faviconMarkPx, faviconMarkPx)
+  .png()
+  .toBuffer()
+const faviconPng = await sharp({
+  create: { width: FAVICON_SIZE, height: FAVICON_SIZE, channels: 4, background: ABYSS },
+})
+  .composite([{ input: faviconMark, gravity: "centre" }])
+  .png({ compressionLevel: 9 })
+  .toBuffer()
+const faviconIco = pngToIco(faviconPng, FAVICON_SIZE)
+writeFileSync(path.join(PUBLIC, "favicon.ico"), faviconIco)
+console.log(`favicon.ico  ${FAVICON_SIZE}x${FAVICON_SIZE}  mark ${faviconMarkPx}px on ${ABYSS}`)
 
 /*
- * The 32 iOS boot-time splash PNGs (`vite/splashScreens.ts`, portrait and
- * landscape): the icon at 28% of the canvas's shorter side, centred on paper.
- * Paper is the manifest `background_color`, and the Abyss tile reads against it
- * as the app appearing.
+ * packet B1 (`no-ios-splash-screens`): the 32 iOS boot-time splash PNGs
+ * (`vite/splashScreens.ts`'s `SPLASHES` matrix, portrait and landscape).
+ *
+ * Mark scale is `SPLASH_MARK_SCALE` (0.28) of the canvas's *shorter* side —
+ * noticeably smaller than `SQUARE_SCALE` (0.72), because a splash screen is
+ * a full-bleed boot screen at arbitrary aspect ratio, not a square app icon:
+ * the mark reads as a small centred mark on a paper field, the same
+ * treatment `ogCard` above gives the Open Graph card (mark centred on a
+ * ruled `PAPER` field), just full-bleed instead of ruled.
  */
-const SPLASH_ICON_SCALE = 0.28
+const SPLASH_MARK_SCALE = 0.28
 const SPLASH_DIR = path.join(PUBLIC, "splash")
 mkdirSync(SPLASH_DIR, { recursive: true })
 
 for (const entry of SPLASHES) {
   for (const orientation of ["portrait", "landscape"]) {
     const { width, height } = splashImagePx(entry, orientation)
-    const iconPx = Math.round(Math.min(width, height) * SPLASH_ICON_SCALE)
+    const shorterSide = Math.min(width, height)
+    const markPx = Math.round(shorterSide * SPLASH_MARK_SCALE)
+    const mark = await sharp(markSvg, { density: 384 }).resize(markPx, markPx).png().toBuffer()
+    const out = await sharp({
+      create: { width, height, channels: 4, background: PAPER },
+    })
+      .composite([{ input: mark, gravity: "centre" }])
+      .png({ compressionLevel: 9 })
+      .toBuffer()
     const filename = splashFilename(entry, orientation)
-    writeFileSync(path.join(SPLASH_DIR, filename), await onPaper(width, height, iconPx))
-    console.log(`splash/${filename}  ${width}x${height}  icon ${iconPx}px on ${PAPER}  (${entry.device}, ${orientation})`)
+    writeFileSync(path.join(SPLASH_DIR, filename), out)
+    console.log(`splash/${filename}  ${width}x${height}  mark ${markPx}px on ${PAPER}  (${entry.device}, ${orientation})`)
   }
 }

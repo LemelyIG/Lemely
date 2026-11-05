@@ -17,8 +17,8 @@
 .brand-label { display:block; }
 .brand-header { position:sticky; top:0; z-index:var(--z-index-nav); background:color-mix(in oklch,var(--brand-paper) 86%,transparent); backdrop-filter:blur(14px); border-bottom:1px solid var(--brand-line); }
 .brand-nav { height:64px; display:flex; align-items:center; justify-content:space-between; gap:28px; }
-.clip-wordmark { display:inline-flex; align-items:flex-end; color:var(--brand-abyss); }
-.clip-wordmark span { font:800 26px/.82 var(--brand-display); letter-spacing:-.04em; color:var(--brand-ink); }
+.marketing-brand .clip-wordmark { display:inline-flex; align-items:flex-end; color:var(--brand-abyss); }
+.marketing-brand .clip-wordmark span { font:800 26px/.82 var(--brand-display); letter-spacing:-.04em; color:var(--brand-ink); }
 /* Header logo: sized in em so the clip keeps the base 12:29 box ratio against the 26px text. */
 /* Lift so the letter bodies (not the clip tops or the y descender) line up with the nav text. */
 .brand-nav .clip-wordmark { font-size:42px; transform:translateY(-.14em); }

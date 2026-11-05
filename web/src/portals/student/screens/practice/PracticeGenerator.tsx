@@ -161,11 +161,11 @@ export function PracticeGenerator() {
             return (
               <>
                 <div className="flex flex-col gap-2">
-                  <h1 className="text-display-lg text-ink">
+                  <h1 className="text-display-lg text-on-surface">
                     Your {subjectName} practice set is ready
                   </h1>
-                  <p className="lm-prose text-body-lg text-ink-muted">
-                    <span className="text-data-md text-ink">{created.questionCount}</span>{" "}
+                  <p className="lm-prose text-body-lg text-on-surface-variant">
+                    <span className="text-data-md text-on-surface">{created.questionCount}</span>{" "}
                     question
                     {created.questionCount === 1 ? "" : "s"}
                     {created.reason === "insufficient_pool"
@@ -211,8 +211,8 @@ export function PracticeGenerator() {
 
               <Card>
                 <CardBody className="flex flex-col gap-3">
-                  <label className="text-label text-ink" htmlFor="practice-count">
-                    Number of questions: <span className="text-data-md text-ink">{count}</span>
+                  <label className="text-label text-on-surface" htmlFor="practice-count">
+                    Number of questions: <span className="text-data-md text-on-surface">{count}</span>
                   </label>
                   <Slider
                     id="practice-count"
@@ -237,7 +237,7 @@ export function PracticeGenerator() {
                   this same preview re-filtering). */}
               <Card>
                 <CardBody className="flex flex-col gap-3">
-                  <h2 className="text-eyebrow text-ink-faint">Source</h2>
+                  <h2 className="text-eyebrow text-on-surface-variant">Source</h2>
                   <div role="radiogroup" aria-label="Question source" className="flex flex-wrap gap-2">
                     {PRACTICE_SOURCES.map((opt) => {
                       const on = source === opt.value
@@ -272,7 +272,7 @@ export function PracticeGenerator() {
                       setWeakTopicsOnly(e.target.checked)
                     }}
                   />
-                  <p className="text-body-sm text-ink-faint">
+                  <p className="text-body-sm text-on-surface-variant">
                     Draws only from topics recorded as weak for you. Your topic selection below is
                     ignored while this is on.
                   </p>
@@ -289,9 +289,9 @@ export function PracticeGenerator() {
                   explains *why* they are inactive stays readable. */}
               <Card>
                 <CardBody className="flex flex-col gap-5">
-                  <h2 className="text-eyebrow text-ink-faint">Topics</h2>
+                  <h2 className="text-eyebrow text-on-surface-variant">Topics</h2>
                   {groups.length === 0 ? (
-                    <p className="text-body-sm text-ink-faint">
+                    <p className="text-body-sm text-on-surface-variant">
                       No servable topics for this subject yet.
                     </p>
                   ) : (
@@ -299,7 +299,7 @@ export function PracticeGenerator() {
                       <legend className="sr-only">Choose topics to practise</legend>
                       {groups.map((group) => (
                         <div key={group.syllabusGroup} className="flex flex-col gap-2">
-                          <h3 className="text-label text-ink">{group.syllabusGroup}</h3>
+                          <h3 className="text-label text-on-surface">{group.syllabusGroup}</h3>
                           <div className="flex flex-col gap-1.5 ps-1">
                             {group.topics.map((t) => (
                               <div key={t.topic} className="flex items-center justify-between gap-3">
@@ -311,7 +311,7 @@ export function PracticeGenerator() {
                                 {/* Omitted, never rendered as "0 marks lost" — the
                                     figure is decoration only when it's real. */}
                                 {t.marksLost > 0 ? (
-                                  <span className="text-data-sm text-ink-faint shrink-0">
+                                  <span className="text-data-sm text-on-surface-variant shrink-0">
                                     {t.marksLost} mark{t.marksLost === 1 ? "" : "s"} lost
                                   </span>
                                 ) : null}
@@ -323,7 +323,7 @@ export function PracticeGenerator() {
                     </fieldset>
                   )}
                   {droppedWeakTopics.length > 0 ? (
-                    <p className="text-body-sm text-ink-faint">
+                    <p className="text-body-sm text-on-surface-variant">
                       {droppedWeakTopics.length === 1
                         ? "One of your weak topics"
                         : `${droppedWeakTopics.length} of your weak topics`}{" "}
@@ -334,7 +334,7 @@ export function PracticeGenerator() {
                     </p>
                   ) : null}
                   {untopicedCount > 0 ? (
-                    <p className="text-body-sm text-ink-faint">
+                    <p className="text-body-sm text-on-surface-variant">
                       {untopicedCount} more question{untopicedCount === 1 ? "" : "s"} in the bank{" "}
                       {untopicedCount === 1 ? "isn't" : "aren't"} tagged to a topic.{" "}
                       {untopicedCount === 1 ? "It's" : "They're"} included automatically when no
@@ -346,7 +346,7 @@ export function PracticeGenerator() {
 
               <Card>
                 <CardBody className="flex flex-col gap-3">
-                  <h2 className="text-eyebrow text-ink-faint">Difficulty</h2>
+                  <h2 className="text-eyebrow text-on-surface-variant">Difficulty</h2>
                   <div className="flex flex-wrap gap-2">
                     {availableDifficultyBands.map((band) => {
                       const active = difficultyBands.has(band)
@@ -364,45 +364,45 @@ export function PracticeGenerator() {
                       )
                     })}
                   </div>
-                  <p className="text-body-sm text-ink-faint">
+                  <p className="text-body-sm text-on-surface-variant">
                     No bands selected means no filter on difficulty.
                   </p>
                 </CardBody>
               </Card>
 
               {view ? (
-                <Card className={view.kind === "unavailable" ? "border-warn" : undefined}>
+                <Card className={view.kind === "unavailable" ? "border-tertiary" : undefined}>
                   <CardBody className="flex flex-col gap-3">
                     {view.kind === "unavailable" ? (
                       (() => {
                         const msg = practiceUnavailableMessage(view.reason)
                         return (
                           <>
-                            <h2 className="text-display-sm text-ink">{msg.heading}</h2>
-                            <p className="text-body-md text-ink-muted">{msg.body}</p>
+                            <h2 className="text-display-sm text-on-surface">{msg.heading}</h2>
+                            <p className="text-body-md text-on-surface-variant">{msg.body}</p>
                           </>
                         )
                       })()
                     ) : view.kind === "shortfall" ? (
                       <>
-                        <h2 className="text-display-sm text-ink">
+                        <h2 className="text-display-sm text-on-surface">
                           Only {view.availableCount} of {view.requestedCount} requested questions
                           match
                         </h2>
-                        <p className="text-body-md text-ink-muted">
+                        <p className="text-body-md text-on-surface-variant">
                           You can still create a shorter set with what's available, or broaden
                           your topic or difficulty selection to reach the full count.
                         </p>
                       </>
                     ) : (
-                      <h2 className="text-display-sm text-ink">
+                      <h2 className="text-display-sm text-on-surface">
                         {view.availableCount} question{view.availableCount === 1 ? "" : "s"}{" "}
                         match, ready to create
                       </h2>
                     )}
 
                     {createPractice.isError && !raceUnavailable ? (
-                      <p className="text-body-sm text-err">
+                      <p className="text-body-sm text-error">
                         We couldn't create this set. Try again.
                       </p>
                     ) : null}
@@ -424,9 +424,9 @@ export function PracticeGenerator() {
                   </CardBody>
                 </Card>
               ) : previewQuery.isPending ? (
-                <p className="text-body-sm text-ink-faint">Checking what matches…</p>
+                <p className="text-body-sm text-on-surface-variant">Checking what matches…</p>
               ) : previewQuery.isError ? (
-                <p className="text-body-sm text-err">
+                <p className="text-body-sm text-error">
                   We couldn't check availability. Try changing a filter.
                 </p>
               ) : null}

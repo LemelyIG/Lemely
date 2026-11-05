@@ -133,14 +133,14 @@ function RangeRow({
         )}
       </div>
       {problem ? (
-        <p id={`${range.id}-problem`} className="m-0 flex items-start gap-1.5 text-body-sm text-err">
+        <p id={`${range.id}-problem`} className="m-0 flex items-start gap-1.5 text-body-sm text-error">
           <WarningCircle size={16} className="mt-0.5 shrink-0" aria-hidden />
           {problem.message}
         </p>
       ) : null}
       {notice && !problem ? (
-        <p className="m-0 flex items-start gap-1.5 text-body-sm text-ink-muted">
-          <Info size={16} className="mt-0.5 shrink-0 text-info" aria-hidden />
+        <p className="m-0 flex items-start gap-1.5 text-body-sm text-on-surface-variant">
+          <Info size={16} className="mt-0.5 shrink-0 text-primary" aria-hidden />
           {notice}
         </p>
       ) : null}
@@ -170,10 +170,10 @@ function DayCard({
   return (
     <section
       aria-labelledby={DAY_ID(weekday)}
-      className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-4"
+      className="flex flex-col gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest p-4"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 id={DAY_ID(weekday)} className="m-0 text-display-sm text-ink">
+        <h2 id={DAY_ID(weekday)} className="m-0 text-display-sm text-on-surface">
           {dayLabel}
         </h2>
         {readOnly ? null : (
@@ -191,7 +191,7 @@ function DayCard({
         )}
       </div>
       {ranges.length === 0 ? (
-        <p className="m-0 text-body-sm text-ink-muted">Not available</p>
+        <p className="m-0 text-body-sm text-on-surface-variant">Not available</p>
       ) : (
         <ul className="m-0 flex list-none flex-col gap-3 p-0">
           {ranges.map((range, index) => (
@@ -283,21 +283,21 @@ function AvailabilityEditor({ profile }: { profile: TutorOwnProfile }) {
 
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-5 min-w-0" noValidate>
-      <div className="flex flex-col gap-2 border-b border-rule pb-5">
+      <div className="flex flex-col gap-2 border-b border-outline-variant pb-5">
         <Link
           to="/teacher/tutoring/profile?step=availability"
-          className="inline-flex min-h-11 w-fit items-center gap-1 text-body-sm text-ink-muted transition-colors hover:text-ink"
+          className="inline-flex min-h-11 w-fit items-center gap-1 text-body-sm text-on-surface-variant transition-colors hover:text-on-surface"
         >
           <CaretLeft size={14} aria-hidden />
           Back to your profile
         </Link>
-        <h1 className="m-0 text-display-md text-ink">Weekly availability</h1>
-        <p className="m-0 max-w-prose text-body-md text-ink-muted">{DST_NOTE_FOR(profile.zoneLabel)}</p>
+        <h1 className="m-0 text-display-md text-on-surface">Weekly availability</h1>
+        <p className="m-0 max-w-prose text-body-md text-on-surface-variant">{DST_NOTE_FOR(profile.zoneLabel)}</p>
       </div>
 
       {readOnly ? (
-        <p className="m-0 flex items-start gap-2 rounded-md border border-rule bg-paper-sunk px-3 py-2.5 text-body-sm text-ink">
-          <WarningCircle size={16} className="mt-0.5 shrink-0 text-warn" aria-hidden />
+        <p className="m-0 flex items-start gap-2 rounded-md border border-outline-variant bg-surface-container-low px-3 py-2.5 text-body-sm text-on-surface">
+          <WarningCircle size={16} className="mt-0.5 shrink-0 text-on-tertiary-container" aria-hidden />
           {profile.listingState === "suspended"
             ? "Your profile is suspended, so your times can't be changed."
             : "Your profile is closed, so your times can't be changed."}
@@ -305,8 +305,8 @@ function AvailabilityEditor({ profile }: { profile: TutorOwnProfile }) {
       ) : null}
 
       {empty ? (
-        <p className="m-0 flex items-start gap-2 rounded-md border border-rule bg-info-wash px-3 py-2.5 text-body-md text-ink">
-          <CalendarBlank size={18} className="mt-0.5 shrink-0 text-info" aria-hidden />
+        <p className="m-0 flex items-start gap-2 rounded-md border border-outline-variant bg-primary-container px-3 py-2.5 text-body-md text-on-surface">
+          <CalendarBlank size={18} className="mt-0.5 shrink-0 text-primary" aria-hidden />
           {NO_RULES_LINE}
         </p>
       ) : null}
@@ -327,10 +327,10 @@ function AvailabilityEditor({ profile }: { profile: TutorOwnProfile }) {
         ))}
       </div>
 
-      <p className="m-0 max-w-prose text-body-sm text-ink-muted">{SPLIT_NOTE_LINE}</p>
+      <p className="m-0 max-w-prose text-body-sm text-on-surface-variant">{SPLIT_NOTE_LINE}</p>
 
       {readOnly ? null : (
-        <div className="flex flex-col gap-3 border-t border-rule pt-5">
+        <div className="flex flex-col gap-3 border-t border-outline-variant pt-5">
           <div className="flex flex-wrap items-center gap-3">
             <Button type="submit" variant="primary" loading={save.isPending} disabled={!dirty || !online}>
               Save weekly times
@@ -351,29 +351,29 @@ function AvailabilityEditor({ profile }: { profile: TutorOwnProfile }) {
             ) : null}
             <Link
               to="/teacher/tutoring"
-              className="inline-flex min-h-11 items-center text-body-sm text-ink-muted transition-colors hover:text-ink"
+              className="inline-flex min-h-11 items-center text-body-sm text-on-surface-variant transition-colors hover:text-on-surface"
             >
               Tutoring home
             </Link>
           </div>
           <div aria-live="polite" className="flex flex-col gap-1">
             {!online ? (
-              <p className="m-0 text-body-sm text-ink-muted">You're offline. Reconnect to save your times.</p>
+              <p className="m-0 text-body-sm text-on-surface-variant">You're offline. Reconnect to save your times.</p>
             ) : null}
             {dirty && !save.isPending && !savedNotice ? (
-              <p className="m-0 text-body-sm text-ink-muted">You have changes that aren't saved yet.</p>
+              <p className="m-0 text-body-sm text-on-surface-variant">You have changes that aren't saved yet.</p>
             ) : null}
             {blocked ? (
-              <p role="alert" className="m-0 text-body-sm text-err">
+              <p role="alert" className="m-0 text-body-sm text-error">
                 {validation.tooMany
                   ? "There are too many times. Remove some so there are 42 or fewer once windows past midnight are split."
                   : "Fix the times marked above, then save."}
               </p>
             ) : null}
-            {savedNotice && !dirty ? <p className="m-0 text-body-sm text-ok">Weekly times saved.</p> : null}
+            {savedNotice && !dirty ? <p className="m-0 text-body-sm text-success-text">Weekly times saved.</p> : null}
           </div>
           {saveError ? (
-            <p role="alert" className="m-0 text-body-sm text-err">
+            <p role="alert" className="m-0 text-body-sm text-error">
               {saveError}
             </p>
           ) : null}

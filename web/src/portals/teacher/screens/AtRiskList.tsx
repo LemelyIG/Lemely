@@ -170,10 +170,10 @@ function AcknowledgeControl({
           </Button>
         </div>
         {flag.acknowledged.note ? (
-          <div className="text-body-sm text-ink-muted italic text-pretty">“{flag.acknowledged.note}”</div>
+          <div className="text-body-sm text-on-surface-variant italic text-pretty">“{flag.acknowledged.note}”</div>
         ) : null}
         {unacknowledge.isError ? (
-          <div className="text-body-sm text-err">Couldn't undo: {teacherMutationFailureMessage(unacknowledge.error)}</div>
+          <div className="text-body-sm text-error">Couldn't undo: {teacherMutationFailureMessage(unacknowledge.error)}</div>
         ) : null}
       </div>
     )
@@ -201,11 +201,11 @@ function AcknowledgeControl({
           },
         )
       }}
-      className="flex flex-col gap-2 max-w-[320px] bg-paper-sunk border border-rule rounded-lg p-3 mt-1"
+      className="flex flex-col gap-2 max-w-[320px] bg-surface-container-low border border-outline-variant rounded-lg p-3 mt-1"
     >
       {/* The kit's `<Textarea>`, which carries the error state this form needs
           below and the focus ring §3.9 specifies. The hand-rolled field it
-          replaces used `outline-accent` like the two selects above. */}
+          replaces used `outline-primary` like the two selects above. */}
       <Textarea
         label="Note (optional, visible only to you)"
         value={note}
@@ -217,7 +217,7 @@ function AcknowledgeControl({
           teacher typed, and marking the field invalid would say there is. The
           message belongs beside the control whose press produced it, which is
           D4.4's placement lesson, and that control is the submit button. */}
-      <p className="text-body-sm text-ink-faint m-0">
+      <p className="text-body-sm text-on-surface-variant m-0">
         This notes that you've seen it. The flag stays visible and reappears as new if the
         student's situation changes. It's never a permanent mute.
       </p>
@@ -230,22 +230,22 @@ function AcknowledgeControl({
         </Button>
       </div>
       {acknowledge.isError ? (
-        <div className="text-body-sm text-err">Couldn't acknowledge: {teacherMutationFailureMessage(acknowledge.error)}</div>
+        <div className="text-body-sm text-error">Couldn't acknowledge: {teacherMutationFailureMessage(acknowledge.error)}</div>
       ) : null}
     </form>
   )
 }
 
 function FlagsCell({ studentId, flags }: { studentId: string; flags: AtRiskFlag[] }) {
-  if (flags.length === 0) return <span className="text-body-sm text-ink-faint">—</span>
+  if (flags.length === 0) return <span className="text-body-sm text-on-surface-variant">—</span>
   return (
     <div className="flex flex-col gap-3 max-w-[360px]">
       {flags.map((f) => (
         <div key={f.reason} className="flex flex-col">
-          <div className="flex items-start gap-1.5 text-body-sm text-ink-muted">
+          <div className="flex items-start gap-1.5 text-body-sm text-on-surface-variant">
             <span
               aria-hidden="true"
-              className="text-err mt-[5px] w-[5px] h-[5px] rounded-full bg-err flex-none"
+              className="text-error mt-[5px] w-[5px] h-[5px] rounded-full bg-error flex-none"
             />
             <span className="flex-1 text-pretty">{f.summary}</span>
           </div>
@@ -305,14 +305,14 @@ export function AtRiskList() {
           return (
             <>
               <div className="flex flex-col gap-1">
-              <div className="text-eyebrow text-ink-faint">
+              <div className="text-eyebrow text-on-surface-variant">
                 Flagged by trajectory, not by one bad day
               </div>
-              <h1 className="text-display-lg text-ink mt-1">At-risk students</h1>
+              <h1 className="text-display-lg text-on-surface mt-1">At-risk students</h1>
             </div>
 
             {/* The kit's `<Select>` rather than two hand-rolled `<select>`s. Both
-                carried `outline-accent`, which §3.9 gives to brand rather than to
+                carried `outline-primary`, which §3.9 gives to brand rather than to
                 focus, and neither had the disabled or error states the kit control
                 implements — §9 gate 4 wants all eight on every interactive component
                 a surface touches. It is still a native `<select>` underneath; see
@@ -388,7 +388,7 @@ export function AtRiskList() {
                           <button
                             type="button"
                             onClick={() => toggleSort(col.key)}
-                            className="inline-flex items-center gap-1 text-eyebrow text-ink-faint transition-colors hover:text-ink cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                            className="inline-flex items-center gap-1 text-eyebrow text-on-surface-variant transition-colors hover:text-on-surface cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                           >
                             {col.label}
                             {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
@@ -404,7 +404,7 @@ export function AtRiskList() {
                       <TD>
                         <div className="flex items-center gap-2.5">
                           <Avatar name={s.displayName} size="sm" />
-                          <Link to={`/teacher/students/${s.studentId}`} className="text-ink hover:underline">
+                          <Link to={`/teacher/students/${s.studentId}`} className="text-on-surface hover:underline">
                             {s.displayName}
                           </Link>
                         </div>
@@ -412,7 +412,7 @@ export function AtRiskList() {
                       <TD>
                         <Link
                           to={`/teacher/classes/${s.classId}`}
-                          className="text-ink-muted transition-colors hover:text-ink hover:underline"
+                          className="text-on-surface-variant transition-colors hover:text-on-surface hover:underline"
                         >
                           {s.className}
                         </Link>
@@ -430,11 +430,11 @@ export function AtRiskList() {
                           // value must never read differently on two screens.
                           <GradeBadge grade={s.grade} size="inline" basis="predicted" />
                         ) : (
-                          <span className="text-body-sm text-ink-faint">No paper grade yet</span>
+                          <span className="text-body-sm text-on-surface-variant">No paper grade yet</span>
                         )}
                       </TD>
                       <TD>
-                        <div className={cn("text-data-md", s.flags.length >= 2 ? "text-err" : "text-ink-muted")}>
+                        <div className={cn("text-data-md", s.flags.length >= 2 ? "text-error" : "text-on-surface-variant")}>
                           {s.flags.length} flag{s.flags.length === 1 ? "" : "s"}
                         </div>
                       </TD>

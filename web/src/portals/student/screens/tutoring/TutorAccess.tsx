@@ -112,7 +112,7 @@ function useFocusWhenRowGone(presentIds: readonly string[] | undefined, target: 
 
 function SectionHeading({ id, children }: { id: string; children: string }) {
   return (
-    <h2 id={id} tabIndex={-1} className="m-0 text-display-sm text-ink">
+    <h2 id={id} tabIndex={-1} className="m-0 text-display-sm text-on-surface">
       {children}
     </h2>
   )
@@ -120,7 +120,7 @@ function SectionHeading({ id, children }: { id: string; children: string }) {
 
 function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
-    <section aria-labelledby={id} className="flex flex-col gap-4 border-t border-rule pt-6">
+    <section aria-labelledby={id} className="flex flex-col gap-4 border-t border-outline-variant pt-6">
       <SectionHeading id={id}>{title}</SectionHeading>
       {children}
     </section>
@@ -129,13 +129,13 @@ function Section({ id, title, children }: { id: string; title: string; children:
 
 function List({ children }: { children: ReactNode }) {
   return (
-    <ul className="m-0 flex list-none flex-col overflow-hidden rounded-lg border border-rule bg-paper-raised p-0">
+    <ul className="m-0 flex list-none flex-col overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest p-0">
       {children}
     </ul>
   )
 }
 
-const ROW = "flex flex-col gap-2 border-b border-rule px-4 py-3.5 last:border-b-0"
+const ROW = "flex flex-col gap-2 border-b border-outline-variant px-4 py-3.5 last:border-b-0"
 
 // ── 1 · Sharing ────────────────────────────────────────────────────────────
 
@@ -144,7 +144,7 @@ function GrantRow({ row, onStop }: { row: GrantRowView; onStop?: () => void }) {
   return (
     <li className={ROW}>
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-        <Link to={row.tutorHref} className="inline-flex min-h-11 min-w-0 items-center break-words text-body-lg font-medium text-ink underline">
+        <Link to={row.tutorHref} className="inline-flex min-h-11 min-w-0 items-center break-words text-body-lg font-medium text-on-surface underline">
           {row.tutorName}
         </Link>
         <Chip tone={row.status.tone} className="gap-1.5">
@@ -152,8 +152,8 @@ function GrantRow({ row, onStop }: { row: GrantRowView; onStop?: () => void }) {
           {row.status.label}
         </Chip>
       </div>
-      <p className="m-0 text-body-sm text-ink-muted">{row.sinceLine}</p>
-      <p className="m-0 text-body-sm text-ink-muted">{row.status.detail}</p>
+      <p className="m-0 text-body-sm text-on-surface-variant">{row.sinceLine}</p>
+      <p className="m-0 text-body-sm text-on-surface-variant">{row.status.detail}</p>
       {row.canStop && onStop ? (
         <div>
           <Button variant="secondary" size="sm" aria-label={row.stopLabel} onClick={onStop}>
@@ -196,8 +196,8 @@ function SharingSection() {
   return (
     <Section id="tutor-access-sharing" title="Sharing">
       <div className="flex max-w-prose flex-col gap-2">
-        <p className="m-0 text-body-md text-ink-muted">{SHARING_EXPLAINER}</p>
-        <p className="m-0 text-body-md text-ink-muted">{SHARING_PARENTS_LINE}</p>
+        <p className="m-0 text-body-md text-on-surface-variant">{SHARING_EXPLAINER}</p>
+        <p className="m-0 text-body-md text-on-surface-variant">{SHARING_PARENTS_LINE}</p>
       </div>
       <QueryState
         query={grants}
@@ -225,7 +225,7 @@ function SharingSection() {
                   ))}
                 </List>
               ) : (
-                <p className="m-0 text-body-md text-ink-muted">{EMPTY_GRANTS_LINE}</p>
+                <p className="m-0 text-body-md text-on-surface-variant">{EMPTY_GRANTS_LINE}</p>
               )}
               {ended.length > 0 ? (
                 <div className="flex flex-col gap-3">
@@ -294,7 +294,7 @@ function LogSection() {
                 const view = accessLogView(entry)
                 return (
                   <li key={logKey(entry)} className={ROW}>
-                    <p className="m-0 break-words text-body-md text-ink">
+                    <p className="m-0 break-words text-body-md text-on-surface">
                       {view.tutorHref ? (
                         <Link to={view.tutorHref} className="font-medium underline">
                           {view.tutorName}
@@ -304,13 +304,13 @@ function LogSection() {
                       )}{" "}
                       {view.action}
                     </p>
-                    <p className="m-0 text-body-sm text-ink-muted">{view.timeLabel}</p>
+                    <p className="m-0 text-body-sm text-on-surface-variant">{view.timeLabel}</p>
                   </li>
                 )
               })}
             </List>
             {paged.moreFailed ? (
-              <p role="alert" className="m-0 text-body-sm text-err">
+              <p role="alert" className="m-0 text-body-sm text-error">
                 We couldn't load more. Press Show more to try again.
               </p>
             ) : null}
@@ -389,10 +389,10 @@ function ClassesSection() {
               return (
                 <li key={view.classId} className={ROW}>
                   <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-                    <span className="min-w-0 break-words text-body-lg font-medium text-ink">{view.className}</span>
+                    <span className="min-w-0 break-words text-body-lg font-medium text-on-surface">{view.className}</span>
                     {view.alsoTutor ? <Chip tone="info">Also your tutor</Chip> : null}
                   </div>
-                  <p className="m-0 text-body-sm text-ink-muted">
+                  <p className="m-0 text-body-sm text-on-surface-variant">
                     {view.teacherName}, {view.whereLine}
                   </p>
                   {view.canLeave ? (
@@ -411,7 +411,7 @@ function ClassesSection() {
                       </Button>
                     </div>
                   ) : null}
-                  {view.askSchool ? <p className="m-0 text-body-sm text-ink-muted">{ASK_SCHOOL_LINE}</p> : null}
+                  {view.askSchool ? <p className="m-0 text-body-sm text-on-surface-variant">{ASK_SCHOOL_LINE}</p> : null}
                 </li>
               )
             })}
@@ -437,7 +437,7 @@ function ClassesSection() {
               }
             >
               {leaveError ? (
-                <p role="alert" className="m-0 text-body-sm text-err">
+                <p role="alert" className="m-0 text-body-sm text-error">
                   {leaveError}
                 </p>
               ) : null}
@@ -472,12 +472,12 @@ function CountingSection() {
                 state={update.isPending ? "loading" : undefined}
                 onChange={(event) => update.mutate(countingUpdate(event.target.checked))}
               />
-              <p className="m-0 text-body-md text-ink-muted">{COUNTING_EXPLAINER}</p>
-              <p role="status" className="m-0 min-h-5 text-body-sm text-ink-muted">
+              <p className="m-0 text-body-md text-on-surface-variant">{COUNTING_EXPLAINER}</p>
+              <p role="status" className="m-0 min-h-5 text-body-sm text-on-surface-variant">
                 {update.isSuccess && !update.isPending ? "Saved." : ""}
               </p>
               {update.isError ? (
-                <p role="alert" className="m-0 text-body-sm text-err">
+                <p role="alert" className="m-0 text-body-sm text-error">
                   {safetyActionError(update.error, "We couldn't save that. Try again.")}
                 </p>
               ) : null}
@@ -534,7 +534,7 @@ function BlocksSection() {
                 return (
                   <li key={row.counterpartId} className={ROW}>
                     <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-                      <span className="min-w-0 break-words text-body-lg font-medium text-ink">{row.name}</span>
+                      <span className="min-w-0 break-words text-body-lg font-medium text-on-surface">{row.name}</span>
                       <Button
                         variant="secondary"
                         size="sm"
@@ -548,12 +548,12 @@ function BlocksSection() {
                         Unblock
                       </Button>
                     </div>
-                    <p className="m-0 text-body-sm text-ink-muted">{row.sinceLine}</p>
+                    <p className="m-0 text-body-sm text-on-surface-variant">{row.sinceLine}</p>
                   </li>
                 )
               })}
             </List>
-            <p className="m-0 text-body-sm text-ink-muted">{UNBLOCK_NOTE}</p>
+            <p className="m-0 text-body-sm text-on-surface-variant">{UNBLOCK_NOTE}</p>
           </div>
         )}
       </QueryState>
@@ -578,7 +578,7 @@ function BlocksSection() {
 export function TutorAccess() {
   return (
     <div className="flex w-full max-w-160 flex-col gap-6">
-      <h1 className="m-0 text-display-md text-ink">Tutors &amp; your data</h1>
+      <h1 className="m-0 text-display-md text-on-surface">Tutors &amp; your data</h1>
       <SharingSection />
       <LogSection />
       <ClassesSection />

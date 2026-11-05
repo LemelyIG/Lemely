@@ -2,8 +2,7 @@
 import { Link } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
 import { Eyebrow } from "@/components/ui/primitives"
-import { Badge } from "@/components/ui/badge"
-import { subjectToneForCode } from "@/components/ui/subject-tag"
+import { SubjectTag } from "@/components/ui/subject-tag"
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table"
 import { EmptyState } from "@/components/ui/state-views"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
@@ -49,8 +48,8 @@ export function Classes() {
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1.5">
         <Eyebrow>School admin</Eyebrow>
-        <h1 className="text-display-lg text-ink">Classes</h1>
-        <p className="max-w-prose text-body-md text-ink-muted">
+        <h1 className="text-display-lg text-on-surface">Classes</h1>
+        <p className="max-w-prose text-body-md text-on-surface-variant">
           Every class in your school, whoever teaches it.
         </p>
       </header>
@@ -103,21 +102,15 @@ export function Classes() {
                     <Link
                       to={`/teacher/classes/${schoolClass.id}`}
                       data-wraps-content-title
-                      className="text-body-sm text-accent-ink hover:underline"
+                      className="text-body-sm text-on-primary-container hover:underline"
                     >
                       {schoolClass.label}
                     </Link>
                   </TD>
                   <TD>
                     {schoolClass.subjectCode ? (
-                      // A bare syllabus code, so the tone comes from
-                      // `subjectToneForCode` rather than `SubjectTag`'s
-                      // name-based lookup, which would fall back to "other" for
-                      // every class in the school.
                       <div className="flex items-center gap-2">
-                        <Badge tone={subjectToneForCode(schoolClass.subjectCode)}>
-                          {schoolClass.subjectName ?? schoolClass.subjectCode}
-                        </Badge>
+                        <SubjectTag subject={schoolClass.subjectName ?? schoolClass.subjectCode} />
                         {/* Omitted when the name has resolved to the code
                             itself — a class's `subjectCode` is free text a
                             teacher typed, so most classes hit the det
@@ -125,11 +118,11 @@ export function Classes() {
                             `subjectIdentifier`'s docstring) and this element
                             would otherwise print the same code twice. */}
                         {(schoolClass.subjectName ?? schoolClass.subjectCode) !== schoolClass.subjectCode ? (
-                          <span className="text-data-sm text-ink-faint">{schoolClass.subjectCode}</span>
+                          <span className="text-data-sm text-on-surface-variant">{schoolClass.subjectCode}</span>
                         ) : null}
                       </div>
                     ) : (
-                      <span className="text-body-sm text-ink-faint">Not set</span>
+                      <span className="text-body-sm text-on-surface-variant">Not set</span>
                     )}
                   </TD>
                   <TD numeric>{schoolClass.studentCount}</TD>
@@ -137,14 +130,14 @@ export function Classes() {
                     {schoolClass.average === null ? (
                       // Never 0%. An empty class and a class that scored nothing
                       // are different facts, and one of them is not a mark.
-                      <span className="text-body-sm text-ink-faint">No papers yet</span>
+                      <span className="text-body-sm text-on-surface-variant">No papers yet</span>
                     ) : (
                       `${Math.round(schoolClass.average)}%`
                     )}
                   </TD>
                   <TD numeric>
                     {schoolClass.atRiskCount === null ? (
-                      <span className="text-body-sm text-ink-faint">Unknown</span>
+                      <span className="text-body-sm text-on-surface-variant">Unknown</span>
                     ) : (
                       schoolClass.atRiskCount
                     )}
@@ -159,11 +152,11 @@ export function Classes() {
       <Card>
         <CardBody className="flex flex-col gap-2">
           <Eyebrow>Making changes</Eyebrow>
-          <p className="max-w-prose text-body-sm text-ink-muted">
+          <p className="max-w-prose text-body-sm text-on-surface-variant">
             Classes are created and renamed by the teacher who runs them, so those controls live
             in the teaching tools rather than here. To move classes between teachers, remove the
             teacher on the{" "}
-            <Link to="/school/teachers" className="text-accent-ink hover:underline">
+            <Link to="/school/teachers" className="text-on-primary-container hover:underline">
               Teachers
             </Link>{" "}
             screen and name who takes them over. There is no way to archive a class yet.

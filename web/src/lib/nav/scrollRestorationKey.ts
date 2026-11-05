@@ -42,3 +42,40 @@ export function scrollRestorationKey(
 ): string {
   return tabRoots.has(location.pathname) ? location.pathname : location.key
 }
+
+/**
+ * Route-backed overlays (the teacher Settings dialog): paths at and under
+ * these render as a dialog over the page the reader was on, not as a page.
+ */
+export const OVERLAY_BASES: readonly string[] = ["/teacher/settings"]
+
+function inOverlay(pathname: string, bases: readonly string[]): boolean {
+  const trimmed = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname
+  return bases.some((base) => trimmed === base || trimmed.startsWith(`${base}/`))
+}
+
+/**
+ * A `getKey` that also knows about route-backed overlays.
+ *
+ * Opening an overlay is a navigation, and react-router resets scroll to the
+ * top on a navigation it has no saved position for. Under a dialog that
+ * reset moved the page underneath to the top (the dialog's scroll lock then
+ * pinned it there, and closing restored the top). An overlay location is
+ * therefore keyed as the page it opened over (the last non-overlay key this
+ * keyer produced): the "restore" on opening is that page's own position, a
+ * no-op, so the page stays put. With no page seen yet (a deep link or a
+ * refresh on the overlay), it keys normally.
+ */
+export function createScrollKeyer(
+  tabRoots: ReadonlySet<string> = TAB_ROOTS,
+  overlayBases: readonly string[] = OVERLAY_BASES,
+): (location: { pathname: string; key: string }) => string {
+  let lastPageKey: string | null = null
+  return (location) => {
+    if (inOverlay(location.pathname, overlayBases)) {
+      return lastPageKey ?? scrollRestorationKey(location, tabRoots)
+    }
+    lastPageKey = scrollRestorationKey(location, tabRoots)
+    return lastPageKey
+  }
+}

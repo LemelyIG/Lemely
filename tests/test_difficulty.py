@@ -81,7 +81,7 @@ def test_difficulty_mix_covers_exactly_grade_order() -> None:
     assert set(DIFFICULTY_MIX) == set(GRADE_ORDER)
 
 
-@pytest.mark.parametrize("bad_grade", [None, "", "Z", "a*", "9-1", "F"])
+@pytest.mark.parametrize("bad_grade", [None, "", "Z", "a*", "9-1", "H"])
 def test_unrecognised_grade_falls_back_to_balanced_mix(bad_grade: str | None) -> None:
     assert difficulty_mix(bad_grade) == (0.20, 0.60, 0.20)
 
@@ -140,3 +140,9 @@ def test_band_vocabulary_matches_generated_question_difficulty_literal() -> None
     band_values = set(get_args(Band))
     literal_values = set(get_args(GeneratedQuestion.model_fields["difficulty"].annotation))
     assert band_values == literal_values == {"foundation", "standard", "challenge"}
+
+
+def test_core_tier_targets_lean_on_foundation_between_e_and_u() -> None:
+    """F and G targets sit between E and U: more foundation than E, less than U."""
+    assert DIFFICULTY_MIX["E"][0] < DIFFICULTY_MIX["F"][0] < DIFFICULTY_MIX["G"][0]
+    assert DIFFICULTY_MIX["G"][0] < DIFFICULTY_MIX["U"][0]

@@ -152,7 +152,7 @@ function StudentTrendPanel({
         ariaLabel="This student's percentage per marked paper, over time"
       />
       <div
-        className="-mx-1 max-h-[180px] overflow-y-auto border-t border-rule pt-2"
+        className="-mx-1 max-h-[180px] overflow-y-auto border-t border-outline-variant pt-2"
         tabIndex={0}
         role="region"
         aria-label="Percentage over time, scrollable"
@@ -170,8 +170,8 @@ function StudentTrendPanel({
               // The index keeps two papers recorded on one day apart (the tutor's
               // dates are days, so same-day points share a `recordedAt`).
               <TR key={`${p.recordedAt}-${index}`}>
-                <TD className="text-ink-muted">{dates.tableDate(p.recordedAt)}</TD>
-                <TD numeric className="text-data-sm text-ink">
+                <TD className="text-on-surface-variant">{dates.tableDate(p.recordedAt)}</TD>
+                <TD numeric className="text-data-sm text-on-surface">
                   {Math.round(p.percentage)}%
                 </TD>
               </TR>
@@ -257,7 +257,7 @@ export function StudentDetailView({
               <h1 className="text-display-md mt-1.5 text-pretty">
                 {student.displayName}
               </h1>
-              <div className="text-body-sm text-ink-muted mt-1">
+              <div className="text-body-sm text-on-surface-variant mt-1">
                 {student.engagement.totalPapers} paper
                 {student.engagement.totalPapers === 1 ? "" : "s"} recorded ·{" "}
                 {dates.activeSummary(student.engagement.lastActiveAt)}
@@ -278,12 +278,12 @@ export function StudentDetailView({
         {student.atRiskFlags.length > 0 ? (
           <section className="flex flex-col gap-3">
             <div className="text-display-sm">At-risk flags</div>
-            <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-3">
+            <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px] flex flex-col gap-3">
               {student.atRiskFlags.map((f) => (
-                <div key={f.reason} className="flex items-start gap-2.5 text-body-md text-ink-muted leading-[1.5]">
+                <div key={f.reason} className="flex items-start gap-2.5 text-body-md text-on-surface-variant leading-[1.5]">
                   <span
                     aria-hidden="true"
-                    className="text-err mt-[6px] w-[6px] h-[6px] rounded-full bg-err flex-none"
+                    className="text-error mt-[6px] w-[6px] h-[6px] rounded-full bg-error flex-none"
                   />
                   <span className="flex-1 text-pretty">{f.summary}</span>
                   {showAcknowledged && f.acknowledged ? (
@@ -301,20 +301,20 @@ export function StudentDetailView({
         <section className="flex flex-col gap-3">
           <div className="text-display-sm">Subjects</div>
           {student.subjects.length === 0 ? (
-            <div className="text-body-md text-ink-muted">No subjects recorded yet.</div>
+            <div className="text-body-md text-on-surface-variant">No subjects recorded yet.</div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
               {student.subjects.map((s) => (
                 <div
                   key={s.subjectCode}
-                  className="bg-paper-raised border border-rule rounded-lg p-[18px] flex items-center gap-4"
+                  className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px] flex items-center gap-4"
                 >
                   <GradeBadge grade={s.predictedGrade} size="medium" basis="predicted" />
                   <div className="min-w-0">
-                    <div className="text-eyebrow text-ink-faint">
+                    <div className="text-eyebrow text-on-surface-variant">
                       {s.subjectCode}
                     </div>
-                    <div className="text-body-md text-ink-muted mt-1">
+                    <div className="text-body-md text-on-surface-variant mt-1">
                       {subjectPercent(s.latestPercentage)} latest · {s.paperCount} paper
                       {s.paperCount === 1 ? "" : "s"}
                     </div>
@@ -331,15 +331,15 @@ export function StudentDetailView({
           {/* Activity / engagement */}
           <section className="flex flex-col gap-3 min-w-0">
             <div className="text-display-sm">Engagement</div>
-            <div className="bg-paper-raised border border-rule rounded-lg p-[18px] grid grid-cols-2 gap-4">
+            <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px] grid grid-cols-2 gap-4">
               <div>
-                <div className="text-eyebrow text-ink-faint">
+                <div className="text-eyebrow text-on-surface-variant">
                   Total papers
                 </div>
                 <div className="text-display-sm mt-1">{student.engagement.totalPapers}</div>
               </div>
               <div>
-                <div className="text-eyebrow text-ink-faint">
+                <div className="text-eyebrow text-on-surface-variant">
                   Last active
                 </div>
                 <div className="text-display-sm mt-1">
@@ -347,7 +347,7 @@ export function StudentDetailView({
                 </div>
               </div>
               <div>
-                <div className="text-eyebrow text-ink-faint">
+                <div className="text-eyebrow text-on-surface-variant">
                   Days since last submission
                 </div>
                 <div className="text-display-sm mt-1">
@@ -362,7 +362,7 @@ export function StudentDetailView({
         <section className="flex flex-col gap-3">
           <div className="text-display-sm">Weaknesses</div>
           {student.weaknesses.length === 0 ? (
-            <div className="text-body-md text-ink-muted">No weakness data yet.</div>
+            <div className="text-body-md text-on-surface-variant">No weakness data yet.</div>
           ) : (
             <div className="flex flex-col gap-2">
               {student.weaknesses.map((w) => (
@@ -376,7 +376,7 @@ export function StudentDetailView({
         <section className="flex flex-col gap-3 min-w-0">
           <div className="text-display-sm">Attempt history</div>
           {student.attempts.length === 0 ? (
-            <div className="text-body-md text-ink-muted">No papers recorded yet.</div>
+            <div className="text-body-md text-on-surface-variant">No papers recorded yet.</div>
           ) : (
             <Table density="operate"
               tabIndex={0}
@@ -426,7 +426,7 @@ export function StudentDetailView({
                     <TD>
                       <GradeBadge grade={a.grade} size="inline" basis="achieved" />
                     </TD>
-                    <TD className="whitespace-nowrap text-ink-muted">
+                    <TD className="whitespace-nowrap text-on-surface-variant">
                       {dates.recorded(a.recordedAt)}
                     </TD>
                     {attemptAction ? (
@@ -452,7 +452,7 @@ function BackButton() {
     <button
       type="button"
       onClick={() => navigate(-1)}
-      className="text-body-sm text-ink-faint transition-colors hover:text-ink w-fit bg-transparent border-0 p-0 cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+      className="text-body-sm text-on-surface-variant transition-colors hover:text-on-surface w-fit bg-transparent border-0 p-0 cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
     >
       <BackArrow /> Back
     </button>

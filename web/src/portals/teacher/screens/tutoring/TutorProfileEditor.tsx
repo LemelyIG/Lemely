@@ -143,7 +143,7 @@ function describedBy(field: ProfileField, hasError: boolean): string | undefined
 function GroupError({ field, message }: { field: ProfileField; message: string | undefined }) {
   if (!message) return null
   return (
-    <p id={`e-${field}`} role="alert" className="m-0 flex items-start gap-1.5 text-body-sm text-err">
+    <p id={`e-${field}`} role="alert" className="m-0 flex items-start gap-1.5 text-body-sm text-error">
       <WarningCircle size={16} className="mt-0.5 shrink-0" aria-hidden />
       {message}
     </p>
@@ -187,7 +187,7 @@ function SubjectsField({ form }: { form: FormApi }) {
       className="m-0 flex min-w-0 flex-col gap-2 border-0 p-0"
       aria-describedby={describedBy("subjectCodes", Boolean(error))}
     >
-      <legend className="mb-2 p-0 text-label text-ink">Subjects you teach</legend>
+      <legend className="mb-2 p-0 text-label text-on-surface">Subjects you teach</legend>
       <QueryState
         query={reference}
         skeleton={
@@ -268,11 +268,11 @@ function CardPreview({ form, profile }: { form: FormApi; profile: TutorOwnProfil
   const areaNames = new Map((areas.data?.items ?? []).map((a) => [a.code, a.name]))
   return (
     <section aria-labelledby="card-preview-title" className="flex flex-col gap-3 lg:sticky lg:top-6">
-      <h3 id="card-preview-title" className="m-0 text-label text-ink">
+      <h3 id="card-preview-title" className="m-0 text-label text-on-surface">
         Your card on the open web
       </h3>
       <TutorCard tutor={previewCard(form.values, profile, subjectNames, areaNames)} headingAs="h4" />
-      <p className="m-0 text-body-sm text-ink-muted">{IDENTIFY_LINE}</p>
+      <p className="m-0 text-body-sm text-on-surface-variant">{IDENTIFY_LINE}</p>
     </section>
   )
 }
@@ -320,11 +320,11 @@ function Visibility({
   }
 
   return (
-    <section aria-labelledby="visibility-title" className="flex flex-col gap-4 rounded-lg border border-rule bg-paper-raised p-4">
-      <h3 id="visibility-title" className="m-0 text-display-sm text-ink">
+    <section aria-labelledby="visibility-title" className="flex flex-col gap-4 rounded-lg border border-outline-variant bg-surface-container-lowest p-4">
+      <h3 id="visibility-title" className="m-0 text-display-sm text-on-surface">
         Who can find your card
       </h3>
-      <p id="search-notice" className="m-0 max-w-prose text-body-md text-ink">
+      <p id="search-notice" className="m-0 max-w-prose text-body-md text-on-surface">
         {SEARCH_NOTICE}
       </p>
       <Switch
@@ -349,14 +349,14 @@ function Visibility({
         />
       ) : null}
       <div aria-live="polite" className="flex flex-col gap-1">
-        {done ? <p className="m-0 text-body-sm text-ok">{done}</p> : null}
+        {done ? <p className="m-0 text-body-sm text-success-text">{done}</p> : null}
         {failure ? (
-          <p role="alert" className="m-0 text-body-sm text-err">
+          <p role="alert" className="m-0 text-body-sm text-error">
             {failure}
           </p>
         ) : null}
         {profile === null ? (
-          <p className="m-0 text-body-sm text-ink-muted">This choice is saved with your draft.</p>
+          <p className="m-0 text-body-sm text-on-surface-variant">This choice is saved with your draft.</p>
         ) : null}
       </div>
     </section>
@@ -424,7 +424,7 @@ function CardStep({
           className="m-0 flex min-w-0 flex-col gap-2 border-0 p-0"
           aria-describedby={describedBy("modes", Boolean(modesError))}
         >
-          <legend className="mb-2 p-0 text-label text-ink">Ways to meet</legend>
+          <legend className="mb-2 p-0 text-label text-on-surface">Ways to meet</legend>
           <div className="flex flex-col gap-2">
             {MODES.map((m) => (
               <Checkbox
@@ -560,20 +560,20 @@ function EvidenceStep({ profile }: { profile: TutorOwnProfile }) {
   return (
     <div className="flex max-w-2xl flex-col gap-5">
       <div className="flex flex-col gap-1">
-        <p className="m-0 text-body-md text-ink">
+        <p className="m-0 text-body-md text-on-surface">
           Upload up to {EVIDENCE_MAX_FILES} files that show who you are as a teacher, such as a degree certificate or a
           teaching letter. PDF, JPEG or PNG, up to 10 MB each.
         </p>
-        <p className="m-0 text-body-md text-ink">{EVIDENCE_NO_ID_LINE}</p>
-        <p className="m-0 text-body-sm text-ink-muted">{EVIDENCE_BADGE_LINE}</p>
+        <p className="m-0 text-body-md text-on-surface">{EVIDENCE_NO_ID_LINE}</p>
+        <p className="m-0 text-body-sm text-on-surface-variant">{EVIDENCE_BADGE_LINE}</p>
       </div>
 
       <div className="flex flex-col gap-2">
-        <h3 ref={listRef} tabIndex={-1} className="m-0 text-label text-ink focus:outline-none">
+        <h3 ref={listRef} tabIndex={-1} className="m-0 text-label text-on-surface focus:outline-none">
           Your files ({profile.evidence.length} of {EVIDENCE_MAX_FILES})
         </h3>
         {profile.evidence.length === 0 ? (
-          <p className="m-0 text-body-md text-ink-muted">No files yet.</p>
+          <p className="m-0 text-body-md text-on-surface-variant">No files yet.</p>
         ) : (
           <ul className="m-0 flex list-none flex-col gap-2 p-0">
             {profile.evidence.map((item) => {
@@ -581,17 +581,17 @@ function EvidenceStep({ profile }: { profile: TutorOwnProfile }) {
               return (
                 <li
                   key={item.evidenceId}
-                  className="flex items-start gap-3 rounded-lg border border-rule bg-paper-raised p-3"
+                  className="flex items-start gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest p-3"
                 >
-                  <Glyph size={22} className="mt-0.5 shrink-0 text-ink-muted" aria-hidden />
+                  <Glyph size={22} className="mt-0.5 shrink-0 text-on-surface-variant" aria-hidden />
                   <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <span className="break-all text-label text-ink">{item.filename}</span>
-                    <span className="text-body-sm text-ink-muted">
+                    <span className="break-all text-label text-on-surface">{item.filename}</span>
+                    <span className="text-body-sm text-on-surface-variant">
                       {item.contentType === "application/pdf" ? "PDF" : "Image"}, {formatFileSize(item.sizeBytes)}, added{" "}
                       {relativeTime(item.uploadedAt)}
                     </span>
                     {item.description ? (
-                      <span className="break-words text-body-sm text-ink">{item.description}</span>
+                      <span className="break-words text-body-sm text-on-surface">{item.description}</span>
                     ) : null}
                   </div>
                   <Button
@@ -614,7 +614,7 @@ function EvidenceStep({ profile }: { profile: TutorOwnProfile }) {
       </div>
 
       {full ? (
-        <p className="m-0 text-body-sm text-ink-muted">
+        <p className="m-0 text-body-sm text-on-surface-variant">
           You have uploaded the most files allowed. Delete one to add another.
         </p>
       ) : (
@@ -648,7 +648,7 @@ function EvidenceStep({ profile }: { profile: TutorOwnProfile }) {
           </div>
         </div>
       )}
-      <div aria-live="polite">{message ? <p className="m-0 text-body-sm text-ok">{message}</p> : null}</div>
+      <div aria-live="polite">{message ? <p className="m-0 text-body-sm text-success-text">{message}</p> : null}</div>
 
       <ConfirmModal
         open={deleting !== null}
@@ -672,10 +672,10 @@ function EvidenceStep({ profile }: { profile: TutorOwnProfile }) {
 function AvailabilityStep({ profile }: { profile: TutorOwnProfile }) {
   return (
     <div className="flex max-w-2xl flex-col gap-4">
-      <p className="m-0 text-body-md text-ink">
+      <p className="m-0 text-body-md text-on-surface">
         Students can only book the weekly times you set, in {profile.zoneLabel}.
       </p>
-      <p className="m-0 text-body-md text-ink-muted" aria-live="polite">
+      <p className="m-0 text-body-md text-on-surface-variant" aria-live="polite">
         {availabilitySummary(profile.availability)}
       </p>
       <div>
@@ -717,11 +717,11 @@ function SubmitStep({
   if (submit.isSuccess || profile.listingState === "pending_review") {
     return (
       <div className="flex max-w-2xl flex-col gap-3">
-        <h3 ref={resultRef} tabIndex={-1} className="m-0 flex items-center gap-2 text-display-sm text-ink focus:outline-none">
-          <CheckCircle size={22} weight="bold" className="text-ok" aria-hidden />
+        <h3 ref={resultRef} tabIndex={-1} className="m-0 flex items-center gap-2 text-display-sm text-on-surface focus:outline-none">
+          <CheckCircle size={22} weight="bold" className="text-success-text" aria-hidden />
           {submit.isSuccess ? "Sent for review" : "Under review"}
         </h3>
-        <p className="m-0 text-body-md text-ink">{UNDER_REVIEW_LINE}</p>
+        <p className="m-0 text-body-md text-on-surface">{UNDER_REVIEW_LINE}</p>
         <div>
           <Link to="/teacher/tutoring" className={buttonVariants({ variant: "secondary", size: "md" })}>
             Back to tutoring
@@ -738,18 +738,18 @@ function SubmitStep({
   return (
     <div className="flex max-w-2xl flex-col gap-4">
       {resubmit && profile.reviewNote ? (
-        <p className="m-0 rounded-md border border-rule bg-warn-wash px-3 py-2.5 text-body-md text-ink">
+        <p className="m-0 rounded-md border border-outline-variant bg-tertiary-container px-3 py-2.5 text-body-md text-on-surface">
           Lemely's note: {profile.reviewNote}
         </p>
       ) : null}
       {blockers.length > 0 ? (
         <div className="flex flex-col gap-2">
-          <h3 className="m-0 text-label text-ink">Before you can send it</h3>
+          <h3 className="m-0 text-label text-on-surface">Before you can send it</h3>
           <ul className="m-0 flex list-none flex-col gap-2 p-0">
             {blockers.map((blocker) => (
-              <li key={blocker.text} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-body-md text-ink">
+              <li key={blocker.text} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-body-md text-on-surface">
                 <span className="flex min-w-0 items-start gap-2">
-                  <WarningCircle size={18} className="mt-0.5 shrink-0 text-warn" aria-hidden />
+                  <WarningCircle size={18} className="mt-0.5 shrink-0 text-on-tertiary-container" aria-hidden />
                   {blocker.text}
                 </span>
                 <Button variant="ghost" size="sm" onClick={() => onGo(blocker.step)}>
@@ -760,25 +760,25 @@ function SubmitStep({
           </ul>
         </div>
       ) : (
-        <p className="m-0 flex items-center gap-2 text-body-md text-ink">
-          <CheckCircle size={18} weight="bold" className="shrink-0 text-ok" aria-hidden />
+        <p className="m-0 flex items-center gap-2 text-body-md text-on-surface">
+          <CheckCircle size={18} weight="bold" className="shrink-0 text-success-text" aria-hidden />
           Everything Lemely needs is in place.
         </p>
       )}
       {unconfirmed ? (
-        <p className="m-0 text-body-md text-ink">
+        <p className="m-0 text-body-md text-on-surface">
           Confirm your email address before you send your profile.{" "}
-          <Link to="/verify-email" className="rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent">
+          <Link to="/verify-email" className="rounded-sm text-on-primary-container underline underline-offset-2 transition-colors hover:text-primary">
             Confirm your email
           </Link>
         </p>
       ) : null}
       {failure ? (
-        <p role="alert" className="m-0 text-body-sm text-err">
+        <p role="alert" className="m-0 text-body-sm text-error">
           {failure}
         </p>
       ) : null}
-      {!online ? <p className="m-0 text-body-sm text-ink-muted">You're offline. Reconnect to send your profile.</p> : null}
+      {!online ? <p className="m-0 text-body-sm text-on-surface-variant">You're offline. Reconnect to send your profile.</p> : null}
       <div>
         <Button
           variant="primary"
@@ -807,8 +807,8 @@ function ReadOnlyProfile({ profile }: { profile: TutorOwnProfile }) {
     <dl className="m-0 grid max-w-2xl grid-cols-1 gap-4 sm:grid-cols-2">
       {rows.map(([label, value]) => (
         <div key={label} className="flex min-w-0 flex-col gap-0.5">
-          <dt className="text-body-sm text-ink-muted">{label}</dt>
-          <dd className="m-0 break-words text-body-md text-ink">{value}</dd>
+          <dt className="text-body-sm text-on-surface-variant">{label}</dt>
+          <dd className="m-0 break-words text-body-md text-on-surface">{value}</dd>
         </div>
       ))}
     </dl>
@@ -817,7 +817,7 @@ function ReadOnlyProfile({ profile }: { profile: TutorOwnProfile }) {
 
 // ── The editor ──────────────────────────────────────────────────────────────
 
-const TONE_WASH = { ok: "bg-ok-wash", info: "bg-info-wash", warn: "bg-warn-wash", neutral: "bg-paper-sunk" } as const
+const TONE_WASH = { ok: "bg-success-container", info: "bg-primary-container", warn: "bg-tertiary-container", neutral: "bg-surface-container-low" } as const
 
 function Editor({ profile }: { profile: TutorOwnProfile | null }) {
   const state = profile?.listingState ?? null
@@ -970,17 +970,17 @@ function Editor({ profile }: { profile: TutorOwnProfile | null }) {
 
   return (
     <div className="flex flex-col gap-6 min-w-0">
-      <div className="flex flex-col gap-2 border-b border-rule pb-5">
+      <div className="flex flex-col gap-2 border-b border-outline-variant pb-5">
         <Link
           to="/teacher/tutoring"
-          className="inline-flex min-h-11 w-fit items-center gap-1 text-body-sm text-ink-muted transition-colors hover:text-ink"
+          className="inline-flex min-h-11 w-fit items-center gap-1 text-body-sm text-on-surface-variant transition-colors hover:text-on-surface"
         >
           Back to tutoring
         </Link>
-        <h1 className="m-0 text-display-md text-ink">Tutor profile</h1>
+        <h1 className="m-0 text-display-md text-on-surface">Tutor profile</h1>
         <p
           className={cn(
-            "m-0 flex flex-col gap-0.5 rounded-md border border-rule px-3 py-2.5 text-body-md text-ink",
+            "m-0 flex flex-col gap-0.5 rounded-md border border-outline-variant px-3 py-2.5 text-body-md text-on-surface",
             TONE_WASH[banner.tone],
           )}
         >
@@ -1007,14 +1007,14 @@ function Editor({ profile }: { profile: TutorOwnProfile | null }) {
           <h2
             ref={headingRef}
             tabIndex={-1}
-            className="m-0 text-display-sm text-ink focus:outline-none"
+            className="m-0 text-display-sm text-on-surface focus:outline-none"
           >
             {current.number}. {current.label}
           </h2>
 
           {needsProfile ? (
             <div className="flex max-w-2xl flex-col gap-3">
-              <p className="m-0 text-body-md text-ink">
+              <p className="m-0 text-body-md text-on-surface">
                 Save your public card first. The other steps belong to your profile, which is created when you save it.
               </p>
               <div>
@@ -1041,10 +1041,10 @@ function Editor({ profile }: { profile: TutorOwnProfile | null }) {
                   ) : (
                     <AboutStep form={form} />
                   )}
-                  <div className="flex flex-col gap-3 border-t border-rule pt-5">
+                  <div className="flex flex-col gap-3 border-t border-outline-variant pt-5">
                     {reReview ? (
-                      <p className="m-0 flex items-start gap-2 rounded-md border border-rule bg-warn-wash px-3 py-2.5 text-body-md text-ink">
-                        <WarningCircle size={18} className="mt-0.5 shrink-0 text-warn" aria-hidden />
+                      <p className="m-0 flex items-start gap-2 rounded-md border border-outline-variant bg-tertiary-container px-3 py-2.5 text-body-md text-on-surface">
+                        <WarningCircle size={18} className="mt-0.5 shrink-0 text-on-tertiary-container" aria-hidden />
                         {reReview}
                       </p>
                     ) : null}
@@ -1059,13 +1059,13 @@ function Editor({ profile }: { profile: TutorOwnProfile | null }) {
                       </Button>
                     </div>
                     <div aria-live="polite" className="flex flex-col gap-1">
-                      {notice ? <p className="m-0 text-body-sm text-ok">{notice}</p> : null}
+                      {notice ? <p className="m-0 text-body-sm text-success-text">{notice}</p> : null}
                       {!online ? (
-                        <p className="m-0 text-body-sm text-ink-muted">You're offline. Reconnect to save.</p>
+                        <p className="m-0 text-body-sm text-on-surface-variant">You're offline. Reconnect to save.</p>
                       ) : null}
                     </div>
                     {server && server.field === null ? (
-                      <p role="alert" className="m-0 text-body-sm text-err">
+                      <p role="alert" className="m-0 text-body-sm text-error">
                         {server.message}
                       </p>
                     ) : null}
@@ -1077,7 +1077,7 @@ function Editor({ profile }: { profile: TutorOwnProfile | null }) {
                   {current.id === "availability" && profile ? <AvailabilityStep profile={profile} /> : null}
                   {current.id === "submit" && profile ? <SubmitStep profile={profile} onGo={goTo} /> : null}
                   {mode === "onboarding" ? (
-                    <div className="flex flex-wrap items-center gap-3 border-t border-rule pt-5">
+                    <div className="flex flex-wrap items-center gap-3 border-t border-outline-variant pt-5">
                       {previous ? (
                         <Button type="button" variant="ghost" onClick={() => goTo(previous.id)}>
                           Back

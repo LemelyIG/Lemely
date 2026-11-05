@@ -889,7 +889,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
           >
             <div
               style={{
-                background: 'var(--brand-art-24)',
+                background: 'var(--brand-art-37)',
                 borderRadius: '16px',
                 padding: '14px',
                 display: 'flex',
@@ -902,7 +902,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
                 style={{
                   fontWeight: '800',
                   fontSize: '15px',
-                  color: 'var(--brand-art-31)',
+                  color: 'var(--brand-art-38)',
                 }}
               >
                 {'Units & SI'}
@@ -910,6 +910,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   background: 'var(--brand-art-6)',
+                  color: 'var(--brand-art-39)',
                   borderRadius: '8px',
                   padding: '6px 9px',
                   fontSize: '12px',
@@ -922,6 +923,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   background: 'var(--brand-art-6)',
+                  color: 'var(--brand-art-39)',
                   borderRadius: '8px',
                   padding: '6px 9px',
                   fontSize: '12px',
@@ -934,6 +936,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   background: 'var(--brand-art-6)',
+                  color: 'var(--brand-art-39)',
                   borderRadius: '8px',
                   padding: '6px 9px',
                   fontSize: '12px',
@@ -946,7 +949,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
             </div>
             <div
               style={{
-                background: 'var(--brand-art-32)',
+                background: 'var(--brand-art-37)',
                 borderRadius: '16px',
                 padding: '14px',
                 display: 'flex',
@@ -959,7 +962,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
                 style={{
                   fontWeight: '800',
                   fontSize: '15px',
-                  color: 'var(--brand-art-5)',
+                  color: 'var(--brand-art-38)',
                 }}
               >
                 {'Graph reading'}
@@ -967,6 +970,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   background: 'var(--brand-art-6)',
+                  color: 'var(--brand-art-39)',
                   borderRadius: '8px',
                   padding: '6px 9px',
                   fontSize: '12px',
@@ -979,6 +983,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   background: 'var(--brand-art-6)',
+                  color: 'var(--brand-art-39)',
                   borderRadius: '8px',
                   padding: '6px 9px',
                   fontSize: '12px',

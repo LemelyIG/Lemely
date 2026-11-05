@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils"
  * and **no shadow, ever** (DESIGN.md §7 — depth in this system comes from
  * tonal layering and hairlines, not elevation).
  *
- * P4.1 migrated the token names off the build-era `bg-surface`/`border-border`
+ * P4.1 migrated the token names off the build-era `bg-surface-container-lowest`/`border-outline-variant`
  * aliases. The values are identical; these are the names DESIGN.md defines.
  * The docstring also claimed "a 1rem (16px) radius", quoting the build-era
  * DESIGN.md — `rounded-lg` resolves to `--radius-lg`, which is **12px**, and
@@ -18,7 +18,7 @@ export function Card({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "bg-paper-raised border border-rule rounded-lg",
+        "bg-surface-container-lowest border border-outline-variant rounded-lg",
         className,
       )}
       {...props}

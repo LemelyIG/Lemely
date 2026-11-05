@@ -65,8 +65,8 @@ export function TutorDirectory() {
       <meta name="robots" content={robotsForDirectory()} />
       <div className="mx-auto flex w-full max-w-marketing flex-col gap-8 px-page-mobile py-section md:px-page-tablet md:py-section-lg lg:px-page-desktop">
         <header className="flex flex-col gap-3">
-          <h1 className="m-0 text-display-lg text-ink">Tutors</h1>
-          <p className="m-0 max-w-prose text-body-lg text-ink-muted">{DIRECTORY_INTRO}</p>
+          <h1 className="m-0 text-display-lg text-on-surface">Tutors</h1>
+          <p className="m-0 max-w-prose text-body-lg text-on-surface-variant">{DIRECTORY_INTRO}</p>
         </header>
         <DirectoryView
           audience="public"
@@ -74,8 +74,8 @@ export function TutorDirectory() {
           filters={filters}
           onFiltersChange={change}
           aside={
-            <p className="m-0 max-w-prose text-body-md text-ink-muted">
-              <Link to={link.to} className="text-ink underline underline-offset-4">
+            <p className="m-0 max-w-prose text-body-md text-on-surface-variant">
+              <Link to={link.to} className="text-on-surface underline underline-offset-4">
                 {linkText}
               </Link>
               {linkRest}

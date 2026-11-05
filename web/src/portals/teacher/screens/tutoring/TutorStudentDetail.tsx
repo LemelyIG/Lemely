@@ -76,7 +76,7 @@ function BackToStudents() {
   return (
     <Link
       to={TUTOR_STUDENTS_PATH}
-      className="inline-flex min-h-11 w-fit items-center gap-1 text-body-sm text-ink-muted transition-colors hover:text-ink"
+      className="inline-flex min-h-11 w-fit items-center gap-1 text-body-sm text-on-surface-variant transition-colors hover:text-on-surface"
     >
       <CaretLeft size={14} aria-hidden />
       My students
@@ -161,7 +161,7 @@ export function TutorStudentDetail() {
             showAcknowledged={false}
             back={<BackToStudents />}
             intro={
-              <p className="m-0 max-w-prose rounded-lg border border-rule bg-paper-sunk px-4 py-3 text-body-md text-ink-muted">
+              <p className="m-0 max-w-prose rounded-lg border border-outline-variant bg-surface-container-low px-4 py-3 text-body-md text-on-surface-variant">
                 {sharedLine(detail.displayName, grantedAt, zone)}
               </p>
             }

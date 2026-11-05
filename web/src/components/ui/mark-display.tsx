@@ -69,14 +69,14 @@ export function MarkDisplay({
         aria-label={`${awarded} out of ${available} marks, ${pct} percent`}
         {...props}
       >
-        <span className="text-data-lg text-ink">
+        <span className="text-data-lg text-on-surface">
           {reveal ? <CountUp value={awarded} from={0} /> : awarded}
         </span>
-        <span className="text-data-md text-ink-faint">/ {available}</span>
+        <span className="text-data-md text-on-surface-variant">/ {available}</span>
         {showPercent && (
           // `ms-1`, not `ml-1`: the percentage trails the mark and must stay
           // trailing under `dir="rtl"` (P3.4).
-          <span className="text-data-sm text-ink-muted bg-paper-sunk rounded-full px-2.5 py-1 ms-1">
+          <span className="text-data-sm text-on-surface-variant bg-surface-container-low rounded-full px-2.5 py-1 ms-1">
             {pct}%
           </span>
         )}
@@ -90,10 +90,10 @@ export function MarkDisplay({
       aria-label={`${awarded} out of ${available} marks, ${pct} percent`}
       {...props}
     >
-      <span className="text-data-md text-ink">
+      <span className="text-data-md text-on-surface">
         {awarded}/{available}
       </span>
-      {showPercent && <span className="text-data-sm text-ink-faint">{pct}%</span>}
+      {showPercent && <span className="text-data-sm text-on-surface-variant">{pct}%</span>}
     </div>
   )
 }

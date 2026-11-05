@@ -183,7 +183,7 @@ async function refreshSession(): Promise<string | null> {
     // query cache and the offline upload queue too, not just the session
     // object — see `endSession`'s own doc comment (`auth/storage.ts`).
     const role = getSession()?.role
-    endSession()
+    void endSession()
     markSessionExpired(role)
   }
   return null

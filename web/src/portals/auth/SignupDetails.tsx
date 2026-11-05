@@ -142,7 +142,7 @@ import {
  * warnings" is one of this task's binding gates. This task's own instruction
  * is equally explicit that the payload/validation logic must be "a pure
  * exported function" tested directly by `web/tests/unit/signup.test.ts` —
- * naming `studentOnboardingRedirect`/`teacherFirstClassRedirect` as the
+ * naming `studentOnboardingRedirect` as the
  * pattern — so it cannot simply stay private the way it could if no test
  * required it. `onboardingData.ts` (the S-01/S-02 wizard) and
  * `verifyEmailLogic.ts` (Task 16, `VerifyEmail.tsx` — the very screen this
@@ -181,7 +181,7 @@ const ROLE_COPY: Record<SelfServiceRole, { heading: string; subheading: string }
  * `login-links-under-44px-tap-target`) — see that file's own docstring for
  * why it's gated to touch/coarse pointers rather than unconditional. */
 const LINK_CLASS =
-  "pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:min-h-11 rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+  "pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:min-h-11 rounded-sm text-on-primary-container underline underline-offset-2 transition-colors hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
 
 export function SignupDetails({ role }: SignupDetailsProps) {
   const { signup } = useAuth()
@@ -257,7 +257,7 @@ export function SignupDetails({ role }: SignupDetailsProps) {
     <AuthFrame
       dataPortal={role}
       footer={
-        <p className="text-body-sm text-ink-muted">
+        <p className="text-body-sm text-on-surface-variant">
           Already have an account?{" "}
           <Link to="/login" className={LINK_CLASS}>
             Sign in
@@ -268,15 +268,15 @@ export function SignupDetails({ role }: SignupDetailsProps) {
       <form
         onSubmit={handleSubmit}
         noValidate
-        className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-rule bg-paper-raised p-8"
+        className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-outline-variant bg-surface-container-lowest p-8"
       >
         <div className="flex flex-col gap-1.5">
-          <h1 className="text-display-lg text-ink">{copy.heading}</h1>
-          <p className="text-body-md text-ink-muted">{copy.subheading}</p>
+          <h1 className="text-display-lg text-on-surface">{copy.heading}</h1>
+          <p className="text-body-md text-on-surface-variant">{copy.subheading}</p>
         </div>
 
         {inviteCode ? (
-          <p className="rounded-md border border-rule bg-paper-sunk px-3 py-2.5 text-body-sm text-ink-muted">
+          <p className="rounded-md border border-outline-variant bg-surface-container-low px-3 py-2.5 text-body-sm text-on-surface-variant">
             Signing up with an invite code. We'll finish setting that up right after your account
             is created.
           </p>
@@ -288,7 +288,7 @@ export function SignupDetails({ role }: SignupDetailsProps) {
            * not the self-registering, independent case D7.2 describes, and
            * this sentence would be actively wrong for them.
            */
-          <p className="rounded-md border border-rule bg-paper-sunk px-3 py-2.5 text-body-sm text-ink-muted">
+          <p className="rounded-md border border-outline-variant bg-surface-container-low px-3 py-2.5 text-body-sm text-on-surface-variant">
             This creates an independent account, not tied to a school. If your school already
             uses Lemely, ask them for an invite link instead.
           </p>
@@ -350,7 +350,7 @@ export function SignupDetails({ role }: SignupDetailsProps) {
                       key={segment}
                       className={cn(
                         "h-1 flex-1 rounded-full transition-colors duration-[var(--dur-instant)] ease-out-soft",
-                        segment < strength.score ? strengthFillClass(strength.score) : "bg-rule",
+                        segment < strength.score ? strengthFillClass(strength.score) : "bg-outline-variant",
                       )}
                     />
                   ))}
@@ -358,10 +358,10 @@ export function SignupDetails({ role }: SignupDetailsProps) {
                 {/* The text label is the real carrier of meaning; the bars
                     above are `aria-hidden` decoration (colour is never the
                     sole carrier, per DESIGN.md §3.6 / QUALITY-BAR.md). */}
-                <span className="text-body-sm text-ink-faint">{strength.label}</span>
+                <span className="text-body-sm text-on-surface-variant">{strength.label}</span>
               </div>
             ) : (
-              <span className="flex-1 text-body-sm text-ink-faint">
+              <span className="flex-1 text-body-sm text-on-surface-variant">
                 At least {MIN_PASSWORD_LENGTH} characters.
               </span>
             )}
@@ -369,7 +369,7 @@ export function SignupDetails({ role }: SignupDetailsProps) {
               type="button"
               disabled={busy}
               onClick={() => setShowPassword((previous) => !previous)}
-              className="inline-flex shrink-0 items-center gap-1 rounded-sm text-body-sm text-ink-muted transition-[color,transform] duration-[var(--dur-fast)] ease-out-soft hover:text-ink active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100"
+              className="inline-flex shrink-0 items-center gap-1 rounded-sm text-body-sm text-on-surface-variant transition-[color,transform] duration-[var(--dur-fast)] ease-out-soft hover:text-on-surface active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100"
             >
               {showPassword ? (
                 <EyeSlash aria-hidden weight="regular" size={16} />
@@ -426,7 +426,7 @@ export function SignupDetails({ role }: SignupDetailsProps) {
                 if (event.target.checked) setConsentError(false)
               }}
             />
-            <p id="signup-consent-copy" className="text-body-sm text-ink-muted">
+            <p id="signup-consent-copy" className="text-body-sm text-on-surface-variant">
               I agree to how Lemely handles my data, described on the{" "}
               {/* New tab: this form's own half-filled state would otherwise
                   unmount the moment a same-tab navigation left the page. */}
@@ -437,7 +437,7 @@ export function SignupDetails({ role }: SignupDetailsProps) {
             </p>
           </div>
           {consentError ? (
-            <p id="signup-consent-error" role="alert" className="text-body-sm text-err">
+            <p id="signup-consent-error" role="alert" className="text-body-sm text-error">
               Agree to how Lemely handles your data before continuing.
             </p>
           ) : null}
@@ -445,7 +445,7 @@ export function SignupDetails({ role }: SignupDetailsProps) {
 
         {signup.isError ? (
           <div className="flex flex-col gap-1.5">
-            <p role="alert" className="text-body-sm text-err">
+            <p role="alert" className="text-body-sm text-error">
               {signUpFailureMessage(signup.error)}
             </p>
             {addressConflict ? (

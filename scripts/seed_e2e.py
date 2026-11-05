@@ -463,7 +463,7 @@ CORRECTED_DAYS_AGO = 1
 BELOW_TARGET_SCORE: tuple[float, str] = (52.0, "D")
 BELOW_TARGET_DAYS_AGO = 1
 #: …against this target on ``lemely.core.history.GRADE_ORDER``
-#: (``["A*", "A", "B", "C", "D", "E", "U"]``). ``D`` is index 4, ``A`` index 1,
+#: (``["A*", "A", "B", "C", "D", "E", "F", "G", "U"]``). ``D`` is index 4, ``A`` index 1,
 #: so the gap is 3 positions — clear of ``_TARGET_GAP_POSITIONS`` (2) rather
 #: than sitting exactly on it, which keeps the fixture from silently going
 #: not-fired if that threshold is ever nudged. The subject is

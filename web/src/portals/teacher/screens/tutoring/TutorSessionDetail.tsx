@@ -100,8 +100,8 @@ const MODE_LABEL: Record<TutoringMode, string> = {
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
-      <dt className="text-body-sm text-ink-muted">{label}</dt>
-      <dd className="m-0 break-words text-body-md text-ink">{children}</dd>
+      <dt className="text-body-sm text-on-surface-variant">{label}</dt>
+      <dd className="m-0 break-words text-body-md text-on-surface">{children}</dd>
     </div>
   )
 }
@@ -121,7 +121,7 @@ function useRefetchBookingOnConflict(bookingId: string): (error: unknown) => voi
   }
 }
 
-const LINK = "rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent break-all"
+const LINK = "rounded-sm text-on-primary-container underline underline-offset-2 transition-colors hover:text-primary break-all"
 
 // ── Accept ──────────────────────────────────────────────────────────────────
 
@@ -189,7 +189,7 @@ function AcceptPanel({
 
   return (
     <section id="accept" aria-labelledby="accept-title" className="flex flex-col gap-4 scroll-mt-6">
-      <h2 id="accept-title" className="m-0 text-display-sm text-ink">
+      <h2 id="accept-title" className="m-0 text-display-sm text-on-surface">
         Reply to this request
       </h2>
 
@@ -228,12 +228,12 @@ function AcceptPanel({
             }}
           />
         ) : (
-          <p className="m-0 text-body-md text-ink-muted">
+          <p className="m-0 text-body-md text-on-surface-variant">
             This session uses another way to meet, so there is no link or place to add.
           </p>
         )}
         {accept.isError && serverField === null ? (
-          <p role="alert" className="m-0 text-body-sm text-err">
+          <p role="alert" className="m-0 text-body-sm text-error">
             {serverMessage}
           </p>
         ) : null}
@@ -250,7 +250,7 @@ function AcceptPanel({
       </form>
 
       {declineOpen ? (
-        <form onSubmit={onDecline} noValidate className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-sunk p-4">
+        <form onSubmit={onDecline} noValidate className="flex flex-col gap-3 rounded-lg border border-outline-variant bg-surface-container-low p-4">
           <Textarea
             label="Reason (optional)"
             hint="The student sees that you declined. Add a reason only if it helps them."
@@ -260,7 +260,7 @@ function AcceptPanel({
             onChange={(event) => setReason(event.target.value)}
           />
           {decline.isError ? (
-            <p role="alert" className="m-0 text-body-sm text-err">
+            <p role="alert" className="m-0 text-body-sm text-error">
               {tutorActionFailureMessage(decline.error, "We couldn't decline that request. Try again.")}
             </p>
           ) : null}
@@ -332,7 +332,7 @@ function LateCancelSheet({
         onChange={(event) => setReason(event.target.value)}
       />
       {error ? (
-        <p role="alert" className="mt-3 text-body-sm text-err">
+        <p role="alert" className="mt-3 text-body-sm text-error">
           {error}
         </p>
       ) : null}
@@ -386,7 +386,7 @@ function ActionsPanel({ booking, online }: { booking: Booking; online: boolean }
 
   return (
     <section aria-labelledby="actions-title" className="flex flex-col gap-3">
-      <h2 id="actions-title" className="m-0 text-display-sm text-ink">
+      <h2 id="actions-title" className="m-0 text-display-sm text-on-surface">
         {canComplete || canNoShow ? "Record the outcome" : "Change this session"}
       </h2>
       <div className="flex flex-wrap gap-3">
@@ -426,7 +426,7 @@ function ActionsPanel({ booking, online }: { booking: Booking; online: boolean }
         ) : null}
       </div>
       {failure ? (
-        <p role="alert" className="m-0 text-body-sm text-err">
+        <p role="alert" className="m-0 text-body-sm text-error">
           {failure}
         </p>
       ) : null}
@@ -524,7 +524,7 @@ function SessionNotes({
   return (
     <div className="flex flex-col gap-3">
       {/* The thread is its own labelled region ("Session notes"); this heading is not a second one. */}
-      <h2 className="m-0 text-display-sm text-ink">Session notes</h2>
+      <h2 className="m-0 text-display-sm text-on-surface">Session notes</h2>
       <QueryState
         query={first}
         skeleton={<SkeletonBlock className="h-32" />}
@@ -589,7 +589,7 @@ function BlockStudent({ booking, alreadyBlocked }: { booking: Booking; alreadyBl
   const [open, setOpen] = useState(false)
   if (alreadyBlocked) {
     return (
-      <p className="m-0 flex items-center gap-2 text-body-sm text-ink-muted">
+      <p className="m-0 flex items-center gap-2 text-body-sm text-on-surface-variant">
         <Prohibit size={16} aria-hidden />
         You have blocked this student.
       </p>
@@ -649,10 +649,10 @@ function Detail({ booking, profile }: { booking: Booking; profile: TutorOwnProfi
 
   return (
     <div className="flex flex-col gap-6 min-w-0">
-      <div className="flex flex-col gap-3 border-b border-rule pb-5">
+      <div className="flex flex-col gap-3 border-b border-outline-variant pb-5">
         <Link
           to="/teacher/tutoring"
-          className="inline-flex min-h-11 w-fit items-center gap-1 text-body-sm text-ink-muted transition-colors hover:text-ink"
+          className="inline-flex min-h-11 w-fit items-center gap-1 text-body-sm text-on-surface-variant transition-colors hover:text-on-surface"
         >
           <CaretLeft size={14} aria-hidden />
           Back to tutoring
@@ -661,15 +661,15 @@ function Detail({ booking, profile }: { booking: Booking; profile: TutorOwnProfi
           <h1
             ref={headingRef}
             tabIndex={-1}
-            className="m-0 text-display-md text-ink focus:outline-none"
+            className="m-0 text-display-md text-on-surface focus:outline-none"
           >
             Session with {booking.student.displayName}
           </h1>
           <BookingStatus state={booking.effectiveState} />
         </div>
-        {outcome ? <p className="m-0 max-w-prose text-body-md text-ink">{outcome}</p> : null}
+        {outcome ? <p className="m-0 max-w-prose text-body-md text-on-surface">{outcome}</p> : null}
         {!online ? (
-          <p className="m-0 text-body-sm text-ink-muted">
+          <p className="m-0 text-body-sm text-on-surface-variant">
             You're offline. Replies, cancellations and outcomes need a connection.
           </p>
         ) : null}
@@ -737,7 +737,7 @@ function Detail({ booking, profile }: { booking: Booking; profile: TutorOwnProfi
         blocksPending={blocks.isPending}
       />
 
-      <div className="flex flex-col gap-2 border-t border-rule pt-5">
+      <div className="flex flex-col gap-2 border-t border-outline-variant pt-5">
         <BlockStudent booking={booking} alreadyBlocked={alreadyBlocked} />
       </div>
     </div>

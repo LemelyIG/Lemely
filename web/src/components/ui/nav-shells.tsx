@@ -50,6 +50,9 @@ export interface NavShellItem {
   active?: boolean
   /** Small trailing marker — unread count, review-queue depth, etc. */
   badge?: string | number
+  /** Rendered in the filled badge style (Abyss variant only): a count that
+   * asks for action, such as the review-queue depth. */
+  urgent?: boolean
   /** Wired by Task 11 (B6): prefetch the destination's chunk on hover/focus. */
   prefetch?: () => void
 }
@@ -113,7 +116,7 @@ export function BottomNav({ items, emphasisId, className, ...props }: BottomNavP
         // P6.3: `z-nav`. The raw `z-30` put a *navigation* bar in the dropdown
         // band, above every menu and popover that would ever need to open over
         // it — the exact inversion the §7 scale exists to prevent.
-        "lm-nav-chrome lm-safe-bottom fixed inset-x-0 bottom-0 z-nav flex items-stretch border-t border-border bg-surface",
+        "lm-nav-chrome lm-safe-bottom fixed inset-x-0 bottom-0 z-nav flex items-stretch border-t border-outline-variant bg-surface-container-lowest",
         className,
       )}
       {...props}
@@ -126,8 +129,8 @@ export function BottomNav({ items, emphasisId, className, ...props }: BottomNavP
             item={item}
             className={(isActive) =>
               cn(
-                "flex min-h-14 flex-1 flex-col items-center justify-center gap-1 py-2.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent active:scale-[0.98]",
-                isActive && !emphasis ? "text-accent" : "text-t3 hover:text-t2",
+                "flex min-h-14 flex-1 flex-col items-center justify-center gap-1 py-2.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.98]",
+                isActive && !emphasis ? "text-primary" : "text-on-surface-variant hover:text-on-surface-variant",
               )
             }
           >
@@ -137,12 +140,12 @@ export function BottomNav({ items, emphasisId, className, ...props }: BottomNavP
                   className={cn(
                     "relative flex items-center justify-center",
                     emphasis &&
-                      "-mt-5 h-11 w-11 rounded-full bg-accent text-accent-on shadow-[var(--shadow-float)]",
+                      "-mt-5 h-11 w-11 rounded-full bg-primary text-on-primary shadow-[var(--shadow-float)]",
                   )}
                 >
                   {item.icon}
                   {item.badge ? (
-                    <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-err px-0.5 text-metadata leading-none text-accent-on">
+                    <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-error px-0.5 text-data-sm leading-none text-on-error">
                       {item.badge}
                     </span>
                   ) : null}
@@ -168,19 +171,22 @@ export interface SidebarNavProps extends HTMLAttributes<HTMLElement> {
   items?: NavShellItem[]
   /** Labelled sections — the student sidebar's "Student"/"Marking" split. */
   groups?: SidebarNavGroup[]
+  /** `abyss` is the teacher shell's Material 3 row: chip radius, primary
+   * container when current, a pill count. `default` is the student/admin row. */
+  variant?: "default" | "abyss"
   className?: string
 }
 
 /** Desktop student/teacher/admin vertical nav list — a current-section
  * indicator, not a full sidebar shell (identity block, "Your classes", the
  * subject accordion all stay in each portal's own `Sidebar`). */
-export function SidebarNav({ items, groups, className, ...props }: SidebarNavProps) {
+export function SidebarNav({ items, groups, variant = "default", className, ...props }: SidebarNavProps) {
   const sections: SidebarNavGroup[] = groups ?? [{ items: items ?? [] }]
 
   return (
     <nav
       aria-label="Primary"
-      className={cn("flex flex-col", groups ? "gap-[22px]" : "gap-0.5", className)}
+      className={cn("flex flex-col", groups ? "gap-[22px]" : variant === "abyss" ? "gap-px" : "gap-0.5", className)}
       {...props}
     >
       {sections.map((section, index) => (
@@ -191,30 +197,54 @@ export function SidebarNav({ items, groups, className, ...props }: SidebarNavPro
         // reordering list.
         <div key={section.label ?? index} className="flex flex-col gap-0.5">
           {section.label ? (
-            <div className="text-eyebrow text-ink-faint px-2 pb-[7px]">{section.label}</div>
+            <div className={cn("text-eyebrow text-on-surface-variant pb-[7px]", variant === "abyss" ? "px-2.5" : "px-2")}>
+              {section.label}
+            </div>
           ) : null}
           {section.items.map((item) => (
             <NavShellLink
               key={item.id}
               item={item}
               className={(isActive) =>
-                cn(
+                variant === "abyss"
+                  ? cn(
+                      "flex w-full items-center gap-2.5 rounded-chip px-2.5 py-2 pointer-coarse:min-h-11 text-start text-label transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+                      isActive
+                        ? "bg-primary-container text-primary"
+                        : "text-on-surface-variant hover:bg-surface-container hover:text-on-surface",
+                    )
+                  : cn(
                   // `pointer-coarse:min-h-11` is §6.1's touch floor: measured at 32px
                   // tall on every mobile width, and this is the control a student on
                   // a phone touches most. Safe as a min because the row already
                   // centres its content.
-                  "flex w-full items-center gap-2.5 rounded-md px-9px py-2 pointer-coarse:min-h-11 text-start text-body-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent active:scale-[0.98]",
+                  "flex w-full items-center gap-2.5 rounded-md px-9px py-2 pointer-coarse:min-h-11 text-start text-body-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.98]",
                   isActive
-                    ? "bg-surface-2 font-medium text-t1"
-                    : "font-normal text-t2 hover:bg-surface-2",
+                    ? "bg-surface-container-low font-medium text-on-surface"
+                    : "font-normal text-on-surface-variant hover:bg-surface-container-low",
                 )
               }
             >
-              {() => (
+              {(isActive) => (
                 <>
                   <span className="flex-none">{item.icon}</span>
                   <span className="flex-1">{item.label}</span>
-                  {item.badge ? <span className="text-metadata text-t3">{item.badge}</span> : null}
+                  {item.badge ? (
+                    variant === "abyss" ? (
+                      <span
+                        className={cn(
+                          "ms-auto inline-flex h-4.5 min-w-4.5 items-center justify-center rounded-pill px-1.5 pt-0.5 text-data-sm",
+                          isActive || item.urgent
+                            ? "bg-primary text-on-primary"
+                            : "bg-surface-container-high text-on-surface",
+                        )}
+                      >
+                        {item.badge}
+                      </span>
+                    ) : (
+                      <span className="text-metadata text-on-surface-variant">{item.badge}</span>
+                    )
+                  ) : null}
                 </>
               )}
             </NavShellLink>

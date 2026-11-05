@@ -134,10 +134,10 @@ const COLUMNS: { key: SortColumn; label: string; numeric?: boolean }[] = [
 
 function TrendCell({ delta }: { delta: number | null }) {
   if (delta == null) {
-    return <span className="text-body-sm text-ink-faint">No prior paper</span>
+    return <span className="text-body-sm text-on-surface-variant">No prior paper</span>
   }
   const Icon = delta > 0 ? TrendUp : delta < 0 ? TrendDown : Minus
-  const tone = delta > 0 ? "text-ok" : delta < 0 ? "text-err" : "text-ink-muted"
+  const tone = delta > 0 ? "text-success-text" : delta < 0 ? "text-error" : "text-on-surface-variant"
   return (
     <span className={cn("inline-flex items-center gap-1 text-data-sm", tone)}>
       <Icon weight="bold" className="w-3 h-3" aria-hidden />
@@ -149,15 +149,15 @@ function TrendCell({ delta }: { delta: number | null }) {
 
 function AtRiskCell({ flags }: { flags: StudentRow["flags"] }) {
   if (flags.length === 0) {
-    return <span className="text-body-sm text-ink-faint">—</span>
+    return <span className="text-body-sm text-on-surface-variant">—</span>
   }
   return (
     <div className="flex flex-col gap-[7px] max-w-[280px]">
       {flags.map((f) => (
-        <div key={f.reason} className="flex items-start gap-1.5 text-body-sm text-ink-muted leading-[1.4]">
+        <div key={f.reason} className="flex items-start gap-1.5 text-body-sm text-on-surface-variant leading-[1.4]">
           <span
             aria-hidden="true"
-            className="text-err mt-[5px] w-[5px] h-[5px] rounded-full bg-err flex-none"
+            className="text-error mt-[5px] w-[5px] h-[5px] rounded-full bg-error flex-none"
           />
           <span className="flex-1 text-pretty">{f.summary}</span>
           {f.acknowledged ? (
@@ -183,14 +183,14 @@ function AddStudentsPanel({ classId, hasSchool }: { classId: string; hasSchool: 
   }
 
   return (
-    <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-3">
-      <div className="text-display-sm text-ink">Add students</div>
-      <p className="text-body-md text-ink-muted text-pretty m-0">
+    <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px] flex flex-col gap-3">
+      <div className="text-display-sm text-on-surface">Add students</div>
+      <p className="text-body-md text-on-surface-variant text-pretty m-0">
         Share the invite code above, and students join themselves from the student portal. That
         works for every class, with or without a linked school.
       </p>
       {hasSchool ? (
-        <form onSubmit={handleEnroll} className="flex flex-wrap items-end gap-3 pt-2 border-t border-rule">
+        <form onSubmit={handleEnroll} className="flex flex-wrap items-end gap-3 pt-2 border-t border-outline-variant">
           <Input
             label="Or add a student already seated in this school, by id"
             required
@@ -204,13 +204,13 @@ function AddStudentsPanel({ classId, hasSchool }: { classId: string; hasSchool: 
           </Button>
         </form>
       ) : (
-        <p className="text-body-sm text-ink-faint pt-2 border-t border-rule m-0">
+        <p className="text-body-sm text-on-surface-variant pt-2 border-t border-outline-variant m-0">
           This class has no linked school, so there's no seat pool to add a student by id
           from. The invite code above is the only way in.
         </p>
       )}
       {enroll.isError ? (
-        <div className="text-body-sm text-err">Couldn't add that student: {teacherMutationFailureMessage(enroll.error)}</div>
+        <div className="text-body-sm text-error">Couldn't add that student: {teacherMutationFailureMessage(enroll.error)}</div>
       ) : null}
     </div>
   )
@@ -290,7 +290,7 @@ export function ClassRoster() {
                     <button
                       type="button"
                       onClick={() => toggleSort(col.key)}
-                      className="inline-flex items-center gap-1 text-eyebrow text-ink-faint transition-colors hover:text-ink cursor-pointer bg-transparent border-0 p-0"
+                      className="inline-flex items-center gap-1 text-eyebrow text-on-surface-variant transition-colors hover:text-on-surface cursor-pointer bg-transparent border-0 p-0"
                     >
                       {col.label}
                       {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
@@ -311,7 +311,7 @@ export function ClassRoster() {
                     <Avatar name={s.name} size="sm" />
                     <Link
                       to={`/teacher/students/${s.studentId}`}
-                      className="text-ink hover:underline"
+                      className="text-on-surface hover:underline"
                     >
                       {s.name}
                     </Link>
@@ -328,7 +328,7 @@ export function ClassRoster() {
                     {s.grade ? (
                       <GradeBadge grade={s.grade} size="inline" basis="predicted" />
                     ) : (
-                      <span className="text-body-sm text-ink-faint">No grade yet</span>
+                      <span className="text-body-sm text-on-surface-variant">No grade yet</span>
                     )}
                     {s.gradeAtRisk ? <Chip tone="warn">Low</Chip> : null}
                   </div>
@@ -339,14 +339,14 @@ export function ClassRoster() {
                 <TD>
                   <AtRiskCell flags={s.flags} />
                 </TD>
-                <TD className="text-body-sm text-ink-muted whitespace-nowrap">
+                <TD className="text-body-sm text-on-surface-variant whitespace-nowrap">
                   {s.lastActiveAt ? relativeTime(s.lastActiveAt) : "Never"}
                 </TD>
                 <TD className="text-end whitespace-nowrap">
                   <Button
                     size="sm"
                     variant="ghost"
-                    className={cn("text-err", removeStudent.isPending && "opacity-50")}
+                    className={cn("text-error", removeStudent.isPending && "opacity-50")}
                     disabled={removeStudent.isPending}
                     onClick={() => setPendingRemove(s)}
                   >
@@ -381,7 +381,7 @@ export function ClassRoster() {
         }}
       />
       {removeStudent.isError ? (
-        <div className="text-body-sm text-err">
+        <div className="text-body-sm text-error">
           Couldn't remove that student: {teacherMutationFailureMessage(removeStudent.error)}
         </div>
       ) : null}

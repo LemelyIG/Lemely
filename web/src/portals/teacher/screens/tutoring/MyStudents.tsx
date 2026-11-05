@@ -51,20 +51,20 @@ function useStudentsPage(_scope: null, cursor: string | null) {
 
 function StudentRow({ row }: { row: StudentRowView }) {
   return (
-    <li className="relative flex items-center gap-3 border-b border-rule px-4 py-4 transition-colors duration-[var(--dur-instant)] ease-out-soft last:border-b-0 hover:bg-paper-sunk focus-within:bg-paper-sunk active:bg-paper-sunk">
+    <li className="relative flex items-center gap-3 border-b border-outline-variant px-4 py-4 transition-colors duration-[var(--dur-instant)] ease-out-soft last:border-b-0 hover:bg-surface-container-low focus-within:bg-surface-container-low active:bg-surface-container-low">
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <Link
           to={row.href}
           state={{ studentName: row.name }}
           aria-label={row.ariaLabel}
-          className="min-w-0 break-words text-body-lg font-medium text-ink after:absolute after:inset-0"
+          className="min-w-0 break-words text-body-lg font-medium text-on-surface after:absolute after:inset-0"
         >
           {row.name}
         </Link>
-        <p className="m-0 text-body-sm text-ink-muted">{row.sinceLine}</p>
-        <p className="m-0 text-body-sm text-ink-muted">{row.upcomingLine}</p>
+        <p className="m-0 text-body-sm text-on-surface-variant">{row.sinceLine}</p>
+        <p className="m-0 text-body-sm text-on-surface-variant">{row.upcomingLine}</p>
       </div>
-      <CaretRight size={16} className="shrink-0 text-ink-faint" aria-hidden />
+      <CaretRight size={16} className="shrink-0 text-on-surface-variant" aria-hidden />
     </li>
   )
 }
@@ -77,12 +77,12 @@ export function MyStudents() {
       <div className="flex flex-col gap-2">
         <Link
           to={TUTORING_HOME_PATH}
-          className="inline-flex min-h-11 w-fit items-center gap-1 text-body-sm text-ink-muted transition-colors hover:text-ink"
+          className="inline-flex min-h-11 w-fit items-center gap-1 text-body-sm text-on-surface-variant transition-colors hover:text-on-surface"
         >
           <CaretLeft size={14} aria-hidden />
           Back to tutoring
         </Link>
-        <h1 className="m-0 text-display-md text-ink">My students</h1>
+        <h1 className="m-0 text-display-md text-on-surface">My students</h1>
       </div>
 
       {isNoTutorProfile(paged.state.error) ? (
@@ -99,22 +99,22 @@ export function MyStudents() {
           isEmpty={(items) => items.length === 0}
           empty={
             <>
-              <p className="m-0 max-w-prose text-body-md text-ink-muted">{MY_STUDENTS_INTRO}</p>
+              <p className="m-0 max-w-prose text-body-md text-on-surface-variant">{MY_STUDENTS_INTRO}</p>
               <EmptyState heading={NO_STUDENTS_LINE} />
             </>
           }
         >
           {(items) => (
             <>
-              <p className="m-0 max-w-prose text-body-md text-ink-muted">{MY_STUDENTS_INTRO}</p>
+              <p className="m-0 max-w-prose text-body-md text-on-surface-variant">{MY_STUDENTS_INTRO}</p>
               <div className="flex flex-col gap-4">
-                <ul className="m-0 flex list-none flex-col overflow-hidden rounded-lg border border-rule bg-paper-raised p-0">
+                <ul className="m-0 flex list-none flex-col overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest p-0">
                   {items.map((student) => (
                     <StudentRow key={student.grantId} row={studentRowView(student)} />
                   ))}
                 </ul>
                 {paged.moreFailed ? (
-                  <p role="alert" className="m-0 text-body-sm text-err">
+                  <p role="alert" className="m-0 text-body-sm text-error">
                     We couldn't load more students. Press Show more students to try again.
                   </p>
                 ) : null}

@@ -383,7 +383,7 @@ def test_class_analytics_happy_path_payload_shape(
     heatmap_students = {c["studentId"] for c in body["heatmap"]}
     assert heatmap_students == {str(amelia), str(jonas)}
 
-    assert len(body["gradeDistribution"]) == 7  # full GRADE_ORDER ladder
+    assert len(body["gradeDistribution"]) == 9  # full GRADE_ORDER ladder
     dist = {b["grade"]: b["count"] for b in body["gradeDistribution"]}
     assert dist["A"] == 1
     assert dist["D"] == 1

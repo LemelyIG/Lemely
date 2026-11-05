@@ -1,6 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
 import type { ElementType, ReactNode } from "react"
-import { BrandMark } from "./brand-mark"
 import { cn } from "@/lib/utils"
 
 /*
@@ -28,46 +27,57 @@ import { cn } from "@/lib/utils"
 export function BrandLockup({
   size = "sm",
   casing = "title",
-  identity = "notebook",
-  animated,
   as = "div",
   className,
   children,
 }: {
   size?: "sm" | "md"
   casing?: "title" | "lower"
-  identity?: "notebook" | "clip"
-  animated?: boolean
+  /** Retained for marketing call sites; the Clip Letters wordmark is the only identity. */
+  identity?: "clip"
   as?: "div" | "span"
   className?: string
   children?: ReactNode
 }) {
   const Wrapper = as as ElementType
-  if (identity === 'clip') {
-    const clip = <svg aria-hidden="true" width="12" height="29" viewBox="28 4 46 94"><path d="M58 34 V72 A8 8 0 0 1 42 72 V20 A14 14 0 0 1 70 20 V78 A18 18 0 0 1 34 78 V36" fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round" /></svg>
-    return <Wrapper className={cn('clip-wordmark', className)} aria-label="Lemely">{clip}<span aria-hidden="true">eme</span>{clip}<span aria-hidden="true">y</span>{children}</Wrapper>
-  }
-  return (
-    <Wrapper className={cn("flex items-center gap-2.5", className)}>
-      {/* `aria-hidden`: the wordmark right beside it already says "Lemely" (or
-          "lemely"), so describing the mark too would make a screen reader
-          announce the brand twice. `BrandMark` hardcodes this already; it is
-          repeated here so the contract reads at the call site, not just
-          inside a component two files away. */}
-      <BrandMark
-        aria-hidden="true"
-        className={size === "sm" ? "h-6 w-8 shrink-0" : "h-7 w-9 shrink-0"}
-        animated={animated}
+  // The Clip Letters wordmark: the two paperclips stand in for the "l" strokes
+  // of "Lemely". Self-contained so it renders outside the marketing portal.
+  const clip = (
+    <svg
+      aria-hidden="true"
+      viewBox="28 4 46 94"
+      preserveAspectRatio="xMidYMax meet"
+      className="h-[1.1em] w-auto shrink-0"
+    >
+      <path
+        d="M58 34 V72 A8 8 0 0 1 42 72 V20 A14 14 0 0 1 70 20 V78 A18 18 0 0 1 34 78 V36"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="5"
+        strokeLinecap="round"
       />
-      <span
-        className={cn(
-          size === "sm" ? "text-display-sm text-ink" : "text-display-md text-ink",
-          children && "flex flex-col min-w-0",
-        )}
-      >
-        {casing === "lower" ? "lemely" : "Lemely"}
-        {children}
+    </svg>
+  )
+  return (
+    <Wrapper
+      className={cn(
+        "wordmark inline-flex flex-col items-start text-primary",
+        size === "sm" ? "wordmark-sm" : "wordmark-md",
+        className,
+      )}
+      aria-label={casing === "lower" ? "lemely" : "Lemely"}
+    >
+      <span className="inline-flex items-end">
+        {clip}
+        <span aria-hidden="true" className="wordmark-letters text-on-surface">
+          eme
+        </span>
+        {clip}
+        <span aria-hidden="true" className="wordmark-letters text-on-surface">
+          y
+        </span>
       </span>
+      {children}
     </Wrapper>
   )
 }

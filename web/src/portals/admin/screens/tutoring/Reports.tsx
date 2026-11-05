@@ -59,19 +59,19 @@ function Rows({ items }: { items: readonly ReportItem[] }) {
             <div className="flex min-w-0 flex-col gap-0.5">
               <span className="flex items-center gap-2">
                 {isSafetyConcern(item) ? (
-                  <Warning size={18} weight="fill" className="flex-none text-err" aria-hidden="true" />
+                  <Warning size={18} weight="fill" className="flex-none text-error" aria-hidden="true" />
                 ) : null}
                 <Link
                   to={`/platform/reports/${encodeURIComponent(item.reportId)}`}
-                  className="inline-flex min-h-11 items-center rounded-sm text-body-md font-medium text-accent-ink underline underline-offset-2 transition-colors hover:text-accent-hover"
+                  className="inline-flex min-h-11 items-center rounded-sm text-body-md font-medium text-on-primary-container underline underline-offset-2 transition-colors hover:text-primary-hover"
                 >
                   {reportReasonLabel(item.reason)}
                 </Link>
               </span>
-              <span className="text-body-sm text-ink-muted">{reportTargetLabel(item.targetType)}</span>
+              <span className="text-body-sm text-on-surface-variant">{reportTargetLabel(item.targetType)}</span>
             </div>
           </TD>
-          <TD className="whitespace-nowrap align-top text-body-sm text-ink-muted">
+          <TD className="whitespace-nowrap align-top text-body-sm text-on-surface-variant">
             <time dateTime={item.createdAt} className="tabular-nums">
               {formatAdminDay(item.createdAt)}
             </time>
@@ -111,7 +111,7 @@ function NextRows({ state, cursor }: { state: State; cursor: string }) {
   if (query.isPending) {
     return (
       <SpanRow>
-        <p role="status" className="m-0 text-body-sm text-ink-muted">
+        <p role="status" className="m-0 text-body-sm text-on-surface-variant">
           Loading more reports
         </p>
       </SpanRow>
@@ -121,7 +121,7 @@ function NextRows({ state, cursor }: { state: State; cursor: string }) {
     return (
       <SpanRow>
         <div className="flex flex-wrap items-center gap-3">
-          <p role="alert" className="m-0 text-body-sm text-ink">
+          <p role="alert" className="m-0 text-body-sm text-on-surface">
             {adminFailureMessage(query.error, "We couldn't load more reports.")}
           </p>
           <Button className="min-h-11" size="sm" onClick={() => void query.refetch()}>
@@ -148,8 +148,8 @@ export function Reports() {
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1.5">
         <Eyebrow>Platform admin</Eyebrow>
-        <h1 className="text-display-lg text-ink">Reports</h1>
-        <p className="max-w-prose text-body-md text-ink-muted">
+        <h1 className="text-display-lg text-on-surface">Reports</h1>
+        <p className="max-w-prose text-body-md text-on-surface-variant">
           Things students, parents and tutors have reported. Safety concerns come first.
         </p>
       </header>

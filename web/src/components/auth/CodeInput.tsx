@@ -171,12 +171,12 @@ export function CodeInput({ length, value, onChange, onComplete, disabled, error
             onChange={(event) => handleChange(index, event.target.value)}
             onKeyDown={(event) => handleKeyDown(index, event.key)}
             onPaste={handlePaste}
-            className="h-14 w-full min-w-0 rounded-md border border-rule bg-paper-raised text-center text-data-lg text-ink transition-colors hover:border-rule-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            className="h-14 w-full min-w-0 rounded-md border border-outline-variant bg-surface-container-lowest text-center text-data-lg text-on-surface transition-colors hover:border-outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           />
         ))}
       </div>
       {error ? (
-        <p role="alert" className="text-body-md text-warn">
+        <p role="alert" className="text-body-md text-on-tertiary-container">
           {error}
         </p>
       ) : null}

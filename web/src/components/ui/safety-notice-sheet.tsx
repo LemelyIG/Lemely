@@ -75,7 +75,7 @@ export function SafetyNoticeSheet({
       dismissible={false}
       hideCloseButton
       description={
-        <span className="mt-2 flex flex-col gap-3 text-ink">
+        <span className="mt-2 flex flex-col gap-3 text-on-surface">
           {safetyNoticeParagraphs(documentsSeen).map((paragraph) => (
             <span key={paragraph} className="block">
               {paragraph}
@@ -99,7 +99,7 @@ export function SafetyNoticeSheet({
       }
     >
       {errorText ? (
-        <p role="alert" className="m-0 text-body-sm text-err">
+        <p role="alert" className="m-0 text-body-sm text-error">
           {errorText}
         </p>
       ) : null}

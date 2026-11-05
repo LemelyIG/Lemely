@@ -85,7 +85,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import RowMapping
     from sqlalchemy.orm import Session, sessionmaker
 
-#: The recorded ladder (ADR-T04; decision row 19): A* to E, then U.
+#: The recorded ladder (ADR-T04; decision row 19): ``GRADE_ORDER``, A* to G, then U.
 LADDER: Final[tuple[str, ...]] = tuple(GRADE_ORDER)
 
 #: Listing states whose own preview shows outcomes (T8, SPEC §a.4b ID-7), as a SQL list.

@@ -241,6 +241,7 @@ export interface AtRiskStudent {
   delta: number | null
   weakTopic: string | null
   flags: AtRiskFlag[]
+  previousGrade: string | null
 }
 
 /**
@@ -270,6 +271,14 @@ export interface Overview {
   atRisk: AtRiskStudent[]
   retention: number[]
   recentActivity: RecentActivity[]
+  paperCount: number
+  pendingReviewCount: number
+  /** 10 counts, one per 10% confidence band over pending review items. */
+  reviewConfidenceBuckets: number[]
+  /** ceil(pending x 20s / 60); a heuristic, rendered as "about N min". */
+  reviewEstimateMinutes: number
+  /** Auto-grade cut-off (0-1); marks below it are queued for review. */
+  reviewConfidenceThreshold: number
 }
 
 // ── Classes ───────────────────────────────────────────────────────────────
@@ -295,6 +304,19 @@ export interface ClassSummary {
   atRiskCount: number | null
   lastActivityAt: string | null
   topWeakness: string | null
+  /**
+   * Class-card fields, grade-bearing papers only (optional: an older server
+   * omits them). `grade` is the median of each student's latest paper grade
+   * (lower middle on an even count); `delta` is percentage points between the
+   * latest and previous papers' means; `lastPaper` is "P4"-style;
+   * `topWeaknessAccuracy` is 0-1 for `topWeakness` on the latest papers.
+   */
+  grade?: string | null
+  delta?: number | null
+  lastPaper?: string | null
+  /** When that paper was recorded (never a quiz); `lastActivityAt` counts quizzes. */
+  lastPaperAt?: string | null
+  topWeaknessAccuracy?: number | null
 }
 
 /** Response for `GET /teacher/classes` (mirrors `ClassListDTO`). */

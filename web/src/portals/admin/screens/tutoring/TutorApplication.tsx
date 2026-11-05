@@ -80,12 +80,12 @@ const STATE_TONE: Record<ListingState, BadgeTone> = {
   closed: "info",
 }
 
-const TEXT = "max-w-prose whitespace-pre-wrap break-words text-body-md text-ink"
+const TEXT = "max-w-prose whitespace-pre-wrap break-words text-body-md text-on-surface"
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="flex flex-col gap-3 border-t border-rule pt-6">
-      <h2 className="text-display-sm text-ink">{title}</h2>
+    <section className="flex flex-col gap-3 border-t border-outline-variant pt-6">
+      <h2 className="text-display-sm text-on-surface">{title}</h2>
       {children}
     </section>
   )
@@ -94,8 +94,8 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
-      <dt className="text-body-sm text-ink-muted">{label}</dt>
-      <dd className="m-0 break-words text-body-md text-ink">{children}</dd>
+      <dt className="text-body-sm text-on-surface-variant">{label}</dt>
+      <dd className="m-0 break-words text-body-md text-on-surface">{children}</dd>
     </div>
   )
 }
@@ -115,17 +115,17 @@ function EvidenceRow({
 }) {
   const usable = file.signedUrl !== null && !expired
   return (
-    <li className="flex flex-col gap-2 border-b border-rule py-3 last:border-b-0 sm:flex-row sm:items-start sm:justify-between">
+    <li className="flex flex-col gap-2 border-b border-outline-variant py-3 last:border-b-0 sm:flex-row sm:items-start sm:justify-between">
       <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="flex items-start gap-2 break-all text-body-md text-ink">
-          <FileText size={18} className="mt-0.5 flex-none text-ink-faint" aria-hidden="true" />
+        <span className="flex items-start gap-2 break-all text-body-md text-on-surface">
+          <FileText size={18} className="mt-0.5 flex-none text-on-surface-variant" aria-hidden="true" />
           {file.filename}
         </span>
-        <span className="text-body-sm text-ink-muted">
+        <span className="text-body-sm text-on-surface-variant">
           {file.contentType}, {formatFileSize(file.sizeBytes)}, uploaded{" "}
           <time dateTime={file.uploadedAt}>{formatAdminDay(file.uploadedAt)}</time>
         </span>
-        {file.description ? <span className="whitespace-pre-wrap break-words text-body-sm text-ink-muted">{file.description}</span> : null}
+        {file.description ? <span className="whitespace-pre-wrap break-words text-body-sm text-on-surface-variant">{file.description}</span> : null}
       </div>
       <div className="flex flex-none flex-wrap items-center gap-2">
         {opened ? (
@@ -146,7 +146,7 @@ function EvidenceRow({
             Open file
           </a>
         ) : (
-          <span className="text-body-sm text-ink-muted">{expired ? "Link expired" : "No link"}</span>
+          <span className="text-body-sm text-on-surface-variant">{expired ? "Link expired" : "No link"}</span>
         )}
       </div>
     </li>
@@ -181,19 +181,19 @@ function Documents({
   return (
     <Section title="Documents">
       {detail.evidence.length === 0 ? (
-        <p className="m-0 text-body-md text-ink-muted">This tutor has not uploaded any files.</p>
+        <p className="m-0 text-body-md text-on-surface-variant">This tutor has not uploaded any files.</p>
       ) : (
         <>
-          <p className="m-0 max-w-prose text-body-sm text-ink-muted">
+          <p className="m-0 max-w-prose text-body-sm text-on-surface-variant">
             Each file downloads from a link that works for {EVIDENCE_LINK_TTL_SECONDS / 60} minutes from
             when this page loaded. Every link issued is logged.
           </p>
           {expired ? (
             <div
               role="alert"
-              className="flex flex-wrap items-center gap-3 rounded-lg border border-rule bg-warn-wash px-4 py-3"
+              className="flex flex-wrap items-center gap-3 rounded-lg border border-outline-variant bg-tertiary-container px-4 py-3"
             >
-              <p className="m-0 text-body-md text-ink">The links have expired.</p>
+              <p className="m-0 text-body-md text-on-surface">The links have expired.</p>
               <Button className="min-h-11" size="sm" loading={refreshing} onClick={onRefresh}>
                 Get new links
               </Button>
@@ -259,7 +259,7 @@ export function DecisionDialog({
       }
     >
       <div className="flex flex-col gap-4">
-        <p className="m-0 text-body-md text-ink">{copy.consequence}</p>
+        <p className="m-0 text-body-md text-on-surface">{copy.consequence}</p>
         <Textarea
           label={copy.noteLabel}
           value={note}
@@ -269,10 +269,10 @@ export function DecisionDialog({
           error={!blank && problem !== null ? problem : undefined}
         />
         {rule.required && blank ? (
-          <p className="m-0 text-body-sm text-ink-muted">A note is needed before this can go through.</p>
+          <p className="m-0 text-body-sm text-on-surface-variant">A note is needed before this can go through.</p>
         ) : null}
         {error ? (
-          <p role="alert" className="m-0 text-body-sm text-err">
+          <p role="alert" className="m-0 text-body-sm text-error">
             {adminFailureMessage(error, "That didn't go through. Try again.")}
           </p>
         ) : null}
@@ -319,7 +319,7 @@ function ApproveForm({
       }}
     >
       {noFiles ? (
-        <p className="m-0 max-w-prose text-body-md text-ink-muted">{noEvidenceLine(detail.listingState)}</p>
+        <p className="m-0 max-w-prose text-body-md text-on-surface-variant">{noEvidenceLine(detail.listingState)}</p>
       ) : (
         <div className="flex items-center [&_label]:min-h-11">
           <Checkbox
@@ -343,12 +343,12 @@ function ApproveForm({
           {label}
         </Button>
         {shown ? (
-          <p id={reasonId} className="m-0 text-body-sm text-ink-muted">
+          <p id={reasonId} className="m-0 text-body-sm text-on-surface-variant">
             {shown}
           </p>
         ) : null}
         {approve.isError ? (
-          <p role="alert" className="m-0 text-body-sm text-err">
+          <p role="alert" className="m-0 text-body-sm text-error">
             {adminFailureMessage(approve.error, "That didn't go through. Try again.")}
           </p>
         ) : null}
@@ -376,7 +376,7 @@ function Decisions({
   const mutation = { reject, suspend, close }
 
   if (decisions.length === 0) {
-    return <p className="m-0 text-body-md text-ink-muted">This profile is closed. No decisions are left.</p>
+    return <p className="m-0 text-body-md text-on-surface-variant">This profile is closed. No decisions are left.</p>
   }
 
   const others = decisions.filter((decision): decision is Exclude<TutorDecision, "approve"> => decision !== "approve")
@@ -404,7 +404,7 @@ function Decisions({
               </Button>
             ))}
           </div>
-          {!online ? <p className="m-0 text-body-sm text-ink-muted">You're offline. Reconnect to decide.</p> : null}
+          {!online ? <p className="m-0 text-body-sm text-on-surface-variant">You're offline. Reconnect to decide.</p> : null}
         </div>
       ) : null}
       {dialog && active ? (
@@ -467,11 +467,11 @@ function Application({
       <header className="flex flex-col gap-2">
         <Eyebrow>Platform admin</Eyebrow>
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-display-lg text-ink">{detail.publicName}</h1>
+          <h1 className="text-display-lg text-on-surface">{detail.publicName}</h1>
           <Badge tone={STATE_TONE[detail.listingState]}>{listingStateLabel(detail.listingState)}</Badge>
           {detail.paused ? <Badge tone="info">Paused by the tutor</Badge> : null}
         </div>
-        <p className="m-0 text-body-md text-ink-muted">{detail.headline}</p>
+        <p className="m-0 text-body-md text-on-surface-variant">{detail.headline}</p>
       </header>
 
       {done ? (
@@ -479,17 +479,17 @@ function Application({
           ref={doneRef}
           tabIndex={-1}
           role="status"
-          className="m-0 rounded-lg border border-rule bg-ok-wash px-4 py-3 text-body-md text-ink"
+          className="m-0 rounded-lg border border-outline-variant bg-success-container px-4 py-3 text-body-md text-on-surface"
         >
           {done}
         </p>
       ) : null}
 
       {detail.openReports > 0 ? (
-        <p className="m-0 flex flex-wrap items-center gap-2 text-body-md text-ink">
-          <Warning size={18} className="flex-none text-warn" aria-hidden="true" />
+        <p className="m-0 flex flex-wrap items-center gap-2 text-body-md text-on-surface">
+          <Warning size={18} className="flex-none text-on-tertiary-container" aria-hidden="true" />
           {detail.openReports === 1 ? "1 open report" : `${detail.openReports} open reports`} about this tutor.
-          <Link to="/platform/reports" className="inline-flex min-h-11 items-center rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent-hover">
+          <Link to="/platform/reports" className="inline-flex min-h-11 items-center rounded-sm text-on-primary-container underline underline-offset-2 transition-colors hover:text-primary-hover">
             Go to reports
           </Link>
         </p>
@@ -519,29 +519,29 @@ function Application({
           <Fact label="Documents seen at last approval">{detail.documentsSeen ? "Yes" : "No"}</Fact>
         </dl>
         <div className="flex flex-col gap-1">
-          <h3 className="text-label text-ink-muted">About</h3>
+          <h3 className="text-label text-on-surface-variant">About</h3>
           <p className={`m-0 ${TEXT}`}>{detail.bio === "" ? "Not set" : detail.bio}</p>
         </div>
         <div className="flex flex-col gap-1">
-          <h3 className="text-label text-ink-muted">Qualifications</h3>
+          <h3 className="text-label text-on-surface-variant">Qualifications</h3>
           <p className={`m-0 ${TEXT}`}>{detail.qualificationNote ?? "Not set"}</p>
         </div>
         {detail.otherModeNote ? (
           <div className="flex flex-col gap-1">
-            <h3 className="text-label text-ink-muted">Another way to meet</h3>
+            <h3 className="text-label text-on-surface-variant">Another way to meet</h3>
             <p className={`m-0 ${TEXT}`}>{detail.otherModeNote}</p>
           </div>
         ) : null}
         <div className="flex flex-col gap-1">
-          <h3 className="text-label text-ink-muted">Weekly availability, {detail.zoneLabel}</h3>
+          <h3 className="text-label text-on-surface-variant">Weekly availability, {detail.zoneLabel}</h3>
           {rows.length === 0 ? (
-            <p className="m-0 text-body-md text-ink-muted">No times set.</p>
+            <p className="m-0 text-body-md text-on-surface-variant">No times set.</p>
           ) : (
             <dl className="m-0 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1">
               {rows.map((row) => (
                 <div key={row.isoWeekday} className="contents">
-                  <dt className="text-body-md text-ink-muted">{row.dayLabel}</dt>
-                  <dd className="m-0 text-body-md tabular-nums text-ink">{row.ranges.join(", ")}</dd>
+                  <dt className="text-body-md text-on-surface-variant">{row.dayLabel}</dt>
+                  <dd className="m-0 text-body-md tabular-nums text-on-surface">{row.ranges.join(", ")}</dd>
                 </div>
               ))}
             </dl>
@@ -560,12 +560,12 @@ function Application({
 
       <Section title="History">
         {detail.history.length === 0 ? (
-          <p className="m-0 text-body-md text-ink-muted">No decisions yet.</p>
+          <p className="m-0 text-body-md text-on-surface-variant">No decisions yet.</p>
         ) : (
           <ol className="m-0 flex list-none flex-col gap-3 p-0">
             {detail.history.map((event) => (
               <li key={`${event.createdAt}-${event.decision}`} className="flex flex-col gap-0.5">
-                <span className="text-body-md text-ink">
+                <span className="text-body-md text-on-surface">
                   <span className="font-medium">{HISTORY_LABEL[event.decision]}</span>
                   {", "}
                   <time dateTime={event.createdAt}>{formatAdminDay(event.createdAt)}</time>
@@ -575,7 +575,7 @@ function Application({
                       : ", documents not seen"
                     : ""}
                 </span>
-                {event.note ? <span className="whitespace-pre-wrap break-words text-body-sm text-ink-muted">{event.note}</span> : null}
+                {event.note ? <span className="whitespace-pre-wrap break-words text-body-sm text-on-surface-variant">{event.note}</span> : null}
               </li>
             ))}
           </ol>

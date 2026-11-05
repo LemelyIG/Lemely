@@ -175,8 +175,10 @@ previous published set (a snapshot) or a rule that depends on the order of
 past reads, and the user declined the snapshot.
 
 **Ladder (former SPEC O-4, confirmed by decision-log row 19 on 2026-10-25):**
-row 8 says "A*..G". Recorded grades stop at E and then U; F and G are not
-grade-bearing today. The chart renders the recorded ladder, U included.
+row 8 says "A*..G". The chart renders the recorded ladder (`GRADE_ORDER`), U
+included. Recorded grades stopped at E and then U when this was written; the
+Cambridge Core-tier grades F and G became grade-bearing afterwards, so the
+ladder is now A* to G, then U.
 
 ## Consequences
 

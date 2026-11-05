@@ -210,8 +210,11 @@ test.describe("teacher sign-up: role select to a class join code", () => {
     // class is not gated, and this is the assertion that it really is not.
     await page.getByRole("link", { name: "Continue to Lemely" }).click()
 
-    // D7.10: zero classes sends a fresh teacher to the first-class step.
-    await expect(page).toHaveURL(/\/teacher\/first-class$/, { timeout: 15_000 })
+    // A fresh teacher lands on the home's setup screen (no redirect), and
+    // creates the first class from its "Create a class" link.
+    await expect(page).toHaveURL(/\/teacher$/, { timeout: 15_000 })
+    await page.getByRole("link", { name: "Create a class" }).first().click()
+    await expect(page).toHaveURL(/\/teacher\/first-class$/)
     await expect(page.getByRole("heading", { name: "Create your first class" })).toBeVisible()
 
     await page.getByLabel("Class name").fill(`E2E Class ${runTag}`)

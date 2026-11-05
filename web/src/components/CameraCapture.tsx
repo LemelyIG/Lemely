@@ -447,21 +447,21 @@ export function CameraCapture({
           <img
             src={page.url}
             alt={`Captured page ${i + 1}`}
-            className="w-[74px] h-[98px] object-cover rounded-md border border-border"
+            className="w-[74px] h-[98px] object-cover rounded-md border border-outline-variant"
           />
           {/* P6.2: `start-1`, not `left-1`. §3.4's RTL rule, found the moment
               this file was added to `rtlSafety.test.ts` — it had never been in
               either gate list, which is the same "a file no gate reads"
               mechanism surface 10 named, on the camera half of the flagship
               flow. The page number belongs at the reading-start corner. */}
-          <span className="absolute top-1 start-1 rounded-full bg-ink/70 text-accent-on text-3xs leading-none px-1.5 py-0.5">
+          <span className="absolute top-1 start-1 rounded-full bg-inverse-surface/70 text-on-primary text-3xs leading-none px-1.5 py-0.5">
             {i + 1}
           </span>
           <button
             type="button"
             onClick={() => removePage(page.id)}
             aria-label={`Remove page ${i + 1}`}
-            className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-ink text-accent-on flex items-center justify-center cursor-pointer transition-colors hover:bg-ink-hover"
+            className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-inverse-surface text-on-primary flex items-center justify-center cursor-pointer transition-colors hover:bg-on-surface"
           >
             <Trash size={11} weight="bold" />
           </button>
@@ -478,7 +478,7 @@ export function CameraCapture({
           // (`autoStart={false}`) — `getUserMedia` waits for this tap
           // instead of firing on mount. See the module header.
           <div className="flex flex-col items-center gap-4 py-10 text-center">
-            <p className="text-dense-sm text-t3 max-w-[36ch] text-pretty">
+            <p className="text-dense-sm text-on-surface-variant max-w-[36ch] text-pretty">
               Lemely needs your camera to photograph the paper.
             </p>
             <div className="flex items-center gap-2.5 flex-wrap justify-center">
@@ -504,14 +504,14 @@ export function CameraCapture({
               never sees this. */}
           <div
             role="status"
-            className="hidden landscape:pointer-coarse:flex items-center gap-2 rounded-md bg-warn/10 px-3 py-2 text-dense-sm text-warn"
+            className="hidden landscape:pointer-coarse:flex items-center gap-2 rounded-md bg-tertiary/10 px-3 py-2 text-dense-sm text-on-tertiary-container"
           >
             Turn your phone upright for the best scan.
           </div>
 
-          <div className="relative w-full aspect-[3/4] max-h-[420px] bg-ink rounded-md overflow-hidden flex items-center justify-center">
+          <div className="relative w-full aspect-[3/4] max-h-[420px] bg-inverse-surface rounded-md overflow-hidden flex items-center justify-center">
             {cameraError ? (
-              <div className="text-dense-sm text-accent-on text-center px-6 leading-[1.5] text-pretty">
+              <div className="text-dense-sm text-on-primary text-center px-6 leading-[1.5] text-pretty">
                 {cameraError}
               </div>
             ) : (
@@ -524,7 +524,7 @@ export function CameraCapture({
               />
             )}
             {starting && !cameraError ? (
-              <div className="absolute inset-0 flex items-center justify-center text-dense-sm text-accent-on/80">
+              <div className="absolute inset-0 flex items-center justify-center text-dense-sm text-on-primary/80">
                 Starting camera...
               </div>
             ) : null}
@@ -542,7 +542,7 @@ export function CameraCapture({
                 <polygon
                   ref={overlayRef}
                   points=""
-                  className="text-accent"
+                  className="text-primary"
                   fill="currentColor"
                   fillOpacity={0.15}
                   stroke="currentColor"
@@ -559,7 +559,7 @@ export function CameraCapture({
                 aria-pressed={torchOn}
                 className={cn(
                   "absolute top-2.5 end-2.5 w-9 h-9 rounded-full flex items-center justify-center transition-colors",
-                  torchOn ? "bg-accent text-accent-on" : "bg-ink/60 text-accent-on hover:bg-ink/75",
+                  torchOn ? "bg-primary text-on-primary" : "bg-inverse-surface/60 text-on-primary hover:bg-inverse-surface/75",
                 )}
               >
                 <Flashlight size={16} weight={torchOn ? "fill" : "regular"} />
@@ -606,13 +606,13 @@ export function CameraCapture({
           <div className="text-dense font-medium">
             {pages.length} page{pages.length === 1 ? "" : "s"} captured
           </div>
-          <div className="text-xs text-t3">
+          <div className="text-xs text-on-surface-variant">
             Check every page before finishing - remove and reshoot anything
             blurry or cut off.
           </div>
           {thumbnailStrip}
           {assembleError ? (
-            <div className="text-dense-sm text-accent-ink leading-[1.5] text-pretty">
+            <div className="text-dense-sm text-on-primary-container leading-[1.5] text-pretty">
               {assembleError}
             </div>
           ) : null}

@@ -101,10 +101,10 @@ export function TutorProfileHeader({ tutor, headingAs: Heading = "h1", className
   return (
     <header className={className ?? "flex flex-col gap-3"}>
       <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
-        <Heading className="m-0 min-w-0 text-display-md text-ink">{tutor.publicName}</Heading>
+        <Heading className="m-0 min-w-0 text-display-md text-on-surface">{tutor.publicName}</Heading>
         <RatingSummary rating={tutor.rating} />
       </div>
-      <p className="m-0 text-body-lg text-ink-muted">{tutor.headline}</p>
+      <p className="m-0 text-body-lg text-on-surface-variant">{tutor.headline}</p>
       <ul className="m-0 flex list-none flex-wrap gap-1.5 p-0" aria-label="Subjects">
         {tutor.subjects.map((subject) => (
           <li key={subject.code}>
@@ -112,7 +112,7 @@ export function TutorProfileHeader({ tutor, headingAs: Heading = "h1", className
           </li>
         ))}
       </ul>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-body-md text-ink-muted">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-body-md text-on-surface-variant">
         <ul className="m-0 flex list-none flex-wrap gap-x-3 gap-y-1 p-0" aria-label="Ways to meet">
           {tutor.modes.map((mode) => {
             const { label, icon: ModeIcon } = MODE[mode]
@@ -133,14 +133,14 @@ export function TutorProfileHeader({ tutor, headingAs: Heading = "h1", className
       </div>
       {full?.documentsSeen ? (
         <details className="max-w-prose">
-          <summary className="inline-flex cursor-pointer list-none items-center gap-2 rounded-md py-1 text-body-sm text-ink">
+          <summary className="inline-flex cursor-pointer list-none items-center gap-2 rounded-md py-1 text-body-sm text-on-surface">
             <Chip tone="neutral" className="gap-1.5">
               <FileText size={14} aria-hidden />
               {DOCUMENTS_SEEN_LABEL}
             </Chip>
-            <span className="text-ink-muted underline underline-offset-4">What this means</span>
+            <span className="text-on-surface-variant underline underline-offset-4">What this means</span>
           </summary>
-          <p className="m-0 mt-2 text-body-sm text-ink-muted">{DOCUMENTS_SEEN_DISCLOSURE}</p>
+          <p className="m-0 mt-2 text-body-sm text-on-surface-variant">{DOCUMENTS_SEEN_DISCLOSURE}</p>
         </details>
       ) : null}
     </header>
@@ -154,25 +154,25 @@ export function TutorAbout({ profile }: { profile: TutorProfile }) {
     <div className="flex flex-col gap-4">
       {profile.bio.trim() !== "" ? (
         <section aria-labelledby="tutor-about" className="flex flex-col gap-2">
-          <h2 id="tutor-about" className="m-0 text-display-sm text-ink">
+          <h2 id="tutor-about" className="m-0 text-display-sm text-on-surface">
             About
           </h2>
-          <p className="m-0 max-w-prose whitespace-pre-line text-body-md text-ink">{profile.bio}</p>
+          <p className="m-0 max-w-prose whitespace-pre-line text-body-md text-on-surface">{profile.bio}</p>
         </section>
       ) : null}
       {profile.qualificationNote ? (
-        <p className="m-0 max-w-prose whitespace-pre-line text-body-md text-ink">
-          <span className="text-label text-ink">Qualifications. </span>
+        <p className="m-0 max-w-prose whitespace-pre-line text-body-md text-on-surface">
+          <span className="text-label text-on-surface">Qualifications. </span>
           {profile.qualificationNote}
         </p>
       ) : null}
       {profile.modes.includes("other") && profile.otherModeNote ? (
-        <p className="m-0 max-w-prose whitespace-pre-line text-body-md text-ink">
-          <span className="text-label text-ink">Other way to meet. </span>
+        <p className="m-0 max-w-prose whitespace-pre-line text-body-md text-on-surface">
+          <span className="text-label text-on-surface">Other way to meet. </span>
           {profile.otherModeNote}
         </p>
       ) : null}
-      <p className="m-0 text-body-md text-ink-muted">{FEES_LINE}</p>
+      <p className="m-0 text-body-md text-on-surface-variant">{FEES_LINE}</p>
     </div>
   )
 }
@@ -183,11 +183,11 @@ export function AvailabilityTable({ profile }: { profile: Pick<TutorProfile, "av
   const rows = availabilityRows(profile.availability)
   return (
     <section aria-labelledby="tutor-availability" className="flex flex-col gap-2">
-      <h2 id="tutor-availability" className="m-0 text-display-sm text-ink">
+      <h2 id="tutor-availability" className="m-0 text-display-sm text-on-surface">
         Weekly availability
       </h2>
       <Table density="operate">
-        <caption className="px-4 py-2 text-start text-body-sm text-ink-muted">
+        <caption className="px-4 py-2 text-start text-body-sm text-on-surface-variant">
           Usual times each week, in {profile.zoneLabel}. Open times for a date are shown when you book.
         </caption>
         <THead sticky={false}>
@@ -202,7 +202,7 @@ export function AvailabilityTable({ profile }: { profile: Pick<TutorProfile, "av
               <TH scope="row">{row.dayLabel}</TH>
               <TD>
                 {row.ranges.length === 0 ? (
-                  <span className="text-ink-muted">No times</span>
+                  <span className="text-on-surface-variant">No times</span>
                 ) : (
                   <span className="flex flex-col text-data-md">
                     {row.ranges.map((range) => (
@@ -228,7 +228,7 @@ export function OutcomesPanel({ outcomes }: { outcomes: Outcomes }) {
   )
   return (
     <section aria-labelledby="tutor-results" className="flex flex-col gap-5">
-      <h2 id="tutor-results" className="m-0 text-display-sm text-ink">
+      <h2 id="tutor-results" className="m-0 text-display-sm text-on-surface">
         Results with this tutor
       </h2>
       {outcomes.subjects.length === 0 ? (
@@ -236,10 +236,10 @@ export function OutcomesPanel({ outcomes }: { outcomes: Outcomes }) {
       ) : (
         outcomes.subjects.map((entry) => (
           <div key={entry.subject.code} className="flex flex-col gap-3">
-            <h3 className="m-0 text-body-lg font-medium text-ink">{entry.subject.name}</h3>
+            <h3 className="m-0 text-body-lg font-medium text-on-surface">{entry.subject.name}</h3>
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
               <div className="flex min-w-0 flex-col gap-3">
-                <h4 className="m-0 text-label text-ink">Grades during their time with this tutor</h4>
+                <h4 className="m-0 text-label text-on-surface">Grades during their time with this tutor</h4>
                 <OrdinalDistribution
                   ladder={outcomes.ladder}
                   distribution={entry.distribution}
@@ -254,7 +254,7 @@ export function OutcomesPanel({ outcomes }: { outcomes: Outcomes }) {
         ))
       )}
       {anyShown ? (
-        <p className="m-0 max-w-prose text-body-sm text-ink-muted">
+        <p className="m-0 max-w-prose text-body-sm text-on-surface-variant">
           {resultsCaption(outcomes.duringWindowDays, outcomes.beforeLookbackDays)}
         </p>
       ) : null}
@@ -303,22 +303,22 @@ function ReviewItem({
   return (
     <li
       tabIndex={focusable ? -1 : undefined}
-      className="flex flex-col gap-2 border-t border-rule py-4 first:border-t-0 first:pt-0"
+      className="flex flex-col gap-2 border-t border-outline-variant py-4 first:border-t-0 first:pt-0"
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="inline-flex items-center gap-1.5 text-data-md text-ink">
-          <Star size={16} weight="fill" className="text-pastel-amber-ink" aria-hidden />
+        <span className="inline-flex items-center gap-1.5 text-data-md text-on-surface">
+          <Star size={16} weight="fill" className="text-on-tertiary-container" aria-hidden />
           <span aria-hidden>{review.stars}</span>
           <span className="sr-only">{review.stars} out of 5</span>
         </span>
-        <span className="text-body-sm text-ink-muted">A student</span>
-        <span className="text-body-sm text-ink-faint">{review.period}</span>
+        <span className="text-body-sm text-on-surface-variant">A student</span>
+        <span className="text-body-sm text-on-surface-variant">{review.period}</span>
       </div>
-      {review.text ? <p className="m-0 max-w-prose whitespace-pre-line text-body-md text-ink">{review.text}</p> : null}
+      {review.text ? <p className="m-0 max-w-prose whitespace-pre-line text-body-md text-on-surface">{review.text}</p> : null}
       {review.reply ? (
-        <div className="ms-4 flex max-w-prose flex-col gap-1 border-s border-rule ps-4">
-          <span className="text-label text-ink-muted">Reply from {tutorName}</span>
-          <p className="m-0 whitespace-pre-line text-body-md text-ink">{review.reply.body}</p>
+        <div className="ms-4 flex max-w-prose flex-col gap-1 border-s border-outline-variant ps-4">
+          <span className="text-label text-on-surface-variant">Reply from {tutorName}</span>
+          <p className="m-0 whitespace-pre-line text-body-md text-on-surface">{review.reply.body}</p>
         </div>
       ) : null}
     </li>
@@ -352,7 +352,7 @@ function ReviewsPageView({
       }
       error={{ heading: "We couldn't load the reviews", retryLabel: "Try again", compact: true }}
       isEmpty={(page: ReviewsPage) => index === 0 && page.items.length === 0}
-      empty={<p className="m-0 text-body-md text-ink-muted">{NO_REVIEWS_LINE}</p>}
+      empty={<p className="m-0 text-body-md text-on-surface-variant">{NO_REVIEWS_LINE}</p>}
     >
       {(page) => <ReviewList page={page} tutorName={tutorName} focusFirst={index > 0} canMore={!followed} onMore={onMore} />}
     </QueryState>
@@ -403,7 +403,7 @@ export function ReviewsSection({ tutorId, tutorName }: { tutorId: string; tutorN
   const [cursors, setCursors] = useState<(string | null)[]>([null])
   return (
     <section aria-labelledby="tutor-reviews" className="flex flex-col gap-3">
-      <h2 id="tutor-reviews" className="m-0 text-display-sm text-ink">
+      <h2 id="tutor-reviews" className="m-0 text-display-sm text-on-surface">
         Reviews
       </h2>
       {cursors.map((cursor, index) => (

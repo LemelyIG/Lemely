@@ -78,7 +78,7 @@ function StarPicker({
   const name = useId()
   return (
     <fieldset className="m-0 flex min-w-0 flex-col gap-1.5 border-0 p-0" disabled={disabled}>
-      <legend className="mb-1 p-0 text-label text-ink">Your rating</legend>
+      <legend className="mb-1 p-0 text-label text-on-surface">Your rating</legend>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <div className="flex items-center">
           {STAR_VALUES.map((stars) => {
@@ -88,7 +88,7 @@ function StarPicker({
                 key={stars}
                 className={cn(
                   "relative inline-flex size-11 cursor-pointer items-center justify-center rounded-md",
-                  "has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-focus-ring",
+                  "has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-primary",
                   "has-disabled:cursor-not-allowed has-disabled:opacity-50",
                 )}
               >
@@ -104,14 +104,14 @@ function StarPicker({
                 <Star
                   size={28}
                   weight={filled ? "fill" : "regular"}
-                  className={cn(filled ? "text-pastel-amber-ink" : "text-ink-faint")}
+                  className={cn(filled ? "text-on-tertiary-container" : "text-on-surface-variant")}
                   aria-hidden
                 />
               </label>
             )
           })}
         </div>
-        <span className={cn("text-body-sm", invalid ? "text-err" : "text-ink-muted")} aria-live="polite">
+        <span className={cn("text-body-sm", invalid ? "text-error" : "text-on-surface-variant")} aria-live="polite">
           {value > 0 ? `${value} of 5 stars` : "Choose 1 to 5 stars."}
         </span>
       </div>
@@ -180,11 +180,11 @@ export function ReviewForm(props: ReviewFormProps) {
             }}
           />
         ) : null}
-        <p className="m-0 max-w-prose text-body-sm text-ink-muted">{REVIEW_PRIVACY_LINE}</p>
+        <p className="m-0 max-w-prose text-body-sm text-on-surface-variant">{REVIEW_PRIVACY_LINE}</p>
       </div>
 
       {errorText && !contactRefused ? (
-        <p role="alert" className="m-0 text-body-sm text-err">
+        <p role="alert" className="m-0 text-body-sm text-error">
           {errorText}
         </p>
       ) : null}

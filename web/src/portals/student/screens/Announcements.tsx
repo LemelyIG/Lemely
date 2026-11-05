@@ -139,16 +139,16 @@ function AnnouncementCard({
         // The unread marker is a left border rather than a bold title: a bold
         // title fights the heading hierarchy and stops being legible once three
         // in a row are unread.
-        unread && "border-s-2 border-s-accent",
+        unread && "border-s-2 border-s-primary",
       )}
     >
       <CardBody className="flex flex-col gap-2">
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
-            <h3 className="text-body-lg font-medium text-ink">
+            <h3 className="text-body-lg font-medium text-on-surface">
               {announcement.title}
             </h3>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-2xs text-ink-faint">
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-2xs text-on-surface-variant">
               <Chip tone={announcement.scope === "school" ? "accent" : "neutral"}>
                 {announcement.scope === "school" ? "Whole school" : "Your class"}
               </Chip>
@@ -162,13 +162,13 @@ function AnnouncementCard({
               Unread
             </Chip>
           ) : (
-            <p className="flex-none text-body-sm text-ink-faint">{readLabel}</p>
+            <p className="flex-none text-body-sm text-on-surface-variant">{readLabel}</p>
           )}
         </div>
 
         <p
           className={cn(
-            "text-body-md whitespace-pre-line text-ink-muted",
+            "text-body-md whitespace-pre-line text-on-surface-variant",
             // Collapsed by default so a long notice cannot bury the ones under
             // it; the full text is one tap away and expanding still marks it
             // read, same as before — this clamp is the only reason a "show
@@ -218,7 +218,7 @@ function AnnouncementCard({
         </div>
 
         {markFailed ? (
-          <p role="alert" className="text-body-sm text-err">
+          <p role="alert" className="text-body-sm text-error">
             We couldn't mark this as read. Try again.
           </p>
         ) : null}
@@ -304,13 +304,13 @@ function ExamEntryRow({ entry }: { entry: StudentExamEntry }) {
       : null
 
   return (
-    <div className="flex flex-col gap-2 border-b border-rule py-3 last:border-b-0">
+    <div className="flex flex-col gap-2 border-b border-outline-variant py-3 last:border-b-0">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="text-body-md font-medium text-ink">
+        <span className="text-body-md font-medium text-on-surface">
           {entry.subjectCode} Paper {entry.paperNumber}
         </span>
         {session ? (
-          <span className="text-2xs text-ink-faint">{session}</span>
+          <span className="text-2xs text-on-surface-variant">{session}</span>
         ) : null}
       </div>
 
@@ -321,28 +321,28 @@ function ExamEntryRow({ entry }: { entry: StudentExamEntry }) {
               key={`${date.paperVariant}-${date.examDate}`}
               className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-body-md"
             >
-              <span className="font-mono text-2xs text-ink-faint">
+              <span className="font-mono text-2xs text-on-surface-variant">
                 Variant {date.paperVariant}
               </span>
-              <time dateTime={date.examDate} className="text-ink">
+              <time dateTime={date.examDate} className="text-on-surface">
                 {formatExamDate(date.examDate)}
               </time>
               {/* Absent when the timetable prints none — never defaulted to
                   midnight, because a missing time must read as missing. */}
               {date.startsAtLocal ? (
-                <span className="text-ink-muted">{date.startsAtLocal}</span>
+                <span className="text-on-surface-variant">{date.startsAtLocal}</span>
               ) : null}
               {date.durationMinutes ? (
-                <span className="text-ink-faint">{date.durationMinutes} min</span>
+                <span className="text-on-surface-variant">{date.durationMinutes} min</span>
               ) : null}
               {/* Named on screen so a student who thinks a date is wrong can
                   cite the document rather than argue with the app. */}
-              <span className="text-3xs text-ink-faint">from {date.source}</span>
+              <span className="text-3xs text-on-surface-variant">from {date.source}</span>
             </li>
           ))}
         </ul>
       ) : (
-        <p className="text-body-md text-ink-muted">
+        <p className="text-body-md text-on-surface-variant">
           {entry.availability === "no_session"
             ? "You have not said which session you are sitting this paper in, so we cannot match it to a timetable."
             : "We do not hold official dates for this session yet."}
@@ -402,7 +402,7 @@ function ExamCalendarPanel() {
                 entry={entry}
               />
             ))}
-            <p className="pt-3 text-2xs text-ink-faint">
+            <p className="pt-3 text-2xs text-on-surface-variant">
               Dates come from the official Cambridge timetable. Always check with
               your school before relying on one.
             </p>
@@ -438,17 +438,17 @@ function Countdown({ today }: { today: Date }) {
     // something going wrong. Making it conditional on proximity was the other
     // option and was refused: any threshold for "now it is urgent" would be
     // invented, and the number in the panel already carries the urgency.
-    <Card className="border-info/40 bg-info-wash">
+    <Card className="border-primary/40 bg-primary-container">
       <CardBody className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
         <div>
           <Eyebrow>Your next exam</Eyebrow>
-          <div className="text-display-sm text-ink">
+          <div className="text-display-sm text-on-surface">
             {formatCountdown(next.days)}
           </div>
         </div>
-        <div className="text-body-md text-ink-muted">
+        <div className="text-body-md text-on-surface-variant">
           {next.entry.subjectCode} Paper {next.entry.paperNumber}
-          <span className="text-ink-faint">
+          <span className="text-on-surface-variant">
             {" "}
             · variant {next.date.paperVariant} ·{" "}
             {formatExamDate(next.date.examDate)}
@@ -503,20 +503,20 @@ export function Announcements() {
             The rest of this screen is still un-migrated and keeps its compat
             tokens until its own surface comes up; correcting a class that
             resolves to nothing is not a migration, it is a bug fix. */}
-        <h1 className="text-display-lg text-ink">What is coming up</h1>
+        <h1 className="text-display-lg text-on-surface">What is coming up</h1>
       </header>
 
       <Countdown today={today} />
 
       <section className="flex flex-col gap-3" aria-labelledby="s28-notices">
-        <h2 id="s28-notices" className="text-body-lg font-medium text-ink">
+        <h2 id="s28-notices" className="text-body-lg font-medium text-on-surface">
           From your teachers
         </h2>
         <AnnouncementsPanel />
       </section>
 
       <section className="flex flex-col gap-3" aria-labelledby="s28-calendar">
-        <h2 id="s28-calendar" className="text-body-lg font-medium text-ink">
+        <h2 id="s28-calendar" className="text-body-lg font-medium text-on-surface">
           Exam calendar
         </h2>
         <Card>

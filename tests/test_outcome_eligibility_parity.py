@@ -106,7 +106,7 @@ def cohort(
 # ---------------------------------------------------------------------------
 
 ORIGINS = ("past_paper", "quiz", "custom_paper")
-GRADES: tuple[str | None, ...] = ("A*", "U", "9", "F", None)
+GRADES: tuple[str | None, ...] = ("A*", "U", "9", "X", None)
 BOUNDARIES: tuple[str | None, ...] = ("exact", "subject_default", "global_default", None)
 SUBJECTS: tuple[str | None, ...] = (SUBJECT, OTHER_SUBJECT, None)
 

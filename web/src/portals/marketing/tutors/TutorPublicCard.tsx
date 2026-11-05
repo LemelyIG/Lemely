@@ -69,9 +69,9 @@ function Card({ tutorId }: { tutorId: string }) {
               </Link>
             </div>
             {booking.kind === "note" ? (
-              <p className="m-0 max-w-prose text-body-md text-ink">{booking.sentence}</p>
+              <p className="m-0 max-w-prose text-body-md text-on-surface">{booking.sentence}</p>
             ) : null}
-            <p className="m-0 max-w-prose text-body-md text-ink-muted">
+            <p className="m-0 max-w-prose text-body-md text-on-surface-variant">
               Full profiles, availability, reviews and results are for people who sign in. Fees are agreed with the
               tutor, outside Lemely.
             </p>

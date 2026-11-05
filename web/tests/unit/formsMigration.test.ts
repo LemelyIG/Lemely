@@ -90,6 +90,20 @@ const ALLOWLIST: { file: string; type: string; count: number; reason: string }[]
     reason:
       "Device sign-out picker (D5.12) — each option is a whole row carrying a \"Will be signed out\" Chip and a title-bearing device name, which Radio's string-only label/description cannot express; the native input sits inside the component's own fieldset/legend and keeps full keyboard/AT semantics.",
   },
+  {
+    file: "src/portals/teacher/home/MarkClassSet.tsx",
+    type: "file",
+    count: 1,
+    reason:
+      "Class-set upload input — hidden and triggered by the labelled \"Upload papers\" Button (drops are also taken window-wide), same shape as the avatar picker.",
+  },
+  {
+    file: "src/portals/teacher/home/TeacherSetup.tsx",
+    type: "file",
+    count: 1,
+    reason:
+      "Setup upload input — hidden and triggered by the header and step \"Upload papers\" Buttons, same shape as the avatar picker.",
+  },
 ]
 
 describe("hand-rolled form fields under src/portals", () => {

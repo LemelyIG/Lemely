@@ -11,7 +11,7 @@ import { LineChart } from "@/components/ui/line-chart"
 import { BarChart } from "@/components/ui/bar-chart"
 import { WeaknessChip } from "@/components/ui/weakness-chip"
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
-import { gradeBand } from "@/components/ui/grade-badge"
+import { gradeTone, type GradeTone } from "@/lib/grade"
 import { topGradeCount } from "@/lib/gradeSummary"
 import { useNivoTheme } from "@/lib/nivoTheme"
 import { cn, downloadCsv } from "@/lib/utils"
@@ -75,16 +75,26 @@ import { useClassDetailContext } from "./ClassDetail"
  * react-spring, which parses it, so a `var()` string arrives as nothing).
  *
  * These are `--grade-*`, not `SERIES_TOKENS`. A grade distribution's colour is
- * not a series key: it is the same four-band scale the `GradeBadge` on every
+ * not a series key: it is the same nine-grade Jewel scale the `GradeBadge` on every
  * other teacher screen uses, and it is the one colour relationship in this
  * product a teacher genuinely learns. Recolouring it from the categorical
  * palette would make the bars prettier and the page less legible.
  */
-const GRADE_BAND_TOKEN: Record<string, string> = {
-  top: "--grade-top",
-  mid: "--grade-mid",
-  borderline: "--grade-borderline",
-  fail: "--grade-fail",
+const GRADE_TONE_TOKEN: Record<GradeTone, string> = {
+  "a-star": "--grade-a-star",
+  a: "--grade-a",
+  b: "--grade-b",
+  c: "--grade-c",
+  d: "--grade-d",
+  e: "--grade-e",
+  f: "--grade-f",
+  g: "--grade-g",
+  u: "--grade-u",
+}
+
+function gradeToken(grade: string): string {
+  const tone = gradeTone(grade)
+  return tone ? GRADE_TONE_TOKEN[tone] : "--md-outline"
 }
 
 /**
@@ -142,7 +152,7 @@ function GradeDistributionPanel({
         showValues
         height={Math.max(180, buckets.length * 26)}
         axisBottomLegend="Students"
-        colorFor={(point) => tokens[GRADE_BAND_TOKEN[gradeBand(point.label)]] ?? ""}
+        colorFor={(point) => tokens[gradeToken(point.label)] ?? ""}
         formatValue={(v) => String(Math.round(v))}
         tooltipDetail={(point) =>
           total === 0
@@ -239,13 +249,13 @@ function CohortTrendPanel({
         ariaLabel="Cohort mean percentage over time"
       />
       {latest ? (
-        <div className="text-body-sm text-ink-muted">
+        <div className="text-body-sm text-on-surface-variant">
           Latest: {Math.round(latest.meanPercentage)}% mean, over {latest.sampleSize} student
           {latest.sampleSize === 1 ? "" : "s"}
         </div>
       ) : null}
       <div
-        className="-mx-1 max-h-48 overflow-y-auto border-t border-rule pt-2"
+        className="-mx-1 max-h-48 overflow-y-auto border-t border-outline-variant pt-2"
         tabIndex={0}
         role="region"
         aria-label="Cohort mean percentage over time, scrollable"
@@ -262,17 +272,17 @@ function CohortTrendPanel({
           <TBody>
             {trend.map((p) => (
               <TR key={p.timestamp}>
-                <TD className="text-body-sm text-ink-muted">
+                <TD className="text-body-sm text-on-surface-variant">
                   {new Date(p.timestamp).toLocaleDateString(undefined, {
                     year: "numeric",
                     month: "short",
                     day: "numeric",
                   })}
                 </TD>
-                <TD numeric className="text-data-sm text-ink">
+                <TD numeric className="text-data-sm text-on-surface">
                   {Math.round(p.meanPercentage)}%
                 </TD>
-                <TD numeric className="text-data-sm text-ink-faint">
+                <TD numeric className="text-data-sm text-on-surface-variant">
                   {p.sampleSize}
                 </TD>
               </TR>
@@ -306,7 +316,7 @@ function HeatmapCellView({ cell }: { cell: HeatmapCell | undefined }) {
     return (
       <td className="p-0.5">
         <div
-          className="w-11 h-8 flex items-center justify-center rounded bg-paper-sunk border border-dashed border-rule text-ink-faint text-data-sm"
+          className="w-11 h-8 flex items-center justify-center rounded bg-surface-container-low border border-dashed border-outline-variant text-on-surface-variant text-data-sm"
           role="img"
           aria-label="No data"
           title="No data. This student has no recorded attempt on this topic"
@@ -458,7 +468,7 @@ export function ClassAnalytics() {
                          * exception this file already logs for the heatmap's
                          * Nivo opt-out, above.
                          */}
-                        <th scope="col" className="sticky start-0 bg-paper-raised px-2 py-1.5 text-start align-bottom">
+                        <th scope="col" className="sticky start-0 bg-surface-container-lowest px-2 py-1.5 text-start align-bottom">
                           <span className="sr-only">Topic</span>
                         </th>
                         {students.map((s) => (
@@ -469,7 +479,7 @@ export function ClassAnalytics() {
                             title={s.name}
                           >
                             <span
-                              className="block w-11 text-data-sm text-ink-faint truncate"
+                              className="block w-11 text-data-sm text-on-surface-variant truncate"
                               style={{ writingMode: "vertical-rl" }}
                             >
                               {s.name}
@@ -483,7 +493,7 @@ export function ClassAnalytics() {
                         <TR key={t.topic}>
                           <th
                             scope="row"
-                            className="sticky start-0 bg-paper-raised px-2 py-1 text-start text-body-sm font-normal whitespace-nowrap max-w-[180px] truncate"
+                            className="sticky start-0 bg-surface-container-lowest px-2 py-1 text-start text-body-sm font-normal whitespace-nowrap max-w-[180px] truncate"
                             title={t.topic}
                           >
                             {t.topic}
@@ -520,19 +530,19 @@ export function ClassAnalytics() {
                 ) : null}
 
                 {selected ? (
-                  <div className="bg-paper-sunk border border-rule rounded-lg p-4 flex flex-col gap-2.5">
-                    <div className="text-body-lg font-medium text-ink">
+                  <div className="bg-surface-container-low border border-outline-variant rounded-lg p-4 flex flex-col gap-2.5">
+                    <div className="text-body-lg font-medium text-on-surface">
                       Students affected by "{selected.topic}"
                     </div>
                     {selected.studentIds.length === 0 ? (
-                      <div className="text-body-sm text-ink-muted">No individual students identified.</div>
+                      <div className="text-body-sm text-on-surface-variant">No individual students identified.</div>
                     ) : (
                       <ul className="flex flex-wrap gap-2 list-none p-0 m-0">
                         {selected.studentIds.map((id) => (
                           <li key={id}>
                             <Link
                               to={`/teacher/students/${id}`}
-                              className="inline-flex items-center border border-rule bg-paper-raised rounded-md px-3 py-1 text-body-sm text-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                              className="inline-flex items-center border border-outline-variant bg-surface-container-lowest rounded-md px-3 py-1 text-body-sm text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                             >
                               {studentsById.get(id) ?? id}
                             </Link>
@@ -552,42 +562,42 @@ export function ClassAnalytics() {
                 {/* Engagement */}
                 <section className="flex flex-col gap-3 min-w-0">
                   <SectionHead title="Engagement" rung="display-md" />
-                  <div className="bg-paper-raised border border-rule rounded-lg p-6 grid grid-cols-2 gap-4">
+                  <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-6 grid grid-cols-2 gap-4">
                     <div>
-                      <div className="text-eyebrow text-ink-faint">
+                      <div className="text-eyebrow text-on-surface-variant">
                         Submissions, 7 days
                       </div>
-                      <div className="text-data-lg text-ink mt-1">{data.engagement.submissionsLast7Days}</div>
+                      <div className="text-data-lg text-on-surface mt-1">{data.engagement.submissionsLast7Days}</div>
                     </div>
                     <div>
-                      <div className="text-eyebrow text-ink-faint">
+                      <div className="text-eyebrow text-on-surface-variant">
                         Submissions, 30 days
                       </div>
-                      <div className="text-data-lg text-ink mt-1">{data.engagement.submissionsLast30Days}</div>
+                      <div className="text-data-lg text-on-surface mt-1">{data.engagement.submissionsLast30Days}</div>
                     </div>
                     <div>
-                      <div className="text-eyebrow text-ink-faint">
+                      <div className="text-eyebrow text-on-surface-variant">
                         Active students, 7 days
                       </div>
-                      <div className="text-data-lg text-ink mt-1">{data.engagement.activeStudentsLast7Days}</div>
+                      <div className="text-data-lg text-on-surface mt-1">{data.engagement.activeStudentsLast7Days}</div>
                     </div>
                     <div>
-                      <div className="text-eyebrow text-ink-faint">
+                      <div className="text-eyebrow text-on-surface-variant">
                         Active students, 30 days
                       </div>
-                      <div className="text-data-lg text-ink mt-1">{data.engagement.activeStudentsLast30Days}</div>
+                      <div className="text-data-lg text-on-surface mt-1">{data.engagement.activeStudentsLast30Days}</div>
                     </div>
                     <div>
-                      <div className="text-eyebrow text-ink-faint">
+                      <div className="text-eyebrow text-on-surface-variant">
                         Never active
                       </div>
-                      <div className="text-data-lg text-ink mt-1">{data.engagement.neverActiveCount}</div>
+                      <div className="text-data-lg text-on-surface mt-1">{data.engagement.neverActiveCount}</div>
                     </div>
                     <div>
-                      <div className="text-eyebrow text-ink-faint">
+                      <div className="text-eyebrow text-on-surface-variant">
                         Median days since last submission
                       </div>
-                      <div className="text-data-lg text-ink mt-1">
+                      <div className="text-data-lg text-on-surface mt-1">
                         {data.engagement.medianDaysSinceLastSubmission != null
                           ? Math.round(data.engagement.medianDaysSinceLastSubmission)
                           : "—"}
@@ -601,7 +611,7 @@ export function ClassAnalytics() {
               <section className="flex flex-col gap-3 min-w-0">
                 <SectionHead title="Per-paper comparison" rung="display-md" />
                 {data.paperComparison.length === 0 ? (
-                  <div className="text-body-md text-ink-muted">No papers recorded for this class yet.</div>
+                  <div className="text-body-md text-on-surface-variant">No papers recorded for this class yet.</div>
                 ) : (
                   <Table density="operate"
                     tabIndex={0}
@@ -620,16 +630,16 @@ export function ClassAnalytics() {
                     <TBody>
                       {data.paperComparison.map((p) => (
                         <TR key={p.paperId}>
-                          <TD className="text-data-sm text-ink">
+                          <TD className="text-data-sm text-on-surface">
                             {p.subjectCode} · Paper {p.paperNumber} Variant {p.paperVariant}
                           </TD>
-                          <TD numeric className="text-data-sm text-ink">
+                          <TD numeric className="text-data-sm text-on-surface">
                             {Math.round(p.meanPercentage)}%
                           </TD>
-                          <TD numeric className="text-data-sm text-ink">
+                          <TD numeric className="text-data-sm text-on-surface">
                             {p.attemptCount}
                           </TD>
-                          <TD numeric className="text-data-sm text-ink">
+                          <TD numeric className="text-data-sm text-on-surface">
                             {p.studentCount}
                           </TD>
                         </TR>

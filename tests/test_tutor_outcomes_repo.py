@@ -76,11 +76,11 @@ BASE_GRADES: tuple[tuple[str, str], ...] = (
     ("B", "B"),
     ("B", "C"),
 )
-BASE_BUCKETS = {"A*": 0, "A": 2, "B": 2, "C": 1, "D": 0, "E": 0, "U": 0}
+BASE_BUCKETS = {"A*": 0, "A": 2, "B": 2, "C": 1, "D": 0, "E": 0, "F": 0, "G": 0, "U": 0}
 BASE_CHANGE = (2, 2, 1)
 #: The base buckets when member X (A* before and during, first to close) displaces
 #: the last base member (during C).
-WITH_X_BUCKETS = {"A*": 1, "A": 2, "B": 2, "C": 0, "D": 0, "E": 0, "U": 0}
+WITH_X_BUCKETS = {"A*": 1, "A": 2, "B": 2, "C": 0, "D": 0, "E": 0, "F": 0, "G": 0, "U": 0}
 WITH_X_CHANGE = (2, 3, 0)
 _VERIFIED_DAY_BEFORE = object()
 
@@ -366,7 +366,7 @@ def test_base_world_is_sufficient_and_counts_each_member_once(
     five_members(sm, tutor)
     outcomes = read(repo, tutor)
     assert outcomes.tutor_id == tutor.profile_id
-    assert outcomes.ladder == ("A*", "A", "B", "C", "D", "E", "U")
+    assert outcomes.ladder == ("A*", "A", "B", "C", "D", "E", "F", "G", "U")
     # Subjects are the tutor's, by name: Chemistry has no cohort and reads insufficient.
     assert [item.subject.code for item in outcomes.subjects] == [OTHER_SUBJECT, SUBJECT]
     assert_base(figures(outcomes))

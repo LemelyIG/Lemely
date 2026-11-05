@@ -111,7 +111,7 @@ function CountingNotice({ audience, childName }: { audience: "student" | "parent
   const phrase = "Tutors & your data"
   const at = audience === "student" ? text.indexOf(phrase) : -1
   return (
-    <p role="note" className="m-0 max-w-prose text-body-sm text-ink-muted">
+    <p role="note" className="m-0 max-w-prose text-body-sm text-on-surface-variant">
       {at < 0 ? (
         text
       ) : (
@@ -131,15 +131,15 @@ function CountingNotice({ audience, childName }: { audience: "student" | "parent
 function SummaryRow({ term, children }: { term: string; children: ReactNode }) {
   return (
     <div className="flex gap-x-4">
-      <dt className="w-20 shrink-0 text-ink-muted">{term}</dt>
-      <dd className="m-0 min-w-0 text-ink">{children}</dd>
+      <dt className="w-20 shrink-0 text-on-surface-variant">{term}</dt>
+      <dd className="m-0 min-w-0 text-on-surface">{children}</dd>
     </div>
   )
 }
 
 function Refusal({ refusal, sessionsPath }: { refusal: BookingRefusal; sessionsPath: string }) {
   return (
-    <div role="alert" className="flex flex-col items-start gap-2 text-body-sm text-err">
+    <div role="alert" className="flex flex-col items-start gap-2 text-body-sm text-error">
       <p className="m-0">{refusal.message}</p>
       {refusal.action === "open_requests" ? (
         <Link to={sessionsPath} className={cn(buttonVariants({ variant: "secondary", size: "sm" }))}>
@@ -274,7 +274,7 @@ export function BookingForm({
             <>
               {childPicker}
               {childError ? (
-                <p role="alert" className="m-0 text-body-sm text-err">
+                <p role="alert" className="m-0 text-body-sm text-error">
                   {childError}
                 </p>
               ) : null}
@@ -320,8 +320,8 @@ export function BookingForm({
         {mode === "other" ? (
           <div className="flex flex-col gap-3">
             {tutor.otherModeNote ? (
-              <p className="m-0 max-w-prose whitespace-pre-line text-body-md text-ink">
-                <span className="text-label text-ink">The tutor says. </span>
+              <p className="m-0 max-w-prose whitespace-pre-line text-body-md text-on-surface">
+                <span className="text-label text-on-surface">The tutor says. </span>
                 {tutor.otherModeNote}
               </p>
             ) : null}
@@ -354,7 +354,7 @@ export function BookingForm({
       </RadioGroup>
 
       <div ref={slotRef} className="flex flex-col gap-3">
-        <div className="text-label text-ink">Time</div>
+        <div className="text-label text-on-surface">Time</div>
         {slots.isError ? (
           <ErrorState
             compact
@@ -383,12 +383,12 @@ export function BookingForm({
           </div>
         ) : null}
         {missing.slot ? (
-          <p role="alert" className="m-0 text-body-sm text-err">
+          <p role="alert" className="m-0 text-body-sm text-error">
             {missing.slot}
           </p>
         ) : null}
         {slotRefusal ? (
-          <p role="alert" className="m-0 text-body-sm text-err">
+          <p role="alert" className="m-0 text-body-sm text-error">
             {slotRefusal.message}
           </p>
         ) : null}
@@ -406,8 +406,8 @@ export function BookingForm({
         />
       ) : null}
 
-      <section aria-labelledby="booking-summary" className="flex flex-col gap-2 border-t border-rule pt-5">
-        <h2 id="booking-summary" className="m-0 text-display-sm text-ink">
+      <section aria-labelledby="booking-summary" className="flex flex-col gap-2 border-t border-outline-variant pt-5">
+        <h2 id="booking-summary" className="m-0 text-display-sm text-on-surface">
           Your request
         </h2>
         <dl className="m-0 flex flex-col gap-y-1 text-body-md">
@@ -419,13 +419,13 @@ export function BookingForm({
             {slot ? formatSlotRange(slot.startsAt, slot.endsAt, tutor.zone, tutor.zoneLabel) : "Not chosen yet"}
           </SummaryRow>
         </dl>
-        <p className="m-0 text-body-sm text-ink-muted">{FEES_LINE}</p>
+        <p className="m-0 text-body-sm text-on-surface-variant">{FEES_LINE}</p>
         <CountingNotice audience={audience} childName={student?.name} />
       </section>
 
       {generalRefusal ? <Refusal refusal={generalRefusal} sessionsPath={sessionsPath} /> : null}
       {create.isError && !refusal ? (
-        <p role="alert" className="m-0 text-body-sm text-err">
+        <p role="alert" className="m-0 text-body-sm text-error">
           {describeQueryFailure(create.error)}
         </p>
       ) : null}
@@ -434,7 +434,7 @@ export function BookingForm({
         <Button type="submit" variant="primary" loading={create.isPending} disabled={!online}>
           Send request
         </Button>
-        {offlineReason ? <span className="text-body-sm text-ink-muted">{offlineReason}</span> : null}
+        {offlineReason ? <span className="text-body-sm text-on-surface-variant">{offlineReason}</span> : null}
       </div>
     </form>
   )

@@ -138,8 +138,8 @@ export interface SessionDetailViewProps {
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-4">
-      <dt className="text-label text-ink-muted sm:w-32 sm:shrink-0">{label}</dt>
-      <dd className="m-0 min-w-0 break-words text-body-md text-ink">{children}</dd>
+      <dt className="text-label text-on-surface-variant sm:w-32 sm:shrink-0">{label}</dt>
+      <dd className="m-0 min-w-0 break-words text-body-md text-on-surface">{children}</dd>
     </div>
   )
 }
@@ -149,11 +149,11 @@ function Notice({ tone, children }: { tone: "neutral" | "warn"; children: ReactN
   return (
     <div
       className={cn(
-        "flex items-start gap-2.5 rounded-md border border-rule px-3.5 py-3 text-body-md text-ink",
-        tone === "warn" ? "bg-warn-wash" : "bg-paper-sunk",
+        "flex items-start gap-2.5 rounded-md border border-outline-variant px-3.5 py-3 text-body-md text-on-surface",
+        tone === "warn" ? "bg-tertiary-container" : "bg-surface-container-low",
       )}
     >
-      <Glyph size={18} weight="bold" className={cn("mt-0.5 shrink-0", tone === "warn" ? "text-warn" : "text-ink-muted")} aria-hidden />
+      <Glyph size={18} weight="bold" className={cn("mt-0.5 shrink-0", tone === "warn" ? "text-on-tertiary-container" : "text-on-surface-variant")} aria-hidden />
       <div className="min-w-0 break-words">{children}</div>
     </div>
   )
@@ -164,9 +164,9 @@ function CountingNotice({ href }: { href: string }) {
   const label = "Tutors & your data"
   const [before, after] = COUNTING_NOTICE.split(label)
   return (
-    <p className="m-0 max-w-prose text-body-sm text-ink-muted">
+    <p className="m-0 max-w-prose text-body-sm text-on-surface-variant">
       {before}
-      <Link to={href} className="text-accent-ink underline">
+      <Link to={href} className="text-on-primary-container underline">
         {label}
       </Link>
       {after}
@@ -191,7 +191,7 @@ function ReviewArea({
 
   let body: ReactNode = null
   if (view.kind === "opens" || view.kind === "unavailable") {
-    body = <p className="m-0 text-body-md text-ink-muted">{view.line}</p>
+    body = <p className="m-0 text-body-md text-on-surface-variant">{view.line}</p>
   } else if (view.kind === "write" && reviews) {
     body = (
       <ReviewForm
@@ -223,7 +223,7 @@ function ReviewArea({
       />
     ) : (
       <div className="flex flex-col gap-2">
-        <p className="m-0 text-body-md text-ink">
+        <p className="m-0 text-body-md text-on-surface">
           You rated this session {view.stars} of 5 stars. {reviewStatusLine(view.textState)}
         </p>
         {view.canEdit && reviews ? (
@@ -246,7 +246,7 @@ function ReviewArea({
   if (body === null) return null
   return (
     <section aria-labelledby="session-review-heading" className="flex flex-col gap-3">
-      <h2 id="session-review-heading" className="m-0 text-display-sm text-ink">
+      <h2 id="session-review-heading" className="m-0 text-display-sm text-on-surface">
         Your review
       </h2>
       {body}
@@ -373,13 +373,13 @@ export function SessionDetailView({
           <h1
             ref={headingRef}
             tabIndex={-1}
-            className="m-0 min-w-0 break-words text-display-md text-ink"
+            className="m-0 min-w-0 break-words text-display-md text-on-surface"
           >
             {booking.subject.name} with {booking.tutor.publicName}
           </h1>
           <BookingStatus state={booking.effectiveState} />
         </div>
-        <p className="m-0 text-body-md text-ink-muted">{sessionTimeLabel(booking, SESSION_ZONE, SESSION_ZONE_LABEL, nowMs)}</p>
+        <p className="m-0 text-body-md text-on-surface-variant">{sessionTimeLabel(booking, SESSION_ZONE, SESSION_ZONE_LABEL, nowMs)}</p>
       </header>
 
       {/* Announces a change of state (cancelled, completed) without moving focus again. */}
@@ -397,7 +397,7 @@ export function SessionDetailView({
         ) : null}
       </div>
 
-      <dl className="m-0 flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-5">
+      <dl className="m-0 flex flex-col gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest p-5">
         <Fact label="Format">{MODE_LABEL[booking.mode]}</Fact>
         <Fact label="Area">{booking.area.name}</Fact>
         {place ? (
@@ -408,13 +408,13 @@ export function SessionDetailView({
                   href={place.href}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex min-h-11 w-fit items-center gap-1.5 text-accent-ink underline"
+                  className="inline-flex min-h-11 w-fit items-center gap-1.5 text-on-primary-container underline"
                 >
                   Open the meeting link
                   <ArrowSquareOut size={14} aria-hidden />
                   <span className="sr-only">(opens in a new tab)</span>
                 </a>
-                <span className="text-body-sm text-ink-muted">{place.host}</span>
+                <span className="text-body-sm text-on-surface-variant">{place.host}</span>
               </span>
             ) : (
               <span className="whitespace-pre-wrap">{place.text}</span>
@@ -436,7 +436,7 @@ export function SessionDetailView({
                 </Button>
               </div>
               {booking.effectiveState === "accepted" ? (
-                <p className="m-0 text-body-sm text-ink-muted">{CANCEL_RULE_LINE}</p>
+                <p className="m-0 text-body-sm text-on-surface-variant">{CANCEL_RULE_LINE}</p>
               ) : null}
             </div>
           ) : null}
@@ -448,10 +448,10 @@ export function SessionDetailView({
                   Mark as completed
                 </Button>
               </div>
-              <p className="m-0 max-w-prose text-body-sm text-ink-muted">{completeHint(viewer)}</p>
+              <p className="m-0 max-w-prose text-body-sm text-on-surface-variant">{completeHint(viewer)}</p>
             </div>
           ) : null}
-          {offlineReason ? <p className="m-0 text-body-sm text-ink-muted">{offlineReason}</p> : null}
+          {offlineReason ? <p className="m-0 text-body-sm text-on-surface-variant">{offlineReason}</p> : null}
         </section>
       ) : null}
 
@@ -460,7 +460,7 @@ export function SessionDetailView({
       {countingHref && showCountingNotice(booking, viewer) ? <CountingNotice href={countingHref} /> : null}
 
       <div className="flex flex-col gap-3">
-        <h2 className="m-0 text-display-sm text-ink">
+        <h2 className="m-0 text-display-sm text-on-surface">
           Session notes
         </h2>
         {notes.error ? (
@@ -490,7 +490,7 @@ export function SessionDetailView({
               footnote={viewer === "parent" ? parentNotesFootnote(booking.student.displayName) : undefined}
             />
             {notes.moreFailed ? (
-              <p role="alert" className="m-0 text-body-sm text-err">
+              <p role="alert" className="m-0 text-body-sm text-error">
                 We couldn't load more notes. Press Show more notes to try again.
               </p>
             ) : null}
@@ -498,7 +498,7 @@ export function SessionDetailView({
         )}
       </div>
 
-      <div className="flex justify-start border-t border-rule pt-4">
+      <div className="flex justify-start border-t border-outline-variant pt-4">
         <Button
           variant="ghost"
           size="sm"

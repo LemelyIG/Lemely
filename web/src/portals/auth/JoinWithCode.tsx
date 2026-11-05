@@ -111,8 +111,8 @@ function CodeEntryStep({
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-5" noValidate>
       <div className="flex flex-col gap-1.5">
-        <h1 className="text-display-lg text-ink">Join with an invite code</h1>
-        <p className="text-body-md text-ink-muted">
+        <h1 className="text-display-lg text-on-surface">Join with an invite code</h1>
+        <p className="text-body-md text-on-surface-variant">
           Enter the code your school or teacher gave you.
         </p>
       </div>
@@ -148,7 +148,7 @@ function PreviewLoadingStep() {
         <SkeletonLine announce={false} className="h-3" width="30%" />
         <SkeletonLine announce={false} className="h-7" width="70%" />
       </div>
-      <div className="flex flex-col gap-2 rounded-md border border-rule bg-paper-sunk p-4">
+      <div className="flex flex-col gap-2 rounded-md border border-outline-variant bg-surface-container-low p-4">
         <SkeletonLine announce={false} width="60%" />
         <SkeletonLine announce={false} width="45%" />
       </div>
@@ -202,22 +202,22 @@ function InvitePreviewStep({
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-1.5">
-        <div className="text-eyebrow text-ink-faint">
+        <div className="text-eyebrow text-on-surface-variant">
           {preview.role === "teacher"
             ? "Teacher invite"
             : preview.role === "parent"
               ? "Parent invite"
               : "Student invite"}
         </div>
-        <h1 className="text-display-lg text-ink">You're about to join</h1>
+        <h1 className="text-display-lg text-on-surface">You're about to join</h1>
       </div>
 
-      <div className="flex flex-col gap-1 rounded-md border border-rule bg-paper-sunk p-4">
+      <div className="flex flex-col gap-1 rounded-md border border-outline-variant bg-surface-container-low p-4">
         {lines.map((line, index) => (
           <p
             key={line}
             className={
-              index === 0 ? "text-body-lg font-medium text-ink" : "text-body-md text-ink-muted"
+              index === 0 ? "text-body-lg font-medium text-on-surface" : "text-body-md text-on-surface-variant"
             }
           >
             {line}
@@ -226,11 +226,11 @@ function InvitePreviewStep({
       </div>
 
       {blocked ? (
-        <p role="alert" className="text-body-sm text-err">
+        <p role="alert" className="text-body-sm text-error">
           {INVITE_ROLE_MISMATCH_MESSAGE}
         </p>
       ) : redeemError ? (
-        <p role="alert" className="text-body-sm text-err">
+        <p role="alert" className="text-body-sm text-error">
           {redeemFailureMessage(redeemError)}
         </p>
       ) : null}
@@ -418,7 +418,7 @@ function JoinWithCodeScreen({ initialCode }: { initialCode: string }) {
       dataPortal="join"
       footer={
         session === null ? (
-          <p className="text-body-sm text-ink-muted">
+          <p className="text-body-sm text-on-surface-variant">
             Already have an account?{" "}
             {/*
              * `next` carries the reader back to this exact invite once
@@ -432,7 +432,7 @@ function JoinWithCodeScreen({ initialCode }: { initialCode: string }) {
              */}
             <Link
               to={withNext("/login", activeCode ? `/join/${activeCode}` : null)}
-              className="rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+              className="rounded-sm text-on-primary-container underline underline-offset-2 transition-colors hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
             >
               Sign in
             </Link>
@@ -441,7 +441,7 @@ function JoinWithCodeScreen({ initialCode }: { initialCode: string }) {
       }
     >
       <div className="flex w-full max-w-100 flex-col gap-6">
-        <div className="rounded-lg border border-rule bg-paper-raised p-8">{body}</div>
+        <div className="rounded-lg border border-outline-variant bg-surface-container-lowest p-8">{body}</div>
       </div>
     </AuthFrame>
   )

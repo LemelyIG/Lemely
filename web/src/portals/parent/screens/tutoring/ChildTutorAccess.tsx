@@ -57,11 +57,11 @@ const GRANT_ICONS: Record<GrantStatusIcon, Icon> = {
   UserMinus,
 }
 
-const ROW = "flex flex-col gap-2 border-b border-rule px-4 py-3.5 last:border-b-0"
+const ROW = "flex flex-col gap-2 border-b border-outline-variant px-4 py-3.5 last:border-b-0"
 
 function List({ children }: { children: ReactNode }) {
   return (
-    <ul className="m-0 flex list-none flex-col overflow-hidden rounded-lg border border-rule bg-paper-raised p-0">
+    <ul className="m-0 flex list-none flex-col overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest p-0">
       {children}
     </ul>
   )
@@ -69,8 +69,8 @@ function List({ children }: { children: ReactNode }) {
 
 function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
-    <section aria-labelledby={id} className="flex flex-col gap-4 border-t border-rule pt-6">
-      <h2 id={id} className="m-0 text-display-sm text-ink">
+    <section aria-labelledby={id} className="flex flex-col gap-4 border-t border-outline-variant pt-6">
+      <h2 id={id} className="m-0 text-display-sm text-on-surface">
         {title}
       </h2>
       {children}
@@ -98,7 +98,7 @@ function GrantRow({ row, onReport }: { row: ParentGrantRowView; onReport: () => 
   return (
     <li className={ROW}>
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-        <Link to={row.tutorHref} className="inline-flex min-h-11 min-w-0 items-center break-words text-body-lg font-medium text-ink underline">
+        <Link to={row.tutorHref} className="inline-flex min-h-11 min-w-0 items-center break-words text-body-lg font-medium text-on-surface underline">
           {row.tutorName}
         </Link>
         <Chip tone={row.status.tone} className="gap-1.5">
@@ -106,8 +106,8 @@ function GrantRow({ row, onReport }: { row: ParentGrantRowView; onReport: () => 
           {row.status.label}
         </Chip>
       </div>
-      <p className="m-0 text-body-sm text-ink-muted">{row.sinceLine}</p>
-      <p className="m-0 text-body-sm text-ink-muted">{row.status.detail}</p>
+      <p className="m-0 text-body-sm text-on-surface-variant">{row.sinceLine}</p>
+      <p className="m-0 text-body-sm text-on-surface-variant">{row.status.detail}</p>
       <div className="-ms-3">
         <ReportButton label={row.reportLabel} onClick={onReport} />
       </div>
@@ -121,7 +121,7 @@ function SharingSection({ childId, childName, onReport }: { childId: string; chi
 
   return (
     <Section id="child-access-sharing" title="Sharing">
-      <p className="m-0 max-w-prose text-body-md text-ink-muted">{parentSharingLine(childName)}</p>
+      <p className="m-0 max-w-prose text-body-md text-on-surface-variant">{parentSharingLine(childName)}</p>
       <QueryState
         query={grants}
         skeleton={<ListSkeleton rows={2} />}
@@ -145,7 +145,7 @@ function SharingSection({ childId, childName, onReport }: { childId: string; chi
               {live.length > 0 ? (
                 <List>{live.map(drawRow)}</List>
               ) : (
-                <p className="m-0 text-body-md text-ink-muted">{noGrantsLine(childName)}</p>
+                <p className="m-0 text-body-md text-on-surface-variant">{noGrantsLine(childName)}</p>
               )}
               {ended.length > 0 ? (
                 <div className="flex flex-col gap-3">
@@ -202,7 +202,7 @@ function LogSection({ childId, childName, onReport }: { childId: string; childNa
                 const view = accessLogView(entry, childName, PARENT_TUTORS_PATH)
                 return (
                   <li key={logKey(entry)} className={ROW}>
-                    <p className="m-0 break-words text-body-md text-ink">
+                    <p className="m-0 break-words text-body-md text-on-surface">
                       {view.tutorHref ? (
                         <Link to={view.tutorHref} className="font-medium underline">
                           {view.tutorName}
@@ -213,7 +213,7 @@ function LogSection({ childId, childName, onReport }: { childId: string; childNa
                       {view.action}
                     </p>
                     <div className="flex flex-wrap items-center justify-between gap-x-3">
-                      <p className="m-0 text-body-sm text-ink-muted">{view.timeLabel}</p>
+                      <p className="m-0 text-body-sm text-on-surface-variant">{view.timeLabel}</p>
                       {entry.tutorId !== null ? (
                         <ReportButton
                           label={`Report ${entry.tutorName}`}
@@ -226,7 +226,7 @@ function LogSection({ childId, childName, onReport }: { childId: string; childNa
               })}
             </List>
             {paged.moreFailed ? (
-              <p role="alert" className="m-0 text-body-sm text-err">
+              <p role="alert" className="m-0 text-body-sm text-error">
                 We couldn't load more. Press Show more to try again.
               </p>
             ) : null}
@@ -264,7 +264,7 @@ function AccessBody({ childId, childName }: { childId: string; childName: string
 
   return (
     <div className="flex w-full max-w-160 flex-col gap-6">
-      <h1 className="m-0 break-words text-display-md text-ink">Who {childName} shares progress with</h1>
+      <h1 className="m-0 break-words text-display-md text-on-surface">Who {childName} shares progress with</h1>
       <SharingSection childId={childId} childName={childName} onReport={askToReport} />
       <LogSection childId={childId} childName={childName} onReport={askToReport} />
       {target ? (

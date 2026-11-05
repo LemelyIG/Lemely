@@ -90,10 +90,10 @@ const BANNER_ICON: Record<string, Icon> = {
 }
 
 const BANNER_TONE: Record<BannerTone, { wash: string; icon: string }> = {
-  ok: { wash: "bg-ok-wash", icon: "text-ok" },
-  info: { wash: "bg-info-wash", icon: "text-info" },
-  warn: { wash: "bg-warn-wash", icon: "text-warn" },
-  neutral: { wash: "bg-paper-sunk", icon: "text-ink-muted" },
+  ok: { wash: "bg-success-container", icon: "text-success-text" },
+  info: { wash: "bg-primary-container", icon: "text-primary" },
+  warn: { wash: "bg-tertiary-container", icon: "text-on-tertiary-container" },
+  neutral: { wash: "bg-surface-container-low", icon: "text-on-surface-variant" },
 }
 
 const SESSION_PATH = (bookingId: string) => `/teacher/tutoring/sessions/${encodeURIComponent(bookingId)}`
@@ -138,14 +138,14 @@ function ListingBannerCard({ profile }: { profile: TutorOwnProfile | null }) {
   return (
     <section
       aria-labelledby="listing-status"
-      className={cn("flex flex-col gap-3 rounded-lg border border-rule p-4 sm:flex-row sm:items-center", tone.wash)}
+      className={cn("flex flex-col gap-3 rounded-lg border border-outline-variant p-4 sm:flex-row sm:items-center", tone.wash)}
     >
       <Glyph size={24} className={cn("shrink-0", tone.icon)} aria-hidden />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <h2 id="listing-status" className="m-0 text-display-sm text-ink">
+        <h2 id="listing-status" className="m-0 text-display-sm text-on-surface">
           {banner.title}
         </h2>
-        <p className="m-0 text-body-md text-ink">{banner.body}</p>
+        <p className="m-0 text-body-md text-on-surface">{banner.body}</p>
       </div>
       <Link
         to="/teacher/tutoring/profile"
@@ -166,15 +166,15 @@ function SessionFacts({ booking, zone, showRequested = false }: { booking: Booki
     <div className="flex min-w-0 flex-col gap-1">
       <Link
         to={SESSION_PATH(booking.bookingId)}
-        className="text-label text-ink hover:underline"
+        className="text-label text-on-surface hover:underline"
       >
         {booking.student.displayName}
-        <span className="text-ink-muted"> · {booking.subject.name}</span>
+        <span className="text-on-surface-variant"> · {booking.subject.name}</span>
       </Link>
-      <span className="text-body-sm text-ink-muted">
+      <span className="text-body-sm text-on-surface-variant">
         {formatSlotRange(booking.startsAt, booking.endsAt, zone.zone, zone.zoneLabel)}
       </span>
-      <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-body-sm text-ink-muted">
+      <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-body-sm text-on-surface-variant">
         <span className="inline-flex items-center gap-1">
           <ModeIcon size={14} aria-hidden />
           {mode.label}
@@ -185,7 +185,7 @@ function SessionFacts({ booking, zone, showRequested = false }: { booking: Booki
   )
 }
 
-const ROW = "flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-4 sm:flex-row sm:items-center sm:justify-between"
+const ROW = "flex flex-col gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest p-4 sm:flex-row sm:items-center sm:justify-between"
 
 interface QueueContext {
   zone: Zone
@@ -301,7 +301,7 @@ function Pages({
       skeleton={<ListSkeleton rows={2} />}
       error={{ heading: "Couldn't load these sessions", body: tutorLoadFailureMessage, compact: true }}
       isEmpty={(page) => cursor === undefined && page.items.length === 0}
-      empty={<p className="m-0 text-body-md text-ink-muted">{emptyText}</p>}
+      empty={<p className="m-0 text-body-md text-on-surface-variant">{emptyText}</p>}
     >
       {(page) => (
         <>
@@ -343,10 +343,10 @@ function Queue({
   return (
     <section aria-labelledby={id} className="flex flex-col gap-3">
       <div className="flex flex-col gap-0.5">
-        <h2 id={id} ref={headingRef} tabIndex={-1} className="m-0 text-display-sm text-ink focus:outline-none">
+        <h2 id={id} ref={headingRef} tabIndex={-1} className="m-0 text-display-sm text-on-surface focus:outline-none">
           {title}
         </h2>
-        {lead ? <p className="m-0 text-body-sm text-ink-muted">{lead}</p> : null}
+        {lead ? <p className="m-0 text-body-sm text-on-surface-variant">{lead}</p> : null}
       </div>
       {children}
     </section>
@@ -405,7 +405,7 @@ function DeclineSheet({
         onChange={(event) => setReason(event.target.value)}
       />
       {error ? (
-        <p role="alert" className="mt-3 text-body-sm text-err">
+        <p role="alert" className="mt-3 text-body-sm text-error">
           {error}
         </p>
       ) : null}
@@ -488,9 +488,9 @@ function Home({ profile }: { profile: TutorOwnProfile | null }) {
 
   return (
     <div className="flex flex-col gap-6 min-w-0">
-      <div className="flex flex-col gap-1 border-b border-rule pb-5">
-        <h1 className="m-0 text-display-md text-ink">Tutoring</h1>
-        <p className="m-0 text-body-md text-ink-muted">Your listing, the requests waiting for you and your sessions.</p>
+      <div className="flex flex-col gap-1 border-b border-outline-variant pb-5">
+        <h1 className="m-0 text-display-md text-on-surface">Tutoring</h1>
+        <p className="m-0 text-body-md text-on-surface-variant">Your listing, the requests waiting for you and your sessions.</p>
       </div>
 
       <ListingBannerCard profile={profile} />
@@ -499,30 +499,30 @@ function Home({ profile }: { profile: TutorOwnProfile | null }) {
         <div className="flex flex-col gap-8 min-w-0 lg:col-span-2">
           {profile === null ? (
             <section aria-labelledby="how-it-works" className="flex flex-col gap-3">
-              <h2 id="how-it-works" className="m-0 text-display-sm text-ink">
+              <h2 id="how-it-works" className="m-0 text-display-sm text-on-surface">
                 What happens next
               </h2>
-              <ol className="m-0 flex max-w-prose list-decimal flex-col gap-2 ps-5 text-body-md text-ink">
+              <ol className="m-0 flex max-w-prose list-decimal flex-col gap-2 ps-5 text-body-md text-on-surface">
                 <li>You set up your public card, add documents and choose your weekly hours.</li>
                 <li>You send your profile to Lemely, who look at it and the documents.</li>
                 <li>Once it is listed, students can find you and send requests, which appear on this page.</li>
               </ol>
             </section>
           ) : !showSessions ? (
-            <p className="m-0 text-body-md text-ink-muted">{view?.note}</p>
+            <p className="m-0 text-body-md text-on-surface-variant">{view?.note}</p>
           ) : ctx ? (
             <>
-              {view?.note ? <p className="m-0 text-body-md text-ink-muted">{view.note}</p> : null}
+              {view?.note ? <p className="m-0 text-body-md text-on-surface-variant">{view.note}</p> : null}
               {!online ? (
-                <p className="m-0 text-body-sm text-ink-muted">
+                <p className="m-0 text-body-sm text-on-surface-variant">
                   You're offline. Replies and outcomes need a connection.
                 </p>
               ) : null}
               <div aria-live="polite" className="empty:hidden">
-                {message ? <p className="m-0 text-body-md text-ok">{message}</p> : null}
+                {message ? <p className="m-0 text-body-md text-success-text">{message}</p> : null}
               </div>
               {actionError ? (
-                <p role="alert" className="m-0 text-body-sm text-err">
+                <p role="alert" className="m-0 text-body-sm text-error">
                   {actionError}
                 </p>
               ) : null}
@@ -568,18 +568,18 @@ function Home({ profile }: { profile: TutorOwnProfile | null }) {
         </div>
 
         <nav aria-label="Tutoring sections" className="min-w-0">
-          <ul className="m-0 flex list-none flex-col overflow-hidden rounded-lg border border-rule bg-paper-raised p-0">
+          <ul className="m-0 flex list-none flex-col overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest p-0">
             {SECTIONS.map((section) => (
-              <li key={section.to} className="border-b border-rule last:border-b-0">
+              <li key={section.to} className="border-b border-outline-variant last:border-b-0">
                 <Link
                   to={section.to}
-                  className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-paper-sunk"
+                  className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-container-low"
                 >
                   <span className="flex min-w-0 flex-1 flex-col">
-                    <span className="text-label text-ink">{section.title}</span>
-                    <span className="text-body-sm text-ink-muted">{section.text}</span>
+                    <span className="text-label text-on-surface">{section.title}</span>
+                    <span className="text-body-sm text-on-surface-variant">{section.text}</span>
                   </span>
-                  <CaretRight size={16} className="shrink-0 text-ink-faint" aria-hidden />
+                  <CaretRight size={16} className="shrink-0 text-on-surface-variant" aria-hidden />
                 </Link>
               </li>
             ))}

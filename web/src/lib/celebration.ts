@@ -154,7 +154,7 @@ export function countUpValue(
 /* ── Streak milestones ──────────────────────────────────────────────────── */
 
 /**
- * The streak lengths that earn a sticker, DESIGN.md §8 item 4.
+ * The streak lengths that earn a milestone chip, DESIGN.md §8 item 4.
  *
  * A fixed early ladder then every fiftieth day. Deliberately sparse: a badge
  * that arrives every day is wallpaper, and §9.3's ban on celebrating
@@ -172,7 +172,7 @@ export function isStreakMilestone(days: number): boolean {
 /**
  * The most recent milestone reached at `days`, or `null` before the first.
  *
- * Used for the sticker a student *holds*, as distinct from the flourish that
+ * Used for the milestone a student *holds*, as distinct from the flourish that
  * fires the moment they reach one. The badge persists between milestones; the
  * motion does not.
  */

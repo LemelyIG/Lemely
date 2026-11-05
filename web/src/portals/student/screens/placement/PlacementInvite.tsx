@@ -104,13 +104,13 @@ export function PlacementInvite() {
           if (view.kind === "unavailable") {
             return (
               <>
-                <h1 className="text-display-md text-ink">{subjectName}</h1>
+                <h1 className="text-display-md text-on-surface">{subjectName}</h1>
                 <Card>
                   <CardBody className="flex flex-col gap-3">
-                    <div className="text-body-lg font-medium text-ink">
+                    <div className="text-body-lg font-medium text-on-surface">
                       {view.message.heading}
                     </div>
-                    <p className="text-body-md text-ink-muted">{view.message.body}</p>
+                    <p className="text-body-md text-on-surface-variant">{view.message.body}</p>
                   </CardBody>
                 </Card>
                 <Button variant="secondary" onClick={handleLater} className="self-start">
@@ -123,10 +123,10 @@ export function PlacementInvite() {
           return (
             <>
               <div className="flex flex-col gap-2">
-                <h1 className="text-display-md text-ink">
+                <h1 className="text-display-md text-on-surface">
                   Get a real starting picture in {subjectName}
                 </h1>
-                <p className="text-body-md text-ink-muted">
+                <p className="text-body-md text-on-surface-variant">
                   A short placement test built from real past-paper questions across the syllabus
                   gives us a much better starting picture than a guess. It finds your strongest
                   and weakest topics, not a grade.
@@ -135,9 +135,9 @@ export function PlacementInvite() {
 
               <Card>
                 <CardBody className="flex flex-col gap-2">
-                  <div className="text-eyebrow text-ink-faint">This test</div>
-                  <div className="text-body-lg font-medium text-ink">{view.estimate}</div>
-                  <p className="text-body-sm text-ink-muted">
+                  <div className="text-eyebrow text-on-surface-variant">This test</div>
+                  <div className="text-body-lg font-medium text-on-surface">{view.estimate}</div>
+                  <p className="text-body-sm text-on-surface-variant">
                     You can take it any time from this subject's screen. There's no rush.
                   </p>
                 </CardBody>
@@ -145,7 +145,7 @@ export function PlacementInvite() {
 
               {/* Directly above the button that produced it (§12). */}
               {createPlacement.isError && !raceUnavailable ? (
-                <p role="alert" className="text-body-sm text-err">
+                <p role="alert" className="text-body-sm text-error">
                   We couldn't start the test. Nothing has been used up, so trying again is safe.
                 </p>
               ) : null}

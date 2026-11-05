@@ -165,12 +165,12 @@ describe("component source (C-18), no colour-only encoding", () => {
   it("ties each segment of the bar to its icon, label and count with a swatch of the segment's own fill", () => {
     expect(source).toContain("partSwatch")
     // Every swatch class is the segment's fill under a background name.
-    expect(source).toMatch(/lower: "border-ink-faint bg-ink-faint"/)
-    expect(source).toMatch(/same: "border-ink-muted bg-paper-sunk"/)
-    expect(source).toMatch(/higher: "border-ink bg-ink"/)
-    expect(source).toMatch(/lower: "fill-ink-faint stroke-paper-raised"/)
-    expect(source).toMatch(/same: "fill-paper-sunk stroke-ink-muted"/)
-    expect(source).toMatch(/higher: "fill-ink stroke-paper-raised"/)
+    expect(source).toMatch(/lower: "border-on-surface-variant bg-on-surface-variant"/)
+    expect(source).toMatch(/same: "border-on-surface-variant bg-surface-container-low"/)
+    expect(source).toMatch(/higher: "border-on-surface bg-on-surface"/)
+    expect(source).toMatch(/lower: "fill-on-surface-variant stroke-surface-container-lowest"/)
+    expect(source).toMatch(/same: "fill-surface-container-low stroke-on-surface-variant"/)
+    expect(source).toMatch(/higher: "fill-on-surface stroke-surface-container-lowest"/)
   })
 
   /* T33: the old ramp used the hairline token rule-strong as a fill (about 1.4:1 on the page in light,

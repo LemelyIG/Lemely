@@ -69,13 +69,13 @@ export function BlockSheet({
     >
       <ul className="m-0 flex list-none flex-col gap-2 p-0">
         {copy.effects.map((effect) => (
-          <li key={effect} className="text-body-md text-ink">
+          <li key={effect} className="text-body-md text-on-surface">
             {effect}
           </li>
         ))}
       </ul>
       {errorText ? (
-        <p role="alert" className="mt-3 text-body-sm text-err">
+        <p role="alert" className="mt-3 text-body-sm text-error">
           {errorText}
         </p>
       ) : null}

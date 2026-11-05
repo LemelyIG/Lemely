@@ -31,15 +31,15 @@ export function PaperIdentity({
       className={cn("flex items-center gap-1.5 flex-wrap text-metadata", className)}
       {...props}
     >
-      <span className="text-t2">{code}</span>
-      <span className="text-t3" aria-hidden>
+      <span className="text-on-surface-variant">{code}</span>
+      <span className="text-on-surface-variant" aria-hidden>
         ·
       </span>
-      <span className="text-t3">{session}</span>
-      <span className="text-t3" aria-hidden>
+      <span className="text-on-surface-variant">{session}</span>
+      <span className="text-on-surface-variant" aria-hidden>
         ·
       </span>
-      <span className="text-t3">{paperLabel}</span>
+      <span className="text-on-surface-variant">{paperLabel}</span>
     </div>
   )
 }

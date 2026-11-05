@@ -82,8 +82,8 @@ export function SubjectsStep({
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
-        <h1 className="text-display-lg text-ink">What are you studying?</h1>
-        <p className="max-w-[65ch] text-pretty text-body-md text-ink-muted">
+        <h1 className="text-display-lg text-on-surface">What are you studying?</h1>
+        <p className="max-w-[65ch] text-pretty text-body-md text-on-surface-variant">
           Pick a qualification and every subject you're sitting. We'll build the rest of
           onboarding and your study plan around this.
         </p>
@@ -91,7 +91,7 @@ export function SubjectsStep({
 
       {loadError ? (
         <Card className="flex flex-col items-start gap-3 p-5">
-          <p role="alert" className="text-body-md text-ink">
+          <p role="alert" className="text-body-md text-on-surface">
             We couldn't load the subject list. Nothing you've entered has been lost.
           </p>
           <Button type="button" variant="secondary" size="sm" className="min-h-11" onClick={onRetry}>
@@ -105,7 +105,7 @@ export function SubjectsStep({
         <div className="flex flex-col gap-4" aria-busy="true" aria-live="polite">
           <span className="sr-only">Loading subjects</span>
           {[0, 1, 2].map((i) => (
-            <Card key={i} className="h-20 animate-pulse bg-paper-sunk" />
+            <Card key={i} className="h-20 animate-pulse bg-surface-container-low" />
           ))}
         </div>
       ) : (
@@ -116,38 +116,38 @@ export function SubjectsStep({
             return (
               <Card
                 key={subject.code}
-                className={cn("overflow-hidden", selected && "border-accent")}
+                className={cn("overflow-hidden", selected && "border-primary")}
               >
                 <button
                   type="button"
                   aria-pressed={selected}
                   onClick={() => onToggleSubject(subject.code)}
-                  className="flex min-h-11 w-full cursor-pointer items-center gap-3 p-5 text-start transition-colors hover:bg-paper-sunk focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                  className="flex min-h-11 w-full cursor-pointer items-center gap-3 p-5 text-start transition-colors hover:bg-surface-container-low focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                 >
                   <span
                     aria-hidden="true"
                     className={cn(
                       "flex h-6 w-6 flex-none items-center justify-center rounded-sm border",
                       selected
-                        ? "border-accent bg-accent text-accent-on"
-                        : "border-rule bg-paper-raised",
+                        ? "border-primary bg-primary text-on-primary"
+                        : "border-outline-variant bg-surface-container-lowest",
                     )}
                   >
                     {selected ? <Check weight="bold" className="h-3.5 w-3.5" /> : null}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block text-body-lg font-medium text-ink">{subject.name}</span>
+                    <span className="block text-body-lg font-medium text-on-surface">{subject.name}</span>
                     {/* The data face: a syllabus code is an identifier, and
                         `data-sm` names the mono face itself rather than pairing
                         `font-mono` with a size rung. */}
-                    <span className="block text-data-sm text-ink-faint">{subject.code}</span>
+                    <span className="block text-data-sm text-on-surface-variant">{subject.code}</span>
                   </span>
                 </button>
 
                 {selected && draft ? (
-                  <div className="flex flex-col gap-5 border-t border-rule p-5">
+                  <div className="flex flex-col gap-5 border-t border-outline-variant p-5">
                     <div className="flex flex-col gap-2">
-                      <div className="text-body-sm font-medium text-ink">Papers you'll sit</div>
+                      <div className="text-body-sm font-medium text-on-surface">Papers you'll sit</div>
                       <div className="flex flex-wrap gap-x-5 gap-y-2.5">
                         {subject.papers.map((paper) => (
                           <Checkbox
@@ -214,9 +214,9 @@ export function SubjectsStep({
         </div>
       )}
 
-      <div className="flex items-start gap-2.5 rounded-lg bg-paper-sunk px-4 py-3">
-        <Info size={16} className="mt-0.5 flex-none text-ink-faint" aria-hidden="true" />
-        <p className="text-pretty text-body-sm text-ink-muted">
+      <div className="flex items-start gap-2.5 rounded-lg bg-surface-container-low px-4 py-3">
+        <Info size={16} className="mt-0.5 flex-none text-on-surface-variant" aria-hidden="true" />
+        <p className="text-pretty text-body-sm text-on-surface-variant">
           More subjects are coming.{" "}
           {subjects.length > 0
             ? `${subjects.map((s) => s.name).join(", ")} ${subjects.length === 1 ? "is the one" : "are the ones"} we can mark and build study plans for today.`
@@ -228,7 +228,7 @@ export function SubjectsStep({
           form-level error — not at the top of the form, and not at the bottom
           under everything else. */}
       {error ? (
-        <p role="alert" className="text-body-sm text-err">
+        <p role="alert" className="text-body-sm text-error">
           {error}
         </p>
       ) : null}
@@ -244,7 +244,7 @@ export function SubjectsStep({
           {saving ? "Saving…" : "Continue"}
         </Button>
         {selectedCount === 0 ? (
-          <span className="text-body-sm text-ink-faint">
+          <span className="text-body-sm text-on-surface-variant">
             Select at least one subject to continue
           </span>
         ) : null}

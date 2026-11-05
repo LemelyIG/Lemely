@@ -478,14 +478,14 @@ export function Review() {
                         ? "Approving…"
                         : `Bulk-approve${selected.size > 0 ? ` (${selected.size})` : ""}`}
                     </Button>
-                    <span className="text-body-sm text-ink-faint">
+                    <span className="text-body-sm text-on-surface-variant">
                       Accepts each selected mark exactly as Lemely awarded it. Integrity flags aren't
                       selectable here. Open one to look at it properly.
                     </span>
                   </div>
 
                   {bulkApprove.isError ? (
-                    <div role="alert" className="text-body-sm text-err">
+                    <div role="alert" className="text-body-sm text-error">
                       Couldn't bulk-approve: {teacherMutationFailureMessage(bulkApprove.error)}
                     </div>
                   ) : null}
@@ -493,7 +493,7 @@ export function Review() {
                   {bulkResult ? (
                     <div
                       role="status"
-                      className="border border-rule rounded-md p-4 bg-paper-sunk flex flex-col gap-2"
+                      className="border border-outline-variant rounded-md p-4 bg-surface-container-low flex flex-col gap-2"
                     >
                       <div className="flex items-center justify-between gap-3">
                         <div className="text-body-md font-medium">
@@ -506,7 +506,7 @@ export function Review() {
                         </Button>
                       </div>
                       {bulkResult.skipped.length > 0 ? (
-                        <ul className="flex flex-col gap-1 text-body-sm text-ink-muted m-0 ps-4 list-disc">
+                        <ul className="flex flex-col gap-1 text-body-sm text-on-surface-variant m-0 ps-4 list-disc">
                           {bulkResult.skipped.map((s) => {
                             const row = snapshotRef.current.find((r) => r.itemId === s.itemId)
                             return (
@@ -580,7 +580,7 @@ export function Review() {
                                 <div className="flex items-center gap-2.5 min-w-0">
                                   <span
                                     aria-hidden="true"
-                                    className="flex-none w-8 h-8 rounded-full bg-paper-sunk border border-rule flex items-center justify-center text-ink-faint"
+                                    className="flex-none w-8 h-8 rounded-full bg-surface-container-low border border-outline-variant flex items-center justify-center text-on-surface-variant"
                                   >
                                     <svg
                                       viewBox="0 0 16 16"
@@ -596,11 +596,11 @@ export function Review() {
                                   <div className="min-w-0 max-w-[20ch]">
                                     <Link
                                       to="/teacher/grading"
-                                      className="flex items-center text-ink hover:underline pointer-coarse:min-h-11"
+                                      className="flex items-center text-on-surface hover:underline pointer-coarse:min-h-11"
                                     >
                                       <span className="truncate">{item.studentDisplayName}</span>
                                     </Link>
-                                    <span className="flex items-center text-body-sm text-ink-faint">
+                                    <span className="flex items-center text-body-sm text-on-surface-variant">
                                       Grading console
                                     </span>
                                   </div>
@@ -654,13 +654,13 @@ export function Review() {
                                       ellipsis would silently stop working. */}
                                   <Link
                                     to={`/teacher/students/${item.studentId}`}
-                                    className="flex items-center text-ink hover:underline pointer-coarse:min-h-11"
+                                    className="flex items-center text-on-surface hover:underline pointer-coarse:min-h-11"
                                   >
                                     <span className="truncate">{item.studentDisplayName}</span>
                                   </Link>
                                   <Link
                                     to={`/teacher/classes/${item.classId}`}
-                                    className="flex items-center text-body-sm text-ink-faint transition-colors hover:text-ink hover:underline pointer-coarse:min-h-11"
+                                    className="flex items-center text-body-sm text-on-surface-variant transition-colors hover:text-on-surface hover:underline pointer-coarse:min-h-11"
                                   >
                                     <span className="truncate">{item.className}</span>
                                   </Link>
@@ -668,7 +668,7 @@ export function Review() {
                               </div>
                               )}
                           </TD>
-                          <TD className="whitespace-nowrap text-body-sm text-ink-muted">
+                          <TD className="whitespace-nowrap text-body-sm text-on-surface-variant">
                             {paperIdentityLabel(item)}
                           </TD>
                           <TD className="text-data-sm whitespace-nowrap">
@@ -679,7 +679,7 @@ export function Review() {
                               {reasonLabel(item.reason)}
                             </Chip>
                           </TD>
-                          <TD className="whitespace-nowrap text-body-sm text-ink-muted">
+                          <TD className="whitespace-nowrap text-body-sm text-on-surface-variant">
                             {relativeTime(item.createdAt)}
                           </TD>
                           {/* The confidence gets its own column rather than sitting
@@ -698,7 +698,7 @@ export function Review() {
                                 {Math.round(item.confidenceScore * 100)}%
                               </Chip>
                             ) : (
-                              <span className="text-body-sm text-ink-faint">–</span>
+                              <span className="text-body-sm text-on-surface-variant">–</span>
                             )}
                           </TD>
                           <TD className="text-end whitespace-nowrap">

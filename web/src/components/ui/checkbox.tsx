@@ -18,13 +18,13 @@ import type { FieldState } from "@/components/ui/input"
  * find). Caller must supply either a visible `label` or its own
  * `aria-label` — this component renders no default text.
  *
- * Restyled onto the Study Notebook tokens (DESIGN.md §3, §12): `border`/
- * `bg`/`text` now come from `--rule` / `--paper-raised` / `--ink-muted`
- * rather than the build-era compatibility names, and the focus ring is
+ * Styled on the v5 Abyss roles (DESIGN.md): `border`/`bg`/`text` come from
+ * the `outline-variant` / `surface-container-lowest` / `on-surface-variant` roles
+ * (it was first restyled onto the retired Study Notebook names), and the focus ring is
  * `--focus-ring` (blue, "the browser is talking to you") rather than
  * `--accent` — DESIGN.md §3.9 is explicit that focus must stay
  * distinguishable from the accent's own checked-state fill, which the old
- * `outline-accent` here did not.
+ * `outline-primary` here did not.
  */
 
 export interface CheckboxProps extends InputHTMLAttributes<HTMLInputElement> {
@@ -73,13 +73,13 @@ export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(function Che
       >
         <span
           className={cn(
-            "relative inline-flex h-[18px] w-[18px] flex-none items-center justify-center rounded-sm border border-rule bg-paper-raised",
+            "relative inline-flex h-[18px] w-[18px] flex-none items-center justify-center rounded-sm border border-outline-variant bg-surface-container-lowest",
             "transition-colors duration-[var(--dur-instant)] ease-out-soft",
-            "hover:border-rule-strong has-checked:border-accent has-checked:bg-accent has-checked:hover:border-accent-hover has-checked:hover:bg-accent-hover",
-            "has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-focus-ring",
-            resolvedState === "error" && "border-err",
-            resolvedState === "success" && "border-ok",
-            indeterminate && "border-accent bg-accent",
+            "hover:border-outline has-checked:border-primary has-checked:bg-primary has-checked:hover:border-primary-hover has-checked:hover:bg-primary-hover",
+            "has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-primary",
+            resolvedState === "error" && "border-error",
+            resolvedState === "success" && "border-success",
+            indeterminate && "border-primary bg-primary",
           )}
         >
           <input
@@ -94,25 +94,25 @@ export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(function Che
             <CircleNotch
               weight="regular"
               aria-hidden
-              className="pointer-events-none h-3 w-3 animate-spin text-ink-faint"
+              className="pointer-events-none h-3 w-3 animate-spin text-on-surface-variant"
             />
           ) : indeterminate ? (
             <Minus
               weight="bold"
               aria-hidden
-              className="pointer-events-none h-3 w-3 text-accent-on"
+              className="pointer-events-none h-3 w-3 text-on-primary"
             />
           ) : (
             <Check
               weight="bold"
               aria-hidden
-              className="pointer-events-none hidden h-3 w-3 text-accent-on peer-checked:block"
+              className="pointer-events-none hidden h-3 w-3 text-on-primary peer-checked:block"
             />
           )}
         </span>
-        {label ? <span className="text-body-sm text-ink-muted">{label}</span> : null}
+        {label ? <span className="text-body-sm text-on-surface-variant">{label}</span> : null}
       </label>
-      {error ? <p className="text-body-sm text-err">{error}</p> : null}
+      {error ? <p className="text-body-sm text-error">{error}</p> : null}
     </div>
   )
 })

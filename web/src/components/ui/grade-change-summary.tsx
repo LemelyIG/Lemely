@@ -57,18 +57,18 @@ const partIcon: Record<GradeChangeKey, Icon> = {
    a graphical object needs in both themes, and "same" differs by shape, not by lightness, so the
    three still tell apart in greyscale (and by the arrow, the word and the count beside them). */
 const partFill: Record<GradeChangeKey, string> = {
-  lower: "fill-ink-faint stroke-paper-raised",
-  same: "fill-paper-sunk stroke-ink-muted",
-  higher: "fill-ink stroke-paper-raised",
+  lower: "fill-on-surface-variant stroke-surface-container-lowest",
+  same: "fill-surface-container-low stroke-on-surface-variant",
+  higher: "fill-on-surface stroke-surface-container-lowest",
 }
 
 /* The same three tokens as backgrounds: the swatch beside each part's icon, word
    and count in the list, which is what ties a segment of the bar to its name.
    Lightness alone never has to tell the segments apart. */
 const partSwatch: Record<GradeChangeKey, string> = {
-  lower: "border-ink-faint bg-ink-faint",
-  same: "border-ink-muted bg-paper-sunk",
-  higher: "border-ink bg-ink",
+  lower: "border-on-surface-variant bg-on-surface-variant",
+  same: "border-on-surface-variant bg-surface-container-low",
+  higher: "border-on-surface bg-on-surface",
 }
 
 export interface GradeChangeSummaryProps {
@@ -90,7 +90,7 @@ export function GradeChangeSummary({
   const tableId = useId()
 
   const title = (
-    <Heading id={titleId} className="m-0 text-label text-ink">
+    <Heading id={titleId} className="m-0 text-label text-on-surface">
       {GRADE_CHANGE_TITLE}
     </Heading>
   )
@@ -115,7 +115,7 @@ export function GradeChangeSummary({
           compact
           kind="empty"
           tone="neutral"
-          icon={<EyeSlash size={16} className="text-ink-faint" aria-hidden />}
+          icon={<EyeSlash size={16} className="text-on-surface-variant" aria-hidden />}
           heading={INSUFFICIENT_RESULTS_HEADING}
           body={insufficientResultsBody(change.k)}
         />
@@ -131,7 +131,7 @@ export function GradeChangeSummary({
       {title}
 
       {layout.n === 0 ? (
-        <p className="m-0 text-body-md text-ink-muted">No grades to compare yet.</p>
+        <p className="m-0 text-body-md text-on-surface-variant">No grades to compare yet.</p>
       ) : (
         <svg
           role="img"
@@ -158,12 +158,12 @@ export function GradeChangeSummary({
         {layout.parts.map((part) => {
           const PartIcon = partIcon[part.key]
           return (
-            <li key={part.key} className="flex items-center gap-2 whitespace-nowrap text-body-md text-ink">
+            <li key={part.key} className="flex items-center gap-2 whitespace-nowrap text-body-md text-on-surface">
               <span
                 aria-hidden
                 className={cn("h-3 w-3 shrink-0 rounded-sm border", partSwatch[part.key])}
               />
-              <PartIcon size={16} weight="bold" className="shrink-0 text-ink-muted" aria-hidden />
+              <PartIcon size={16} weight="bold" className="shrink-0 text-on-surface-variant" aria-hidden />
               <span>{part.label}</span>
               <span className="text-data-md">{part.count}</span>
             </li>
@@ -172,7 +172,7 @@ export function GradeChangeSummary({
       </ul>
 
       <figcaption className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
-        <span className="text-body-sm text-ink-muted">{gradeChangeCaption(n)}</span>
+        <span className="text-body-sm text-on-surface-variant">{gradeChangeCaption(n)}</span>
         <Button
           variant="ghost"
           size="sm"
@@ -186,7 +186,7 @@ export function GradeChangeSummary({
 
       <div id={tableId} hidden={!showTable}>
         <Table density="operate">
-          <caption className="px-4 py-2 text-start text-body-sm text-ink-muted">
+          <caption className="px-4 py-2 text-start text-body-sm text-on-surface-variant">
             {GRADE_CHANGE_TITLE}
           </caption>
           <THead sticky={false}>
