@@ -209,7 +209,7 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
   return createPortal(
     <div className="fixed inset-0 z-modal" onKeyDown={handleKeyDown}>
       <div
-        className="fixed inset-0 z-scrim bg-[var(--scrim)] motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
+        className="fixed inset-0 z-scrim bg-scrim motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
         aria-hidden="true"
         onClick={onClose}
       />

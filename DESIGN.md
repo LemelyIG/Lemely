@@ -50,7 +50,7 @@ colors:
   inverse-surface: "oklch(0.16 0.014 245)"
   inverse-on-surface: "oklch(0.95 0.006 240)"
   inverse-primary: "#7fb8e0"
-  scrim: "oklch(0.20 0.03 242 / 0.4)"
+  scrim: "oklch(0.20 0.03 242 / 0.55)"
   shadow: "oklch(0.30 0.06 242)"
   # Material 3 roles, dark scheme
   dark-primary: "#7fb8e0"

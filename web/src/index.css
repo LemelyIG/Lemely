@@ -50,7 +50,7 @@
   --md-inverse-surface: oklch(0.16 0.014 245);
   --md-inverse-on-surface: oklch(0.95 0.006 240);
   --md-inverse-primary: #7fb8e0;
-  --md-scrim: oklch(0.20 0.03 242 / 0.4);
+  --md-scrim: oklch(0.20 0.03 242 / 0.55);
   --md-shadow: oklch(0.30 0.06 242);
 
   --grade-a-star: oklch(0.46 0.12 155);
@@ -466,15 +466,19 @@ body {
    bar) re-anchors to body and jumps by the current scroll offset. Lock the
    viewport on html instead and clip body, which creates no scroll container,
    so sticky chrome stays put while the overlay is open. The scrollbar's space
-   stays reserved (scrollbar-gutter) instead of the library's body margin, so
-   the layout does not shift sideways either. */
+   is reserved on html at all times (`scrollbar-gutter: stable`, below), so
+   neither lock (this one, nor `lockScroll`'s `position: fixed` body that
+   removes the page's scrollbar) shifts the layout sideways. */
 html:has(body[data-scroll-locked]) {
   overflow: hidden;
-  scrollbar-gutter: stable;
 }
 html body[data-scroll-locked] {
   overflow: clip !important;
   margin-right: 0 !important;
+}
+
+html {
+  scrollbar-gutter: stable;
 }
 
 body {
