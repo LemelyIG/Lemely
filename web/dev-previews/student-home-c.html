@@ -25,381 +25,250 @@
       <label>Width <select data-control="width"></select></label>
       <span class="sh-demo">Demo data</span>
     </nav>
-    <main id="sh-root" class="sh-root tl">
-      <section data-when-state="loading" aria-busy="true" aria-label="Loading your overview" class="tl-page">
-        <div class="tl-skel tl-skel-line tl-skel-greet"></div>
-        <div class="tl-hero tl-skel-hero">
-          <div class="tl-skel tl-skel-binny"></div>
-          <div class="tl-skel-stack">
-            <div class="tl-skel tl-skel-line tl-skel-level"></div>
-            <div class="tl-skel tl-skel-bar"></div>
-            <div class="tl-skel-week">
-              <span class="tl-skel"></span><span class="tl-skel"></span><span class="tl-skel"></span><span class="tl-skel"></span><span class="tl-skel"></span><span class="tl-skel"></span><span class="tl-skel"></span>
-            </div>
+    <main id="sh-root" class="sh-root bf">
+      <section data-when-state="loading" aria-busy="true" aria-label="Loading your brief" class="bf-page">
+        <div class="bf-brief">
+          <div class="bf-skel bf-skel-binny"></div>
+          <div class="bf-skel-col">
+            <div class="bf-skel bf-skel-line bf-skel-sm"></div>
+            <div class="bf-skel bf-skel-line bf-skel-xl"></div>
+            <div class="bf-skel bf-skel-line bf-skel-lg"></div>
+            <div class="bf-skel-chips"><span class="bf-skel"></span><span class="bf-skel"></span><span class="bf-skel"></span></div>
           </div>
         </div>
-        <div class="tl-skel tl-skel-block"></div>
-        <div class="tl-skel tl-skel-ledger"></div>
+        <div class="bf-skel-stories"><span class="bf-skel"></span><span class="bf-skel"></span><span class="bf-skel"></span></div>
       </section>
 
-      <section data-when-state="error" role="alert" class="tl-page">
-        <div class="tl-card tl-error">
-          <svg class="tl-ico tl-error-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5v5.5" /><path d="M12 16.4v.1" /></svg>
-          <h1 class="tl-error-h">Couldn't load your overview.</h1>
-          <p class="tl-error-p">Check your connection and try again.</p>
-          <button type="button" class="tl-btn tl-btn-pri" onclick="location.reload()">Try again</button>
+      <section data-when-state="error" role="alert" class="bf-page">
+        <div class="bf-error">
+          <svg class="bf-ico bf-error-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5v5.5" /><path d="M12 16.4v.1" /></svg>
+          <h1 class="bf-error-h">Couldn't load your overview.</h1>
+          <p class="bf-error-p">Check your connection and try again.</p>
+          <button type="button" class="bf-chip bf-chip-lead" onclick="location.reload()">Try again</button>
         </div>
       </section>
 
-      <section data-when-state="new" class="tl-page" aria-labelledby="tl-new-h">
-        <header class="tl-greet">
-          <h1 id="tl-new-h">Good morning, there.</h1>
-        </header>
-        <div class="tl-hero tl-card tl-hero-new">
-          <figure class="tl-binny">
-            <div class="tl-binny-tile" data-binny></div>
-            <figcaption class="tl-say">
-              <span data-when-mood="marking">Reading your answers.</span>
-              <span data-when-mood="grade-improved">A in 0580, up from B.</span>
-              <span data-when-mood="paper-marked">Your 0580/42 result is in.</span>
-              <span data-when-mood="streak-kept">Day 9. Streak kept.</span>
-              <span data-when-mood="idle">Ready when you are.</span>
+      <section data-when-state="new" class="bf-page" aria-labelledby="bf-new-h">
+        <article class="bf-brief">
+          <figure class="bf-byline">
+            <div class="bf-binny" data-binny></div>
+            <figcaption class="bf-by">
+              <span class="bf-by-name">Binny's brief</span>
+              <span class="bf-by-date">Thu 5 Nov</span>
             </figcaption>
           </figure>
-          <div class="tl-new-body">
-            <ol class="tl-today-list tl-today-new">
-              <li data-today-item="first-paper" class="tl-item">
-                <span class="tl-item-ico" aria-hidden="true">
-                  <svg class="tl-ico" viewBox="0 0 24 24"><path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2l1.5-2h6l1.5 2h2A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z" /><circle cx="12" cy="13" r="3.5" /></svg>
-                </span>
-                <div class="tl-item-text">
-                  <h2 class="tl-item-title">Let's get your first paper marked</h2>
-                  <p class="tl-item-body">Photograph or upload a paper you have already sat. Lemely finds the session and variant, pulls the official mark scheme, and marks it question by question.</p>
-                </div>
-                <a class="tl-btn tl-btn-pri" href="/student/correct">Correct a paper</a>
-              </li>
-            </ol>
-            <ol class="tl-steps" aria-label="Your first steps">
-              <li class="tl-step is-now"><span class="tl-step-dot" aria-hidden="true"></span><span class="tl-step-t">Correct your first paper</span><span class="tl-step-when">Now</span></li>
-              <li class="tl-step"><span class="tl-step-dot" aria-hidden="true"></span><span class="tl-step-t">See where you stand</span><span class="tl-step-when">Later</span></li>
-              <li class="tl-step"><span class="tl-step-dot" aria-hidden="true"></span><span class="tl-step-t">Get a study plan built from your own mistakes</span><span class="tl-step-when">Later</span></li>
-            </ol>
-          </div>
-        </div>
-      </section>
-
-      <div data-when-state="ready" class="tl-page">
-        <header class="tl-greet">
-          <h1>Good morning, Mariam.</h1>
-          <p class="tl-greet-sub" data-needs="many-papers">3 subjects, 22 papers corrected so far.</p>
-          <p class="tl-greet-sub" data-only-state="one-paper">1 subject, 1 paper corrected so far.</p>
-        </header>
-
-        <section class="tl-hero tl-card" aria-label="Level and streak">
-          <figure class="tl-binny">
-            <div class="tl-binny-tile" data-binny></div>
-            <figcaption class="tl-say">
+          <div class="bf-text">
+            <p class="bf-hello">Good morning, there.</p>
+            <h1 id="bf-new-h" class="bf-say">
               <span data-when-mood="marking">Reading your answers.</span>
-              <span data-when-mood="grade-improved">A in 0580, up from B.</span>
-              <span data-when-mood="paper-marked">Your 0580/42 result is in.</span>
+              <span data-when-mood="grade-improved">A in <span class="bf-code">0580</span>, up from B.</span>
+              <span data-when-mood="paper-marked">Your <span class="bf-code">0580/42</span> result is in.</span>
               <span data-when-mood="streak-kept">Day 9. Streak kept.</span>
               <span data-when-mood="idle">Ready when you are.</span>
-            </figcaption>
-          </figure>
-
-          <div class="tl-level">
-            <div class="tl-level-row">
-              <p class="tl-level-n" data-needs="many-papers">Level 7</p>
-              <p class="tl-level-n" data-only-state="one-paper">Level 1</p>
-              <p class="tl-xp"><span class="tl-xp-n" data-needs="many-papers">2,340</span><span class="tl-xp-n" data-only-state="one-paper">50</span><span class="tl-xp-u">XP</span></p>
-            </div>
-            <div data-needs="many-papers">
-              <div class="tl-bar" role="progressbar" aria-label="XP to level 8" aria-valuemin="0" aria-valuemax="500" aria-valuenow="240" aria-valuetext="240 of 500 XP to level 8">
-                <span class="tl-bar-fill"></span>
-              </div>
-              <p class="tl-bar-label">240 / 500 XP to level 8</p>
-            </div>
-            <div data-only-state="one-paper">
-              <div class="tl-bar" role="progressbar" aria-label="XP to level 2" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" aria-valuetext="50 of 100 XP to level 2">
-                <span class="tl-bar-fill tl-bar-half"></span>
-              </div>
-              <p class="tl-bar-label">50 / 100 XP to level 2</p>
-            </div>
-          </div>
-
-          <div class="tl-week">
-            <div data-when-streak="kept">
-              <div class="tl-week-head">
-                <p class="tl-week-n">9-day streak</p>
-                <p class="tl-week-meta">Longest 14 · 1 freeze · XP per day</p>
-              </div>
-              <ol class="tl-strip" aria-label="XP per day, last 7 days. Peak 120 XP on 4 November.">
-                <li class="tl-day is-earned" title="30 Oct · 60 XP"><span class="tl-xp-col"><span class="tl-xp-bar" style="--xp: 0.5"></span></span><span class="tl-day-w">Fri</span><span class="tl-day-d">30</span><span class="tl-vh">30 October, 60 XP</span></li>
-                <li class="tl-day is-earned" title="31 Oct · 20 XP"><span class="tl-xp-col"><span class="tl-xp-bar" style="--xp: 0.167"></span></span><span class="tl-day-w">Sat</span><span class="tl-day-d">31</span><span class="tl-vh">31 October, 20 XP</span></li>
-                <li class="tl-day is-earned" title="1 Nov · 35 XP"><span class="tl-xp-col"><span class="tl-xp-bar" style="--xp: 0.292"></span></span><span class="tl-day-w">Sun</span><span class="tl-day-d">1</span><span class="tl-vh">1 November, 35 XP</span></li>
-                <li class="tl-day is-earned" title="2 Nov · 50 XP"><span class="tl-xp-col"><span class="tl-xp-bar" style="--xp: 0.417"></span></span><span class="tl-day-w">Mon</span><span class="tl-day-d">2</span><span class="tl-vh">2 November, 50 XP</span></li>
-                <li class="tl-day is-earned" title="3 Nov · 30 XP"><span class="tl-xp-col"><span class="tl-xp-bar" style="--xp: 0.25"></span></span><span class="tl-day-w">Tue</span><span class="tl-day-d">3</span><span class="tl-vh">3 November, 30 XP</span></li>
-                <li class="tl-day is-earned" title="4 Nov · 120 XP"><span class="tl-xp-col"><span class="tl-xp-val" aria-hidden="true">120</span><span class="tl-xp-bar" style="--xp: 1"></span></span><span class="tl-day-w">Wed</span><span class="tl-day-d">4</span><span class="tl-vh">4 November, 120 XP</span></li>
-                <li class="tl-day is-earned is-today" aria-current="date" title="Today · 25 XP"><span class="tl-xp-col"><span class="tl-xp-bar" style="--xp: 0.208"></span></span><span class="tl-day-w"><span class="tl-wide">Today</span><span class="tl-narrow">Thu</span></span><span class="tl-day-d">5</span><span class="tl-vh">5 November, today, 25 XP</span></li>
-              </ol>
-            </div>
-            <div data-when-streak="zero">
-              <div class="tl-week-head">
-                <p class="tl-week-n">No streak yet this week.</p>
-              </div>
-              <p class="tl-week-body">Correct a paper, finish a session, take a quiz or review flashcards to start one.</p>
-              <ol class="tl-strip" aria-label="XP per day, last 7 days">
-                <li class="tl-day is-earned tl-op-empty"><span class="tl-xp-col"><span class="tl-xp-val" aria-hidden="true">60</span><span class="tl-xp-bar" style="--xp: 0.5"></span></span><span class="tl-day-w">Fri</span><span class="tl-day-d">30</span><span class="tl-vh" data-needs="many-papers">30 October, 60 XP</span><span class="tl-vh" data-only-state="one-paper">30 October, no XP</span></li>
-                <li class="tl-day is-earned tl-op-empty"><span class="tl-xp-col"><span class="tl-xp-bar" style="--xp: 0.167"></span></span><span class="tl-day-w">Sat</span><span class="tl-day-d">31</span><span class="tl-vh" data-needs="many-papers">31 October, 20 XP</span><span class="tl-vh" data-only-state="one-paper">31 October, no XP</span></li>
-                <li class="tl-day is-earned tl-op-empty"><span class="tl-xp-col"><span class="tl-xp-bar" style="--xp: 0.292"></span></span><span class="tl-day-w">Sun</span><span class="tl-day-d">1</span><span class="tl-vh" data-needs="many-papers">1 November, 35 XP</span><span class="tl-vh" data-only-state="one-paper">1 November, no XP</span></li>
-                <li class="tl-day is-earned"><span class="tl-xp-col"><span class="tl-xp-bar" style="--xp: 0.417"></span></span><span class="tl-day-w">Mon</span><span class="tl-day-d">2</span><span class="tl-vh">2 November, 50 XP</span></li>
-                <li class="tl-day is-earned tl-op-empty"><span class="tl-xp-col"><span class="tl-xp-bar" style="--xp: 0.25"></span></span><span class="tl-day-w">Tue</span><span class="tl-day-d">3</span><span class="tl-vh" data-needs="many-papers">3 November, 30 XP</span><span class="tl-vh" data-only-state="one-paper">3 November, no XP</span></li>
-                <li class="tl-day"><span class="tl-xp-col"></span><span class="tl-day-w">Wed</span><span class="tl-day-d">4</span><span class="tl-vh">4 November, no XP yet</span></li>
-                <li class="tl-day is-today" aria-current="date"><span class="tl-xp-col"></span><span class="tl-day-w"><span class="tl-wide">Today</span><span class="tl-narrow">Thu</span></span><span class="tl-day-d">5</span><span class="tl-vh">5 November, no XP yet</span></li>
-              </ol>
-            </div>
-          </div>
-        </section>
-
-        <section class="tl-today" aria-labelledby="tl-today-h">
-          <h2 id="tl-today-h" class="tl-h2">Today</h2>
-          <div class="tl-card tl-today-card">
-            <ol class="tl-today-list">
-              <li data-today-item="marking" class="tl-item">
-                <span class="tl-item-ico" aria-hidden="true">
-                  <svg class="tl-ico" viewBox="0 0 24 24"><path d="M7 3.5h7l4 4V20a.5.5 0 0 1-.5.5h-10a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5z" /><path d="M9.5 13l2 2 3.5-4" /></svg>
-                </span>
-                <div class="tl-item-text">
-                  <h3 class="tl-item-title">0625/42 is being marked</h3>
-                  <p class="tl-item-meta">Marking now · 0625</p>
-                  <p class="tl-item-body">Lemely is reading your answers and checking each one against the official mark scheme.</p>
-                </div>
-                <a class="tl-btn" href="/student/correct/progress">See progress</a>
-              </li>
-              <li data-today-item="session" class="tl-item">
-                <span class="tl-item-ico" aria-hidden="true">
-                  <svg class="tl-ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
-                </span>
-                <div class="tl-item-text">
-                  <h3 class="tl-item-title">Quadratic inequalities</h3>
-                  <p class="tl-item-meta">Today's session · 0606 · 25 min</p>
-                  <p class="tl-item-body">Next in your study plan for Additional Mathematics.</p>
-                </div>
-                <a class="tl-btn" href="/student/plan/0606/session/s1">Start session</a>
-              </li>
-              <li data-today-item="practice" class="tl-item">
-                <span class="tl-item-ico" aria-hidden="true">
-                  <svg class="tl-ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="4.5" /><circle cx="12" cy="12" r="1" /></svg>
-                </span>
-                <div class="tl-item-text" data-needs="many-papers">
-                  <h3 class="tl-item-title">Waves</h3>
-                  <p class="tl-item-meta">Practise next · 0625 · 54% accuracy</p>
-                  <p class="tl-item-body">Your weakest topic right now. A short set shows whether it is improving.</p>
-                </div>
-                <div class="tl-item-text" data-only-state="one-paper">
-                  <h3 class="tl-item-title">Vectors</h3>
-                  <p class="tl-item-meta">Practise next · 0580 · 50% accuracy</p>
-                  <p class="tl-item-body">Your weakest topic right now. A short set shows whether it is improving.</p>
-                </div>
-                <div class="tl-item-act" data-needs="many-papers"><a class="tl-btn" href="/student/practice/0625">Practise waves</a></div>
-                <div class="tl-item-act" data-only-state="one-paper"><a class="tl-btn" href="/student/practice/0580">Practise vectors</a></div>
-              </li>
-              <li data-today-item="correct" class="tl-item">
-                <span class="tl-item-ico" aria-hidden="true">
-                  <svg class="tl-ico" viewBox="0 0 24 24"><path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2l1.5-2h6l1.5 2h2A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z" /><circle cx="12" cy="13" r="3.5" /></svg>
-                </span>
-                <div class="tl-item-text">
-                  <h3 class="tl-item-title">Ready for another paper?</h3>
-                  <p class="tl-item-body">Each paper sharpens your predicted grade.</p>
-                </div>
-                <a class="tl-btn" href="/student/correct">Correct a paper</a>
-              </li>
-              <li data-today-item="first-paper" class="tl-item">
-                <span class="tl-item-ico" aria-hidden="true">
-                  <svg class="tl-ico" viewBox="0 0 24 24"><path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2l1.5-2h6l1.5 2h2A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z" /><circle cx="12" cy="13" r="3.5" /></svg>
-                </span>
-                <div class="tl-item-text">
-                  <h3 class="tl-item-title">Let's get your first paper marked</h3>
-                  <p class="tl-item-body">Photograph or upload a paper you have already sat. Lemely finds the session and variant, pulls the official mark scheme, and marks it question by question.</p>
-                </div>
-                <a class="tl-btn" href="/student/correct">Correct a paper</a>
-              </li>
-            </ol>
-            <div class="tl-note" data-only-state="no-plan">
-              <p>No study plan this week. Build one from your weak topics.</p>
-              <a class="tl-link" href="/student/plan">Build a plan</a>
-            </div>
-          </div>
-        </section>
-
-        <section class="tl-fixnext" aria-labelledby="tl-fix-h">
-          <div class="tl-sec-head">
-            <h2 id="tl-fix-h" class="tl-h2 tl-h2-sm">Fix next</h2>
-            <p class="tl-sec-note">Most marks dropped first · secure from 70%</p>
-          </div>
-          <ol class="tl-fix-row">
-            <li class="tl-fix" data-needs="many-papers">
-              <div class="tl-fix-top">
-                <svg class="tl-ring" viewBox="0 0 48 48" role="img" aria-label="54% accuracy. Secure from 70%.">
-                  <circle class="tl-ring-track" cx="24" cy="24" r="18" />
-                  <circle class="tl-ring-arc" cx="24" cy="24" r="18" pathLength="100" stroke-dasharray="54 100" transform="rotate(-90 24 24)" />
-                  <line class="tl-ring-tick" x1="10.69" y1="28.33" x2="3.08" y2="30.8" />
-                  <text x="24" y="28" text-anchor="middle">54%</text>
-                </svg>
-                <div class="tl-fix-name"><h3 class="tl-fix-t">Waves</h3><p class="tl-code">0625</p></div>
-              </div>
-              <p class="tl-fix-change is-up"><svg class="tl-ico tl-ico-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" /></svg>Up 7 since last paper</p>
-              <p class="tl-fix-drop">9 marks dropped</p>
-              <a class="tl-btn tl-btn-sm" href="/student/practice/0625">Practise<span class="tl-vh"> waves</span></a>
-            </li>
-            <li class="tl-fix" data-needs="many-papers">
-              <div class="tl-fix-top">
-                <svg class="tl-ring" viewBox="0 0 48 48" role="img" aria-label="58% accuracy. Secure from 70%.">
-                  <circle class="tl-ring-track" cx="24" cy="24" r="18" />
-                  <circle class="tl-ring-arc" cx="24" cy="24" r="18" pathLength="100" stroke-dasharray="58 100" transform="rotate(-90 24 24)" />
-                  <line class="tl-ring-tick" x1="10.69" y1="28.33" x2="3.08" y2="30.8" />
-                  <text x="24" y="28" text-anchor="middle">58%</text>
-                </svg>
-                <div class="tl-fix-name"><h3 class="tl-fix-t">Quadratic inequalities</h3><p class="tl-code">0606</p></div>
-              </div>
-              <p class="tl-fix-change"><svg class="tl-ico tl-ico-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6" /></svg>Down 3 since last paper</p>
-              <p class="tl-fix-drop">6 marks dropped</p>
-              <a class="tl-btn tl-btn-sm" href="/student/practice/0606">Practise<span class="tl-vh"> quadratic inequalities</span></a>
-            </li>
-            <li class="tl-fix" data-needs="many-papers">
-              <div class="tl-fix-top">
-                <svg class="tl-ring" viewBox="0 0 48 48" role="img" aria-label="63% accuracy. Secure from 70%.">
-                  <circle class="tl-ring-track" cx="24" cy="24" r="18" />
-                  <circle class="tl-ring-arc" cx="24" cy="24" r="18" pathLength="100" stroke-dasharray="63 100" transform="rotate(-90 24 24)" />
-                  <line class="tl-ring-tick" x1="10.69" y1="28.33" x2="3.08" y2="30.8" />
-                  <text x="24" y="28" text-anchor="middle">63%</text>
-                </svg>
-                <div class="tl-fix-name"><h3 class="tl-fix-t">Vectors</h3><p class="tl-code">0580</p></div>
-              </div>
-              <p class="tl-fix-change is-up"><svg class="tl-ico tl-ico-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" /></svg>Up 8 since last paper</p>
-              <p class="tl-fix-drop">5 marks dropped</p>
-              <a class="tl-btn tl-btn-sm" href="/student/practice/0580">Practise<span class="tl-vh"> vectors</span></a>
-            </li>
-            <li class="tl-fix" data-needs="many-papers">
-              <div class="tl-fix-top">
-                <svg class="tl-ring" viewBox="0 0 48 48" role="img" aria-label="66% accuracy. Secure from 70%.">
-                  <circle class="tl-ring-track" cx="24" cy="24" r="18" />
-                  <circle class="tl-ring-arc" cx="24" cy="24" r="18" pathLength="100" stroke-dasharray="66 100" transform="rotate(-90 24 24)" />
-                  <line class="tl-ring-tick" x1="10.69" y1="28.33" x2="3.08" y2="30.8" />
-                  <text x="24" y="28" text-anchor="middle">66%</text>
-                </svg>
-                <div class="tl-fix-name"><h3 class="tl-fix-t">Moments</h3><p class="tl-code">0625</p></div>
-              </div>
-              <p class="tl-fix-change">First seen this paper</p>
-              <p class="tl-fix-drop">3 marks dropped</p>
-              <a class="tl-btn tl-btn-sm" href="/student/practice/0625">Practise<span class="tl-vh"> moments</span></a>
-            </li>
-            <li class="tl-fix" data-only-state="one-paper">
-              <div class="tl-fix-top">
-                <svg class="tl-ring" viewBox="0 0 48 48" role="img" aria-label="50% accuracy. Secure from 70%.">
-                  <circle class="tl-ring-track" cx="24" cy="24" r="18" />
-                  <circle class="tl-ring-arc" cx="24" cy="24" r="18" pathLength="100" stroke-dasharray="50 100" transform="rotate(-90 24 24)" />
-                  <line class="tl-ring-tick" x1="10.69" y1="28.33" x2="3.08" y2="30.8" />
-                  <text x="24" y="28" text-anchor="middle">50%</text>
-                </svg>
-                <div class="tl-fix-name"><h3 class="tl-fix-t">Vectors</h3><p class="tl-code">0580</p></div>
-              </div>
-              <p class="tl-fix-change">First paper</p>
-              <p class="tl-fix-drop">4 marks dropped</p>
-              <a class="tl-btn tl-btn-sm" href="/student/practice/0580">Practise<span class="tl-vh"> vectors</span></a>
-            </li>
-          </ol>
-        </section>
-
-        <div class="tl-record">
-          <section class="tl-card tl-ledger" aria-labelledby="tl-subjects-h">
-            <h2 id="tl-subjects-h" class="tl-h3">Subjects</h2>
-            <ul class="tl-rows tl-fill">
-              <li>
-                <a class="tl-subj" href="/student/subject/0580">
-                  <span class="tl-chip tl-g-a" data-needs="many-papers" aria-label="Grade A">A</span>
-                  <span class="tl-chip tl-g-b" data-only-state="one-paper" aria-label="Grade B">B</span>
-                  <span class="tl-subj-name"><span class="tl-code">0580</span> Mathematics</span>
-                  <span class="tl-subj-delta is-up" data-needs="many-papers"><svg class="tl-ico tl-ico-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" /></svg>up from B</span>
-                  <span class="tl-subj-delta" data-only-state="one-paper">One paper so far — the line starts with your second</span>
-                  <svg class="tl-spark" data-needs="many-papers" viewBox="0 0 132 40" role="img" aria-label="0580 percentage over the last 8 papers, from 49% to 76%. A* band at 85%.">
-                    <polyline points="4,29.13 21.71,27.73 39.43,26.33 57.14,27.27 74.86,24.93 92.57,23.53 110.29,22.6 128,16.53" />
-                    <circle cx="128" cy="16.53" r="3" />
-                  </svg>
-                  <span class="tl-spark-cap" data-needs="many-papers">9 points from an A*</span>
-                  <svg class="tl-spark" data-only-state="one-paper" viewBox="0 0 132 40" role="img" aria-label="0580: one paper so far at 65%. A band at 70%.">
-                    <circle cx="128" cy="21.67" r="3" />
-                  </svg>
-                  <span class="tl-subj-papers"><span class="tl-num" data-needs="many-papers">14 papers</span><span class="tl-num" data-only-state="one-paper">1 paper</span></span>
-                  <span class="tl-subj-exam" data-needs="exams"><span class="tl-num">exam in 188 days</span></span>
-                </a>
-              </li>
-              <li data-needs="many-papers">
-                <a class="tl-subj" href="/student/subject/0606">
-                  <span class="tl-chip tl-g-b" aria-label="Grade B">B</span>
-                  <span class="tl-subj-name"><span class="tl-code">0606</span> Additional Mathematics</span>
-                  <span class="tl-subj-delta">no change</span>
-                  <svg class="tl-spark" viewBox="0 0 132 40" role="img" aria-label="0606 percentage over all 6 papers, from 44% to 59%. A band at 68%.">
-                    <polyline points="39.43,31.47 57.14,28.67 74.86,27.27 92.57,25.4 110.29,26.33 128,24.47" />
-                    <circle cx="128" cy="24.47" r="3" />
-                  </svg>
-                  <span class="tl-spark-cap">9 points from an A</span>
-                  <span class="tl-subj-papers"><span class="tl-num">6 papers</span></span>
-                  <span class="tl-subj-exam" data-needs="exams"><span class="tl-num">exam in 194 days</span></span>
-                </a>
-              </li>
-              <li data-needs="many-papers">
-                <a class="tl-subj" href="/student/subject/0625">
-                  <span class="tl-chip tl-g-c" aria-label="Grade C">C</span>
-                  <span class="tl-subj-name"><span class="tl-code">0625</span> Physics</span>
-                  <span class="tl-subj-delta is-up"><svg class="tl-ico tl-ico-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" /></svg>up from D · estimated</span>
-                  <svg class="tl-spark" viewBox="0 0 132 40" role="img" aria-label="0625 percentage over both papers, from 41% to 48%. B band at 52%.">
-                    <polyline points="110.29,32.87 128,29.6" />
-                    <circle cx="128" cy="29.6" r="3" />
-                  </svg>
-                  <span class="tl-spark-cap">4 points from a B</span>
-                  <span class="tl-subj-papers"><span class="tl-num">2 papers</span></span>
-                  <span class="tl-subj-exam" data-needs="exams"><span class="tl-num">exam in 180 days</span></span>
-                </a>
+            </h1>
+            <p class="bf-body"><strong>Let's get your first paper marked.</strong> Photograph or upload a paper you have already sat. Lemely finds the session and variant, pulls the official mark scheme, and marks it question by question.</p>
+            <ul class="bf-replies" aria-label="Your next step">
+              <li data-today-item="first-paper" class="bf-reply">
+                <a class="bf-chip" href="/student/correct">Correct a paper<svg class="bf-ico bf-ico-sm bf-flip" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg></a>
               </li>
             </ul>
-            <div class="tl-note" data-only-state="no-exams">
-              <p>Add your exam dates to see how long you have for each subject.</p>
-              <a class="tl-link" href="/student/settings/exams">Add exam dates</a>
+          </div>
+        </article>
+
+        <section class="bf-path-sec" aria-labelledby="bf-steps-h">
+          <h2 id="bf-steps-h" class="bf-h2">How it starts</h2>
+          <ol class="bf-path">
+            <li class="bf-stone is-now"><span class="bf-stone-dot" aria-hidden="true"></span><span class="bf-stone-when">Now</span><span class="bf-stone-t">Correct your first paper</span></li>
+            <li class="bf-stone"><span class="bf-stone-dot" aria-hidden="true"></span><span class="bf-stone-when">Later</span><span class="bf-stone-t">See where you stand</span></li>
+            <li class="bf-stone"><span class="bf-stone-dot" aria-hidden="true"></span><span class="bf-stone-when">Later</span><span class="bf-stone-t">Get a study plan built from your own mistakes</span></li>
+          </ol>
+        </section>
+      </section>
+
+      <div data-when-state="ready" class="bf-page">
+        <article class="bf-brief" aria-labelledby="bf-say-h">
+          <figure class="bf-byline">
+            <div class="bf-binny" data-binny></div>
+            <figcaption class="bf-by">
+              <span class="bf-by-name">Binny's brief</span>
+              <span class="bf-by-date">Thu 5 Nov</span>
+            </figcaption>
+          </figure>
+          <div class="bf-text">
+            <p class="bf-hello">Good morning, Mariam.</p>
+            <h1 id="bf-say-h" class="bf-say">
+              <span data-when-mood="marking">Reading your answers.</span>
+              <span data-when-mood="grade-improved">A in <span class="bf-code">0580</span>, up from B.</span>
+              <span data-when-mood="paper-marked">Your <span class="bf-code">0580/42</span> result is in.</span>
+              <span data-when-mood="streak-kept">Day 9. Streak kept.</span>
+              <span data-when-mood="idle">Ready when you are.</span>
+            </h1>
+
+            <p class="bf-body" data-brief="populated no-exams streak-zero">Physics is <strong>4 points from a B</strong>, and Waves is the weakest topic there. Today's session is <strong>Quadratic inequalities</strong>, next in your Additional Mathematics plan.</p>
+            <p class="bf-body" data-brief="marking"><span class="bf-code">0625/42</span> is being marked. Lemely is reading your answers and checking each one against the official mark scheme. Your Quadratic inequalities session is ready while you wait.</p>
+            <p class="bf-body" data-brief="no-plan">Physics is <strong>4 points from a B</strong>, and Waves is the weakest topic there. No study plan this week. Build one from your weak topics. <a class="bf-inline" href="/student/plan">Build a plan</a></p>
+            <p class="bf-body" data-brief="one-paper">Your first Mathematics paper came back a B, <span class="bf-code">52/80</span>. Vectors is the topic to practise first.</p>
+
+            <ul class="bf-replies" aria-label="Today">
+              <li data-today-item="marking" class="bf-reply">
+                <a class="bf-chip" href="/student/correct/progress">See progress<span class="bf-chip-meta">0625/42</span></a>
+              </li>
+              <li data-today-item="session" class="bf-reply">
+                <a class="bf-chip" href="/student/plan/0606/session/s1">Start session<span class="bf-chip-meta">25 min</span></a>
+              </li>
+              <li data-today-item="practice" class="bf-reply">
+                <a class="bf-chip" href="/student/practice/0625" data-needs="many-papers">Practise waves<span class="bf-chip-meta">54%</span></a>
+                <a class="bf-chip" href="/student/practice/0580" data-only-state="one-paper">Practise vectors<span class="bf-chip-meta">50%</span></a>
+              </li>
+              <li data-today-item="correct" class="bf-reply">
+                <a class="bf-chip" href="/student/correct">Correct a paper</a>
+              </li>
+            </ul>
+          </div>
+        </article>
+
+        <section class="bf-since" aria-labelledby="bf-since-h">
+          <h2 id="bf-since-h" class="bf-h2">Since October</h2>
+          <div class="bf-stories">
+            <a class="bf-story" href="/student/subject/0625" data-needs="many-papers">
+              <p class="bf-story-t">Physics climbed from D to C. B is 4 points away.</p>
+              <ol class="bf-stones" aria-label="Physics grade journey: D, then C now, B next">
+                <li class="bf-gstone is-past"><span class="bf-g bf-g-d">D</span><span class="bf-gstone-l">Before</span></li>
+                <li class="bf-gstone is-now"><span class="bf-g bf-g-c">C</span><span class="bf-gstone-l">Now</span></li>
+                <li class="bf-gstone is-next"><span class="bf-g bf-g-next">B</span><span class="bf-gstone-l">4 points</span></li>
+              </ol>
+            </a>
+            <a class="bf-story" href="/student/subject/0580" data-only-state="one-paper">
+              <p class="bf-story-t">Your first Mathematics grade is a B. Each paper adds a step.</p>
+              <ol class="bf-stones" aria-label="Mathematics grade journey: B now">
+                <li class="bf-gstone is-now"><span class="bf-g bf-g-b">B</span><span class="bf-gstone-l">Now</span></li>
+                <li class="bf-gstone is-next"><span class="bf-g bf-g-next">A</span><span class="bf-gstone-l">Next</span></li>
+              </ol>
+            </a>
+
+            <a class="bf-story" href="/student/practice/0625" data-needs="many-papers">
+              <p class="bf-story-t">Waves is up 7 points since your last paper.</p>
+              <p class="bf-pair" role="img" aria-label="Waves accuracy: 47% before, 54% now">
+                <span class="bf-pair-chip is-before">47%</span>
+                <svg class="bf-ico bf-pair-arrow bf-flip" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+                <span class="bf-pair-chip is-after">54%</span>
+              </p>
+            </a>
+            <a class="bf-story" href="/student/practice/0580" data-only-state="one-paper">
+              <p class="bf-story-t">Vectors starts at 50%. Your next paper shows the change.</p>
+              <p class="bf-pair" role="img" aria-label="Vectors accuracy: 50% on your first paper">
+                <span class="bf-pair-chip is-after">50%</span>
+              </p>
+            </a>
+
+            <div class="bf-story bf-story-streak">
+              <div data-when-streak="kept">
+                <p class="bf-story-t">9 days in a row. Your longest is 14.</p>
+                <ol class="bf-steps" aria-label="XP per day, last 7 days. Peak 120 XP on 4 November.">
+                  <li class="bf-step is-earned" title="30 Oct · 60 XP"><span class="bf-bar" style="--xp: 0.5"></span><span class="bf-step-d">F</span><span class="bf-vh">30 October, 60 XP</span></li>
+                  <li class="bf-step is-earned" title="31 Oct · 20 XP"><span class="bf-bar" style="--xp: 0.167"></span><span class="bf-step-d">S</span><span class="bf-vh">31 October, 20 XP</span></li>
+                  <li class="bf-step is-earned" title="1 Nov · 35 XP"><span class="bf-bar" style="--xp: 0.292"></span><span class="bf-step-d">S</span><span class="bf-vh">1 November, 35 XP</span></li>
+                  <li class="bf-step is-earned" title="2 Nov · 50 XP"><span class="bf-bar" style="--xp: 0.417"></span><span class="bf-step-d">M</span><span class="bf-vh">2 November, 50 XP</span></li>
+                  <li class="bf-step is-earned" title="3 Nov · 30 XP"><span class="bf-bar" style="--xp: 0.25"></span><span class="bf-step-d">T</span><span class="bf-vh">3 November, 30 XP</span></li>
+                  <li class="bf-step is-earned is-peak" title="4 Nov · 120 XP"><span class="bf-bar" style="--xp: 1"><span class="bf-bar-v" aria-hidden="true">120</span></span><span class="bf-step-d">W</span><span class="bf-vh">4 November, 120 XP</span></li>
+                  <li class="bf-step is-earned is-today" aria-current="date" title="Today · 25 XP"><span class="bf-bar" style="--xp: 0.208"></span><span class="bf-step-d">T</span><span class="bf-vh">5 November, today, 25 XP</span></li>
+                </ol>
+                <p class="bf-story-foot">1 freeze in hand</p>
+              </div>
+              <div data-when-streak="zero">
+                <p class="bf-story-t">No streak yet this week.</p>
+                <p class="bf-story-sub">Correct a paper, finish a session, take a quiz or review flashcards to start one.</p>
+                <ol class="bf-steps" aria-label="XP per day, last 7 days">
+                  <li class="bf-step is-earned bf-op-empty"><span class="bf-bar" style="--xp: 0.5"></span><span class="bf-step-d">F</span><span class="bf-vh" data-needs="many-papers">30 October, 60 XP</span><span class="bf-vh" data-only-state="one-paper">30 October, no XP</span></li>
+                  <li class="bf-step is-earned bf-op-empty"><span class="bf-bar" style="--xp: 0.167"></span><span class="bf-step-d">S</span><span class="bf-vh" data-needs="many-papers">31 October, 20 XP</span><span class="bf-vh" data-only-state="one-paper">31 October, no XP</span></li>
+                  <li class="bf-step is-earned bf-op-empty"><span class="bf-bar" style="--xp: 0.292"></span><span class="bf-step-d">S</span><span class="bf-vh" data-needs="many-papers">1 November, 35 XP</span><span class="bf-vh" data-only-state="one-paper">1 November, no XP</span></li>
+                  <li class="bf-step is-earned"><span class="bf-bar" style="--xp: 0.417"></span><span class="bf-step-d">M</span><span class="bf-vh">2 November, 50 XP</span></li>
+                  <li class="bf-step is-earned bf-op-empty"><span class="bf-bar" style="--xp: 0.25"></span><span class="bf-step-d">T</span><span class="bf-vh" data-needs="many-papers">3 November, 30 XP</span><span class="bf-vh" data-only-state="one-paper">3 November, no XP</span></li>
+                  <li class="bf-step"><span class="bf-bar"></span><span class="bf-step-d">W</span><span class="bf-vh">4 November, no XP yet</span></li>
+                  <li class="bf-step is-today" aria-current="date"><span class="bf-bar"></span><span class="bf-step-d">T</span><span class="bf-vh">5 November, today, no XP yet</span></li>
+                </ol>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="bf-line-sec" aria-labelledby="bf-fix-h">
+          <p id="bf-fix-h" class="bf-line"><span data-needs="many-papers">Marks to win back, most dropped first.</span><span data-only-state="one-paper">One topic to win back marks on.</span></p>
+          <ul class="bf-topics">
+            <li data-needs="many-papers"><a class="bf-topic" href="/student/practice/0625">Waves<span class="bf-topic-m">9 marks</span></a></li>
+            <li data-needs="many-papers"><a class="bf-topic" href="/student/practice/0606">Quadratic inequalities<span class="bf-topic-m">6 marks</span></a></li>
+            <li data-needs="many-papers"><a class="bf-topic" href="/student/practice/0580">Vectors<span class="bf-topic-m">5 marks</span></a></li>
+            <li data-needs="many-papers"><a class="bf-topic" href="/student/practice/0625">Moments<span class="bf-topic-m">3 marks</span></a></li>
+            <li data-only-state="one-paper"><a class="bf-topic" href="/student/practice/0580">Vectors<span class="bf-topic-m">4 marks</span></a></li>
+          </ul>
+        </section>
+
+        <footer class="bf-ledger">
+          <section class="bf-ledger-col" aria-labelledby="bf-stand-h">
+            <h2 id="bf-stand-h" class="bf-h3">Where you stand</h2>
+            <ul class="bf-subjects">
+              <li><a class="bf-subj" href="/student/subject/0580">
+                <span class="bf-g bf-g-sm bf-g-a" data-needs="many-papers" aria-label="Grade A">A</span>
+                <span class="bf-g bf-g-sm bf-g-b" data-only-state="one-paper" aria-label="Grade B">B</span>
+                <span class="bf-subj-t"><span class="bf-code">0580</span> Mathematics</span>
+                <span class="bf-subj-m" data-needs="many-papers"><span class="is-up">up from B</span><span data-needs="exams"> · exam in <span class="bf-code">188</span> days</span></span>
+                <span class="bf-subj-m" data-only-state="one-paper">1 paper<span data-needs="exams"> · exam in <span class="bf-code">188</span> days</span></span>
+              </a></li>
+              <li data-needs="many-papers"><a class="bf-subj" href="/student/subject/0606">
+                <span class="bf-g bf-g-sm bf-g-b" aria-label="Grade B">B</span>
+                <span class="bf-subj-t"><span class="bf-code">0606</span> Additional Mathematics</span>
+                <span class="bf-subj-m">no change<span data-needs="exams"> · exam in <span class="bf-code">194</span> days</span></span>
+              </a></li>
+              <li data-needs="many-papers"><a class="bf-subj" href="/student/subject/0625">
+                <span class="bf-g bf-g-sm bf-g-c" aria-label="Grade C">C</span>
+                <span class="bf-subj-t"><span class="bf-code">0625</span> Physics</span>
+                <span class="bf-subj-m"><span class="is-up">up from D</span> · estimated<span data-needs="exams"> · exam in <span class="bf-code">180</span> days</span></span>
+              </a></li>
+            </ul>
+            <p class="bf-note" data-only-state="no-exams">Add your exam dates to see how long you have for each subject. <a class="bf-inline" href="/student/settings/exams">Add exam dates</a></p>
+          </section>
+          <section class="bf-ledger-col" aria-labelledby="bf-recent-h">
+            <h2 id="bf-recent-h" class="bf-h3">Recent papers</h2>
+            <ul class="bf-papers">
+              <li data-needs="many-papers"><a class="bf-paper" href="/student/result/demo-0580-42-mj24"><span class="bf-paper-l">0580/42 · m/j 2024</span><span class="bf-paper-s">61/80</span><span class="bf-g bf-g-xs bf-g-a" aria-label="Grade A">A</span></a></li>
+              <li data-needs="many-papers"><a class="bf-paper" href="/student/result/demo-0625-42-on23"><span class="bf-paper-l">0625/42 · o/n 2023</span><span class="bf-paper-s">38/80</span><span class="bf-g bf-g-xs bf-g-c" aria-label="Grade C">C</span></a></li>
+              <li data-needs="many-papers"><a class="bf-paper" href="/student/result/demo-0580-22-on23"><span class="bf-paper-l">0580/22 · o/n 2023</span><span class="bf-paper-s">49/80</span><span class="bf-g bf-g-xs bf-g-b" aria-label="Grade B">B</span></a></li>
+              <li data-needs="many-papers"><a class="bf-paper" href="/student/result/demo-0606-12-mj24"><span class="bf-paper-l">0606/12 · m/j 2024</span><span class="bf-paper-s">47/80</span><span class="bf-g bf-g-xs bf-g-b" aria-label="Grade B">B</span></a></li>
+              <li data-needs="many-papers"><a class="bf-paper" href="/student/result/demo-0580-41-mj23"><span class="bf-paper-l">0580/41 · m/j 2023</span><span class="bf-paper-s">45/80</span><span class="bf-g bf-g-xs bf-g-b" aria-label="Grade B">B</span></a></li>
+              <li data-only-state="one-paper"><a class="bf-paper" href="/student/result/demo-0580-42-mj24"><span class="bf-paper-l">0580/42 · m/j 2024</span><span class="bf-paper-s">52/80</span><span class="bf-g bf-g-xs bf-g-b" aria-label="Grade B">B</span></a></li>
+            </ul>
+          </section>
+          <section class="bf-ledger-col bf-level" aria-labelledby="bf-level-h">
+            <h2 id="bf-level-h" class="bf-h3">Level</h2>
+            <p class="bf-level-n"><span data-needs="many-papers">Level 7</span><span data-only-state="one-paper">Level 1</span></p>
+            <p class="bf-level-xp"><span data-needs="many-papers">2,340 XP</span><span data-only-state="one-paper">50 XP</span></p>
+            <div data-needs="many-papers">
+              <div class="bf-meter" role="progressbar" aria-label="XP to level 8" aria-valuemin="0" aria-valuemax="500" aria-valuenow="240"><span style="--p: 0.48"></span></div>
+              <p class="bf-meter-l">240 / 500 XP to level 8</p>
+            </div>
+            <div data-only-state="one-paper">
+              <div class="bf-meter" role="progressbar" aria-label="XP to level 2" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"><span style="--p: 0.5"></span></div>
+              <p class="bf-meter-l">50 / 100 XP to level 2</p>
             </div>
           </section>
-
-          <div class="tl-record-side">
-            <section class="tl-card tl-recent" aria-labelledby="tl-recent-h">
-              <h2 id="tl-recent-h" class="tl-h3">Recent results</h2>
-              <ul class="tl-results tl-fill">
-                <li data-needs="many-papers"><a class="tl-res" href="/student/result/demo-0580-42-mj24"><span class="tl-res-paper">0580/42 · m/j 2024</span><span class="tl-res-date">4 Nov</span><span class="tl-res-marks">61/80</span><span class="tl-chip tl-chip-sm tl-g-a" aria-label="Grade A">A</span></a></li>
-                <li data-needs="many-papers"><a class="tl-res" href="/student/result/demo-0625-42-on23"><span class="tl-res-paper">0625/42 · o/n 2023</span><span class="tl-res-date">31 Oct</span><span class="tl-res-marks">38/80</span><span class="tl-chip tl-chip-sm tl-g-c" aria-label="Grade C">C</span></a></li>
-                <li data-needs="many-papers"><a class="tl-res" href="/student/result/demo-0580-22-on23"><span class="tl-res-paper">0580/22 · o/n 2023</span><span class="tl-res-date">27 Oct</span><span class="tl-res-marks">49/80</span><span class="tl-chip tl-chip-sm tl-g-b" aria-label="Grade B">B</span></a></li>
-                <li data-needs="many-papers"><a class="tl-res" href="/student/result/demo-0606-12-mj24"><span class="tl-res-paper">0606/12 · m/j 2024</span><span class="tl-res-date">22 Oct</span><span class="tl-res-marks">47/80</span><span class="tl-chip tl-chip-sm tl-g-b" aria-label="Grade B">B</span></a></li>
-                <li data-needs="many-papers"><a class="tl-res" href="/student/result/demo-0580-41-mj23"><span class="tl-res-paper">0580/41 · m/j 2023</span><span class="tl-res-date">15 Oct</span><span class="tl-res-marks">45/80</span><span class="tl-chip tl-chip-sm tl-g-b" aria-label="Grade B">B</span></a></li>
-                <li data-only-state="one-paper"><a class="tl-res" href="/student/result/demo-0580-42-mj24"><span class="tl-res-paper">0580/42 · m/j 2024</span><span class="tl-res-date"></span><span class="tl-res-marks">52/80</span><span class="tl-chip tl-chip-sm tl-g-b" aria-label="Grade B">B</span></a></li>
-              </ul>
-            </section>
-          </div>
-        </div>
+        </footer>
       </div>
 
-      <nav class="tl-tabs" aria-label="Student">
-        <a class="tl-tab" href="/student" aria-current="page">
-          <svg class="tl-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z" /></svg>
+      <nav class="bf-tabs" aria-label="Student">
+        <a class="bf-tab" href="/student" aria-current="page">
+          <svg class="bf-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z" /></svg>
           <span>Overview</span>
         </a>
-        <a class="tl-tab" href="/student/correct">
-          <svg class="tl-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2l1.5-2h6l1.5 2h2A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z" /><circle cx="12" cy="13" r="3.5" /></svg>
+        <a class="bf-tab" href="/student/correct">
+          <svg class="bf-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2l1.5-2h6l1.5 2h2A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z" /><circle cx="12" cy="13" r="3.5" /></svg>
           <span>Correct</span>
         </a>
-        <a class="tl-tab" href="/student/classes">
-          <svg class="tl-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="9" r="3.5" /><path d="M3 19.5c.6-3 3-5 6-5s5.4 2 6 5" /><path d="M15.5 5.8a3.5 3.5 0 0 1 0 6.4M17.5 14.8c1.8.7 3 2.4 3.5 4.7" /></svg>
+        <a class="bf-tab" href="/student/classes">
+          <svg class="bf-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="9" r="3.5" /><path d="M3 19.5c.6-3 3-5 6-5s5.4 2 6 5" /><path d="M15.5 5.8a3.5 3.5 0 0 1 0 6.4M17.5 14.8c1.8.7 3 2.4 3.5 4.7" /></svg>
           <span>Classes</span>
         </a>
-        <a class="tl-tab" href="/student/profile">
-          <svg class="tl-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8.5" r="4" /><path d="M4.5 20c.8-3.6 3.8-6 7.5-6s6.7 2.4 7.5 6" /></svg>
+        <a class="bf-tab" href="/student/profile">
+          <svg class="bf-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8.5" r="4" /><path d="M4.5 20c.8-3.6 3.8-6 7.5-6s6.7 2.4 7.5 6" /></svg>
           <span>Profile</span>
         </a>
       </nav>
