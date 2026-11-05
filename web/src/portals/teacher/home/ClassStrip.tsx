@@ -59,8 +59,8 @@ export function ClassStrip({ classes }: { classes: ClassSummary[] }) {
                   <p className="mt-1 truncate text-data-sm text-on-surface-variant">
                     {m.trend && (
                       <span className={TREND_TONE[m.trend.tone]}>
-                        {m.trend.tone === "down" && <span aria-hidden>↓ </span>}
-                        {m.trend.text}
+                        {/* The sign is the non-colour cue; a typographic minus, no extra arrow. */}
+                        {m.trend.text.replace(/^-/, "\u2212")}
                         <span className="sr-only"> points since the previous paper</span>
                       </span>
                     )}
