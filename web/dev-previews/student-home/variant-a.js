@@ -279,6 +279,126 @@ function runMarkingDemo() {
   stageTimers.push(setTimeout(() => setStage(prog, 3), STAGE_MS * 2))
 }
 
+/* ---------- app shell: toolbar offset, stuck bar, popovers, subjects, notifications ---------- */
+const toolbar = document.querySelector(".sh-toolbar")
+const bar = document.querySelector(".as-bar")
+const side = document.getElementById("as-side")
+const pops = [...document.querySelectorAll("details.as-pop")]
+
+// The preview toolbar is sticky above the shell; the sidebar and top bar stick below it.
+if (toolbar) {
+  const setTop = () => root.style.setProperty("--as-top", `${toolbar.offsetHeight}px`)
+  new ResizeObserver(setTop).observe(toolbar)
+  setTop()
+}
+
+function syncStuck() {
+  if (!bar) return
+  const top = toolbar ? toolbar.offsetHeight : 0
+  bar.classList.toggle("is-stuck", window.scrollY > 0 && bar.getBoundingClientRect().top <= top + 1)
+}
+window.addEventListener("scroll", () => requestAnimationFrame(syncStuck), { passive: true })
+
+// Top-bar popovers: one open at a time; outside click or Escape closes, and Escape
+// returns focus to the trigger.
+function closePops(except = null) {
+  for (const d of pops) if (d !== except) d.open = false
+}
+for (const d of pops) {
+  d.addEventListener("toggle", () => {
+    if (!d.open) return
+    closePops(d)
+    if (side?.matches(":popover-open")) side.hidePopover()
+  })
+}
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("details.as-pop")) closePops()
+})
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return
+  const open = pops.find((d) => d.open)
+  if (!open) return
+  open.open = false
+  open.querySelector("summary").focus()
+})
+
+// The "More" sheet is the sidebar as a popover; it only exists in the mobile shell.
+function closeSheetIfWide() {
+  if (side?.matches(":popover-open") && root.clientWidth > 760) side.hidePopover()
+}
+window.addEventListener("resize", closeSheetIfWide)
+// Opening moves focus into the sheet; closing (Esc, scrim, close button) hands it back
+// to "More" through the popover API.
+side?.addEventListener("toggle", (e) => {
+  if (e.newState !== "open") return
+  closePops()
+  side.querySelector(".as-side-close")?.focus()
+})
+
+// Whether a shell element shows in a page state (mirrors the data-a-show/-hide CSS).
+function inState(el, state) {
+  const hide = el.dataset.aHide?.split(" ") ?? []
+  const show = el.dataset.aShow?.split(" ")
+  return !hide.includes(state) && (!show || show.includes(state))
+}
+
+// Subjects: a disclosure per subject. On each state, open the subject of today's
+// session when it is enrolled, otherwise the first enrolled subject.
+function setSubject(btn, open) {
+  btn.setAttribute("aria-expanded", String(open))
+  document.getElementById(btn.getAttribute("aria-controls")).hidden = !open
+}
+function resetSubjects() {
+  const state = root.dataset.state
+  const rows = [...document.querySelectorAll(".as-subjects > li")].filter((li) => li.querySelector(".as-subj") && inState(li, state))
+  const pick = rows.find((li) => li.hasAttribute("data-current")) ?? rows[0]
+  for (const btn of document.querySelectorAll(".as-subj")) setSubject(btn, btn.closest("li") === pick)
+}
+document.querySelector(".as-subjects")?.addEventListener("click", (e) => {
+  const btn = e.target.closest(".as-subj")
+  if (btn) setSubject(btn, btn.getAttribute("aria-expanded") !== "true")
+})
+
+// Notifications: unread per state, a count on the bell, "Mark all read".
+const bellSummary = document.querySelector(".as-pop-bell summary")
+const bellCount = document.querySelector(".as-pop-bell .as-count")
+const markRead = document.querySelector("[data-a-markread]")
+function setUnread(item, unread) {
+  item.classList.toggle("is-unread", unread)
+  item.querySelector(".as-unread-vh")?.remove()
+  if (unread) item.insertAdjacentHTML("afterbegin", '<span class="a-vh as-unread-vh">Unread: </span>')
+}
+function syncCount() {
+  const state = root.dataset.state
+  const n = [...document.querySelectorAll(".as-items > li")].filter(
+    (li) => inState(li, state) && li.querySelector(".as-item.is-unread"),
+  ).length
+  bellCount.textContent = n ? String(n) : ""
+  bellSummary.setAttribute("aria-label", n ? `Notifications, ${n} unread` : "Notifications")
+  markRead.disabled = n === 0
+  markRead.hidden = state === "new"
+}
+function resetNotifications() {
+  const state = root.dataset.state
+  for (const li of document.querySelectorAll(".as-items > li")) {
+    const when = li.dataset.unread?.split(" ") ?? []
+    setUnread(li.querySelector(".as-item"), when.includes("always") || when.includes(state))
+  }
+  syncCount()
+}
+markRead?.addEventListener("click", () => {
+  for (const item of document.querySelectorAll(".as-item.is-unread")) setUnread(item, false)
+  syncCount()
+  bellSummary.focus()
+})
+
+function resetShell() {
+  closePops()
+  if (side?.matches(":popover-open")) side.hidePopover()
+  resetSubjects()
+  resetNotifications()
+}
+
 /* ---------- wiring ---------- */
 new MutationObserver((records) => {
   const names = new Set(records.map((r) => r.attributeName))
@@ -286,7 +406,11 @@ new MutationObserver((records) => {
     syncMotion()
     if (!motionOn()) runMarkingDemo()
   }
-  if (names.has("data-state")) runMarkingDemo()
+  if (names.has("data-state")) {
+    runMarkingDemo()
+    resetShell()
+  }
+  if (names.has("data-width")) requestAnimationFrame(closeSheetIfWide)
   if (names.has("data-state") || names.has("data-width")) {
     endCheer()
     endGreet()
@@ -308,3 +432,5 @@ measure()
 resetExam()
 observeSections()
 runMarkingDemo()
+resetShell()
+syncStuck()

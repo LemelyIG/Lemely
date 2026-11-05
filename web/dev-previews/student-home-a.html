@@ -27,6 +27,19 @@
       <symbol id="a-i-camera" viewBox="0 0 20 20"><path d="M3 7.5a1.5 1.5 0 0 1 1.5-1.5h2L8 4h4l1.5 2h2A1.5 1.5 0 0 1 17 7.5v7a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5Z" /><circle cx="10" cy="11" r="3" /></symbol>
       <symbol id="a-i-class" viewBox="0 0 20 20"><circle cx="7.5" cy="7" r="2.75" /><path d="M2.5 16c.4-2.8 2.4-4.5 5-4.5s4.6 1.7 5 4.5" /><path d="M13 4.5a2.6 2.6 0 0 1 0 5M14.5 11.6c1.7.5 2.8 2 3 4.4" /></symbol>
       <symbol id="a-i-user" viewBox="0 0 20 20"><circle cx="10" cy="7" r="3.25" /><path d="M3.75 17c.5-3.3 3-5.25 6.25-5.25s5.75 1.95 6.25 5.25" /></symbol>
+      <!-- Shell icons: same 20-unit grid and 1.8 stroke as the page icons. -->
+      <symbol id="a-i-clip" viewBox="28 4 46 94"><path d="M58 34 V72 A8 8 0 0 1 42 72 V20 A14 14 0 0 1 70 20 V78 A18 18 0 0 1 34 78 V36" /></symbol>
+      <symbol id="a-i-bell" viewBox="0 0 20 20"><path d="M5.25 8.25a4.75 4.75 0 0 1 9.5 0c0 3.6 1.5 5 1.5 5H3.75s1.5-1.4 1.5-5Z" /><path d="M8.25 16.25a1.9 1.9 0 0 0 3.5 0" /></symbol>
+      <symbol id="a-i-trophy" viewBox="0 0 20 20"><path d="M6.25 3.75h7.5v4.5a3.75 3.75 0 0 1-7.5 0Z" /><path d="M6.25 5.25H3.75v1a2.75 2.75 0 0 0 2.75 2.75M13.75 5.25h2.5v1A2.75 2.75 0 0 1 13.5 9" /><path d="M10 12v3M6.75 16.25h6.5" /></symbol>
+      <symbol id="a-i-friends" viewBox="0 0 20 20"><circle cx="7" cy="7.25" r="2.5" /><circle cx="13.5" cy="8.25" r="2" /><path d="M2.75 16c.4-2.7 2.1-4.25 4.25-4.25s3.85 1.55 4.25 4.25M12 12.4c.5-.1 1-.15 1.5-.15 2 0 3.4 1.3 3.75 3.75" /></symbol>
+      <symbol id="a-i-gear" viewBox="0 0 20 20"><circle cx="10" cy="10" r="2.5" /><path d="M10 2.75v2M10 15.25v2M17.25 10h-2M4.75 10h-2M15.1 4.9l-1.4 1.4M6.3 13.7l-1.4 1.4M15.1 15.1l-1.4-1.4M6.3 6.3 4.9 4.9" /></symbol>
+      <symbol id="a-i-heart" viewBox="0 0 20 20"><path d="M10 16.25s-6.25-3.6-6.25-8.1A3.4 3.4 0 0 1 10 6.4a3.4 3.4 0 0 1 6.25 1.75c0 4.5-6.25 8.1-6.25 8.1Z" /></symbol>
+      <symbol id="a-i-trash" viewBox="0 0 20 20"><path d="M4 6h12M8 6V4.25h4V6M5.5 6l.75 10h7.5l.75-10M8.5 9v4.5M11.5 9v4.5" /></symbol>
+      <symbol id="a-i-out" viewBox="0 0 20 20"><path d="M8 3.75H4.75v12.5H8M12.5 6.5 16 10l-3.5 3.5M16 10H8" /></symbol>
+      <symbol id="a-i-mega" viewBox="0 0 20 20"><path d="M3.5 8.25v3.5h2.75L12.5 15V5L6.25 8.25Z" /><path d="M15 7.75a3 3 0 0 1 0 4.5M7 11.75l.9 4" /></symbol>
+      <symbol id="a-i-check" viewBox="0 0 20 20"><path d="M4.5 10.5 8.25 14 15.5 6.5" /></symbol>
+      <symbol id="a-i-more" viewBox="0 0 20 20"><rect x="3.5" y="3.5" width="5" height="5" rx="1.25" /><rect x="11.5" y="3.5" width="5" height="5" rx="1.25" /><rect x="3.5" y="11.5" width="5" height="5" rx="1.25" /><rect x="11.5" y="11.5" width="5" height="5" rx="1.25" /></symbol>
+      <symbol id="a-i-x" viewBox="0 0 20 20"><path d="M5.5 5.5l9 9M14.5 5.5l-9 9" /></symbol>
     </svg>
 
     <nav class="sh-toolbar" aria-label="Preview controls">
@@ -38,7 +51,106 @@
       <span class="sh-demo">Demo data</span>
     </nav>
 
-    <main id="sh-root" class="sh-root">
+    <div id="sh-root" class="sh-root">
+    <a class="as-skip" href="#as-main">Skip to content</a>
+    <div class="as-app">
+      <!-- Sidebar on desktop; on mobile the same nav opens as the "More" sheet (popover). -->
+      <nav class="as-side" id="as-side" aria-label="Main" popover>
+        <div class="as-side-head">
+          <a class="as-wm" href="/student" aria-label="Lemely, overview"><svg class="as-wm-clip" aria-hidden="true"><use href="#a-i-clip" /></svg><span>eme</span><svg class="as-wm-clip" aria-hidden="true"><use href="#a-i-clip" /></svg><span>y</span></a>
+          <button type="button" class="as-iconbtn as-side-close" popovertarget="as-side" popovertargetaction="hide" aria-label="Close menu"><svg class="a-ico" aria-hidden="true"><use href="#a-i-x" /></svg></button>
+        </div>
+        <ul class="as-list">
+          <li><a href="/student" aria-current="page"><svg class="a-ico" aria-hidden="true"><use href="#a-i-home" /></svg><span class="as-lb">Overview</span></a></li>
+          <li><a href="/student/correct"><svg class="a-ico" aria-hidden="true"><use href="#a-i-camera" /></svg><span class="as-lb">Correct a paper</span><span class="as-n is-hot" data-a-show="marking" aria-hidden="true">1</span><span class="a-vh" data-a-show="marking">, 1 paper marking</span></a></li>
+          <li><a href="/student/classes"><svg class="a-ico" aria-hidden="true"><use href="#a-i-class" /></svg><span class="as-lb">Your classes</span></a></li>
+          <li><a href="/student/board"><svg class="a-ico" aria-hidden="true"><use href="#a-i-trophy" /></svg><span class="as-lb">Standings</span></a></li>
+          <li><a href="/student/friends"><svg class="a-ico" aria-hidden="true"><use href="#a-i-friends" /></svg><span class="as-lb">Friends</span></a></li>
+        </ul>
+        <p class="as-label" id="as-subj-h">Subjects</p>
+        <ul class="as-subjects" aria-labelledby="as-subj-h">
+          <li data-a-hide="new">
+            <button type="button" class="as-subj" aria-expanded="false" aria-controls="as-sub-0580"><svg class="a-ico as-chev" aria-hidden="true"><use href="#a-i-chev" /></svg><span class="as-subj-t"><span class="as-lb">Mathematics</span><span class="as-code">0580</span></span></button>
+            <ul class="as-sub" id="as-sub-0580" hidden>
+              <li><a href="/student/practice/0580">Practice</a></li>
+              <li><a href="/student/flashcards/0580">Flashcards</a></li>
+              <li><a href="/student/plan/0580">Study plan</a></li>
+            </ul>
+          </li>
+          <li data-a-hide="new one-paper" data-current>
+            <button type="button" class="as-subj" aria-expanded="false" aria-controls="as-sub-0606"><svg class="a-ico as-chev" aria-hidden="true"><use href="#a-i-chev" /></svg><span class="as-subj-t"><span class="as-lb">Additional Mathematics</span><span class="as-code">0606</span></span></button>
+            <ul class="as-sub" id="as-sub-0606" hidden>
+              <li><a href="/student/practice/0606">Practice</a></li>
+              <li><a href="/student/flashcards/0606">Flashcards</a></li>
+              <li><a href="/student/plan/0606">Study plan</a></li>
+            </ul>
+          </li>
+          <li data-a-hide="new one-paper">
+            <button type="button" class="as-subj" aria-expanded="false" aria-controls="as-sub-0625"><svg class="a-ico as-chev" aria-hidden="true"><use href="#a-i-chev" /></svg><span class="as-subj-t"><span class="as-lb">Physics</span><span class="as-code">0625</span></span></button>
+            <ul class="as-sub" id="as-sub-0625" hidden>
+              <li><a href="/student/practice/0625">Practice</a></li>
+              <li><a href="/student/flashcards/0625">Flashcards</a></li>
+              <li><a href="/student/plan/0625">Study plan</a></li>
+            </ul>
+          </li>
+          <li class="as-subj-empty" data-a-show="new">Your subjects show up here after your first marked paper.</li>
+        </ul>
+        <div class="as-foot">
+          <span class="as-avatar" aria-hidden="true">M</span>
+          <span class="as-who"><b>Mariam</b><small><span data-a-hide="new one-paper">IGCSE · 3 subjects</span><span data-a-show="one-paper">IGCSE · 1 subject</span><span data-a-show="new">IGCSE · no subjects yet</span></small></span>
+        </div>
+      </nav>
+
+      <div class="as-col">
+        <header class="as-bar">
+          <a class="as-wm as-bar-wm" href="/student" aria-label="Lemely, overview"><svg class="as-wm-clip" aria-hidden="true"><use href="#a-i-clip" /></svg><span>eme</span><svg class="as-wm-clip" aria-hidden="true"><use href="#a-i-clip" /></svg><span>y</span></a>
+          <details class="as-pop as-pop-bell">
+            <summary class="as-iconbtn" aria-label="Notifications"><svg class="a-ico" aria-hidden="true"><use href="#a-i-bell" /></svg><span class="as-count" aria-hidden="true"></span></summary>
+            <div class="as-pop-panel">
+              <div class="as-pop-head">
+                <h2>Notifications</h2>
+                <button type="button" class="as-textbtn" data-a-markread>Mark all read</button>
+              </div>
+              <ul class="as-items">
+                <li data-a-hide="new one-paper" data-unread="always">
+                  <a class="as-item" href="/student/announcements"><span class="as-item-ico"><svg class="a-ico" aria-hidden="true"><use href="#a-i-mega" /></svg></span><span class="as-item-t"><b>Physics mock moved to Thu <span class="a-mono">12 Nov</span></b><small>Ms Farouk · Year 11 Physics</small></span><time class="a-mono" datetime="2026-11-05T09:12">9:12</time></a>
+                </li>
+                <li data-a-hide="new one-paper" data-unread="always">
+                  <a class="as-item" href="/student/friends"><span class="as-item-ico"><svg class="a-ico" aria-hidden="true"><use href="#a-i-friends" /></svg></span><span class="as-item-t"><b>Youssef added you as a friend</b><small>See where you both stand this week</small></span><time class="a-mono" datetime="2026-11-05T08:40">8:40</time></a>
+                </li>
+                <li data-a-hide="new one-paper" data-unread="result-in">
+                  <a class="as-item" href="/student/result/p-0580-42"><span class="as-item-ico"><svg class="a-ico" aria-hidden="true"><use href="#a-i-check" /></svg></span><span class="as-item-t"><b><span class="a-mono">0580/42</span> is marked</b><small>Grade A, up from B</small></span><time class="a-mono" datetime="2026-11-04T18:00">Wed</time></a>
+                </li>
+                <li data-a-show="one-paper">
+                  <a class="as-item" href="/student/result/p-0580-42"><span class="as-item-ico"><svg class="a-ico" aria-hidden="true"><use href="#a-i-check" /></svg></span><span class="as-item-t"><b><span class="a-mono">0580/42</span> is marked</b><small>Grade B, your first result</small></span><time class="a-mono" datetime="2026-11-02T17:00">Mon</time></a>
+                </li>
+              </ul>
+              <p class="as-pop-empty" data-a-show="new">Nothing yet. Marked papers and messages from your teachers land here.</p>
+              <div class="as-pop-foot">
+                <a href="/student/notifications">All notifications</a>
+                <a href="/student/announcements">Announcements</a>
+              </div>
+            </div>
+          </details>
+          <details class="as-pop as-pop-me">
+            <summary class="as-iconbtn as-me" aria-label="Profile and account"><span class="as-avatar" aria-hidden="true">M</span></summary>
+            <div class="as-pop-panel">
+              <div class="as-pop-who">
+                <span class="as-avatar" aria-hidden="true">M</span>
+                <span class="as-who"><b>Mariam</b><small><span data-a-hide="new one-paper">IGCSE · 3 subjects</span><span data-a-show="one-paper">IGCSE · 1 subject</span><span data-a-show="new">IGCSE · no subjects yet</span></small></span>
+              </div>
+              <ul class="as-links">
+                <li><a href="/student/profile"><svg class="a-ico" aria-hidden="true"><use href="#a-i-user" /></svg>Your profile</a></li>
+                <li><a href="/student/parents"><svg class="a-ico" aria-hidden="true"><use href="#a-i-heart" /></svg>Your parents</a></li>
+                <li><a href="/student/settings"><svg class="a-ico" aria-hidden="true"><use href="#a-i-gear" /></svg>Settings</a></li>
+                <li><a href="/student/recently-deleted"><svg class="a-ico" aria-hidden="true"><use href="#a-i-trash" /></svg>Recently deleted</a></li>
+                <li class="as-links-sep"><button type="button"><svg class="a-ico" aria-hidden="true"><use href="#a-i-out" /></svg>Sign out</button></li>
+              </ul>
+            </div>
+          </details>
+        </header>
+
+        <main id="as-main" class="as-main" tabindex="-1">
       <section data-when-state="loading" aria-busy="true" aria-label="Loading your overview" class="a-page">
         <div class="a-head a-skel-head">
           <div class="a-head-text">
@@ -391,12 +503,16 @@
         </section>
       </div>
 
-      <nav class="a-bottombar" aria-label="Student">
+        </main>
+      </div>
+
+      <nav class="a-bottombar" aria-label="Main, mobile">
         <a href="/student" aria-current="page"><svg class="a-ico" aria-hidden="true"><use href="#a-i-home" /></svg><span>Overview</span></a>
-        <a href="/student/correct"><svg class="a-ico" aria-hidden="true"><use href="#a-i-camera" /></svg><span>Correct</span></a>
+        <a href="/student/correct"><svg class="a-ico" aria-hidden="true"><use href="#a-i-camera" /></svg><span>Correct</span><span class="as-n is-hot" data-a-show="marking" aria-hidden="true">1</span><span class="a-vh" data-a-show="marking">, 1 paper marking</span></a>
         <a href="/student/classes"><svg class="a-ico" aria-hidden="true"><use href="#a-i-class" /></svg><span>Classes</span></a>
-        <a href="/student/profile"><svg class="a-ico" aria-hidden="true"><use href="#a-i-user" /></svg><span>Profile</span></a>
+        <button type="button" popovertarget="as-side"><svg class="a-ico" aria-hidden="true"><use href="#a-i-more" /></svg><span>More</span></button>
       </nav>
-    </main>
+    </div>
+    </div>
   </body>
 </html>
