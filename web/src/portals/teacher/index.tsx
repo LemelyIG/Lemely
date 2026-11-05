@@ -555,7 +555,7 @@ function TeacherLayout() {
         <main
           id={MAIN_CONTENT_ID}
           tabIndex={-1}
-          className="flex-1 min-w-0 overflow-x-hidden w-full max-w-app px-page-mobile pt-2 pb-bottom-nav sidebar:pb-8 md:px-page-tablet lg:px-[72px] focus:outline-none"
+          className="flex-1 min-w-0 overflow-x-hidden w-full max-w-[1600px] px-page-mobile pt-2 pb-bottom-nav sidebar:pb-8 md:px-page-tablet lg:px-[72px] focus:outline-none"
         >
           {/* PR 2 part C: offline recovery banner, above the Suspense/
               ErrorBoundary content it sits over — it renders nothing while

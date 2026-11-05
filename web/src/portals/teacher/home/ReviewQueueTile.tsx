@@ -19,7 +19,7 @@ export function ReviewQueueTile({ overview }: { overview: Overview }) {
       className="th-queue th-lift relative grid min-w-0 grid-cols-[auto_minmax(0,1fr)] grid-rows-[auto_1fr_auto] gap-x-10 gap-y-2.5 rounded-tile px-5 py-4.5"
     >
       <h2 id="rq-h" className="th-accent col-span-full text-eyebrow">Review queue</h2>
-      <div className="flex max-w-[150px] flex-col justify-center gap-2">
+      <div className="flex max-w-[150px] flex-col justify-center gap-2 xl:max-w-64">
         <p className="th-qnum text-display-xl">{m.count}</p>
         {m.empty ? (
           <p className="th-muted text-body-sm">Nothing needs your eyes.</p>

@@ -16,7 +16,7 @@ export function Overview({ overview, classes, onFiles }: { overview: OverviewDTO
       <h1 className="sr-only">Overview</h1>
       {/* grid-cols-1 is minmax(0, 1fr): an implicit `auto` column grows to the
           class strip's min-content (three 280px cards), clipping every tile at 375. */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] xl:grid-cols-2">
         <ReviewQueueTile overview={overview} />
         <MarkClassSet lastUpload={lastUpload} onFiles={onFiles} />
       </div>
