@@ -427,8 +427,11 @@ class ClassSummaryDTO(ApiModel):
     # grade (lower middle on an even count), not an average of letters;
     # ``delta`` is percentage points between the latest and previous papers'
     # means over students with both; ``lastPaper`` is "P<n>" of the class's
-    # newest paper; ``topWeaknessAccuracy`` is 0-1 over the latest papers
-    # listing ``topWeakness``. ``None`` whenever the data is absent.
+    # newest paper; ``topWeakness`` and ``topWeaknessAccuracy`` both rank
+    # each student's latest paper, the accuracy being marks earned / marks
+    # available on that topic (0-1). ``WeakArea`` rows only exist where marks
+    # were lost, so a student with full marks on the topic is not counted and
+    # the accuracy reads low. ``None`` whenever the data is absent.
     grade: str | None = None
     delta: float | None = None
     lastPaper: str | None = None

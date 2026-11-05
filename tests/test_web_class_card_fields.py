@@ -10,8 +10,9 @@ does not exist, never a placeholder):
 - ``delta``: mean of the latest papers minus mean of the previous papers, over
   students with two grade-bearing papers in the latest paper's subject.
 - ``lastPaper``: ``"P<n>"`` of the class's most recent grade-bearing paper.
-- ``topWeaknessAccuracy``: mean accuracy of ``topWeakness`` across the
-  students' latest grade-bearing papers that list it.
+- ``topWeakness`` / ``topWeaknessAccuracy``: the worst topic over each
+  student's latest grade-bearing paper, and its marks earned / marks
+  available across those same papers.
 """
 
 from __future__ import annotations
@@ -122,6 +123,18 @@ def test_median_grade_of_nothing_is_none() -> None:
     assert _median_grade([]) is None
 
 
+def test_median_grade_orders_core_tier_grades_f_and_g() -> None:
+    # IGCSE Core papers award F and G; they sit between E and U on the ladder.
+    assert _median_grade(["G", "C", "F"]) == "F"
+    assert _median_grade(["U", "G", "A*"]) == "G"
+    assert _median_grade(["E", "F", "G", "U"]) == "G"
+
+
+def test_median_grade_skips_grades_off_the_ladder() -> None:
+    assert _median_grade(["B", "X", "C"]) == "C"
+    assert _median_grade(["?"]) is None
+
+
 def _history(*records: PaperRecord) -> StudentHistory:
     from lemely.core.history import StudentHistory
 
@@ -131,7 +144,7 @@ def _history(*records: PaperRecord) -> StudentHistory:
 def test_trend_single_paper_has_no_delta() -> None:
     sid = str(uuid.uuid4())
     only = _record(sid, percentage=60, grade="C", days_ago=1)
-    trend = _class_card_trend([_history(only)], None)
+    trend = _class_card_trend([_history(only)])
     assert trend.grade == "C"
     assert trend.delta is None
     assert trend.last_paper == "P4"
@@ -151,7 +164,7 @@ def test_trend_delta_uses_only_students_with_two_papers() -> None:
         ),
         _history(_record(str(uuid.uuid4()), percentage=10, grade="U", days_ago=1)),
     ]
-    trend = _class_card_trend(histories, None)
+    trend = _class_card_trend(histories)
     # (60 + 75) / 2 - (50 + 70) / 2 = 7.5
     assert trend.delta == 7.5
 
@@ -164,7 +177,7 @@ def test_trend_previous_paper_must_share_the_latest_subject() -> None:
             _record(a, percentage=60, grade="C", days_ago=1),
         )
     ]
-    assert _class_card_trend(histories, None).delta is None
+    assert _class_card_trend(histories).delta is None
 
 
 def test_trend_ignores_quizzes_for_grade_delta_and_last_paper() -> None:
@@ -177,7 +190,7 @@ def test_trend_ignores_quizzes_for_grade_delta_and_last_paper() -> None:
             _record(a, percentage=99, grade="A*", days_ago=1, paper_number=6, origin="quiz"),
         )
     ]
-    trend = _class_card_trend(histories, None)
+    trend = _class_card_trend(histories)
     assert trend.grade == "E"
     assert trend.delta is None
     assert trend.last_paper == "P2"
@@ -189,10 +202,10 @@ def test_trend_last_paper_is_the_class_wide_most_recent_paper() -> None:
         _history(_record(str(uuid.uuid4()), percentage=60, grade="C", days_ago=3, paper_number=2)),
         _history(_record(str(uuid.uuid4()), percentage=60, grade="C", days_ago=1, paper_number=6)),
     ]
-    assert _class_card_trend(histories, None).last_paper == "P6"
+    assert _class_card_trend(histories).last_paper == "P6"
 
 
-def test_trend_weakness_accuracy_is_the_mean_over_latest_papers_listing_it() -> None:
+def test_trend_weakness_accuracy_is_marks_weighted_over_latest_papers() -> None:
     histories = [
         _history(
             _record(str(uuid.uuid4()), percentage=60, grade="C", days_ago=1, weak={"Waves": 0.2})
@@ -201,25 +214,79 @@ def test_trend_weakness_accuracy_is_the_mean_over_latest_papers_listing_it() -> 
             _record(str(uuid.uuid4()), percentage=60, grade="C", days_ago=1, weak={"Waves": 0.6})
         ),
         _history(
-            _record(str(uuid.uuid4()), percentage=60, grade="C", days_ago=1, weak={"Optics": 0.1})
+            _record(str(uuid.uuid4()), percentage=60, grade="C", days_ago=1, weak={"Optics": 0.9})
         ),
     ]
-    assert _class_card_trend(histories, "Waves").top_weakness_accuracy == 0.4
-    assert _class_card_trend(histories, "Magnetism").top_weakness_accuracy is None
-    assert _class_card_trend(histories, None).top_weakness_accuracy is None
+    trend = _class_card_trend(histories)
+    assert trend.top_weakness == "Waves"  # 8 + 4 marks lost beats Optics' 1
+    assert trend.top_weakness_accuracy == 0.4  # (2 + 6) / (10 + 10)
+
+
+def _weak(topic: str, lost: int, maximum: int) -> WeakArea:
+    return WeakArea(
+        topic=topic,
+        lost_marks=lost,
+        maximum_marks=maximum,
+        accuracy=1 - lost / maximum,
+        question_ids=["1"],
+    )
+
+
+def test_trend_weakness_accuracy_weights_by_maximum_marks() -> None:
+    small = _record(str(uuid.uuid4()), percentage=60, grade="C", days_ago=1)
+    small.weak_areas.append(_weak("Waves", 9, 10))  # 10% on 10 marks
+    big = _record(str(uuid.uuid4()), percentage=60, grade="C", days_ago=1)
+    big.weak_areas.append(_weak("Waves", 2, 40))  # 95% on 40 marks
+    trend = _class_card_trend([_history(small), _history(big)])
+    # Marks-weighted (1 + 38) / 50, not the mean of ratios (0.1 + 0.95) / 2.
+    assert trend.top_weakness_accuracy == 0.78
+
+
+def test_trend_weak_topic_and_accuracy_share_the_latest_paper_population() -> None:
+    a = str(uuid.uuid4())
+    histories = [
+        _history(
+            # An old paper and a newer quiz both lose heavily on Optics...
+            _record(a, percentage=20, grade="U", days_ago=9, weak={"Optics": 0.0}),
+            _record(a, percentage=60, grade="C", days_ago=3, weak={"Waves": 0.5}),
+            _record(a, percentage=10, grade="U", days_ago=1, origin="quiz", weak={"Optics": 0.0}),
+        )
+    ]
+    trend = _class_card_trend(histories)
+    # ...but the latest paper lists Waves, so topic and accuracy both say Waves.
+    assert trend.top_weakness == "Waves"
+    assert trend.top_weakness_accuracy == 0.5
+
+
+def test_trend_with_no_weak_topics_reports_no_weakness() -> None:
+    trend = _class_card_trend(
+        [_history(_record(str(uuid.uuid4()), percentage=90, grade="A", days_ago=1))]
+    )
+    assert (trend.top_weakness, trend.top_weakness_accuracy) == (None, None)
 
 
 def test_trend_with_no_graded_papers_is_all_none() -> None:
     trend = _class_card_trend(
-        [_history(_record(str(uuid.uuid4()), percentage=90, grade="A", days_ago=1, origin="quiz"))],
-        "Waves",
+        [
+            _history(
+                _record(
+                    str(uuid.uuid4()),
+                    percentage=90,
+                    grade="A",
+                    days_ago=1,
+                    origin="quiz",
+                    weak={"Waves": 0.2},
+                )
+            )
+        ],
     )
-    assert (trend.grade, trend.delta, trend.last_paper, trend.top_weakness_accuracy) == (
-        None,
-        None,
-        None,
-        None,
-    )
+    assert (
+        trend.grade,
+        trend.delta,
+        trend.last_paper,
+        trend.top_weakness,
+        trend.top_weakness_accuracy,
+    ) == (None, None, None, None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -290,3 +357,24 @@ def test_route_card_fields_scope_to_the_callers_own_class(
     summary = _summary(client, mine)
     assert summary["grade"] == "C"
     assert summary["lastPaper"] == "P2"
+
+
+def test_route_core_tier_grades_do_not_break_the_class_list(
+    client: TestClient,  # noqa: F811
+    pg_sessionmaker: sessionmaker[Session],  # noqa: F811
+    class_service: ClassService,  # noqa: F811
+    history_store: HistoryStore,  # noqa: F811
+) -> None:
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    f_student, g_student, odd_student = _enrol(pg_sessionmaker, class_service, teacher, 3)
+    history_store.append(str(f_student), _record(f_student, percentage=30, grade="F", days_ago=2))
+    history_store.append(str(g_student), _record(g_student, percentage=20, grade="G", days_ago=1))
+    history_store.append(
+        str(odd_student), _record(odd_student, percentage=50, grade="Q", days_ago=1)
+    )
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[attr-defined]
+        user_id=str(teacher), role=Role.teacher.value
+    )
+    response = client.get("/api/teacher/classes")
+    assert response.status_code == 200
+    assert len(response.json()["classes"]) == 1
