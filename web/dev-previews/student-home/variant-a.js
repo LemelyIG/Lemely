@@ -126,10 +126,11 @@ function selectExam(code, { focus = false } = {}) {
     if (!shown || !first || first === shown) {
       subtitle.innerHTML = defaultSubtitle
     } else {
-      const days = shown.querySelector(".a-xt-n")?.dataset.n ?? ""
+      /* Carry what the tile doesn't: the exam's place in the order, not its day count. */
+      const nth = ["First", "Second", "Third", "Fourth", "Fifth"][tiles().indexOf(shown)] ?? "Next"
       const name = shown.querySelector(".a-xt-name")?.lastChild?.textContent.trim() ?? ""
       const date = shown.querySelector(".a-xt-date")?.textContent ?? ""
-      subtitle.innerHTML = `<span class="a-mono">${days}</span> days to ${name} · <span class="a-mono">${date}</span>`
+      subtitle.innerHTML = `${nth} exam: ${name}, <span class="a-mono">${date}</span>`
     }
   }
   if (focus) shown?.querySelector(".a-xt-sel")?.focus()
