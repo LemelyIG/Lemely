@@ -237,7 +237,7 @@ export function ClassDetailLayout() {
                 </div>
               </div>
               <div className="flex items-center gap-3 flex-wrap text-body-sm text-on-surface-variant mt-1">
-                <span>{classDetail.topWeakness ? `Top weakness: ${classDetail.topWeakness}` : "Not enough data for a top weakness yet"}</span>
+                <span>{classDetail.topWeakness ? `Top weakness on latest papers: ${classDetail.topWeakness}` : "Not enough data for a top weakness yet"}</span>
                 <span aria-hidden="true">·</span>
                 <span>
                   {classDetail.lastActivityAt

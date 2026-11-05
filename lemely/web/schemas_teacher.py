@@ -397,10 +397,10 @@ class ClassSummaryDTO(ApiModel):
     ``atRiskCount`` is the number of this class's roster with >=1 fired D3.3
     flag — the one at-risk engine (``lemely.core.at_risk.assess_at_risk``),
     never a second heuristic. ``topWeakness`` is the class's highest-lost-
-    marks topic from the same ranker T-04's analytics screen uses
-    (``lemely.core.class_analytics.rank_topic_weaknesses``) — topic
-    aggregation is deliberately unfiltered by origin (D3.9), so a quiz's
-    evidence counts here even when it cannot back a grade claim.
+    marks topic across each student's latest grade-bearing paper (quizzes
+    excluded), the same population ``topWeaknessAccuracy`` is computed over.
+    T-04's analytics screen still ranks across the whole history and every
+    origin, so the two can name different topics.
     ``lastActivityAt`` is the most recent ``recorded_at`` across the whole
     roster, any origin (a quiz is activity too). An empty class, or one with
     no history at all, reports ``0``/``None`` — never a fabricated
