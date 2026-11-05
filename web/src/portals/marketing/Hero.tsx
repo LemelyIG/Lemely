@@ -1,4 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
+import { ForwardArrow } from '@/components/ui/inline-arrow'
 import { ConversionActions } from './ConversionActions'
 import { useHeroArtMotion } from './useHeroArtMotion'
 import { HeroChartArt } from './ReferenceArt'
@@ -24,7 +25,10 @@ export function Hero() {
           </p>
           <ConversionActions />
           <p className="brand-fine">
-            First paper free · No card · Cambridge IGCSE, O Level &amp; A Level
+            First paper free · No card
+            <span className="brand-desktop-copy"> · </span>
+            <br className="brand-mobile-copy" />
+            Cambridge IGCSE, O Level &amp; A Level
           </p>
         </div>
         <figure
@@ -52,8 +56,7 @@ export function Hero() {
               <HeroChartArt />
             </div>
             <div className="brand-chart-foot">
-              <span className="brand-label">C to A* · 5 PAPERS</span>
-              <span>Every paper is progress.</span>
+              <span className="brand-label">C <ForwardArrow size={9} /> A* · 5 PAPERS</span>
             </div>
           </div>
         </figure>

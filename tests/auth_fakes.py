@@ -128,8 +128,9 @@ class FakeUserMirror:
         return next((u for u in self.rows.values() if u.email == email), None)
 
     def mark_email_verified(self, user_id: uuid.UUID, *, verified_at: datetime) -> None:
+        """Record the first verification instant only, as ``DbUserMirror`` does."""
         existing = self.rows.get(user_id)
-        if existing is not None:
+        if existing is not None and existing.email_verified_at is None:
             existing.email_verified_at = verified_at
 
     def set_avatar_path(self, user_id: uuid.UUID, path: str | None) -> None:
@@ -343,6 +344,7 @@ class FakeEmailProvider:
     sent_verifications: list[tuple[str, str, str]] = field(default_factory=list)
     sent_resets: list[tuple[str, str]] = field(default_factory=list)
     sent_signup_codes: list[tuple[str, str]] = field(default_factory=list)
+    sent_contact_messages: list[tuple[str, str]] = field(default_factory=list)
 
     def send_verification(self, email: str, link: str, code: str) -> None:
         if self.raise_on_send:
@@ -358,3 +360,8 @@ class FakeEmailProvider:
         if self.raise_on_send:
             raise RuntimeError("simulated signup-code-email delivery failure")
         self.sent_signup_codes.append((email, code))
+
+    def send_contact_message(self, from_email: str, message: str) -> None:
+        if self.raise_on_send:
+            raise RuntimeError("simulated contact-message delivery failure")
+        self.sent_contact_messages.append((from_email, message))

@@ -134,6 +134,46 @@ def test_reply_to_is_omitted_when_unset_and_sent_when_set() -> None:
     assert json.loads(seen[0].content)["reply_to"] == "support@lemelyig.com"
 
 
+def test_mock_provider_logs_a_contact_message_without_its_body(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.INFO, logger="lemely.auth.email"):
+        MockEmailProvider().send_contact_message("visitor@example.com", "secret question")
+    assert "visitor@example.com" in caplog.text
+    assert "secret question" not in caplog.text
+
+
+def test_contact_message_goes_to_contact_address_with_visitor_reply_to() -> None:
+    provider, seen = _provider(_ok, _settings(reply_to="support@lemelyig.com"))
+    provider.send_contact_message("visitor@example.com", "How do I join?")
+
+    body = json.loads(seen[0].content)
+    assert body["to"] == ["contact@lemelyig.com"]
+    # The visitor wins over the configured [email] reply_to.
+    assert body["reply_to"] == "visitor@example.com"
+    assert body["subject"] == "Landing page question from visitor@example.com"
+    assert "How do I join?" in body["text"]
+
+
+def test_contact_message_escapes_html_and_keeps_line_breaks() -> None:
+    provider, seen = _provider(_ok)
+    provider.send_contact_message("visitor@example.com", "<script>alert(1)</script>\nsecond line")
+
+    html_body = json.loads(seen[0].content)["html"]
+    assert "<script>" not in html_body
+    assert "&lt;script&gt;" in html_body
+    assert "<br>" in html_body
+
+
+def test_contact_message_subject_has_no_header_injection() -> None:
+    provider, seen = _provider(_ok)
+    provider.send_contact_message("a@example.com\r\nBcc: evil@example.com", "hi")
+
+    subject = json.loads(seen[0].content)["subject"]
+    assert "\r" not in subject
+    assert "\n" not in subject
+
+
 def test_link_is_html_escaped_in_the_html_part() -> None:
     """A query string must not break out of the href attribute."""
     provider, seen = _provider(_ok)

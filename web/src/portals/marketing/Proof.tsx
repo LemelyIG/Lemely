@@ -5,15 +5,19 @@ import { ProofMetric } from './ProofMetric'
 
 export function Proof() {
   return (
-    <section className="brand-proof brand-section" id="teachers">
+    <section className="brand-proof brand-section">
       <div className="brand-wrap">
         <span className="brand-label">PROOF</span>
         <h2>
-          Marked like an examiner.
-          <br />
+          Marked like an examiner.{' '}
+          <br className="brand-break-phone" />
           <span>Proven paper by paper.</span>
         </h2>
-        <ResponsiveDeck label="Marking results" className="brand-metrics">
+        <ResponsiveDeck
+          label="Marking results"
+          className="brand-metrics"
+          tone="dark"
+        >
           {proofMetrics.map((x, index) => (
             <ProofMetric
               key={x.value}

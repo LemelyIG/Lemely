@@ -367,7 +367,16 @@ def render_example_toml() -> str:
     lines.append(f"signed_url_ttl_seconds = {s.storage.signed_url_ttl_seconds}")
     avatar_max_mib = s.storage.avatar_max_bytes // (1024 * 1024)
     lines.append(f"avatar_max_bytes = {s.storage.avatar_max_bytes}  # {avatar_max_mib} MiB")
+    lines.append("# Tutor evidence documents (qualification scans) are PII: a separate private")
+    lines.append("# bucket, opened only by an admin through a short-lived signed URL.")
+    lines.append(f'tutor_evidence_bucket = "{s.storage.tutor_evidence_bucket}"')
+    lines.append(
+        f"tutor_evidence_signed_url_ttl_seconds = {s.storage.tutor_evidence_signed_url_ttl_seconds}"
+    )
     lines.append('# gcs_project = "my-gcp-project"  # only if ADC can\'t infer one')
+    lines.append("# The project NUMBER (not its id) that must own tutor_evidence_bucket. Required")
+    lines.append("# for evidence storage on gcs: unset, every evidence operation is refused.")
+    lines.append("# gcs_project_number = 123456789012")
     lines.append("")
 
     lines.append("[push]")
@@ -553,6 +562,9 @@ def render_example_toml() -> str:
     lines.append("# Where replies go. Unset means they return to `from_address`, an unattended")
     lines.append("# mailbox; point it at a real inbox once one exists.")
     lines.append('# reply_to = "support@lemelyig.com"')
+    lines.append("# Inbox that receives questions sent from the landing page FAQ composer")
+    lines.append("# (POST /api/contact). The visitor's address is the Reply-To on that mail.")
+    lines.append(f'contact_address = "{s.email.contact_address}"')
     lines.append("# Short on purpose: verification mail is a best-effort side effect of an")
     lines.append("# already-created account and must never make a signup hang.")
     lines.append(f"timeout_seconds = {s.email.timeout_seconds}")
@@ -579,6 +591,13 @@ def render_example_toml() -> str:
     lines.append(f"sweep_poll_seconds = {s.notifications.sweep_poll_seconds}")
     lines.append(f"streak_warning_hour = {s.notifications.streak_warning_hour}")
     lines.append(f"study_plan_reminder_hour = {s.notifications.study_plan_reminder_hour}")
+    lines.append("")
+
+    lines.append("[tutoring]")
+    lines.append("# Tutoring-marketplace mail is sent by one sweeper job. Once this many")
+    lines.append("# tutoring mails went out in the last 24 hours, further ones are skipped, not")
+    lines.append("# sent. 60 sits below Resend's 100/day free quota, which account mail shares.")
+    lines.append(f"email_daily_cap = {s.tutoring.email_daily_cap}")
 
     # No trailing blank line: pre-commit's end-of-file-fixer collapses a double
     # trailing newline in lemely.toml.example, which would drift from this

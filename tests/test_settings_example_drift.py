@@ -54,6 +54,30 @@ class ExampleTomlDriftTests(unittest.TestCase):
             "claude-haiku-5-5",
         )
 
+    def test_example_documents_every_storage_key(self) -> None:
+        """Final review finding 6: ``gcs_project_number`` (needed for evidence on gcs) was missing.
+
+        Every ``[storage]`` field appears as a key, set or commented, and the commented project
+        number, uncommented, loads as an int.
+        """
+        import re
+        import tomllib
+
+        from lemely.runtime.config import Settings, StorageSettings
+
+        rendered = render_example_toml()
+        section = rendered.split("[storage]\n", 1)[1].split("\n[", 1)[0]
+        keys = set(re.findall(r"^(?:# )?([a-z_]+) = ", section, flags=re.MULTILINE))
+        fields = set(StorageSettings.model_fields)
+        self.assertGreaterEqual(len(fields), 9)  # non-vacuity: 9 [storage] fields today
+        self.assertEqual(fields - keys, set())
+
+        line = "# gcs_project_number = 123456789012"
+        self.assertIn(line, section)
+        data = tomllib.loads(rendered.replace(line, line[2:]))
+        storage = Settings.model_validate({"storage": data["storage"]}).storage
+        self.assertEqual(storage.gcs_project_number, 123456789012)
+
 
 if __name__ == "__main__":
     unittest.main()

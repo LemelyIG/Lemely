@@ -25,8 +25,14 @@ from lemely.auth.otp import OtpRateLimitError
 from lemely.auth.service import AuthResult, AuthService, DeviceContext
 from lemely.auth.tokens import TokenError, decode_email_proof_token, mint_email_proof_token
 from lemely.db.device_repo import MAX_DEVICES, DeviceLimitReachedError
-from lemely.db.invite_repo import InviteError, InviteNotFoundError, InviteService
+from lemely.db.invite_repo import (
+    InviteError,
+    InviteNotFoundError,
+    InviteService,
+    ParentInvitePreview,
+)
 from lemely.db.models.enums import InviteRole, Role
+from lemely.db.notification_repo import NotificationService
 from lemely.runtime.config import Settings
 from lemely.runtime.errors import AuthError
 from lemely.web.deps import (
@@ -34,12 +40,16 @@ from lemely.web.deps import (
     get_auth_context,
     get_auth_service,
     get_invite_service,
+    get_notification_service,
+    get_push_transport,
     get_resend_verification_cooldown_store,
     get_settings,
     get_signup_and_reset_cooldown_store,
     get_user_mirror,
 )
 from lemely.web.devices import to_device_dto
+from lemely.web.push import NotificationTransport
+from lemely.web.routers.invites import PARENT_LIMIT_MESSAGE, parent_link_change_notices
 from lemely.web.schemas_auth import (
     LoginRequestDTO,
     ParentCodeRequestDTO,
@@ -60,6 +70,8 @@ from lemely.web.schemas_auth import (
     VerifyEmailResponseDTO,
 )
 from lemely.web.schemas_devices import DeviceLimitChallengeDTO
+from lemely.web.tutoring_http import tutoring_error
+from lemely.web.tutoring_notify import send_after_commit
 
 router = APIRouter(prefix="/api")
 log = structlog.get_logger(__name__)
@@ -173,7 +185,9 @@ single constant, reused verbatim by both branches below, is what makes "dead
 code" and "live code, wrong role" produce byte-identical responses."""
 
 
-def _require_live_parent_invite(invite_service: InviteService, code: str) -> None:
+def _require_live_parent_invite(
+    invite_service: InviteService, code: str, *, refuse_at_parent_limit: bool = False
+) -> None:
     """Refuse a dead or non-parent invite with the same 404 an unknown code gets.
 
     Used by all three ``/auth/parent/*`` routes (spec §4): a code that does
@@ -184,6 +198,12 @@ def _require_live_parent_invite(invite_service: InviteService, code: str) -> Non
     same disclosure discipline :meth:`~lemely.db.invite_repo.InviteService.preview`'s
     own docstring binds itself to (rule 4), extended here to "is this a
     parent invite" as well as "does the code exist".
+
+    ``refuse_at_parent_limit`` (tutoring SPEC §c.4, set only by
+    :func:`parent_signup`): a live parent invite whose child already has the
+    most linked parents allowed is a **409** ``parent_limit`` before any
+    account is created — the refusal the redemption itself would give. The two
+    earlier steps keep their behaviour (SPEC §c.4 lists only the signup route).
     """
     try:
         preview = invite_service.preview(code)
@@ -191,6 +211,12 @@ def _require_live_parent_invite(invite_service: InviteService, code: str) -> Non
         raise HTTPException(status_code=404, detail=_UNKNOWN_PARENT_INVITE_DETAIL) from exc
     if preview.role is not InviteRole.parent:
         raise HTTPException(status_code=404, detail=_UNKNOWN_PARENT_INVITE_DETAIL)
+    if (
+        refuse_at_parent_limit
+        and isinstance(preview, ParentInvitePreview)
+        and preview.parent_limit_reached
+    ):
+        raise tutoring_error(409, "parent_limit", PARENT_LIMIT_MESSAGE)
 
 
 @router.post("/auth/signup", response_model=TokenResponseDTO)
@@ -416,6 +442,8 @@ def parent_signup(
     service: Annotated[AuthService, Depends(get_auth_service)],
     invite_service: Annotated[InviteService, Depends(get_invite_service)],
     settings: Annotated[Settings, Depends(get_settings)],
+    notifications: Annotated[NotificationService, Depends(get_notification_service)],
+    transport: Annotated[NotificationTransport, Depends(get_push_transport)],
     user_agent: Annotated[str | None, Header()] = None,
 ) -> TokenResponseDTO:
     """Create the parent's account from a verified proof token and link it (spec §4).
@@ -454,12 +482,20 @@ def parent_signup(
     tries the link again, or — if it was a single-use link someone else
     already claimed — the child mints a fresh one; P-01's "no parent yet"
     empty state on the child's own portal already points here.
+
+    **Tutoring SPEC §c.4, no guard change.** The live-invite re-check also
+    answers **409** ``parent_limit`` before any account exists when the child
+    already has the most linked parents allowed. A child who reaches the cap
+    in the window after that check makes ``redeem`` refuse, which is logged
+    and swallowed exactly like the race above. A successful link tells every
+    parent already linked: the email is queued in the redemption's
+    transaction, the inbox notice is sent here after it.
     """
     try:
         claims = decode_email_proof_token(body.proofToken, settings)
     except TokenError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
-    _require_live_parent_invite(invite_service, claims.invite_code)
+    _require_live_parent_invite(invite_service, claims.invite_code, refuse_at_parent_limit=True)
     try:
         result = service.signup(
             claims.email,
@@ -473,12 +509,20 @@ def parent_signup(
     except AuthError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
-        invite_service.redeem(result.user_id, claims.invite_code, caller_role=Role.parent)
+        redeemed = invite_service.redeem(
+            result.user_id, claims.invite_code, caller_role=Role.parent
+        )
     except InviteError:
         log.warning(
             "parent_signup_redeem_failed",
             invite_code_fingerprint=_invite_code_fingerprint(claims.invite_code),
             user_id=str(result.user_id),
+        )
+    else:
+        send_after_commit(
+            parent_link_change_notices(redeemed.link_change),
+            service=notifications,
+            transport=transport,
         )
     return _to_token_dto(result)
 

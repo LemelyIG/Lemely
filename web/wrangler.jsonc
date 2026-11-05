@@ -14,10 +14,14 @@
     // artifact falls back to index.html, same as web/nginx.conf's
     // `try_files $uri $uri/ /index.html`.
     "not_found_handling": "single-page-application",
-    // Only /api/* invokes worker/index.ts; every other request is served
+    // Only these paths invoke worker/index.ts; every other request is served
     // as a static asset directly by the platform without running any
     // Worker code (cheaper and faster than a catch-all fetch handler).
-    "run_worker_first": ["/api/*"]
+    // /tutors and /tutors/* run the worker so it can set each tutor page's
+    // X-Robots-Tag (worker/robots.ts; SPEC §b.5, decision row 17): the
+    // platform does not apply public/_headers to Worker responses, and a
+    // static rule could not honour a tutor's opt-out anyway.
+    "run_worker_first": ["/api/*", "/tutors", "/tutors/*"]
   },
   // Included on the Workers Free plan — cheap, useful when an /api/*
   // proxy call fails and you need to see why without reproducing locally.

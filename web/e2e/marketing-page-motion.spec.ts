@@ -56,13 +56,13 @@ test('Binny thinks, answers, and returns to idle without blocking other question
     .click()
   await expect(
     page.getByRole('region', { name: 'Binny answers' }),
-  ).toContainText('THINKING')
+  ).toContainText('TYPING…')
   await expect(
     page.getByRole('region', { name: 'Binny answers' }),
   ).toContainText('Very. In blind tests', { timeout: 4000 })
   await expect(
     page.getByRole('region', { name: 'Binny answers' }),
-  ).toContainText('READY TO HELP')
+  ).toContainText('ONLINE · ANSWERS IN SECONDS')
   await page.getByRole('button', { name: 'Can parents see results?' }).click()
   await expect(
     page.getByRole('region', { name: 'Binny answers' }),
@@ -75,10 +75,12 @@ test('mobile upload shortcut follows scrolling and disappears at the closing act
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/landing')
   const upload = page.getByRole('link', { name: 'Upload free', exact: true })
-  await expect(upload).toHaveAttribute('href', '/signup')
+  // The hero's own primary action is on screen, so the shortcut stays hidden.
+  await expect(upload).toHaveCount(0)
   await page.locator('#features').scrollIntoViewIfNeeded()
   await page.mouse.wheel(0, -100)
   await expect(upload).toBeVisible()
+  await expect(upload).toHaveAttribute('href', '/signup')
   await page.locator('#start').scrollIntoViewIfNeeded()
   await expect(upload).not.toBeVisible()
 })
@@ -90,11 +92,13 @@ test('mobile feature deck exposes every feature and announces its position', asy
   await page.goto('/landing#features')
   const deck = page.getByRole('region', { name: 'Lemely features' })
   await expect(deck.getByRole('status')).toHaveText('1 / 8')
-  await deck.getByRole('button', { name: 'Next slide' }).click()
+  await deck.getByRole('button', { name: 'Next card' }).click()
   await expect(deck.getByRole('status')).toHaveText('2 / 8')
   await expect(
     deck.getByRole('heading', { name: 'Confidence on every mark' }),
   ).toBeInViewport()
-  await deck.getByRole('button', { name: 'Previous slide' }).click()
+  await deck
+    .getByRole('group', { name: 'Lemely features cards' })
+    .press('ArrowLeft')
   await expect(deck.getByRole('status')).toHaveText('1 / 8')
 })

@@ -11,10 +11,17 @@ const points = [
 ]
 const grades = ['C', 'B', 'B', 'A', 'A*']
 const gradeTokens = [7, 8, 8, 9, 10]
-/** Binny follows the workshop's 9.6 second five-paper journey. */
+/** The workshop journey runs 9.6 seconds. First paint joins it with Papers 1 to 3 already
+ * charted (Binny standing on Paper 3), and the rest plays 1.25x faster, so the chart finishes
+ * C to A* in about 4.6 seconds instead of leaving the headline's claim half drawn for ten. */
+const JOURNEY_START = 3900
+const JOURNEY_SPEED = 1.25
 export function useHeroArtMotion() {
   const scene = useSceneMotion<HTMLElement>()
   const clock = useRef(0)
+  const journey = useRef(JOURNEY_START)
+  // The journey plays once and then holds its finished chart, like the reference's settled state.
+  const done = useRef(false)
   useEffect(() => {
     const root = scene.ref.current
     if (!root) return
@@ -42,7 +49,7 @@ export function useHeroArtMotion() {
     const cheer = () => {
       celebration = clock.current
       hover = clock.current
-      if (!scene.enabled) {
+      if (!scene.enabled || done.current) {
         set('lvl', 'opacity', 1)
         for (const name of ['happy', 'open']) {
           const el = q(name)
@@ -66,10 +73,34 @@ export function useHeroArtMotion() {
     const move = (event: PointerEvent) => {
       mouse = [event.clientX, event.clientY]
     }
+    const restore = () => {
+      snapshots.forEach(({ el, transform, opacity, style }) => {
+        for (const [name, value] of [
+          ['transform', transform],
+          ['opacity', opacity],
+          ['style', style],
+        ]) {
+          if (value === null) el.removeAttribute(name!)
+          else el.setAttribute(name!, value!)
+        }
+      })
+      clip.setAttribute('width', '640')
+      grade.textContent = 'A*'
+      grade.style.removeProperty('background-color')
+    }
     const frame = (now: number) => {
-      if (previous) clock.current += Math.min(now - previous, 80)
+      if (previous) {
+        const step = Math.min(now - previous, 80)
+        clock.current += step
+        journey.current += step * JOURNEY_SPEED
+      }
       previous = now
-      const t = (clock.current / 1000) % 9.6
+      if (journey.current >= 9600) {
+        done.current = true
+        restore()
+        return
+      }
+      const t = journey.current / 1000
       const index = Math.max(0, Math.min(4, Math.floor((t - 0.8) / 1.5)))
       let position = index,
         arc =
@@ -168,7 +199,7 @@ export function useHeroArtMotion() {
       }
       raf = requestAnimationFrame(frame)
     }
-    if (scene.enabled) {
+    if (scene.enabled && !done.current) {
       raf = requestAnimationFrame(frame)
       root.addEventListener('pointermove', move)
     }
@@ -181,19 +212,7 @@ export function useHeroArtMotion() {
       binny.removeEventListener('pointerenter', enter)
       binny.removeEventListener('keydown', key)
       root.removeEventListener('pointermove', move)
-      snapshots.forEach(({ el, transform, opacity, style }) => {
-        for (const [name, value] of [
-          ['transform', transform],
-          ['opacity', opacity],
-          ['style', style],
-        ]) {
-          if (value === null) el.removeAttribute(name!)
-          else el.setAttribute(name!, value!)
-        }
-      })
-      clip.setAttribute('width', '640')
-      grade.textContent = 'A*'
-      grade.style.removeProperty('background-color')
+      restore()
     }
   }, [scene.enabled, scene.ref])
   return scene

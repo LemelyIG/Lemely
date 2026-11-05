@@ -13,8 +13,10 @@
   --brand-art-4: var(--md-surface-container-highest);
   --brand-art-5: var(--md-primary);
   --brand-art-6: var(--md-surface-container-lowest);
-  --brand-art-7: var(--grade-c);
-  --brand-art-8: var(--grade-b);
+  /* Grade chips C and B carry white letters in the hero chart and walkthrough:
+     darkened from the grade role so the letter holds 4.5:1. */
+  --brand-art-7: color-mix(in oklch, var(--grade-c) 89%, black);
+  --brand-art-8: color-mix(in oklch, var(--grade-b) 95%, black);
   --brand-art-9: var(--grade-a);
   --brand-art-10: var(--grade-a-star);
   --brand-art-11: var(--md-tertiary);
@@ -66,6 +68,40 @@
   --brand-ok: var(--md-success-text);
   --brand-error: var(--md-error);
   --brand-shadow: 0 32px 70px -40px color-mix(in oklch, var(--md-shadow) 40%, transparent);
+  /* Landing page reference fidelity (decks, walkthrough, FAQ composer, closing). */
+  --brand-sent-badge: var(--brand-art-27);
+  --brand-wk-flag-bg: var(--md-tertiary-container);
+  --brand-wk-flag-ink: var(--md-on-tertiary-container);
+  --brand-wk-row-on: var(--md-surface-container-low);
+  --brand-wk-scan-glow: color-mix(in oklch, var(--md-inverse-primary) 60%, transparent);
+  --brand-wk-paper-shadow: 0 30px 50px -30px color-mix(in oklch, var(--md-shadow) 45%, transparent), 0 0 0 1px var(--md-outline-variant);
+  --brand-wk-ok: var(--md-success-text);
+  --brand-wk-bad: var(--md-error);
+  /* Fill of a primary button that cannot act yet (FAQ Send until both fields are valid). */
+  --brand-idle-control: var(--md-outline);
+  --brand-typing-dot: var(--md-outline);
+  --brand-stage: var(--md-surface-container);
+  --brand-lead: var(--md-on-surface-variant);
+  --brand-hint: var(--md-on-surface-variant);
+  --brand-nav-link: var(--md-on-surface);
+  --brand-line: var(--md-outline-variant);
+  --brand-ring: var(--md-outline-variant);
+  --brand-rule-soft: var(--md-outline-variant);
+  --brand-rule-input: color-mix(in oklch, var(--md-outline-variant) 70%, var(--md-outline));
+  --brand-night-body: var(--md-inverse-on-surface);
+  --brand-night-card: var(--brand-night-panel);
+  --brand-night-ring: var(--brand-night-rule);
+  --brand-night-dot: color-mix(in oklch, var(--md-inverse-surface) 60%, var(--md-inverse-on-surface));
+  --brand-core-art: var(--brand-art-22);
+  --brand-closing-text: var(--md-inverse-on-surface);
+  --brand-closing-ring: var(--md-outline);
+  --brand-gold-pulse: color-mix(in oklch, var(--md-tertiary) 50%, transparent);
+  --brand-gold-pulse-off: color-mix(in oklch, var(--md-tertiary) 0%, transparent);
+  --brand-chart-shadow: 0 40px 80px -40px color-mix(in oklch, var(--md-shadow) 45%, transparent), 0 0 0 1px var(--md-outline-variant);
+  --brand-hover-lift: 0 22px 40px -26px color-mix(in oklch, var(--md-shadow) 40%, transparent);
+  --brand-panel-shadow: 0 30px 60px -40px color-mix(in oklch, var(--md-shadow) 45%, transparent), 0 0 0 1px var(--md-outline-variant);
+  --brand-upload-shadow: color-mix(in oklch, var(--md-shadow) 65%, transparent);
+  --brand-metric-drop: color-mix(in oklch, var(--md-shadow) 60%, transparent);
   --brand-display: 'Bricolage Grotesque Variable', sans-serif;
   --brand-body: 'Schibsted Grotesk Variable', sans-serif;
   --brand-mono: 'JetBrains Mono Variable', monospace;

@@ -65,6 +65,14 @@ class NotificationPreferencesRow:
     study_plan_reminder: bool = True
     at_risk_alert: bool = True
     review_withdrawn: bool = True
+    booking_request: bool = True
+    booking_update: bool = True
+    booking_note: bool = True
+    tutor_access: bool = True
+    tutor_review: bool = True
+    tutor_listing: bool = True
+    parent_link: bool = True
+    tutoring_report: bool = True
     quiet_hours_start: time | None = None
     quiet_hours_end: time | None = None
 
@@ -109,6 +117,14 @@ class NotificationPreferencesService:
         study_plan_reminder: bool | _UnsetType = UNSET,
         at_risk_alert: bool | _UnsetType = UNSET,
         review_withdrawn: bool | _UnsetType = UNSET,
+        booking_request: bool | _UnsetType = UNSET,
+        booking_update: bool | _UnsetType = UNSET,
+        booking_note: bool | _UnsetType = UNSET,
+        tutor_access: bool | _UnsetType = UNSET,
+        tutor_review: bool | _UnsetType = UNSET,
+        tutor_listing: bool | _UnsetType = UNSET,
+        parent_link: bool | _UnsetType = UNSET,
+        tutoring_report: bool | _UnsetType = UNSET,
         quiet_hours_start: time | _UnsetType | None = UNSET,
         quiet_hours_end: time | _UnsetType | None = UNSET,
     ) -> NotificationPreferencesRow:
@@ -157,6 +173,38 @@ class NotificationPreferencesService:
                     if isinstance(review_withdrawn, _UnsetType)
                     else review_withdrawn
                 ),
+                booking_request=(
+                    current.booking_request
+                    if isinstance(booking_request, _UnsetType)
+                    else booking_request
+                ),
+                booking_update=(
+                    current.booking_update
+                    if isinstance(booking_update, _UnsetType)
+                    else booking_update
+                ),
+                booking_note=(
+                    current.booking_note if isinstance(booking_note, _UnsetType) else booking_note
+                ),
+                tutor_access=(
+                    current.tutor_access if isinstance(tutor_access, _UnsetType) else tutor_access
+                ),
+                tutor_review=(
+                    current.tutor_review if isinstance(tutor_review, _UnsetType) else tutor_review
+                ),
+                tutor_listing=(
+                    current.tutor_listing
+                    if isinstance(tutor_listing, _UnsetType)
+                    else tutor_listing
+                ),
+                parent_link=(
+                    current.parent_link if isinstance(parent_link, _UnsetType) else parent_link
+                ),
+                tutoring_report=(
+                    current.tutoring_report
+                    if isinstance(tutoring_report, _UnsetType)
+                    else tutoring_report
+                ),
                 quiet_hours_start=(
                     current.quiet_hours_start
                     if isinstance(quiet_hours_start, _UnsetType)
@@ -181,6 +229,14 @@ class NotificationPreferencesService:
             model_row.study_plan_reminder = merged.study_plan_reminder
             model_row.at_risk_alert = merged.at_risk_alert
             model_row.review_withdrawn = merged.review_withdrawn
+            model_row.booking_request = merged.booking_request
+            model_row.booking_update = merged.booking_update
+            model_row.booking_note = merged.booking_note
+            model_row.tutor_access = merged.tutor_access
+            model_row.tutor_review = merged.tutor_review
+            model_row.tutor_listing = merged.tutor_listing
+            model_row.parent_link = merged.parent_link
+            model_row.tutoring_report = merged.tutoring_report
             model_row.quiet_hours_start = merged.quiet_hours_start
             model_row.quiet_hours_end = merged.quiet_hours_end
             session.flush()
@@ -195,6 +251,14 @@ def _row_from_model(model: NotificationPreference) -> NotificationPreferencesRow
         study_plan_reminder=model.study_plan_reminder,
         at_risk_alert=model.at_risk_alert,
         review_withdrawn=model.review_withdrawn,
+        booking_request=model.booking_request,
+        booking_update=model.booking_update,
+        booking_note=model.booking_note,
+        tutor_access=model.tutor_access,
+        tutor_review=model.tutor_review,
+        tutor_listing=model.tutor_listing,
+        parent_link=model.parent_link,
+        tutoring_report=model.tutoring_report,
         quiet_hours_start=model.quiet_hours_start,
         quiet_hours_end=model.quiet_hours_end,
     )

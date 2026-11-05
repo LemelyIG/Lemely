@@ -43,14 +43,17 @@ test('public landing preserves destinations and reference sections', async ({
 test('walkthrough, review and FAQ work with the keyboard', async ({ page }) => {
   await page.goto('/landing')
   const mobile = await page.evaluate(() => innerWidth < 760)
-  if (!mobile) await page.getByRole('tab', { name: /02 Marked/ }).click()
-  await page.getByRole('tab', { name: /Q3\(c\)/ }).click()
-  await expect(page.getByText('AI confidence 72%')).toBeVisible()
-  await page.getByRole('radio', { name: 'Award A1' }).click()
-  await expect(page.getByText('Illustration: A1 awarded')).toBeVisible()
-  if (!mobile) await page.getByRole('tab', { name: /03 Insights/ }).click()
-  else await page.getByText('Weak topic found').scrollIntoViewIfNeeded()
-  await expect(page.getByText('Weak topic found')).toBeVisible()
+  // Mobile shows the three-card How it works stack; the review controls live
+  // in the desktop scroll scene.
+  if (!mobile) {
+    await page.getByRole('tab', { name: /02 Marked/ }).click()
+    await page.getByRole('button', { name: 'Explain Q3(c)' }).click()
+    await expect(page.getByText('AI confidence 72%')).toBeVisible()
+    await page.getByRole('radio', { name: 'Award A1' }).click()
+    await expect(page.getByRole('radio', { name: 'Award A1' })).toBeChecked()
+    await page.getByRole('tab', { name: /03 Insights/ }).click()
+    await expect(page.getByText('Weak topic found')).toBeVisible()
+  }
   const faq = page.getByRole('button', {
     name: 'How accurate is the AI marking?',
   })
@@ -63,10 +66,18 @@ test('walkthrough, review and FAQ work with the keyboard', async ({ page }) => {
   await page
     .getByRole('textbox', { name: 'Ask anything else' })
     .fill('Can we arrange a demo?')
-  await expect(page.getByRole('link', { name: 'Open email' })).toHaveAttribute(
-    'href',
-    /mailto:contact@lemelyig.com.*Can%20we/,
+  // Send is disabled until both fields are valid; the API is route-mocked.
+  await page.route('**/api/contact', (route) =>
+    route.fulfill({ status: 202, json: { accepted: true } }),
   )
+  const send = page.getByRole('button', { name: 'Send', exact: true })
+  await expect(send).toBeDisabled()
+  await page.getByRole('textbox', { name: 'Your email' }).fill('a@b.co')
+  await expect(send).toBeEnabled()
+  await send.click()
+  // The chat log is desktop-only; the reply is in the DOM everywhere.
+  await expect(page.getByText('Good one. A human from the team')).toHaveCount(1)
+  await expect(page.getByText("Got it. We'll email you back at")).toBeVisible()
 })
 
 test('responsive layout and accessible mobile navigation', async ({
@@ -91,6 +102,11 @@ test('responsive layout and accessible mobile navigation', async ({
     expect(clippedHeadings).toEqual([])
   }
   await page.setViewportSize({ width: 390, height: 844 })
+  const header = page.locator('.brand-header')
+  await expect(header.getByRole('link', { name: 'Sign in' })).toBeVisible()
+  await expect(header.getByRole('link', { name: 'Sign up' })).toBeHidden()
+  await expect(header.getByRole('button', { name: 'Open menu' })).toBeVisible()
+  await page.setViewportSize({ width: 768, height: 900 })
   await page.getByRole('button', { name: 'Open menu' }).click()
   await expect(page.getByRole('dialog')).toBeVisible()
   await page
@@ -98,6 +114,7 @@ test('responsive layout and accessible mobile navigation', async ({
     .getByRole('link', { name: 'Features', exact: true })
     .click()
   await expect(page.getByRole('dialog')).not.toBeVisible()
+  await expect(page).toHaveURL(/#features$/)
   const results = await new AxeBuilder({ page }).analyze()
   expect(results.violations).toEqual([])
   await page.screenshot({

@@ -22,18 +22,71 @@ export type StaffRole = "teacher" | "parent"
  * `payload.studentId` is the server-side relationship the alert was raised
  * from (`_alert_teachers_and_parents`), so linking to it never trusts a
  * caller. A row without one renders with no action rather than a link that
- * cannot resolve. Any other type has no screen for these roles and, in
- * practice, never reaches them.
+ * cannot resolve. A type with no screen for the role returns null, and every
+ * id is encoded before it is spliced into a path.
+ *
+ * The tutoring notices (SPEC docs/tutoring/SPEC.md section b.4) are routed here
+ * too: the tutor-side ones land in the teacher inbox, the family-side ones in
+ * the parent inbox.
  */
 export function staffDestinationFor(
   role: StaffRole,
   notification: Pick<Notification, "type" | "payload">,
 ): string | null {
-  if (notification.type !== "at_risk_alert") return null
-  const studentId = notification.payload.studentId
-  if (!studentId) return null
-  const id = encodeURIComponent(studentId)
-  return role === "teacher" ? `/teacher/students/${id}` : `/parent/children/${id}`
+  const { type, payload } = notification
+  if (type === "at_risk_alert") {
+    const studentId = payload.studentId
+    if (!studentId) return null
+    const id = encodeURIComponent(studentId)
+    return role === "teacher" ? `/teacher/students/${id}` : `/parent/children/${id}`
+  }
+  return role === "teacher" ? tutorDestinationFor(type, payload) : parentDestinationFor(type, payload)
+}
+
+/** A tutor's own tutoring screens (SPEC section d, T-15 to T-21). Ids only in the payload. */
+function tutorDestinationFor(type: string, payload: Record<string, string>): string | null {
+  switch (type) {
+    case "booking_request":
+    case "booking_update":
+    case "booking_note":
+      return payload.bookingId
+        ? `/teacher/tutoring/sessions/${encodeURIComponent(payload.bookingId)}`
+        : null
+    case "tutor_access":
+      return "/teacher/tutoring/students"
+    case "tutor_review":
+      return "/teacher/tutoring/preview"
+    case "tutor_listing":
+      return "/teacher/tutoring/profile"
+    default:
+      return null
+  }
+}
+
+/**
+ * A parent's tutoring screens (P-05, P-06, P-08). A booking notice needs both ids: the child
+ * the session belongs to, and the session. A parent-link notice has no subject left to open,
+ * so it goes to the list of children.
+ */
+function parentDestinationFor(type: string, payload: Record<string, string>): string | null {
+  const child = payload.studentId ? encodeURIComponent(payload.studentId) : null
+  switch (type) {
+    case "booking_update":
+    case "booking_note":
+      return child !== null && payload.bookingId
+        ? `/parent/children/${child}/sessions/${encodeURIComponent(payload.bookingId)}`
+        : null
+    case "tutor_access":
+      if (child === null) return null
+      // A class-join notice is about tutoring in general; a grant notice is about who has access.
+      return payload.enrollmentId
+        ? `/parent/children/${child}/tutoring`
+        : `/parent/children/${child}/tutor-access`
+    case "parent_link":
+      return "/parent"
+    default:
+      return null
+  }
 }
 
 export function isInboxEmpty(page: NotificationsPage): boolean {
@@ -72,6 +125,15 @@ export function staffTypeLabel(type: string): string {
     // teacher had open. Non-navigable, same as every other row here — the
     // withdrawn item 403s if opened, so there is nowhere for a click to go.
     review_withdrawn: "Review withdrawn",
+    // The tutoring marketplace's notices (SPEC docs/tutoring/SPEC.md section b.4).
+    booking_request: "Session request",
+    booking_update: "Session update",
+    booking_note: "Session note",
+    tutor_access: "Progress sharing",
+    tutor_review: "Review decision",
+    tutor_listing: "Tutor profile",
+    parent_link: "Parent link",
+    tutoring_report: "Safety report",
   }
   return labels[type] ?? type
 }

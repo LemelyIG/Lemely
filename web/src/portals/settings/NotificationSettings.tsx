@@ -6,10 +6,10 @@ import { Switch } from "@/components/ui/switch"
 import { ListSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
 import {
-  NOTIFICATION_TOGGLES,
   quietHoursSummary,
   quietHoursUpdate,
   timeInputValue,
+  visibleToggles,
   type NotificationPrefKey,
   type NotificationPreferences,
 } from "@/lib/notificationPrefs"
@@ -48,7 +48,8 @@ import { SettingsCard, SettingsRow, SettingsSection, SettingsStatus } from "./Se
  *
  * Two things this screen is careful not to overstate.
  *
- * **The five toggles are the whole enum.** UI spec §G-12 also lists a "weekly
+ * **The toggles are the whole enum** (fourteen types, each role seeing the ones the
+ * server sends it). UI spec §G-12 also lists a "weekly
  * summary"; there is no such notification type, column, sender or row, so it is
  * absent here rather than mocked (UI spec §1.4). That gap is reported, not
  * papered over.
@@ -287,18 +288,13 @@ export function NotificationSettingsSection({
           {(data) => (
             <SettingsCard>
               <ul className="flex flex-col divide-y divide-outline-variant">
-                {NOTIFICATION_TOGGLES.filter(
-                  // `atRiskAlert` arrives as `null` for every role but teacher
-                  // and parent, and that null means "no such preference for
-                  // you" rather than "off". Rendering it unchecked would offer
-                  // a switch the router answers with a 422.
-                  (toggle) => valueFor(data, toggle.key) !== null,
-                )
-                  // R10: `reviewWithdrawn` is a `role: "teacher"` toggle (see
-                  // its own doc). The server sends it as a plain boolean for
-                  // every role, so the `null` filter above cannot hide it;
-                  // `showTeacherOnly` is this screen's own gate instead.
-                  .filter((toggle) => toggle.role !== "teacher" || showTeacherOnly)
+                {/* `visibleToggles` hides a toggle whose value is `null` (no
+                    such preference for this role: `atRiskAlert`,
+                    `reviewWithdrawn` and the eight tutoring toggles) rather
+                    than rendering it unchecked, which would offer a switch the
+                    router answers with a 422. `showTeacherOnly` is this
+                    screen's own extra gate for `reviewWithdrawn`. */}
+                {visibleToggles(data, { showTeacherOnly })
                   .map((toggle) => (
                     <li key={toggle.key} className="flex flex-col gap-2 px-4 py-4 sm:px-5">
                       <Switch
@@ -443,7 +439,7 @@ export function NotificationSettings() {
 /**
  * Read one toggle off the loaded preferences.
  *
- * Returns `null` only for `atRiskAlert` on a role that has no such preference —
+ * Returns `null` for a role-gated toggle on a role that has no such preference —
  * the distinction the filter above depends on, kept as a function so the null
  * cannot be flattened to `false` by a stray `??`.
  */

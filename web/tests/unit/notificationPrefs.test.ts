@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs"
+import path from "node:path"
 import { describe, expect, it } from "vitest"
 import {
   NOTIFICATION_TOGGLES,
@@ -5,6 +7,8 @@ import {
   quietHoursSummary,
   quietHoursUpdate,
   timeInputValue,
+  visibleToggles,
+  type NotificationPreferences,
 } from "@/lib/notificationPrefs"
 import {
   resolvePushState,
@@ -25,14 +29,46 @@ import {
  * a lie told by a control the reader trusts.
  */
 
+/** The members of the backend's `NotificationType` enum, read from its source. */
+function backendNotificationTypes(): string[] {
+  const source = readFileSync(
+    path.resolve(__dirname, "../../../lemely/db/models/enums.py"),
+    "utf-8",
+  )
+  const block = /class NotificationType\(enum\.Enum\):([\s\S]*?)\n\n\nclass /.exec(source)
+  if (block === null) throw new Error("NotificationType not found in enums.py")
+  return [...block[1].matchAll(/^ {4}([a-z_]+) = "[a-z_]+"$/gm)].map((m) => m[1])
+}
+
+function camelCase(snake: string): string {
+  return snake.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase())
+}
+
+const TUTORING_KEYS = [
+  "bookingRequest",
+  "bookingUpdate",
+  "bookingNote",
+  "tutorAccess",
+  "tutorReview",
+  "tutorListing",
+  "parentLink",
+  "tutoringReport",
+] as const
+
 describe("NOTIFICATION_TOGGLES", () => {
-  it("ships exactly the six real notification types and no weekly summary", () => {
-    // UI spec §G-12 lists a seventh, "weekly summary". `NotificationType` has
-    // six members (Task 17 added `review_withdrawn`, R2), no column, no
-    // sender and no row for a seventh — a switch for it would gate nothing,
-    // which is what UI spec §1.4 forbids. If this ever reads seven, check
-    // the backend enum first: the spec is not the source of truth here.
-    expect(NOTIFICATION_TOGGLES.map((toggle) => toggle.key)).toEqual([
+  it("ships one toggle per backend notification type (fourteen) and no weekly summary", () => {
+    // UI spec §G-12 lists a "weekly summary". `NotificationType` has no member,
+    // column, sender or row for it — a switch for it would gate nothing, which is
+    // what UI spec §1.4 forbids. The expected keys are derived from the backend
+    // enum's source, so a fifteenth type there fails this until it gets a switch.
+    const backend = backendNotificationTypes()
+    expect(backend).toHaveLength(14) // non-vacuity: 6 original + 8 tutoring
+    expect(NOTIFICATION_TOGGLES.map((toggle) => toggle.key)).toEqual(backend.map(camelCase))
+    expect(JSON.stringify(NOTIFICATION_TOGGLES).toLowerCase()).not.toContain("weekly")
+  })
+
+  it("keeps the original six first, in their original order, then the eight tutoring ones", () => {
+    expect(NOTIFICATION_TOGGLES.slice(0, 6).map((toggle) => toggle.key)).toEqual([
       "gradeReady",
       "announcement",
       "streakWarning",
@@ -40,7 +76,24 @@ describe("NOTIFICATION_TOGGLES", () => {
       "atRiskAlert",
       "reviewWithdrawn",
     ])
-    expect(JSON.stringify(NOTIFICATION_TOGGLES).toLowerCase()).not.toContain("weekly")
+    expect(NOTIFICATION_TOGGLES.slice(6).map((toggle) => toggle.key)).toEqual([...TUTORING_KEYS])
+  })
+
+  it("leaves tutoring role gating to the server's null, not to a client-side role flag", () => {
+    for (const key of TUTORING_KEYS) {
+      expect(NOTIFICATION_TOGGLES.find((toggle) => toggle.key === key)?.role).toBeUndefined()
+    }
+  })
+
+  it("keeps tutoring copy clear of the words the tutoring copy rule bans", () => {
+    for (const key of TUTORING_KEYS) {
+      const toggle = NOTIFICATION_TOGGLES.find((t) => t.key === key)
+      const text = `${toggle?.label} ${toggle?.description}`.toLowerCase()
+      expect(text).not.toContain("improvement")
+      expect(text).not.toContain("verified")
+      expect(text).not.toContain("!")
+      expect(text).not.toContain("—")
+    }
   })
 
   it("gates reviewWithdrawn to the teacher role, the only role it ever fires for", () => {
@@ -54,6 +107,118 @@ describe("NOTIFICATION_TOGGLES", () => {
       expect(toggle.label.length).toBeGreaterThan(0)
       expect(toggle.description.length).toBeGreaterThan(0)
     }
+  })
+})
+
+/** What `GET /api/me/notification-preferences` returns, with every role-gated value null. */
+function prefs(overrides: Partial<NotificationPreferences> = {}): NotificationPreferences {
+  return {
+    gradeReady: true,
+    announcement: true,
+    streakWarning: true,
+    studyPlanReminder: true,
+    atRiskAlert: null,
+    reviewWithdrawn: null,
+    bookingRequest: null,
+    bookingUpdate: null,
+    bookingNote: null,
+    tutorAccess: null,
+    tutorReview: null,
+    tutorListing: null,
+    parentLink: null,
+    tutoringReport: null,
+    quietHoursStart: null,
+    quietHoursEnd: null,
+    ...overrides,
+  }
+}
+
+const keysOf = (toggles: readonly { key: string }[]): string[] => toggles.map((t) => t.key)
+
+describe("visibleToggles", () => {
+  it("hides every toggle whose GET value is null", () => {
+    // A student: the server nulls the gated ones, and the screen must not offer a
+    // switch the router would answer with a 422.
+    const student = prefs({ bookingUpdate: true, bookingNote: true, tutorAccess: true, tutorReview: false })
+    expect(keysOf(visibleToggles(student))).toEqual([
+      "gradeReady",
+      "announcement",
+      "streakWarning",
+      "studyPlanReminder",
+      "bookingUpdate",
+      "bookingNote",
+      "tutorAccess",
+      "tutorReview",
+    ])
+  })
+
+  it("shows a toggle that is false: off is a state, null is absence", () => {
+    const shown = visibleToggles(prefs({ tutoringReport: false }))
+    expect(keysOf(shown)).toContain("tutoringReport")
+  })
+
+  it("renders a tutoring toggle only when its value is non-null, for every one of the eight", () => {
+    for (const key of TUTORING_KEYS) {
+      expect(keysOf(visibleToggles(prefs()))).not.toContain(key)
+      expect(keysOf(visibleToggles(prefs({ [key]: true })))).toContain(key)
+    }
+  })
+
+  it("gives each role exactly the toggles the server enabled for it", () => {
+    const teacher = prefs({
+      atRiskAlert: true,
+      reviewWithdrawn: true,
+      bookingRequest: true,
+      bookingUpdate: true,
+      bookingNote: true,
+      tutorAccess: true,
+      tutorReview: true,
+      tutorListing: true,
+    })
+    const parent = prefs({ atRiskAlert: true, bookingUpdate: true, bookingNote: true, tutorAccess: true, parentLink: true })
+    const admin = prefs({ tutoringReport: true })
+    expect(keysOf(visibleToggles(teacher, { showTeacherOnly: true }))).toEqual([
+      "gradeReady",
+      "announcement",
+      "streakWarning",
+      "studyPlanReminder",
+      "atRiskAlert",
+      "reviewWithdrawn",
+      "bookingRequest",
+      "bookingUpdate",
+      "bookingNote",
+      "tutorAccess",
+      "tutorReview",
+      "tutorListing",
+    ])
+    expect(keysOf(visibleToggles(parent))).toEqual([
+      "gradeReady",
+      "announcement",
+      "streakWarning",
+      "studyPlanReminder",
+      "atRiskAlert",
+      "bookingUpdate",
+      "bookingNote",
+      "tutorAccess",
+      "parentLink",
+    ])
+    expect(keysOf(visibleToggles(admin)).slice(-1)).toEqual(["tutoringReport"])
+  })
+
+  it("keeps showTeacherOnly gating reviewWithdrawn, as before", () => {
+    const teacher = prefs({ reviewWithdrawn: true })
+    expect(keysOf(visibleToggles(teacher))).not.toContain("reviewWithdrawn")
+    expect(keysOf(visibleToggles(teacher, { showTeacherOnly: false }))).not.toContain("reviewWithdrawn")
+    expect(keysOf(visibleToggles(teacher, { showTeacherOnly: true }))).toContain("reviewWithdrawn")
+  })
+
+  it("never lets showTeacherOnly reveal a toggle the server nulled", () => {
+    expect(keysOf(visibleToggles(prefs(), { showTeacherOnly: true }))).toEqual([
+      "gradeReady",
+      "announcement",
+      "streakWarning",
+      "studyPlanReminder",
+    ])
   })
 })
 
