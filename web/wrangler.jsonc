@@ -28,6 +28,10 @@
   "observability": {
     "enabled": true
   },
+  // The Worker's only slow work is the round trip to Cloud Run (us-central1).
+  // Smart Placement runs it close to that backend instead of close to the
+  // visitor, which shortens the many-request hop; static assets are unaffected.
+  "placement": { "mode": "smart" },
   // Local `wrangler dev` / `npm run cf:dev` target — mirrors vite.config.ts's
   // own dev-server proxy target so both point at the same local backend.
   "vars": {
@@ -44,12 +48,18 @@
       // No trailing "/*" — a Custom Domain maps the WHOLE hostname to this
       // Worker (that's what makes it a "custom domain" rather than a plain
       // Route); wrangler rejects a wildcard/path here.
-      "routes": [{ "pattern": "staging.lemelyig.com", "custom_domain": true }]
+      "routes": [{ "pattern": "staging.lemelyig.com", "custom_domain": true }],
+      // Warm-keeper for the scale-to-zero backend; see `scheduled` in
+      // worker/index.ts. Staging is the dev environment people hit
+      // after idle gaps; production has the same trigger below.
+      "triggers": { "crons": ["*/5 * * * *"] }
     },
     "production": {
       "name": "lemely-web-production",
       "vars": { "BACKEND_URL": "https://REPLACED-BY-CI.invalid" },
-      "routes": [{ "pattern": "lemelyig.com", "custom_domain": true }]
+      "routes": [{ "pattern": "lemelyig.com", "custom_domain": true }],
+      // Same warm-keeper as staging; see `scheduled` in worker/index.ts.
+      "triggers": { "crons": ["*/5 * * * *"] }
     }
   }
 }

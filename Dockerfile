@@ -60,7 +60,11 @@ COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 # `.lemely-cache` is where the Gemini disk cache and the persistent spend
 # ledger (BUILD/MISSION.md §8) live; created here so it is owned by the
 # non-root user rather than materialising root-owned on first write.
-RUN mkdir -p /app/.lemely-cache \
+# PYTHONDONTWRITEBYTECODE=1 above means nothing is ever cached at runtime, so
+# without this every cold start recompiles the whole package. Precompiled here
+# (the venv's wheels already ship .pyc from pip), startup only loads them.
+RUN python -m compileall -q /app/lemely \
+    && mkdir -p /app/.lemely-cache \
     && chown -R lemely:lemely /app \
     && chmod +x /usr/local/bin/docker-entrypoint.sh
 
