@@ -5,8 +5,8 @@
  * prefers-reduced-motion and the preview's data-motion is not "reduce"), the
  * root gets .a-motion: CSS animations then wait on their first frame until the
  * section scrolls into view (.is-in) and run once. This script measures the
- * distances the markers travel, drives the exam tiles' selection, keyboard
- * movement and count-down, and gives Binny its small reactions.
+ * distances the markers travel, drives the exam tiles' selection and keyboard
+ * movement, and gives Binny its small reactions (in words when motion is off).
  */
 import { renderBinny } from "./binny-island"
 
@@ -31,8 +31,8 @@ function timeAtProgress(p) {
   return 1
 }
 
-/* ---------- measurements for slides and bounces ---------- */
-const JOURNEY_MS = 1100
+/* ---------- measurements for slides and stone acknowledgements ---------- */
+const JOURNEY_MS = 500
 
 function measureJourneys() {
   for (const j of document.querySelectorAll(".a-journey")) {
@@ -85,7 +85,6 @@ const seen = new IntersectionObserver(
       if (!e.isIntersecting) continue
       e.target.classList.add("is-in")
       seen.unobserve(e.target)
-      if (e.target.classList.contains("a-exams")) countDown()
     }
   },
   { threshold: 0.2 },
@@ -141,25 +140,6 @@ function resetExam() {
   if (first) selectExam(first.dataset.exam)
 }
 
-/* Day counts tick down from +10 to their value, once, as the tiles pop in. */
-function countDown() {
-  if (!motionOn() || !exams) return
-  for (const [i, t] of tiles().entries()) {
-    const n = t.querySelector(".a-xt-n")
-    const target = Number(n.dataset.n)
-    const start = performance.now() + 820 + i * 140
-    const dur = 900
-    n.textContent = String(target + 10)
-    const step = (now) => {
-      const k = Math.min(1, Math.max(0, (now - start) / dur))
-      const eased = 1 - (1 - k) ** 3
-      n.textContent = String(Math.round(target + 10 - 10 * eased))
-      if (k < 1) requestAnimationFrame(step)
-    }
-    requestAnimationFrame(step)
-  }
-}
-
 if (exams) {
   exams.addEventListener("click", (e) => {
     const b = e.target.closest(".a-xt-sel")
@@ -187,9 +167,31 @@ function binnyTile() {
   return document.querySelector('[data-when-state="ready"] .ah-binny-tile')
 }
 
+/* With reduced motion the jump is off, so the tap answers in words: the caption says
+   "Hi, Mariam." for a moment, then the mood caption returns. */
+const GREET_MS = 2400
+let greetTimer = 0
+function endGreet() {
+  clearTimeout(greetTimer)
+  greetTimer = 0
+  for (const b of document.querySelectorAll(".ah-binny.is-greeting")) b.classList.remove("is-greeting")
+}
+function greet(tile) {
+  const figure = tile.closest(".ah-binny")
+  if (!figure) return
+  endCheer()
+  figure.classList.add("is-greeting")
+  clearTimeout(greetTimer)
+  greetTimer = setTimeout(endGreet, GREET_MS)
+}
+
 document.addEventListener("click", (e) => {
   const tile = e.target.closest(".ah-binny-tile")
-  if (!tile || !motionOn()) return
+  if (!tile) return
+  if (!motionOn()) {
+    greet(tile)
+    return
+  }
   tile.classList.remove("is-jump")
   void tile.offsetWidth
   tile.classList.add("is-jump")
@@ -229,6 +231,7 @@ function cheer() {
   const tile = binnyTile()
   const kept = !["streak-zero", "one-paper"].includes(root.dataset.state)
   if (!tile || !kept) return
+  endGreet()
   if (!cheering) {
     cheering = true
     tile.closest(".ah-binny")?.classList.add("is-cheering")
@@ -286,6 +289,7 @@ new MutationObserver((records) => {
   if (names.has("data-state")) runMarkingDemo()
   if (names.has("data-state") || names.has("data-width")) {
     endCheer()
+    endGreet()
     requestAnimationFrame(() => {
       measure()
       resetExam()

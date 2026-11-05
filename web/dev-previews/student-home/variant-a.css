@@ -145,7 +145,7 @@
   display: block; block-size: 100%; inline-size: 48%;
   border-radius: inherit; background: var(--md-primary);
   transform-origin: 0 50%;
-  animation: ahFill 900ms var(--ah-ease-x) 200ms both;
+  animation: ahFill 500ms var(--ah-ease-x) 150ms both;
 }
 .ah-bar-fill:dir(rtl) { transform-origin: 100% 50% }
 .ah-bar-label { margin-block-start: 6px; font: 600 13px/1.4 var(--font-mono); color: var(--text-secondary); font-variant-numeric: tabular-nums }
@@ -168,7 +168,7 @@
 .ah-day.is-earned .ah-day-d { background: var(--md-tertiary); color: var(--sh-gold-text) }
 .ah-day.is-today .ah-day-w { color: var(--md-primary) }
 .ah-day.is-today .ah-day-d { outline: 2px solid var(--md-primary); outline-offset: 2px }
-.ah-day.is-today.is-earned .ah-day-d { animation: ahPop 600ms var(--ah-ease-x) 700ms both }
+.ah-day.is-today.is-earned .ah-day-d { animation: ahPop var(--dur-slow) var(--ah-ease-x) 420ms both }
 /* Daily XP bars above each day: one shared scale (120 XP peak = 32px), gold only where XP was earned. */
 .ah-xp-col {
   display: flex; flex-direction: column; justify-content: flex-end; align-items: center;
@@ -485,55 +485,71 @@
 }
 .ah-bar-fill, .ah-day.is-today.is-earned .ah-day-d { animation: none }
 
-/* Header: XP bar fills, bars grow, day tiles pop left to right, today settles last. */
-.a-motion .ah-bar-fill { animation: ahFill 900ms var(--a-ease-expo) 200ms both }
-.a-motion .ah-xp-bar { transform-origin: 50% 100%; animation: aGrow 500ms var(--a-ease-expo) calc(var(--di, 0) * 70ms + 250ms) both }
-.a-motion .ah-day-d { animation: aPop 520ms var(--a-ease-expo) calc(var(--di, 0) * 70ms + 150ms) both }
-.a-motion .ah-day.is-today .ah-day-d { animation: aPop 620ms var(--a-ease-expo) 820ms both }
+/* Timings follow DESIGN.md: 150/200/350ms, the standard curve for state changes and the
+   expressive curve (--a-ease-expo) for reveals. No element runs past 500ms (only fills and the
+   journey/ruler slides use 500ms) and no section's stagger runs past ~700ms. Overshoot and
+   squash-and-stretch belong to Binny alone. */
+
+/* Header: XP bar fills, bars grow, day tiles rise in left to right, today settles last. */
+.a-motion .ah-bar-fill { animation: ahFill 500ms var(--a-ease-expo) 150ms both }
+.a-motion .ah-xp-bar { transform-origin: 50% 100%; animation: aGrow var(--dur-slow) var(--a-ease-expo) calc(var(--di, 0) * 45ms + 150ms) both }
+.a-motion .ah-day-d { animation: aRiseIn var(--dur-slow) var(--a-ease-expo) calc(var(--di, 0) * 45ms + 80ms) both }
+.a-motion .ah-day.is-today .ah-day-d { animation: aRiseIn var(--dur-slow) var(--a-ease-expo) 420ms both }
 .ah-strip > li:nth-child(1) { --di: 0 } .ah-strip > li:nth-child(2) { --di: 1 } .ah-strip > li:nth-child(3) { --di: 2 }
 .ah-strip > li:nth-child(4) { --di: 3 } .ah-strip > li:nth-child(5) { --di: 4 } .ah-strip > li:nth-child(6) { --di: 5 }
 .ah-strip > li:nth-child(7) { --di: 6 }
 
-/* Binny: idle bob (the header's own), blink, a jump on tap, a lean toward the action, a cheer for the streak. */
+/* Binny: idle bob (the header's own), blink, a jump on tap, a lean toward the action, a cheer
+   for the streak. The page's only overshoot (DESIGN.md: squash-and-stretch is Binny's).
+   With reduced motion the tap answers in words instead: "Hi, Mariam." (variant-a.js). */
 .ah-binny-tile { cursor: pointer; transition: transform var(--dur-slow) var(--a-ease-expo) }
 .a-motion .ah-binny-tile .brand-binny-eyes { transform-origin: 100px 140px; animation: aBlink 3.6s linear infinite }
 .ah-binny-tile.is-lean { transform: rotate(-5deg) translateY(-2px) }
-.ah-binny-tile.is-jump svg { animation: aJump 620ms var(--a-ease-expo) }
-.ah-binny-tile.is-cheer svg { animation: aCheer 700ms var(--a-ease-expo) }
+.ah-binny-tile.is-jump svg { animation: aJump 500ms var(--a-ease-expo) }
+.ah-binny-tile.is-cheer svg { animation: aCheer 500ms var(--a-ease-expo) }
+.sh-root .ah-say .ah-say-hi { display: none }
+.sh-root .ah-binny.is-greeting .ah-say [data-when-mood] { display: none }
+.sh-root .ah-binny.is-greeting .ah-say .ah-say-hi { display: inline }
 
 /* Big action rises in. */
 .a-motion .a-act { animation: aRise var(--dur-slow) var(--a-ease-expo) 120ms both }
 
-/* Grade journeys: the trail draws, the marker slides from the first paper to now,
-   each stone it passes bounces, the next stone glows once. --from and --bd come from variant-a.js. */
-.a-motion .a-j-trail { transform-origin: 0 50%; animation: aDraw 1100ms var(--a-ease-expo) 200ms both }
-.a-motion .a-j-me { animation: aSlide 1100ms var(--a-ease-expo) 200ms both }
-.a-motion .a-stone.is-passed { animation: aBounce 420ms var(--a-ease-expo) calc(200ms + var(--bd, 0ms)) both }
-.a-motion .a-stone.is-passed[data-pass="0"] { animation: none }
+/* Grade journeys: the trail draws, the marker slides from the first paper to now, each stone
+   it passes swells once with a fading halo in its own grade colour (no hop), the next stone
+   glows once. --from and --bd come from variant-a.js, whose JOURNEY_MS matches the 500ms slide. */
+.a-motion .a-j-trail { transform-origin: 0 50%; animation: aDraw 500ms var(--a-ease-expo) 150ms both }
+.a-motion .a-j-me { animation: aSlide 500ms var(--a-ease-expo) 150ms both }
+.a-stone.is-passed::after {
+  content: ""; position: absolute; inset: -3px; z-index: -1; border-radius: 50%; background: inherit; opacity: 0;
+}
+.a-motion .a-stone.is-passed { animation: aAck 240ms var(--a-ease-expo) calc(150ms + var(--bd, 0ms)) both }
+.a-motion .a-stone.is-passed::after { animation: aHalo 240ms var(--a-ease-expo) calc(150ms + var(--bd, 0ms)) both }
+.a-motion .a-stone.is-passed[data-pass="0"], .a-motion .a-stone.is-passed[data-pass="0"]::after { animation: none }
+.a-motion [data-anim] .a-stone.is-passed::after { animation-play-state: paused }
+.a-motion [data-anim].is-in .a-stone.is-passed::after { animation-play-state: running }
 .a-stone.is-next::after {
   content: ""; position: absolute; inset: -3px; border-radius: 50%; box-shadow: 0 0 0 3px var(--md-primary); opacity: 0;
 }
-.a-motion [data-anim].is-in .a-stone.is-next::after { animation: aGlow 900ms var(--a-ease-expo) 1300ms both }
+.a-motion [data-anim].is-in .a-stone.is-next::after { animation: aGlow var(--dur-slow) var(--a-ease-expo) 550ms both }
 
 /* Mastery ruler: markers slide from the previous value, the tail draws behind them. */
-.a-motion .a-marker { animation: aSlideC 900ms var(--a-ease-expo) calc(var(--li, 0) * 90ms + 150ms) both }
-.a-motion .a-marker-l { animation: aSlideX 900ms var(--a-ease-expo) calc(var(--li, 0) * 90ms + 150ms) both }
-.a-motion .a-tail { animation: aDraw 900ms var(--a-ease-expo) calc(var(--li, 0) * 90ms + 150ms) both }
+.a-motion .a-marker { animation: aSlideC 500ms var(--a-ease-expo) calc(var(--li, 0) * 60ms + 100ms) both }
+.a-motion .a-marker-l { animation: aSlideX 500ms var(--a-ease-expo) calc(var(--li, 0) * 60ms + 100ms) both }
+.a-motion .a-tail { animation: aDraw 500ms var(--a-ease-expo) calc(var(--li, 0) * 60ms + 100ms) both }
 .a-tail.is-up { transform-origin: 0 50% } .a-tail.is-down { transform-origin: 100% 50% }
 .a-lanes > li:nth-child(1) { --li: 0 } .a-lanes > li:nth-child(2) { --li: 1 } .a-lanes > li:nth-child(3) { --li: 2 }
 .a-lanes > li:nth-child(4) { --li: 3 } .a-lanes > li:nth-child(5) { --li: 4 }
 
-/* Exams: the band fills from Today to the first exam, stems drop, tiles pop in order;
-   the day counts tick down from +10 (variant-a.js). */
-.a-motion .a-xb-fill { animation: aDraw 1100ms var(--a-ease-expo) 150ms both }
-.a-motion .a-xb-weeks { animation: aFade 500ms var(--ease-out) 300ms both }
-.a-motion .a-xb-stem { animation: aDrop 420ms var(--a-ease-expo) calc(var(--ei, 0) * 140ms + 700ms) both }
-.a-motion .a-xt { animation: aPopIn 560ms var(--a-ease-expo) calc(var(--ei, 0) * 140ms + 820ms) both }
+/* Exams: the band fills from Today to the first exam, stems drop, tiles rise in order.
+   The day counts are final from the first frame; only the tiles move. */
+.a-motion .a-xb-fill { animation: aDraw 500ms var(--a-ease-expo) 100ms both }
+.a-motion .a-xb-weeks { animation: aFade var(--dur-base) var(--ease-out) 150ms both }
+.a-motion .a-xb-stem { animation: aDrop var(--dur-base) var(--a-ease-expo) calc(var(--ei, 0) * 80ms + 300ms) both }
+.a-motion .a-xt { animation: aRiseIn var(--dur-slow) var(--a-ease-expo) calc(var(--ei, 0) * 80ms + 250ms) both }
 :is(.a-xt, .a-xb-pin)[data-exam="0625"] { --ei: 0 } :is(.a-xt, .a-xb-pin)[data-exam="0580"] { --ei: 1 } :is(.a-xt, .a-xb-pin)[data-exam="0606"] { --ei: 2 }
 .sh-root[data-state="one-paper"] :is(.a-xt, .a-xb-pin)[data-exam="0580"] { --ei: 0 }
 
-@keyframes aPop { 0% { transform: scale(0.6); opacity: 0 } 70% { transform: scale(1.08); opacity: 1 } 100% { transform: none } }
-@keyframes aPopIn { 0% { transform: scale(0.4); opacity: 0 } 70% { transform: scale(1.1); opacity: 1 } 100% { transform: none } }
+@keyframes aRiseIn { from { transform: translateY(8px) scale(0.96); opacity: 0 } }
 @keyframes aGrow { from { transform: scaleY(0) } }
 @keyframes aRise { from { transform: translateY(8px); opacity: 0 } }
 @keyframes aDraw { from { transform: scaleX(0) } }
@@ -543,7 +559,8 @@
 @keyframes aSlide { from { transform: translate(calc(-50% + var(--from, 0px)), -50%) } to { transform: translate(-50%, -50%) } }
 @keyframes aSlideC { from { transform: translate(calc(-50% + var(--from, 0px)), -50%) } to { transform: translate(-50%, -50%) } }
 @keyframes aSlideX { from { transform: translate(calc(-50% + var(--from, 0px)), calc(-100% - 11px)) } to { transform: translate(-50%, calc(-100% - 11px)) } }
-@keyframes aBounce { 0%, 100% { transform: translate(-50%, -50%) } 40% { transform: translate(-50%, calc(-50% - 7px)) } }
+@keyframes aAck { 0%, 100% { transform: translate(-50%, -50%) } 45% { transform: translate(-50%, -50%) scale(1.08) } }
+@keyframes aHalo { 0% { opacity: 0.45; transform: scale(1) } 100% { opacity: 0; transform: scale(1.5) } }
 @keyframes aGlow { 0% { opacity: 0.9; transform: scale(1) } 100% { opacity: 0; transform: scale(1.6) } }
 @keyframes aBlink { 0%, 94%, 100% { transform: scaleY(1) } 97% { transform: scaleY(0.1) } }
 @keyframes aJump { 0% { transform: none } 25% { transform: translateY(4px) scaleY(0.9) } 55% { transform: translateY(-24px) scaleY(1.05) } 80% { transform: translateY(2px) scaleY(0.96) } 100% { transform: none } }
@@ -826,9 +843,9 @@
   background: var(--surface-card); color: var(--sh-success-text); font: 700 var(--fs-body) / 1 var(--font-ui);
 }
 .a-act-up .a-ico { inline-size: 18px; block-size: 18px; stroke-width: 2.2 }
-.a-motion .a-act-result .a-act-marks { animation: aRise 520ms var(--a-ease-expo) 220ms both }
-.a-motion .a-act-result .a-act-grade { animation: aPop 620ms var(--a-ease-expo) 520ms both }
-.a-motion .a-act-result .a-act-up { animation: aRise 420ms var(--a-ease-expo) 760ms both }
+.a-motion .a-act-result .a-act-marks { animation: aRise var(--dur-slow) var(--a-ease-expo) 120ms both }
+.a-motion .a-act-result .a-act-grade { animation: aRiseIn var(--dur-slow) var(--a-ease-expo) 260ms both }
+.a-motion .a-act-result .a-act-up { animation: aRise var(--dur-slow) var(--a-ease-expo) 380ms both }
 .a-motion [data-anim] .a-act-result :is(.a-act-marks, .a-act-grade, .a-act-up) { animation-play-state: paused }
 .a-motion [data-anim].is-in .a-act-result :is(.a-act-marks, .a-act-grade, .a-act-up) { animation-play-state: running }
 
@@ -884,7 +901,7 @@
 .a-prog-fill {
   display: block; block-size: 100%; border-radius: inherit; background: var(--md-primary);
   transform: scaleX(0); transform-origin: 0 50%;
-  transition: transform 900ms var(--a-ease-expo);
+  transition: transform 500ms var(--a-ease-expo);
 }
 .a-prog-fill:dir(rtl) { transform-origin: 100% 50% }
 .a-prog[data-stage="1"] [data-seg="1"] .a-prog-fill { transform: scaleX(0.55) }
