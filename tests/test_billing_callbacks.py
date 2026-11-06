@@ -641,6 +641,23 @@ def test_stale_pending_for_an_older_failed_transaction_does_not_reopen_it(
     assert _grants(sm, pid) == []
 
 
+def test_a_pending_callback_that_reopens_a_failed_payment_restarts_the_backoff(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    with sm.begin() as session:
+        payment = session.get(Payment, pid)
+        assert payment is not None
+        payment.reconcile_attempts = 7
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), txn_id=1, success=False))
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), txn_id=2, success=False, pending=True))
+    payment = _payment(sm, pid)
+    assert payment.status is PaymentStatus.pending
+    assert payment.reconcile_attempts == 0
+    assert payment.next_reconcile_at == FIXED_NOW + timedelta(minutes=15)
+
+
 def test_stale_pending_for_the_current_transaction_after_a_success_with_error_stays_failed(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:

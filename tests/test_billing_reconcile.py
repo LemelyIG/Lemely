@@ -13,7 +13,7 @@ from sqlalchemy import event
 
 from lemely.db import billing_repo
 from lemely.db.announcement_repo import AnnouncementService
-from lemely.db.billing_repo import BillingService
+from lemely.db.billing_repo import RECONCILE_STUCK_AFTER, BillingService
 from lemely.db.class_repo import ClassService
 from lemely.db.models.billing import Payment, PaymentPurpose, PaymentStatus, PaymobEvent
 from lemely.db.models.usage import UsageGrant
@@ -67,13 +67,22 @@ def _reconcile(
     lock_timeout: str | None = None,
 ) -> int:
     with sm() as session:
-        if lock_timeout is not None:
-            # A guard for the two-runner tests: if SKIP LOCKED regressed, the select would
-            # wait on the other runner's lock forever. This makes that an error instead.
-            session.execute(sa.text(f"SET LOCAL lock_timeout = '{lock_timeout}'"))
-        return BillingService(session, client, PAYMOB_SETTINGS, now=lambda: now).reconcile_pending(
-            now=now
-        )
+        try:
+            if lock_timeout is not None:
+                # A guard for the two-runner tests: if SKIP LOCKED regressed, a select would
+                # wait on the other runner's lock forever. A session-level setting (committed
+                # at once, since SET is transactional) lasts across the per-payment commits, so
+                # that regression is an error on any select of the pass, not a hang.
+                session.execute(sa.text(f"SET lock_timeout = '{lock_timeout}'"))
+                session.commit()
+            return BillingService(
+                session, client, PAYMOB_SETTINGS, now=lambda: now
+            ).reconcile_pending(now=now)
+        finally:
+            if lock_timeout is not None:
+                session.rollback()
+                session.execute(sa.text("RESET lock_timeout"))
+                session.commit()
 
 
 def _payment(sm: sessionmaker[Session], pid: uuid.UUID) -> Payment:
@@ -310,6 +319,98 @@ def test_an_inquiry_answer_without_a_transaction_id_is_unreadable_not_absent(
     assert _event_count(sm) == 0
 
 
+def test_an_inquiry_answer_for_another_payment_is_refused(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A's inquiry returning B's success must neither pay A nor use up B's transaction event."""
+    sm = migrated_sessionmaker
+    a = _due_payment(sm, age=timedelta(minutes=20))
+    b = _due_payment(sm, age=timedelta(minutes=5))  # not due: only A is inquired
+    b_success = transaction_obj(merchant_order_id=str(b))
+    client = FakePaymobClient()
+    client.inquiry_response = b_success
+    with structlog.testing.capture_logs() as logs:
+        assert _reconcile(sm, client) == 1
+    assert client.inquiries == [str(a)]
+    payment = _payment(sm, a)
+    assert payment.status is PaymentStatus.created
+    assert payment.paymob_txn_id is None
+    assert payment.reconcile_attempts == 1
+    assert payment.next_reconcile_at == FIXED_NOW + timedelta(minutes=15)
+    assert _grant_count(sm, a) == 0
+    assert _event_count(sm) == 0
+    (mismatch,) = [e for e in logs if e["event"] == "paymob_inquiry_reference_mismatch"]
+    assert mismatch["log_level"] == "error"
+    assert mismatch["payment_id"] == str(a)
+    # B's own callback still lands: its event was never consumed.
+    with sm.begin() as session:
+        BillingService(
+            session, client, PAYMOB_SETTINGS, now=lambda: FIXED_NOW
+        ).apply_transaction_callback(b_success)
+    assert _payment(sm, b).status is PaymentStatus.paid
+    assert _grant_count(sm, b) == 1
+
+
+def test_an_inquiry_answer_naming_this_payment_is_applied(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    pid = _due_payment(sm, age=timedelta(minutes=20))
+    client = FakePaymobClient()
+    client.inquiry_response = transaction_obj(merchant_order_id=str(pid))
+    assert _reconcile(sm, client) == 1
+    assert _payment(sm, pid).status is PaymentStatus.paid
+
+
+STUCK_ANSWERS: list[Callable[[], PaymobError | dict[str, Any]]] = [
+    lambda: PaymobError("Paymob GET inquiry timed out", timeout=True),
+    lambda: PaymobError("Paymob GET inquiry returned 503", status_code=503),
+    lambda: {"detail": "maintenance"},
+]
+
+
+@pytest.mark.parametrize("make_answer", STUCK_ANSWERS)
+def test_a_payment_that_stays_unreadable_for_a_week_stops_being_polled_but_stays_open(
+    migrated_sessionmaker: sessionmaker[Session],
+    make_answer: Callable[[], PaymobError | dict[str, Any]],
+) -> None:
+    sm = migrated_sessionmaker
+    young = _due_payment(sm, age=RECONCILE_STUCK_AFTER - timedelta(hours=1))
+    old = _due_payment(sm, age=RECONCILE_STUCK_AFTER)
+    client = FakePaymobClient()
+    client.inquiry_response = make_answer()
+    with structlog.testing.capture_logs() as logs:
+        assert _reconcile(sm, client) == 2
+    assert _payment(sm, young).next_reconcile_at == FIXED_NOW + timedelta(minutes=15)
+    stuck = _payment(sm, old)
+    assert stuck.status is PaymentStatus.created  # R20b: never failed on an unknown outcome
+    assert stuck.next_reconcile_at is None
+    (entry,) = [e for e in logs if e["event"] == "paymob_reconcile_stuck"]
+    assert entry["log_level"] == "error"
+    assert entry["payment_id"] == str(old)
+    # No longer selected, so no further inquiries.
+    client.inquiries.clear()
+    assert _reconcile(sm, client, now=FIXED_NOW + timedelta(days=1)) == 1  # only `young`
+    assert client.inquiries == [str(young)]
+
+
+def test_a_stuck_payment_is_still_paid_by_a_late_callback(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    pid = _due_payment(sm, age=RECONCILE_STUCK_AFTER)
+    client = FakePaymobClient()
+    client.inquiry_response = PaymobError("down", status_code=503)
+    _reconcile(sm, client)
+    assert _payment(sm, pid).next_reconcile_at is None
+    with sm.begin() as session:
+        BillingService(
+            session, client, PAYMOB_SETTINGS, now=lambda: FIXED_NOW
+        ).apply_transaction_callback(transaction_obj(merchant_order_id=str(pid)))
+    assert _payment(sm, pid).status is PaymentStatus.paid
+    assert _grant_count(sm, pid) == 1
+
+
 def test_closed_payments_are_never_inquired(migrated_sessionmaker: sessionmaker[Session]) -> None:
     sm = migrated_sessionmaker
     _due_payment(sm, age=timedelta(hours=1), status=PaymentStatus.paid)
@@ -503,6 +604,23 @@ def test_a_runner_skips_the_locked_payment_and_settles_the_free_one(
     assert client.inquiries == [str(free)]
     assert _payment(sm, free).status is PaymentStatus.paid
     assert _payment(sm, locked).status is PaymentStatus.created
+    assert _payment(sm, locked).reconcile_attempts == 0
+
+
+def test_a_locked_payment_behind_a_free_one_is_skipped_on_the_next_select(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The second select of the pass (after the first commit) must skip too."""
+    sm = migrated_sessionmaker
+    free = _due_payment(sm, age=timedelta(hours=3))  # first in queue order
+    locked = _due_payment(sm, age=timedelta(hours=1))
+    client = FakePaymobClient()
+    client.inquiry_response = transaction_obj(merchant_order_id=str(free))
+    with sm() as holder:
+        holder.scalars(sa.select(Payment).where(Payment.id == locked).with_for_update()).one()
+        assert _reconcile(sm, client, lock_timeout="3s") == 1
+    assert client.inquiries == [str(free)]
+    assert _payment(sm, free).status is PaymentStatus.paid
     assert _payment(sm, locked).reconcile_attempts == 0
 
 

@@ -63,6 +63,9 @@ INTENTION_EXPIRATION_SECONDS: Final = 3600
 RECONCILE_AFTER: Final = timedelta(minutes=15)
 RECONCILE_GIVE_UP_AFTER: Final = timedelta(hours=24)
 RECONCILE_MAX_BACKOFF: Final = timedelta(hours=4)
+#: A payment still open this long after it was created, whose inquiries keep erroring or
+#: coming back unreadable, stops being polled (its status stays open: R20b).
+RECONCILE_STUCK_AFTER: Final = timedelta(days=7)
 RECONCILE_BATCH: Final = 20
 # Past 2**10 the doubling is far beyond the cap; clamping the exponent keeps ``timedelta``
 # multiplication from overflowing on a payment that has been rescheduled for years.
@@ -740,6 +743,7 @@ class BillingService:
             if payment.status is PaymentStatus.failed:
                 # A new attempt (another transaction) is in flight after a decline: its success
                 # callback may be lost, so put the payment back on the reconcile schedule.
+                payment.reconcile_attempts = 0  # the new attempt starts at the 15 minute backoff
                 payment.next_reconcile_at = self._now() + RECONCILE_AFTER
                 log.info("paymob_pending_after_failure", payment_id=str(payment.id), txn_id=txn_id)
             payment.status = PaymentStatus.pending
@@ -919,7 +923,7 @@ class BillingService:
                 .with_for_update(skip_locked=True)
             ).first()
             if payment is not None:
-                self._schedule_next(payment, now=now)
+                self._reschedule_unknown(payment, now=now)
             self._session.commit()
         except Exception:
             self._session.rollback()
@@ -939,14 +943,28 @@ class BillingService:
                 timeout=exc.timeout,
                 outcome_unknown=_outcome_unknown(exc),
             )
-            self._schedule_next(payment, now=now)
+            self._reschedule_unknown(payment, now=now)
             return
         if obj is not None:
             if _as_int(obj.get("id")) is None:
                 # A 2xx object with no transaction id is an unreadable answer, not "no
                 # transaction yet": it must not start the 24-hour countdown.
                 log.warning("paymob_inquiry_unreadable", payment_id=str(payment.id))
-                self._schedule_next(payment, now=now)
+                self._reschedule_unknown(payment, now=now)
+                return
+            if not self._answers_for(payment, obj):
+                # The answer belongs to another payment. Applying it would pay and grant
+                # this one on that payment's transaction and consume the event key its own
+                # callback needs, leaving it open for good. Record nothing.
+                order = obj.get("order")
+                answered = order.get("merchant_order_id") if isinstance(order, Mapping) else None
+                log.error(
+                    "paymob_inquiry_reference_mismatch",
+                    payment_id=str(payment.id),
+                    answered_reference=str(answered)[:64],
+                    txn_id=_as_int(obj.get("id")),
+                )
+                self._reschedule_unknown(payment, now=now)
                 return
             self._apply_transaction(obj, source="inquiry", payment=payment)
         if payment.status not in _OPEN:
@@ -956,6 +974,39 @@ class BillingService:
             payment.status = PaymentStatus.failed
             payment.next_reconcile_at = None
             log.info("paymob_payment_abandoned", payment_id=str(payment.id))
+            return
+        self._schedule_next(payment, now=now)
+
+    @staticmethod
+    def _answers_for(payment: Payment, obj: JsonMap) -> bool:
+        """False when ``obj`` names a different payment than the one inquired.
+
+        An answer that carries no ``merchant_order_id`` is taken to be for the inquired
+        payment: the inquiry was keyed on its reference.
+        """
+        order = obj.get("order")
+        if not isinstance(order, Mapping):
+            return True
+        reference = order.get("merchant_order_id")
+        return reference is None or str(reference) == payment.special_reference
+
+    def _reschedule_unknown(self, payment: Payment, *, now: datetime) -> None:
+        """Reschedule after an inquiry that told us nothing, or stop polling a stuck payment.
+
+        After ``RECONCILE_STUCK_AFTER`` the schedule is cleared so the row stops costing
+        an inquiry per pass, and ``paymob_reconcile_stuck`` is logged at error level for
+        a human. The status stays open: an unknown outcome is never "failed" (R20b), and a
+        late callback can still settle it.
+        """
+        if now - payment.created_at >= RECONCILE_STUCK_AFTER:
+            payment.reconcile_attempts += 1
+            payment.next_reconcile_at = None
+            log.error(
+                "paymob_reconcile_stuck",
+                payment_id=str(payment.id),
+                status=payment.status.value,
+                attempts=payment.reconcile_attempts,
+            )
             return
         self._schedule_next(payment, now=now)
 
@@ -974,6 +1025,7 @@ __all__ = [
     "RECONCILE_BATCH",
     "RECONCILE_GIVE_UP_AFTER",
     "RECONCILE_MAX_BACKOFF",
+    "RECONCILE_STUCK_AFTER",
     "RETURN_PATH",
     "WEBHOOK_PATH",
     "BillingError",
