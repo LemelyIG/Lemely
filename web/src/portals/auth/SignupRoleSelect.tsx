@@ -1,5 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E5 S4 R3 V4 */
-import { Link } from "react-router-dom"
+import { Link, useSearchParams } from "react-router-dom"
+import { safeNextPath, withNext } from "@/lib/nextPath"
 import {
   CaretRight,
   ChalkboardTeacher,
@@ -148,6 +149,8 @@ function RoleChoiceLink({ to, icon: Glyph, title, description }: RoleChoice) {
 }
 
 export function SignupRoleSelect() {
+  const [searchParams] = useSearchParams()
+  const next = safeNextPath(searchParams.get("next"))
   return (
     <AuthFrame
       footer={
@@ -170,7 +173,7 @@ export function SignupRoleSelect() {
 
         <div className="flex flex-col gap-3">
           {ROLE_CHOICES.map((choice) => (
-            <RoleChoiceLink key={choice.to} {...choice} />
+            <RoleChoiceLink key={choice.to} {...choice} to={withNext(choice.to, next)} />
           ))}
         </div>
 

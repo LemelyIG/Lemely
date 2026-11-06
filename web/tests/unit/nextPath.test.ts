@@ -93,3 +93,13 @@ describe("withNext", () => {
     )
   })
 })
+
+describe("safeNextPath hardening", () => {
+  it("rejects a backslash anywhere, not only at the start", () => {
+    expect(safeNextPath("/a\\b")).toBeNull()
+  })
+  it("rejects scheme-only vectors", () => {
+    expect(safeNextPath("javascript:alert(1)")).toBeNull()
+    expect(safeNextPath("data:text/html,x")).toBeNull()
+  })
+})

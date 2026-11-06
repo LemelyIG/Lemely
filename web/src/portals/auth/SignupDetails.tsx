@@ -3,6 +3,8 @@ import { useState, type FormEvent } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { Eye, EyeSlash } from "@phosphor-icons/react"
 import { useAuth, type SelfServiceRole } from "@/lib/auth/AuthContext"
+import { rememberSignupNext } from "@/lib/auth/signupNext"
+import { safeNextPath } from "@/lib/nextPath"
 import { useRedeemInvite } from "@/lib/hooks/useInvitesApi"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -191,6 +193,7 @@ export function SignupDetails({ role }: SignupDetailsProps) {
   // See the module docstring's invite section: `?code=`, matching
   // `signupPathForInvite` (`lib/hooks/useInvitesApi.ts`) exactly.
   const inviteCode = searchParams.get("code")
+  const next = safeNextPath(searchParams.get("next"))
 
   const [values, setValues] = useState<SignupFormValues>({
     name: "",
@@ -235,6 +238,7 @@ export function SignupDetails({ role }: SignupDetailsProps) {
     setConsentError(false)
     signup.mutate(payload, {
       onSuccess: () => {
+        rememberSignupNext(next)
         const proceed = () => navigate("/verify-email", { replace: true })
         if (inviteCode) {
           redeemInvite.mutate({ code: inviteCode }, { onSuccess: proceed, onError: proceed })
