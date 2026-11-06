@@ -1,6 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
+import { useQueryClient } from "@tanstack/react-query"
 import { ArrowClockwise, Camera, UploadSimple } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -12,6 +13,7 @@ import {
 import { QueryState } from "@/components/ui/query-state"
 import { ErrorState } from "@/components/ui/state-views"
 import { QueuedBanner } from "@/components/ui/queued-banner"
+import { EstimateRange } from "@/components/billing/estimate-range"
 import { CameraCapture } from "@/components/CameraCapture"
 import {
   advanceStage,
@@ -32,6 +34,11 @@ import {
   useUploadRun,
 } from "@/lib/hooks/useStudentApi"
 import { useProfile } from "@/lib/hooks/useMeApi"
+import { billingPaths } from "@/lib/billingPaths"
+import type { EstimateRequest } from "@/lib/billingTypes"
+import { useBillingSummary } from "@/lib/hooks/useBillingApi"
+import { invalidateUsage } from "@/lib/hooks/useUsageApi"
+import { useMeteredGate } from "@/lib/meteredGate"
 import { canStartRun, runPhase } from "@/lib/uploadRun"
 import { cn } from "@/lib/utils"
 import { uploadStageProgress } from "@/lib/uploadProgress"
@@ -609,6 +616,14 @@ export function CorrectPaper() {
    * on the server, so a run that stopped is restartable with nothing picked.
    */
   const resumableId = paperId ?? (strandedStopped ? (strandedRun?.paperId ?? null) : null)
+  const queryClient = useQueryClient()
+  const billing = useBillingSummary()
+  const markRequest: EstimateRequest | null = scanFile
+    ? { action: "mark_paper" }
+    : canRetryInPlace(resumableId) && resumableId
+      ? { action: "mark_paper", paperId: resumableId }
+      : null
+  const markGate = useMeteredGate(markRequest)
 
   /**
    * The id to mark, uploading first only when the server has nothing yet.
@@ -692,6 +707,10 @@ export function CorrectPaper() {
       setPaperId(id)
       await streamCorrection(id)
     } catch (err) {
+      if (markGate.captureError(err)) {
+        setStages(initialStages)
+        return
+      }
       // A cancelled upload is not a failed one. `uploadWithProgress` rejects
       // with a `DOMException` named `AbortError` (matching what an aborted
       // `fetch` does), and that is an `Error` with a message, so without this
@@ -710,6 +729,7 @@ export function CorrectPaper() {
       setError(message)
     } finally {
       setRunning(false)
+      invalidateUsage(queryClient)
     }
   }
 
@@ -778,12 +798,20 @@ export function CorrectPaper() {
             size="lg"
             onClick={runPipeline}
             loading={busy}
-            disabled={!canStart}
+            disabled={!canStart || markGate.block !== null}
           >
             {primaryLabel}
           </Button>
         )}
       </header>
+
+      <EstimateRange
+        gate={markGate}
+        audience="student"
+        paths={billingPaths({ role: "student" })}
+        managedByName={billing.data?.managedByName ?? null}
+        subjectUnknown
+      />
 
       <QueuedBanner count={uploadQueue.count} onRetry={uploadQueue.retry} />
 
@@ -977,7 +1005,7 @@ export function CorrectPaper() {
                         size="sm"
                         icon={<ArrowClockwise size={16} />}
                         onClick={runPipeline}
-                        disabled={!canStart}
+                        disabled={!canStart || markGate.block !== null}
                         className="self-start"
                       >
                         {retryLabel}

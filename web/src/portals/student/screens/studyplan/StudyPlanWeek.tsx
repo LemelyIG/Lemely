@@ -1,5 +1,7 @@
 import { useMemo } from "react"
 import { Link, useNavigate, useParams } from "react-router-dom"
+import { useQueryClient } from "@tanstack/react-query"
+import { EstimateRange } from "@/components/billing/estimate-range"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 import { ListSkeleton, PageHeaderSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
@@ -12,7 +14,12 @@ import {
   useCurrentStudyPlan,
   useRebuildStudyPlan,
 } from "@/lib/hooks/useStudyPlanApi"
+import { billingPaths } from "@/lib/billingPaths"
+import { useBillingSummary } from "@/lib/hooks/useBillingApi"
 import { useStudentProfile } from "@/lib/hooks/useMeApi"
+import { invalidateUsage } from "@/lib/hooks/useUsageApi"
+import { useMeteredGate } from "@/lib/meteredGate"
+import { parseUsageBlock } from "@/lib/usageBlock"
 import { useExamCalendar } from "@/lib/hooks/useAnnouncementApi"
 import type { StudyPlanSessionDTO, StudyPlanWeekDTO } from "@/lib/studyPlanTypes"
 import { studentActionFailureMessage, studentLoadFailureMessage } from "@/lib/studentOutcome"
@@ -77,6 +84,7 @@ function WeekHeader({
   kicker,
   onRebuild,
   rebuilding,
+  blocked,
 }: {
   plan: StudyPlanWeekDTO
   subjectName: string
@@ -86,6 +94,7 @@ function WeekHeader({
   kicker: string | undefined
   onRebuild: () => void
   rebuilding: boolean
+  blocked: boolean
 }) {
   const progress = weekProgress(plan)
   return (
@@ -96,8 +105,9 @@ function WeekHeader({
         kicker={kicker}
         level={1}
         rung="display-lg"
+        className="max-tablet:flex-col max-tablet:items-start"
         action={
-          <Button variant="secondary" size="md" onClick={onRebuild} disabled={rebuilding}>
+          <Button variant="secondary" size="md" onClick={onRebuild} disabled={rebuilding || blocked}>
             {rebuilding ? "Rebuilding…" : REBUILD_LABEL}
           </Button>
         }
@@ -243,7 +253,24 @@ export function StudyPlanWeek() {
   const kicker = weekHeaderKicker(targetGrade, examDate, today)
 
   const heading = `Your ${subjectName} week`
-  const onRebuild = () => rebuild.mutate({ subjectCode })
+  const queryClient = useQueryClient()
+  const billing = useBillingSummary()
+  const planGate = useMeteredGate(subjectCode ? { action: "study_plan", subjectCode } : null)
+  const onRebuild = () => {
+    if (planGate.block) return
+    rebuild.mutate(
+      { subjectCode },
+      { onSuccess: () => invalidateUsage(queryClient), onError: (err) => void planGate.captureError(err) },
+    )
+  }
+  const estimate = (
+    <EstimateRange
+      gate={planGate}
+      audience="student"
+      paths={billingPaths({ role: "student" })}
+      managedByName={billing.data?.managedByName ?? null}
+    />
+  )
 
   return (
     <div className="lm-read flex flex-col gap-6">
@@ -285,7 +312,7 @@ export function StudyPlanWeek() {
              fetch" or a status line. The action is kept in the sentence
              because both can fail on this one screen, and a reader told only
              that something went wrong has to guess which. */
-          const rebuildError = rebuild.isError ? (
+          const rebuildError = rebuild.isError && !parseUsageBlock(rebuild.error) ? (
             <p className="text-body-md text-error">
               {studentActionFailureMessage(rebuild.error, "rebuild your plan")}
             </p>
@@ -312,6 +339,7 @@ export function StudyPlanWeek() {
                     onClick: () => navigate(`/student/placement/${subjectCode}`),
                   }}
                 />
+                {estimate}
                 {rebuildError}
               </>
             )
@@ -335,6 +363,7 @@ export function StudyPlanWeek() {
                     onClick: onRebuild,
                   }}
                 />
+                {estimate}
                 {rebuildError}
               </>
             )
@@ -351,7 +380,9 @@ export function StudyPlanWeek() {
                 kicker={kicker}
                 onRebuild={onRebuild}
                 rebuilding={rebuild.isPending}
+                blocked={planGate.block !== null}
               />
+              {estimate}
               {rebuildError}
               {completeError}
               <PlanBasis />
