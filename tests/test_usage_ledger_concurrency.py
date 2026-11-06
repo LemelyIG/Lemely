@@ -8,8 +8,8 @@
   exactly as many succeed as the balance covers, and ``held`` equals their sum.
 * **Shared cap.** Two jobs under one assistant's cap, against a teacher with
   plenty of credits: the cap admits only one.
-* **Settle against the expiry sweeper.** Exactly one of them closes the job and
-  the ledger reconciles.
+* **Settle against the expiry sweeper.** Whichever holds its transaction open closes the
+  job; the other is proven queued behind it, then finds the job closed and does nothing.
 * **Opposite chain orders.** Jobs whose chains name two owners in opposite
   orders run together without a deadlock.
 """
@@ -47,6 +47,7 @@ from tests.usage_db import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
+    from datetime import datetime
 
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -155,25 +156,64 @@ def test_concurrent_jobs_under_one_cap_admit_only_what_the_cap_allows(
     assert balance(sm, credits) == (1000, 6)
 
 
-def test_settle_racing_the_expiry_sweeper_closes_the_job_once(sm: sessionmaker[Session]) -> None:
+def _stale_job(sm: sessionmaker[Session]) -> tuple[uuid.UUID, uuid.UUID, datetime]:
+    """A 20-unit grant with one open 10-unit job already past its expiry at the returned time."""
     add_rate(sm)
     owner = add_user(sm)
     gid = grant(sm, owner, 20)
     job_id = reserve(sm, own_chain(owner), 10, expires_at=NOW + timedelta(seconds=1))
-    later = NOW + timedelta(minutes=1)
-    results = _run_together(
-        sm,
-        [
-            lambda s: UsageLedger(s).settle(job_id, actual_cost_usd=Decimal("0.007"), now=later),
-            lambda s: UsageLedger(s).expire_stale_jobs(now=later),
-        ],
-    )
-    assert not [r for r in results if isinstance(r, Exception)], results
-    status = job(sm, job_id).status
-    assert status in {UsageJobStatus.settled, UsageJobStatus.expired}
-    assert balance(sm, gid) == ((13, 0) if status is UsageJobStatus.settled else (20, 0))
+    return gid, job_id, NOW + timedelta(minutes=1)
+
+
+def test_a_sweep_queued_behind_an_open_settle_closes_nothing(sm: sessionmaker[Session]) -> None:
+    gid, job_id, later = _stale_job(sm)
+    holder = sm()
+    try:
+        holder.begin()
+        UsageLedger(holder).settle(job_id, actual_cost_usd=Decimal("0.007"), now=later)
+        sweeping = _Paused(lambda: _sweep(sm, later))
+        _wait_until_a_backend_waits_on_a_lock(sm)  # the sweep is queued behind the settle
+        holder.commit()
+    finally:
+        holder.close()
+    sweeping.join()
+    assert sweeping.error is None
+    assert sweeping.result == 0
+    assert job(sm, job_id).status is UsageJobStatus.settled
+    assert balance(sm, gid) == (13, 0)
     with sm.begin() as session:
         assert UsageLedger(session).reconcile_balances() == []
+
+
+def test_a_settle_queued_behind_an_open_sweep_changes_nothing(sm: sessionmaker[Session]) -> None:
+    gid, job_id, later = _stale_job(sm)
+    holder = sm()
+    try:
+        holder.begin()
+        assert UsageLedger(holder).expire_stale_jobs(now=later) == 1
+        settling = _Paused(lambda: _settle(sm, job_id, later))
+        _wait_until_a_backend_waits_on_a_lock(sm)  # the settle is queued behind the sweep
+        holder.commit()
+    finally:
+        holder.close()
+    settling.join()
+    assert settling.error is None
+    assert settling.result is UsageJobStatus.expired
+    assert job(sm, job_id).status is UsageJobStatus.expired
+    assert job(sm, job_id).charged == 0
+    assert balance(sm, gid) == (20, 0)
+    with sm.begin() as session:
+        assert UsageLedger(session).reconcile_balances() == []
+
+
+def _sweep(factory: sessionmaker[Session], now: datetime) -> int:
+    with factory.begin() as session:
+        return UsageLedger(session).expire_stale_jobs(now=now)
+
+
+def _settle(factory: sessionmaker[Session], job_id: uuid.UUID, now: datetime) -> UsageJobStatus:
+    with factory.begin() as session:
+        return UsageLedger(session).settle(job_id, actual_cost_usd=Decimal("0.007"), now=now).status
 
 
 def test_opposite_chain_orders_do_not_deadlock(sm: sessionmaker[Session]) -> None:

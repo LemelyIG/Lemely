@@ -201,19 +201,29 @@ def test_reconcile_reports_exactly_one_cached_remaining_held_and_debt_and_repair
     assert reconcile(sm) == []
 
 
-def test_a_row_whose_repair_breaks_a_check_does_not_stop_the_rest(
-    sm: sessionmaker[Session], caplog: pytest.LogCaptureFixture
+def _in_id_order(
+    first_is_stray: bool, one: uuid.UUID, other: uuid.UUID
+) -> tuple[uuid.UUID, uuid.UUID]:
+    """``(stray, clean)`` so that the stray row's id sorts first or last: reconcile walks by id."""
+    low, high = sorted([one, other])
+    return (low, high) if first_is_stray else (high, low)
+
+
+@pytest.mark.parametrize("stray_first", [True, False], ids=["stray-first", "stray-last"])
+def test_a_grant_whose_repair_breaks_a_check_does_not_stop_the_rest(
+    sm: sessionmaker[Session], caplog: pytest.LogCaptureFixture, stray_first: bool
 ) -> None:
     """One grant is cleanly drifted; another has a stray hold entry, so its recomputed
     ``held`` (15) exceeds its ``remaining`` (10) and the repair would violate
-    ``held_within_remaining``. The clean one is repaired, both are reported, the run
-    does not raise, and the error names the row that could not be repaired."""
+    ``held_within_remaining``. Whichever sorts first, the clean one is repaired, both
+    are reported, the run does not raise, and the error names the row that failed."""
     owner = add_user(sm)
-    clean = grant(sm, owner, 20)
-    stray = grant(sm, owner, 10)
+    stray, clean = _in_id_order(stray_first, grant(sm, owner, 10), grant(sm, owner, 10))
     with sm.begin() as session:
         session.execute(
-            sa.text("UPDATE usage_grant_balances SET remaining = 25 WHERE grant_id = :g"),
+            sa.text(
+                "UPDATE usage_grant_balances SET remaining = remaining + 5 WHERE grant_id = :g"
+            ),
             {"g": clean},
         )
         session.add(
@@ -225,14 +235,67 @@ def test_a_row_whose_repair_breaks_a_check_does_not_stop_the_rest(
                 idempotency_key="stray-hold",
             )
         )
-    with caplog.at_level(logging.ERROR, logger="lemely.db.usage_ledger_repo"):
-        drift = reconcile(sm)
-    assert sorted(drift) == sorted([(clean, 25, 20), (stray, 0, 15)])
-    assert balance(sm, clean) == (20, 0)  # repaired
-    assert balance(sm, stray) == (10, 0)  # left as it was: the repair is impossible
-    assert [str(stray) in r.getMessage() for r in caplog.records if r.levelno == logging.ERROR] == [
-        True
-    ]
+    stray_remaining = balance(sm, stray)[0]
+    clean_remaining = balance(sm, clean)[0] - 5
+    with (
+        caplog.at_level(logging.ERROR, logger="lemely.db.usage_ledger_repo"),
+        sm.begin() as session,
+    ):
+        drift = UsageLedger(session).reconcile_balances()
+        # Inside the reconciling session: the rejected value did not stay on the row.
+        rows = {
+            gid: (rem, held)
+            for gid, rem, held in session.execute(
+                sa.text("SELECT grant_id, remaining, held FROM usage_grant_balances")
+            )
+        }
+        assert rows[stray] == (stray_remaining, 0)
+        assert rows[clean] == (clean_remaining, 0)
+    assert sorted(drift) == sorted([(clean, clean_remaining + 5, clean_remaining), (stray, 0, 15)])
+    assert balance(sm, clean) == (clean_remaining, 0)
+    assert balance(sm, stray) == (stray_remaining, 0)  # left as it was: the repair is impossible
+    errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1
+    assert str(stray) in errors[0]
+    assert str(clean) not in errors[0]
+
+
+@pytest.mark.parametrize("stray_first", [True, False], ids=["stray-first", "stray-last"])
+def test_a_debt_whose_repair_breaks_a_check_does_not_stop_the_rest(
+    sm: sessionmaker[Session], caplog: pytest.LogCaptureFixture, stray_first: bool
+) -> None:
+    """The same for debts: a stray 9-unit repayment on a 7-unit debt recomputes to -2
+    outstanding, which breaks ``outstanding_within_units``; the other debt, drifted
+    cleanly from 7 to 3, is still repaired."""
+    owner = add_user(sm)
+    stray, clean = _in_id_order(stray_first, add_debt(sm, owner, 7), add_debt(sm, owner, 7))
+    with sm.begin() as session:
+        session.execute(
+            sa.text("UPDATE usage_debts SET outstanding = 3 WHERE id = :d"), {"d": clean}
+        )
+        session.add(
+            UsageEntry(
+                debt_id=stray,
+                kind=UsageEntryKind.debt_repay,
+                units=-9,
+                event_at=NOW,
+                idempotency_key="stray-repay",
+            )
+        )
+    with (
+        caplog.at_level(logging.ERROR, logger="lemely.db.usage_ledger_repo"),
+        sm.begin() as session,
+    ):
+        drift = UsageLedger(session).reconcile_balances()
+        rows = dict(session.execute(sa.text("SELECT id, outstanding FROM usage_debts")).all())
+        assert rows[stray] == 7
+        assert rows[clean] == 7
+    assert sorted(drift) == sorted([(clean, 3, 7), (stray, 7, -2)])
+    assert sorted(d.outstanding for d in debts(sm, owner)) == [7, 7]
+    errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1
+    assert str(stray) in errors[0]
+    assert str(clean) not in errors[0]
 
 
 def test_a_clean_ledger_and_an_empty_one_report_nothing(sm: sessionmaker[Session]) -> None:
