@@ -176,13 +176,13 @@ function selftestVerdicts() {
   console.log("selftest verdict table passed")
 }
 
-async function selftestEndToEnd(browser) {
+async function selftestEndToEnd(browser, width = 1440) {
   // The real before-vs-after path against a temp baseline: record, mutate a
   // copy, compare, and require a red verdict and exit code 1. The real
   // baseline directory is never written.
   const scene = SCENES.find((s) => s.id === "teacher-home-content")
   if (!scene) throw new Error("selftest: scene teacher-home-content not found")
-  const item = { scene, width: 1440, theme: "light", key: "teacher-home-content@1440@light" }
+  const item = { scene, width, theme: "light", key: `teacher-home-content@${width}@light` }
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "drift-selftest-"))
   const baselineDir = path.join(tmp, "baseline")
   const runDir = path.join(tmp, "run")
@@ -219,7 +219,7 @@ async function selftestEndToEnd(browser) {
     const ok = await compareItem(browser, item, { baselineDir, runDir, table: entry })
     assertEqual(ok.outcome, "pass-justified", "mutated baseline, approved")
     assertEqual(exitCodeFor([ok]), 0, "exit code, approved")
-    console.log("selftest end-to-end passed")
+    console.log(`selftest end-to-end passed at ${width}px`)
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true })
   }
@@ -245,6 +245,39 @@ function selftestEmptySelection() {
   assertEqual(exitCodeFor([{ outcome: "pass" }]), 0, "exit code, one pass")
   assertEqual(exitCodeFor([{ outcome: "pass" }, { outcome: "fail" }]), 1, "exit code, one fail")
   console.log("selftest empty selection passed")
+}
+
+async function selftestContentIgnoresChrome(browser) {
+  // Content mode: a fixed or sticky element outside the content selector must
+  // not reach the capture, and a real content change must still differ.
+  const context = await browser.newContext({ viewport: { width: 390, height: 600 } })
+  try {
+    const page = await context.newPage()
+    const html = (chrome, body) =>
+      `<body style="margin:0;background:#fff"><div style="position:fixed;bottom:0;left:0;right:0;height:60px;background:${chrome}"></div>` +
+      `<div style="position:sticky;top:0;height:40px;background:${chrome}"></div>` +
+      `<main id="m" style="height:560px;background:${body}"><div style="margin:10px;height:80px;border-radius:24px;background:#fff;border-left:4px solid #036"></div></main></body>`
+    const shoot = async (chrome, body, lift = 0) => {
+      await page.setContent(html(chrome, body))
+      if (lift) await page.addStyleTag({ content: `#m { transform: translateY(${lift}px); }` })
+      return capture(page, { capture: "content", selector: "#m" })
+    }
+    const base = await shoot("#f00", "#0a0")
+    const chromeOnly = await shoot("#00f", "#0a0")
+    const contentChanged = await shoot("#f00", "#a0a")
+    // The same content a fraction of a pixel lower (a shell change that moves the
+    // content origin by a rem fraction) must still compare as 0 px.
+    const shifted = await shoot("#f00", "#0a0", 0.3)
+    const fraction = diffPngs(base, shifted, path.join(DRIFT_DIR, "selftest", "fraction.diff.png"))
+    if (fraction.diff !== 0) throw new Error(`selftest: a fractional content origin leaked into the capture (${fraction.diff} px)`)
+    const same = diffPngs(base, chromeOnly, path.join(DRIFT_DIR, "selftest", "chrome.diff.png"))
+    const changed = diffPngs(base, contentChanged, path.join(DRIFT_DIR, "selftest", "content.diff.png"))
+    if (same.diff !== 0) throw new Error(`selftest: a fixed/sticky element outside the content leaked into the capture (${same.diff} px)`)
+    if (changed.diff === 0) throw new Error("selftest: a real content change did not differ in content mode")
+    console.log(`selftest content ignores chrome passed (chrome change ${same.diff} px, content change ${changed.diff} px)`)
+  } finally {
+    await context.close()
+  }
 }
 
 async function selftestStableShot(browser) {
@@ -307,9 +340,13 @@ async function runSelftest(browser) {
   if (same.diff !== 0) throw new Error("selftest: identical captures differ, the capture is not deterministic")
   if (verdict(changed, null) !== "fail") throw new Error("selftest: a recoloured title did not fail the gate")
   await selftestStableShot(browser)
+  await selftestContentIgnoresChrome(browser)
   const realBaseline = path.join(BASELINE_DIR, "teacher-home-content@1440@light.png")
   const before = fs.existsSync(realBaseline) ? fs.readFileSync(realBaseline) : null
   await selftestEndToEnd(browser)
+  // Content mode must still go red on a real content mutation at the phone width,
+  // where the fixed bottom tabs and the shell bar are hidden before capture.
+  await selftestEndToEnd(browser, 390)
   const after = fs.existsSync(realBaseline) ? fs.readFileSync(realBaseline) : null
   if (before && (!after || !before.equals(after))) throw new Error("selftest: the real baseline was modified")
   console.log("selftest passed")

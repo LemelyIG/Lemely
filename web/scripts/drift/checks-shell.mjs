@@ -77,4 +77,18 @@ export const SHELL_CHECKS = [
       await assertFocused(bell, "bell after keyboard open")
     },
   },
+  ...[900, 1100, 1300].map((width) => ({
+    // One breakpoint decides both: exactly one of {sidebar column, menu button}
+    // is visible at any width above the phone range. Today both follow the
+    // `sidebar:` variant (820px); Task 4/5 move both to shell-lg (1248px) and
+    // the xor still holds, only which side shows at 900 and 1100 flips.
+    id: `teacher-sidebar-xor-menu-${width}`,
+    width,
+    app: TEACHER_HOME,
+    async run(page) {
+      const menu = await page.getByRole("button", { name: "Open teacher navigation" }).isVisible()
+      const sidebar = await page.getByRole("navigation", { name: "Teacher sections" }).isVisible()
+      if (menu === sidebar) throw new Error(`at ${width}px: menu button visible=${menu}, sidebar visible=${sidebar}; exactly one must show`)
+    },
+  })),
 ]

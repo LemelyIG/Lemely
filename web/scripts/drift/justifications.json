@@ -1,16 +1,16 @@
 {
   "teacher-home-frame": {
-    "difference": "Top bar: 1px outline border instead of ring, 21px/800 title, design A icons, dot instead of count badge, gear visible at every width, 36px menu button, bar 8px shorter below 1001px",
+    "difference": "Top bar: 1px outline border instead of ring, 21px/800 title, design A icons, dot instead of count badge, gear visible at every width, 36px menu button, bar 8px shorter below 1248px (drawer range, the user's decision), breadcrumb trail padding moves from 72px to 14px at 721-1247px",
     "justification": "Design A .as-bar, .as-title, .as-iconbtn, .as-dot, .as-btn (variant-a.css)",
     "approved": "pending"
   },
   "teacher-class-frame": {
-    "difference": "Top bar: 1px outline border instead of ring, 21px/800 title, design A icons, dot instead of count badge, gear visible at every width, 36px menu button, bar 8px shorter below 1001px",
+    "difference": "Top bar: 1px outline border instead of ring, 21px/800 title, design A icons, dot instead of count badge, gear visible at every width, 36px menu button, bar 8px shorter below 1248px (drawer range, the user's decision), breadcrumb trail padding moves from 72px to 14px at 721-1247px",
     "justification": "Design A .as-bar, .as-title, .as-iconbtn, .as-dot, .as-btn (variant-a.css)",
     "approved": "pending"
   },
   "teacher-notifications-frame": {
-    "difference": "Top bar: 1px outline border instead of ring, 21px/800 title, design A icons, dot instead of count badge, gear visible at every width, 36px menu button, bar 8px shorter below 1001px",
+    "difference": "Top bar: 1px outline border instead of ring, 21px/800 title, design A icons, dot instead of count badge, gear visible at every width, 36px menu button, bar 8px shorter below 1248px (drawer range, the user's decision), breadcrumb trail padding moves from 72px to 14px at 721-1247px",
     "justification": "Design A .as-bar, .as-title, .as-iconbtn, .as-dot, .as-btn (variant-a.css)",
     "approved": "pending"
   },
@@ -57,36 +57,6 @@
   "teacher-settings-install": {
     "difference": "Only the top bar behind the settings dialog changed",
     "justification": "Design A .as-bar",
-    "approved": "pending"
-  },
-  "teacher-home-content@390": {
-    "difference": "Page content is identical. Below 721px the flat 44px bar (design A max-width 720) and from 721 to 1000px the 56px bar (was 64px with a 44px menu button) move the content origin, so the viewport-fixed bottom tab bar crosses the content crop at a different row (notifications also fills the viewport, so its crop is 8px shorter at 768)",
-    "justification": "Design A .as-bar sizes; only the fixed bottom tabs overlap a different part of the crop",
-    "approved": "pending"
-  },
-  "teacher-home-content@768": {
-    "difference": "Page content is identical. Below 721px the flat 44px bar (design A max-width 720) and from 721 to 1000px the 56px bar (was 64px with a 44px menu button) move the content origin, so the viewport-fixed bottom tab bar crosses the content crop at a different row (notifications also fills the viewport, so its crop is 8px shorter at 768)",
-    "justification": "Design A .as-bar sizes; only the fixed bottom tabs overlap a different part of the crop",
-    "approved": "pending"
-  },
-  "teacher-class-content@390": {
-    "difference": "Page content is identical. Below 721px the flat 44px bar (design A max-width 720) and from 721 to 1000px the 56px bar (was 64px with a 44px menu button) move the content origin, so the viewport-fixed bottom tab bar crosses the content crop at a different row (notifications also fills the viewport, so its crop is 8px shorter at 768)",
-    "justification": "Design A .as-bar sizes; only the fixed bottom tabs overlap a different part of the crop",
-    "approved": "pending"
-  },
-  "teacher-class-content@768": {
-    "difference": "Page content is identical. Below 721px the flat 44px bar (design A max-width 720) and from 721 to 1000px the 56px bar (was 64px with a 44px menu button) move the content origin, so the viewport-fixed bottom tab bar crosses the content crop at a different row (notifications also fills the viewport, so its crop is 8px shorter at 768)",
-    "justification": "Design A .as-bar sizes; only the fixed bottom tabs overlap a different part of the crop",
-    "approved": "pending"
-  },
-  "teacher-notifications-content@390": {
-    "difference": "Page content is identical. Below 721px the flat 44px bar (design A max-width 720) and from 721 to 1000px the 56px bar (was 64px with a 44px menu button) move the content origin, so the viewport-fixed bottom tab bar crosses the content crop at a different row (notifications also fills the viewport, so its crop is 8px shorter at 768)",
-    "justification": "Design A .as-bar sizes; only the fixed bottom tabs overlap a different part of the crop",
-    "approved": "pending"
-  },
-  "teacher-notifications-content@768": {
-    "difference": "Page content is identical. Below 721px the flat 44px bar (design A max-width 720) and from 721 to 1000px the 56px bar (was 64px with a 44px menu button) move the content origin, so the viewport-fixed bottom tab bar crosses the content crop at a different row (notifications also fills the viewport, so its crop is 8px shorter at 768)",
-    "justification": "Design A .as-bar sizes; only the fixed bottom tabs overlap a different part of the crop",
     "approved": "pending"
   }
 }

@@ -236,8 +236,56 @@ export async function capture(page, { capture: mode, selector, neutral = false }
     return stableShot(page, () => page.screenshot({ animations: "disabled", caret: "hide" }))
   }
   if (neutral) await page.addStyleTag({ content: `${selector} { background: rgb(255 0 255) !important; }` })
+  await hideChromeOutside(page, selector)
+  await snapContentOrigin(page, selector)
   const clip = await contentBox(page, selector)
   return stableShot(page, () => page.screenshot({ fullPage: true, clip, animations: "disabled", caret: "hide" }))
+}
+
+/**
+ * Content mode compares page content only. A fixed or sticky element outside
+ * the content selector (top bar, bottom tabs, scrim) is shell, not content, yet
+ * a fullPage screenshot paints it over whatever row of the content it happens
+ * to sit on, so a shell change would leak in as a content difference. Hide each
+ * one with `visibility: hidden` (layout is kept, so nothing reflows). An
+ * element that contains the selector is left alone.
+ */
+export async function hideChromeOutside(page, selector) {
+  return page.evaluate((sel) => {
+    const target = document.querySelector(sel)
+    let hidden = 0
+    for (const el of document.body.querySelectorAll("*")) {
+      if (el === target || target.contains(el)) continue
+      const position = getComputedStyle(el).position
+      if (position !== "fixed" && position !== "sticky") continue
+      if (el.contains(target)) continue
+      el.style.setProperty("visibility", "hidden", "important")
+      hidden++
+    }
+    return hidden
+  }, selector)
+}
+
+/**
+ * The content origin can sit at a fractional pixel (a rem or line-height
+ * above it), and a shell change moves that fraction. The clip is cut at whole
+ * pixels, so a different fraction re-rasterises every anti-aliased edge in the
+ * content (rounded corners, text) though nothing in it changed. Shift the
+ * content by the fraction (a `translate`, no reflow) so its origin is whole on
+ * both sides and only a real difference remains.
+ */
+export async function snapContentOrigin(page, selector) {
+  return page.evaluate((sel) => {
+    const el = document.querySelector(sel)
+    const r = el.getBoundingClientRect()
+    const s = getComputedStyle(el)
+    const x = r.left + parseFloat(s.paddingLeft)
+    const y = r.top + window.scrollY + parseFloat(s.paddingTop)
+    const dx = x - Math.round(x)
+    const dy = y - Math.round(y)
+    if (dx !== 0 || dy !== 0) el.style.setProperty("translate", `${-dx}px ${-dy}px`, "important")
+    return { dx, dy }
+  }, selector)
 }
 
 /**
