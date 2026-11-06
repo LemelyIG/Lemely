@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
+/* Neutral surface and neutral icon rather than error red, per PRODUCT.md; the status wrapper stays mounted so debt that appears later is announced. */
 import { Warning } from "@phosphor-icons/react"
 import { Link } from "react-router-dom"
 import type { Audience } from "@/lib/billingTypes"

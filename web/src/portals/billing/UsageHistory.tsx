@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P4 H4 E5 S4 R4 V4 */
+/* E5: a phone gets stacked cards and larger screens a table (one hidden at any width), a failed next page keeps the rows, focus returns to a real control after each load, and the live region says how many rows arrived. */
 import type { InfiniteData, UseInfiniteQueryResult } from "@tanstack/react-query"
 import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"

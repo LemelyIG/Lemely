@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
+/* The 403 for an assistant renders a plain ErrorState with no retry, because retrying cannot change who the teacher is. JoinTeamCard stays outside the query so an assistant can still join a team. */
 import { ApiError } from "@/lib/api"
 import { PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"

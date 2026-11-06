@@ -1,7 +1,10 @@
+/* Hallmark · pre-emit critique: P4 H3 E4 S4 R4 V3 */
+/* H3: the joined-teams footnote sits inside the same card as the join form. Its failure now goes through QueryState as a compact inline error with a retry, keeping the original sentence (join is still possible). */
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { QueryState } from "@/components/ui/query-state"
 import { ROLE_COPY, joinCodeDraft, joinFailureMessage, joinedMessage } from "@/lib/assistantRoles"
 import { useJoinTeam, useMemberships } from "@/lib/hooks/useTeamApi"
 
@@ -14,22 +17,34 @@ import { useJoinTeam, useMemberships } from "@/lib/hooks/useTeamApi"
 /** Read-only: there is no leave action to offer (the backend has no endpoint for it). */
 function JoinedTeams() {
   const teams = useMemberships()
-  if (teams.isError) {
-    return <p className="m-0 text-body-sm text-on-surface-variant">Couldn't load the teams you assist. You can still join one.</p>
-  }
-  if (!teams.data || teams.data.length === 0) return null
   return (
-    <div className="flex flex-col gap-2 border-t border-outline-variant pt-3">
-      <h3 className="m-0 text-label text-on-surface">Teams you assist</h3>
-      <ul aria-label="Teams you assist" className="m-0 flex list-none flex-col gap-1 p-0">
-        {teams.data.map((t) => (
-          <li key={t.memberId} className="flex flex-wrap items-baseline justify-between gap-x-4 text-body-sm">
-            <span className="text-on-surface">{t.teacherName}</span>
-            <span className="text-on-surface-variant">{ROLE_COPY[t.role].label}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
+    // No skeleton: the list is a footnote to the form, so an empty slot while it loads is the true picture.
+    <QueryState
+      query={teams}
+      skeleton={null}
+      isEmpty={(list) => list.length === 0}
+      // `empty` is `??`-chained to `children`, so `null` would fall through to the list; an empty fragment renders nothing.
+      empty={<></>}
+      error={{
+        heading: "Couldn't load the teams you assist.",
+        body: "You can still join one.",
+        compact: true,
+      }}
+    >
+      {(list) => (
+        <div className="flex flex-col gap-2 border-t border-outline-variant pt-3">
+          <h3 className="m-0 text-label text-on-surface">Teams you assist</h3>
+          <ul aria-label="Teams you assist" className="m-0 flex list-none flex-col gap-1 p-0">
+            {list.map((t) => (
+              <li key={t.memberId} className="flex flex-wrap items-baseline justify-between gap-x-4 text-body-sm">
+                <span className="text-on-surface">{t.teacherName}</span>
+                <span className="text-on-surface-variant">{ROLE_COPY[t.role].label}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </QueryState>
   )
 }
 

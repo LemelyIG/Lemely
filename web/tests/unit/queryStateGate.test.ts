@@ -176,6 +176,26 @@ const ALLOWLIST: { path: string; reason: string }[] = [
       "loads data, but its one consumer degrades: a failed profile read renders `the email on your account`, a complete sentence, where an error panel would announce a failure the reader does not need to act on",
   },
   {
+    path: "src/portals/teacher/screens/team/AssistantDialogs.tsx",
+    reason:
+      "loads no data: four dialogs driven by `Team.tsx`'s gated `useTeam()` query through their props; imports only the invite, role, cap and remove mutations",
+  },
+  {
+    path: "src/portals/teacher/screens/team/AssistantsPanel.tsx",
+    reason:
+      "loads no data: renders the `team` prop that `Team.tsx` fetches inside its own `<QueryState>`; imports only `useRevokeAssistantInvite`, a mutation",
+  },
+  {
+    path: "src/portals/teacher/screens/team/SeatCountDialogs.tsx",
+    reason:
+      "loads no data: `useSeatQuote` is a mutation (a POST that prices the typed count, never a read), as are `useAddSeats` and `useReduceSeats`; the subscription and card arrive as props from `SeatsPanel`",
+  },
+  {
+    path: "src/portals/teacher/screens/team/SeatEditorDialog.tsx",
+    reason:
+      "loads no data: a dialog driven by the seat row `SeatsPanel` passes it; imports only the remove-seat, cap and scope mutations",
+  },
+  {
     path: "src/portals/teacher/screens/ClassRoster.tsx",
     reason:
       "loads no data: renders the class detail from `useClassDetailContext()`, which its parent layout fetches and gates; imports only the enrol/remove mutations",

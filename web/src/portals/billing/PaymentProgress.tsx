@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
+/* Same copy and the same polling record as the checkout return page, so the dialog and the page never disagree. Failure tells the reader the charge is still processed but offers no retry control, only a reload. */
 import { useEffect, useRef } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { paymentPhase } from "@/lib/billingFormat"

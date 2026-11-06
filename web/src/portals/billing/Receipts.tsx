@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
+/* A refund is named, never priced (M9); empty state offers the one way back. Row layout is the same card-per-record shape as usage history. */
 import { Link } from "react-router-dom"
 import { buttonVariants } from "@/components/ui/button"
 import { ListSkeleton } from "@/components/ui/loading-shapes"

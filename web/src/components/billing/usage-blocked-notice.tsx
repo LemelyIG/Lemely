@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P4 H4 E3 S4 R4 V3 */
+/* E3: the next-step links are hand-styled copies of the button look (`LINK` + colour classes) rather than `buttonVariants`, so they will drift from Button, and the managed-by paragraph is indented off the file's own formatting. */
 import { createElement, type ReactNode } from "react"
 import { Info } from "@phosphor-icons/react"
 import { Link } from "react-router-dom"

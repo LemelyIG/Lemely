@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P4 H3 E4 S4 R3 V3 */
+/* H3/R3: three fieldsets (subjects, actions, overflow) in one scrolling modal give no single primary decision. Partial saves are reported honestly (scope saved, cap failed). */
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"

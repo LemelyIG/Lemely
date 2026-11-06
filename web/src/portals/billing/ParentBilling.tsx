@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P3 H3 E4 S4 R4 V3 */
+/* The heading is generic until `useChildren` resolves, then swaps to the child's name, a small layout shift on a slow load. The child-overview link is deliberately a quiet text link beside Tutoring. */
 import { CaretRight } from "@phosphor-icons/react"
 import { Link, useParams } from "react-router-dom"
 import { billingPaths } from "@/lib/billingPaths"

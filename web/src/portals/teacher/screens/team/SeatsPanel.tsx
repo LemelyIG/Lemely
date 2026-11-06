@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+/* Allowance shown as a share, never as units; a six-column table from xl and stacked cards below, one of them hidden at any width. Plan-inactive and every-seat-taken notices say what to do next. */
 import { useState } from "react"
 import { Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"

@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R3 V3 */
+/* R3/V3: the plans grid and the credit-pack grid repeat the same 2/3-column card rhythm back to back, so the page reads as two copies of one template; the checkout failure alert also sits above the QueryState rather than beside the card that caused it. */
 import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 import { Check } from "@phosphor-icons/react"

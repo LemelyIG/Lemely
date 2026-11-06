@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
+/* The count is never coerced: an out-of-range value shows a field error and the quote and pay buttons stay disabled, so the seats priced are the seats charged. */
 import { useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"

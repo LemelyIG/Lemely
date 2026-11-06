@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P4 H3 E3 S4 R4 V3 */
+/* E3: PayerCard still hand-rolls its pending line ("Loading auto top-up…") and its failure ("Reload the page", no retry); not a route screen, so QueryState was not forced, but the three-query composition is the next thing to fix. H3: the form is one even grid of four fields under a switch. */
 import { useEffect, useReducer, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"

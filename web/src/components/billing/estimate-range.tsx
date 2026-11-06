@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P4 H3 E4 S4 R4 V3 */
+/* H3 on purpose: the estimate is one muted line that must not compete with the action it precedes. A free action says nothing; a failed estimate says the reader can still start. */
 import type { ReactNode } from "react"
 import type { Audience } from "@/lib/billingTypes"
 import { estimateSentence } from "@/lib/billingFormat"

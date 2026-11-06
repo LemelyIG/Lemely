@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
+/* Names the real end date (grace date when past due) instead of a generic warning; the confirm button stays `primary` because cancelling at period end is reversible-by-resubscribing, not destructive. Shares its dialog skeleton with PlanChangeDialog (V3). */
 import { useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Modal } from "@/components/ui/modal"

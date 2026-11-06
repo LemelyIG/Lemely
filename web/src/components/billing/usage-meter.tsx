@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P4 H4 E3 S4 R4 V3 */
+/* E3: hand-builds the same card chrome as CreditBalanceCard instead of using `Card`. Accent fill in every band is intentional: using up an allowance is the plan working. */
 import { ProgressBar } from "@/components/ui/progress-bar"
 import type { UsageMeterView } from "@/lib/billingTypes"
 import { allowanceMeterModel, seatMeterModel, type MeterModel } from "@/lib/usageMeterModel"

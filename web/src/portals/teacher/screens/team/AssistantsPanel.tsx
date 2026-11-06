@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
+/* Names only, never an email. Row actions carry the assistant's name in their accessible label; a revoke failure is announced beside the list it belongs to. */
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { PERMISSION_COPY, ROLE_COPY, assistantFailureMessage } from "@/lib/assistantRoles"

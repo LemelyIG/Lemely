@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P4 H4 E3 S4 R4 V3 */
+/* E3: hand-builds the card chrome (`rounded-lg border ... p-5`) instead of using `Card`, and repeats the text-link class that BillingOverview and DebtNotice each define again. */
 import { Link } from "react-router-dom"
 import { formatCredits } from "@/lib/billingFormat"
 import type { CreditBalance } from "@/lib/billingTypes"

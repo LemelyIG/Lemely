@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+/* Glyph, heading, one line of body, the amount, then at most two actions. mismatch and reversed share the neutral tone with confirming; deliberate (PRODUCT.md: no red for money states the user did not cause) but the glyph alone has to carry the difference. */
 import { useEffect, useRef, type ReactNode } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { ArrowCounterClockwise, CheckCircle, Hourglass, WarningCircle, type Icon } from "@phosphor-icons/react"

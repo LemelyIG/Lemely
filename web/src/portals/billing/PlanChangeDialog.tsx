@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
+/* One persistent live line carries quoting, the quote and the scheduled result, and focus follows the result when the confirm button unmounts. The branch ladder for `status`/`body` is long (R4, not R5) but each branch is a distinct fact the payer needs. */
 import { useEffect, useRef, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Modal } from "@/components/ui/modal"

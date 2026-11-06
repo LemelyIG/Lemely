@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P3 H4 E4 S3 R5 V3 */
+/* Thin route wrapper around PlansView: QueryState with the default failure sentence, a sr-visible h1 above both states. P/S are inherited from PlansView. */
 import { useParams } from "react-router-dom"
 import { PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"

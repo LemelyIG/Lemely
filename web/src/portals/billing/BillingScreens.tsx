@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P3 H4 E4 S3 R5 V3 */
+/* Route wiring only: no visible UI of its own, so P/S are inherited from BillingOverview. The two wrappers differ by one prop on purpose; merging them would hide which route owns which audience. */
 import { billingPaths } from "@/lib/billingPaths"
 import { AutoTopupCard } from "./AutoTopupCard"
 import { BillingOverview } from "./BillingOverview"

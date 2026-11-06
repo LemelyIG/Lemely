@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R3 V3 */
+/* R3: four dialogs plus CopyCodeButton and RolePicker share one 310-line file, and `Footer` flips the close button between ghost and secondary depending on whether a primary exists. Focus is moved deliberately after reset and after the invite code appears. */
 import { useEffect, useReducer, useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"

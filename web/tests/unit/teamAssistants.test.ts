@@ -257,7 +257,8 @@ describe("JoinTeamCard", () => {
     }
     m.memberships = errorQuery(new ApiError(500, "x"))
     const html = text(renderStatic(h(JoinTeamCard)))
-    expect(html).toContain("Couldn't load the teams you assist. You can still join one.")
+    expect(html).toContain("Couldn't load the teams you assist.")
+    expect(html).toContain("You can still join one.")
     expect(html).toContain("Join team")
   })
 

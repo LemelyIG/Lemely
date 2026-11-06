@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
+/* V3: past-due notice, debt notice, plan, meters, auto top-up and links all sit in one equal-gap stack; the `-mt-6` that cancels the empty debt live region's gap is a workaround, not a layout. */
 import { useState, type ReactNode } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 import { CreditBalanceCard } from "@/components/billing/credit-balance"
