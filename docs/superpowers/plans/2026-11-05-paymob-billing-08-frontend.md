@@ -102,6 +102,7 @@ DTOs are camelCase (`ApiModel`).
 | # | Method and path (client path, `/api` added by `request`) | Request (backend model) | Response (backend model) | Phase |
 |---|---|---|---|---|
 | A1 | `GET /billing/catalogue` (auth: any billing party; returns every audience, filtered client-side) | — | `CatalogueDTO {planTiers: PlanTierDTO[], creditPacks: CreditPackDTO[]}`; `PlanTierDTO {planTierId, code, name, priceMinor, currency, interval: "monthly"\|"yearly"\|null, audience, includedSeats: int, extraSeatPriceMinor: int, features: dict}`; `CreditPackDTO {creditPackId, code, name, credits, priceMinor, currency}` | 02 |
+| A1b | `GET /billing/public-catalogue?audience=student\|teacher` (no auth; 422 bad audience; 429 with `Retry-After`) | — | `PublicCatalogueDTO {audience, planTiers: [{code, name, audience, interval\|null, priceMinor, currency, features, includedSeats\|null, extraSeatPriceMinor\|null}], creditPacks: [{code, name, units, priceMinor, currency}]}` (no ids) | 02 |
 | A2 | `POST /billing/subscriptions/checkout` (201) | `SubscriptionCheckoutRequestDTO {planTierId, beneficiaryId?, extraSeats=0}` | `SubscriptionCheckoutDTO {subscriptionId, paymentId, checkoutUrl}` | 05 |
 | A3 | `POST /billing/checkout/pack` (201) | `PackCheckoutRequest {creditPackId, beneficiaryId?}` | `CheckoutDTO {paymentId, checkoutUrl}` | 02 |
 | A4 | `GET /billing/payments/{payment_id}` | — | `PaymentStatusDTO {paymentId, status, purpose, amountMinor, currency, description, paidAt}` | 02 |
@@ -158,7 +159,6 @@ DTOs are camelCase (`ApiModel`).
 
 | # | Gap | Frontend handling until resolved |
 |---|---|---|
-| M1 | `GET /billing/catalogue` requires auth (`require_billing_party`) | No public `/pricing` page; plans render only inside the signed-in portals. |
 | M2 | `PlanTierDTO.features` is an untyped `dict` in 02 and 07 | Convention used by the adapter: each key is a feature line, shown when its value is `true`; the admin editor writes `{line: true}`. Owners to confirm. |
 | M3 | `EstimateDTO` has no payer name (seat teacher, lead teacher) | Copy says "your seat" / "your monthly plan" without a name. |
 | M4 | `SeatMeterDTO` (usage meter) has no teacher name or subjects; seats carry no class names and assistants no email or status (names only, by design) | Student meter reads "Seat from your teacher"; team screens show names only. |
@@ -224,7 +224,8 @@ Behavioural assumptions:
 | `web/src/components/billing/estimate-range.tsx` | Pre-action estimate line | 3 |
 | `web/src/lib/checkoutReturn.ts` | Return-path memory and return-page copy (pure) | 4 |
 | `web/src/portals/billing/PlansView.tsx` | Tier and pack cards, interval toggle, checkout start | 4 |
-| `web/src/portals/billing/PlansScreen.tsx` | Route wrappers per role (no public page: M1) | 4 |
+| `web/src/portals/billing/PlansScreen.tsx` | Route wrappers per role | 4 |
+| `web/src/lib/pricingModel.ts`, `web/src/portals/marketing/Pricing.tsx` | Public `/pricing` page and its links/preselect | 17 |
 | `web/src/portals/billing/CheckoutReturn.tsx` | `/billing/return/:paymentId` polling page | 4 |
 | `web/src/portals/billing/PaymentProgress.tsx` | Inline polling readout for MOTO charges | 5 |
 | `web/src/portals/billing/PlanChangeDialog.tsx` | Upgrade/downgrade quote and confirm | 5 |
@@ -260,6 +261,7 @@ Behavioural assumptions:
 | 14 | Admin customer view with reasoned actions | 13 |
 | 15 | Admin payments, problem queue and health | 13 |
 | 16 | Admin money and margin | 13 |
+| 17 | Public pricing page (`/pricing`) and plan preselect | 1, 4 |
 
 Tasks 2, 3, 4 and 13 may run in parallel once Task 1 is merged (disjoint file sets; each commits
 with `git commit -S -- <its paths>`). Tasks 9 and 10 may run in parallel after Task 3.
@@ -3128,7 +3130,7 @@ Behaviour:
    that parameter). Packs stay buyable.
 4. **Not the payer** (`canManage === false`): no buy controls; one line "{managedByName}
    manages billing for this account. Ask them to make changes."
-5. **No public pricing page** (M1: the catalogue needs a signed-in billing party).
+5. **Public pricing** lives in Task 17 (`/pricing`, from the no-auth public catalogue).
    **`/billing`** exists because plan 05's billing emails link there: it sends a signed-in user
    to their own billing page (`defaultBillingPath(role)`; a parent lands on `/parent`, where each
    child's billing is linked).
@@ -11975,6 +11977,562 @@ git commit -S -m "feat(web): admin money and margin" -- $P
 
 ---
 
+### Task 17: Public pricing page
+
+**Files:**
+- Modify: `web/src/lib/billingTypes.ts` (public catalogue wire and view types)
+- Modify: `web/src/lib/billingAdapters.ts` (`toPublicCatalogue`)
+- Modify: `web/src/lib/hooks/useBillingApi.ts` (`billingApi.publicCatalogue`, `usePublicCatalogue`)
+- Create: `web/src/lib/pricingModel.ts`
+- Create: `web/src/portals/marketing/Pricing.tsx`
+- Modify: `web/src/portals/marketing/index.tsx` (`pricingRoute`)
+- Modify: `web/src/routes.tsx` (`/pricing`)
+- Modify: `web/src/portals/billing/PlansView.tsx` (preselect from `?plan=&interval=`)
+- Modify: `web/tests/unit/documentMeta.test.ts` (`/pricing` is public with a description)
+- Test: `web/tests/unit/publicPricing.test.ts`, `web/tests/unit/billingPurchase.test.ts`
+  (preselect case)
+- E2E: `web/e2e/billing-pricing.spec.ts`
+
+**Interfaces:**
+- Consumes (Tasks 1, 4): `request`, `featureLines`, `formatMoney`, `formatCredits`,
+  `intervalLabel`, `MarketingFrame`, `PlansView`, types `Audience`, `BillingInterval`.
+- Produces: types `WirePublicCatalogue`, `PublicTier`, `PublicPack`, `PublicCatalogue`;
+  `toPublicCatalogue(w)`; `billingApi.publicCatalogue(audience)`,
+  `usePublicCatalogue(audience)`; `chooseHref(tier)`, `signupHref(audience)`,
+  `planPreselect(params)`, `publicCatalogueFailure(err)` from `pricingModel.ts`; screen
+  `Pricing`; `pricingRoute` from the marketing portal.
+
+Backend (plan 02, resolves M1): `GET /api/billing/public-catalogue?audience=student|teacher`, no
+auth, returns `PublicCatalogueDTO {audience, planTiers: [{code, name, audience, interval |
+null, priceMinor, currency, features, includedSeats | null, extraSeatPriceMinor | null}],
+creditPacks: [{code, name, units, priceMinor, currency}]}`; 422 on a bad audience; 429 with
+`Retry-After` when rate-limited. There are no ids, so the page never starts a checkout.
+
+Behaviour:
+
+- **Toggles**: Students / Teachers (`ToggleGroup`, default Students, `?audience=teacher` honoured)
+  and Monthly / Yearly (default Monthly). Tiers for the chosen interval, cheapest first; teacher
+  tiers show "{n} student seats included" and "Extra seats {price} each {interval}". Credit
+  packs under `id="packs"`, with "Credits last 12 months from purchase."
+- **Choose plan**: each tier links "Choose {name}" to
+  `/login?next=/{audience}/billing/plans?plan={code}&interval={month|year}` (the `next` value
+  URL-encoded; `Login` already honours `?next=` through `safeNextPath`). Under the tiers: "New to
+  Lemely? Create a student account" (or teacher) → `/signup/{audience}`. Packs link "Sign in to
+  buy" to `/login?next=/{audience}/billing/plans#packs`.
+- **Preselect** on the signed-in plans page: `PlansView` reads `?plan=` and `?interval=`; the
+  interval toggle starts on `interval`, and the tier whose `code` matches is marked
+  (`data-preselected="true"`, a "Selected on the pricing page" line) with its button first in
+  tab order inside its card. An unknown code is ignored.
+- **States**: loading skeleton; 429 → "Too many requests. Try again in {n} seconds." (from
+  `retryAfter`) else "Try again in a minute."; other failures → "Couldn't load prices. Check your
+  connection and try again." with Retry; empty (no tiers and no packs) → "No plans are on sale
+  right now." Prices come only from the API (PRODUCT.md: no fabricated pricing).
+- Marketing chrome: `MarketingFrame` (it renders the page's one `<main>`); one `<h1>` "Pricing".
+
+- [ ] **Step 1: Write the failing tests**
+
+`web/tests/unit/publicPricing.test.ts`:
+
+```ts
+import { createElement as h } from "react"
+import { beforeEach, describe, expect, it, vi } from "vitest"
+import { ApiError } from "@/lib/api"
+import { toPublicCatalogue } from "@/lib/billingAdapters"
+import { chooseHref, planPreselect, publicCatalogueFailure, signupHref } from "@/lib/pricingModel"
+import type { WirePublicCatalogue } from "@/lib/billingTypes"
+import { errorQuery, okQuery, pendingQuery, renderStatic } from "./support/billingRender"
+
+const wire: WirePublicCatalogue = {
+  audience: "teacher",
+  planTiers: [
+    { code: "teacher_max_m", name: "Teacher Max", audience: "teacher", interval: "monthly", priceMinor: 150000, currency: "EGP", features: {}, includedSeats: 40, extraSeatPriceMinor: 3000 },
+    { code: "teacher_pro_m", name: "Teacher Pro", audience: "teacher", interval: "monthly", priceMinor: 90000, currency: "EGP", features: { "Class analytics": true }, includedSeats: 20, extraSeatPriceMinor: 3000 },
+    { code: "teacher_pro_y", name: "Teacher Pro", audience: "teacher", interval: "yearly", priceMinor: 900000, currency: "EGP", features: {}, includedSeats: 20, extraSeatPriceMinor: 30000 },
+    { code: "legacy", name: "Legacy", audience: "teacher", interval: null, priceMinor: 0, currency: "EGP", features: {}, includedSeats: null, extraSeatPriceMinor: null },
+  ],
+  creditPacks: [{ code: "pack_500", name: "500 credits", units: 500, priceMinor: 15000, currency: "EGP" }],
+}
+
+const s = vi.hoisted(() => ({ catalogue: null as unknown }))
+vi.mock("@/lib/hooks/useBillingApi", () => ({ usePublicCatalogue: () => s.catalogue }))
+vi.mock("@/portals/marketing", () => ({ MarketingFrame: (p: { children: unknown }) => h("main", null, p.children as never) }))
+
+import { Pricing } from "@/portals/marketing/Pricing"
+
+beforeEach(() => {
+  s.catalogue = okQuery(toPublicCatalogue(wire))
+})
+
+describe("toPublicCatalogue", () => {
+  it("maps intervals and features and drops interval-less tiers", () => {
+    const c = toPublicCatalogue(wire)
+    expect(c.tiers.map((t) => t.code)).toEqual(["teacher_max_m", "teacher_pro_m", "teacher_pro_y"])
+    expect(c.tiers[1]).toEqual({
+      code: "teacher_pro_m", name: "Teacher Pro", audience: "teacher", interval: "month", priceMinor: 90000, currency: "EGP",
+      features: ["Class analytics"], includedSeats: 20, extraSeatPriceMinor: 3000,
+    })
+    expect(c.packs).toEqual(wire.creditPacks)
+  })
+})
+
+describe("pricing model", () => {
+  it("sends Choose plan through sign-in to the plans page with the tier code", () => {
+    const tier = toPublicCatalogue(wire).tiers[1]
+    expect(chooseHref(tier)).toBe(`/login?next=${encodeURIComponent("/teacher/billing/plans?plan=teacher_pro_m&interval=month")}`)
+    expect(signupHref("student")).toBe("/signup/student")
+  })
+
+  it("reads a preselection only when both parts are valid", () => {
+    expect(planPreselect(new URLSearchParams("plan=teacher_pro_m&interval=year"))).toEqual({ code: "teacher_pro_m", interval: "year" })
+    expect(planPreselect(new URLSearchParams("plan=teacher_pro_m"))).toEqual({ code: "teacher_pro_m", interval: null })
+    expect(planPreselect(new URLSearchParams("interval=week"))).toEqual({ code: null, interval: null })
+  })
+
+  it("words a rate limit with its countdown and other failures plainly", () => {
+    expect(publicCatalogueFailure(new ApiError(429, "x", undefined, 30))).toBe("Too many requests. Try again in 30 seconds.")
+    expect(publicCatalogueFailure(new ApiError(429, "x"))).toBe("Too many requests. Try again in a minute.")
+    expect(publicCatalogueFailure(new ApiError(0, "x"))).toBe("Couldn't load prices. Check your connection and try again.")
+  })
+})
+
+describe("Pricing", () => {
+  const page = (path = "/pricing") => renderStatic(h(Pricing), path)
+
+  it("shows monthly tiers cheapest first with seats, and packs", () => {
+    const html = page("/pricing?audience=teacher")
+    expect(html.indexOf("Teacher Pro")).toBeLessThan(html.indexOf("Teacher Max"))
+    expect(html).toContain("20 student seats included")
+    expect(html).toMatch(/Extra seats EGP\s30\.00 each per month/)
+    expect(html).not.toMatch(/EGP\s9,000\.00/)
+    expect(html).toContain('id="packs"')
+    expect(html).toContain("500 credits")
+    expect(html).toContain(`href="${chooseHref(toPublicCatalogue(wire).tiers[1]).replace(/&/g, "&amp;")}"`)
+    expect(html).toContain('href="/signup/teacher"')
+  })
+
+  it("has one h1 and the two toggles", () => {
+    const html = page()
+    expect(html.match(/<h1/g)?.length).toBe(1)
+    expect(html).toContain('aria-label="Who is this for"')
+    expect(html).toContain('aria-label="Billing interval"')
+  })
+
+  it("renders loading, rate-limit and empty states", () => {
+    s.catalogue = pendingQuery()
+    expect(page()).toContain('aria-label="Loading"')
+    s.catalogue = errorQuery(new ApiError(429, "x", undefined, 12))
+    expect(page()).toContain("Try again in 12 seconds.")
+    s.catalogue = okQuery({ audience: "student", tiers: [], packs: [] })
+    expect(page()).toContain("No plans are on sale right now.")
+  })
+})
+```
+
+Add to `web/tests/unit/billingPurchase.test.ts`, inside `describe("PlansView", …)`:
+
+```ts
+  it("preselects the tier and interval chosen on the public pricing page", () => {
+    const html = renderStatic(
+      h(PlansView, { audience: "student", beneficiaryId: null, paths, currentTierId: null, hasLiveSubscription: false, canManage: true, managedByName: null }),
+      "/student/billing/plans?plan=student_plus_y&interval=year",
+    )
+    expect(html).toMatch(/EGP\s2,500\.00/)
+    expect(html).toContain('data-preselected="true"')
+    expect(html).toContain("Selected on the pricing page")
+  })
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run: `npx vitest run tests/unit/publicPricing.test.ts tests/unit/billingPurchase.test.ts`
+Expected: FAIL ("Failed to resolve import "@/lib/pricingModel"" and the preselect case).
+
+- [ ] **Step 3: Add the types, adapter and fetcher**
+
+Append to `web/src/lib/billingTypes.ts`:
+
+```ts
+// ── Public catalogue (plan 02, no auth) ─────────────────────────────────────
+
+/** 02 `PublicCatalogueDTO` (`GET /billing/public-catalogue?audience=`). No ids. */
+export interface WirePublicCatalogue {
+  audience: Audience
+  planTiers: {
+    code: string
+    name: string
+    audience: string
+    interval: "monthly" | "yearly" | null
+    priceMinor: number
+    currency: string
+    features: Record<string, unknown>
+    includedSeats: number | null
+    extraSeatPriceMinor: number | null
+  }[]
+  creditPacks: PublicPack[]
+}
+
+export interface PublicPack {
+  code: string
+  name: string
+  units: number
+  priceMinor: number
+  currency: string
+}
+
+export interface PublicTier {
+  code: string
+  name: string
+  audience: Audience
+  interval: BillingInterval
+  priceMinor: number
+  currency: string
+  features: string[]
+  includedSeats: number | null
+  extraSeatPriceMinor: number | null
+}
+
+export interface PublicCatalogue {
+  audience: Audience
+  tiers: PublicTier[]
+  packs: PublicPack[]
+}
+```
+
+Append to `web/src/lib/billingAdapters.ts` (merge the type imports):
+
+```ts
+export function toPublicCatalogue(w: WirePublicCatalogue): PublicCatalogue {
+  return {
+    audience: w.audience,
+    tiers: w.planTiers.flatMap((t): PublicTier[] =>
+      t.interval === null
+        ? []
+        : [
+            {
+              code: t.code,
+              name: t.name,
+              audience: t.audience === "teacher" ? "teacher" : "student",
+              interval: t.interval === "yearly" ? "year" : "month",
+              priceMinor: t.priceMinor,
+              currency: t.currency,
+              features: featureLines(t.features),
+              includedSeats: t.includedSeats,
+              extraSeatPriceMinor: t.extraSeatPriceMinor,
+            },
+          ],
+    ),
+    packs: w.creditPacks,
+  }
+}
+```
+
+In `web/src/lib/hooks/useBillingApi.ts`, add to `billingApi`:
+
+```ts
+  /** No auth (plan 02). `request` still adds a bearer if a session exists; the route ignores it. */
+  publicCatalogue: (audience: Audience) => request<WirePublicCatalogue>(`/billing/public-catalogue?audience=${audience}`),
+```
+
+to `billingKeys`: `publicCatalogue: (audience: Audience) => ["billing", "public-catalogue", audience] as const,`
+and the hook (import `toPublicCatalogue`, `PublicCatalogue`, `WirePublicCatalogue`):
+
+```ts
+export function usePublicCatalogue(audience: Audience): UseQueryResult<PublicCatalogue, Error> {
+  return useQuery({
+    queryKey: billingKeys.publicCatalogue(audience),
+    queryFn: () => billingApi.publicCatalogue(audience),
+    select: toPublicCatalogue,
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+}
+```
+
+Add to `billingApi.test.ts`'s route list: `await billingApi.publicCatalogue("teacher")` and the
+expected `["/billing/public-catalogue?audience=teacher", "GET"]` (append to both lists).
+
+- [ ] **Step 4: Write `web/src/lib/pricingModel.ts`**
+
+```ts
+import { ApiError } from "@/lib/api"
+import type { Audience, BillingInterval, PublicTier } from "@/lib/billingTypes"
+
+/* Public pricing links and preselection. The public catalogue has no ids, so a choice travels
+ * by tier code through sign-in to the signed-in plans page, which matches it by code. */
+
+export function chooseHref(tier: PublicTier): string {
+  const next = `/${tier.audience}/billing/plans?plan=${encodeURIComponent(tier.code)}&interval=${tier.interval}`
+  return `/login?next=${encodeURIComponent(next)}`
+}
+
+export function packsHref(audience: Audience): string {
+  return `/login?next=${encodeURIComponent(`/${audience}/billing/plans#packs`)}`
+}
+
+export function signupHref(audience: Audience): string {
+  return `/signup/${audience}`
+}
+
+export function planPreselect(params: URLSearchParams): { code: string | null; interval: BillingInterval | null } {
+  const interval = params.get("interval")
+  return {
+    code: params.get("plan") || null,
+    interval: interval === "month" || interval === "year" ? interval : null,
+  }
+}
+
+export function publicCatalogueFailure(err: unknown): string {
+  if (err instanceof ApiError && err.status === 429) {
+    return err.retryAfter ? `Too many requests. Try again in ${err.retryAfter} seconds.` : "Too many requests. Try again in a minute."
+  }
+  return "Couldn't load prices. Check your connection and try again."
+}
+```
+
+- [ ] **Step 5: Write `web/src/portals/marketing/Pricing.tsx`**
+
+```tsx
+import { useState } from "react"
+import { Link, useSearchParams } from "react-router-dom"
+import { Card, CardBody } from "@/components/ui/card"
+import { CardGridSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
+import { EmptyState } from "@/components/ui/state-views"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { formatCredits, formatMoney, intervalLabel } from "@/lib/billingFormat"
+import type { Audience, BillingInterval } from "@/lib/billingTypes"
+import { usePublicCatalogue } from "@/lib/hooks/useBillingApi"
+import { chooseHref, packsHref, publicCatalogueFailure, signupHref } from "@/lib/pricingModel"
+import { MarketingFrame } from "@/portals/marketing"
+
+/*
+ * `/pricing`: public prices from `GET /billing/public-catalogue` (plan 02, no auth). Nothing here
+ * is a hard-coded number (PRODUCT.md: no fabricated pricing). Choosing a plan goes through sign-in
+ * to the signed-in plans page, which preselects the tier by its code.
+ */
+
+const CTA =
+  "inline-flex items-center justify-center rounded-button bg-primary px-4 py-2.5 text-label text-on-primary hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:min-h-11"
+const TEXT_LINK = "font-medium text-primary underline-offset-2 hover:underline pointer-coarse:min-h-11 pointer-coarse:inline-flex pointer-coarse:items-center"
+
+export function Pricing() {
+  const [params] = useSearchParams()
+  const [audience, setAudience] = useState<Audience>(params.get("audience") === "teacher" ? "teacher" : "student")
+  const [interval, setInterval] = useState<BillingInterval>("month")
+  const catalogue = usePublicCatalogue(audience)
+
+  return (
+    <MarketingFrame>
+      <div className="mx-auto flex w-full max-w-app flex-col gap-6 px-page-mobile py-12 md:px-page-desktop">
+        <h1 className="m-0 text-display-lg text-on-surface">Pricing</h1>
+        <div className="flex flex-wrap gap-3">
+          <ToggleGroup type="single" value={audience} onValueChange={(v) => (v === "student" || v === "teacher" ? setAudience(v) : undefined)} aria-label="Who is this for">
+            <ToggleGroupItem value="student">Students</ToggleGroupItem>
+            <ToggleGroupItem value="teacher">Teachers</ToggleGroupItem>
+          </ToggleGroup>
+          <ToggleGroup type="single" value={interval} onValueChange={(v) => (v === "month" || v === "year" ? setInterval(v) : undefined)} aria-label="Billing interval">
+            <ToggleGroupItem value="month">Monthly</ToggleGroupItem>
+            <ToggleGroupItem value="year">Yearly</ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+        <QueryState
+          query={catalogue}
+          skeleton={<CardGridSkeleton count={3} />}
+          error={{ heading: "Couldn't load prices", body: publicCatalogueFailure }}
+          isEmpty={(c) => c.tiers.length === 0 && c.packs.length === 0}
+          empty={<EmptyState heading="No plans are on sale right now." body="Check back soon." />}
+        >
+          {(c) => {
+            const tiers = c.tiers.filter((t) => t.interval === interval).sort((a, b) => a.priceMinor - b.priceMinor)
+            return (
+              <>
+                <section aria-labelledby="pricing-plans" className="flex flex-col gap-4">
+                  <h2 id="pricing-plans" className="m-0 text-display-sm text-on-surface">Plans</h2>
+                  <ul className="m-0 grid list-none gap-4 p-0 md:grid-cols-2 lg:grid-cols-3">
+                    {tiers.map((tier) => (
+                      <li key={tier.code}>
+                        <Card className="h-full">
+                          <CardBody className="flex h-full flex-col gap-3">
+                            <h3 className="m-0 text-display-sm text-on-surface">{tier.name}</h3>
+                            <p className="m-0">
+                              <span className="text-data-lg text-on-surface">{formatMoney(tier.priceMinor, tier.currency)}</span>{" "}
+                              <span className="text-body-sm text-on-surface-variant">{intervalLabel(tier.interval)}</span>
+                            </p>
+                            {tier.includedSeats !== null ? <p className="m-0 text-body-sm text-on-surface">{tier.includedSeats} student seats included</p> : null}
+                            {tier.extraSeatPriceMinor !== null ? (
+                              <p className="m-0 text-body-sm text-on-surface-variant">
+                                Extra seats {formatMoney(tier.extraSeatPriceMinor, tier.currency)} each {intervalLabel(tier.interval)}
+                              </p>
+                            ) : null}
+                            <ul className="m-0 flex flex-1 flex-col gap-1 ps-4 text-body-sm text-on-surface">
+                              {tier.features.map((f) => <li key={f}>{f}</li>)}
+                            </ul>
+                            <Link to={chooseHref(tier)} className={CTA}>Choose {tier.name}</Link>
+                          </CardBody>
+                        </Card>
+                      </li>
+                    ))}
+                  </ul>
+                  {tiers.length === 0 ? (
+                    <p className="m-0 text-body-sm text-on-surface-variant">No {interval === "month" ? "monthly" : "yearly"} plans right now.</p>
+                  ) : null}
+                  <p className="m-0 text-body-sm text-on-surface-variant">
+                    New to Lemely?{" "}
+                    <Link to={signupHref(audience)} className={TEXT_LINK}>Create a {audience} account</Link>
+                  </p>
+                </section>
+                <section id="packs" aria-labelledby="pricing-packs" className="flex scroll-mt-24 flex-col gap-4">
+                  <h2 id="pricing-packs" className="m-0 text-display-sm text-on-surface">Credit packs</h2>
+                  <p className="m-0 text-body-sm text-on-surface-variant">Credits last 12 months from purchase.</p>
+                  <ul className="m-0 grid list-none gap-4 p-0 md:grid-cols-2 lg:grid-cols-3">
+                    {c.packs.map((pack) => (
+                      <li key={pack.code}>
+                        <Card className="h-full">
+                          <CardBody className="flex h-full flex-col gap-2">
+                            <h3 className="m-0 text-display-xs text-on-surface">{pack.name}</h3>
+                            <p className="m-0 text-data-md text-on-surface">{formatCredits(pack.units)}</p>
+                            <p className="m-0 flex-1 text-body-sm text-on-surface-variant">{formatMoney(pack.priceMinor, pack.currency)}</p>
+                            <Link to={packsHref(audience)} className={TEXT_LINK}>Sign in to buy</Link>
+                          </CardBody>
+                        </Card>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              </>
+            )
+          }}
+        </QueryState>
+      </div>
+    </MarketingFrame>
+  )
+}
+```
+
+- [ ] **Step 6: Preselect in `PlansView.tsx`**
+
+Import `useSearchParams` from `react-router-dom` and `planPreselect` from `@/lib/pricingModel`.
+At the top of `PlansView`, replace the interval state with:
+
+```tsx
+  const [params] = useSearchParams()
+  const preselect = planPreselect(params)
+  const [interval, setInterval] = useState<BillingInterval>(preselect.interval ?? "month")
+```
+
+On each tier's `<Card>` add `data-preselected={tier.code === preselect.code ? "true" : undefined}`,
+and directly under the tier name render:
+
+```tsx
+                          {tier.code === preselect.code ? (
+                            <p className="m-0 text-body-sm font-medium text-primary">Selected on the pricing page</p>
+                          ) : null}
+```
+
+- [ ] **Step 7: Register the route**
+
+`web/src/portals/marketing/index.tsx`: lazy-import `Pricing` (`./Pricing`, `m.Pricing`) the way
+`DataHandling` is loaded, and export:
+
+```tsx
+export const pricingRoute: RouteObject = {
+  path: "pricing",
+  element: (
+    <Suspense fallback={<RouteSkeleton />}>
+      <Pricing />
+    </Suspense>
+  ),
+  /* Public, like `/data`: a visitor deciding whether to sign up most needs prices. The
+   * description states the page's subject only; prices come from the live catalogue. */
+  handle: {
+    title: "Pricing",
+    description: "Lemely plans and credit packs for students and teachers, monthly or yearly.",
+    skeleton: "page-header",
+  } satisfies PageMeta,
+}
+```
+
+(`Pricing` renders its own `MarketingFrame`.) `web/src/routes.tsx`: import `pricingRoute` with
+the other marketing exports and add `{ ...pricingRoute, path: "/pricing", errorElement },` right
+after the `/data` entry. `web/tests/unit/documentMeta.test.ts`: add `"/pricing",` to
+`PUBLIC_WITH_DESCRIPTION` after `"/data",`.
+
+- [ ] **Step 8: Run the tests to verify they pass**
+
+Run: `npx vitest run tests/unit/publicPricing.test.ts tests/unit/billingPurchase.test.ts tests/unit/billingApi.test.ts tests/unit/documentMeta.test.ts tests/unit/marketing.test.ts tests/unit/marketingContent.test.ts`
+Expected: PASS.
+
+- [ ] **Step 9: Write the e2e stub**
+
+`web/e2e/billing-pricing.spec.ts`:
+
+```ts
+import { test, expect } from "@playwright/test"
+
+// Wire shape: plan 02 `PublicCatalogueDTO` (no ids, no auth).
+const student = {
+  audience: "student",
+  planTiers: [{ code: "student_plus_m", name: "Student Plus", audience: "student", interval: "monthly", priceMinor: 25000, currency: "EGP", features: { "Mark past papers": true }, includedSeats: null, extraSeatPriceMinor: null }],
+  creditPacks: [{ code: "pack_500", name: "500 credits", units: 500, priceMinor: 15000, currency: "EGP" }],
+}
+const teacher = {
+  audience: "teacher",
+  planTiers: [{ code: "teacher_pro_m", name: "Teacher Pro", audience: "teacher", interval: "monthly", priceMinor: 90000, currency: "EGP", features: {}, includedSeats: 20, extraSeatPriceMinor: 3000 }],
+  creditPacks: [],
+}
+
+test("public pricing switches audience and sends a choice through sign-in with the tier code", async ({ page }) => {
+  await page.route("**/api/billing/public-catalogue?audience=student", (r) => r.fulfill({ json: student }))
+  await page.route("**/api/billing/public-catalogue?audience=teacher", (r) => r.fulfill({ json: teacher }))
+  await page.goto("/pricing")
+  await expect(page.getByRole("heading", { level: 1, name: "Pricing" })).toBeVisible()
+  await expect(page.getByText("Student Plus")).toBeVisible()
+  await page.getByRole("radio", { name: "Teachers" }).click()
+  await expect(page.getByText("20 student seats included")).toBeVisible()
+  await page.getByRole("link", { name: "Choose Teacher Pro" }).click()
+  await expect(page).toHaveURL(/\/login\?next=/)
+  expect(decodeURIComponent(new URL(page.url()).searchParams.get("next") ?? "")).toBe(
+    "/teacher/billing/plans?plan=teacher_pro_m&interval=month",
+  )
+})
+
+test("a rate-limited catalogue shows the countdown", async ({ page }) => {
+  await page.route("**/api/billing/public-catalogue**", (r) =>
+    r.fulfill({ status: 429, headers: { "Retry-After": "20" }, json: { detail: "Too many requests" } }),
+  )
+  await page.goto("/pricing")
+  await expect(page.getByText("Try again in 20 seconds.")).toBeVisible()
+})
+```
+
+Radix single `ToggleGroup` items render `role="radio"`.
+
+- [ ] **Step 10: Run the e2e spec (local stack only)**
+
+Run: `npx playwright test e2e/billing-pricing.spec.ts`
+Expected: 2 passed, or "e2e not run: local stack down" recorded.
+
+- [ ] **Step 11: Run the frontend gate**
+
+```bash
+npm run typecheck
+npx vitest run tests/unit/publicPricing.test.ts tests/unit/billingPurchase.test.ts tests/unit/billingApi.test.ts tests/unit/documentMeta.test.ts tests/unit/marketing.test.ts tests/unit/marketingContent.test.ts tests/unit/marketingCardPadding.test.ts tests/unit/robotsTxt.test.ts $SCAN
+npm run lint && npm run check:copy && npm run build && npm run check:installable
+```
+Expected: all exit 0.
+
+- [ ] **Step 12: Commit**
+
+```bash
+cd /home/sico/Code/Lemely/.claude/worktrees/paymob-integration
+/home/sico/Code/Lemely/.venv/bin/pre-commit run --all-files && graphify update .
+P="web/src/lib/billingTypes.ts web/src/lib/billingAdapters.ts web/src/lib/hooks/useBillingApi.ts web/src/lib/pricingModel.ts web/src/portals/marketing/Pricing.tsx web/src/portals/marketing/index.tsx web/src/routes.tsx web/src/portals/billing/PlansView.tsx web/tests/unit/documentMeta.test.ts web/tests/unit/publicPricing.test.ts web/tests/unit/billingPurchase.test.ts web/tests/unit/billingApi.test.ts web/e2e/billing-pricing.spec.ts"
+git add $P
+git commit -S -m "feat(web): public pricing page with plan preselect" -- $P
+```
+
+---
+
 ## Self-review (completed while writing)
 
 - **Spec coverage.** §2.1 plans/credits/parent payer → Tasks 4–8; free start and signup credits
@@ -11996,4 +12554,4 @@ git commit -S -m "feat(web): admin money and margin" -- $P
   follow the backend plans; wire types copy their models and adapters isolate the renames.
   Re-check at execution (Task 1 Step 1, Task 11 Step 0, Task 13 Step 0): the R3 routes' landed
   DTOs (summary, quotes, cards, invites), `SEAT_ACTIONS` against Phase 04's `ACTION_SPECS`, and
-  the open items in "API assumptions" (M1–M4, M6, M9–M12).
+  the open items in "API assumptions" (M2–M4, M6, M9–M12).

@@ -342,10 +342,13 @@ below, the decision wins.
 - **R19 Fallback path.** `PaymobSettings.subscription_amount_updatable` (added in Phase 05)
   defaults to `True`. When `False`, upgrades, downgrades and seat reductions are refused;
   extra seats are charged on each renewal by Phase 06's job; cancel still works.
+- **R20 Public pricing.** Phase 02 adds `GET /api/billing/public-catalogue?audience=` (no auth,
+  rate-limited, no ids or allowance sizes); Phase 08 Task 17 adds the public `/pricing` page.
 
 ## Accepted gaps (not built in this programme)
 
-- No public pricing page: the catalogue route requires sign-in.
+- Sign-up does not carry the plan chosen on `/pricing`; only sign-in does (the signup flow has
+  no return-path parameter).
 - Parents see a child's plan, meter, credits and debt (billing summary) but not the child's
   per-job usage history.
 - Estimates name the payer generically ("your seat", "your plan"), not by teacher name.

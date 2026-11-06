@@ -3764,7 +3764,11 @@ def active_catalogue(
     ).all()
     packs = session.scalars(
         select(CreditPack)
-        .where(CreditPack.is_active.is_(True))
+        .where(
+            CreditPack.is_active.is_(True),
+            CreditPack.price_minor > 0,
+            CreditPack.units > 0,
+        )
         .order_by(CreditPack.price_minor, CreditPack.code)
     ).all()
     return list(tiers), list(packs)
@@ -5030,15 +5034,17 @@ git commit -S -m "feat(billing): reconcile missed Paymob callbacks by inquiry on
 
 ---
 
-### Task 9: `/api/billing` router (catalogue, pack checkout, payment status, receipts, saved cards)
+### Task 9: `/api/billing` router (public pricing catalogue, catalogue, pack checkout, payment status, receipts, saved cards)
 
 **Files:**
 - Create: `lemely/web/schemas_billing.py`
 - Create: `lemely/web/routers/billing.py`
 - Modify: `lemely/db/billing_repo.py` (add `saved_cards_for`)
-- Modify: `lemely/web/deps_billing.py` (checkout limiter)
+- Modify: `lemely/web/deps_billing.py` (checkout limiter and public-catalogue limiter)
 - Modify: `lemely/web/app.py` (import and `include_router`)
-- Modify: `tests/test_authz_matrix_complete.py` (five entries; `TUTORING_PARTY` heading count 1 -> 6)
+- Modify: `tests/test_authz_matrix_complete.py`:
+  - five `TUTORING_PARTY` entries (heading count 1 -> 6);
+  - one PUBLIC entry (heading 16 -> 17, `len(ROUTES) - 16` -> `- 17`).
 - Test: `tests/test_web_billing.py`
 
 **Interfaces:**
@@ -5056,7 +5062,24 @@ git commit -S -m "feat(billing): reconcile missed Paymob callbacks by inquiry on
   - Route `GET /api/billing/receipts` returns `ReceiptListDTO`.
   - Route `GET /api/billing/cards` (index R3) returns `SavedCardList{cards: [SavedCardView{cardId, maskedPan, brand}]}`: the caller's own active saved cards, masked only, newest first. This is the shape Phase 08 types as `SavedCardList`; `brand` is `""` when Paymob sent none.
   - `billing_repo.saved_cards_for(session, user_id: uuid.UUID) -> list[SavedCard]`.
-  - All five routes are guarded by `require_role(student, parent, teacher)`.
+  - All five routes above are guarded by `require_role(student, parent, teacher)`.
+  - Route `GET /api/billing/public-catalogue?audience=student|teacher` is PUBLIC, with no auth, for the public pricing page. It is rate-limited per client IP by `deps_billing.get_public_catalogue_limiter()` (60 per IP per 60 s, 429 with `Retry-After`). `audience` is required; any other value is 422.
+
+    It returns `PublicCatalogueDTO`:
+
+    ```
+    {
+      audience: "student" | "teacher",
+      planTiers: [{code, name, audience, interval, priceMinor, currency, features,
+                   includedSeats, extraSeatPriceMinor}],
+      creditPacks: [{code, name, units, priceMinor, currency}]
+    }
+    ```
+
+    - `includedSeats` and `extraSeatPriceMinor` are integers on teacher tiers and `null` on student tiers.
+    - It lists active tiers of that audience only, and only active packs with a non-zero price and non-zero units. Inactive signup rows never appear.
+    - It contains no ids, no `paymob_plan_id`, no `allowance_units` and no `seat_allowance_units`.
+    - The Cloudflare Worker already forwards every `/api/*` path (`web/worker/index.ts`), so no Worker change is needed.
   - `deps_billing.get_checkout_limiter() -> SlidingWindowLimiter` allows 5 per user per 60 s.
 
 - [ ] **Step 1: Write the failing router test**
@@ -5083,7 +5106,12 @@ from lemely.runtime.config import PaymobSettings, Settings
 from lemely.runtime.token_cipher import TokenCipher
 from lemely.web import create_app
 from lemely.web.deps import AuthContext, get_auth_context, get_settings
-from lemely.web.deps_billing import get_billing_sessionmaker, get_checkout_limiter, get_paymob_client
+from lemely.web.deps_billing import (
+    get_billing_sessionmaker,
+    get_checkout_limiter,
+    get_paymob_client,
+    get_public_catalogue_limiter,
+)
 from lemely.web.ratelimit import SlidingWindowLimiter
 from tests.paymob_fixtures import (
     FIXED_NOW,
@@ -5115,6 +5143,9 @@ def client(migrated_sessionmaker: sessionmaker[Session], paymob: FakePaymobClien
     app.dependency_overrides[get_billing_sessionmaker] = lambda: migrated_sessionmaker
     app.dependency_overrides[get_paymob_client] = lambda: paymob
     app.dependency_overrides[get_checkout_limiter] = lambda: SlidingWindowLimiter(
+        limit=100, window_seconds=60, clock=time.monotonic
+    )
+    app.dependency_overrides[get_public_catalogue_limiter] = lambda: SlidingWindowLimiter(
         limit=100, window_seconds=60, clock=time.monotonic
     )
     yield TestClient(app)
@@ -5159,6 +5190,90 @@ def test_catalogue_shows_the_callers_audience_and_active_packs_only(
 
     _as(client, seed_user(sm, Role.teacher), Role.teacher)
     assert [t["code"] for t in client.get("/api/billing/catalogue").json()["planTiers"]] == ["teacher_monthly"]
+
+
+# -- public pricing catalogue ----------------------------------------------------
+
+
+def _public_seed(sm: sessionmaker[Session]) -> None:
+    with sm.begin() as session:
+        session.add_all(
+            [
+                PlanTier(
+                    code="student_monthly", name="Student", price_minor=9900, audience=PlanAudience.student,
+                    allowance_units=5000, paymob_plan_id=1186, features={"papers": "unlimited"},
+                ),
+                PlanTier(
+                    code="teacher_monthly", name="Teacher", price_minor=49900, audience=PlanAudience.teacher,
+                    allowance_units=20000, paymob_plan_id=1187, included_seats=30,
+                    seat_allowance_units=700, extra_seat_price_minor=1500,
+                ),
+                PlanTier(
+                    code="student_retired", name="Old", price_minor=5000, audience=PlanAudience.student,
+                    is_active=False,
+                ),
+            ]
+        )
+    seed_pack(sm, code="pack_100", name="100 credits", units=100, price_minor=10000)
+    seed_pack(sm, code="pack_old", is_active=False)
+    seed_pack(sm, code="signup_student", units=200, price_minor=0, is_active=False)
+
+
+def test_public_catalogue_needs_no_auth_and_hides_internals(
+    client: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    _public_seed(migrated_sessionmaker)
+    response = client.get("/api/billing/public-catalogue", params={"audience": "student"})
+    assert response.status_code == 200
+    assert response.json() == {
+        "audience": "student",
+        "planTiers": [
+            {
+                "code": "student_monthly",
+                "name": "Student",
+                "audience": "student",
+                "interval": None,
+                "priceMinor": 9900,
+                "currency": "EGP",
+                "features": {"papers": "unlimited"},
+                "includedSeats": None,
+                "extraSeatPriceMinor": None,
+            }
+        ],
+        "creditPacks": [
+            {"code": "pack_100", "name": "100 credits", "units": 100, "priceMinor": 10000, "currency": "EGP"}
+        ],
+    }
+    for hidden in ("paymob", "allowance", "Allowance", "Id\"", "student_retired", "pack_old", "signup_"):
+        assert hidden not in response.text, hidden
+
+
+def test_public_catalogue_filters_by_audience(
+    client: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    _public_seed(migrated_sessionmaker)
+    body = client.get("/api/billing/public-catalogue", params={"audience": "teacher"}).json()
+    assert body["audience"] == "teacher"
+    (tier,) = body["planTiers"]
+    assert tier["code"] == "teacher_monthly"
+    assert tier["includedSeats"] == 30
+    assert tier["extraSeatPriceMinor"] == 1500
+    assert "seat_allowance" not in str(body) and "700" not in str(tier)
+    assert [p["code"] for p in body["creditPacks"]] == ["pack_100"]
+
+
+@pytest.mark.parametrize("params", [{}, {"audience": "parent"}, {"audience": "admin"}])
+def test_public_catalogue_requires_a_valid_audience(client: TestClient, params: dict[str, str]) -> None:
+    assert client.get("/api/billing/public-catalogue", params=params).status_code == 422
+
+
+def test_public_catalogue_is_rate_limited_per_client(client: TestClient) -> None:
+    limiter = SlidingWindowLimiter(limit=2, window_seconds=60, clock=lambda: 0.0)
+    client.app.dependency_overrides[get_public_catalogue_limiter] = lambda: limiter  # type: ignore[union-attr]
+    url = "/api/billing/public-catalogue?audience=student"
+    codes = [client.get(url).status_code for _ in range(3)]
+    assert codes == [200, 200, 429]
+    assert int(client.get(url).headers["Retry-After"]) >= 1
 
 
 # -- pack checkout --------------------------------------------------------------
@@ -5414,7 +5529,29 @@ def get_checkout_limiter() -> SlidingWindowLimiter:
     )
 ```
 
-(c) In `reset_billing_singletons`, add `get_checkout_limiter.cache_clear()`, and add `"get_checkout_limiter"` to `__all__`.
+Also add this after `get_checkout_limiter`:
+
+```python
+#: Public pricing page (no auth): 60 reads per client IP per minute. Keyed by the
+#: same ``_client_ip`` the contact form uses, with the same caveat
+#: (``ClientErrorLimiters`` in ``deps.py``): it binds callers that arrive through
+#: the Cloudflare Worker. The response is a few hundred bytes of public data, so
+#: this is a deterrent, not a security boundary.
+_PUBLIC_CATALOGUE_LIMIT = 60
+_PUBLIC_CATALOGUE_WINDOW_SECONDS = 60.0
+
+
+@lru_cache(maxsize=1)
+def get_public_catalogue_limiter() -> SlidingWindowLimiter:
+    """Per-IP limiter for ``GET /api/billing/public-catalogue``."""
+    return SlidingWindowLimiter(
+        limit=_PUBLIC_CATALOGUE_LIMIT,
+        window_seconds=_PUBLIC_CATALOGUE_WINDOW_SECONDS,
+        clock=time.monotonic,
+    )
+```
+
+(c) In `reset_billing_singletons`, add `get_checkout_limiter.cache_clear()` and `get_public_catalogue_limiter.cache_clear()`, and add `"get_checkout_limiter"` and `"get_public_catalogue_limiter"` to `__all__`.
 
 (d) In `lemely/db/billing_repo.py`, add this read query after `receipts_for`, and add `"saved_cards_for"` to `__all__`. `SavedCard` is already imported since Task 7.
 
@@ -5472,6 +5609,39 @@ class CreditPackDTO(ApiModel):
     credits: int
     priceMinor: int
     currency: str
+
+
+class PublicPlanTierDTO(ApiModel):
+    """A tier as the public pricing page shows it: no ids, no Paymob link, no allowances."""
+
+    code: str
+    name: str
+    audience: str
+    interval: str | None = None
+    priceMinor: int
+    currency: str
+    features: dict[str, Any] = Field(default_factory=dict)
+    #: Teacher tiers only; ``None`` on student tiers.
+    includedSeats: int | None = None
+    extraSeatPriceMinor: int | None = None
+
+
+class PublicCreditPackDTO(ApiModel):
+    """A pack as the public pricing page shows it (credits are visible by design)."""
+
+    code: str
+    name: str
+    units: int
+    priceMinor: int
+    currency: str
+
+
+class PublicCatalogueDTO(ApiModel):
+    """Response for ``GET /api/billing/public-catalogue?audience=…`` (no auth)."""
+
+    audience: str
+    planTiers: list[PublicPlanTierDTO] = Field(default_factory=list)
+    creditPacks: list[PublicCreditPackDTO] = Field(default_factory=list)
 
 
 class CatalogueDTO(ApiModel):
@@ -5543,8 +5713,9 @@ Create `lemely/web/routers/billing.py`:
 ```python
 """Billing endpoints: catalogue, pack checkout, payment status, receipts (billing spec §5.5, §7).
 
-**Authz.** Students, parents and teachers only (``require_role``). Every
-object-level check keys on ``auth.user_id``:
+**Authz.** ``GET /public-catalogue`` is PUBLIC (pricing page; IP rate-limited,
+public fields only). Every other route is students, parents and teachers only
+(``require_role``), and every object-level check keys on ``auth.user_id``:
 
 * checkout: a student or teacher buys only for themselves; a parent only for a
   child linked by ``parent_child_links``. An unlinked or non-existent child is
@@ -5560,9 +5731,9 @@ forbids extra fields, so a client-sent price is a 422.
 from __future__ import annotations
 
 import uuid
-from typing import Annotated, Final
+from typing import Annotated, Final, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session, sessionmaker  # noqa: TC002 - FastAPI reads the type at runtime
 
 from lemely.db.billing_repo import (
@@ -5581,8 +5752,14 @@ from lemely.db.models.enums import Role
 from lemely.io.paymob.client import PaymobClient
 from lemely.runtime.config import Settings
 from lemely.web.deps import AuthContext, get_settings, require_role
-from lemely.web.deps_billing import get_billing_sessionmaker, get_checkout_limiter, get_paymob_client
+from lemely.web.deps_billing import (
+    get_billing_sessionmaker,
+    get_checkout_limiter,
+    get_paymob_client,
+    get_public_catalogue_limiter,
+)
 from lemely.web.ratelimit import SlidingWindowLimiter
+from lemely.web.routers.client_errors import _client_ip
 from lemely.web.schemas_billing import (
     CatalogueDTO,
     CheckoutDTO,
@@ -5590,6 +5767,9 @@ from lemely.web.schemas_billing import (
     PackCheckoutRequest,
     PaymentStatusDTO,
     PlanTierDTO,
+    PublicCatalogueDTO,
+    PublicCreditPackDTO,
+    PublicPlanTierDTO,
     ReceiptDTO,
     ReceiptListDTO,
     SavedCardList,
@@ -5650,6 +5830,59 @@ def get_catalogue(
                     code=p.code,
                     name=p.name,
                     credits=p.units,
+                    priceMinor=p.price_minor,
+                    currency=p.currency,
+                )
+                for p in packs
+            ],
+        )
+
+
+@router.get("/public-catalogue", response_model=PublicCatalogueDTO)
+def get_public_catalogue(
+    request: Request,
+    audience: Annotated[Literal["student", "teacher"], Query()],
+    sm: Annotated[sessionmaker[Session], Depends(get_billing_sessionmaker)],
+    limiter: Annotated[SlidingWindowLimiter, Depends(get_public_catalogue_limiter)],
+) -> PublicCatalogueDTO:
+    """Public pricing page: active tiers of one audience and sellable packs (no auth).
+
+    PUBLIC on purpose: a visitor compares plans before signing up. It exposes no
+    ids, no Paymob plan link and no allowance sizes, which stay hidden by design
+    (spec §2.1). Rate-limited per client IP, like the contact form.
+    """
+    client_ip = _client_ip(request)
+    if not limiter.allow(client_ip):
+        retry = limiter.retry_after(client_ip)
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"Too many requests; retry in {retry}s.",
+            headers={"Retry-After": str(retry)},
+        )
+    is_teacher = audience == "teacher"
+    with sm() as session:
+        tiers, packs = active_catalogue(session, audience=PlanAudience(audience))
+        return PublicCatalogueDTO(
+            audience=audience,
+            planTiers=[
+                PublicPlanTierDTO(
+                    code=t.code,
+                    name=t.name,
+                    audience=t.audience.value,
+                    interval=t.interval.value if t.interval is not None else None,
+                    priceMinor=t.price_minor,
+                    currency=t.currency,
+                    features=dict(t.features),
+                    includedSeats=t.included_seats if is_teacher else None,
+                    extraSeatPriceMinor=t.extra_seat_price_minor if is_teacher else None,
+                )
+                for t in tiers
+            ],
+            creditPacks=[
+                PublicCreditPackDTO(
+                    code=p.code,
+                    name=p.name,
+                    units=p.units,
                     priceMinor=p.price_minor,
                     currency=p.currency,
                 )
@@ -5794,6 +6027,32 @@ with:
     ("GET", "/api/billing/cards"): TUTORING_PARTY,
 ```
 
+Then the public pricing catalogue:
+
+(a) Replace `    # ── PUBLIC (16) ────────────────────` with `    # ── PUBLIC (17) ────────────────────`.
+
+(b) Directly after the line `    ("GET", "/api/public/tutoring-areas"): PUBLIC,`, insert:
+
+```python
+    # Billing pricing page: active tiers and sellable packs, public fields only (no
+    # ids, Paymob plan or allowances), IP rate-limited (tests/test_web_billing.py).
+    ("GET", "/api/billing/public-catalogue"): PUBLIC,
+```
+
+(c) In `test_the_sweeps_actually_cover_the_surface`, replace:
+
+```python
+    # card, P3 areas) + the landing page contact form.
+    assert len(_NON_PUBLIC) == len(ROUTES) - 16
+```
+
+with:
+
+```python
+    # card, P3 areas) + the landing page contact form + the public pricing catalogue.
+    assert len(_NON_PUBLIC) == len(ROUTES) - 17
+```
+
 - [ ] **Step 8: Run the tests to verify they pass**
 
 Run: `PYTHONPATH=$PWD /home/sico/Code/Lemely/.venv/bin/pytest tests/test_web_billing.py tests/test_authz_matrix_complete.py tests/test_web_app.py tests/architecture/ -v --no-cov`
@@ -5804,7 +6063,7 @@ Expected: all PASS, including `test_every_route_is_declared`, `test_declared_gua
 ```bash
 /home/sico/Code/Lemely/.venv/bin/pre-commit run --all-files
 git add lemely/db/billing_repo.py lemely/web/schemas_billing.py lemely/web/routers/billing.py lemely/web/deps_billing.py lemely/web/app.py tests/test_authz_matrix_complete.py tests/test_web_billing.py
-git commit -S -m "feat(billing): add catalogue, pack checkout, payment status, receipts and saved-card routes" -- lemely/db/billing_repo.py lemely/web/schemas_billing.py lemely/web/routers/billing.py lemely/web/deps_billing.py lemely/web/app.py tests/test_authz_matrix_complete.py tests/test_web_billing.py
+git commit -S -m "feat(billing): add public pricing, catalogue, pack checkout, payment status, receipts and saved-card routes" -- lemely/db/billing_repo.py lemely/web/schemas_billing.py lemely/web/routers/billing.py lemely/web/deps_billing.py lemely/web/app.py tests/test_authz_matrix_complete.py tests/test_web_billing.py
 ```
 
 ---
@@ -5814,7 +6073,7 @@ git commit -S -m "feat(billing): add catalogue, pack checkout, payment status, r
 **Files:**
 - Create: `lemely/web/routers/paymob_webhooks.py`
 - Modify: `lemely/web/app.py` (import and `include_router`)
-- Modify: `tests/test_authz_matrix_complete.py` (one PUBLIC entry; PUBLIC heading 16 -> 17; `len(ROUTES) - 16` -> `- 17`)
+- Modify: `tests/test_authz_matrix_complete.py` (one PUBLIC entry; PUBLIC heading 17 -> 18; `len(ROUTES) - 17` -> `- 18`. Task 9 already moved them from 16 to 17)
 - Test: `tests/test_web_paymob_webhooks.py`
 
 **Interfaces:**
@@ -6122,9 +6381,11 @@ In `lemely/web/app.py`, add `paymob_webhooks,` to the `from lemely.web.routers i
 
 In `tests/test_authz_matrix_complete.py`:
 
-(a) Replace `    # ── PUBLIC (16) ────────────────────` with `    # ── PUBLIC (17) ────────────────────`.
+Task 9 already raised PUBLIC to 17 for the public pricing catalogue.
 
-(b) Directly after the line `    ("GET", "/api/public/tutoring-areas"): PUBLIC,`, insert:
+(a) Replace `    # ── PUBLIC (17) ────────────────────` with `    # ── PUBLIC (18) ────────────────────`.
+
+(b) Directly after the line `    ("GET", "/api/billing/public-catalogue"): PUBLIC,` (added by Task 9), insert:
 
 ```python
     # Billing spec 2026-11-02 §5.1/§6: Paymob's server-to-server callbacks hold
@@ -6136,15 +6397,16 @@ In `tests/test_authz_matrix_complete.py`:
 (c) In `test_the_sweeps_actually_cover_the_surface`, replace:
 
 ```python
-    # card, P3 areas) + the landing page contact form.
-    assert len(_NON_PUBLIC) == len(ROUTES) - 16
+    # card, P3 areas) + the landing page contact form + the public pricing catalogue.
+    assert len(_NON_PUBLIC) == len(ROUTES) - 17
 ```
 
 with:
 
 ```python
-    # card, P3 areas) + the landing page contact form + the Paymob webhook.
-    assert len(_NON_PUBLIC) == len(ROUTES) - 17
+    # card, P3 areas) + the landing page contact form + the public pricing catalogue
+    # + the Paymob webhook.
+    assert len(_NON_PUBLIC) == len(ROUTES) - 18
 ```
 
 - [ ] **Step 6: Run the tests to verify they pass**
@@ -6187,6 +6449,7 @@ After this commit, run `graphify update .` (AST-only, no API cost) to keep the k
 | §5.10 reconcile created/pending > 15 min by inquiry, backoff, 24 h -> failed | 8 |
 | §6 HMAC 401 + alert log; duplicate 200; unknown ref 200; mismatch -> `failed_mismatch`, no grant, alert; insert before call; inquiry before any retry; outage -> 503 | 6, 7, 8, 9, 10 |
 | §7 secrets server-only; token encrypted; parent only for linked child; payer-only receipts; IDOR tests; checkout rate limit | 1, 2, 9 |
+| Public pricing page `GET /api/billing/public-catalogue` (no auth, IP rate limit, public fields only) | 9 |
 | Index R3 `GET /api/billing/cards` (masked, own cards, IDOR-tested); R8 one-live index; R10 lineage-only migration test; R11 zero-price packs allowed, never sold | 9, 5, 5, 5/6 |
 | §2.5 receipts = payments the payer paid | 9 |
 | §9 HMAC worked example, `None` handling, wallet-shaped `source_data`; subscription HMAC; webhook fixtures; checkout IDOR; duplicate webhook; mismatch | 3, 7, 9, 10 |
