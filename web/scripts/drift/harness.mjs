@@ -8,6 +8,8 @@
  * (2026-11-05 10:00, the preview fixtures' "now") and no animation.
  */
 import { spawn } from "node:child_process"
+import { createHash } from "node:crypto"
+import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { SURFACES, SESSION, PROFILE } from "../capture_surface.mjs"
@@ -52,19 +54,43 @@ export async function startServers({ needKit }) {
   }
 }
 
-/** True when a design kit dev server already answers on KIT_PORT (the design
- * preview server is long-lived; the gate reuses it rather than starting a second). */
-async function kitAlreadyUp() {
+const KIT_PROBE = "/student-home/variant-a.css?direct"
+const KIT_PROBE_FILE = path.join(WEB_DIR, "dev-previews", "student-home", "variant-a.css")
+
+function sha(buffer) {
+  return createHash("sha256").update(buffer).digest("hex").slice(0, 12)
+}
+
+/**
+ * Probe KIT_PORT. Returns false when nothing answers there; true when the
+ * server there serves THIS worktree's kit; throws otherwise. "Serves this
+ * worktree" = the raw bytes of variant-a.css hash the same as the file on
+ * disk. (The design preview server is long-lived and may belong to another
+ * worktree, in which case the gate must not silently use it.)
+ */
+export async function verifyRunningKit(fetchImpl = fetch) {
+  let res
   try {
-    return (await fetch(`${KIT_BASE}/student-home-a.html`, { signal: AbortSignal.timeout(1500) })).ok
+    res = await fetchImpl(`${KIT_BASE}${KIT_PROBE}`, { signal: AbortSignal.timeout(1500) })
   } catch {
     return false
   }
+  if (!res.ok) return false
+  const served = sha(Buffer.from(await res.arrayBuffer()))
+  const disk = sha(fs.readFileSync(KIT_PROBE_FILE))
+  if (served !== disk) {
+    throw new Error(
+      `port ${KIT_PORT} serves a design kit that is not this worktree (${WEB_DIR}): ` +
+        `served variant-a.css hash ${served}, on-disk hash ${disk}. ` +
+        `Stop that server or run it from this worktree; the gate will not start a second kit.`,
+    )
+  }
+  return true
 }
 
 async function startKit(app, needKit) {
   let kit = null
-  if (needKit && !(await kitAlreadyUp())) {
+  if (needKit && !(await verifyRunningKit())) {
     await assertPortFree(KIT_BASE, KIT_PORT, "the drift gate")
     const bin = path.join(WEB_DIR, "node_modules", ".bin", "vite")
     const child = spawn(
@@ -76,7 +102,12 @@ async function startKit(app, needKit) {
     child.stdout.on("data", (d) => lines.push(String(d)))
     child.stderr.on("data", (d) => lines.push(String(d)))
     kit = { child, log: () => lines.join(""), stop: () => child.kill("SIGTERM") }
-    await waitUntilUp(`${KIT_BASE}/student-home-a.html`, kit, "preview kit")
+    try {
+      await waitUntilUp(`${KIT_BASE}/student-home-a.html`, kit, "preview kit")
+    } catch (error) {
+      kit.stop()
+      throw error
+    }
   }
   return {
     stop() {

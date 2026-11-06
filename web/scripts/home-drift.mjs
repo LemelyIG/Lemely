@@ -11,11 +11,14 @@
  * Baselines for before-vs-after scenes live in reports/.scratch/drift/baseline/.
  * Exit 0 only when every selected scene key passes (see compare.mjs verdict).
  */
+import { execFileSync } from "node:child_process"
 import fs from "node:fs"
+import os from "node:os"
 import path from "node:path"
 import { chromium } from "@playwright/test"
 import { HEIGHT, SCENES, THEMES, WINDOWS } from "./drift/scenes.mjs"
 import {
+  KIT_PORT,
   REPO_DIR,
   SELECTORS,
   capture,
@@ -24,17 +27,20 @@ import {
   openApp,
   openPreview,
   startServers,
+  verifyRunningKit,
 } from "./drift/harness.mjs"
-import { diffPngs, findJustification, verdict } from "./drift/compare.mjs"
+import { diffPngs, findJustification, judge, readJustifications, verdict } from "./drift/compare.mjs"
+import { PNG } from "pngjs"
 
 function parseArgs(argv) {
-  const out = { scene: [], windows: null, themes: null, recordBaseline: false, selftest: false, list: false }
+  const out = { scene: [], windows: null, themes: null, recordBaseline: false, recordProvenance: false, selftest: false, list: false }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === "--scene") out.scene = argv[++i].split(",")
     else if (a === "--windows") out.windows = argv[++i].split(",").map(Number)
     else if (a === "--themes") out.themes = argv[++i].split(",")
     else if (a === "--record-baseline") out.recordBaseline = true
+    else if (a === "--record-provenance") out.recordProvenance = true
     else if (a === "--selftest") out.selftest = true
     else if (a === "--list") out.list = true
     else throw new Error(`unknown argument ${a}`)
@@ -45,6 +51,7 @@ function parseArgs(argv) {
 const args = parseArgs(process.argv.slice(2))
 const DRIFT_DIR = path.join(REPO_DIR, "reports", ".scratch", "drift")
 const BASELINE_DIR = path.join(DRIFT_DIR, "baseline")
+const PROVENANCE_FILE = "provenance.json"
 
 function expand() {
   const keys = []
@@ -85,7 +92,155 @@ async function shoot(browser, side, item, targetWidth) {
   }
 }
 
+function gitHead() {
+  return execFileSync("git", ["rev-parse", "HEAD"], { cwd: REPO_DIR, encoding: "utf8" }).trim()
+}
+
+/** Write the baseline provenance next to the baseline PNGs. */
+function writeProvenance(baselineDir, extra = {}) {
+  const provenance = { sha: gitHead(), recordedAt: new Date().toISOString(), ...extra }
+  fs.mkdirSync(baselineDir, { recursive: true })
+  fs.writeFileSync(path.join(baselineDir, PROVENANCE_FILE), JSON.stringify(provenance, null, 2) + "\n")
+  return provenance
+}
+
+function printProvenance(baselineDir) {
+  const file = path.join(baselineDir, PROVENANCE_FILE)
+  if (!fs.existsSync(file)) {
+    console.log(`baseline provenance: none recorded (${path.relative(REPO_DIR, file)} missing)`)
+    return
+  }
+  const p = JSON.parse(fs.readFileSync(file, "utf8"))
+  console.log(`baseline provenance: git ${p.sha} at ${p.recordedAt}${p.note ? ` (${p.note})` : ""}`)
+}
+
+/**
+ * Compare one scene key and return its report row. A failure to capture (for
+ * example the content width cannot be matched) fails that one key and does not
+ * abort the run.
+ */
+async function compareItem(browser, item, { baselineDir, runDir, table }) {
+  const { scene, key } = item
+  try {
+    let a
+    let b
+    if (scene.kind === "preview-vs-app") {
+      a = await shoot(browser, "preview", item)
+      b = await shoot(browser, "app", item, a.contentWidth)
+    } else {
+      const basePng = path.join(baselineDir, `${key}.png`)
+      if (!fs.existsSync(basePng)) throw new Error(`no baseline; run with --record-baseline on merged develop`)
+      const meta = JSON.parse(fs.readFileSync(path.join(baselineDir, `${key}.json`), "utf8"))
+      a = { png: fs.readFileSync(basePng) }
+      b = await shoot(browser, "app", item, meta.contentWidth ?? undefined)
+    }
+    fs.writeFileSync(path.join(runDir, `${key}.a.png`), a.png)
+    fs.writeFileSync(path.join(runDir, `${key}.b.png`), b.png)
+    const result = diffPngs(a.png, b.png, path.join(runDir, `${key}.diff.png`))
+    const justification = findJustification(key, table)
+    const { outcome, reason } = judge(result, justification, scene.rule ?? "gate")
+    return { key, ...result, outcome, reason, justification }
+  } catch (error) {
+    return { key, diff: null, pct: 0, outcome: "fail", reason: `capture failed: ${error.message}`, justification: null }
+  }
+}
+
+/** Process exit code for a set of rows: 0 only when every row passes. */
+export function exitCodeFor(rows) {
+  return rows.some((r) => r.outcome === "fail") ? 1 : 0
+}
+
+function assertEqual(actual, expected, label) {
+  if (actual !== expected) throw new Error(`selftest: ${label}: expected ${expected}, got ${actual}`)
+}
+
+function selftestVerdicts() {
+  const approved = { justification: "design A rule X", approved: "yes" }
+  const pending = { justification: "design A rule X", approved: "no" }
+  const unmarked = { justification: "design A rule X" }
+  assertEqual(verdict({ diff: 0, pct: 0 }, null), "pass", "0 px")
+  assertEqual(verdict({ diff: 10, pct: 14.9 }, approved, "gate"), "pass-justified", "gate <=15% approved")
+  assertEqual(verdict({ diff: 10, pct: 15 }, approved, "gate"), "pass-justified", "gate exactly 15% approved")
+  assertEqual(verdict({ diff: 10, pct: 15.1 }, approved, "gate"), "fail", "gate >15% approved")
+  assertEqual(verdict({ diff: 10, pct: 60 }, approved, "log"), "pass-justified", "log has no cap")
+  assertEqual(verdict({ diff: 10, pct: 1 }, null, "gate"), "fail", "unjustified")
+  assertEqual(verdict({ diff: 10, pct: 1 }, { justification: "  " }, "gate"), "fail", "blank justification")
+  assertEqual(verdict({ diff: 10, pct: 1 }, pending, "gate"), "fail", "gate justified, approval pending")
+  assertEqual(verdict({ diff: 10, pct: 60 }, pending, "log"), "fail", "log justified, approval pending")
+  assertEqual(verdict({ diff: 10, pct: 1 }, unmarked, "log"), "fail", "approved key missing")
+  if (!/pending/.test(judge({ diff: 10, pct: 1 }, pending, "log").reason)) {
+    throw new Error("selftest: an unapproved justified diff must say approval is pending")
+  }
+  console.log("selftest verdict table passed")
+}
+
+async function selftestEndToEnd(browser) {
+  // The real before-vs-after path against a temp baseline: record, mutate a
+  // copy, compare, and require a red verdict and exit code 1. The real
+  // baseline directory is never written.
+  const scene = SCENES.find((s) => s.id === "teacher-home-content")
+  if (!scene) throw new Error("selftest: scene teacher-home-content not found")
+  const item = { scene, width: 1440, theme: "light", key: "teacher-home-content@1440@light" }
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "drift-selftest-"))
+  const baselineDir = path.join(tmp, "baseline")
+  const runDir = path.join(tmp, "run")
+  fs.mkdirSync(baselineDir, { recursive: true })
+  fs.mkdirSync(runDir, { recursive: true })
+  try {
+    const shot = await shoot(browser, "app", item)
+    fs.writeFileSync(path.join(baselineDir, `${item.key}.png`), shot.png)
+    fs.writeFileSync(path.join(baselineDir, `${item.key}.json`), JSON.stringify({ contentWidth: shot.contentWidth ?? null }))
+    const clean = await compareItem(browser, item, { baselineDir, runDir, table: {} })
+    assertEqual(clean.outcome, "pass", "unmodified baseline")
+    assertEqual(exitCodeFor([clean]), 0, "exit code, unmodified baseline")
+    // Mutate the temp baseline: paint a 60x60 block magenta.
+    const png = PNG.sync.read(fs.readFileSync(path.join(baselineDir, `${item.key}.png`)))
+    for (let y = 0; y < 60; y++) {
+      for (let x = 0; x < 60; x++) {
+        const i = (y * png.width + x) * 4
+        png.data[i] = 255
+        png.data[i + 1] = 0
+        png.data[i + 2] = 255
+        png.data[i + 3] = 255
+      }
+    }
+    fs.writeFileSync(path.join(baselineDir, `${item.key}.png`), PNG.sync.write(png))
+    const mutated = await compareItem(browser, item, { baselineDir, runDir, table: {} })
+    console.log(`selftest mutated baseline: ${mutated.diff} px, ${mutated.outcome} (${mutated.reason})`)
+    assertEqual(mutated.outcome, "fail", "mutated baseline, no justification")
+    assertEqual(exitCodeFor([mutated]), 1, "exit code, mutated baseline")
+    // Same mutation, justified but not approved: still red; approved: green.
+    const entry = { [item.key]: { justification: "selftest", approved: "no" } }
+    const pending = await compareItem(browser, item, { baselineDir, runDir, table: entry })
+    assertEqual(pending.outcome, "fail", "mutated baseline, approval pending")
+    entry[item.key].approved = "yes"
+    const ok = await compareItem(browser, item, { baselineDir, runDir, table: entry })
+    assertEqual(ok.outcome, "pass-justified", "mutated baseline, approved")
+    assertEqual(exitCodeFor([ok]), 0, "exit code, approved")
+    console.log("selftest end-to-end passed")
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+}
+
+async function selftestForeignKit() {
+  const foreign = async () => new Response("/* another worktree */", { status: 200 })
+  let message = ""
+  try {
+    await verifyRunningKit(foreign)
+  } catch (error) {
+    message = error.message
+  }
+  if (!message.includes(String(KIT_PORT)) || (message.match(/hash [0-9a-f]{12}/g) ?? []).length !== 2) {
+    throw new Error(`selftest: a foreign kit server was not rejected with both hashes: ${message || "no error"}`)
+  }
+  assertEqual(await verifyRunningKit(async () => Promise.reject(new Error("refused"))), false, "free port")
+  console.log("selftest foreign kit check passed")
+}
+
 async function runSelftest(browser) {
+  selftestVerdicts()
+  await selftestForeignKit()
   // Proves the gate can go red: the same preview twice must be 0 px, and the
   // same preview with its title recoloured must fail.
   const item = {
@@ -111,6 +266,11 @@ async function runSelftest(browser) {
   console.log(`selftest same: ${same.diff} px; perturbed: ${changed.diff} px`)
   if (same.diff !== 0) throw new Error("selftest: identical captures differ, the capture is not deterministic")
   if (verdict(changed, null) !== "fail") throw new Error("selftest: a recoloured title did not fail the gate")
+  const realBaseline = path.join(BASELINE_DIR, "teacher-home-content@1440@light.png")
+  const before = fs.existsSync(realBaseline) ? fs.readFileSync(realBaseline) : null
+  await selftestEndToEnd(browser)
+  const after = fs.existsSync(realBaseline) ? fs.readFileSync(realBaseline) : null
+  if (before && (!after || !before.equals(after))) throw new Error("selftest: the real baseline was modified")
   console.log("selftest passed")
 }
 
@@ -120,76 +280,72 @@ async function main() {
     for (const i of items) console.log(i.key)
     return
   }
+  if (args.recordProvenance) {
+    const p = writeProvenance(BASELINE_DIR, {
+      note: "provenance-only write; baseline PNGs were captured earlier, not re-captured",
+    })
+    console.log(`baseline provenance written: git ${p.sha} at ${p.recordedAt}`)
+    return
+  }
   const needKit = args.selftest || items.some((i) => i.scene.kind === "preview-vs-app")
   const servers = await startServers({ needKit })
-  const browser = await chromium.launch()
+  let browser
   const runDir = path.join(DRIFT_DIR, new Date().toISOString().replace(/[:.]/g, "-"))
-  fs.mkdirSync(runDir, { recursive: true })
-  fs.mkdirSync(BASELINE_DIR, { recursive: true })
   const rows = []
   try {
+    browser = await chromium.launch()
+    fs.mkdirSync(runDir, { recursive: true })
+    fs.mkdirSync(BASELINE_DIR, { recursive: true })
     if (args.selftest) {
       await runSelftest(browser)
       return
     }
-    for (const item of items) {
-      const { scene, key } = item
-      if (args.recordBaseline) {
-        if (scene.kind !== "before-vs-after") continue
+    if (args.recordBaseline) {
+      for (const item of items) {
+        if (item.scene.kind !== "before-vs-after") continue
         const shot = await shoot(browser, "app", item)
-        fs.writeFileSync(path.join(BASELINE_DIR, `${key}.png`), shot.png)
+        fs.writeFileSync(path.join(BASELINE_DIR, `${item.key}.png`), shot.png)
         fs.writeFileSync(
-          path.join(BASELINE_DIR, `${key}.json`),
+          path.join(BASELINE_DIR, `${item.key}.json`),
           JSON.stringify({ contentWidth: shot.contentWidth ?? null }),
         )
-        console.log(`baseline ${key}`)
-        continue
+        console.log(`baseline ${item.key}`)
       }
-      let a
-      let b
-      if (scene.kind === "preview-vs-app") {
-        a = await shoot(browser, "preview", item)
-        b = await shoot(browser, "app", item, a.contentWidth)
-      } else {
-        const basePng = path.join(BASELINE_DIR, `${key}.png`)
-        if (!fs.existsSync(basePng)) throw new Error(`${key}: no baseline; run with --record-baseline on merged develop`)
-        const meta = JSON.parse(fs.readFileSync(path.join(BASELINE_DIR, `${key}.json`), "utf8"))
-        a = { png: fs.readFileSync(basePng) }
-        b = await shoot(browser, "app", item, meta.contentWidth ?? undefined)
-      }
-      fs.writeFileSync(path.join(runDir, `${key}.a.png`), a.png)
-      fs.writeFileSync(path.join(runDir, `${key}.b.png`), b.png)
-      const result = diffPngs(a.png, b.png, path.join(runDir, `${key}.diff.png`))
-      const justification = findJustification(key)
-      const outcome = verdict(result, justification, scene.rule ?? "gate")
-      rows.push({ key, ...result, outcome, justification })
-      console.log(`${outcome.padEnd(14)} ${result.pct.toFixed(3).padStart(8)}%  ${key}`)
+      const p = writeProvenance(BASELINE_DIR)
+      console.log(`baseline provenance: git ${p.sha} at ${p.recordedAt}`)
+      return
+    }
+    if (items.some((i) => i.scene.kind === "before-vs-after")) printProvenance(BASELINE_DIR)
+    const table = readJustifications()
+    for (const item of items) {
+      const row = await compareItem(browser, item, { baselineDir: BASELINE_DIR, runDir, table })
+      rows.push(row)
+      const pct = row.diff === null ? "     n/a" : row.pct.toFixed(3).padStart(8)
+      const note = row.outcome === "fail" ? `  [${row.reason}]` : ""
+      console.log(`${row.outcome.padEnd(14)} ${pct}%  ${row.key}${note}`)
     }
   } finally {
-    await browser.close()
+    await browser?.close()
     servers.stop()
   }
-  if (args.recordBaseline || args.selftest) return
   fs.writeFileSync(path.join(runDir, "report.json"), JSON.stringify(rows, null, 2))
   const md = [
-    "| Scene | Difference | % pixels | Justification | Approved |",
-    "|---|---|---|---|---|",
+    "| Scene | Difference | % pixels | Justification | Approved | Verdict |",
+    "|---|---|---|---|---|---|",
     ...rows
-      .filter((r) => r.diff > 0)
+      .filter((r) => r.diff === null || r.diff > 0)
       .map(
         (r) =>
           `| ${r.key} | ${r.justification?.difference ?? "(none)"} | ${r.pct.toFixed(2)} | ${
             r.justification?.justification ?? "(missing)"
-          } | ${r.justification?.approved ?? "no"} |`,
+          } | ${r.justification?.approved ?? "no"} | ${r.outcome}: ${r.reason} |`,
       ),
   ].join("\n")
   fs.writeFileSync(path.join(runDir, "report.md"), md + "\n")
   console.log(`report: ${path.relative(REPO_DIR, runDir)}`)
   const failed = rows.filter((r) => r.outcome === "fail")
-  if (failed.length) {
-    console.error(`${failed.length} scene key(s) failed`)
-    process.exitCode = 1
-  }
+  if (failed.length) console.error(`${failed.length} scene key(s) failed`)
+  process.exitCode = exitCodeFor(rows)
 }
 
 main().catch((error) => {

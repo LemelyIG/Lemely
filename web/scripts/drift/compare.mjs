@@ -69,12 +69,23 @@ export function readJustifications() {
 
 /**
  * "pass": 0 differing pixels.
- * "pass-justified": differs, has a written justification, and (rule "gate") is at most 15%.
- * "fail": anything else. A gate scene over 15% fails even when justified.
+ * "pass-justified": differs, has a written justification whose `approved` is
+ *   "yes", and (rule "gate") is at most 15%. Rule "log" has no 15% cap.
+ * "fail": anything else: no justification, justification not yet approved
+ *   (approval pending), or a gate scene over 15% even when justified.
  */
-export function verdict(result, justification, rule = "gate") {
-  if (result.diff === 0) return "pass"
+export function judge(result, justification, rule = "gate") {
+  if (result.diff === 0) return { outcome: "pass", reason: "no differing pixels" }
+  if (rule === "gate" && result.pct > MAX_PCT) {
+    return { outcome: "fail", reason: `${result.pct.toFixed(2)}% differs, over the ${MAX_PCT}% gate cap` }
+  }
   const written = Boolean(justification && justification.justification && justification.justification.trim())
-  if (rule === "gate" && result.pct > MAX_PCT) return "fail"
-  return written ? "pass-justified" : "fail"
+  if (!written) return { outcome: "fail", reason: "differs with no written justification" }
+  const approved = String(justification.approved ?? "").trim().toLowerCase() === "yes"
+  if (!approved) return { outcome: "fail", reason: "justified but approval is pending (approved must be \"yes\")" }
+  return { outcome: "pass-justified", reason: "justified and approved" }
+}
+
+export function verdict(result, justification, rule = "gate") {
+  return judge(result, justification, rule).outcome
 }
