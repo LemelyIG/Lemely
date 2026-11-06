@@ -3,12 +3,14 @@ import type {
   AdminPaymentRow,
   AssistantRow,
   AutoTopupSettings,
+  BillingHealth,
   BillingSummary,
   Catalogue,
   CustomerDetail,
   EstimateResponse,
   PaymentStatusView,
   PlanTier,
+  ProblemQueue,
   Receipt,
   SeatRow,
   SubscriptionView,
@@ -295,6 +297,32 @@ const customer: CustomerDetail = {
   audit: [],
 }
 
+const problems: ProblemQueue = {
+  mismatches: [{ ...adminPayment, id: "pay7", status: "failed_mismatch", amountMinor: 24000, paymobOrderId: "PM-7" }],
+  stalePending: [],
+  missingCallbacks: [],
+  hmacFailures: [{ id: "w1", kind: "transaction", reason: "bad hmac", remoteAddr: "1.2.3.4", receivedAt: "2026-11-05T07:00:00Z" }],
+  hmacFailures24h: 1,
+  refundsNeedingAttention: [],
+}
+
+const health: BillingHealth = {
+  windowHours: 24,
+  jobs: [
+    { name: "billing.reconcile_pending", neverRun: false, lastStartedAt: "2026-11-05T08:00:00Z", lastFinishedAt: "2026-11-05T08:00:05Z", lastOutcome: "ok", lastResultCount: 2, lastError: null, lastSuccessAt: "2026-11-05T08:00:05Z", consecutiveFailures: 0, totalRuns: 40, totalFailures: 0 },
+    { name: "usage.reconcile_balances", neverRun: false, lastStartedAt: "2026-11-05T02:00:00Z", lastFinishedAt: "2026-11-05T02:00:09Z", lastOutcome: "failed", lastResultCount: null, lastError: "drift on 2 grants", lastSuccessAt: "2026-11-04T02:00:09Z", consecutiveFailures: 1, totalRuns: 10, totalFailures: 1 },
+    { name: "billing.auto_topup", neverRun: true, lastStartedAt: null, lastFinishedAt: null, lastOutcome: null, lastResultCount: null, lastError: null, lastSuccessAt: null, consecutiveFailures: 0, totalRuns: 0, totalFailures: 0 },
+  ],
+  verifiedEvents: 197,
+  hmacFailures: 3,
+  webhookErrorRate: 0.015,
+  mismatches: 1,
+  renewalFailureEvents: 1,
+  pastDueNow: 2,
+  failedAutoTopups: 0,
+  failedExtraSeatCharges: 0,
+}
+
 export const fx = {
   studentMonthly,
   studentYearly,
@@ -320,4 +348,6 @@ export const fx = {
   adminCatalogue,
   adminPayment,
   customer,
+  problems,
+  health,
 }

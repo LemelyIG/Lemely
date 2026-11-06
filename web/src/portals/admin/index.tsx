@@ -100,6 +100,12 @@ const BillingCustomerDetail = lazy(() =>
 const BillingCatalogue = lazy(() =>
   import("./screens/billing/Catalogue").then((m) => ({ default: m.Catalogue })),
 )
+const BillingPayments = lazy(() =>
+  import("./screens/billing/Payments").then((m) => ({ default: m.Payments })),
+)
+const BillingHealth = lazy(() =>
+  import("./screens/billing/Health").then((m) => ({ default: m.Health })),
+)
 
 const NAV_ICON: Record<AdminNavItem["icon"], Icon> = {
   dashboard: SquaresFour,
@@ -460,7 +466,9 @@ export const platformAdminRoute: RouteObject = {
       children: [
         { index: true, element: <BillingCustomers />, handle: { title: "Billing customers", skeleton: "list" } },
         { path: "customers/:userId", element: <BillingCustomerDetail />, handle: { title: "Billing customer", skeleton: "page-header" } },
+        { path: "payments", element: <BillingPayments />, handle: { title: "Billing payments", skeleton: "list" } },
         { path: "catalogue", element: <BillingCatalogue />, handle: { title: "Billing catalogue", skeleton: "page-header" } },
+        { path: "health", element: <BillingHealth />, handle: { title: "Billing health", skeleton: "page-header" } },
       ],
     },
     {

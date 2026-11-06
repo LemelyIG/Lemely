@@ -10,7 +10,9 @@ import { cn } from "@/lib/utils"
 export const BILLING_AREAS: readonly { to: string; label: string; end?: boolean; also?: string }[] = [
   // A customer's page belongs to the Customers area, so its pill stays active there.
   { to: "/platform/billing", label: "Customers", end: true, also: "/platform/billing/customers/" },
+  { to: "/platform/billing/payments", label: "Payments" },
   { to: "/platform/billing/catalogue", label: "Catalogue" },
+  { to: "/platform/billing/health", label: "Health" },
 ]
 
 /** An area is active on its own path, under it (unless `end`), or under its `also` prefix. */
