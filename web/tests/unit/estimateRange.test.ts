@@ -75,6 +75,17 @@ describe("EstimateRange", () => {
     expect(html).not.toContain('role="status"')
   })
 
+  it("forwards the heading level to the notice", () => {
+    expect(render(gate({ block: { reason: "insufficient_credits", estimate: null }, blockSource: "estimate" }), { headingLevel: 2 })).toContain("<h2 ")
+  })
+
+  it("shows the working state, not stale numbers, while a blocked estimate refetches", () => {
+    state.estimate = { ...okQuery({ ...fx.estimate, blockedReason: "insufficient_credits" }), isFetching: true }
+    const html = render(gate({}))
+    expect(html).toContain("Working out the cost")
+    expect(html).not.toContain('data-testid="estimate-range"')
+  })
+
   it("offers Try again on a blocked notice", () => {
     expect(render(gate({ block: { reason: "insufficient_credits", estimate: null }, blockSource: "estimate" }))).toContain("Try again")
   })

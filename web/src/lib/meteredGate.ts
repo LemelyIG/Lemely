@@ -46,17 +46,23 @@ export function reconcileCaught(caught: CaughtBlock | null, key: string | null):
   return caught !== null && caught.key === key ? caught : null
 }
 
+/** A blocked estimate that is being refetched is stale: show neither its block nor its numbers until the answer lands. */
+export function isRecheckingBlock(estimate: EstimateResponse | undefined, isFetching: boolean): boolean {
+  return isFetching && Boolean(estimate?.blockedReason)
+}
+
 export function resolveBlock(
   estimate: EstimateResponse | undefined,
   caught: CaughtBlock | null,
   requestKey: string | null,
   estimateError?: unknown,
+  rechecking = false,
 ): UsageBlock | null {
   const live = reconcileCaught(caught, requestKey)
   if (live) return live.block
   const fromError = parseUsageBlock(estimateError)
   if (fromError) return fromError
-  if (estimate?.blockedReason) return { reason: estimate.blockedReason, estimate: null }
+  if (!rechecking && estimate?.blockedReason) return { reason: estimate.blockedReason, estimate: null }
   return null
 }
 
@@ -95,6 +101,6 @@ export function useMeteredGate(request: EstimateRequest | null): MeteredGate {
     setCaught(null)
     void refetch()
   }, [refetch])
-  const block = resolveBlock(estimate.data, live, key, estimate.error)
+  const block = resolveBlock(estimate.data, live, key, estimate.error, isRecheckingBlock(estimate.data, estimate.isFetching))
   return { request, estimate, block, blockSource: blockSourceOf(block, live, key), captureError, clear, retry }
 }

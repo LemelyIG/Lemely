@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { ApiError } from "@/lib/api"
-import { blockSourceOf, captureBlock, reconcileCaught, requestKeyOf, resolveBlock } from "@/lib/meteredGate"
+import { blockSourceOf, isRecheckingBlock, captureBlock, reconcileCaught, requestKeyOf, resolveBlock } from "@/lib/meteredGate"
 import { fx } from "./support/billingFixtures"
 
 const req = { action: "regrade" as const, paperId: "p1" }
@@ -80,5 +80,22 @@ describe("blockSourceOf", () => {
     const fromEstimate = resolveBlock({ ...fx.estimate, blockedReason: "no_active_plan" }, null, "k")
     expect(blockSourceOf(fromEstimate, null, "k")).toBe("estimate")
     expect(blockSourceOf(null, null, "k")).toBeNull()
+  })
+})
+
+describe("stale blocked estimate while refetching", () => {
+  const blocked = { ...fx.estimate, blockedReason: "insufficient_credits" as const }
+
+  it("is only rechecking when a blocked answer is being refetched", () => {
+    expect(isRecheckingBlock(blocked, true)).toBe(true)
+    expect(isRecheckingBlock(blocked, false)).toBe(false)
+    expect(isRecheckingBlock(fx.estimate, true)).toBe(false)
+    expect(isRecheckingBlock(undefined, true)).toBe(false)
+  })
+
+  it("hides the estimate-derived block while rechecking but keeps a caught 402", () => {
+    expect(resolveBlock(blocked, null, "k", undefined, true)).toBeNull()
+    const caught = captureBlock(err402(), "k")
+    expect(resolveBlock(blocked, caught, "k", undefined, true)?.reason).toBe("insufficient_credits")
   })
 })

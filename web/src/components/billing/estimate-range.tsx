@@ -2,7 +2,7 @@ import type { ReactNode } from "react"
 import type { Audience } from "@/lib/billingTypes"
 import { estimateSentence } from "@/lib/billingFormat"
 import type { BillingPaths } from "@/lib/billingPaths"
-import type { MeteredGate } from "@/lib/meteredGate"
+import { isRecheckingBlock, type MeteredGate } from "@/lib/meteredGate"
 import { UsageBlockedNotice } from "./usage-blocked-notice"
 
 /*
@@ -18,12 +18,14 @@ export function EstimateRange({
   paths,
   managedByName,
   subjectUnknown = false,
+  headingLevel,
 }: {
   gate: MeteredGate
   audience: Audience
   paths: BillingPaths | null
   managedByName: string | null
   subjectUnknown?: boolean
+  headingLevel?: 2 | 3 | 4
 }) {
   if (gate.request === null) return null
   const { estimate } = gate
@@ -33,6 +35,7 @@ export function EstimateRange({
       audience={audience}
       paths={paths}
       managedByName={managedByName}
+      headingLevel={headingLevel}
       live={gate.blockSource === "start" ? "alert" : "status"}
       onRetry={gate.retry}
     />
@@ -43,7 +46,7 @@ export function EstimateRange({
   let content: ReactNode
   if (notice) {
     content = notice
-  } else if (estimate.isPending) {
+  } else if (estimate.isPending || isRecheckingBlock(estimate.data, estimate.isFetching)) {
     content = <p className="m-0 text-body-sm text-on-surface-variant">Working out the cost…</p>
   } else if (estimate.isError || !estimate.data) {
     content = (
