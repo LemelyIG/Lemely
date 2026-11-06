@@ -27,6 +27,7 @@ import {
   matchContentWidth,
   openApp,
   openPreview,
+  stableShot,
   startServers,
   verifyRunningKit,
 } from "./drift/harness.mjs"
@@ -246,6 +247,36 @@ function selftestEmptySelection() {
   console.log("selftest empty selection passed")
 }
 
+async function selftestStableShot(browser) {
+  // A static page must settle: the stabiliser returns a buffer equal to a fresh one.
+  const context = await browser.newContext({ viewport: { width: 400, height: 300 } })
+  try {
+    const page = await context.newPage()
+    await page.setContent("<body style='margin:0;background:#def'><h1>static</h1></body>")
+    const taken = []
+    const settled = await stableShot(page, async () => {
+      const png = await page.screenshot()
+      taken.push(png)
+      return png
+    })
+    if (taken.length < 2 || !taken[taken.length - 1].equals(taken[taken.length - 2]) || !settled.equals(taken[taken.length - 1])) {
+      throw new Error("selftest: stableShot did not return identical consecutive buffers for a static page")
+    }
+    // And an ever-changing page must fail loudly, not pass.
+    let n = 0
+    let message = ""
+    try {
+      await stableShot(page, async () => Buffer.from(String(n++)), { intervalMs: 1, maxTries: 4 })
+    } catch (error) {
+      message = error.message
+    }
+    if (!/unstable capture/.test(message)) throw new Error("selftest: a never-stable capture did not fail")
+    console.log(`selftest stable capture passed (${taken.length} shots to settle)`)
+  } finally {
+    await context.close()
+  }
+}
+
 async function runSelftest(browser) {
   selftestVerdicts()
   selftestEmptySelection()
@@ -275,6 +306,7 @@ async function runSelftest(browser) {
   console.log(`selftest same: ${same.diff} px; perturbed: ${changed.diff} px`)
   if (same.diff !== 0) throw new Error("selftest: identical captures differ, the capture is not deterministic")
   if (verdict(changed, null) !== "fail") throw new Error("selftest: a recoloured title did not fail the gate")
+  await selftestStableShot(browser)
   const realBaseline = path.join(BASELINE_DIR, "teacher-home-content@1440@light.png")
   const before = fs.existsSync(realBaseline) ? fs.readFileSync(realBaseline) : null
   await selftestEndToEnd(browser)

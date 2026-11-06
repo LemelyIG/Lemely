@@ -3,9 +3,10 @@
  *   node scripts/shell-behaviour.mjs [--check <prefix>] [--axe]
  *
  * Runs SHELL_CHECKS against `vite preview` of dist/ (run `npm run build`
- * first). --axe additionally runs axe-core after each check marked `axe: true`
- * (and after every check's final state when no check is marked) and fails on
- * any violation. Exit 0 only when every check passes.
+ * first). --axe additionally runs axe-core after each check's final state
+ * (skipping checks marked `axe: false`) and fails on any violation. --check
+ * with no value, or a prefix that matches no check, exits 1. Exit 0 only when
+ * every check passes.
  */
 import path from "node:path"
 import { chromium } from "@playwright/test"
@@ -13,16 +14,27 @@ import { SHELL_CHECKS } from "./drift/checks-shell.mjs"
 import { WEB_DIR, openApp, startServers } from "./drift/harness.mjs"
 
 const argv = process.argv.slice(2)
-const prefix = argv.includes("--check") ? argv[argv.indexOf("--check") + 1] : ""
+const checkAt = argv.indexOf("--check")
+const prefix = checkAt === -1 ? "" : (argv[checkAt + 1] ?? "")
+if (checkAt !== -1 && (!prefix || prefix.startsWith("--"))) {
+  console.error("--check needs a check id prefix")
+  process.exit(1)
+}
 const withAxe = argv.includes("--axe")
 const AXE = path.join(WEB_DIR, "node_modules", "axe-core", "axe.min.js")
 
 async function main() {
+  const checks = SHELL_CHECKS.filter((c) => c.id.startsWith(prefix))
+  if (!checks.length) {
+    console.error(`no checks match --check ${prefix}`)
+    process.exitCode = 1
+    return
+  }
   const servers = await startServers({ needKit: false })
   const browser = await chromium.launch()
   let failed = 0
   try {
-    for (const check of SHELL_CHECKS.filter((c) => c.id.startsWith(prefix))) {
+    for (const check of checks) {
       const width = check.width ?? 1440
       const { context, page } = await openApp(browser, {
         width,

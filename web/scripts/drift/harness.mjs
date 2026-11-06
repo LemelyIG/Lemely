@@ -233,9 +233,28 @@ export async function matchContentWidth(page, selector, target, height) {
 export async function capture(page, { capture: mode, selector, neutral = false }) {
   if (mode === "frame") {
     await page.addStyleTag({ content: `${selector} > * { visibility: hidden !important; }` })
-    return page.screenshot({ animations: "disabled", caret: "hide" })
+    return stableShot(page, () => page.screenshot({ animations: "disabled", caret: "hide" }))
   }
   if (neutral) await page.addStyleTag({ content: `${selector} { background: rgb(255 0 255) !important; }` })
   const clip = await contentBox(page, selector)
-  return page.screenshot({ fullPage: true, clip, animations: "disabled", caret: "hide" })
+  return stableShot(page, () => page.screenshot({ fullPage: true, clip, animations: "disabled", caret: "hide" }))
+}
+
+/**
+ * Screenshot until two consecutive buffers are byte-identical, so a page that
+ * is still swapping a skeleton for content (or finishing a late paint) is never
+ * compared mid-change. Never stable within `maxTries` throws "unstable capture"
+ * so the scene key fails rather than passing on a half-settled frame. This is
+ * a settle, not a retry: the result is never re-taken because it differs from
+ * a reference.
+ */
+export async function stableShot(page, take, { intervalMs = 100, maxTries = 8 } = {}) {
+  let previous = await take()
+  for (let attempt = 1; attempt < maxTries; attempt++) {
+    await page.waitForTimeout(intervalMs)
+    const next = await take()
+    if (next.equals(previous)) return next
+    previous = next
+  }
+  throw new Error(`unstable capture: no two consecutive screenshots were identical in ${maxTries} tries ${intervalMs} ms apart`)
 }

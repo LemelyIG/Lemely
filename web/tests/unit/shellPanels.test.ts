@@ -11,7 +11,7 @@ import { stripComments } from "./support/jsxSource"
  */
 
 const SRC = join(import.meta.dirname, "..", "..", "src")
-const SHELL_FILES = ["NotificationsPanel.tsx", "AccountPanel.tsx", "ShellAvatar.tsx", "TopBarSheets.tsx"]
+const SHELL_FILES = ["NotificationsPanel.tsx", "AccountPanel.tsx", "ShellAvatar.tsx", "TopBarSheets.tsx", "shellModel.ts"]
 
 describe("components/shell is portal-neutral", () => {
   it.each(SHELL_FILES)("%s imports no portal module", (file) => {

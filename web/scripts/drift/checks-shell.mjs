@@ -9,7 +9,12 @@ import { teacherShellMocks } from "./mocks.mjs"
 /** Radix hands focus back a frame after the panel unmounts, so poll briefly rather than read once. */
 export async function assertFocused(locator, label) {
   for (let attempt = 0; attempt < 20; attempt++) {
-    if (await locator.evaluate((el) => el === document.activeElement)) return
+    try {
+      // Bounded so a re-mounted (detached) trigger fails fast with the label, not after 30 s.
+      if (await locator.evaluate((el) => el === document.activeElement, undefined, { timeout: 500 })) return
+    } catch {
+      throw new Error(`${label}: the element is gone or unreachable, expected focus on it`)
+    }
     await locator.page().waitForTimeout(50)
   }
   throw new Error(`${label}: expected focus on the element`)
@@ -55,8 +60,19 @@ export const SHELL_CHECKS = [
       await bell.focus()
       await page.keyboard.press("Enter")
       await page.getByRole("menu").waitFor()
-      const first = page.getByRole("menuitem").first()
-      await first.waitFor()
+      await page.getByRole("menuitem").first().waitFor()
+      // Keyboard open lands on a menu item; ArrowDown must move to a different one.
+      const focusedItem = () =>
+        page.evaluate(() => {
+          const el = document.activeElement
+          return el?.getAttribute("role") === "menuitem" ? (el.textContent ?? "").trim() : null
+        })
+      const opened = await focusedItem()
+      if (!opened) throw new Error("bell menu: keyboard open did not focus a menu item")
+      await page.keyboard.press("ArrowDown")
+      await page.waitForTimeout(100)
+      const next = await focusedItem()
+      if (!next || next === opened) throw new Error(`bell menu: ArrowDown did not move focus to the next item (was "${opened}", now "${next}")`)
       await page.keyboard.press("Escape")
       await assertFocused(bell, "bell after keyboard open")
     },
