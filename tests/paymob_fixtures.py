@@ -154,3 +154,109 @@ def sign_transaction(obj: dict[str, Any], secret: str = TEST_HMAC_SECRET) -> str
 
 def sign_token(obj: dict[str, Any], secret: str = TEST_HMAC_SECRET) -> str:
     return sign(token_hmac_message(obj), secret)
+
+
+#: ``POST v1/intention/`` 201 body (research 01 §2.1 sample, with our test ids).
+INTENTION_RESPONSE: dict[str, Any] = {
+    "payment_keys": [
+        {
+            "integration": CARD_INTEGRATION_ID,
+            "key": "ZXlKaGJHY2lPaUpJVXpVeE1pSjkuZXlKMWMyVnlYMmxrSWpveE1EVXpPVEk0ZlE.payment-key",
+            "gateway_type": "MIGS",
+            "iframe_id": None,
+            "order_id": 265715202,
+        }
+    ],
+    "intention_order_id": 265715202,
+    "id": "pi_test_bd49bb7fb4da48cfac4ec71ab4d8c433",
+    "intention_detail": {
+        "amount": 10000,
+        "items": [
+            {"name": "Credit pack", "amount": 10000, "description": "100 credits", "quantity": 1}
+        ],
+        "currency": "EGP",
+        "billing_data": {
+            "apartment": "NA",
+            "floor": "NA",
+            "first_name": "Sara",
+            "last_name": "Ali",
+            "street": "NA",
+            "building": "NA",
+            "phone_number": "+201234567890",
+            "shipping_method": None,
+            "city": "NA",
+            "country": "EGY",
+            "state": "NA",
+            "email": "payer@example.com",
+            "postal_code": None,
+        },
+    },
+    "client_secret": "egy_csk_test_94042f793419c5a0f14a4cadfda9d626",
+    "payment_methods": [
+        {
+            "integration_id": CARD_INTEGRATION_ID,
+            "alias": None,
+            "name": "Card",
+            "method_type": "online",
+            "currency": "EGP",
+            "live": False,
+            "use_cvc_with_moto": False,
+        }
+    ],
+    "special_reference": "set-per-test",
+    "extras": {"creation_extras": {}, "confirmation_extras": None},
+    "confirmed": False,
+    "status": "intended",
+    "created": "2026-11-05T10:00:00.000000",
+    "card_detail": None,
+    "card_tokens": [],
+    "object": "paymentintention",
+}
+
+#: ``POST api/auth/tokens`` body, trimmed (the real one carries the merchant profile).
+AUTH_TOKEN_RESPONSE: dict[str, Any] = {"token": "auth_token_test_1", "profile": {"id": 302852}}
+
+#: ``GET api/acceptance/subscriptions/{id}`` (research 02 §2.3/§6 field list).
+SUBSCRIPTION_RESPONSE: dict[str, Any] = {
+    "id": 1264,
+    "client_info": {
+        "email": "payer@example.com",
+        "full_name": "Sara Ali",
+        "phone_number": "+201234567890",
+    },
+    "frequency": 30,
+    "created_at": "2026-11-05T10:00:00",
+    "updated_at": "2026-11-05T10:00:00",
+    "name": "Student monthly",
+    "reminder_days": None,
+    "retrial_days": 3,
+    "plan_id": 1186,
+    "state": "active",
+    "amount_cents": 9900,
+    "starts_at": "2026-11-05",
+    "next_billing": "2026-12-05",
+    "reminder_date": None,
+    "ends_at": None,
+    "resumed_at": None,
+    "suspended_at": None,
+    "webhook_url": "https://lemelyig.com/api/webhooks/paymob/subscription",
+    "integration": MOTO_INTEGRATION_ID,
+    "initial_transaction": 241322967,
+}
+
+#: ``POST api/acceptance/subscription-plans`` body.
+PLAN_RESPONSE: dict[str, Any] = {
+    "id": 1186,
+    "frequency": 30,
+    "name": "Student monthly",
+    "reminder_days": None,
+    "retrial_days": 3,
+    "plan_type": "rent",
+    "number_of_deductions": None,
+    "amount_cents": 9900,
+    "use_transaction_amount": False,
+    "is_active": True,
+    "webhook_url": "https://lemelyig.com/api/webhooks/paymob/subscription",
+    "integration": MOTO_INTEGRATION_ID,
+    "fee": None,
+}
