@@ -1,0 +1,533 @@
+"""BillingService.apply_*_callback: verify, dedupe, grant once (spec §5.1 step 4, §5.5, §6)."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import pytest
+import sqlalchemy as sa
+from pydantic import SecretStr
+
+from lemely.db import billing_repo
+from lemely.db.billing_repo import BillingService, MalformedCallback, add_months
+from lemely.db.models.billing import Payment, PaymentPurpose, PaymentStatus, PaymobEvent, SavedCard
+from lemely.db.models.enums import Role
+from lemely.db.models.usage import UsageGrant
+from lemely.runtime.config import PaymobSettings
+from lemely.runtime.token_cipher import TokenCipher, TokenCipherError
+from tests.paymob_fixtures import (
+    FIXED_NOW,
+    PAYMOB_SETTINGS,
+    TEST_CARD_TOKEN_KEY,
+    FakePaymobClient,
+    seed_pack,
+    seed_payment,
+    seed_user,
+    token_obj,
+    transaction_obj,
+)
+
+if TYPE_CHECKING:
+    import uuid
+    from typing import Any
+
+    from sqlalchemy.orm import Session, sessionmaker
+
+
+def _apply(
+    sm: sessionmaker[Session], obj: dict[str, Any], settings: PaymobSettings = PAYMOB_SETTINGS
+) -> None:
+    with sm.begin() as session:
+        BillingService(
+            session, FakePaymobClient(), settings, now=lambda: FIXED_NOW
+        ).apply_transaction_callback(obj)
+
+
+def _apply_token(
+    sm: sessionmaker[Session], obj: dict[str, Any], settings: PaymobSettings = PAYMOB_SETTINGS
+) -> None:
+    with sm.begin() as session:
+        BillingService(
+            session, FakePaymobClient(), settings, now=lambda: FIXED_NOW
+        ).apply_token_callback(obj)
+
+
+def _setup(sm: sessionmaker[Session], **kwargs: Any) -> tuple[uuid.UUID, uuid.UUID]:
+    payer = seed_user(sm)
+    pack = seed_pack(sm)
+    payment = seed_payment(
+        sm, payer=payer, beneficiary=payer, pack_id=pack, paymob_order_id=265715202, **kwargs
+    )
+    return payer, payment
+
+
+def _payment(sm: sessionmaker[Session], payment_id: uuid.UUID) -> Payment:
+    with sm() as session:
+        payment = session.get(Payment, payment_id)
+        assert payment is not None
+        return payment
+
+
+def _grants(sm: sessionmaker[Session], payment_id: uuid.UUID) -> list[UsageGrant]:
+    with sm() as session:
+        return list(
+            session.scalars(sa.select(UsageGrant).where(UsageGrant.payment_id == payment_id))
+        )
+
+
+def _events(sm: sessionmaker[Session]) -> list[PaymobEvent]:
+    with sm() as session:
+        return list(session.scalars(sa.select(PaymobEvent).order_by(PaymobEvent.created_at)))
+
+
+def test_a_successful_callback_marks_paid_and_grants_once(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    payer, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid)))
+    payment = _payment(sm, pid)
+    assert payment.status is PaymentStatus.paid
+    assert payment.paid_at == FIXED_NOW
+    assert payment.paymob_txn_id == 192036465
+    assert payment.method == "card"
+    assert payment.next_reconcile_at is None
+    assert payment.last_callback is not None and payment.last_callback["id"] == 192036465
+    (grant,) = _grants(sm, pid)
+    assert grant.owner_user_id == payer
+    assert grant.units == 100
+    (event,) = _events(sm)
+    assert event.dedupe_key == "txn:192036465:s1p0v0r0:0"
+    assert event.processed_at == FIXED_NOW
+
+
+def test_a_duplicate_callback_is_a_no_op(migrated_sessionmaker: sessionmaker[Session]) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    obj = transaction_obj(merchant_order_id=str(pid))
+    _apply(sm, obj)
+    _apply(sm, obj)
+    assert len(_grants(sm, pid)) == 1
+    assert len(_events(sm)) == 1
+
+
+def test_pending_then_success(migrated_sessionmaker: sessionmaker[Session]) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), success=False, pending=True))
+    assert _payment(sm, pid).status is PaymentStatus.pending
+    assert _grants(sm, pid) == []
+    _apply(sm, transaction_obj(merchant_order_id=str(pid)))
+    assert _payment(sm, pid).status is PaymentStatus.paid
+    assert len(_grants(sm, pid)) == 1
+    assert len(_events(sm)) == 2
+
+
+def test_a_declined_callback_fails_without_a_grant(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), success=False))
+    payment = _payment(sm, pid)
+    assert payment.status is PaymentStatus.failed
+    assert payment.next_reconcile_at is None
+    assert _grants(sm, pid) == []
+
+
+def test_a_late_success_after_failure_is_honoured(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm, status=PaymentStatus.failed)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid)))
+    assert _payment(sm, pid).status is PaymentStatus.paid
+    assert len(_grants(sm, pid)) == 1
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"error_occured": True},
+        {"is_voided": True},
+        {"is_refunded": True, "refunded_amount_cents": 10000},
+    ],
+)
+def test_success_with_a_bad_flag_is_not_paid(
+    migrated_sessionmaker: sessionmaker[Session], overrides: dict[str, Any]
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), **overrides))
+    assert _payment(sm, pid).status is PaymentStatus.failed
+    assert _grants(sm, pid) == []
+
+
+@pytest.mark.parametrize("overrides", [{"amount_cents": 9999}, {"currency": "USD"}])
+def test_amount_or_currency_mismatch_is_failed_mismatch_with_no_grant(
+    migrated_sessionmaker: sessionmaker[Session], overrides: dict[str, Any]
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), **overrides))
+    payment = _payment(sm, pid)
+    assert payment.status is PaymentStatus.failed_mismatch
+    assert payment.next_reconcile_at is None
+    assert _grants(sm, pid) == []
+    # A later correct callback cannot revive a mismatched payment.
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), txn_id=999))
+    assert _payment(sm, pid).status is PaymentStatus.failed_mismatch
+    assert _grants(sm, pid) == []
+
+
+@pytest.mark.parametrize("reference", ["not-a-uuid", "6f1c5d1e-0000-4000-8000-000000000000"])
+def test_an_unknown_reference_is_recorded_and_ignored(
+    migrated_sessionmaker: sessionmaker[Session], reference: str
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=reference))
+    assert _payment(sm, pid).status is PaymentStatus.created
+    assert len(_events(sm)) == 1
+
+
+def test_refund_and_void_flags_on_a_paid_payment(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid)))
+    _apply(
+        sm,
+        transaction_obj(merchant_order_id=str(pid), is_refunded=True, refunded_amount_cents=4000),
+    )
+    assert _payment(sm, pid).status is PaymentStatus.partially_refunded
+    _apply(
+        sm,
+        transaction_obj(merchant_order_id=str(pid), is_refunded=True, refunded_amount_cents=10000),
+    )
+    assert _payment(sm, pid).status is PaymentStatus.refunded
+    assert len(_grants(sm, pid)) == 1  # clawback of unspent units is an admin action (Phase 07)
+
+
+def test_void_on_a_paid_payment(migrated_sessionmaker: sessionmaker[Session]) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid)))
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), is_voided=True))
+    assert _payment(sm, pid).status is PaymentStatus.voided
+
+
+def test_a_child_refund_transaction_changes_nothing(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid)))
+    _apply(
+        sm,
+        transaction_obj(
+            merchant_order_id=str(pid),
+            txn_id=192036466,
+            is_refund=True,
+            has_parent_transaction=True,
+            amount_cents=4000,
+        ),
+    )
+    payment = _payment(sm, pid)
+    assert payment.status is PaymentStatus.paid
+    assert payment.paymob_txn_id == 192036465
+    assert len(_events(sm)) == 2
+
+
+def test_a_missing_handler_rolls_the_whole_callback_back(
+    migrated_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    monkeypatch.delitem(billing_repo._PAID_HANDLERS, PaymentPurpose.credit_pack)
+    with pytest.raises(RuntimeError, match="no paid handler"):
+        _apply(sm, transaction_obj(merchant_order_id=str(pid)))
+    assert _payment(sm, pid).status is PaymentStatus.created
+    assert _events(sm) == []
+
+
+def test_a_callback_without_an_id_is_malformed(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    obj = transaction_obj()
+    del obj["id"]
+    with pytest.raises(MalformedCallback):
+        _apply(migrated_sessionmaker, obj)
+
+
+# -- card-token callbacks ------------------------------------------------------
+
+
+def _cards(sm: sessionmaker[Session]) -> list[SavedCard]:
+    with sm() as session:
+        return list(session.scalars(sa.select(SavedCard)))
+
+
+def test_a_token_callback_stores_the_card_encrypted_for_the_payer(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    parent = seed_user(sm, Role.parent)
+    child = seed_user(sm)
+    pack = seed_pack(sm)
+    seed_payment(sm, payer=parent, beneficiary=child, pack_id=pack, paymob_order_id=265715202)
+    _apply_token(sm, token_obj(token="tok-secret-123"))
+    (card,) = _cards(sm)
+    assert card.user_id == parent
+    assert card.masked_pan == "xxxx-xxxx-xxxx-2346"
+    assert card.brand == "MasterCard"
+    assert card.paymob_token_id == 15978654
+    assert "tok-secret-123" not in card.token
+    assert TokenCipher(TEST_CARD_TOKEN_KEY).decrypt(card.token, parent) == "tok-secret-123"
+    with sm() as session:
+        service = BillingService(session, FakePaymobClient(), PAYMOB_SETTINGS)
+        assert service.card_token(card) == "tok-secret-123"
+    (event,) = _events(sm)
+    assert event.payload["token"] == "[redacted]"
+    assert "tok-secret-123" not in str(event.payload)
+
+
+def test_the_same_card_twice_refreshes_one_row(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _setup(sm)
+    _apply_token(sm, token_obj(token_id=1, token="tok-a", masked_pan="xxxx-xxxx-xxxx-1111"))
+    _apply_token(sm, token_obj(token_id=2, token="tok-a", masked_pan="xxxx-xxxx-xxxx-2222"))
+    (card,) = _cards(sm)
+    assert card.masked_pan == "xxxx-xxxx-xxxx-2222"
+    assert card.paymob_token_id == 2
+
+
+def test_a_duplicate_token_callback_is_a_no_op(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _setup(sm)
+    _apply_token(sm, token_obj())
+    _apply_token(sm, token_obj())
+    assert len(_cards(sm)) == 1
+    assert len(_events(sm)) == 1
+
+
+def test_a_token_for_an_unknown_order_is_ignored(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _setup(sm)
+    _apply_token(sm, token_obj(order_id="1"))
+    assert _cards(sm) == []
+
+
+def test_without_a_card_key_the_token_is_not_stored(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _setup(sm)
+    no_key = PAYMOB_SETTINGS.model_copy(update={"card_token_key": None})
+    _apply_token(sm, token_obj(), settings=no_key)
+    assert _cards(sm) == []
+    with sm() as session:
+        service = BillingService(session, FakePaymobClient(), no_key)
+        with pytest.raises(billing_repo.BillingError):
+            service.card_token(SavedCard(token="v1:x", token_fingerprint="f", masked_pan="m"))
+
+
+def test_a_token_callback_without_a_token_is_malformed(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    obj = token_obj()
+    del obj["token"]
+    with pytest.raises(MalformedCallback):
+        _apply_token(migrated_sessionmaker, obj)
+
+
+# -- R20b / refunds / grants ---------------------------------------------------
+
+
+def test_a_decline_then_a_verified_success_is_paid_and_granted_once(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), txn_id=1, success=False))
+    assert _payment(sm, pid).status is PaymentStatus.failed
+    success = transaction_obj(merchant_order_id=str(pid), txn_id=2)
+    _apply(sm, success)
+    _apply(sm, success)
+    assert _payment(sm, pid).status is PaymentStatus.paid
+    assert _payment(sm, pid).paymob_txn_id == 2
+    assert len(_grants(sm, pid)) == 1
+
+
+def test_the_grant_uses_the_injected_clock(migrated_sessionmaker: sessionmaker[Session]) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid)))
+    (grant,) = _grants(sm, pid)
+    assert grant.expires_at == add_months(FIXED_NOW, 12)
+    assert grant.effective_at == FIXED_NOW
+
+
+def test_a_duplicate_with_a_different_clock_cannot_grant_twice(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    obj = transaction_obj(merchant_order_id=str(pid))
+    _apply(sm, obj)
+    with sm.begin() as session:
+        later = lambda: FIXED_NOW.replace(year=2030)  # noqa: E731
+        BillingService(
+            session, FakePaymobClient(), PAYMOB_SETTINGS, now=later
+        ).apply_transaction_callback(obj)
+    assert len(_grants(sm, pid)) == 1
+
+
+def test_a_second_transaction_on_a_paid_payment_changes_nothing(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid)))
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), txn_id=777, is_voided=True))
+    payment = _payment(sm, pid)
+    assert payment.status is PaymentStatus.paid
+    assert payment.paymob_txn_id == 192036465
+    assert len(_grants(sm, pid)) == 1
+
+
+def test_a_voided_payment_ignores_a_late_success(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm, status=PaymentStatus.voided)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid)))
+    assert _payment(sm, pid).status is PaymentStatus.voided
+    assert _grants(sm, pid) == []
+
+
+def test_the_callback_never_commits_the_route_owns_the_transaction(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    with sm() as session:
+        BillingService(
+            session, FakePaymobClient(), PAYMOB_SETTINGS, now=lambda: FIXED_NOW
+        ).apply_transaction_callback(transaction_obj(merchant_order_id=str(pid)))
+        session.rollback()
+    assert _payment(sm, pid).status is PaymentStatus.created
+    assert _events(sm) == []
+    assert _grants(sm, pid) == []
+
+
+def test_a_stored_transaction_event_never_holds_a_raw_card_token(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    obj = transaction_obj(merchant_order_id=str(pid))
+    obj["source_data"]["token"] = "tok-in-transaction"
+    obj["order"]["items"].append({"name": "x", "card_token": "tok-nested"})
+    _apply(sm, obj)
+    (event,) = _events(sm)
+    payment = _payment(sm, pid)
+    assert "tok-in-transaction" not in str(event.payload)
+    assert "tok-nested" not in str(event.payload)
+    assert payment.last_callback is not None
+    assert "tok-in-transaction" not in str(payment.last_callback)
+    assert "tok-nested" not in str(payment.last_callback)
+
+
+def test_the_unknown_reference_event_is_redacted_too(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    obj = transaction_obj(merchant_order_id="nobody")
+    obj["source_data"]["token"] = "tok-orphan"
+    _apply(sm, obj)
+    (event,) = _events(sm)
+    assert "tok-orphan" not in str(event.payload)
+
+
+# -- R22: card tokens bound to their owner -------------------------------------
+
+
+def test_the_stored_token_opens_only_for_its_owner(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    payer, _ = _setup(sm)
+    other = seed_user(sm)
+    _apply_token(sm, token_obj(token="tok-owned"))
+    (card,) = _cards(sm)
+    cipher = TokenCipher(TEST_CARD_TOKEN_KEY)
+    assert cipher.decrypt(card.token, payer) == "tok-owned"
+    with pytest.raises(TokenCipherError):
+        cipher.decrypt(card.token, other)
+    assert card.token_fingerprint == cipher.fingerprint("tok-owned", payer)
+
+
+def test_a_ciphertext_moved_to_another_users_row_is_refused(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _setup(sm)
+    other = seed_user(sm)
+    _apply_token(sm, token_obj(token="tok-moved"))
+    (card,) = _cards(sm)
+    with sm() as session:
+        service = BillingService(session, FakePaymobClient(), PAYMOB_SETTINGS)
+        assert service.card_token(card) == "tok-moved"
+        card.user_id = other  # a database writer swaps the row's owner
+        with pytest.raises(TokenCipherError):
+            service.card_token(card)
+        session.rollback()
+
+
+def test_the_same_physical_card_for_two_users_is_two_rows_with_different_fingerprints(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    pack = seed_pack(sm)
+    a, b = seed_user(sm), seed_user(sm)
+    seed_payment(sm, payer=a, beneficiary=a, pack_id=pack, paymob_order_id=11)
+    seed_payment(sm, payer=b, beneficiary=b, pack_id=pack, paymob_order_id=22)
+    _apply_token(sm, token_obj(token_id=1, order_id="11", token="tok-shared"))
+    _apply_token(sm, token_obj(token_id=2, order_id="22", token="tok-shared"))
+    cards = {card.user_id: card for card in _cards(sm)}
+    assert set(cards) == {a, b}
+    assert cards[a].token_fingerprint != cards[b].token_fingerprint
+    service_cipher = TokenCipher(TEST_CARD_TOKEN_KEY)
+    assert service_cipher.decrypt(cards[a].token, a) == "tok-shared"
+    assert service_cipher.decrypt(cards[b].token, b) == "tok-shared"
+
+
+def test_the_same_card_for_the_same_user_keeps_a_stable_fingerprint(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _setup(sm)
+    _apply_token(sm, token_obj(token_id=1, token="tok-a"))
+    first = _cards(sm)[0].token_fingerprint
+    _apply_token(sm, token_obj(token_id=2, token="tok-a"))
+    (card,) = _cards(sm)
+    assert card.token_fingerprint == first
+
+
+def test_a_malformed_card_key_fails_the_token_callback_loudly(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _setup(sm)
+    bad = PAYMOB_SETTINGS.model_copy(update={"card_token_key": SecretStr("not-a-key")})
+    with pytest.raises(TokenCipherError):
+        _apply_token(sm, token_obj(), settings=bad)
+    assert _cards(sm) == []

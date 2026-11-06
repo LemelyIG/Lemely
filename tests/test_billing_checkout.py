@@ -15,6 +15,7 @@ from lemely.db.billing_repo import (
     CheckoutUnavailable,
     NotLinkedToBeneficiary,
     UnknownCreditPack,
+    _outcome_unknown,
     add_months,
     billing_data_for,
     grant_credit_pack,
@@ -25,7 +26,7 @@ from lemely.db.models import User
 from lemely.db.models.billing import Payment, PaymentPurpose, PaymentStatus
 from lemely.db.models.enums import Role
 from lemely.db.models.usage import GrantKind, UsageGrant
-from lemely.io.paymob.client import PaymobError
+from lemely.io.paymob.client import PaymobError, PaymobNotConfigured
 from lemely.runtime.config import PaymobSettings
 from lemely.runtime.token_cipher import TokenCipher, TokenCipherError
 from tests.paymob_fixtures import (
@@ -285,11 +286,12 @@ def test_a_duplicate_paid_callback_cannot_double_grant_even_with_a_different_clo
     pack = seed_pack(sm, units=40)
     payment_id = seed_payment(
         sm, payer=payer, beneficiary=payer, pack_id=pack, grant_units=40, status=PaymentStatus.paid
-    )  # paid_at unset: the handler falls back to the wall clock, which differs per call
-    for _ in range(3):
+    )
+    for day in (1, 2, 3):  # a different paid_at (clock) on every call
         with sm.begin() as session:
             payment = session.get(Payment, payment_id)
             assert payment is not None
+            payment.paid_at = datetime(2026, 11, day, tzinfo=UTC)
             grant_credit_pack(session, payment, {})
     with sm() as session:
         grants = session.scalars(
@@ -459,3 +461,105 @@ def test_billing_data_truncates_long_names_to_paymobs_limit() -> None:
     data = billing_data_for(user)
     assert len(data["first_name"]) == 50
     assert len(data["last_name"]) == 50
+
+
+def test_grant_credit_pack_never_falls_back_to_the_wall_clock(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    payer = seed_user(sm)
+    pack = seed_pack(sm)
+    payment_id = seed_payment(
+        sm, payer=payer, beneficiary=payer, pack_id=pack, status=PaymentStatus.paid
+    )  # paid_at unset: the service sets it from its injected clock before the handler runs
+    with sm.begin() as session:
+        payment = session.get(Payment, payment_id)
+        assert payment is not None
+        with pytest.raises(RuntimeError, match="paid_at"):
+            grant_credit_pack(session, payment, {})
+    with sm() as session:
+        assert session.scalars(sa.select(UsageGrant)).all() == []
+
+
+def test_a_paymob_not_configured_error_is_a_known_nothing_happened() -> None:
+    assert _outcome_unknown(PaymobNotConfigured("no secret key")) is False
+    assert _outcome_unknown(PaymobError("timeout", timeout=True)) is True
+    assert _outcome_unknown(PaymobError("transport")) is True
+    assert _outcome_unknown(PaymobError("400", status_code=400)) is False
+    assert _outcome_unknown(PaymobError("500", status_code=500)) is True
+    assert _outcome_unknown(PaymobError("201", status_code=201)) is True
+    assert _outcome_unknown(PaymobError("flagged", status_code=400, outcome_unknown=True)) is True
+
+
+def test_paymob_not_configured_during_checkout_fails_the_payment(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    payer = seed_user(sm)
+    pack = seed_pack(sm)
+    client = FakePaymobClient()
+    client.intention_response = PaymobNotConfigured("no secret key")
+    with sm() as session, pytest.raises(CheckoutUnavailable):
+        _service(session, client).create_pack_checkout(
+            payer_user_id=payer, beneficiary_user_id=payer, credit_pack_id=pack
+        )
+    with sm() as session:
+        (payment,) = session.scalars(sa.select(Payment)).all()
+        assert payment.status is PaymentStatus.failed
+        assert payment.next_reconcile_at is None
+
+
+def test_a_missing_client_secret_keeps_paymobs_intention_and_order_ids(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    payer = seed_user(sm)
+    pack = seed_pack(sm)
+    client = FakePaymobClient()
+    client.intention_response = {**INTENTION_RESPONSE, "client_secret": None}
+    with sm() as session, pytest.raises(CheckoutUnavailable):
+        _service(session, client).create_pack_checkout(
+            payer_user_id=payer, beneficiary_user_id=payer, credit_pack_id=pack
+        )
+    with sm() as session:
+        (payment,) = session.scalars(sa.select(Payment)).all()
+    assert payment.status is PaymentStatus.failed
+    assert payment.paymob_intention_id == str(INTENTION_RESPONSE["id"])
+    assert payment.paymob_order_id == INTENTION_RESPONSE["intention_order_id"]
+
+
+def test_checkout_items_must_add_up_to_the_payment_amount_before_anything_is_committed(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    payer = seed_user(sm)
+    pack = seed_pack(sm)
+    payment_id = uuid.uuid4()
+    client = FakePaymobClient()
+    with sm() as session:
+        payment = Payment(
+            id=payment_id,
+            payer_user_id=payer,
+            beneficiary_user_id=payer,
+            purpose=PaymentPurpose.credit_pack,
+            credit_pack_id=pack,
+            grant_units=100,
+            amount_minor=10000,
+            currency="EGP",
+            status=PaymentStatus.created,
+            special_reference=str(payment_id),
+        )
+        items = [
+            {"name": "a", "amount": 6000, "quantity": 1},
+            {"name": "b", "amount": 3999, "quantity": 1},
+        ]
+        with pytest.raises(ValueError, match="10000"):
+            _service(session, client).create_intention_checkout(
+                payment=payment,
+                items=items,
+                billing_data={},
+                subscription_plan_id=None,
+            )
+    assert client.intentions == []
+    with sm() as session:
+        assert session.scalars(sa.select(Payment)).all() == []

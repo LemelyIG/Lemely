@@ -9,13 +9,17 @@ seal. The stored form is ``"v1:" + urlsafe_b64(nonce || ciphertext||tag)``.
 * The master key is never used directly: HKDF-SHA256 derives an independent
   encryption key and an independent fingerprint key from it, so the two uses cannot
   interact.
-* The version prefix and a purpose label are bound into the GCM additional
-  authenticated data. A blob sealed for another purpose, or relabelled with another
-  version, fails authentication, and a later key-rotation scheme (``v2:``) can
+* The version prefix, a purpose label and the **owner's user id** are bound into the
+  GCM additional authenticated data (``b"lemely.card-token.v1:" + str(user_id)``). A
+  blob sealed for another purpose, relabelled with another version, or moved to
+  another user's row fails authentication, so a database writer cannot make one
+  user's card charge as another's, and a later key-rotation scheme (``v2:``) can
   coexist with old rows without guessing.
 * Because sealing is randomised, the same card arriving twice cannot be matched on
-  ciphertext. :meth:`TokenCipher.fingerprint` is an HMAC-SHA256 of the token under
-  the derived fingerprint key: deterministic, useless without the key.
+  ciphertext. :meth:`TokenCipher.fingerprint` is an HMAC-SHA256 of the owner's user
+  id and the token under the derived fingerprint key: deterministic per (owner,
+  card), useless without the key, and two users who share a card do not share a
+  fingerprint, so the column cannot link them.
 * Failures raise :class:`TokenCipherError` (a ``ValueError``) with fixed messages that
   never contain the token, the key or the ciphertext, and carry no ``__cause__`` or
   ``__context__``; ``repr`` shows no key material.
@@ -33,6 +37,7 @@ import binascii
 import hashlib
 import hmac
 import os
+import uuid
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes
@@ -50,6 +55,17 @@ _FINGERPRINT_INFO = b"lemely.card-token.fingerprint.v1"
 
 class TokenCipherError(ValueError):
     """Any key, format or authentication failure; messages never include secrets."""
+
+
+def _owner(user_id: uuid.UUID) -> bytes:
+    """The canonical, fixed-length (36 ASCII bytes) form of the owner id."""
+    if not isinstance(user_id, uuid.UUID):
+        raise TokenCipherError("card token owner must be a UUID")
+    return str(user_id).encode("ascii")
+
+
+def _aad(user_id: uuid.UUID) -> bytes:
+    return _AAD + b":" + _owner(user_id)
 
 
 def _b64decode(value: str) -> bytes | None:
@@ -91,14 +107,15 @@ class TokenCipher:
         """A fresh random key in the form ``card_token_key`` expects."""
         return base64.urlsafe_b64encode(os.urandom(_KEY_BYTES)).decode()
 
-    def encrypt(self, plaintext: str) -> str:
-        """Seal ``plaintext``; every call yields a different string."""
+    def encrypt(self, plaintext: str, user_id: uuid.UUID) -> str:
+        """Seal ``plaintext`` for ``user_id``; every call yields a different string."""
         nonce = os.urandom(_NONCE_BYTES)
-        sealed = self._aead.encrypt(nonce, plaintext.encode("utf-8"), _AAD)
+        sealed = self._aead.encrypt(nonce, plaintext.encode("utf-8"), _aad(user_id))
         return _VERSION + base64.urlsafe_b64encode(nonce + sealed).decode()
 
-    def decrypt(self, ciphertext: str) -> str:
-        """Open a value produced by :meth:`encrypt`; ``TokenCipherError`` on any failure."""
+    def decrypt(self, ciphertext: str, user_id: uuid.UUID) -> str:
+        """Open a value :meth:`encrypt` sealed for ``user_id``; ``TokenCipherError`` otherwise."""
+        aad = _aad(user_id)
         if not isinstance(ciphertext, str) or not ciphertext.startswith(_VERSION):
             raise TokenCipherError("unknown card token ciphertext format")
         raw = _b64decode(ciphertext[len(_VERSION) :])
@@ -108,16 +125,17 @@ class TokenCipher:
             raise TokenCipherError("card token ciphertext is truncated")
         plain: str | None
         try:
-            plain = self._aead.decrypt(raw[:_NONCE_BYTES], raw[_NONCE_BYTES:], _AAD).decode("utf-8")
+            plain = self._aead.decrypt(raw[:_NONCE_BYTES], raw[_NONCE_BYTES:], aad).decode("utf-8")
         except (InvalidTag, UnicodeDecodeError):
             plain = None
         if plain is None:
             raise TokenCipherError("card token could not be decrypted")
         return plain
 
-    def fingerprint(self, plaintext: str) -> str:
-        """Deterministic keyed digest used to recognise the same card twice."""
-        return hmac.new(self._mac_key, plaintext.encode("utf-8"), hashlib.sha256).hexdigest()
+    def fingerprint(self, plaintext: str, user_id: uuid.UUID) -> str:
+        """Deterministic keyed digest used to recognise ``user_id``'s same card twice."""
+        message = _owner(user_id) + b":" + plaintext.encode("utf-8")
+        return hmac.new(self._mac_key, message, hashlib.sha256).hexdigest()
 
 
 __all__ = ["TokenCipher", "TokenCipherError"]

@@ -31,6 +31,7 @@ from urllib.parse import urlencode
 
 import structlog
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from lemely.db.models import ParentChildLink, User
 from lemely.db.models.billing import (
@@ -38,8 +39,11 @@ from lemely.db.models.billing import (
     Payment,
     PaymentPurpose,
     PaymentStatus,
+    PaymobEvent,
+    PaymobEventKind,
     PlanAudience,
     PlanTier,
+    SavedCard,
 )
 from lemely.db.models.usage import GrantKind
 from lemely.db.usage_ledger_repo import UsageLedger
@@ -59,6 +63,12 @@ INTENTION_EXPIRATION_SECONDS: Final = 3600
 RECONCILE_AFTER: Final = timedelta(minutes=15)
 WEBHOOK_PATH: Final = "/api/webhooks/paymob/transaction"
 RETURN_PATH: Final = "/billing/return"
+
+_OPEN: Final = (PaymentStatus.created, PaymentStatus.pending)
+_SETTLED: Final = (PaymentStatus.paid, PaymentStatus.partially_refunded, PaymentStatus.refunded)
+_REDACTED: Final = "[redacted]"
+# Keys whose value is a raw card token wherever they appear in a stored payload.
+_TOKEN_KEYS: Final = frozenset({"token", "card_token", "saved_card_token"})
 
 #: A decoded Paymob JSON object (callback ``obj``, intention item or billing data).
 JsonMap = Mapping[str, Any]  # type: ignore[explicit-any]
@@ -169,12 +179,16 @@ def billing_data_for(user: User) -> dict[str, str]:
 def _outcome_unknown(exc: PaymobError) -> bool:
     """True when Paymob may have applied the call: never read this as a decline.
 
-    No usable answer (``status_code is None``) or an explicit ``outcome_unknown``
-    is unknown by the client's contract. Only a received 4xx is a definite
-    rejection: a 5xx (a gateway error does not say whether the order was created)
-    or a 2xx we could not use is unknown even where the client did not flag it.
+    The client's own ``outcome_unknown`` flag is authoritative: it is set when no
+    usable answer came back, and cleared for ``PaymobNotConfigured`` (raised
+    before anything was sent, so nothing happened). Beyond that, only a received
+    4xx is a definite rejection: a 5xx (a gateway error does not say whether the
+    order was created) or a 2xx we could not use is unknown even where the client
+    did not flag it.
     """
-    return exc.outcome_unknown or exc.status_code is None or not 400 <= exc.status_code < 500
+    if exc.outcome_unknown:
+        return True
+    return exc.status_code is not None and not 400 <= exc.status_code < 500
 
 
 def _as_int(value: object) -> int | None:
@@ -204,6 +218,30 @@ def transaction_dedupe_key(obj: JsonMap) -> str:
     )
 
 
+def _redact_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            key: _REDACTED if key in _TOKEN_KEYS and item is not None else _redact_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact_value(item) for item in value]
+    return value
+
+
+def _redact_tokens(obj: JsonMap) -> dict[str, object]:
+    """A deep copy of ``obj`` with every raw card token replaced (spec §7).
+
+    Stored payloads (``paymob_events.payload``, ``payments.last_callback``) are
+    readable by support and admin tools; the token is a credential that can charge
+    the card, so it never reaches them, whichever callback it arrives in.
+    """
+    return {
+        key: _REDACTED if key in _TOKEN_KEYS and item is not None else _redact_value(item)
+        for key, item in obj.items()
+    }
+
+
 # ---------------------------------------------------------------------------
 # Paid handler: credit packs (spec §5.5).
 # ---------------------------------------------------------------------------
@@ -213,7 +251,11 @@ def grant_credit_pack(session: Session, payment: Payment, obj: JsonMap) -> None:
     """Issue the beneficiary's visible credit grant, expiring 12 months after payment."""
     if payment.grant_units is None:
         raise RuntimeError(f"credit pack payment {payment.id} has no grant_units snapshot")
-    paid_at = payment.paid_at or _utcnow()
+    # ``paid_at`` is set from the service's injected clock before any handler runs;
+    # a wall-clock fallback here would make the expiry and a replay disagree.
+    paid_at = payment.paid_at
+    if paid_at is None:
+        raise RuntimeError(f"credit pack payment {payment.id} has no paid_at")
     UsageLedger(session).issue_grant(
         owner_user_id=payment.beneficiary_user_id,
         kind=GrantKind.credit_pack,
@@ -418,6 +460,13 @@ class BillingService:
         """
         if not self._settings.checkout_configured:
             raise CheckoutUnavailable("Paymob checkout is not configured")
+        item_total = sum(_as_int(item.get("amount")) or 0 for item in items)
+        if item_total != payment.amount_minor:
+            # Paymob rejects a mismatch, and a mismatched row would sit open until reconciled.
+            raise ValueError(
+                f"checkout items add up to {item_total}, "
+                f"not the payment amount {payment.amount_minor}"
+            )
         if payment.next_reconcile_at is None:
             payment.next_reconcile_at = self._now() + RECONCILE_AFTER
         self._session.add(payment)
@@ -454,14 +503,16 @@ class BillingService:
                 outcome_unknown=unknown,
             )
             raise CheckoutUnavailable("Paymob is unavailable") from exc
+        # Paymob created an order even when the response is unusable: keep its ids
+        # on the row so support and reconciliation can find it.
+        intention_id = response.get("id")
+        payment.paymob_intention_id = str(intention_id) if intention_id else None
+        payment.paymob_order_id = _as_int(response.get("intention_order_id"))
         client_secret = response.get("client_secret")
         if not isinstance(client_secret, str) or not client_secret:
             self._fail_checkout(payment, "intention response had no client_secret", None)
             log.warning("paymob_intention_without_secret", payment_id=str(payment.id))
             raise CheckoutUnavailable("Paymob returned no client secret")
-        intention_id = response.get("id")
-        payment.paymob_intention_id = str(intention_id) if intention_id else None
-        payment.paymob_order_id = _as_int(response.get("intention_order_id"))
         self._session.commit()
         query = urlencode(
             {"publicKey": self._settings.public_key or "", "clientSecret": client_secret}
@@ -493,6 +544,244 @@ class BillingService:
             "outcome_unknown": True,
         }
         self._session.commit()
+
+    # -- callbacks ------------------------------------------------------------
+
+    def apply_transaction_callback(self, obj: JsonMap) -> None:
+        """Apply a HMAC-verified transaction callback ``obj`` (spec §5.1 step 4, §6).
+
+        Never commits: the webhook route's ``sessionmaker.begin()`` owns the
+        transaction and answers 200 only after it commits.
+        """
+        self._apply_transaction(obj, source="callback")
+
+    def _record_event(self, kind: PaymobEventKind, dedupe_key: str, payload: JsonMap) -> bool:
+        """Insert the event once; False when ``dedupe_key`` was already recorded.
+
+        ``payload`` is stored as given: callers pass it already redacted.
+        """
+        inserted = self._session.execute(
+            pg_insert(PaymobEvent)
+            .values(
+                kind=kind, dedupe_key=dedupe_key, payload=dict(payload), processed_at=self._now()
+            )
+            .on_conflict_do_nothing(index_elements=[PaymobEvent.dedupe_key])
+            .returning(PaymobEvent.id)
+        ).scalar_one_or_none()
+        return inserted is not None
+
+    def _payment_for_reference(self, reference: object) -> Payment | None:
+        if not isinstance(reference, str) or not reference:
+            return None
+        return self._session.scalars(
+            select(Payment).where(Payment.special_reference == reference).with_for_update()
+        ).one_or_none()
+
+    def _apply_transaction(
+        self, obj: JsonMap, *, source: str, payment: Payment | None = None
+    ) -> None:
+        """Verify, dedupe and apply one transaction ``obj`` (callback or inquiry).
+
+        ``payment`` is passed by reconciliation, which already holds its row lock.
+        """
+        txn_id = _as_int(obj.get("id"))
+        if txn_id is None:
+            raise MalformedCallback("transaction callback has no integer id")
+        safe = _redact_tokens(obj)
+        if not self._record_event(PaymobEventKind.transaction, transaction_dedupe_key(obj), safe):
+            log.info("paymob_duplicate_transaction", txn_id=txn_id, source=source)
+            return
+        order = obj.get("order")
+        order_map: JsonMap = order if isinstance(order, Mapping) else {}
+        if payment is None:
+            payment = self._payment_for_reference(order_map.get("merchant_order_id"))
+        if payment is None:
+            log.warning(
+                "paymob_unknown_reference",
+                merchant_order_id=str(order_map.get("merchant_order_id"))[:64],
+                txn_id=txn_id,
+                source=source,
+            )
+            return
+        if (
+            _is_true(obj.get("is_refund"))
+            or _is_true(obj.get("is_void"))
+            or _is_true(obj.get("has_parent_transaction"))
+        ):
+            # A refund/void child; the parent's own callback carries the state.
+            log.info("paymob_child_transaction", payment_id=str(payment.id), txn_id=txn_id)
+            return
+        if payment.status in _SETTLED:
+            self._apply_post_payment_flags(payment, obj, safe, txn_id=txn_id)
+            return
+        if payment.status in (PaymentStatus.failed_mismatch, PaymentStatus.voided):
+            log.warning(
+                "paymob_callback_for_closed_payment",
+                payment_id=str(payment.id),
+                status=payment.status.value,
+                txn_id=txn_id,
+            )
+            return
+
+        # Open (created/pending) or failed: a failed payment can still become paid on a
+        # later verified success (R20b), and the grant's idempotency key keeps that to one.
+        payment.last_callback = safe
+        payment.paymob_txn_id = txn_id
+        if payment.paymob_order_id is None:
+            payment.paymob_order_id = _as_int(order_map.get("id"))
+        source_data = obj.get("source_data")
+        if isinstance(source_data, Mapping) and isinstance(source_data.get("type"), str):
+            payment.method = source_data["type"]
+
+        amount = _as_int(obj.get("amount_cents"))
+        currency = obj.get("currency")
+        if amount != payment.amount_minor or currency != payment.currency:
+            payment.status = PaymentStatus.failed_mismatch
+            payment.next_reconcile_at = None
+            log.error(
+                "paymob_amount_mismatch",
+                payment_id=str(payment.id),
+                txn_id=txn_id,
+                expected_amount=payment.amount_minor,
+                received_amount=amount,
+                expected_currency=payment.currency,
+                received_currency=str(currency)[:8],
+                source=source,
+            )
+            return
+
+        succeeded = (
+            obj.get("success") is True
+            and obj.get("pending") is False
+            and not _is_true(obj.get("is_voided"))
+            and not _is_true(obj.get("is_refunded"))
+            and not _is_true(obj.get("error_occured"))
+        )
+        if succeeded:
+            handler = _PAID_HANDLERS.get(payment.purpose)
+            if handler is None:
+                raise RuntimeError(f"no paid handler registered for {payment.purpose.value}")
+            payment.status = PaymentStatus.paid
+            payment.paid_at = self._now()
+            payment.next_reconcile_at = None
+            handler(self._session, payment, obj)
+            log.info(
+                "paymob_payment_paid",
+                payment_id=str(payment.id),
+                purpose=payment.purpose.value,
+                txn_id=txn_id,
+                source=source,
+            )
+        elif obj.get("pending") is True and payment.status in _OPEN:
+            payment.status = PaymentStatus.pending
+        elif obj.get("pending") is True:
+            # A failed payment is not reopened by a pending callback.
+            log.info("paymob_pending_after_failure", payment_id=str(payment.id), txn_id=txn_id)
+        else:
+            payment.status = PaymentStatus.failed
+            payment.next_reconcile_at = None
+            log.info(
+                "paymob_payment_failed", payment_id=str(payment.id), txn_id=txn_id, source=source
+            )
+
+    def _apply_post_payment_flags(
+        self, payment: Payment, obj: JsonMap, safe: JsonMap, *, txn_id: int
+    ) -> None:
+        """Mirror a refund or void on an already-paid payment (no grant changes here)."""
+        if txn_id != payment.paymob_txn_id:
+            log.warning(
+                "paymob_second_transaction_on_paid_payment",
+                payment_id=str(payment.id),
+                txn_id=txn_id,
+            )
+            return
+        payment.last_callback = dict(safe)
+        if _is_true(obj.get("is_voided")):
+            payment.status = PaymentStatus.voided
+        elif _is_true(obj.get("is_refunded")):
+            refunded = _as_int(obj.get("refunded_amount_cents")) or 0
+            payment.status = (
+                PaymentStatus.refunded
+                if refunded >= payment.amount_minor
+                else PaymentStatus.partially_refunded
+            )
+        else:
+            return
+        log.warning(
+            "paymob_payment_reversed",
+            payment_id=str(payment.id),
+            status=payment.status.value,
+            txn_id=txn_id,
+        )
+
+    def apply_token_callback(self, obj: JsonMap) -> None:
+        """Store or refresh the payer's saved card from a verified TOKEN callback (§5.5).
+
+        Never commits. The token is sealed for, and fingerprinted under, the payer's
+        user id (R22), and the stored event never holds the raw token.
+        """
+        token_id = _as_int(obj.get("id"))
+        token = obj.get("token")
+        if token_id is None or not isinstance(token, str) or not token:
+            raise MalformedCallback("token callback lacks an id or a token")
+        payload = _redact_tokens({**dict(obj), "token": _REDACTED})
+        dedupe_key = f"token:{token_id}:{obj.get('order_id')}"
+        if not self._record_event(PaymobEventKind.token, dedupe_key, payload):
+            log.info("paymob_duplicate_token", token_id=token_id)
+            return
+        order_id = _as_int(obj.get("order_id"))
+        payment = (
+            self._session.scalars(
+                select(Payment).where(Payment.paymob_order_id == order_id)
+            ).one_or_none()
+            if order_id is not None
+            else None
+        )
+        if payment is None:
+            log.warning("paymob_token_unknown_order", order_id=str(obj.get("order_id"))[:32])
+            return
+        cipher = self.cipher
+        if cipher is None:
+            log.warning("paymob_token_not_stored_no_key", payment_id=str(payment.id))
+            return
+        owner = payment.payer_user_id
+        fingerprint = cipher.fingerprint(token, owner)
+        masked_pan = str(obj.get("masked_pan") or "")
+        subtype = obj.get("card_subtype")
+        brand = subtype if isinstance(subtype, str) else None
+        card = self._session.scalars(
+            select(SavedCard).where(
+                SavedCard.user_id == owner, SavedCard.token_fingerprint == fingerprint
+            )
+        ).one_or_none()
+        if card is None:
+            self._session.add(
+                SavedCard(
+                    user_id=owner,
+                    token=cipher.encrypt(token, owner),
+                    token_fingerprint=fingerprint,
+                    masked_pan=masked_pan,
+                    brand=brand,
+                    paymob_token_id=token_id,
+                )
+            )
+        else:
+            card.masked_pan = masked_pan
+            card.brand = brand
+            card.paymob_token_id = token_id
+            card.is_active = True
+        log.info("paymob_card_saved", payment_id=str(payment.id), user_id=str(owner))
+
+    def card_token(self, card: SavedCard) -> str:
+        """The decrypted token for a merchant-initiated charge (Phase 06).
+
+        Opens only for the row's own ``user_id``; a ciphertext moved to another
+        user's row raises ``TokenCipherError``.
+        """
+        cipher = self.cipher
+        if cipher is None:
+            raise BillingError("card token key is not configured")
+        return cipher.decrypt(card.token, card.user_id)
 
 
 __all__ = [
