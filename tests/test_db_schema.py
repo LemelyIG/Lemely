@@ -112,6 +112,14 @@ EXPECTED_TABLES = {
     "tutor_access_audit",
     "tutoring_reports",
     "tutoring_blocks",
+    # Usage ledger (lemely/db/models/usage.py, migration 0052).
+    "usage_rates",
+    "usage_estimators",
+    "usage_grants",
+    "usage_grant_balances",
+    "usage_jobs",
+    "usage_entries",
+    "usage_debts",
 }
 
 # Tables deliberately excluded from `test_every_model_has_timestamps` below.
@@ -133,6 +141,8 @@ EXPECTED_TABLES = {
 # (``tests/test_db_tutoring_schema.py`` asserts they have no ``updated_at``).
 # ``tutor_evidence_uploads`` (migration 0051, T30 F30-5) is a fifth append-only log
 # of the same shape: one row per T6 upload attempt, never updated.
+# ``usage_entries`` (migration 0052) is the usage ledger: a trigger rejects every
+# UPDATE and DELETE, so it carries ``created_at`` (and ``event_at``) only.
 TABLES_WITHOUT_TIMESTAMPS = {
     "otp_challenges",
     "auth_cooldowns",
@@ -142,6 +152,7 @@ TABLES_WITHOUT_TIMESTAMPS = {
     "parent_link_events",
     "tutor_access_audit",
     "tutor_evidence_uploads",
+    "usage_entries",
 }
 
 
