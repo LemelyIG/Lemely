@@ -36,7 +36,7 @@ from tests.usage_db import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Sequence
 
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -354,6 +354,56 @@ def test_closing_a_job_whose_chain_no_longer_reaches_its_holds_raises(
         UsageLedger(session).release(job_id, now=NOW)
     assert balance(sm, gid) == (30, 10)  # the failed close rolled back
     assert job(sm, job_id).status is UsageJobStatus.open
+
+
+def test_a_failed_close_leaves_no_pending_writes_in_the_session(
+    sm: sessionmaker[Session],
+) -> None:
+    """The chain reaches the seat grant (released first) but not the teacher's credits."""
+    student, teacher, member = add_user(sm), add_user(sm, Role.teacher), uuid.uuid4()
+    seat = grant(sm, student, 5, kind=GrantKind.seat_allowance, teacher_member_id=member)
+    credits = grant(sm, teacher, 50, kind=GrantKind.credit_pack, visible=True)
+    chain = seat_chain(student, teacher, member, cap=100)
+    job_id = reserve(sm, chain, 10, actor=student, teacher_member_id=member)
+    assert (balance(sm, seat), balance(sm, credits)) == ((5, 5), (50, 5))
+    with sm.begin() as session:
+        session.execute(
+            sa.update(UsageJob)
+            .where(UsageJob.job_id == job_id)
+            .values(payer_chain=[payer_to_json(chain[0])])
+        )
+    with sm.begin() as session:
+        with pytest.raises(RuntimeError, match="no longer reaches"):
+            UsageLedger(session).release(job_id, now=NOW)
+        # Validation runs before any release entry or ``held`` change is staged.
+        assert not session.new
+        assert not session.dirty
+    assert (balance(sm, seat), balance(sm, credits)) == ((5, 5), (50, 5))
+    assert job(sm, job_id).status is UsageJobStatus.open
+
+
+def test_expire_stale_jobs_counts_only_the_jobs_it_closed(
+    sm: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another transaction expires one job between the candidate read and the lock."""
+    owner = add_user(sm)
+    gid = grant(sm, owner, 100)
+    stolen = reserve(sm, own_chain(owner), 10, expires_at=NOW + timedelta(minutes=1))
+    mine = reserve(sm, own_chain(owner), 10, expires_at=NOW + timedelta(minutes=2))
+    real_lock = UsageLedger._lock_owners
+
+    def lock_after_a_rival_sweep(self: UsageLedger, owner_ids: Sequence[uuid.UUID]) -> None:
+        monkeypatch.setattr(UsageLedger, "_lock_owners", real_lock)
+        with sm.begin() as rival:
+            assert UsageLedger(rival).expire_stale_jobs(now=NOW + timedelta(seconds=90)) == 1
+        real_lock(self, owner_ids)
+
+    monkeypatch.setattr(UsageLedger, "_lock_owners", lock_after_a_rival_sweep)
+    with sm.begin() as session:
+        assert UsageLedger(session).expire_stale_jobs(now=NOW + timedelta(minutes=10)) == 1
+    assert job(sm, stolen).status is UsageJobStatus.expired
+    assert job(sm, mine).status is UsageJobStatus.expired
+    assert balance(sm, gid) == (100, 0)
 
 
 def test_sweeper_and_reserve_over_the_same_owners_do_not_deadlock(

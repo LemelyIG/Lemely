@@ -17,13 +17,14 @@ The balance cache and the entries change together under those locks, so
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 
-from lemely.core.usage_pricing import GRANT_PRIORITY
+from lemely.core.usage_pricing import GRANT_PRIORITY, usd_to_units
 from lemely.core.usage_types import GrantScope, Payer, payer_from_json, payer_to_json
 from lemely.db.models.usage import (
     GrantKind,
@@ -34,11 +35,13 @@ from lemely.db.models.usage import (
     UsageGrantBalance,
     UsageJob,
     UsageJobStatus,
+    UsageRate,
 )
 
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Sequence
+    from decimal import Decimal
 
     from sqlalchemy.orm import Session
 
@@ -515,7 +518,7 @@ class UsageLedger:
 
     def release(self, job_id: uuid.UUID, *, now: datetime) -> UsageJob:
         """Free every hold of a failed job at no charge (§5.7 step 6)."""
-        return self._close(job_id, UsageJobStatus.released, now)
+        return self._close(job_id, UsageJobStatus.released, now)[0]
 
     def expire_stale_jobs(self, *, now: datetime) -> int:
         """Release open jobs past ``expires_at`` and mark them expired (§5.7 step 7)."""
@@ -530,7 +533,9 @@ class UsageLedger:
         self._lock_owners([payer_from_json(p).owner_user_id for _, chain in rows for p in chain])
         expired = 0
         for job_id, _chain in rows:
-            if self._close(job_id, UsageJobStatus.expired, now).status is UsageJobStatus.expired:
+            # Count only the jobs this sweep closed: another transaction may have
+            # released, settled or expired one between the candidate read and the lock.
+            if self._close(job_id, UsageJobStatus.expired, now)[1]:
                 expired += 1
         return expired
 
@@ -558,25 +563,115 @@ class UsageLedger:
         ).all()
         return {gid: int(total) for gid, total in rows if gid is not None and total}
 
-    def _close(self, job_id: uuid.UUID, status: UsageJobStatus, now: datetime) -> UsageJob:
+    def _close(
+        self, job_id: uuid.UUID, status: UsageJobStatus, now: datetime
+    ) -> tuple[UsageJob, bool]:
+        """Release every hold and move an open job to ``status``.
+
+        Returns the job and whether this call changed it: a job that is no longer
+        open (closed by a concurrent transaction) is left alone and reported as
+        unchanged.
+        """
         job, payers = self._locked_job(job_id)
         if job.status is not UsageJobStatus.open:
-            return job
+            return job, False
         holds = self._job_holds(job_id)
-        released: set[uuid.UUID] = set()
-        for slot in self._slots(payers, now=now, lock=True, include=set(holds)):
-            held = holds.get(slot.grant.id, 0)
-            if held:
+        slots = self._slots(payers, now=now, lock=True, include=set(holds))
+        self._require_reachable(job_id, holds, slots)
+        for slot in slots:
+            if held := holds.get(slot.grant.id, 0):
                 self._release_slot(slot, held, job, now)
-                released.add(slot.grant.id)
-        if stranded := set(holds) - released:
+        job.status = status
+        self._session.flush()
+        return job, True
+
+    @staticmethod
+    def _require_reachable(
+        job_id: uuid.UUID, holds: dict[uuid.UUID, int], slots: Sequence[_Slot]
+    ) -> None:
+        """Raise before any write when the chain cannot reach a grant the job holds."""
+        reached = {slot.grant.id for slot in slots}
+        if stranded := set(holds) - reached:
             raise RuntimeError(
                 f"usage job {job_id} holds units on grants {sorted(stranded)} "
                 "that its payer chain no longer reaches"
             )
-        job.status = status
+
+    def settle(self, job_id: uuid.UUID, *, actual_cost_usd: Decimal, now: datetime) -> UsageJob:
+        """Charge the actual cost (§5.7 step 5). A job no longer open is returned unchanged.
+
+        Holds are released and charged first, in chain order; any rest keeps drawing
+        down the stored chain (skipping indebted non-exempt payers, within caps); what
+        is still left becomes a debt on the payer of last resort. Takes the same
+        owner and job locks as :meth:`release`, so a concurrent release or sweep either
+        finishes first (settle is then a no-op) or waits for this one.
+        """
+        job, payers = self._locked_job(job_id)
+        if job.status is not UsageJobStatus.open:
+            return job
+        units_per_usd = self._session.scalar(
+            sa.select(UsageRate.units_per_usd).where(
+                UsageRate.version == job.rate_version, UsageRate.action == job.action
+            )
+        )
+        if units_per_usd is None:
+            raise LookupError(f"no usage rate for version {job.rate_version}, {job.action!r}")
+        need = usd_to_units(actual_cost_usd, units_per_usd)
+        charged = need
+        holds = self._job_holds(job_id)
+        slots = self._slots(payers, now=now, lock=True, include=set(holds))
+        self._require_reachable(job_id, holds, slots)
+        settled: dict[uuid.UUID, int] = defaultdict(int)
+        # Release every hold, then charge the held grants first, in chain order.
+        for slot in slots:
+            held = holds.get(slot.grant.id, 0)
+            if held == 0:
+                continue
+            self._release_slot(slot, held, job, now)
+            take = min(held, need)
+            if take:
+                slot.taken += take
+                settled[slot.grant.id] += take
+                need -= take
+        if need:
+            for slot, take in self._walk(slots, need, payers, now=now, after_release=True):
+                settled[slot.grant.id] += take
+                need -= take
+        if need:
+            self._create_debt(payers[-1].owner_user_id, need, job, now)
+        for slot in slots:
+            amount = settled.get(slot.grant.id, 0)
+            if amount:
+                self._entry(
+                    kind=UsageEntryKind.settle,
+                    units=-amount,
+                    event_at=now,
+                    key=f"job:{job_id}",
+                    grant_id=slot.grant.id,
+                    job=job,
+                    payer=slot.payer,
+                )
+                slot.balance.remaining -= amount
+        job.status = UsageJobStatus.settled
+        job.charged = charged
+        job.debt_created = need
+        job.actual_cost_usd = actual_cost_usd
+        job.settled_at = now
         self._session.flush()
         return job
+
+    def _create_debt(
+        self, owner_user_id: uuid.UUID, units: int, job: UsageJob, now: datetime
+    ) -> None:
+        debt = self._open_debt(owner_user_id, units, job_id=job.job_id)
+        self._entry(
+            kind=UsageEntryKind.debt,
+            units=-units,
+            event_at=now,
+            key=f"job:{job.job_id}",
+            debt_id=debt.id,
+            job=job,
+        )
 
     def _release_slot(self, slot: _Slot, held: int, job: UsageJob, now: datetime) -> None:
         self._entry(
