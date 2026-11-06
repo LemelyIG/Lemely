@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
 import { lazy, Suspense, useState } from "react"
-import { Link, useLocation } from "react-router-dom"
+import { Link, Navigate, useLocation } from "react-router-dom"
 import {
   SquaresFour,
   Armchair,
@@ -14,6 +14,7 @@ import {
   GraduationCap,
   ChatText,
   Flag,
+  Receipt,
   type Icon,
 } from "@phosphor-icons/react"
 import { useQueryClient } from "@tanstack/react-query"
@@ -87,6 +88,13 @@ const TutoringReportDetail = lazy(() =>
   import("./screens/tutoring/ReportDetail").then((m) => ({ default: m.ReportDetail })),
 )
 
+const BillingLayout = lazy(() =>
+  import("./screens/billing/BillingLayout").then((m) => ({ default: m.BillingLayout })),
+)
+const BillingCatalogue = lazy(() =>
+  import("./screens/billing/Catalogue").then((m) => ({ default: m.Catalogue })),
+)
+
 const NAV_ICON: Record<AdminNavItem["icon"], Icon> = {
   dashboard: SquaresFour,
   // A seat is a chair. The glyph is the literal object the quota counts, which
@@ -100,6 +108,7 @@ const NAV_ICON: Record<AdminNavItem["icon"], Icon> = {
   tutors: GraduationCap,
   moderation: ChatText,
   reports: Flag,
+  billing: Receipt,
 }
 
 /*
@@ -436,6 +445,16 @@ export const platformAdminRoute: RouteObject = {
       path: "schools",
       element: <Schools />,
       handle: { title: "Platform schools", skeleton: "page-header" },
+    },
+    // Billing (Paymob phase 08, spec §8). Inherits the platform_admin guard.
+    {
+      path: "billing",
+      element: <BillingLayout />,
+      handle: { title: "Platform billing", skeleton: "page-header" },
+      children: [
+        { index: true, element: <Navigate to="catalogue" replace /> },
+        { path: "catalogue", element: <BillingCatalogue />, handle: { title: "Billing catalogue", skeleton: "page-header" } },
+      ],
     },
     {
       path: "activations",

@@ -2,6 +2,7 @@ import { isLiveSubscription } from "@/lib/billingFormat"
 import {
   TEAM_PERMISSIONS,
   USAGE_BLOCK_REASONS,
+  type AdminCatalogue,
   type AssistantRow,
   type AutoTopupSettings,
   type BillingInterval,
@@ -12,6 +13,7 @@ import {
   type EstimateResponse,
   type HeldPlanTier,
   type MeteredAction,
+  type PaymobDrift,
   type PlanTier,
   type SeatRow,
   type SavedCardView,
@@ -21,6 +23,7 @@ import {
   type UsageJobRow,
   type UsageJobStatus,
   type UsageMeterView,
+  type WireAdminCatalogue,
   type WireAssistant,
   type WireAssistantInvite,
   type WireAutoTopup,
@@ -231,5 +234,46 @@ export function toTeamView(p: TeamParts): TeamView {
     seats: p.seats.seats.map(toSeatRow),
     assistants: p.assistants.assistants.map(toAssistantRow),
     invites: p.invites.invites,
+  }
+}
+
+const DRIFT: Record<PaymobDrift, string | null> = {
+  in_sync: null,
+  not_synced: "Not synced to Paymob yet",
+  unverified: "Paymob plan not checked",
+  drifted: "Paymob plan differs from the catalogue",
+}
+
+export function toAdminCatalogue(w: WireAdminCatalogue): AdminCatalogue {
+  const free = (a: "student" | "teacher") => w.freeAllowances.find((f) => f.audience === a)
+  return {
+    tiers: w.planTiers.map((t) => {
+      const teacher = t.audience === "teacher"
+      return {
+        id: t.id,
+        code: t.code,
+        name: t.name,
+        audience: teacher ? "teacher" : "student",
+        interval: t.interval === "yearly" ? "year" : t.interval === "monthly" ? "month" : null,
+        priceMinor: t.priceMinor,
+        currency: t.currency,
+        allowanceUnits: t.allowanceUnits,
+        includedSeats: teacher ? t.includedSeats : null,
+        seatAllowanceUnits: teacher ? t.seatAllowanceUnits : null,
+        extraSeatPriceMinor: teacher ? t.extraSeatPriceMinor : null,
+        features: featureLines(t.features),
+        isActive: t.isActive,
+        paymobPlanId: t.paymobPlanId,
+        drift: DRIFT[t.paymobDrift],
+      }
+    }),
+    packs: w.creditPacks,
+    rates: w.usageRates,
+    estimators: w.usageEstimators,
+    freeAllowances: {
+      studentSignupUnits: free("student")?.units ?? 0,
+      teacherSignupUnits: free("teacher")?.units ?? 0,
+      teacherSignupExpiryDays: free("teacher")?.validDays ?? null,
+    },
   }
 }

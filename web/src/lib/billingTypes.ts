@@ -643,3 +643,477 @@ export interface TeamMembership {
   teacherName: string
   role: AssistantRole
 }
+
+// ── Admin billing (plan 07) ─────────────────────────────────────────────────
+
+export type PaymobDrift = "in_sync" | "not_synced" | "unverified" | "drifted"
+export type EstimatorInputKind = "pages" | "marks" | "questions" | "none"
+
+/** 07 `PlanTierDTO` (admin). */
+export interface WireAdminPlanTier {
+  id: string
+  code: string
+  name: string
+  audience: string
+  interval: "monthly" | "yearly" | null
+  priceMinor: number
+  currency: string
+  allowanceUnits: number
+  includedSeats: number
+  seatAllowanceUnits: number
+  extraSeatPriceMinor: number
+  features: Record<string, unknown>
+  isActive: boolean
+  paymobPlanId: number | null
+  paymobDrift: PaymobDrift
+}
+
+/** 07 `CreditPackDTO` (admin). */
+export interface AdminCreditPack {
+  id: string
+  code: string
+  name: string
+  units: number
+  priceMinor: number
+  currency: string
+  isActive: boolean
+}
+
+/** 07 `FreeAllowanceDTO` (the inactive signup packs, index R11). */
+export interface WireFreeAllowance {
+  audience: "student" | "teacher"
+  creditPackId: string
+  units: number
+  validDays: number | null
+}
+
+/** 07 `UsageRateDTO`. */
+export interface UsageRateRow {
+  id: string
+  version: number
+  action: MeteredAction
+  unitsPerUsd: number
+  effectiveFrom: string
+}
+
+/** 07 `UsageEstimatorDTO`. */
+export interface EstimatorRow {
+  id: string
+  version: number
+  action: MeteredAction
+  inputKind: EstimatorInputKind
+  baseLow: number
+  baseHigh: number
+  perInputLow: number
+  perInputHigh: number
+  effectiveFrom: string
+}
+
+/** 07 `AdminCatalogueDTO`. */
+export interface WireAdminCatalogue {
+  planTiers: WireAdminPlanTier[]
+  creditPacks: AdminCreditPack[]
+  freeAllowances: WireFreeAllowance[]
+  usageRates: UsageRateRow[]
+  usageEstimators: EstimatorRow[]
+}
+
+export interface Reasoned {
+  reason: string
+}
+
+/** 07 `PlanTierCreateDTO`. */
+export interface TierCreate extends Reasoned {
+  code: string
+  name: string
+  audience: Audience
+  interval: "monthly" | "yearly"
+  priceMinor: number
+  currency: "EGP"
+  allowanceUnits: number
+  includedSeats: number
+  seatAllowanceUnits: number
+  extraSeatPriceMinor: number
+  features: Record<string, boolean>
+  isActive: boolean
+}
+
+/** 07 `PlanTierUpdateDTO`: every editable field, all required. */
+export interface TierUpdate extends Reasoned {
+  name: string
+  priceMinor: number
+  allowanceUnits: number
+  includedSeats: number
+  seatAllowanceUnits: number
+  extraSeatPriceMinor: number
+  features: Record<string, boolean>
+  isActive: boolean
+}
+
+/** 07 `CreditPackCreateDTO`. */
+export interface PackCreate extends Reasoned {
+  code: string
+  name: string
+  units: number
+  priceMinor: number
+  currency: "EGP"
+  isActive: boolean
+}
+
+/** 07 `CreditPackUpdateDTO`: every editable field, all required. */
+export interface PackUpdate extends Reasoned {
+  name: string
+  units: number
+  priceMinor: number
+  isActive: boolean
+}
+
+/** 07 `FreeAllowanceUpdateDTO` (one audience per request). */
+export interface FreeAllowanceUpdate extends Reasoned {
+  audience: "student" | "teacher"
+  units: number
+}
+
+/** 07 `UsageRateVersionDTO`. */
+export interface RateCreate extends Reasoned {
+  action: MeteredAction
+  unitsPerUsd: number
+  effectiveFrom: string | null
+}
+
+/** 07 `UsageEstimatorVersionDTO`. */
+export interface EstimatorCreate extends Reasoned {
+  action: MeteredAction
+  inputKind: EstimatorInputKind
+  baseLow: number
+  baseHigh: number
+  perInputLow: number
+  perInputHigh: number
+  effectiveFrom: string | null
+}
+
+/** View: tier with student-only seat fields as `null`, feature lines and a drift sentence. */
+export interface AdminPlanTier {
+  id: string
+  code: string
+  name: string
+  audience: Audience
+  interval: BillingInterval | null
+  priceMinor: number
+  currency: string
+  allowanceUnits: number
+  includedSeats: number | null
+  seatAllowanceUnits: number | null
+  extraSeatPriceMinor: number | null
+  features: string[]
+  isActive: boolean
+  paymobPlanId: number | null
+  /** `null` when in sync with Paymob. */
+  drift: string | null
+}
+
+export interface FreeAllowances {
+  studentSignupUnits: number
+  teacherSignupUnits: number
+  /** Read-only: `FreeAllowanceUpdateDTO` carries no validity. */
+  teacherSignupExpiryDays: number | null
+}
+
+export interface AdminCatalogue {
+  tiers: AdminPlanTier[]
+  packs: AdminCreditPack[]
+  rates: UsageRateRow[]
+  estimators: EstimatorRow[]
+  freeAllowances: FreeAllowances
+}
+
+export interface FreeAllowancesUpdate extends Reasoned {
+  studentSignupUnits: number
+  teacherSignupUnits: number
+}
+
+// Customer view (07 `CustomerDetailDTO` and friends).
+
+export interface CustomerHit {
+  userId: string
+  email: string
+  displayName: string | null
+  role: string
+  matchedOn: "user_id" | "payment_id" | "paymob_order" | "email" | "name"
+}
+
+export interface CustomerSearchResult {
+  hits: CustomerHit[]
+}
+
+export interface AdminRefund {
+  id: string
+  kind: "refund" | "void"
+  status: "requested" | "succeeded" | "failed" | "unknown"
+  amountMinor: number
+  reason: string
+  adminUserId: string
+  clawedBackUnits: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AdminPaymentRow {
+  id: string
+  payerUserId: string
+  beneficiaryUserId: string
+  purpose: PaymentPurpose
+  status: PaymentStatus
+  amountMinor: number
+  currency: string
+  refundedMinor: number
+  paymobOrderId: string | null
+  paymobTxnId: string | null
+  planTierId: string | null
+  creditPackId: string | null
+  subscriptionId: string | null
+  seatQuantity: number | null
+  createdAt: string
+  paidAt: string | null
+  refunds: AdminRefund[]
+}
+
+export interface AdminSubscription {
+  id: string
+  planTierId: string
+  planCode: string
+  planName: string
+  status: SubscriptionStatus
+  payerUserId: string | null
+  currentPeriodStart: string | null
+  currentPeriodEnd: string | null
+  cancelAtPeriodEnd: boolean
+  pendingPlanTierId: string | null
+  graceUntil: string | null
+  extraSeats: number
+  pendingExtraSeats: number | null
+  paymobSubscriptionId: string | null
+  isManuallyActivated: boolean
+  periods: { periodStart: string; periodEnd: string; paymentId: string | null }[]
+}
+
+export interface AdminGrant {
+  id: string
+  kind: string
+  visible: boolean
+  units: number
+  remaining: number
+  held: number
+  effectiveAt: string
+  expiresAt: string | null
+  teacherMemberId: string | null
+  paymentId: string | null
+}
+
+export interface AdminDebt {
+  id: string
+  jobId: string | null
+  units: number
+  outstanding: number
+  createdAt: string
+}
+
+export interface AdminUsageJob {
+  jobId: string
+  action: string
+  status: string
+  estimateLow: number
+  estimateHigh: number
+  estimatorVersion: number
+  rateVersion: number
+  reserved: number
+  charged: number | null
+  debtCreated: number | null
+  /** Decimal string, e.g. "0.041230". */
+  actualCostUsd: string | null
+  actualUnits: number | null
+  outsideRange: boolean
+  createdAt: string
+  settledAt: string | null
+}
+
+export interface AdminMember {
+  memberId: string
+  userId: string
+  email: string
+  kind: string
+  status: string
+  scopeSubjects: string[] | null
+  scopeActions: string[] | null
+  rolePreset: string | null
+  capUnits: number | null
+  capPeriod: string | null
+  leavesAt: string | null
+}
+
+export interface LinkedUser {
+  userId: string
+  email: string
+  displayName: string | null
+}
+
+export interface AuditEntry {
+  id: string
+  adminUserId: string
+  action: string
+  targetKind: string
+  targetId: string
+  reason: string
+  before: Record<string, unknown> | null
+  after: Record<string, unknown> | null
+  createdAt: string
+}
+
+export interface CustomerDetail {
+  user: { id: string; email: string; displayName: string | null; role: string; createdAt: string }
+  balance: { allowanceAvailable: number; creditsAvailable: number; seatAvailable: number; outstandingDebt: number }
+  subscriptions: AdminSubscription[]
+  grants: AdminGrant[]
+  debts: AdminDebt[]
+  usageJobs: AdminUsageJob[]
+  payments: AdminPaymentRow[]
+  seats: AdminMember[]
+  assistants: AdminMember[]
+  seatedWith: AdminMember[]
+  parents: LinkedUser[]
+  children: LinkedUser[]
+  audit: AuditEntry[]
+}
+
+/** 07 `AdminGrantRequestDTO` (`requestId` makes the grant idempotent). */
+export interface AdminGrantRequest extends Reasoned {
+  units: number
+  /** `null` = never expires; backend default 365. */
+  validDays: number | null
+  requestId: string
+}
+
+/** 07 `AdminAdjustRequestDTO` (signed units). */
+export interface AdminAdjustRequest extends Reasoned {
+  units: number
+  requestId: string
+}
+
+/** 07 `AdminForgiveRequestDTO` (`null` forgives all). */
+export interface AdminForgiveRequest extends Reasoned {
+  units: number | null
+}
+
+/** 07 `ManualActivationRequestDTO`. */
+export interface ManualActivationRequest extends Reasoned {
+  planTierId: string
+  periodDays: number
+}
+
+/** 07 `AdminExtendRequestDTO`. */
+export interface AdminExtendRequest extends Reasoned {
+  days: number
+}
+
+/** 07 `AdminCancelRequestDTO`. */
+export interface AdminCancelRequest extends Reasoned {
+  when: "period_end" | "now"
+}
+
+/** 07 `AdminRefundRequestDTO` (`null` = the full refundable amount). */
+export interface AdminRefundRequest extends Reasoned {
+  amountMinor: number | null
+}
+
+export interface AdminPaymentsPage {
+  items: AdminPaymentRow[]
+  nextCursor: string | null
+}
+
+export interface WebhookFailure {
+  id: string
+  kind: "transaction" | "token" | "subscription"
+  reason: string
+  remoteAddr: string | null
+  receivedAt: string
+}
+
+export interface ProblemQueue {
+  mismatches: AdminPaymentRow[]
+  stalePending: AdminPaymentRow[]
+  missingCallbacks: AdminPaymentRow[]
+  hmacFailures: WebhookFailure[]
+  hmacFailures24h: number
+  refundsNeedingAttention: AdminRefund[]
+}
+
+export interface MarginReport {
+  windowStart: string
+  windowEnd: string
+  revenue: {
+    recurringMinor: number
+    packsMinor: number
+    refundedMinor: number
+    netMinor: number
+    byPurpose: Record<string, number>
+    byPlan: { key: string; minor: number }[]
+  }
+  cost: {
+    totalUsd: string
+    byAction: { key: string | null; jobs: number; costUsd: string }[]
+    byPlan: { key: string | null; jobs: number; costUsd: string }[]
+    byModel: { model: string; costUsd: string }[]
+    unattributedModelUsd: string
+  }
+  egpPerUsd: string | null
+  costMinor: number | null
+  marginMinor: number | null
+  accuracy: {
+    action: string
+    estimatorVersion: number
+    jobs: number
+    below: number
+    above: number
+    shareOutside: number
+    meanOverrunUnits: number | null
+    maxOverrunUnits: number | null
+  }[]
+  exposure: {
+    outstandingDebtUnits: number
+    debtors: number
+    topDebtors: { userId: string; email: string; outstanding: number }[]
+    usersAtLimit: number
+    creditsExpiring30dUnits: number
+    creditsExpiring30dOwners: number
+    creditsExpiredUnusedUnits: number
+    expiredJobs: { count: number; costUsd: string }
+  }
+}
+
+export interface SweeperJobHealth {
+  name: string
+  neverRun: boolean
+  lastStartedAt: string | null
+  lastFinishedAt: string | null
+  lastOutcome: "ok" | "failed" | null
+  lastResultCount: number | null
+  lastError: string | null
+  lastSuccessAt: string | null
+  consecutiveFailures: number
+  totalRuns: number
+  totalFailures: number
+}
+
+export interface BillingHealth {
+  windowHours: number
+  jobs: SweeperJobHealth[]
+  verifiedEvents: number
+  hmacFailures: number
+  /** 0..1, `null` with no events in the window. */
+  webhookErrorRate: number | null
+  mismatches: number
+  renewalFailureEvents: number
+  pastDueNow: number
+  failedAutoTopups: number
+  failedExtraSeatCharges: number
+}

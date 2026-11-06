@@ -1,8 +1,11 @@
 import type {
+  AdminCatalogue,
+  AdminPaymentRow,
   AssistantRow,
   AutoTopupSettings,
   BillingSummary,
   Catalogue,
+  CustomerDetail,
   EstimateResponse,
   PaymentStatusView,
   PlanTier,
@@ -242,6 +245,55 @@ const team: TeamView = {
   invites: [{ inviteId: "inv1", code: "AST-7KQ2", role: "viewer", expiresAt: "2026-11-12T00:00:00Z", createdAt: "2026-11-05T00:00:00Z" }],
 }
 
+const adminCatalogue: AdminCatalogue = {
+  tiers: [
+    {
+      id: "t-s-m", code: "student_plus_m", name: "Student Plus", audience: "student", interval: "month", priceMinor: 25000,
+      currency: "EGP", allowanceUnits: 4000, includedSeats: null, seatAllowanceUnits: null, extraSeatPriceMinor: null,
+      features: ["Mark past papers", "Study plans"], isActive: true, paymobPlanId: 77, drift: null,
+    },
+  ],
+  packs: [{ id: "p1", code: "pack_500", name: "500 credits", units: 500, priceMinor: 15000, currency: "EGP", isActive: true }],
+  rates: [{ id: "r1", version: 1, action: "mark_paper", unitsPerUsd: 1000, effectiveFrom: "2026-11-01T00:00:00Z" }],
+  estimators: [
+    { id: "e1", version: 1, action: "mark_paper", inputKind: "none", baseLow: 2, baseHigh: 4, perInputLow: 0, perInputHigh: 0, effectiveFrom: "2026-11-01T00:00:00Z" },
+  ],
+  freeAllowances: { studentSignupUnits: 300, teacherSignupUnits: 1000, teacherSignupExpiryDays: 30 },
+}
+
+const adminPayment: AdminPaymentRow = {
+  id: "pay1", payerUserId: "u1", beneficiaryUserId: "u2", purpose: "subscription_first", status: "paid", amountMinor: 25000,
+  currency: "EGP", refundedMinor: 0, paymobOrderId: "PM-1", paymobTxnId: "TX-1", planTierId: "t-s-m", creditPackId: null,
+  subscriptionId: "sub1", seatQuantity: null, createdAt: "2026-11-01T09:00:00Z", paidAt: "2026-11-01T09:01:00Z", refunds: [],
+}
+
+const customer: CustomerDetail = {
+  user: { id: "u2", email: "omar@example.com", displayName: "Omar Hassan", role: "student", createdAt: "2026-10-01T00:00:00Z" },
+  balance: { allowanceAvailable: 1500, creditsAvailable: 0, seatAvailable: 0, outstandingDebt: 12 },
+  subscriptions: [
+    {
+      id: "sub1", planTierId: "t-s-m", planCode: "student_plus_m", planName: "Student Plus", status: "active", payerUserId: "u1",
+      currentPeriodStart: "2026-11-01T00:00:00Z", currentPeriodEnd: "2026-12-01T00:00:00Z", cancelAtPeriodEnd: false,
+      pendingPlanTierId: null, graceUntil: null, extraSeats: 0, pendingExtraSeats: null, paymobSubscriptionId: "501",
+      isManuallyActivated: false, periods: [{ periodStart: "2026-11-01T00:00:00Z", periodEnd: "2026-12-01T00:00:00Z", paymentId: "pay1" }],
+    },
+  ],
+  grants: [
+    { id: "g1", kind: "period_allowance", visible: false, units: 4000, remaining: 1500, held: 0, effectiveAt: "2026-11-01T00:00:00Z", expiresAt: "2026-12-01T00:00:00Z", teacherMemberId: null, paymentId: "pay1" },
+  ],
+  debts: [{ id: "d1", jobId: "j9", units: 12, outstanding: 12, createdAt: "2026-11-04T00:00:00Z" }],
+  usageJobs: [
+    { jobId: "j9", action: "mark_paper", status: "settled", estimateLow: 3, estimateHigh: 5, estimatorVersion: 1, rateVersion: 1, reserved: 5, charged: 9, debtCreated: 12, actualCostUsd: "0.009000", actualUnits: 9, outsideRange: true, createdAt: "2026-11-04T00:00:00Z", settledAt: "2026-11-04T00:01:00Z" },
+  ],
+  payments: [adminPayment],
+  seats: [],
+  assistants: [],
+  seatedWith: [],
+  parents: [{ userId: "u1", email: "mona@example.com", displayName: "Mona Said" }],
+  children: [],
+  audit: [],
+}
+
 export const fx = {
   studentMonthly,
   studentYearly,
@@ -264,4 +316,7 @@ export const fx = {
   team,
   studentCatalogue,
   teacherCatalogue,
+  adminCatalogue,
+  adminPayment,
+  customer,
 }
