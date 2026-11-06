@@ -1,8 +1,9 @@
 import { createElement as h } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ApiError } from "@/lib/api"
+import { INVITE_CODE_ID, rolePresetId } from "@/lib/assistantRoles"
 import { fx } from "./support/billingFixtures"
-import { fakeMutation, renderStatic } from "./support/billingRender"
+import { errorQuery, fakeMutation, okQuery, pendingQuery, renderStatic } from "./support/billingRender"
 
 const m = vi.hoisted(() => ({} as Record<string, unknown>))
 vi.mock("@/lib/hooks/useTeamApi", () => ({
@@ -12,6 +13,7 @@ vi.mock("@/lib/hooks/useTeamApi", () => ({
   useSetMemberCap: () => m.cap,
   useRemoveAssistant: () => m.remove,
   useJoinTeam: () => m.join,
+  useMemberships: () => m.memberships,
 }))
 vi.mock("@/components/ui/modal", () => ({
   Modal: (p: { open: boolean; title: unknown; children: unknown; footer?: unknown }) =>
@@ -24,6 +26,7 @@ import { JoinTeamCard } from "@/portals/teacher/screens/team/JoinTeamCard"
 
 beforeEach(() => {
   for (const k of ["invite", "revoke", "role", "cap", "remove", "join"]) m[k] = fakeMutation()
+  m.memberships = okQuery([])
 })
 
 const noop = () => undefined
@@ -106,6 +109,17 @@ describe("RoleDialog", () => {
     expect(on("Regrade papers")).toBe(false)
   })
 
+  it("gives each preset the id focus returns to after a reset", () => {
+    const html = render()
+    for (const r of ["co_teacher", "marker", "viewer"] as const) expect(html).toContain(`id="${rolePresetId(r)}"`)
+  })
+
+  it("opens on the permissions the server reports", () => {
+    const html = render({ ...fx.assistant, permissions: ["mark", "regrade", "generate_quiz", "view_results"], overrides: {} })
+    expect(html).toMatch(/aria-checked="true"[^>]*>(?:(?!<\/button>).)*<\/button><label[^>]*><span[^>]*>Generate quizzes</)
+    expect(text(html)).toContain("Changed from the Marker preset.")
+  })
+
   it("flags toggles that differ from the preset and offers a reset", () => {
     expect(render()).not.toContain("Reset to preset")
     const html = render({ ...fx.assistant, overrides: { view_usage: true }, permissions: ["mark", "regrade", "view_results", "view_usage"] })
@@ -171,13 +185,15 @@ describe("InviteDialog", () => {
     expect(html).not.toContain('value="30"')
   })
 
-  it("shows a created code once with its expiry and a copy control", () => {
+  it("shows the created code with its expiry, a single-use note and a copy control", () => {
     m.invite = fakeMutation({ isSuccess: true, data: fx.team.invites[0] })
     const html = render()
     expect(html).toContain("AST-7KQ2")
     expect(html).toContain("Copy code")
     expect(html).toContain("It works once")
     expect(html).not.toContain("Create invite code")
+    // The code is where focus lands, so its element carries the id the focus helper names.
+    expect(html).toMatch(new RegExp(`id="${INVITE_CODE_ID}"[^>]*tabindex="-1"`))
   })
 
   it("names the failure when there are too many open invites", () => {
@@ -221,6 +237,38 @@ describe("JoinTeamCard", () => {
     expect(text(renderStatic(h(JoinTeamCard)))).toContain("already been used")
     m.join = fakeMutation({ isError: true, error: new ApiError(500, "x") })
     expect(text(renderStatic(h(JoinTeamCard)))).toContain("Couldn't join that team. Check the code and try again.")
+  })
+
+  it("lists the teams you assist, names and roles only", () => {
+    m.memberships = okQuery([{ memberId: "mm1", teacherName: "Ms Hoda Ibrahim", role: "marker" }, { memberId: "mm2", teacherName: "Mr Adel", role: "co_teacher" }])
+    const html = renderStatic(h(JoinTeamCard))
+    expect(html).toContain("Teams you assist")
+    expect(html).toContain("Ms Hoda Ibrahim")
+    expect(html).toContain("Marker")
+    expect(html).toContain("Co-teacher")
+    expect(html).not.toMatch(/Leave|Remove/)
+    expect(html).not.toMatch(/@/)
+  })
+
+  it("shows no list while loading or when there are no teams, and does not block joining when it fails", () => {
+    for (const q of [pendingQuery(), okQuery([])]) {
+      m.memberships = q
+      expect(renderStatic(h(JoinTeamCard))).not.toContain("Teams you assist")
+    }
+    m.memberships = errorQuery(new ApiError(500, "x"))
+    const html = text(renderStatic(h(JoinTeamCard)))
+    expect(html).toContain("Couldn't load the teams you assist. You can still join one.")
+    expect(html).toContain("Join team")
+  })
+
+  it("capitalises the role in the confirmation", () => {
+    m.join = fakeMutation({ isSuccess: true, data: { teacherName: "Ms Nour", role: "marker" } })
+    expect(text(renderStatic(h(JoinTeamCard)))).toContain("You're now on Ms Nour's team as Marker.")
+  })
+
+  it("names a conflict on joining (already on the team, or your own code)", () => {
+    m.join = fakeMutation({ isError: true, error: new ApiError(409, "x") })
+    expect(text(renderStatic(h(JoinTeamCard)))).toContain("You can't join that team. You may already be on it.")
   })
 
   it("announces a join politely and failures as alerts", () => {

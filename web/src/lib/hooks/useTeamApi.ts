@@ -10,6 +10,7 @@ import { request } from "@/lib/api"
 import { toTeamView } from "@/lib/billingAdapters"
 import type {
   AssistantInviteCreate,
+  AssistantRole,
   AssistantRoleUpdate,
   CapUpdate,
   SeatScopeUpdate,
@@ -80,6 +81,28 @@ export function useTeam(): UseQueryResult<TeamView, Error> {
         request<ClassList>("/teacher/classes"),
       ])
       return toTeamView({ seats, capacity, assistants, invites, summary, classes })
+    },
+  })
+}
+
+/** A team the signed-in teacher assists. Names only. */
+export interface JoinedTeam {
+  memberId: string
+  teacherName: string
+  role: AssistantRole
+}
+
+/**
+ * Teams the signed-in teacher assists (`GET /memberships`). Keyed under `["team"]`, so joining a
+ * team (which invalidates it) refreshes this list too. Any teacher may read their own memberships.
+ */
+export function useMemberships(): UseQueryResult<JoinedTeam[], Error> {
+  return useQuery({
+    queryKey: [...teamKeys.team, "memberships"],
+    retry: teamRetry,
+    queryFn: async () => {
+      const { memberships } = await teamApi.memberships()
+      return memberships.map((m) => ({ memberId: m.memberId, teacherName: m.teacherName, role: m.role }))
     },
   })
 }

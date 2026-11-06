@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useEffect, useReducer, useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
@@ -9,20 +9,22 @@ import { Switch } from "@/components/ui/switch"
 import {
   INVITE_EXPIRY_DAYS,
   PERMISSION_COPY,
-  PRESET_PERMISSIONS,
   ROLES,
   ROLE_COPY,
   assistantCapChanged,
   assistantFailureMessage,
+  INVITE_CODE_ID,
   differsFromPreset,
-  effectivePermissions,
+  focusTargetId,
   inviteBody,
-  roleBody,
   roleChanged,
-  togglePermission,
+  roleDraftBody,
+  roleDraftFor,
+  rolePresetId,
+  roleReducer,
 } from "@/lib/assistantRoles"
 import { formatBillingDate } from "@/lib/billingFormat"
-import { TEAM_PERMISSIONS, type AssistantRole, type AssistantRow, type CapPeriod, type TeamPermission } from "@/lib/billingTypes"
+import { TEAM_PERMISSIONS, type AssistantRole, type AssistantRow, type CapPeriod } from "@/lib/billingTypes"
 import { useCreateAssistantInvite, useRemoveAssistant, useSetAssistantRole, useSetMemberCap } from "@/lib/hooks/useTeamApi"
 import { capBody } from "@/lib/teamModel"
 
@@ -46,7 +48,7 @@ function RolePicker({ value, onChange }: { value: AssistantRole; onChange: (role
   return (
     <RadioGroup label="Role" value={value} onValueChange={(v) => onChange(ROLES.find((r) => r === v) ?? value)}>
       {ROLES.map((r) => (
-        <Radio key={r} value={r} label={ROLE_COPY[r].label} description={ROLE_COPY[r].description} />
+        <Radio key={r} id={rolePresetId(r)} value={r} label={ROLE_COPY[r].label} description={ROLE_COPY[r].description} />
       ))}
     </RadioGroup>
   )
@@ -93,9 +95,9 @@ export function CopyCodeButton({
 
 export function RoleDialog({ open, onClose, assistant }: { open: boolean; onClose: () => void; assistant: AssistantRow }) {
   const save = useSetAssistantRole()
-  const [preset, setPreset] = useState<AssistantRole>(assistant.rolePreset)
-  const [selected, setSelected] = useState<TeamPermission[]>(() => effectivePermissions(assistant.rolePreset, assistant.overrides))
-  const changed = roleChanged(assistant, preset, selected)
+  const [draft, dispatch] = useReducer(roleReducer, assistant, roleDraftFor)
+  const { preset, selected } = draft
+  const changed = roleChanged(assistant, draft)
   const custom = differsFromPreset(preset, selected)
   return (
     <Modal
@@ -110,7 +112,7 @@ export function RoleDialog({ open, onClose, assistant }: { open: boolean; onClos
               variant="primary"
               loading={save.isPending}
               disabled={!changed}
-              onClick={() => save.mutate({ memberId: assistant.memberId, body: roleBody(preset, selected) }, { onSuccess: onClose })}
+              onClick={() => save.mutate({ memberId: assistant.memberId, body: roleDraftBody(draft) }, { onSuccess: onClose })}
             >
               Save role
             </Button>
@@ -121,10 +123,7 @@ export function RoleDialog({ open, onClose, assistant }: { open: boolean; onClos
       <div className="flex flex-col gap-6">
         <RolePicker
           value={preset}
-          onChange={(r) => {
-            setPreset(r)
-            setSelected([...PRESET_PERMISSIONS[r]])
-          }}
+          onChange={(r) => dispatch({ type: "preset", preset: r })}
         />
         <fieldset className="m-0 flex min-w-0 flex-col gap-3 border-0 p-0">
           <legend className="mb-2 p-0 text-label text-on-surface">Permissions</legend>
@@ -134,7 +133,7 @@ export function RoleDialog({ open, onClose, assistant }: { open: boolean; onClos
               layout="row"
               label={PERMISSION_COPY[p]}
               checked={selected.includes(p)}
-              onCheckedChange={(on) => setSelected((l) => togglePermission(l, p, on))}
+              onCheckedChange={(on) => dispatch({ type: "toggle", permission: p, on })}
             />
           ))}
           {selected.length === 0 ? (
@@ -143,7 +142,16 @@ export function RoleDialog({ open, onClose, assistant }: { open: boolean; onClos
           {custom ? (
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="m-0 text-body-sm text-on-surface-variant">Changed from the {ROLE_COPY[preset].label} preset.</p>
-              <Button size="sm" variant="ghost" className="-ms-3" onClick={() => setSelected([...PRESET_PERMISSIONS[preset]])}>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="-ms-3"
+                onClick={() => {
+                  dispatch({ type: "reset" })
+                  // This button leaves the page on reset; focus moves to the preset so the dialog keeps it.
+                  document.getElementById(focusTargetId({ kind: "role-reset", preset }))?.focus()
+                }}
+              >
                 Reset to preset
               </Button>
             </div>
@@ -249,9 +257,8 @@ export function InviteDialog({ open, onClose }: { open: boolean; onClose: () => 
   const created = invite.isSuccess ? invite.data : undefined
   // The button that was pressed is replaced by the code, so focus moves to the code rather than
   // falling to the page behind the dialog (where Escape would no longer reach it).
-  const codeRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    if (created) codeRef.current?.focus()
+    if (created) document.getElementById(focusTargetId({ kind: "invite-created" }))?.focus()
   }, [created])
   return (
     <Modal
@@ -275,7 +282,7 @@ export function InviteDialog({ open, onClose }: { open: boolean; onClose: () => 
     >
       {created ? (
         <div className="flex flex-col gap-3">
-          <div ref={codeRef} tabIndex={-1} role="status" className="flex flex-col gap-1 outline-none">
+          <div id={INVITE_CODE_ID} tabIndex={-1} role="status" className="flex flex-col gap-1 outline-none">
             <p className="m-0 text-body-md text-on-surface">
               Send this code to your assistant. It works once, until {formatBillingDate(created.expiresAt)}.
             </p>

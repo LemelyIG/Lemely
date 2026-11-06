@@ -2,14 +2,36 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { joinCodeDraft, joinFailureMessage, joinedMessage } from "@/lib/assistantRoles"
-import { useJoinTeam } from "@/lib/hooks/useTeamApi"
+import { ROLE_COPY, joinCodeDraft, joinFailureMessage, joinedMessage } from "@/lib/assistantRoles"
+import { useJoinTeam, useMemberships } from "@/lib/hooks/useTeamApi"
 
 /*
  * Redeeming an assistant invite with your own teacher account (spec §2.3, §4.4). Always shown,
  * including to an assistant, who gets a 403 on the team itself. The code is secret-ish: it is
  * sent once and never logged.
  */
+
+/** Read-only: there is no leave action to offer (the backend has no endpoint for it). */
+function JoinedTeams() {
+  const teams = useMemberships()
+  if (teams.isError) {
+    return <p className="m-0 text-body-sm text-on-surface-variant">Couldn't load the teams you assist. You can still join one.</p>
+  }
+  if (!teams.data || teams.data.length === 0) return null
+  return (
+    <div className="flex flex-col gap-2 border-t border-outline-variant pt-3">
+      <h3 className="m-0 text-label text-on-surface">Teams you assist</h3>
+      <ul aria-label="Teams you assist" className="m-0 flex list-none flex-col gap-1 p-0">
+        {teams.data.map((t) => (
+          <li key={t.memberId} className="flex flex-wrap items-baseline justify-between gap-x-4 text-body-sm">
+            <span className="text-on-surface">{t.teacherName}</span>
+            <span className="text-on-surface-variant">{ROLE_COPY[t.role].label}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
 
 export function JoinTeamCard() {
   const join = useJoinTeam()
@@ -71,6 +93,7 @@ export function JoinTeamCard() {
               {join.isError ? <p role="alert" className="m-0 text-body-sm text-error">{joinFailureMessage(join.error)}</p> : null}
             </>
           )}
+          <JoinedTeams />
         </CardBody>
       </Card>
     </section>

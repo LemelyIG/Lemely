@@ -8,8 +8,10 @@ import {
   ROLE_COPY,
   assistantCapChanged,
   assistantFailureMessage,
+  INVITE_CODE_ID,
   differsFromPreset,
   effectivePermissions,
+  focusTargetId,
   inviteBody,
   joinCodeDraft,
   joinFailureMessage,
@@ -17,6 +19,10 @@ import {
   overridesFor,
   roleBody,
   roleChanged,
+  roleDraftBody,
+  roleDraftFor,
+  rolePresetId,
+  roleReducer,
   togglePermission,
 } from "@/lib/assistantRoles"
 import { TEAM_PERMISSIONS } from "@/lib/billingTypes"
@@ -75,18 +81,70 @@ describe("role editor builders", () => {
     expect(togglePermission(["mark"], "mark", true)).toEqual(["mark"])
   })
 
-  it("keeps Save off until the draft differs from what is stored", () => {
+  it("keeps Save off until the draft differs from what the server holds", () => {
     const row = fx.assistant
-    expect(roleChanged(row, "marker", ["view_results", "mark", "regrade"])).toBe(false)
-    expect(roleChanged(row, "viewer", PRESET_PERMISSIONS.viewer)).toBe(true)
-    expect(roleChanged(row, "marker", ["mark", "view_results"])).toBe(true)
-    // The same effective permissions held as overrides on another preset are still a different role.
-    expect(roleChanged({ ...row, rolePreset: "co_teacher", overrides: { manage_classes: false } }, "marker", ["mark", "regrade", "view_results"])).toBe(true)
+    expect(roleChanged(row, roleDraftFor(row))).toBe(false)
+    expect(roleChanged(row, { preset: "marker", selected: ["view_results", "mark", "regrade"] })).toBe(false)
+    expect(roleChanged(row, { preset: "viewer", selected: PRESET_PERMISSIONS.viewer })).toBe(true)
+    expect(roleChanged(row, { preset: "marker", selected: ["mark", "view_results"] })).toBe(true)
+    // The same permissions under another preset are still a different role.
+    expect(roleChanged({ ...row, rolePreset: "co_teacher" }, { preset: "marker", selected: ["mark", "regrade", "view_results"] })).toBe(true)
   })
 
   it("tells when the toggles no longer match the preset", () => {
     expect(differsFromPreset("marker", ["mark", "regrade", "view_results"])).toBe(false)
     expect(differsFromPreset("marker", ["mark"])).toBe(true)
+  })
+})
+
+describe("role dialog draft", () => {
+  const row = fx.assistant
+
+  it("opens on the server's effective permissions, not on the frontend preset mirror", () => {
+    // The backend says this marker can also generate quizzes (no override stored); the frontend mirror alone would say it cannot.
+    const served = { ...row, permissions: ["mark", "regrade", "generate_quiz", "view_results"] as typeof row.permissions, overrides: {} }
+    expect(roleDraftFor(served)).toEqual({ preset: "marker", selected: ["mark", "regrade", "generate_quiz", "view_results"] })
+    expect(roleChanged(served, roleDraftFor(served))).toBe(false)
+    // Overrides are still worked out against the preset.
+    expect(roleDraftBody(roleDraftFor(served))).toEqual({ rolePreset: "marker", overrides: { generate_quiz: true } })
+  })
+
+  it("switching preset resets the toggles to that preset", () => {
+    const custom = roleReducer(roleDraftFor(row), { type: "toggle", permission: "view_usage", on: true })
+    expect(roleReducer(custom, { type: "preset", preset: "viewer" })).toEqual({ preset: "viewer", selected: ["view_results", "view_usage"] })
+    expect(roleReducer(custom, { type: "preset", preset: "co_teacher" }).selected).toEqual([...TEAM_PERMISSIONS])
+  })
+
+  it("a toggle changes one permission and keeps catalogue order", () => {
+    const d = roleReducer(roleReducer(roleDraftFor(row), { type: "toggle", permission: "view_usage", on: true }), { type: "toggle", permission: "regrade", on: false })
+    expect(d).toEqual({ preset: "marker", selected: ["mark", "view_results", "view_usage"] })
+    expect(differsFromPreset(d.preset, d.selected)).toBe(true)
+    expect(roleChanged(row, d)).toBe(true)
+  })
+
+  it("reset puts the toggles back on the chosen preset and keeps the preset", () => {
+    const custom = roleReducer(roleDraftFor(row), { type: "toggle", permission: "manage_classes", on: true })
+    const back = roleReducer(custom, { type: "reset" })
+    expect(back).toEqual({ preset: "marker", selected: ["mark", "regrade", "view_results"] })
+    expect(differsFromPreset(back.preset, back.selected)).toBe(false)
+    expect(roleChanged(row, back)).toBe(false)
+  })
+
+  it("the save body is the preset and only the toggles that differ", () => {
+    const d = roleReducer(roleReducer(roleDraftFor(row), { type: "toggle", permission: "view_usage", on: true }), { type: "toggle", permission: "regrade", on: false })
+    expect(roleDraftBody(d)).toEqual({ rolePreset: "marker", overrides: { regrade: false, view_usage: true } })
+    expect(roleDraftBody(roleReducer(d, { type: "reset" }))).toEqual({ rolePreset: "marker", overrides: {} })
+  })
+})
+
+describe("focus targets", () => {
+  it("sends focus to the code once an invite is created", () => {
+    expect(focusTargetId({ kind: "invite-created" })).toBe(INVITE_CODE_ID)
+  })
+
+  it("sends focus to the chosen preset after a reset", () => {
+    expect(focusTargetId({ kind: "role-reset", preset: "marker" })).toBe(rolePresetId("marker"))
+    expect(focusTargetId({ kind: "role-reset", preset: "viewer" })).not.toBe(focusTargetId({ kind: "role-reset", preset: "marker" }))
   })
 })
 
@@ -129,8 +187,8 @@ describe("join code", () => {
   })
 
   it("names the joined team and role", () => {
-    expect(joinedMessage("Ms Nour", "marker")).toBe("You're now on Ms Nour's team as marker.")
-    expect(joinedMessage("Ms Nour", "co_teacher")).toBe("You're now on Ms Nour's team as co-teacher.")
+    expect(joinedMessage("Ms Nour", "marker")).toBe("You're now on Ms Nour's team as Marker.")
+    expect(joinedMessage("Ms Nour", "co_teacher")).toBe("You're now on Ms Nour's team as Co-teacher.")
   })
 })
 
@@ -153,6 +211,7 @@ describe("failure copy", () => {
   it("maps joining by status and code", () => {
     expect(joinFailureMessage(err(404))).toBe("That code isn't valid or has expired. Ask for a new one.")
     expect(joinFailureMessage(err(409, "invite_already_redeemed"))).toContain("already been used")
+    expect(joinFailureMessage(err(409))).toBe("You can't join that team. You may already be on it.")
     expect(joinFailureMessage(err(403))).toContain("teacher accounts")
     expect(joinFailureMessage(err(429))).toContain("Too many attempts")
     expect(joinFailureMessage(err(0))).toContain("offline")

@@ -20,6 +20,7 @@ vi.mock("@/lib/hooks/useTeamApi", () => ({
   useSetAssistantRole: () => s.m.role,
   useRemoveAssistant: () => s.m.removeAssistant,
   useJoinTeam: () => s.m.join,
+  useMemberships: () => okQuery([]),
 }))
 vi.mock("@/lib/hooks/useBillingApi", () => ({
   useSeatQuote: () => s.m.quote,

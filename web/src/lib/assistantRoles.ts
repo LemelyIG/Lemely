@@ -73,16 +73,68 @@ export function roleBody(preset: AssistantRole, selected: readonly TeamPermissio
   return { rolePreset: preset, overrides: overridesFor(preset, orderedPermissions(selected)) }
 }
 
-const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x) => b.includes(x))
-
-/** True when the draft is not what the assistant already has. Save stays off until it is. */
-export function roleChanged(row: AssistantRow, preset: AssistantRole, selected: readonly TeamPermission[]): boolean {
-  return preset !== row.rolePreset || !sameList(orderedPermissions(selected), effectivePermissions(row.rolePreset, row.overrides))
-}
-
 /** True when the toggles no longer match the chosen preset. */
 export function differsFromPreset(preset: AssistantRole, selected: readonly TeamPermission[]): boolean {
   return Object.keys(overridesFor(preset, orderedPermissions(selected))).length > 0
+}
+
+/** The role dialog's state: a preset and the permissions switched on. */
+export interface RoleDraft {
+  preset: AssistantRole
+  selected: TeamPermission[]
+}
+
+export type RoleAction =
+  | { type: "preset"; preset: AssistantRole }
+  | { type: "toggle"; permission: TeamPermission; on: boolean }
+  | { type: "reset" }
+
+/**
+ * The draft an assistant's dialog opens on. The toggles come from what the server says the
+ * assistant can do now (`permissions`), not from re-deriving it off the frontend preset mirror,
+ * so a preset the backend changed never shows the wrong switches.
+ */
+export function roleDraftFor(row: AssistantRow): RoleDraft {
+  return { preset: row.rolePreset, selected: orderedPermissions(row.permissions) }
+}
+
+export function roleReducer(draft: RoleDraft, action: RoleAction): RoleDraft {
+  switch (action.type) {
+    case "preset":
+      return { preset: action.preset, selected: [...PRESET_PERMISSIONS[action.preset]] }
+    case "toggle":
+      return { ...draft, selected: togglePermission(draft.selected, action.permission, action.on) }
+    case "reset":
+      return { ...draft, selected: [...PRESET_PERMISSIONS[draft.preset]] }
+  }
+}
+
+/** The PATCH input for a draft (the hook maps it to `{ role, permissions }`). */
+export function roleDraftBody(draft: RoleDraft): AssistantRoleUpdate {
+  return roleBody(draft.preset, draft.selected)
+}
+
+const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x) => b.includes(x))
+
+/** True when the draft is not what the assistant already has. Save stays off until it is. */
+export function roleChanged(row: AssistantRow, draft: RoleDraft): boolean {
+  return draft.preset !== row.rolePreset || !sameList(orderedPermissions(draft.selected), row.permissions)
+}
+
+/* ── Focus ───────────────────────────────────────────────────────────────── */
+
+/** DOM ids focus moves to when the control that had it goes away. */
+export const INVITE_CODE_ID = "assistant-invite-code"
+export const rolePresetId = (role: AssistantRole) => `assistant-role-${role}`
+
+export type FocusEvent = { kind: "invite-created" } | { kind: "role-reset"; preset: AssistantRole }
+
+/**
+ * Where focus goes after a control is replaced or removed, so it never falls to the page behind
+ * a dialog (where Escape and Tab no longer reach the dialog's own handling).
+ */
+export function focusTargetId(event: FocusEvent): string {
+  return event.kind === "invite-created" ? INVITE_CODE_ID : rolePresetId(event.preset)
 }
 
 /* ── Spending cap ────────────────────────────────────────────────────────── */
@@ -124,7 +176,7 @@ export function joinCodeDraft(raw: string): JoinDraft {
 }
 
 export function joinedMessage(teacherName: string, role: AssistantRole): string {
-  return `You're now on ${teacherName}'s team as ${ROLE_COPY[role].label.toLowerCase()}.`
+  return `You're now on ${teacherName}'s team as ${ROLE_COPY[role].label}.`
 }
 
 /* ── Failure copy (none of these charge anything) ────────────────────────── */
@@ -156,6 +208,9 @@ export function joinFailureMessage(err: unknown): string {
   if (status === 0) return "You're offline. Try again when you're back online."
   if (status === 403) return "Only teacher accounts can join a team."
   if (status === 429) return "Too many attempts. Wait a minute and try again."
-  if (status === 409 && billingErrorCode(err) === "invite_already_redeemed") return "That code has already been used. Ask for a new one."
+  if (status === 409) {
+    if (billingErrorCode(err) === "invite_already_redeemed") return "That code has already been used. Ask for a new one."
+    return "You can't join that team. You may already be on it."
+  }
   return "Couldn't join that team. Check the code and try again."
 }
