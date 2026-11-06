@@ -116,8 +116,8 @@ DTOs are camelCase (`ApiModel`).
 | A12 | `GET /billing/auto-topup?beneficiaryId=` / `PUT /billing/auto-topup` | `AutoTopupRequest {beneficiaryId?, enabled, thresholdUnits>0, creditPackId, savedCardId?, monthlyCapMinor>=0}` | `AutoTopupDTO {beneficiaryId, enabled, thresholdUnits\|null, creditPackId\|null, savedCardId\|null, monthlyCapMinor\|null, spentThisMonthMinor, currency, disabledReason\|null}`; "not set up" = `enabled: false`, nulls, `currency: "EGP"` | 06 |
 | A13 | `GET /billing/cards` (R3) | — | `SavedCardList {cards: [SavedCardView {cardId, maskedPan, brand}]}` (`brand` `""` when Paymob sent none) | 02 |
 | A14 | `POST /billing/subscriptions/{id}/seats/quote` (R3) | `ExtraSeatsRequest {seats}` | `ChargeQuoteDTO` (`allowanceUnits: null`) | 06 |
-| A15 | `POST /billing/subscriptions/{id}/extra-seats` (202) | `ExtraSeatsRequest {seats}` | `ChargeDTO` | 06 |
-| A16 | `PUT /billing/subscriptions/{id}/extra-seats/pending` | `SeatReductionRequest {extraSeats}` (the new **total**, not a delta) | `SeatsDTO {extraSeats, pendingExtraSeats}` | 06 |
+| A15 | `POST /billing/subscriptions/{id}/seats` (202) | `ExtraSeatsRequest {seats}` | `ChargeDTO` | 06 |
+| A16 | `PUT /billing/subscriptions/{id}/seats/pending` | `SeatReductionRequest {extraSeats}` (the new **total**, not a delta) | `SeatsDTO {extraSeats, pendingExtraSeats}` | 06 |
 | A17 | `POST /usage/estimate` | `EstimateRequestDTO {action, paperId?, attemptId?, questionResultId?, assignmentId?, subjectCode?, count?}` | `EstimateDTO {low, high, payer: "seat"\|"allowance"\|"credits"\|"none", percentLow, percentHigh, blockedReason}` | 04 |
 | A18 | `GET /usage/meter` (caller only) | — | `UsageMeterDTO {allowanceFraction, allowanceResetsAt, creditsBalance, creditLots: [{remaining, expiresAt}], seats: [{teacherMemberId, teacherUserId, fraction, resetsAt}], debtUnits}` | 04 |
 | A19 | `GET /usage/history?limit=25&cursor=` (caller only) | — | `UsageHistoryDTO {jobs: [UsageJobDTO {jobId, action, status, paidBy: "allowance"\|"seat"\|"credits"\|"teacher_credits"\|"mixed"\|"none", percentOfPlan, credits, debtCredits, estimatePercentOfPlan: [lo, hi]\|null, estimateCredits: [lo, hi]\|null, actorUserId, createdAt, settledAt}], nextCursor}` (no raw units for allowance rows) | 04 |
@@ -1482,8 +1482,8 @@ describe("billing fetchers (paths without /api: request() adds it)", () => {
       ["/billing/auto-topup", "PUT"],
       ["/billing/cards", "GET"],
       ["/billing/subscriptions/s1/seats/quote", "POST"],
-      ["/billing/subscriptions/s1/extra-seats", "POST"],
-      ["/billing/subscriptions/s1/extra-seats/pending", "PUT"],
+      ["/billing/subscriptions/s1/seats", "POST"],
+      ["/billing/subscriptions/s1/seats/pending", "PUT"],
     ])
   })
 
@@ -1722,10 +1722,10 @@ export const billingApi = {
   saveAutoTopup: (body: AutoTopupUpdate) => request<WireAutoTopup>("/billing/auto-topup", { method: "PUT", body: JSON.stringify(body) }),
   cards: () => request<WireSavedCardList>("/billing/cards"),
   seatQuote: (subscriptionId: string, seats: number) => request<WireQuote>(`${sub(subscriptionId)}/seats/quote`, post({ seats })),
-  addSeats: (subscriptionId: string, seats: number) => request<WireCharge>(`${sub(subscriptionId)}/extra-seats`, post({ seats })),
+  addSeats: (subscriptionId: string, seats: number) => request<WireCharge>(`${sub(subscriptionId)}/seats`, post({ seats })),
   /** `extraSeats` is the new total from the next renewal, not a delta (06 `SeatReductionRequest`). */
   reduceSeats: (subscriptionId: string, extraSeats: number) =>
-    request<WireSeats>(`${sub(subscriptionId)}/extra-seats/pending`, { method: "PUT", body: JSON.stringify({ extraSeats }) }),
+    request<WireSeats>(`${sub(subscriptionId)}/seats/pending`, { method: "PUT", body: JSON.stringify({ extraSeats }) }),
 }
 
 export const billingKeys = {
@@ -7414,8 +7414,8 @@ import { PaymentProgress } from "@/portals/billing/PaymentProgress"
 
 /*
  * Extra seats (spec §2.2, §5.4): adding charges the prorated price now on the saved card
- * (`…/seats/quote`, then `…/extra-seats`, 202) and the seats renew with the plan; removing
- * schedules a lower total for the next renewal (`…/extra-seats/pending`) and is refused while
+ * (`…/seats/quote`, then `…/seats`, 202) and the seats renew with the plan; removing
+ * schedules a lower total for the next renewal (`…/seats/pending`) and is refused while
  * it would leave fewer seats than seated students.
  */
 
