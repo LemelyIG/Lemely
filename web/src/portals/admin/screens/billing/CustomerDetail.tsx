@@ -97,14 +97,22 @@ function Panel({ title, action, children }: { title: string; action?: ReactNode;
  * that refetch to land. A refusal (4xx) changed nothing and never blocks.
  */
 function useRetryGuard(
-  mutation: { isError: boolean; error: unknown },
+  mutation: { isError: boolean; isPending: boolean; error: unknown },
   customer: { dataUpdatedAt: number; isError: boolean },
 ): string | null {
   const [seen, setSeen] = useState<unknown>(null)
   const [since, setSince] = useState<number | null>(null)
+  // The freshness baseline is the data as it was when the attempt started, not when the failure
+  // arrives: a refetch may land before or after the error, and either order must release the guard.
+  const [pending, setPending] = useState(false)
+  const [startedAt, setStartedAt] = useState<number | null>(null)
+  if (mutation.isPending !== pending) {
+    setPending(mutation.isPending)
+    if (mutation.isPending) setStartedAt(customer.dataUpdatedAt)
+  }
   if (mutation.isError && mutation.error !== seen && isAmbiguousFailure(mutation.error)) {
     setSeen(mutation.error)
-    setSince(customer.dataUpdatedAt)
+    setSince(startedAt ?? customer.dataUpdatedAt)
   }
   if (since === null || customer.dataUpdatedAt > since) return null
   return customer.isError
