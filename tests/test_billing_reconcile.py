@@ -50,12 +50,19 @@ def _due_payment(
     *,
     age: timedelta,
     status: PaymentStatus = PaymentStatus.created,
+    paymob_order_id: int | None = None,
 ) -> uuid.UUID:
     payer = seed_user(sm)
     pack = seed_pack(sm)
     created = FIXED_NOW - age
     return seed_payment(
-        sm, payer=payer, beneficiary=payer, pack_id=pack, created_at=created, status=status
+        sm,
+        payer=payer,
+        beneficiary=payer,
+        pack_id=pack,
+        created_at=created,
+        status=status,
+        paymob_order_id=paymob_order_id,
     )
 
 
@@ -351,6 +358,60 @@ def test_an_inquiry_answer_for_another_payment_is_refused(
     assert _grant_count(sm, b) == 1
 
 
+def _answer_with_order(pid: uuid.UUID, order: object, *, txn_id: int = 192036465) -> dict[str, Any]:
+    """A success answer whose ``order`` is replaced by ``order`` (a map, a bare id, or absent)."""
+    obj = transaction_obj(merchant_order_id=str(pid), txn_id=txn_id)
+    if order is None:
+        del obj["order"]
+    else:
+        obj["order"] = order
+    return obj
+
+
+@pytest.mark.parametrize(
+    "order",
+    [{"id": 222}, 222, {"id": "222"}],
+    ids=["reference-less map", "bare int", "numeric string id"],
+)
+def test_an_inquiry_answer_naming_a_different_order_id_is_refused(
+    migrated_sessionmaker: sessionmaker[Session], order: object
+) -> None:
+    sm = migrated_sessionmaker
+    pid = _due_payment(sm, age=timedelta(minutes=20), paymob_order_id=111)
+    client = FakePaymobClient()
+    client.inquiry_response = _answer_with_order(pid, order)
+    with structlog.testing.capture_logs() as logs:
+        assert _reconcile(sm, client) == 1
+    payment = _payment(sm, pid)
+    assert payment.status is PaymentStatus.created
+    assert payment.paymob_txn_id is None
+    assert payment.next_reconcile_at == FIXED_NOW + timedelta(minutes=15)
+    assert _grant_count(sm, pid) == 0
+    assert _event_count(sm) == 0
+    assert [e["event"] for e in logs if e["log_level"] == "error"] == [
+        "paymob_inquiry_reference_mismatch"
+    ]
+
+
+@pytest.mark.parametrize(
+    "order",
+    [{"id": 111}, 111, {}, None],
+    ids=["same order id map", "same bare int", "empty order map", "no order at all"],
+)
+def test_an_inquiry_answer_that_agrees_or_names_nothing_is_applied(
+    migrated_sessionmaker: sessionmaker[Session], order: object
+) -> None:
+    """Pins the choice: an answer with neither reference nor order id was keyed on our
+    reference, so it is trusted. Refusing missing references must turn this red."""
+    sm = migrated_sessionmaker
+    pid = _due_payment(sm, age=timedelta(minutes=20), paymob_order_id=111)
+    client = FakePaymobClient()
+    client.inquiry_response = _answer_with_order(pid, order)
+    assert _reconcile(sm, client) == 1
+    assert _payment(sm, pid).status is PaymentStatus.paid
+    assert _grant_count(sm, pid) == 1
+
+
 def test_an_inquiry_answer_naming_this_payment_is_applied(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:
@@ -392,6 +453,28 @@ def test_a_payment_that_stays_unreadable_for_a_week_stops_being_polled_but_stays
     client.inquiries.clear()
     assert _reconcile(sm, client, now=FIXED_NOW + timedelta(days=1)) == 1  # only `young`
     assert client.inquiries == [str(young)]
+
+
+def test_the_stuck_threshold_is_seven_days() -> None:
+    assert timedelta(days=7) == RECONCILE_STUCK_AFTER
+
+
+def test_a_poisoned_payment_older_than_a_week_stops_being_polled_but_stays_open(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    poison = _due_payment(sm, age=RECONCILE_STUCK_AFTER + timedelta(hours=1))
+    client = _PoisonedClient(poison)
+    with structlog.testing.capture_logs() as logs:
+        assert _reconcile(sm, client) == 0
+    payment = _payment(sm, poison)
+    assert payment.status is PaymentStatus.created
+    assert payment.next_reconcile_at is None
+    stuck = [e for e in logs if e["event"] == "paymob_reconcile_stuck"]
+    assert [e["payment_id"] for e in stuck] == [str(poison)]
+    client.inquiries.clear()
+    assert _reconcile(sm, client, now=FIXED_NOW + timedelta(days=1)) == 0
+    assert client.inquiries == []
 
 
 def test_a_stuck_payment_is_still_paid_by_a_late_callback(

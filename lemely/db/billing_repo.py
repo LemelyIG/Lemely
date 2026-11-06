@@ -958,10 +958,12 @@ class BillingService:
                 # callback needs, leaving it open for good. Record nothing.
                 order = obj.get("order")
                 answered = order.get("merchant_order_id") if isinstance(order, Mapping) else None
+                answered_order = order.get("id") if isinstance(order, Mapping) else order
                 log.error(
                     "paymob_inquiry_reference_mismatch",
                     payment_id=str(payment.id),
                     answered_reference=str(answered)[:64],
+                    answered_order_id=str(answered_order)[:32],
                     txn_id=_as_int(obj.get("id")),
                 )
                 self._reschedule_unknown(payment, now=now)
@@ -981,14 +983,27 @@ class BillingService:
     def _answers_for(payment: Payment, obj: JsonMap) -> bool:
         """False when ``obj`` names a different payment than the one inquired.
 
-        An answer that carries no ``merchant_order_id`` is taken to be for the inquired
-        payment: the inquiry was keyed on its reference.
+        Two identifiers are cross-checked: ``order.merchant_order_id`` against our
+        ``special_reference``, and ``order.id`` (or a bare-int ``order``) against the
+        payment's ``paymob_order_id`` once that is known. A disagreement on either is a
+        refusal. An answer that carries neither is taken to be for the inquired payment:
+        the inquiry was keyed on its reference.
         """
         order = obj.get("order")
-        if not isinstance(order, Mapping):
-            return True
-        reference = order.get("merchant_order_id")
-        return reference is None or str(reference) == payment.special_reference
+        reference: object = None
+        order_id: int | None
+        if isinstance(order, Mapping):
+            reference = order.get("merchant_order_id")
+            order_id = _as_int(order.get("id"))
+        else:
+            order_id = _as_int(order)
+        if reference is not None and str(reference) != payment.special_reference:
+            return False
+        return (
+            payment.paymob_order_id is None
+            or order_id is None
+            or order_id == payment.paymob_order_id
+        )
 
     def _reschedule_unknown(self, payment: Payment, *, now: datetime) -> None:
         """Reschedule after an inquiry that told us nothing, or stop polling a stuck payment.
