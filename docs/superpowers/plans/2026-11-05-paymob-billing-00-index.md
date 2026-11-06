@@ -365,3 +365,10 @@ below, the decision wins.
 - Review each task at its commit SHA, not from the working tree.
 - After the last task of a phase, run that phase's touched test files and pre-commit once more
   on the final tree.
+
+## Execution amendments (decided during implementation)
+
+- **R20b Unknown outcome is never "failed".** `PaymobError.outcome_unknown` (or `status_code is None`, or a 5xx on a charge-class call) leaves a payment open (`created`/`pending`) for reconciliation. Only a 4xx, or a 2xx without a client secret, marks it `failed`. Plan text that expects `failed` after a Paymob 5xx or transport error is superseded: plan 02 Task 9 `test_paymob_failure_is_503_with_a_friendly_message` expects `created`; plan 05 `test_paymob_outage_leaves_a_failed_checkout_the_next_one_replaces` and its prose (lines ~147, 2075, 2078, 2341) expect the payment to stay open while the pending subscription is still replaced by the next checkout.
+- **R21 Lazy cipher.** `BillingService.cipher` is a lazy property; code must use `self.cipher`, never `self._cipher` (plan 02 Task 7 text that reads `_cipher` is superseded).
+- **R22 Card tokens bound to their owner.** The AAD used to encrypt a saved-card token and the fingerprint input both include the owning `user_id`, so ciphertexts cannot be swapped between users and fingerprints do not link users who share a card. Applied in plan 02 Task 7 (token callback) with matching known-answer tests in `tests/test_token_cipher.py`.
+- **R23 Web DOM tests.** The user approved adding jsdom + @testing-library/react as dev dependencies, opt-in per test file (`// @vitest-environment jsdom`), for focus, effect and click behaviour that node-only tests cannot reach.
