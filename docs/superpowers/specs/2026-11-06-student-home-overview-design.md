@@ -51,6 +51,9 @@ Not changed: preview variants B and C stay in `web/dev-previews/`.
 | Data | Extend the backend so every design state is backed by real data. |
 | Styling | Rebuild in Tailwind v4 using the existing `@theme` tokens in `web/src/index.css`. No ported stylesheet. |
 | Fidelity | No unjustified drift. Screenshot comparison against the preview is the acceptance gate. |
+| A1 (confirmed 2026-11-07) | Mistakes beaten everywhere: one-paper, sparse3 and new get Mistakes beaten copy per the copy table in section 3 (no Garden anywhere). The preview gains the matching `data-gs` blocks before Task 12's drift scenes run. |
+| A2 (confirmed 2026-11-07) | The practise button is per state, from data: it names the first still-to-beat topic the student has; with none it becomes "Upload a paper". The preview's single shared link is split per data set. |
+| Garden leftovers (confirmed 2026-11-07) | Remove the stray 1px line above the grade cards in sparse states on phones, and rewrite the two plant-word lines ("Physics is still to plant" → "No Physics paper yet"; "waters your Add Maths plant" → "adds to your Add Maths"). Fix in the preview first, then build to match. |
 
 ## 1. Architecture and data
 
@@ -247,7 +250,7 @@ switch): no topic data at all in a state that expects some → no count, "No mis
 paper and it counts", up to 4 to-beat chips, footer "{n} more still to beat"; a count of 1 uses
 "mistake" ("1 mistake you don't make anymore").
 
-**A1 (assumption, the user confirms before the card is built).** The preview covers only `pop`,
+**A1 (confirmed 2026-11-07, see Decisions).** The preview covers only `pop`,
 `sp0`, `sp1`, `sp2`. `one-paper` and `sparse3` still show the old Garden there (gstate `none`),
 and `new` still shows a "Grade ladder" sample card left over from a rejected direction. This spec
 proposes Mistakes beaten everywhere, with no new visual pieces: one-paper uses the `sp1` shape,
@@ -259,7 +262,7 @@ Design copy the user may want to revisit now that the Garden is gone (kept word 
 told otherwise): the sparse2 hero kicker "Physics is still to plant" and the sparse3 practice body
 "…waters your Add Maths plant". In the preview, sparse1's footer says "Practise Logarithms", a
 0606 topic, for a student with no 0606 paper; the build prints the student's own top to-beat topic
-("Practise Bearings", `/student/practice/0580`). **A2 (assumption, confirmed with A1):** the
+("Practise Bearings", `/student/practice/0580`). **A2 (confirmed 2026-11-07, see Decisions):** the
 preview's one shared link is split per data set so the reference matches; without A2 this is a
 drift-log row.
 

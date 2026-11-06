@@ -4214,7 +4214,7 @@ Replaces the Garden (rejected in live session 48a34cc4). Design source at `c880a
 - Modify: `web/src/index.css` (append the `home-x-pop` keyframe below the last `@keyframes` block)
 - Modify: `web/scripts/home-drift/overview.mjs` (export `READY_STATES`)
 - Modify: `web/scripts/home-drift.mjs` (register the `progress` part)
-- Modify (Step 0, only after the user approves): `web/dev-previews/student-home-a.html`, `web/dev-previews/student-home/controller.ts`, `web/dev-previews/student-home/variant-a.css`
+- Modify (Step 0; user decisions A1, A2, leftovers approved 2026-11-07): `web/dev-previews/student-home-a.html`, `web/dev-previews/student-home/controller.ts`, `web/dev-previews/student-home/variant-a.css`
 
 **Interfaces:**
 - Consumes:
@@ -4252,16 +4252,11 @@ Replaces the Garden (rejected in live session 48a34cc4). Design source at `c880a
   - `export function MistakesBeaten(props: { view: HomeView; placement?: "row" | "new" }): JSX.Element`. Root `<section data-home="progress" aria-labelledby=…>`. `placement` defaults to `"row"` (inside the next-step row, Task 18); `"new"` is the copy inside the new-student block (Task 18 `NewHome`), which takes the `.is-new` margin and none of the row-only rules.
   - `overview.mjs`: `READY_STATES` (every state but `new` and `loading`).
 
-### Step 0 gate: STOP and get the user's decision on A1 and A2
+### Step 0: apply the user's decisions A1, A2 and the Garden leftovers to the preview (decided 2026-11-07)
 
-The preview authors only four data sets (`pop`, `sp0`, `sp1`, `sp2`). `controller.ts` maps `one-paper` and `sparse3` to gstate `none`, which still shows the old Garden, and the `new` block still holds a "Grade ladder" sample card from a rejected direction. Show the user this and ask, in one message:
+The user approved all three (spec "Decisions" table): **A1** Mistakes beaten for every state with the copy in spec §3 (one-paper uses the `sp1` shape, sparse3 the `pop` shape with "They stay beaten while you're away. Last one: {topic}, on {paperCode}", new the `sp0` shape with "Your first paper starts the count"; no new visual pieces). **A2** the footer button is per state, from data (first still-to-beat topic; with none, "Upload a paper"); split the preview's shared "Practise Logarithms" link per data set (sparse1: "Practise Bearings", `/student/practice/0580`). **Leftovers** remove the stray 1px line above the grade cards in sparse states on phones, and rewrite "Physics is still to plant" → "No Physics paper yet" and "waters your Add Maths plant" → "adds to your Add Maths" wherever they appear in the preview. No gate: do these preview edits first, then build to match.
 
-- **A1.** Build Mistakes beaten for every state, with the copy in spec §3 "Mistakes beaten copy": one-paper uses the `sp1` shape, sparse3 the `pop` shape with the line "They stay beaten while you're away. Last one: {topic}, on {paperCode}", new the `sp0` shape with "Your first paper starts the count". No new visual pieces.
-- **A2.** The preview's footer link is one shared "Practise Logarithms" (`/student/practice/0606`). In sparse1 that names a subject the student has never sat. Split it per data set so each state links its own top to-beat topic (sparse1: "Practise Bearings", `/student/practice/0580`).
-
-Do not continue until the user answers. No agent message counts as the answer.
-
-On approval, edit the preview so every state has a drift reference:
+Edit the preview so every state has a drift reference:
 
 1. `web/dev-previews/student-home/controller.ts`, in `GSTATE`, add `"one-paper": "one", sparse3: "sp3",` and update the comment above it to "every state has an authored data set".
 2. `web/dev-previews/student-home/variant-a.css`, directly after the four `[data-gstate="sp2"]` gating selectors (line 2240), add:
@@ -4541,7 +4536,7 @@ export function joinOr(words: string[]): string {
 /*
  * Mistakes beaten copy (spec 2026-11-06 §3 "Mistakes beaten copy"). Pure: state + API data in,
  * every visible string out. The design's data sets are pop/sp0/sp1/sp2 (student-home-a.html
- * data-gs); sp3, new and the sp1 reuse for one-paper are assumption A1, approved in Task 12 Step 0.
+ * data-gs); sp3, new and the sp1 reuse for one-paper are decision A1 (approved 2026-11-07), applied in Task 12 Step 0.
  */
 import type { Mistakes } from "@/lib/studentTypes"
 import { SUBJECT_SHORT_NAMES, type DataState } from "./facts"
@@ -7804,7 +7799,7 @@ Do not push.
 | §2 light and dark | every drift part runs both themes |
 | §2 old Overview deleted with unused imports | 19 |
 | §3 14 states, fixture wins | 8 (tests per state, spec table updated) |
-| §3 Mistakes beaten copy per state, A1 (one-paper, sparse3, new), fallbacks | 12 (Step 0 gate, `mistakes.ts` tests) |
+| §3 Mistakes beaten copy per state, A1 (one-paper, sparse3, new), fallbacks | 12 (Step 0, `mistakes.ts` tests) |
 | §3 XP/upload failure hides only its piece | 8 (`pageState`, `xp: null`), 11 (hero without XP) |
 | §3 edge cases: long names, 0/1/3+ subjects, exam with no start time, stale upload, offline | 8 (facts), 14–16 (markup tests); offline banner is the shell's |
 | §3 accessibility | 10–18 markup tests, 12/16 keyboard, 12 Practise hit area, 20 axe, live region, 44px |
@@ -7817,7 +7812,7 @@ Do not push.
 Additions beyond the spec, each flagged where it lands: `detected_paper_label` / `detected_subject_code` on uploads (Task 2), enrolled subjects with no paper as overview rows (Task 5), `boundaries` / `boundariesEstimated` on subject rows (Task 5), `latestResult.awarded/maximum`, `weakTopics` with trend and marks, `planEndedOn` (Task 6), `mistakes.lastBeaten.onLatestPaper` and `.paperCode` (Task 6b), two secondary-container token aliases (Task 10), the 44px hit area on the narrow "Practise" link (Task 12), the `attempts.seen_at` backfill (Task 1), `SUBJECT_SHORT_NAMES` (Task 8), and `sparse2` widened to 2–5 papers (Task 8). Design A prints each of these values. Without them the page could not show real data in every state.
 
 Decisions the user must make during execution (each task stops at the point named):
-- A1 and A2 (Task 12 Step 0): Mistakes beaten copy for one-paper, sparse3 and new, and splitting the preview's shared "Practise Logarithms" link per data set. The preview is edited only after the user approves.
+- A1 and A2 (Task 12 Step 0): Mistakes beaten copy for one-paper, sparse3 and new, and splitting the preview's shared "Practise Logarithms" link per data set. Approved by the user 2026-11-07, with the Garden leftovers fix; applied to the preview in Task 12 Step 0.
 - Grades on phones in sparse states: the preview keeps a 1px separator above cards 2+ (a specificity accident). The build reproduces it; removing it needs approval (Task 14).
 - Garden-era copy that survives in other sections: the sparse2 hero kicker "Physics is still to plant" (Task 11) and the sparse3 practice body "…waters your Add Maths plant" (Task 13). Kept word for word until the user rewords them.
 - Exams in sparse2: the preview checks a hidden Physics radio, so no tile looks selected. 10 scenes are expected to fail at ≤15% (Task 16 drift-log row).
