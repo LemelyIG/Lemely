@@ -3,18 +3,24 @@
 from __future__ import annotations
 
 import logging
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
+import sqlalchemy as sa
 
 from lemely.core.usage_types import GrantScope, Payer, payer_to_json
 from lemely.db.models.enums import Role
-from lemely.db.models.usage import GrantKind, UsageEntryKind, UsageJobStatus
+from lemely.db.models.usage import GrantKind, UsageEntryKind, UsageJob, UsageJobStatus
 from lemely.db.usage_ledger_repo import InsufficientBalance, UsageLedger
+from tests._concurrency import _Paused, _wait_until_a_backend_waits_on_a_lock
 from tests.usage_db import (
+    ACTION,
+    ESTIMATOR_VERSION,
     NOW,
+    RATE_VERSION,
     add_debt,
     add_user,
     balance,
@@ -44,6 +50,11 @@ def usage_db() -> Iterator[sessionmaker[Session]]:
 @pytest.fixture
 def sm(usage_db: sessionmaker[Session]) -> Iterator[sessionmaker[Session]]:
     yield from emptied_after(usage_db)
+
+
+def _job_count(sm: sessionmaker[Session]) -> int:
+    with sm() as session:
+        return int(session.scalar(sa.select(sa.func.count()).select_from(UsageJob)) or 0)
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +111,7 @@ def test_reserve_refuses_when_the_chain_is_short_and_writes_nothing(
     assert (caught.value.available, caught.value.required) == (9, 10)
     assert balance(sm, gid) == (9, 0)
     assert entries(sm, kind=UsageEntryKind.hold) == []
+    assert _job_count(sm) == 0
 
 
 def test_insufficient_balance_message_defaults_to_the_numbers() -> None:
@@ -113,6 +125,10 @@ def test_reserve_validates(sm: sessionmaker[Session]) -> None:
         reserve(sm, [], 1, actor=owner)
     with pytest.raises(ValueError, match="estimate_low"):
         reserve(sm, own_chain(owner), 1, low=2)
+    with pytest.raises(ValueError, match="expires_at"):
+        reserve(sm, own_chain(owner), 1, expires_at=NOW)
+    with pytest.raises(ValueError, match="expires_at"):
+        reserve(sm, own_chain(owner), 1, expires_at=NOW - timedelta(minutes=1))
 
 
 def test_debt_blocks_the_owners_own_balance_but_not_a_seat(sm: sessionmaker[Session]) -> None:
@@ -138,7 +154,7 @@ def test_teacher_credits_stop_at_the_seat_cap_counting_open_holds(
     # Only 4 of the cap is left; the student has nothing of their own.
     with pytest.raises(InsufficientBalance) as caught:
         reserve(sm, chain, 6, actor=student, teacher_member_id=member)
-    assert caught.value.available == 4
+    assert (caught.value.available, caught.value.required) == (4, 6)
     own = grant(sm, student, 2)
     reserve(sm, chain, 6, actor=student, teacher_member_id=member)
     assert balance(sm, teacher_credits) == (100, 10)
@@ -288,3 +304,108 @@ def test_replay_with_a_different_kind_or_units_warns_and_returns_the_existing_gr
     assert all(r.levelno == logging.WARNING for r in caplog.records)
     assert all("period:2026-11" in r.getMessage() for r in caplog.records)
     assert balance(sm, first) == (50, 0)
+
+
+# ---------------------------------------------------------------------------
+# Task 5 review fixes (expired grants, stranded holds, lock order)
+# ---------------------------------------------------------------------------
+
+
+def test_release_frees_a_hold_on_a_grant_that_expired_after_reserving(
+    sm: sessionmaker[Session],
+) -> None:
+    owner = add_user(sm)
+    gid = grant(sm, owner, 30, expires_at=NOW + timedelta(minutes=10))
+    job_id = reserve(sm, own_chain(owner), 10)
+    assert balance(sm, gid) == (30, 10)
+    with sm.begin() as session:
+        UsageLedger(session).release(job_id, now=NOW + timedelta(minutes=20))
+    assert balance(sm, gid) == (30, 0)
+    assert job(sm, job_id).status is UsageJobStatus.released
+    [release] = entries(sm, job_id=job_id, kind=UsageEntryKind.release)
+    assert (release.grant_id, release.units) == (gid, -10)
+
+
+def test_expire_stale_jobs_frees_a_hold_on_a_grant_that_expired_after_reserving(
+    sm: sessionmaker[Session],
+) -> None:
+    owner = add_user(sm)
+    gid = grant(sm, owner, 30, expires_at=NOW + timedelta(minutes=10))
+    job_id = reserve(sm, own_chain(owner), 10, expires_at=NOW + timedelta(minutes=15))
+    with sm.begin() as session:
+        assert UsageLedger(session).expire_stale_jobs(now=NOW + timedelta(minutes=20)) == 1
+    assert balance(sm, gid) == (30, 0)
+    assert job(sm, job_id).status is UsageJobStatus.expired
+
+
+def test_closing_a_job_whose_chain_no_longer_reaches_its_holds_raises(
+    sm: sessionmaker[Session],
+) -> None:
+    owner, other = add_user(sm), add_user(sm)
+    gid = grant(sm, owner, 30)
+    job_id = reserve(sm, own_chain(owner), 10)
+    with sm.begin() as session:
+        session.execute(
+            sa.update(UsageJob)
+            .where(UsageJob.job_id == job_id)
+            .values(payer_chain=[payer_to_json(p) for p in own_chain(other)])
+        )
+    with pytest.raises(RuntimeError, match="no longer reaches"), sm.begin() as session:
+        UsageLedger(session).release(job_id, now=NOW)
+    assert balance(sm, gid) == (30, 10)  # the failed close rolled back
+    assert job(sm, job_id).status is UsageJobStatus.open
+
+
+def test_sweeper_and_reserve_over_the_same_owners_do_not_deadlock(
+    sm: sessionmaker[Session],
+) -> None:
+    """The sweeper closes B's job before A's; a reserve locks A before B.
+
+    Without one sorted pre-lock in ``expire_stale_jobs`` the sweeper holds B
+    while waiting for A, and the reserve holds A while waiting for B.
+    """
+    low, high = sorted([add_user(sm), add_user(sm)])
+    grant(sm, low, 100)
+    grant(sm, high, 100)
+    reserve(sm, own_chain(high), 10, expires_at=NOW + timedelta(minutes=5))  # closed first
+    reserve(sm, own_chain(low), 10, expires_at=NOW + timedelta(minutes=8))
+    holds_low = threading.Event()
+    go = threading.Event()
+    reserved = uuid.uuid4()
+
+    def reserver() -> None:
+        with sm.begin() as session:
+            ledger = UsageLedger(session)
+            ledger._lock_owners([low])
+            holds_low.set()
+            assert go.wait(30)
+            ledger.reserve(
+                job_id=reserved,
+                actor_user_id=low,
+                action=ACTION,
+                payers=[*own_chain(low), *own_chain(high)],
+                estimate_low=0,
+                estimate_high=5,
+                estimator_version=ESTIMATOR_VERSION,
+                rate_version=RATE_VERSION,
+                teacher_member_id=None,
+                expires_at=NOW + timedelta(hours=1),
+                now=NOW,
+            )
+
+    def sweeper() -> int:
+        assert holds_low.wait(30)
+        with sm.begin() as session:
+            return UsageLedger(session).expire_stale_jobs(now=NOW + timedelta(minutes=10))
+
+    reserving = _Paused(reserver)
+    sweeping = _Paused(sweeper)
+    assert holds_low.wait(30)
+    _wait_until_a_backend_waits_on_a_lock(sm)  # the sweeper is queued behind the reserver
+    go.set()
+    reserving.join()
+    sweeping.join()
+    assert reserving.error is None
+    assert sweeping.error is None
+    assert sweeping.result == 2
+    assert job(sm, reserved).status is UsageJobStatus.open

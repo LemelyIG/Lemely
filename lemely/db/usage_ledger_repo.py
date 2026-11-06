@@ -473,6 +473,8 @@ class UsageLedger:
             raise ValueError("payers must not be empty")
         if not 0 <= estimate_low <= estimate_high:
             raise ValueError("need 0 <= estimate_low <= estimate_high")
+        if expires_at <= now:
+            raise ValueError("expires_at must be after now")
         self._lock_owners([p.owner_user_id for p in payers])
         slots = self._slots(payers, now=now, lock=True)
         plan = self._walk(slots, estimate_high, payers, now=now)
@@ -517,13 +519,17 @@ class UsageLedger:
 
     def expire_stale_jobs(self, *, now: datetime) -> int:
         """Release open jobs past ``expires_at`` and mark them expired (§5.7 step 7)."""
-        job_ids = self._session.scalars(
-            sa.select(UsageJob.job_id)
+        rows = self._session.execute(
+            sa.select(UsageJob.job_id, UsageJob.payer_chain)
             .where(UsageJob.status == UsageJobStatus.open, UsageJob.expires_at <= now)
             .order_by(UsageJob.expires_at, UsageJob.job_id)
         ).all()
+        # One sorted pass over every owner involved: closing the jobs one by one
+        # would otherwise take owner locks in expiry order and deadlock with a
+        # reserve that takes them in ascending UUID order.
+        self._lock_owners([payer_from_json(p).owner_user_id for _, chain in rows for p in chain])
         expired = 0
-        for job_id in job_ids:
+        for job_id, _chain in rows:
             if self._close(job_id, UsageJobStatus.expired, now).status is UsageJobStatus.expired:
                 expired += 1
         return expired
@@ -557,10 +563,17 @@ class UsageLedger:
         if job.status is not UsageJobStatus.open:
             return job
         holds = self._job_holds(job_id)
+        released: set[uuid.UUID] = set()
         for slot in self._slots(payers, now=now, lock=True, include=set(holds)):
             held = holds.get(slot.grant.id, 0)
             if held:
                 self._release_slot(slot, held, job, now)
+                released.add(slot.grant.id)
+        if stranded := set(holds) - released:
+            raise RuntimeError(
+                f"usage job {job_id} holds units on grants {sorted(stranded)} "
+                "that its payer chain no longer reaches"
+            )
         job.status = status
         self._session.flush()
         return job
