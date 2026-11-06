@@ -1,6 +1,27 @@
 import { describe, expect, it } from "vitest"
 import { ApiError } from "@/lib/api"
 import {
+  ADJUST_FIELDS,
+  CANCEL_FIELDS,
+  EXTEND_FIELDS,
+  FORGIVE_FIELDS,
+  GRANT_FIELDS,
+  REFUND_FIELDS,
+  activatableTiers,
+  activationBody,
+  activationFields,
+  adjustBody,
+  canVoid,
+  cancelBody,
+  extendBody,
+  forgiveBody,
+  grantBody,
+  humanize,
+  paymentActionState,
+  refundAmountErrors,
+  refundBody,
+  refundOutcome,
+  refundableMinor,
   ESTIMATOR_FIELDS,
   PACK_FIELDS,
   RATE_FIELDS,
@@ -272,5 +293,94 @@ describe("admin billing failures", () => {
     expect(adminRetry(0, api(422))).toBe(false)
     expect(adminRetry(0, api(500))).toBe(true)
     expect(adminRetry(2, api(500))).toBe(false)
+  })
+})
+
+describe("customer action bodies", () => {
+  it("builds plan 07's grant, adjust, forgive, activation, extend, cancel and refund bodies", () => {
+    expect(grantBody({ units: "200", validDays: "" }, "goodwill", "rq1")).toEqual({ units: 200, validDays: null, requestId: "rq1", reason: "goodwill" })
+    expect(grantBody({ units: "200", validDays: "90" }, "goodwill", "rq1").validDays).toBe(90)
+    expect(adjustBody({ units: "-40" }, "correction", "rq2")).toEqual({ units: -40, requestId: "rq2", reason: "correction" })
+    expect(forgiveBody({ units: "" }, "forgive all")).toEqual({ units: null, reason: "forgive all" })
+    expect(forgiveBody({ units: "12" }, "forgive part")).toEqual({ units: 12, reason: "forgive part" })
+    expect(activationBody({ planTierId: "t1", periodDays: "30" }, "complimentary")).toEqual({ planTierId: "t1", periodDays: 30, reason: "complimentary" })
+    expect(extendBody({ days: "7" }, "outage")).toEqual({ days: 7, reason: "outage" })
+    expect(cancelBody({ immediate: true }, "fraud")).toEqual({ when: "now", reason: "fraud" })
+    expect(cancelBody({ immediate: false }, "asked")).toEqual({ when: "period_end", reason: "asked" })
+    expect(refundBody({ amountMajor: "150" }, "duplicate")).toEqual({ amountMinor: 15000, reason: "duplicate" })
+    expect(refundBody({ amountMajor: "" }, "full")).toEqual({ amountMinor: null, reason: "full" })
+  })
+
+  it("never lets a non-number reach a ledger body", () => {
+    for (const bad of ["", "abc", "0", "-0", "1.5", "- 4", "12e3"]) {
+      expect(Object.keys(fieldErrors(ADJUST_FIELDS, { units: bad })), `adjust ${bad}`).toEqual(["units"])
+    }
+    expect(fieldErrors(ADJUST_FIELDS, { units: "-40" })).toEqual({})
+    expect(fieldErrors(ADJUST_FIELDS, { units: "40" })).toEqual({})
+    expect(Object.keys(fieldErrors(GRANT_FIELDS, { units: "0", validDays: "" }))).toEqual(["units"])
+    expect(Object.keys(fieldErrors(GRANT_FIELDS, { units: "5", validDays: "0" }))).toEqual(["validDays"])
+    expect(fieldErrors(FORGIVE_FIELDS, { units: "" })).toEqual({})
+    expect(Object.keys(fieldErrors(FORGIVE_FIELDS, { units: "0" }))).toEqual(["units"])
+    expect(Object.keys(fieldErrors(EXTEND_FIELDS, { days: "0" }))).toEqual(["days"])
+    expect(fieldErrors(CANCEL_FIELDS, { immediate: false })).toEqual({})
+    expect(Object.keys(fieldErrors(activationFields([]), { planTierId: "t", periodDays: "0" }))).toEqual(["periodDays"])
+    expect(Object.keys(fieldErrors(REFUND_FIELDS, { amountMajor: "0" }))).toEqual(["amountMajor"])
+    expect(fieldErrors(REFUND_FIELDS, { amountMajor: "" })).toEqual({})
+  })
+})
+
+describe("refunds that may not have happened", () => {
+  const base = { id: "r1", kind: "refund" as const, amountMinor: 15000, reason: "dup", adminUserId: "a", clawedBackUnits: 0, createdAt: "", updatedAt: "" }
+
+  it("calls an unknown outcome unknown, never a failure, and a refusal a refusal", () => {
+    const unknown = refundOutcome({ ...base, status: "unknown" }, "EGP")
+    expect(unknown.label).toMatch(/outcome unknown/)
+    expect(unknown.detail).toMatch(/may have gone through/)
+    expect(`${unknown.label} ${unknown.detail}`.toLowerCase()).not.toMatch(/fail|declin|nothing was/)
+    expect(unknown.tone).toBe("attention")
+    const failed = refundOutcome({ ...base, status: "failed" }, "EGP")
+    expect(failed.label).toMatch(/declined/)
+    expect(failed.tone).toBe("error")
+    expect(refundOutcome({ ...base, status: "succeeded", clawedBackUnits: 300 }, "EGP").detail).toMatch(/300 unspent units taken back/)
+    expect(refundOutcome({ ...base, kind: "void", status: "requested" }, "EGP").label).toMatch(/^Void of/)
+  })
+
+  it("offers only the check while a refund is open, and nothing once the payment is settled", () => {
+    const p = { status: "paid" as const, refunds: [] as never[], refundedMinor: 0, amountMinor: 25000 }
+    expect(paymentActionState(p)).toBe("open")
+    expect(paymentActionState({ ...p, refunds: [{ ...base, status: "unknown" }] })).toBe("settling")
+    expect(paymentActionState({ ...p, refunds: [{ ...base, status: "requested" }] })).toBe("settling")
+    expect(paymentActionState({ ...p, refunds: [{ ...base, status: "failed" }] })).toBe("open")
+    expect(paymentActionState({ ...p, status: "refunded" })).toBe("closed")
+    expect(paymentActionState({ ...p, status: "pending" })).toBe("closed")
+    expect(paymentActionState({ ...p, status: "partially_refunded" })).toBe("open")
+  })
+
+  it("voids only a payment nothing has been taken back from, and caps a refund at what is left", () => {
+    expect(canVoid({ status: "paid", refundedMinor: 0 })).toBe(true)
+    expect(canVoid({ status: "partially_refunded", refundedMinor: 1000 })).toBe(false)
+    expect(refundableMinor({ amountMinor: 25000, refundedMinor: 4000 })).toBe(21000)
+    expect(refundAmountErrors({ amountMajor: "210.01" }, 21000, "EGP")).toHaveLength(1)
+    expect(refundAmountErrors({ amountMajor: "210" }, 21000, "EGP")).toEqual([])
+    expect(refundAmountErrors({ amountMajor: "" }, 21000, "EGP")).toEqual([])
+  })
+
+  it("words a dropped connection on a customer action for that page, not the catalogue", () => {
+    const err = new ApiError(0, "net", undefined)
+    expect(adminBillingFailureMessage(err, "forgive this debt", { reload: "Reload this page" })).toMatch(/^The connection dropped.*Reload this page to check before trying again\.$/)
+    expect(adminBillingFailureMessage(err, "save")).toMatch(/Reload the catalogue/)
+    expect(adminBillingFailureMessage(new ApiError(409, "x", { code: "refund_in_flight" }), "refund")).toMatch(/waiting on Paymob/)
+  })
+})
+
+describe("customer view helpers", () => {
+  it("humanizes codes and lists only plans that can be activated for the customer's role", () => {
+    expect(humanize("pending_first_payment")).toBe("Pending first payment")
+    const tier = (id: string, audience: "student" | "teacher", isActive = true, priceMinor = 25000) =>
+      ({ id, code: id, name: id, audience, isActive, priceMinor }) as never
+    const tiers = [tier("s", "student"), tier("t", "teacher"), tier("old", "student", false), tier("free", "student", true, 0)]
+    expect(activatableTiers(tiers, "student").map((t: { id: string }) => t.id)).toEqual(["s"])
+    expect(activatableTiers(tiers, "teacher").map((t: { id: string }) => t.id)).toEqual(["t"])
+    expect(activatableTiers(tiers, "parent").map((t: { id: string }) => t.id)).toEqual(["s", "t"])
   })
 })

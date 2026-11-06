@@ -1,14 +1,24 @@
 import { ApiError } from "@/lib/api"
 import { billingErrorCode } from "@/lib/billingOutcome"
 import { METERED_ACTIONS } from "@/lib/billingTypes"
+import { formatMoney } from "@/lib/billingFormat"
 import type {
+  AdminAdjustRequest,
+  AdminCancelRequest,
   AdminCreditPack,
+  AdminExtendRequest,
+  AdminForgiveRequest,
+  AdminGrantRequest,
+  AdminPaymentRow,
   AdminPlanTier,
+  AdminRefund,
+  AdminRefundRequest,
   Audience,
   EstimatorCreate,
   EstimatorInputKind,
   FreeAllowances,
   FreeAllowanceUpdate,
+  ManualActivationRequest,
   MeteredAction,
   PackCreate,
   PackUpdate,
@@ -478,6 +488,10 @@ const FRIENDLY: Record<string, string> = {
   per_input_without_input_kind: "Per input units need a counted input. Choose pages, marks or questions, or set both to 0.",
   seat_fields_on_student_tier: "Student tiers carry no seats. Set the seat fields to 0.",
   not_billable: "A free tier has no Paymob plan to sync.",
+  paymob_billed: "Paymob bills this plan, so its period can't be moved here. Grant credits instead.",
+  refund_in_flight: "A refund on this payment is still waiting on Paymob. Check with Paymob before trying another.",
+  not_voidable: "This payment can't be voided any more. Refund it instead.",
+  not_refundable: "Only a paid payment can be refunded.",
 }
 
 function serverMessage(err: unknown): string | null {
@@ -510,26 +524,168 @@ export class PartialSaveError extends Error {
  * back on a Paymob failure (`rolledBackOn502`); anything else with an unclear outcome says so,
  * because a blind retry could add a second audit row.
  */
-export function adminBillingFailureMessage(err: unknown, action: string, opts: { rolledBackOn502?: boolean } = {}): string {
+export function adminBillingFailureMessage(
+  err: unknown,
+  action: string,
+  opts: { rolledBackOn502?: boolean; reload?: string } = {},
+): string {
+  const reload = opts.reload ?? "Reload the catalogue"
   if (err instanceof PartialSaveError) {
     const saved = err.saved.join(" and ")
     return `${saved} ${err.saved.length > 1 ? "were" : "was"} saved, but ${err.failed} was not. ${adminBillingFailureMessage(err.original, action, opts)}`
   }
   const status = err instanceof ApiError ? err.status : -1
-  if (status === 0) return "The connection dropped. This change may not have been saved. Reload the catalogue to check before trying again."
+  if (status === 0) return `The connection dropped. This change may not have been saved. ${reload} to check before trying again.`
   if (status === 401) return "Your session has expired. Sign in again. Nothing was saved."
   if (status === 403) return "Only platform admins can change billing. Nothing was saved."
   if (status === 429) return "Too many attempts. Wait a minute and try again. Nothing was saved."
   if (status === 502) {
     return opts.rolledBackOn502
       ? "Paymob didn't accept this request, so nothing was changed. Try again in a minute."
-      : "Paymob didn't answer cleanly, so the outcome is unknown. Reload the catalogue to check, then try again if it did not save."
+      : `Paymob didn't answer cleanly, so the outcome is unknown. ${reload} to check, then try again if it did not save.`
   }
-  if (status === 404) return serverMessage(err) ?? "That row no longer exists. Reload the catalogue."
+  if (status === 404) return serverMessage(err) ?? `That row no longer exists. ${reload}.`
   if (status === 409 || status === 422) {
     const code = billingErrorCode(err)
     if (code && FRIENDLY[code]) return FRIENDLY[code]
     return serverMessage(err) ?? "The server refused these values. Check each field and try again. Nothing was saved."
   }
-  return `Couldn't ${action}. Reload the catalogue to check whether it saved before trying again.`
+  return `Couldn't ${action}. ${reload} to check whether it saved before trying again.`
+}
+
+// ── Customer actions (spec §8.2, plan 07 A32-A35) ──────────────────────────
+
+const numOrNull = (v: FormValues, k: string) => (str(v, k) === "" ? null : num(v, k))
+
+export const GRANT_FIELDS: FieldSpec[] = [
+  { name: "units", label: "Credits to grant", kind: "number", positive: true },
+  { name: "validDays", label: "Valid for (days, empty = never expires)", kind: "number", optional: true, positive: true },
+]
+/** `requestId` is minted once per open dialog so a double submit is one grant. */
+export function grantBody(v: FormValues, reason: string, requestId: string): AdminGrantRequest {
+  return { units: num(v, "units"), validDays: numOrNull(v, "validDays"), requestId, reason }
+}
+
+export const ADJUST_FIELDS: FieldSpec[] = [
+  {
+    name: "units",
+    label: "Units (negative to debit)",
+    kind: "text",
+    maxLength: 12,
+    pattern: /^-?[1-9]\d{0,9}$/,
+    patternMessage: "Units must be a whole number other than zero, like 40 or -40.",
+    hint: "A debit larger than the balance becomes debt.",
+  },
+]
+export function adjustBody(v: FormValues, reason: string, requestId: string): AdminAdjustRequest {
+  return { units: Math.trunc(num(v, "units")), requestId, reason }
+}
+
+export const FORGIVE_FIELDS: FieldSpec[] = [
+  { name: "units", label: "Units to forgive (empty = all)", kind: "number", optional: true, positive: true },
+]
+export function forgiveBody(v: FormValues, reason: string): AdminForgiveRequest {
+  return { units: numOrNull(v, "units"), reason }
+}
+
+export function activationFields(tiers: { id: string; code: string; name: string }[]): FieldSpec[] {
+  return [
+    { name: "planTierId", label: "Plan", kind: "select", options: tiers.map((t) => ({ value: t.id, label: `${t.name} (${t.code})` })) },
+    { name: "periodDays", label: "Period (days)", kind: "number", positive: true },
+  ]
+}
+export function activationBody(v: FormValues, reason: string): ManualActivationRequest {
+  return { planTierId: str(v, "planTierId"), periodDays: num(v, "periodDays"), reason }
+}
+
+export const EXTEND_FIELDS: FieldSpec[] = [{ name: "days", label: "Days to add", kind: "number", positive: true }]
+export function extendBody(v: FormValues, reason: string): AdminExtendRequest {
+  return { days: num(v, "days"), reason }
+}
+
+export const CANCEL_FIELDS: FieldSpec[] = [{ name: "immediate", label: "End access now instead of at period end", kind: "checkbox" }]
+export function cancelBody(v: FormValues, reason: string): AdminCancelRequest {
+  return { when: v.immediate === true ? "now" : "period_end", reason }
+}
+
+export const REFUND_FIELDS: FieldSpec[] = [
+  { name: "amountMajor", label: "Refund amount (EGP, empty = everything refundable)", kind: "money", optional: true, positive: true },
+]
+export function refundBody(v: FormValues, reason: string): AdminRefundRequest {
+  return { amountMinor: str(v, "amountMajor") === "" ? null : minorFromMajor(str(v, "amountMajor")), reason }
+}
+
+/** What a payment still has to give back: its amount less the refunds Paymob confirmed. */
+export function refundableMinor(p: Pick<AdminPaymentRow, "amountMinor" | "refundedMinor">): number {
+  return Math.max(0, p.amountMinor - p.refundedMinor)
+}
+
+/** Refund attempts whose outcome is not settled. The server refuses a second refund while one is open. */
+export function openRefunds(p: Pick<AdminPaymentRow, "refunds">): AdminRefund[] {
+  return p.refunds.filter((r) => r.status === "requested" || r.status === "unknown")
+}
+
+export type PaymentActionState = "closed" | "settling" | "open"
+
+/**
+ * Which refund controls a payment gets. `settling` means a refund or void is still open: the
+ * only safe move is to ask Paymob what happened, so no new refund is offered.
+ */
+export function paymentActionState(p: Pick<AdminPaymentRow, "status" | "refunds">): PaymentActionState {
+  if (p.status !== "paid" && p.status !== "partially_refunded") return "closed"
+  return openRefunds(p).length > 0 ? "settling" : "open"
+}
+
+/** A void is only possible on a payment nothing has been taken back from yet. */
+export function canVoid(p: Pick<AdminPaymentRow, "status" | "refundedMinor">): boolean {
+  return p.status === "paid" && p.refundedMinor === 0
+}
+
+/** Cross-field rule for the refund form: the amount may not exceed what is left. */
+export function refundAmountErrors(v: FormValues, remainingMinor: number, currency: string): string[] {
+  const minor = str(v, "amountMajor") === "" ? null : minorFromMajor(str(v, "amountMajor"))
+  if (minor !== null && minor > remainingMinor) return [`Only ${formatMoney(remainingMinor, currency)} is left to refund on this payment.`]
+  return []
+}
+
+export type RefundTone = "neutral" | "attention" | "error"
+
+/**
+ * One refund attempt in words. `unknown` never reads as a failure: Paymob did not answer, so
+ * the refund may have happened. Only `failed` (Paymob refused) says nothing was taken back.
+ */
+export function refundOutcome(r: AdminRefund, currency: string): { label: string; detail: string; tone: RefundTone } {
+  const what = r.kind === "void" ? "Void" : "Refund"
+  const money = formatMoney(r.amountMinor, currency)
+  const clawed = r.clawedBackUnits > 0 ? ` ${grouped(r.clawedBackUnits)} unspent units taken back.` : ""
+  switch (r.status) {
+    case "succeeded":
+      return { label: `${what} of ${money} succeeded`, detail: `Paymob confirmed it.${clawed}`, tone: "neutral" }
+    case "failed":
+      return { label: `${what} of ${money} was declined`, detail: "Paymob refused it. The payment is unchanged.", tone: "error" }
+    case "unknown":
+      return {
+        label: `${what} of ${money}: outcome unknown`,
+        detail: "Paymob did not answer, so this may have gone through. Check with Paymob before trying again.",
+        tone: "attention",
+      }
+    default:
+      return { label: `${what} of ${money} requested`, detail: "Waiting for Paymob to answer.", tone: "attention" }
+  }
+}
+
+/** `pending_first_payment` as "Pending first payment". */
+export function humanize(code: string): string {
+  const text = code.replaceAll("_", " ")
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+/**
+ * Plans an admin can activate for this customer: active, paid tiers for their audience. Parent
+ * and admin accounts hold no plan of their own, so they see every active paid tier.
+ */
+export function activatableTiers(tiers: AdminPlanTier[], role: string): AdminPlanTier[] {
+  const mine = tiers.filter((t) => t.isActive && t.priceMinor > 0)
+  const forRole = mine.filter((t) => t.audience === role)
+  return role === "student" || role === "teacher" ? forRole : mine
 }

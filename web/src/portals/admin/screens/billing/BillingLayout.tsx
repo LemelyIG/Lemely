@@ -4,10 +4,11 @@ import { cn } from "@/lib/utils"
 
 /*
  * `/platform/billing` and its areas (spec §8). One sidebar entry, a pill nav per area, so the
- * platform sidebar stays short. Tasks 14–16 append their areas to `BILLING_AREAS`.
+ * platform sidebar stays short. Tasks 15–16 append their areas to `BILLING_AREAS`.
  */
 
 export const BILLING_AREAS: readonly { to: string; label: string; end?: boolean }[] = [
+  { to: "/platform/billing", label: "Customers", end: true },
   { to: "/platform/billing/catalogue", label: "Catalogue" },
 ]
 

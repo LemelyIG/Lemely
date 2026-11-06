@@ -44,6 +44,7 @@ export function ReasonedFormDialog<TBody>({
   check,
   onSaved,
   rolledBackOn502 = false,
+  reload,
 }: {
   open: boolean
   onClose: () => void
@@ -60,6 +61,8 @@ export function ReasonedFormDialog<TBody>({
   onSaved?: () => void
   /** True only where a Paymob failure is known to roll the whole write back (the plan sync). */
   rolledBackOn502?: boolean
+  /** How the failure copy tells the admin to check what saved ("Reload this page"). */
+  reload?: string
 }) {
   const formId = useId()
   const formRef = useRef<HTMLFormElement>(null)
@@ -109,7 +112,7 @@ export function ReasonedFormDialog<TBody>({
         <div className="flex flex-col gap-3">
           {mutation.isError ? (
             <p role="alert" className="m-0 text-body-sm text-error">
-              {adminBillingFailureMessage(mutation.error, "save this change", { rolledBackOn502 })}
+              {adminBillingFailureMessage(mutation.error, "save this change", { rolledBackOn502, reload })}
             </p>
           ) : null}
           <div className="flex justify-end gap-2">
@@ -187,11 +190,13 @@ export function ReasonedFormDialog<TBody>({
           )
         })}
         {showErrors && crossProblems.length > 0 ? (
-          <ul role="alert" className="m-0 flex flex-col gap-1 ps-4 text-body-sm text-error sm:col-span-2">
-            {crossProblems.map((m) => (
-              <li key={m}>{m}</li>
-            ))}
-          </ul>
+          <div role="alert" className="sm:col-span-2">
+            <ul className="m-0 flex flex-col gap-1 ps-4 text-body-sm text-error">
+              {crossProblems.map((m) => (
+                <li key={m}>{m}</li>
+              ))}
+            </ul>
+          </div>
         ) : null}
         <Textarea
           wrapperClassName="sm:col-span-2"

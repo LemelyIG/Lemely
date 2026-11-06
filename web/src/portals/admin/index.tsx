@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
 import { lazy, Suspense, useState } from "react"
-import { Link, Navigate, useLocation } from "react-router-dom"
+import { Link, useLocation } from "react-router-dom"
 import {
   SquaresFour,
   Armchair,
@@ -90,6 +90,12 @@ const TutoringReportDetail = lazy(() =>
 
 const BillingLayout = lazy(() =>
   import("./screens/billing/BillingLayout").then((m) => ({ default: m.BillingLayout })),
+)
+const BillingCustomers = lazy(() =>
+  import("./screens/billing/Customers").then((m) => ({ default: m.Customers })),
+)
+const BillingCustomerDetail = lazy(() =>
+  import("./screens/billing/CustomerDetail").then((m) => ({ default: m.CustomerDetail })),
 )
 const BillingCatalogue = lazy(() =>
   import("./screens/billing/Catalogue").then((m) => ({ default: m.Catalogue })),
@@ -452,7 +458,8 @@ export const platformAdminRoute: RouteObject = {
       element: <BillingLayout />,
       handle: { title: "Platform billing", skeleton: "page-header" },
       children: [
-        { index: true, element: <Navigate to="catalogue" replace />, handle: { title: "Platform billing", skeleton: "page-header" } },
+        { index: true, element: <BillingCustomers />, handle: { title: "Billing customers", skeleton: "list" } },
+        { path: "customers/:userId", element: <BillingCustomerDetail />, handle: { title: "Billing customer", skeleton: "page-header" } },
         { path: "catalogue", element: <BillingCatalogue />, handle: { title: "Billing catalogue", skeleton: "page-header" } },
       ],
     },
