@@ -27,6 +27,13 @@ import {
   versionRows,
   visibleFields,
   paymobState,
+  PartialSaveError,
+  featureLinesOf,
+  formatUtc,
+  freeChanges,
+  freeValues,
+  hiddenFeatureCount,
+  mergeFeatures,
 } from "@/lib/adminBillingModel"
 import { fx } from "./support/billingFixtures"
 
@@ -176,12 +183,54 @@ describe("admin billing model: what the server would refuse is refused first", (
     ])
   })
 
-  it("never raises a drift alarm for a free tier or a tier nobody can buy", () => {
-    const tier = { ...fx.adminCatalogue.tiers[0], drift: "Paymob amount is 240.00" }
+  it("raises the crimson drift alarm only for a tier on sale that is missing or differs", () => {
+    const tier = { ...fx.adminCatalogue.tiers[0], drift: "Paymob plan differs from the catalogue", driftState: "drifted" as const }
     expect(paymobState(tier)).toMatchObject({ tone: "attention", canSync: true })
+    expect(paymobState({ ...tier, driftState: "not_synced", drift: "Not synced to Paymob yet" })).toMatchObject({ tone: "attention" })
     expect(paymobState({ ...tier, isActive: false })).toMatchObject({ tone: "muted", canSync: true })
-    expect(paymobState({ ...tier, priceMinor: 0, drift: "Not synced to Paymob yet" })).toMatchObject({ tone: "free", canSync: false })
-    expect(paymobState({ ...tier, drift: null })).toMatchObject({ tone: "ok" })
+    expect(paymobState({ ...tier, priceMinor: 0, driftState: "not_synced", drift: "Not synced to Paymob yet" })).toMatchObject({ tone: "free", canSync: false })
+    expect(paymobState({ ...tier, drift: null, driftState: "in_sync" })).toMatchObject({ tone: "ok" })
+  })
+
+  it("treats a plan nobody checked as a neutral prompt to sync, not a fault", () => {
+    const state = paymobState({ ...fx.adminCatalogue.tiers[0], drift: "Paymob plan not checked", driftState: "unverified" })
+    expect(state.tone).toBe("neutral")
+    expect(state.canSync).toBe(true)
+    expect(state.text).toMatch(/Sync to confirm/)
+  })
+
+  it("round-trips a tier's stored features: unknown keys and false flags survive an edit", () => {
+    const raw = { "Mark past papers": true, "Study plans": true, papers: "unlimited", beta: false, tiers: 3 }
+    const tier = { ...fx.adminCatalogue.tiers[0], features: ["Mark past papers", "Study plans"], rawFeatures: raw }
+    const v = tierValues(tier)
+    expect(featureLinesOf(v)).toEqual(["Mark past papers", "Study plans"])
+    // Untouched form: identical features come back.
+    expect(tierUpdateBody(v, "r", raw).features).toEqual(raw)
+    // Remove one true line, add one: non-true keys stay, the removed line goes, the new one is true.
+    const edited = { ...v, features: "Mark past papers\nClass analytics" }
+    expect(tierUpdateBody(edited, "r", raw).features).toEqual({ papers: "unlimited", beta: false, tiers: 3, "Mark past papers": true, "Class analytics": true })
+    // Typing the name of a stored-false key turns it on.
+    expect(mergeFeatures({ beta: false }, ["beta"])).toEqual({ beta: true })
+    expect(hiddenFeatureCount(raw)).toBe(3)
+    // Without raw features (a new tier) only the typed lines are sent.
+    expect(tierUpdateBody(v, "r").features).toEqual({ "Mark past papers": true, "Study plans": true })
+  })
+
+  it("sends only the free allowances that changed, and an unset one always counts as changed", () => {
+    const current = { studentSignupUnits: 300, teacherSignupUnits: 1000, teacherSignupExpiryDays: 30 }
+    expect(freeChanges(freeValues(current), "r", current)).toEqual([])
+    expect(freeChanges({ ...freeValues(current), teacherSignupUnits: "1200" }, "r", current)).toEqual([{ audience: "teacher", units: 1200, reason: "r" }])
+    const unset = { studentSignupUnits: null, teacherSignupUnits: 1000, teacherSignupExpiryDays: 30 }
+    expect(freeValues(unset).studentSignupUnits).toBe("")
+    expect(fieldErrors([{ name: "studentSignupUnits", label: "Student free allowance (units)", kind: "number" }], freeValues(unset))).toEqual({
+      studentSignupUnits: "Student free allowance (units) is required.",
+    })
+    expect(freeChanges({ ...freeValues(unset), studentSignupUnits: "0" }, "r", unset)).toEqual([{ audience: "student", units: 0, reason: "r" }])
+  })
+
+  it("shows an effective-from instant with its time in UTC", () => {
+    expect(formatUtc("2026-12-01T00:00:00Z")).toBe("1 Dec 2026, 00:00 UTC")
+    expect(formatUtc("2026-10-15T13:05:00+02:00")).toBe("15 Oct 2026, 11:05 UTC")
   })
 })
 
@@ -198,10 +247,20 @@ describe("admin billing failures", () => {
     expect(adminBillingFailureMessage(api(422, [{ loc: ["body", "name"], msg: "x" }]), "save")).toMatch(/Check each field/)
   })
 
+  it("claims 'nothing was changed' on a 502 only for the plan sync", () => {
+    const e = api(502, { code: "paymob_plan_create_failed", message: "boom" })
+    expect(adminBillingFailureMessage(e, "sync", { rolledBackOn502: true })).toBe("Paymob didn't accept this request, so nothing was changed. Try again in a minute.")
+    const other = adminBillingFailureMessage(e, "save this change")
+    expect(other).toMatch(/outcome is unknown/)
+    expect(other).not.toMatch(/nothing was changed/)
+  })
+
+  it("says which allowance saved when the second request fails", () => {
+    const partial = new PartialSaveError(["the student free allowance"], "the teacher signup credits", api(422, { code: "units_rejected", message: "The database refused these units." }))
+    expect(adminBillingFailureMessage(partial, "save")).toBe("the student free allowance was saved, but the teacher signup credits was not. The database refused these units.")
+  })
+
   it("says what is and is not known when the outcome is unclear", () => {
-    expect(adminBillingFailureMessage(api(502, { code: "paymob_plan_create_failed", message: "boom" }), "sync")).toBe(
-      "Paymob didn't accept this request, so nothing was changed. Try again in a minute.",
-    )
     expect(adminBillingFailureMessage(api(403), "save")).toMatch(/Only platform admins/)
     expect(adminBillingFailureMessage(api(0), "save")).toMatch(/may not have been saved/)
     expect(adminBillingFailureMessage(api(500), "save this change")).toMatch(/check whether it saved/)

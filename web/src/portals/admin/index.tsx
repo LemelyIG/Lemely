@@ -452,7 +452,7 @@ export const platformAdminRoute: RouteObject = {
       element: <BillingLayout />,
       handle: { title: "Platform billing", skeleton: "page-header" },
       children: [
-        { index: true, element: <Navigate to="catalogue" replace /> },
+        { index: true, element: <Navigate to="catalogue" replace />, handle: { title: "Platform billing", skeleton: "page-header" } },
         { path: "catalogue", element: <BillingCatalogue />, handle: { title: "Billing catalogue", skeleton: "page-header" } },
       ],
     },

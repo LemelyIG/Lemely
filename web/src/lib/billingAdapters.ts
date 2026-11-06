@@ -265,14 +265,16 @@ export function toAdminCatalogue(w: WireAdminCatalogue): AdminCatalogue {
         isActive: t.isActive,
         paymobPlanId: t.paymobPlanId,
         drift: DRIFT[t.paymobDrift],
+        driftState: t.paymobDrift,
+        rawFeatures: t.features,
       }
     }),
     packs: w.creditPacks,
     rates: w.usageRates,
     estimators: w.usageEstimators,
     freeAllowances: {
-      studentSignupUnits: free("student")?.units ?? 0,
-      teacherSignupUnits: free("teacher")?.units ?? 0,
+      studentSignupUnits: free("student")?.units ?? null,
+      teacherSignupUnits: free("teacher")?.units ?? null,
       teacherSignupExpiryDays: free("teacher")?.validDays ?? null,
     },
   }

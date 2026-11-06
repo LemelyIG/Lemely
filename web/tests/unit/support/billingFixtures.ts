@@ -250,7 +250,8 @@ const adminCatalogue: AdminCatalogue = {
     {
       id: "t-s-m", code: "student_plus_m", name: "Student Plus", audience: "student", interval: "month", priceMinor: 25000,
       currency: "EGP", allowanceUnits: 4000, includedSeats: null, seatAllowanceUnits: null, extraSeatPriceMinor: null,
-      features: ["Mark past papers", "Study plans"], isActive: true, paymobPlanId: 77, drift: null,
+      features: ["Mark past papers", "Study plans"], isActive: true, paymobPlanId: 77, drift: null, driftState: "in_sync",
+      rawFeatures: { "Mark past papers": true, "Study plans": true },
     },
   ],
   packs: [{ id: "p1", code: "pack_500", name: "500 credits", units: 500, priceMinor: 15000, currency: "EGP", isActive: true }],

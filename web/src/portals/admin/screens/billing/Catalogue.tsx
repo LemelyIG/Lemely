@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
 import { useState, type ReactNode } from "react"
 import { WarningCircle } from "@phosphor-icons/react"
 import { Badge } from "@/components/ui/badge"
@@ -16,7 +17,9 @@ import {
   TIER_UPDATE_FIELDS,
   estimatorBody,
   estimatorErrors,
-  freeFormBody,
+  freeChanges,
+  formatUtc,
+  hiddenFeatureCount,
   freeValues,
   isForbidden,
   packBody,
@@ -30,7 +33,7 @@ import {
   versionRows,
   type VersionStatus,
 } from "@/lib/adminBillingModel"
-import { formatBillingDate, formatMoney } from "@/lib/billingFormat"
+import { formatMoney } from "@/lib/billingFormat"
 import type { AdminCatalogue, AdminCreditPack, AdminPlanTier } from "@/lib/billingTypes"
 import {
   useAdminCatalogue,
@@ -364,11 +367,11 @@ function Body({ c, open }: { c: AdminCatalogue; open: (d: Dialog) => void }) {
         <dl className="m-0 grid gap-x-8 gap-y-3 text-body-sm sm:grid-cols-3">
           <div>
             <dt className="text-on-surface-variant">Student free allowance</dt>
-            <dd className="m-0 text-data-md">{n(free.studentSignupUnits)} units</dd>
+            <dd className="m-0 text-data-md">{free.studentSignupUnits === null ? "Not set" : `${n(free.studentSignupUnits)} units`}</dd>
           </div>
           <div>
             <dt className="text-on-surface-variant">Teacher signup credits</dt>
-            <dd className="m-0 text-data-md">{n(free.teacherSignupUnits)} units</dd>
+            <dd className="m-0 text-data-md">{free.teacherSignupUnits === null ? "Not set" : `${n(free.teacherSignupUnits)} units`}</dd>
           </div>
           <div>
             <dt className="text-on-surface-variant">Teacher credits expire after</dt>
@@ -413,7 +416,7 @@ function Body({ c, open }: { c: AdminCatalogue; open: (d: Dialog) => void }) {
                   </TD>
                   <TD numeric>{r.version}</TD>
                   <TD numeric>{n(r.unitsPerUsd)}</TD>
-                  <TD>{formatBillingDate(r.effectiveFrom)}</TD>
+                  <TD>{formatUtc(r.effectiveFrom)}</TD>
                   <TD className="hidden md:table-cell">
                     <StatusCell status={status} />
                   </TD>
@@ -468,7 +471,7 @@ function Body({ c, open }: { c: AdminCatalogue; open: (d: Dialog) => void }) {
                   <TD numeric>
                     {e.perInputLow}–{e.perInputHigh}
                   </TD>
-                  <TD>{formatBillingDate(e.effectiveFrom)}</TD>
+                  <TD>{formatUtc(e.effectiveFrom)}</TD>
                   <TD className="hidden md:table-cell">
                     <StatusCell status={status} />
                   </TD>
@@ -534,10 +537,13 @@ export function Catalogue() {
                 initial={tierValues(dialog.tier)}
                 submitLabel="Save tier"
                 mutation={updateTier}
-                toBody={(v, r) => ({ id: dialog.tier!.id, body: tierUpdateBody(v, r) })}
+                toBody={(v, r) => ({ id: dialog.tier!.id, body: tierUpdateBody(v, r, dialog.tier!.rawFeatures) })}
                 note={
                   <p className="m-0 text-body-sm text-on-surface-variant">
                     Code, audience and interval are fixed once a tier exists. A changed price shows as drift until it is synced to Paymob.
+                    {hiddenFeatureCount(dialog.tier.rawFeatures) > 0
+                      ? ` ${hiddenFeatureCount(dialog.tier.rawFeatures)} other feature setting${hiddenFeatureCount(dialog.tier.rawFeatures) === 1 ? "" : "s"} on this tier are not lines to edit and are kept as they are.`
+                      : ""}
                   </p>
                 }
                 onSaved={saved(`Saved ${dialog.tier.code}.`)}
@@ -563,14 +569,23 @@ export function Catalogue() {
               title={`Sync ${dialog.tier.code} to Paymob`}
               fields={[]}
               initial={{}}
-              submitLabel="Sync to Paymob"
+              submitLabel={dialog.tier.drift === null ? "Create a new plan anyway" : "Sync to Paymob"}
               mutation={syncTier}
               toBody={(_v, r) => ({ id: dialog.tier.id, body: { reason: r } })}
+              rolledBackOn502
               note={
-                <p className="m-0 text-body-sm text-on-surface">
-                  Creates a new Paymob plan at {formatMoney(dialog.tier.priceMinor, dialog.tier.currency)} {intervalWord(dialog.tier)} and links it to this tier. If Paymob does not accept it,
-                  nothing changes.
-                </p>
+                <div className="flex flex-col gap-2 text-body-sm text-on-surface">
+                  <p className="m-0">
+                    Creates a new Paymob plan at {formatMoney(dialog.tier.priceMinor, dialog.tier.currency)} {intervalWord(dialog.tier)} and links this tier to it. New checkouts use the new plan.
+                    Subscriptions already running keep the plan they started on. If Paymob does not accept it, nothing changes.
+                  </p>
+                  {dialog.tier.drift === null ? (
+                    <p className="m-0 text-on-surface-variant">
+                      This tier is already in sync. Syncing again only adds another plan in Paymob
+                      {dialog.tier.paymobPlanId === null ? "" : ` and replaces plan ${dialog.tier.paymobPlanId} as the tier's link`}. Do it after changing the price or interval, not otherwise.
+                    </p>
+                  ) : null}
+                </div>
               }
               onSaved={saved(`Synced ${dialog.tier.code} to Paymob.`)}
             />
@@ -640,7 +655,8 @@ export function Catalogue() {
               initial={freeValues(c.freeAllowances)}
               submitLabel="Save allowances"
               mutation={updateFree}
-              toBody={freeFormBody}
+              toBody={(v, r) => freeChanges(v, r, c.freeAllowances)}
+              check={(v) => (freeChanges(v, "unused", c.freeAllowances).length === 0 ? ["Nothing has changed. Change a value to save."] : [])}
               note={
                 <p className="m-0 text-body-sm text-on-surface-variant">
                   {c.freeAllowances.teacherSignupExpiryDays === null

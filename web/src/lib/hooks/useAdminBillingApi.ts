@@ -9,7 +9,7 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query"
 import { request } from "@/lib/api"
-import { adminRetry } from "@/lib/adminBillingModel"
+import { PartialSaveError, adminRetry } from "@/lib/adminBillingModel"
 import { toAdminCatalogue } from "@/lib/billingAdapters"
 import type {
   AdminAdjustRequest,
@@ -28,7 +28,6 @@ import type {
   EstimatorCreate,
   EstimatorRow,
   FreeAllowanceUpdate,
-  FreeAllowancesUpdate,
   ManualActivationRequest,
   MarginReport,
   PackCreate,
@@ -121,23 +120,32 @@ export const useCreatePack = () => useCatalogueWrite((b: PackCreate) => adminBil
 export const useUpdatePack = () => useCatalogueWrite((v: { id: string; body: PackUpdate }) => adminBillingApi.updatePack(v.id, v.body))
 export const useCreateRate = () => useCatalogueWrite((b: RateCreate) => adminBillingApi.createRate(b))
 export const useCreateEstimator = () => useCatalogueWrite((b: EstimatorCreate) => adminBillingApi.createEstimator(b))
+const FREE_LABEL = { student: "the student free allowance", teacher: "the teacher signup credits" } as const
+
 /**
- * One form, two requests: 07 updates one audience per call. Both are always sent and awaited, so
- * a failure of one never leaves the other in flight behind a "failed" dialog; if either failed
- * the first error is thrown after both settle, and the catalogue is refetched either way so a
- * half-saved pair is visible rather than hidden.
+ * One form, up to two requests (07 updates one audience per call), sent one after the other and
+ * only for the audiences that changed. If the second fails after the first saved, a
+ * `PartialSaveError` says which landed; the catalogue is refetched on settle either way so a
+ * half-saved pair is visible, and a retry (computed against that refetch) sends only the rest.
  */
 export const useUpdateFreeAllowances = () => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (b: FreeAllowancesUpdate) => {
-      const results = await Promise.allSettled([
-        adminBillingApi.updateFreeAllowance({ audience: "student", units: b.studentSignupUnits, reason: b.reason }),
-        adminBillingApi.updateFreeAllowance({ audience: "teacher", units: b.teacherSignupUnits, reason: b.reason }),
-      ])
-      const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected")
-      if (failed) throw failed.reason
-      return results.map((r) => (r as PromiseFulfilledResult<WireFreeAllowance>).value)
+    mutationFn: async (updates: FreeAllowanceUpdate[]) => {
+      const saved: WireFreeAllowance[] = []
+      for (const update of updates) {
+        try {
+          saved.push(await adminBillingApi.updateFreeAllowance(update))
+        } catch (error) {
+          if (saved.length === 0) throw error
+          throw new PartialSaveError(
+            saved.map((s) => FREE_LABEL[s.audience]),
+            FREE_LABEL[update.audience],
+            error,
+          )
+        }
+      }
+      return saved
     },
     onSettled: () => qc.invalidateQueries({ queryKey: adminBillingKeys.catalogue }),
   })

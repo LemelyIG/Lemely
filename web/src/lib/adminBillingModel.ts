@@ -96,6 +96,29 @@ const featureDict = (v: FormValues) =>
       .map((l) => [l, true] as const),
   )
 
+/** The feature lines typed into the form. */
+export function featureLinesOf(v: FormValues): string[] {
+  return Object.keys(featureDict(v))
+}
+
+/**
+ * The `features` object to send. The form edits only the lines that are `true`; every other
+ * stored key (a limit like `"papers": "unlimited"`, a `false` flag) is carried back untouched,
+ * because the update replaces the whole dict. A `true` line the admin removed is dropped; a line
+ * typed for a key that is stored as something else turns it on.
+ */
+export function mergeFeatures(raw: Record<string, unknown> | undefined, lines: string[]): Record<string, unknown> {
+  const merged: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(raw ?? {})) if (value !== true) merged[key] = value
+  for (const line of lines) merged[line] = true
+  return merged
+}
+
+/** Stored feature keys the form cannot show (not `true`), so a note can say they are kept. */
+export function hiddenFeatureCount(raw: Record<string, unknown>): number {
+  return Object.values(raw).filter((v) => v !== true).length
+}
+
 /** The fields a form actually shows for these values (audience-specific ones drop out). */
 export function visibleFields(fields: FieldSpec[], values: FormValues): FieldSpec[] {
   return fields.filter((f) => f.audience === undefined || f.audience === str(values, "audience"))
@@ -202,7 +225,7 @@ export function tierValues(t: AdminPlanTier | null): FormValues {
   }
 }
 
-export function tierUpdateBody(v: FormValues, reason: string): TierUpdate {
+export function tierUpdateBody(v: FormValues, reason: string, rawFeatures?: Record<string, unknown>): TierUpdate {
   const teacher = isTeacher(v)
   return {
     name: str(v, "name"),
@@ -211,7 +234,7 @@ export function tierUpdateBody(v: FormValues, reason: string): TierUpdate {
     includedSeats: teacher ? intOrZero(v, "includedSeats") : 0,
     seatAllowanceUnits: teacher ? intOrZero(v, "seatAllowanceUnits") : 0,
     extraSeatPriceMinor: teacher ? moneyOrZero(v, "extraSeatPriceMajor") : 0,
-    features: featureDict(v),
+    features: mergeFeatures(rawFeatures, featureLinesOf(v)),
     isActive: v.isActive === true,
     reason,
   }
@@ -343,7 +366,10 @@ export const FREE_FIELDS: FieldSpec[] = [
 ]
 
 export function freeValues(f: FreeAllowances): FormValues {
-  return { studentSignupUnits: String(f.studentSignupUnits), teacherSignupUnits: String(f.teacherSignupUnits) }
+  return {
+    studentSignupUnits: f.studentSignupUnits === null ? "" : String(f.studentSignupUnits),
+    teacherSignupUnits: f.teacherSignupUnits === null ? "" : String(f.teacherSignupUnits),
+  }
 }
 
 /** The two `FreeAllowanceUpdateDTO` bodies the form produces. */
@@ -354,7 +380,15 @@ export function freeBody(v: FormValues, reason: string): FreeAllowanceUpdate[] {
   ]
 }
 
-/** The hook's single variable: both audiences in one reasoned submit. */
+/**
+ * Only the audiences whose value differs from what the catalogue holds now (an unset one always
+ * differs), so a retry after a partial save never re-sends, and re-audits, the one that saved.
+ */
+export function freeChanges(v: FormValues, reason: string, current: FreeAllowances): FreeAllowanceUpdate[] {
+  return freeBody(v, reason).filter((b) => b.units !== (b.audience === "student" ? current.studentSignupUnits : current.teacherSignupUnits))
+}
+
+/** Both audiences in one reasoned submit (every audience, changed or not). */
 export function freeFormBody(v: FormValues, reason: string) {
   const [student, teacher] = freeBody(v, reason)
   return { studentSignupUnits: student.units, teacherSignupUnits: teacher.units, reason }
@@ -396,20 +430,40 @@ export function versionRows<T extends Versioned>(rows: T[], now: Date = new Date
 // ── Paymob plan state ───────────────────────────────────────────────────────
 
 export interface PaymobState {
-  tone: "free" | "ok" | "attention" | "muted"
+  /** `neutral`: not checked yet, which is a prompt to sync, not a fault. */
+  tone: "free" | "ok" | "attention" | "neutral" | "muted"
   text: string
   /** A free tier has no Paymob plan to create. */
   canSync: boolean
 }
 
 /**
- * What the Paymob column says. Drift on a tier nobody can buy is history, not an alarm, and a
- * free tier never has a plan (the server answers 422 `not_billable` to a sync).
+ * What the Paymob column says. Crimson (`attention`) is for a tier on sale whose plan is missing
+ * or differs. A plan nobody checked yet (`unverified`) is a neutral prompt to sync; drift on a
+ * tier nobody can buy is history; a free tier never has a plan (the server answers 422
+ * `not_billable` to a sync).
  */
 export function paymobState(t: AdminPlanTier): PaymobState {
   if (t.priceMinor === 0) return { tone: "free", text: "Free tier, no Paymob plan", canSync: false }
   if (t.drift === null) return { tone: "ok", text: "In sync", canSync: true }
+  if (t.driftState === "unverified") return { tone: "neutral", text: `${t.drift}. Sync to confirm it matches.`, canSync: true }
   return { tone: t.isActive ? "attention" : "muted", text: t.drift, canSync: true }
+}
+
+/** An instant for an administrator: the day, the time and the zone the server reads it in. */
+export function formatUtc(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  const text = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(d)
+  return `${text} UTC`
 }
 
 // ── Failures ────────────────────────────────────────────────────────────────
@@ -439,18 +493,44 @@ function serverMessage(err: unknown): string | null {
 }
 
 /**
+ * A multi-request write that saved some parts and then failed. `saved` and `failed` are
+ * human labels, so the message can say exactly what is and is not in the catalogue.
+ */
+export class PartialSaveError extends Error {
+  readonly saved: string[]
+  readonly failed: string
+  readonly original: unknown
+  constructor(saved: string[], failed: string, original: unknown) {
+    super("partial save")
+    this.name = "PartialSaveError"
+    this.saved = saved
+    this.failed = failed
+    this.original = original
+  }
+}
+
+/**
  * What an administrator is told when a catalogue write fails. The server's `{code, message}`
  * sentences are written for administrators ("A tier with code x exists."), so a known 404, 409
- * or 422 shows them; a transport or server failure says what is and is not known, because the
- * write is one transaction and a retry after an unknown outcome could add a second audit row.
+ * or 422 shows them. Every write is one transaction, but only the Paymob sync is known to roll
+ * back on a Paymob failure (`rolledBackOn502`); anything else with an unclear outcome says so,
+ * because a blind retry could add a second audit row.
  */
-export function adminBillingFailureMessage(err: unknown, action: string): string {
+export function adminBillingFailureMessage(err: unknown, action: string, opts: { rolledBackOn502?: boolean } = {}): string {
+  if (err instanceof PartialSaveError) {
+    const saved = err.saved.join(" and ")
+    return `${saved} ${err.saved.length > 1 ? "were" : "was"} saved, but ${err.failed} was not. ${adminBillingFailureMessage(err.original, action, opts)}`
+  }
   const status = err instanceof ApiError ? err.status : -1
   if (status === 0) return "The connection dropped. This change may not have been saved. Reload the catalogue to check before trying again."
   if (status === 401) return "Your session has expired. Sign in again. Nothing was saved."
   if (status === 403) return "Only platform admins can change billing. Nothing was saved."
   if (status === 429) return "Too many attempts. Wait a minute and try again. Nothing was saved."
-  if (status === 502) return "Paymob didn't accept this request, so nothing was changed. Try again in a minute."
+  if (status === 502) {
+    return opts.rolledBackOn502
+      ? "Paymob didn't accept this request, so nothing was changed. Try again in a minute."
+      : "Paymob didn't answer cleanly, so the outcome is unknown. Reload the catalogue to check, then try again if it did not save."
+  }
   if (status === 404) return serverMessage(err) ?? "That row no longer exists. Reload the catalogue."
   if (status === 409 || status === 422) {
     const code = billingErrorCode(err)

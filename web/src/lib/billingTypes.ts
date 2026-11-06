@@ -734,7 +734,7 @@ export interface TierCreate extends Reasoned {
   includedSeats: number
   seatAllowanceUnits: number
   extraSeatPriceMinor: number
-  features: Record<string, boolean>
+  features: Record<string, unknown>
   isActive: boolean
 }
 
@@ -746,7 +746,7 @@ export interface TierUpdate extends Reasoned {
   includedSeats: number
   seatAllowanceUnits: number
   extraSeatPriceMinor: number
-  features: Record<string, boolean>
+  features: Record<string, unknown>
   isActive: boolean
 }
 
@@ -810,11 +810,19 @@ export interface AdminPlanTier {
   paymobPlanId: number | null
   /** `null` when in sync with Paymob. */
   drift: string | null
+  /** The server's drift verdict, kept so the screen can tell "not checked" from "differs". */
+  driftState: PaymobDrift
+  /**
+   * The tier's whole `features` object as stored. `features` above is only its `true` lines; an
+   * edit must send the rest back untouched (the update replaces the dict).
+   */
+  rawFeatures: Record<string, unknown>
 }
 
 export interface FreeAllowances {
-  studentSignupUnits: number
-  teacherSignupUnits: number
+  /** `null` while the signup pack does not exist yet (nothing has set it). */
+  studentSignupUnits: number | null
+  teacherSignupUnits: number | null
   /** Read-only: `FreeAllowanceUpdateDTO` carries no validity. */
   teacherSignupExpiryDays: number | null
 }

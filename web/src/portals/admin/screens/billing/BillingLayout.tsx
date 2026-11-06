@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S3 R5 V3 */
 import { NavLink, Outlet } from "react-router-dom"
 import { cn } from "@/lib/utils"
 
