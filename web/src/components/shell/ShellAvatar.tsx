@@ -13,13 +13,13 @@ export function profileName(profile: Pick<Profile, "displayName" | "email">): st
 }
 
 /**
- * What stands in the profile menu's slot until the menu's own chunk (and the
+ * What stands in the account panel's slot until the menu's own chunk (and the
  * profile) have loaded: the same avatar, same box, so nothing pops in or
  * shifts when the real trigger replaces it. Initials once the profile is
  * known, an empty squircle before that. Not interactive: the trigger that
  * replaces it is.
  */
-export function ProfileAvatarPlaceholder() {
+export function ShellAvatarPlaceholder() {
   const { data } = useProfile()
   return (
     <span aria-hidden="true" className={cn("flex flex-none rounded-lg", PROFILE_AVATAR_BOX)}>

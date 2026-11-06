@@ -8,10 +8,9 @@ import { EmptyState, ErrorState, OfflineState } from "@/components/ui/state-view
 import { gradeChipClass } from "@/lib/grade"
 import { cn } from "@/lib/utils"
 import { unreadBadgeLabel } from "@/lib/staffInbox"
-import { ClassesNavSection, TOP_BAR_ICON_BUTTON } from "@/portals/teacher"
-import { NotificationsMenu } from "@/portals/teacher/components/NotificationsMenu"
-import { ProfileMenu } from "@/portals/teacher/components/ProfileMenu"
-import { CreateSheet } from "@/portals/teacher/components/TopBarSheets"
+import { ClassesNavSection, TEACHER_NOTIFICATIONS_PANEL, TOP_BAR_ICON_BUTTON, TeacherAccountPanel } from "@/portals/teacher"
+import { NotificationsPanel } from "@/components/shell/NotificationsPanel"
+import { CreateSheet } from "@/portals/teacher/components/CreateSheet"
 import { AtRiskTable } from "@/portals/teacher/home/AtRiskTable"
 import { ClassStrip } from "@/portals/teacher/home/ClassStrip"
 import { MarkClassSet } from "@/portals/teacher/home/MarkClassSet"
@@ -82,7 +81,7 @@ function BellCell({ seed, badge }: { seed: QuerySeed; badge: string | null }) {
   return (
     <Seeded seed={seed}>
       <TopBarCell>
-        <NotificationsMenu unread={badge} triggerClassName={TOP_BAR_ICON_BUTTON} />
+        <NotificationsPanel {...TEACHER_NOTIFICATIONS_PANEL} unread={badge} triggerClassName={TOP_BAR_ICON_BUTTON} />
       </TopBarCell>
     </Seeded>
   )
@@ -143,30 +142,30 @@ export function TeacherGroup() {
             <CreateSheet triggerClassName="inline-flex h-9 items-center gap-2 rounded-button bg-primary px-3.5 btn-text text-on-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" />
           </TopBarCell>
         </StateCell>
-        <StateCell state="default" provenance="live" note="ProfileMenu with a seeded profile. Click the avatar.">
+        <StateCell state="default" provenance="live" note="AccountPanel with a seeded profile. Click the avatar.">
           <Seeded seed={SEED_PROFILE}>
             <TopBarCell>
-              <ProfileMenu />
+              <TeacherAccountPanel />
             </TopBarCell>
           </Seeded>
         </StateCell>
-        <StateCell state="loading" provenance="prop" note="ProfileMenu while the profile is pending: the real hook, never answered.">
+        <StateCell state="loading" provenance="prop" note="AccountPanel while the profile is pending: the real hook, never answered.">
           <Seeded seed={{}}>
             <TopBarCell>
-              <ProfileMenu />
+              <TeacherAccountPanel />
             </TopBarCell>
           </Seeded>
         </StateCell>
-        <StateCell state="default" provenance="live" note="NotificationsMenu, 2 unread. Click the bell: three rows, Mark all read, two footer links.">
+        <StateCell state="default" provenance="live" note="NotificationsPanel, 2 unread. Click the bell: three rows, Mark all read, two footer links.">
           <BellCell seed={SEED_INBOX} badge={unreadBadgeLabel(FIXTURE_COUNTS)} />
         </StateCell>
-        <StateCell state="success" provenance="live" note="NotificationsMenu, all read: no badge, no Mark all read. Open it to see the empty copy.">
+        <StateCell state="success" provenance="live" note="NotificationsPanel, all read: no badge, no Mark all read. Open it to see the empty copy.">
           <BellCell seed={SEED_INBOX_EMPTY} badge={null} />
         </StateCell>
-        <StateCell state="loading" provenance="live" note="NotificationsMenu, inbox pending. Open it to see the Loading line; the request never answers here.">
+        <StateCell state="loading" provenance="live" note="NotificationsPanel, inbox pending. Open it to see the Loading line; the request never answers here.">
           <BellCell seed={{}} badge={null} />
         </StateCell>
-        <StateCell state="error" provenance="live" note="NotificationsMenu, inbox failed. Open it to see the alert and Try again.">
+        <StateCell state="error" provenance="live" note="NotificationsPanel, inbox failed. Open it to see the alert and Try again.">
           <BellCell seed={SEED_INBOX_ERROR} badge={null} />
         </StateCell>
       </ComponentSection>

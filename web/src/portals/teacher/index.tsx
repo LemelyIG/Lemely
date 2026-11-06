@@ -25,6 +25,8 @@ import {
   Trash,
   UploadSimple,
   GraduationCap,
+  Lifebuoy,
+  UserCircle,
   type Icon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
@@ -42,12 +44,21 @@ import { useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import { useNotificationCounts } from "@/lib/hooks/useNotificationApi"
 import { useReviewQueueCount } from "@/lib/hooks/useReviewQueueCount"
-import { unreadBadgeLabel } from "@/lib/staffInbox"
+import { STAFF_INBOX_ERROR, TEACHER_INBOX_EMPTY, staffDestinationFor, unreadBadgeLabel } from "@/lib/staffInbox"
 import { navItems, resolveTrail, classesItemActive, type NavItem } from "./data"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
-import { CreateSheet } from "./components/TopBarSheets"
-import { ProfileAvatarPlaceholder } from "./components/ProfileAvatar"
-import { roleLabel } from "./components/topBarActions"
+import { CreateSheet } from "./components/CreateSheet"
+import { ShellAvatarPlaceholder } from "@/components/shell/ShellAvatar"
+import {
+  HELP_HREF,
+  INBOX_TO,
+  ANNOUNCEMENTS_TO,
+  PROFILE_EDIT_TO,
+  SETTINGS_TO,
+  roleLabel,
+} from "./components/topBarActions"
+import type { AccountLink } from "@/components/shell/AccountPanel"
+import type { NotificationsPanelProps } from "@/components/shell/NotificationsPanel"
 import { underlyingPathname } from "@/lib/nav/backgroundLocation"
 import { useOverlayState } from "@/lib/nav/useOverlayState"
 import { TEACHER_SETTINGS_TABS } from "@/portals/settings/settingsTabs"
@@ -104,12 +115,10 @@ const TeacherNotifications = lazy(() =>
 // containing any one of them pulls in the code for all of them, defeating the
 // per-screen splitting this whole file otherwise does.
 // Loaded on its own so Radix's menu stays out of the entry chunk's budget.
-const NotificationsMenu = lazy(() =>
-  import("./components/NotificationsMenu").then((m) => ({ default: m.NotificationsMenu })),
+const NotificationsPanel = lazy(() =>
+  import("@/components/shell/NotificationsPanel").then((m) => ({ default: m.NotificationsPanel })),
 )
-const ProfileMenu = lazy(() =>
-  import("./components/ProfileMenu").then((m) => ({ default: m.ProfileMenu })),
-)
+const AccountPanel = lazy(() => import("@/components/shell/AccountPanel").then((m) => ({ default: m.AccountPanel })))
 const SettingsModalRoute = lazy(() =>
   import("@/portals/settings/SettingsModal").then((m) => ({
     default: m.SettingsModalRoute,
@@ -167,6 +176,37 @@ const MyStudents = lazy(() =>
 const TutorStudentDetail = lazy(() =>
   import("./screens/tutoring/TutorStudentDetail").then((m) => ({ default: m.TutorStudentDetail })),
 )
+
+const TEACHER_TYPE_ICON: Record<string, Icon> = { at_risk_alert: Warning, announcement: Megaphone }
+
+/** The teacher bell panel's portal facts. */
+export const TEACHER_NOTIFICATIONS_PANEL: Omit<NotificationsPanelProps, "unread" | "triggerClassName"> = {
+  destinationFor: (notification) => staffDestinationFor("teacher", notification),
+  iconFor: (type) => {
+    const Glyph = TEACHER_TYPE_ICON[type] ?? Bell
+    return <Glyph size={20} aria-hidden="true" />
+  },
+  inboxTo: INBOX_TO,
+  footerLinks: [
+    { to: INBOX_TO, label: "All notifications" },
+    { to: ANNOUNCEMENTS_TO, label: "Announcements" },
+  ],
+  emptyMessage: `${TEACHER_INBOX_EMPTY.heading}. ${TEACHER_INBOX_EMPTY.body}`,
+  errorHeading: STAFF_INBOX_ERROR.heading,
+}
+
+/** The teacher account panel's links, in order. */
+export const TEACHER_ACCOUNT_LINKS: readonly AccountLink[] = [
+  { id: "profile", label: "Edit profile", to: PROFILE_EDIT_TO, overlay: true, icon: <UserCircle size={20} aria-hidden="true" /> },
+  { id: "settings", label: "Settings", to: SETTINGS_TO, overlay: true, icon: <Gear size={20} aria-hidden="true" /> },
+  {
+    id: "help",
+    label: "Help and feedback",
+    description: "Email the Lemely team",
+    href: HELP_HREF,
+    icon: <Lifebuoy size={20} aria-hidden="true" />,
+  },
+]
 
 const SIDEBAR_PRIMARY: NavItem["icon"][] = ["overview", "grading", "review", "classes", "atRisk"]
 const SIDEBAR_TOOLS: NavItem["icon"][] = ["schemes", "quizzes", "tutoring", "announcements", "deleted"]
@@ -437,6 +477,17 @@ function Sidebar() {
 export const TOP_BAR_ICON_BUTTON =
   "relative flex h-9 w-9 flex-none items-center justify-center rounded-chip text-on-surface-variant transition-colors hover:bg-surface-container hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:h-11 pointer-coarse:w-11"
 
+export function TeacherAccountPanel() {
+  const { data } = useProfile()
+  return (
+    <AccountPanel
+      links={TEACHER_ACCOUNT_LINKS}
+      detail={data ? roleLabel(data.role) : null}
+      triggerClassName="cursor-pointer"
+    />
+  )
+}
+
 function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
   const location = useLocation()
   const overlayState = useOverlayState()
@@ -485,15 +536,15 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
             </Link>
           }
         >
-          <NotificationsMenu unread={unread} triggerClassName={TOP_BAR_ICON_BUTTON} />
+          <NotificationsPanel {...TEACHER_NOTIFICATIONS_PANEL} unread={unread} triggerClassName={TOP_BAR_ICON_BUTTON} />
         </Suspense>
         {/* Below `sm` the bar has no room for a title beside six 44px targets, so
             the gear folds into the profile menu (which carries Settings). */}
         <Link to="/teacher/settings" state={overlayState} aria-label="Settings" className={cn(TOP_BAR_ICON_BUTTON, "max-sm:hidden")}>
           <Gear size={20} aria-hidden="true" />
         </Link>
-        <Suspense fallback={<ProfileAvatarPlaceholder />}>
-          <ProfileMenu triggerClassName="cursor-pointer" />
+        <Suspense fallback={<ShellAvatarPlaceholder />}>
+          <TeacherAccountPanel />
         </Suspense>
       </div>
       {/* The D1.5 back affordance: one crumb is just the page's own name, which

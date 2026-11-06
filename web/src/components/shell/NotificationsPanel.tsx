@@ -1,14 +1,34 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import { Link, useNavigate } from "react-router-dom"
-import { Bell, Megaphone, Warning, type Icon } from "@phosphor-icons/react"
+import type { ReactNode } from "react"
+import { Bell } from "@phosphor-icons/react"
 import { DropdownMenu } from "radix-ui"
 import { useMarkAllNotificationsRead, useMarkNotificationRead, useNotifications } from "@/lib/hooks/useNotificationApi"
 import type { Notification } from "@/lib/notificationTypes"
-import { STAFF_INBOX_ERROR, TEACHER_INBOX_EMPTY, showMarkAllRead, staffDestinationFor } from "@/lib/staffInbox"
-import { formatAge } from "@/portals/student/screens/Notifications"
+import { showMarkAllRead } from "@/lib/staffInbox"
 import { cn } from "@/lib/utils"
-import { FOCUS_RING, IconTile } from "./TopBarSheets"
-import { ANNOUNCEMENTS_TO, INBOX_TO, NOTIFICATION_PREVIEW_LIMIT } from "./topBarActions"
+import { formatAge } from "./shellModel"
+import { SHEET_FOCUS_RING as FOCUS_RING, IconTile } from "./TopBarSheets"
+
+export interface NotificationsPanelProps {
+  /** Badge text from the counts query (`unreadBadgeLabel`), null for none. */
+  unread: string | null
+  triggerClassName: string
+  /** Where a row goes; null sends the reader to `inboxTo`. */
+  destinationFor: (notification: Notification) => string | null
+  /** The glyph for a row's notification type. */
+  iconFor: (type: string) => ReactNode
+  inboxTo: string
+  footerLinks: readonly { to: string; label: string }[]
+  emptyMessage: string
+  errorHeading: string
+  /** Rows shown; default 4. */
+  previewLimit?: number
+}
+
+type PanelProps = Omit<NotificationsPanelProps, "unread" | "triggerClassName" | "previewLimit"> & {
+  previewLimit: number
+}
 
 /** Same panel surface as the profile menu, a little wider for a title plus a line of detail. */
 const PANEL_SURFACE =
@@ -17,23 +37,25 @@ const PANEL_SURFACE =
 const ROW =
   "flex w-full cursor-pointer items-start gap-3 rounded-lg p-2.5 text-start text-on-surface transition-colors duration-150 data-[highlighted]:bg-surface-container-low dark:data-[highlighted]:bg-surface-container-highest focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary"
 
-const TYPE_ICON: Record<string, Icon> = { at_risk_alert: Warning, announcement: Megaphone }
-
-function Row({ notification }: { notification: Notification }) {
+function Row({
+  notification,
+  destinationFor,
+  iconFor,
+  inboxTo,
+}: { notification: Notification } & Pick<PanelProps, "destinationFor" | "iconFor" | "inboxTo">) {
   const navigate = useNavigate()
   const markRead = useMarkNotificationRead()
   const unread = notification.readAt === null
-  const destination = staffDestinationFor("teacher", notification)
-  const Glyph = TYPE_ICON[notification.type] ?? Bell
+  const destination = destinationFor(notification)
   return (
     <DropdownMenu.Item
       className={ROW}
       onSelect={() => {
         if (unread) markRead.mutate(notification.notificationId)
-        void navigate(destination ?? INBOX_TO)
+        void navigate(destination ?? inboxTo)
       }}
     >
-      <IconTile><Glyph size={20} aria-hidden="true" /></IconTile>
+      <IconTile>{iconFor(notification.type)}</IconTile>
       <span className="min-w-0 flex-1">
         <span className={cn("line-clamp-2 text-label", unread ? "font-bold" : "font-medium")}>{notification.title}</span>
         {notification.body ? (
@@ -56,7 +78,15 @@ function Row({ notification }: { notification: Notification }) {
 }
 
 /** Mounts only while the panel is open, so the inbox is fetched on first open, not on every page load. */
-function Panel() {
+function Panel({
+  destinationFor,
+  iconFor,
+  inboxTo,
+  footerLinks,
+  emptyMessage,
+  errorHeading,
+  previewLimit,
+}: PanelProps) {
   const query = useNotifications()
   const markAll = useMarkAllNotificationsRead()
   const page = query.data
@@ -79,26 +109,24 @@ function Panel() {
         <p role="status" className="px-2.5 py-6 text-center text-body-sm text-on-surface-variant">Loading</p>
       ) : query.isError ? (
         <div role="alert" className="px-2.5 py-4 text-body-sm">
-          <p className="font-bold">{STAFF_INBOX_ERROR.heading}</p>
+          <p className="font-bold">{errorHeading}</p>
           <button type="button" onClick={() => void query.refetch()} className={cn("mt-1 rounded-md font-bold text-primary hover:underline", FOCUS_RING)}>
             Try again
           </button>
         </div>
       ) : page && page.notifications.length === 0 ? (
         <div className="px-2.5 py-5 text-center">
-          <p className="text-label">{TEACHER_INBOX_EMPTY.heading}</p>
-          <p className="mt-1 text-body-sm text-on-surface-variant">{TEACHER_INBOX_EMPTY.body}</p>
+          <p className="text-label">{emptyMessage}</p>
         </div>
       ) : (
-        page?.notifications.slice(0, NOTIFICATION_PREVIEW_LIMIT).map((n) => (
-          <Row key={n.notificationId} notification={n} />
-        ))
+        page?.notifications
+          .slice(0, previewLimit)
+          .map((n) => (
+            <Row key={n.notificationId} notification={n} destinationFor={destinationFor} iconFor={iconFor} inboxTo={inboxTo} />
+          ))
       )}
       <div className="mt-1 flex items-center justify-around border-t border-outline-variant pt-1">
-        {[
-          { to: INBOX_TO, label: "All notifications" },
-          { to: ANNOUNCEMENTS_TO, label: "Announcements" },
-        ].map((link) => (
+        {footerLinks.map((link) => (
           <DropdownMenu.Item key={link.to} asChild>
             <Link to={link.to} className="cursor-pointer rounded-lg px-3 py-2.5 text-label text-primary data-[highlighted]:bg-surface-container-low dark:data-[highlighted]:bg-surface-container-highest focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary">
               {link.label}
@@ -116,7 +144,7 @@ function Panel() {
  * `unread` is the badge text from the counts endpoint, which the shell already
  * reads, so the badge shows before the panel is ever opened.
  */
-export function NotificationsMenu({ unread, triggerClassName }: { unread: string | null; triggerClassName: string }) {
+export function NotificationsPanel({ unread, triggerClassName, ...panel }: NotificationsPanelProps) {
   return (
     <DropdownMenu.Root modal={false}>
       <DropdownMenu.Trigger
@@ -132,7 +160,7 @@ export function NotificationsMenu({ unread, triggerClassName }: { unread: string
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content align="end" sideOffset={8} collisionPadding={10} className={PANEL_SURFACE}>
-          <Panel />
+          <Panel {...panel} previewLimit={panel.previewLimit ?? 4} />
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>

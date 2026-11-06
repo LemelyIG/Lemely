@@ -1,15 +1,46 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S3 R4 V3 */
 import { Link, useNavigate } from "react-router-dom"
-import { Gear, Lifebuoy, SignOut, UserCircle } from "@phosphor-icons/react"
+import type { ReactNode } from "react"
+import { SignOut } from "@phosphor-icons/react"
 import { DropdownMenu } from "radix-ui"
 import { Avatar } from "@/components/ui/avatar"
-import { PROFILE_AVATAR_BOX, ProfileAvatarPlaceholder, profileName } from "./ProfileAvatar"
+import { PROFILE_AVATAR_BOX, ShellAvatarPlaceholder, profileName } from "./ShellAvatar"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import { useOverlayState } from "@/lib/nav/useOverlayState"
 import { cn } from "@/lib/utils"
-import { FOCUS_RING, IconTile } from "./TopBarSheets"
-import { HELP_HREF, PROFILE_EDIT_TO, SETTINGS_TO, roleLabel } from "./topBarActions"
+import { SHEET_FOCUS_RING as FOCUS_RING, IconTile } from "./TopBarSheets"
+
+export interface AccountLink {
+  id: string
+  label: string
+  icon: ReactNode
+  /** An in-app route. Exactly one of `to` / `href`. */
+  to?: string
+  href?: string
+  /** Carry the current page as the overlay background (settings links). */
+  overlay?: boolean
+  /** A second line under the label. */
+  description?: string
+}
+
+export interface AccountPanelProps {
+  links: readonly AccountLink[]
+  /** The line under the email (teacher: role; student: qualification and subject count). */
+  detail: string | null
+  triggerClassName?: string
+}
+
+function LinkText({ link }: { link: AccountLink }) {
+  return link.description ? (
+    <span className="min-w-0">
+      <span className="block text-label">{link.label}</span>
+      <span className="block text-body-sm text-on-surface-variant">{link.description}</span>
+    </span>
+  ) : (
+    <span className="text-label">{link.label}</span>
+  )
+}
 
 /** Panel surface: the prototype's `.pop-panel` (lowest container, 18px radius, panel shadow). */
 const MENU_SURFACE =
@@ -22,17 +53,17 @@ const MENU_ITEM =
  * The signed-in teacher's avatar at the end of the top bar, dropping a small
  * account panel from itself. Name, email and role all come from
  * `GET /api/me/profile`; until it resolves the slot holds
- * `ProfileAvatarPlaceholder` (the same box, no invented person), which is
+ * `ShellAvatarPlaceholder` (the same box, no invented person), which is
  * also this module's `Suspense` fallback, so the avatar never pops in. Radix DropdownMenu supplies the menu semantics:
  * `aria-haspopup`/`aria-expanded` on the trigger, focus into the panel and
  * back to the avatar, arrow keys, Escape and outside-click dismissal.
  */
-export function ProfileMenu({ triggerClassName }: { triggerClassName?: string }) {
+export function AccountPanel({ links, detail, triggerClassName }: AccountPanelProps) {
   const { data } = useProfile()
   const { logout } = useAuth()
   const navigate = useNavigate()
   const overlayState = useOverlayState()
-  if (!data) return <ProfileAvatarPlaceholder />
+  if (!data) return <ShellAvatarPlaceholder />
   const name = profileName(data)
 
   return (
@@ -50,30 +81,24 @@ export function ProfileMenu({ triggerClassName }: { triggerClassName?: string })
             <div className="min-w-0">
               <p className="truncate text-label">{name}</p>
               <p className="truncate text-body-sm text-on-surface-variant">{data.email}</p>
-              <p className="text-body-sm text-on-surface-variant">{roleLabel(data.role)}</p>
+              {detail ? <p className="text-body-sm text-on-surface-variant">{detail}</p> : null}
             </div>
           </div>
-          <DropdownMenu.Item asChild>
-            <Link to={PROFILE_EDIT_TO} state={overlayState} className={MENU_ITEM}>
-              <IconTile><UserCircle size={20} aria-hidden="true" /></IconTile>
-              <span className="text-label">Edit profile</span>
-            </Link>
-          </DropdownMenu.Item>
-          <DropdownMenu.Item asChild>
-            <Link to={SETTINGS_TO} state={overlayState} className={MENU_ITEM}>
-              <IconTile><Gear size={20} aria-hidden="true" /></IconTile>
-              <span className="text-label">Settings</span>
-            </Link>
-          </DropdownMenu.Item>
-          <DropdownMenu.Item asChild>
-            <a href={HELP_HREF} className={MENU_ITEM}>
-              <IconTile><Lifebuoy size={20} aria-hidden="true" /></IconTile>
-              <span className="min-w-0">
-                <span className="block text-label">Help and feedback</span>
-                <span className="block text-body-sm text-on-surface-variant">Email the Lemely team</span>
-              </span>
-            </a>
-          </DropdownMenu.Item>
+          {links.map((link) => (
+            <DropdownMenu.Item key={link.id} asChild>
+              {link.href ? (
+                <a href={link.href} className={MENU_ITEM}>
+                  <IconTile>{link.icon}</IconTile>
+                  <LinkText link={link} />
+                </a>
+              ) : (
+                <Link to={link.to ?? "/"} state={link.overlay ? overlayState : undefined} className={MENU_ITEM}>
+                  <IconTile>{link.icon}</IconTile>
+                  <LinkText link={link} />
+                </Link>
+              )}
+            </DropdownMenu.Item>
+          ))}
           <DropdownMenu.Item
             className={cn(MENU_ITEM, "text-start")}
             onSelect={() => {
