@@ -122,4 +122,4 @@ Run only the touched test files, never the full suite.
 
 | Scene | Difference | % pixels | Justification | Approved |
 |---|---|---|---|---|
-| Student, phone widths | Bottom tab bar present; design has none | (measure) | Phone navigation parity with teacher; user decision 2026-11-06 | Yes |
+| Student, phone widths | Today's bottom tab bar instead of the design's own 4-item phone bar (≤720px) | (measure) | Phone navigation parity with teacher; user decision 2026-11-06 | Yes |
