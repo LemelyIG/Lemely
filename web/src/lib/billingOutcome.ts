@@ -28,6 +28,8 @@ const CONFLICTS: Record<string, string> = {
   seats_exceed_new_tier: "That plan has fewer seats than students you have seated. Remove students first, then change the plan.",
   charge_in_flight: "A charge for this is already being confirmed. Wait a minute, then check again.",
   plan_change_pending: "A plan change is already scheduled. It applies at the end of this period.",
+  downgrade_unavailable:
+    "This plan can't be scheduled as a downgrade right now. Your current plan is unchanged and nothing was charged. You can still cancel it from the billing page.",
   period_ending: "This period ends too soon to change now. Try again after the renewal.",
   seat_reduction_pending: "A seat reduction is already scheduled for the end of this period.",
   seat_charge_overdue: "The last seat charge hasn't been paid yet. Check the saved card, then try again.",
