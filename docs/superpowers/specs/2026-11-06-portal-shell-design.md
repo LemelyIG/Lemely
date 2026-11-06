@@ -25,6 +25,18 @@ notifications panel, account panel and settings dialog.
 | Styling | Tailwind v4 with the existing `@theme` tokens. |
 | Fidelity | Same drift gate as the Overview spec: 0 differing pixels, or up to 15% with a written justification per difference. |
 
+## Decisions (2026-11-06, plan)
+
+1. Drawer breakpoint: below 1248px, as this spec says (design A switches at 1000px). The 1024px
+   scenes differ from the design and are logged in the drift log.
+2. Student nav: Tutors and Sessions are sidebar rows after Friends, styled like the others. Logged
+   drift.
+3. Streak gap: accepted. `HeaderStreak` goes with the old shell; the Overview hero restores the
+   streak.
+4. Avatar: squircle (kit `Avatar`, DESIGN.md §6), not design A's circle. Logged drift.
+5. Phone bar: keep today's `BottomNav`, not design A's own 4-item bar.
+6. The staged design A preview files are committed (signed WIP commit) before the merge.
+
 ## 0. Baseline
 
 This branch is 57 commits behind `origin/develop`. Merge `origin/develop` into
