@@ -19,6 +19,18 @@ export async function assertFocused(locator, label) {
   }
   throw new Error(`${label}: expected focus on the element`)
 }
+/** Focus lands in the dialog a frame after it mounts; poll rather than assume. */
+export async function assertFocusWithin(locator, label) {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    try {
+      if (await locator.evaluate((el) => el.contains(document.activeElement), undefined, { timeout: 500 })) return
+    } catch {
+      throw new Error(`${label}: the element is gone or unreachable, expected focus within it`)
+    }
+    await locator.page().waitForTimeout(50)
+  }
+  throw new Error(`${label}: focus never moved into the dialog`)
+}
 export async function assertHidden(locator, label) {
   await locator.waitFor({ state: "hidden", timeout: 3000 }).catch(() => {
     throw new Error(`${label}: expected it to close`)
@@ -101,6 +113,7 @@ async function openNavFromMore(page) {
   await more.click()
   const dialog = page.getByRole("dialog")
   await dialog.waitFor()
+  await assertFocusWithin(dialog, "drawer")
   return { more, dialog }
 }
 
@@ -132,8 +145,37 @@ SHELL_CHECKS.push(
       await menu.click()
       const dialog = page.getByRole("dialog")
       await dialog.waitFor()
+      await assertFocusWithin(dialog, "drawer opened from the menu button")
       await page.keyboard.press("Escape")
       await assertHidden(dialog, "drawer opened from the menu button")
+      await assertFocused(menu, "menu button")
+    },
+  },
+  {
+    // Deterministic: open and press Escape in one task, so the keydown fires
+    // before the requestAnimationFrame that moves focus into the panel (focus
+    // is still on the menu button and the event never targets the panel).
+    id: "teacher-drawer-escape-before-focus-moves-1100",
+    width: 1100,
+    app: TEACHER_HOME,
+    async run(page) {
+      const menu = page.getByRole("button", { name: "Open teacher navigation" })
+      const stillOnTrigger = await menu.evaluate(
+        (el) =>
+          new Promise((resolve) => {
+            // Registered before the click, so it runs ahead of the drawer's own focus frame
+            // (rAF callbacks run in registration order) yet after React has committed.
+            requestAnimationFrame(() => {
+              const onTrigger = document.activeElement === el
+              document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))
+              resolve(onTrigger)
+            })
+            el.focus()
+            el.click()
+          }),
+      )
+      if (!stillOnTrigger) throw new Error("test setup: focus had already moved into the drawer, the race was not exercised")
+      await assertHidden(page.getByRole("dialog"), "drawer closed by an Escape before focus moved in")
       await assertFocused(menu, "menu button")
     },
   },

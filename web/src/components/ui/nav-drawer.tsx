@@ -6,6 +6,7 @@
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
@@ -128,6 +129,26 @@ export function NavDrawer({ open, onClose, title, children, footer, variant = "d
     }
   }, [mounted])
 
+  // Escape at document level, not on the panel wrapper: focus only moves into
+  // the panel a frame after mount, and an Escape pressed in that frame (focus
+  // still on the trigger) never reaches a React handler on the panel. The
+  // latest `onClose` is read through a ref so the listener is added once per
+  // open, not once per parent render.
+  // A layout effect, so the listener is live at commit rather than a passive
+  // flush later (which can itself land after the first frame under load).
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+  useLayoutEffect(() => {
+    if (!mounted) return
+    function onDocumentKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return
+      event.stopPropagation()
+      onCloseRef.current()
+    }
+    document.addEventListener("keydown", onDocumentKeyDown)
+    return () => document.removeEventListener("keydown", onDocumentKeyDown)
+  }, [mounted])
+
   // Shared with Modal — see `lockScroll`'s own doc for why this replaces a
   // plain `overflow: hidden` toggle, and why it is reference-counted (a
   // modal opened over this drawer, or vice versa, must not have the other's
@@ -181,11 +202,7 @@ export function NavDrawer({ open, onClose, title, children, footer, variant = "d
   if (!mounted) return null
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
-    if (event.key === "Escape") {
-      event.stopPropagation()
-      onClose()
-      return
-    }
+    // Escape is handled at document level (effect above), not here.
     if (event.key !== "Tab") return
 
     const panel = panelRef.current

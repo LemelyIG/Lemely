@@ -95,6 +95,7 @@ async function shoot(browser, side, item, meta = {}) {
       : await openApp(browser, { width, height, theme, app: scene.app })
   try {
     const selector = SELECTORS[side === "preview" ? "preview" : "app"]
+    // App side only: the preview kit is a static mock with its own fixed layout; the shipped shell is what must not scroll sideways.
     if (side === "app" && width >= OVERFLOW_MIN_WIDTH && width < SIDEBAR_COLUMN_WIDTH) {
       // Natural layout, before any pin: the pin below proves content equivalence
       // at the baseline width, not that 820-1247 lays out without a sideways scroll.
