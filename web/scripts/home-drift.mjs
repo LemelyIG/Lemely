@@ -98,14 +98,34 @@ function gitHead() {
   return execFileSync("git", ["rev-parse", "HEAD"], { cwd: REPO_DIR, encoding: "utf8" }).trim()
 }
 
-/** True when the working tree has uncommitted changes (`git status --porcelain` is not empty). */
+/** True when tracked files have uncommitted changes (untracked files are ignored on purpose). */
 function gitDirty() {
-  return execFileSync("git", ["status", "--porcelain"], { cwd: REPO_DIR, encoding: "utf8" }).trim() !== ""
+  return execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], { cwd: REPO_DIR, encoding: "utf8" }).trim() !== ""
 }
 
-/** Write the baseline provenance next to the baseline PNGs. */
+/** The per-key sidecar: content width plus the capturing checkout. */
+function sidecarFor(shot) {
+  return JSON.stringify({ contentWidth: shot.contentWidth ?? null, sha: gitHead(), dirty: gitDirty() })
+}
+
+/** Summarise the per-key sidecars: which SHAs are present, and how many keys lack one. */
+function scanSidecars(baselineDir) {
+  const shas = {}
+  let missing = 0
+  let dirty = 0
+  for (const f of fs.existsSync(baselineDir) ? fs.readdirSync(baselineDir) : []) {
+    if (!f.endsWith(".json") || f === PROVENANCE_FILE) continue
+    const meta = JSON.parse(fs.readFileSync(path.join(baselineDir, f), "utf8"))
+    if (!meta.sha) missing++
+    else shas[meta.sha] = (shas[meta.sha] ?? 0) + 1
+    if (meta.dirty) dirty++
+  }
+  return { shas, missing, dirty }
+}
+
+/** Write the global provenance summary, derived from the per-key sidecars (the source of truth). */
 function writeProvenance(baselineDir, extra = {}) {
-  const provenance = { sha: gitHead(), dirty: gitDirty(), recordedAt: new Date().toISOString(), ...extra }
+  const provenance = { ...scanSidecars(baselineDir), recordedAt: new Date().toISOString(), ...extra }
   fs.mkdirSync(baselineDir, { recursive: true })
   fs.writeFileSync(path.join(baselineDir, PROVENANCE_FILE), JSON.stringify(provenance, null, 2) + "\n")
   return provenance
@@ -117,8 +137,9 @@ function printProvenance(baselineDir) {
     console.log(`baseline provenance: none recorded (${path.relative(REPO_DIR, file)} missing)`)
     return
   }
-  const p = JSON.parse(fs.readFileSync(file, "utf8"))
-  console.log(`baseline provenance: git ${p.sha}${p.dirty === undefined ? "" : p.dirty ? " (dirty tree)" : " (clean tree)"} at ${p.recordedAt}${p.note ? ` (${p.note})` : ""}`)
+  const p = scanSidecars(baselineDir)
+  const list = Object.entries(p.shas).map(([sha, n]) => `${sha.slice(0, 8)} x${n}`).join(", ")
+  console.log(`baseline provenance (per-key sidecars): ${list || "none"}; missing sha: ${p.missing}; dirty: ${p.dirty}`)
 }
 
 /**
@@ -138,6 +159,7 @@ async function compareItem(browser, item, { baselineDir, runDir, table }) {
       const basePng = path.join(baselineDir, `${key}.png`)
       if (!fs.existsSync(basePng)) throw new Error(`no baseline; run with --record-baseline on merged develop`)
       const meta = JSON.parse(fs.readFileSync(path.join(baselineDir, `${key}.json`), "utf8"))
+      if (!meta.sha) throw new Error(`baseline sidecar ${key}.json has no sha; re-record with --record-baseline`)
       a = { png: fs.readFileSync(basePng) }
       b = await shoot(browser, "app", item, meta.contentWidth ?? undefined)
     }
@@ -191,10 +213,19 @@ async function selftestEndToEnd(browser, width = 1440) {
   try {
     const shot = await shoot(browser, "app", item)
     fs.writeFileSync(path.join(baselineDir, `${item.key}.png`), shot.png)
-    fs.writeFileSync(path.join(baselineDir, `${item.key}.json`), JSON.stringify({ contentWidth: shot.contentWidth ?? null }))
+    fs.writeFileSync(path.join(baselineDir, `${item.key}.json`), sidecarFor(shot))
     const clean = await compareItem(browser, item, { baselineDir, runDir, table: {} })
     assertEqual(clean.outcome, "pass", "unmodified baseline")
     assertEqual(exitCodeFor([clean]), 0, "exit code, unmodified baseline")
+    // A sidecar without a sha has no provable origin: that key must fail.
+    const sidecarPath = path.join(baselineDir, `${item.key}.json`)
+    const sidecarText = fs.readFileSync(sidecarPath, "utf8")
+    const { sha: _sha, dirty: _dirty, ...bare } = JSON.parse(sidecarText)
+    fs.writeFileSync(sidecarPath, JSON.stringify(bare))
+    const noSha = await compareItem(browser, item, { baselineDir, runDir, table: {} })
+    assertEqual(noSha.outcome, "fail", "sidecar without sha")
+    if (!/no sha/.test(noSha.reason)) throw new Error("selftest: a sha-less sidecar must say it has no sha")
+    fs.writeFileSync(sidecarPath, sidecarText)
     // Mutate the temp baseline: paint a 60x60 block magenta.
     const png = PNG.sync.read(fs.readFileSync(path.join(baselineDir, `${item.key}.png`)))
     for (let y = 0; y < 60; y++) {
@@ -368,10 +399,8 @@ async function main() {
     return
   }
   if (args.recordProvenance) {
-    const p = writeProvenance(BASELINE_DIR, {
-      note: "provenance-only write; baseline PNGs were captured earlier, not re-captured",
-    })
-    console.log(`baseline provenance written: git ${p.sha}${p.dirty ? " (dirty tree)" : ""} at ${p.recordedAt}`)
+    const p = writeProvenance(BASELINE_DIR, { note: "summary rescanned from per-key sidecars" })
+    console.log(`baseline provenance written: ${JSON.stringify(p.shas)} missing ${p.missing}`)
     return
   }
   const needKit = args.selftest || items.some((i) => i.scene.kind === "preview-vs-app")
@@ -392,14 +421,11 @@ async function main() {
         if (item.scene.kind !== "before-vs-after") continue
         const shot = await shoot(browser, "app", item)
         fs.writeFileSync(path.join(BASELINE_DIR, `${item.key}.png`), shot.png)
-        fs.writeFileSync(
-          path.join(BASELINE_DIR, `${item.key}.json`),
-          JSON.stringify({ contentWidth: shot.contentWidth ?? null }),
-        )
+        fs.writeFileSync(path.join(BASELINE_DIR, `${item.key}.json`), sidecarFor(shot))
         console.log(`baseline ${item.key}`)
       }
       const p = writeProvenance(BASELINE_DIR)
-      console.log(`baseline provenance: git ${p.sha}${p.dirty ? " (dirty tree)" : ""} at ${p.recordedAt}`)
+      console.log(`baseline provenance written: ${JSON.stringify(p.shas)} missing ${p.missing} dirty ${p.dirty}`)
       return
     }
     if (items.some((i) => i.scene.kind === "before-vs-after")) printProvenance(BASELINE_DIR)

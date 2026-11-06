@@ -168,7 +168,10 @@ describe("headers keep their existing padding while opting into the additive ins
       ...css.matchAll(/@media \(display-mode: standalone\)[^{]*\{\s*\.lm-shell-bar-inset\s*\{([\s\S]*?)\}/g),
     ].map((m) => m[1])
     expect(standalone.length).toBeGreaterThanOrEqual(1)
-    for (const block of standalone) expect(block).toContain("env(safe-area-inset-top)")
+    for (const block of standalone) {
+      expect(block).toContain("env(safe-area-inset-top)")
+      expect(block).not.toMatch(/height|block-size/)
+    }
   })
 
   it("marketing's header is untouched — it had no py-* to lose", () => {

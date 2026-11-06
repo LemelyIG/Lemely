@@ -249,6 +249,7 @@ export async function capture(page, { capture: mode, selector, neutral = false }
  * to sit on, so a shell change would leak in as a content difference. Hide each
  * one with `visibility: hidden` (layout is kept, so nothing reflows). An
  * element that contains the selector is left alone.
+ * Shell-over-content overlap is the frame scenes' job, not this mode's.
  */
 export async function hideChromeOutside(page, selector) {
   return page.evaluate((sel) => {
