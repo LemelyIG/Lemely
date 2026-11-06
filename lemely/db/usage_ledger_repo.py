@@ -16,6 +16,7 @@ The balance cache and the entries change together under those locks, so
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -23,7 +24,7 @@ from typing import TYPE_CHECKING
 import sqlalchemy as sa
 
 from lemely.core.usage_pricing import GRANT_PRIORITY
-from lemely.core.usage_types import GrantScope, Payer
+from lemely.core.usage_types import GrantScope, Payer, payer_from_json, payer_to_json
 from lemely.db.models.usage import (
     GrantKind,
     UsageDebt,
@@ -32,6 +33,7 @@ from lemely.db.models.usage import (
     UsageGrant,
     UsageGrantBalance,
     UsageJob,
+    UsageJobStatus,
 )
 
 if TYPE_CHECKING:
@@ -39,6 +41,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from sqlalchemy.orm import Session
+
+logger = logging.getLogger("lemely.db.usage_ledger_repo")
 
 #: Entry kinds that move a grant's ``remaining``; ``hold``/``release`` move ``held``.
 REMAINING_KINDS: tuple[UsageEntryKind, ...] = (
@@ -178,6 +182,17 @@ class UsageLedger:
             )
         ).one_or_none()
         if existing is not None:
+            if existing.kind is not kind or existing.units != units:
+                logger.warning(
+                    "grant replay under key %r for owner %s differs from the stored grant "
+                    "(kind %s vs %s, units %d vs %d); returning the stored grant",
+                    idempotency_key,
+                    owner_user_id,
+                    kind.value,
+                    existing.kind.value,
+                    units,
+                    existing.units,
+                )
             return existing
         at = effective_at if effective_at is not None else datetime.now(UTC)
         grant = UsageGrant(
@@ -218,7 +233,7 @@ class UsageLedger:
             self._entry(
                 kind=UsageEntryKind.debt_repay,
                 units=-repay,
-                event_at=at,
+                event_at=max(at, datetime.now(UTC)),
                 key=f"repay:{debt.id}",
                 grant_id=grant.id,
                 debt_id=debt.id,
@@ -378,6 +393,26 @@ class UsageLedger:
         held = base.where(UsageEntry.kind.in_(HELD_KINDS))
         return -int(self._session.scalar(settled) or 0) + int(self._session.scalar(held) or 0)
 
+    def _open_debt(
+        self, owner_user_id: uuid.UUID, units: int, *, job_id: uuid.UUID | None = None
+    ) -> UsageDebt:
+        """Insert a fully outstanding debt row.
+
+        ``created_at`` is the DB's ``clock_timestamp()``, not the transaction-start
+        ``now()`` default: debts created in one transaction would tie, and
+        :meth:`_open_debts` repays oldest first.
+        """
+        debt = UsageDebt(
+            owner_user_id=owner_user_id,
+            job_id=job_id,
+            units=units,
+            outstanding=units,
+            created_at=sa.func.clock_timestamp(),
+        )
+        self._session.add(debt)
+        self._session.flush()
+        return debt
+
     def _open_debts(self, owner_user_id: uuid.UUID) -> Sequence[UsageDebt]:
         return self._session.scalars(
             sa.select(UsageDebt)
@@ -417,6 +452,130 @@ class UsageLedger:
                 reason=reason,
             )
         )
+
+    def reserve(
+        self,
+        *,
+        job_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        action: str,
+        payers: Sequence[Payer],
+        estimate_low: int,
+        estimate_high: int,
+        estimator_version: int,
+        rate_version: int,
+        teacher_member_id: uuid.UUID | None,
+        expires_at: datetime,
+        now: datetime,
+    ) -> UsageJob:
+        """Hold ``estimate_high`` across the chain and open the job (§5.7 step 3)."""
+        if not payers:
+            raise ValueError("payers must not be empty")
+        if not 0 <= estimate_low <= estimate_high:
+            raise ValueError("need 0 <= estimate_low <= estimate_high")
+        self._lock_owners([p.owner_user_id for p in payers])
+        slots = self._slots(payers, now=now, lock=True)
+        plan = self._walk(slots, estimate_high, payers, now=now)
+        covered = sum(take for _slot, take in plan)
+        if covered < estimate_high:
+            raise InsufficientBalance(available=covered, required=estimate_high)
+        job = UsageJob(
+            job_id=job_id,
+            actor_user_id=actor_user_id,
+            teacher_member_id=teacher_member_id,
+            action=action,
+            estimate_low=estimate_low,
+            estimate_high=estimate_high,
+            estimator_version=estimator_version,
+            reserved=estimate_high,
+            charged=0,
+            debt_created=0,
+            rate_version=rate_version,
+            payer_chain=[payer_to_json(p) for p in payers],
+            status=UsageJobStatus.open,
+            expires_at=expires_at,
+        )
+        self._session.add(job)
+        self._session.flush()
+        for slot, take in plan:
+            self._entry(
+                kind=UsageEntryKind.hold,
+                units=take,
+                event_at=now,
+                key=f"job:{job_id}",
+                grant_id=slot.grant.id,
+                job=job,
+                payer=slot.payer,
+            )
+            slot.balance.held += take
+        self._session.flush()
+        return job
+
+    def release(self, job_id: uuid.UUID, *, now: datetime) -> UsageJob:
+        """Free every hold of a failed job at no charge (§5.7 step 6)."""
+        return self._close(job_id, UsageJobStatus.released, now)
+
+    def expire_stale_jobs(self, *, now: datetime) -> int:
+        """Release open jobs past ``expires_at`` and mark them expired (§5.7 step 7)."""
+        job_ids = self._session.scalars(
+            sa.select(UsageJob.job_id)
+            .where(UsageJob.status == UsageJobStatus.open, UsageJob.expires_at <= now)
+            .order_by(UsageJob.expires_at, UsageJob.job_id)
+        ).all()
+        expired = 0
+        for job_id in job_ids:
+            if self._close(job_id, UsageJobStatus.expired, now).status is UsageJobStatus.expired:
+                expired += 1
+        return expired
+
+    def _locked_job(self, job_id: uuid.UUID) -> tuple[UsageJob, list[Payer]]:
+        chain = self._session.scalar(
+            sa.select(UsageJob.payer_chain).where(UsageJob.job_id == job_id)
+        )
+        if chain is None:
+            raise LookupError(f"no usage job {job_id}")
+        payers = [payer_from_json(p) for p in chain]
+        self._lock_owners([p.owner_user_id for p in payers])
+        job = self._session.scalars(
+            sa.select(UsageJob)
+            .where(UsageJob.job_id == job_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).one()
+        return job, payers
+
+    def _job_holds(self, job_id: uuid.UUID) -> dict[uuid.UUID, int]:
+        rows = self._session.execute(
+            sa.select(UsageEntry.grant_id, sa.func.sum(UsageEntry.units))
+            .where(UsageEntry.job_id == job_id, UsageEntry.kind.in_(HELD_KINDS))
+            .group_by(UsageEntry.grant_id)
+        ).all()
+        return {gid: int(total) for gid, total in rows if gid is not None and total}
+
+    def _close(self, job_id: uuid.UUID, status: UsageJobStatus, now: datetime) -> UsageJob:
+        job, payers = self._locked_job(job_id)
+        if job.status is not UsageJobStatus.open:
+            return job
+        holds = self._job_holds(job_id)
+        for slot in self._slots(payers, now=now, lock=True, include=set(holds)):
+            held = holds.get(slot.grant.id, 0)
+            if held:
+                self._release_slot(slot, held, job, now)
+        job.status = status
+        self._session.flush()
+        return job
+
+    def _release_slot(self, slot: _Slot, held: int, job: UsageJob, now: datetime) -> None:
+        self._entry(
+            kind=UsageEntryKind.release,
+            units=-held,
+            event_at=now,
+            key=f"job:{job.job_id}",
+            grant_id=slot.grant.id,
+            job=job,
+            payer=slot.payer,
+        )
+        slot.balance.held -= held
 
 
 __all__ = ["HELD_KINDS", "REMAINING_KINDS", "InsufficientBalance", "UsageLedger"]

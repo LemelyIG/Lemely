@@ -37,6 +37,7 @@ from lemely.db.models.usage import (
     UsageEntry,
     UsageGrant,
     UsageGrantBalance,
+    UsageJob,
     UsageRate,
 )
 from lemely.db.models.users import User
@@ -179,6 +180,36 @@ def add_debt(factory: sessionmaker[Session], owner: uuid.UUID, units: int) -> uu
         return debt.id
 
 
+def reserve(
+    factory: sessionmaker[Session],
+    payers: list[Payer],
+    high: int,
+    *,
+    actor: uuid.UUID | None = None,
+    low: int = 0,
+    teacher_member_id: uuid.UUID | None = None,
+    expires_at: datetime | None = None,
+    now: datetime = NOW,
+) -> uuid.UUID:
+    """Reserve through the ledger in its own transaction; return the new job id."""
+    job_id = uuid.uuid4()
+    with factory.begin() as session:
+        UsageLedger(session).reserve(
+            job_id=job_id,
+            actor_user_id=actor or payers[0].owner_user_id,
+            action=ACTION,
+            payers=payers,
+            estimate_low=low,
+            estimate_high=high,
+            estimator_version=ESTIMATOR_VERSION,
+            rate_version=RATE_VERSION,
+            teacher_member_id=teacher_member_id,
+            expires_at=expires_at or now + timedelta(hours=1),
+            now=now,
+        )
+    return job_id
+
+
 def balance(factory: sessionmaker[Session], grant_id: uuid.UUID) -> tuple[int, int]:
     """``(remaining, held)`` from the cache row."""
     with factory() as session:
@@ -193,6 +224,11 @@ def entries(factory: sessionmaker[Session], **filters: object) -> list[UsageEntr
         for column, value in filters.items():
             stmt = stmt.where(getattr(UsageEntry, column) == value)
         return list(session.scalars(stmt))
+
+
+def job(factory: sessionmaker[Session], job_id: uuid.UUID) -> UsageJob:
+    with factory() as session:
+        return session.scalars(sa.select(UsageJob).where(UsageJob.job_id == job_id)).one()
 
 
 def debts(factory: sessionmaker[Session], owner: uuid.UUID) -> list[UsageDebt]:
@@ -228,7 +264,9 @@ __all__ = [
     "entries",
     "grant",
     "grant_row",
+    "job",
     "own_chain",
+    "reserve",
     "seat_chain",
     "usage_database",
 ]
