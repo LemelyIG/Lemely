@@ -176,6 +176,9 @@ const NotificationSettingsSection = lazy(() =>
     default: m.NotificationSettingsSection,
   })),
 )
+const StudentPlans = lazy(() =>
+  import("@/portals/billing/PlansScreen").then((m) => ({ default: m.StudentPlans })),
+)
 const InstallSettingsSection = lazy(() =>
   import("@/portals/settings/InstallSettings").then((m) => ({
     default: m.InstallSettingsSection,
@@ -1042,6 +1045,11 @@ export const studentRoute: RouteObject = {
       path: "recently-deleted",
       element: <RecentlyDeleted />,
       handle: { title: "Recently deleted", skeleton: "list" },
+    },
+    {
+      path: "billing/plans",
+      element: <StudentPlans />,
+      handle: { title: "Plans and credits", skeleton: "page-header" },
     },
     {
       path: "settings",

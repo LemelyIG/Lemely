@@ -135,6 +135,9 @@ const ClassesSettingsSection = lazy(() =>
     default: m.ClassesSettingsSection,
   })),
 )
+const TeacherPlans = lazy(() =>
+  import("@/portals/billing/PlansScreen").then((m) => ({ default: m.TeacherPlans })),
+)
 const InstallSettingsSection = lazy(() =>
   import("@/portals/settings/InstallSettings").then((m) => ({
     default: m.InstallSettingsSection,
@@ -822,6 +825,11 @@ export const teacherRoute: RouteObject = {
       path: "notifications",
       element: <TeacherNotifications />,
       handle: { title: "Notifications", skeleton: "list" },
+    },
+    {
+      path: "billing/plans",
+      element: <TeacherPlans />,
+      handle: { title: "Plans and credits", skeleton: "page-header" },
     },
     {
       // A dialog over the current page: `ScreenOutlet`'s overlay (in the layout)

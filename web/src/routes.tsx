@@ -75,6 +75,12 @@ const ProfileSettings = lazy(() =>
 const InstallSettings = lazy(() =>
   import("@/portals/settings/InstallSettings").then((m) => ({ default: m.InstallSettings })),
 )
+const CheckoutReturn = lazy(() =>
+  import("@/portals/billing/CheckoutReturn").then((m) => ({ default: m.CheckoutReturn })),
+)
+const BillingRedirect = lazy(() =>
+  import("@/portals/billing/CheckoutReturn").then((m) => ({ default: m.BillingRedirect })),
+)
 
 /*
  * Task 19 (spec §4.4) · lazy consts for the five G-02/G-03/G-06/G-07/G-08
@@ -362,6 +368,37 @@ export const appRoutes: RouteObject[] = [
    * not have an account yet.
    */
   { ...dataHandlingRoute, path: "/data", errorElement },
+  /*
+   * Plan 05's billing emails link to `/billing`; send each role to its own billing page.
+   */
+  {
+    path: "/billing",
+    errorElement,
+    handle: { title: "Plan and billing", skeleton: "standalone" } satisfies PageMeta,
+    element: (
+      <RequireAuth allowedRoles={ALL_ROLES}>
+        <Suspense fallback={<RouteSkeleton />}>
+          <BillingRedirect />
+        </Suspense>
+      </RequireAuth>
+    ),
+  },
+  /*
+   * Where Paymob's hosted checkout returns the payer (spec §5.1 step 5). Any signed-in role:
+   * students, teachers and parents all pay.
+   */
+  {
+    path: "/billing/return/:paymentId",
+    errorElement,
+    handle: { title: "Payment status", skeleton: "standalone" } satisfies PageMeta,
+    element: (
+      <RequireAuth allowedRoles={ALL_ROLES}>
+        <Suspense fallback={<RouteSkeleton />}>
+          <CheckoutReturn />
+        </Suspense>
+      </RequireAuth>
+    ),
+  },
   /*
    * G-16 and G-17 (tutor marketplace, T22). Public, no `RequireAuth`. Both carry a
    * description, as every signed-out route does (`documentMeta.test.ts` pins which).

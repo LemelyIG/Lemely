@@ -45,6 +45,9 @@ const ChildTutoring = lazy(() =>
 const ParentSessionDetail = lazy(() =>
   import("./screens/tutoring/ParentSessionDetail").then((m) => ({ default: m.ParentSessionDetail })),
 )
+const ParentChildPlans = lazy(() =>
+  import("@/portals/billing/PlansScreen").then((m) => ({ default: m.ParentChildPlans })),
+)
 const ChildTutorAccess = lazy(() =>
   import("./screens/tutoring/ChildTutorAccess").then((m) => ({ default: m.ChildTutorAccess })),
 )
@@ -436,6 +439,11 @@ export const parentRoute: RouteObject = {
       path: "children/:childId/tutor-access",
       element: <ChildTutorAccess />,
       handle: { title: "Who they share with", skeleton: "list" },
+    },
+    {
+      path: "children/:childId/billing/plans",
+      element: <ParentChildPlans />,
+      handle: { title: "Plans and credits", skeleton: "page-header" },
     },
     { path: "tutors", element: <ParentFindTutor />, handle: { title: "Tutors", skeleton: "list" } },
     {
