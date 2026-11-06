@@ -1,5 +1,8 @@
+import { isLiveSubscription } from "@/lib/billingFormat"
 import {
+  TEAM_PERMISSIONS,
   USAGE_BLOCK_REASONS,
+  type AssistantRow,
   type AutoTopupSettings,
   type BillingInterval,
   type BillingSummary,
@@ -10,11 +13,16 @@ import {
   type HeldPlanTier,
   type MeteredAction,
   type PlanTier,
+  type SeatRow,
   type SavedCardView,
+  type TeamPermission,
+  type TeamView,
   type UsageBlockReason,
   type UsageJobRow,
   type UsageJobStatus,
   type UsageMeterView,
+  type WireAssistant,
+  type WireAssistantInvite,
   type WireAutoTopup,
   type WireBillingSummary,
   type WireCatalogue,
@@ -22,6 +30,8 @@ import {
   type WireEstimate,
   type WirePlanTier,
   type WireSavedCard,
+  type WireSeat,
+  type WireSeatCapacity,
   type WireUsageJob,
   type WireUsageMeter,
 } from "@/lib/billingTypes"
@@ -155,4 +165,71 @@ export function toEstimate(w: WireEstimate): EstimateResponse {
 
 export function toUsageJob(w: WireUsageJob): UsageJobRow {
   return { ...w, action: w.action as MeteredAction, status: w.status as UsageJobStatus }
+}
+
+const PERMISSION_SET: ReadonlySet<string> = new Set(TEAM_PERMISSIONS)
+
+export function toSeatRow(w: WireSeat): SeatRow {
+  return {
+    memberId: w.memberId,
+    studentUserId: w.studentId,
+    studentName: w.studentName,
+    status: w.status,
+    leavesAt: w.leavesAt,
+    scopeSubjects: w.scopeSubjects,
+    scopeActions: w.scopeActions as MeteredAction[],
+    capUnits: w.capUnits,
+    capPeriod: w.capPeriod,
+    capUsedUnits: w.capUsedUnits,
+    meterFraction: w.meterFraction,
+  }
+}
+
+export function toAssistantRow(w: WireAssistant): AssistantRow {
+  const overrides: Partial<Record<TeamPermission, boolean>> = {}
+  for (const [k, v] of Object.entries(w.permissions)) if (PERMISSION_SET.has(k)) overrides[k as TeamPermission] = v
+  return {
+    memberId: w.memberId,
+    userId: w.assistantId,
+    name: w.assistantName,
+    rolePreset: w.role,
+    overrides,
+    permissions: w.effectivePermissions.filter((p): p is TeamPermission => PERMISSION_SET.has(p)),
+    capUnits: w.capUnits,
+    capPeriod: w.capPeriod,
+    capUsedUnits: w.capUsedUnits,
+  }
+}
+
+export interface TeamParts {
+  seats: { seats: WireSeat[] }
+  capacity: WireSeatCapacity
+  assistants: { assistants: WireAssistant[] }
+  invites: { invites: WireAssistantInvite[] }
+  summary: WireBillingSummary
+  classes: { classes: { subjectCode: string | null; subjectName: string | null }[] }
+}
+
+/** Plan fields come from the teacher's billing summary (M12); subjects from their classes. */
+export function toTeamView(p: TeamParts): TeamView {
+  const sub = p.summary.subscription
+  const subjects = new Map<string, string>()
+  for (const c of p.classes.classes) if (c.subjectCode) subjects.set(c.subjectCode, c.subjectName ?? c.subjectCode)
+  return {
+    planActive: isLiveSubscription(sub?.status),
+    subscriptionId: sub?.subscriptionId ?? null,
+    seatCapacity: p.capacity.capacity,
+    seatsUsed: p.capacity.used,
+    includedSeats: sub?.tier.includedSeats ?? 0,
+    extraSeats: sub?.extraSeats ?? 0,
+    pendingExtraSeats: sub?.pendingExtraSeats ?? null,
+    extraSeatPriceMinor: sub ? sub.tier.extraSeatPriceMinor : null,
+    currency: sub?.tier.currency ?? "EGP",
+    currentPeriodEnd: sub?.currentPeriodEnd ?? null,
+    savedCard: toSavedCard(p.summary.savedCard),
+    subjects: [...subjects].map(([code, name]) => ({ code, name })),
+    seats: p.seats.seats.map(toSeatRow),
+    assistants: p.assistants.assistants.map(toAssistantRow),
+    invites: p.invites.invites,
+  }
 }

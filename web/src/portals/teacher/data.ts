@@ -38,6 +38,7 @@ export interface NavItem {
     | "announcements"
     | "notifications"
     | "settings"
+    | "team"
     | "billing"
     | "deleted"
   /** Index route match (Overview lives at /teacher). */
@@ -84,6 +85,8 @@ export const navItems: NavItem[] = [
     icon: "notifications",
     badge: "unread-notifications",
   },
+  // Seats and assistants sit just above billing: seats are what the plan buys.
+  { to: "/teacher/team", label: "Seats and assistants", icon: "team" },
   // Settings moves into the primary nav from the footer's plain link (P5.9
   // chunk D's placement is superseded here): a route under /teacher with a
   // real active state belongs beside the rest of this teacher's sections

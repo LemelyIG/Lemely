@@ -1,4 +1,5 @@
 import type {
+  AssistantRow,
   AutoTopupSettings,
   BillingSummary,
   Catalogue,
@@ -6,10 +7,15 @@ import type {
   PaymentStatusView,
   PlanTier,
   Receipt,
+  SeatRow,
   SubscriptionView,
+  TeamView,
   UsageHistoryPage,
   UsageJobRow,
   UsageMeterView,
+  WireAssistant,
+  WireBillingSummary,
+  WireSeat,
 } from "@/lib/billingTypes"
 
 const studentMonthly: PlanTier = {
@@ -133,6 +139,109 @@ const teacherCatalogue: Catalogue = { audience: "teacher", tiers: [teacherMonthl
 
 const history: UsageHistoryPage = { jobs: [job], nextCursor: null }
 
+const wireSeat: WireSeat = {
+  kind: "student_seat",
+  memberId: "m1",
+  studentId: "u-s1",
+  studentName: "Omar Hassan",
+  status: "active",
+  leavesAt: null,
+  scopeSubjects: ["0580"],
+  scopeActions: ["mark_paper", "self_review"],
+  capUnits: null,
+  capPeriod: "month",
+  capUsedUnits: 0,
+  meterFraction: 0.4,
+  joinedAt: "2026-10-12T09:00:00Z",
+}
+const seat: SeatRow = {
+  memberId: "m1",
+  studentUserId: "u-s1",
+  studentName: "Omar Hassan",
+  status: "active",
+  leavesAt: null,
+  scopeSubjects: ["0580"],
+  scopeActions: ["mark_paper", "self_review"],
+  capUnits: null,
+  capPeriod: "month",
+  capUsedUnits: 0,
+  meterFraction: 0.4,
+}
+const wireAssistant: WireAssistant = {
+  kind: "assistant",
+  memberId: "m9",
+  assistantId: "u-a1",
+  assistantName: "Sara Ali",
+  role: "marker",
+  permissions: {},
+  effectivePermissions: ["mark", "regrade", "view_results"],
+  capUnits: 2000,
+  capPeriod: "month",
+  capUsedUnits: 300,
+}
+const assistant: AssistantRow = {
+  memberId: "m9",
+  userId: "u-a1",
+  name: "Sara Ali",
+  rolePreset: "marker",
+  overrides: {},
+  permissions: ["mark", "regrade", "view_results"],
+  capUnits: 2000,
+  capPeriod: "month",
+  capUsedUnits: 300,
+}
+const wireTeacherTier = {
+  planTierId: "t-t-m",
+  code: "teacher_pro_m",
+  name: "Teacher Pro",
+  priceMinor: 90000,
+  currency: "EGP",
+  interval: "monthly" as const,
+  audience: "teacher",
+  includedSeats: 20,
+  extraSeatPriceMinor: 3000,
+  features: {},
+}
+const wireTeacherSummary: WireBillingSummary = {
+  beneficiary: { userId: "u-t", displayName: "Ms Nour", audience: "teacher" },
+  subscription: {
+    subscriptionId: "sub-t",
+    status: "active",
+    tier: wireTeacherTier,
+    currentPeriodStart: "2026-11-01T00:00:00Z",
+    currentPeriodEnd: "2026-12-01T00:00:00Z",
+    cancelAtPeriodEnd: false,
+    pendingTier: null,
+    graceUntil: null,
+    extraSeats: 2,
+    pendingExtraSeats: null,
+  },
+  canManage: true,
+  managedByName: null,
+  savedCard: { cardId: "card1", maskedPan: "•••• 2346", brand: "Mastercard" },
+  usage: { fraction: 0.2, resetsAt: "2026-12-01T00:00:00Z" },
+  credits: { totalUnits: 5000, expiring: [] },
+  debtUnits: 0,
+  seats: { capacity: 22, used: 1 },
+}
+const team: TeamView = {
+  planActive: true,
+  subscriptionId: "sub-t",
+  seatCapacity: 22,
+  seatsUsed: 1,
+  includedSeats: 20,
+  extraSeats: 2,
+  pendingExtraSeats: null,
+  extraSeatPriceMinor: 3000,
+  currency: "EGP",
+  currentPeriodEnd: "2026-12-01T00:00:00Z",
+  savedCard: { cardId: "card1", maskedPan: "•••• 2346", brand: "Mastercard" },
+  subjects: [{ code: "0580", name: "Mathematics" }],
+  seats: [seat],
+  assistants: [assistant],
+  invites: [{ inviteId: "inv1", code: "AST-7KQ2", role: "viewer", expiresAt: "2026-11-12T00:00:00Z", createdAt: "2026-11-05T00:00:00Z" }],
+}
+
 export const fx = {
   studentMonthly,
   studentYearly,
@@ -147,6 +256,12 @@ export const fx = {
   receipt,
   payment,
   autoTopup,
+  wireSeat,
+  seat,
+  wireAssistant,
+  assistant,
+  wireTeacherSummary,
+  team,
   studentCatalogue,
   teacherCatalogue,
 }

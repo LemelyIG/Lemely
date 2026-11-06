@@ -26,6 +26,7 @@ import {
   Trash,
   UploadSimple,
   GraduationCap,
+  UsersFour,
   type Icon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
@@ -136,6 +137,7 @@ const ClassesSettingsSection = lazy(() =>
     default: m.ClassesSettingsSection,
   })),
 )
+const Team = lazy(() => import("./screens/team/Team").then((m) => ({ default: m.Team })))
 const TeacherBilling = lazy(() =>
   import("@/portals/billing/BillingScreens").then((m) => ({ default: m.TeacherBilling })),
 )
@@ -179,7 +181,7 @@ const TutorStudentDetail = lazy(() =>
 )
 
 const SIDEBAR_PRIMARY: NavItem["icon"][] = ["overview", "grading", "review", "classes", "atRisk"]
-const SIDEBAR_TOOLS: NavItem["icon"][] = ["schemes", "quizzes", "tutoring", "announcements", "deleted"]
+const SIDEBAR_TOOLS: NavItem["icon"][] = ["schemes", "quizzes", "tutoring", "announcements", "team", "deleted"]
 
 const NAV_ICON: Record<NavItem["icon"], Icon> = {
   overview: SquaresFour,
@@ -196,6 +198,7 @@ const NAV_ICON: Record<NavItem["icon"], Icon> = {
   announcements: Megaphone,
   notifications: Bell,
   settings: Gear,
+  team: UsersFour,
   billing: CreditCard,
   deleted: Trash,
 }
@@ -836,6 +839,11 @@ export const teacherRoute: RouteObject = {
       path: "notifications",
       element: <TeacherNotifications />,
       handle: { title: "Notifications", skeleton: "list" },
+    },
+    {
+      path: "team",
+      element: <Team />,
+      handle: { title: "Seats and assistants", skeleton: "page-header" },
     },
     {
       path: "billing",

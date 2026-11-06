@@ -482,3 +482,164 @@ export interface UsageHistoryPage {
   jobs: UsageJobRow[]
   nextCursor: string | null
 }
+
+// ── Teacher team (plan 03 Task 7) ───────────────────────────────────────────
+
+export type TeacherMemberStatus = "active" | "leaving" | "removed"
+export type AssistantRole = "co_teacher" | "marker" | "viewer"
+
+/** Plan 03 `TeamPermission`. Billing and seats are never permissions (spec §2.3). */
+export const TEAM_PERMISSIONS = [
+  "mark",
+  "regrade",
+  "generate_quiz",
+  "manage_classes",
+  "view_results",
+  "manage_students",
+  "view_usage",
+] as const
+export type TeamPermission = (typeof TEAM_PERMISSIONS)[number]
+
+/** 03 `SeatDTO` (with `kind`, `capUsedUnits`, `meterFraction` added by plan 03). */
+export interface WireSeat {
+  kind: "student_seat"
+  memberId: string
+  studentId: string
+  studentName: string
+  status: "active" | "leaving"
+  leavesAt: string | null
+  scopeSubjects: string[]
+  scopeActions: string[]
+  capUnits: number | null
+  capPeriod: CapPeriod
+  capUsedUnits: number
+  meterFraction: number | null
+  joinedAt: string
+}
+
+/** 03 `SeatCapacityDTO`. */
+export interface WireSeatCapacity {
+  capacity: number
+  used: number
+  free: number
+}
+
+/** 03 `AssistantDTO` (with `kind`, `capUsedUnits`). `permissions` = toggles off the preset. */
+export interface WireAssistant {
+  kind: "assistant"
+  memberId: string
+  assistantId: string
+  assistantName: string
+  role: AssistantRole
+  permissions: Record<string, boolean>
+  effectivePermissions: string[]
+  capUnits: number | null
+  capPeriod: CapPeriod
+  capUsedUnits: number
+}
+
+/** 03 `AssistantInviteDTO` (with `inviteId`, `createdAt`). */
+export interface WireAssistantInvite {
+  inviteId: string
+  code: string
+  role: AssistantRole
+  expiresAt: string
+  createdAt: string
+}
+
+/** 03 `MembershipDTO`. */
+export interface WireMembership {
+  memberId: string
+  teacherId: string
+  teacherName: string
+  role: AssistantRole
+  effectivePermissions: string[]
+}
+
+/** 03 `UpdateAssistantRequestDTO`. */
+export interface WireAssistantUpdate {
+  role?: AssistantRole
+  permissions?: Record<string, boolean>
+}
+
+/** 03 `SetSeatScopeRequestDTO`. */
+export interface SeatScopeUpdate {
+  subjects: string[]
+  actions: MeteredAction[]
+}
+
+/** 03 `SetCapRequestDTO`. */
+export interface CapUpdate {
+  capUnits: number | null
+  capPeriod: CapPeriod
+}
+
+/** 03 `CreateAssistantInviteRequestDTO` (`expiresInDays` 1–30). */
+export interface AssistantInviteCreate {
+  role: AssistantRole
+  expiresInDays: number
+}
+
+export interface SeatRow {
+  memberId: string
+  studentUserId: string
+  studentName: string
+  status: TeacherMemberStatus
+  /** End of the month removal was requested in; set while `leaving`. */
+  leavesAt: string | null
+  scopeSubjects: string[]
+  scopeActions: MeteredAction[]
+  /** Overflow into the teacher's credits. `null` = no overflow. */
+  capUnits: number | null
+  capPeriod: CapPeriod
+  capUsedUnits: number
+  /** This month's seat allowance used, 0..1; `null` before the first grant. */
+  meterFraction: number | null
+}
+
+export interface AssistantRow {
+  memberId: string
+  userId: string
+  name: string
+  rolePreset: AssistantRole
+  /** Toggles that differ from the preset. */
+  overrides: Partial<Record<TeamPermission, boolean>>
+  /** Effective permissions after overrides. */
+  permissions: TeamPermission[]
+  /** Cap on the lead's balance. `null` = no limit. */
+  capUnits: number | null
+  capPeriod: CapPeriod
+  capUsedUnits: number
+}
+
+export type AssistantInvite = WireAssistantInvite
+
+export interface TeamView {
+  planActive: boolean
+  subscriptionId: string | null
+  seatCapacity: number
+  /** Active plus leaving seats: both count against capacity (spec §4.4). */
+  seatsUsed: number
+  includedSeats: number
+  extraSeats: number
+  pendingExtraSeats: number | null
+  extraSeatPriceMinor: number | null
+  currency: string
+  currentPeriodEnd: string | null
+  savedCard: SavedCardView | null
+  /** Subjects of the teacher's classes, for the scope editor. */
+  subjects: { code: string; name: string }[]
+  seats: SeatRow[]
+  assistants: AssistantRow[]
+  invites: AssistantInvite[]
+}
+
+export interface AssistantRoleUpdate {
+  rolePreset: AssistantRole
+  overrides: Partial<Record<TeamPermission, boolean>>
+}
+
+export interface TeamMembership {
+  teacherName: string
+  role: AssistantRole
+}
