@@ -9,11 +9,48 @@ import hmac
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from lemely.runtime.token_cipher import TokenCipher
+from lemely.runtime.token_cipher import TokenCipher, TokenCipherError
 
 KEY = base64.urlsafe_b64encode(b"k" * 32).decode()
 OTHER_KEY = base64.urlsafe_b64encode(b"o" * 32).decode()
 TOKEN = "3f22ce8a4e5b6c7d8e9f0a1b2c3d4e5f"
+
+# Known answers pin the at-rest format: any change to the key derivation (labels, salt,
+# hash), the AAD, the nonce layout or the fingerprint algorithm makes rows already in the
+# database unreadable, so these constants must never be "regenerated" to make a test pass.
+# SEALED_V1 is KEY sealing TOKEN with nonce bytes 00..0b and AAD b"lemely.card-token.v1".
+SEALED_V1 = "v1:AAECAwQFBgcICQoLnKXV-P8OGBLPw_i_f8qTAUrfoigNVbRHQQH-b2TsbhA5_pA0nERHyDMvi8xkqyNC"
+FINGERPRINT_V1 = "0a5b37abf666d0056b2b0b9a879753013e258cf674a2d7fb47441169103a3985"
+AAD_V1 = b"lemely.card-token.v1"
+NONCE = bytes(range(12))
+
+
+def _blob(cipher: TokenCipher, aad: bytes | None) -> str:
+    sealed = cipher._aead.encrypt(NONCE, TOKEN.encode(), aad)
+    return "v1:" + base64.urlsafe_b64encode(NONCE + sealed).decode()
+
+
+def test_known_answer_blob_decrypts() -> None:
+    assert TokenCipher(KEY).decrypt(SEALED_V1) == TOKEN
+
+
+def test_known_answer_blob_is_reproduced_by_the_pinned_aad() -> None:
+    assert _blob(TokenCipher(KEY), AAD_V1) == SEALED_V1
+
+
+def test_known_answer_fingerprint() -> None:
+    assert TokenCipher(KEY).fingerprint(TOKEN) == FINGERPRINT_V1
+
+
+def test_derived_keys_are_independent_of_each_other_and_the_master_key() -> None:
+    cipher = TokenCipher(KEY)
+    mac_key = cipher._mac_key
+    assert mac_key != b"k" * 32
+    # If the fingerprint key were also the encryption key, a blob sealed under it would open.
+    foreign = AESGCM(mac_key).encrypt(NONCE, TOKEN.encode(), AAD_V1)
+    blob = "v1:" + base64.urlsafe_b64encode(NONCE + foreign).decode()
+    with pytest.raises(TokenCipherError, match="could not be decrypted"):
+        cipher.decrypt(blob)
 
 
 def test_round_trip() -> None:
@@ -48,7 +85,7 @@ def test_tampering_is_detected() -> None:
     sealed = cipher.encrypt(TOKEN)
     raw = bytearray(base64.urlsafe_b64decode(sealed[3:]))
     raw[-1] ^= 0x01
-    with pytest.raises(ValueError, match="could not be decrypted"):
+    with pytest.raises(TokenCipherError, match="could not be decrypted"):
         cipher.decrypt("v1:" + base64.urlsafe_b64encode(bytes(raw)).decode())
 
 
@@ -56,26 +93,21 @@ def test_tampered_nonce_is_detected() -> None:
     cipher = TokenCipher(KEY)
     raw = bytearray(base64.urlsafe_b64decode(cipher.encrypt(TOKEN)[3:]))
     raw[0] ^= 0x01
-    with pytest.raises(ValueError, match="could not be decrypted"):
+    with pytest.raises(TokenCipherError, match="could not be decrypted"):
         cipher.decrypt("v1:" + base64.urlsafe_b64encode(bytes(raw)).decode())
 
 
 def test_the_wrong_key_cannot_decrypt() -> None:
     sealed = TokenCipher(KEY).encrypt(TOKEN)
-    with pytest.raises(ValueError, match="could not be decrypted"):
+    with pytest.raises(TokenCipherError, match="could not be decrypted"):
         TokenCipher(OTHER_KEY).decrypt(sealed)
 
 
-def test_ciphertext_is_bound_to_its_purpose() -> None:
-    """A blob sealed under the same key for another purpose (other AAD) is refused."""
-    cipher = TokenCipher(KEY)
-    # Reach the derived encryption key the way a sibling feature sharing the master
-    # key would not be able to: seal with the cipher's own AEAD but a different AAD.
-    nonce = b"n" * 12
-    foreign = cipher._aead.encrypt(nonce, TOKEN.encode(), b"lemely.some-other-purpose")
-    blob = "v1:" + base64.urlsafe_b64encode(nonce + foreign).decode()
-    with pytest.raises(ValueError, match="could not be decrypted"):
-        cipher.decrypt(blob)
+@pytest.mark.parametrize("aad", [None, b"", b"lemely.card-token.v2", b"lemely.other-purpose.v1"])
+def test_ciphertext_is_bound_to_its_purpose(aad: bytes | None) -> None:
+    """A blob sealed under the same key with any other AAD is refused."""
+    with pytest.raises(TokenCipherError, match="could not be decrypted"):
+        TokenCipher(KEY).decrypt(_blob(TokenCipher(KEY), aad))
 
 
 def test_encryption_key_is_not_the_raw_master_key() -> None:
@@ -83,7 +115,7 @@ def test_encryption_key_is_not_the_raw_master_key() -> None:
     nonce = b"n" * 12
     raw_sealed = AESGCM(b"k" * 32).encrypt(nonce, TOKEN.encode(), b"lemely.card-token.v1")
     blob = "v1:" + base64.urlsafe_b64encode(nonce + raw_sealed).decode()
-    with pytest.raises(ValueError, match="could not be decrypted"):
+    with pytest.raises(TokenCipherError, match="could not be decrypted"):
         TokenCipher(KEY).decrypt(blob)
 
 
@@ -109,22 +141,26 @@ def test_failures_do_not_leak_plaintext_or_key() -> None:
     ):
         with pytest.raises(ValueError) as info:
             attempt()
-        text = repr(info.value) + str(info.value.__cause__)
+        assert info.value.__cause__ is None
+        assert info.value.__context__ is None
+        text = repr(info.value)
         assert TOKEN not in text
         assert KEY not in text
         assert OTHER_KEY not in text
 
 
 def test_a_key_that_is_not_32_bytes_is_refused() -> None:
-    with pytest.raises(ValueError, match="32 bytes"):
+    with pytest.raises(TokenCipherError, match="32 bytes"):
         TokenCipher(base64.urlsafe_b64encode(b"short").decode())
 
 
 def test_a_key_that_is_not_base64_is_refused_without_echoing_it() -> None:
     bad = "not*base64*key*not*base64*key*not*base64*key"
-    with pytest.raises(ValueError, match="base64") as info:
+    with pytest.raises(TokenCipherError, match="base64") as info:
         TokenCipher(bad)
     assert bad not in str(info.value)
+    assert info.value.__cause__ is None
+    assert info.value.__context__ is None
 
 
 def test_unpadded_keys_are_accepted() -> None:
@@ -133,10 +169,9 @@ def test_unpadded_keys_are_accepted() -> None:
 
 def test_repr_and_str_never_show_key_material() -> None:
     cipher = TokenCipher(KEY)
-    for text in (repr(cipher), str(cipher), f"{cipher!r}"):
-        assert KEY not in text
-        assert KEY.rstrip("=") not in text
-        assert "kkkk" not in text
+    assert repr(cipher) == "TokenCipher(<redacted>)"
+    assert str(cipher) == "TokenCipher(<redacted>)"
+    assert not hasattr(cipher, "__dict__")
 
 
 def test_fingerprint_is_deterministic_and_keyed() -> None:
@@ -157,3 +192,33 @@ def test_generated_keys_work() -> None:
     key = TokenCipher.generate_key()
     assert TokenCipher(key).decrypt(TokenCipher(key).encrypt(TOKEN)) == TOKEN
     assert TokenCipher.generate_key() != key
+
+
+def test_every_failure_is_a_token_cipher_error_and_a_value_error() -> None:
+    assert issubclass(TokenCipherError, ValueError)
+    cipher = TokenCipher(KEY)
+    for bad in ("", "v2:abcd", "v1:", "v1:!!!", "plain", "v1:\u00e9\u00e9\u00e9\u00e9", None):
+        with pytest.raises(TokenCipherError):
+            cipher.decrypt(bad)  # type: ignore[arg-type]
+    for bad_key in ("", "!!!", base64.urlsafe_b64encode(b"short").decode(), None):
+        with pytest.raises(TokenCipherError):
+            TokenCipher(bad_key)  # type: ignore[arg-type]
+
+
+def test_only_the_urlsafe_alphabet_is_accepted() -> None:
+    # 32 bytes whose standard base64 contains "+" and "/" (urlsafe uses "-" and "_").
+    raw = bytes([0xFB, 0xFF] * 16)
+    urlsafe = base64.urlsafe_b64encode(raw).decode()
+    standard = base64.b64encode(raw).decode()
+    assert "-" in urlsafe
+    assert "_" in urlsafe
+    assert "+" in standard
+    assert "/" in standard
+    TokenCipher(urlsafe)
+    with pytest.raises(TokenCipherError, match="base64"):
+        TokenCipher(standard)
+    sealed = TokenCipher(KEY).encrypt(TOKEN)
+    body = sealed[3:]
+    assert TokenCipher(KEY).decrypt("v1:" + body.rstrip("=")) == TOKEN
+    with pytest.raises(TokenCipherError):
+        TokenCipher(KEY).decrypt("v1:" + body.replace("-", "+").replace("_", "/") + "+")

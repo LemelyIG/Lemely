@@ -67,6 +67,8 @@ db = [
   "alembic>=1.14,<2",
   "psycopg[binary]>=3.2,<4",
   "pyjwt[crypto]>=2.10,<3",
+  # Imported directly by lemely/runtime/vapid.py and token_cipher.py (AES-GCM, HKDF).
+  "cryptography>=49,<50",  # installed: 49.0.0
 ]
 # Every tool here decides a gate, so every one of them is upper-bounded. An
 # unbounded gate tool means the verdict can change with no commit — CI installs

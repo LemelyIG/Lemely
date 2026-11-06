@@ -16,8 +16,11 @@ seal. The stored form is ``"v1:" + urlsafe_b64(nonce || ciphertext||tag)``.
 * Because sealing is randomised, the same card arriving twice cannot be matched on
   ciphertext. :meth:`TokenCipher.fingerprint` is an HMAC-SHA256 of the token under
   the derived fingerprint key: deterministic, useless without the key.
-* Failures raise ``ValueError`` with fixed messages that never contain the token,
-  the key or the ciphertext; ``repr`` shows no key material.
+* Failures raise :class:`TokenCipherError` (a ``ValueError``) with fixed messages that
+  never contain the token, the key or the ciphertext, and carry no ``__cause__`` or
+  ``__context__``; ``repr`` shows no key material.
+* Keys and ciphertext bodies are urlsafe base64 only (``-`` and ``_``); the standard
+  ``+`` and ``/`` alphabet is rejected. Missing ``=`` padding is tolerated.
 
 Lives in ``lemely.runtime`` (stdlib + ``cryptography`` only), so the ``db`` layer
 can use it without importing ``io`` or ``web``.
@@ -45,10 +48,19 @@ _ENCRYPTION_INFO = b"lemely.card-token.encryption.v1"
 _FINGERPRINT_INFO = b"lemely.card-token.fingerprint.v1"
 
 
-def _b64decode(value: str) -> bytes:
-    """Strict urlsafe base64 decode that tolerates missing ``=`` padding."""
-    padded = value + "=" * (-len(value) % 4)
-    return base64.b64decode(padded.encode("ascii"), altchars=b"-_", validate=True)
+class TokenCipherError(ValueError):
+    """Any key, format or authentication failure; messages never include secrets."""
+
+
+def _b64decode(value: str) -> bytes | None:
+    """Strict urlsafe base64 decode (padding optional); ``None`` if it is not valid."""
+    if "+" in value or "/" in value:  # b64decode(altchars=...) would accept these too
+        return None
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        return base64.b64decode(padded.encode("ascii"), altchars=b"-_", validate=True)
+    except (binascii.Error, ValueError, UnicodeError):
+        return None
 
 
 def _derive(master: bytes, info: bytes) -> bytes:
@@ -61,13 +73,12 @@ class TokenCipher:
     __slots__ = ("_aead", "_mac_key")
 
     def __init__(self, key_b64: str) -> None:
-        try:
-            master = _b64decode(key_b64.strip())
-        except (binascii.Error, ValueError, UnicodeError):
-            # ``from None``: never chain the original error, keep the key out of tracebacks.
-            raise ValueError("card token key is not valid urlsafe base64") from None
+        # Failures are raised outside any ``except`` block so no ``__context__`` is kept.
+        master = _b64decode(key_b64.strip()) if isinstance(key_b64, str) else None
+        if master is None:
+            raise TokenCipherError("card token key is not valid urlsafe base64")
         if len(master) != _KEY_BYTES:
-            raise ValueError("card token key must decode to exactly 32 bytes")
+            raise TokenCipherError("card token key must decode to exactly 32 bytes")
         self._aead = AESGCM(_derive(master, _ENCRYPTION_INFO))
         self._mac_key = _derive(master, _FINGERPRINT_INFO)
 
@@ -87,24 +98,26 @@ class TokenCipher:
         return _VERSION + base64.urlsafe_b64encode(nonce + sealed).decode()
 
     def decrypt(self, ciphertext: str) -> str:
-        """Open a value produced by :meth:`encrypt`; ``ValueError`` on any failure."""
+        """Open a value produced by :meth:`encrypt`; ``TokenCipherError`` on any failure."""
         if not isinstance(ciphertext, str) or not ciphertext.startswith(_VERSION):
-            raise ValueError("unknown card token ciphertext format")
-        try:
-            raw = _b64decode(ciphertext[len(_VERSION) :])
-        except (binascii.Error, ValueError, UnicodeError):
-            raise ValueError("card token ciphertext is not valid base64") from None
+            raise TokenCipherError("unknown card token ciphertext format")
+        raw = _b64decode(ciphertext[len(_VERSION) :])
+        if raw is None:
+            raise TokenCipherError("card token ciphertext is not valid base64")
         if len(raw) <= _NONCE_BYTES:
-            raise ValueError("card token ciphertext is truncated")
+            raise TokenCipherError("card token ciphertext is truncated")
+        plain: str | None
         try:
-            plain = self._aead.decrypt(raw[:_NONCE_BYTES], raw[_NONCE_BYTES:], _AAD)
-            return plain.decode("utf-8")
+            plain = self._aead.decrypt(raw[:_NONCE_BYTES], raw[_NONCE_BYTES:], _AAD).decode("utf-8")
         except (InvalidTag, UnicodeDecodeError):
-            raise ValueError("card token could not be decrypted") from None
+            plain = None
+        if plain is None:
+            raise TokenCipherError("card token could not be decrypted")
+        return plain
 
     def fingerprint(self, plaintext: str) -> str:
         """Deterministic keyed digest used to recognise the same card twice."""
         return hmac.new(self._mac_key, plaintext.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
-__all__ = ["TokenCipher"]
+__all__ = ["TokenCipher", "TokenCipherError"]
