@@ -18,16 +18,32 @@ export function actionLabel(action: MeteredAction): string {
   return ACTIONS[action]
 }
 
-/* Plan 04 sends display values: plan share in percentage points, credit part in credits. */
-function span([lo, hi]: [number, number], unit: (n: number) => string, rangeUnit: string): string {
-  return lo === hi ? unit(hi) : `${lo}–${hi}${rangeUnit}`
+/*
+ * Plan 04 sends display values: plan share in percentage points (fractional, e.g. 1.37), credit
+ * part in credits. The meter shows whole percents, so these do too: a positive share that would
+ * round to 0 reads "<1%", never "0%", and a range whose low end rounds to 0 reads "up to N%".
+ */
+const whole = (n: number) => Math.round(n)
+
+function pctText(n: number): string {
+  return n > 0 && whole(n) === 0 ? "<1% of plan" : `${whole(n)}% of plan`
 }
-const pct = (n: number) => `${n}% of plan`
+
+function pctRange([lo, hi]: [number, number]): string {
+  const [l, h] = [whole(lo), whole(hi)]
+  if (h === 0) return pctText(hi)
+  if (l === h) return `${h}% of plan`
+  return l === 0 ? `up to ${h}% of plan` : `${l}–${h}% of plan`
+}
+
+function creditRange([lo, hi]: [number, number]): string {
+  return lo === hi ? formatCredits(hi) : `${lo}–${hi} credits`
+}
 
 export function jobEstimateText(row: UsageJobRow): string {
   const parts = [
-    row.estimatePercentOfPlan ? span(row.estimatePercentOfPlan, pct, "% of plan") : null,
-    row.estimateCredits ? span(row.estimateCredits, (n) => formatCredits(n), " credits") : null,
+    row.estimatePercentOfPlan ? pctRange(row.estimatePercentOfPlan) : null,
+    row.estimateCredits ? creditRange(row.estimateCredits) : null,
   ].filter((x): x is string => x !== null)
   return parts.length > 0 ? parts.join(" + ") : "—"
 }
@@ -47,8 +63,10 @@ export function jobStatusText(row: UsageJobRow): string {
 
 export function jobChargeText(row: UsageJobRow): string {
   if (row.status === "open") return "Not charged yet"
+  // A job that failed or timed out costs nothing, whatever numbers the row carries.
+  if (row.status === "released" || row.status === "expired") return "No charge"
   const parts = [
-    row.percentOfPlan !== null ? pct(row.percentOfPlan) : null,
+    row.percentOfPlan !== null ? pctText(row.percentOfPlan) : null,
     row.credits !== null ? formatCredits(row.credits) : null,
   ].filter((x): x is string => x !== null)
   if (parts.length === 0) return "No charge"
@@ -74,4 +92,18 @@ export function receiptStatusText(receipt: Receipt): string | null {
   if (receipt.status === "refunded") return "Refunded"
   if (receipt.status === "partially_refunded") return "Partly refunded"
   return null
+}
+
+/**
+ * What the history screen shows. Only the first page's failure is a full-page error: once any
+ * page is loaded the list stays on screen, and a failed "Load more" is reported beside the
+ * button (react-query v5 keeps `data` but flips `status` to "error" in that case).
+ */
+export function historyPhase(q: { data: { pages: { jobs: unknown[] }[] } | undefined }): "first-load" | "empty" | "list" {
+  if (q.data === undefined) return "first-load"
+  return q.data.pages.every((p) => p.jobs.length === 0) ? "empty" : "list"
+}
+
+export function moreLoadedText(added: number): string {
+  return `${added} more ${added === 1 ? "job" : "jobs"} loaded`
 }

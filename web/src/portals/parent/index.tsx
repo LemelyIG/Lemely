@@ -14,6 +14,7 @@ import { BadgeSync } from "@/components/badge-sync"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { ScreenOutlet } from "@/components/ui/screen-outlet"
 import { Breadcrumbs, type Crumb } from "@/components/ui/breadcrumbs"
+import { receiptsTrail } from "./trail"
 import { Chip } from "@/components/ui/chip"
 import { useNotificationCounts } from "@/lib/hooks/useNotificationApi"
 import { unreadBadgeLabel } from "@/lib/staffInbox"
@@ -192,17 +193,8 @@ function ParentTrail() {
 
   const hasChildList = (data?.children.length ?? 0) > 1
   if (!childId) {
-    // The payer's receipts sit above any one child, so there is no `:childId` to hang a trail
-    // on. With several children the way back is the list; with one, `/parent` would only
-    // redirect, so the trail points at that child's overview instead. Pending, it is omitted.
-    if (location.pathname.replace(/\/+$/, "") !== "/parent/billing/receipts") return null
-    const only = data?.children[0]
-    const back: Crumb | null = hasChildList
-      ? { label: "Your children", to: "/parent" }
-      : only
-        ? { label: "Overview", to: `/parent/children/${only.childId}` }
-        : null
-    return back ? <Breadcrumbs items={[back, { label: "Receipts" }]} className="py-3" /> : null
+    const receipts = receiptsTrail(location.pathname, data?.children)
+    return receipts ? <Breadcrumbs items={receipts} className="py-3" /> : null
   }
 
   const trail: Crumb[] = []

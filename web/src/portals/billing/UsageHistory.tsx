@@ -1,3 +1,5 @@
+import type { InfiniteData, UseInfiniteQueryResult } from "@tanstack/react-query"
+import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { ListSkeleton } from "@/components/ui/loading-shapes"
@@ -5,10 +7,17 @@ import { QueryState } from "@/components/ui/query-state"
 import { EmptyState } from "@/components/ui/state-views"
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table"
 import { formatBillingDate } from "@/lib/billingFormat"
-import type { UsageJobRow } from "@/lib/billingTypes"
+import type { UsageHistoryPage, UsageJobRow } from "@/lib/billingTypes"
 import { billingPaths } from "@/lib/billingPaths"
 import { useUsageHistory } from "@/lib/hooks/useUsageApi"
-import { actionLabel, jobChargeText, jobEstimateText, jobStatusText } from "@/lib/usageHistoryModel"
+import {
+  actionLabel,
+  historyPhase,
+  jobChargeText,
+  jobEstimateText,
+  jobStatusText,
+  moreLoadedText,
+} from "@/lib/usageHistoryModel"
 
 /*
  * Usage history (spec §2.4): one row per metered job, estimate against actual. This is the
@@ -84,45 +93,88 @@ function HistoryRows({ jobs }: { jobs: UsageJobRow[] }) {
   )
 }
 
+type History = UseInfiniteQueryResult<InfiniteData<UsageHistoryPage, string | null>, Error>
+
+/*
+ * The loaded rows plus the "Load more" control. A failed page keeps the rows on screen and says
+ * so beside the button. After a page loads, keyboard focus has to land somewhere real: the button
+ * is disabled while it fetches (which drops focus) and disappears on the last page, so focus
+ * returns to the button, or to the closing note when there is nothing more to load. The polite
+ * live region says how many rows arrived.
+ */
+function HistoryList({ history }: { history: History }) {
+  const jobs = history.data?.pages.flatMap((p) => p.jobs) ?? []
+  const [announce, setAnnounce] = useState("")
+  const [refocus, setRefocus] = useState(false)
+  const moreRef = useRef<HTMLButtonElement>(null)
+  const endRef = useRef<HTMLParagraphElement>(null)
+  const { hasNextPage, isFetchingNextPage } = history
+
+  useEffect(() => {
+    if (!refocus || isFetchingNextPage) return
+    ;(hasNextPage ? moreRef.current : endRef.current)?.focus()
+    setRefocus(false)
+  }, [refocus, isFetchingNextPage, hasNextPage])
+
+  const loadMore = async () => {
+    const before = jobs.length
+    const result = await history.fetchNextPage()
+    if (!result.isFetchNextPageError && result.data) {
+      setAnnounce(moreLoadedText(result.data.pages.flatMap((p) => p.jobs).length - before))
+    }
+    setRefocus(true)
+  }
+
+  return (
+    <>
+      <HistoryRows jobs={jobs} />
+      <p role="status" className="sr-only">
+        {announce}
+      </p>
+      {history.isFetchNextPageError ? (
+        <p role="alert" className="m-0 text-body-sm text-on-surface">
+          Couldn't load more of your usage.
+        </p>
+      ) : null}
+      {hasNextPage ? (
+        <div>
+          <Button ref={moreRef} variant="secondary" loading={isFetchingNextPage} onClick={() => void loadMore()}>
+            {history.isFetchNextPageError ? "Try again" : "Load more"}
+          </Button>
+        </div>
+      ) : (history.data?.pages.length ?? 0) > 1 ? (
+        <p ref={endRef} tabIndex={-1} className="m-0 text-body-sm text-on-surface-variant focus:outline-none">
+          That's all of your usage.
+        </p>
+      ) : null}
+    </>
+  )
+}
+
 export function UsageHistoryView({ backHref }: { backHref: string }) {
   const history = useUsageHistory()
+  const phase = historyPhase(history)
   return (
     <div className="flex flex-col gap-6">
       <h1 className="m-0 text-display-md text-on-surface">Usage history</h1>
-      <QueryState
-        query={history}
-        skeleton={<ListSkeleton />}
-        error={{ heading: "Couldn't load your usage history" }}
-        isEmpty={(d) => d.pages.every((p) => p.jobs.length === 0)}
-        empty={
-          <EmptyState
-            kicker={null}
-            heading="No usage yet."
-            body="Jobs you run appear here with their estimate and what they actually cost."
-          >
-            <Link to={backHref} className={buttonVariants({ variant: "secondary" })}>
-              Back to plan and billing
-            </Link>
-          </EmptyState>
-        }
-      >
-        {(d) => (
-          <>
-            <HistoryRows jobs={d.pages.flatMap((p) => p.jobs)} />
-            {history.hasNextPage ? (
-              <div>
-                <Button
-                  variant="secondary"
-                  loading={history.isFetchingNextPage}
-                  onClick={() => void history.fetchNextPage()}
-                >
-                  Load more
-                </Button>
-              </div>
-            ) : null}
-          </>
-        )}
-      </QueryState>
+      {phase === "first-load" ? (
+        // Only the first page's failure is a full-page error; `historyPhase` is "list" once any page loaded.
+        <QueryState query={history} skeleton={<ListSkeleton />} error={{ heading: "Couldn't load your usage history" }}>
+          {() => null}
+        </QueryState>
+      ) : phase === "empty" ? (
+        <EmptyState
+          kicker={null}
+          heading="No usage yet."
+          body="Jobs you run appear here with their estimate and what they actually cost."
+        >
+          <Link to={backHref} className={buttonVariants({ variant: "secondary" })}>
+            Back to plan and billing
+          </Link>
+        </EmptyState>
+      ) : (
+        <HistoryList history={history} />
+      )}
     </div>
   )
 }

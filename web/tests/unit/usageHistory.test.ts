@@ -4,9 +4,11 @@ import { fx } from "./support/billingFixtures"
 import { errorQuery, okQuery, pendingQuery, renderStatic } from "./support/billingRender"
 import {
   actionLabel,
+  historyPhase,
   jobChargeText,
   jobEstimateText,
   jobStatusText,
+  moreLoadedText,
   purposeLabel,
   receiptStatusText,
 } from "@/lib/usageHistoryModel"
@@ -22,7 +24,14 @@ const infinite = (pages: unknown[], hasNextPage = false) => ({
   ...okQuery({ pages, pageParams: [null] }),
   hasNextPage,
   isFetchingNextPage: false,
+  isFetchNextPageError: false,
   fetchNextPage: vi.fn(),
+})
+
+/** The two renderings of the same rows: the phone cards and the table. */
+const arms = (html: string) => ({
+  cards: /<ul aria-label="Usage history"[\s\S]*?<\/ul>/.exec(html)?.[0] ?? "",
+  table: /<table[\s\S]*?<\/table>/.exec(html)?.[0] ?? "",
 })
 
 beforeEach(() => {
@@ -54,6 +63,32 @@ describe("usage history model", () => {
     expect(jobChargeText({ ...fx.job, credits: 9, debtCredits: 4 })).toBe("9 credits (4 credits went below zero)")
   })
 
+  it("says no charge for a failed or timed-out job whatever numbers it carries", () => {
+    const stale = { ...fx.job, credits: 3, percentOfPlan: 2, debtCredits: 1, paidBy: "mixed" as const }
+    expect(jobChargeText({ ...stale, status: "released" })).toBe("No charge")
+    expect(jobChargeText({ ...stale, status: "expired" })).toBe("No charge")
+  })
+
+  it("shows the plan share as whole percents and never as 0%", () => {
+    const plan = { ...fx.job, paidBy: "allowance" as const, credits: null, estimateCredits: null }
+    expect(jobChargeText({ ...plan, percentOfPlan: 1.37 })).toBe("1% of plan")
+    expect(jobChargeText({ ...plan, percentOfPlan: 2.5 })).toBe("3% of plan")
+    expect(jobChargeText({ ...plan, percentOfPlan: 0.3 })).toBe("<1% of plan")
+    expect(jobChargeText({ ...plan, percentOfPlan: 0 })).toBe("0% of plan")
+    expect(jobEstimateText({ ...plan, estimatePercentOfPlan: [0.4, 3.6] })).toBe("up to 4% of plan")
+    expect(jobEstimateText({ ...plan, estimatePercentOfPlan: [1.2, 3.6] })).toBe("1–4% of plan")
+    expect(jobEstimateText({ ...plan, estimatePercentOfPlan: [2.2, 2.4] })).toBe("2% of plan")
+    expect(jobEstimateText({ ...plan, estimatePercentOfPlan: [0.1, 0.3] })).toBe("<1% of plan")
+  })
+
+  it("decides the history screen from the loaded pages, not the query status", () => {
+    expect(historyPhase({ data: undefined })).toBe("first-load")
+    expect(historyPhase({ data: { pages: [{ jobs: [] }] } })).toBe("empty")
+    expect(historyPhase({ data: { pages: [{ jobs: [] }, { jobs: [1] }] } })).toBe("list")
+    expect(moreLoadedText(1)).toBe("1 more job loaded")
+    expect(moreLoadedText(25)).toBe("25 more jobs loaded")
+  })
+
   it("labels payment purposes and refunds", () => {
     expect(purposeLabel("extra_seats")).toBe("Extra seats")
     expect(receiptStatusText(fx.receipt)).toBeNull()
@@ -70,6 +105,31 @@ describe("UsageHistoryView", () => {
     expect(html).toContain("Charged")
     expect(html).toContain("Paper marking")
     expect(html).toContain("3–5 credits")
+    const { table, cards } = arms(html)
+    expect(table).toContain(">Estimate<")
+    expect(table).toContain(">Charged<")
+    expect(table).toContain("3–5 credits")
+    expect(table).toContain("4 credits")
+    expect(cards).toContain("Paper marking")
+    expect(cards).toContain("3–5 credits")
+    expect(cards).toContain("4 credits")
+    expect(html).toContain("max-sm:hidden")
+    expect(html).toContain("sm:hidden")
+  })
+
+  it("shows an allowance row and a mixed row in both renderings", () => {
+    const plan = { ...fx.job, jobId: "a1", action: "study_plan" as const, paidBy: "allowance" as const, credits: null, percentOfPlan: 3, estimateCredits: null, estimatePercentOfPlan: [2, 4] as [number, number] }
+    const mixed = { ...plan, jobId: "m1", action: "generate_quiz" as const, paidBy: "mixed" as const, percentOfPlan: 1, credits: 2, estimateCredits: [1, 3] as [number, number] }
+    s.history = infinite([{ jobs: [plan, mixed], nextCursor: null }])
+    const { table, cards } = arms(renderStatic(h(UsageHistoryView, { backHref: "/x" })))
+    for (const arm of [table, cards]) {
+      expect(arm).toContain("Weekly study plan")
+      expect(arm).toContain("2–4% of plan")
+      expect(arm).toContain("3% of plan")
+      expect(arm).toContain("Quiz generation")
+      expect(arm).toContain("2–4% of plan + 1–3 credits")
+      expect(arm).toContain("1% of plan + 2 credits")
+    }
   })
 
   it("offers more pages while there is a cursor", () => {
@@ -86,6 +146,30 @@ describe("UsageHistoryView", () => {
     expect(renderStatic(h(UsageHistoryView, { backHref: "/x" }))).toContain("No usage yet.")
   })
 
+  it("keeps the loaded rows when a later page fails, with an inline retry", () => {
+    s.history = {
+      ...infinite([{ jobs: [fx.job], nextCursor: "n2" }], true),
+      status: "error",
+      isError: true,
+      isSuccess: false,
+      error: new Error("boom"),
+      isFetchNextPageError: true,
+    }
+    const html = renderStatic(h(UsageHistoryView, { backHref: "/x" }))
+    expect(html).toContain("Paper marking")
+    expect(html).toContain("load more of your usage")
+    expect(html).toContain("Try again")
+    expect(html).not.toContain("load your usage history")
+  })
+
+  it("closes the list with a note once the last page has loaded", () => {
+    s.history = infinite([{ jobs: [fx.job], nextCursor: "n2" }, { jobs: [{ ...fx.job, jobId: "j9" }], nextCursor: null }])
+    const html = renderStatic(h(UsageHistoryView, { backHref: "/x" }))
+    expect(html).toContain("all of your usage")
+    expect(html).toContain('role="status"')
+    expect(html).not.toContain("Load more")
+  })
+
   it("says what a failed job and a debt row cost", () => {
     s.history = infinite([
       {
@@ -97,9 +181,12 @@ describe("UsageHistoryView", () => {
       },
     ])
     const html = renderStatic(h(UsageHistoryView, { backHref: "/x" }))
-    expect(html).toContain("No charge")
-    expect(html).toContain("Failed, not charged")
-    expect(html).toContain("went below zero")
+    const { table, cards } = arms(html)
+    for (const arm of [table, cards]) {
+      expect(arm).toContain("No charge")
+      expect(arm).toContain("Failed, not charged")
+      expect(arm).toContain("went below zero")
+    }
   })
 
   it("keeps the heading, with a loading and an error state under it", () => {
