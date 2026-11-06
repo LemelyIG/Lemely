@@ -51,6 +51,9 @@ const ParentChildPlans = lazy(() =>
 const ParentChildBilling = lazy(() =>
   import("@/portals/billing/ParentBilling").then((m) => ({ default: m.ParentChildBilling })),
 )
+const ParentReceipts = lazy(() =>
+  import("@/portals/billing/Receipts").then((m) => ({ default: m.ParentReceipts })),
+)
 const ChildTutorAccess = lazy(() =>
   import("./screens/tutoring/ChildTutorAccess").then((m) => ({ default: m.ChildTutorAccess })),
 )
@@ -188,7 +191,19 @@ function ParentTrail() {
   const subject = useCachedChildSubject(childId ?? "", code ?? "")
 
   const hasChildList = (data?.children.length ?? 0) > 1
-  if (!childId) return null
+  if (!childId) {
+    // The payer's receipts sit above any one child, so there is no `:childId` to hang a trail
+    // on. With several children the way back is the list; with one, `/parent` would only
+    // redirect, so the trail points at that child's overview instead. Pending, it is omitted.
+    if (location.pathname.replace(/\/+$/, "") !== "/parent/billing/receipts") return null
+    const only = data?.children[0]
+    const back: Crumb | null = hasChildList
+      ? { label: "Your children", to: "/parent" }
+      : only
+        ? { label: "Overview", to: `/parent/children/${only.childId}` }
+        : null
+    return back ? <Breadcrumbs items={[back, { label: "Receipts" }]} className="py-3" /> : null
+  }
 
   const trail: Crumb[] = []
   if (hasChildList) trail.push({ label: "Your children", to: "/parent" })
@@ -460,6 +475,13 @@ export const parentRoute: RouteObject = {
       path: "children/:childId/billing/plans",
       element: <ParentChildPlans />,
       handle: { title: "Plans and credits", skeleton: "page-header" },
+    },
+    // The payer's own list across every child (receipts belong to the payer). There is no
+    // child usage-history route: `/usage/history` serves the caller only (M6).
+    {
+      path: "billing/receipts",
+      element: <ParentReceipts />,
+      handle: { title: "Receipts", skeleton: "list" },
     },
     { path: "tutors", element: <ParentFindTutor />, handle: { title: "Tutors", skeleton: "list" } },
     {

@@ -142,6 +142,12 @@ const TeacherBilling = lazy(() =>
 const TeacherPlans = lazy(() =>
   import("@/portals/billing/PlansScreen").then((m) => ({ default: m.TeacherPlans })),
 )
+const TeacherUsageHistory = lazy(() =>
+  import("@/portals/billing/UsageHistory").then((m) => ({ default: m.TeacherUsageHistory })),
+)
+const TeacherReceipts = lazy(() =>
+  import("@/portals/billing/Receipts").then((m) => ({ default: m.TeacherReceipts })),
+)
 const InstallSettingsSection = lazy(() =>
   import("@/portals/settings/InstallSettings").then((m) => ({
     default: m.InstallSettingsSection,
@@ -840,6 +846,16 @@ export const teacherRoute: RouteObject = {
       path: "billing/plans",
       element: <TeacherPlans />,
       handle: { title: "Plans and credits", skeleton: "page-header" },
+    },
+    {
+      path: "billing/history",
+      element: <TeacherUsageHistory />,
+      handle: { title: "Usage history", skeleton: "list" },
+    },
+    {
+      path: "billing/receipts",
+      element: <TeacherReceipts />,
+      handle: { title: "Receipts", skeleton: "list" },
     },
     {
       // A dialog over the current page: `ScreenOutlet`'s overlay (in the layout)

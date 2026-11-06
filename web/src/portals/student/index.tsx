@@ -182,6 +182,12 @@ const StudentBilling = lazy(() =>
 const StudentPlans = lazy(() =>
   import("@/portals/billing/PlansScreen").then((m) => ({ default: m.StudentPlans })),
 )
+const StudentUsageHistory = lazy(() =>
+  import("@/portals/billing/UsageHistory").then((m) => ({ default: m.StudentUsageHistory })),
+)
+const StudentReceipts = lazy(() =>
+  import("@/portals/billing/Receipts").then((m) => ({ default: m.StudentReceipts })),
+)
 const InstallSettingsSection = lazy(() =>
   import("@/portals/settings/InstallSettings").then((m) => ({
     default: m.InstallSettingsSection,
@@ -1058,6 +1064,16 @@ export const studentRoute: RouteObject = {
       path: "billing/plans",
       element: <StudentPlans />,
       handle: { title: "Plans and credits", skeleton: "page-header" },
+    },
+    {
+      path: "billing/history",
+      element: <StudentUsageHistory />,
+      handle: { title: "Usage history", skeleton: "list" },
+    },
+    {
+      path: "billing/receipts",
+      element: <StudentReceipts />,
+      handle: { title: "Receipts", skeleton: "list" },
     },
     {
       path: "settings",

@@ -20,6 +20,7 @@ export function ParentChildBilling() {
       audience="student"
       beneficiaryId={childId}
       heading={name ? `Plan and billing for ${name}` : "Plan and billing"}
+      beneficiaryName={name}
     />
   )
 }

@@ -189,6 +189,8 @@ export const crumbs: Record<string, string> = {
   "/student/recently-deleted": "Home / Recently deleted",
   "/student/billing": "Home / Plan and billing",
   "/student/billing/plans": "Home / Plan and billing / Plans",
+  "/student/billing/history": "Home / Plan and billing / Usage history",
+  "/student/billing/receipts": "Home / Plan and billing / Receipts",
   "/student/settings": "Home / Settings",
   "/student/settings/devices": "Home / Settings / Account and devices",
   "/student/settings/notifications": "Home / Settings / Notifications",
