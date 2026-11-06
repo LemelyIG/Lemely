@@ -45,7 +45,7 @@ function useScrolled(): boolean {
 }
 
 const BAR = cn(
-  "lm-nav-chrome lm-shell-bar-inset sticky top-2 z-nav mx-7 mt-2 mb-6 flex h-14 items-center gap-2 rounded-inner border border-outline-variant bg-surface-container-lowest ps-[17px] pe-[11px] transition-shadow duration-200",
+  "lm-nav-chrome lm-shell-bar-inset lm-shell-bar-glass sticky top-2 z-nav mx-7 mt-2 mb-6 flex h-14 items-center gap-2 rounded-inner border border-outline-variant bg-surface-container-lowest ps-[17px] pe-[11px] transition-shadow duration-200",
   "data-[stuck=true]:shadow-[var(--shadow-hover)] dark:border-transparent dark:bg-surface-container-high dark:data-[stuck=true]:shadow-none",
   "max-shell-lg:mx-2.5 max-shell-lg:ps-3 max-shell-lg:pe-2.5",
   "max-shell-sm:relative max-shell-sm:top-auto max-shell-sm:m-0 max-shell-sm:h-11 max-shell-sm:rounded-none max-shell-sm:border-0 max-shell-sm:bg-transparent max-shell-sm:ps-3.5 max-shell-sm:pe-2 max-shell-sm:shadow-none dark:max-shell-sm:bg-transparent",
@@ -55,6 +55,7 @@ const BAR = cn(
  * The floating top bar (design A `.as-bar`): menu button (drawer range only),
  * the page title, the portal's actions, bell, gear and avatar. The breadcrumb
  * trail renders under it only when the reader has drilled in.
+ * Semi-translucent over a backdrop blur (`.lm-shell-bar-glass`), like the landing page header.
  */
 export function ShellTopBar({
   title,

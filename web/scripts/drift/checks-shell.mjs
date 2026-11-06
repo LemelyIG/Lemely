@@ -4,6 +4,7 @@
  * settings by URL. Each check opens the real app (mocked API, harness.mjs)
  * and throws on the first broken expectation. Later tasks append checks.
  */
+import { PNG } from "pngjs"
 import { teacherShellMocks } from "./mocks.mjs"
 
 /** Radix hands focus back a frame after the panel unmounts, so poll briefly rather than read once. */
@@ -200,4 +201,71 @@ SHELL_CHECKS.push(
       if (navs !== 1) throw new Error(`rail: expected 1 nav labelled Teacher, found ${navs}`)
     },
   },
+)
+
+/** Mean luma (0..255) of a PNG screenshot. */
+function meanLuma(buffer) {
+  const { data } = PNG.sync.read(buffer)
+  let sum = 0
+  for (let i = 0; i < data.length; i += 4) sum += 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]
+  return sum / (data.length / 4)
+}
+
+/** Alpha of a computed colour: "rgba(r, g, b, a)", "oklch(l c h / a)", "color(srgb r g b / a)"; 1 when opaque. */
+function alphaOf(color) {
+  const slash = color.match(/\/\s*([\d.]+)(%?)\s*\)$/)
+  if (slash) return slash[2] ? Number(slash[1]) / 100 : Number(slash[1])
+  const rgba = color.match(/^rgba\([^)]*,\s*([\d.]+)\)$/)
+  return rgba ? Number(rgba[1]) : 1
+}
+
+/**
+ * Task 4a: the floating bar is 86% opaque over a backdrop blur. The bar is
+ * scrolled into its stuck state, then the same clip of it is shot twice:
+ * once over the plain page and once with a contrasting block fixed under it.
+ * The block must show through faintly: the mean luma moves, but by much less
+ * than a clear bar would let it.
+ */
+export function barIsTranslucent(id, app, theme) {
+  return {
+    id,
+    width: 1440,
+    theme,
+    app,
+    async run(page) {
+      const bar = page.locator("header[data-stuck]").first()
+      const style = await bar.evaluate((el) => {
+        const s = getComputedStyle(el)
+        return { bg: s.backgroundColor, blur: s.backdropFilter || s.webkitBackdropFilter || "" }
+      })
+      if (!/blur\(/.test(style.blur)) throw new Error(`${theme}: bar backdrop-filter is "${style.blur}", expected a blur`)
+      const alpha = alphaOf(style.bg)
+      if (!(alpha > 0.8 && alpha < 0.9)) throw new Error(`${theme}: bar background ${style.bg} has alpha ${alpha}, expected 0.86`)
+      await page.evaluate(() => {
+        document.body.style.minHeight = "3000px"
+        window.scrollTo(0, 400)
+      })
+      await page.waitForFunction(() => document.querySelector("header[data-stuck]")?.getAttribute("data-stuck") === "true")
+      const box = await bar.boundingBox()
+      const clip = { x: box.x + 4, y: box.y + 4, width: box.width - 8, height: box.height - 8 }
+      const plain = meanLuma(await page.screenshot({ clip, animations: "disabled" }))
+      await page.evaluate(
+        ([top, height, colour]) => {
+          const probe = document.createElement("div")
+          probe.style.cssText = `position:fixed;inset-inline:0;top:${top}px;height:${height}px;background:${colour};z-index:0;pointer-events:none`
+          document.body.append(probe)
+        },
+        [box.y, box.height, theme === "dark" ? "#fff" : "#000"],
+      )
+      const covered = meanLuma(await page.screenshot({ clip, animations: "disabled" }))
+      const moved = Math.abs(plain - covered)
+      if (moved < 4) throw new Error(`${theme}: content under the bar is not visible (luma ${plain.toFixed(1)} -> ${covered.toFixed(1)})`)
+      if (moved > 80) throw new Error(`${theme}: the bar is too clear (luma ${plain.toFixed(1)} -> ${covered.toFixed(1)})`)
+    },
+  }
+}
+
+SHELL_CHECKS.push(
+  barIsTranslucent("teacher-bar-translucent-light", TEACHER_HOME, "light"),
+  barIsTranslucent("teacher-bar-translucent-dark", TEACHER_HOME, "dark"),
 )

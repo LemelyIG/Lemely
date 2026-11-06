@@ -1086,6 +1086,28 @@ html[data-direction="back"]::view-transition-new(root) {
   }
 }
 
+/* The shared shell's floating top bar (ShellTopBar) is semi-translucent, like
+   the landing page header (brand.css .brand-header): 86% of the bar's own
+   surface over a backdrop blur, so a page scrolling under it stays faintly
+   visible. Unlayered, so it beats the bar's layered `bg-*` utilities, which
+   stay as the solid fallback where backdrop-filter is unsupported. The radius
+   is the one DESIGN §3.2 item 6 allows (`--blur-nav`). Floating bar only
+   (above 720px, the `max-shell-sm` edge): the flat phone bar stays transparent
+   and scrolls with the page, as in design A (variant-a.css, "Floating top bar:
+   semi-translucent", which is gated to `@container ashell (min-width: 721px)`). */
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  @media (min-width: 721px) {
+    .lm-shell-bar-glass {
+      background-color: color-mix(in oklch, var(--md-surface-container-lowest) 86%, transparent);
+      -webkit-backdrop-filter: blur(var(--blur-nav));
+      backdrop-filter: blur(var(--blur-nav));
+    }
+    [data-theme="dark"] .lm-shell-bar-glass {
+      background-color: color-mix(in oklch, var(--md-surface-container-high) 86%, transparent);
+    }
+  }
+}
+
 /* §14 rule 3 forbids an arbitrary value, so this is the named utility for the
    home-indicator clearance `BottomNav` and the toast rail both need. */
 .lm-safe-bottom {
