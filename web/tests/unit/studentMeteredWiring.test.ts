@@ -51,4 +51,17 @@ describe("start controls are disabled while blocked", () => {
     expect(source).toContain("if (planGate.block) return")
     expect(source).toContain("!parseUsageBlock(rebuild.error)")
   })
+
+  it("StudyPlanWeek omits the empty-state rebuild action while blocked and renders the estimate before it", () => {
+    const source = read("src/portals/student/screens/studyplan/StudyPlanWeek.tsx")
+    // notGenerated: the primary CTA is the rebuild; refused: the secondary action is.
+    expect(source).toMatch(/action=\{\s*planGate\.block\s*\?\s*undefined\s*:\s*\{\s*label: rebuild\.isPending \? "Building…"/)
+    expect(source).toMatch(/secondaryAction=\{\s*planGate\.block\s*\?\s*undefined\s*:\s*\{\s*label: rebuild\.isPending \? "Rebuilding…"/)
+    for (const marginalia of ["A blank week, for now", "Not enough to go on yet"]) {
+      const at = source.indexOf(`marginalia="${marginalia}"`)
+      expect(at).toBeGreaterThan(0)
+      const head = source.slice(0, at)
+      expect(head.lastIndexOf("{estimate}")).toBeGreaterThan(head.lastIndexOf("return ("))
+    }
+  })
 })

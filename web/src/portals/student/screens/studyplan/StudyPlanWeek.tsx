@@ -326,20 +326,24 @@ export function StudyPlanWeek() {
           if (view.kind === "notGenerated") {
             return (
               <>
+                {estimate}
                 <EmptyState
                   marginalia="A blank week, for now"
                   heading="No plan for this week yet"
                   body={`You don't have a ${subjectName} plan for this week. Build one and it will lay out concrete sessions across the days you have left.`}
-                  action={{
-                    label: rebuild.isPending ? "Building…" : "Build this week's plan",
-                    onClick: onRebuild,
-                  }}
+                  action={
+                    planGate.block
+                      ? undefined
+                      : {
+                          label: rebuild.isPending ? "Building…" : "Build this week's plan",
+                          onClick: onRebuild,
+                        }
+                  }
                   secondaryAction={{
                     label: "Take the placement test",
                     onClick: () => navigate(`/student/placement/${subjectCode}`),
                   }}
                 />
-                {estimate}
                 {rebuildError}
               </>
             )
@@ -350,6 +354,7 @@ export function StudyPlanWeek() {
             return (
               <>
                 <h1 className="text-display-lg text-on-surface">{heading}</h1>
+                {estimate}
                 <EmptyState
                   marginalia="Not enough to go on yet"
                   heading={message.heading}
@@ -358,12 +363,15 @@ export function StudyPlanWeek() {
                     label: "Take the placement test",
                     onClick: () => navigate(`/student/placement/${subjectCode}`),
                   }}
-                  secondaryAction={{
-                    label: rebuild.isPending ? "Rebuilding…" : REBUILD_LABEL,
-                    onClick: onRebuild,
-                  }}
+                  secondaryAction={
+                    planGate.block
+                      ? undefined
+                      : {
+                          label: rebuild.isPending ? "Rebuilding…" : REBUILD_LABEL,
+                          onClick: onRebuild,
+                        }
+                  }
                 />
-                {estimate}
                 {rebuildError}
               </>
             )
