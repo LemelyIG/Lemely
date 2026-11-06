@@ -176,6 +176,9 @@ const NotificationSettingsSection = lazy(() =>
     default: m.NotificationSettingsSection,
   })),
 )
+const StudentBilling = lazy(() =>
+  import("@/portals/billing/BillingScreens").then((m) => ({ default: m.StudentBilling })),
+)
 const StudentPlans = lazy(() =>
   import("@/portals/billing/PlansScreen").then((m) => ({ default: m.StudentPlans })),
 )
@@ -1045,6 +1048,11 @@ export const studentRoute: RouteObject = {
       path: "recently-deleted",
       element: <RecentlyDeleted />,
       handle: { title: "Recently deleted", skeleton: "list" },
+    },
+    {
+      path: "billing",
+      element: <StudentBilling />,
+      handle: { title: "Plan and billing", skeleton: "page-header" },
     },
     {
       path: "billing/plans",

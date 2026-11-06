@@ -21,6 +21,7 @@ import {
   Bell,
   Megaphone,
   Gear,
+  CreditCard,
   List,
   Trash,
   UploadSimple,
@@ -135,6 +136,9 @@ const ClassesSettingsSection = lazy(() =>
     default: m.ClassesSettingsSection,
   })),
 )
+const TeacherBilling = lazy(() =>
+  import("@/portals/billing/BillingScreens").then((m) => ({ default: m.TeacherBilling })),
+)
 const TeacherPlans = lazy(() =>
   import("@/portals/billing/PlansScreen").then((m) => ({ default: m.TeacherPlans })),
 )
@@ -186,6 +190,7 @@ const NAV_ICON: Record<NavItem["icon"], Icon> = {
   announcements: Megaphone,
   notifications: Bell,
   settings: Gear,
+  billing: CreditCard,
   deleted: Trash,
 }
 
@@ -825,6 +830,11 @@ export const teacherRoute: RouteObject = {
       path: "notifications",
       element: <TeacherNotifications />,
       handle: { title: "Notifications", skeleton: "list" },
+    },
+    {
+      path: "billing",
+      element: <TeacherBilling />,
+      handle: { title: "Plan and billing", skeleton: "page-header" },
     },
     {
       path: "billing/plans",

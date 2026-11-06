@@ -38,6 +38,7 @@ export interface NavItem {
     | "announcements"
     | "notifications"
     | "settings"
+    | "billing"
     | "deleted"
   /** Index route match (Overview lives at /teacher). */
   end?: boolean
@@ -87,6 +88,7 @@ export const navItems: NavItem[] = [
   // chunk D's placement is superseded here): a route under /teacher with a
   // real active state belongs beside the rest of this teacher's sections
   // rather than set apart as an account-level afterthought.
+  { to: "/teacher/billing", label: "Plan and billing", icon: "billing" },
   { to: "/teacher/settings", label: "Settings", icon: "settings" },
   // R2/D4: the same full recovery surface the student portal gives its own
   // deletion flow, not a hidden safety net reachable only from a toast.
@@ -154,6 +156,14 @@ export function resolveTrail(pathname: string): TrailCrumb[] {
 
   if (path === "/teacher/settings/notifications") {
     return [root, { label: "Settings", to: "/teacher/settings" }, { label: "Notifications" }]
+  }
+
+  const billingChild = path.match(/^\/teacher\/billing\/(plans|history|receipts)$/)
+  if (billingChild) {
+    const label = { plans: "Plans", history: "Usage history", receipts: "Receipts" }[
+      billingChild[1] as "plans" | "history" | "receipts"
+    ]
+    return [root, { label: "Plan and billing", to: "/teacher/billing" }, { label }]
   }
 
   // Tutoring (T-16 to T-18, T-21): one hop below the "Tutoring" section, which is a
