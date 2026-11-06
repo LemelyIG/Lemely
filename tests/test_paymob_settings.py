@@ -9,7 +9,7 @@ from lemely.runtime.config import PaymobSettings, Settings
 
 
 def test_defaults_are_unconfigured_with_the_egypt_hosts() -> None:
-    paymob = Settings().paymob
+    paymob = PaymobSettings()
     assert paymob.api_base == "https://accept.paymob.com"
     assert paymob.checkout_base == "https://eg.checkout.paymob.com"
     assert paymob.notification_base_url == "https://lemelyig.com"
@@ -75,12 +75,18 @@ def test_checkout_needs_all_five_credentials() -> None:
 
 def test_secrets_never_appear_in_repr() -> None:
     paymob = PaymobSettings.model_validate(
-        {"secret_key": "sk_live_SECRET", "api_key": "API_SECRET", "hmac_secret": "HMAC_SECRET"}
+        {
+            "secret_key": "sk_live_SECRET",
+            "api_key": "API_SECRET",
+            "hmac_secret": "HMAC_SECRET",
+            "card_token_key": "CARD_TOKEN_SECRET",
+        }
     )
     rendered = repr(paymob) + str(paymob.model_dump())
     assert "sk_live_SECRET" not in rendered
     assert "API_SECRET" not in rendered
     assert "HMAC_SECRET" not in rendered
+    assert "CARD_TOKEN_SECRET" not in rendered
 
 
 def test_a_relative_callback_origin_is_rejected() -> None:
