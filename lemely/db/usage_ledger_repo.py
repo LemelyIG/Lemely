@@ -20,6 +20,7 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
@@ -41,7 +42,6 @@ from lemely.db.models.usage import (
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Sequence
-    from decimal import Decimal
 
     from sqlalchemy.orm import Session
 
@@ -605,6 +605,10 @@ class UsageLedger:
         is still left becomes a debt on the payer of last resort. Takes the same
         owner and job locks as :meth:`release`, so a concurrent release or sweep either
         finishes first (settle is then a no-op) or waits for this one.
+
+        ``actual_cost_usd`` is quantized to 6 decimal places (half up) first, so the
+        stored USD and the units charged always agree. ``job.charged`` is the actual
+        cost in units; the amount drawn from grants is ``charged - debt_created``.
         """
         job, payers = self._locked_job(job_id)
         if job.status is not UsageJobStatus.open:
@@ -616,6 +620,7 @@ class UsageLedger:
         )
         if units_per_usd is None:
             raise LookupError(f"no usage rate for version {job.rate_version}, {job.action!r}")
+        actual_cost_usd = actual_cost_usd.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
         need = usd_to_units(actual_cost_usd, units_per_usd)
         charged = need
         holds = self._job_holds(job_id)
@@ -634,6 +639,8 @@ class UsageLedger:
                 settled[slot.grant.id] += take
                 need -= take
         if need:
+            # The cap query must see the release entries just staged, not rely on autoflush.
+            self._session.flush()
             for slot, take in self._walk(slots, need, payers, now=now, after_release=True):
                 settled[slot.grant.id] += take
                 need -= take

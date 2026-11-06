@@ -216,7 +216,12 @@ class UsageGrantBalance(TimestampMixin, Base):
 
 
 class UsageJob(TimestampMixin, Base):
-    """One metered action: reservation, charge and the usage-history row."""
+    """One metered action: reservation, charge and the usage-history row.
+
+    ``charged`` is the actual cost in units (``ceil`` of ``actual_cost_usd`` at the
+    job's rate); ``debt_created`` is the part of it that no grant could cover, so
+    the amount actually drawn from grants is ``charged - debt_created``.
+    """
 
     __tablename__ = "usage_jobs"
     __table_args__ = (

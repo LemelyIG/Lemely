@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import threading
 import uuid
 from datetime import timedelta
@@ -221,17 +222,18 @@ def test_settle_needs_the_jobs_rate_and_an_existing_job(sm: sessionmaker[Session
 def test_debts_from_one_transaction_repay_in_creation_order(sm: sessionmaker[Session]) -> None:
     """``_open_debt`` stamps ``clock_timestamp()``, so same-transaction debts do not tie."""
     owner = add_user(sm)
-    jobs = [reserve(sm, own_chain(owner), 0) for _ in range(4)]
+    jobs = [reserve(sm, own_chain(owner), 0) for _ in range(8)]
     with sm.begin() as session:
         ledger = UsageLedger(session)
         for n, job_id in enumerate(jobs, start=1):
             ledger.settle(job_id, actual_cost_usd=Decimal(n) / 1000, now=NOW)  # n units of debt
-    assert {d.job_id: d.units for d in debts(sm, owner)} == dict(
-        zip(jobs, [1, 2, 3, 4], strict=True)
-    )
-    grant(sm, owner, 5, kind=GrantKind.credit_pack, visible=True)
+    rows = {d.job_id: d for d in debts(sm, owner)}
+    assert [rows[j].units for j in jobs] == list(range(1, 9))
+    stamps = [rows[j].created_at for j in jobs]
+    assert all(a < b for a, b in itertools.pairwise(stamps))
+    grant(sm, owner, 10, kind=GrantKind.credit_pack, visible=True)
     repaid = {d.job_id: d.outstanding for d in debts(sm, owner)}
-    assert repaid == dict(zip(jobs, [0, 0, 1, 4], strict=True))
+    assert [repaid[j] for j in jobs] == [0, 0, 0, 0, 5, 6, 7, 8]
 
 
 def test_settle_with_stranded_holds_raises_and_writes_nothing(
@@ -293,5 +295,35 @@ def test_settle_waits_for_a_concurrent_release_and_then_does_nothing(
     assert settling.error is None
     assert settling.result is UsageJobStatus.released
     assert balance(sm, gid) == (30, 0)
-    assert job(sm, job_id).charged is None or job(sm, job_id).charged == 0
+    assert job(sm, job_id).charged == 0
     assert [e.kind for e in entries(sm, job_id=job_id) if e.kind is UsageEntryKind.settle] == []
+
+
+def test_settle_quantizes_the_cost_so_stored_usd_and_units_agree(
+    sm: sessionmaker[Session],
+) -> None:
+    owner = add_user(sm)
+    grant(sm, owner, 100)
+    finer = reserve(sm, own_chain(owner), 10)
+    settle(sm, finer, "0.0000001")  # below 6 dp: rounds to zero, so no unit is charged
+    row = job(sm, finer)
+    assert (row.actual_cost_usd, row.charged) == (Decimal("0.000000"), 0)
+    half = reserve(sm, own_chain(owner), 10)
+    settle(sm, half, "0.0000005")  # rounds half up to 0.000001: one unit at 1000/USD
+    row = job(sm, half)
+    assert (row.actual_cost_usd, row.charged) == (Decimal("0.000001"), 1)
+
+
+def test_settle_cap_counts_what_the_held_slot_already_took(sm: sessionmaker[Session]) -> None:
+    """Overage after a capped hold: the cap covers the held draw plus the walk, not each alone."""
+    student, teacher, member = add_user(sm), add_user(sm, Role.teacher), uuid.uuid4()
+    credits = grant(sm, teacher, 100, kind=GrantKind.credit_pack, visible=True)
+    chain = seat_chain(student, teacher, member, cap=20)
+    job_id = reserve(sm, chain, 5, actor=student, teacher_member_id=member)
+    assert balance(sm, credits) == (100, 5)
+    settle(sm, job_id, "0.030")  # 30 units: 5 from the hold, 15 more up to the cap, 10 debt
+    assert balance(sm, credits) == (80, 0)
+    row = job(sm, job_id)
+    assert (row.charged, row.debt_created) == (30, 10)
+    assert debts(sm, teacher) == []
+    assert [d.units for d in debts(sm, student)] == [10]
