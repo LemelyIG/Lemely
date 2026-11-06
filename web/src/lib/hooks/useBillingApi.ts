@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
-import { useMutation, useQuery, useQueryClient, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient, type QueryClient, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query"
 import { request } from "@/lib/api"
+import { usageKeys } from "@/lib/hooks/useUsageApi"
 import { toAutoTopup, toBillingSummary, toCatalogue, toSavedCard } from "@/lib/billingAdapters"
 import type {
   Audience,
@@ -80,6 +81,14 @@ export const billingKeys = {
   cards: ["billing", "cards"] as const,
 }
 
+/** Query prefixes that move when money moves: billing data, and usage (estimates, meter, history). */
+export const BILLING_SUCCESS_KEYS = [billingKeys.all, usageKeys.all] as const
+
+/** Call after any billing success (a paid return, a pack, a plan or seat change, an auto top-up). */
+export function invalidateBilling(queryClient: QueryClient): void {
+  for (const queryKey of BILLING_SUCCESS_KEYS) void queryClient.invalidateQueries({ queryKey })
+}
+
 export const PAYMENT_POLL_MS = 2000
 export const PAYMENT_POLL_LIMIT_MS = 180_000
 
@@ -114,31 +123,59 @@ export function useBillingSummary(beneficiaryId: string | null = null): UseQuery
 }
 
 /**
+ * Pure poll-clock logic behind `usePaymentStatus`, split out so it is testable without a DOM.
+ * The clock belongs to one payment id and restarts when the id changes.
+ */
+export interface PaymentPollClock {
+  id: string | null
+  startedAt: number
+}
+
+export function startPollClock(id: string | null, now: number): PaymentPollClock {
+  return { id, startedAt: now }
+}
+
+/** The same clock while the id is unchanged, a fresh one when it changed. */
+export function syncPollClock(clock: PaymentPollClock, id: string | null, now: number): PaymentPollClock {
+  return clock.id === id ? clock : startPollClock(id, now)
+}
+
+/** The `refetchInterval` answer for the current clock, status and fetch outcome. */
+export function pollInterval(clock: PaymentPollClock, status: PaymentStatus | undefined, now: number, errored: boolean): number | false {
+  return nextPaymentPoll(status, clock.startedAt, now, errored)
+}
+
+/** Fires `onExpire` when the time limit ends polling on an unconfirmed payment. Returns the cleanup. */
+export function schedulePollExpiry(
+  clock: PaymentPollClock,
+  status: PaymentStatus | undefined,
+  now: number,
+  onExpire: () => void,
+): () => void {
+  if (status !== "created" && status !== "pending") return () => undefined
+  const timer = setTimeout(onExpire, Math.max(0, clock.startedAt + PAYMENT_POLL_LIMIT_MS - now) + 1)
+  return () => clearTimeout(timer)
+}
+
+/**
  * `GET /billing/payments/{id}`, polled every 2s while `created`/`pending`, for three minutes at
- * most (spec §5.1 step 5). The clock restarts when `paymentId` changes. `pollingStopped` turns
- * true, through a timer that re-renders at the limit, when the limit ends polling on an
- * unconfirmed payment, so the screen can say so.
+ * most (spec §5.1 step 5), never after a failed fetch. `pollingStopped` turns true, through a
+ * timer that re-renders at the limit, so the screen can say polling gave up.
  */
 export function usePaymentStatus(paymentId: string | null): UseQueryResult<PaymentStatusView, Error> & { pollingStopped: boolean } {
-  const [clock, setClock] = useState({ id: paymentId, startedAt: Date.now() })
-  if (clock.id !== paymentId) setClock({ id: paymentId, startedAt: Date.now() })
-  const startedAt = clock.id === paymentId ? clock.startedAt : Date.now()
+  const [stored, setStored] = useState(() => startPollClock(paymentId, Date.now()))
+  const clock = syncPollClock(stored, paymentId, Date.now())
+  if (clock !== stored) setStored(clock)
   const [, rerender] = useState(0)
   const query = useQuery({
     queryKey: billingKeys.payment(paymentId ?? ""),
     queryFn: () => billingApi.payment(paymentId ?? ""),
     enabled: paymentId !== null,
-    refetchInterval: (q) => nextPaymentPoll(q.state.data?.status, startedAt, Date.now(), q.state.status === "error"),
+    refetchInterval: (q) => pollInterval(clock, q.state.data?.status, Date.now(), q.state.status === "error"),
   })
   const status = query.data?.status
-  const confirming = status === "created" || status === "pending"
-  useEffect(() => {
-    if (!confirming) return
-    const remaining = Math.max(0, startedAt + PAYMENT_POLL_LIMIT_MS - Date.now())
-    const timer = setTimeout(() => rerender((n) => n + 1), remaining + 1)
-    return () => clearTimeout(timer)
-  }, [confirming, startedAt])
-  return Object.assign(query, { pollingStopped: pollingExpired(status, startedAt, Date.now()) })
+  useEffect(() => schedulePollExpiry(clock, status, Date.now(), () => rerender((n) => n + 1)), [clock, status])
+  return Object.assign(query, { pollingStopped: pollingExpired(status, clock.startedAt, Date.now()) })
 }
 
 export function useStartSubscriptionCheckout(): UseMutationResult<CheckoutResponse, Error, SubscriptionCheckoutRequest> {
@@ -165,7 +202,7 @@ export function useUpgrade(): UseMutationResult<WireCharge, Error, PlanTarget> {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ subscriptionId, planTierId }) => billingApi.upgrade(subscriptionId, planTierId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: billingKeys.all }),
+    onSuccess: () => invalidateBilling(qc),
   })
 }
 
@@ -174,7 +211,7 @@ export function useDowngrade(): UseMutationResult<WireSubscription, Error, PlanT
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ subscriptionId, planTierId }) => billingApi.downgrade(subscriptionId, planTierId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: billingKeys.all }),
+    onSuccess: () => invalidateBilling(qc),
   })
 }
 
@@ -183,7 +220,7 @@ export function useCancelSubscription(): UseMutationResult<WireSubscription, Err
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ subscriptionId }) => billingApi.cancel(subscriptionId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: billingKeys.all }),
+    onSuccess: () => invalidateBilling(qc),
   })
 }
 
@@ -199,7 +236,10 @@ export function useSaveAutoTopup(): UseMutationResult<WireAutoTopup, Error, Auto
   const qc = useQueryClient()
   return useMutation({
     mutationFn: billingApi.saveAutoTopup,
-    onSuccess: (data, body) => qc.setQueryData(billingKeys.autoTopup(body.beneficiaryId), data),
+    onSuccess: (data, body) => {
+      qc.setQueryData(billingKeys.autoTopup(body.beneficiaryId), data)
+      invalidateBilling(qc)
+    },
   })
 }
 
@@ -216,7 +256,14 @@ export function useSeatQuote(): UseMutationResult<Quote, Error, { subscriptionId
 }
 
 export function useAddSeats(): UseMutationResult<MerchantChargeStarted, Error, { subscriptionId: string; seats: number }> {
-  return useMutation({ mutationFn: ({ subscriptionId, seats }) => billingApi.addSeats(subscriptionId, seats) })
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ subscriptionId, seats }) => billingApi.addSeats(subscriptionId, seats),
+    onSuccess: () => {
+      invalidateBilling(qc)
+      void qc.invalidateQueries({ queryKey: ["team"] })
+    },
+  })
 }
 
 export function useReduceSeats(): UseMutationResult<SeatReductionResult, Error, { subscriptionId: string; extraSeats: number }> {
@@ -224,7 +271,7 @@ export function useReduceSeats(): UseMutationResult<SeatReductionResult, Error, 
   return useMutation({
     mutationFn: ({ subscriptionId, extraSeats }) => billingApi.reduceSeats(subscriptionId, extraSeats),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: billingKeys.all })
+      invalidateBilling(qc)
       void qc.invalidateQueries({ queryKey: ["team"] })
     },
   })

@@ -1,12 +1,24 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
   request: vi.fn(),
 }))
 
+import { QueryClient } from "@tanstack/react-query"
 import { ApiError, request } from "@/lib/api"
-import { billingApi, nextPaymentPoll, pollingExpired, PAYMENT_POLL_LIMIT_MS, PAYMENT_POLL_MS } from "@/lib/hooks/useBillingApi"
+import {
+  BILLING_SUCCESS_KEYS,
+  billingApi,
+  invalidateBilling,
+  nextPaymentPoll,
+  pollInterval,
+  pollingExpired,
+  schedulePollExpiry,
+  startPollClock,
+  syncPollClock, PAYMENT_POLL_LIMIT_MS,
+  PAYMENT_POLL_MS,
+} from "@/lib/hooks/useBillingApi"
 import { usageApi } from "@/lib/hooks/useUsageApi"
 import { billingErrorCode, billingFailureMessage } from "@/lib/billingOutcome"
 import { billingPaths } from "@/lib/billingPaths"
@@ -111,6 +123,71 @@ describe("payment polling", () => {
     expect(pollingExpired("created", 500_000, 600_000)).toBe(false)
     expect(pollingExpired("paid", 0, 999_999)).toBe(false)
     expect(pollingExpired(undefined, 0, 999_999)).toBe(false)
+  })
+})
+
+describe("payment poll clock (the logic usePaymentStatus delegates to)", () => {
+  afterEach(() => vi.useRealTimers())
+
+  it("returns interval false after a fetch error, 2s otherwise", () => {
+    const clock = startPollClock("p1", 0)
+    expect(pollInterval(clock, undefined, 1000, true)).toBe(false)
+    expect(pollInterval(clock, "pending", 1000, true)).toBe(false)
+    expect(pollInterval(clock, "pending", 1000, false)).toBe(2000)
+  })
+
+  it("resets the clock when the payment id changes and keeps it otherwise", () => {
+    const first = startPollClock("p1", 1000)
+    expect(syncPollClock(first, "p1", 5000)).toBe(first)
+    const second = syncPollClock(first, "p2", 200_000)
+    expect(second).toEqual({ id: "p2", startedAt: 200_000 })
+    expect(pollInterval(first, "pending", 200_000, false)).toBe(false)
+    expect(pollInterval(second, "pending", 200_000, false)).toBe(2000)
+  })
+
+  it("fires the expiry callback at the 3-minute limit, not before", () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    const onExpire = vi.fn()
+    schedulePollExpiry(startPollClock("p1", 0), "pending", Date.now(), onExpire)
+    vi.advanceTimersByTime(PAYMENT_POLL_LIMIT_MS - 1)
+    expect(onExpire).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(2)
+    expect(onExpire).toHaveBeenCalledTimes(1)
+    expect(pollingExpired("pending", 0, Date.now())).toBe(true)
+  })
+
+  it("measures the limit from the clock start and cancels on cleanup", () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(100_000)
+    const onExpire = vi.fn()
+    const cancel = schedulePollExpiry(startPollClock("p1", 100_000), "created", Date.now(), onExpire)
+    vi.advanceTimersByTime(PAYMENT_POLL_LIMIT_MS - 1)
+    expect(onExpire).not.toHaveBeenCalled()
+    cancel()
+    vi.advanceTimersByTime(10)
+    expect(onExpire).not.toHaveBeenCalled()
+  })
+
+  it("schedules nothing for a settled or unknown status", () => {
+    vi.useFakeTimers()
+    const onExpire = vi.fn()
+    for (const status of ["paid", "failed", undefined] as const) {
+      schedulePollExpiry(startPollClock("p1", 0), status, 0, onExpire)()
+    }
+    schedulePollExpiry(startPollClock("p1", 0), "paid", 0, onExpire)
+    vi.advanceTimersByTime(PAYMENT_POLL_LIMIT_MS * 2)
+    expect(onExpire).not.toHaveBeenCalled()
+  })
+})
+
+describe("billing success invalidation", () => {
+  it("refreshes billing data and the usage prefix (estimates, meter, history) together", () => {
+    const qc = new QueryClient()
+    const spy = vi.spyOn(qc, "invalidateQueries")
+    invalidateBilling(qc)
+    expect(spy.mock.calls.map((c) => c[0]?.queryKey)).toEqual([["billing"], ["usage"]])
+    expect(BILLING_SUCCESS_KEYS).toEqual([["billing"], ["usage"]])
   })
 })
 
