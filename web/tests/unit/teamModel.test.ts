@@ -34,6 +34,7 @@ import {
   teamRetry,
 } from "@/lib/teamModel"
 import { ApiError } from "@/lib/api"
+import type { SeatScopeUpdate } from "@/lib/billingTypes"
 import { fx } from "./support/billingFixtures"
 
 const req = vi.mocked(request)
@@ -254,7 +255,7 @@ describe("teamRetry", () => {
 
 describe("planSeatSave", () => {
   const noCap = { capUnits: null, capPeriod: "month" as const }
-  const same = { subjects: ["0580"], actions: ["mark_paper", "self_review"] }
+  const same: SeatScopeUpdate = { subjects: ["0580"], actions: ["mark_paper", "self_review"] }
   const plan = (over: Partial<Parameters<typeof planSeatSave>[0]["draft"]> = {}, savedScope = null as Parameters<typeof planSeatSave>[0]["savedScope"]) =>
     planSeatSave({ seat: fx.seat, draft: { ...same, cap: noCap, ...over }, savedScope })
 
@@ -271,7 +272,7 @@ describe("planSeatSave", () => {
   })
 
   it("does not resend a scope it already saved, but does resend after it is reverted", () => {
-    const saved = { subjects: ["0580"], actions: ["mark_paper", "self_review", "study_plan"] }
+    const saved: SeatScopeUpdate = { subjects: ["0580"], actions: ["mark_paper", "self_review", "study_plan"] }
     const cap = { capUnits: 500, capPeriod: "month" as const }
     const draft = { ...saved, cap }
     expect(planSeatSave({ seat: fx.seat, draft, savedScope: saved })).toEqual({ sendScope: null, sendCap: cap })
@@ -295,5 +296,5 @@ describe("partialSaveMessage", () => {
     expect(partialSaveMessage(same, null)).toBeNull()
   })
 
-  const same = { subjects: ["0580"], actions: ["mark_paper"] }
+  const same: SeatScopeUpdate = { subjects: ["0580"], actions: ["mark_paper"] }
 })
