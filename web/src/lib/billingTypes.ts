@@ -835,11 +835,6 @@ export interface AdminCatalogue {
   freeAllowances: FreeAllowances
 }
 
-export interface FreeAllowancesUpdate extends Reasoned {
-  studentSignupUnits: number
-  teacherSignupUnits: number
-}
-
 // Customer view (07 `CustomerDetailDTO` and friends).
 
 export interface CustomerHit {
@@ -1124,4 +1119,49 @@ export interface BillingHealth {
   pastDueNow: number
   failedAutoTopups: number
   failedExtraSeatCharges: number
+}
+
+// ── Public catalogue (plan 02, no auth) ─────────────────────────────────────
+
+/** 02 `PublicCatalogueDTO` (`GET /billing/public-catalogue?audience=`). No ids. */
+export interface WirePublicCatalogue {
+  audience: Audience
+  planTiers: {
+    code: string
+    name: string
+    audience: string
+    interval: "monthly" | "yearly" | null
+    priceMinor: number
+    currency: string
+    features: Record<string, unknown>
+    includedSeats: number | null
+    extraSeatPriceMinor: number | null
+  }[]
+  creditPacks: PublicPack[]
+}
+
+export interface PublicPack {
+  code: string
+  name: string
+  units: number
+  priceMinor: number
+  currency: string
+}
+
+export interface PublicTier {
+  code: string
+  name: string
+  audience: Audience
+  interval: BillingInterval
+  priceMinor: number
+  currency: string
+  features: string[]
+  includedSeats: number | null
+  extraSeatPriceMinor: number | null
+}
+
+export interface PublicCatalogue {
+  audience: Audience
+  tiers: PublicTier[]
+  packs: PublicPack[]
 }

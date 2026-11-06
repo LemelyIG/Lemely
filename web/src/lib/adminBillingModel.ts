@@ -388,12 +388,6 @@ export function freeChanges(v: FormValues, reason: string, current: FreeAllowanc
   return freeBody(v, reason).filter((b) => b.units !== (b.audience === "student" ? current.studentSignupUnits : current.teacherSignupUnits))
 }
 
-/** Both audiences in one reasoned submit (every audience, changed or not). */
-export function freeFormBody(v: FormValues, reason: string) {
-  const [student, teacher] = freeBody(v, reason)
-  return { studentSignupUnits: student.units, teacherSignupUnits: teacher.units, reason }
-}
-
 // ── Versioned rows ──────────────────────────────────────────────────────────
 
 export type VersionStatus = "current" | "scheduled" | "superseded"

@@ -90,6 +90,15 @@ describe("Catalogue", () => {
     expect(html).not.toContain('role="note"')
   })
 
+  it("shows a plan nobody has checked as a neutral prompt to sync, not a crimson alarm", () => {
+    s.catalogue = okQuery({ ...fx.adminCatalogue, tiers: [{ ...fx.adminCatalogue.tiers[0], drift: "Paymob plan not checked", driftState: "unverified" }] })
+    const html = renderStatic(h(Catalogue))
+    expect(html).toContain("Paymob plan not checked. Sync to confirm it matches.")
+    expect(html).not.toContain("text-error")
+    expect(html).not.toContain('role="note"')
+    expect(html).toContain("Sync to Paymob")
+  })
+
   it("loads with a skeleton, fails with a retry, and refuses a non-admin plainly", () => {
     s.catalogue = pendingQuery()
     expect(renderStatic(h(Catalogue))).toContain('aria-label="Loading"')

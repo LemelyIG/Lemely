@@ -38,6 +38,9 @@ import { Catalogue } from "@/portals/admin/screens/billing/Catalogue"
 import { ReasonedFormDialog } from "@/portals/admin/screens/billing/ReasonedFormDialog"
 
 type Fake = ReturnType<typeof fakeMutation>
+
+/** Set the controlled reason field in one synchronous event: no per-key timing to race. */
+const setReason = (text: string) => fireEvent.change(screen.getByLabelText("Reason"), { target: { value: text } })
 const fake = (over: Parameters<typeof fakeMutation>[0] = {}): Fake => fakeMutation(over)
 
 function wrap(el: ReturnType<typeof h>) {
@@ -72,7 +75,7 @@ describe("ReasonedFormDialog", () => {
     const user = userEvent.setup()
     const m = fake()
     dialog(m, { initial: { ...packValues(fx.adminCatalogue.packs[0]), units: "0" } })
-    await user.type(screen.getByLabelText("Reason"), "valid reason here")
+    setReason("valid reason here")
     await user.click(screen.getByRole("button", { name: "Save pack" }))
     expect(m.mutate).not.toHaveBeenCalled()
     expect(screen.getByText("Credits must be a whole number above zero.")).toBeTruthy()
@@ -83,7 +86,7 @@ describe("ReasonedFormDialog", () => {
     const user = userEvent.setup()
     const m = fake()
     dialog(m)
-    await user.type(screen.getByLabelText("Reason"), "no")
+    setReason("no")
     await user.click(screen.getByRole("button", { name: "Save pack" }))
     expect(m.mutate).not.toHaveBeenCalled()
     expect(screen.getByText(/at least 5 characters/)).toBeTruthy()
@@ -95,9 +98,9 @@ describe("ReasonedFormDialog", () => {
     const m = fake()
     m.mutate.mockImplementation((_body: unknown, opts?: { onSuccess?: () => void }) => opts?.onSuccess?.())
     const { toBody, onClose, onSaved } = dialog(m)
-    await user.type(screen.getByLabelText("Reason"), "   price matched to Paymob   ")
+    setReason("   price matched to Paymob   ")
     await user.click(screen.getByRole("button", { name: "Save pack" }))
-    expect(m.mutate).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(m.mutate).toHaveBeenCalledTimes(1))
     expect(toBody).toHaveBeenCalledWith(expect.anything(), "price matched to Paymob")
     expect(onSaved).toHaveBeenCalledTimes(1)
     expect(onClose).toHaveBeenCalledTimes(1)
@@ -131,9 +134,7 @@ describe("Catalogue writes", () => {
     s.updateFree = fake()
   })
 
-  const reason = async (user: ReturnType<typeof userEvent.setup>, text = "because the price changed") => {
-    await user.type(screen.getByLabelText("Reason"), text)
-  }
+  const reason = (text = "because the price changed") => setReason(text)
 
   it("sends a tier edit with its stored features carried through, not only the true lines", async () => {
     const tier = { ...fx.adminCatalogue.tiers[0], rawFeatures: { "Mark past papers": true, "Study plans": true, papers: "unlimited", beta: false } }
@@ -142,8 +143,9 @@ describe("Catalogue writes", () => {
     render(wrap(h(Catalogue)))
     await user.click(screen.getAllByRole("button", { name: "Edit student_plus_m" })[0])
     expect(screen.getByText(/2 other feature settings .* kept as they are/)).toBeTruthy()
-    await reason(user)
+    reason()
     await user.click(screen.getByRole("button", { name: "Save tier" }))
+    await waitFor(() => expect((s.updateTier as Fake).mutate).toHaveBeenCalledTimes(1))
     const [vars] = (s.updateTier as Fake).mutate.mock.calls[0]
     expect(vars.id).toBe("t-s-m")
     expect(vars.body.features).toEqual({ papers: "unlimited", beta: false, "Mark past papers": true, "Study plans": true })
@@ -167,9 +169,9 @@ describe("Catalogue writes", () => {
     await user.click(screen.getAllByRole("button", { name: "Sync student_plus_m to Paymob" })[0])
     const dlg = screen.getByRole("dialog")
     expect(within(dlg).queryByText(/already in sync/)).toBeNull()
-    await reason(user)
+    reason()
     await user.click(within(dlg).getByRole("button", { name: "Sync to Paymob" }))
-    expect((s.syncTier as Fake).mutate).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect((s.syncTier as Fake).mutate).toHaveBeenCalledTimes(1))
     expect((s.syncTier as Fake).mutate.mock.calls[0][0]).toEqual({ id: "t-s-m", body: { reason: "because the price changed" } })
   })
 
@@ -177,7 +179,7 @@ describe("Catalogue writes", () => {
     const user = userEvent.setup()
     render(wrap(h(Catalogue)))
     await user.click(screen.getByRole("button", { name: "Edit free allowances" }))
-    await reason(user)
+    reason()
     await user.click(screen.getByRole("button", { name: "Save allowances" }))
     expect((s.updateFree as Fake).mutate).not.toHaveBeenCalled()
     expect(screen.getByText(/Nothing has changed/)).toBeTruthy()
@@ -185,6 +187,7 @@ describe("Catalogue writes", () => {
     await user.clear(teacher)
     await user.type(teacher, "1200")
     await user.click(screen.getByRole("button", { name: "Save allowances" }))
+    await waitFor(() => expect((s.updateFree as Fake).mutate).toHaveBeenCalledTimes(1))
     expect((s.updateFree as Fake).mutate.mock.calls[0][0]).toEqual([{ audience: "teacher", units: 1200, reason: "because the price changed" }])
   })
 
@@ -194,7 +197,7 @@ describe("Catalogue writes", () => {
     render(wrap(h(Catalogue)))
     expect(screen.getByText("Not set")).toBeTruthy()
     await user.click(screen.getByRole("button", { name: "Edit free allowances" }))
-    await reason(user)
+    reason()
     await user.click(screen.getByRole("button", { name: "Save allowances" }))
     expect((s.updateFree as Fake).mutate).not.toHaveBeenCalled()
     expect(screen.getByText("Student free allowance (units) is required.")).toBeTruthy()
