@@ -491,6 +491,33 @@ def test_a_key_used_for_a_credit_cannot_be_reused_for_a_debit_nor_the_reverse(
     assert not entries(sm, kind=UsageEntryKind.grant, reason="oops")
 
 
+def test_a_credit_replay_with_a_different_reason_only_warns_and_changes_nothing(
+    sm: sessionmaker[Session], caplog: pytest.LogCaptureFixture
+) -> None:
+    owner = add_user(sm)
+    _adjust(sm, owner, 10, "adj:r", "goodwill")
+    with caplog.at_level(logging.WARNING, logger="lemely.db.usage_ledger_repo"):
+        _adjust(sm, owner, 10, "adj:r", "goodwill")  # identical replay: silent
+        assert not caplog.records
+        _adjust(sm, owner, 10, "adj:r", "other reason")
+    assert len(caplog.records) == 1
+    assert "adj:r" in caplog.records[0].getMessage()
+    assert "other reason" in caplog.records[0].getMessage()
+    [stored] = entries(sm, kind=UsageEntryKind.grant)
+    assert stored.reason == "goodwill"
+
+
+def test_a_grant_under_a_key_does_not_make_a_debit_under_that_key_a_replay(
+    sm: sessionmaker[Session],
+) -> None:
+    """Guard: only an ``adjustment`` grant is a positive adjust's record."""
+    owner = add_user(sm)
+    pack = grant(sm, owner, 20, kind=GrantKind.credit_pack, visible=True, key="shared-key")
+    _adjust(sm, owner, -5, "shared-key", "abuse")
+    assert balance(sm, pack) == (15, 0)
+    assert len(entries(sm, kind=UsageEntryKind.adjust)) == 1
+
+
 # ---------------------------------------------------------------------------
 # expire_grants re-checks expiry under the lock
 # ---------------------------------------------------------------------------

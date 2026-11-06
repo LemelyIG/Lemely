@@ -185,16 +185,24 @@ class UsageLedger:
             )
         ).one_or_none()
         if existing is not None:
-            if existing.kind is not kind or existing.units != units:
+            stored_reason = self._session.scalar(
+                sa.select(UsageEntry.reason).where(
+                    UsageEntry.grant_id == existing.id, UsageEntry.kind == UsageEntryKind.grant
+                )
+            )
+            if existing.kind is not kind or existing.units != units or stored_reason != reason:
                 logger.warning(
                     "grant replay under key %r for owner %s differs from the stored grant "
-                    "(kind %s vs %s, units %d vs %d); returning the stored grant",
+                    "(kind %s vs %s, units %d vs %d, reason %r vs %r); "
+                    "returning the stored grant",
                     idempotency_key,
                     owner_user_id,
                     kind.value,
                     existing.kind.value,
                     units,
                     existing.units,
+                    reason,
+                    stored_reason,
                 )
             return existing
         at = effective_at if effective_at is not None else datetime.now(UTC)
@@ -719,10 +727,7 @@ class UsageLedger:
         for grant_id, _owner in candidates:
             # Re-read under the lock: another transaction may have spent, held or
             # clawed back or re-dated the grant between the candidate read and the lock.
-            balance = self._locked_balance(grant_id)
-            expires_at = self._session.scalar(
-                sa.select(UsageGrant.expires_at).where(UsageGrant.id == grant_id)
-            )
+            balance, expires_at = self._locked_balance_and_expiry(grant_id)
             amount = balance.remaining - balance.held
             if amount <= 0 or expires_at is None or expires_at > now:
                 continue
@@ -859,11 +864,12 @@ class UsageLedger:
         self._session.flush()
 
     def _credit_for_key(self, owner_user_id: uuid.UUID, idempotency_key: str) -> UsageGrant | None:
-        """The owner's grant issued under this key, if any (a positive adjust's record)."""
+        """The owner's ``adjustment`` grant issued under this key (a positive adjust's record)."""
         return self._session.scalars(
             sa.select(UsageGrant).where(
                 UsageGrant.owner_user_id == owner_user_id,
                 UsageGrant.idempotency_key == idempotency_key,
+                UsageGrant.kind == GrantKind.adjustment,
             )
         ).one_or_none()
 
@@ -963,6 +969,19 @@ class UsageLedger:
             .execution_options(populate_existing=True)
         ).one()
 
+    def _locked_balance_and_expiry(
+        self, grant_id: uuid.UUID
+    ) -> tuple[UsageGrantBalance, datetime | None]:
+        """The locked balance row with the grant's ``expires_at``, in one statement."""
+        row = self._session.execute(
+            sa.select(UsageGrantBalance, UsageGrant.expires_at)
+            .join(UsageGrant, UsageGrant.id == UsageGrantBalance.grant_id)
+            .where(UsageGrantBalance.grant_id == grant_id)
+            .with_for_update(of=UsageGrantBalance)
+            .execution_options(populate_existing=True)
+        ).one()
+        return row[0], row[1]
+
     def _entry_count(self, grant_id: uuid.UUID, kind: UsageEntryKind) -> int:
         return int(
             self._session.scalar(
@@ -972,6 +991,130 @@ class UsageLedger:
             )
             or 0
         )
+
+    def reconcile_balances(self) -> list[tuple[uuid.UUID, int, int]]:
+        """Rebuild the cache from the entries; return every drift as ``(id, cached, actual)``.
+
+        One tuple per drifted value: a grant's ``remaining``, a grant's ``held``
+        (both keyed by grant id) and a debt's ``outstanding`` (keyed by debt id),
+        then the cache is repaired. Finding drift means a bug, not a race, since
+        entries and cache change together under the owner locks.
+
+        The first scan reads without locks and finds the suspects. Their owners
+        are then locked once, in ascending UUID order, before any balance or debt
+        row is: the order every other writer uses, so a reserve over the same
+        owners cannot deadlock with this sweep. Under those locks each suspect is
+        re-read and recomputed, so a write that landed after the scan is not
+        reported.
+        """
+        grants = [row[0] for row in self._grant_sums() if row[1:3] != row[3:5]]
+        drifted_debts = [row[0] for row in self._debt_sums() if row[1] != row[2]]
+        if not grants and not drifted_debts:
+            return []
+        self._lock_owners(self._owners_of(grants, drifted_debts))
+        drift: list[tuple[uuid.UUID, int, int]] = []
+        for grant_id in grants:
+            balance = self._locked_balance(grant_id)
+            [(_gid, _rem, _held, actual_rem, actual_held)] = self._grant_sums(grant_id)
+            if balance.remaining != actual_rem:
+                drift.append((grant_id, balance.remaining, actual_rem))
+                balance.remaining = actual_rem
+            if balance.held != actual_held:
+                drift.append((grant_id, balance.held, actual_held))
+                balance.held = actual_held
+        for debt_id in drifted_debts:
+            debt = self._session.scalars(
+                sa.select(UsageDebt)
+                .where(UsageDebt.id == debt_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            ).one()
+            [(_did, _cached, actual_out)] = self._debt_sums(debt_id)
+            if debt.outstanding != actual_out:
+                drift.append((debt_id, debt.outstanding, actual_out))
+                debt.outstanding = actual_out
+        self._session.flush()
+        return drift
+
+    def _owners_of(
+        self, grant_ids: Sequence[uuid.UUID], debt_ids: Sequence[uuid.UUID]
+    ) -> list[uuid.UUID]:
+        return list(
+            self._session.scalars(
+                sa.select(UsageGrant.owner_user_id)
+                .where(UsageGrant.id.in_(grant_ids))
+                .union(sa.select(UsageDebt.owner_user_id).where(UsageDebt.id.in_(debt_ids)))
+            )
+        )
+
+    def _grant_sums(
+        self, grant_id: uuid.UUID | None = None
+    ) -> list[tuple[uuid.UUID, int, int, int, int]]:
+        """``(grant, cached remaining, cached held, remaining from entries, held from entries)``."""
+        remaining = sa.func.coalesce(
+            sa.func.sum(sa.case((UsageEntry.kind.in_(REMAINING_KINDS), UsageEntry.units), else_=0)),
+            0,
+        )
+        held = sa.func.coalesce(
+            sa.func.sum(sa.case((UsageEntry.kind.in_(HELD_KINDS), UsageEntry.units), else_=0)),
+            0,
+        )
+        stmt = (
+            sa.select(
+                UsageGrantBalance.grant_id,
+                UsageGrantBalance.remaining,
+                UsageGrantBalance.held,
+                remaining,
+                held,
+            )
+            .outerjoin(UsageEntry, UsageEntry.grant_id == UsageGrantBalance.grant_id)
+            .group_by(
+                UsageGrantBalance.grant_id, UsageGrantBalance.remaining, UsageGrantBalance.held
+            )
+            .order_by(UsageGrantBalance.grant_id)
+        )
+        if grant_id is not None:
+            stmt = stmt.where(UsageGrantBalance.grant_id == grant_id)
+        return [
+            (g, int(cr), int(ch), int(ar), int(ah))
+            for g, cr, ch, ar, ah in self._session.execute(stmt)
+        ]
+
+    def _debt_sums(self, debt_id: uuid.UUID | None = None) -> list[tuple[uuid.UUID, int, int]]:
+        """``(debt, cached outstanding, outstanding from entries)``.
+
+        The debt's ``units`` less its repayments (``debt_repay``, negative) and
+        its forgiveness (a grant-less ``adjust``, positive).
+        """
+        repaid = sa.func.coalesce(
+            sa.func.sum(
+                sa.case((UsageEntry.kind == UsageEntryKind.debt_repay, UsageEntry.units), else_=0)
+            ),
+            0,
+        )
+        forgiven = sa.func.coalesce(
+            sa.func.sum(
+                sa.case(
+                    (
+                        sa.and_(
+                            UsageEntry.kind == UsageEntryKind.adjust, UsageEntry.grant_id.is_(None)
+                        ),
+                        UsageEntry.units,
+                    ),
+                    else_=0,
+                )
+            ),
+            0,
+        )
+        stmt = (
+            sa.select(UsageDebt.id, UsageDebt.outstanding, UsageDebt.units + repaid - forgiven)
+            .outerjoin(UsageEntry, UsageEntry.debt_id == UsageDebt.id)
+            .group_by(UsageDebt.id, UsageDebt.outstanding, UsageDebt.units)
+            .order_by(UsageDebt.id)
+        )
+        if debt_id is not None:
+            stmt = stmt.where(UsageDebt.id == debt_id)
+        return [(d, int(c), int(a)) for d, c, a in self._session.execute(stmt)]
 
 
 __all__ = ["HELD_KINDS", "REMAINING_KINDS", "InsufficientBalance", "UsageLedger"]
