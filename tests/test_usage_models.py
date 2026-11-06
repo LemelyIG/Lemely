@@ -333,7 +333,6 @@ def _job(actor: uuid.UUID, **overrides: object) -> UsageJob:
         ({"estimate_low": 5, "estimate_high": 2}, "ck_usage_jobs_estimate_range"),
         ({"estimate_low": -1}, "ck_usage_jobs_estimate_range"),
         ({"reserved": -1}, "ck_usage_jobs_reserved_nonnegative"),
-        ({"charged": -1}, "ck_usage_jobs_charged_nonnegative"),
         ({"charged": 2, "debt_created": 3}, "ck_usage_jobs_debt_within_charged"),
         ({"debt_created": -1}, "ck_usage_jobs_debt_within_charged"),
         ({"status": UsageJobStatus.settled}, "ck_usage_jobs_settled_at_matches"),
@@ -350,6 +349,31 @@ def test_usage_jobs_checks_reject(
     actor = add_user(sm)
     with pytest.raises(IntegrityError, match=constraint), sm.begin() as session:
         session.add(_job(actor, **overrides))
+
+
+def test_usage_jobs_charged_nonnegative_trips_on_its_own(sm: sessionmaker[Session]) -> None:
+    """``charged < 0`` also breaks ``debt_within_charged`` (``0 <= debt_created <= charged``).
+
+    Postgres names one violated check, so drop the implying one inside the (rolled back)
+    transaction to show ``charged_nonnegative`` fires by itself.
+    """
+    actor = add_user(sm)
+    with (
+        pytest.raises(IntegrityError, match="ck_usage_jobs_charged_nonnegative"),
+        sm.begin() as session,
+    ):
+        session.execute(
+            sa.text("ALTER TABLE usage_jobs DROP CONSTRAINT ck_usage_jobs_debt_within_charged")
+        )
+        session.add(_job(actor, charged=-1))
+    # The rollback restored the dropped constraint.
+    with sm() as session:
+        assert session.scalar(
+            sa.text(
+                "SELECT count(*) FROM pg_constraint "
+                "WHERE conname = 'ck_usage_jobs_debt_within_charged'"
+            )
+        )
 
 
 def test_usage_jobs_accept_a_settled_job_with_debt(sm: sessionmaker[Session]) -> None:

@@ -29,9 +29,10 @@ from tests.test_migration_tutoring_enums import (
     type_exists,
     upgrade_head,
 )
+from tests.usage_db import usage_database
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -127,36 +128,130 @@ def test_tables_constraints_enums_and_trigger_present(
         assert _trigger_names(session) == {"trg_usage_entries_append_only"}
 
 
+def _index_columns(session: Session, name: str) -> list[str]:
+    """The index's key columns in order, from the catalogue."""
+    return list(
+        session.execute(
+            sa.text(
+                "SELECT pg_get_indexdef(i.indexrelid, k.n, true) "
+                "FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid "
+                "CROSS JOIN LATERAL generate_series(1, i.indnkeyatts) AS k(n) "
+                "WHERE c.relname = :name ORDER BY k.n"
+            ),
+            {"name": name},
+        ).scalars()
+    )
+
+
 def test_migrated_indexes_match_the_spend_order_and_foreign_key_lookups(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:
     """Names alone do not prove column order: read the key columns from the catalogue."""
     with migrated_sessionmaker() as session:
-        spend = session.execute(
-            sa.text(
-                "SELECT pg_get_indexdef(i.indexrelid, k.n, true), i.indoption::text "
-                "FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid "
-                "CROSS JOIN LATERAL generate_series(1, i.indnkeyatts) AS k(n) "
-                "WHERE c.relname = 'ix_usage_grants_owner_spend' ORDER BY k.n"
-            )
-        ).all()
-        assert [row[0] for row in spend] == [
+        assert _index_columns(session, "ix_usage_grants_owner_spend") == [
             "owner_user_id",
             "priority",
             "expires_at",
             "effective_at",
             "id",
         ]
+        options = session.execute(
+            sa.text(
+                "SELECT i.indoption::text FROM pg_index i "
+                "JOIN pg_class c ON c.oid = i.indexrelid "
+                "WHERE c.relname = 'ix_usage_grants_owner_spend'"
+            )
+        ).scalar_one()
         # 0 = ASC NULLS LAST on every key column (no DESC, no NULLS FIRST).
-        assert spend[0][1].split() == ["0"] * 5
-        for index, column in (
-            ("ix_usage_entries_debt", "debt_id"),
-            ("ix_usage_debts_job", "job_id"),
-        ):
-            definition = session.execute(
-                sa.text("SELECT indexdef FROM pg_indexes WHERE indexname = :n"), {"n": index}
-            ).scalar_one()
-            assert f"({column})" in definition
+        assert options.split() == ["0"] * 5
+        assert _index_columns(session, "ix_usage_entries_debt") == ["debt_id"]
+        assert _index_columns(session, "ix_usage_debts_job") == ["job_id"]
+
+
+def schema_dump(
+    session: Session,
+    tables: Sequence[str],
+    *,
+    enums: Sequence[str] = (),
+    trigger_table: str | None = None,
+    functions: Sequence[str] = (),
+) -> dict[str, list[tuple[str, ...]]]:
+    """Catalogue definitions of ``tables`` and the objects around them, as comparable rows.
+
+    Reusable by later phases: pass their tables (and enums, trigger table, functions).
+    Everything comes from ``information_schema`` and ``pg_catalog``, so a migrated
+    database and a ``create_all`` database give equal dumps exactly when they have the
+    same schema.
+    """
+    params = {"t": list(tables), "e": list(enums), "f": list(functions)}
+    queries: dict[str, str] = {
+        "columns": (
+            "SELECT table_name, column_name, data_type, udt_name, is_nullable, column_default, "
+            "numeric_precision, numeric_scale FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = ANY(:t)"
+        ),
+        "constraints": (
+            "SELECT t.relname, c.conname, pg_get_constraintdef(c.oid) FROM pg_constraint c "
+            "JOIN pg_class t ON t.oid = c.conrelid WHERE t.relname = ANY(:t)"
+        ),
+        "indexes": (
+            "SELECT tablename, indexname, indexdef FROM pg_indexes "
+            "WHERE schemaname = 'public' AND tablename = ANY(:t)"
+        ),
+        "enums": (
+            "SELECT t.typname, array_agg(e.enumlabel ORDER BY e.enumsortorder)::text "
+            "FROM pg_type t JOIN pg_enum e ON e.enumtypid = t.oid "
+            "WHERE t.typname = ANY(:e) GROUP BY t.typname"
+        ),
+        "functions": (
+            "SELECT p.proname, pg_get_functiondef(p.oid) FROM pg_proc p WHERE p.proname = ANY(:f)"
+        ),
+    }
+    dump = {
+        name: sorted(
+            tuple("" if v is None else str(v) for v in row)
+            for row in session.execute(sa.text(sql), params)
+        )
+        for name, sql in queries.items()
+    }
+    triggers: list[tuple[str, ...]] = []
+    if trigger_table is not None:
+        triggers = [
+            (str(name), str(definition))
+            for name, definition in session.execute(
+                sa.text(
+                    "SELECT tgname, pg_get_triggerdef(oid) FROM pg_trigger "
+                    "WHERE tgrelid = to_regclass(:tbl) AND NOT tgisinternal"
+                ),
+                {"tbl": trigger_table},
+            )
+        ]
+    dump["triggers"] = sorted(triggers)
+    return dump
+
+
+def test_migrated_schema_equals_the_create_all_schema(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Parity: the migration builds what the models declare, definition by definition.
+
+    ``_orm_names`` compares names only; this compares column types, nullability and
+    defaults, CHECK/FK/unique definitions, index definitions, enum labels, and the
+    trigger and its function against a database built by ``create_all``.
+    """
+    kwargs = {
+        "enums": list(ENUMS),
+        "trigger_table": "usage_entries",
+        "functions": ["usage_entries_reject_mutation"],
+    }
+    with migrated_sessionmaker() as session:
+        migrated = schema_dump(session, TABLES, **kwargs)
+    with usage_database() as orm_sessionmaker, orm_sessionmaker() as session:
+        orm = schema_dump(session, TABLES, **kwargs)
+    # Non-vacuous: every section found something to compare.
+    assert all(migrated[section] for section in migrated)
+    for section, rows in migrated.items():
+        assert rows == orm[section], section
 
 
 def test_migrated_credit_grants_must_be_visible(
