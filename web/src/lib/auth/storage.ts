@@ -93,8 +93,13 @@ export function setSession(session: Session): void {
  * may have happened tabs or days earlier, describing a sign-out that this
  * reader chose themselves (SHOULD-FIX 4).
  */
+/** localStorage key of the one-use post-verification `next` (`signupNext.ts`); a sign-out must
+ * drop it so the next person on a shared device never inherits it. */
+export const SIGNUP_NEXT_KEY = "lemely.signup.next"
+
 export function clearSession(): void {
   localStorage.removeItem(SESSION_KEY)
+  localStorage.removeItem(SIGNUP_NEXT_KEY)
   notify(null)
   expiredSignal = false
   expiredRole = undefined

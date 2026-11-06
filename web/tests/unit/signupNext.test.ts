@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import { afterVerifyPath, rememberSignupNext, takeSignupNext } from "@/lib/auth/signupNext"
 import { safeNextPath } from "@/lib/nextPath"
@@ -64,7 +66,7 @@ describe("signup next", () => {
   it("re-validates on read, so every tampered stored value is ignored", () => {
     for (const bad of BAD) {
       const s = memoryStorage()
-      s.setItem("lemely.signup.next", bad)
+      s.setItem("lemely.signup.next", JSON.stringify({ path: bad, ts: Date.now() }))
       expect(takeSignupNext(s), JSON.stringify(bad)).toBeNull()
       expect(s.getItem("lemely.signup.next")).toBeNull()
     }
@@ -75,5 +77,34 @@ describe("signup next", () => {
     rememberSignupNext("/student/billing/plans", s)
     rememberSignupNext(plans, s)
     expect(takeSignupNext(s)).toBe(plans)
+  })
+
+  it("expires after an hour, removing the value", () => {
+    const s = memoryStorage()
+    rememberSignupNext(plans, s, 1_000)
+    expect(takeSignupNext(s, 1_000 + 59 * 60_000)).toBe(plans)
+    rememberSignupNext(plans, s, 1_000)
+    expect(takeSignupNext(s, 1_000 + 61 * 60_000)).toBeNull()
+    expect(s.getItem("lemely.signup.next")).toBeNull()
+  })
+
+  it("ignores old string-format and malformed stored values", () => {
+    for (const raw of [plans, "null", "42", "{", JSON.stringify({ path: plans }), JSON.stringify({ path: 1, ts: 1 })]) {
+      const s = memoryStorage()
+      s.setItem("lemely.signup.next", raw)
+      expect(takeSignupNext(s)).toBeNull()
+    }
+  })
+
+  it("afterVerifyPath without a session still consumes the value", () => {
+    const s = memoryStorage()
+    rememberSignupNext(plans, s)
+    expect(afterVerifyPath(null, s)).toBe("/login")
+    expect(s.getItem("lemely.signup.next")).toBeNull()
+  })
+
+  it("clearSession removes the remembered next", () => {
+    const src = readFileSync(join(import.meta.dirname, "..", "..", "src/lib/auth/storage.ts"), "utf8")
+    expect(src).toMatch(/clearSession\(\): void \{[^}]*removeItem\(SIGNUP_NEXT_KEY\)/)
   })
 })
