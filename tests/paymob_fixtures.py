@@ -12,10 +12,23 @@ behind its worked example, so callbacks here are signed with it.
 from __future__ import annotations
 
 import base64
-from typing import Any
+import uuid
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any
 
+import httpx
+
+from lemely.db.models import ParentChildLink, User
+from lemely.db.models.billing import CreditPack, Payment, PaymentPurpose, PaymentStatus
+from lemely.db.models.enums import Role
+from lemely.io.paymob.client import PaymobClient
 from lemely.io.paymob.hmac import sign, token_hmac_message, transaction_hmac_message
 from lemely.runtime.config import PaymobSettings
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from sqlalchemy.orm import Session, sessionmaker
 
 TEST_HMAC_SECRET = "test_hmac_secret_0123456789abcdef"
 TEST_CARD_TOKEN_KEY = base64.urlsafe_b64encode(b"k" * 32).decode()
@@ -260,3 +273,126 @@ PLAN_RESPONSE: dict[str, Any] = {
     "integration": MOTO_INTEGRATION_ID,
     "fee": None,
 }
+# ---------------------------------------------------------------------------
+# Fake client and DB seeders (Task 6 onward).
+# ---------------------------------------------------------------------------
+
+FIXED_NOW = datetime(2026, 11, 5, 12, 0, tzinfo=UTC)
+
+
+def _refuse(request: httpx.Request) -> httpx.Response:
+    raise AssertionError(f"unexpected Paymob HTTP call: {request.method} {request.url}")
+
+
+class FakePaymobClient(PaymobClient):
+    """A PaymobClient whose HTTP layer is never reached; each call is scripted."""
+
+    def __init__(self, settings: PaymobSettings = PAYMOB_SETTINGS) -> None:
+        super().__init__(settings, http=httpx.Client(transport=httpx.MockTransport(_refuse)))
+        self.intentions: list[dict[str, Any]] = []
+        self.intention_response: dict[str, Any] | Exception = dict(INTENTION_RESPONSE)
+        self.on_intention: Callable[[dict[str, Any]], None] | None = None
+        self.inquiries: list[str] = []
+        self.inquiry_response: dict[str, Any] | None | Exception = None
+
+    def create_intention(self, body: Any) -> dict[str, Any]:
+        self.intentions.append(dict(body))
+        if self.on_intention is not None:
+            self.on_intention(dict(body))
+        if isinstance(self.intention_response, Exception):
+            raise self.intention_response
+        return dict(self.intention_response)
+
+    def inquire_by_order_ref(self, merchant_order_id: str) -> dict[str, Any] | None:
+        self.inquiries.append(merchant_order_id)
+        if isinstance(self.inquiry_response, Exception):
+            raise self.inquiry_response
+        return self.inquiry_response
+
+
+def seed_user(
+    sm: sessionmaker[Session],
+    role: Role = Role.student,
+    *,
+    display_name: str | None = "Sara Ali",
+    phone: str | None = "+201234567890",
+) -> uuid.UUID:
+    uid = uuid.uuid4()
+    with sm.begin() as session:
+        session.add(
+            User(
+                id=uid,
+                email=f"{uid}@example.com",
+                role=role,
+                display_name=display_name,
+                phone=phone,
+            )
+        )
+    return uid
+
+
+def seed_pack(
+    sm: sessionmaker[Session],
+    *,
+    code: str | None = None,
+    name: str = "100 credits",
+    units: int = 100,
+    price_minor: int = 10000,
+    is_active: bool = True,
+) -> uuid.UUID:
+    pack_id = uuid.uuid4()
+    with sm.begin() as session:
+        session.add(
+            CreditPack(
+                id=pack_id,
+                code=code or f"pack_{pack_id.hex[:8]}",
+                name=name,
+                units=units,
+                price_minor=price_minor,
+                currency="EGP",
+                is_active=is_active,
+            )
+        )
+    return pack_id
+
+
+def link_parent(sm: sessionmaker[Session], *, parent_id: uuid.UUID, child_id: uuid.UUID) -> None:
+    with sm.begin() as session:
+        session.add(ParentChildLink(parent_id=parent_id, child_id=child_id))
+
+
+def seed_payment(
+    sm: sessionmaker[Session],
+    *,
+    payer: uuid.UUID,
+    beneficiary: uuid.UUID,
+    pack_id: uuid.UUID,
+    amount_minor: int = 10000,
+    grant_units: int = 100,
+    status: PaymentStatus = PaymentStatus.created,
+    created_at: datetime | None = None,
+    next_reconcile_at: datetime | None = None,
+    paymob_order_id: int | None = None,
+    paid_at: datetime | None = None,
+) -> uuid.UUID:
+    payment_id = uuid.uuid4()
+    created = created_at or FIXED_NOW
+    with sm.begin() as session:
+        payment = Payment(
+            id=payment_id,
+            payer_user_id=payer,
+            beneficiary_user_id=beneficiary,
+            purpose=PaymentPurpose.credit_pack,
+            credit_pack_id=pack_id,
+            grant_units=grant_units,
+            amount_minor=amount_minor,
+            currency="EGP",
+            status=status,
+            special_reference=str(payment_id),
+            paymob_order_id=paymob_order_id,
+            paid_at=paid_at,
+            next_reconcile_at=next_reconcile_at or created + timedelta(minutes=15),
+        )
+        payment.created_at = created
+        session.add(payment)
+    return payment_id
