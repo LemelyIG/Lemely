@@ -33,8 +33,8 @@ function JoinedTeams() {
     >
       {(list) => (
         <div className="flex flex-col gap-2 border-t border-outline-variant pt-3">
-          <h3 className="m-0 text-label text-on-surface">Teams you assist</h3>
-          <ul aria-label="Teams you assist" className="m-0 flex list-none flex-col gap-1 p-0">
+          <h3 id="joined-teams-heading" className="m-0 text-label text-on-surface">Teams you assist</h3>
+          <ul aria-labelledby="joined-teams-heading" className="m-0 flex list-none flex-col gap-1 p-0">
             {list.map((t) => (
               <li key={t.memberId} className="flex flex-wrap items-baseline justify-between gap-x-4 text-body-sm">
                 <span className="text-on-surface">{t.teacherName}</span>

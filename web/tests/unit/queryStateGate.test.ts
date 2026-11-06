@@ -124,22 +124,26 @@ function usesQueryState(source: string): boolean {
 }
 
 /*
- * What is left after the per-screen sweep (PR 3).
+ * What is left after the per-screen sweep (PR 3), and what has been added since.
  *
  * This list was seeded at 53 entries by running the detector above against
  * the tree on 2026-09-02. PR 3 converted 49 of them to `QueryState` — each
  * one read, converted and reviewed screen by screen — and deleted its entry
- * here as it went. The four below are what survived that sweep, and they are
- * here for different reasons than the original 53 were.
+ * here as it went. What survived that sweep were five entries, and they are
+ * here for different reasons than the original 53 were. The billing/team work
+ * has since added four more, so there are nine entries: eight load no data and
+ * one (`VerifyEmail.tsx`) does.
  *
- * Three of them load no data at all. Each imports one or two *mutation*
+ * Eight of them load no data at all. Each imports one or more *mutation*
  * hooks from `@/lib/hooks/`, which the detector cannot tell apart from a
  * query export without importing the hooks layer and inspecting its return
  * type — the over-counting the module header already predicts, and calls
  * failing safe. `ClassRoster.tsx` is the clearest case: it renders a class
  * detail it never fetches, reading it from `useClassDetailContext()`, the
  * outlet context its parent layout fills from a query the layout owns and
- * gates. Wrapping any of the three in a `<QueryState>` would mean inventing
+ * gates. The four team dialogs and panels are the same shape: `Team.tsx`
+ * fetches the team inside its own `<QueryState>` and hands the rows down as
+ * props. Wrapping any of them in a `<QueryState>` would mean inventing
  * a query object for a screen that has none, which is not adoption — it is
  * this gate being told what it wants to hear.
  *
@@ -154,8 +158,13 @@ function usesQueryState(source: string): boolean {
  * report it. A screen belongs here when using the shared pattern would cost
  * the reader something, not when nobody got round to it.
  *
- * This list may shrink and must never grow. A NEW screen that loads data must
- * use `QueryState` from the day it is written: the pattern now exists, 49
+ * The rule, precisely: an entry may be added for a mutation-only false
+ * positive, with a reason that says which hooks it imports and where its data
+ * comes from, checked against `@/lib/hooks/` (a hook that returns
+ * `useQuery` is not mutation-only). A screen that loads data may not be
+ * added; it must use `QueryState`, as `team/JoinTeamCard.tsx` does for its one
+ * query. Entries are otherwise only ever deleted. A NEW screen that loads data
+ * must use `QueryState` from the day it is written: the pattern now exists, 49
  * screens use it, and there is no longer any such thing as a screen that
  * predates it.
  */

@@ -262,6 +262,21 @@ describe("JoinTeamCard", () => {
     expect(html).toContain("Join team")
   })
 
+  it("reads a dropped connection as offline, not as a failure, and still lets you join", () => {
+    // `OfflineState` and `ErrorState` carry the same sentences here and the same compact role; the
+    // glyph is the one difference, so the offline one is recognised by the slash of Phosphor's WifiSlash.
+    const WIFI_SLASH = "53.92,34.62ZM128,192"
+    m.memberships = errorQuery(new ApiError(500, "x"))
+    expect(renderStatic(h(JoinTeamCard))).not.toContain(WIFI_SLASH)
+    m.memberships = errorQuery(new ApiError(0, "x"))
+    const html = renderStatic(h(JoinTeamCard))
+    expect(html).toContain(WIFI_SLASH)
+    expect(html).toMatch(/role="status"/)
+    expect(text(html)).toContain("Couldn't load the teams you assist.")
+    expect(text(html)).toContain("You can still join one.")
+    expect(text(html)).toContain("Join team")
+  })
+
   it("capitalises the role in the confirmation", () => {
     m.join = fakeMutation({ isSuccess: true, data: { teacherName: "Ms Nour", role: "marker" } })
     expect(text(renderStatic(h(JoinTeamCard)))).toContain("You're now on Ms Nour's team as Marker.")

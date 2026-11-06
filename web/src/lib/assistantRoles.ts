@@ -31,7 +31,10 @@ export const PERMISSION_COPY: Record<TeamPermission, string> = {
   view_usage: "See usage",
 }
 
-/** Frontend mirror of plan 03 `PRESET_PERMISSIONS` (no API serves it; update it with 03). */
+/**
+ * Frontend mirror of plan 03 `PRESET_PERMISSIONS`: no API serves the presets, so the role picker,
+ * `roleDraftFor` and the reset-to-preset action all read this copy. Update it with plan 03.
+ */
 export const PRESET_PERMISSIONS: Record<AssistantRole, TeamPermission[]> = {
   co_teacher: [...TEAM_PERMISSIONS],
   marker: ["mark", "regrade", "view_results"],
