@@ -45,7 +45,7 @@ function useScrolled(): boolean {
 }
 
 const BAR = cn(
-  "lm-nav-chrome sticky top-2 z-nav mx-7 mt-2 mb-6 flex h-14 items-center gap-2 rounded-inner border border-outline-variant bg-surface-container-lowest ps-[17px] pe-[11px] transition-shadow duration-200",
+  "lm-nav-chrome lm-shell-bar-inset sticky top-2 z-nav mx-7 mt-2 mb-6 flex h-14 items-center gap-2 rounded-inner border border-outline-variant bg-surface-container-lowest ps-[17px] pe-[11px] transition-shadow duration-200",
   "data-[stuck=true]:shadow-[var(--shadow-hover)] dark:border-transparent dark:bg-surface-container-high dark:data-[stuck=true]:shadow-none",
   "max-shell-lg:mx-2.5 max-shell-lg:ps-3 max-shell-lg:pe-2.5",
   "max-shell-sm:relative max-shell-sm:top-auto max-shell-sm:m-0 max-shell-sm:h-11 max-shell-sm:rounded-none max-shell-sm:border-0 max-shell-sm:bg-transparent max-shell-sm:ps-3.5 max-shell-sm:pe-2 max-shell-sm:shadow-none dark:max-shell-sm:bg-transparent",
@@ -78,11 +78,14 @@ export function ShellTopBar({
           onClick={onOpenNav}
           aria-label={navLabel}
           aria-haspopup="dialog"
-          className={cn(SHELL_ICON_BUTTON, "shell-lg:hidden max-shell-sm:hidden")}
+          // Same variant as the teacher sidebar's `hidden sidebar:flex` (820px), so
+          // exactly one of {sidebar, menu button} shows. Task 4/5 move both to
+          // `shell-lg` (1248px).
+          className={cn(SHELL_ICON_BUTTON, "sidebar:hidden max-shell-sm:hidden")}
         >
           <ShellIcon name="menu" />
         </button>
-        <p className="me-auto min-w-0 truncate [font:800_21px/1_var(--font-sans)] tracking-[-0.02em] text-on-surface">
+        <p className="me-auto min-w-0 truncate text-title-bar text-on-surface">
           {title}
         </p>
         {actions}

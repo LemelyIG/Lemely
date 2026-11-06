@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest"
 import { nextSettingsTabIndex, notificationsTriggerLabel, panelTimeLabel } from "@/components/shell/shellModel"
-import { avatarInitial } from "@/components/shell/ShellAvatar"
 
 const NOW = new Date(2026, 10, 5, 10, 0) // Thu 5 Nov 2026, the preview fixtures' "now"
 
@@ -48,15 +47,5 @@ describe("nextSettingsTabIndex (arrow keys on the settings tabs)", () => {
   it("ignores other keys and an unknown current tab", () => {
     expect(nextSettingsTabIndex(0, "Enter", 5)).toBeNull()
     expect(nextSettingsTabIndex(-1, "ArrowDown", 5)).toBeNull()
-  })
-})
-
-describe("avatarInitial", () => {
-  it("is the first letter, upper-cased", () => {
-    expect(avatarInitial("mariam")).toBe("M")
-    expect(avatarInitial("  Ömer ")).toBe("Ö")
-  })
-  it("falls back to ? for an empty name", () => {
-    expect(avatarInitial("")).toBe("?")
   })
 })

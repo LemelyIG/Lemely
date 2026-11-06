@@ -346,10 +346,10 @@
      `min-[820px]:`/`md:` literal onto this token. */
   --breakpoint-sidebar: 820px;
   /* Portal shell (design A, docs/superpowers/specs/2026-11-06-portal-shell-design.md).
-     `shell-lg:` is where the sidebar is a column (design A's drawer range is
-     max-width 1000px); `max-shell-sm:` is the phone range where the top bar
+     `shell-lg:` is where the sidebar is a column: the drawer shows below
+     1248px (the user's decision, wider than design A's 1000px); `max-shell-sm:` is the phone range where the top bar
      goes flat (design A: max-width 720px). */
-  --breakpoint-shell-lg: 1001px;
+  --breakpoint-shell-lg: 1248px;
   --breakpoint-shell-sm: 721px;
   /* Packet B3 (Task 4): the retrofit's other two dimensions. `--sidebar-width`
      unifies the student sidebar's old 246px with the teacher/admin 252px —
@@ -666,6 +666,12 @@ body {
 }
 .text-display-xs {
   font: 700 16px/1.3 var(--font-sans);
+}
+/* The top bar title (design A `.as-title`). Its own class: `text-display-sm`
+   is 700 weight and 1.25 line height, and a layered utility would lose to it. */
+.text-title-bar {
+  font: 800 21px/1 var(--font-sans);
+  letter-spacing: -0.02em;
 }
 /* `overflow-wrap: anywhere` on display headers: a school name or email at 320px
    is wider than the viewport, and html/body clip rather than scroll. Only
@@ -1058,6 +1064,26 @@ html[data-direction="back"]::view-transition-new(root) {
 }
 .lm-app-header-pt-2\.5 {
   --lm-app-header-pt: calc(var(--spacing) * 2.5);
+}
+
+/* The shared shell's floating top bar (ShellTopBar) keeps design A's 56px box,
+   so the standalone-PWA top inset goes outside it: onto the sticky offset and
+   the margin that sit above the box, never into its height. Unlayered, so it
+   beats the bar's layered `top-2`/`mt-2`; hence additive, like `.lm-app-header`.
+   On phones (<721px) the bar is flat and in flow (`m-0`), so only the margin
+   carries the inset. Browser tabs are untouched: the OS chrome already
+   reserves that area. */
+@media (display-mode: standalone) {
+  .lm-shell-bar-inset {
+    top: calc(var(--spacing) * 2 + env(safe-area-inset-top));
+    margin-top: calc(var(--spacing) * 2 + env(safe-area-inset-top));
+  }
+}
+@media (display-mode: standalone) and (max-width: 720px) {
+  .lm-shell-bar-inset {
+    top: auto;
+    margin-top: env(safe-area-inset-top);
+  }
 }
 
 /* §14 rule 3 forbids an arbitrary value, so this is the named utility for the

@@ -8,12 +8,6 @@ export function profileName(profile: Pick<Profile, "displayName" | "email">): st
   return profile.displayName ?? profile.email.split("@")[0]
 }
 
-/** Design A's avatar shows one letter. */
-export function avatarInitial(name: string): string {
-  const first = Array.from(name.trim())[0]
-  return first ? first.toLocaleUpperCase() : "?"
-}
-
 /** `.as-avatar` (32px) and `.as-ident .as-avatar` (38px). The kit's squircle
  * `Avatar` stands in for design A's circle (user decision, logged as drift). */
 export function ShellAvatar({

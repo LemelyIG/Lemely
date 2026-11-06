@@ -124,6 +124,7 @@ describe("no arbitrary literals in the retrofitted portals", () => {
   const BANNED: [RegExp, string][] = [
     [/\btext-\[[0-9.]+px\]/g, "arbitrary font size"],
     [/\brounded-\[[0-9.]+px\]/g, "arbitrary border radius"],
+    [/\[font:[^\]]*\d+px/g, "arbitrary font shorthand"],
   ]
 
   function* walk(dir: string): Generator<string> {

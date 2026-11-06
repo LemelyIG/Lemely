@@ -160,6 +160,17 @@ describe("headers keep their existing padding while opting into the additive ins
     expect(source).not.toContain("--lm-app-header-pt")
   })
 
+  it("ShellTopBar opts into the standalone safe-area inset outside its fixed box", () => {
+    const source = readFileSync(join(SRC, "components/shell/ShellTopBar.tsx"), "utf8")
+    expect(source).toContain("lm-shell-bar-inset")
+    const css = readFileSync(join(SRC, "index.css"), "utf8")
+    const standalone = [
+      ...css.matchAll(/@media \(display-mode: standalone\)[^{]*\{\s*\.lm-shell-bar-inset\s*\{([\s\S]*?)\}/g),
+    ].map((m) => m[1])
+    expect(standalone.length).toBeGreaterThanOrEqual(1)
+    for (const block of standalone) expect(block).toContain("env(safe-area-inset-top)")
+  })
+
   it("marketing's header is untouched — it had no py-* to lose", () => {
     const line = headerLine("portals/marketing/MarketingHeader.tsx")
     expect(line).not.toContain("lm-app-header-pt")
