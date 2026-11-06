@@ -565,7 +565,7 @@ def test_checkout_items_must_add_up_to_the_payment_amount_before_anything_is_com
         assert session.scalars(sa.select(Payment)).all() == []
 
 
-@pytest.mark.parametrize("quantity", [2, 0, "1"])
+@pytest.mark.parametrize("quantity", [2, 0, "1", True, 1.0])
 def test_checkout_items_with_a_quantity_other_than_one_are_refused(
     migrated_sessionmaker: sessionmaker[Session], quantity: object
 ) -> None:

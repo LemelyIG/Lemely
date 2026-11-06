@@ -469,7 +469,7 @@ class BillingService:
         if not self._settings.checkout_configured:
             raise CheckoutUnavailable("Paymob checkout is not configured")
         for item in items:
-            if "quantity" in item and item["quantity"] != 1:
+            if "quantity" in item and not (type(item["quantity"]) is int and item["quantity"] == 1):
                 # Whether Paymob's item ``amount`` is per unit or a line total is unconfirmed;
                 # fail closed rather than send a total it may reject or misprice.
                 raise ValueError("checkout items must have quantity 1")
@@ -640,6 +640,20 @@ class BillingService:
             )
             return
 
+        prev_txn = payment.paymob_txn_id
+        if (
+            payment.status is PaymentStatus.failed
+            and obj.get("pending") is True
+            and txn_id == prev_txn
+        ):
+            # A pending callback for the transaction that already failed is stale (delivered
+            # out of order). Reopening would strand the payment in ``pending``: the reconcile
+            # inquiry's failure dedupes against the event already recorded and never lands.
+            log.info(
+                "paymob_stale_pending_after_failure", payment_id=str(payment.id), txn_id=txn_id
+            )
+            return
+
         # Open (created/pending) or failed: a failed payment can still become paid on a
         # later verified success (R20b), and the grant's idempotency key keeps that to one.
         payment.last_callback = safe
@@ -691,7 +705,7 @@ class BillingService:
             )
         elif obj.get("pending") is True:
             if payment.status is PaymentStatus.failed:
-                # A retry in the same checkout is in flight after a decline: its success
+                # A new attempt (another transaction) is in flight after a decline: its success
                 # callback may be lost, so put the payment back on the reconcile schedule.
                 payment.next_reconcile_at = self._now() + RECONCILE_AFTER
                 log.info("paymob_pending_after_failure", payment_id=str(payment.id), txn_id=txn_id)

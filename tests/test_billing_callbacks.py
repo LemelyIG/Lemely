@@ -596,6 +596,29 @@ def test_a_pending_retry_after_a_decline_returns_to_pending_and_is_reconciled(
     assert len(_grants(sm, pid)) == 1
 
 
+def test_stale_pending_for_the_failed_transaction_does_not_reopen_it(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    failed = transaction_obj(merchant_order_id=str(pid), txn_id=1, success=False)
+    _apply(sm, failed)
+    # The same transaction's pending callback arrives out of order, after its final failure.
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), txn_id=1, success=False, pending=True))
+    payment = _payment(sm, pid)
+    assert payment.status is PaymentStatus.failed
+    assert payment.next_reconcile_at is None
+    assert payment.paymob_txn_id == 1
+    assert payment.last_callback is not None
+    assert payment.last_callback["pending"] is False
+    # The reconcile inquiry returns the same failure again: it dedupes and stays failed.
+    _apply(sm, failed)
+    payment = _payment(sm, pid)
+    assert payment.status is PaymentStatus.failed
+    assert payment.next_reconcile_at is None
+    assert _grants(sm, pid) == []
+
+
 def _refund(pid: uuid.UUID, cents: int) -> dict[str, Any]:
     return transaction_obj(
         merchant_order_id=str(pid), is_refunded=True, refunded_amount_cents=cents
