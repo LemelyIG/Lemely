@@ -108,6 +108,28 @@ describe("PlansView", () => {
     expect(held).not.toMatch(/EGP\s2,500\.00/)
   })
 
+  it("preselects the tier and interval chosen on the public pricing page", () => {
+    s.catalogue = okQuery({ ...fx.studentCatalogue, tiers: [fx.studentMonthly, fx.studentYearly] })
+    const html = renderStatic(
+      h(PlansView, { audience: "student", beneficiaryId: null, paths, currentTierId: null, hasLiveSubscription: false, canManage: true, managedByName: null }),
+      "/student/billing/plans?plan=student_plus_y&interval=year",
+    )
+    expect(html).toMatch(/EGP\s2,500\.00/)
+    expect(html).toContain('data-preselected="true"')
+    expect(html).toContain("Selected on the pricing page")
+  })
+
+  it("ignores an unknown plan code and a bad interval", () => {
+    s.catalogue = okQuery({ ...fx.studentCatalogue, tiers: [fx.studentMonthly, fx.studentYearly] })
+    const html = renderStatic(
+      h(PlansView, { audience: "student", beneficiaryId: null, paths, currentTierId: null, hasLiveSubscription: false, canManage: true, managedByName: null }),
+      "/student/billing/plans?plan=nope&interval=week",
+    )
+    expect(html).toMatch(/EGP\s250\.00/)
+    expect(html).not.toContain("data-preselected")
+    expect(html).not.toContain("Selected on the pricing page")
+  })
+
   it("says one seat in the singular", () => {
     s.catalogue = okQuery({ ...fx.teacherCatalogue, tiers: [{ ...fx.teacherMonthly, includedSeats: 1 }] })
     const html = view({ audience: "teacher", paths: billingPaths({ role: "teacher" }) })

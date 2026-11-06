@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R3 V3 */
 /* R3/V3: the plans grid and the credit-pack grid repeat the same 2/3-column card rhythm back to back, so the page reads as two copies of one template; the checkout failure alert also sits above the QueryState rather than beside the card that caused it. */
 import { useEffect, useState } from "react"
-import { Link } from "react-router-dom"
+import { Link, useSearchParams } from "react-router-dom"
 import { Check } from "@phosphor-icons/react"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
@@ -28,6 +28,7 @@ import {
   useStartPackCheckout,
   useStartSubscriptionCheckout,
 } from "@/lib/hooks/useBillingApi"
+import { planPreselect } from "@/lib/pricingModel"
 
 /*
  * Plans and credit packs for one audience (spec §2.1, §2.2). Allowance sizes are hidden by
@@ -55,7 +56,10 @@ export function PlansView(props: PlansViewProps) {
   const catalogue = useCatalogue(audience)
   const subCheckout = useStartSubscriptionCheckout()
   const packCheckout = useStartPackCheckout()
-  const [interval, setInterval] = useState<BillingInterval>(() => initialInterval(currentInterval))
+  // The public pricing page links here with `?plan=<code>&interval=`; an unknown code matches no tier.
+  const [params] = useSearchParams()
+  const preselect = planPreselect(params)
+  const [interval, setInterval] = useState<BillingInterval>(() => preselect.interval ?? initialInterval(currentInterval))
   const [extraSeats, setExtraSeats] = useState(0)
   const [unsafe, setUnsafe] = useState(false)
   // After a successful start the payer is on their way to Paymob; keep the buttons off until the
@@ -179,9 +183,12 @@ export function PlansView(props: PlansViewProps) {
                 <ul className="m-0 grid list-none gap-4 p-0 md:grid-cols-2 lg:grid-cols-3">
                   {tiers.map((tier) => (
                     <li key={tier.id}>
-                      <Card className="h-full">
+                      <Card className={tier.code === preselect.code ? "h-full border-primary" : "h-full"} data-preselected={tier.code === preselect.code ? "true" : undefined}>
                         <CardBody className="flex h-full flex-col gap-3">
                           <h3 className="m-0 text-display-sm text-on-surface">{tier.name}</h3>
+                          {tier.code === preselect.code ? (
+                            <p className="m-0 text-body-sm font-medium text-primary">Selected on the pricing page</p>
+                          ) : null}
                           <p className="m-0">
                             <span className="text-data-lg text-on-surface">{formatMoney(tier.priceMinor, tier.currency)}</span>{" "}
                             <span className="text-body-sm text-on-surface-variant">{intervalLabel(tier.interval)}</span>

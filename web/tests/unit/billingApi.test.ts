@@ -52,6 +52,7 @@ describe("billing fetchers (paths without /api: request() adds it)", () => {
     await billingApi.seatQuote("s1", 3)
     await billingApi.addSeats("s1", 3)
     await billingApi.reduceSeats("s1", 1)
+    await billingApi.publicCatalogue("teacher")
     expect(calls()).toEqual([
       ["/billing/catalogue", "GET"],
       ["/billing/summary", "GET"],
@@ -71,6 +72,7 @@ describe("billing fetchers (paths without /api: request() adds it)", () => {
       ["/billing/subscriptions/s1/seats/quote", "POST"],
       ["/billing/subscriptions/s1/seats", "POST"],
       ["/billing/subscriptions/s1/seats/pending", "PUT"],
+      ["/billing/public-catalogue?audience=teacher", "GET"],
     ])
   })
 

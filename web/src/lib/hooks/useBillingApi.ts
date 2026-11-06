@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { useMutation, useQuery, useQueryClient, type QueryClient, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query"
 import { request } from "@/lib/api"
 import { usageKeys } from "@/lib/hooks/useUsageApi"
-import { toAutoTopup, toBillingSummary, toCatalogue, toSavedCard } from "@/lib/billingAdapters"
+import { toAutoTopup, toBillingSummary, toCatalogue, toPublicCatalogue, toSavedCard } from "@/lib/billingAdapters"
 import type {
   Audience,
   AutoTopupSettings,
@@ -14,6 +14,7 @@ import type {
   PackCheckoutRequest,
   PaymentStatus,
   PaymentStatusView,
+  PublicCatalogue,
   Quote,
   Receipt,
   SavedCardView,
@@ -25,6 +26,7 @@ import type {
   WireCharge,
   WireCheckout,
   WirePaymentStatus,
+  WirePublicCatalogue,
   WireQuote,
   WireReceiptList,
   WireSavedCardList,
@@ -49,6 +51,8 @@ function withBeneficiary(path: string, beneficiaryId: string | null): string {
 
 export const billingApi = {
   catalogue: () => request<WireCatalogue>("/billing/catalogue"),
+  /** No auth (plan 02). `request` still adds a bearer if a session exists; the route ignores it. */
+  publicCatalogue: (audience: Audience) => request<WirePublicCatalogue>(`/billing/public-catalogue?audience=${audience}`),
   summary: (beneficiaryId: string | null) => request<WireBillingSummary>(withBeneficiary("/billing/summary", beneficiaryId)),
   startSubscriptionCheckout: (body: SubscriptionCheckoutRequest) =>
     request<WireSubscriptionCheckout>("/billing/subscriptions/checkout", post(body)),
@@ -73,6 +77,7 @@ export const billingApi = {
 
 export const billingKeys = {
   all: ["billing"] as const,
+  publicCatalogue: (audience: Audience) => ["billing", "public-catalogue", audience] as const,
   catalogue: ["billing", "catalogue"] as const,
   summary: (beneficiaryId: string | null) => ["billing", "summary", beneficiaryId ?? "me"] as const,
   payment: (paymentId: string) => ["billing", "payment", paymentId] as const,
@@ -116,6 +121,16 @@ export function pollingExpired(status: PaymentStatus | undefined, startedAt: num
 /** One catalogue request; each audience is a `select` over it. */
 export function useCatalogue(audience: Audience): UseQueryResult<Catalogue, Error> {
   return useQuery({ queryKey: billingKeys.catalogue, queryFn: billingApi.catalogue, select: (w) => toCatalogue(w, audience) })
+}
+
+export function usePublicCatalogue(audience: Audience): UseQueryResult<PublicCatalogue, Error> {
+  return useQuery({
+    queryKey: billingKeys.publicCatalogue(audience),
+    queryFn: () => billingApi.publicCatalogue(audience),
+    select: toPublicCatalogue,
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
 }
 
 export function useBillingSummary(beneficiaryId: string | null = null): UseQueryResult<BillingSummary, Error> {

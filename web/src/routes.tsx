@@ -7,7 +7,7 @@ import { Navigate, Outlet, useSearchParams } from "react-router-dom"
 import { teacherRoute } from "@/portals/teacher"
 import { studentRoute } from "@/portals/student"
 import { parentRoute } from "@/portals/parent"
-import { marketingRoute, dataHandlingRoute, MarketingLanding } from "@/portals/marketing"
+import { marketingRoute, dataHandlingRoute, pricingRoute, MarketingLanding } from "@/portals/marketing"
 import { platformAdminRoute, schoolAdminRoute } from "@/portals/admin"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { RequireAuth, portalPathForRole } from "@/lib/auth/RequireAuth"
@@ -368,6 +368,7 @@ export const appRoutes: RouteObject[] = [
    * not have an account yet.
    */
   { ...dataHandlingRoute, path: "/data", errorElement },
+  { ...pricingRoute, path: "/pricing", errorElement },
   /*
    * Plan 05's billing emails link to `/billing`; send each role to its own billing page.
    */

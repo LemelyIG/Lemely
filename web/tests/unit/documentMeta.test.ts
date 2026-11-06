@@ -218,6 +218,7 @@ describe("the signup/verify/reset/join routes carry honest metadata — Task 19"
       "/",
       "/landing",
       "/data",
+      "/pricing",
       "/login",
       // G-16 and G-17 (tutor marketplace): public, signed-out reachable.
       "/tutors",

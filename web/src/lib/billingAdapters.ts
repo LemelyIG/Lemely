@@ -15,6 +15,8 @@ import {
   type MeteredAction,
   type PaymobDrift,
   type PlanTier,
+  type PublicCatalogue,
+  type PublicTier,
   type SeatRow,
   type SavedCardView,
   type TeamPermission,
@@ -32,6 +34,7 @@ import {
   type WireCreditPack,
   type WireEstimate,
   type WirePlanTier,
+  type WirePublicCatalogue,
   type WireSavedCard,
   type WireSeat,
   type WireSeatCapacity,
@@ -277,5 +280,29 @@ export function toAdminCatalogue(w: WireAdminCatalogue): AdminCatalogue {
       teacherSignupUnits: free("teacher")?.units ?? null,
       teacherSignupExpiryDays: free("teacher")?.validDays ?? null,
     },
+  }
+}
+
+export function toPublicCatalogue(w: WirePublicCatalogue): PublicCatalogue {
+  return {
+    audience: w.audience,
+    tiers: w.planTiers.flatMap((t): PublicTier[] =>
+      t.interval === null
+        ? []
+        : [
+            {
+              code: t.code,
+              name: t.name,
+              audience: t.audience === "teacher" ? "teacher" : "student",
+              interval: t.interval === "yearly" ? "year" : "month",
+              priceMinor: t.priceMinor,
+              currency: t.currency,
+              features: featureLines(t.features),
+              includedSeats: t.includedSeats,
+              extraSeatPriceMinor: t.extraSeatPriceMinor,
+            },
+          ],
+    ),
+    packs: w.creditPacks,
   }
 }
