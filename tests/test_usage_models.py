@@ -92,7 +92,7 @@ def test_db_enums_mirror_the_core_vocabularies() -> None:
     assert {m.value for m in EstimatorInputKind} == ESTIMATOR_INPUT_KINDS
 
 
-def test_foreign_keys_deferred_to_later_phases_are_plain_columns() -> None:
+def test_payment_id_has_its_foreign_key_and_later_phase_columns_are_plain() -> None:
     grants = Base.metadata.tables["usage_grants"]
     for column in ("subscription_period_id", "teacher_member_id"):
         assert grants.c[column].nullable

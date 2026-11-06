@@ -106,7 +106,11 @@ def upgrade() -> None:
     """Upgrade schema."""
     # The new labels must be committed before the partial index below names them
     # ("unsafe use of new value of enum type"), so this runs outside the open
-    # transaction. ``autocommit_block`` commits that transaction first.
+    # transaction. ``autocommit_block`` commits that transaction first, and with it
+    # every earlier revision applied in the same run: a base-to-head upgrade that
+    # fails anywhere after this point stops at 0052 (plus the two committed labels),
+    # not at base. Re-running is safe because both statements are
+    # ``ADD VALUE IF NOT EXISTS``.
     with op.get_context().autocommit_block():
         op.execute("ALTER TYPE subscriptionstatus ADD VALUE IF NOT EXISTS 'pending_first_payment'")
         op.execute("ALTER TYPE subscriptionstatus ADD VALUE IF NOT EXISTS 'past_due'")

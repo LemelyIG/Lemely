@@ -9,7 +9,10 @@ five original labels.
 
 from __future__ import annotations
 
+import importlib.util
+import re
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -20,6 +23,7 @@ from sqlalchemy.exc import IntegrityError
 
 from lemely.db.base import Base
 from lemely.db.models import import_all_models
+from lemely.db.models.billing import _LIVE_PAID_PREDICATE, LIVE_SUBSCRIPTION_STATUSES
 from tests.test_migration_tutoring_enums import (
     column_names,
     current_revision,
@@ -35,6 +39,7 @@ from tests.usage_db import usage_database
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from types import ModuleType
 
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -86,6 +91,32 @@ PREVIOUS_STATUS_LABELS = ["inactive", "active", "cancelled", "expired", "rejecte
 #: Every table 0053 creates or alters, for the parity check.
 PARITY_TABLES = (*NEW_TABLES, "plan_tiers", "subscriptions", "usage_grants")
 PARITY_ENUMS = (*NEW_TYPES, "subscriptionstatus")
+
+
+def _model_live_labels() -> set[str]:
+    return {status.value for status in LIVE_SUBSCRIPTION_STATUSES}
+
+
+def _predicate_labels(predicate: str) -> set[str]:
+    return set(re.findall(r"'([a-z_]+)'", predicate))
+
+
+def _migration_module() -> ModuleType:
+    path = Path(__file__).parent.parent / "lemely/db/migrations/versions/0053_billing_payments.py"
+    spec = importlib.util.spec_from_file_location("migration_0053", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_live_index_predicate_names_exactly_the_live_statuses() -> None:
+    """The index predicate is a string; it must not drift from ``LIVE_SUBSCRIPTION_STATUSES``."""
+    expected = _model_live_labels()
+    assert len(expected) == 3
+    assert _predicate_labels(_LIVE_PAID_PREDICATE) == expected
+    assert _predicate_labels(_migration_module()._LIVE_PAID_PREDICATE) == expected
 
 
 def _orm_names(table: str) -> set[str]:
@@ -230,8 +261,10 @@ def test_one_live_paid_subscription_per_beneficiary(
         session.execute(insert, {"u": user, "t": tier, "s": "cancelled", "p": user})
         session.execute(insert, {"u": user, "t": tier, "s": "active", "p": None})
         session.execute(insert, {"u": user, "t": tier, "s": "active", "p": None})
-    with pytest.raises(IntegrityError), migrated_sessionmaker.begin() as session:
-        session.execute(insert, {"u": user, "t": tier, "s": "past_due", "p": user})
+    # Every live status collides with the live ``active`` row, not just ``past_due``.
+    for live in sorted(label for label in _model_live_labels()):
+        with pytest.raises(IntegrityError), migrated_sessionmaker.begin() as session:
+            session.execute(insert, {"u": user, "t": tier, "s": live, "p": user})
 
 
 def test_a_credit_pack_payment_must_name_its_pack(
