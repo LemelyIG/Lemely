@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import time
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -297,21 +299,6 @@ def test_pay_with_token_sends_the_mit_body_with_no_auth_header() -> None:
     assert "authorization" not in rec.requests[-1].headers
 
 
-def test_an_empty_success_body_is_an_empty_dict() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/api/auth/tokens":
-            return httpx.Response(200, json=AUTH_TOKEN_RESPONSE)
-        return httpx.Response(200, content=b"")
-
-    assert _client_with_handler(handler).cancel_subscription(1264) == {}
-
-
-def test_a_non_object_success_body_is_a_paymob_error() -> None:
-    client, _ = _client({("GET", "/api/acceptance/subscriptions/1"): (200, [1, 2])})
-    with pytest.raises(PaymobError, match="non-object"):
-        client.get_subscription(1)
-
-
 def test_an_auth_response_without_a_token_is_a_paymob_error() -> None:
     client, rec = _client(
         {("GET", "/api/acceptance/subscriptions/1"): (200, SUBSCRIPTION_RESPONSE)}
@@ -490,6 +477,28 @@ FAILURES: dict[str, Callable[[httpx.Request], httpx.Response]] = {
     "http_502": lambda r: httpx.Response(502, content=b"bad gateway"),
     "http_503": lambda r: httpx.Response(503, json={"detail": "later"}),
     "http_401": lambda r: httpx.Response(401, json={"detail": "incorrect credentials"}),
+    "read_error": lambda r: (_ for _ in ()).throw(httpx.ReadError("reset", request=r)),
+    "write_error": lambda r: (_ for _ in ()).throw(httpx.WriteError("reset", request=r)),
+    "protocol_error": lambda r: (_ for _ in ()).throw(httpx.RemoteProtocolError("bad", request=r)),
+    "http_302": lambda r: httpx.Response(302, headers={"location": "https://elsewhere.example/"}),
+    "http_200_html": lambda r: httpx.Response(
+        200, content=b"<html>Down for maintenance</html>", headers={"content-type": "text/html"}
+    ),
+    "http_200_empty": lambda r: httpx.Response(200, content=b""),
+    "http_200_array": lambda r: httpx.Response(200, json=[1, 2]),
+}
+
+#: Failures where Paymob gave no usable answer, so the call may have been applied.
+UNKNOWN_OUTCOME = {
+    "read_timeout",
+    "connect_timeout",
+    "connect_error",
+    "read_error",
+    "write_error",
+    "protocol_error",
+    "http_200_html",
+    "http_200_empty",
+    "http_200_array",
 }
 
 
@@ -512,9 +521,13 @@ def test_a_failed_charge_class_call_is_sent_exactly_once(
         call(_client_with_handler(handler))
     assert seen == [(method, path)], f"{label} was sent {len(seen)} times after {failure}"
     assert caught.value.timeout is failure.endswith("timeout")
+    assert caught.value.outcome_unknown is (failure in UNKNOWN_OUTCOME)
+    assert (caught.value.status_code is None) is (failure in UNKNOWN_OUTCOME)
 
 
-@pytest.mark.parametrize("failure", ["read_timeout", "connect_error", "http_500", "http_503"])
+@pytest.mark.parametrize(
+    "failure", ["read_timeout", "connect_error", "http_500", "http_503", "http_200_html"]
+)
 def test_an_idempotent_get_is_not_retried_on_a_timeout_or_server_error(failure: str) -> None:
     seen: list[str] = []
 
@@ -624,3 +637,162 @@ def test_header_shaped_text_is_redacted_even_for_a_credential_the_client_does_no
         _client_with_handler(handler).create_intention({"amount": 1})
     assert "someOtherLongToken123" not in caught.value.body["message"]
     assert "abcdefgh12345" not in caught.value.body["message"]
+
+
+# -- error contract: status_code None  =>  outcome unknown ---------------------
+
+CHARGE_CLASS: list[tuple[str, Callable[[PaymobClient], Any]]] = [
+    ("create_intention", lambda c: c.create_intention({"amount": 1})),
+    ("refund", lambda c: c.refund(transaction_id=1, amount_cents=100)),
+    ("void", lambda c: c.void(transaction_id=1)),
+    ("pay_with_token", lambda c: c.pay_with_token(card_token="t", payment_token="p")),
+]
+
+
+@pytest.mark.parametrize(("label", "call"), CHARGE_CLASS, ids=[c[0] for c in CHARGE_CLASS])
+@pytest.mark.parametrize("failure", ["http_200_html", "http_200_empty", "http_200_array"])
+def test_an_unreadable_2xx_on_a_charge_class_call_is_unknown_not_a_decline(
+    label: str, call: Callable[[PaymobClient], Any], failure: str
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/auth/tokens":
+            return httpx.Response(200, json=AUTH_TOKEN_RESPONSE)
+        return FAILURES[failure](request)
+
+    with pytest.raises(PaymobError) as caught:
+        call(_client_with_handler(handler))
+    error = caught.value
+    assert error.status_code is None
+    assert error.outcome_unknown is True
+    assert error.timeout is False
+    assert error.body == {}
+
+
+def test_an_empty_2xx_is_not_turned_into_an_empty_dict_on_any_call() -> None:
+    client = _client_with_handler(lambda r: FAILURES["http_200_empty"](r))
+    for call in (
+        lambda: client.cancel_subscription(1),
+        lambda: client.update_subscription(1, amount_cents=5),
+        lambda: client.get_subscription(1),
+    ):
+        with pytest.raises(PaymobError) as caught:
+            call()
+        assert caught.value.outcome_unknown is True
+
+
+def test_an_empty_json_object_2xx_is_a_valid_answer() -> None:
+    client, _ = _client({("POST", "/api/acceptance/subscriptions/1/cancel"): (200, {})})
+    assert client.cancel_subscription(1) == {}
+
+
+def test_a_received_error_status_is_a_known_outcome() -> None:
+    client, _ = _client(
+        {("POST", "/api/acceptance/void_refund/void"): (400, {"message": "settled"})}
+    )
+    with pytest.raises(PaymobError) as caught:
+        client.void(transaction_id=1)
+    assert caught.value.status_code == 400
+    assert caught.value.outcome_unknown is False
+
+
+def test_not_configured_means_nothing_was_sent() -> None:
+    client, rec = _client({}, settings=PaymobSettings())
+    with pytest.raises(PaymobNotConfigured) as caught:
+        client.create_intention({"amount": 1})
+    assert caught.value.outcome_unknown is False
+    assert caught.value.status_code is None
+    assert rec.requests == []
+
+
+# -- the token lock, token scrubbing and key scrubbing -------------------------
+
+
+def test_two_threads_racing_for_a_token_mint_it_once() -> None:
+    mints: list[int] = []
+    barrier = threading.Barrier(2)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/auth/tokens":
+            mints.append(1)
+            time.sleep(0.15)  # hold the mint open so the second thread arrives mid-flight
+            return httpx.Response(200, json=AUTH_TOKEN_RESPONSE)
+        return httpx.Response(200, json=SUBSCRIPTION_RESPONSE)
+
+    client = _client_with_handler(handler)
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            barrier.wait(timeout=5)
+            client.get_subscription(1264)
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+    assert errors == []
+    assert len(mints) == 1
+
+
+def test_a_401_echoing_the_rejected_token_does_not_leak_it() -> None:
+    def make() -> tuple[PaymobClient, list[str]]:
+        minted = iter(["tok_rejected_one", "tok_rejected_two"])
+        issued: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/api/auth/tokens":
+                token = next(minted)
+                issued.append(token)
+                return httpx.Response(200, json={"token": token})
+            # The bare token, so only value-based scrubbing (not the header-shape regex) catches it.
+            bare = request.headers["authorization"].removeprefix("Bearer ")
+            return httpx.Response(401, json={"detail": f"rejected:{bare}"})
+
+        return _client_with_handler(handler), issued
+
+    client, issued = make()
+    with pytest.raises(PaymobError) as caught:
+        client.get_subscription(1)
+    assert issued == ["tok_rejected_one", "tok_rejected_two"]
+    text = str(caught.value) + repr(caught.value) + json.dumps(caught.value.body)
+    assert not any(token in text for token in issued)
+    assert caught.value.body["detail"] == "rejected:[redacted]"
+
+    client, issued = make()
+    with pytest.raises(PaymobError) as caught:
+        client.cancel_subscription(1)
+    text = str(caught.value) + repr(caught.value) + json.dumps(caught.value.body)
+    assert not any(token in text for token in issued)
+
+
+def test_a_credential_in_an_error_body_key_is_scrubbed_too() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={f"echo_{SECRET_KEY}": {f"inner_{SECRET_KEY}": "x"}})
+
+    with pytest.raises(PaymobError) as caught:
+        _client_with_handler(handler).create_intention({"amount": 1})
+    assert SECRET_KEY not in json.dumps(caught.value.body)
+    assert caught.value.body
+
+
+def test_forgetting_a_rejected_token_leaves_a_newer_cached_token_alone() -> None:
+    holder: dict[str, PaymobClient] = {}
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/auth/tokens":
+            return httpx.Response(200, json={"token": "tok_stale"})
+        seen.append(request.headers["authorization"])
+        if len(seen) == 1:
+            # Another thread refreshed the cache while our request was in flight.
+            holder["c"]._token = "tok_fresh"
+            return httpx.Response(401, json={"detail": "expired"})
+        return httpx.Response(200, json=SUBSCRIPTION_RESPONSE)
+
+    client = _client_with_handler(handler)
+    holder["c"] = client
+    assert client.get_subscription(1264)["id"] == 1264
+    assert seen == ["Bearer tok_stale", "Bearer tok_fresh"]

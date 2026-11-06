@@ -10,9 +10,22 @@ the one Paymob documents for it:
 * ``Authorization: Token <secret key>``: create intention, refund, void.
 * ``Authorization: Bearer <auth token>``: inquiry, subscription plans and
   subscriptions. The token comes from ``POST api/auth/tokens`` with the API key,
-  lives one hour, and is cached here for 50 minutes.
+  lives one hour, and is cached here for 50 minutes. The cache lock is held while
+  the mint request is in flight, so concurrent callers share one mint rather than
+  each minting (a slow mint delays them by up to ``timeout_seconds``).
 * None: ``POST api/acceptance/payments/pay`` (the payment token in the body
   authorises it).
+
+**Error contract.** ``status_code`` is ``None`` when no usable answer came back:
+a timeout, any transport failure (connect, read, write, protocol), or a 2xx whose
+body is empty or not a JSON object (a proxy or maintenance page). Then
+``outcome_unknown`` is ``True``: the request may have been applied, so the
+caller must inquire and must never read the failure as a decline. ``timeout`` is
+the narrower flag for a deadline that expired. The exceptions are
+``PaymobNotConfigured`` (nothing was sent) and a received non-2xx status, which
+carries ``status_code`` (a 5xx on a charge-class call is still ambiguous: treat
+it as unknown too). An empty 2xx is never turned into ``{}``: no Paymob
+endpoint documents one, and ``{}`` would read as a definite failure.
 
 **Never retried.** Paymob has no idempotency keys (research 02 §8), so a charge,
 refund, void or pay call that is sent once is never sent again by this module. A
@@ -60,10 +73,14 @@ _Auth = Literal["secret", "bearer", "none"]
 
 
 class PaymobError(ExternalServiceError):
-    """A Paymob call failed: transport error, timeout or error status.
+    """A Paymob call failed: transport error, timeout, bad body or error status.
 
-    ``timeout`` is ``True`` only when the request may have reached Paymob and no
-    answer came back: the caller must inquire before any retry.
+    ``status_code is None`` means no usable answer came back, and then
+    ``outcome_unknown`` is ``True`` (unless the call was never sent, see
+    :class:`PaymobNotConfigured`): the caller must inquire before any retry and
+    must not treat the failure as a decline. ``timeout`` is ``True`` only when a
+    deadline expired. A received error status sets ``status_code`` and leaves
+    ``outcome_unknown`` ``False``.
     """
 
     def __init__(
@@ -73,15 +90,23 @@ class PaymobError(ExternalServiceError):
         status_code: int | None = None,
         timeout: bool = False,
         body: Mapping[str, object] | None = None,
+        outcome_unknown: bool | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.timeout = timeout
         self.body: JsonObject = dict(body or {})
+        self.outcome_unknown = status_code is None if outcome_unknown is None else outcome_unknown
 
 
 class PaymobNotConfigured(PaymobError):
-    """A credential this call needs is not set (see ``PaymobSettings``)."""
+    """A credential this call needs is not set (see ``PaymobSettings``).
+
+    Raised before anything is sent, so the outcome is known: nothing happened.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, outcome_unknown=False)
 
 
 def _scrub(value: object, secrets: tuple[str, ...]) -> object:
@@ -233,21 +258,26 @@ class PaymobClient:
                     self._forget_token(token)
         if allow_404 and response.status_code == 404:
             return None
-        body: object
+        parsed: object
         try:
-            body = response.json() if response.content else {}
+            parsed = response.json() if response.content else None
         except ValueError:
-            body = {}
-        if response.status_code >= 400:
-            scrubbed = _scrub(body, self._secrets(*tried, *sensitive))
+            parsed = None
+        if not 200 <= response.status_code < 300:
+            scrubbed = _scrub(parsed, self._secrets(*tried, *sensitive))
             raise PaymobError(
                 f"Paymob {method} {path} returned {response.status_code}",
                 status_code=response.status_code,
                 body=scrubbed if isinstance(scrubbed, dict) else None,
             )
-        if not isinstance(body, dict):
-            raise PaymobError(f"Paymob {method} {path} returned a non-object body")
-        return body
+        if not isinstance(parsed, dict):
+            # A 2xx we cannot read (empty, HTML, a JSON array): the call may well
+            # have been applied, so this is "unknown", never a definite failure.
+            raise PaymobError(
+                f"Paymob {method} {path} returned {response.status_code} with no JSON object body",
+                outcome_unknown=True,
+            )
+        return parsed
 
     def _request(
         self,
@@ -307,6 +337,11 @@ class PaymobClient:
         )
 
     def void(self, *, transaction_id: int) -> JsonObject:
+        """``POST api/acceptance/void_refund/void``: cancel a card transaction.
+
+        Card only, and only before settlement (the same business day); after that
+        Paymob answers an error status and the caller must use :meth:`refund`.
+        """
         return self._request(
             "POST",
             "api/acceptance/void_refund/void",
