@@ -563,3 +563,37 @@ def test_checkout_items_must_add_up_to_the_payment_amount_before_anything_is_com
     assert client.intentions == []
     with sm() as session:
         assert session.scalars(sa.select(Payment)).all() == []
+
+
+@pytest.mark.parametrize("quantity", [2, 0, "1"])
+def test_checkout_items_with_a_quantity_other_than_one_are_refused(
+    migrated_sessionmaker: sessionmaker[Session], quantity: object
+) -> None:
+    sm = migrated_sessionmaker
+    payer = seed_user(sm)
+    pack = seed_pack(sm)
+    payment_id = uuid.uuid4()
+    client = FakePaymobClient()
+    with sm() as session:
+        payment = Payment(
+            id=payment_id,
+            payer_user_id=payer,
+            beneficiary_user_id=payer,
+            purpose=PaymentPurpose.credit_pack,
+            credit_pack_id=pack,
+            grant_units=100,
+            amount_minor=10000,
+            currency="EGP",
+            status=PaymentStatus.created,
+            special_reference=str(payment_id),
+        )
+        with pytest.raises(ValueError, match="quantity"):
+            _service(session, client).create_intention_checkout(
+                payment=payment,
+                items=[{"name": "a", "amount": 10000, "quantity": quantity}],
+                billing_data={},
+                subscription_plan_id=None,
+            )
+    assert client.intentions == []
+    with sm() as session:
+        assert session.scalars(sa.select(Payment)).all() == []

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import threading
+import time
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -29,6 +32,7 @@ from tests.paymob_fixtures import (
 
 if TYPE_CHECKING:
     import uuid
+    from datetime import datetime
     from typing import Any
 
     from sqlalchemy.orm import Session, sessionmaker
@@ -531,3 +535,193 @@ def test_a_malformed_card_key_fails_the_token_callback_loudly(
     with pytest.raises(TokenCipherError):
         _apply_token(sm, token_obj(), settings=bad)
     assert _cards(sm) == []
+
+
+# -- review fixes: single-layer exactly-once, lifecycle, ordering, races -----------
+
+
+def _apply_at(sm: sessionmaker[Session], obj: dict[str, Any], now: datetime) -> None:
+    with sm.begin() as session:
+        BillingService(
+            session, FakePaymobClient(), PAYMOB_SETTINGS, now=lambda: now
+        ).apply_transaction_callback(obj)
+
+
+def test_a_replayed_success_is_stopped_by_the_paid_status_even_if_dedupe_fails(
+    migrated_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    obj = transaction_obj(merchant_order_id=str(pid))
+    _apply(sm, obj)
+    monkeypatch.setattr(BillingService, "_record_event", lambda self, kind, key, payload: True)
+    _apply_at(sm, obj, FIXED_NOW + timedelta(days=1))
+    assert _payment(sm, pid).paid_at == FIXED_NOW
+    assert len(_grants(sm, pid)) == 1
+
+
+def test_a_second_successful_transaction_on_a_paid_payment_changes_nothing(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid)))
+    _apply_at(
+        sm, transaction_obj(merchant_order_id=str(pid), txn_id=777), FIXED_NOW + timedelta(days=1)
+    )
+    payment = _payment(sm, pid)
+    assert payment.paymob_txn_id == 192036465
+    assert payment.paid_at == FIXED_NOW
+    assert payment.status is PaymentStatus.paid
+    assert len(_grants(sm, pid)) == 1
+
+
+def test_a_pending_retry_after_a_decline_returns_to_pending_and_is_reconciled(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), txn_id=1, success=False))
+    assert _payment(sm, pid).status is PaymentStatus.failed
+    assert _payment(sm, pid).next_reconcile_at is None
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), txn_id=2, success=False, pending=True))
+    payment = _payment(sm, pid)
+    assert payment.status is PaymentStatus.pending
+    assert payment.next_reconcile_at == FIXED_NOW + timedelta(minutes=15)
+    assert _grants(sm, pid) == []
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), txn_id=2))
+    payment = _payment(sm, pid)
+    assert payment.status is PaymentStatus.paid
+    assert payment.next_reconcile_at is None
+    assert len(_grants(sm, pid)) == 1
+
+
+def _refund(pid: uuid.UUID, cents: int) -> dict[str, Any]:
+    return transaction_obj(
+        merchant_order_id=str(pid), is_refunded=True, refunded_amount_cents=cents
+    )
+
+
+def test_a_late_smaller_refund_total_never_downgrades_a_full_refund(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid)))
+    _apply(sm, _refund(pid, 10000))
+    _apply(sm, _refund(pid, 4000))  # arrives late
+    payment = _payment(sm, pid)
+    assert payment.status is PaymentStatus.refunded
+    assert payment.last_callback is not None
+    assert payment.last_callback["refunded_amount_cents"] == 10000
+
+
+def test_refund_progress_keeps_the_largest_total_seen(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid)))
+    _apply(sm, _refund(pid, 6000))
+    _apply(sm, _refund(pid, 4000))
+    payment = _payment(sm, pid)
+    assert payment.status is PaymentStatus.partially_refunded
+    assert payment.last_callback is not None
+    assert payment.last_callback["refunded_amount_cents"] == 6000
+    _apply(sm, _refund(pid, 10000))
+    assert _payment(sm, pid).status is PaymentStatus.refunded
+
+
+def test_every_token_looking_key_is_redacted_including_nested_lists(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _setup(sm)
+    obj = token_obj(token="tok-main")
+    obj["card_tokens"] = [{"token": "tok-in-list", "id": 9}]
+    obj["Saved_Token_Value"] = "tok-odd-key"
+    obj["extra"] = {"nested": {"cardToken": "tok-deep"}}
+    _apply_token(sm, obj)
+    (event,) = _events(sm)
+    text = str(event.payload)
+    for leaked in ("tok-main", "tok-in-list", "tok-odd-key", "tok-deep"):
+        assert leaked not in text
+    assert event.payload["card_tokens"] == "[redacted]"
+    assert event.payload["id"] == 15978654  # non-token fields survive
+
+
+def test_the_token_callback_never_commits_the_route_owns_the_transaction(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _setup(sm)
+    with sm() as session:
+        BillingService(session, FakePaymobClient(), PAYMOB_SETTINGS).apply_token_callback(
+            token_obj()
+        )
+        session.rollback()
+    assert _cards(sm) == []
+    assert _events(sm) == []
+
+
+def test_the_callback_locks_the_payment_before_inserting_its_event(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Lock order payment-then-event: a reconcile-style holder cannot deadlock a callback."""
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    obj = transaction_obj(merchant_order_id=str(pid))
+    errors: list[BaseException] = []
+
+    def callback() -> None:
+        try:
+            _apply(sm, obj)
+        except BaseException as exc:
+            errors.append(exc)
+
+    with sm() as holder:  # plays reconcile_pending: it holds the payment row lock first
+        holder.execute(sa.text("SET LOCAL lock_timeout = '5s'"))
+        locked = holder.scalars(sa.select(Payment).where(Payment.id == pid).with_for_update()).one()
+        worker = threading.Thread(target=callback)
+        worker.start()
+        time.sleep(1.0)  # the callback is now waiting on the payment lock
+        BillingService(
+            holder, FakePaymobClient(), PAYMOB_SETTINGS, now=lambda: FIXED_NOW
+        )._apply_transaction(obj, source="inquiry", payment=locked)
+        holder.commit()
+    worker.join(30)
+    assert not worker.is_alive()
+    assert errors == []
+    assert _payment(sm, pid).status is PaymentStatus.paid
+    assert len(_grants(sm, pid)) == 1
+    assert len(_events(sm)) == 1
+
+
+def test_two_concurrent_first_saves_of_the_same_card_do_not_fail(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _setup(sm)
+    errors: list[BaseException] = []
+
+    def second() -> None:
+        try:
+            _apply_token(
+                sm, token_obj(token_id=2, token="tok-race", masked_pan="xxxx-xxxx-xxxx-2222")
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    with sm.begin() as first:
+        BillingService(first, FakePaymobClient(), PAYMOB_SETTINGS).apply_token_callback(
+            token_obj(token_id=1, token="tok-race", masked_pan="xxxx-xxxx-xxxx-1111")
+        )
+        worker = threading.Thread(target=second)
+        worker.start()
+        time.sleep(1.0)  # the second callback is now waiting on the first's uncommitted card row
+    worker.join(30)
+    assert not worker.is_alive()
+    assert errors == []
+    (card,) = _cards(sm)
+    assert card.masked_pan == "xxxx-xxxx-xxxx-2222"
+    assert card.paymob_token_id == 2

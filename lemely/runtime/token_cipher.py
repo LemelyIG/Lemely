@@ -47,7 +47,8 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 _VERSION = "v1:"
 _NONCE_BYTES = 12
 _KEY_BYTES = 32
-# Bound into every ciphertext as GCM AAD: purpose label plus the format version.
+# Label half of every ciphertext's GCM AAD (purpose + format version); the owner's
+# user id is appended per call (``_aad``), so the full AAD is ``_AAD + b":" + user_id``.
 _AAD = b"lemely.card-token.v1"
 _ENCRYPTION_INFO = b"lemely.card-token.encryption.v1"
 _FINGERPRINT_INFO = b"lemely.card-token.fingerprint.v1"

@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any, Final
 from urllib.parse import urlencode
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from lemely.db.models import ParentChildLink, User
@@ -64,11 +64,14 @@ RECONCILE_AFTER: Final = timedelta(minutes=15)
 WEBHOOK_PATH: Final = "/api/webhooks/paymob/transaction"
 RETURN_PATH: Final = "/billing/return"
 
-_OPEN: Final = (PaymentStatus.created, PaymentStatus.pending)
 _SETTLED: Final = (PaymentStatus.paid, PaymentStatus.partially_refunded, PaymentStatus.refunded)
 _REDACTED: Final = "[redacted]"
-# Keys whose value is a raw card token wherever they appear in a stored payload.
-_TOKEN_KEYS: Final = frozenset({"token", "card_token", "saved_card_token"})
+# Refund progress only moves forward: an out-of-order callback never downgrades it.
+_REFUND_RANK: Final = {
+    PaymentStatus.paid: 0,
+    PaymentStatus.partially_refunded: 1,
+    PaymentStatus.refunded: 2,
+}
 
 #: A decoded Paymob JSON object (callback ``obj``, intention item or billing data).
 JsonMap = Mapping[str, Any]  # type: ignore[explicit-any]
@@ -218,10 +221,15 @@ def transaction_dedupe_key(obj: JsonMap) -> str:
     )
 
 
+def _is_token_key(key: object) -> bool:
+    """Any key that may carry a card token: ``token``, ``card_token``, ``card_tokens``, ..."""
+    return isinstance(key, str) and "token" in key.lower()
+
+
 def _redact_value(value: object) -> object:
     if isinstance(value, Mapping):
         return {
-            key: _REDACTED if key in _TOKEN_KEYS and item is not None else _redact_value(item)
+            key: _REDACTED if _is_token_key(key) and item is not None else _redact_value(item)
             for key, item in value.items()
         }
     if isinstance(value, (list, tuple)):
@@ -237,7 +245,7 @@ def _redact_tokens(obj: JsonMap) -> dict[str, object]:
     the card, so it never reaches them, whichever callback it arrives in.
     """
     return {
-        key: _REDACTED if key in _TOKEN_KEYS and item is not None else _redact_value(item)
+        key: _REDACTED if _is_token_key(key) and item is not None else _redact_value(item)
         for key, item in obj.items()
     }
 
@@ -460,6 +468,11 @@ class BillingService:
         """
         if not self._settings.checkout_configured:
             raise CheckoutUnavailable("Paymob checkout is not configured")
+        for item in items:
+            if "quantity" in item and item["quantity"] != 1:
+                # Whether Paymob's item ``amount`` is per unit or a line total is unconfirmed;
+                # fail closed rather than send a total it may reject or misprice.
+                raise ValueError("checkout items must have quantity 1")
         item_total = sum(_as_int(item.get("amount")) or 0 for item in items)
         if item_total != payment.amount_minor:
             # Paymob rejects a mismatch, and a mismatched row would sit open until reconciled.
@@ -588,13 +601,17 @@ class BillingService:
         if txn_id is None:
             raise MalformedCallback("transaction callback has no integer id")
         safe = _redact_tokens(obj)
+        order = obj.get("order")
+        order_map: JsonMap = order if isinstance(order, Mapping) else {}
+        # Lock order: the payment row first (FOR UPDATE), then the ``paymob_events`` insert.
+        # ``reconcile_pending`` (Task 8) locks the payment before it calls this method, so
+        # taking the event's unique-key row first here would deadlock against it. Every
+        # path that touches both must follow payment-then-event.
+        if payment is None:
+            payment = self._payment_for_reference(order_map.get("merchant_order_id"))
         if not self._record_event(PaymobEventKind.transaction, transaction_dedupe_key(obj), safe):
             log.info("paymob_duplicate_transaction", txn_id=txn_id, source=source)
             return
-        order = obj.get("order")
-        order_map: JsonMap = order if isinstance(order, Mapping) else {}
-        if payment is None:
-            payment = self._payment_for_reference(order_map.get("merchant_order_id"))
         if payment is None:
             log.warning(
                 "paymob_unknown_reference",
@@ -672,11 +689,13 @@ class BillingService:
                 txn_id=txn_id,
                 source=source,
             )
-        elif obj.get("pending") is True and payment.status in _OPEN:
-            payment.status = PaymentStatus.pending
         elif obj.get("pending") is True:
-            # A failed payment is not reopened by a pending callback.
-            log.info("paymob_pending_after_failure", payment_id=str(payment.id), txn_id=txn_id)
+            if payment.status is PaymentStatus.failed:
+                # A retry in the same checkout is in flight after a decline: its success
+                # callback may be lost, so put the payment back on the reconcile schedule.
+                payment.next_reconcile_at = self._now() + RECONCILE_AFTER
+                log.info("paymob_pending_after_failure", payment_id=str(payment.id), txn_id=txn_id)
+            payment.status = PaymentStatus.pending
         else:
             payment.status = PaymentStatus.failed
             payment.next_reconcile_at = None
@@ -695,16 +714,21 @@ class BillingService:
                 txn_id=txn_id,
             )
             return
-        payment.last_callback = dict(safe)
         if _is_true(obj.get("is_voided")):
+            payment.last_callback = dict(safe)
             payment.status = PaymentStatus.voided
         elif _is_true(obj.get("is_refunded")):
             refunded = _as_int(obj.get("refunded_amount_cents")) or 0
-            payment.status = (
+            seen = _as_int((payment.last_callback or {}).get("refunded_amount_cents")) or 0
+            reached = (
                 PaymentStatus.refunded
                 if refunded >= payment.amount_minor
                 else PaymentStatus.partially_refunded
             )
+            if refunded >= seen:
+                payment.last_callback = dict(safe)  # keeps the largest total seen
+            if _REFUND_RANK[reached] > _REFUND_RANK[payment.status]:
+                payment.status = reached
         else:
             return
         log.warning(
@@ -749,27 +773,29 @@ class BillingService:
         masked_pan = str(obj.get("masked_pan") or "")
         subtype = obj.get("card_subtype")
         brand = subtype if isinstance(subtype, str) else None
-        card = self._session.scalars(
-            select(SavedCard).where(
-                SavedCard.user_id == owner, SavedCard.token_fingerprint == fingerprint
+        # One atomic upsert on (user_id, token_fingerprint): two callbacks for the same
+        # card racing on its first save cannot both insert, and neither 500s.
+        stmt = pg_insert(SavedCard).values(
+            user_id=owner,
+            token=cipher.encrypt(token, owner),
+            token_fingerprint=fingerprint,
+            masked_pan=masked_pan,
+            brand=brand,
+            paymob_token_id=token_id,
+            is_active=True,
+        )
+        self._session.execute(
+            stmt.on_conflict_do_update(
+                index_elements=[SavedCard.user_id, SavedCard.token_fingerprint],
+                set_={
+                    "masked_pan": stmt.excluded.masked_pan,
+                    "brand": stmt.excluded.brand,
+                    "paymob_token_id": stmt.excluded.paymob_token_id,
+                    "is_active": True,
+                    "updated_at": func.now(),
+                },
             )
-        ).one_or_none()
-        if card is None:
-            self._session.add(
-                SavedCard(
-                    user_id=owner,
-                    token=cipher.encrypt(token, owner),
-                    token_fingerprint=fingerprint,
-                    masked_pan=masked_pan,
-                    brand=brand,
-                    paymob_token_id=token_id,
-                )
-            )
-        else:
-            card.masked_pan = masked_pan
-            card.brand = brand
-            card.paymob_token_id = token_id
-            card.is_active = True
+        )
         log.info("paymob_card_saved", payment_id=str(payment.id), user_id=str(owner))
 
     def card_token(self, card: SavedCard) -> str:
