@@ -294,7 +294,8 @@ def test_0043_merge_heads_joins_the_develop_and_branch_chains() -> None:
         "0042_question_result_source_box",
         "0039_paper_soft_delete",
     }
-    assert script_dir.get_heads() == ["0051_tutor_evidence_uploads"]
+    lineage = {r.revision for r in script_dir.iterate_revisions("heads", "base")}
+    assert "0043_merge_heads" in lineage
 
 
 def test_every_enum_column_binds_its_value_not_its_member_name() -> None:

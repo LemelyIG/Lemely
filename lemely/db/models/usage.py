@@ -153,7 +153,19 @@ class UsageGrant(TimestampMixin, Base):
             "NOT (visible AND kind IN ('period_allowance', 'seat_allowance'))",
             name="allowance_hidden",
         ),
-        sa.Index("ix_usage_grants_owner_spend", "owner_user_id", "priority", "effective_at"),
+        sa.CheckConstraint(
+            "kind NOT IN ('credit_pack', 'auto_topup') OR visible", name="credit_visible"
+        ),
+        # The spend order of spec §5.6: priority, soonest expiry first with no-expiry last,
+        # then oldest, then id as the tie-break.
+        sa.Index(
+            "ix_usage_grants_owner_spend",
+            "owner_user_id",
+            "priority",
+            sa.text("expires_at ASC NULLS LAST"),
+            "effective_at",
+            "id",
+        ),
         sa.Index(
             "ix_usage_grants_expiring",
             "expires_at",
@@ -267,6 +279,7 @@ class UsageDebt(TimestampMixin, Base):
         sa.CheckConstraint(
             "0 <= outstanding AND outstanding <= units", name="outstanding_within_units"
         ),
+        sa.Index("ix_usage_debts_job", "job_id"),
         sa.Index(
             "ix_usage_debts_owner_outstanding",
             "owner_user_id",
@@ -309,6 +322,7 @@ class UsageEntry(Base):
         ),
         sa.Index("ix_usage_entries_grant", "grant_id"),
         sa.Index("ix_usage_entries_job", "job_id"),
+        sa.Index("ix_usage_entries_debt", "debt_id"),
         sa.Index(
             "ix_usage_entries_cap",
             "teacher_member_id",
