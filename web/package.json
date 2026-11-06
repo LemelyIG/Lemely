@@ -65,6 +65,8 @@
     "axe-core": "^4.12.1",
     "lighthouse": "^13.4.1",
     "oxlint": "^1.71.0",
+    "pixelmatch": "^7.2.0",
+    "pngjs": "^7.0.0",
     "puppeteer": "^25.5.0",
     "sharp": "^0.35.3",
     "tailwindcss": "^4.3.3",

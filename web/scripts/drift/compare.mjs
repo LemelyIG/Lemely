@@ -1,0 +1,80 @@
+/*
+ * Pixel comparison for the drift gate (home-drift.mjs).
+ *
+ * A "differing pixel" is what pixelmatch reports at threshold 0.1 (its YIQ
+ * colour-distance default), with anti-aliased pixels excluded (its default).
+ * That is the gate's definition of a pixel that differs; the spec's "0
+ * differing pixels" means 0 under this definition.
+ *
+ * Two captures of different sizes are padded to the larger size with opaque
+ * magenta, so every row or column one side lacks counts as differing.
+ */
+import fs from "node:fs"
+import path from "node:path"
+import { fileURLToPath } from "node:url"
+import { PNG } from "pngjs"
+import pixelmatch from "pixelmatch"
+
+export const MAX_PCT = 15
+const HERE = path.dirname(fileURLToPath(import.meta.url))
+const JUSTIFICATIONS_PATH = path.join(HERE, "justifications.json")
+
+function padTo(png, width, height) {
+  if (png.width === width && png.height === height) return png
+  const out = new PNG({ width, height })
+  for (let i = 0; i < out.data.length; i += 4) {
+    out.data[i] = 255
+    out.data[i + 1] = 0
+    out.data[i + 2] = 255
+    out.data[i + 3] = 255
+  }
+  PNG.bitblt(png, out, 0, 0, png.width, png.height, 0, 0)
+  return out
+}
+
+/** Diff two PNG buffers, write the diff image, return the counts. */
+export function diffPngs(aBuffer, bBuffer, diffPath) {
+  const a = PNG.sync.read(aBuffer)
+  const b = PNG.sync.read(bBuffer)
+  const width = Math.max(a.width, b.width)
+  const height = Math.max(a.height, b.height)
+  const pa = padTo(a, width, height)
+  const pb = padTo(b, width, height)
+  const out = new PNG({ width, height })
+  const diff = pixelmatch(pa.data, pb.data, out.data, width, height, { threshold: 0.1 })
+  fs.mkdirSync(path.dirname(diffPath), { recursive: true })
+  fs.writeFileSync(diffPath, PNG.sync.write(out))
+  const total = width * height
+  return {
+    diff,
+    total,
+    pct: total === 0 ? 0 : (diff / total) * 100,
+    sizes: { a: [a.width, a.height], b: [b.width, b.height] },
+  }
+}
+
+/** Most specific justification for a scene key `${id}@${window}@${theme}`:
+ * exact key, then `${id}@${window}`, then `${id}@*@${theme}`, then `${id}`. */
+export function findJustification(key, table = readJustifications()) {
+  const [id, win, theme] = key.split("@")
+  for (const candidate of [key, `${id}@${win}`, `${id}@*@${theme}`, id]) {
+    if (table[candidate]) return { key: candidate, ...table[candidate] }
+  }
+  return null
+}
+
+export function readJustifications() {
+  return JSON.parse(fs.readFileSync(JUSTIFICATIONS_PATH, "utf8"))
+}
+
+/**
+ * "pass": 0 differing pixels.
+ * "pass-justified": differs, has a written justification, and (rule "gate") is at most 15%.
+ * "fail": anything else. A gate scene over 15% fails even when justified.
+ */
+export function verdict(result, justification, rule = "gate") {
+  if (result.diff === 0) return "pass"
+  const written = Boolean(justification && justification.justification && justification.justification.trim())
+  if (rule === "gate" && result.pct > MAX_PCT) return "fail"
+  return written ? "pass-justified" : "fail"
+}
