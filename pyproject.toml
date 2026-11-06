@@ -485,6 +485,21 @@ forbidden_modules = [
   "fastapi",
 ]
 
+[[tool.importlinter.contracts]]
+name = "Usage pricing stays pure (Paymob billing spec §3)"
+type = "forbidden"
+source_modules = [
+  "lemely.core.usage_types",
+  "lemely.core.usage_pricing",
+]
+forbidden_modules = [
+  "lemely.db",
+  "lemely.web",
+  "lemely.io",
+  "sqlalchemy",
+  "fastapi",
+]
+
 [tool.pyright]
 venvPath = '.'
 venv = '.venv'
