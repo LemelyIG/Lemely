@@ -2,7 +2,7 @@ import { useEffect, useRef, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Modal } from "@/components/ui/modal"
 import { formatBillingDate, formatMoney } from "@/lib/billingFormat"
-import { billingFailureMessage } from "@/lib/billingOutcome"
+import { billingErrorCode, billingFailureMessage } from "@/lib/billingOutcome"
 import type { PlanTier, SavedCardView, SubscriptionView } from "@/lib/billingTypes"
 import { useDowngrade, useUpgrade, useUpgradeQuote } from "@/lib/hooks/useBillingApi"
 import { PaymentProgress } from "./PaymentProgress"
@@ -72,7 +72,9 @@ export function PlanChangeDialog({
   const downgradeFailed = downgrade.isError && forTier(downgrade.variables, tier.id)
   const quoteFailed = quote.isError && forTier(quote.variables, tier.id)
   const failure = upgradeFailed ? upgrade.error : downgradeFailed ? downgrade.error : quoteFailed ? quote.error : null
-  const canConfirm = !done && (isUpgrade ? q !== undefined && hasCard : true)
+  // `downgrade_unavailable` says this plan cannot be scheduled right now, so offering the same button again would contradict it.
+  const unavailable = downgradeFailed && billingErrorCode(downgrade.error) === "downgrade_unavailable"
+  const canConfirm = !done && !unavailable && (isUpgrade ? q !== undefined && hasCard : true)
   const busy = upgrade.isPending || downgrade.isPending
   const end = subscription.currentPeriodEnd ? formatBillingDate(subscription.currentPeriodEnd) : "the end of this period"
 

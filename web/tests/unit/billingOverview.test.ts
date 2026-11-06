@@ -46,7 +46,7 @@ vi.mock("@/components/ui/modal", () => ({
       : null,
 }))
 
-import { BillingOverview } from "@/portals/billing/BillingOverview"
+import { BillingOverview, nextPinned } from "@/portals/billing/BillingOverview"
 import { CancelPlanDialog } from "@/portals/billing/CancelPlanDialog"
 import { PlanChangeDialog } from "@/portals/billing/PlanChangeDialog"
 
@@ -214,6 +214,32 @@ describe("BillingOverview", () => {
   })
 })
 
+describe("nextPinned", () => {
+  const plus = fx.activeSub
+  const upgraded = { ...fx.activeSub, tier: { ...fx.studentMonthly, id: "t-up" } }
+
+  it("opens for a tier that is not the current plan and closes with no tier", () => {
+    expect(nextPinned(null, "t-up", plus)).toEqual({ tierId: "t-up", subscription: plus })
+    expect(nextPinned(null, "t-s-m", plus)).toBeNull()
+    expect(nextPinned(null, null, plus)).toBeNull()
+    expect(nextPinned({ tierId: "t-up", subscription: plus }, null, plus)).toBeNull()
+  })
+
+  it("stays open, on the original subscription, after a paid upgrade makes the target current", () => {
+    const pinned = nextPinned(null, "t-up", plus)
+    const after = nextPinned(pinned, "t-up", upgraded)
+    expect(after).toBe(pinned)
+    expect(after?.subscription.tier.id).toBe("t-s-m")
+    // without the pin the same inputs would close the dialog
+    expect(nextPinned(null, "t-up", upgraded)).toBeNull()
+  })
+
+  it("switches to a different tier named in the URL", () => {
+    const pinned = nextPinned(null, "t-up", plus)
+    expect(nextPinned(pinned, "t-down", plus)?.tierId).toBe("t-down")
+  })
+})
+
 describe("PlanChangeDialog", () => {
   const up = { ...fx.studentMonthly, id: "t-up", name: "Student Max", priceMinor: 40000 }
   const down = { ...fx.studentMonthly, id: "t-down", name: "Student Lite", priceMinor: 10000 }
@@ -290,6 +316,13 @@ describe("PlanChangeDialog", () => {
     expect(html).not.toContain("Try again")
   })
 
+  it("removes the confirm button once the downgrade is unavailable, but keeps it for a seats conflict", () => {
+    s.downgrade = fakeMutation({ isError: true, error: new ApiError(409, "x", { error: "downgrade_unavailable", message: "x" }) })
+    expect(dialog(down)).not.toContain("Schedule the change")
+    s.downgrade = fakeMutation({ isError: true, error: new ApiError(409, "x", { error: "seats_insufficient", message: "x" }) })
+    expect(dialog(down)).toContain("Schedule the change")
+  })
+
   it("shows a seats conflict as an alert", () => {
     s.downgrade = fakeMutation({ isError: true, error: new ApiError(409, "x", { error: "seats_insufficient", message: "x" }) })
     const html = dialog(down)
@@ -318,6 +351,14 @@ describe("CancelPlanDialog", () => {
     s.cancel = fakeMutation({ isSuccess: true, data: { ...wireSub, cancelAtPeriodEnd: true } })
     const done = renderStatic(h(CancelPlanDialog, { open: true, onClose: () => undefined, subscription: pastDue, audience: "student" }))
     expect(done).toContain("Cancelled. Your plan ends on " + formatBillingDate("2026-11-08T00:00:00Z"))
+  })
+
+  it("cannot be dismissed while the cancel is in flight", () => {
+    const render = () =>
+      renderStatic(h(CancelPlanDialog, { open: true, onClose: () => undefined, subscription: fx.activeSub, audience: "student" }))
+    expect(render()).toContain('data-dismissible="true"')
+    s.cancel = fakeMutation({ isPending: true })
+    expect(render()).toContain('data-dismissible="false"')
   })
 
   it("keeps the result and failure live regions mounted", () => {

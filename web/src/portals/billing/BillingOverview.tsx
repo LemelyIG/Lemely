@@ -11,7 +11,7 @@ import { ErrorState } from "@/components/ui/state-views"
 import { ApiError } from "@/lib/api"
 import { formatBillingDate, formatMoney, intervalLabel, isLiveSubscription } from "@/lib/billingFormat"
 import { billingPaths, type BillingScope } from "@/lib/billingPaths"
-import type { Audience, BillingSummary, UsageMeterView } from "@/lib/billingTypes"
+import type { Audience, BillingSummary, PlanTier, SavedCardView, SubscriptionView, UsageMeterView } from "@/lib/billingTypes"
 import { useBillingSummary, useCatalogue } from "@/lib/hooks/useBillingApi"
 import { useUsageMeter } from "@/lib/hooks/useUsageApi"
 import { describeQueryFailure } from "@/lib/queryFailure"
@@ -110,6 +110,56 @@ function PlanCard({
   )
 }
 
+/** The plan change in progress: the target tier and the subscription as it was when it opened. */
+export interface PinnedChange {
+  tierId: string
+  subscription: SubscriptionView
+}
+
+/**
+ * Whether the plan-change dialog is open, decided from the `?change=` tier and the live plan.
+ * A paid upgrade refetches the summary, which makes the target tier the current one; the dialog
+ * must keep showing its result until the payer closes it, so an open change stays pinned (with
+ * the subscription it started from) for as long as the URL still names its tier. No tier in the
+ * URL closes it; a tier that is already the current plan never opens it. Returns `pinned`
+ * itself when nothing changes, so it can drive render-time state without looping.
+ */
+export function nextPinned(pinned: PinnedChange | null, changeTierId: string | null, current: SubscriptionView): PinnedChange | null {
+  if (changeTierId === null) return null
+  if (pinned !== null && pinned.tierId === changeTierId) return pinned
+  return changeTierId === current.tier.id ? null : { tierId: changeTierId, subscription: current }
+}
+
+function PlanChangeHost({
+  subscription,
+  tiers,
+  changeTierId,
+  savedCard,
+  onClose,
+}: {
+  subscription: SubscriptionView
+  tiers: PlanTier[]
+  changeTierId: string | null
+  savedCard: SavedCardView | null
+  onClose: () => void
+}) {
+  const [pinned, setPinned] = useState<PinnedChange | null>(null)
+  const known = tiers.find((t) => t.id === changeTierId)?.id ?? null
+  const active = nextPinned(pinned, known, subscription)
+  if (active !== pinned) setPinned(active)
+  const tier = active ? (tiers.find((t) => t.id === active.tierId) ?? null) : null
+  return (
+    <PlanChangeDialog
+      key={tier?.id ?? "none"}
+      open={active !== null}
+      onClose={onClose}
+      subscription={active?.subscription ?? subscription}
+      tier={tier}
+      savedCard={savedCard}
+    />
+  )
+}
+
 /*
  * Own seat meters come from `/usage/meter`, which serves the caller (M6), so the hook lives here
  * and mounts only for a signed-in student or teacher: a parent viewing a child never fetches
@@ -147,7 +197,6 @@ export function BillingOverview({
   const [params, setParams] = useSearchParams()
   const [cancelOpen, setCancelOpen] = useState(false)
   const changeTo = params.get("change")
-  const changeTier = catalogue.data?.tiers.find((t) => t.id === changeTo) ?? null
   const closeChange = () => {
     const next = new URLSearchParams(params)
     next.delete("change")
@@ -203,13 +252,12 @@ export function BillingOverview({
                 </nav>
                 {live && sub && s.canManage && !waiting ? (
                   <>
-                    <PlanChangeDialog
-                      key={changeTier?.id ?? "none"}
-                      open={changeTier !== null && changeTier.id !== sub.tier.id}
-                      onClose={closeChange}
+                    <PlanChangeHost
                       subscription={sub}
-                      tier={changeTier}
+                      tiers={catalogue.data?.tiers ?? []}
+                      changeTierId={changeTo}
                       savedCard={s.savedCard}
+                      onClose={closeChange}
                     />
                     <CancelPlanDialog open={cancelOpen} onClose={() => setCancelOpen(false)} subscription={sub} audience={audience} />
                   </>
