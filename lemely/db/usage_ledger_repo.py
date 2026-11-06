@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING
 
@@ -718,10 +718,13 @@ class UsageLedger:
         expired = 0
         for grant_id, _owner in candidates:
             # Re-read under the lock: another transaction may have spent, held or
-            # clawed back the grant between the candidate read and the lock.
+            # clawed back or re-dated the grant between the candidate read and the lock.
             balance = self._locked_balance(grant_id)
+            expires_at = self._session.scalar(
+                sa.select(UsageGrant.expires_at).where(UsageGrant.id == grant_id)
+            )
             amount = balance.remaining - balance.held
-            if amount <= 0:
+            if amount <= 0 or expires_at is None or expires_at > now:
                 continue
             count = self._entry_count(grant_id, UsageEntryKind.expire)
             self._entry(
@@ -739,9 +742,14 @@ class UsageLedger:
     def claw_back_grant(self, grant_id: uuid.UUID, *, reason: str, now: datetime) -> int:
         """Remove a refunded grant's unspent, unheld units; spent units stay spent (§6).
 
-        The grant is also closed (``expires_at = now``) so units a running job
-        still holds go to :meth:`expire_grants` when that job lets them go.
-        Returns the units clawed back; a second call returns 0.
+        The return value is the units refunded by this call. Units a running job
+        still holds are not counted: they stay on the grant until the job lets
+        them go, then :meth:`expire_grants` removes them as ``expire`` entries
+        (or a later call removes them as a ``refund`` entry, when none was
+        written yet). To make that safe the grant is always closed: ``expires_at``
+        becomes ``max(now, effective_at + 1 microsecond)`` unless it is already
+        earlier, so released units are never spendable again. A second call
+        after a refund entry exists returns 0.
         """
         grant = self._session.get(UsageGrant, grant_id)
         if grant is None:
@@ -751,8 +759,11 @@ class UsageLedger:
         if self._entry_count(grant_id, UsageEntryKind.refund):
             return 0
         amount = max(balance.remaining - balance.held, 0)
-        if now > grant.effective_at and (grant.expires_at is None or grant.expires_at > now):
-            grant.expires_at = now
+        # The CHECK needs expires_at > effective_at, so a grant that starts at or
+        # after ``now`` is closed one microsecond past its start.
+        close_at = max(now, grant.effective_at + timedelta(microseconds=1))
+        if grant.expires_at is None or grant.expires_at > close_at:
+            grant.expires_at = close_at
         if amount:
             self._entry(
                 kind=UsageEntryKind.refund,
@@ -786,6 +797,10 @@ class UsageLedger:
         if units == 0:
             raise ValueError("units must not be 0")
         if units > 0:
+            self._lock_owners([owner_user_id])
+            if (stored := self._recorded_debit(owner_user_id, idempotency_key)) is not None:
+                self._warn_adjust_replay(owner_user_id, idempotency_key, units, reason, *stored)
+                return
             self._issue(
                 owner_user_id=owner_user_id,
                 kind=GrantKind.adjustment,
@@ -801,7 +816,13 @@ class UsageLedger:
             )
             return
         self._lock_owners([owner_user_id])
-        if self._debit_recorded(owner_user_id, idempotency_key):
+        if (stored := self._recorded_debit(owner_user_id, idempotency_key)) is not None:
+            self._warn_adjust_replay(owner_user_id, idempotency_key, units, reason, *stored)
+            return
+        if (credit := self._credit_for_key(owner_user_id, idempotency_key)) is not None:
+            self._warn_adjust_replay(
+                owner_user_id, idempotency_key, units, reason, credit.units, None
+            )
             return
         own = [
             Payer(owner_user_id=owner_user_id, scope=GrantScope.ALLOWANCE),
@@ -837,10 +858,25 @@ class UsageLedger:
             )
         self._session.flush()
 
-    def _debit_recorded(self, owner_user_id: uuid.UUID, idempotency_key: str) -> bool:
-        """Whether a negative adjust under this key already wrote to a grant or a debt."""
+    def _credit_for_key(self, owner_user_id: uuid.UUID, idempotency_key: str) -> UsageGrant | None:
+        """The owner's grant issued under this key, if any (a positive adjust's record)."""
+        return self._session.scalars(
+            sa.select(UsageGrant).where(
+                UsageGrant.owner_user_id == owner_user_id,
+                UsageGrant.idempotency_key == idempotency_key,
+            )
+        ).one_or_none()
+
+    def _recorded_debit(
+        self, owner_user_id: uuid.UUID, idempotency_key: str
+    ) -> tuple[int, str | None] | None:
+        """``(signed units, reason)`` of a negative adjust already recorded under this key.
+
+        A negative adjust writes ``adjust`` entries on grants and/or a ``debt``
+        entry; the units are their sum (negative). ``None`` when there are none.
+        """
         on_grant = (
-            sa.select(UsageEntry.id)
+            sa.select(UsageEntry.units, UsageEntry.reason)
             .join(UsageGrant, UsageGrant.id == UsageEntry.grant_id)
             .where(
                 UsageGrant.owner_user_id == owner_user_id,
@@ -849,7 +885,7 @@ class UsageLedger:
             )
         )
         on_debt = (
-            sa.select(UsageEntry.id)
+            sa.select(UsageEntry.units, UsageEntry.reason)
             .join(UsageDebt, UsageDebt.id == UsageEntry.debt_id)
             .where(
                 UsageDebt.owner_user_id == owner_user_id,
@@ -857,9 +893,32 @@ class UsageLedger:
                 UsageEntry.idempotency_key == idempotency_key,
             )
         )
-        return bool(
-            self._session.scalar(sa.select(sa.exists(on_grant.union_all(on_debt).subquery())))
-        )
+        rows = self._session.execute(on_grant.union_all(on_debt)).all()
+        if not rows:
+            return None
+        return sum(int(u) for u, _ in rows), rows[0][1]
+
+    @staticmethod
+    def _warn_adjust_replay(
+        owner_user_id: uuid.UUID,
+        idempotency_key: str,
+        units: int,
+        reason: str,
+        stored_units: int,
+        stored_reason: str | None,
+    ) -> None:
+        """Log a replay that is not identical to the stored adjustment (the call is a no-op)."""
+        if stored_units != units or stored_reason != reason:
+            logger.warning(
+                "adjust replay under key %r for owner %s differs from the stored adjustment "
+                "(units %d vs %d, reason %r vs %r); ignoring it",
+                idempotency_key,
+                owner_user_id,
+                units,
+                stored_units,
+                reason,
+                stored_reason,
+            )
 
     def forgive_debt(
         self, owner_user_id: uuid.UUID, *, units: int | None, reason: str, now: datetime
