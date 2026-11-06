@@ -18,6 +18,8 @@ import {
   capChanged,
   monthEndInstant,
   monthEndLabel,
+  partialSaveMessage,
+  planSeatSave,
   removableExtraSeats,
   scopeBody,
   scopeChanged,
@@ -29,6 +31,7 @@ import {
   seatCountValidation,
   seatStatusText,
   teamFailureMessage,
+  teamRetry,
 } from "@/lib/teamModel"
 import { ApiError } from "@/lib/api"
 import { fx } from "./support/billingFixtures"
@@ -235,4 +238,62 @@ describe("teamFailureMessage", () => {
     expect(teamFailureMessage(err(422, "invalid_cap"), "x")).toContain("zero or more")
     expect(teamFailureMessage(err(422), "save the seat")).toBe("Couldn't save the seat. Check the details and try again.")
   })
+})
+
+describe("teamRetry", () => {
+  it("never retries a refusal or bad request, retries a server or network failure once", () => {
+    for (const status of [400, 401, 403, 404, 409, 422, 429]) expect(teamRetry(0, new ApiError(status, "x")), String(status)).toBe(false)
+    for (const status of [0, 500, 502, 503]) {
+      expect(teamRetry(0, new ApiError(status, "x")), String(status)).toBe(true)
+      expect(teamRetry(1, new ApiError(status, "x")), `${status} again`).toBe(false)
+    }
+    expect(teamRetry(0, new Error("boom"))).toBe(true)
+    expect(teamRetry(1, new Error("boom"))).toBe(false)
+  })
+})
+
+describe("planSeatSave", () => {
+  const noCap = { capUnits: null, capPeriod: "month" as const }
+  const same = { subjects: ["0580"], actions: ["mark_paper", "self_review"] }
+  const plan = (over: Partial<Parameters<typeof planSeatSave>[0]["draft"]> = {}, savedScope = null as Parameters<typeof planSeatSave>[0]["savedScope"]) =>
+    planSeatSave({ seat: fx.seat, draft: { ...same, cap: noCap, ...over }, savedScope })
+
+  it("sends nothing when nothing changed", () => {
+    expect(plan()).toEqual({ sendScope: null, sendCap: null })
+  })
+
+  it("sends only what changed", () => {
+    expect(plan({ actions: ["mark_paper", "self_review", "study_plan"] })).toEqual({
+      sendScope: { subjects: ["0580"], actions: ["mark_paper", "self_review", "study_plan"] },
+      sendCap: null,
+    })
+    expect(plan({ cap: { capUnits: 0, capPeriod: "month" } })).toEqual({ sendScope: null, sendCap: { capUnits: 0, capPeriod: "month" } })
+  })
+
+  it("does not resend a scope it already saved, but does resend after it is reverted", () => {
+    const saved = { subjects: ["0580"], actions: ["mark_paper", "self_review", "study_plan"] }
+    const cap = { capUnits: 500, capPeriod: "month" as const }
+    const draft = { ...saved, cap }
+    expect(planSeatSave({ seat: fx.seat, draft, savedScope: saved })).toEqual({ sendScope: null, sendCap: cap })
+    // Reverted to what the seat started with: the server now holds `saved`, so the original must go out again.
+    expect(plan({ cap }, saved)).toEqual({ sendScope: { subjects: ["0580"], actions: ["mark_paper", "self_review"] }, sendCap: cap })
+  })
+
+  it("drops actions a seat cannot pay for before comparing", () => {
+    expect(plan({ actions: ["mark_paper", "self_review", "regrade"] })).toEqual({ sendScope: null, sendCap: null })
+  })
+})
+
+describe("partialSaveMessage", () => {
+  it("says the scope was saved when the cap then failed", () => {
+    const msg = partialSaveMessage(same, new ApiError(422, "x", { code: "invalid_cap", message: "x" }))
+    expect(msg).toBe("Your subjects and actions were saved, but the credit limit wasn't. The credit limit must be a whole number, zero or more.")
+  })
+
+  it("is null when nothing was saved first or nothing failed", () => {
+    expect(partialSaveMessage(null, new ApiError(500, "x"))).toBeNull()
+    expect(partialSaveMessage(same, null)).toBeNull()
+  })
+
+  const same = { subjects: ["0580"], actions: ["mark_paper"] }
 })

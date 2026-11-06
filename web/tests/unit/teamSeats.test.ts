@@ -244,6 +244,13 @@ describe("seat count dialogs", () => {
     expect(html).not.toContain("Pay EGP")
   })
 
+  it("locks the seat count while the charge is being made", () => {
+    s.m.quote = fakeMutation({ isSuccess: true, data: quoted })
+    expect(addDialog()).not.toMatch(/<input(?=[^>]*type="number")[^>]*\sdisabled=""/)
+    s.m.add = fakeMutation({ isPending: true })
+    expect(addDialog()).toMatch(/<input(?=[^>]*type="number")[^>]*\sdisabled=""/)
+  })
+
   it("follows the charge after confirming", () => {
     s.m.add = fakeMutation({ isSuccess: true, data: { paymentId: "pay1", status: "pending", amountMinor: 4500, currency: "EGP" } })
     expect(addDialog()).toContain("Confirming your payment")

@@ -5,17 +5,16 @@ import { Input } from "@/components/ui/input"
 import { Modal } from "@/components/ui/modal"
 import { Select } from "@/components/ui/select"
 import { formatBillingDate } from "@/lib/billingFormat"
-import type { CapPeriod, MeteredAction, SeatRow } from "@/lib/billingTypes"
+import type { CapPeriod, MeteredAction, SeatRow, SeatScopeUpdate } from "@/lib/billingTypes"
 import { useRemoveSeat, useSetMemberCap, useSetSeatScope } from "@/lib/hooks/useTeamApi"
 import {
   SEAT_ACTIONS,
   SEAT_ACTION_COPY,
   capBody,
-  capChanged,
   monthEndInstant,
   monthEndLabel,
-  scopeBody,
-  scopeChanged,
+  partialSaveMessage,
+  planSeatSave,
   seatActionsIn,
   teamFailureMessage,
 } from "@/lib/teamModel"
@@ -28,7 +27,6 @@ import {
  */
 
 const toggle = <T,>(list: T[], item: T, on: boolean) => (on ? [...new Set([...list, item])] : list.filter((x) => x !== item))
-const scopeKey = (b: { subjects: string[]; actions: string[] }) => JSON.stringify([[...b.subjects].sort(), [...b.actions].sort()])
 
 export function SeatEditorDialog({
   open,
@@ -49,7 +47,7 @@ export function SeatEditorDialog({
   const [capUnits, setCapUnits] = useState(String(seat.capUnits ?? 500))
   const [capPeriod, setCapPeriod] = useState<CapPeriod>(seat.capPeriod)
   // The scope that has already been saved by this dialog, so a retry after a failed cap does not resend it.
-  const [savedScope, setSavedScope] = useState<string | null>(null)
+  const [savedScope, setSavedScope] = useState<SeatScopeUpdate | null>(null)
   const capDraft = capBody(overflow, capUnits, capPeriod)
   // A subject the seat already covers stays editable even when none of the teacher's
   // classes teach it any more, so it can always be switched off.
@@ -60,17 +58,18 @@ export function SeatEditorDialog({
 
   const save = () => {
     if (!capDraft.ok) return
-    const sBody = scopeBody(subjectCodes, actions)
+    const plan = planSeatSave({ seat, draft: { subjects: subjectCodes, actions, cap: capDraft.body }, savedScope })
     const saveCap = () => {
-      if (capChanged(seat, capDraft.body)) cap.mutate({ memberId: seat.memberId, body: capDraft.body }, { onSuccess: onClose })
+      if (plan.sendCap) cap.mutate({ memberId: seat.memberId, body: plan.sendCap }, { onSuccess: onClose })
       else onClose()
     }
-    if (savedScope === null ? scopeChanged(seat, sBody) : savedScope !== scopeKey(sBody)) {
+    const sent = plan.sendScope
+    if (sent) {
       scope.mutate(
-        { memberId: seat.memberId, body: sBody },
+        { memberId: seat.memberId, body: sent },
         {
           onSuccess: () => {
-            setSavedScope(scopeKey(sBody))
+            setSavedScope(sent)
             saveCap()
           },
         },
@@ -81,7 +80,7 @@ export function SeatEditorDialog({
   const failure = scope.isError
     ? teamFailureMessage(scope.error, "save the subjects and actions")
     : cap.isError
-      ? `${savedScope !== null ? "Your subjects and actions were saved, but the credit limit wasn't. " : ""}${teamFailureMessage(cap.error, "save the credit limit")}`
+      ? (partialSaveMessage(savedScope, cap.error) ?? teamFailureMessage(cap.error, "save the credit limit"))
       : null
 
   return (

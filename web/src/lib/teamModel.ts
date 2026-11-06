@@ -81,8 +81,15 @@ export function scopeBody(subjects: readonly string[], actions: readonly string[
 
 const sameSet = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x) => b.includes(x))
 
+const sameScope = (a: SeatScopeUpdate, b: SeatScopeUpdate) => sameSet(a.subjects, b.subjects) && sameSet(a.actions, b.actions)
+
 export function scopeChanged(seat: SeatRow, body: SeatScopeUpdate): boolean {
-  return !sameSet(seat.scopeSubjects, body.subjects) || !sameSet(seatActionsIn(seat.scopeActions), body.actions)
+  return !sameScope(seatScope(seat), body)
+}
+
+/** The scope a seat holds now, restricted to what a seat can pay for. */
+export function seatScope(seat: SeatRow): SeatScopeUpdate {
+  return { subjects: seat.scopeSubjects, actions: seatActionsIn(seat.scopeActions) }
 }
 
 /** Largest overflow limit the editor accepts; the backend only requires zero or more. */
@@ -103,6 +110,36 @@ export function capBody(overflow: boolean, raw: string, capPeriod: CapPeriod): C
 
 export function capChanged(seat: SeatRow, body: CapUpdate): boolean {
   return body.capUnits !== seat.capUnits || (body.capUnits !== null && body.capPeriod !== seat.capPeriod)
+}
+
+export interface SeatDraft {
+  subjects: readonly string[]
+  actions: readonly string[]
+  cap: CapUpdate
+}
+
+/**
+ * What one press of "Save seat" must send: scope first, then the cap, each only when it differs
+ * from what is already stored. `savedScope` is the scope this dialog has already saved (a failed
+ * cap leaves the dialog open), which becomes the baseline: a retry does not resend it, and
+ * reverting it afterwards does.
+ */
+export function planSeatSave(a: { seat: SeatRow; draft: SeatDraft; savedScope: SeatScopeUpdate | null }): {
+  sendScope: SeatScopeUpdate | null
+  sendCap: CapUpdate | null
+} {
+  const body = scopeBody(a.draft.subjects, a.draft.actions)
+  const baseline = a.savedScope ?? seatScope(a.seat)
+  return {
+    sendScope: sameScope(baseline, body) ? null : body,
+    sendCap: capChanged(a.seat, a.draft.cap) ? a.draft.cap : null,
+  }
+}
+
+/** When the cap failed after the scope was saved, say so; `null` when nothing was saved first. */
+export function partialSaveMessage(savedScope: SeatScopeUpdate | null, capError: unknown): string | null {
+  if (savedScope === null || !capError) return null
+  return `Your subjects and actions were saved, but the credit limit wasn't. ${teamFailureMessage(capError, "save the credit limit")}`
 }
 
 /* ── Seat counts (buy and remove extra seats) ───────────────────────────── */
@@ -155,4 +192,10 @@ export function teamFailureMessage(err: unknown, action: string): string {
   }
   if (status === 409) return "That change isn't possible right now. Reload the page and try again."
   return `Couldn't ${action}. Try again.`
+}
+
+/** The team query's retry rule: a refusal or bad request will not change on a retry; a server or network failure gets one. */
+export function teamRetry(failureCount: number, error: Error): boolean {
+  if (error instanceof ApiError && error.status >= 400 && error.status < 500) return false
+  return failureCount < 1
 }

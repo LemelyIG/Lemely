@@ -90,6 +90,7 @@ export function AddSeatsDialog({
               max={MAX_ADD}
               hint={`Between 1 and ${MAX_ADD}.`}
               error={count.ok ? undefined : count.error}
+              disabled={add.isPending}
               value={qty}
               onChange={(e) => {
                 setQty(e.target.value)

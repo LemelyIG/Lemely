@@ -6,7 +6,7 @@ import {
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query"
-import { ApiError, request } from "@/lib/api"
+import { request } from "@/lib/api"
 import { toTeamView } from "@/lib/billingAdapters"
 import type {
   AssistantInviteCreate,
@@ -24,6 +24,7 @@ import type {
 } from "@/lib/billingTypes"
 import { billingApi } from "@/lib/hooks/useBillingApi"
 import type { ClassList } from "@/lib/teacherTypes"
+import { teamRetry } from "@/lib/teamModel"
 
 /*
  * React-query hooks over `/api/teacher/team/*` (plan 03 Task 7). Lead teacher only: billing,
@@ -68,7 +69,7 @@ export function useTeam(): UseQueryResult<TeamView, Error> {
   return useQuery({
     queryKey: teamKeys.team,
     // A refusal (an assistant opening the lead teacher's page) will not change on a retry.
-    retry: (failures, error) => failures < 1 && !(error instanceof ApiError && error.status >= 400 && error.status < 500),
+    retry: teamRetry,
     queryFn: async () => {
       const [seats, capacity, assistants, invites, summary, classes] = await Promise.all([
         teamApi.seats(),
