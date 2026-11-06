@@ -36,6 +36,12 @@ import {
 } from "@/lib/hooks/useTeacherApi"
 import type { PaperKind, PaperSummary, PipelineStep } from "@/lib/teacherTypes"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
+import { EstimateRange } from "@/components/billing/estimate-range"
+import { billingPaths } from "@/lib/billingPaths"
+import type { EstimateRequest } from "@/lib/billingTypes"
+import { invalidateUsage } from "@/lib/hooks/useUsageApi"
+import { useMeteredGate } from "@/lib/meteredGate"
+import { parseUsageBlock } from "@/lib/usageBlock"
 
 /*
  * Grading. Wired to `GET /papers` (grid + tabs) via `usePapers()` and
@@ -438,6 +444,15 @@ export function Grading() {
   const activePaperId = selectedPaperId ?? defaultPaperId
   const paperDetailQuery = usePaperDetail(activePaperId)
   const regrade = useRegradePaper()
+  const teacherPaths = billingPaths({ role: "teacher" })
+  const uploadRequest: EstimateRequest | null = scanFile ? { action: "mark_paper" } : null
+  const uploadGate = useMeteredGate(uploadRequest)
+  // Exactly when the "Try again" panel renders: `detail.error` is set (see the JSX below).
+  const regradeGate = useMeteredGate(
+    paperDetailQuery.data?.error
+      ? { action: "regrade", paperId: paperDetailQuery.data.id }
+      : null,
+  )
 
   const handleUpload = async () => {
     if (!scanFile || uploading) return
@@ -455,7 +470,14 @@ export function Grading() {
       setScanFile(null)
       setSchemeFile(null)
       queryClient.invalidateQueries({ queryKey: ["teacher", "papers"] })
+      invalidateUsage(queryClient)
     } catch (err) {
+      // A 402 is the balance saying no, not a failed upload: the notice above the button
+      // explains it, so the stepper goes back to its idle state instead of showing a failure.
+      if (uploadGate.captureError(err)) {
+        setStages(UPLOAD_STAGES)
+        return
+      }
       /* P6.2. This put `err.message` on the failed stage, so a dropped
          connection during a class upload wrote the browser's "Failed to fetch"
          into the pipeline panel, and a 500 wrote its status line. C-10 requires
@@ -645,15 +667,18 @@ export function Grading() {
                           // to say why, or the teacher has nothing to act on.
                           <div className="mt-3 pt-3 border-t border-outline-variant flex flex-col gap-2.5 items-start">
                             <div className="text-body-md text-error">{detail.error}</div>
+                            <EstimateRange gate={regradeGate} audience="teacher" paths={teacherPaths} managedByName={null} />
                             <Button
                               variant="ink"
                               size="sm"
-                              disabled={regrade.isPending}
-                              onClick={() => regrade.mutate(detail.id)}
+                              disabled={regrade.isPending || regradeGate.block !== null}
+                              onClick={() => regrade.mutate(detail.id, { onSuccess: () => invalidateUsage(queryClient), onError: (err) => void regradeGate.captureError(err) })}
                             >
-                              {regrade.isPending ? "Queueing…" : "Try again"}
+                              {/* The notice above carries its own "Try again" (re-check the balance), so while
+                                blocked this one reads differently instead of repeating the label. */}
+                              {regrade.isPending ? "Queueing…" : regradeGate.block !== null ? "Marking paused" : "Try again"}
                             </Button>
-                            {regrade.isError ? (
+                            {regrade.isError && !parseUsageBlock(regrade.error) ? (
                               <div className="text-body-md text-error">
                                 Couldn't re-queue: {teacherMutationFailureMessage(regrade.error)}
                               </div>
@@ -758,11 +783,18 @@ export function Grading() {
                         </div>
                       ) : null}
                     </div>
+                    <EstimateRange
+                      gate={uploadGate}
+                      audience="teacher"
+                      paths={teacherPaths}
+                      managedByName={null}
+                      subjectUnknown
+                    />
                     <Button
                       variant="ink"
                       size="sm"
                       onClick={handleUpload}
-                      disabled={uploading || !scanFile}
+                      disabled={uploading || !scanFile || uploadGate.block !== null}
                     >
                       {uploading ? "Uploading…" : "Upload & grade"}
                     </Button>

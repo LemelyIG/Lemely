@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useEffect, useMemo, useState, type FormEvent } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
-import type { UseQueryResult } from "@tanstack/react-query"
+import { useQueryClient, type UseQueryResult } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { EmptyState } from "@/components/ui/state-views"
@@ -48,6 +48,11 @@ import type {
 } from "@/lib/teacherTypes"
 import { statusLabel, statusTone } from "./Quizzes"
 import { BackArrow, ForwardArrow } from "@/components/ui/inline-arrow"
+import { EstimateRange } from "@/components/billing/estimate-range"
+import { billingPaths } from "@/lib/billingPaths"
+import { invalidateUsage } from "@/lib/hooks/useUsageApi"
+import { useMeteredGate } from "@/lib/meteredGate"
+import { parseUsageBlock } from "@/lib/usageBlock"
 
 /*
  * Quiz builder (T-09) — the stepped flow at `/teacher/quizzes/:quizId`.
@@ -724,9 +729,24 @@ function StepPreview({
   const included = questions.filter((q) => q.status === "included").sort((a, b) => a.position - b.position)
   const removed = questions.filter((q) => q.status !== "included")
   const canGenerate = quiz.poolSource != null
+  const queryClient = useQueryClient()
+  // The estimate prices what is still missing, not the whole quiz (04 `EstimateRequestDTO.count` is 1–50).
+  const remaining = quiz.requestedCount != null ? Math.min(50, Math.max(1, quiz.requestedCount - included.length)) : null
+  const generateGate = useMeteredGate(
+    isDraft && canGenerate && quizId
+      ? { action: "generate_quiz", ...(remaining !== null ? { count: remaining } : {}) }
+      : null,
+  )
 
   function handleGenerate() {
-    generate.mutate(undefined, { onSuccess: (data) => setLastGenerated(data) })
+    if (generateGate.block) return
+    generate.mutate(undefined, {
+      onSuccess: (data) => {
+        setLastGenerated(data)
+        invalidateUsage(queryClient)
+      },
+      onError: (err) => void generateGate.captureError(err),
+    })
   }
 
   return (
@@ -736,7 +756,7 @@ function StepPreview({
           <Button
             type="button"
             variant="ink"
-            disabled={!canGenerate || generate.isPending}
+            disabled={!canGenerate || generate.isPending || generateGate.block !== null}
             title={canGenerate ? undefined : "Choose a question source in step 4 first"}
             onClick={handleGenerate}
           >
@@ -753,10 +773,13 @@ function StepPreview({
           </span>
         </div>
       ) : null}
+      {isDraft ? (
+        <EstimateRange gate={generateGate} audience="teacher" paths={billingPaths({ role: "teacher" })} managedByName={null} />
+      ) : null}
       {!canGenerate && isDraft ? (
         <p className="text-body-sm text-on-surface-variant m-0">Choose a question source in step 4 before generating.</p>
       ) : null}
-      {generate.isError ? (
+      {generate.isError && !parseUsageBlock(generate.error) ? (
         <div role="alert" className="text-body-sm text-error">
           Couldn't generate questions: {teacherMutationFailureMessage(generate.error)}
         </div>
