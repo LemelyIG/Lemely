@@ -21,18 +21,25 @@ child's classes and the student's own view of them cannot drift.
 exists on this route, so one student cannot enumerate another's classes —
 that is a property of the signature, not a check a later edit could drop.
 Same shape as P5.3's leaderboard router and P5.8 chunk A's XP router.
+
+**Leaving a school-less class** (``DELETE /api/student/classes/{class_id}``,
+tutoring S17, SC-2c) sits here because this router's prefix is the path. It
+removes only the caller's own enrolment, only in a class with no school; a
+school class, a class the caller is not in and an unknown id are one 404.
 """
 
 from __future__ import annotations
 
+import uuid  # noqa: TC003 - FastAPI resolves the path parameter's type at runtime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from lemely.db.class_repo import ClassService  # noqa: TC001 - FastAPI resolves this at runtime
 from lemely.db.models.enums import Role
 from lemely.web.deps import AuthContext, get_class_service, require_role
 from lemely.web.schemas_student_classes import StudentClassDTO, StudentClassListDTO
+from lemely.web.tutoring_http import NO_STORE
 
 router = APIRouter(
     prefix="/api/student/classes", dependencies=[Depends(require_role(Role.student))]
@@ -63,6 +70,28 @@ def list_my_classes(
             for row in rows
         ]
     )
+
+
+@router.delete("/{class_id}", status_code=204)
+def leave_school_less_class(
+    class_id: uuid.UUID,
+    response: Response,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[ClassService, Depends(get_class_service)],
+) -> None:
+    """S17: leave a school-less class (SC-2c, O24). 204, or 404 with no reason given.
+
+    ``Cache-Control: private, no-store`` on the 204 and on the 404 (SPEC §b.5;
+    this router keeps its own route class, so the header is set here). The
+    teacher stops seeing the caller's progress through this class at once.
+    """
+    if not service.leave_school_less_class(auth.user_id, class_id):
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "not_found", "message": "Class not found."},
+            headers={"Cache-Control": NO_STORE},
+        )
+    response.headers["Cache-Control"] = NO_STORE
 
 
 __all__ = ["router"]

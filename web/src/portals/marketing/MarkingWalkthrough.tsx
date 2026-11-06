@@ -1,4 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
+import { ForwardArrow } from '@/components/ui/inline-arrow'
 import {
   useEffect,
   useRef,
@@ -7,8 +8,10 @@ import {
   type ReactNode,
 } from "react";
 import { useSceneMotion } from "./useSceneMotion";
+import { MobileHow } from "./MobileHow";
 import "./walkthrough-motion.css";
-import { CloudArrowUp, Check, ArrowRight } from "@phosphor-icons/react";
+import "./walkthrough-tablet.css";
+import { Check } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsPanel } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -16,18 +19,24 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 const steps = [
   {
     value: "upload",
+    n: "01",
+    title: "Upload",
     label: "01 Upload",
     description:
       "Photograph a hand-written past paper or drop in a scan. Lemely reads every answer, working included.",
   },
   {
     value: "marked",
+    n: "02",
+    title: "Marked",
     label: "02 Marked",
     description:
       "Method and accuracy marks are awarded line by line against the official mark scheme, each with a confidence score.",
   },
   {
     value: "insights",
+    n: "03",
+    title: "Insights",
     label: "03 Insights",
     description:
       "Lost marks cluster into weak topics, the predicted grade updates, and a practice plan is ready.",
@@ -68,95 +77,201 @@ const questions = {
 } as const;
 type QuestionKey = keyof typeof questions;
 
-function MarkedPaper({
-  reviewed,
-  unmarked = false,
+type Stage = "upload" | "marked" | "insights";
+type Line = {
+  text: string;
+  mark: string;
+  right: boolean;
+  /** write-on delay and duration, then the mark draw delay (seconds). */
+  at: [number, number, number];
+};
+
+function PaperQuestion({
+  id,
+  prompt,
+  points,
+  lines,
+  marked,
+  selected,
   onSelect,
 }: {
-  reviewed: boolean;
-  unmarked?: boolean;
+  id: QuestionKey;
+  prompt: string;
+  points: number;
+  lines: Line[];
+  marked: boolean;
+  selected: boolean;
   onSelect?: (question: QuestionKey) => void;
 }) {
   return (
-    <div className="brand-script" data-unmarked={unmarked}>
-      {unmarked && <span className="walkthrough-scan" aria-hidden="true" />}
-      <div className="brand-script-head">
-        <span className="brand-label">PHYSICS · PAPER 4 · QUESTION 3</span>
-        <strong>{reviewed ? "5" : "4"}/6</strong>
-      </div>
-      <p>A cyclist travels 1.2 km in 4.0 minutes.</p>
-      <div>
-        <p>
+    <div className="wt-q" data-selected={selected}>
+      <div className="wt-q-head">
+        <span>
           <Button
             variant="ghost"
             className="walkthrough-paper-question"
-            onClick={() => onSelect?.("a")}
-            disabled={unmarked}
-            aria-label="Explain Q3(a)"
+            onClick={() => onSelect?.(id)}
+            disabled={!marked}
+            aria-label={`Explain Q3(${id})`}
+            aria-pressed={selected}
           >
-            (a)
+            ({id})
           </Button>{" "}
-          Calculate the average speed in m/s. <span>[3]</span>
-        </p>
-        <div className="brand-working">
-          <span>
-            v = d / t <b>M1</b>
-          </span>
-          <span>
-            = 1200 / 240 <b>M1</b>
-          </span>
-          <span>
-            = 5 <b className="brand-wrong">A0</b>
-          </span>
-        </div>
+          {prompt}
+        </span>
+        <span className="wt-points">[{points}]</span>
       </div>
-      <div>
-        <p>
-          <Button
-            variant="ghost"
-            className="walkthrough-paper-question"
-            onClick={() => onSelect?.("b")}
-            disabled={unmarked}
-            aria-label="Explain Q3(b)"
+      {lines.map((line) => (
+        <div className="wt-line" key={line.text}>
+          <span
+            className="wt-write"
+            style={
+              {
+                "--d": `${line.at[0]}s`,
+                "--t": `${line.at[1]}s`,
+              } as CSSProperties
+            }
           >
-            (b)
-          </Button>{" "}
-          State one difference between speed and velocity. <span>[1]</span>
-        </p>
-        <div className="brand-working">
-          <span>
-            velocity has a direction <b>B1</b>
+            {line.text}
           </span>
+          {marked && (
+            <>
+              <svg
+                className="wt-tick"
+                width="22"
+                height="18"
+                viewBox="0 0 22 18"
+                aria-hidden="true"
+                style={{ "--d": `${line.at[2]}s` } as CSSProperties}
+              >
+                <path
+                  d={
+                    line.right
+                      ? "M2 9 L8 15 L20 2"
+                      : "M4 2 L18 16 M18 2 L4 16"
+                  }
+                  pathLength={1}
+                />
+              </svg>
+              <span className="wt-mark">{line.mark}</span>
+            </>
+          )}
         </div>
-      </div>
-      <div>
-        <p>
-          <Button
-            variant="ghost"
-            className="walkthrough-paper-question"
-            onClick={() => onSelect?.("c")}
-            disabled={unmarked}
-            aria-label="Explain Q3(c)"
-          >
-            (c)
-          </Button>{" "}
-          It accelerates from rest to 5.0 m/s in 10 s. Calculate the
-          acceleration. <span>[2]</span>
-        </p>
-        <div className="brand-working">
-          <span>
-            a = v / t = 5 / 10 <b>M1</b>
-          </span>
-          <span>
-            = 0.5 m/s{" "}
-            <b className={reviewed ? "" : "brand-wrong"}>
-              {reviewed ? "A1" : "A0"}
-            </b>
-          </span>
-        </div>
-      </div>
-      <span className="brand-label">ILLUSTRATIVE MARKED ANSWER</span>
+      ))}
     </div>
+  );
+}
+
+function MarkedPaper({
+  stage,
+  reviewed,
+  question,
+  onSelect,
+}: {
+  stage: Stage;
+  reviewed: boolean;
+  question: QuestionKey;
+  onSelect?: (question: QuestionKey) => void;
+}) {
+  const marked = stage !== "upload";
+  const pick = (id: QuestionKey) => marked && question === id;
+  return (
+    <div className="wt-paper brand-script" data-stage={stage}>
+      {stage === "upload" && <span className="walkthrough-scan" aria-hidden="true" />}
+      <div className="wt-paper-head">
+        <span className="brand-label">PHYSICS · PAPER 4 · QUESTION 3</span>
+        {marked && (
+          <span className="wt-score">
+            <svg width="70" height="44" viewBox="0 0 70 44" aria-hidden="true">
+              <ellipse cx="35" cy="22" rx="33" ry="19" pathLength={1} />
+            </svg>
+            {reviewed ? "5" : "4"}/6
+          </span>
+        )}
+      </div>
+      <p className="wt-stem">A cyclist travels 1.2 km in 4.0 minutes.</p>
+      <PaperQuestion
+        id="a"
+        prompt="Calculate the average speed in m/s."
+        points={3}
+        marked={marked}
+        selected={pick("a")}
+        onSelect={onSelect}
+        lines={[
+          { text: "v = d / t", mark: "M1", right: true, at: [0.1, 0.4, 0.05] },
+          { text: "= 1200 / 240", mark: "M1", right: true, at: [0.35, 0.45, 0.12] },
+          { text: "= 5", mark: "A0", right: false, at: [0.6, 0.25, 0.19] },
+        ]}
+      />
+      <PaperQuestion
+        id="b"
+        prompt="State one difference between speed and velocity."
+        points={1}
+        marked={marked}
+        selected={pick("b")}
+        onSelect={onSelect}
+        lines={[
+          {
+            text: "velocity has a direction",
+            mark: "B1",
+            right: true,
+            at: [0.8, 0.5, 0.26],
+          },
+        ]}
+      />
+      <PaperQuestion
+        id="c"
+        prompt="It accelerates from rest to 5.0 m/s in 10 s. Calculate the acceleration."
+        points={2}
+        marked={marked}
+        selected={pick("c")}
+        onSelect={onSelect}
+        lines={[
+          {
+            text: "a = v / t = 5 / 10",
+            mark: "M1",
+            right: true,
+            at: [1.05, 0.45, 0.33],
+          },
+          {
+            text: "= 0.5 m/s",
+            mark: reviewed ? "A1" : "A0",
+            right: reviewed,
+            at: [1.3, 0.3, 0.4],
+          },
+        ]}
+      />
+    </div>
+  );
+}
+
+// Step bands run from the moment the wrap pins (progress 0) to the moment it releases (1). Step 1 owns the
+// first quarter (about 21vh of an 85vh pin) so the scene responds soon after it locks; tab clicks land
+// inside each band.
+const STEP_BANDS = [0.25, 0.62] as const;
+const STEP_TARGET: Record<string, number> = {
+  upload: 0.1,
+  marked: 0.45,
+  insights: 0.82,
+};
+const stepAt = (progress: number) =>
+  progress < STEP_BANDS[0]
+    ? "upload"
+    : progress < STEP_BANDS[1]
+      ? "marked"
+      : "insights";
+function pinGeometry(section: HTMLElement) {
+  const wrap = section.firstElementChild as HTMLElement;
+  return {
+    top: parseFloat(getComputedStyle(wrap).top) || 64,
+    range: Math.max(1, section.offsetHeight - wrap.offsetHeight),
+  };
+}
+function pinProgress(section: HTMLElement) {
+  const { top, range } = pinGeometry(section);
+  return Math.max(
+    0,
+    Math.min(1, (top - section.getBoundingClientRect().top) / range),
   );
 }
 
@@ -189,8 +304,13 @@ function WalkthroughPanel({
   );
 }
 
+/** Tablet widths cannot pin a 1180px scene at a readable size, so they get the real-size reflow in walkthrough-tablet.css. */
+const TABLET = "(min-width: 760px) and (max-width: 1099px)";
+
 export function MarkingWalkthrough() {
-  const [step, setStep] = useState("upload");
+  const [tablet, setTablet] = useState(() => window.matchMedia(TABLET).matches);
+  // Without a scroll scene the visitor lands on the step that carries the claim.
+  const [step, setStep] = useState(() => (tablet ? "marked" : "upload"));
   const [mobile, setMobile] = useState(
     () => window.matchMedia("(max-width: 759px)").matches,
   );
@@ -201,6 +321,13 @@ export function MarkingWalkthrough() {
   // Keep its stage mounted until the visitor deliberately scrolls again.
   const interacting = useRef(false);
   const [seen, setSeen] = useState<string[]>([]);
+  // The reference starts the one-shot write-on at page load, long before the visitor reaches the pinned scene,
+  // so it is already finished on arrival while only the scan beam keeps sweeping. Latch once.
+  const [primed, setPrimed] = useState(false);
+
+  useEffect(() => {
+    setPrimed(true);
+  }, []);
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 759px)");
@@ -208,6 +335,15 @@ export function MarkingWalkthrough() {
     media.addEventListener("change", change);
     return () => media.removeEventListener("change", change);
   }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia(TABLET);
+    const change = () => setTablet(media.matches);
+    media.addEventListener("change", change);
+    return () => media.removeEventListener("change", change);
+  }, []);
+  // No pin, no scale: the scene flows in the page and the tabs drive the step.
+  const unpinned = reducedMotion || tablet;
 
   useEffect(() => {
     const element = ref.current;
@@ -230,23 +366,18 @@ export function MarkingWalkthrough() {
         .forEach((node) => observer.observe(node));
       return () => observer.disconnect();
     }
-    if (!enabled) return;
+    // Scroll position, not visibility, decides the step: the reference recomputes it on every
+    // scroll, so leaving and re-entering the section must land on the step for that position.
+    if (unpinned) return;
     let frame = 0;
     const update = () => {
       frame = 0;
       const bounds = element.getBoundingClientRect();
-      const progress = Math.max(
-        0,
-        Math.min(
-          1,
-          -bounds.top / Math.max(1, bounds.height - window.innerHeight),
-        ),
-      );
-      if (fill.current) fill.current.style.transform = `scaleX(${progress})`;
-      if (!interacting.current)
-        setStep(
-          progress < 0.34 ? "upload" : progress < 0.7 ? "marked" : "insights",
-        );
+      if (bounds.bottom <= 0 || bounds.top >= window.innerHeight)
+        interacting.current = false;
+      const progress = pinProgress(element);
+      if (fill.current) fill.current.style.transform = `scaleX(${progress.toFixed(3)})`;
+      if (!interacting.current) setStep(stepAt(progress));
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(update);
@@ -259,7 +390,7 @@ export function MarkingWalkthrough() {
     const resumeOutside = (event: PointerEvent) => {
       if (
         !(event.target instanceof Element) ||
-        !event.target.closest(".brand-marked-grid")
+        !event.target.closest(".brand-stage")
       )
         resumeScroll();
     };
@@ -296,24 +427,30 @@ export function MarkingWalkthrough() {
       window.removeEventListener("resize", schedule);
       cancelAnimationFrame(frame);
     };
-  }, [enabled, mobile, pageVisible, ref]);
+  }, [unpinned, mobile, pageVisible, ref]);
 
   useEffect(() => {
     const grid = ref.current?.querySelector<HTMLElement>(".brand-walkthrough");
-    if (!grid || mobile || reducedMotion) return;
+    if (!grid || mobile || unpinned) return;
+    const host = grid.parentElement;
+    let fitK = 1;
     const fit = () => {
-      grid.style.setProperty(
-        "--walkthrough-scale",
-        String(
-          Math.min(
-            1,
-            (window.innerHeight - 112) / Math.max(1, grid.offsetHeight),
-          ),
-        ),
+      // Same fit as the reference: the 1180px scene shrinks to the sticky host's height and width.
+      const availW = (host?.clientWidth ?? window.innerWidth) - 64;
+      const k = Math.min(
+        1,
+        (window.innerHeight - 96) / Math.max(1, grid.offsetHeight),
+        availW / 1180,
       );
+      // Reference hysteresis: ignore sub-0.5% changes so a 1176px host does not nudge a 1:1 scene.
+      if (Math.abs(fitK - k) > 0.005) {
+        fitK = k;
+        grid.style.setProperty("--walkthrough-scale", k.toFixed(3));
+      }
     };
     const observer = new ResizeObserver(fit);
     observer.observe(grid);
+    if (host) observer.observe(host);
     window.addEventListener("resize", fit);
     fit();
     return () => {
@@ -321,32 +458,37 @@ export function MarkingWalkthrough() {
       window.removeEventListener("resize", fit);
       grid.style.removeProperty("--walkthrough-scale");
     };
-  }, [mobile, reducedMotion, ref]);
+  }, [mobile, unpinned, ref]);
 
   const selectStep = (value: string) => {
     setStep(value);
-    if (mobile || reducedMotion || !ref.current) return;
+    if (mobile || unpinned || !ref.current) return;
     const bounds = ref.current.getBoundingClientRect();
-    const progress =
-      value === "upload" ? 0.08 : value === "marked" ? 0.5 : 0.85;
+    const { top, range } = pinGeometry(ref.current);
     window.scrollTo({
-      top:
-        window.scrollY +
-        bounds.top +
-        Math.max(0, bounds.height - window.innerHeight) * progress,
+      top: window.scrollY + bounds.top - top + range * STEP_TARGET[value],
       behavior: "instant",
     });
   };
   const [question, setQuestion] = useState<QuestionKey>("a");
   const [review, setReview] = useState("keep");
   const selected = questions[question];
+  if (mobile) return <MobileHow />;
+  const stage = step as Stage;
+  const stepIndex = steps.findIndex((x) => x.value === step);
+  const holdMarked = () => {
+    if (!mobile && !unpinned && step === "marked")
+      interacting.current = true;
+  };
   return (
     <section
       id="how"
       ref={ref}
       className="brand-how brand-section walkthrough-motion"
       data-motion={enabled}
+      data-primed={primed && pageVisible}
       data-reduced={reducedMotion}
+      data-tablet={tablet}
     >
       <div className="brand-wrap">
         <Tabs
@@ -358,7 +500,9 @@ export function MarkingWalkthrough() {
           className="brand-walkthrough"
         >
           <div className="brand-step-nav">
-            <span className="brand-label">HOW IT WORKS · SCROLL</span>
+            <span className="brand-label">
+              {tablet ? "HOW IT WORKS" : "HOW IT WORKS · SCROLL"}
+            </span>
             <h2>
               Upload.
               <br />
@@ -370,21 +514,48 @@ export function MarkingWalkthrough() {
               <span ref={fill} />
             </div>
             <div className="walkthrough-desktop-nav">
-              <TabsList tabs={steps} label="Marking walkthrough" />
+              <TabsList
+                className="walkthrough-steps"
+                label="Marking walkthrough"
+                tabs={steps.map((x, i) => ({
+                  value: x.value,
+                  label: (
+                    <>
+                      <span className="wt-badge" data-reached={i <= stepIndex}>
+                        {x.n}
+                      </span>{" "}
+                      <span className="wt-step-copy">
+                        <span className="wt-step-title">{x.title}</span>{" "}
+                        <span className="wt-step-desc">{x.description}</span>
+                      </span>
+                    </>
+                  ),
+                }))}
+              />
             </div>
-            <p>{steps.find((x) => x.value === step)?.description}</p>
-            <span className="brand-label">A SAMPLE PAPER, EXPLAINED</span>
           </div>
-          <div className="brand-stage">
-            <WalkthroughPanel
-              value="upload"
-              flow={mobile}
-              active={reducedMotion || seen.includes("upload")}
-            >
-              <div className="walkthrough-upload-grid">
-                {!mobile && <MarkedPaper reviewed={false} unmarked />}
-                <div className="brand-upload">
-                  <CloudArrowUp size={64} aria-hidden="true" />
+          <div
+            className="brand-stage"
+            onPointerDownCapture={holdMarked}
+            onFocusCapture={holdMarked}
+          >
+            <MarkedPaper
+              stage={stage}
+              reviewed={review === "award"}
+              question={question}
+              onSelect={(value) => {
+                setQuestion(value);
+                if (!mobile && !unpinned && step === "marked")
+                  selectStep("marked");
+              }}
+            />
+            <div className="wt-col">
+              <WalkthroughPanel
+                value="upload"
+                flow={mobile}
+                active={reducedMotion || seen.includes("upload")}
+              >
+                <div className="wt-card wt-upload">
                   <h3>Uploading 3 photos</h3>
                   <div
                     className="walkthrough-upload-progress"
@@ -392,197 +563,162 @@ export function MarkingWalkthrough() {
                   >
                     <span />
                   </div>
-                  <div className="brand-photo-stack" aria-hidden="true">
-                    <i />
-                    <i />
-                    <i>
-                      <span className="brand-hand">
-                        v = d / t<br />= 1200 / 240
-                        <br />= 5
+                  <ul className="wt-checks">
+                    <li style={{ "--d": "0.1s" } as CSSProperties}>
+                      <span className="wt-dot wt-dot-ok" aria-hidden="true">
+                        <Check weight="bold" />
                       </span>
-                    </i>
-                  </div>
-                  <p>
-                    <Check aria-hidden="true" /> 3 pages received
-                  </p>
-                  <p>
-                    <Check aria-hidden="true" /> Handwriting read · 6 answers
-                  </p>
-                  <p className="brand-label">
-                    Matching to the 0625 mark scheme…
-                  </p>
-                  <p>
-                    Any phone camera. Crooked pages, pencil and crossings-out
-                    are fine.
-                  </p>
+                      3 pages received
+                    </li>
+                    <li style={{ "--d": "0.18s" } as CSSProperties}>
+                      <span className="wt-dot wt-dot-ok" aria-hidden="true">
+                        <Check weight="bold" />
+                      </span>
+                      Handwriting read · 6 answers
+                    </li>
+                    <li style={{ "--d": "0.26s" } as CSSProperties}>
+                      <span className="wt-dot wt-dot-wait" aria-hidden="true" />
+                      Matching to the 0625 mark scheme…
+                    </li>
+                  </ul>
                 </div>
-              </div>
-            </WalkthroughPanel>
-            <WalkthroughPanel
-              value="marked"
-              flow={mobile}
-              active={reducedMotion || seen.includes("marked")}
-            >
-              <div
-                className="brand-marked-grid"
-                onPointerDownCapture={() => {
-                  if (!mobile && !reducedMotion) interacting.current = true;
-                }}
-                onFocusCapture={() => {
-                  if (!mobile && !reducedMotion) interacting.current = true;
-                }}
+                <p className="wt-aside">
+                  Any phone camera. Crooked pages, pencil and crossings-out are
+                  fine.
+                </p>
+              </WalkthroughPanel>
+              <WalkthroughPanel
+                value="marked"
+                flow={mobile}
+                active={reducedMotion || seen.includes("marked")}
               >
-                <MarkedPaper
-                  reviewed={review === "award"}
-                  onSelect={(value) => {
-                    setQuestion(value);
-                    if (!mobile && !reducedMotion) selectStep("marked");
-                  }}
-                />
-                <div className="brand-explanation">
-                  <span className="brand-label">
-                    TAP A QUESTION ON THE PAPER
-                  </span>
-                  <Tabs
-                    value={question}
-                    onValueChange={(v) => {
-                      setQuestion(v as QuestionKey);
-                      if (!mobile && !reducedMotion) selectStep("marked");
-                    }}
-                  >
-                    <TabsList
-                      tabs={Object.entries(questions).map(([value, q]) => ({
-                        value,
-                        label: q.label,
-                      }))}
-                      label="Question explanation"
-                    />
-                    {(Object.keys(questions) as QuestionKey[]).map((key) => (
-                      <TabsPanel key={key} value={key}>
-                        <div className="brand-explanation-title">
-                          <h3>
-                            {selected.label} · {selected.title}
-                          </h3>
-                          <strong>
-                            {question === "c" && review === "award"
-                              ? "2 / 2"
-                              : selected.score}
-                          </strong>
-                        </div>
-                        <div className="brand-mark-rows">
-                          {selected.rows.map(([code, text, result], i) => (
-                            <div
-                              key={i}
-                              style={{ "--mark-index": i } as CSSProperties}
-                            >
-                              <b>{code}</b>
-                              <span>{text}</span>
-                              <small
-                                className={
-                                  result === "AWARDED"
-                                    ? "brand-correct"
-                                    : "brand-wrong"
-                                }
-                              >
-                                {question === "c" &&
-                                i === 1 &&
-                                review === "award"
-                                  ? "AWARDED"
-                                  : result}
-                              </small>
-                            </div>
-                          ))}
-                        </div>
-                        <p className="brand-confidence">
-                          AI confidence {selected.confidence}%
-                        </p>
-                        <div className="brand-confidence-track">
-                          <span style={{ width: `${selected.confidence}%` }} />
-                        </div>
-                        <aside className="brand-scheme">
-                          <span className="brand-label">
-                            MARK SCHEME · 0625 · {selected.label}
-                          </span>
-                          <p>{selected.scheme}</p>
-                        </aside>
-                        {question === "c" && (
-                          <div className="brand-review">
-                            <h4>Teacher review.</h4>
-                            <p>
-                              The unit looks like m/s, but the ² may be faint.
-                              Held for teacher review before it counts.
-                            </p>
-                            <ToggleGroup
-                              type="single"
-                              value={review}
-                              onValueChange={(v) => {
-                                if (v) {
-                                  setReview(v);
-                                  if (!mobile && !reducedMotion)
-                                    selectStep("marked");
-                                }
-                              }}
-                              aria-label="Illustrative teacher review"
-                            >
-                              <ToggleGroupItem value="keep">
-                                Keep A0
-                              </ToggleGroupItem>
-                              <ToggleGroupItem value="award">
-                                Award A1
-                              </ToggleGroupItem>
-                            </ToggleGroup>
-                            <p role="status">
-                              Illustration:{" "}
-                              {review === "award" ? "A1 awarded" : "A0 kept"}
-                            </p>
-                          </div>
-                        )}
-                      </TabsPanel>
-                    ))}
-                  </Tabs>
-                </div>
-              </div>
-            </WalkthroughPanel>
-            <WalkthroughPanel
-              value="insights"
-              flow={mobile}
-              active={reducedMotion || seen.includes("insights")}
-            >
-              <div className="brand-insights">
-                <div>
-                  <span className="brand-label">ACROSS 3 PAPERS</span>
-                  <h3>Weak topic found</h3>
-                  <strong>Units &amp; SI</strong>
-                  <div className="brand-topic-list">
-                    <span>
-                      P4 Q3(a) <b>−1</b>
-                    </span>
-                    <span>
-                      P4 Q3(c) <b>−1</b>
-                    </span>
-                    <span>
-                      P2 Q5 <b>−2</b>
-                    </span>
+                <span className="brand-label wt-tap">
+                  TAP A QUESTION ON THE PAPER
+                </span>
+                <div className="wt-card wt-explain">
+                  <div className="wt-explain-title">
+                    <h3>
+                      {selected.label} · {selected.title}
+                    </h3>
+                    <strong>
+                      {question === "c" && review === "award"
+                        ? "2 / 2"
+                        : selected.score}
+                    </strong>
                   </div>
+                  <div className="brand-mark-rows">
+                    {selected.rows.map(([code, text, result], i) => {
+                      const awarded =
+                        result === "AWARDED" ||
+                        (question === "c" && i === 1 && review === "award");
+                      return (
+                        <div
+                          key={`${question}-${i}`}
+                          style={{ "--mark-index": i } as CSSProperties}
+                        >
+                          <b>{code}</b>
+                          <span>{text}</span>
+                          <small
+                            className={
+                              awarded
+                                ? "brand-correct"
+                                : result === "CHECK"
+                                  ? "brand-check"
+                                  : "brand-wrong"
+                            }
+                          >
+                            {awarded ? "AWARDED" : result}
+                          </small>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="wt-confidence">
+                    <p className="brand-confidence">
+                      <span>AI confidence</span>{" "}
+                      <span>{selected.confidence}%</span>
+                    </p>
+                    <div className="brand-confidence-track">
+                      <span
+                        data-low={selected.confidence < 80}
+                        style={{ width: `${selected.confidence}%` }}
+                      />
+                    </div>
+                  </div>
+                  <aside className="brand-scheme">
+                    <span className="brand-label">
+                      MARK SCHEME · 0625 · {selected.label}
+                    </span>
+                    <p>{selected.scheme}</p>
+                  </aside>
+                  {question === "c" && (
+                    <div className="brand-review">
+                      <p>
+                        <b>Teacher review.</b> The unit looks like m/s, but the
+                        ² may be faint. Sent to your queue before it
+                        counts.
+                      </p>
+                      <ToggleGroup
+                        type="single"
+                        value={review}
+                        onValueChange={(v) => {
+                          if (v) {
+                            setReview(v);
+                            if (!mobile && !unpinned)
+                              selectStep("marked");
+                          }
+                        }}
+                        aria-label="Teacher review"
+                      >
+                        <ToggleGroupItem value="keep">Keep A0</ToggleGroupItem>
+                        <ToggleGroupItem value="award">
+                          Award A1
+                        </ToggleGroupItem>
+                      </ToggleGroup>
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <span className="brand-label">PREDICTED GRADE</span>
-                  <p className="brand-grade-transition">
-                    B <ArrowRight aria-hidden="true" /> A
-                  </p>
-                  <p>
-                    Next: units drill · 10 questions{" "}
-                    <span className="brand-label">15 MIN</span>
-                  </p>
-                  <p className="brand-report">
+              </WalkthroughPanel>
+              <WalkthroughPanel
+                value="insights"
+                flow={mobile}
+                active={reducedMotion || seen.includes("insights")}
+              >
+                <div className="wt-card wt-insights">
+                  <div className="wt-insights-head">
+                    <h3>Weak topic found</h3>
+                    <span className="brand-label">ACROSS 3 PAPERS</span>
+                  </div>
+                  <div className="wt-weak">
+                    <strong>Units &amp; SI</strong>
+                    <div className="brand-topic-list">
+                      <span style={{ "--dx": "-160px", "--dy": "-120px", "--r": "-14deg", "--d": "0.05s" } as CSSProperties}>
+                        P4 Q3(a) <b>−1</b>
+                      </span>
+                      <span style={{ "--dx": "-120px", "--dy": "-30px", "--r": "10deg", "--d": "0.12s" } as CSSProperties}>
+                        P4 Q3(c) <b>−1</b>
+                      </span>
+                      <span style={{ "--dx": "80px", "--dy": "90px", "--r": "-8deg", "--d": "0.19s" } as CSSProperties}>
+                        P2 Q5 <b>−2</b>
+                      </span>
+                    </div>
+                  </div>
+                  <div className="wt-grade brand-grade-transition">
+                    <span>Predicted grade</span>
+                    <b className="wt-grade-b">B</b>
+                    <span className="wt-arrow" aria-hidden="true"><ForwardArrow /></span>
+                    <b className="wt-grade-a">A</b>
+                  </div>
+                  <div className="wt-next">
+                    <span>Next: units drill · 10 questions</span>
+                    <span className="wt-next-time">15 MIN</span>
+                  </div>
+                  <p className="wt-report brand-report">
                     Progress report ready to send to Layan's parents.
                   </p>
-                  <span className="brand-label">
-                    ILLUSTRATION · NO REPORT IS SENT
-                  </span>
                 </div>
-              </div>
-            </WalkthroughPanel>
+              </WalkthroughPanel>
+            </div>
           </div>
         </Tabs>
       </div>

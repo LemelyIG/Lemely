@@ -1,5 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
-import { lazy, Suspense } from "react"
+import { lazy, Suspense, useEffect, useRef } from "react"
+import { useLocation } from "react-router-dom"
 import type { RouteObject } from "react-router-dom"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
@@ -13,6 +14,46 @@ import "./brand.css"
 
 const Landing = lazy(() => import("./Landing").then(m => ({ default: m.Landing })))
 const DataHandling = lazy(() => import("./DataHandling").then(m => ({ default: m.DataHandling })))
+
+/**
+ * Scrolls to `location.hash` once the lazy page body exists. The browser's own
+ * hash scroll runs before the chunk has mounted, so a deep link or a nav click
+ * from `/` would otherwise stay at the top. Rendered inside the Suspense
+ * boundary so it commits together with the page; later hash changes (nav
+ * clicks, back and forward) re-run it via the router's location key.
+ */
+function HashScroll() {
+  const { hash, key } = useLocation()
+  const first = useRef(true)
+  useEffect(() => {
+    const instant = first.current
+    first.current = false
+    if (!hash) return
+    let id = hash.slice(1)
+    try {
+      id = decodeURIComponent(id)
+    } catch {
+      /* keep the raw id */
+    }
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    let frame = 0
+    let tries = 0
+    const go = () => {
+      const target = document.getElementById(id)
+      if (target) {
+        target.scrollIntoView({
+          block: "start",
+          behavior: instant || reduced ? "auto" : "smooth",
+        })
+        return
+      }
+      if (tries++ < 30) frame = requestAnimationFrame(go)
+    }
+    go()
+    return () => cancelAnimationFrame(frame)
+  }, [hash, key])
+  return null
+}
 
 export function MarketingFrame({ children }: { children: React.ReactNode }) {
   return <div className="marketing-brand min-h-dvh">
@@ -45,6 +86,7 @@ export function MarketingLanding() {
       */}
       <Suspense fallback={<RouteSkeleton />}>
         <Landing />
+        <HashScroll />
       </Suspense>
     </MarketingFrame>
   )
@@ -79,6 +121,7 @@ export function MarketingDataHandling() {
     <MarketingFrame>
       <Suspense fallback={<RouteSkeleton />}>
         <DataHandling />
+        <HashScroll />
       </Suspense>
     </MarketingFrame>
   )

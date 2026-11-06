@@ -15,6 +15,12 @@ import { describe, expect, it } from "vitest"
  * of drift HIGH 2 turned out to be (nginx.conf's five headers existed but
  * only reached 3 of 5 locations). This test reads all three and cross-
  * checks every value.
+ *
+ * T08 (SPEC §b.5): the Worker now serves the tutor pages too, and Cloudflare
+ * does not apply `public/_headers` to Worker responses, so both of its paths
+ * must take the five headers from ONE helper, `applySecurityHeaders` in
+ * `worker/index.ts`. The worker values below are read from that helper's
+ * body, and a separate case proves no other worker code sets them.
  */
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url))
@@ -22,6 +28,13 @@ const ROOT = fileURLToPath(new URL("../../", import.meta.url))
 const headersFile = readFileSync(join(ROOT, "public/_headers"), "utf8")
 const nginxConf = readFileSync(join(ROOT, "nginx.conf"), "utf8")
 const workerSource = readFileSync(join(ROOT, "worker/index.ts"), "utf8")
+const robotsSource = readFileSync(join(ROOT, "worker/robots.ts"), "utf8")
+
+/** The body of `function applySecurityHeaders(...) { ... }` in
+ * worker/index.ts: everything up to the first column-0 closing brace. */
+const HELPER_DEFINITION = /^function applySecurityHeaders\(headers: Headers\): void \{\n([\s\S]*?)^\}/m
+const helperMatch = HELPER_DEFINITION.exec(workerSource)
+const workerHelperBody = helperMatch ? helperMatch[1] : ""
 
 const HEADER_NAMES = [
   "Strict-Transport-Security",
@@ -47,10 +60,16 @@ function valuesFromNginxConf(name: string): string[] {
   return [...nginxConf.matchAll(re)].map((m) => m[1])
 }
 
-/** `out.headers.set("Name", "value")` in worker/index.ts. */
+/** `headers.set("Name", "value")` inside worker/index.ts's
+ * `applySecurityHeaders`, the one place the Worker sets them. */
 function valueFromWorkerSource(name: string): string | null {
-  const match = workerSource.match(new RegExp(`headers\\.set\\(\\s*"${name}",\\s*"([^"]+)"`))
+  const match = workerHelperBody.match(new RegExp(`headers\\.set\\(\\s*"${name}",\\s*"([^"]+)"`))
   return match ? match[1] : null
+}
+
+/** Every `.set("Name"` / `.append("Name"` call for `name` in `source`. */
+function headerWrites(source: string, name: string): number {
+  return [...source.matchAll(new RegExp(`\\.(?:set|append)\\(\\s*"${name}"`, "gi"))].length
 }
 
 /**
@@ -94,6 +113,28 @@ describe("security header parity across the three deploy targets", () => {
     expect(fromWorker, `worker/index.ts's ${name} disagrees with public/_headers`).toBe(
       fromHeadersFile,
     )
+  })
+
+  /*
+   * T08: the /api/* proxy and the tutor pages (worker/robots.ts) are two
+   * response paths in one Worker. A second hand-written copy of the headers
+   * on either path could drift exactly the way HIGH 2 did, so the helper is
+   * the only writer and both paths call it. The behaviour itself (every
+   * /tutors and /api/* response carries all five) is asserted on real
+   * responses in `workerTutorRobots.test.ts`.
+   */
+  it("the worker sets the five headers in one helper that both of its response paths call", () => {
+    expect(helperMatch, "worker/index.ts has no applySecurityHeaders(headers: Headers) helper").not.toBeNull()
+    const outsideHelper = workerSource.replace(HELPER_DEFINITION, "")
+    for (const name of HEADER_NAMES) {
+      expect(headerWrites(workerHelperBody, name), `${name} inside the helper`).toBe(1)
+      expect(headerWrites(outsideHelper, name), `${name} set outside the helper in index.ts`).toBe(0)
+      expect(headerWrites(robotsSource, name), `${name} set in robots.ts`).toBe(0)
+    }
+    // One call on the tutor-page branch, one on the proxied response.
+    const calls = [...outsideHelper.matchAll(/\bapplySecurityHeaders\(/g)].length
+    expect(calls, "applySecurityHeaders call sites in worker/index.ts").toBe(2)
+    expect(outsideHelper).toMatch(/handleTutorPage\([^)]*\);\s*applySecurityHeaders\(/)
   })
 
   /*

@@ -25,3 +25,10 @@ export const faqItems = [
     "answer": "Yes. Upload your own mark scheme or worksheet and I'll mark against it exactly as I do with the official ones."
   }
 ] as const
+
+/** What Binny says once every question has been asked and answered (reference). */
+export const faqClosingNote =
+  "That's all my party tricks. Anything else? Ask below."
+
+/** Binny's answer to the composer's Send, appended with the visitor's text (reference). */
+export const sendReply = 'Good one. A human from the team will email you back.'

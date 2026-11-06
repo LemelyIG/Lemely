@@ -3,18 +3,20 @@ import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { Check, Plus, UploadSimple } from "@phosphor-icons/react"
 import type { ClassSummary } from "@/lib/teacherTypes"
+import type { Unlock } from "./growth"
+import { UnlockLadder } from "./NextUp"
 import type { SetupProgress } from "./setup"
 import "./home.css"
 
 const STEPS = [
   { key: "created", title: "Create a class", what: "Get a join code to share with your students." },
-  { key: "uploaded", title: "Upload papers", what: "A whole class set at once, as PDFs." },
+  { key: "uploaded", title: "Upload papers", what: "One PDF per student, marked one at a time." },
   { key: "reviewed", title: "Review flagged answers", what: "Check the answers Lemely is unsure about." },
 ] as const
 
 const isPdf = (f: File) => f.type === "application/pdf" || /\.pdf$/i.test(f.name)
 
-export function TeacherSetup({ progress, firstClass, onFiles }: { progress: SetupProgress; firstClass: ClassSummary | null; onFiles: (files: File[]) => void }) {
+export function TeacherSetup({ progress, firstClass, unlocks, onFiles }: { progress: SetupProgress; firstClass: ClassSummary | null; unlocks: Unlock[]; onFiles: (files: File[]) => void }) {
   const input = useRef<HTMLInputElement>(null)
   const [nudge, setNudge] = useState(0)
   const [copied, setCopied] = useState(false)
@@ -53,13 +55,13 @@ export function TeacherSetup({ progress, firstClass, onFiles }: { progress: Setu
 
   return (
     <div className="grid gap-8">
-      <header className="rounded-card bg-inverse-surface p-8 text-inverse-on-surface">
-        <p className="text-eyebrow text-inverse-primary">Every mark, explained.</p>
-        <h1 className="mt-2 text-display-lg">Mark your first class set</h1>
+      <header className="rounded-card bg-primary p-8 text-on-primary dark:bg-primary-container dark:text-on-primary-container">
+        <p className="text-eyebrow text-inverse-primary dark:text-primary">Every mark, explained.</p>
+        <h1 className="mt-2 text-display-lg">Mark your first papers</h1>
         <div className="mt-6 flex flex-wrap gap-3">
-          <Link to="/teacher/first-class" className="inline-flex items-center gap-2 rounded-button bg-inverse-primary px-5 py-3 btn-text text-primary transition-colors hover:bg-inverse-primary/85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-inverse-primary">Create a class</Link>
+          <Link to="/teacher/first-class" className="inline-flex items-center gap-2 rounded-button bg-inverse-primary px-5 py-3 btn-text text-primary transition-colors hover:bg-inverse-primary/85 dark:bg-primary dark:text-on-primary dark:hover:bg-primary-hover">Create a class</Link>
           <button type="button" onClick={() => (progress.created ? input.current?.click() : setNudge((n) => n + 1))}
-            className="rounded-button border border-inverse-on-surface/40 px-5 py-3 btn-text transition-colors hover:bg-inverse-on-surface/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-inverse-primary">Upload papers</button>
+            className="rounded-button border border-on-primary/40 px-5 py-3 btn-text transition-colors hover:bg-on-primary/10 dark:border-on-primary-container/40 dark:hover:bg-on-primary-container/10">Upload papers</button>
         </div>
       </header>
 
@@ -85,8 +87,8 @@ export function TeacherSetup({ progress, firstClass, onFiles }: { progress: Setu
                   <h3 className="font-bold">{s.title}</h3>
                   {s.key === "created" && done && firstClass?.joinCode ? (
                     <p className="text-body-sm text-on-surface-variant">
-                      {firstClass.label} · join code <code className="text-data-md text-on-surface">{firstClass.joinCode}</code>{" "}
-                      <button type="button" onClick={() => void copy(firstClass.joinCode!)} className="font-bold text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">{copied ? "Copied" : "Copy"}</button>
+                      {firstClass.label} · {firstClass.studentCount} {firstClass.studentCount === 1 ? "student" : "students"} joined · join code <code className="text-data-md text-on-surface">{firstClass.joinCode}</code>{" "}
+                      <button type="button" onClick={() => void copy(firstClass.joinCode!)} className="font-bold text-primary">{copied ? "Copied" : "Copy"}</button>
                     </p>
                   ) : (
                     <p className="text-body-sm text-on-surface-variant">{s.what}</p>
@@ -105,6 +107,10 @@ export function TeacherSetup({ progress, firstClass, onFiles }: { progress: Setu
             )
           })}
         </ol>
+      </section>
+
+      <section aria-labelledby="gs-unlock" className="rounded-card bg-surface-container-lowest p-6 shadow-panel">
+        <UnlockLadder unlocks={unlocks} as="h2" headingId="gs-unlock" />
       </section>
       <input ref={input} type="file" accept="application/pdf" multiple hidden onChange={(e) => upload(e.target.files)} />
     </div>

@@ -13,7 +13,7 @@ const front = design.split("---")[1].split("\ntypography:")[0]
 const roles = [...front.matchAll(/^  ([a-z0-9-]+): "/gm)]
   .map((m) => m[1])
   .filter((k) => !k.startsWith("dark-") && !k.startsWith("grade-") && !k.startsWith("binny-"))
-  .filter((k) => !["abyss", "abyss-hover", "abyss-lip", "tide", "tide-hover", "mist-blue", "night", "white", "gold", "crimson", "crimson-on-dark", "shadow"].includes(k))
+  .filter((k) => !["abyss", "abyss-hover", "abyss-lip", "tide", "tide-hover", "mist-blue", "night", "night-surface", "white", "gold", "crimson", "crimson-on-dark", "shadow"].includes(k))
 
 describe("token layer", () => {
   it.each(roles)("exposes --color-%s as a utility", (role) => {

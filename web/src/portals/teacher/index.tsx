@@ -23,11 +23,12 @@ import {
   Gear,
   List,
   Trash,
-  Plus,
   UploadSimple,
+  GraduationCap,
   type Icon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
+import { gradeChipClass } from "@/lib/grade"
 import { Avatar } from "@/components/ui/avatar"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
 import { portalErrorFallback } from "@/components/route-error"
@@ -44,6 +45,14 @@ import { useReviewQueueCount } from "@/lib/hooks/useReviewQueueCount"
 import { unreadBadgeLabel } from "@/lib/staffInbox"
 import { navItems, resolveTrail, classesItemActive, type NavItem } from "./data"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
+import { CreateSheet } from "./components/TopBarSheets"
+import { ProfileAvatarPlaceholder } from "./components/ProfileAvatar"
+import { roleLabel } from "./components/topBarActions"
+import { underlyingPathname } from "@/lib/nav/backgroundLocation"
+import { useOverlayState } from "@/lib/nav/useOverlayState"
+import { TEACHER_SETTINGS_TABS } from "@/portals/settings/settingsTabs"
+
+const TEACHER_SETTINGS_BASE = "/teacher/settings"
 
 // P6.1b: screens are `React.lazy`, not static imports — see the same note in
 // `portals/student/index.tsx`. QuizBuilder and ClassAnalytics in particular
@@ -88,19 +97,22 @@ const Announcements = lazy(() =>
 const TeacherNotifications = lazy(() =>
   import("./screens/Notifications").then((m) => ({ default: m.TeacherNotifications })),
 )
-// Settings' three screens now mount here too, alongside every other lazy
-// screen in this portal, rather than only reaching the top-level
-// `/settings/*` lane from a footer link — see `data.ts`'s `navItems` and the
-// route registration below.
+// Settings is a dialog over the current page (`SettingsModalRoute`), one
+// route per tab, each tab's section lazy on its own.
 // Each imported from its own module rather than the `@/portals/settings`
-// barrel: importing all four through one barrel module means a chunk
-// containing any one of them pulls in the code for all four, defeating the
-// per-screen splitting this whole file otherwise does. The barrel still
-// exists for other consumers (its own header explains why) — this portal
-// just does not use it for the lazy boundary.
-const PortalSettingsLayout = lazy(() =>
-  import("@/portals/settings/PortalSettingsLayout").then((m) => ({
-    default: m.PortalSettingsLayout,
+// barrel: importing them all through one barrel module means a chunk
+// containing any one of them pulls in the code for all of them, defeating the
+// per-screen splitting this whole file otherwise does.
+// Loaded on its own so Radix's menu stays out of the entry chunk's budget.
+const NotificationsMenu = lazy(() =>
+  import("./components/NotificationsMenu").then((m) => ({ default: m.NotificationsMenu })),
+)
+const ProfileMenu = lazy(() =>
+  import("./components/ProfileMenu").then((m) => ({ default: m.ProfileMenu })),
+)
+const SettingsModalRoute = lazy(() =>
+  import("@/portals/settings/SettingsModal").then((m) => ({
+    default: m.SettingsModalRoute,
   })),
 )
 const ProfileSettingsSection = lazy(() =>
@@ -108,12 +120,22 @@ const ProfileSettingsSection = lazy(() =>
     default: m.ProfileSettingsSection,
   })),
 )
-const DeviceSettingsSection = lazy(() =>
-  import("@/portals/settings/DeviceSettings").then((m) => ({ default: m.DeviceSettingsSection })),
+const AccountSettingsSection = lazy(() =>
+  import("@/portals/settings/AccountSettings").then((m) => ({ default: m.AccountSettingsSection })),
 )
 const NotificationSettingsSection = lazy(() =>
   import("@/portals/settings/NotificationSettings").then((m) => ({
     default: m.NotificationSettingsSection,
+  })),
+)
+const AppearanceSettingsSection = lazy(() =>
+  import("@/portals/settings/AppearanceSettings").then((m) => ({
+    default: m.AppearanceSettingsSection,
+  })),
+)
+const ClassesSettingsSection = lazy(() =>
+  import("@/portals/settings/ClassesSettings").then((m) => ({
+    default: m.ClassesSettingsSection,
   })),
 )
 const InstallSettingsSection = lazy(() =>
@@ -122,8 +144,32 @@ const InstallSettingsSection = lazy(() =>
   })),
 )
 
+// T-15..T-18 and T-21 (tutoring marketplace): the teacher's own tutoring screens.
+const TutoringHome = lazy(() =>
+  import("./screens/tutoring/TutoringHome").then((m) => ({ default: m.TutoringHome })),
+)
+const TutorProfileEditor = lazy(() =>
+  import("./screens/tutoring/TutorProfileEditor").then((m) => ({ default: m.TutorProfileEditor })),
+)
+const Availability = lazy(() =>
+  import("./screens/tutoring/Availability").then((m) => ({ default: m.Availability })),
+)
+const TutorSessionDetail = lazy(() =>
+  import("./screens/tutoring/TutorSessionDetail").then((m) => ({ default: m.TutorSessionDetail })),
+)
+const PreviewReviews = lazy(() =>
+  import("./screens/tutoring/PreviewReviews").then((m) => ({ default: m.PreviewReviews })),
+)
+// T-19 and T-20: the students who share their progress with this tutor.
+const MyStudents = lazy(() =>
+  import("./screens/tutoring/MyStudents").then((m) => ({ default: m.MyStudents })),
+)
+const TutorStudentDetail = lazy(() =>
+  import("./screens/tutoring/TutorStudentDetail").then((m) => ({ default: m.TutorStudentDetail })),
+)
+
 const SIDEBAR_PRIMARY: NavItem["icon"][] = ["overview", "grading", "review", "classes", "atRisk"]
-const SIDEBAR_TOOLS: NavItem["icon"][] = ["schemes", "quizzes", "announcements", "deleted"]
+const SIDEBAR_TOOLS: NavItem["icon"][] = ["schemes", "quizzes", "tutoring", "announcements", "deleted"]
 
 const NAV_ICON: Record<NavItem["icon"], Icon> = {
   overview: SquaresFour,
@@ -136,6 +182,7 @@ const NAV_ICON: Record<NavItem["icon"], Icon> = {
   atRisk: Warning,
   schemes: Books,
   quizzes: Sparkle,
+  tutoring: GraduationCap,
   announcements: Megaphone,
   notifications: Bell,
   settings: Gear,
@@ -174,7 +221,7 @@ function toNavShellItem(
  * real "current class" concept anywhere in the app to back it). Capped at 5
  * with a link to the full list rather than an unbounded sidebar.
  */
-function ClassesNavSection() {
+export function ClassesNavSection() {
   const { data, isPending, isError } = useTeacherClasses()
 
   return (
@@ -201,8 +248,8 @@ function ClassesNavSection() {
               // default (non-exact) match is deliberate, since this row must
               // also read as current on the class's `/analytics` child.
               //
-              // No grade chip: `ClassSummary` carries `average` (a percentage)
-              // and no grade, and a grade is not something to invent here. The
+              // The grade chip is the server's median latest paper grade
+              // (`ClassSummary.grade`), shown only when it exists. The
               // trailing figure is the real `studentCount`.
               <NavLink
                 key={c.id}
@@ -219,7 +266,15 @@ function ClassesNavSection() {
                 }
               >
                 <span className="truncate">{c.label}</span>
-                <span className="ms-auto flex-none text-data-sm text-on-surface-variant">{c.studentCount}</span>
+                {c.grade ? (
+                  <span className={cn("ms-auto inline-flex h-4.5 min-w-6 flex-none items-center justify-center rounded-md px-1 pt-0.5 text-data-sm font-bold", gradeChipClass(c.grade, { size: "small" }))}>
+                    <span className="sr-only">Median grade </span>
+                    {c.grade}
+                  </span>
+                ) : null}
+                <span className={cn("inline-flex h-4.5 w-6 flex-none items-center justify-end pt-0.5 text-data-sm tabular-nums text-on-surface-variant", !c.grade && "ms-auto")}>
+                  {c.studentCount}
+                </span>
               </NavLink>
             ))}
             {data.classes.length > 5 ? (
@@ -262,17 +317,12 @@ function UserBlock() {
   }
 
   const name = data.displayName ?? data.email.split("@")[0]
-  const roleLabel = data.role
-    .split("_")
-    .map((w) => w[0].toUpperCase() + w.slice(1))
-    .join(" ")
-
   return (
     <div className="flex items-center gap-2.5">
       <Avatar name={name} src={data.avatarUrl ?? undefined} size="sm" />
       <div className="min-w-0">
         <div className="truncate text-body-sm font-medium text-on-surface">{name}</div>
-        <div className="text-body-sm text-on-surface-variant">{roleLabel}</div>
+        <div className="text-body-sm text-on-surface-variant">{roleLabel(data.role)}</div>
       </div>
     </div>
   )
@@ -317,7 +367,9 @@ function TeacherNav() {
   const toolItems = navItems.filter((i) => SIDEBAR_TOOLS.includes(i.icon)).map(toShell)
 
   return (
-    <div className="flex flex-col gap-[18px]">
+    // `gap-8`: the three groups (sections, your classes, tools) read as
+    // separate blocks rather than one long list.
+    <div className="flex flex-col gap-8">
       <SidebarNav variant="abyss" aria-label="Teacher sections" items={primaryItems} />
       <ClassesNavSection />
       <SidebarNav variant="abyss" aria-label="Teacher tools" groups={[{ label: "Tools", items: toolItems }]} />
@@ -382,12 +434,21 @@ function Sidebar() {
  * route back on a laptop too. The *bar* is mobile-only because above `md` the
  * sidebar already carries the logo and the menu button has nothing to open.
  */
-const TOP_BAR_ICON_BUTTON =
+export const TOP_BAR_ICON_BUTTON =
   "relative flex h-9 w-9 flex-none items-center justify-center rounded-chip text-on-surface-variant transition-colors hover:bg-surface-container hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:h-11 pointer-coarse:w-11"
 
 function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
   const location = useLocation()
-  const trail = resolveTrail(location.pathname)
+  const overlayState = useOverlayState()
+  // While Settings is a dialog, the page underneath is still the page: the
+  // title and trail follow the background location, not "/teacher/settings".
+  const trail = resolveTrail(
+    underlyingPathname({
+      pathname: location.pathname,
+      state: location.state,
+      overlayBase: TEACHER_SETTINGS_BASE,
+    }),
+  )
   const title = trail[trail.length - 1]?.label ?? "Overview"
   const { data: counts } = useNotificationCounts()
   const unread = unreadBadgeLabel(counts)
@@ -398,47 +459,42 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
           `sidebar` breakpoint, so it belongs on the nav layer with the
           sidebar (DESIGN.md §7). Side margins are 16px on mobile, 28px from
           `md`; the page well below carries its own 72px at `lg`. */}
-      <div className="lm-app-header lm-app-header-pt-2.5 lm-nav-chrome sticky top-2 z-nav mx-4 mb-6 mt-2 flex min-h-14 items-center pb-2.5 gap-2 rounded-inner bg-surface-container-lowest pe-3 ps-3 ring-1 ring-outline-variant shadow-[var(--shadow-float)] md:mx-7 md:ps-[18px]">
+      <div className="lm-app-header lm-app-header-pt-2.5 lm-nav-chrome sticky top-2 z-nav mx-4 mb-6 mt-2 flex min-h-14 items-center pb-2.5 gap-0.5 rounded-inner sm:gap-2 bg-surface-container-lowest pe-1 ps-2 ring-1 ring-outline-variant shadow-[var(--shadow-float)] md:mx-7 sm:pe-3 sm:ps-3 md:ps-[18px]">
         <NavDrawerTrigger
           onClick={onOpenNav}
           label="Open teacher navigation"
-          className="-ms-1 sidebar:hidden"
+          className="-ms-2 sidebar:hidden"
         />
         <p className="min-w-0 truncate text-display-sm text-on-surface">
           {title}
         </p>
         <div className="flex-1" />
-        <Link
-          to="/teacher/first-class"
-          className="inline-flex h-9 flex-none items-center gap-[7px] rounded-chip bg-secondary-container px-3 btn-text text-on-secondary-container transition-colors hover:bg-secondary-container/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:px-3.5 pointer-coarse:h-11"
-        >
-          <Plus size={16} aria-hidden="true" />
-          <span className="hidden sm:inline">Create</span>
-          <span className="sr-only sm:hidden">Create a class</span>
-        </Link>
+        <CreateSheet triggerClassName="inline-flex h-9 flex-none cursor-pointer items-center gap-[7px] rounded-chip bg-secondary-container px-3 btn-text text-on-secondary-container transition-colors hover:bg-secondary-container/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:px-3.5 pointer-coarse:h-11" />
         <Link
           to="/teacher/grading"
-          className="me-0 sm:me-2.5 inline-flex h-9 flex-none items-center gap-[7px] rounded-chip bg-primary px-3 btn-text text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:px-3.5 pointer-coarse:h-11"
+          className="me-0 sm:me-2.5 inline-flex h-9 flex-none items-center gap-[7px] rounded-chip bg-primary px-3 btn-text text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary max-sm:justify-center sm:px-3.5 pointer-coarse:h-11 max-sm:pointer-coarse:w-11 max-sm:pointer-coarse:px-0"
         >
           <UploadSimple size={16} aria-hidden="true" />
           <span className="hidden sm:inline">Upload papers</span>
           <span className="sr-only sm:hidden">Upload papers</span>
         </Link>
-        <Link
-          to="/teacher/notifications"
-          aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"}
-          className={TOP_BAR_ICON_BUTTON}
+        <Suspense
+          fallback={
+            <Link to="/teacher/notifications" aria-label="Notifications" className={TOP_BAR_ICON_BUTTON}>
+              <Bell size={20} aria-hidden="true" />
+            </Link>
+          }
         >
-          <Bell size={20} aria-hidden="true" />
-          {unread ? (
-            <span className="absolute -end-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-pill bg-primary px-1 text-data-sm text-on-primary">
-              {unread}
-            </span>
-          ) : null}
-        </Link>
-        <Link to="/teacher/settings" aria-label="Settings" className={TOP_BAR_ICON_BUTTON}>
+          <NotificationsMenu unread={unread} triggerClassName={TOP_BAR_ICON_BUTTON} />
+        </Suspense>
+        {/* Below `sm` the bar has no room for a title beside six 44px targets, so
+            the gear folds into the profile menu (which carries Settings). */}
+        <Link to="/teacher/settings" state={overlayState} aria-label="Settings" className={cn(TOP_BAR_ICON_BUTTON, "max-sm:hidden")}>
           <Gear size={20} aria-hidden="true" />
         </Link>
+        <Suspense fallback={<ProfileAvatarPlaceholder />}>
+          <ProfileMenu triggerClassName="cursor-pointer" />
+        </Suspense>
       </div>
       {/* The D1.5 back affordance: one crumb is just the page's own name, which
           the title already says, so the trail renders only when drilled in. */}
@@ -528,7 +584,7 @@ function TeacherLayout() {
         <main
           id={MAIN_CONTENT_ID}
           tabIndex={-1}
-          className="flex-1 min-w-0 overflow-x-hidden w-full max-w-app px-page-mobile pt-2 pb-bottom-nav sidebar:pb-8 md:px-page-tablet lg:px-[72px] focus:outline-none"
+          className="flex-1 min-w-0 overflow-x-hidden w-full max-w-[1600px] px-page-mobile pt-2 pb-bottom-nav sidebar:pb-8 md:px-page-tablet lg:px-[72px] focus:outline-none"
         >
           {/* PR 2 part C: offline recovery banner, above the Suspense/
               ErrorBoundary content it sits over — it renders nothing while
@@ -572,7 +628,13 @@ function TeacherLayout() {
                 resetKey={location.pathname}
                 fallback={portalErrorFallback}
               >
-                <ScreenOutlet />
+                <ScreenOutlet
+                  overlay={{
+                    routes: teacherContentRoutes(),
+                    overlayBase: TEACHER_SETTINGS_BASE,
+                    fallbackPath: "/teacher",
+                  }}
+                />
               </ErrorBoundary>
             </Suspense>
           )}
@@ -717,6 +779,41 @@ export const teacherRoute: RouteObject = {
       handle: { title: "Quiz results", skeleton: "page-header" },
     },
     {
+      path: "tutoring",
+      element: <TutoringHome />,
+      handle: { title: "Tutoring", skeleton: "list" },
+    },
+    {
+      path: "tutoring/profile",
+      element: <TutorProfileEditor />,
+      handle: { title: "Tutor profile", skeleton: "page-header" },
+    },
+    {
+      path: "tutoring/availability",
+      element: <Availability />,
+      handle: { title: "Weekly availability", skeleton: "page-header" },
+    },
+    {
+      path: "tutoring/sessions/:bookingId",
+      element: <TutorSessionDetail />,
+      handle: { title: "Tutoring session", skeleton: "page-header" },
+    },
+    {
+      path: "tutoring/preview",
+      element: <PreviewReviews />,
+      handle: { title: "Profile preview and reviews", skeleton: "page-header" },
+    },
+    {
+      path: "tutoring/students",
+      element: <MyStudents />,
+      handle: { title: "My students", skeleton: "list" },
+    },
+    {
+      path: "tutoring/students/:studentId",
+      element: <TutorStudentDetail />,
+      handle: { title: "Student progress", skeleton: "page-header" },
+    },
+    {
       path: "announcements",
       element: <Announcements />,
       handle: { title: "Announcements", skeleton: "list" },
@@ -727,18 +824,29 @@ export const teacherRoute: RouteObject = {
       handle: { title: "Notifications", skeleton: "list" },
     },
     {
+      // A dialog over the current page: `ScreenOutlet`'s overlay (in the layout)
+      // renders the page underneath, this route renders the dialog. One child
+      // per entry in `TEACHER_SETTINGS_TABS`; `settingsTabs.test.ts` holds the
+      // two in step. Paths are unchanged from the page-based settings.
       path: "settings",
-      element: <PortalSettingsLayout basePath="/teacher/settings" />,
+      element: (
+        <SettingsModalRoute
+          tabs={TEACHER_SETTINGS_TABS}
+          basePath={TEACHER_SETTINGS_BASE}
+          fallbackPath="/teacher"
+        />
+      ),
       handle: { title: "Settings", skeleton: "page-header" },
       children: [
         {
           index: true,
-          element: <ProfileSettingsSection />,
+          // Appearance has its own tab here, so not inside Profile.
+          element: <ProfileSettingsSection appearance={false} />,
           handle: { title: "Profile settings", skeleton: "page-header" },
         },
         {
           path: "devices",
-          element: <DeviceSettingsSection />,
+          element: <AccountSettingsSection />,
           handle: { title: "Account and devices", skeleton: "page-header" },
         },
         {
@@ -747,6 +855,16 @@ export const teacherRoute: RouteObject = {
           // only for a teacher (Task 9's `_notify_withdrawn_reviewers`).
           element: <NotificationSettingsSection showTeacherOnly />,
           handle: { title: "Notification settings", skeleton: "page-header" },
+        },
+        {
+          path: "appearance",
+          element: <AppearanceSettingsSection />,
+          handle: { title: "Appearance", skeleton: "page-header" },
+        },
+        {
+          path: "classes",
+          element: <ClassesSettingsSection />,
+          handle: { title: "Classes and grading", skeleton: "page-header" },
         },
         {
           path: "install",
@@ -764,4 +882,15 @@ export const teacherRoute: RouteObject = {
       handle: { title: "Page not found", skeleton: "page-header" },
     },
   ],
+}
+
+let contentRoutesCache: RouteObject[] | null = null
+
+/** The portal's child routes minus the settings dialog, matched against the
+ * page underneath while the dialog is open (`ScreenOutlet`'s `overlay`, in
+ * `TeacherLayout`; everywhere else it is the plain screen outlet). Built once, on first use, because
+ * `teacherRoute` is declared after the layout that reads it. */
+function teacherContentRoutes(): RouteObject[] {
+  contentRoutesCache ??= (teacherRoute.children ?? []).filter((route) => route.path !== "settings")
+  return contentRoutesCache
 }

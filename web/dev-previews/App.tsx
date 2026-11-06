@@ -1,6 +1,8 @@
 import { useState, type CSSProperties } from "react"
 import { MagnifyingGlass, Plus } from "@phosphor-icons/react"
-import { ComponentSection, Group, StateCell, slug } from "./harness"
+import { ComponentSection, Group, StateCell, slug, useThemeToggle } from "./harness"
+import { Foundations } from "./Foundations"
+import { TeacherGroup } from "./Teacher"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -54,52 +56,6 @@ import { RECONNECTED_TOAST, UPDATED_TOAST } from "@/components/recovery-effects"
  * with `npm run preview:kit`.
  */
 
-/*
- * Every Tailwind class below is written out in full, never assembled from a
- * template literal. Tailwind v4 finds classes by scanning source text for
- * literal strings, so `bg-pastel-${name}` generates no CSS at all and the
- * swatch silently renders unstyled. That is easy to miss on a page whose whole
- * job is to show colours, which is exactly why it is spelled out here.
- */
-const PASTELS = [
-  ["rose", "Unassigned or other subjects", "bg-pastel-rose", "text-pastel-rose-ink"],
-  ["amber", "English", "bg-pastel-amber", "text-pastel-amber-ink"],
-  ["sage", "Chemistry", "bg-pastel-sage", "text-pastel-sage-ink"],
-  ["sky", "Mathematics", "bg-pastel-sky", "text-pastel-sky-ink"],
-  ["lilac", "Physics", "bg-pastel-lilac", "text-pastel-lilac-ink"],
-  ["clay", "Biology", "bg-pastel-clay", "text-pastel-clay-ink"],
-] as const
-
-const SEMANTIC = [
-  ["ok", "Correct, complete, saved, on track", "bg-ok-wash", "text-ok"],
-  ["warn", "Partial credit, uncertain, borderline", "bg-warn-wash", "text-warn"],
-  ["err", "Wrong, failed, destructive, blocked", "bg-err-wash", "text-err"],
-  ["info", "Neutral notices and tips", "bg-info-wash", "text-info"],
-] as const
-
-const SURFACES = [
-  ["paper-raised", "bg-paper-raised"],
-  ["paper", "bg-paper"],
-  ["paper-sunk", "bg-paper-sunk"],
-] as const
-
-const TYPE_RUNGS = [
-  ["text-display-hero", "Display hero, marketing only"],
-  ["text-display-xl", "Display xl"],
-  ["text-display-lg", "Display lg, in-app page titles"],
-  ["text-display-md", "Display md, section headings"],
-  ["text-display-sm", "Display sm, sub-sections"],
-  ["text-body-lg", "Body lg, the default"],
-  ["text-body-md", "Body md, dense"],
-  ["text-body-sm", "Body sm, captions"],
-  ["text-label", "Label, buttons and form labels"],
-  ["text-eyebrow", "Eyebrow, uppercase kicker"],
-  ["text-data-lg", "Data lg, the big number"],
-  ["text-data-md", "Data md, inline figures"],
-  ["text-data-sm", "Data sm, codes and metadata"],
-  ["text-hand", "Marginalia, decorative only"],
-] as const
-
 /** What to do to see the states a static render cannot show. */
 const INTERACT_NOTE: Record<string, string> = {
   hover: "Hover this control to see it",
@@ -107,7 +63,19 @@ const INTERACT_NOTE: Record<string, string> = {
   active: "Press and hold this control to see it",
 }
 
-const SECTIONS = ["Colour", "Typography", "Texture", "Forms", "Display", "Overlays"] as const
+const SECTIONS = [
+  "Colour",
+  "Typography",
+  "Shape and motion",
+  "Brand",
+  "Teacher portal",
+  "Forms",
+  "Display",
+  "Overlays",
+  "Navigation and first run",
+  "Full-page states",
+  "Loading and recovery",
+] as const
 
 /**
  * A stand-in for a chosen scan, so `FileDrop`'s success state can be shown
@@ -241,10 +209,10 @@ function TabsDemo() {
           ]}
         />
         <TabsPanel value="marks">
-          <p className="text-body-md text-ink-muted">Sixty three out of eighty.</p>
+          <p className="text-body-md text-on-surface-variant">Sixty three out of eighty.</p>
         </TabsPanel>
         <TabsPanel value="notes">
-          <p className="text-body-md text-ink-muted">Two marks on the gradient.</p>
+          <p className="text-body-md text-on-surface-variant">Two marks on the gradient.</p>
         </TabsPanel>
       </Tabs>
     </div>
@@ -285,7 +253,7 @@ function ModalDemo() {
         Open modal
       </Button>
       <Modal open={open} onClose={() => setOpen(false)} title="Delete this paper?">
-        <p className="text-body-md text-ink-muted">
+        <p className="text-body-md text-on-surface-variant">
           The marks and the annotations go with it. This cannot be undone.
         </p>
         <div className="mt-6 flex justify-end gap-2">
@@ -316,7 +284,7 @@ function QueryStateDemoPanel({ rows }: { rows: QueryStateDemoData["rows"] }) {
   return (
     <ul className="flex w-full flex-col gap-1.5">
       {rows.map((row) => (
-        <li key={row.id} className="text-body-sm text-ink">
+        <li key={row.id} className="text-body-sm text-on-surface">
           {row.label}
         </li>
       ))}
@@ -376,18 +344,38 @@ export function App() {
 }
 
 function AppBody() {
+  const [theme, setTheme] = useThemeToggle()
   return (
-    <div className="paper-grain min-h-screen">
-      <header className="sticky top-0 z-[var(--z-index-nav)] border-b border-rule bg-paper/85 backdrop-blur-[10px]">
-        <div className="mx-auto flex max-w-[var(--container-app)] flex-wrap items-center gap-4 px-6 py-4">
-          <span className="text-display-sm text-ink">Lemely component kit</span>
-          <span className="text-data-sm text-ink-faint">The Study Notebook</span>
-          <nav className="ms-auto flex flex-wrap gap-3">
+    <div className="min-h-screen bg-surface text-on-surface">
+      <header className="sticky top-0 z-[var(--z-index-nav)] border-b border-outline-variant bg-surface/85 backdrop-blur-[10px]">
+        <div className="mx-auto flex max-w-[var(--container-app)] flex-wrap items-center gap-x-4 gap-y-2 px-6 py-4">
+          <span className="text-display-sm text-on-surface">Lemely component kit</span>
+          <span className="text-data-sm text-on-surface-variant">Abyss, v5</span>
+          <div
+            role="group"
+            aria-label="Theme"
+            className="ms-auto flex rounded-chip bg-surface-container-low p-0.5 dark:bg-surface-container"
+          >
+            {(["light", "dark"] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                aria-pressed={theme === t}
+                onClick={() => setTheme(t)}
+                className={`rounded-chip px-3 py-1 text-label capitalize transition-colors duration-[var(--dur-instant)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${
+                  theme === t ? "bg-primary text-on-primary" : "text-on-surface-variant hover:text-on-surface"
+                }`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+          <nav aria-label="Kit sections" className="flex basis-full flex-wrap gap-x-4 gap-y-1">
             {SECTIONS.map((s) => (
               <a
                 key={s}
                 href={`#${slug(s)}`}
-                className="text-label text-ink-muted transition-colors duration-[var(--dur-instant)] hover:text-accent-ink"
+                className="text-label text-on-surface-variant transition-colors duration-[var(--dur-instant)] hover:text-primary"
               >
                 {s}
               </a>
@@ -397,124 +385,16 @@ function AppBody() {
       </header>
 
       <main className="mx-auto flex max-w-[var(--container-app)] flex-col gap-section px-6 py-12">
-        <p className="text-body-lg max-w-[65ch] text-ink-muted">
+        <p className="text-body-lg max-w-[65ch] text-on-surface-variant">
           Every value on this page comes from <code className="text-data-md">DESIGN.md</code> by way
           of <code className="text-data-md">src/index.css</code>. If something here looks wrong, the
-          token is wrong, not the page. Contrast claims are pinned by{" "}
+          token is wrong, not the page. Contrast ratios are measured in your browser from the
+          colours it is painting, so they follow the theme toggle; CI pins them in{" "}
           <code className="text-data-md">tests/test_design_tokens.py</code>.
         </p>
 
-        <Group title="Colour">
-          <ComponentSection
-            name="Paper and ink"
-            summary="Cards sit lighter than the canvas, the way a sheet laid on a desk catches more light. Never pure white and never pure black: both read sterile and break the paper illusion. Ink faint is the floor, and there is deliberately no lighter text step."
-          >
-            <StateCell state="default" provenance="prop" note="Surfaces, lightest to darkest">
-              <div className="flex w-full flex-col gap-2">
-                {SURFACES.map(([name, bg]) => (
-                  <div
-                    key={name}
-                    className={`flex items-center justify-between rounded-md border border-rule px-3 py-2 ${bg}`}
-                  >
-                    <span className="text-body-sm text-ink">{name}</span>
-                  </div>
-                ))}
-              </div>
-            </StateCell>
-            <StateCell state="default" provenance="prop" note="Text tokens, all AA on every surface">
-              <div className="flex w-full flex-col gap-1">
-                <span className="text-body-lg text-ink">ink, 11.6:1</span>
-                <span className="text-body-lg text-ink-muted">ink-muted, 6.09:1</span>
-                <span className="text-body-lg text-ink-faint">ink-faint, 4.94:1</span>
-              </div>
-            </StateCell>
-            <StateCell
-              state="default"
-              provenance="prop"
-              note="Accent has three values because three jobs have three contrast requirements"
-            >
-              <div className="flex w-full flex-col gap-2">
-                <span className="rounded-md bg-accent px-3 py-2 text-label text-accent-on">
-                  accent fill, white label 4.65:1
-                </span>
-                <span className="text-body-md text-accent-ink">accent-ink text, 9.75:1</span>
-                <span className="rounded-md bg-accent-wash px-3 py-2 text-body-sm text-accent-ink">
-                  accent-wash
-                </span>
-              </div>
-            </StateCell>
-          </ComponentSection>
-
-          <ComponentSection
-            name="Pastels and subjects"
-            summary="The sticker set. Subject colours are semantic, not decorative: a student should find Physics by colour before reading. Never pick a subject colour at a call site."
-          >
-            {PASTELS.map(([name, use, bg, fg]) => (
-              <StateCell key={name} state="default" provenance="prop" note={use}>
-                <span className={`rounded-full px-2.5 py-1 text-eyebrow ${bg} ${fg}`}>{name}</span>
-              </StateCell>
-            ))}
-          </ComponentSection>
-
-          <ComponentSection
-            name="Semantic states"
-            summary="Teal rather than green, so the success and error pair survives deuteranopia and protanopia where green against red does not. They also descend in lightness, so the ladder survives greyscale for a reader who gets no hue at all. Colour never carries meaning alone: each pairs with a label."
-          >
-            {SEMANTIC.map(([name, use, bg, fg]) => (
-              <StateCell key={name} state="default" provenance="prop" note={use}>
-                <span className={`rounded-md px-3 py-1.5 text-body-sm ${bg} ${fg}`}>{name}</span>
-              </StateCell>
-            ))}
-          </ComponentSection>
-        </Group>
-
-        <Group title="Typography">
-          <ComponentSection
-            name="The four faces"
-            summary="Newsreader for display, Geist for interface and body, JetBrains Mono for every number (tabular by construction, so a column of marks aligns and a counting score never jitters), and Caveat for marginalia only. If losing the text would be a problem, it is not Caveat."
-          >
-            {TYPE_RUNGS.map(([cls, label]) => (
-              <StateCell key={cls} state="default" provenance="prop" note={cls}>
-                <span className={`${cls} text-ink`}>{label}</span>
-              </StateCell>
-            ))}
-          </ComponentSection>
-        </Group>
-
-        <Group title="Texture">
-          <ComponentSection
-            name="The notebook layer"
-            summary="How the one protected quality survives contact with a dashboard, and the easiest thing in the system to overdo. The restraint rule: marginalia decorates, never carries meaning alone. Remove every element here and the product must still be fully usable."
-          >
-            <StateCell state="default" provenance="prop" note=".ruled-bg, 32px">
-              <div className="ruled-bg h-24 w-full rounded-md border border-rule" />
-            </StateCell>
-            <StateCell state="default" provenance="prop" note=".dotted-bg, 24px">
-              <div className="dotted-bg h-24 w-full rounded-md border border-rule" />
-            </StateCell>
-            <StateCell
-              state="default"
-              provenance="prop"
-              note=".margin-rule, the cheapest and most on-brand texture available"
-            >
-              <div className="margin-rule">
-                <p className="text-body-md text-ink-muted">
-                  A single hairline at the content&rsquo;s inline start, echoing the logo.
-                </p>
-              </div>
-            </StateCell>
-            <StateCell state="default" provenance="prop" note=".sticker, decorative badges only">
-              <span className="sticker rounded-sm bg-pastel-amber px-2.5 py-1 text-eyebrow text-pastel-amber-ink">
-                7 day streak
-              </span>
-            </StateCell>
-            <StateCell state="default" provenance="prop" note="The paper grain is on this page">
-              <p className="text-hand text-ink-muted">
-                Marginalia lives here, and nowhere that matters.
-              </p>
-            </StateCell>
-          </ComponentSection>
-        </Group>
+<Foundations theme={theme} />
+        <TeacherGroup />
 
         <Group title="Forms">
           <ComponentSection
@@ -607,7 +487,7 @@ function AppBody() {
                 // resting target under an "active" label would be the kind of
                 // evidence-shaped non-evidence this build keeps finding.
                 active:
-                  "Drag-over is JavaScript state, not a pseudo-class, so `Force` cannot pin it and this cell shows the target at rest. The accent rule and wash are exercised on the real screen.",
+                  "Drag-over is JavaScript state, not a pseudo-class, so `Force` cannot pin it and this cell shows the target at rest. The primary outline and container wash are exercised on the real screen.",
               }}
             />
           </ComponentSection>
@@ -824,7 +704,7 @@ function AppBody() {
             <StateCell state="default" provenance="prop">
               <div className="w-full">
                 <ChartFrame title="Predicted grade" subtitle="Last six papers">
-                  <div className="dotted-bg h-28 rounded-md border border-rule" />
+                  <div className="h-28 rounded-chip border border-outline-variant bg-surface-container-low" />
                 </ChartFrame>
               </div>
             </StateCell>
@@ -863,7 +743,7 @@ function AppBody() {
                   </Button>
                 )}
               >
-                <p className="text-body-sm text-ink-muted">
+                <p className="text-body-sm text-on-surface-variant">
                   Confidence is how sure the marker is, not how right it is.
                 </p>
               </Popover>
@@ -1141,7 +1021,7 @@ function AppBody() {
             >
               <div className="relative h-16 w-full">
                 <SkipLink />
-                <span className="text-body-sm text-ink-faint">Tab into this cell</span>
+                <span className="text-body-sm text-on-surface-variant">Tab into this cell</span>
               </div>
             </StateCell>
           </ComponentSection>
@@ -1287,7 +1167,7 @@ function AppBody() {
 
           <ComponentSection
             name="Service trouble"
-            summary="`service-trouble`. `health` is optional and caller-supplied (no polling happens in this component); omitted, the status row simply does not render. Both reachable statuses shown below; `unknown` renders the same row with a neutral rule-coloured dot."
+            summary="`service-trouble`. `health` is optional and caller-supplied (no polling happens in this component); omitted, the status row simply does not render. Both reachable statuses shown below; `unknown` renders the same row with a neutral outline-coloured dot."
           >
             <StateCell state="error" provenance="prop" note="health.status = 'not-responding'">
               <div className="w-full">
@@ -1360,7 +1240,7 @@ function AppBody() {
             name="Loading tiers"
             summary="`RouteFallback`, the Suspense fallback around every portal Outlet and lazy screen. Paper only for the first 200 ms, then the layout skeleton, then after 5 s the slow-load state paints over it. Both thresholds are the `--loading-tier-skeleton` and `--loading-tier-slow` tokens; the pre-mount shell in index.html stages on the same two numbers."
           >
-            <StateCell state="loading" provenance="prop" note="Tier 1, 0 to 200 ms: paper only">
+            <StateCell state="loading" provenance="prop" note="Tier 1, 0 to 200 ms: the bare surface only">
               <div className="min-h-40 w-full" style={tierStyle(HELD, HELD)}>
                 <RouteFallback frame="content" />
               </div>

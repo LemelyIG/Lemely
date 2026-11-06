@@ -42,8 +42,9 @@
  */
 @source "../src";
 
-/* The preview page itself is a document, not a product surface, so it gets the
-   Read lane's comfortable measure and the paper grain turned on. */
+/* The preview page is a document, not a product surface: it takes the page
+   surface of whichever theme the toggle has set on <html>. */
 body {
-  background: var(--paper);
+  background: var(--md-surface);
+  color: var(--md-on-surface);
 }

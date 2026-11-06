@@ -78,6 +78,12 @@ Read `LEMELY_AUDIT.md` in the repo root before doing anything else. Summary:
   plus written deployment docs for a future free-tier cloud deploy. No live hosting.
 - **Leaderboards show XP (effort), never grades.** Grades are private to the
   student, their parents, and their teachers.
+  "Their teachers" includes a tutor whom the student has chosen to share their
+  progress with, for as long as the student keeps sharing (tutoring marketplace,
+  `BUILD/tutoring/decision-log.md` rows 3b and 19, `docs/tutoring/adr/ADR-T02-consent-and-access.md`).
+  That access is a separate gate from a class roster: the student grants it,
+  every read is logged and visible to the student, and the student can stop it
+  at any time.
 
 ## 4. Phase roadmap
 

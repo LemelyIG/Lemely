@@ -3,10 +3,10 @@
 # Workload Identity Federation (WIF), so GitHub Actions can deploy to Cloud
 # Run without ever holding a long-lived GCP service-account key, plus the
 # Artifact Registry repo the backend image gets pushed to. It also
-# provisions, per environment, the GCS upload bucket and runtime service
-# account Cloud Run deploys as, and — optionally — the billing budget that
-# is the only guard on Gemini spend once the in-app cap is retired (spec
-# DS3).
+# provisions, per environment, the three private GCS buckets (uploads,
+# avatars, tutor evidence) and the runtime service account Cloud Run deploys
+# as, and — optionally — the billing budget that is the only guard on Gemini
+# spend once the in-app cap is retired (spec DS3).
 #
 # Run this ONCE per GCP project (it is safe to re-run — every step is
 # idempotent), ideally in Cloud Shell (https://console.cloud.google.com —
@@ -110,6 +110,7 @@ gcloud services enable storage.googleapis.com billingbudgets.googleapis.com --qu
 for ENV in staging production; do
   UPLOADS_BUCKET="${PROJECT_ID}-uploads-${ENV}"
   AVATAR_BUCKET="${PROJECT_ID}-avatars-${ENV}"
+  EVIDENCE_BUCKET="${PROJECT_ID}-tutor-evidence-${ENV}"
   RUNTIME_SA_ID="lemely-backend-${ENV}"
   RUNTIME_SA="${RUNTIME_SA_ID}@${PROJECT_ID}.iam.gserviceaccount.com"
 
@@ -120,10 +121,15 @@ for ENV in staging production; do
     echo "   already exists, skipping"
   fi
 
-  # Scans and mark schemes in one bucket, profile pictures in another: they
-  # have different retention and access shapes, and the 90-day lifecycle below
-  # must not reach avatars, which are meant to persist.
-  for BUCKET in "$UPLOADS_BUCKET" "$AVATAR_BUCKET"; do
+  # Scans and mark schemes in one bucket, profile pictures in another, tutors'
+  # qualification documents in a third: they have different retention
+  # and access shapes, and the 90-day lifecycle below must reach neither
+  # avatars nor evidence, which are meant to persist. deploy.yml derives the
+  # same three names (tests/test_deploy_evidence_bucket.py checks the
+  # evidence one). If creating the evidence bucket fails because the name is
+  # taken, another project owns that bucket and the script stops here: do not
+  # deploy (docs/deployment.md §5.9 has the way out).
+  for BUCKET in "$UPLOADS_BUCKET" "$AVATAR_BUCKET" "$EVIDENCE_BUCKET"; do
     echo "== Bucket gs://$BUCKET (uniform access, no public access) =="
     if ! gcloud storage buckets describe "gs://$BUCKET" >/dev/null 2>&1; then
       gcloud storage buckets create "gs://$BUCKET" --location="$REGION" \
@@ -145,6 +151,33 @@ for ENV in staging production; do
   echo "== 90-day delete rule on gs://$UPLOADS_BUCKET (uploads only) =="
   gcloud storage buckets update "gs://$UPLOADS_BUCKET" \
     --lifecycle-file="$(dirname "$0")/gcs-lifecycle.json"
+
+  # The evidence bucket only: an existing bucket is brought to the same private
+  # state on every run, so one made by hand before this script knew about it
+  # cannot stay public. Both settings are idempotent. The backend reads them
+  # before its first use of the bucket and refuses it unless both are on
+  # (SC-22, lemely/io/storage_gcs.py); reading a bucket's settings needs
+  # storage.buckets.get, which objectAdmin does not include, so the runtime
+  # account also gets legacyBucketReader on this one bucket (buckets.get plus
+  # object listing, which objectAdmin already grants).
+  echo "== Enforce uniform access + public access prevention on gs://$EVIDENCE_BUCKET =="
+  gcloud storage buckets update "gs://$EVIDENCE_BUCKET" \
+    --uniform-bucket-level-access --public-access-prevention
+  echo "== legacyBucketReader on gs://$EVIDENCE_BUCKET for $RUNTIME_SA_ID (bucket settings check) =="
+  gcloud storage buckets add-iam-policy-binding "gs://$EVIDENCE_BUCKET" \
+    --member="serviceAccount:${RUNTIME_SA}" \
+    --role="roles/storage.legacyBucketReader" \
+    --quiet >/dev/null
+  # deploy.yml reads the same settings after each rollout, as the deploy
+  # account, and fails the deploy unless the bucket is private and owned by
+  # this project. Same read, this one bucket only; the deploy account already
+  # deploys revisions that run as the runtime account, so this adds no access
+  # it did not effectively have.
+  echo "== legacyBucketReader on gs://$EVIDENCE_BUCKET for $SERVICE_ACCOUNT_ID (deploy-time check) =="
+  gcloud storage buckets add-iam-policy-binding "gs://$EVIDENCE_BUCKET" \
+    --member="serviceAccount:${SA_EMAIL}" \
+    --role="roles/storage.legacyBucketReader" \
+    --quiet >/dev/null
 
   # Needed for V4 signed URLs. A Cloud Run workload-identity credential has no
   # local signer, so google-cloud-storage signs through the IAM signBlob API —
@@ -185,6 +218,7 @@ gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
   --quiet >/dev/null
 
 PROVIDER_NAME="$(gcloud iam workload-identity-pools providers describe "$PROVIDER_ID" --location=global --workload-identity-pool="$POOL_ID" --format='value(name)')"
+PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
 
 cat <<EOF
 
@@ -201,6 +235,17 @@ deploy.yml derives both from GCP_PROJECT_ID above):
 
   gs://${PROJECT_ID}-uploads-staging      lemely-backend-staging@${PROJECT_ID}.iam.gserviceaccount.com
   gs://${PROJECT_ID}-uploads-production   lemely-backend-production@${PROJECT_ID}.iam.gserviceaccount.com
+
+Tutor evidence buckets (private; deploy.yml sets LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET
+to these names, no new GitHub variable needed):
+
+  gs://${PROJECT_ID}-tutor-evidence-staging
+  gs://${PROJECT_ID}-tutor-evidence-production
+
+The backend uses an evidence bucket only if it is owned by project number
+${PROJECT_NUMBER}. deploy.yml reads that number from
+GCP_WORKLOAD_IDENTITY_PROVIDER, so confirm the value you set there starts with
+projects/${PROJECT_NUMBER}/ (no new variable is needed).
 
 Billing budget: ${BUDGET_SUMMARY}
 

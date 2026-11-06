@@ -25,12 +25,19 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.db.base import Base
-from lemely.db.models import Subject, User
+from lemely.db.models import NotificationPreference, Subject, User
 from lemely.db.models.enums import Role
+from lemely.db.notification_prefs_repo import NotificationPreferencesService
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.runtime.config import DatabaseSettings
 from lemely.web import create_app
-from lemely.web.deps import AuthContext, get_auth_context, get_student_profile_service
+from lemely.web.deps import (
+    AuthContext,
+    get_auth_context,
+    get_notification_prefs_service,
+    get_student_profile_service,
+)
+from tests.test_migration_tutoring_enums import spec_preference_role_table
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -502,3 +509,137 @@ def test_post_complete_onboarding_sets_timestamp(
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["onboardingCompletedAt"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Tutoring notification toggles (SPEC docs/tutoring/SPEC.md §a.1 role table)
+#
+# The expected roles are parsed from the SPEC table, never restated here: each
+# toggle is non-null on GET, and settable on PUT, for exactly its listed roles.
+# ---------------------------------------------------------------------------
+
+TUTORING_ROLE_TABLE = spec_preference_role_table()
+TUTORING_CASES = [(role, kind) for role in Role for kind in TUTORING_ROLE_TABLE]
+TUTORING_ALLOWED = [(r, k) for r, k in TUTORING_CASES if r.value in TUTORING_ROLE_TABLE[k]]
+TUTORING_DISALLOWED = [(r, k) for r, k in TUTORING_CASES if r.value not in TUTORING_ROLE_TABLE[k]]
+
+
+def _camel(snake: str) -> str:
+    head, *rest = snake.split("_")
+    return head + "".join(part.title() for part in rest)
+
+
+def _case_ids(cases: list[tuple[Role, str]]) -> list[str]:
+    return [f"{role.value}-{kind}" for role, kind in cases]
+
+
+@pytest.fixture(scope="module")
+def prefs_sessionmaker() -> Iterator[sessionmaker[Session]]:
+    base_url = DatabaseSettings().url
+    if not _server_reachable(base_url):
+        pytest.skip("local Postgres not reachable")
+    server_url = make_url(base_url).set(database="postgres")
+    admin = create_engine(server_url, isolation_level="AUTOCOMMIT")
+    dbname = f"lemely_test_{uuid.uuid4().hex[:12]}"
+    with admin.connect() as conn:
+        conn.execute(sa.text(f'CREATE DATABASE "{dbname}"'))
+    engine = create_engine(make_url(base_url).set(database=dbname))
+    Base.metadata.create_all(engine)
+    try:
+        yield sessionmaker(bind=engine, expire_on_commit=False, future=True)
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)'))
+        admin.dispose()
+
+
+@pytest.fixture
+def prefs_client(prefs_sessionmaker: sessionmaker[Session]) -> Iterator[TestClient]:
+    app = create_app()
+    service = NotificationPreferencesService(prefs_sessionmaker)
+    app.dependency_overrides[get_notification_prefs_service] = lambda: service
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+def _stored_rows(sm: sessionmaker[Session], user_id: uuid.UUID) -> int:
+    with sm() as session:
+        return session.query(NotificationPreference).filter_by(user_id=user_id).count()
+
+
+def test_tutoring_role_table_is_parsed_from_spec() -> None:
+    """Non-vacuity: 8 toggles x 5 roles; 15 allowed pairs; every listed role is real."""
+    assert len(TUTORING_ROLE_TABLE) == 8
+    assert len(TUTORING_CASES) == 40
+    assert len(TUTORING_ALLOWED) == 15
+    roles = {role.value for role in Role}
+    for allowed in TUTORING_ROLE_TABLE.values():
+        assert allowed <= roles
+        assert Role.school_admin.value not in allowed
+
+
+@pytest.mark.parametrize(("role", "kind"), TUTORING_CASES, ids=_case_ids(TUTORING_CASES))
+def test_tutoring_toggles_null_on_get_for_roles_outside_the_table(
+    prefs_client: TestClient, role: Role, kind: str
+) -> None:
+    _as(prefs_client, uuid.uuid4(), role)
+
+    resp = prefs_client.get("/api/me/notification-preferences")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    field = _camel(kind)
+    assert field in body
+    expected = True if role.value in TUTORING_ROLE_TABLE[kind] else None
+    assert body[field] is expected
+
+
+@pytest.mark.parametrize(("role", "kind"), TUTORING_DISALLOWED, ids=_case_ids(TUTORING_DISALLOWED))
+def test_tutoring_toggle_put_from_disallowed_role_422(
+    prefs_client: TestClient,
+    prefs_sessionmaker: sessionmaker[Session],
+    role: Role,
+    kind: str,
+) -> None:
+    user = _seed_user(prefs_sessionmaker, role)
+    _as(prefs_client, user, role)
+    field = _camel(kind)
+
+    for value in (True, False):
+        resp = prefs_client.put("/api/me/notification-preferences", json={field: value})
+        assert resp.status_code == 422, (field, value, resp.text)
+
+    # Refused outright, never half-applied: no row was written.
+    assert _stored_rows(prefs_sessionmaker, user) == 0
+
+
+@pytest.mark.parametrize(("role", "kind"), TUTORING_ALLOWED, ids=_case_ids(TUTORING_ALLOWED))
+def test_tutoring_toggle_put_round_trip_for_allowed_role(
+    prefs_client: TestClient,
+    prefs_sessionmaker: sessionmaker[Session],
+    role: Role,
+    kind: str,
+) -> None:
+    user = _seed_user(prefs_sessionmaker, role)
+    _as(prefs_client, user, role)
+    field = _camel(kind)
+
+    put = prefs_client.put("/api/me/notification-preferences", json={field: False})
+
+    assert put.status_code == 200, put.text
+    body = put.json()
+    assert body[field] is False
+    for other in TUTORING_ROLE_TABLE:
+        if other == kind:
+            continue
+        visible = role.value in TUTORING_ROLE_TABLE[other]
+        assert body[_camel(other)] is (True if visible else None), other
+    assert prefs_client.get("/api/me/notification-preferences").json() == body
+    # An explicit null is invalid input, not a reset to the default.
+    assert (
+        prefs_client.put("/api/me/notification-preferences", json={field: None}).status_code == 422
+    )
+    again = prefs_client.put("/api/me/notification-preferences", json={field: True})
+    assert again.status_code == 200
+    assert again.json()[field] is True

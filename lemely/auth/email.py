@@ -93,6 +93,14 @@ class EmailProvider(Protocol):
         """
         ...
 
+    def send_contact_message(self, from_email: str, message: str) -> None:
+        """Forward a landing-page visitor's question to the team. Raises on failure.
+
+        ``from_email`` is the visitor's own, already-validated address; a real
+        provider sets it as ``Reply-To`` so the team can answer directly.
+        """
+        ...
+
 
 class MockEmailProvider:
     """Offline :class:`EmailProvider` that logs the link instead of sending it.
@@ -117,6 +125,10 @@ class MockEmailProvider:
     def send_signup_code(self, email: str, code: str) -> None:
         """Log the parent-signup code for ``email`` at INFO level."""
         logger.info("Mock email to %s: your Lemely signup code is %s", email, code)
+
+    def send_contact_message(self, from_email: str, message: str) -> None:
+        """Log that a landing-page question arrived (sender and length only)."""
+        logger.info("Mock contact message from %s (%d characters)", from_email, len(message))
 
 
 #: Body copy per purpose: (subject, lead paragraph, button label, ignore-notice).
@@ -237,6 +249,34 @@ def _render_signup_code(code: str) -> tuple[str, str, str]:
     return subject, html_body, text_body
 
 
+def _render_contact_message(from_email: str, message: str) -> tuple[str, str, str]:
+    """Return ``(subject, html_body, text_body)`` for a landing-page question.
+
+    Both ``from_email`` and ``message`` come from an anonymous visitor, so the
+    HTML escapes both and the subject has every control character (CR/LF in
+    particular, which would otherwise allow header injection) collapsed to a
+    space.
+    """
+    clean_email = " ".join(from_email.split())
+    subject = f"Landing page question from {clean_email}"
+    safe_email = html.escape(clean_email)
+    safe_message = html.escape(message).replace("\r\n", "\n").replace("\r", "\n")
+    safe_message = safe_message.replace("\n", "<br>")
+    html_body = (
+        '<!doctype html><html lang="en"><body style="margin:0;padding:24px;'
+        "background:#f6f7f9;font-family:-apple-system,BlinkMacSystemFont,"
+        "'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1f2933;\">"
+        '<div style="max-width:480px;margin:0 auto;background:#ffffff;'
+        'border-radius:12px;padding:32px;">'
+        '<p style="margin:0 0 16px;font-size:13px;line-height:1.5;color:#52606d;">'
+        f"From {safe_email}. Reply to this email to answer them.</p>"
+        f'<p style="margin:0;font-size:15px;line-height:1.55;">{safe_message}</p>'
+        "</div></body></html>"
+    )
+    text_body = f"From {clean_email}. Reply to this email to answer them.\n\n{message}\n"
+    return subject, html_body, text_body
+
+
 class ResendEmailProvider:
     """Real :class:`EmailProvider` sending over Resend's REST API.
 
@@ -327,13 +367,36 @@ class ResendEmailProvider:
         """
         self._send(email, *_render_signup_code(code))
 
-    def _send(self, to: str, subject: str, html_body: str, text_body: str) -> None:
+    def send_contact_message(self, from_email: str, message: str) -> None:
+        """Forward a landing-page visitor's question to ``[email] contact_address``.
+
+        ``Reply-To`` is the visitor's address so the team answers them directly.
+        """
+        subject, html_body, text_body = _render_contact_message(from_email, message)
+        self._send(
+            self._settings.contact_address,
+            subject,
+            html_body,
+            text_body,
+            reply_to=from_email,
+        )
+
+    def _send(
+        self,
+        to: str,
+        subject: str,
+        html_body: str,
+        text_body: str,
+        reply_to: str | None = None,
+    ) -> None:
         """POST one mail to Resend, raising :class:`ExternalServiceError` on failure.
 
         The link is never logged here, on success or on failure: it is a live
         credential, and this provider exists precisely because it should reach
         an inbox and nowhere else. Only the recipient, the subject, and the
         provider's own message id are recorded.
+
+        ``reply_to`` overrides ``[email] reply_to`` for this one mail.
         """
         payload: dict[str, object] = {
             "from": self._sender,
@@ -342,8 +405,9 @@ class ResendEmailProvider:
             "html": html_body,
             "text": text_body,
         }
-        if self._settings.reply_to is not None:
-            payload["reply_to"] = self._settings.reply_to
+        effective_reply_to = reply_to if reply_to is not None else self._settings.reply_to
+        if effective_reply_to is not None:
+            payload["reply_to"] = effective_reply_to
 
         url = f"{self._settings.api_base_url.rstrip('/')}/emails"
         try:

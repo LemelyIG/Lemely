@@ -118,6 +118,7 @@ def import_all_models() -> None:
         study_plan,
         teacher_papers,
         thresholds,
+        tutoring,
         users,
     )
 

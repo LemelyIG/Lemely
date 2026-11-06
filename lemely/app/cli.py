@@ -543,6 +543,13 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
         _print_result(ctx, {"all_passed": False, "checks": checks})
         raise click.exceptions.Exit(ConfigError.exit_code) from exc
 
+    # Tutoring booking email: a mock provider is a warning, never a failure, so
+    # dev and CI keep a passing doctor (`ok=True`; the line carries the warning).
+    from lemely.web.tutoring_email import doctor_lines
+
+    for line in doctor_lines(settings):
+        record("tutoring_email", True, line)
+
     # F1 (Gemini 3.x migration): surface what model_for() actually resolves to
     # per task tag, so a config mistake (e.g. escalation falling back to the
     # global 2.5 model) is visible without reading lemely.toml by hand.
@@ -709,10 +716,16 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     # honours `--no-network`, which a bare `google.auth.default()` call here
     # would not — it would reach for credentials in the one mode that promises
     # not to.
-    from lemely.io.storage import check_storage
+    from lemely.io.storage import check_storage, check_tutor_evidence_storage
 
     storage_ok, storage_detail = check_storage(settings, no_network=no_network)
     record("storage_backend", storage_ok, detail=storage_detail)
+    # Advisory for the same reasons. The evidence bucket is its own line because
+    # it is judged by the backend's privacy-and-owner check, not by a reachable
+    # bucket: a deploy that skipped the bootstrap otherwise looks healthy here
+    # while every tutor document upload answers 503.
+    evidence_ok, evidence_detail = check_tutor_evidence_storage(settings, no_network=no_network)
+    record("tutor_evidence_storage", evidence_ok, detail=evidence_detail)
 
     # Advisory, like storage: this build ships without VAPID keys and that is
     # a supported state (D5.9 §4) — the inbox keeps working and push simply
@@ -777,6 +790,7 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
         "claude_files_workspace",
         "gradio_extra_installed",
         "storage_backend",
+        "tutor_evidence_storage",
         "push_transport",
         "no_removed_config_keys",
         "gemini_promo_pricing_window",
@@ -1075,6 +1089,31 @@ def audit_bindings_cmd(
     click.echo(
         "Not listed does not mean correctly bound: the checks only see questions with "
         "numeric expected answers, so short shifts and papers with few of them pass unseen."
+    )
+
+
+@cli.group("tutoring")
+def tutoring_group() -> None:
+    """Tutoring marketplace maintenance."""
+
+
+@tutoring_group.command("recompute-ratings")
+@click.option(
+    "--tutor",
+    "tutor",
+    default=None,
+    help="Recompute only this tutor profile id (default: every tutor).",
+)
+@click.pass_context
+def tutoring_recompute_ratings_cmd(ctx: click.Context, tutor: str | None) -> None:
+    """Rewrite stored tutor ratings (rating_sum, rating_count, rank_score) from reviews."""
+    from lemely.app.tutoring_cli import recompute_ratings_command
+    from lemely.db.session import get_sessionmaker
+
+    recompute_ratings_command(
+        get_sessionmaker(_get_settings(ctx)),
+        tutor=tutor,
+        json_output=bool(ctx.obj.get("json_output", False)),
     )
 
 

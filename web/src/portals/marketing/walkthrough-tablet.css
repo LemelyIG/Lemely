@@ -1,0 +1,49 @@
+/* How it works at 760-1099px. A 1180px pinned scene cannot be shown at a readable size in this width band, and scaling it
+   shrank step copy to ~9px and mono labels to ~7px inside ~3,300px of scroll. Here the scene is not pinned and not scaled:
+   heading, three steps and the stage stack at real size, and the tabs (or the keyboard) drive the step. Applies whether or not
+   the visitor asks for reduced motion; data-tablet comes from the same media query in MarkingWalkthrough.tsx. */
+@media (min-width: 760px) and (max-width: 1099px) {
+  #how.walkthrough-motion[data-tablet=true] { height: auto; padding-block: 72px 80px; }
+  #how.walkthrough-motion[data-tablet=true]>.brand-wrap { position: relative; top: auto; display: block; height: auto; min-height: 0; padding-block: 0; overflow: visible; }
+  #how.walkthrough-motion[data-tablet=true] .brand-walkthrough { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; max-width: none; flex: none; transform: none; gap: 32px; align-items: start; }
+
+  /* Heading and progress */
+  #how[data-tablet=true] .brand-step-nav { max-width: none; gap: 20px; }
+  #how[data-tablet=true] .brand-step-nav h2 { font-size: clamp(40px, 6vw, 56px); line-height: 1; }
+  #how[data-tablet=true] .brand-step-nav h2 br { display: inline-block; width: .3em; }
+  #how[data-tablet=true] .walkthrough-progress { display: none; }
+
+  /* Steps: a three-column row, badge above copy so each description gets the full column. */
+  #how[data-tablet=true] .walkthrough-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+  #how[data-tablet=true] .walkthrough-steps [role=tab] { flex-direction: column; gap: 12px; padding-top: 16px; border-top: 2px solid var(--brand-line); border-radius: 0; opacity: 1; }
+  #how[data-tablet=true] .walkthrough-steps [role=tab][aria-selected=true] { border-top-color: var(--brand-abyss); opacity: 1; }
+  /* Inactive steps stay at full opacity (dimming them failed 4.5:1); the top rule, filled badge and ink title mark the active one. */
+  #how[data-tablet=true] .walkthrough-steps [role=tab]:not([aria-selected=true]) .wt-step-title { color: var(--brand-muted); }
+  #how[data-tablet=true] .walkthrough-steps [role=tab]:not([aria-selected=true]):hover { border-top-color: var(--brand-hint); }
+  #how[data-tablet=true] .walkthrough-steps [role=tab]:not([aria-selected=true]):hover .wt-step-title { color: var(--brand-ink); }
+  #how[data-tablet=true] .wt-step-title { font-size: 19px; text-decoration: none; }
+  #how[data-tablet=true] .wt-step-desc { font-size: 15px; }
+
+  /* Stage at real size: paper left, explanation right. */
+  #how[data-tablet=true] .brand-stage { min-height: 0; padding: 24px; gap: 20px; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); }
+  #how[data-tablet=true] .wt-col { min-height: 0; }
+  #how[data-tablet=true] .wt-paper[data-stage=insights] { transform: rotate(-1.5deg); }
+
+  /* The handwriting font overhangs its advance width; the write-on clip would cut the last glyph at real size. */
+  #how[data-tablet=true] .wt-write { padding-inline-end: .3em; margin-inline-end: -.3em; }
+
+  #how[data-tablet=true] .wt-paper-head { gap: 8px; }
+  #how[data-tablet=true] .wt-paper-head .brand-label { letter-spacing: .02em; }
+  #how[data-tablet=true] .wt-next-time { white-space: nowrap; }
+
+  /* Legibility floor at this width: mono labels 12px, running copy 14px. */
+  #how[data-tablet=true] .wt-paper-head .brand-label,
+  #how[data-tablet=true] .wt-tap,
+  #how[data-tablet=true] .brand-mark-rows small,
+  #how[data-tablet=true] .brand-scheme .brand-label,
+  #how[data-tablet=true] .wt-insights-head .brand-label,
+  #how[data-tablet=true] .wt-report .brand-label { font-size: 12px; }
+  #how[data-tablet=true] .brand-confidence,
+  #how[data-tablet=true] .wt-report,
+  #how[data-tablet=true] .brand-review [data-slot=toggle-group-item] { font-size: 14px; }
+}

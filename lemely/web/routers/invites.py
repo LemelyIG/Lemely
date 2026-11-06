@@ -23,28 +23,90 @@ AUTH_ANY shape. The caller's role is still passed through to
 redeemed by a parent, is a **403**
 (:class:`~lemely.db.invite_repo.InviteRoleMismatchError`) — a business rule
 enforced in the service, not a route-level guard.
+
+**Tutoring additions to redeem (SPEC §c.4, decision row 14), no guard change.**
+A parent invite whose child already has four linked parents answers **409**
+``parent_limit``; a new parent link and a new enrolment in a tutor's
+school-less class are announced after commit (D5.9 §1) through
+:func:`~lemely.web.tutoring_notify.send_after_commit`. The two mappers below
+turn the service's change records into those notices; ``student.py`` and
+``auth.py`` reuse them for the same events.
 """
 
 # FastAPI ``Depends``/``response_model`` and pydantic construction need these type
 # imports at runtime (see the per-file-ignore in pyproject.toml).
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Final, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from lemely.db.invite_repo import (
     InviteAlreadyRedeemedError,
     InviteNotFoundError,
+    InviteParentLimitError,
     InviteRoleMismatchError,
     InviteService,
 )
 from lemely.db.models import Invite
-from lemely.db.models.enums import InviteRole, Role
-from lemely.web.deps import AuthContext, get_auth_context, get_invite_service
+from lemely.db.models.enums import InviteRole, ParentLinkEvent, Role
+from lemely.db.notification_repo import NotificationService
+from lemely.db.parent_repo import MAX_LINKED_PARENTS
+from lemely.web.deps import (
+    AuthContext,
+    get_auth_context,
+    get_invite_service,
+    get_notification_service,
+    get_push_transport,
+)
+from lemely.web.push import NotificationTransport
 from lemely.web.schemas_invites import InviteCodeDTO, InvitePreviewDTO, RedeemInviteResponseDTO
+from lemely.web.tutoring_http import tutoring_error
+from lemely.web.tutoring_notify import class_join_notices, parent_link_notices, send_after_commit
+
+if TYPE_CHECKING:
+    from lemely.db.class_repo import TutorClassJoin
+    from lemely.db.invite_repo import RedeemResult
+    from lemely.db.parent_repo import ParentLinkChange
+    from lemely.web.tutoring_notify import InboxNotice
 
 router = APIRouter(prefix="/api/invites")
+
+PARENT_LIMIT_MESSAGE: Final = (
+    f"This child already has {MAX_LINKED_PARENTS} linked parents, the most allowed."
+)
+"""The ``parent_limit`` 409 message, shared with ``POST /api/auth/parent/signup``."""
+
+
+def parent_link_change_notices(change: ParentLinkChange | None) -> list[InboxNotice]:
+    """The after-commit ``parent_link`` notices for a link change (SPEC §b.4); none without one."""
+    if change is None:
+        return []
+    return parent_link_notices(
+        event="linked" if change.event is ParentLinkEvent.linked else "unlinked",
+        event_id=change.event_id,
+        recipient_parent_ids=change.notify_parent_ids,
+    )
+
+
+def tutor_class_join_notices(join: TutorClassJoin | None) -> list[InboxNotice]:
+    """The after-commit ``tutor_access`` notices for a tutor class join (SC-2d); none otherwise."""
+    if join is None:
+        return []
+    return class_join_notices(
+        enrollment_id=join.enrollment_id,
+        student_user_id=join.student_id,
+        tutor_name=join.tutor_name,
+        linked_parent_ids=join.linked_parent_ids,
+    )
+
+
+def redeem_notices(result: RedeemResult) -> list[InboxNotice]:
+    """Every after-commit notice one redemption owes."""
+    return [
+        *parent_link_change_notices(result.link_change),
+        *tutor_class_join_notices(result.class_join),
+    ]
 
 
 def _mintable_invite_role(role: InviteRole) -> Literal["student", "teacher"]:
@@ -130,6 +192,8 @@ def redeem_invite(
     code: str,
     auth: Annotated[AuthContext, Depends(get_auth_context)],
     service: Annotated[InviteService, Depends(get_invite_service)],
+    notifications: Annotated[NotificationService, Depends(get_notification_service)],
+    transport: Annotated[NotificationTransport, Depends(get_push_transport)],
 ) -> RedeemInviteResponseDTO:
     """Redeem a code for the authenticated caller. Idempotent.
 
@@ -171,17 +235,28 @@ def redeem_invite(
     applies for the three pre-account ``/auth/parent/*`` routes) does not
     extend to a signed-in caller probing a code they could, at best, learn
     is real but still cannot redeem.
+
+    **409 ``parent_limit``** (tutoring SPEC §c.4): a parent invite whose child
+    already has four linked parents, for a parent not already among them. The
+    body is the tutoring ``{"code", "message"}`` shape and names no one. After
+    a successful redemption the parents already linked (new parent link), or
+    the caller's linked parents (new enrolment in a tutor's school-less class),
+    get their inbox notices; the change has committed by then, and a failed
+    notice never fails the redemption.
     """
     try:
         result = service.redeem(auth.user_id, code, caller_role=Role(auth.role))
     except InviteNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InviteParentLimitError as exc:
+        raise tutoring_error(409, "parent_limit", PARENT_LIMIT_MESSAGE) from exc
     except InviteAlreadyRedeemedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except InviteRoleMismatchError as exc:
         raise HTTPException(
             status_code=403, detail="This invite is not for your account type."
         ) from exc
+    send_after_commit(redeem_notices(result), service=notifications, transport=transport)
     return RedeemInviteResponseDTO(
         role=result.role.value,
         schoolId=str(result.school_id) if result.school_id is not None else None,
@@ -190,4 +265,10 @@ def redeem_invite(
     )
 
 
-__all__ = ["router"]
+__all__ = [
+    "PARENT_LIMIT_MESSAGE",
+    "parent_link_change_notices",
+    "redeem_notices",
+    "router",
+    "tutor_class_join_notices",
+]

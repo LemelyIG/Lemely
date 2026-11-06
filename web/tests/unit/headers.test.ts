@@ -19,6 +19,24 @@ describe("public/_headers", () => {
     expect(headers).toMatch(/^\/\*\s*$/m)
   })
 
+  /*
+   * T08 (SPEC §b.5, decision row 17): tutor cards are indexable unless the
+   * tutor opted out, and the Worker decides each card's X-Robots-Tag. A
+   * `/tutors` rule here, or an X-Robots-Tag on the catch-all block, would
+   * mark every card noindex if the platform ever applied this file to the
+   * Worker's responses. `tests/test_deploy_headers.py` holds the same guard
+   * with a canary for its parser.
+   */
+  it("has no /tutors rule and sets no X-Robots-Tag (row 17)", () => {
+    const patterns = headers
+      .split("\n")
+      .filter((line) => line.trim() !== "" && !line.startsWith("#") && !/^\s/.test(line))
+      .map((line) => line.trim())
+    expect(patterns).toContain("/*")
+    expect(patterns.filter((pattern) => /tutors/i.test(pattern))).toEqual([])
+    expect(headers).not.toMatch(/X-Robots-Tag/i)
+  })
+
   it("sets Strict-Transport-Security with a one-year max-age and includeSubDomains", () => {
     expect(headers).toContain("Strict-Transport-Security: max-age=31536000; includeSubDomains")
   })

@@ -207,6 +207,23 @@ def test_grade_distribution_includes_zero_buckets_for_the_full_ladder() -> None:
     assert counts["U"] == 0
 
 
+def test_grade_distribution_counts_core_tier_f_and_g() -> None:
+    """Core-tier F and G papers land in their own buckets, between E and U."""
+    distribution = grade_distribution(
+        [
+            _history("alice", _record("alice", 30.0, grade="F")),
+            _history("bob", _record("bob", 20.0, grade="G")),
+            _history("cara", _record("cara", 25.0, grade="G")),
+        ]
+    )
+    grades = [b.grade for b in distribution]
+    assert grades.index("E") < grades.index("F") < grades.index("G") < grades.index("U")
+    counts = {b.grade: b.count for b in distribution}
+    assert counts["F"] == 1
+    assert counts["G"] == 2
+    assert counts["U"] == 0
+
+
 def test_grade_distribution_empty_cohort_is_all_zero_buckets() -> None:
     distribution = grade_distribution([])
     assert all(b.count == 0 for b in distribution)

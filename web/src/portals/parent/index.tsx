@@ -3,7 +3,7 @@ import type { RouteObject } from "react-router-dom"
 import { lazy, Suspense } from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
-import { Bell, Gear, SignOut } from "@phosphor-icons/react"
+import { Bell, Gear, GraduationCap, SignOut } from "@phosphor-icons/react"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { useCachedChildSubject, useChildren } from "@/lib/hooks/useParentApi"
 import { BrandLockup } from "@/components/ui/brand-lockup"
@@ -37,6 +37,25 @@ const SubjectDetail = lazy(() =>
 const Weaknesses = lazy(() => import("./screens/Weaknesses").then((m) => ({ default: m.Weaknesses })))
 const ParentNotifications = lazy(() =>
   import("./screens/Notifications").then((m) => ({ default: m.ParentNotifications })),
+)
+// P-05 to P-08 (tutor marketplace, T27).
+const ChildTutoring = lazy(() =>
+  import("./screens/tutoring/ChildTutoring").then((m) => ({ default: m.ChildTutoring })),
+)
+const ParentSessionDetail = lazy(() =>
+  import("./screens/tutoring/ParentSessionDetail").then((m) => ({ default: m.ParentSessionDetail })),
+)
+const ChildTutorAccess = lazy(() =>
+  import("./screens/tutoring/ChildTutorAccess").then((m) => ({ default: m.ChildTutorAccess })),
+)
+const ParentFindTutor = lazy(() =>
+  import("./screens/tutoring/ParentFindTutor").then((m) => ({ default: m.ParentFindTutor })),
+)
+const ParentTutorProfile = lazy(() =>
+  import("./screens/tutoring/ParentFindTutor").then((m) => ({ default: m.ParentTutorProfile })),
+)
+const ParentBookSession = lazy(() =>
+  import("./screens/tutoring/ParentFindTutor").then((m) => ({ default: m.ParentBookSession })),
 )
 
 /*
@@ -99,7 +118,8 @@ function ChildSwitcher() {
           // across the switch where the path still makes sense. A subject the
           // other child does not take would 404, so only the overview and
           // weaknesses tails carry over; everything else lands on the overview.
-          const tail = location.pathname.endsWith("/weaknesses") ? "/weaknesses" : ""
+          const tail =
+            ["/weaknesses", "/tutoring", "/tutor-access"].find((t) => location.pathname.endsWith(t)) ?? ""
           navigate(`/parent/children/${event.target.value}${tail}`)
         }}
       >
@@ -174,6 +194,20 @@ function ParentTrail() {
     trail.push({ label: "Overview" })
   } else if (path.endsWith("/weaknesses")) {
     trail.push({ label: "Overview", to: childOverview }, { label: "Weak topics" })
+  } else if (path.endsWith("/tutoring")) {
+    trail.push({ label: "Overview", to: childOverview }, { label: "Tutoring" })
+  } else if (path.endsWith("/tutor-access")) {
+    trail.push(
+      { label: "Overview", to: childOverview },
+      { label: "Tutoring", to: `${childOverview}/tutoring` },
+      { label: "Who they share with" },
+    )
+  } else if (/\/sessions\/[^/]+$/.test(path)) {
+    trail.push(
+      { label: "Overview", to: childOverview },
+      { label: "Tutoring", to: `${childOverview}/tutoring` },
+      { label: "Session" },
+    )
   } else if (/\/subjects\/[^/]+$/.test(path)) {
     trail.push(
       { label: "Overview", to: childOverview },
@@ -247,6 +281,16 @@ function Header() {
             <span className="hidden sm:inline">Notifications</span>
             <UnreadNotificationsBadge />
           </Link>
+          {/* P-07 (tutor marketplace, T27): the directory is not tied to one child, so it
+              lives here beside the inbox, with the same icon-at-mobile treatment. */}
+          <Link
+            to="/parent/tutors"
+            aria-label="Tutors"
+            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center text-body-sm text-on-surface-variant transition-colors hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          >
+            <GraduationCap size={16} aria-hidden="true" />
+            <span className="hidden sm:inline">Tutors</span>
+          </Link>
           <Link
             to="/settings/devices"
             aria-label="Settings"
@@ -309,7 +353,7 @@ function ParentLayout() {
       <main
         id={MAIN_CONTENT_ID}
         tabIndex={-1}
-        className="mx-auto w-full min-w-0 max-w-240 flex-1 overflow-x-hidden px-4 pb-16 pt-2 focus:outline-none md:px-8"
+        className="mx-auto w-full min-w-0 max-w-240 flex-1 overflow-x-hidden px-4 pb-16 pt-6 focus:outline-none md:px-8 lg:pt-8"
       >
         {/* PR 2 part C: offline recovery banner, above the Suspense/
             ErrorBoundary content it sits over — it renders nothing while
@@ -376,6 +420,33 @@ export const parentRoute: RouteObject = {
       path: "children/:childId/weaknesses",
       element: <Weaknesses />,
       handle: { title: "Topics to work on", skeleton: "page-header" },
+    },
+    // P-05 to P-08 (tutor marketplace, T27).
+    {
+      path: "children/:childId/tutoring",
+      element: <ChildTutoring />,
+      handle: { title: "Tutoring", skeleton: "list" },
+    },
+    {
+      path: "children/:childId/sessions/:bookingId",
+      element: <ParentSessionDetail />,
+      handle: { title: "Session details", skeleton: "page-header" },
+    },
+    {
+      path: "children/:childId/tutor-access",
+      element: <ChildTutorAccess />,
+      handle: { title: "Who they share with", skeleton: "list" },
+    },
+    { path: "tutors", element: <ParentFindTutor />, handle: { title: "Tutors", skeleton: "list" } },
+    {
+      path: "tutors/:tutorId",
+      element: <ParentTutorProfile />,
+      handle: { title: "Tutor profile", skeleton: "page-header" },
+    },
+    {
+      path: "tutors/:tutorId/book",
+      element: <ParentBookSession />,
+      handle: { title: "Book a session", skeleton: "page-header" },
     },
     {
       path: "notifications",

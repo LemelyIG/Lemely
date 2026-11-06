@@ -258,6 +258,8 @@ export function HeroChartArt() {
           ></path>
         </g>
         <g data-hc="binny" transform="translate(528 0)" role="button" tabIndex={0} aria-label="Celebrate with Binny">
+          {/* Transparent hit area: at least 44 CSS px at the smallest art scale (0.475). */}
+          <rect x="-22" y="-1" width="130" height="95" fill="transparent" />
           <g data-hc="lvl" opacity="0" style={{ pointerEvents: 'none' }}>
             <g transform="translate(42 -14)">
               <path
@@ -495,7 +497,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
             <span
               style={{
                 fontFamily: 'var(--brand-mono)',
-                fontSize: '11px',
+                fontSize: '12px',
                 letterSpacing: '0.06em',
                 color: 'var(--brand-art-3)',
               }}
@@ -626,7 +628,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   fontFamily: 'var(--brand-mono)',
-                  fontSize: '11px',
+                  fontSize: '12px',
                   fontWeight: '600',
                   color: 'var(--brand-art-25)',
                 }}
@@ -739,7 +741,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
                   <span
                     style={{
                       fontFamily: 'var(--brand-mono)',
-                      fontSize: '10px',
+                      fontSize: '12px',
                       letterSpacing: '0.06em',
                       background: 'var(--brand-art-28)',
                       color: 'var(--brand-art-29)',
@@ -849,7 +851,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   fontFamily: 'var(--brand-mono)',
-                  fontSize: '11px',
+                  fontSize: '12px',
                   letterSpacing: '0.06em',
                   color: 'var(--brand-art-3)',
                 }}
@@ -887,7 +889,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
           >
             <div
               style={{
-                background: 'var(--brand-art-24)',
+                background: 'var(--brand-art-37)',
                 borderRadius: '16px',
                 padding: '14px',
                 display: 'flex',
@@ -900,7 +902,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
                 style={{
                   fontWeight: '800',
                   fontSize: '15px',
-                  color: 'var(--brand-art-31)',
+                  color: 'var(--brand-art-38)',
                 }}
               >
                 {'Units & SI'}
@@ -908,6 +910,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   background: 'var(--brand-art-6)',
+                  color: 'var(--brand-art-39)',
                   borderRadius: '8px',
                   padding: '6px 9px',
                   fontSize: '12px',
@@ -920,6 +923,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   background: 'var(--brand-art-6)',
+                  color: 'var(--brand-art-39)',
                   borderRadius: '8px',
                   padding: '6px 9px',
                   fontSize: '12px',
@@ -932,6 +936,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   background: 'var(--brand-art-6)',
+                  color: 'var(--brand-art-39)',
                   borderRadius: '8px',
                   padding: '6px 9px',
                   fontSize: '12px',
@@ -944,7 +949,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
             </div>
             <div
               style={{
-                background: 'var(--brand-art-32)',
+                background: 'var(--brand-art-37)',
                 borderRadius: '16px',
                 padding: '14px',
                 display: 'flex',
@@ -957,7 +962,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
                 style={{
                   fontWeight: '800',
                   fontSize: '15px',
-                  color: 'var(--brand-art-5)',
+                  color: 'var(--brand-art-38)',
                 }}
               >
                 {'Graph reading'}
@@ -965,6 +970,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   background: 'var(--brand-art-6)',
+                  color: 'var(--brand-art-39)',
                   borderRadius: '8px',
                   padding: '6px 9px',
                   fontSize: '12px',
@@ -977,6 +983,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   background: 'var(--brand-art-6)',
+                  color: 'var(--brand-art-39)',
                   borderRadius: '8px',
                   padding: '6px 9px',
                   fontSize: '12px',
@@ -1063,7 +1070,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
                 display: 'flex',
                 gap: '16px',
                 fontFamily: 'var(--brand-mono)',
-                fontSize: '11px',
+                fontSize: '12px',
                 color: 'var(--brand-art-3)',
               }}
             >
@@ -1146,7 +1153,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   fontFamily: 'var(--brand-mono)',
-                  fontSize: '11px',
+                  fontSize: '12px',
                   color: 'var(--brand-art-3)',
                   width: '30px',
                 }}
@@ -1194,7 +1201,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   fontFamily: 'var(--brand-mono)',
-                  fontSize: '11px',
+                  fontSize: '12px',
                   color: 'var(--brand-art-3)',
                   width: '30px',
                 }}
@@ -1242,7 +1249,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   fontFamily: 'var(--brand-mono)',
-                  fontSize: '11px',
+                  fontSize: '12px',
                   color: 'var(--brand-art-3)',
                   width: '30px',
                 }}
@@ -1278,7 +1285,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   fontFamily: 'var(--brand-mono)',
-                  fontSize: '11px',
+                  fontSize: '12px',
                   color: 'var(--brand-art-5)',
                   width: '30px',
                 }}
@@ -1504,7 +1511,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   fontFamily: 'var(--brand-mono)',
-                  fontSize: '10px',
+                  fontSize: '12px',
                   letterSpacing: '0.06em',
                   background: 'var(--brand-art-2)',
                   color: 'var(--brand-art-5)',
@@ -1520,7 +1527,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   fontFamily: 'var(--brand-mono)',
-                  fontSize: '11px',
+                  fontSize: '12px',
                   color: 'var(--brand-art-3)',
                 }}
               >
@@ -1541,7 +1548,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   fontFamily: 'var(--brand-mono)',
-                  fontSize: '11px',
+                  fontSize: '12px',
                   color: 'var(--brand-art-3)',
                 }}
               >
@@ -1562,7 +1569,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   fontFamily: 'var(--brand-mono)',
-                  fontSize: '11px',
+                  fontSize: '12px',
                   color: 'var(--brand-art-3)',
                 }}
               >
@@ -1583,7 +1590,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   fontFamily: 'var(--brand-mono)',
-                  fontSize: '11px',
+                  fontSize: '12px',
                   color: 'var(--brand-art-3)',
                 }}
               >

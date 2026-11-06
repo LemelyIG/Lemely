@@ -114,7 +114,8 @@ export interface SessionCaches {
   // (`Persister["removeClient"]` from `@tanstack/query-persist-client-core`)
   // is typed `Promisable<void>` (`void | PromiseLike<void>`), so the default
   // wiring below must fit that, not the other way around — `endSession` only
-  // ever `void`s the result, so the exact shape doesn't otherwise matter.
+  // passes the result to `Promise.allSettled`, so the exact shape doesn't
+  // otherwise matter.
   removePersistedQueries: () => unknown
   clearUploadQueue: () => Promise<void>
 }
@@ -150,11 +151,11 @@ const defaultSessionCaches: SessionCaches = {
  *
  * All three session-end paths now call this instead of duplicating the
  * cleanup, so no future one can forget it. `clearQueries` is synchronous;
- * `removePersistedQueries`/`clearUploadQueue` are fire-and-forget, exactly
- * like `AuthContext.tsx`'s own pre-existing `clearUploadQueue()` call was —
- * nothing on any of these three call sites (a sign-out click, a redirect
- * render, a refused refresh) waits for either, and a failure here must not
- * block it.
+ * `removePersistedQueries`/`clearUploadQueue` start immediately and the
+ * returned promise settles once both have (it never rejects). A redirect
+ * render and a refused refresh do not wait for it; a sign-out click awaits
+ * it before navigating to the sign-in screen. A failure here must not block
+ * any of them.
  *
  * Deliberately does NOT clear `THEME_STORAGE_KEY` ("lemely.theme", `lib/
  * theme/theme.ts`): the Appearance setting is a device preference, not
@@ -163,11 +164,16 @@ const defaultSessionCaches: SessionCaches = {
  * sign-in screen this function's own caller is about to render, and after
  * the next reader signs in on the same device.
  */
-export function endSession(caches: SessionCaches = defaultSessionCaches): void {
+export function endSession(caches: SessionCaches = defaultSessionCaches): Promise<void> {
   clearSession()
   caches.clearQueries()
-  void caches.removePersistedQueries()
-  void caches.clearUploadQueue()
+  // Started here, synchronously, whether or not anyone waits. The returned
+  // promise settles when both have, and never rejects: a caller that wants
+  // to navigate only after the caches are gone (a sign-out click) can await
+  // it, and a failure still must not block that navigation.
+  const removing = caches.removePersistedQueries()
+  const clearing = caches.clearUploadQueue()
+  return Promise.allSettled([removing, clearing]).then(() => undefined)
 }
 
 /*

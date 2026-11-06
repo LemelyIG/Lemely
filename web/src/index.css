@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* `dark:` follows the app's own theme switch (`data-theme` on <html>, set by
+   lib/theme/applyTheme.ts), not the OS colour-scheme media query, so a
+   user who picks dark on a light OS gets the dark variant too. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 /* v5 Abyss faces (DESIGN.md §3). Each has one job. */
 @import "@fontsource-variable/bricolage-grotesque"; /* T1 display, 28px and above */
 @import "@fontsource-variable/schibsted-grotesk"; /* T2 UI and text */
@@ -42,10 +47,10 @@
   --md-on-surface-variant: oklch(0.47 0.02 240);
   --md-outline: oklch(0.87 0.012 240);
   --md-outline-variant: oklch(0.92 0.01 240);
-  --md-inverse-surface: #130e10;
+  --md-inverse-surface: oklch(0.16 0.014 245);
   --md-inverse-on-surface: oklch(0.95 0.006 240);
   --md-inverse-primary: #7fb8e0;
-  --md-scrim: oklch(0.20 0.03 242 / 0.4);
+  --md-scrim: oklch(0.20 0.03 242 / 0.55);
   --md-shadow: oklch(0.30 0.06 242);
 
   --grade-a-star: oklch(0.46 0.12 155);
@@ -54,6 +59,8 @@
   --grade-c: oklch(0.63 0.12 88);
   --grade-d: oklch(0.59 0.125 62);
   --grade-e: oklch(0.54 0.13 38);
+  --grade-f: oklch(0.53 0.135 30);
+  --grade-g: oklch(0.52 0.138 22);
   --grade-u: oklch(0.50 0.14 15);
 
   /* Mascot only (student surfaces and the marketing page) */
@@ -94,12 +101,12 @@
   --md-success-text: oklch(0.72 0.12 150);
   --md-success-container: oklch(0.30 0.06 150);
   --md-on-success-container: oklch(0.90 0.06 150);
-  --md-surface: #130e10;
-  --md-surface-container-lowest: oklch(0.12 0.006 240);
-  --md-surface-container-low: oklch(0.19 0.01 240);
-  --md-surface-container: oklch(0.215 0.014 240);
-  --md-surface-container-high: oklch(0.25 0.018 240);
-  --md-surface-container-highest: oklch(0.29 0.022 240);
+  --md-surface: oklch(0.16 0.014 245);
+  --md-surface-container-lowest: oklch(0.12 0.010 245);
+  --md-surface-container-low: oklch(0.19 0.014 245);
+  --md-surface-container: oklch(0.215 0.016 245);
+  --md-surface-container-high: oklch(0.25 0.020 245);
+  --md-surface-container-highest: oklch(0.29 0.024 245);
   --md-on-surface: oklch(0.95 0.006 240);
   --md-on-surface-variant: oklch(0.77 0.015 240);
   --md-outline: oklch(0.38 0.02 240);
@@ -126,6 +133,10 @@
   /* iOS Safari auto-zooms on focusing a text input under 16px, so this is a
      platform floor for native form fields, applied via `.text-field`. */
   --fs-field: 16px;
+  /* The body-sm step of the type ramp, named once so `.text-body-sm` and the
+     placeholder rule cannot drift apart. */
+  --fs-body-sm: 14px;
+  --lh-body-sm: 1.45;
 }
 
 @theme inline {
@@ -176,6 +187,8 @@
   --color-grade-c: var(--grade-c);
   --color-grade-d: var(--grade-d);
   --color-grade-e: var(--grade-e);
+  --color-grade-f: var(--grade-f);
+  --color-grade-g: var(--grade-g);
   --color-grade-u: var(--grade-u);
 
   --font-display: "Bricolage Grotesque Variable", "Schibsted Grotesk Variable", sans-serif;
@@ -207,7 +220,7 @@
   --ease-expo: var(--ease-expo);
 }
 
-@source inline("bg-grade-{a-star,a,b,c,d,e,u}");
+@source inline("bg-grade-{a-star,a,b,c,d,e,f,g,u}");
 
 /* Layout, motion and breakpoint tokens carried over unchanged from the build
    era. Colours, faces and radii live in the block above. */
@@ -455,6 +468,27 @@ body {
   overscroll-behavior-y: contain;
 }
 
+/* Dialogs and sheets lock page scroll by setting `overflow: hidden` on body
+   (react-remove-scroll, attribute `data-scroll-locked`). That makes body a
+   scroll container, so every `position: sticky` shell element (sidebar, top
+   bar) re-anchors to body and jumps by the current scroll offset. Lock the
+   viewport on html instead and clip body, which creates no scroll container,
+   so sticky chrome stays put while the overlay is open. The scrollbar's space
+   is reserved on html at all times (`scrollbar-gutter: stable`, below), so
+   neither lock (this one, nor `lockScroll`'s `position: fixed` body that
+   removes the page's scrollbar) shifts the layout sideways. */
+html:has(body[data-scroll-locked]) {
+  overflow: hidden;
+}
+html body[data-scroll-locked] {
+  overflow: clip !important;
+  margin-right: 0 !important;
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   margin: 0;
   background: var(--md-surface);
@@ -474,14 +508,47 @@ body {
   outline-offset: 2px;
   border-radius: 2px;
 }
+/* Every element already carries its ring colour before it is focused.
+   `transition-colors` animates outline-color too, so without this the ring
+   fades in from `currentColor` (navy on a dark-mode primary button, ~1.3:1,
+   for 150ms). For the same reason the panel overrides below set the ring on
+   every descendant rather than on `:focus-visible` alone: a value that only
+   appears on focus is a value that transitions in. Base layer, so any
+   outline colour utility still wins. */
+@layer base {
+  * {
+    outline-color: var(--focus-ring);
+  }
+  /* Placeholders are hints, not values: body-sm regular, never the field's
+     16px semibold (the 16px floor is for typed text, which stops iOS zoom).
+     Layered, so a `placeholder:` utility can still override. */
+  input::placeholder,
+  textarea::placeholder {
+    font-size: var(--fs-body-sm);
+    line-height: var(--lh-body-sm);
+    font-weight: 400;
+  }
+}
 /* Inside an inverse panel the ring sits on inverse-surface, where `primary`
    is the same hue family as the fill and all but vanishes; `inverse-primary`
    is the role built for that surface. Descendants only: an element that IS
    the inverse fill (the `ink` button) draws its ring on the page surface
    outside it, where `primary` is still right. Pinned by
    tests/test_design_tokens.py (focus ring clears 3:1 where it can sit). */
-.bg-inverse-surface :focus-visible {
+.bg-inverse-surface * {
   --focus-ring: var(--md-inverse-primary);
+}
+/* Same on a `primary` fill (the review tile in light mode is Abyss): the
+   default ring is the fill colour. `inverse-primary` is the opposite end of the
+   brand pair in both schemes (Tide on Abyss, Abyss on Tide). */
+.bg-primary * {
+  --focus-ring: var(--md-inverse-primary);
+}
+/* A panel that is `primary` in light but `primary-container` in dark (the
+   review tile) takes the default `primary` ring back in dark, where Tide clears
+   3:1 on the navy container and `inverse-primary` (Abyss) would not. */
+:root[data-theme="dark"] .dark\:bg-primary-container * {
+  --focus-ring: var(--md-primary);
 }
 
 /* ── §6.1 touch-target floor ───────────────────────────────────────────────
@@ -630,7 +697,7 @@ body {
   font: 400 16px/1.5 var(--font-sans);
 }
 .text-body-sm {
-  font: 400 14px/1.45 var(--font-sans);
+  font: 400 var(--fs-body-sm) / var(--lh-body-sm) var(--font-sans);
 }
 /* The `--fs-field` platform floor (iOS zooms on inputs under 16px). Standalone:
    it shares a twMerge font-size group with `.text-body-*`, so the two never

@@ -25,7 +25,9 @@ authenticated student's own id, never a caller-supplied one (D1.6).
 
 from __future__ import annotations
 
+import logging
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, NoReturn
 
@@ -35,6 +37,7 @@ from lemely.core.analytics import aggregate_weaknesses_from_history
 from lemely.core.at_risk import AtRiskReason, assess_at_risk
 from lemely.core.class_analytics import (
     EngagementStats,
+    TopicWeakness,
     cohort_trend,
     engagement_stats,
     grade_distribution,
@@ -42,7 +45,13 @@ from lemely.core.class_analytics import (
     rank_topic_weaknesses,
     topic_student_heatmap,
 )
-from lemely.core.history import HistoryStoreProtocol, StudentHistory, latest_grade_bearing
+from lemely.core.history import (
+    HistoryStoreProtocol,
+    PaperRecord,
+    StudentHistory,
+    grade_bearing,
+    latest_grade_bearing,
+)
 from lemely.db.at_risk_repo import AtRiskAcknowledgementRow, AtRiskAckService
 from lemely.db.class_exclusion_repo import ClassExclusionRepository, ExclusionTargetNotFoundError
 from lemely.db.class_history import ClassScopedHistoryStore, load_roster_histories
@@ -111,6 +120,8 @@ from lemely.web.schemas_teacher import (
 # alone. Named so the long Annotated[...] signatures below stay under the
 # line-length limit.
 _STAFF_ROLES = (Role.teacher, Role.school_admin, Role.platform_admin)
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_role(*_STAFF_ROLES))])
 
@@ -185,6 +196,129 @@ def _latest_activity(histories: list[StudentHistory]) -> str | None:
     )
 
 
+_MEDIAN_GRADE_LADDER: tuple[str, ...] = tuple(_GRADE_ORDER)
+"""Every CAIE letter grade best first, Core-tier ``F``/``G`` included.
+
+An alias of the single ladder ``GRADE_ORDER`` (``lemely.core.history``), never
+re-literalised: a median ordered against a shorter ladder raised ``ValueError``
+for a Core-tier ``F`` or ``G`` and took ``GET /api/teacher/classes`` down.
+"""
+
+
+def _median_grade(grades: list[str]) -> str | None:
+    """Median of CAIE letter grades, or ``None`` when no grade is on the ladder.
+
+    Grades are ordered best first (``A*`` .. ``G``, ``U``). With an even count
+    the two middle grades can differ; this takes the *lower* of them, the
+    conservative reading: a class card should never claim a better typical
+    grade than half its graded students actually reached. A median of letters
+    (unlike a mean) is always one of the grades a student really holds, so it
+    adds no invented precision (D3.12's objection to averaging letter grades).
+    A grade off :data:`_MEDIAN_GRADE_LADDER` cannot be ordered, so it is
+    skipped (logged at debug) rather than failing the whole class list.
+    """
+    ranked: list[str] = []
+    for grade in grades:
+        if grade in _MEDIAN_GRADE_LADDER:
+            ranked.append(grade)
+        else:
+            log.debug("class-card median skips a grade off the ladder: %r", grade)
+    if not ranked:
+        return None
+    ordered = sorted(ranked, key=_MEDIAN_GRADE_LADDER.index)
+    return ordered[len(ordered) // 2]
+
+
+def _latest_paper_weakness(histories: list[StudentHistory]) -> TopicWeakness | None:
+    """The class's worst topic over each student's latest grade-bearing paper.
+
+    One population for both class-card weakness fields: ``topWeakness`` and
+    ``topWeaknessAccuracy`` both come from this one :class:`TopicWeakness` row,
+    so the topic named and the percentage beside it describe the same papers.
+    The ranking is T-04's own :func:`rank_topic_weaknesses` (marks lost, ties
+    alphabetical) run over a one-record history per student; the accuracy is
+    that row's marks earned / marks available, weighted by
+    ``WeakArea.maximum_marks`` rather than a mean of per-paper ratios.
+
+    Remaining bias: ``WeakArea`` rows only exist for topics with marks lost
+    (``group_weak_areas`` drops a topic a student aced), so a student with full
+    marks on the topic contributes neither their earned nor available marks.
+    The accuracy is therefore over students who dropped at least one mark on
+    the topic, and reads low against the whole class.
+    """
+    latest = [
+        StudentHistory(student_id=history.student_id, records=[bearing[-1]])
+        for history in histories
+        if (bearing := grade_bearing(history.records))
+    ]
+    ranked = rank_topic_weaknesses(latest)
+    return ranked[0] if ranked else None
+
+
+@dataclass(frozen=True)
+class _ClassCardTrend:
+    """The teacher-home class-card fields derived from one roster-history pass."""
+
+    grade: str | None
+    delta: float | None
+    last_paper: str | None
+    last_paper_at: str | None
+    top_weakness: str | None
+    top_weakness_accuracy: float | None
+
+
+def _class_card_trend(histories: list[StudentHistory]) -> _ClassCardTrend:
+    """Grade chip, trend and weak topic for one class card.
+
+    Grade-bearing papers only, the same filter ``_average_for`` applies, so a
+    quiz never moves a grade, a delta, the "last paper" label or the weak topic:
+
+    - ``grade``: :func:`_median_grade` of each student's latest paper grade.
+    - ``delta``: mean of the latest papers minus mean of the previous papers,
+      in percentage points to 1 dp, over students who have a previous paper in
+      the latest paper's subject (``_previous_grade``'s rule: a Maths paper is
+      not a "previous" Physics paper). ``None`` when no student has two.
+    - ``last_paper``: ``"P<n>"`` of the class's most recent paper.
+    - ``last_paper_at``: that same paper's ``recorded_at``.
+    - ``top_weakness`` / ``top_weakness_accuracy``: :func:`_latest_paper_weakness`
+      (topic, and its marks-weighted 0-1 accuracy to 3 dp).
+    """
+    latest: list[PaperRecord] = []
+    latest_pairs: list[tuple[float, float]] = []
+    for history in histories:
+        bearing = grade_bearing(history.records)
+        if not bearing:
+            continue
+        newest = bearing[-1]
+        latest.append(newest)
+        same_subject = [
+            r for r in bearing if r.metadata.subject_code == newest.metadata.subject_code
+        ]
+        if len(same_subject) >= 2:
+            latest_pairs.append((newest.percentage, same_subject[-2].percentage))
+
+    delta = None
+    if latest_pairs:
+        now_mean = sum(pair[0] for pair in latest_pairs) / len(latest_pairs)
+        before_mean = sum(pair[1] for pair in latest_pairs) / len(latest_pairs)
+        delta = round(now_mean - before_mean, 1)
+
+    most_recent = max(latest, key=lambda r: r.recorded_at, default=None)
+    weakness = _latest_paper_weakness(histories)
+    return _ClassCardTrend(
+        grade=_median_grade([r.grade for r in latest]),
+        delta=delta,
+        last_paper=f"P{most_recent.metadata.paper_number}" if most_recent else None,
+        last_paper_at=most_recent.recorded_at if most_recent else None,
+        top_weakness=weakness.topic if weakness else None,
+        top_weakness_accuracy=(
+            round(1.0 - weakness.lost_marks / weakness.maximum_marks, 3)
+            if weakness and weakness.maximum_marks
+            else None
+        ),
+    )
+
+
 def _class_subject_name(code: str | None) -> str | None:
     """Human name for a class's subject code, or ``None`` when the class has none set.
 
@@ -213,8 +347,9 @@ def _class_row_to_summary(
     ``average`` already needed, not a second pass over the roster or a
     second round of history reads. ``atRiskCount`` reuses the one D3.3 rules
     engine (``assess_at_risk``); ``topWeakness`` reuses T-04's own ranker
-    (``rank_topic_weaknesses``) rather than a third topic aggregation; the
-    mean stays in ``_average_for`` so the D3.9 grade-bearing filter has
+    (``rank_topic_weaknesses``), over each student's latest grade-bearing
+    paper (:func:`_latest_paper_weakness`), rather than a third topic
+    aggregation; the mean stays in ``_average_for`` so the D3.9 grade-bearing filter has
     exactly one implementation and its regression tests keep guarding the
     path this route actually takes. Target grades (P4.3/D4.5) come from one
     ``StudentProfileService.target_grades_for_many`` call over this class's
@@ -230,7 +365,7 @@ def _class_row_to_summary(
         for h in histories
         if assess_at_risk(h, now=now, targets=targets_by_student.get(h.student_id)).flags
     )
-    ranked = rank_topic_weaknesses(histories)
+    card = _class_card_trend(histories)
     return ClassSummaryDTO(
         id=str(row.class_id),
         label=row.name,
@@ -242,7 +377,12 @@ def _class_row_to_summary(
         joinCode=row.join_code,
         atRiskCount=at_risk_count,
         lastActivityAt=_latest_activity(histories),
-        topWeakness=ranked[0].topic if ranked else None,
+        topWeakness=card.top_weakness,
+        grade=card.grade,
+        delta=card.delta,
+        lastPaper=card.last_paper,
+        lastPaperAt=card.last_paper_at,
+        topWeaknessAccuracy=card.top_weakness_accuracy,
     )
 
 
@@ -361,7 +501,7 @@ def _class_row_to_detail(
             history, now=now, targets=targets_by_student.get(history.student_id)
         ).flags
     )
-    ranked = rank_topic_weaknesses([history for _, history in histories])
+    weakness = _latest_paper_weakness([history for _, history in histories])
     stats = [
         StatCardDTO(
             key="Class average",
@@ -392,7 +532,7 @@ def _class_row_to_detail(
         joinCode=row.join_code,
         atRiskCount=at_risk,
         lastActivityAt=_latest_activity([history for _, history in histories]),
-        topWeakness=ranked[0].topic if ranked else None,
+        topWeakness=weakness.topic if weakness else None,
     )
 
 

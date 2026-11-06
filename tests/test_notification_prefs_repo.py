@@ -36,6 +36,7 @@ from lemely.db.models import NotificationPreference, User
 from lemely.db.models.enums import Role
 from lemely.db.notification_prefs_repo import DEFAULTS, NotificationPreferencesService
 from lemely.runtime.config import DatabaseSettings
+from tests.test_migration_tutoring_enums import spec_new_notification_types
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -237,3 +238,38 @@ def test_clearing_only_one_bound_of_an_existing_pair_raises_value_error(
     read = service.get(user)
     assert read.quiet_hours_start == time(22, 0)
     assert read.quiet_hours_end == time(7, 0)
+
+
+# ── the eight tutoring toggles (SPEC docs/tutoring/SPEC.md §a.1) ─────────────
+
+
+def test_tutoring_preference_fields_default_true_and_merge(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    fields = spec_new_notification_types()
+    assert len(fields) == 8
+    for name in fields:
+        assert hasattr(DEFAULTS, name), name
+        assert getattr(DEFAULTS, name) is True, name
+
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    service = NotificationPreferencesService(pg_sessionmaker)
+    first, second = fields[0], fields[-1]
+
+    service.set(user, **{first: False})
+    merged = service.set(user, **{second: False})
+
+    # The second partial write kept the first one's value (merge, not reset).
+    assert getattr(merged, first) is False
+    assert getattr(merged, second) is False
+    stored = service.get(user)
+    assert stored == merged
+    for name in fields[1:-1]:
+        assert getattr(stored, name) is True, name
+    assert stored.grade_ready is True
+
+    # Each toggle round-trips through its own column.
+    for name in fields:
+        service.set(user, **{name: False})
+    assert all(getattr(service.get(user), name) is False for name in fields)
+    assert _row_count(pg_sessionmaker) == 1

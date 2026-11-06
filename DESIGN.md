@@ -50,7 +50,7 @@ colors:
   inverse-surface: "oklch(0.16 0.014 245)"
   inverse-on-surface: "oklch(0.95 0.006 240)"
   inverse-primary: "#7fb8e0"
-  scrim: "oklch(0.20 0.03 242 / 0.4)"
+  scrim: "oklch(0.20 0.03 242 / 0.55)"
   shadow: "oklch(0.30 0.06 242)"
   # Material 3 roles, dark scheme
   dark-primary: "#7fb8e0"
@@ -94,6 +94,8 @@ colors:
   grade-c: "oklch(0.63 0.12 88)"
   grade-d: "oklch(0.59 0.125 62)"
   grade-e: "oklch(0.54 0.13 38)"
+  grade-f: "oklch(0.53 0.135 30)"
+  grade-g: "oklch(0.52 0.138 22)"
   grade-u: "oklch(0.50 0.14 15)"
   # Mascot only (student surfaces)
   binny-steel: "oklch(0.80 0.01 240)"
@@ -271,11 +273,11 @@ All values come from the five tonal palettes in the brand guidelines (tone = OKL
 - **Crimson** (`oklch(0.53 0.20 25)` light, `oklch(0.72 0.15 25)` dark): the `error` role. Lost marks, low confidence and genuine errors only.
 
 ### Grade scale: "Jewel"
-Green through yellow to red in even hue and lightness steps. Every chip uses white text and always shows the letter. Colour is never the only signal.
+Green through yellow to red in even hue and lightness steps. Every chip uses white text and always shows the letter. Colour is never the only signal. F and G are the Cambridge IGCSE Core-tier grades (Core papers run C to G); they step between E and U.
 
-| A* | A | B | C | D | E | U |
-|---|---|---|---|---|---|---|
-| `oklch(0.46 0.12 155)` | `oklch(0.52 0.12 132)` | `oklch(0.58 0.12 110)` | `oklch(0.63 0.12 88)` | `oklch(0.59 0.125 62)` | `oklch(0.54 0.13 38)` | `oklch(0.50 0.14 15)` |
+| A* | A | B | C | D | E | F | G | U |
+|---|---|---|---|---|---|---|---|---|
+| `oklch(0.46 0.12 155)` | `oklch(0.52 0.12 132)` | `oklch(0.58 0.12 110)` | `oklch(0.63 0.12 88)` | `oklch(0.59 0.125 62)` | `oklch(0.54 0.13 38)` | `oklch(0.53 0.135 30)` | `oklch(0.52 0.138 22)` | `oklch(0.50 0.14 15)` |
 
 ### Neutral
 - **Night** (`#130e10`): the text ink. `on-surface` in light mode and `inverse-on-surface` in dark mode, and the letters of the wordmark on light backgrounds. Night is never a fill: its warm undertone clashes with the blues as a background.
@@ -329,7 +331,7 @@ Lemely is flat by default. Depth comes from the tonal surface ladder: page on `s
 - **Floating panel** (`box-shadow: 0 30px 60px -40px oklch(0.3 0.06 242 / 0.45), 0 0 0 1px oklch(0.92 0.01 240)`): menus, popovers, toasts.
 
 ### Motion
-Motion is quick and exponential. Standard easing is `cubic-bezier(0.2, 0.8, 0.2, 1)`, with an expressive `cubic-bezier(0.16, 1, 0.3, 1)` for reveals and reward moments. Durations are 150ms (fast), 200ms (base) and 350ms (slow). Entrances rise 8px and fade in. Animate transform and opacity only. Binny alone gets squash-and-stretch with overshoot (idle bob about 7px, jump about 28px, ear wiggle about 12°, blink every 3.6s, badges pop to 1.25× before settling). `prefers-reduced-motion` turns all of it off.
+Motion is quick and exponential. Standard easing is `cubic-bezier(0.2, 0.8, 0.2, 1)`, with an expressive `cubic-bezier(0.16, 1, 0.3, 1)` for reveals and reward moments. Durations are 150ms (fast), 200ms (base) and 350ms (slow). Entrances rise 8px and fade in. Animate transform and opacity only, with one documented exception: the slow-load tier's self-drawing stroke animates `stroke-dashoffset`. Binny alone gets squash-and-stretch with overshoot (idle bob about 7px, jump about 28px, ear wiggle about 12°, blink every 3.6s, badges pop to 1.25× before settling). `prefers-reduced-motion` turns all of it off.
 
 ### Named Rules
 **The Flat At Rest Rule.** Surfaces are flat at rest. A shadow appears only on hover or on a floating panel.
@@ -346,10 +348,11 @@ Components are confident and rounded: big radii, heavy weights on buttons, gener
 - **Hover / Focus:** hover moves to `#0a3d62` (light) or `#9ccaea` (dark). Press scales to 0.97. Focus shows a 2px `primary` outline at a 2px offset.
 - **Tonal:** `primary-container` fill with `on-primary-container` text, for the second action in a pair ("See all marks").
 - **Outlined:** `surface-container-lowest` fill with a 1.5px `outline` border, for quiet utilities.
+- **Idle (cannot act yet):** a primary button that is waiting on input (the landing page FAQ Send until both fields are valid) fills with `outline` and keeps its `on-primary` label, rather than fading out.
 
 ### Chips
 - **Streak / tag pill:** `primary-container` with `on-primary-container` text, a 999px radius, 6px 12px padding and Schibsted 600 at 13px.
-- **Grade chip:** the Jewel colour for the grade with white Bricolage 800 text and a 10px radius. Always shows the letter.
+- **Grade chip:** the Jewel colour for the grade with white Bricolage 800 text and a 10px radius. Always shows the letter. The marketing hero chart and walkthrough darken the C and B chips (`--brand-art-7`, `--brand-art-8`) so their white letters hold 4.5:1.
 - **Confidence chip:** low confidence uses `error-container` with `on-error-container` text and the value as a percentage. High confidence uses success text. Medium confidence uses a gold dot.
 
 ### Cards / Containers

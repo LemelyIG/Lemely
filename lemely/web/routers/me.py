@@ -110,9 +110,35 @@ _AT_RISK_ALERT_ROLES = frozenset({Role.teacher.value, Role.parent.value})
 # narrowed to the one role it actually applies to.
 _REVIEW_WITHDRAWN_ROLES = frozenset({Role.teacher.value})
 
+# The eight tutoring toggles (SPEC docs/tutoring/SPEC.md §a.1 role table, PLAN
+# rev 2 P4) get the same null-on-GET / 422-on-disallowed-PUT treatment. Each
+# set is exactly the roles SPEC §b.4 sends that notification type to; gating is
+# by role, not by owning a tutor profile, so every teacher sees the teacher
+# toggles. school_admin gets none of the eight.
+_BOOKING_REQUEST_ROLES = frozenset({Role.teacher.value})
+_BOOKING_UPDATE_ROLES = frozenset({Role.student.value, Role.parent.value, Role.teacher.value})
+_BOOKING_NOTE_ROLES = frozenset({Role.student.value, Role.parent.value, Role.teacher.value})
+_TUTOR_ACCESS_ROLES = frozenset({Role.student.value, Role.parent.value, Role.teacher.value})
+_TUTOR_REVIEW_ROLES = frozenset({Role.student.value, Role.teacher.value})
+_TUTOR_LISTING_ROLES = frozenset({Role.teacher.value})
+_PARENT_LINK_ROLES = frozenset({Role.parent.value})
+_TUTORING_REPORT_ROLES = frozenset({Role.platform_admin.value})
+
+# DTO field -> the roles that may see and set it, for the PUT refusal loop.
+_TUTORING_TOGGLE_ROLES: tuple[tuple[str, frozenset[str]], ...] = (
+    ("bookingRequest", _BOOKING_REQUEST_ROLES),
+    ("bookingUpdate", _BOOKING_UPDATE_ROLES),
+    ("bookingNote", _BOOKING_NOTE_ROLES),
+    ("tutorAccess", _TUTOR_ACCESS_ROLES),
+    ("tutorReview", _TUTOR_REVIEW_ROLES),
+    ("tutorListing", _TUTOR_LISTING_ROLES),
+    ("parentLink", _PARENT_LINK_ROLES),
+    ("tutoringReport", _TUTORING_REPORT_ROLES),
+)
+
 
 def _to_dto(row: NotificationPreferencesRow, *, role: str) -> NotificationPreferencesDTO:
-    """Convert a preferences row to its DTO, nulling ``atRiskAlert`` by role."""
+    """Convert a preferences row to its DTO, nulling every role-gated toggle by role."""
     return NotificationPreferencesDTO(
         gradeReady=row.grade_ready,
         announcement=row.announcement,
@@ -120,6 +146,14 @@ def _to_dto(row: NotificationPreferencesRow, *, role: str) -> NotificationPrefer
         studyPlanReminder=row.study_plan_reminder,
         atRiskAlert=row.at_risk_alert if role in _AT_RISK_ALERT_ROLES else None,
         reviewWithdrawn=row.review_withdrawn if role in _REVIEW_WITHDRAWN_ROLES else None,
+        bookingRequest=row.booking_request if role in _BOOKING_REQUEST_ROLES else None,
+        bookingUpdate=row.booking_update if role in _BOOKING_UPDATE_ROLES else None,
+        bookingNote=row.booking_note if role in _BOOKING_NOTE_ROLES else None,
+        tutorAccess=row.tutor_access if role in _TUTOR_ACCESS_ROLES else None,
+        tutorReview=row.tutor_review if role in _TUTOR_REVIEW_ROLES else None,
+        tutorListing=row.tutor_listing if role in _TUTOR_LISTING_ROLES else None,
+        parentLink=row.parent_link if role in _PARENT_LINK_ROLES else None,
+        tutoringReport=row.tutoring_report if role in _TUTORING_REPORT_ROLES else None,
         quietHoursStart=row.quiet_hours_start,
         quietHoursEnd=row.quiet_hours_end,
     )
@@ -167,11 +201,12 @@ def put_notification_preferences(
     Only fields present in the request body are changed — an omitted field is
     left as-is; an explicit ``null`` on the quiet-hours pair clears that
     bound (``payload.model_fields_set`` is how "omitted" and "explicitly
-    sent" are told apart). ``atRiskAlert`` is teacher/parent only (G-12), and
-    ``reviewWithdrawn`` is teacher only (R10): either role supplying its
-    disallowed field at all — ``true`` or ``false`` — is a 422, never
-    silently dropped. Setting exactly one of the quiet-hours pair is also a
-    422 (enforced by the service).
+    sent" are told apart). ``atRiskAlert`` is teacher/parent only (G-12),
+    ``reviewWithdrawn`` is teacher only (R10), and each tutoring toggle is
+    limited to its SPEC §a.1 roles: a role supplying a field it may not set at
+    all — ``true`` or ``false`` — is a 422, never silently dropped. Setting
+    exactly one of the quiet-hours pair is also a 422 (enforced by the
+    service).
     """
     provided = payload.model_fields_set
     if "atRiskAlert" in provided and auth.role not in _AT_RISK_ALERT_ROLES:
@@ -184,6 +219,12 @@ def put_notification_preferences(
             status_code=422,
             detail="reviewWithdrawn is only settable for the teacher role.",
         )
+    for field, roles in _TUTORING_TOGGLE_ROLES:
+        if field in provided and auth.role not in roles:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{field} is not settable for the {auth.role} role.",
+            )
 
     try:
         row = service.set(
@@ -216,6 +257,46 @@ def put_notification_preferences(
             review_withdrawn=(
                 _required_bool(payload.reviewWithdrawn, field="reviewWithdrawn")
                 if "reviewWithdrawn" in provided
+                else UNSET
+            ),
+            booking_request=(
+                _required_bool(payload.bookingRequest, field="bookingRequest")
+                if "bookingRequest" in provided
+                else UNSET
+            ),
+            booking_update=(
+                _required_bool(payload.bookingUpdate, field="bookingUpdate")
+                if "bookingUpdate" in provided
+                else UNSET
+            ),
+            booking_note=(
+                _required_bool(payload.bookingNote, field="bookingNote")
+                if "bookingNote" in provided
+                else UNSET
+            ),
+            tutor_access=(
+                _required_bool(payload.tutorAccess, field="tutorAccess")
+                if "tutorAccess" in provided
+                else UNSET
+            ),
+            tutor_review=(
+                _required_bool(payload.tutorReview, field="tutorReview")
+                if "tutorReview" in provided
+                else UNSET
+            ),
+            tutor_listing=(
+                _required_bool(payload.tutorListing, field="tutorListing")
+                if "tutorListing" in provided
+                else UNSET
+            ),
+            parent_link=(
+                _required_bool(payload.parentLink, field="parentLink")
+                if "parentLink" in provided
+                else UNSET
+            ),
+            tutoring_report=(
+                _required_bool(payload.tutoringReport, field="tutoringReport")
+                if "tutoringReport" in provided
                 else UNSET
             ),
             quiet_hours_start=payload.quietHoursStart if "quietHoursStart" in provided else UNSET,

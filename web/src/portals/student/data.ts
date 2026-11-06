@@ -9,8 +9,10 @@
 
 import {
   Bell,
+  CalendarCheck,
   ChalkboardTeacher,
   Gear,
+  GraduationCap,
   HandHeart,
   House,
   Megaphone,
@@ -90,6 +92,9 @@ export const navGroups: NavGroup[] = [
       // Friends, and the rest all sit in the same trailing slice), not a
       // placement this entry is exempt from.
       { to: "/student/classes", label: "Your classes", icon: ChalkboardTeacher },
+      { to: "/student/tutors", label: "Tutors", icon: GraduationCap },
+      // S-38 ("Tutors & your data") has no nav entry of its own (SPEC C-13); Sessions links to it.
+      { to: "/student/sessions", label: "Sessions", icon: CalendarCheck },
       // Enrolled subjects render here as a collapsible accordion — see
       // `SubjectNavGroup` in `index.tsx`. They come from `GET
       // /student/overview`'s real `subjects` list, not this static array,
@@ -165,6 +170,9 @@ export const crumbs: Record<string, string> = {
   "/student": "Home",
   "/student/correct": "Marking / Correct a paper",
   "/student/classes": "Home / Your classes",
+  "/student/tutors": "Home / Tutors",
+  "/student/sessions": "Home / Sessions",
+  "/student/tutor-access": "Home / Tutors & your data",
   "/student/board": "Home / Standings",
   "/student/friends": "Home / Friends",
   "/student/profile": "Home / Your profile",
@@ -198,6 +206,13 @@ export const crumbs: Record<string, string> = {
 export function resolveCrumb(pathname: string): string {
   const exact = crumbs[pathname]
   if (exact) return exact
+
+  // Like a result, a tutor is "This tutor", never an id (S-34, S-35).
+  if (/^\/student\/tutors\/[^/]+$/.test(pathname)) return "Home / Tutors / This tutor"
+  if (/^\/student\/tutors\/[^/]+\/book$/.test(pathname)) return "Home / Tutors / This tutor / Book"
+
+  // A session's id is never in the crumb (see "This result" below).
+  if (/^\/student\/sessions\/[^/]+$/.test(pathname)) return "Home / Sessions / This session"
 
   const subjectMatch = pathname.match(/^\/student\/subject\/([^/]+)$/)
   if (subjectMatch) return `Home / ${subjectMatch[1]}`

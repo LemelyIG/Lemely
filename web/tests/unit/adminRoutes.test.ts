@@ -5,6 +5,7 @@ import path from "node:path"
 import { appRoutes, flattenRoutes } from "@/routes"
 import { portalPathForRole } from "@/lib/auth/RequireAuth"
 import { platformAdminRoute, schoolAdminRoute } from "@/portals/admin"
+import { platformNavItems, resolveAdminTrail, schoolNavItems } from "@/portals/admin/data"
 
 /*
  * P4.7 · the two admin lanes, and the role split that made them necessary.
@@ -138,6 +139,69 @@ describe("Task 22 · /platform/schools is registered under the guarded platform 
     for (const role of ["student", "parent", "teacher", "school_admin"]) {
       expect(platform, `platform_admin's guard must not admit ${role}`).not.toContain(role)
     }
+  })
+})
+
+/*
+ * T28 · the tutoring screens X-04..X-07 are children of the guarded platform
+ * subtree and of no other lane: registered under `platformAdminRoute`, absent
+ * from `schoolAdminRoute`, each with its own title, and reachable by exactly
+ * the one role the subtree's guard admits.
+ */
+describe("T28 · the tutoring screens sit under the guarded platform subtree", () => {
+  const PATHS = ["tutors", "tutors/:tutorId", "moderation", "reports", "reports/:reportId"]
+
+  it.each(PATHS)("registers %s on platformAdminRoute", (child) => {
+    expect(platformAdminRoute.children?.some((route) => route.path === child), `/platform/${child}`).toBe(true)
+  })
+
+  it.each(PATHS)("does not register %s on schoolAdminRoute", (child) => {
+    expect(schoolAdminRoute.children?.some((route) => route.path === child), `/school/${child}`).toBe(false)
+  })
+
+  it("gives every platform child its own title", () => {
+    const titles = (platformAdminRoute.children ?? []).map((route) => (route.handle as { title?: string } | undefined)?.title)
+    expect(titles.every((title) => typeof title === "string" && title.length > 0)).toBe(true)
+    expect(new Set(titles).size).toBe(titles.length)
+  })
+
+  it("reaches platform_admin and none of the other four roles", () => {
+    const platform = allowedRolesOf(topLevelRoutes.find((r) => r.path === "platform")!.element)
+    expect(platform).toEqual(["platform_admin"])
+  })
+
+  it("lists Tutors, Moderation and Reports in the platform navigation, and not in the school one", () => {
+    expect(platformNavItems.map((item) => item.to)).toEqual(
+      expect.arrayContaining(["/platform/tutors", "/platform/moderation", "/platform/reports"]),
+    )
+    expect(schoolNavItems.map((item) => item.to)).not.toContain("/platform/tutors")
+  })
+
+  it("trails a tutor application and a report back to their list", () => {
+    expect(resolveAdminTrail("/platform/tutors/abc", "platform")).toEqual([
+      { label: "Console", to: "/platform" },
+      { label: "Tutors", to: "/platform/tutors" },
+      { label: "Application" },
+    ])
+    expect(resolveAdminTrail("/platform/reports/abc", "platform").at(-1)).toEqual({ label: "Report" })
+    expect(resolveAdminTrail("/platform/tutors", "platform")).toEqual([
+      { label: "Console", to: "/platform" },
+      { label: "Tutors" },
+    ])
+  })
+
+  const SCREENS = [
+    "TutorQueue.tsx",
+    "TutorApplication.tsx",
+    "Moderation.tsx",
+    "Reports.tsx",
+    "ReportDetail.tsx",
+  ].map((file) => `src/portals/admin/screens/tutoring/${file}`)
+
+  it.each(SCREENS)("%s renders no `error.message` and words failures through adminTutoring", (relative) => {
+    const source = fs.readFileSync(path.resolve(__dirname, "../..", relative), "utf8")
+    expect(source).not.toMatch(/\b(?:error|err)\.message\b/)
+    expect(source).toMatch(/adminFailureMessage/)
   })
 })
 

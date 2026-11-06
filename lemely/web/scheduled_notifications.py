@@ -50,6 +50,7 @@ from lemely.db.models.users import User
 from lemely.db.xp_repo import DEFAULT_ZONE, resolve_zone
 from lemely.web.notify import notify_safely
 from lemely.web.purge import purge_expired_papers, purge_expired_teacher_papers
+from lemely.web.tutoring_email import deliver_tutoring_email
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
@@ -59,6 +60,7 @@ if TYPE_CHECKING:
 
     from lemely.db.announcement_repo import AnnouncementRow, AnnouncementService
     from lemely.db.notification_repo import NotificationService
+    from lemely.io.notify_email import TransactionalEmailProvider
     from lemely.io.storage import StorageBackend
     from lemely.runtime.config import NotificationsSettings
     from lemely.web.push import NotificationTransport
@@ -472,9 +474,14 @@ class Sweeper:
     plan_memo: ZoneDateMemo = field(default_factory=ZoneDateMemo)
     storage: StorageBackend | None = None
     bucket: str | None = None
+    #: The tutoring email job (SPEC §b.4) runs only when a provider is given, the same
+    #: optional-collaborator pattern as ``storage``/``bucket`` above, so a sweeper built
+    #: without one keeps exactly the pre-tutoring job set.
+    email_provider: TransactionalEmailProvider | None = None
+    email_daily_cap: int = 60
 
     def sweep_once(self) -> dict[str, int | None]:
-        """Run announcements, streak warnings, study-plan reminders and purge, once each."""
+        """Run announcements, streaks, study-plan reminders, purge and tutoring email, once each."""
         moment = self.now()
         jobs: list[tuple[str, Callable[[], int]]] = [
             (
@@ -519,6 +526,19 @@ class Sweeper:
                     "purge_expired_teacher_papers",
                     lambda: purge_expired_teacher_papers(
                         self.sessionmaker, storage, bucket, now=moment
+                    ),
+                )
+            )
+        provider = self.email_provider
+        if provider is not None:
+            jobs.append(
+                (
+                    "deliver_tutoring_email",
+                    lambda: deliver_tutoring_email(
+                        sessionmaker=self.sessionmaker,
+                        provider=provider,
+                        daily_cap=self.email_daily_cap,
+                        now=self.now,
                     ),
                 )
             )

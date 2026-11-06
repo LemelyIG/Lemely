@@ -135,7 +135,7 @@ export function RequireAuth({
   // `endSession`'s own doc comment (`storage.ts`).
   useEffect(() => {
     if (strandedRole !== null) {
-      endSession()
+      void endSession()
       markSessionExpired(strandedRole)
     }
   }, [strandedRole])

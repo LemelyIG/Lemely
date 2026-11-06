@@ -277,7 +277,7 @@ _GRADE_ORDER = GRADE_ORDER
 # "this grade is low right now", not "this student is on a declining
 # trajectory" — the two must not be conflated. Kept as its own literal set
 # because it has no analogue in ``lemely.core.at_risk``.
-_AT_RISK_GRADES = {"D", "E", "U"}
+_AT_RISK_GRADES = {"D", "E", "F", "G", "U"}
 
 # The staff triple every route needing per-caller tenancy scoping (overview,
 # student detail, at-risk list, P3.3) authenticates against. Named so the long

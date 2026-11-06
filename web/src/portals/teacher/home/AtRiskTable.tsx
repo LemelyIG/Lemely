@@ -2,30 +2,13 @@
 import { Link } from "react-router-dom"
 import type { AtRiskStudent } from "@/lib/teacherTypes"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
-import { gradeTone, type GradeTone } from "@/lib/grade"
+import { gradeChipClass } from "@/lib/grade"
 import { atRiskRowModel } from "./models"
 
-// Small chips (16px letter) fail AA as white-on-Jewel, so the Jewel colour moves to
-// a border around a dark letter. Matches gradeChipClass's small variant; literal
-// class names so Tailwind generates them.
-const SMALL_CHIP_BORDER: Record<GradeTone, string> = {
-  "a-star": "border-grade-a-star",
-  a: "border-grade-a",
-  b: "border-grade-b",
-  c: "border-grade-c",
-  d: "border-grade-d",
-  e: "border-grade-e",
-  u: "border-grade-u",
-}
-
-function smallGradeChipClass(grade: string): string {
-  const tone = gradeTone(grade)
-  return `border-2 ${tone ? SMALL_CHIP_BORDER[tone] : "border-outline-variant"} bg-surface-container-lowest text-on-surface`
-}
-
-export function AtRiskTable({ students }: { students: AtRiskStudent[] }) {
+/** `trendsReady` is false while no class has two marked papers, so an empty list means "not yet" rather than "all clear". */
+export function AtRiskTable({ students, trendsReady = true }: { students: AtRiskStudent[]; trendsReady?: boolean }) {
   return (
-    <section aria-labelledby="ar-h" className="rounded-card bg-surface-container-lowest p-6 shadow-panel">
+    <section aria-labelledby="ar-h" className="min-w-0 rounded-card bg-surface-container-lowest p-6 shadow-panel">
       <div className="flex items-baseline justify-between">
         <h2 id="ar-h" className="text-display-md">
           At-risk students<span className="sr-only">, {students.length}</span>{" "}
@@ -34,14 +17,14 @@ export function AtRiskTable({ students }: { students: AtRiskStudent[] }) {
         <Link to="/teacher/at-risk" className="font-bold text-primary">View all</Link>
       </div>
       {students.length === 0 ? (
-        <p className="mt-4 text-body-md text-on-surface-variant">No student is on a falling trend right now.</p>
+        <p className="mt-4 text-body-md text-on-surface-variant">{trendsReady ? "No student is on a falling trend right now." : "Trends start once each student has two marked papers. Then anyone falling behind shows up here."}</p>
       ) : (
         <ul className="mt-2">
           {students.slice(0, 4).map((s, i) => {
             const m = atRiskRowModel(s)
             return (
               <li key={`${m.name}-${i}`} className="[&+&]:border-t [&+&]:border-outline-variant">
-                <Link to="/teacher/at-risk" className="group flex items-center gap-4 py-3 outline-offset-[-2px] transition-transform duration-150 hover:translate-x-1 motion-reduce:hover:translate-x-0 focus-visible:outline-2 focus-visible:outline-primary">
+                <Link to="/teacher/at-risk" className="group flex items-center gap-4 py-3 transition-transform duration-150 hover:translate-x-1 motion-reduce:hover:translate-x-0">
                   <span aria-hidden className="grid size-10 place-items-center rounded-pill bg-primary-container font-bold text-on-primary-container transition-colors group-hover:bg-primary group-hover:text-on-primary">{m.initials}</span>
                   <span className="min-w-0 flex-1">
                     <span className="block font-bold group-hover:underline">{m.name}</span>
@@ -55,9 +38,9 @@ export function AtRiskTable({ students }: { students: AtRiskStudent[] }) {
                   </span>
                   {m.to && (
                     <span className="flex items-center gap-2" role="img" aria-label={m.from ? `${m.from} to ${m.to}` : m.to}>
-                      {m.from && <span className={`grid size-9 place-items-center rounded-row font-bold ${smallGradeChipClass(m.from)}`}>{m.from}</span>}
+                      {m.from && <span className={`grid size-9 place-items-center rounded-row font-bold ${gradeChipClass(m.from)}`}>{m.from}</span>}
                       {m.from && <span aria-hidden className="text-on-surface-variant"><ForwardArrow /></span>}
-                      <span className={`grid size-9 place-items-center rounded-row font-bold ${smallGradeChipClass(m.to)}`}>{m.to}</span>
+                      <span className={`grid size-9 place-items-center rounded-row font-bold ${gradeChipClass(m.to)}`}>{m.to}</span>
                     </span>
                   )}
                 </Link>

@@ -1,5 +1,6 @@
 User-agent: *
 Allow: /
+Allow: /api/public/tutors/
 Disallow: /api/
 Disallow: /student
 Disallow: /teacher

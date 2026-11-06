@@ -93,6 +93,25 @@ EXPECTED_TABLES = {
     "component_thresholds",
     "option_thresholds",
     "class_paper_exclusions",
+    # Tutoring marketplace (lemely/db/models/tutoring.py, migrations 0045-0051).
+    "tutor_profiles",
+    "tutor_subjects",
+    "tutor_availability_rules",
+    "tutor_evidence_files",
+    "tutor_evidence_uploads",
+    "tutor_approval_events",
+    "tutoring_admin_access",
+    "parent_link_events",
+    "email_outbox",
+    "student_tutoring_preferences",
+    "tutor_bookings",
+    "tutor_booking_notes",
+    "tutor_reviews",
+    "tutor_review_replies",
+    "tutor_data_grants",
+    "tutor_access_audit",
+    "tutoring_reports",
+    "tutoring_blocks",
 }
 
 # Tables deliberately excluded from `test_every_model_has_timestamps` below.
@@ -106,7 +125,24 @@ EXPECTED_TABLES = {
 # overwritten wholesale on every stamp and ``stamped_at`` already answers
 # "when was this last touched" — see
 # ``lemely/db/models/auth_cooldowns.py``'s module docstring.
-TABLES_WITHOUT_TIMESTAMPS = {"otp_challenges", "auth_cooldowns"}
+# The five tutoring tables follow docs/tutoring/SPEC.md §a.2 as written:
+# ``tutor_subjects`` is a pure (tutor, subject) key with no timestamps, and the
+# four append-only logs (``tutor_approval_events``, ``tutoring_admin_access``,
+# ``parent_link_events``, ``tutor_access_audit``) carry ``created_at`` only,
+# because no row is ever updated
+# (``tests/test_db_tutoring_schema.py`` asserts they have no ``updated_at``).
+# ``tutor_evidence_uploads`` (migration 0051, T30 F30-5) is a fifth append-only log
+# of the same shape: one row per T6 upload attempt, never updated.
+TABLES_WITHOUT_TIMESTAMPS = {
+    "otp_challenges",
+    "auth_cooldowns",
+    "tutor_subjects",
+    "tutor_approval_events",
+    "tutoring_admin_access",
+    "parent_link_events",
+    "tutor_access_audit",
+    "tutor_evidence_uploads",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +283,7 @@ def test_0043_merge_heads_joins_the_develop_and_branch_chains() -> None:
         "0042_question_result_source_box",
         "0039_paper_soft_delete",
     }
-    assert script_dir.get_heads() == ["0043_merge_heads"]
+    assert script_dir.get_heads() == ["0051_tutor_evidence_uploads"]
 
 
 def test_every_enum_column_binds_its_value_not_its_member_name() -> None:

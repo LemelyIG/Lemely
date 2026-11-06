@@ -4,12 +4,9 @@ import { Avatar } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
-import { Radio, RadioGroup } from "@/components/ui/radio"
 import { Select } from "@/components/ui/select"
 import { validateAvatarFile } from "@/lib/avatarUpload"
 import { useProfile, usePutTimezone, useRemoveAvatar, useUploadAvatar } from "@/lib/hooks/useMeApi"
-import { isThemePreference } from "@/lib/theme/theme"
-import { useTheme } from "@/lib/theme/useTheme"
 import {
   FOLLOW_DEVICE_UPDATE,
   FOLLOW_DEVICE_VALUE,
@@ -24,7 +21,9 @@ import {
   settingsLoadFailureMessage,
   settingsSaveFailureMessage,
 } from "@/lib/settingsOutcome"
+import { AppearanceSettingsSection } from "./AppearanceSettings"
 import { SettingsFrame } from "./SettingsFrame"
+import { SettingsCard, SettingsRow, SettingsSection, SettingsStatus } from "./SettingsRows"
 
 /*
  * Profile — the third screen in the settings lane, alongside `DeviceSettings`
@@ -66,18 +65,25 @@ function roleLabel(role: string): string {
  * `PortalSettingsLayout` for the in-portal lane, in addition to the framed
  * `ProfileSettings` below for the top-level `/settings/profile` lane.
  */
-export function ProfileSettingsSection() {
+export function ProfileSettingsSection({
+  appearance = true,
+}: {
+  /** Render the theme choice inside this section. The teacher Settings
+   * dialog passes `false`: it has an Appearance tab of its own. */
+  appearance?: boolean
+} = {}) {
   const profile = useProfile()
   const upload = useUploadAvatar()
   const remove = useRemoveAvatar()
   const putTimezone = usePutTimezone()
-  const { preference: themePreference, setPreference: setThemePreference } = useTheme()
   const [timezoneError, setTimezoneError] = useState<string | null>(null)
+  const [timezoneSaved, setTimezoneSaved] = useState(false)
   const device = deviceTimezone()
   const zoneOptions = timezoneOptions(browserTimezones(), profile.data?.timezone, device)
 
   const handleTimezoneChange = (event: ChangeEvent<HTMLSelectElement>) => {
     setTimezoneError(null)
+    setTimezoneSaved(false)
     const value = event.target.value
     if (value === FOLLOW_DEVICE_VALUE) {
       // Clear the choice first, then send the device zone: the server
@@ -85,6 +91,7 @@ export function ProfileSettingsSection() {
       putTimezone.mutate(FOLLOW_DEVICE_UPDATE, {
         onError: (error) => setTimezoneError(settingsSaveFailureMessage(error)),
         onSuccess: () => {
+          setTimezoneSaved(true)
           const update = deviceTimezoneUpdate(device)
           if (update !== null) putTimezone.mutate(update)
         },
@@ -93,6 +100,7 @@ export function ProfileSettingsSection() {
     }
     putTimezone.mutate(explicitTimezoneUpdate(value), {
       onError: (error) => setTimezoneError(settingsSaveFailureMessage(error)),
+      onSuccess: () => setTimezoneSaved(true),
     })
   }
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -155,15 +163,13 @@ export function ProfileSettingsSection() {
 
   return (
     <>
-      <section aria-labelledby="identity-heading" className="flex flex-col gap-4">
-        <h2 id="identity-heading" className="text-display-sm text-on-surface">
-          Your profile
-        </h2>
-
-        {/* No `srHeading`: the page's own `<h1>` is rendered above this
-            section unconditionally, whether by `SettingsFrame` (the
-            top-level lane) or `PortalSettingsLayout` (the in-portal one), in
-            every query state — an sr-only heading here would duplicate it. */}
+      <SettingsSection
+        title="Your profile"
+        description="Your name and email come from your account. With no name set, Lemely shows the first part of your email."
+      >
+        {/* No `srHeading`: the page's own `<h1>` (page lane) or the dialog
+            title (teacher Settings dialog) sits above this section in every
+            query state, so an sr-only heading here would duplicate it. */}
         <QueryState
           query={profile}
           skeleton={<PanelSkeleton />}
@@ -175,149 +181,110 @@ export function ProfileSettingsSection() {
           {(data) => {
             const name = data.displayName ?? data.email.split("@")[0]
             return (
-              <div className="flex items-center gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest p-4 sm:p-5">
-                <Avatar name={name} src={data.avatarUrl ?? undefined} size="lg" />
-                <div className="min-w-0">
-                  <p className="truncate text-body-lg font-medium text-on-surface">{name}</p>
-                  <p className="truncate text-body-sm text-on-surface-variant">{data.email}</p>
-                  <p className="text-body-sm text-on-surface-variant">{roleLabel(data.role)}</p>
-                </div>
-              </div>
+              <SettingsCard>
+                <SettingsRow
+                  label="Profile picture"
+                  description="PNG, JPEG or WEBP, up to 5 MB. Shown next to your name."
+                  control={
+                    <>
+                      <Avatar name={name} src={previewUrl ?? data.avatarUrl ?? undefined} size="lg" />
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={handleChoose}
+                        loading={upload.isPending}
+                        disabled={remove.isPending}
+                      >
+                        {data.avatarUrl ? "Change" : "Choose a picture"}
+                      </Button>
+                      {data.avatarUrl ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={handleRemove}
+                          loading={remove.isPending}
+                          disabled={upload.isPending}
+                        >
+                          Remove
+                        </Button>
+                      ) : null}
+                    </>
+                  }
+                  status={
+                    <>
+                      {/* Adjacent to the control that produced it. */}
+                      {validationError ? (
+                        <SettingsStatus tone="error">{validationError}</SettingsStatus>
+                      ) : null}
+                      {actionError ? <SettingsStatus tone="error">{actionError}</SettingsStatus> : null}
+                      {upload.isPending ? <SettingsStatus>Uploading your picture…</SettingsStatus> : null}
+                    </>
+                  }
+                />
+                <SettingsRow
+                  label="Name"
+                  control={<span className="truncate text-body-md text-on-surface">{name}</span>}
+                />
+                <SettingsRow
+                  label="Email"
+                  control={
+                    <span className="truncate text-body-md text-on-surface">{data.email}</span>
+                  }
+                />
+                <SettingsRow
+                  label="Role"
+                  control={
+                    <span className="text-body-md text-on-surface">{roleLabel(data.role)}</span>
+                  }
+                />
+              </SettingsCard>
             )
           }}
         </QueryState>
-      </section>
+        {/* `hidden` rather than `sr-only`: this input is never the target
+            of a direct interaction, only `fileInputRef.current?.click()`
+            above, so the buttons are the whole accessible surface for this
+            control and it needs no name or focus stop of its own. */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          className="hidden"
+          disabled={busy}
+          onChange={handleFileSelected}
+          data-kit-field="file"
+        />
+      </SettingsSection>
 
-      <section aria-labelledby="picture-heading" className="flex flex-col gap-4">
-        <div className="flex flex-col gap-2">
-          <h2 id="picture-heading" className="text-display-sm text-on-surface">
-            Profile picture
-          </h2>
-          <p className="max-w-[65ch] text-body-sm text-on-surface-variant">
-            PNG, JPEG, or WEBP, up to 5 MB. Shown next to your name in the sidebar.
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest p-4 sm:p-5">
-          <div className="flex flex-wrap items-center gap-4">
-            <Avatar
-              name={profile.data ? (profile.data.displayName ?? profile.data.email.split("@")[0]) : undefined}
-              src={previewUrl ?? profile.data?.avatarUrl ?? undefined}
-              size="lg"
-            />
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={handleChoose}
-                loading={upload.isPending}
-                disabled={remove.isPending}
-              >
-                {profile.data?.avatarUrl ? "Change picture" : "Choose a picture"}
-              </Button>
-              {profile.data?.avatarUrl ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={handleRemove}
-                  loading={remove.isPending}
-                  disabled={upload.isPending}
-                >
-                  Remove picture
-                </Button>
-              ) : null}
-            </div>
-            {/* `hidden` rather than `sr-only`: this input is never the target
-                of a direct interaction, only `fileInputRef.current?.click()`
-                above — the two `Button`s are the whole accessible surface for
-                this control, so it needs no name or focus stop of its own. */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              className="hidden"
-              disabled={busy}
-              onChange={handleFileSelected}
-              data-kit-field="file"
-            />
-          </div>
-
-          {/* Adjacent to the control that produced it, same as the other two
-              settings screens' row-level notices. */}
-          {validationError ? (
-            <p role="status" className="text-body-sm text-error">
-              {validationError}
-            </p>
-          ) : null}
-          {actionError ? (
-            <p role="status" className="text-body-sm text-error">
-              {actionError}
-            </p>
-          ) : null}
-        </div>
-      </section>
-
-      <section aria-labelledby="timezone-heading" className="flex flex-col gap-4">
-        <div className="flex flex-col gap-2">
-          <h2 id="timezone-heading" className="text-display-sm text-on-surface">
-            Time zone
-          </h2>
-          <p className="max-w-[65ch] text-body-sm text-on-surface-variant">
-            Quiet hours, streak days and daily reminders follow this. Following your device
-            keeps it up to date when you travel.
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest p-4 sm:p-5">
-          <Select
-            label="Your time zone"
-            value={pickerValue(profile.data)}
-            onChange={handleTimezoneChange}
-            disabled={profile.isPending || putTimezone.isPending}
-          >
-            <option value={FOLLOW_DEVICE_VALUE}>
-              {device ? `Follow this device (${device})` : "Follow this device"}
-            </option>
-            {zoneOptions.map((zone) => (
-              <option key={zone} value={zone}>
-                {zone}
+      <SettingsSection
+        title="Time zone"
+        description="Quiet hours, streak days and daily reminders follow this. Following your device keeps it right when you travel."
+      >
+        <SettingsCard>
+          <div className="flex flex-col gap-3 px-4 py-4 sm:px-5">
+            <Select
+              label="Your time zone"
+              value={pickerValue(profile.data)}
+              onChange={handleTimezoneChange}
+              disabled={profile.isPending || putTimezone.isPending}
+              state={putTimezone.isPending ? "loading" : undefined}
+              error={timezoneError ?? undefined}
+              hint={timezoneSaved && !putTimezone.isPending ? "Saved." : undefined}
+            >
+              <option value={FOLLOW_DEVICE_VALUE}>
+                {device ? `Follow this device (${device})` : "Follow this device"}
               </option>
-            ))}
-          </Select>
-          {timezoneError ? (
-            <p role="status" className="text-body-sm text-error">
-              {timezoneError}
-            </p>
-          ) : null}
-        </div>
-      </section>
+              {zoneOptions.map((zone) => (
+                <option key={zone} value={zone}>
+                  {zone}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </SettingsCard>
+      </SettingsSection>
 
-      <section aria-labelledby="appearance-heading" className="flex flex-col gap-4">
-        <div className="flex flex-col gap-2">
-          <h2 id="appearance-heading" className="text-display-sm text-on-surface">
-            Appearance
-          </h2>
-          <p className="max-w-[65ch] text-body-sm text-on-surface-variant">
-            Applies immediately on this device. System follows your OS setting and switches
-            automatically if it changes.
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest p-4 sm:p-5">
-          <RadioGroup
-            label="Theme"
-            value={themePreference}
-            onValueChange={(value) => {
-              if (isThemePreference(value)) setThemePreference(value)
-            }}
-            orientation="horizontal"
-          >
-            <Radio label="System" value="system" />
-            <Radio label="Light" value="light" />
-            <Radio label="Dark" value="dark" />
-          </RadioGroup>
-        </div>
-      </section>
+      {appearance ? <AppearanceSettingsSection /> : null}
     </>
   )
 }

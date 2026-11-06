@@ -95,7 +95,12 @@ export function FeatureMotion({
     }
   }, [name, scene.reducedMotion, scene.ref])
   useEffect(() => {
-    animations.current.forEach((a) => (scene.enabled ? a.play() : a.pause()))
+    // Finished one-shots stay at their final frame: play() or pause()+play() on one rewinds it.
+    animations.current.forEach((a) => {
+      if (a.playState === 'finished') return
+      if (scene.enabled) a.play()
+      else a.pause()
+    })
     if (!scene.enabled) return
     const root = scene.ref.current?.querySelector('.brand-art')
     if (!root) return
@@ -121,7 +126,9 @@ export function FeatureMotion({
     frame = requestAnimationFrame(count)
     return () => {
       cancelAnimationFrame(frame)
-      animations.current.forEach((a) => a.pause())
+      animations.current.forEach((a) => {
+        if (a.playState !== 'finished') a.pause()
+      })
     }
   }, [name, scene.enabled, scene.ref])
   return (

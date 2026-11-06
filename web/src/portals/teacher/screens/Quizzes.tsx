@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V3 */
 import { useState, type FormEvent } from "react"
-import { Link, useNavigate } from "react-router-dom"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Chip, type ChipProps } from "@/components/ui/chip"
 import { GradeBadge } from "@/components/ui/grade-badge"
@@ -149,7 +149,30 @@ export function Quizzes() {
   const [search, setSearch] = useState("")
   const [sortColumn, setSortColumn] = useState<SortColumn>("title")
   const [sortDir, setSortDir] = useState<1 | -1>(1)
-  const [showCreate, setShowCreate] = useState(false)
+  const [showCreateState, setShowCreate] = useState(false)
+  // `?new=1` (the top bar's Create sheet, "AI quiz") arrives with the form
+  // already open. Derived rather than copied into state, so a second visit
+  // from the sheet while already here opens it too.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const wantsNew = searchParams.get("new") === "1"
+  const showCreate = showCreateState || wantsNew
+
+  function toggleCreate() {
+    if (!showCreate) {
+      setShowCreate(true)
+      return
+    }
+    setShowCreate(false)
+    if (wantsNew) {
+      setSearchParams(
+        (params) => {
+          params.delete("new")
+          return params
+        },
+        { replace: true },
+      )
+    }
+  }
   const [title, setTitle] = useState("")
   const [subjectCode, setSubjectCode] = useState("")
 
@@ -229,7 +252,7 @@ export function Quizzes() {
                   placeholder="Search quizzes or subjects…"
                   wrapperClassName="w-[240px]"
                 />
-                <Button variant="ink" onClick={() => setShowCreate((v) => !v)}>
+                <Button variant="ink" onClick={toggleCreate}>
                   {showCreate ? "Cancel" : "+ New quiz"}
                 </Button>
               </div>

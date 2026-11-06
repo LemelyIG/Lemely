@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P5 H4 E5 S5 R4 V4 */
 import { useLayoutEffect } from "react"
 import { Outlet, ScrollRestoration, useNavigationType } from "react-router-dom"
-import { scrollRestorationKey } from "@/lib/nav/scrollRestorationKey"
+import { createScrollKeyer } from "@/lib/nav/scrollRestorationKey"
 import { navigationDirection } from "@/lib/nav/navigationDirection"
 
 /*
@@ -23,6 +23,10 @@ import { navigationDirection } from "@/lib/nav/navigationDirection"
  * triggers it) reads the DOM synchronously when it captures the "before"
  * snapshot — a value that only exists in a React tree is invisible to it.
  */
+/** One keyer for the app's lifetime: it remembers the last page key so an
+ * overlay route keys as the page underneath (`createScrollKeyer`). */
+const scrollKey = createScrollKeyer()
+
 export function RootOutlet() {
   const navigationType = useNavigationType()
 
@@ -33,7 +37,7 @@ export function RootOutlet() {
   return (
     <>
       <Outlet />
-      <ScrollRestoration getKey={(location) => scrollRestorationKey(location)} />
+      <ScrollRestoration getKey={scrollKey} />
     </>
   )
 }

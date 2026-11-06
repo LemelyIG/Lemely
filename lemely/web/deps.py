@@ -72,6 +72,7 @@ from lemely.io.evidence_judge import GeminiEvidenceJudge
 from lemely.io.flashcard_generation import FlashcardGenerator
 from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
+from lemely.io.notify_email import build_transactional_provider
 from lemely.io.storage import StorageBackend
 from lemely.io.storage_gcs import GcsStorageBackend
 from lemely.io.storage_local import LocalFileStorageBackend
@@ -189,7 +190,11 @@ def get_storage_backend() -> StorageBackend:
     """
     settings = get_settings()
     if settings.storage.backend == "gcs":
-        return GcsStorageBackend(project=settings.storage.gcs_project)
+        return GcsStorageBackend(
+            project=settings.storage.gcs_project,
+            tutor_evidence_bucket=settings.storage.tutor_evidence_bucket,
+            project_number=settings.storage.gcs_project_number,
+        )
     return LocalFileStorageBackend(settings.paths.output_dir / "storage")
 
 
@@ -297,9 +302,19 @@ def get_auth_service() -> AuthService:
         otp_store=otp_store,
         settings=settings,
         device_registry=get_device_registry(),
-        email=_build_email_provider(settings),
+        email=get_email_provider(),
         tokens=get_auth_token_service(),
     )
+
+
+@lru_cache(maxsize=1)
+def get_email_provider() -> EmailProvider:
+    """Return the process-wide :class:`EmailProvider`, built once by :func:`_build_email_provider`.
+
+    Shared by :func:`get_auth_service` and the anonymous contact route so both
+    talk to one provider (and one HTTP client) rather than each building their own.
+    """
+    return _build_email_provider(get_settings())
 
 
 def _build_email_provider(settings: Settings) -> EmailProvider:
@@ -808,6 +823,8 @@ def get_sweeper() -> Sweeper:
         settings=settings.notifications,
         storage=get_storage_backend(),
         bucket=settings.storage.bucket,
+        email_provider=build_transactional_provider(settings),
+        email_daily_cap=settings.tutoring.email_daily_cap,
     )
 
 
@@ -1149,6 +1166,45 @@ def get_client_error_limiters() -> ClientErrorLimiters:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class ContactLimiters:
+    """The two :class:`SlidingWindowLimiter` instances guarding ``POST /api/contact``.
+
+    ``per_client`` (keyed by IP) stops one visitor mailing the team repeatedly;
+    ``global_`` caps the route's daily volume below Resend's free tier. The same
+    caveat as :class:`ClientErrorLimiters` applies: ``per_client`` only binds a
+    caller that arrived through the Cloudflare Worker.
+    """
+
+    per_client: SlidingWindowLimiter
+    global_: SlidingWindowLimiter
+
+
+# 3 messages per caller per 10 minutes; 60 across every caller per day (Resend's
+# free tier is 100 mails/day, shared with verification and reset mail).
+_CONTACT_PER_CLIENT_LIMIT = 3
+_CONTACT_PER_CLIENT_WINDOW_SECONDS = 600.0
+_CONTACT_GLOBAL_LIMIT = 60
+_CONTACT_GLOBAL_WINDOW_SECONDS = 86400.0
+
+
+@lru_cache(maxsize=1)
+def get_contact_limiters() -> ContactLimiters:
+    """Return the process-wide rate limiters guarding ``POST /api/contact``."""
+    return ContactLimiters(
+        per_client=SlidingWindowLimiter(
+            limit=_CONTACT_PER_CLIENT_LIMIT,
+            window_seconds=_CONTACT_PER_CLIENT_WINDOW_SECONDS,
+            clock=time.monotonic,
+        ),
+        global_=SlidingWindowLimiter(
+            limit=_CONTACT_GLOBAL_LIMIT,
+            window_seconds=_CONTACT_GLOBAL_WINDOW_SECONDS,
+            clock=time.monotonic,
+        ),
+    )
+
+
 def reset_singletons() -> None:
     """Clear all cached singletons. Intended for tests that swap settings."""
     get_settings.cache_clear()
@@ -1205,3 +1261,10 @@ def reset_singletons() -> None:
     # PR 1 chunk C: the client-error rate limiters — same reasoning as the two
     # comments above, the promise is *all* cached singletons.
     get_client_error_limiters.cache_clear()
+    get_email_provider.cache_clear()
+    get_contact_limiters.cache_clear()
+    # Tutoring marketplace providers live in their own module (T06 onward); the
+    # promise above is *all* cached singletons.
+    from lemely.web.deps_tutoring import reset_tutoring_singletons
+
+    reset_tutoring_singletons()

@@ -80,6 +80,13 @@
  *     below — which is why they cannot be collapsed onto one account, and the
  *     fourth is on a different account again because completing `active`'s
  *     sessions would destroy the populated-week capture.
+ *   - the tutoring marketplace (T33): every route on the SPEC §d "Accessibility
+ *     and performance gate routes" list, with its states (default, loading,
+ *     error, empty and the screen-specific ones, plus dark), is registered by
+ *     `audit_tutoring_registry.mjs`, which also adds the `platform_admin`
+ *     session (X-04..X-07) and the signed-out one (G-16, G-17). These entries
+ *     capture at 320/768/1280 and every `ready` is built from the state's own
+ *     content, so a login redirect or an error page can never satisfy it.
  * Deliberately still NOT in this registry: nothing. Every student route is
  * audited as of P5.11.
  *   (This note used to name four routes as "P5 screens still on mock data",
@@ -128,7 +135,7 @@
  * actual UI. `empty` (a genuinely empty seeded account, never a stubbed
  * payload) needs its own session, so it is a *separate* registry entry
  * sharing the primary route's `screenId`, not a `states[]` entry — see the
- * `emptyTeacher`/`emptyParent` entries below. `offline` (CDP) is a `states[]`
+ * `emptyTeacher`/`emptyParent` entries below. `offline` (an aborted request) is a `states[]`
  * entry (same session, same context) on T-01.
  *
  * Usage: `npm run audit` (from web/), or `node scripts/audit.mjs` directly.
@@ -161,6 +168,7 @@ import puppeteer from "puppeteer"
 import lighthouse from "lighthouse"
 import { assertPortFree } from "./serve_guard.mjs"
 import { gotoWithRetry, withRetry } from "./nav_retry.mjs"
+import { buildTutoringRegistry, offlineStateHooks } from "./audit_tutoring_registry.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const webRoot = path.resolve(__dirname, "..")
@@ -203,6 +211,17 @@ const RESPONSIVE_SUMMARY_PATH = path.join(REPORTS_DIR, "responsive-summary.json"
  * the run could not do, and so `check_ui_gates.py` can read it. */
 const ROUTE_FAILURES_PATH = path.join(REPORTS_DIR, "route-failures.json")
 const CONTACT_SHEET_PATH = path.join(REPORTS_DIR, "contact-sheet.html")
+
+/* T33. `LEMELY_AUDIT_SCOPE=tutoring` audits only the tutoring marketplace's registry entries
+ * (`audit_tutoring_registry.mjs`): no login journey, no student upload, none of the older
+ * routes. It exists so a fix to a tutoring screen can be re-measured in minutes. A gate run
+ * (`live_audit.sh`) leaves it unset and audits everything; the reports a scoped run writes are
+ * partial and are not evidence for the whole product. */
+const AUDIT_SCOPE = process.env.LEMELY_AUDIT_SCOPE ?? "all"
+if (AUDIT_SCOPE !== "all" && AUDIT_SCOPE !== "tutoring") {
+  throw new Error(`LEMELY_AUDIT_SCOPE must be "all" or "tutoring", got ${JSON.stringify(AUDIT_SCOPE)}`)
+}
+const TUTORING_ONLY = AUDIT_SCOPE === "tutoring"
 
 const BREAKPOINTS = [
   { width: 380, height: 844 },
@@ -522,12 +541,42 @@ async function pressCheckboxOnce(page, labelPattern, timeout = 15_000) {
   )
 }
 
-/** Full-page capture at `$LEMELY_REPORT_DIR/screens/<screenId>/<state>--<bp>.png`
- * — same path convention as web/e2e/screenshots.spec.ts's `shoot`. */
-async function shoot(page, screenId, state, bpWidth) {
+/** Full-page capture at `$LEMELY_REPORT_DIR/screens/<screenId>/<state>--<bp>[--dark].png`
+ * — same path convention as web/e2e/screenshots.spec.ts's `shoot`. `suffix` is `--dark` for a
+ * dark-theme capture of a state that also exists in the light theme (T33). */
+async function shoot(page, screenId, state, bpWidth, suffix = "", { hideBottomChrome = false } = {}) {
   const dir = path.join(SCREENS_DIR, screenId)
   fs.mkdirSync(dir, { recursive: true })
-  await page.screenshot({ path: path.join(dir, `${state}--${bpWidth}.png`), fullPage: true })
+  // T33. A full-page capture of a mobile page paints the fixed bottom navigation once, at the
+  // viewport's bottom, which lands in the middle of a tall page and covers its content. That is
+  // an artefact of the capture, not of the screen, so an entry can ask for those bars to be
+  // hidden for the shot. Anything inside or holding a dialog is never touched.
+  if (hideBottomChrome) {
+    await page.evaluate(() => {
+      for (const el of document.querySelectorAll("body *")) {
+        const position = getComputedStyle(el).position
+        if (position !== "fixed" && position !== "sticky") continue
+        if (el.closest('[role="dialog"]') || el.querySelector('[role="dialog"]')) continue
+        const rect = el.getBoundingClientRect()
+        if (rect.height === 0 || rect.top < window.innerHeight / 2) continue
+        if (rect.bottom < window.innerHeight - 1) continue
+        el.setAttribute("data-audit-hidden", "")
+        el.style.visibility = "hidden"
+      }
+    })
+  }
+  try {
+    await page.screenshot({ path: path.join(dir, `${state}--${bpWidth}${suffix}.png`), fullPage: true })
+  } finally {
+    if (hideBottomChrome) {
+      await page.evaluate(() => {
+        for (const el of document.querySelectorAll("[data-audit-hidden]")) {
+          el.removeAttribute("data-audit-hidden")
+          el.style.visibility = ""
+        }
+      })
+    }
+  }
 }
 
 /**
@@ -920,18 +969,6 @@ async function gotoReady(page, url, ready, waitUntil = "networkidle0") {
   )
 }
 
-/** Races `promise` against a plain timer — `page.evaluate()` has no timeout
- * of its own, so a promise that never resolves (e.g. a service worker that
- * never activates) would otherwise hang the whole run rather than surfacing
- * as the diagnostic route failure it actually is. */
-function withTimeout(promise, ms, label) {
-  let timer
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), ms)
-  })
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
-}
-
 /** `setup`/`teardown` pair for a `loading` state: holds the route's own API
  * request open for `delayMs` before letting it through, so the screen's real
  * pending UI (its `isPending` render, not a stub) is what gets captured.
@@ -1144,13 +1181,23 @@ async function visitRoute(
         await st.setup(page)
       }
 
-      log(`${route.screenId} ${route.path} [${st.state}] — screenshots + responsive check (3 breakpoints)...`)
-      for (const bp of BREAKPOINTS) {
+      // T33: an entry or a state may name its own widths (the tutoring screens use 320/768/1280).
+      const breakpoints = st.breakpoints ?? route.breakpoints ?? BREAKPOINTS
+      log(
+        `${route.screenId} ${route.path} [${st.state}] — screenshots + responsive check ` +
+          `(${breakpoints.map((bp) => bp.width).join("/")})...`,
+      )
+      for (const bp of breakpoints) {
         await page.setViewport(bp)
         await gotoReady(page, url, ready, waitUntil)
+        // T33: a dialog or a toast is still fading in when `ready` resolves; the first
+        // screenshots showed S-38's confirm sheet half transparent. Axe already waits.
+        await settleAnimations(page)
         const violation = await checkNoHorizontalScroll(page, st.slug, bp.width)
         if (violation) responsiveViolations.push(violation)
-        await shoot(page, route.screenId, st.state, bp.width)
+        await shoot(page, route.screenId, st.state, bp.width, st.shotSuffix, {
+          hideBottomChrome: route.hideBottomChrome === true,
+        })
       }
 
       log(`${route.screenId} ${route.path} [${st.state}] — axe...`)
@@ -1334,16 +1381,16 @@ function buildRouteRegistry(seed) {
   const quizDetailUrl = `/teacher/quizzes/${seed.quiz.quizId}`
   const quizResultsUrl = `/teacher/quizzes/${seed.quiz.quizId}/assignments/${seed.quiz.assignmentId}/results`
 
+  // T33: the tutoring marketplace's screens (SPEC §d) live in their own module, so the
+  // registry for a feature that ships 23 gated routes does not bury this file further.
+  const tutoringEntries = buildTutoringRegistry(seed, { loadingStateHooks, errorStateHooks })
+  if (TUTORING_ONLY) return tutoringEntries
+
   return [
-    // ── G-05 · Parent log in (phone + OTP) — unauthenticated ──────────────
-    {
-      screenId: "G-05",
-      slug: "parent-login",
-      path: "/login/parent",
-      session: null,
-      ready: (page) => waitForText(page, "Check on your child"),
-      authed: false,
-    },
+    // ── G-05 · Parent log in (phone + OTP) — REMOVED (T33) ─────────────────
+    // `/login/parent` was retired with phone login (f7fa3283, "retire phone login"): the route now
+    // answers the 404 page, and this entry could only ever wait 15 s for "Check on your child"
+    // and fail the whole audit. A parent signs in on `/login`, which has its own entry (G-04).
     // ── P6.5 · How your data is handled — unauthenticated ─────────────────
     // The second public content page in the product (D6.8 option A). Its
     // `screenId` is not a UI-spec id, because this page answers no line of the
@@ -1438,21 +1485,13 @@ function buildRouteRegistry(seed) {
           slug: "teacher-overview-offline",
           lighthouse: false,
           ready: (page) => waitForText(page, "Couldn't load the overview"),
-          setup: async (page) => {
-            // Wait for the service worker to be active before flipping
-            // offline — `vite.config.ts`'s `navigateFallback` only serves
-            // the app shell offline once a worker controls navigations for
-            // this origin, and this session's page has already navigated
-            // here once (the `default` state above), giving it time to
-            // install.
-            await withTimeout(
-              page.evaluate(() => navigator.serviceWorker.ready),
-              15_000,
-              "service worker ready (T-01 offline capture)",
-            )
-            await page.setOfflineMode(true)
-          },
-          teardown: (page) => page.setOfflineMode(false),
+          // T33. This used to flip CDP offline mode and reload through the service worker's
+          // navigation fallback. Current Chromium applies that emulation to a service-worker
+          // navigation too (`net::ERR_INTERNET_DISCONNECTED` on the goto itself, 3 times), so the
+          // route could not be reached at all. Aborting the screen's own request is the same
+          // failure the screen sees (`fetch` rejects, `lib/api.ts` reports status 0) and leaves
+          // the navigation alone.
+          ...offlineStateHooks("/api/teacher/overview"),
         },
       ],
     },
@@ -1744,11 +1783,9 @@ function buildRouteRegistry(seed) {
           state: "empty",
           slug: "teacher-overview-empty",
           lighthouse: false,
-          // P3.2: the teacher header greets by the reader's real local time
-          // now, so a fixed "Good morning" gate would fail this audit for
-          // sixteen hours a day. `waitForText` compiles its argument as a
-          // case-insensitive RegExp, so the alternation works as-is.
-          ready: (page) => waitForText(page, "Good (morning|afternoon|evening)"),
+          // A teacher with no class is sent on from /teacher to /teacher/first-class, so the
+          // greeting this used to wait for (the populated overview's) is never on screen (T33).
+          ready: (page) => waitForText(page, "Create your first class"),
         },
       ],
     },
@@ -1814,7 +1851,7 @@ function buildRouteRegistry(seed) {
       slug: "student-parents",
       path: "/student/parents",
       session: decliningStudentSession,
-      ready: (page) => waitForText(page, "Your parents"),
+      ready: (page) => waitForText(page, "Parent access"),
       authed: true,
     },
     // ── Student onboarding + placement (P4.8 chunk C · S-01..S-05) ────────
@@ -2475,7 +2512,9 @@ function buildRouteRegistry(seed) {
       slug: "student-landing",
       path: "/student/landing",
       session: practiceActiveSession,
-      ready: (page) => waitForText(page, "Thirty papers marked"),
+      // `/student/landing` redirects to the public `/landing` (routes.tsx); the page that
+      // answers is the marketing landing page, whose h1 is the one stable thing on it.
+      ready: (page) => waitForText(page, "Marking you can check, line by line"),
       authed: true,
     },
     // ── DEV-01 · Result-header design gallery — REMOVED P4.10 (D4.8) ──────
@@ -2547,7 +2586,7 @@ function buildRouteRegistry(seed) {
         },
       ],
     },
-  ]
+  ].concat(tutoringEntries)
 }
 
 // ── Chromium lifecycle ────────────────────────────────────────────────────
@@ -2683,6 +2722,9 @@ async function main() {
     const page = await browser.newPage()
     watchConsole(page, consoleErrors)
 
+    // T33: with LEMELY_AUDIT_SCOPE=tutoring the older inline journeys below (G-04 through S-06,
+    // the real upload included) are skipped; the block is not re-indented so the diff stays small.
+    if (!TUTORING_ONLY) {
     // ── G-04 · Log in — unaudited/unauthenticated, must run before any
     // login so /login doesn't self-redirect away from an existing session
     // (App.tsx's LoginRoute navigates to the portal home if session is set).
@@ -2781,10 +2823,32 @@ async function main() {
     const signupRes = await fetch(`${BACKEND_URL}/api/auth/signup`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email, password: PASSWORD, role: "student" }),
+      // `acceptedTerms` has been required since D7.11 (consent to /data); without it signup answers
+      // 422 and this journey, which every later audit step depends on, never starts.
+      body: JSON.stringify({ email, password: PASSWORD, role: "student", acceptedTerms: true }),
     })
     if (!signupRes.ok) {
       throw new Error(`signup failed: ${signupRes.status} ${await signupRes.text()}`)
+    }
+    // The journey needs a student who can mark a paper, and a fresh signup cannot: its email is
+    // unverified (D7.5 refuses a marking run) and it has not onboarded (D7.9 sends every page to
+    // /student/onboard). `web/e2e/screenshots.spec.ts` clears both through the API the UI itself
+    // calls, which captures no screen this audit does not own; so does this.
+    const { accessToken: journeyToken, devLink } = await signupRes.json()
+    const verifyRes = await fetch(`${BACKEND_URL}/api/auth/verify-email`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: String(devLink).split("/").pop() }),
+    })
+    if (!verifyRes.ok) {
+      throw new Error(`verify-email failed: ${verifyRes.status} ${await verifyRes.text()}`)
+    }
+    const onboardRes = await fetch(`${BACKEND_URL}/api/me/student-profile/complete-onboarding`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${journeyToken}` },
+    })
+    if (!onboardRes.ok) {
+      throw new Error(`complete-onboarding failed: ${onboardRes.status} ${await onboardRes.text()}`)
     }
 
     log("Logging in through the real UI...")
@@ -3020,6 +3084,7 @@ async function main() {
     } finally {
       await page.emulateMediaFeatures([])
     }
+    } // end of the inline journeys (skipped when TUTORING_ONLY)
     // ── The 15 declaratively-registered routes (teacher/parent/G-05/
     // student-parents) — each role gets its own fresh page with a real
     // session injected (see `injectSession`), rather than re-driving 4
@@ -3036,6 +3101,13 @@ async function main() {
     // actually unauthenticated, and it also removes the registry's implicit
     // dependency on route ordering for the authenticated roles.
     routes = buildRouteRegistry(seed)
+    // T33: `LEMELY_AUDIT_SCREENS=S-33,S-37` narrows a re-run to those screen ids. Like the scope, a
+    // narrowed run writes partial reports and is not evidence for the whole product.
+    const onlyScreens = (process.env.LEMELY_AUDIT_SCREENS ?? "").split(",").map((id) => id.trim()).filter(Boolean)
+    if (onlyScreens.length > 0) {
+      routes = routes.filter((route) => onlyScreens.includes(route.screenId))
+      if (routes.length === 0) throw new Error(`LEMELY_AUDIT_SCREENS=${onlyScreens.join(",")} matches no registry entry`)
+    }
     // The student journey above is finished with this page, and it is the
     // heaviest one in the run (a real upload + a full marking pass). Closing
     // it frees its renderer before the registry walk opens five more

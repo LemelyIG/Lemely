@@ -114,6 +114,103 @@ describe("staffTypeLabel", () => {
   })
 })
 
+/* The eight tutoring types (SPEC section b.4). A teacher is a tutor, so the tutor-side notices
+ * land in the teacher inbox; a parent gets the family-side ones. The payload holds ids only. */
+describe("tutoring notices in the staff inboxes", () => {
+  const BOOKING = "b-1"
+
+  it("labels all eight tutoring types, none falling back to the raw enum name", () => {
+    const labels = {
+      booking_request: "Session request",
+      booking_update: "Session update",
+      booking_note: "Session note",
+      tutor_access: "Progress sharing",
+      tutor_review: "Review decision",
+      tutor_listing: "Tutor profile",
+      parent_link: "Parent link",
+      tutoring_report: "Safety report",
+    }
+    expect(Object.keys(labels)).toHaveLength(8)
+    for (const [type, label] of Object.entries(labels)) {
+      expect(staffTypeLabel(type)).toBe(label)
+    }
+  })
+
+  it("sends a tutor to the session for a request, an update or a note", () => {
+    for (const type of ["booking_request", "booking_update", "booking_note"]) {
+      expect(
+        staffDestinationFor("teacher", notification({ type, payload: { bookingId: BOOKING } })),
+      ).toBe(`/teacher/tutoring/sessions/${BOOKING}`)
+    }
+  })
+
+  it("sends a parent to the child's session, which needs both ids", () => {
+    const payload = { bookingId: BOOKING, studentId: "stu-1" }
+    for (const type of ["booking_update", "booking_note"]) {
+      expect(staffDestinationFor("parent", notification({ type, payload }))).toBe(
+        "/parent/children/stu-1/sessions/b-1",
+      )
+    }
+    expect(
+      staffDestinationFor(
+        "parent",
+        notification({ type: "booking_update", payload: { bookingId: BOOKING } }),
+      ),
+    ).toBeNull()
+  })
+
+  it("routes progress-sharing notices to where each role sees them", () => {
+    expect(staffDestinationFor("teacher", notification({ type: "tutor_access", payload: { grantId: "g" } }))).toBe(
+      "/teacher/tutoring/students",
+    )
+    expect(
+      staffDestinationFor(
+        "parent",
+        notification({ type: "tutor_access", payload: { grantId: "g", studentId: "stu-1" } }),
+      ),
+    ).toBe("/parent/children/stu-1/tutor-access")
+    // A class-join notice is about tutoring, not about a grant.
+    expect(
+      staffDestinationFor(
+        "parent",
+        notification({ type: "tutor_access", payload: { enrollmentId: "e", studentId: "stu-1" } }),
+      ),
+    ).toBe("/parent/children/stu-1/tutoring")
+  })
+
+  it("routes listing and review decisions to the tutor's own screens", () => {
+    expect(
+      staffDestinationFor("teacher", notification({ type: "tutor_listing", payload: { approvalEventId: "a" } })),
+    ).toBe("/teacher/tutoring/profile")
+    expect(
+      staffDestinationFor("teacher", notification({ type: "tutor_review", payload: { replyId: "r" } })),
+    ).toBe("/teacher/tutoring/preview")
+  })
+
+  it("sends a parent-link notice to the parent's children list", () => {
+    expect(
+      staffDestinationFor("parent", notification({ type: "parent_link", payload: { eventId: "e" } })),
+    ).toBe("/parent")
+  })
+
+  it("gives a role no link into a screen it cannot open", () => {
+    const payload = { bookingId: BOOKING, studentId: "stu-1", grantId: "g", approvalEventId: "a" }
+    expect(staffDestinationFor("parent", notification({ type: "booking_request", payload }))).toBeNull()
+    expect(staffDestinationFor("parent", notification({ type: "tutor_listing", payload }))).toBeNull()
+    expect(staffDestinationFor("teacher", notification({ type: "parent_link", payload }))).toBeNull()
+    expect(staffDestinationFor("teacher", notification({ type: "tutoring_report", payload }))).toBeNull()
+  })
+
+  it("encodes every id it splices into a path", () => {
+    expect(
+      staffDestinationFor(
+        "parent",
+        notification({ type: "booking_update", payload: { bookingId: "a/b", studentId: "c d" } }),
+      ),
+    ).toBe("/parent/children/c%20d/sessions/a%2Fb")
+  })
+})
+
 describe("both screens wire the four states and mark-all-read", () => {
   const screens = {
     teacher: "../../src/portals/teacher/screens/Notifications.tsx",

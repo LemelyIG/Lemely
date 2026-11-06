@@ -77,7 +77,7 @@ export const CHART_TOKENS = [
   /*
    * The Jewel grade scale, for the one chart whose colour is not a series
    * palette at all. A grade-distribution bar is coloured by the grade it
-   * shows (the same seven tokens `gradeChipClass` uses), and re-colouring it
+   * shows (the same nine tokens `gradeChipClass` uses), and re-colouring it
    * from `SERIES_TOKENS` would break the one colour relationship in this
    * product a teacher actually learns. They are listed here so the gate checks
    * them like every other chart token. The four already in `SERIES_TOKENS`
@@ -85,6 +85,8 @@ export const CHART_TOKENS = [
    */
   "--grade-b",
   "--grade-d",
+  "--grade-f",
+  "--grade-g",
   "--grade-u",
 ] as const
 

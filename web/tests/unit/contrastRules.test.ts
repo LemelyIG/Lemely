@@ -188,7 +188,7 @@ describe("the weak-role list is derived from index.css", () => {
   const byRole = new Map(WEAK.map((w) => [w.role, w]))
 
   it("finds the roles v5 is known to ship under 4.5:1", () => {
-    for (const role of ["success", "tertiary", "grade-a-star", "grade-a", "grade-b", "grade-c", "grade-d", "grade-e", "grade-u"]) {
+    for (const role of ["success", "tertiary", "grade-a-star", "grade-a", "grade-b", "grade-c", "grade-d", "grade-e", "grade-f", "grade-g", "grade-u"]) {
       expect(byRole.has(role), `${role} should be weak`).toBe(true)
     }
   })
@@ -205,7 +205,7 @@ describe("the weak-role list is derived from index.css", () => {
   })
 
   it("bans success, tertiary and the sub-3:1 grades outright and lets the rest through at 24px+", () => {
-    for (const role of ["success", "tertiary", "grade-a-star", "grade-e", "grade-u"]) {
+    for (const role of ["success", "tertiary", "grade-a-star", "grade-e", "grade-f", "grade-g", "grade-u"]) {
       expect(byRole.get(role)?.bannedOutright, role).toBe(true)
     }
     for (const role of ["grade-a", "grade-b", "grade-c", "grade-d"]) {

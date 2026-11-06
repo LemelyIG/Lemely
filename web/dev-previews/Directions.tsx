@@ -21,7 +21,7 @@ import { directionsIntro, railTicks } from "@/portals/student/data"
  * never ship it.
  *
  * **DECISION D4.8** asks whether this follows it there. It is not resolved as
- * this is written, so the screen is migrated to the Study Notebook in place
+ * this is written, so the screen is migrated to the design system in place
  * rather than moved unattended: a gallery that has to argue for design
  * decisions in the old palette is not much of an argument, and moving a file
  * the audit script visits by path is not a change to make while the question
@@ -36,10 +36,9 @@ import { directionsIntro, railTicks } from "@/portals/student/data"
  *     token**. It resolved to Georgia, the browser's default serif, so the
  *     screen whose entire job is to show typographic treatments was showing
  *     them in the wrong face.
- *   - Direction C is a dark panel, and DESIGN.md §3.1 now rules that out in as
- *     many words: `--paper-inverse` is "the one dark surface permitted, for a
- *     single proof/close band on marketing only. **Never a dark section inside
- *     an app screen.**" C is therefore not an option any more, and the gallery
+ *   - Direction C is a dark panel, and DESIGN.md's inverse-surface guidance rules
+ *     that out: the inverse panel is for one proof or close band on marketing
+ *     only, never a dark section inside an app screen. C is therefore not an option any more, and the gallery
  *     was still offering it as the "warmest" one. It stays on the page,
  *     labelled as ruled out, because deleting the alternative is how the next
  *     person proposes it again.
@@ -138,10 +137,8 @@ export function Directions() {
               <div className="text-eyebrow text-on-surface-variant">Grade</div>
               <div className="text-data-lg mt-1.5 text-primary">A</div>
             </div>
-            {/* `margin-rule` (§8), not a hand-written `border-s` plus padding:
-                it is the project's own hairline-in-the-margin utility and it
-                is already RTL-safe by construction. */}
-            <div className="text-body-sm margin-rule max-w-[44ch] flex-1 text-pretty text-on-surface-variant">
+            {/* A logical-property hairline (`border-s`, `ps`), so it flips in RTL. */}
+            <div className="text-body-sm max-w-[44ch] border-s-2 border-outline ps-4 flex-1 text-pretty text-on-surface-variant">
               Above the 2020 A boundary by 15 marks. Two dropped, both single-mark recall.
             </div>
           </div>
@@ -167,14 +164,12 @@ export function Directions() {
         <DirectionLabel
           letter="C"
           title="Two sentences, the grade is secondary"
-          note="warmest, and no longer available: DESIGN.md §3.1 rules out a dark panel inside an app screen"
+          note="warmest, and no longer available: a dark panel inside an app screen is ruled out"
           status="ruled-out"
         />
         {/*
-          Rendered on `--paper-inverse`, the token, rather than `bg-inverse-surface`, which
-          is the *text* colour and was being used as a background: close enough
-          in value to look right and wrong by name, so changing the ink colour
-          would have repainted this panel.
+          Rendered on `bg-inverse-surface`, the inverse panel role (Night surface in
+          light mode).
 
           Keeping the treatment visible while marking it ruled out is
           deliberate. It is a real option for a future Read-lane screen or a

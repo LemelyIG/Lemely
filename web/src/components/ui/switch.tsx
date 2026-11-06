@@ -15,6 +15,10 @@ export interface SwitchProps
   state?: FieldState
   error?: string
   wrapperClassName?: string
+  /** `inline` (default): switch, then its label. `row`: label and
+   * description on the start side, switch on the end side, for settings
+   * rows where every control lines up on one edge. */
+  layout?: "inline" | "row"
 }
 
 /**
@@ -43,6 +47,7 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
     disabled,
     className,
     wrapperClassName,
+    layout = "inline",
     id,
     ...props
   },
@@ -70,7 +75,12 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
 
   return (
     <div className={cn("flex flex-col gap-1.5", wrapperClassName)}>
-      <div className="flex items-start gap-3">
+      <div
+        className={cn(
+          "flex items-start gap-3",
+          layout === "row" && "flex-row-reverse justify-between gap-6",
+        )}
+      >
         <button
           ref={ref}
           type="button"

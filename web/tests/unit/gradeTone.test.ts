@@ -3,11 +3,11 @@ import { gradeChipClass, gradeTone } from "@/lib/grade"
 
 describe("gradeTone", () => {
   it.each([
-    ["A*", "a-star"], ["A", "a"], ["B", "b"], ["C", "c"], ["D", "d"], ["E", "e"], ["U", "u"],
+    ["A*", "a-star"], ["A", "a"], ["B", "b"], ["C", "c"], ["D", "d"], ["E", "e"], ["F", "f"], ["G", "g"], ["U", "u"],
     ["a*", "a-star"], [" b ", "b"],
   ])("%s maps to %s", (grade, tone) => expect(gradeTone(grade)).toBe(tone))
 
-  it.each(["", "F", "9", "A**"])("%s has no tone", (grade) => expect(gradeTone(grade)).toBeNull())
+  it.each(["", "H", "9", "A**"])("%s has no tone", (grade) => expect(gradeTone(grade)).toBeNull())
 })
 
 /*
@@ -25,7 +25,12 @@ describe("gradeChipClass", () => {
     expect(gradeChipClass("A*", { size: "large" })).toBe("bg-grade-a-star text-white")
   })
 
+  it.each([["F", "f"], ["G", "g"]])("gives Core-tier %s its own Jewel chip", (grade, tone) => {
+    expect(gradeChipClass(grade)).toBe(`border-2 border-grade-${tone} bg-surface-container-lowest text-on-surface`)
+    expect(gradeChipClass(grade, { size: "large" })).toBe(`bg-grade-${tone} text-white`)
+  })
+
   it.each(["small", "large"] as const)("gives an unknown grade a neutral %s chip", (size) => {
-    expect(gradeChipClass("F", { size })).not.toMatch(/grade-|text-white/)
+    expect(gradeChipClass("H", { size })).not.toMatch(/grade-|text-white/)
   })
 })

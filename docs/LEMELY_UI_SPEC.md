@@ -79,13 +79,23 @@ These are not stylistic preferences. They constrain the interface.
    "worth a look."
 3. **Grades are private; effort is public.** Leaderboards rank XP only — never
    grades, never percentages, never predicted grades. A student's marks are
-   visible to that student, their linked parents, and their teachers. Nobody
-   else, ever.
+   visible to that student, their linked parents, and their teachers. A tutor
+   the student has chosen to share with counts as one of their teachers for as
+   long as the student keeps sharing (decision-log rows 3b and 19, ADR-T02). The
+   student can see each time that tutor looks, can stop sharing at any time, and
+   their linked parents can see who they share with. A tutor's public profile may
+   show an anonymous figure about past students only when at least five have a
+   marked paper, never one student's grade. Nobody else, ever.
 4. **The teacher has final authority.** Any mark Lemely produces can be
    overridden by a teacher, with a note. The override is what the student sees
    afterwards, labelled as a teacher correction.
 5. **Parents observe; they don't drive.** Parent views are read-only. No
-   messaging a child through the app, no assigning work, no marking.
+   messaging a child through the app, no assigning work, no marking. One
+   exception is recorded in decision-log rows 10 and 19: a parent can browse
+   tutors and request a session for a linked child, and can cancel or mark
+   complete a session that parent requested. A parent cannot share the child's
+   progress with a tutor, cannot stop the child's sharing, and reads a child's
+   notes with a tutor without being able to post.
 6. **Never invent precision.** Predicted grade boundaries come from real
    historical data where it exists; where it doesn't, the prediction is labelled
    "estimated" in the interface, visibly and every time.
@@ -226,6 +236,8 @@ who is also a parent).
 | G-13 | Notifications inbox | All |
 | G-14 | Subscription / plan status | Student, Parent, School |
 | G-15 | Offline / connection lost | All |
+| G-16 | Tutor directory (public) | Public |
+| G-17 | Tutor public card | Public |
 | S-01 | Student onboarding — subjects | Student |
 | S-02 | Student onboarding — questionnaire | Student |
 | S-03 | Student onboarding — placement invite | Student |
@@ -257,6 +269,12 @@ who is also a parent).
 | S-29 | Leaderboards | Student |
 | S-30 | Friends | Student |
 | S-31 | Profile / XP / streak | Student |
+| S-33 | Find a tutor | Student |
+| S-34 | Tutor profile | Student |
+| S-35 | Book a session | Student |
+| S-36 | My sessions | Student |
+| S-37 | Session detail | Student |
+| S-38 | Tutors & your data | Student |
 | T-01 | Teacher dashboard | Teacher |
 | T-02 | Classes list | Teacher |
 | T-03 | Class detail — roster | Teacher |
@@ -269,10 +287,21 @@ who is also a parent).
 | T-10 | Quiz results (class) | Teacher |
 | T-11 | Custom paper & mark scheme upload | Teacher |
 | T-12 | Announcement composer | Teacher |
+| T-15 | Tutoring home | Teacher |
+| T-16 | Tutor profile & onboarding | Teacher |
+| T-17 | Weekly availability | Teacher |
+| T-18 | Session detail (tutor) | Teacher |
+| T-19 | My students | Teacher |
+| T-20 | Student detail (tutor view) | Teacher |
+| T-21 | Profile preview & reviews | Teacher |
 | P-01 | Parent home / children | Parent |
 | P-02 | Child overview | Parent |
 | P-03 | Child subject detail | Parent |
 | P-04 | Child weaknesses | Parent |
+| P-05 | Child's tutoring | Parent |
+| P-06 | Session detail (parent, read-only) | Parent |
+| P-07 | Find a tutor (parent) | Parent |
+| P-08 | Who the child shares progress with | Parent |
 | K-01 | School dashboard | School admin |
 | K-02 | Seats & student accounts | School admin |
 | K-03 | Teachers | School admin |
@@ -280,8 +309,17 @@ who is also a parent).
 | X-01 | Platform admin console | Platform admin |
 | X-02 | Account activation queue | Platform admin |
 | X-03 | Pipeline & corpus health | Platform admin |
+| X-04 | Tutor approval queue | Platform admin |
+| X-05 | Tutor application | Platform admin |
+| X-06 | Moderation queue | Platform admin |
+| X-07 | Reports | Platform admin |
 
 ---
+
+Numbering note: S-32, T-13 and T-14 are not used here. `web/scripts/audit.mjs`
+already uses `S-32-provisional`, `T-13-provisional` and `T-14-provisional` for
+screens that have no row in this table, so the tutoring screens continue each
+sequence after them.
 
 # PART 4 — SCREENS IN DETAIL
 
@@ -468,6 +506,31 @@ and roughly when, and keep the app usable in a limited way meanwhile.
 Not a full screen so much as a system: a persistent, unobtrusive banner; queued
 uploads shown with their queued state; cached content readable; uncached
 destinations replaced by an explanatory panel with a retry.
+
+### G-16 · Tutor directory (public)
+**Route.** `/tutors`
+**Contains.** An introduction ("Find a tutor for IGCSE Maths, Additional Maths and
+Physics. Fees are agreed with the tutor, outside Lemely."). Filters: subject,
+mode, area, minimum rating. Tutor cards (C-23). "Load more". "Sign in to see
+full profiles, availability, reviews and results." Lemely shows no prices.
+**States.** No match: "No tutors match these filters yet." with "Clear filters".
+No listed tutors yet: "Tutors are being reviewed. Check back soon."
+**Search engines.** The directory page is never indexed (`noindex, follow`, in
+the response header and the page's meta tag), so crawlers can still reach cards.
+**Exits.** G-17, G-04, G-02.
+
+### G-17 · Tutor public card
+**Route.** `/tutors/:tutorId`
+**Contains.** The public fields only, larger: first name and last initial,
+headline, subjects, modes, area, rating (C-22). "Sign in to book".
+**States.** Unknown, unlisted, paused or suspended: "This tutor isn't listed."
+with a link to G-16.
+**Search engines.** A card is indexable by default and the tutor can opt out on
+T-16. The edge worker asks the API about each card and marks it `noindex,
+nofollow` whenever the answer is not a clear yes, including when the check fails.
+The page's meta tag matches while loading and on failure. See `docs/deployment.md`
+for the staging check.
+**Exits.** G-04 (then S-34 for a student or P-07 for a parent), G-16.
 
 ---
 
@@ -832,6 +895,92 @@ of real work, and make the streak feel worth protecting without being
 manipulative — a streak-freeze that's offered kindly beats a guilt-trip.
 **Exits.** G-11, S-29.
 
+## 4.6a Student: tutoring
+
+Tutoring is optional. Students find a tutor, book a session, and may choose to
+share their progress with a tutor. Fees are agreed between the student and the
+tutor, outside Lemely; no screen shows a price. Times are shown in the tutor's
+zone with its label (for example "Thu 30 Oct · 17:00–18:00 Cairo time").
+Free text is plain text, never linked. A refused contact detail shows "To keep
+everyone safe, keep contact details off Lemely. Use the session notes instead."
+
+### S-33 · Find a tutor
+**Route.** `/student/tutors`
+**Contains.** G-16's filters plus "Usually available" (day chips and
+morning/afternoon/evening). Tutor cards in rank order. A disclosure says tutors
+with few reviews are ranked as if they also had five 4-star reviews, so one great
+review cannot put someone at the top. Ratings read "New" below three students,
+never stars. "Load more".
+**Exits.** S-34.
+
+### S-34 · Tutor profile
+**Route.** `/student/tutors/:tutorId`
+**Contains.** Header with name, headline, rating, subjects, modes, area, "Listed
+since", and "Documents seen by Lemely" when an admin looked at the tutor's
+documents (disclosure: "A Lemely admin looked at documents this tutor uploaded.
+This is not a background check."). Bio, qualification note, weekly availability.
+**Results** per subject, shown only when enough past students have a marked
+paper: an ordered grade bar (C-17) and a grade-change summary (C-18), each with
+its student count and a table alternative. The caption says the grades come from
+Lemely's automatic marking, leave out estimated boundaries, and do not show what
+the tutor caused. Reviews (paged). Actions: Book a session, Share my progress,
+Report, Block.
+**States.** Results hidden: "Results are hidden for now. We show them only when
+at least 5 students have a marked paper from their time with this tutor, and
+only when no one's grade could be worked out from them." No reviews: "No reviews
+yet." Not taking bookings: "This tutor isn't taking bookings right now."
+**Interactions.** Share my progress opens a confirmation that explains S-38, that
+it covers all subjects until the student stops it, that every visit is recorded
+and visible to them, and that their linked parents are told.
+**Exits.** S-35, S-38, G-13.
+
+### S-35 · Book a session
+**Route.** `/student/tutors/:tutorId/book`
+**Contains.** The first-booking safety notice (C-24) if not yet acknowledged.
+Subject, mode, duration, a slot picker (C-19) for the next 14 days with "Show
+later dates" up to 28, an optional first note, a summary, and a counting notice:
+if the student has sessions with this tutor their grades in that subject are
+counted, without their name, in the tutor's results, and they can opt out in S-38.
+**Interactions.** Request goes to S-37. Refusals are named: time just taken,
+student already busy, request already pending, five requests waiting, email not
+confirmed (with the link), too many requests today.
+**Exits.** S-37, S-34.
+
+### S-36 · My sessions
+**Route.** `/student/sessions`
+**Contains.** Upcoming and Past tabs. Each row: tutor, subject, time, mode, status
+(C-20).
+**States.** "No sessions booked." (to S-33). "No past sessions yet."
+**Exits.** S-37.
+
+### S-37 · Session detail
+**Route.** `/student/sessions/:bookingId`
+**Contains.** Status, tutor, subject, time, mode, area; after acceptance the
+meeting link or place. Actions as the server allows: Cancel, Mark as completed
+(when the tutor has recorded nothing 48 hours after the session), Review. The
+notes thread (C-21) with a composer when posting is open, preceded by C-24 if the
+student has not seen it. The review form says review text is checked by Lemely
+before others see it and shows the season, not the date or the name.
+**States.** Inside 24 hours of the start the student cannot cancel and is told to
+message the tutor. A late cancellation by the tutor shows the tutor's reason.
+Expired request: "The tutor didn't reply before the start time."
+**Exits.** S-36, S-34, report sheet.
+
+### S-38 · Tutors & your data
+**Route.** `/student/tutor-access`
+**Contains.** (1) Tutors the student shares with, with Stop sharing. The
+explainer lists what a tutor sees (grades, predicted and target grades, marks,
+weak topics, trend, at-risk warnings, days active, for all subjects) and what
+they never see (answer sheets, the time of day). It says linked parents can see
+who the student shares with and each time a tutor looked. (2) Who looked, a paged
+log. (3) Teachers who can see the student's progress through a class, with Leave
+for classes that have no school and an "ask your school" note otherwise. (4) A
+switch "Count my grades in my tutors' results", on by default, with the 90-day
+hold explained. (5) Blocked tutors with Unblock.
+**States.** "You aren't sharing your progress with any tutor." "No tutor has
+looked at your progress." The class section is hidden when empty.
+**Exits.** S-34.
+
 ---
 
 ## 4.7 Teacher
@@ -954,6 +1103,84 @@ school admins), title, body with light formatting, optional attachment, optional
 schedule, and a preview of how it appears to a student.
 **Exits.** T-01.
 
+## 4.7a Teacher: tutoring
+
+Tutoring is a separate section of the teacher portal. A teacher with a tutor
+profile keeps a normal teacher account; a profile is not a role.
+
+### T-15 · Tutoring home
+**Route.** `/teacher/tutoring`
+**Contains.** The listing status (draft, under review, listed, paused, rejected
+with the note, suspended, closed). Requests awaiting a reply, oldest first, with
+Accept and Decline. Upcoming sessions. Sessions awaiting an outcome (Completed or
+No-show).
+**States.** No profile: a prompt to start T-16. "No requests yet." Under review:
+"Lemely is reviewing your profile. You'll get a notification."
+**Exits.** T-16, T-17, T-18, T-19, T-21.
+
+### T-16 · Tutor profile & onboarding
+**Route.** `/teacher/tutoring/profile`
+**Contains.** Steps: public card (first name, last initial, headline, subjects,
+modes, area) with a live preview of the open-web card; about (bio, qualification
+note, other-mode note); evidence (up to five files; "Don't upload identity
+documents."); availability (T-17); submit (needs a confirmed email). A fixed
+notice above the "Show my card in search engines" switch (on by default) says the
+card is on the open web, search engines can list it, the tutor can turn that off,
+and that engines can take weeks to drop a card. After listing: edit, pause, and
+the switch. Editing name, initial, headline, bio, qualification or other-mode
+note sends the profile back for review and hides it until approved; the switch
+does not. Changing documents removes the "Documents seen" badge until Lemely
+looks again.
+**States.** Rejected: the note and Resubmit. Suspended or closed: read-only with
+the admin's note.
+**Exits.** T-17, T-21, T-15.
+
+### T-17 · Weekly availability
+**Route.** `/teacher/tutoring/availability`
+**Contains.** Seven day rows of time ranges in 15-minute steps with the zone
+label, Add and Remove. "Cairo time; daylight saving is handled for you. Times in
+the hour when the clocks change can't be booked."
+**States.** "Add at least one time so students can book."
+**Exits.** T-15, T-16.
+
+### T-18 · Session detail (tutor)
+**Route.** `/teacher/tutoring/sessions/:bookingId`
+**Contains.** Student label, who requested, subject, time, mode, area. Accept
+(meeting link from Google Meet, Zoom, Microsoft Teams or Whereby; a place for
+in-person), Decline with a reason, Cancel until the start (inside 24 hours a
+reason is required and the sheet says the student and linked parents will see
+it), Completed or No-show after the end. The notes thread (C-21), with the line
+that the student's parents can read the notes. "Shared progress: yes/no", with a
+link to T-20 when yes.
+**Exits.** T-15, T-20.
+
+### T-19 · My students
+**Route.** `/teacher/tutoring/students`
+**Contains.** Students with an active grant: label, sharing since, upcoming
+sessions. "Students choose to share their progress with you. They can stop at any
+time, and they can see each time you look."
+**States.** "No students are sharing their progress with you yet."
+**Exits.** T-20.
+
+### T-20 · Student detail (tutor view)
+**Route.** `/teacher/tutoring/students/:studentId`
+**Contains.** The T-05 composition fed by the tutor projection: dates without
+times, no question ids. "{Name} shared this with you on {date}. They can stop
+sharing at any time. Each visit is recorded and they can see it." Removed
+relative to T-05: attempt drill-down, remark, assign practice, at-risk
+acknowledge, integrity signals. Dates are cut in the tutor's own zone. An
+unplaced activity date reads "—"; a student who was never active reads "Never".
+**States.** When sharing has ended, one message for every reason: "{Name}'s
+progress is no longer shared with you." The cache for that student is cleared.
+**Exits.** T-19.
+
+### T-21 · Profile preview & reviews
+**Route.** `/teacher/tutoring/preview`
+**Contains.** S-34 as students see it, plus the review list with "Reply" (one
+reply per review; "Replies are checked by Lemely before students see them.") and
+each reply's moderation state.
+**Exits.** T-16.
+
 ---
 
 ## 4.8 Parent
@@ -989,6 +1216,45 @@ from an A"), and topic weaknesses. Read-only throughout.
 **Contains.** Ranked weak topics with what they're costing, phrased for a
 non-specialist, and constructive framing on what the child is doing about it
 (practice generated, sessions planned). Explicitly not a list of failures.
+
+### P-05 · Child's tutoring
+**Route.** `/parent/children/:childId/tutoring`
+**Contains.** The child's tutors and sessions with status (C-20). Links to P-08
+("Who {child} shares progress with") and P-07 ("Find a tutor for {child}").
+**States.** "{Child} has no tutoring sessions."
+**Exits.** P-06, P-07, P-08.
+
+### P-06 · Session detail (parent, read-only)
+**Route.** `/parent/children/:childId/sessions/:bookingId`
+**Contains.** The facts of S-37, including the place after acceptance and a tutor's
+late-cancel reason. The notes thread is read-only: "Notes are between {child} and
+the tutor. You can read them and report anything that worries you." Cancel and
+Mark as completed appear only for a session this parent requested. Report,
+including "The session outcome is wrong".
+**Exits.** P-05.
+
+### P-07 · Find a tutor (parent)
+**Routes.** `/parent/tutors`, `/parent/tutors/:tutorId`,
+`/parent/tutors/:tutorId/book`
+**Contains.** S-33, S-34 and S-35 in the parent shell, with a required "Booking
+for" child selector, the counting notice phrased for the child, and no first-note
+field. Share my progress, Block and the safety notice (C-24) are absent. Report
+stays.
+**States.** With no linked child, P-01's explanation of how to link one replaces
+the booking step.
+**Exits.** P-06.
+
+### P-08 · Who the child shares progress with
+**Route.** `/parent/children/:childId/tutor-access`
+**Contains.** (1) The child's grants: tutor, since, status, with no revoke
+control. "{Child} decides who can see their progress. Only {child} can stop
+sharing. If something worries you, report it." A sharing ended by a tutor-side
+action reads "Sharing ended"; one ended by the child's own block names it. (2)
+Who looked, a paged log: tutor, "viewed {child}'s progress" or "saw {child} in
+their student list", time. A Report link per tutor.
+**States.** "{Child} isn't sharing their progress with any tutor." "No tutor has
+looked at {child}'s progress."
+**Exits.** P-05.
 
 ---
 
@@ -1036,6 +1302,35 @@ Mark scheme corpus coverage by subject/session/variant; grade boundary coverage
 with gaps highlighted (this drives whether predictions are real or estimated);
 ingestion job status and failures; marking accuracy metrics against the golden
 fixture set; error rates by stage.
+
+### X-04 · Tutor approval queue
+**Route.** `/platform/tutors`
+Table of tutor profiles: name, subjects, submitted, with a state filter. A banner
+reads "Email delivery: mock" when no email provider key is configured, so staff
+know booking emails are being recorded as skipped. **Exits.** X-05.
+
+### X-05 · Tutor application
+**Route.** `/platform/tutors/:tutorId`
+Profile fields, account email, evidence files (each opens a 300-second download
+link and each open is logged), approval history, open reports. Approve (with a
+required "I looked at the documents" box that sets "Documents seen"), Reject,
+Suspend or Reinstate, Close. The notes on reject, suspend and resolution are
+required. Close confirms that it cancels future sessions, ends every student's
+sharing, removes students from the tutor's classes that have no school, and
+cannot be undone. Suspend confirms that it also removes students who booked or
+shared with the tutor from those classes.
+
+### X-06 · Moderation queue
+**Route.** `/platform/moderation`
+Review texts and tutor replies waiting for approval, oldest first.
+
+### X-07 · Reports
+**Routes.** `/platform/reports`, `/platform/reports/:reportId`
+Safety concerns first. The detail shows what was reported as it was when reported
+and, for a booking or note, the thread; opening the thread is logged. Resolve with
+dismiss, hide content, suspend tutor, cancel booking (before the start only) or
+mark completed (a disputed outcome), and a note. After the report is resolved the
+thread the admin already read stays visible; reloading it is a second logged view.
 
 ---
 
