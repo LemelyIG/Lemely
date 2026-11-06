@@ -34,6 +34,7 @@ from lemely.db.billing_repo import (
     CheckoutUnavailable,
     NotLinkedToBeneficiary,
     UnknownCreditPack,
+    UnknownPayer,
     active_catalogue,
     describe_payment,
     payment_for_viewer,
@@ -46,9 +47,11 @@ from lemely.io.paymob.client import PaymobClient  # noqa: TC001 - FastAPI reads 
 from lemely.runtime.config import Settings  # noqa: TC001 - FastAPI reads the type at runtime
 from lemely.web.deps import AuthContext, get_settings, require_role
 from lemely.web.deps_billing import (
+    PublicCatalogueCache,
     get_billing_sessionmaker,
     get_checkout_limiter,
     get_paymob_client,
+    get_public_catalogue_cache,
     get_public_catalogue_limiter,
 )
 from lemely.web.ratelimit import (
@@ -134,18 +137,59 @@ def get_catalogue(
         )
 
 
+def _render_public_catalogue(
+    session: Session, audience: Literal["student", "teacher"]
+) -> PublicCatalogueDTO:
+    """The public pricing page for one audience: sellable tiers and packs, public fields only."""
+    is_teacher = audience == "teacher"
+    tiers, packs = active_catalogue(
+        session, audience=PlanAudience(audience), sellable_tiers_only=True
+    )
+    return PublicCatalogueDTO(
+        audience=audience,
+        planTiers=[
+            PublicPlanTierDTO(
+                code=t.code,
+                name=t.name,
+                audience=t.audience.value,
+                interval=t.interval.value if t.interval is not None else None,
+                priceMinor=t.price_minor,
+                currency=t.currency,
+                features=dict(t.features),
+                includedSeats=t.included_seats if is_teacher else None,
+                extraSeatPriceMinor=t.extra_seat_price_minor if is_teacher else None,
+            )
+            for t in tiers
+        ],
+        creditPacks=[
+            PublicCreditPackDTO(
+                code=p.code,
+                name=p.name,
+                units=p.units,
+                priceMinor=p.price_minor,
+                currency=p.currency,
+            )
+            for p in packs
+        ],
+    )
+
+
 @router.get("/public-catalogue", response_model=PublicCatalogueDTO)
 def get_public_catalogue(
     request: Request,
     audience: Annotated[Literal["student", "teacher"], Query()],
     sm: Annotated[sessionmaker[Session], Depends(get_billing_sessionmaker)],
     limiter: Annotated[SlidingWindowLimiter, Depends(get_public_catalogue_limiter)],
+    cache: Annotated[PublicCatalogueCache, Depends(get_public_catalogue_cache)],
 ) -> PublicCatalogueDTO:
-    """Public pricing page: active tiers of one audience and sellable packs (no auth).
+    """Public pricing page: sellable tiers of one audience and sellable packs (no auth).
 
     PUBLIC on purpose: a visitor compares plans before signing up. It exposes no
     ids, no Paymob plan link and no allowance sizes, which stay hidden by design
-    (spec §2.1). Rate-limited per client IP, like the contact form.
+    (spec §2.1). Rate-limited per client IP, like the contact form; the rendered
+    answer is also cached for a short TTL per audience, because a direct caller of
+    the Cloud Run URL can rotate ``X-Forwarded-For`` past the per-IP limit and
+    must not be able to turn every request into database reads.
     """
     client_ip = _client_ip(request)
     if not limiter.allow(client_ip):
@@ -155,36 +199,13 @@ def get_public_catalogue(
             f"Too many requests; retry in {retry}s.",
             headers={"Retry-After": str(retry)},
         )
-    is_teacher = audience == "teacher"
+    cached = cache.get(audience)
+    if cached is not None:
+        return cached
     with sm() as session:
-        tiers, packs = active_catalogue(session, audience=PlanAudience(audience))
-        return PublicCatalogueDTO(
-            audience=audience,
-            planTiers=[
-                PublicPlanTierDTO(
-                    code=t.code,
-                    name=t.name,
-                    audience=t.audience.value,
-                    interval=t.interval.value if t.interval is not None else None,
-                    priceMinor=t.price_minor,
-                    currency=t.currency,
-                    features=dict(t.features),
-                    includedSeats=t.included_seats if is_teacher else None,
-                    extraSeatPriceMinor=t.extra_seat_price_minor if is_teacher else None,
-                )
-                for t in tiers
-            ],
-            creditPacks=[
-                PublicCreditPackDTO(
-                    code=p.code,
-                    name=p.name,
-                    units=p.units,
-                    priceMinor=p.price_minor,
-                    currency=p.currency,
-                )
-                for p in packs
-            ],
-        )
+        rendered = _render_public_catalogue(session, audience)
+    cache.put(audience, rendered)
+    return rendered
 
 
 @router.post("/checkout/pack", response_model=CheckoutDTO, status_code=status.HTTP_201_CREATED)
@@ -216,6 +237,9 @@ def checkout_pack(
             )
         except UnknownCreditPack as exc:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown credit pack") from exc
+        except UnknownPayer as exc:
+            # A valid token whose user row is gone: refuse, and do not echo the id.
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Billing is not available") from exc
         except NotLinkedToBeneficiary as exc:
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN, "You can only buy for a linked child"

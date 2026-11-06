@@ -7,6 +7,7 @@ Process-wide, lazily built singletons, the ``lru_cache`` pattern of
 
 from __future__ import annotations
 
+import threading
 import time
 from functools import lru_cache
 from typing import TYPE_CHECKING
@@ -22,6 +23,8 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from sqlalchemy.orm import Session, sessionmaker
+
+    from lemely.web.schemas_billing import PublicCatalogueDTO
 
 
 @lru_cache(maxsize=1)
@@ -69,6 +72,49 @@ def get_public_catalogue_limiter() -> SlidingWindowLimiter:
     )
 
 
+#: How long a rendered public catalogue is served from memory. Short enough that an
+#: admin price edit shows within a minute, long enough that a caller who rotates
+#: ``X-Forwarded-For`` past the per-IP limiter cannot turn every request into DB reads.
+_PUBLIC_CATALOGUE_TTL_SECONDS = 30.0
+
+
+class PublicCatalogueCache:
+    """A tiny per-audience TTL cache of the rendered public catalogue (in-process).
+
+    Per Cloud Run instance, like the limiters. Only two audiences exist, so it is
+    bounded without eviction. The clock is injected so tests drive expiry.
+    """
+
+    def __init__(self, *, ttl_seconds: float, clock: Callable[[], float]) -> None:
+        self._ttl = ttl_seconds
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._entries: dict[str, tuple[float, PublicCatalogueDTO]] = {}
+
+    def get(self, audience: str) -> PublicCatalogueDTO | None:
+        """The cached catalogue for ``audience``, or ``None`` if absent or expired."""
+        with self._lock:
+            entry = self._entries.get(audience)
+            if entry is None:
+                return None
+            stored_at, value = entry
+            if self._clock() - stored_at >= self._ttl:
+                del self._entries[audience]
+                return None
+            return value
+
+    def put(self, audience: str, value: PublicCatalogueDTO) -> None:
+        """Store ``value`` for ``audience`` from now."""
+        with self._lock:
+            self._entries[audience] = (self._clock(), value)
+
+
+@lru_cache(maxsize=1)
+def get_public_catalogue_cache() -> PublicCatalogueCache:
+    """The process-wide cache behind ``GET /api/billing/public-catalogue``."""
+    return PublicCatalogueCache(ttl_seconds=_PUBLIC_CATALOGUE_TTL_SECONDS, clock=time.monotonic)
+
+
 def get_billing_reconcile_job() -> Callable[[datetime], int] | None:
     """The ``billing.reconcile_pending`` job, or ``None`` when Paymob is unconfigured."""
     settings = get_settings().paymob
@@ -99,13 +145,16 @@ def reset_billing_singletons() -> None:
         get_paymob_client.cache_clear()
         get_checkout_limiter.cache_clear()
         get_public_catalogue_limiter.cache_clear()
+        get_public_catalogue_cache.cache_clear()
 
 
 __all__ = [
+    "PublicCatalogueCache",
     "get_billing_reconcile_job",
     "get_billing_sessionmaker",
     "get_checkout_limiter",
     "get_paymob_client",
+    "get_public_catalogue_cache",
     "get_public_catalogue_limiter",
     "reset_billing_singletons",
 ]

@@ -45,6 +45,7 @@ from lemely.db.models.billing import (
     PlanTier,
     SavedCard,
 )
+from lemely.db.models.enums import Role
 from lemely.db.models.usage import GrantKind
 from lemely.db.usage_ledger_repo import UsageLedger
 from lemely.io.paymob.client import PaymobError
@@ -114,7 +115,15 @@ class UnknownCreditPack(BillingError):
 
 
 class NotLinkedToBeneficiary(BillingError):
-    """The payer is not the beneficiary and has no ``parent_child_links`` row to them (403)."""
+    """The payer may not buy for this beneficiary (403).
+
+    A parent buys only for a student they are linked to through ``parent_child_links``,
+    never for themselves; nobody else buys for another user.
+    """
+
+
+class UnknownPayer(BillingError):
+    """The payer has no ``users`` row, e.g. a valid token for a deleted account (403)."""
 
 
 class MalformedCallback(BillingError):
@@ -307,13 +316,17 @@ def is_linked_parent(session: Session, parent_id: uuid.UUID, child_id: uuid.UUID
 
 
 def active_catalogue(
-    session: Session, *, audience: PlanAudience
+    session: Session, *, audience: PlanAudience, sellable_tiers_only: bool = False
 ) -> tuple[list[PlanTier], list[CreditPack]]:
-    tiers = session.scalars(
-        select(PlanTier)
-        .where(PlanTier.is_active.is_(True), PlanTier.audience == audience)
-        .order_by(PlanTier.price_minor, PlanTier.code)
-    ).all()
+    """Active tiers of ``audience`` and every sellable pack.
+
+    ``sellable_tiers_only`` also drops tiers with no billing interval (rows nobody can
+    subscribe to); the public pricing page sets it.
+    """
+    tier_query = select(PlanTier).where(PlanTier.is_active.is_(True), PlanTier.audience == audience)
+    if sellable_tiers_only:
+        tier_query = tier_query.where(PlanTier.interval.is_not(None))
+    tiers = session.scalars(tier_query.order_by(PlanTier.price_minor, PlanTier.code)).all()
     packs = session.scalars(
         select(CreditPack)
         .where(
@@ -421,8 +434,8 @@ class BillingService:
         """Price a pack on the server, insert the payment, create the intention (§5.5).
 
         The price and unit count come from the ``credit_packs`` row, never from
-        the caller. ``payer_user_id`` may differ from ``beneficiary_user_id`` only
-        through a ``parent_child_links`` row (parent pays, child receives).
+        the caller. A parent buys only for a linked student, never for themselves
+        (``NotLinkedToBeneficiary``); no one else buys for another user.
         """
         if not self._settings.checkout_configured:
             raise CheckoutUnavailable("Paymob checkout is not configured")
@@ -432,11 +445,10 @@ class BillingService:
             raise UnknownCreditPack(str(credit_pack_id))
         payer = self._session.get(User, payer_user_id)
         if payer is None:
-            raise BillingError(f"unknown payer {payer_user_id}")
-        if payer_user_id != beneficiary_user_id and not is_linked_parent(
-            self._session, payer_user_id, beneficiary_user_id
-        ):
-            # A parent buys only for a linked child; nobody buys credits for a stranger.
+            raise UnknownPayer(str(payer_user_id))
+        if (
+            payer.role is Role.parent or payer_user_id != beneficiary_user_id
+        ) and not self._may_buy_for(payer_user_id, beneficiary_user_id):
             raise NotLinkedToBeneficiary(str(beneficiary_user_id))
         payment_id = uuid.uuid4()
         payment = Payment(
@@ -465,6 +477,18 @@ class BillingService:
             billing_data=billing_data_for(payer),
             subscription_plan_id=None,
         )
+
+    def _may_buy_for(self, payer_user_id: uuid.UUID, beneficiary_user_id: uuid.UUID) -> bool:
+        """True when ``payer`` is linked to ``beneficiary`` and the beneficiary is a student.
+
+        Applies to every parent (even naming their own id, which is never linked) and to
+        any payer naming someone else. ``is_linked_parent`` ignores roles, so a link row
+        that points at a teacher or another parent is refused here.
+        """
+        if not is_linked_parent(self._session, payer_user_id, beneficiary_user_id):
+            return False
+        beneficiary = self._session.get(User, beneficiary_user_id)
+        return beneficiary is not None and beneficiary.role is Role.student
 
     def create_intention_checkout(
         self,
@@ -1063,6 +1087,7 @@ __all__ = [
     "NotLinkedToBeneficiary",
     "PaidHandler",
     "UnknownCreditPack",
+    "UnknownPayer",
     "active_catalogue",
     "add_months",
     "billing_data_for",

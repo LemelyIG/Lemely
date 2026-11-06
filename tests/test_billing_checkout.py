@@ -15,6 +15,7 @@ from lemely.db.billing_repo import (
     CheckoutUnavailable,
     NotLinkedToBeneficiary,
     UnknownCreditPack,
+    UnknownPayer,
     _outcome_unknown,
     add_months,
     billing_data_for,
@@ -597,3 +598,55 @@ def test_checkout_items_with_a_quantity_other_than_one_are_refused(
     assert client.intentions == []
     with sm() as session:
         assert session.scalars(sa.select(Payment)).all() == []
+
+
+# -- who may buy for whom (review of ee61001c) -----------------------------------------
+
+
+def test_a_parent_cannot_buy_a_pack_for_themselves(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The rule lives in the service so every later purchase path inherits it."""
+    sm = migrated_sessionmaker
+    parent = seed_user(sm, Role.parent)
+    link_parent(sm, parent_id=parent, child_id=seed_user(sm))  # even a parent with a child
+    pack = seed_pack(sm)
+    client = FakePaymobClient()
+    with sm() as session, pytest.raises(NotLinkedToBeneficiary):
+        _service(session, client).create_pack_checkout(
+            payer_user_id=parent, beneficiary_user_id=parent, credit_pack_id=pack
+        )
+    assert client.intentions == []
+    with sm() as session:
+        assert session.scalars(sa.select(Payment)).all() == []
+
+
+@pytest.mark.parametrize("role", [Role.teacher, Role.parent])
+def test_a_link_to_a_non_student_does_not_let_a_parent_buy(
+    migrated_sessionmaker: sessionmaker[Session], role: Role
+) -> None:
+    sm = migrated_sessionmaker
+    parent = seed_user(sm, Role.parent)
+    other = seed_user(sm, role)
+    link_parent(sm, parent_id=parent, child_id=other)
+    client = FakePaymobClient()
+    with sm() as session, pytest.raises(NotLinkedToBeneficiary):
+        _service(session, client).create_pack_checkout(
+            payer_user_id=parent, beneficiary_user_id=other, credit_pack_id=seed_pack(sm)
+        )
+    assert client.intentions == []
+    with sm() as session:
+        assert session.scalars(sa.select(Payment)).all() == []
+
+
+def test_a_payer_without_a_users_row_is_a_specific_error(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    ghost = uuid.uuid4()
+    client = FakePaymobClient()
+    with sm() as session, pytest.raises(UnknownPayer):
+        _service(session, client).create_pack_checkout(
+            payer_user_id=ghost, beneficiary_user_id=ghost, credit_pack_id=seed_pack(sm)
+        )
+    assert client.intentions == []

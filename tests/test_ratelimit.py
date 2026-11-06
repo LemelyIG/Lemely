@@ -13,6 +13,10 @@ sleeps out a real window.
 
 from __future__ import annotations
 
+import threading
+import time
+from collections import deque
+
 from lemely.web.ratelimit import SlidingWindowLimiter
 
 
@@ -173,3 +177,30 @@ def test_retry_after_does_not_itself_record_an_event() -> None:
     assert limiter.retry_after("k") > 0  # still over limit — unchanged by the read above
     clock.advance(10.0)
     assert limiter.allow("k") is True  # the earlier retry_after() calls added nothing
+
+
+class _SlowAppend(deque[float]):
+    """A deque whose ``append`` yields first, widening the check-then-append window."""
+
+    def append(self, item: float, /) -> None:
+        time.sleep(0.002)
+        super().append(item)
+
+
+def test_concurrent_callers_cannot_overshoot_the_limit() -> None:
+    """``allow`` is check-and-record under a lock: N threads get exactly ``limit`` passes."""
+    clock = FakeClock()
+    limiter = SlidingWindowLimiter(limit=5, window_seconds=60.0, clock=clock)
+    assert limiter.allow("k")
+    limiter._events["k"] = _SlowAppend(limiter._events["k"])
+    results: list[bool] = []
+
+    def hit() -> None:
+        results.append(limiter.allow("k"))
+
+    threads = [threading.Thread(target=hit) for _ in range(24)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert results.count(True) == 4  # the seed call used one of the five

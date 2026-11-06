@@ -24,9 +24,11 @@ from lemely.runtime.token_cipher import TokenCipher
 from lemely.web import create_app
 from lemely.web.deps import AuthContext, get_auth_context, get_settings
 from lemely.web.deps_billing import (
+    PublicCatalogueCache,
     get_billing_sessionmaker,
     get_checkout_limiter,
     get_paymob_client,
+    get_public_catalogue_cache,
     get_public_catalogue_limiter,
 )
 from lemely.web.ratelimit import SlidingWindowLimiter
@@ -52,9 +54,24 @@ def paymob() -> FakePaymobClient:
     return FakePaymobClient()
 
 
+class _Clock:
+    """A settable monotonic clock for the public-catalogue cache."""
+
+    def __init__(self) -> None:
+        self.now = 1_000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+@pytest.fixture
+def cache_clock() -> _Clock:
+    return _Clock()
+
+
 @pytest.fixture
 def client(
-    migrated_sessionmaker: sessionmaker[Session], paymob: FakePaymobClient
+    migrated_sessionmaker: sessionmaker[Session], paymob: FakePaymobClient, cache_clock: _Clock
 ) -> Iterator[TestClient]:
     settings = Settings().model_copy(update={"paymob": PAYMOB_SETTINGS})
     app = create_app()
@@ -67,6 +84,8 @@ def client(
     app.dependency_overrides[get_public_catalogue_limiter] = lambda: SlidingWindowLimiter(
         limit=100, window_seconds=60, clock=time.monotonic
     )
+    cache = PublicCatalogueCache(ttl_seconds=30.0, clock=cache_clock)
+    app.dependency_overrides[get_public_catalogue_cache] = lambda: cache
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -157,6 +176,7 @@ def _public_seed(sm: sessionmaker[Session]) -> None:
                     price_minor=9900,
                     audience=PlanAudience.student,
                     allowance_units=5000,
+                    interval=PlanInterval.monthly,
                     paymob_plan_id=1186,
                     features={"papers": "unlimited"},
                 ),
@@ -166,6 +186,7 @@ def _public_seed(sm: sessionmaker[Session]) -> None:
                     price_minor=49900,
                     audience=PlanAudience.teacher,
                     allowance_units=20000,
+                    interval=PlanInterval.monthly,
                     paymob_plan_id=1187,
                     included_seats=30,
                     seat_allowance_units=700,
@@ -176,6 +197,7 @@ def _public_seed(sm: sessionmaker[Session]) -> None:
                     name="Old",
                     price_minor=5000,
                     audience=PlanAudience.student,
+                    interval=PlanInterval.monthly,
                     is_active=False,
                 ),
             ]
@@ -198,7 +220,7 @@ def test_public_catalogue_needs_no_auth_and_hides_internals(
                 "code": "student_monthly",
                 "name": "Student",
                 "audience": "student",
-                "interval": None,
+                "interval": "monthly",
                 "priceMinor": 9900,
                 "currency": "EGP",
                 "features": {"papers": "unlimited"},
@@ -251,6 +273,48 @@ def test_public_catalogue_filters_by_audience(
     assert tier["extraSeatPriceMinor"] == 1500
     assert "seat_allowance" not in str(body) and "700" not in str(tier)
     assert [p["code"] for p in body["creditPacks"]] == ["pack_100"]
+
+
+def test_public_catalogue_lists_only_sellable_tiers(
+    client: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    """A tier with no billing interval cannot be bought, so the pricing page never lists it."""
+    sm = migrated_sessionmaker
+    _public_seed(sm)
+    _tier(sm, "student_no_interval", PlanAudience.student)  # active, but no interval
+    body = client.get("/api/billing/public-catalogue", params={"audience": "student"}).json()
+    assert [t["code"] for t in body["planTiers"]] == ["student_monthly"]
+    _as(client, seed_user(sm), Role.student)  # the signed-in catalogue is unchanged
+    signed_in = client.get("/api/billing/catalogue").json()
+    assert "student_no_interval" in [t["code"] for t in signed_in["planTiers"]]
+
+
+def test_public_catalogue_is_cached_per_audience_until_the_ttl_expires(
+    client: TestClient, migrated_sessionmaker: sessionmaker[Session], cache_clock: _Clock
+) -> None:
+    """Bypassing the per-IP limiter cannot turn every request into a DB query."""
+    sm = migrated_sessionmaker
+    _public_seed(sm)
+    url = "/api/billing/public-catalogue"
+    first = client.get(url, params={"audience": "student"}).json()
+    seed_pack(sm, code="pack_new", price_minor=20000)  # the catalogue changes underneath
+
+    cache_clock.now += 29.0
+    assert client.get(url, params={"audience": "student"}).json() == first  # a cache hit
+    other = client.get(url, params={"audience": "teacher"}).json()  # keyed by audience
+    assert other["audience"] == "teacher"
+    assert "pack_new" in [p["code"] for p in other["creditPacks"]]
+
+    cache_clock.now += 2.0  # 31 s after the first fill: expired
+    refreshed = client.get(url, params={"audience": "student"}).json()
+    assert [p["code"] for p in refreshed["creditPacks"]] == ["pack_100", "pack_new"]
+
+
+def test_a_rate_limited_request_never_reaches_the_cache(client: TestClient) -> None:
+    limiter = SlidingWindowLimiter(limit=1, window_seconds=60, clock=lambda: 0.0)
+    client.app.dependency_overrides[get_public_catalogue_limiter] = lambda: limiter  # type: ignore[attr-defined]
+    url = "/api/billing/public-catalogue?audience=student"
+    assert [client.get(url).status_code for _ in range(2)] == [200, 429]
 
 
 @pytest.mark.parametrize("params", [{}, {"audience": "parent"}, {"audience": "admin"}])
@@ -386,6 +450,52 @@ def test_a_parent_cannot_buy_for_a_child_linked_to_another_parent(
         json={"creditPackId": str(seed_pack(sm)), "beneficiaryId": str(their_child)},
     )
     assert response.status_code == 403
+
+
+def test_a_parent_cannot_buy_a_pack_for_themselves(
+    client: TestClient, migrated_sessionmaker: sessionmaker[Session], paymob: FakePaymobClient
+) -> None:
+    """Spec: a parent buys only for a linked child, never for their own account."""
+    sm = migrated_sessionmaker
+    parent = seed_user(sm, Role.parent)
+    link_parent(sm, parent_id=parent, child_id=seed_user(sm))
+    _as(client, parent, Role.parent)
+    response = client.post(
+        "/api/billing/checkout/pack",
+        json={"creditPackId": str(seed_pack(sm)), "beneficiaryId": str(parent)},
+    )
+    assert response.status_code == 403
+    assert paymob.intentions == []
+    with sm() as session:
+        assert session.scalars(sa.select(Payment)).all() == []
+
+
+def test_a_parent_cannot_buy_for_a_linked_teacher(
+    client: TestClient, migrated_sessionmaker: sessionmaker[Session], paymob: FakePaymobClient
+) -> None:
+    sm = migrated_sessionmaker
+    parent = seed_user(sm, Role.parent)
+    teacher = seed_user(sm, Role.teacher)
+    link_parent(sm, parent_id=parent, child_id=teacher)
+    _as(client, parent, Role.parent)
+    response = client.post(
+        "/api/billing/checkout/pack",
+        json={"creditPackId": str(seed_pack(sm)), "beneficiaryId": str(teacher)},
+    )
+    assert response.status_code == 403
+    assert paymob.intentions == []
+
+
+def test_a_valid_token_without_a_users_row_is_403_not_500(
+    client: TestClient, migrated_sessionmaker: sessionmaker[Session], paymob: FakePaymobClient
+) -> None:
+    sm = migrated_sessionmaker
+    ghost = uuid.uuid4()
+    _as(client, ghost, Role.student)
+    response = client.post("/api/billing/checkout/pack", json={"creditPackId": str(seed_pack(sm))})
+    assert response.status_code == 403
+    assert str(ghost) not in response.text  # generic text, no id echoed
+    assert paymob.intentions == []
 
 
 def test_a_parent_must_name_the_child(
