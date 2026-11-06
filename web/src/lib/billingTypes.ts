@@ -344,6 +344,16 @@ export interface PlanTier {
   extraSeatPriceMinor: number | null
 }
 
+/**
+ * A tier as a held subscription shows it. Unlike a sellable `PlanTier`, a legacy manual plan
+ * has no billing interval and a tier of an unrecognised audience is never relabelled, so both
+ * are nullable here.
+ */
+export interface HeldPlanTier extends Omit<PlanTier, "audience" | "interval"> {
+  audience: Audience | null
+  interval: BillingInterval | null
+}
+
 export interface CreditPack {
   id: string
   code: string
@@ -375,12 +385,12 @@ export interface SavedCardView {
 export interface SubscriptionView {
   subscriptionId: string
   status: SubscriptionStatus
-  tier: PlanTier
+  tier: HeldPlanTier
   currentPeriodStart: string | null
   currentPeriodEnd: string | null
   cancelAtPeriodEnd: boolean
   /** A scheduled downgrade, applied at `currentPeriodEnd`. */
-  pendingTier: PlanTier | null
+  pendingTier: HeldPlanTier | null
   /** Set while `past_due`: access continues until then. */
   graceUntil: string | null
   extraSeats: number
@@ -427,7 +437,8 @@ export interface SeatSummary {
 }
 
 export interface BillingSummary {
-  beneficiary: { userId: string; displayName: string | null; audience: Audience }
+  /** `audience` is `null` when the backend sent a value that is not student or teacher. */
+  beneficiary: { userId: string; displayName: string | null; audience: Audience | null }
   subscription: SubscriptionView | null
   /** The caller pays (or nobody pays yet and the caller may buy). */
   canManage: boolean

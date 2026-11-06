@@ -46,6 +46,7 @@ describe("billing formatting", () => {
   it("labels intervals", () => {
     expect(intervalLabel("month")).toBe("per month")
     expect(intervalLabel("year")).toBe("per year")
+    expect(intervalLabel(null)).toBe("per period")
   })
 
   it("states a credit range with an en dash and a percent range against the plan or seat", () => {
@@ -58,6 +59,7 @@ describe("billing formatting", () => {
     )
     expect(estimateSentence(est({ payer: "allowance", percentLow: null, percentHigh: null }))).toBe("3–5 credits")
     expect(estimateSentence(est({ payer: "none" }))).toBe("no charge")
+    expect(estimateSentence(est({ low: 1200, high: 3400 }))).toBe(`${new Intl.NumberFormat().format(1200)}–${new Intl.NumberFormat().format(3400)} credits`)
   })
 
   it("knows which payers are shown as a percentage", () => {
@@ -85,5 +87,6 @@ describe("billing formatting", () => {
     expect(paymentPhase("refunded")).toBe("reversed")
     expect(paymentPhase("partially_refunded")).toBe("reversed")
     expect(paymentPhase("voided")).toBe("reversed")
+    expect(paymentPhase("something_new" as never)).toBe("confirming")
   })
 })

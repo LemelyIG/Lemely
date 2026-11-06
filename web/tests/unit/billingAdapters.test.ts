@@ -5,6 +5,7 @@ import {
   toBillingSummary,
   toCatalogue,
   toEstimate,
+  toHeldTier,
   toSavedCard,
   toUsageJob,
   toUsageMeter,
@@ -96,6 +97,56 @@ describe("billing adapters", () => {
     expect(s.savedCard?.brand).toBe("Card")
     expect(toBillingSummary({ ...w, subscription: null }).subscription).toBeNull()
     expect(toSavedCard(null)).toBeNull()
+  })
+
+  it("keeps a held legacy subscription (no interval) in the summary while the catalogue drops it", () => {
+    const legacy = tier({ interval: null })
+    const w = {
+      beneficiary: { userId: "u2", displayName: "Omar", audience: "student" },
+      subscription: {
+        subscriptionId: "sub1",
+        status: "active" as const,
+        tier: legacy,
+        currentPeriodStart: null,
+        currentPeriodEnd: null,
+        cancelAtPeriodEnd: false,
+        pendingTier: tier({ planTierId: "t9", interval: "yearly" }),
+        graceUntil: null,
+        extraSeats: 0,
+        pendingExtraSeats: null,
+      },
+      canManage: true,
+      managedByName: null,
+      savedCard: null,
+      usage: { fraction: null, resetsAt: null },
+      credits: { totalUnits: 0, expiring: [] },
+      debtUnits: 0,
+      seats: null,
+    }
+    const s = toBillingSummary(w)
+    expect(s.subscription?.tier).toMatchObject({ id: "t1", interval: null, audience: "student" })
+    expect(s.subscription?.pendingTier?.interval).toBe("year")
+    expect(toCatalogue({ planTiers: [legacy], creditPacks: [] }, "student").tiers).toEqual([])
+  })
+
+  it("never relabels an unknown audience as student", () => {
+    const odd = tier({ audience: "admin" })
+    expect(toCatalogue({ planTiers: [odd], creditPacks: [] }, "student").tiers).toEqual([])
+    expect(toCatalogue({ planTiers: [odd], creditPacks: [] }, "teacher").tiers).toEqual([])
+    expect(toHeldTier(odd)).toMatchObject({ audience: null, includedSeats: null })
+    expect(toHeldTier(tier({ interval: "weekly" as never })).interval).toBeNull()
+    const base = {
+      beneficiary: { userId: "u", displayName: null, audience: "guardian" },
+      subscription: null,
+      canManage: false,
+      managedByName: null,
+      savedCard: null,
+      usage: { fraction: null, resetsAt: null },
+      credits: { totalUnits: 0, expiring: [] },
+      debtUnits: 0,
+      seats: null,
+    }
+    expect(toBillingSummary(base).beneficiary.audience).toBeNull()
   })
 
   it("maps auto top-up, estimates and jobs", () => {

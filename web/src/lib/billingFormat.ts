@@ -29,7 +29,9 @@ export function formatBillingDate(iso: string, locale?: string): string {
   return new Date(iso).toLocaleDateString(locale, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })
 }
 
-export function intervalLabel(interval: BillingInterval): string {
+/** A held legacy plan has no interval: say "per period" rather than guess one. */
+export function intervalLabel(interval: BillingInterval | null): string {
+  if (interval === null) return "per period"
   return interval === "month" ? "per month" : "per year"
 }
 
@@ -48,7 +50,8 @@ export function estimateSentence(e: EstimateResponse): string {
     return e.payer === "seat" ? `${amount} of your seat's monthly allowance` : `${amount} of your monthly plan`
   }
   if (e.payer === "none") return "no charge"
-  return e.low === e.high ? `about ${formatCredits(e.high)}` : `${e.low}–${e.high} credits`
+  const n = (v: number) => new Intl.NumberFormat().format(v)
+  return e.low === e.high ? `about ${formatCredits(e.high)}` : `${n(e.low)}–${n(e.high)} credits`
 }
 
 /** One live subscription per beneficiary per audience (spec §4.3 partial unique index). */
@@ -73,5 +76,8 @@ export function paymentPhase(status: PaymentStatus): PaymentPhase {
     case "partially_refunded":
     case "voided":
       return "reversed"
+    default:
+      // A status this build does not know yet is unconfirmed, not a success or a failure.
+      return "confirming"
   }
 }

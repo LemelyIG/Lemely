@@ -6,7 +6,7 @@ vi.mock("@/lib/api", async (importOriginal) => ({
 }))
 
 import { ApiError, request } from "@/lib/api"
-import { billingApi, nextPaymentPoll, PAYMENT_POLL_LIMIT_MS, PAYMENT_POLL_MS } from "@/lib/hooks/useBillingApi"
+import { billingApi, nextPaymentPoll, pollingExpired, PAYMENT_POLL_LIMIT_MS, PAYMENT_POLL_MS } from "@/lib/hooks/useBillingApi"
 import { usageApi } from "@/lib/hooks/useUsageApi"
 import { billingErrorCode, billingFailureMessage } from "@/lib/billingOutcome"
 import { billingPaths } from "@/lib/billingPaths"
@@ -57,8 +57,8 @@ describe("billing fetchers (paths without /api: request() adds it)", () => {
       ["/billing/auto-topup", "PUT"],
       ["/billing/cards", "GET"],
       ["/billing/subscriptions/s1/seats/quote", "POST"],
-      ["/billing/subscriptions/s1/extra-seats", "POST"],
-      ["/billing/subscriptions/s1/extra-seats/pending", "PUT"],
+      ["/billing/subscriptions/s1/seats", "POST"],
+      ["/billing/subscriptions/s1/seats/pending", "PUT"],
     ])
   })
 
@@ -97,6 +97,20 @@ describe("payment polling", () => {
     expect(nextPaymentPoll("pending", 0, 180_000)).toBe(false)
     expect(nextPaymentPoll("paid", 0, 1000)).toBe(false)
     expect(nextPaymentPoll("failed", 0, 1000)).toBe(false)
+  })
+
+  it("stops polling when the fetch itself failed", () => {
+    expect(nextPaymentPoll(undefined, 0, 1000, true)).toBe(false)
+    expect(nextPaymentPoll("pending", 0, 1000, true)).toBe(false)
+    expect(nextPaymentPoll("pending", 0, 1000, false)).toBe(2000)
+  })
+
+  it("reports expiry only for an unconfirmed payment past the limit, relative to its own start", () => {
+    expect(pollingExpired("pending", 0, 179_999)).toBe(false)
+    expect(pollingExpired("pending", 0, 180_000)).toBe(true)
+    expect(pollingExpired("created", 500_000, 600_000)).toBe(false)
+    expect(pollingExpired("paid", 0, 999_999)).toBe(false)
+    expect(pollingExpired(undefined, 0, 999_999)).toBe(false)
   })
 })
 

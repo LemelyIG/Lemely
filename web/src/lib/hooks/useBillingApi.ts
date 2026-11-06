@@ -1,4 +1,4 @@
-import { useRef } from "react"
+import { useEffect, useState } from "react"
 import { useMutation, useQuery, useQueryClient, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query"
 import { request } from "@/lib/api"
 import { toAutoTopup, toBillingSummary, toCatalogue, toSavedCard } from "@/lib/billingAdapters"
@@ -64,10 +64,10 @@ export const billingApi = {
   saveAutoTopup: (body: AutoTopupUpdate) => request<WireAutoTopup>("/billing/auto-topup", { method: "PUT", body: JSON.stringify(body) }),
   cards: () => request<WireSavedCardList>("/billing/cards"),
   seatQuote: (subscriptionId: string, seats: number) => request<WireQuote>(`${sub(subscriptionId)}/seats/quote`, post({ seats })),
-  addSeats: (subscriptionId: string, seats: number) => request<WireCharge>(`${sub(subscriptionId)}/extra-seats`, post({ seats })),
+  addSeats: (subscriptionId: string, seats: number) => request<WireCharge>(`${sub(subscriptionId)}/seats`, post({ seats })),
   /** `extraSeats` is the new total from the next renewal, not a delta (06 `SeatReductionRequest`). */
   reduceSeats: (subscriptionId: string, extraSeats: number) =>
-    request<WireSeats>(`${sub(subscriptionId)}/extra-seats/pending`, { method: "PUT", body: JSON.stringify({ extraSeats }) }),
+    request<WireSeats>(`${sub(subscriptionId)}/seats/pending`, { method: "PUT", body: JSON.stringify({ extraSeats }) }),
 }
 
 export const billingKeys = {
@@ -83,10 +83,25 @@ export const billingKeys = {
 export const PAYMENT_POLL_MS = 2000
 export const PAYMENT_POLL_LIMIT_MS = 180_000
 
-/** Poll while the payment is unconfirmed, for at most three minutes. Pure, for tests. */
-export function nextPaymentPoll(status: PaymentStatus | undefined, startedAt: number, now: number): number | false {
+/**
+ * Poll while the payment is unconfirmed, for at most three minutes, and never after a failed
+ * fetch (the screen shows the error with a retry instead of hammering a failing route). Pure,
+ * for tests.
+ */
+export function nextPaymentPoll(
+  status: PaymentStatus | undefined,
+  startedAt: number,
+  now: number,
+  fetchFailed = false,
+): number | false {
+  if (fetchFailed) return false
   if (status !== undefined && status !== "created" && status !== "pending") return false
   return now - startedAt < PAYMENT_POLL_LIMIT_MS ? PAYMENT_POLL_MS : false
+}
+
+/** True once the time limit, not a terminal status, ended polling on an unconfirmed payment. */
+export function pollingExpired(status: PaymentStatus | undefined, startedAt: number, now: number): boolean {
+  return (status === "created" || status === "pending") && now - startedAt >= PAYMENT_POLL_LIMIT_MS
 }
 
 /** One catalogue request; each audience is a `select` over it. */
@@ -100,21 +115,30 @@ export function useBillingSummary(beneficiaryId: string | null = null): UseQuery
 
 /**
  * `GET /billing/payments/{id}`, polled every 2s while `created`/`pending`, for three minutes at
- * most (spec §5.1 step 5). `pollingStopped` turns true when the limit ends polling on an
+ * most (spec §5.1 step 5). The clock restarts when `paymentId` changes. `pollingStopped` turns
+ * true, through a timer that re-renders at the limit, when the limit ends polling on an
  * unconfirmed payment, so the screen can say so.
  */
 export function usePaymentStatus(paymentId: string | null): UseQueryResult<PaymentStatusView, Error> & { pollingStopped: boolean } {
-  const startedAt = useRef(Date.now())
+  const [clock, setClock] = useState({ id: paymentId, startedAt: Date.now() })
+  if (clock.id !== paymentId) setClock({ id: paymentId, startedAt: Date.now() })
+  const startedAt = clock.id === paymentId ? clock.startedAt : Date.now()
+  const [, rerender] = useState(0)
   const query = useQuery({
     queryKey: billingKeys.payment(paymentId ?? ""),
     queryFn: () => billingApi.payment(paymentId ?? ""),
     enabled: paymentId !== null,
-    refetchInterval: (q) => nextPaymentPoll(q.state.data?.status, startedAt.current, Date.now()),
+    refetchInterval: (q) => nextPaymentPoll(q.state.data?.status, startedAt, Date.now(), q.state.status === "error"),
   })
   const status = query.data?.status
-  const pollingStopped =
-    (status === "created" || status === "pending") && nextPaymentPoll(status, startedAt.current, Date.now()) === false
-  return Object.assign(query, { pollingStopped })
+  const confirming = status === "created" || status === "pending"
+  useEffect(() => {
+    if (!confirming) return
+    const remaining = Math.max(0, startedAt + PAYMENT_POLL_LIMIT_MS - Date.now())
+    const timer = setTimeout(() => rerender((n) => n + 1), remaining + 1)
+    return () => clearTimeout(timer)
+  }, [confirming, startedAt])
+  return Object.assign(query, { pollingStopped: pollingExpired(status, startedAt, Date.now()) })
 }
 
 export function useStartSubscriptionCheckout(): UseMutationResult<CheckoutResponse, Error, SubscriptionCheckoutRequest> {

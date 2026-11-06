@@ -1,11 +1,13 @@
 import {
   USAGE_BLOCK_REASONS,
   type AutoTopupSettings,
+  type BillingInterval,
   type BillingSummary,
   type Catalogue,
   type Audience,
   type CreditPack,
   type EstimateResponse,
+  type HeldPlanTier,
   type MeteredAction,
   type PlanTier,
   type SavedCardView,
@@ -36,22 +38,37 @@ export function featureLines(features: Record<string, unknown>): string[] {
     .map(([k]) => k)
 }
 
-/** `null` for a tier with no interval (legacy manual plans are not sold). */
-export function toPlanTier(w: WirePlanTier): PlanTier | null {
-  if (w.interval === null) return null
-  const teacher = w.audience === "teacher"
+function toAudience(value: string): Audience | null {
+  return value === "student" || value === "teacher" ? value : null
+}
+
+function toInterval(value: string | null): BillingInterval | null {
+  return value === "monthly" ? "month" : value === "yearly" ? "year" : null
+}
+
+/** A tier as a held subscription shows it: never dropped, never relabelled. */
+export function toHeldTier(w: WirePlanTier): HeldPlanTier {
+  const audience = toAudience(w.audience)
+  const teacher = audience === "teacher"
   return {
     id: w.planTierId,
     code: w.code,
     name: w.name,
-    audience: teacher ? "teacher" : "student",
-    interval: w.interval === "yearly" ? "year" : "month",
+    audience,
+    interval: toInterval(w.interval),
     priceMinor: w.priceMinor,
     currency: w.currency,
     features: featureLines(w.features),
     includedSeats: teacher ? w.includedSeats : null,
     extraSeatPriceMinor: teacher ? w.extraSeatPriceMinor : null,
   }
+}
+
+/** `null` for a tier that cannot be sold: no interval (legacy manual plan) or unknown audience. */
+export function toPlanTier(w: WirePlanTier): PlanTier | null {
+  const held = toHeldTier(w)
+  if (held.interval === null || held.audience === null) return null
+  return { ...held, interval: held.interval, audience: held.audience }
 }
 
 export function toCreditPack(w: WireCreditPack): CreditPack {
@@ -89,19 +106,18 @@ export function toUsageMeter(w: WireUsageMeter): UsageMeterView {
 
 export function toBillingSummary(w: WireBillingSummary): BillingSummary {
   const sub = w.subscription
-  const tier = sub ? toPlanTier(sub.tier) : null
   return {
-    beneficiary: { ...w.beneficiary, audience: w.beneficiary.audience === "teacher" ? "teacher" : "student" },
+    beneficiary: { ...w.beneficiary, audience: toAudience(w.beneficiary.audience) },
     subscription:
-      sub && tier
+      sub
         ? {
             subscriptionId: sub.subscriptionId,
             status: sub.status,
-            tier,
+            tier: toHeldTier(sub.tier),
             currentPeriodStart: sub.currentPeriodStart,
             currentPeriodEnd: sub.currentPeriodEnd,
             cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
-            pendingTier: sub.pendingTier ? toPlanTier(sub.pendingTier) : null,
+            pendingTier: sub.pendingTier ? toHeldTier(sub.pendingTier) : null,
             graceUntil: sub.graceUntil,
             extraSeats: sub.extraSeats,
             pendingExtraSeats: sub.pendingExtraSeats,
