@@ -236,6 +236,18 @@
             <div class="mo-plant"><span class="mo-pot-area"><span class="mo-pot"></span></span><span class="mo-name">Next</span></div>
           </div>
         </section>
+        <!-- Progress card (Mistakes beaten), new account. One sample row shows what fills in. -->
+        <section class="a-prog-dir a-prog-ladder is-new" data-garden-dir="1" hidden aria-labelledby="gd1n-h">
+          <header class="pd-head"><h2 class="pd-h" id="gd1n-h">Grade ladder</h2><p class="pd-note">Ticks sit on each paper's real grade boundaries.</p></header>
+          <p class="pd-read"><span class="pd-sent">See exactly how far you are from the <b>next grade</b></span><span class="pd-ctx a-mono">Real boundaries for the paper you sat, not a formula</span></p>
+          <ol class="pd-rows">
+            <li><a class="pd-row is-open" href="/student/correct" aria-label="No subjects yet. Upload a paper to place your first marker on its grade ladder.">
+              <span class="pd-name"><b>Your first subject</b><span class="pd-meta a-mono">No paper yet</span></span>
+              <span class="pl-track is-empty" aria-hidden="true"><span class="pl-rail"></span><i class="pl-tick" style="--at: 20%"><b>C</b></i><i class="pl-tick" style="--at: 41.67%"><b>B</b></i><i class="pl-tick" style="--at: 66.67%"><b>A</b></i><i class="pl-tick" style="--at: 91.67%"><b>A*</b></i></span>
+              <span class="pd-stat"><span class="pd-go">Upload a paper <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></span></span>
+            </a></li>
+          </ol>
+        </section>
         <ol class="a-steps" aria-label="How Lemely works for you">
           <li aria-current="step"><span class="a-step-n">1</span><span class="a-step-t">Correct your first paper</span><span class="a-step-s">Now</span><span class="a-step-ghost a-g-paper" aria-hidden="true"><i></i><i></i><i></i><i></i></span></li>
           <li><span class="a-step-n">2</span><span class="a-step-t">See where you stand</span><span class="a-step-s">Later</span><span class="a-step-ghost a-g-ruler" aria-hidden="true"><i>C</i><i>B</i><i>A</i><i>A*</i></span></li>
@@ -244,336 +256,388 @@
       </section>
 
       <div data-when-state="ready" class="a-page a-ready">
-        <section class="ah-hero ah-card" data-anim aria-label="Level and streak">
-        <div class="ah-greet"><h1 class="a-greet">Good morning, Mariam.</h1><p class="a-kicker"><span data-needs="many-papers">3 subjects, 22 papers corrected so far.</span><span data-only-state="one-paper">1 subject, 1 paper corrected so far.</span><span data-sp="sparse0">Your first paper is being marked.</span><span data-sp="sparse1">Your first paper is marked. Two subjects to go.</span><span data-sp="sparse2">4 papers corrected. Physics is still to plant.</span><span data-sp="sparse3">Good to see you again.</span></p></div>
-          <figure class="ah-binny">
-            <button type="button" class="ah-binny-tile" data-binny aria-label="Binny, your study buddy. Press to say hi." title="Say hi to Binny"></button>
-            <figcaption class="ah-say" aria-live="polite">
-              <span data-when-mood="marking">Reading your answers.</span>
-              <span data-when-mood="grade-improved" data-news>A in 0580, up from B.</span>
-              <span data-when-mood="paper-marked" data-news>Your 0580/42 result is in.</span>
-              <span data-quiet="session">Today's session is ready.</span>
-              <span data-quiet="practice">A short set is ready.</span>
-              <span data-when-mood="streak-kept" data-sp-off="all">Day 9. Streak kept.</span>
-              <span data-when-mood="idle" data-sp-off="sparse3">Ready when you are.</span>
-              <span data-when-mood="idle" data-sp="sparse3">Welcome back, Mariam.</span>
-              <span data-when-mood="streak-kept" data-sp="sparse0 sparse1">Day 1. Streak started.</span>
-              <span data-when-mood="streak-kept" data-sp="sparse2">Day 3. Streak kept.</span>
-              <span class="ah-say-hi">Hi, Mariam.</span>
-            </figcaption>
-          </figure>
-
-          <div class="ah-level">
-            <div class="ah-level-row">
-              <p class="ah-level-n" data-needs="many-papers">Level 7</p>
-              <p class="ah-level-n" data-only-state="one-paper">Level 1</p>
-              <p class="ah-level-n" data-sp="sparse0 sparse1">Level 1</p>
-              <p class="ah-level-n" data-sp="sparse2 sparse3">Level 2</p>
-              <p class="ah-xp"><span class="ah-xp-n" data-needs="many-papers">2,340</span><span class="ah-xp-n" data-only-state="one-paper">50</span><span class="ah-xp-n" data-sp="sparse0">20</span><span class="ah-xp-n" data-sp="sparse1">70</span><span class="ah-xp-n" data-sp="sparse2">220</span><span class="ah-xp-n" data-sp="sparse3">270</span><span class="ah-xp-u">XP</span></p>
-            </div>
-            <div data-needs="many-papers">
-              <div class="ah-bar" role="progressbar" aria-label="XP to level 8" aria-valuemin="0" aria-valuemax="500" aria-valuenow="240" aria-valuetext="240 of 500 XP to level 8">
-                <span class="ah-bar-fill"></span>
-              </div>
-              <p class="ah-bar-label">240 / 500 XP to level 8</p>
-            </div>
-            <div data-only-state="one-paper">
-              <div class="ah-bar" role="progressbar" aria-label="XP to level 2" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" aria-valuetext="50 of 100 XP to level 2">
-                <span class="ah-bar-fill ah-bar-half"></span>
-              </div>
-              <p class="ah-bar-label">50 / 100 XP to level 2</p>
-            </div>
-            <div data-sp="sparse0">
-              <div class="ah-bar" role="progressbar" aria-label="XP to level 2" aria-valuemin="0" aria-valuemax="100" aria-valuenow="20" aria-valuetext="20 of 100 XP to level 2"><span class="ah-bar-fill" style="inline-size: 20%"></span></div>
-              <p class="ah-bar-label">20 / 100 XP to level 2</p>
-            </div>
-            <div data-sp="sparse1">
-              <div class="ah-bar" role="progressbar" aria-label="XP to level 2" aria-valuemin="0" aria-valuemax="100" aria-valuenow="70" aria-valuetext="70 of 100 XP to level 2"><span class="ah-bar-fill" style="inline-size: 70%"></span></div>
-              <p class="ah-bar-label">70 / 100 XP to level 2</p>
-            </div>
-            <div data-sp="sparse2">
-              <div class="ah-bar" role="progressbar" aria-label="XP to level 3" aria-valuemin="0" aria-valuemax="200" aria-valuenow="120" aria-valuetext="120 of 200 XP to level 3"><span class="ah-bar-fill" style="inline-size: 60%"></span></div>
-              <p class="ah-bar-label">120 / 200 XP to level 3</p>
-            </div>
-            <div data-sp="sparse3">
-              <div class="ah-bar" role="progressbar" aria-label="XP to level 3" aria-valuemin="0" aria-valuemax="200" aria-valuenow="170" aria-valuetext="170 of 200 XP to level 3"><span class="ah-bar-fill" style="inline-size: 85%"></span></div>
-              <p class="ah-bar-label">170 / 200 XP to level 3</p>
-            </div>
-          </div>
-
-          <div class="ah-week">
-            <div data-when-streak="kept">
-              <div class="ah-week-head">
-                <p class="ah-week-n"><button type="button" class="ah-streak" aria-describedby="ah-week-meta" aria-label="9-day streak. Press to make Binny cheer." title="Press to make Binny cheer">9-day streak</button></p>
-                <p class="ah-week-meta" id="ah-week-meta">Longest 14 · 1 freeze · XP per day</p>
-              </div>
-              <ol class="ah-strip" aria-label="XP per day, last 7 days. Peak 120 XP on 4 November.">
-                <li class="ah-day is-earned" title="30 Oct · 60 XP"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.5"></span></span><span class="ah-day-w">Fri</span><span class="ah-day-d">30</span><span class="ah-vh">30 October, 60 XP</span></li>
-                <li class="ah-day is-earned" title="31 Oct · 20 XP"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.167"></span></span><span class="ah-day-w">Sat</span><span class="ah-day-d">31</span><span class="ah-vh">31 October, 20 XP</span></li>
-                <li class="ah-day is-earned" title="1 Nov · 35 XP"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.292"></span></span><span class="ah-day-w">Sun</span><span class="ah-day-d">1</span><span class="ah-vh">1 November, 35 XP</span></li>
-                <li class="ah-day is-earned" title="2 Nov · 50 XP"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.417"></span></span><span class="ah-day-w">Mon</span><span class="ah-day-d">2</span><span class="ah-vh">2 November, 50 XP</span></li>
-                <li class="ah-day is-earned" title="3 Nov · 30 XP"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.25"></span></span><span class="ah-day-w">Tue</span><span class="ah-day-d">3</span><span class="ah-vh">3 November, 30 XP</span></li>
-                <li class="ah-day is-earned" title="4 Nov · 120 XP"><span class="ah-xp-col"><span class="ah-xp-val" aria-hidden="true">120</span><span class="ah-xp-bar" style="--xp: 1"></span></span><span class="ah-day-w">Wed</span><span class="ah-day-d">4</span><span class="ah-vh">4 November, 120 XP</span></li>
-                <li class="ah-day is-earned is-today" aria-current="date" title="Today · 25 XP"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.208"></span></span><span class="ah-day-w"><span class="ah-wide">Today</span><span class="ah-narrow">Thu</span></span><span class="ah-day-d">5</span><span class="ah-vh">5 November, today, 25 XP</span></li>
-              </ol>
-            </div>
-            <div data-when-streak="zero">
-              <div class="ah-week-head">
-                <p class="ah-week-n">Streak paused.</p>
-              </div>
-              <p class="ah-week-body">Earn XP today to start again. Correct a paper, finish a session, take a quiz or review flashcards.</p>
-              <ol class="ah-strip" aria-label="XP per day, last 7 days">
-                <li class="ah-day is-earned ah-op-empty"><span class="ah-xp-col"><span class="ah-xp-val" aria-hidden="true">60</span><span class="ah-xp-bar" style="--xp: 0.5"></span></span><span class="ah-day-w">Fri</span><span class="ah-day-d">30</span><span class="ah-vh" data-needs="many-papers">30 October, 60 XP</span><span class="ah-vh" data-only-state="one-paper">30 October, no XP</span></li>
-                <li class="ah-day is-earned ah-op-empty"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.167"></span></span><span class="ah-day-w">Sat</span><span class="ah-day-d">31</span><span class="ah-vh" data-needs="many-papers">31 October, 20 XP</span><span class="ah-vh" data-only-state="one-paper">31 October, no XP</span></li>
-                <li class="ah-day is-earned ah-op-empty"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.292"></span></span><span class="ah-day-w">Sun</span><span class="ah-day-d">1</span><span class="ah-vh" data-needs="many-papers">1 November, 35 XP</span><span class="ah-vh" data-only-state="one-paper">1 November, no XP</span></li>
-                <li class="ah-day is-earned"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.417"></span></span><span class="ah-day-w">Mon</span><span class="ah-day-d">2</span><span class="ah-vh">2 November, 50 XP</span></li>
-                <li class="ah-day is-earned ah-op-empty"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.25"></span></span><span class="ah-day-w">Tue</span><span class="ah-day-d">3</span><span class="ah-vh" data-needs="many-papers">3 November, 30 XP</span><span class="ah-vh" data-only-state="one-paper">3 November, no XP</span></li>
-                <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Wed</span><span class="ah-day-d">4</span><span class="ah-vh">4 November, no XP yet</span></li>
-                <li class="ah-day is-today" aria-current="date"><span class="ah-xp-col"></span><span class="ah-day-w"><span class="ah-wide">Today</span><span class="ah-narrow">Thu</span></span><span class="ah-day-d">5</span><span class="ah-vh">5 November, no XP yet</span></li>
-              </ol>
-            </div>
-            <!-- Sparse states: their own week, read from each fixture's calendar. -->
-            <div class="ah-sp-week" data-sp="sparse0">
-              <div class="ah-week-head"><p class="ah-week-n">Day 1.</p></div>
-              <p class="ah-week-body">Uploading your first paper earned <span class="a-mono">20</span> XP. Come back tomorrow for day 2.</p>
-              <ol class="ah-strip" aria-label="XP per day, last 7 days. 20 XP today.">
-                <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Fri</span><span class="ah-day-d">30</span><span class="ah-vh">30 October, no XP</span></li>
-                <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Sat</span><span class="ah-day-d">31</span><span class="ah-vh">31 October, no XP</span></li>
-                <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Sun</span><span class="ah-day-d">1</span><span class="ah-vh">1 November, no XP</span></li>
-                <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Mon</span><span class="ah-day-d">2</span><span class="ah-vh">2 November, no XP</span></li>
-                <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Tue</span><span class="ah-day-d">3</span><span class="ah-vh">3 November, no XP</span></li>
-                <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Wed</span><span class="ah-day-d">4</span><span class="ah-vh">4 November, no XP</span></li>
-                <li class="ah-day is-earned is-today" aria-current="date"><span class="ah-xp-col"><span class="ah-xp-val" aria-hidden="true">20</span><span class="ah-xp-bar" style="--xp: 0.167"></span></span><span class="ah-day-w"><span class="ah-wide">Today</span><span class="ah-narrow">Thu</span></span><span class="ah-day-d">5</span><span class="ah-vh">5 November, today, 20 XP</span></li>
-              </ol>
-            </div>
-            <div class="ah-sp-week" data-sp="sparse1">
-              <div class="ah-week-head"><p class="ah-week-n">1-day streak</p></div>
-              <p class="ah-week-body">Practise or upload tomorrow to make it 2.</p>
-              <ol class="ah-strip" aria-label="XP per day, last 7 days. 70 XP today.">
-                <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Fri</span><span class="ah-day-d">30</span><span class="ah-vh">30 October, no XP</span></li>
-                <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Sat</span><span class="ah-day-d">31</span><span class="ah-vh">31 October, no XP</span></li>
-                <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Sun</span><span class="ah-day-d">1</span><span class="ah-vh">1 November, no XP</span></li>
-                <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Mon</span><span class="ah-day-d">2</span><span class="ah-vh">2 November, no XP</span></li>
-                <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Tue</span><span class="ah-day-d">3</span><span class="ah-vh">3 November, no XP</span></li>
-                <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Wed</span><span class="ah-day-d">4</span><span class="ah-vh">4 November, no XP</span></li>
-                <li class="ah-day is-earned is-today" aria-current="date"><span class="ah-xp-col"><span class="ah-xp-val" aria-hidden="true">70</span><span class="ah-xp-bar" style="--xp: 0.583"></span></span><span class="ah-day-w"><span class="ah-wide">Today</span><span class="ah-narrow">Thu</span></span><span class="ah-day-d">5</span><span class="ah-vh">5 November, today, 70 XP</span></li>
-              </ol>
-            </div>
-            <div class="ah-sp-week" data-sp="sparse2">
-              <div class="ah-week-head"><p class="ah-week-n">3-day streak</p><p class="ah-week-meta">Your longest yet · XP per day</p></div>
-              <ol class="ah-strip" aria-label="XP per day, last 7 days. Peak 60 XP on 3 November.">
-                <li class="ah-day is-earned"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.333"></span></span><span class="ah-day-w">Fri</span><span class="ah-day-d">30</span><span class="ah-vh">30 October, 40 XP</span></li>
-                <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Sat</span><span class="ah-day-d">31</span><span class="ah-vh">31 October, no XP</span></li>
-                <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Sun</span><span class="ah-day-d">1</span><span class="ah-vh">1 November, no XP</span></li>
-                <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Mon</span><span class="ah-day-d">2</span><span class="ah-vh">2 November, no XP</span></li>
-                <li class="ah-day is-earned"><span class="ah-xp-col"><span class="ah-xp-val" aria-hidden="true">60</span><span class="ah-xp-bar" style="--xp: 0.5"></span></span><span class="ah-day-w">Tue</span><span class="ah-day-d">3</span><span class="ah-vh">3 November, 60 XP</span></li>
-                <li class="ah-day is-earned"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.333"></span></span><span class="ah-day-w">Wed</span><span class="ah-day-d">4</span><span class="ah-vh">4 November, 40 XP</span></li>
-                <li class="ah-day is-earned is-today" aria-current="date"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.25"></span></span><span class="ah-day-w"><span class="ah-wide">Today</span><span class="ah-narrow">Thu</span></span><span class="ah-day-d">5</span><span class="ah-vh">5 November, today, 30 XP</span></li>
-              </ol>
-            </div>
-            <div class="ah-sp-week" data-sp="sparse3">
-              <div class="ah-week-head"><p class="ah-week-n">Welcome back.</p></div>
-              <p class="ah-week-body">Your streak reset. Your progress didn't. Earn XP today to start a new one.</p>
-              <ol class="ah-strip" aria-label="XP per day, last 7 days. No XP yet this week.">
-                <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Fri</span><span class="ah-day-d">30</span><span class="ah-vh">30 October, no XP</span></li>
-                <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Sat</span><span class="ah-day-d">31</span><span class="ah-vh">31 October, no XP</span></li>
-                <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Sun</span><span class="ah-day-d">1</span><span class="ah-vh">1 November, no XP</span></li>
-                <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Mon</span><span class="ah-day-d">2</span><span class="ah-vh">2 November, no XP</span></li>
-                <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Tue</span><span class="ah-day-d">3</span><span class="ah-vh">3 November, no XP</span></li>
-                <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Wed</span><span class="ah-day-d">4</span><span class="ah-vh">4 November, no XP</span></li>
-                <li class="ah-day is-today" aria-current="date"><span class="ah-xp-col"></span><span class="ah-day-w"><span class="ah-wide">Today</span><span class="ah-narrow">Thu</span></span><span class="ah-day-d">5</span><span class="ah-vh">5 November, today, no XP yet</span></li>
-              </ol>
-            </div>
-          </div>
-        </section>
-
-        <div class="a-next-row">
+          <section class="ah-hero ah-card" data-anim aria-label="Level and streak">
+          <div class="ah-greet"><h1 class="a-greet">Good morning, Mariam.</h1><p class="a-kicker"><span data-needs="many-papers">3 subjects, 22 papers corrected so far.</span><span data-only-state="one-paper">1 subject, 1 paper corrected so far.</span><span data-sp="sparse0">Your first paper is being marked.</span><span data-sp="sparse1">Your first paper is marked. Two subjects to go.</span><span data-sp="sparse2">4 papers corrected. Physics is still to plant.</span><span data-sp="sparse3">Good to see you again.</span></p></div>
+            <figure class="ah-binny">
+              <button type="button" class="ah-binny-tile" data-binny aria-label="Binny, your study buddy. Press to say hi." title="Say hi to Binny"></button>
+              <figcaption class="ah-say" aria-live="polite">
+                <span data-when-mood="marking">Reading your answers.</span>
+                <span data-when-mood="grade-improved" data-news>A in 0580, up from B.</span>
+                <span data-when-mood="paper-marked" data-news>Your 0580/42 result is in.</span>
+                <span data-quiet="session">Today's session is ready.</span>
+                <span data-quiet="practice">A short set is ready.</span>
+                <span data-when-mood="streak-kept" data-sp-off="all">Day 9. Streak kept.</span>
+                <span data-when-mood="idle" data-sp-off="sparse3">Ready when you are.</span>
+                <span data-when-mood="idle" data-sp="sparse3">Welcome back, Mariam.</span>
+                <span data-when-mood="streak-kept" data-sp="sparse0 sparse1">Day 1. Streak started.</span>
+                <span data-when-mood="streak-kept" data-sp="sparse2">Day 3. Streak kept.</span>
+                <span class="ah-say-hi">Hi, Mariam.</span>
+              </figcaption>
+            </figure>
 
 
-            <section class="a-mo" aria-label="Your momentum">
-              <h2 class="mo-h">Your Garden</h2>
-              <p class="mo-read" data-k="a" data-needs="many-papers" aria-hidden="true"><span class="mo-sent">Maths is up <b>27 points</b></span><span class="mo-ctx a-mono">49% → 76% · 14 papers</span></p><p class="mo-read" data-k="b" data-needs="many-papers" aria-hidden="true"><span class="mo-sent">Add Maths is up <b>15 points</b></span><span class="mo-ctx a-mono">44% → 59% · 6 papers</span></p><p class="mo-read" data-k="c" data-needs="many-papers" aria-hidden="true"><span class="mo-sent">Physics is up <b>7 points</b></span><span class="mo-ctx a-mono">41% → 48% · 2 papers</span></p>
-                            <p class="mo-read" data-k="solo" data-only-state="one-paper"><span class="mo-sent">Maths has <b>sprouted</b></span><span class="mo-ctx a-mono">Grade B · first paper</span></p>
-              <fieldset class="mo-garden" data-needs="many-papers"><legend class="a-vh">Pick a subject to see how far it has grown</legend>
-                  <input class="a-vh mo-r" type="radio" name="mo2-subj" id="mo2-a" value="a" checked>
-                  <label class="mo-plant" for="mo2-a" style="--now: 76.7%; --was: 31.7%">
-                    <span class="mo-pot-area" aria-hidden="true"><span class="mo-was"></span><span class="mo-stem"><span class="mo-leaf" style="--at: 14%"></span><span class="mo-leaf" style="--at: 29%"></span><span class="mo-leaf" style="--at: 43%"></span><span class="mo-leaf" style="--at: 57%"></span><span class="mo-leaf" style="--at: 71%"></span><span class="mo-leaf" style="--at: 86%"></span><span class="mo-bud" data-grade="A">A</span></span><span class="mo-pot"></span></span>
-                    <span class="mo-name">Maths</span><span class="mo-val a-mono">76%</span>
-                    <span class="a-vh">Maths 0580: 49% to 76%, up 27, 14 papers.</span>
-                  </label><input class="a-vh mo-r" type="radio" name="mo2-subj" id="mo2-b" value="b">
-                  <label class="mo-plant" for="mo2-b" style="--now: 48.3%; --was: 23.3%">
-                    <span class="mo-pot-area" aria-hidden="true"><span class="mo-was"></span><span class="mo-stem"><span class="mo-leaf" style="--at: 14%"></span><span class="mo-leaf" style="--at: 29%"></span><span class="mo-leaf" style="--at: 43%"></span><span class="mo-leaf" style="--at: 57%"></span><span class="mo-leaf" style="--at: 71%"></span><span class="mo-leaf" style="--at: 86%"></span><span class="mo-bud" data-grade="B">B</span></span><span class="mo-pot"></span></span>
-                    <span class="mo-name">Add Maths</span><span class="mo-val a-mono">59%</span>
-                    <span class="a-vh">Add Maths 0606: 44% to 59%, up 15, 6 papers.</span>
-                  </label><input class="a-vh mo-r" type="radio" name="mo2-subj" id="mo2-c" value="c">
-                  <label class="mo-plant" for="mo2-c" style="--now: 30.0%; --was: 18.3%">
-                    <span class="mo-pot-area" aria-hidden="true"><span class="mo-was"></span><span class="mo-stem"><span class="mo-leaf" style="--at: 33%"></span><span class="mo-leaf" style="--at: 67%"></span><span class="mo-bud" data-grade="C">C</span></span><span class="mo-pot"></span></span>
-                    <span class="mo-name">Physics</span><span class="mo-val a-mono">48%</span>
-                    <span class="a-vh">Physics 0625: 41% to 48%, up 7, 2 papers.</span>
-                  </label>
-              </fieldset>
-              <div class="mo-garden mo-garden-solo" role="group" aria-label="Your garden" data-only-state="one-paper">
-                <div class="mo-plant is-solo" style="--now: 52%; --was: 0%">
-                  <span class="mo-pot-area" aria-hidden="true"><span class="mo-stem"><span class="mo-leaf" style="--at: 30%"></span><span class="mo-leaf" style="--at: 62%"></span><span class="mo-bud" data-grade="B">B</span></span><span class="mo-pot"></span></span>
-                  <span class="mo-name">Maths</span><span class="mo-val a-mono">0580</span>
-                  <span class="a-vh">Maths 0580: grade B on your first paper.</span>
-                </div>
-                <p class="mo-seed a-mono">Mark more papers to see how it grows.</p>
+            <div class="ah-level">
+              <div class="ah-level-row">
+                <p class="ah-level-n" data-needs="many-papers">Level 7</p>
+                <p class="ah-level-n" data-only-state="one-paper">Level 1</p>
+                <p class="ah-level-n" data-sp="sparse0 sparse1">Level 1</p>
+                <p class="ah-level-n" data-sp="sparse2 sparse3">Level 2</p>
+                <p class="ah-xp"><span class="ah-xp-n" data-needs="many-papers">2,340</span><span class="ah-xp-n" data-only-state="one-paper">50</span><span class="ah-xp-n" data-sp="sparse0">20</span><span class="ah-xp-n" data-sp="sparse1">70</span><span class="ah-xp-n" data-sp="sparse2">220</span><span class="ah-xp-n" data-sp="sparse3">270</span><span class="ah-xp-u">XP</span></p>
               </div>
-              <!-- Sparse states: every chosen subject has a pot. Seeds wait for a first paper, sprouts
-                   carry their grade, and the readout and the fill line say what grows next. -->
-              <p class="mo-read" data-k="sp" data-sp="sparse0"><span class="mo-sent">Your first seed is <b>germinating</b></span><span class="mo-ctx a-mono">0580/42 is being marked · 3 subjects planted</span></p>
-              <p class="mo-read" data-k="sp" data-sp="sparse1"><span class="mo-sent">Maths has <b>sprouted</b></span><span class="mo-ctx a-mono">Grade C · your first result</span></p>
-              <p class="mo-read" data-k="sp" data-sp="sparse2"><span class="mo-sent">Maths is <b>up a grade</b></span><span class="mo-ctx a-mono">C → B · 2 of 3 subjects growing</span></p>
-              <p class="mo-read" data-k="sp" data-sp="sparse3"><span class="mo-sent">Your progress <b>is safe</b></span><span class="mo-ctx a-mono">Last watered 27 Oct · 5 papers kept</span></p>
-              <div class="mo-garden mo-garden-sp" role="list" aria-label="Your garden, one plant per subject">
-                <div class="mo-plant mo-sp is-germ is-lead" role="listitem" data-sp="sparse0">
-                  <span class="mo-pot-area" aria-hidden="true"><span class="mo-sp-seed"><span class="mo-sp-shoot"></span></span><span class="mo-pot"></span></span>
-                  <span class="mo-name" aria-hidden="true">Maths</span><span class="mo-val a-mono" aria-hidden="true">Marking now</span>
-                  <span class="a-vh">Maths 0580: your first paper is being marked. Its plant appears when the grade lands.</span>
+              <div data-needs="many-papers">
+                <div class="ah-bar" role="progressbar" aria-label="XP to level 8" aria-valuemin="0" aria-valuemax="500" aria-valuenow="240" aria-valuetext="240 of 500 XP to level 8">
+                  <span class="ah-bar-fill"></span>
                 </div>
-                <div class="mo-plant mo-sp is-lead" role="listitem" data-sp="sparse1" style="--now: 40%; --was: 0%">
-                  <span class="mo-pot-area" aria-hidden="true"><span class="mo-stem"><span class="mo-leaf" style="--at: 30%"></span><span class="mo-leaf" style="--at: 62%"></span><span class="mo-bud" data-grade="C">C</span></span><span class="mo-pot"></span></span>
-                  <span class="mo-name" aria-hidden="true">Maths</span><span class="mo-val a-mono" aria-hidden="true">Grade C</span>
-                  <span class="a-vh">Maths 0580: grade C on your first paper.</span>
-                </div>
-                <div class="mo-plant mo-sp is-lead" role="listitem" data-sp="sparse2" style="--now: 62%; --was: 40%">
-                  <span class="mo-pot-area" aria-hidden="true"><span class="mo-was"></span><span class="mo-stem"><span class="mo-leaf" style="--at: 22%"></span><span class="mo-leaf" style="--at: 48%"></span><span class="mo-leaf" style="--at: 74%"></span><span class="mo-bud" data-grade="B">B</span></span><span class="mo-pot"></span></span>
-                  <span class="mo-name" aria-hidden="true">Maths</span><span class="mo-val mo-val-up a-mono" aria-hidden="true">C → B</span>
-                  <span class="a-vh">Maths 0580: grade B, up from C, 3 papers.</span>
-                </div>
-                <div class="mo-plant mo-sp is-dry" role="listitem" data-sp="sparse3" style="--now: 64%; --was: 40%">
-                  <span class="mo-pot-area" aria-hidden="true"><span class="mo-was"></span><span class="mo-stem"><span class="mo-leaf" style="--at: 22%"></span><span class="mo-leaf" style="--at: 48%"></span><span class="mo-leaf" style="--at: 74%"></span><span class="mo-bud" data-grade="B">B</span></span><span class="mo-pot"></span></span>
-                  <span class="mo-name" aria-hidden="true">Maths</span><span class="mo-val a-mono" aria-hidden="true">Grade B</span>
-                  <span class="a-vh">Maths 0580: grade B, up from C, 3 papers. Last paper 27 October.</span>
-                </div>
-                <a class="mo-plant mo-sp is-seed" role="listitem" data-sp="sparse0 sparse1" href="/student/correct">
-                  <span class="mo-pot-area" aria-hidden="true"><span class="mo-sp-guide"></span><span class="mo-sp-seed"></span><span class="mo-pot"></span></span>
-                  <span class="mo-name" aria-hidden="true">Add Maths</span><span class="mo-val mo-plant-it" aria-hidden="true">Plant it <svg class="a-ico"><use href="#a-i-arrow" /></svg></span>
-                  <span class="a-vh">Add Maths 0606: planted, no paper yet. Upload an Add Maths paper to plant it.</span>
-                </a>
-                <div class="mo-plant mo-sp" role="listitem" data-sp="sparse2" style="--now: 34%; --was: 0%">
-                  <span class="mo-pot-area" aria-hidden="true"><span class="mo-stem"><span class="mo-leaf" style="--at: 45%"></span><span class="mo-bud" data-grade="C">C</span></span><span class="mo-pot"></span></span>
-                  <span class="mo-name" aria-hidden="true">Add Maths</span><span class="mo-val a-mono" aria-hidden="true">Grade C</span>
-                  <span class="a-vh">Add Maths 0606: grade C on your first paper.</span>
-                </div>
-                <div class="mo-plant mo-sp is-dry" role="listitem" data-sp="sparse3" style="--now: 44%; --was: 40%">
-                  <span class="mo-pot-area" aria-hidden="true"><span class="mo-was"></span><span class="mo-stem"><span class="mo-leaf" style="--at: 30%"></span><span class="mo-leaf" style="--at: 62%"></span><span class="mo-bud" data-grade="C">C</span></span><span class="mo-pot"></span></span>
-                  <span class="mo-name" aria-hidden="true">Add Maths</span><span class="mo-val a-mono" aria-hidden="true">Grade C</span>
-                  <span class="a-vh">Add Maths 0606: grade C, 2 papers. Last paper 27 October.</span>
-                </div>
-                <a class="mo-plant mo-sp is-seed" role="listitem" data-sp="sparse0 sparse1 sparse2 sparse3" href="/student/correct">
-                  <span class="mo-pot-area" aria-hidden="true"><span class="mo-sp-guide"></span><span class="mo-sp-seed"></span><span class="mo-pot"></span></span>
-                  <span class="mo-name" aria-hidden="true">Physics</span><span class="mo-val mo-plant-it" aria-hidden="true">Plant it <svg class="a-ico"><use href="#a-i-arrow" /></svg></span>
-                  <span class="a-vh">Physics 0625: planted, no paper yet. Upload a Physics paper to plant it.</span>
-                </a>
+                <p class="ah-bar-label">240 / 500 XP to level 8</p>
               </div>
-              <div class="mo-fill" data-sp="sparse0">
-                <p class="mo-fill-t"><b class="a-mono">1 of 6</b> growing on your page</p>
-                <span class="mo-pips" aria-hidden="true"><i title="First result"></i><i title="Practice targets"></i><i class="is-on" title="Exam dates"></i><i title="3-day streak"></i><i title="Study plan"></i><i title="All 3 subjects planted"></i></span>
-                <p class="mo-fill-next"><span class="a-vh">Done: exam dates. </span>Next: your first result, marking now.</p>
+              <div data-only-state="one-paper">
+                <div class="ah-bar" role="progressbar" aria-label="XP to level 2" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" aria-valuetext="50 of 100 XP to level 2">
+                  <span class="ah-bar-fill ah-bar-half"></span>
+                </div>
+                <p class="ah-bar-label">50 / 100 XP to level 2</p>
               </div>
-              <div class="mo-fill" data-sp="sparse1">
-                <p class="mo-fill-t"><b class="a-mono">3 of 6</b> growing on your page</p>
-                <span class="mo-pips" aria-hidden="true"><i class="is-on" title="First result"></i><i class="is-on" title="Practice targets"></i><i class="is-on" title="Exam dates"></i><i title="3-day streak"></i><i title="Study plan"></i><i title="All 3 subjects planted"></i></span>
-                <p class="mo-fill-next"><span class="a-vh">Done: first result, practice targets, exam dates. </span>Next: plant Add Maths or Physics.</p>
+              <div data-sp="sparse0">
+                <div class="ah-bar" role="progressbar" aria-label="XP to level 2" aria-valuemin="0" aria-valuemax="100" aria-valuenow="20" aria-valuetext="20 of 100 XP to level 2"><span class="ah-bar-fill" style="inline-size: 20%"></span></div>
+                <p class="ah-bar-label">20 / 100 XP to level 2</p>
               </div>
-              <div class="mo-fill" data-sp="sparse2">
-                <p class="mo-fill-t"><b class="a-mono">4 of 6</b> growing on your page</p>
-                <span class="mo-pips" aria-hidden="true"><i class="is-on" title="First result"></i><i class="is-on" title="Practice targets"></i><i title="Exam dates"></i><i class="is-on" title="3-day streak"></i><i class="is-on" title="Study plan"></i><i title="All 3 subjects planted"></i></span>
-                <p class="mo-fill-next"><span class="a-vh">Done: first result, practice targets, streak, study plan. </span>Next: plant Physics and add its exam date.</p>
+              <div data-sp="sparse1">
+                <div class="ah-bar" role="progressbar" aria-label="XP to level 2" aria-valuemin="0" aria-valuemax="100" aria-valuenow="70" aria-valuetext="70 of 100 XP to level 2"><span class="ah-bar-fill" style="inline-size: 70%"></span></div>
+                <p class="ah-bar-label">70 / 100 XP to level 2</p>
               </div>
-              <div class="mo-fill" data-sp="sparse3">
-                <p class="mo-fill-t"><b class="a-mono">3 of 6</b> growing on your page</p>
-                <span class="mo-pips" aria-hidden="true"><i class="is-on" title="First result"></i><i class="is-on" title="Practice targets"></i><i class="is-on" title="Exam dates"></i><i title="3-day streak"></i><i title="Study plan"></i><i title="All 3 subjects planted"></i></span>
-                <p class="mo-fill-next"><span class="a-vh">Done: first result, practice targets, exam dates. </span>Next: one short set restarts your streak.</p>
+              <div data-sp="sparse2">
+                <div class="ah-bar" role="progressbar" aria-label="XP to level 3" aria-valuemin="0" aria-valuemax="200" aria-valuenow="120" aria-valuetext="120 of 200 XP to level 3"><span class="ah-bar-fill" style="inline-size: 60%"></span></div>
+                <p class="ah-bar-label">120 / 200 XP to level 3</p>
               </div>
-              <p class="mo-rest" data-only-state="streak-zero"><span class="mo-sent">Your garden is resting.</span> <span class="mo-ctx a-mono">Streak paused. Earn XP today and it grows again.</span></p>
-            </section>
-
-
-          <section class="a-action-card" data-anim aria-labelledby="a-act-h">
-            <h2 id="a-act-h" class="a-vh">Your next step</h2>
-            <div class="a-act a-act-result" data-when-action="result">
-              <p class="a-meta-line"><span data-sp-off="sparse1">Marked <span class="a-mono">4 Nov</span></span><span data-sp="sparse1">Your first result · marked today</span><span class="a-code">0580</span></p>
-              <h3 class="a-act-title a-act-paper">0580/42 · m/j 2024</h3>
-              <p class="a-act-score"><span class="a-vh">Score </span><b class="a-act-marks" data-sp-off="sparse1">61</b><b class="a-act-marks" data-sp="sparse1">37</b><span class="a-act-of">/80</span><span class="a-act-grade" data-grade="A" aria-label="Grade A" data-sp-off="sparse1">A</span><span class="a-act-grade" data-grade="C" aria-label="Grade C" data-sp="sparse1">C</span><span class="a-act-first" data-sp="sparse1">Your starting point</span><span class="a-act-up" data-sp-off="sparse1"><svg class="a-ico" aria-hidden="true"><use href="#a-i-up" /></svg>up from B</span></p>
-              <p class="a-act-body">Every mark explained, question by question.</p>
-              <a class="a-btn a-btn-primary a-act-btn" href="/student/result/p-0580-42">See your marks <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+              <div data-sp="sparse3">
+                <div class="ah-bar" role="progressbar" aria-label="XP to level 3" aria-valuemin="0" aria-valuemax="200" aria-valuenow="170" aria-valuetext="170 of 200 XP to level 3"><span class="ah-bar-fill" style="inline-size: 85%"></span></div>
+                <p class="ah-bar-label">170 / 200 XP to level 3</p>
+              </div>
             </div>
-            <div class="a-act" data-when-action="marking">
-              <p class="a-meta-line"><span>Marking now</span><span class="a-code" data-sp-off="sparse0">0625</span><span class="a-code" data-sp="sparse0">0580</span></p>
-              <h3 class="a-act-title"><span data-sp-off="sparse0">0625/42 is being marked</span><span data-sp="sparse0">Your first paper is being marked</span></h3>
-              <div class="a-prog" data-stage="3">
-                <p class="a-prog-now" role="status" aria-live="polite"><span data-stage-text="1">Finding the paper and mark scheme</span><span data-stage-text="2">Reading your answers</span><span data-stage-text="3">Marking question <span class="a-mono">7</span> of <span class="a-mono">12</span></span></p>
-                <div class="a-prog-bar" role="progressbar" aria-label="Marking progress" aria-valuemin="0" aria-valuemax="12" aria-valuenow="7" aria-valuetext="Question 7 of 12">
-                  <span class="a-prog-seg" data-seg="1"><span class="a-prog-fill"></span></span>
-                  <span class="a-prog-seg" data-seg="2"><span class="a-prog-fill"></span></span>
-                  <span class="a-prog-seg" data-seg="3"><span class="a-prog-fill"></span></span>
+
+
+            <div class="ah-week">
+              <div data-when-streak="kept">
+                <div class="ah-week-head">
+                  <p class="ah-week-n"><button type="button" class="ah-streak" aria-describedby="ah-week-meta" aria-label="9-day streak. Press to make Binny cheer." title="Press to make Binny cheer">9-day streak</button></p>
+                  <p class="ah-week-meta" id="ah-week-meta">Longest 14 · 1 freeze · XP per day</p>
                 </div>
-                <ol class="a-prog-steps" aria-hidden="true">
-                  <li data-step="1">Paper and mark scheme</li>
-                  <li data-step="2">Your answers</li>
-                  <li data-step="3">Questions <span class="a-mono">7/12</span></li>
+                <ol class="ah-strip" aria-label="XP per day, last 7 days. Peak 120 XP on 4 November.">
+                  <li class="ah-day is-earned" title="30 Oct · 60 XP"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.5"></span></span><span class="ah-day-w">Fri</span><span class="ah-day-d">30</span><span class="ah-vh">30 October, 60 XP</span></li>
+                  <li class="ah-day is-earned" title="31 Oct · 20 XP"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.167"></span></span><span class="ah-day-w">Sat</span><span class="ah-day-d">31</span><span class="ah-vh">31 October, 20 XP</span></li>
+                  <li class="ah-day is-earned" title="1 Nov · 35 XP"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.292"></span></span><span class="ah-day-w">Sun</span><span class="ah-day-d">1</span><span class="ah-vh">1 November, 35 XP</span></li>
+                  <li class="ah-day is-earned" title="2 Nov · 50 XP"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.417"></span></span><span class="ah-day-w">Mon</span><span class="ah-day-d">2</span><span class="ah-vh">2 November, 50 XP</span></li>
+                  <li class="ah-day is-earned" title="3 Nov · 30 XP"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.25"></span></span><span class="ah-day-w">Tue</span><span class="ah-day-d">3</span><span class="ah-vh">3 November, 30 XP</span></li>
+                  <li class="ah-day is-earned" title="4 Nov · 120 XP"><span class="ah-xp-col"><span class="ah-xp-val" aria-hidden="true">120</span><span class="ah-xp-bar" style="--xp: 1"></span></span><span class="ah-day-w">Wed</span><span class="ah-day-d">4</span><span class="ah-vh">4 November, 120 XP</span></li>
+                  <li class="ah-day is-earned is-today" aria-current="date" title="Today · 25 XP"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.208"></span></span><span class="ah-day-w"><span class="ah-wide">Today</span><span class="ah-narrow">Thu</span></span><span class="ah-day-d">5</span><span class="ah-vh">5 November, today, 25 XP</span></li>
                 </ol>
               </div>
-              <p class="a-act-body a-sp-next" data-sp="sparse0">When <span class="a-mono">0580/42</span> is marked you get your grade, every lost mark explained, and your first practice targets.</p>
-              <a class="a-btn a-btn-primary a-act-btn" href="/student/correct">See progress <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
-              <a class="a-sp-also" href="/student/correct" data-sp="sparse0">While you wait, upload an Add Maths or Physics paper <svg class="a-ico" aria-hidden="true"><use href="#a-i-chev" /></svg></a>
-            </div>
-            <div class="a-act" data-when-action="session">
-              <p class="a-meta-line"><span>Today's session</span><span class="a-code">0606</span></p>
-              <h3 class="a-act-title">Quadratic inequalities</h3>
-              <p class="a-facts"><span class="a-mono">25 min</span></p>
-              <p class="a-act-body">Next in your study plan for Additional Mathematics.</p>
-              <a class="a-btn a-btn-primary a-act-btn" href="/student/plan/0606/session/s1">Start session <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
-            </div>
-            <div class="a-act" data-when-action="first-paper">
-
-              <h3 class="a-act-title">Let's get your first paper marked</h3>
-
-              <p class="a-act-body">Photograph or upload a paper you have already sat. Lemely finds the session and variant, pulls the official mark scheme, and marks it question by question.</p>
-              <a class="a-btn a-btn-primary a-act-btn" href="/student/correct">Upload a paper <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
-            </div>
-            <div data-when-action="practice">
-            <div class="a-act" data-needs="many-papers">
-              <p class="a-meta-line"><span>Practise next</span><span class="a-code">0625</span></p>
-              <h3 class="a-act-title">Waves</h3>
-              <p class="a-facts"><span class="a-mono">54% accuracy</span></p>
-              <p class="a-act-body">Your weakest topic right now. A short set shows whether it is improving.</p>
-              <a class="a-btn a-btn-primary a-act-btn" href="/student/practice/0625">Practise waves <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
-            </div>
-            <div class="a-act" data-only-state="one-paper">
-              <p class="a-meta-line"><span>Practise next</span><span class="a-code">0580</span></p>
-              <h3 class="a-act-title">Vectors</h3>
-              <p class="a-facts"><span class="a-mono">50% accuracy</span></p>
-              <p class="a-act-body">Your weakest topic right now. A short set shows whether it is improving.</p>
-              <a class="a-btn a-btn-primary a-act-btn" href="/student/practice/0580">Practise vectors <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
-            </div>
-            <div class="a-act" data-sp="sparse2">
-              <p class="a-meta-line"><span>Practise next</span><span class="a-code">0606</span></p>
-              <h3 class="a-act-title">Logarithms</h3>
-              <p class="a-facts"><span class="a-mono">48% accuracy</span></p>
-              <p class="a-act-body">Your weakest topic so far. One short set shows whether it is moving.</p>
-              <a class="a-btn a-btn-primary a-act-btn" href="/student/practice/0606">Practise logarithms <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
-            </div>
-            <div class="a-act" data-sp="sparse3">
-              <p class="a-meta-line"><span>Pick up where you left off</span><span class="a-code">0606</span></p>
-              <h3 class="a-act-title">Logarithms</h3>
-              <p class="a-facts"><span class="a-mono">51% accuracy · 10 min</span></p>
-              <p class="a-act-body">One 10-minute set starts a new streak and waters your Add Maths plant.</p>
-              <a class="a-btn a-btn-primary a-act-btn" href="/student/practice/0606">Start a 10-minute set <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
-            </div>
-            </div>
-            <div class="a-act" data-when-action="correct">
-
-              <h3 class="a-act-title">Ready for another paper?</h3>
-
-              <p class="a-act-body">Each paper sharpens your predicted grade.</p>
-              <a class="a-btn a-btn-primary a-act-btn" href="/student/correct">Upload a paper <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+              <div data-when-streak="zero">
+                <div class="ah-week-head">
+                  <p class="ah-week-n">Streak paused.</p>
+                </div>
+                <p class="ah-week-body">Earn XP today to start again. Correct a paper, finish a session, take a quiz or review flashcards.</p>
+                <ol class="ah-strip" aria-label="XP per day, last 7 days">
+                  <li class="ah-day is-earned ah-op-empty"><span class="ah-xp-col"><span class="ah-xp-val" aria-hidden="true">60</span><span class="ah-xp-bar" style="--xp: 0.5"></span></span><span class="ah-day-w">Fri</span><span class="ah-day-d">30</span><span class="ah-vh" data-needs="many-papers">30 October, 60 XP</span><span class="ah-vh" data-only-state="one-paper">30 October, no XP</span></li>
+                  <li class="ah-day is-earned ah-op-empty"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.167"></span></span><span class="ah-day-w">Sat</span><span class="ah-day-d">31</span><span class="ah-vh" data-needs="many-papers">31 October, 20 XP</span><span class="ah-vh" data-only-state="one-paper">31 October, no XP</span></li>
+                  <li class="ah-day is-earned ah-op-empty"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.292"></span></span><span class="ah-day-w">Sun</span><span class="ah-day-d">1</span><span class="ah-vh" data-needs="many-papers">1 November, 35 XP</span><span class="ah-vh" data-only-state="one-paper">1 November, no XP</span></li>
+                  <li class="ah-day is-earned"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.417"></span></span><span class="ah-day-w">Mon</span><span class="ah-day-d">2</span><span class="ah-vh">2 November, 50 XP</span></li>
+                  <li class="ah-day is-earned ah-op-empty"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.25"></span></span><span class="ah-day-w">Tue</span><span class="ah-day-d">3</span><span class="ah-vh" data-needs="many-papers">3 November, 30 XP</span><span class="ah-vh" data-only-state="one-paper">3 November, no XP</span></li>
+                  <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Wed</span><span class="ah-day-d">4</span><span class="ah-vh">4 November, no XP yet</span></li>
+                  <li class="ah-day is-today" aria-current="date"><span class="ah-xp-col"></span><span class="ah-day-w"><span class="ah-wide">Today</span><span class="ah-narrow">Thu</span></span><span class="ah-day-d">5</span><span class="ah-vh">5 November, no XP yet</span></li>
+                </ol>
+              </div>
+              <!-- Sparse states: their own week, read from each fixture's calendar. -->
+              <div class="ah-sp-week" data-sp="sparse0">
+                <div class="ah-week-head"><p class="ah-week-n">Day 1.</p></div>
+                <p class="ah-week-body">Uploading your first paper earned <span class="a-mono">20</span> XP. Come back tomorrow for day 2.</p>
+                <ol class="ah-strip" aria-label="XP per day, last 7 days. 20 XP today.">
+                  <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Fri</span><span class="ah-day-d">30</span><span class="ah-vh">30 October, no XP</span></li>
+                  <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Sat</span><span class="ah-day-d">31</span><span class="ah-vh">31 October, no XP</span></li>
+                  <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Sun</span><span class="ah-day-d">1</span><span class="ah-vh">1 November, no XP</span></li>
+                  <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Mon</span><span class="ah-day-d">2</span><span class="ah-vh">2 November, no XP</span></li>
+                  <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Tue</span><span class="ah-day-d">3</span><span class="ah-vh">3 November, no XP</span></li>
+                  <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Wed</span><span class="ah-day-d">4</span><span class="ah-vh">4 November, no XP</span></li>
+                  <li class="ah-day is-earned is-today" aria-current="date"><span class="ah-xp-col"><span class="ah-xp-val" aria-hidden="true">20</span><span class="ah-xp-bar" style="--xp: 0.167"></span></span><span class="ah-day-w"><span class="ah-wide">Today</span><span class="ah-narrow">Thu</span></span><span class="ah-day-d">5</span><span class="ah-vh">5 November, today, 20 XP</span></li>
+                </ol>
+              </div>
+              <div class="ah-sp-week" data-sp="sparse1">
+                <div class="ah-week-head"><p class="ah-week-n">1-day streak</p></div>
+                <p class="ah-week-body">Practise or upload tomorrow to make it 2.</p>
+                <ol class="ah-strip" aria-label="XP per day, last 7 days. 70 XP today.">
+                  <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Fri</span><span class="ah-day-d">30</span><span class="ah-vh">30 October, no XP</span></li>
+                  <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Sat</span><span class="ah-day-d">31</span><span class="ah-vh">31 October, no XP</span></li>
+                  <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Sun</span><span class="ah-day-d">1</span><span class="ah-vh">1 November, no XP</span></li>
+                  <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Mon</span><span class="ah-day-d">2</span><span class="ah-vh">2 November, no XP</span></li>
+                  <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Tue</span><span class="ah-day-d">3</span><span class="ah-vh">3 November, no XP</span></li>
+                  <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Wed</span><span class="ah-day-d">4</span><span class="ah-vh">4 November, no XP</span></li>
+                  <li class="ah-day is-earned is-today" aria-current="date"><span class="ah-xp-col"><span class="ah-xp-val" aria-hidden="true">70</span><span class="ah-xp-bar" style="--xp: 0.583"></span></span><span class="ah-day-w"><span class="ah-wide">Today</span><span class="ah-narrow">Thu</span></span><span class="ah-day-d">5</span><span class="ah-vh">5 November, today, 70 XP</span></li>
+                </ol>
+              </div>
+              <div class="ah-sp-week" data-sp="sparse2">
+                <div class="ah-week-head"><p class="ah-week-n">3-day streak</p><p class="ah-week-meta">Your longest yet · XP per day</p></div>
+                <ol class="ah-strip" aria-label="XP per day, last 7 days. Peak 60 XP on 3 November.">
+                  <li class="ah-day is-earned"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.333"></span></span><span class="ah-day-w">Fri</span><span class="ah-day-d">30</span><span class="ah-vh">30 October, 40 XP</span></li>
+                  <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Sat</span><span class="ah-day-d">31</span><span class="ah-vh">31 October, no XP</span></li>
+                  <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Sun</span><span class="ah-day-d">1</span><span class="ah-vh">1 November, no XP</span></li>
+                  <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Mon</span><span class="ah-day-d">2</span><span class="ah-vh">2 November, no XP</span></li>
+                  <li class="ah-day is-earned"><span class="ah-xp-col"><span class="ah-xp-val" aria-hidden="true">60</span><span class="ah-xp-bar" style="--xp: 0.5"></span></span><span class="ah-day-w">Tue</span><span class="ah-day-d">3</span><span class="ah-vh">3 November, 60 XP</span></li>
+                  <li class="ah-day is-earned"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.333"></span></span><span class="ah-day-w">Wed</span><span class="ah-day-d">4</span><span class="ah-vh">4 November, 40 XP</span></li>
+                  <li class="ah-day is-earned is-today" aria-current="date"><span class="ah-xp-col"><span class="ah-xp-bar" style="--xp: 0.25"></span></span><span class="ah-day-w"><span class="ah-wide">Today</span><span class="ah-narrow">Thu</span></span><span class="ah-day-d">5</span><span class="ah-vh">5 November, today, 30 XP</span></li>
+                </ol>
+              </div>
+              <div class="ah-sp-week" data-sp="sparse3">
+                <div class="ah-week-head"><p class="ah-week-n">Welcome back.</p></div>
+                <p class="ah-week-body">Your streak reset. Your progress didn't. Earn XP today to start a new one.</p>
+                <ol class="ah-strip" aria-label="XP per day, last 7 days. No XP yet this week.">
+                  <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Fri</span><span class="ah-day-d">30</span><span class="ah-vh">30 October, no XP</span></li>
+                  <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Sat</span><span class="ah-day-d">31</span><span class="ah-vh">31 October, no XP</span></li>
+                  <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Sun</span><span class="ah-day-d">1</span><span class="ah-vh">1 November, no XP</span></li>
+                  <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Mon</span><span class="ah-day-d">2</span><span class="ah-vh">2 November, no XP</span></li>
+                  <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Tue</span><span class="ah-day-d">3</span><span class="ah-vh">3 November, no XP</span></li>
+                  <li class="ah-day"><span class="ah-xp-col"></span><span class="ah-day-w">Wed</span><span class="ah-day-d">4</span><span class="ah-vh">4 November, no XP</span></li>
+                  <li class="ah-day is-today" aria-current="date"><span class="ah-xp-col"></span><span class="ah-day-w"><span class="ah-wide">Today</span><span class="ah-narrow">Thu</span></span><span class="ah-day-d">5</span><span class="ah-vh">5 November, today, no XP yet</span></li>
+                </ol>
+              </div>
             </div>
           </section>
-        </div>
+
+            <div class="a-next-row">
+
+
+                <section class="a-mo" aria-label="Your momentum">
+                  <h2 class="mo-h">Your Garden</h2>
+                  <p class="mo-read" data-k="a" data-needs="many-papers" aria-hidden="true"><span class="mo-sent">Maths is up <b>27 points</b></span><span class="mo-ctx a-mono">49% → 76% · 14 papers</span></p><p class="mo-read" data-k="b" data-needs="many-papers" aria-hidden="true"><span class="mo-sent">Add Maths is up <b>15 points</b></span><span class="mo-ctx a-mono">44% → 59% · 6 papers</span></p><p class="mo-read" data-k="c" data-needs="many-papers" aria-hidden="true"><span class="mo-sent">Physics is up <b>7 points</b></span><span class="mo-ctx a-mono">41% → 48% · 2 papers</span></p>
+                                <p class="mo-read" data-k="solo" data-only-state="one-paper"><span class="mo-sent">Maths has <b>sprouted</b></span><span class="mo-ctx a-mono">Grade B · first paper</span></p>
+                  <fieldset class="mo-garden" data-needs="many-papers"><legend class="a-vh">Pick a subject to see how far it has grown</legend>
+                      <input class="a-vh mo-r" type="radio" name="mo2-subj" id="mo2-a" value="a" checked>
+                      <label class="mo-plant" for="mo2-a" style="--now: 76.7%; --was: 31.7%">
+                        <span class="mo-pot-area" aria-hidden="true"><span class="mo-was"></span><span class="mo-stem"><span class="mo-leaf" style="--at: 14%"></span><span class="mo-leaf" style="--at: 29%"></span><span class="mo-leaf" style="--at: 43%"></span><span class="mo-leaf" style="--at: 57%"></span><span class="mo-leaf" style="--at: 71%"></span><span class="mo-leaf" style="--at: 86%"></span><span class="mo-bud" data-grade="A">A</span></span><span class="mo-pot"></span></span>
+                        <span class="mo-name">Maths</span><span class="mo-val a-mono">76%</span>
+                        <span class="a-vh">Maths 0580: 49% to 76%, up 27, 14 papers.</span>
+                      </label><input class="a-vh mo-r" type="radio" name="mo2-subj" id="mo2-b" value="b">
+                      <label class="mo-plant" for="mo2-b" style="--now: 48.3%; --was: 23.3%">
+                        <span class="mo-pot-area" aria-hidden="true"><span class="mo-was"></span><span class="mo-stem"><span class="mo-leaf" style="--at: 14%"></span><span class="mo-leaf" style="--at: 29%"></span><span class="mo-leaf" style="--at: 43%"></span><span class="mo-leaf" style="--at: 57%"></span><span class="mo-leaf" style="--at: 71%"></span><span class="mo-leaf" style="--at: 86%"></span><span class="mo-bud" data-grade="B">B</span></span><span class="mo-pot"></span></span>
+                        <span class="mo-name">Add Maths</span><span class="mo-val a-mono">59%</span>
+                        <span class="a-vh">Add Maths 0606: 44% to 59%, up 15, 6 papers.</span>
+                      </label><input class="a-vh mo-r" type="radio" name="mo2-subj" id="mo2-c" value="c">
+                      <label class="mo-plant" for="mo2-c" style="--now: 30.0%; --was: 18.3%">
+                        <span class="mo-pot-area" aria-hidden="true"><span class="mo-was"></span><span class="mo-stem"><span class="mo-leaf" style="--at: 33%"></span><span class="mo-leaf" style="--at: 67%"></span><span class="mo-bud" data-grade="C">C</span></span><span class="mo-pot"></span></span>
+                        <span class="mo-name">Physics</span><span class="mo-val a-mono">48%</span>
+                        <span class="a-vh">Physics 0625: 41% to 48%, up 7, 2 papers.</span>
+                      </label>
+                  </fieldset>
+                  <div class="mo-garden mo-garden-solo" role="group" aria-label="Your garden" data-only-state="one-paper">
+                    <div class="mo-plant is-solo" style="--now: 52%; --was: 0%">
+                      <span class="mo-pot-area" aria-hidden="true"><span class="mo-stem"><span class="mo-leaf" style="--at: 30%"></span><span class="mo-leaf" style="--at: 62%"></span><span class="mo-bud" data-grade="B">B</span></span><span class="mo-pot"></span></span>
+                      <span class="mo-name">Maths</span><span class="mo-val a-mono">0580</span>
+                      <span class="a-vh">Maths 0580: grade B on your first paper.</span>
+                    </div>
+                    <p class="mo-seed a-mono">Mark more papers to see how it grows.</p>
+                  </div>
+                  <!-- Sparse states: every chosen subject has a pot. Seeds wait for a first paper, sprouts
+                       carry their grade, and the readout and the fill line say what grows next. -->
+                  <p class="mo-read" data-k="sp" data-sp="sparse0"><span class="mo-sent">Your first seed is <b>germinating</b></span><span class="mo-ctx a-mono">0580/42 is being marked · 3 subjects planted</span></p>
+                  <p class="mo-read" data-k="sp" data-sp="sparse1"><span class="mo-sent">Maths has <b>sprouted</b></span><span class="mo-ctx a-mono">Grade C · your first result</span></p>
+                  <p class="mo-read" data-k="sp" data-sp="sparse2"><span class="mo-sent">Maths is <b>up a grade</b></span><span class="mo-ctx a-mono">C → B · 2 of 3 subjects growing</span></p>
+                  <p class="mo-read" data-k="sp" data-sp="sparse3"><span class="mo-sent">Your progress <b>is safe</b></span><span class="mo-ctx a-mono">Last watered 27 Oct · 5 papers kept</span></p>
+                  <div class="mo-garden mo-garden-sp" role="list" aria-label="Your garden, one plant per subject">
+                    <div class="mo-plant mo-sp is-germ is-lead" role="listitem" data-sp="sparse0">
+                      <span class="mo-pot-area" aria-hidden="true"><span class="mo-sp-seed"><span class="mo-sp-shoot"></span></span><span class="mo-pot"></span></span>
+                      <span class="mo-name" aria-hidden="true">Maths</span><span class="mo-val a-mono" aria-hidden="true">Marking now</span>
+                      <span class="a-vh">Maths 0580: your first paper is being marked. Its plant appears when the grade lands.</span>
+                    </div>
+                    <div class="mo-plant mo-sp is-lead" role="listitem" data-sp="sparse1" style="--now: 40%; --was: 0%">
+                      <span class="mo-pot-area" aria-hidden="true"><span class="mo-stem"><span class="mo-leaf" style="--at: 30%"></span><span class="mo-leaf" style="--at: 62%"></span><span class="mo-bud" data-grade="C">C</span></span><span class="mo-pot"></span></span>
+                      <span class="mo-name" aria-hidden="true">Maths</span><span class="mo-val a-mono" aria-hidden="true">Grade C</span>
+                      <span class="a-vh">Maths 0580: grade C on your first paper.</span>
+                    </div>
+                    <div class="mo-plant mo-sp is-lead" role="listitem" data-sp="sparse2" style="--now: 62%; --was: 40%">
+                      <span class="mo-pot-area" aria-hidden="true"><span class="mo-was"></span><span class="mo-stem"><span class="mo-leaf" style="--at: 22%"></span><span class="mo-leaf" style="--at: 48%"></span><span class="mo-leaf" style="--at: 74%"></span><span class="mo-bud" data-grade="B">B</span></span><span class="mo-pot"></span></span>
+                      <span class="mo-name" aria-hidden="true">Maths</span><span class="mo-val mo-val-up a-mono" aria-hidden="true">C → B</span>
+                      <span class="a-vh">Maths 0580: grade B, up from C, 3 papers.</span>
+                    </div>
+                    <div class="mo-plant mo-sp is-dry" role="listitem" data-sp="sparse3" style="--now: 64%; --was: 40%">
+                      <span class="mo-pot-area" aria-hidden="true"><span class="mo-was"></span><span class="mo-stem"><span class="mo-leaf" style="--at: 22%"></span><span class="mo-leaf" style="--at: 48%"></span><span class="mo-leaf" style="--at: 74%"></span><span class="mo-bud" data-grade="B">B</span></span><span class="mo-pot"></span></span>
+                      <span class="mo-name" aria-hidden="true">Maths</span><span class="mo-val a-mono" aria-hidden="true">Grade B</span>
+                      <span class="a-vh">Maths 0580: grade B, up from C, 3 papers. Last paper 27 October.</span>
+                    </div>
+                    <a class="mo-plant mo-sp is-seed" role="listitem" data-sp="sparse0 sparse1" href="/student/correct">
+                      <span class="mo-pot-area" aria-hidden="true"><span class="mo-sp-guide"></span><span class="mo-sp-seed"></span><span class="mo-pot"></span></span>
+                      <span class="mo-name" aria-hidden="true">Add Maths</span><span class="mo-val mo-plant-it" aria-hidden="true">Plant it <svg class="a-ico"><use href="#a-i-arrow" /></svg></span>
+                      <span class="a-vh">Add Maths 0606: planted, no paper yet. Upload an Add Maths paper to plant it.</span>
+                    </a>
+                    <div class="mo-plant mo-sp" role="listitem" data-sp="sparse2" style="--now: 34%; --was: 0%">
+                      <span class="mo-pot-area" aria-hidden="true"><span class="mo-stem"><span class="mo-leaf" style="--at: 45%"></span><span class="mo-bud" data-grade="C">C</span></span><span class="mo-pot"></span></span>
+                      <span class="mo-name" aria-hidden="true">Add Maths</span><span class="mo-val a-mono" aria-hidden="true">Grade C</span>
+                      <span class="a-vh">Add Maths 0606: grade C on your first paper.</span>
+                    </div>
+                    <div class="mo-plant mo-sp is-dry" role="listitem" data-sp="sparse3" style="--now: 44%; --was: 40%">
+                      <span class="mo-pot-area" aria-hidden="true"><span class="mo-was"></span><span class="mo-stem"><span class="mo-leaf" style="--at: 30%"></span><span class="mo-leaf" style="--at: 62%"></span><span class="mo-bud" data-grade="C">C</span></span><span class="mo-pot"></span></span>
+                      <span class="mo-name" aria-hidden="true">Add Maths</span><span class="mo-val a-mono" aria-hidden="true">Grade C</span>
+                      <span class="a-vh">Add Maths 0606: grade C, 2 papers. Last paper 27 October.</span>
+                    </div>
+                    <a class="mo-plant mo-sp is-seed" role="listitem" data-sp="sparse0 sparse1 sparse2 sparse3" href="/student/correct">
+                      <span class="mo-pot-area" aria-hidden="true"><span class="mo-sp-guide"></span><span class="mo-sp-seed"></span><span class="mo-pot"></span></span>
+                      <span class="mo-name" aria-hidden="true">Physics</span><span class="mo-val mo-plant-it" aria-hidden="true">Plant it <svg class="a-ico"><use href="#a-i-arrow" /></svg></span>
+                      <span class="a-vh">Physics 0625: planted, no paper yet. Upload a Physics paper to plant it.</span>
+                    </a>
+                  </div>
+                  <div class="mo-fill" data-sp="sparse0">
+                    <p class="mo-fill-t"><b class="a-mono">1 of 6</b> growing on your page</p>
+                    <span class="mo-pips" aria-hidden="true"><i title="First result"></i><i title="Practice targets"></i><i class="is-on" title="Exam dates"></i><i title="3-day streak"></i><i title="Study plan"></i><i title="All 3 subjects planted"></i></span>
+                    <p class="mo-fill-next"><span class="a-vh">Done: exam dates. </span>Next: your first result, marking now.</p>
+                  </div>
+                  <div class="mo-fill" data-sp="sparse1">
+                    <p class="mo-fill-t"><b class="a-mono">3 of 6</b> growing on your page</p>
+                    <span class="mo-pips" aria-hidden="true"><i class="is-on" title="First result"></i><i class="is-on" title="Practice targets"></i><i class="is-on" title="Exam dates"></i><i title="3-day streak"></i><i title="Study plan"></i><i title="All 3 subjects planted"></i></span>
+                    <p class="mo-fill-next"><span class="a-vh">Done: first result, practice targets, exam dates. </span>Next: plant Add Maths or Physics.</p>
+                  </div>
+                  <div class="mo-fill" data-sp="sparse2">
+                    <p class="mo-fill-t"><b class="a-mono">4 of 6</b> growing on your page</p>
+                    <span class="mo-pips" aria-hidden="true"><i class="is-on" title="First result"></i><i class="is-on" title="Practice targets"></i><i title="Exam dates"></i><i class="is-on" title="3-day streak"></i><i class="is-on" title="Study plan"></i><i title="All 3 subjects planted"></i></span>
+                    <p class="mo-fill-next"><span class="a-vh">Done: first result, practice targets, streak, study plan. </span>Next: plant Physics and add its exam date.</p>
+                  </div>
+                  <div class="mo-fill" data-sp="sparse3">
+                    <p class="mo-fill-t"><b class="a-mono">3 of 6</b> growing on your page</p>
+                    <span class="mo-pips" aria-hidden="true"><i class="is-on" title="First result"></i><i class="is-on" title="Practice targets"></i><i class="is-on" title="Exam dates"></i><i title="3-day streak"></i><i title="Study plan"></i><i title="All 3 subjects planted"></i></span>
+                    <p class="mo-fill-next"><span class="a-vh">Done: first result, practice targets, exam dates. </span>Next: one short set restarts your streak.</p>
+                  </div>
+                  <p class="mo-rest" data-only-state="streak-zero"><span class="mo-sent">Your garden is resting.</span> <span class="mo-ctx a-mono">Streak paused. Earn XP today and it grows again.</span></p>
+                </section>
+
+                <!-- ===== Progress card: Mistakes beaten. Shown for the states data-gstate covers; the Garden above stays for the rest. ===== -->
+                <!-- Direction 1: Grade Ladder. Track spans 30% to 90%; ticks sit on each paper's real boundaries. -->
+                  <section class="a-prog-dir a-prog-ladder" data-garden-dir="1" hidden aria-labelledby="gd1-h">
+                    <header class="k-head"><h2 class="pd-h" id="gd1-h">Mistakes beaten</h2><span class="k-sub">Lost once, right since</span></header>
+                    <div data-gs="pop">
+                      <p class="k-big"><span class="k-num">11</span><span class="k-lead">mistakes you don't make anymore</span></p>
+                      <p class="k-ctx">Last one beaten: Moments, on 0625/42</p>
+                    </div>
+                    <div data-gs="sp0">
+                      <p class="k-big"><span class="k-lead">Your first paper is being marked</span></p>
+                      <p class="k-ctx">Every mark it loses becomes a mistake to beat</p>
+                    </div>
+                    <div data-gs="sp1">
+                      <p class="k-big"><span class="k-num">6</span><span class="k-lead">mistakes to beat from your first paper</span></p>
+                      <p class="k-ctx">Get one right on your next paper and it counts</p>
+                    </div>
+                    <div data-gs="sp2">
+                      <p class="k-big"><span class="k-num">2</span><span class="k-lead">mistakes beaten · 5 to go</span></p>
+                      <p class="k-ctx">Bearings beaten on your last Maths paper</p>
+                    </div>
+                    <ul class="x-chips" data-gs="pop" aria-label="Recently beaten and still to beat">
+                      <li class="x-chip"><span class="x-tick" aria-hidden="true"></span><span class="a-vh">Beaten: </span>Moments <span class="x-code">0625</span></li>
+                      <li class="x-chip"><span class="x-tick" aria-hidden="true"></span><span class="a-vh">Beaten: </span>Bearings <span class="x-code">0580</span></li>
+                      <li class="x-chip"><span class="x-tick" aria-hidden="true"></span><span class="a-vh">Beaten: </span>Chain rule <span class="x-code">0606</span></li>
+                      <li class="x-chip"><span class="x-tick" aria-hidden="true"></span><span class="a-vh">Beaten: </span>Vectors <span class="x-code">0580</span></li>
+                      <li class="x-chip is-open"><span class="a-vh">To beat: </span>Logarithms <span class="x-code">0606</span></li>
+                      <li class="x-chip is-open"><span class="a-vh">To beat: </span>Circle theorems <span class="x-code">0580</span></li>
+                    </ul>
+                    <ul class="x-chips" data-gs="sp1" aria-label="Mistakes to beat">
+                      <li class="x-chip is-open"><span class="a-vh">To beat: </span>Bearings</li><li class="x-chip is-open"><span class="a-vh">To beat: </span>Simultaneous equations</li><li class="x-chip is-open"><span class="a-vh">To beat: </span>Vectors</li><li class="x-chip is-open"><span class="a-vh">To beat: </span>Circle theorems</li>
+                    </ul>
+                    <ul class="x-chips" data-gs="sp2" aria-label="Beaten and still to beat">
+                      <li class="x-chip"><span class="x-tick" aria-hidden="true"></span><span class="a-vh">Beaten: </span>Bearings <span class="x-code">0580</span></li>
+                      <li class="x-chip"><span class="x-tick" aria-hidden="true"></span><span class="a-vh">Beaten: </span>Vectors <span class="x-code">0580</span></li>
+                      <li class="x-chip is-open"><span class="a-vh">To beat: </span>Circle theorems <span class="x-code">0580</span></li>
+                      <li class="x-chip is-open"><span class="a-vh">To beat: </span>Logarithms <span class="x-code">0606</span></li>
+                    </ul>
+                    <div class="x-foot" data-gs="pop sp1 sp2">
+                      <span class="k-ctx" data-gs="pop">4 still to beat</span><span class="k-ctx" data-gs="sp1">2 more on the paper</span><span class="k-ctx" data-gs="sp2">3 more still to beat</span>
+                      <a class="k-go" href="/student/practice/0606">Practise Logarithms <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+                    </div>
+                  </section>
+
+                <!-- Direction 2: Exam Pace. Lane x runs from the first paper to exam day; y spans 30% to 90%.
+                     Solid line = marks so far, dashed = pace projected to the finish line (next grade). -->
+
+                <!-- Direction 3: Topic Map. One tile per syllabus topic in syllabus order; data-tiles is
+                     s secure (70%+), m building (50-69%), w shaky (under 50%), p charting now, . not charted;
+                     * and ! mark the next-step tile (building, shaky). variant-a.js expands it. -->
+
+
+              <section class="a-action-card" data-anim aria-labelledby="a-act-h">
+                <h2 id="a-act-h" class="a-vh">Your next step</h2>
+                <div class="a-act a-act-result" data-when-action="result">
+                  <p class="a-meta-line"><span data-sp-off="sparse1">Marked <span class="a-mono">4 Nov</span></span><span data-sp="sparse1">Your first result · marked today</span><span class="a-code">0580</span></p>
+                  <h3 class="a-act-title a-act-paper">0580/42 · m/j 2024</h3>
+                  <p class="a-act-score"><span class="a-vh">Score </span><b class="a-act-marks" data-sp-off="sparse1">61</b><b class="a-act-marks" data-sp="sparse1">37</b><span class="a-act-of">/80</span><span class="a-act-grade" data-grade="A" aria-label="Grade A" data-sp-off="sparse1">A</span><span class="a-act-grade" data-grade="C" aria-label="Grade C" data-sp="sparse1">C</span><span class="a-act-first" data-sp="sparse1">Your starting point</span><span class="a-act-up" data-sp-off="sparse1"><svg class="a-ico" aria-hidden="true"><use href="#a-i-up" /></svg>up from B</span></p>
+                  <p class="a-act-body">Every mark explained, question by question.</p>
+                  <a class="a-btn a-btn-primary a-act-btn" href="/student/result/p-0580-42">See your marks <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+                </div>
+                <div class="a-act" data-when-action="marking">
+                  <p class="a-meta-line"><span>Marking now</span><span class="a-code" data-sp-off="sparse0">0625</span><span class="a-code" data-sp="sparse0">0580</span></p>
+                  <h3 class="a-act-title"><span data-sp-off="sparse0">0625/42 is being marked</span><span data-sp="sparse0">Your first paper is being marked</span></h3>
+                  <div class="a-prog" data-stage="3">
+                    <p class="a-prog-now" role="status" aria-live="polite"><span data-stage-text="1">Finding the paper and mark scheme</span><span data-stage-text="2">Reading your answers</span><span data-stage-text="3">Marking question <span class="a-mono">7</span> of <span class="a-mono">12</span></span></p>
+                    <div class="a-prog-bar" role="progressbar" aria-label="Marking progress" aria-valuemin="0" aria-valuemax="12" aria-valuenow="7" aria-valuetext="Question 7 of 12">
+                      <span class="a-prog-seg" data-seg="1"><span class="a-prog-fill"></span></span>
+                      <span class="a-prog-seg" data-seg="2"><span class="a-prog-fill"></span></span>
+                      <span class="a-prog-seg" data-seg="3"><span class="a-prog-fill"></span></span>
+                    </div>
+                    <ol class="a-prog-steps" aria-hidden="true">
+                      <li data-step="1">Paper and mark scheme</li>
+                      <li data-step="2">Your answers</li>
+                      <li data-step="3">Questions <span class="a-mono">7/12</span></li>
+                    </ol>
+                  </div>
+                  <p class="a-act-body a-sp-next" data-sp="sparse0">When <span class="a-mono">0580/42</span> is marked you get your grade, every lost mark explained, and your first practice targets.</p>
+                  <a class="a-btn a-btn-primary a-act-btn" href="/student/correct">See progress <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+                  <a class="a-sp-also" href="/student/correct" data-sp="sparse0">While you wait, upload an Add Maths or Physics paper <svg class="a-ico" aria-hidden="true"><use href="#a-i-chev" /></svg></a>
+                </div>
+                <div class="a-act" data-when-action="session">
+                  <p class="a-meta-line"><span>Today's session</span><span class="a-code">0606</span></p>
+                  <h3 class="a-act-title">Quadratic inequalities</h3>
+                  <p class="a-facts"><span class="a-mono">25 min</span></p>
+                  <p class="a-act-body">Next in your study plan for Additional Mathematics.</p>
+                  <a class="a-btn a-btn-primary a-act-btn" href="/student/plan/0606/session/s1">Start session <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+                </div>
+                <div class="a-act" data-when-action="first-paper">
+
+                  <h3 class="a-act-title">Let's get your first paper marked</h3>
+
+                  <p class="a-act-body">Photograph or upload a paper you have already sat. Lemely finds the session and variant, pulls the official mark scheme, and marks it question by question.</p>
+                  <a class="a-btn a-btn-primary a-act-btn" href="/student/correct">Upload a paper <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+                </div>
+                <div data-when-action="practice">
+                <div class="a-act" data-needs="many-papers">
+                  <p class="a-meta-line"><span>Practise next</span><span class="a-code">0625</span></p>
+                  <h3 class="a-act-title">Waves</h3>
+                  <p class="a-facts"><span class="a-mono">54% accuracy</span></p>
+                  <p class="a-act-body">Your weakest topic right now. A short set shows whether it is improving.</p>
+                  <a class="a-btn a-btn-primary a-act-btn" href="/student/practice/0625">Practise waves <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+                </div>
+                <div class="a-act" data-only-state="one-paper">
+                  <p class="a-meta-line"><span>Practise next</span><span class="a-code">0580</span></p>
+                  <h3 class="a-act-title">Vectors</h3>
+                  <p class="a-facts"><span class="a-mono">50% accuracy</span></p>
+                  <p class="a-act-body">Your weakest topic right now. A short set shows whether it is improving.</p>
+                  <a class="a-btn a-btn-primary a-act-btn" href="/student/practice/0580">Practise vectors <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+                </div>
+                <div class="a-act" data-sp="sparse2">
+                  <p class="a-meta-line"><span>Practise next</span><span class="a-code">0606</span></p>
+                  <h3 class="a-act-title">Logarithms</h3>
+                  <p class="a-facts"><span class="a-mono">48% accuracy</span></p>
+                  <p class="a-act-body">Your weakest topic so far. One short set shows whether it is moving.</p>
+                  <a class="a-btn a-btn-primary a-act-btn" href="/student/practice/0606">Practise logarithms <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+                </div>
+                <div class="a-act" data-sp="sparse3">
+                  <p class="a-meta-line"><span>Pick up where you left off</span><span class="a-code">0606</span></p>
+                  <h3 class="a-act-title">Logarithms</h3>
+                  <p class="a-facts"><span class="a-mono">51% accuracy · 10 min</span></p>
+                  <p class="a-act-body">One 10-minute set starts a new streak and waters your Add Maths plant.</p>
+                  <a class="a-btn a-btn-primary a-act-btn" href="/student/practice/0606">Start a 10-minute set <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+                </div>
+                </div>
+                <div class="a-act" data-when-action="correct">
+
+                  <h3 class="a-act-title">Ready for another paper?</h3>
+
+                  <p class="a-act-body">Each paper sharpens your predicted grade.</p>
+                  <a class="a-btn a-btn-primary a-act-btn" href="/student/correct">Upload a paper <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+                </div>
+              </section>
+            </div>
         <p class="a-note a-sp-lock" data-sp="sparse1"><span><b>Study plan</b> unlocks after one more paper or one practice set.</span> <a href="/student/practice/0580">Practise vectors <svg class="a-ico" aria-hidden="true"><use href="#a-i-chev" /></svg></a></p>
         <p class="a-note" data-sp="sparse2">Add your Physics exam date to see how long you have. <a href="/student/profile">Add exam date <svg class="a-ico" aria-hidden="true"><use href="#a-i-chev" /></svg></a></p>
         <p class="a-note" data-sp="sparse3"><span>Your study plan ended on <span class="a-mono">27 Oct</span>. Build a fresh week from your weak topics.</span> <a href="/student/plan">Build a plan <svg class="a-ico" aria-hidden="true"><use href="#a-i-chev" /></svg></a></p>
@@ -582,113 +646,105 @@
 
         <section class="a-sec a-grades" data-anim aria-labelledby="a-grades-h">
           <h2 id="a-grades-h" class="a-sec-h">Your grades</h2>
-          <details class="a-key" data-needs="many-papers">
-            <summary>What do the labels mean?</summary>
-            <dl>
-              <div><dt><span class="a-est">estimated</span></dt><dd>We have no published boundaries for this paper yet, so grades use boundaries from past sessions.</dd></div>
-              <div><dt>Dashed outline</dt><dd>The next grade you are working towards.</dd></div>
-              <div><dt>Dashed line in Your Garden</dt><dd>Where a subject started, on your first paper.</dd></div>
-            </dl>
-          </details>
-          <ul class="a-gj">
-            <li data-needs="many-papers">
-              <a class="a-gj-row" href="/student/subject/0625" aria-label="Physics, 0625: 48%, grade C, 4% from a B. Boundaries estimated: no exact boundary for this paper yet; based on past sessions. C 45%, B 52%, A 66%, A* 80%. Started at 41%.">
-                <span class="a-gj-name"><b>Physics</b><span class="a-code">0625</span><span class="a-est" title="No exact boundary for this paper yet; based on past sessions.">estimated</span></span>
-                <span class="a-gj-dist"><span class="a-mono">4%</span> from a B</span>
-                <div class="a-journey" aria-hidden="true"><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 7.2%; inline-size: 15.51%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-next" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-ahead" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-b" style="inset-inline-start: 12.0%">C 45%</span><span class="a-j-b" style="inset-inline-start: 37.0%">B 52%</span><span class="a-j-b" style="inset-inline-start: 62.0%">A 66%</span><span class="a-j-b" style="inset-inline-start: 87.0%">A* 80%</span><span class="a-j-me" style="inset-inline-start: 22.71%"><span class="a-j-me-l">48%</span></span></div>
-                <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
-              </a>
-            </li>
-            <li data-needs="many-papers">
-              <a class="a-gj-row" href="/student/subject/0580" aria-label="Mathematics, 0580: 76%, grade A, 9% from an A*. C 42%, B 55%, A 70%, A* 85%. Started at 49%.">
-                <span class="a-gj-name"><b>Mathematics</b><span class="a-code">0580</span></span>
-                <span class="a-gj-dist"><span class="a-mono">9%</span> from an A*</span>
-                <div class="a-journey" aria-hidden="true"><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 25.46%; inline-size: 46.54%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-passed" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-passed" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-next" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-b" style="inset-inline-start: 12.0%">C 42%</span><span class="a-j-b" style="inset-inline-start: 37.0%">B 55%</span><span class="a-j-b" style="inset-inline-start: 62.0%">A 70%</span><span class="a-j-b" style="inset-inline-start: 87.0%">A* 85%</span><span class="a-j-me" style="inset-inline-start: 72.0%"><span class="a-j-me-l">76%</span></span></div>
-                <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
-              </a>
-            </li>
-            <li data-needs="many-papers">
-              <a class="a-gj-row" href="/student/subject/0606" aria-label="Additional Mathematics, 0606: 59%, grade B, 9% from an A. C 40%, B 54%, A 68%, A* 82%. Started at 44%.">
-                <span class="a-gj-name"><b>Additional Mathematics</b><span class="a-code">0606</span></span>
-                <span class="a-gj-dist"><span class="a-mono">9%</span> from an A</span>
-                <div class="a-journey" aria-hidden="true"><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 19.14%; inline-size: 26.79%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-passed" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-next" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-b" style="inset-inline-start: 12.0%">C 40%</span><span class="a-j-b" style="inset-inline-start: 37.0%">B 54%</span><span class="a-j-b" style="inset-inline-start: 62.0%">A 68%</span><span class="a-j-b" style="inset-inline-start: 87.0%">A* 82%</span><span class="a-j-me" style="inset-inline-start: 45.93%"><span class="a-j-me-l">59%</span></span></div>
-                <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
-              </a>
-            </li>
-            <li data-only-state="one-paper">
-              <a class="a-gj-row" href="/student/subject/0580" aria-label="Mathematics, 0580: 65%, grade B, 5% from an A. C 42%, B 55%, A 70%, A* 85%.">
-                <span class="a-gj-name"><b>Mathematics</b><span class="a-code">0580</span></span>
-                <span class="a-gj-dist"><span class="a-mono">5%</span> from an A</span>
-                <div class="a-journey" aria-hidden="true"><span class="a-j-line"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-passed" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-next" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-b" style="inset-inline-start: 12.0%">C 42%</span><span class="a-j-b" style="inset-inline-start: 37.0%">B 55%</span><span class="a-j-b" style="inset-inline-start: 62.0%">A 70%</span><span class="a-j-b" style="inset-inline-start: 87.0%">A* 85%</span><span class="a-j-me" style="inset-inline-start: 53.67%"><span class="a-j-me-l">65%</span></span></div>
-                <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
-              </a>
-            </li>
-            <!-- Sparse states: graded subjects first, then a waiting row for each subject with no grade yet. -->
-            <li data-sp="sparse1">
-              <a class="a-gj-row" href="/student/subject/0580" aria-label="Mathematics, 0580: 46%, grade C, 9% from a B. C 42%, B 55%, A 70%, A* 85%. Your first paper.">
-                <span class="a-gj-name"><b>Mathematics</b><span class="a-code">0580</span></span>
-                <span class="a-gj-dist"><span class="a-mono">9%</span> from a B</span>
-                <div class="a-journey" aria-hidden="true"><span class="a-j-line"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-next" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-ahead" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 19.69%"><span class="a-j-me-l">46%</span></span></div>
-                <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
-              </a>
-            </li>
-            <li data-sp="sparse2">
-              <a class="a-gj-row" href="/student/subject/0580" aria-label="Mathematics, 0580: 58%, grade B, 12% from an A. C 42%, B 55%, A 70%, A* 85%. Started at 46%.">
-                <span class="a-gj-name"><b>Mathematics</b><span class="a-code">0580</span></span>
-                <span class="a-gj-dist"><span class="a-mono">12%</span> from an A</span>
-                <div class="a-journey" aria-hidden="true"><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 19.69%; inline-size: 22.31%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-passed" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-next" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 42.0%"><span class="a-j-me-l">58%</span></span></div>
-                <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
-              </a>
-            </li>
-            <li data-sp="sparse2">
-              <a class="a-gj-row" href="/student/subject/0606" aria-label="Additional Mathematics, 0606: 47%, grade C, 7% from a B. C 40%, B 54%, A 68%, A* 82%. Your first paper.">
-                <span class="a-gj-name"><b>Additional Mathematics</b><span class="a-code">0606</span></span>
-                <span class="a-gj-dist"><span class="a-mono">7%</span> from a B</span>
-                <div class="a-journey" aria-hidden="true"><span class="a-j-line"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-next" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-ahead" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 24.5%"><span class="a-j-me-l">47%</span></span></div>
-                <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
-              </a>
-            </li>
-            <li data-sp="sparse3">
-              <a class="a-gj-row" href="/student/subject/0580" aria-label="Mathematics, 0580: 60%, grade B, 10% from an A. C 42%, B 55%, A 70%, A* 85%. Started at 46%.">
-                <span class="a-gj-name"><b>Mathematics</b><span class="a-code">0580</span></span>
-                <span class="a-gj-dist"><span class="a-mono">10%</span> from an A</span>
-                <div class="a-journey" aria-hidden="true"><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 19.69%; inline-size: 25.64%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-passed" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-next" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 45.33%"><span class="a-j-me-l">60%</span></span></div>
-                <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
-              </a>
-            </li>
-            <li data-sp="sparse3">
-              <a class="a-gj-row" href="/student/subject/0606" aria-label="Additional Mathematics, 0606: 49%, grade C, 5% from a B. C 40%, B 54%, A 68%, A* 82%. Started at 45%.">
-                <span class="a-gj-name"><b>Additional Mathematics</b><span class="a-code">0606</span></span>
-                <span class="a-gj-dist"><span class="a-mono">5%</span> from a B</span>
-                <div class="a-journey" aria-hidden="true"><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 20.93%; inline-size: 7.14%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-next" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-ahead" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 28.07%"><span class="a-j-me-l">49%</span></span></div>
-                <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
-              </a>
-            </li>
-            <li class="a-gj-lock" data-sp="sparse0">
-              <a class="a-gj-row a-gj-row-lock" href="/student/correct">
-                <span class="a-gj-name"><b>Mathematics</b><span class="a-code">0580</span></span>
-                <span class="a-gj-dist">Marking now</span>
-                <span class="a-gj-wait">Your first grade lands here when <span class="a-mono">0580/42</span> is marked.</span>
-                <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
-              </a>
-            </li>
-            <li class="a-gj-lock" data-sp="sparse0 sparse1">
-              <a class="a-gj-row a-gj-row-lock" href="/student/correct">
-                <span class="a-gj-name"><b>Additional Mathematics</b><span class="a-code">0606</span></span>
-                <span class="a-gj-dist">No paper yet</span>
-                <span class="a-gj-wait">Upload an Add Maths paper to see where you stand.</span>
-                <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
-              </a>
-            </li>
-            <li class="a-gj-lock" data-sp="sparse0 sparse1 sparse2 sparse3">
-              <a class="a-gj-row a-gj-row-lock" href="/student/correct">
-                <span class="a-gj-name"><b>Physics</b><span class="a-code">0625</span></span>
-                <span class="a-gj-dist">No paper yet</span>
-                <span class="a-gj-wait">Upload a Physics paper to see where you stand.</span>
-                <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
-              </a>
-            </li>
-          </ul>
+              <ul class="a-gj">
+                <li data-needs="many-papers">
+                  <a class="a-gj-row" href="/student/subject/0625" aria-label="Physics, 0625: 48%, grade C, 4% from a B. Boundaries estimated: no exact boundary for this paper yet; based on past sessions. C 45%, B 52%, A 66%, A* 80%. Started at 41%.">
+                    <span class="a-gj-name"><b>Physics</b><span class="a-code">0625</span><span class="a-est" title="No exact boundary for this paper yet; based on past sessions.">estimated</span></span>
+                    <span class="a-gj-dist"><span class="a-mono">4%</span> from a B</span>
+                    <div class="a-journey" aria-hidden="true"><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 7.2%; inline-size: 15.51%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-next" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-ahead" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-b" style="inset-inline-start: 12.0%">C 45%</span><span class="a-j-b" style="inset-inline-start: 37.0%">B 52%</span><span class="a-j-b" style="inset-inline-start: 62.0%">A 66%</span><span class="a-j-b" style="inset-inline-start: 87.0%">A* 80%</span><span class="a-j-me" style="inset-inline-start: 22.71%"><span class="a-j-me-l">48%</span></span></div>
+                    <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
+                  </a>
+                </li>
+                <li data-needs="many-papers">
+                  <a class="a-gj-row" href="/student/subject/0580" aria-label="Mathematics, 0580: 76%, grade A, 9% from an A*. C 42%, B 55%, A 70%, A* 85%. Started at 49%.">
+                    <span class="a-gj-name"><b>Mathematics</b><span class="a-code">0580</span></span>
+                    <span class="a-gj-dist"><span class="a-mono">9%</span> from an A*</span>
+                    <div class="a-journey" aria-hidden="true"><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 25.46%; inline-size: 46.54%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-passed" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-passed" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-next" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-b" style="inset-inline-start: 12.0%">C 42%</span><span class="a-j-b" style="inset-inline-start: 37.0%">B 55%</span><span class="a-j-b" style="inset-inline-start: 62.0%">A 70%</span><span class="a-j-b" style="inset-inline-start: 87.0%">A* 85%</span><span class="a-j-me" style="inset-inline-start: 72.0%"><span class="a-j-me-l">76%</span></span></div>
+                    <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
+                  </a>
+                </li>
+                <li data-needs="many-papers">
+                  <a class="a-gj-row" href="/student/subject/0606" aria-label="Additional Mathematics, 0606: 59%, grade B, 9% from an A. C 40%, B 54%, A 68%, A* 82%. Started at 44%.">
+                    <span class="a-gj-name"><b>Additional Mathematics</b><span class="a-code">0606</span></span>
+                    <span class="a-gj-dist"><span class="a-mono">9%</span> from an A</span>
+                    <div class="a-journey" aria-hidden="true"><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 19.14%; inline-size: 26.79%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-passed" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-next" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-b" style="inset-inline-start: 12.0%">C 40%</span><span class="a-j-b" style="inset-inline-start: 37.0%">B 54%</span><span class="a-j-b" style="inset-inline-start: 62.0%">A 68%</span><span class="a-j-b" style="inset-inline-start: 87.0%">A* 82%</span><span class="a-j-me" style="inset-inline-start: 45.93%"><span class="a-j-me-l">59%</span></span></div>
+                    <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
+                  </a>
+                </li>
+                <li data-only-state="one-paper">
+                  <a class="a-gj-row" href="/student/subject/0580" aria-label="Mathematics, 0580: 65%, grade B, 5% from an A. C 42%, B 55%, A 70%, A* 85%.">
+                    <span class="a-gj-name"><b>Mathematics</b><span class="a-code">0580</span></span>
+                    <span class="a-gj-dist"><span class="a-mono">5%</span> from an A</span>
+                    <div class="a-journey" aria-hidden="true"><span class="a-j-line"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-passed" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-next" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-b" style="inset-inline-start: 12.0%">C 42%</span><span class="a-j-b" style="inset-inline-start: 37.0%">B 55%</span><span class="a-j-b" style="inset-inline-start: 62.0%">A 70%</span><span class="a-j-b" style="inset-inline-start: 87.0%">A* 85%</span><span class="a-j-me" style="inset-inline-start: 53.67%"><span class="a-j-me-l">65%</span></span></div>
+                    <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
+                  </a>
+                </li>
+                <!-- Sparse states: graded subjects first, then a waiting row for each subject with no grade yet. -->
+                <li data-sp="sparse1">
+                  <a class="a-gj-row" href="/student/subject/0580" aria-label="Mathematics, 0580: 46%, grade C, 9% from a B. C 42%, B 55%, A 70%, A* 85%. Your first paper.">
+                    <span class="a-gj-name"><b>Mathematics</b><span class="a-code">0580</span></span>
+                    <span class="a-gj-dist"><span class="a-mono">9%</span> from a B</span>
+                    <div class="a-journey" aria-hidden="true"><span class="a-j-line"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-next" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-ahead" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 19.69%"><span class="a-j-me-l">46%</span></span></div>
+                    <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
+                  </a>
+                </li>
+                <li data-sp="sparse2">
+                  <a class="a-gj-row" href="/student/subject/0580" aria-label="Mathematics, 0580: 58%, grade B, 12% from an A. C 42%, B 55%, A 70%, A* 85%. Started at 46%.">
+                    <span class="a-gj-name"><b>Mathematics</b><span class="a-code">0580</span></span>
+                    <span class="a-gj-dist"><span class="a-mono">12%</span> from an A</span>
+                    <div class="a-journey" aria-hidden="true"><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 19.69%; inline-size: 22.31%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-passed" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-next" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 42.0%"><span class="a-j-me-l">58%</span></span></div>
+                    <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
+                  </a>
+                </li>
+                <li data-sp="sparse2">
+                  <a class="a-gj-row" href="/student/subject/0606" aria-label="Additional Mathematics, 0606: 47%, grade C, 7% from a B. C 40%, B 54%, A 68%, A* 82%. Your first paper.">
+                    <span class="a-gj-name"><b>Additional Mathematics</b><span class="a-code">0606</span></span>
+                    <span class="a-gj-dist"><span class="a-mono">7%</span> from a B</span>
+                    <div class="a-journey" aria-hidden="true"><span class="a-j-line"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-next" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-ahead" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 24.5%"><span class="a-j-me-l">47%</span></span></div>
+                    <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
+                  </a>
+                </li>
+                <li data-sp="sparse3">
+                  <a class="a-gj-row" href="/student/subject/0580" aria-label="Mathematics, 0580: 60%, grade B, 10% from an A. C 42%, B 55%, A 70%, A* 85%. Started at 46%.">
+                    <span class="a-gj-name"><b>Mathematics</b><span class="a-code">0580</span></span>
+                    <span class="a-gj-dist"><span class="a-mono">10%</span> from an A</span>
+                    <div class="a-journey" aria-hidden="true"><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 19.69%; inline-size: 25.64%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-passed" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-next" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 45.33%"><span class="a-j-me-l">60%</span></span></div>
+                    <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
+                  </a>
+                </li>
+                <li data-sp="sparse3">
+                  <a class="a-gj-row" href="/student/subject/0606" aria-label="Additional Mathematics, 0606: 49%, grade C, 5% from a B. C 40%, B 54%, A 68%, A* 82%. Started at 45%.">
+                    <span class="a-gj-name"><b>Additional Mathematics</b><span class="a-code">0606</span></span>
+                    <span class="a-gj-dist"><span class="a-mono">5%</span> from a B</span>
+                    <div class="a-journey" aria-hidden="true"><span class="a-j-line"></span><span class="a-j-trail" style="inset-inline-start: 20.93%; inline-size: 7.14%"></span><span class="a-stone is-passed" data-grade="C" style="inset-inline-start: 12.0%">C</span><span class="a-stone is-next" data-grade="B" style="inset-inline-start: 37.0%">B</span><span class="a-stone is-ahead" data-grade="A" style="inset-inline-start: 62.0%">A</span><span class="a-stone is-ahead" data-grade="A*" style="inset-inline-start: 87.0%">A*</span><span class="a-j-me" style="inset-inline-start: 28.07%"><span class="a-j-me-l">49%</span></span></div>
+                    <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
+                  </a>
+                </li>
+                <li class="a-gj-lock" data-sp="sparse0">
+                  <a class="a-gj-row a-gj-row-lock" href="/student/correct">
+                    <span class="a-gj-name"><b>Mathematics</b><span class="a-code">0580</span></span>
+                    <span class="a-gj-dist">Marking now</span>
+                    <span class="a-gj-wait">Your first grade lands here when <span class="a-mono">0580/42</span> is marked.</span>
+                    <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
+                  </a>
+                </li>
+                <li class="a-gj-lock" data-sp="sparse0 sparse1">
+                  <a class="a-gj-row a-gj-row-lock" href="/student/correct">
+                    <span class="a-gj-name"><b>Additional Mathematics</b><span class="a-code">0606</span></span>
+                    <span class="a-gj-dist">No paper yet</span>
+                    <span class="a-gj-wait">Upload an Add Maths paper to see where you stand.</span>
+                    <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
+                  </a>
+                </li>
+                <li class="a-gj-lock" data-sp="sparse0 sparse1 sparse2 sparse3">
+                  <a class="a-gj-row a-gj-row-lock" href="/student/correct">
+                    <span class="a-gj-name"><b>Physics</b><span class="a-code">0625</span></span>
+                    <span class="a-gj-dist">No paper yet</span>
+                    <span class="a-gj-wait">Upload a Physics paper to see where you stand.</span>
+                    <svg class="a-ico a-gj-go" aria-hidden="true"><use href="#a-i-chev" /></svg>
+                  </a>
+                </li>
+              </ul>
         </section>
 
         <section class="a-sec a-weak" data-anim aria-labelledby="a-weak-h">

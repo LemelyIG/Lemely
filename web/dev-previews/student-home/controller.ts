@@ -21,6 +21,14 @@ function readParams(): Record<ControlName, string> {
   return { state: pick("state"), theme: pick("theme"), motion: pick("motion"), width: pick("width") }
 }
 
+/* Progress card (Mistakes beaten) is the default. gstate names which authored data
+   set it shows; "none" keeps the old Garden for states the card does not cover yet. */
+const GSTATE: Partial<Record<StateId, string>> = {
+  populated: "pop", "result-in": "pop", marking: "pop", "no-plan": "pop", "no-exams": "pop",
+  "streak-zero": "pop", loading: "pop", error: "pop",
+  new: "new", sparse0: "sp0", sparse1: "sp1", sparse2: "sp2",
+}
+
 function apply(root: HTMLElement, variant: Variant, params: Record<ControlName, string>): void {
   const { facts } = FIXTURES[params.state as StateId]
   const action = deriveNextAction(facts, { preferClosestExam: variant === "b" })
@@ -36,6 +44,8 @@ function apply(root: HTMLElement, variant: Variant, params: Record<ControlName, 
     width: params.width,
     exams: facts.subjects.some((s) => s.nextExamOn !== null) ? "yes" : "no",
   })
+  root.dataset.garden = "1"
+  root.dataset.gstate = GSTATE[params.state as StateId] ?? "none"
   document.querySelectorAll("[data-binny]").forEach((slot) => renderBinny(slot, mood))
   const qs = new URLSearchParams(params).toString()
   history.replaceState(null, "", `${location.pathname}?${qs}`)

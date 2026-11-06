@@ -228,7 +228,7 @@
     border-inline-start: 0; border-block-start: 1px solid var(--border-subtle);
   }
   .ah-week-n { font-size: var(--fs-headline) }
-  .ah-week-meta { font-size: var(--fs-label); white-space: nowrap }
+  .ah-week-meta { font-size: var(--fs-body-sm); line-height: 1; white-space: nowrap }
   .ah-week-head { margin-block-end: 10px; gap: 2px 12px }
   .ah-week-body { margin-block: -2px 10px; font-size: var(--fs-body-sm) }
   .ah-strip { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px }
@@ -381,6 +381,8 @@
    countdown tile hanging from each exam date. The selected tile takes the tint. */
 .a-sec-sub { margin: calc(var(--space-2) * -1) 0 var(--space-3); font-size: var(--fs-body-sm); color: var(--text-secondary) }
 .a-sec-sub .a-mono { color: var(--text-body) }
+.a-sec-sub { max-inline-size: 70ch }
+@container home (max-width: 760px) { .a-secure-note { padding-inline: var(--space-3) } } /* line up with the card content below */
 .a-xcard {
   padding: var(--space-5) var(--space-6) var(--space-6); border-radius: var(--radius-card);
   background: var(--surface-card); box-shadow: var(--a-card-edge);
@@ -390,7 +392,7 @@
   position: absolute; inset-block-end: calc(100% - 14px); inset-inline-start: 0;
   padding: 4px 10px; border-radius: var(--radius-pill);
   background: var(--text-body); color: var(--surface-card);
-  font: 700 var(--fs-label) / 1.2 var(--font-ui); white-space: nowrap;
+  font: 700 var(--fs-body-sm) / 1.2 var(--font-ui); white-space: nowrap;
 }
 .a-xb-today .a-mono { font-weight: 600 }
 .a-xb-track {
@@ -1566,7 +1568,7 @@ label.as-row { cursor: pointer }
 .a-mo .mo-read { flex-direction: column; align-items: flex-start; gap: var(--space-1); margin: var(--space-2) 0 var(--space-3) }
 .a-mo .mo-sent { font: 600 var(--fs-title)/1.2 var(--font-ui); letter-spacing: var(--ls-headline-ui); color: var(--text-body) }
 .a-mo .mo-sent b { font: 800 var(--fs-title)/1.2 var(--font-ui); letter-spacing: var(--ls-headline-ui); color: var(--md-primary) }
-.a-mo .mo-ctx { font: 600 var(--fs-label)/1.3 var(--font-mono); letter-spacing: 0.02em; color: var(--text-secondary); font-variant-numeric: tabular-nums }
+.a-mo .mo-ctx { font: 600 var(--fs-body-sm)/1.35 var(--font-ui); color: var(--text-secondary); font-variant-numeric: tabular-nums }
 .a-mo .mo-plant { gap: 0 }
 .a-mo .mo-name { margin-block-start: var(--space-1); font: 600 var(--fs-body-sm)/1.2 var(--font-ui) }
 .a-mo .mo-val { font: 600 var(--fs-label)/1.3 var(--font-mono); color: var(--text-muted); font-variant-numeric: tabular-nums }
@@ -1801,7 +1803,7 @@ label.as-row { cursor: pointer }
 .sh-root:not([data-state="one-paper"]) .a-mo .mo-garden-solo { display: none }
 .sh-root[data-state="one-paper"] .a-mo .mo-garden-solo { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; align-content: center; gap: var(--space-3); margin: 0 }
 .a-mo .mo-plant.is-solo { cursor: default; padding-inline: var(--space-6); background: var(--md-primary-container) }
-.a-mo .mo-seed { margin: 0; max-inline-size: 24ch; text-align: center; font: 600 var(--fs-label)/1.4 var(--font-mono); color: var(--text-secondary) }
+.a-mo .mo-seed { margin: 0; max-inline-size: 24ch; text-align: center; font: 600 var(--fs-body-sm)/1.4 var(--font-ui); color: var(--text-secondary) }
 @container home (min-width: 900px) {
   .a-mo .mo-garden-solo { grid-column: 2; grid-row: 1 / span 2 }
 }
@@ -1889,25 +1891,6 @@ grid-template-areas: "n c" "t t"; row-gap: 0; padding-block: var(--space-2);
   content: ""; position: absolute;
   inset-block: min(0px, calc((100% - 45px) / 2));
   inset-inline: min(0px, calc((100% - 45px) / 2));
-}
-
-/* A short key for the labels that need one. A disclosure, so it works on touch and keyboard. */
-.a-key { margin: calc(var(--space-2) * -1) 0 var(--space-3); font-size: var(--fs-body-sm); color: var(--text-secondary) }
-.a-key > summary {
-  display: inline-flex; align-items: center; min-block-size: 44px; padding-inline: var(--space-1); border-radius: var(--radius-chip);
-  color: var(--text-secondary); font-weight: 700; cursor: pointer; list-style: none;
-}
-.a-key > summary::-webkit-details-marker { display: none }
-.a-key > summary::after { content: "+"; margin-inline-start: var(--space-2); font-family: var(--font-mono) }
-.a-key[open] > summary::after { content: "\2212" }
-.a-key > summary:hover { color: var(--md-primary) }
-.a-key dl { display: grid; gap: var(--space-2); margin: 0; padding: var(--space-3) var(--space-4); border-radius: var(--radius-inner); background: var(--md-surface-low) }
-.a-key dl > div { display: grid; grid-template-columns: minmax(7rem, max-content) minmax(0, 1fr); gap: var(--space-3); align-items: baseline }
-.a-key dt { color: var(--text-body); font-weight: 700 }
-.a-key dd { margin: 0 }
-@container home (max-width: 560px) {
-  .a-key dl > div { grid-template-columns: minmax(0, 1fr) }
-  .a-key dl { gap: var(--space-3) }
 }
 
 /* The exam timeline is aria-hidden, so its compressed range is explained in plain text. */
@@ -2169,7 +2152,7 @@ grid-template-areas: "n c" "t t"; row-gap: 0; padding-block: var(--space-2);
 .sh-root[data-state^="sparse"] .a-gj > li + li { border-block-start: 1px solid var(--border-subtle) }
 .a-lane-lock p {
   margin: 0; padding: var(--space-3) var(--space-4); border: 1.5px dashed var(--border-default); border-radius: var(--radius-chip);
-  color: var(--text-secondary); font-size: var(--fs-body-sm); line-height: 1.4;
+  color: var(--text-secondary); font-size: var(--fs-body-sm); line-height: 1.4; max-inline-size: 60ch;
 }
 .sh-root[data-state="sparse0"] .a-weak :is(.a-scale, .a-secure-note) { display: none }
 
@@ -2241,4 +2224,257 @@ grid-template-areas: "n c" "t t"; row-gap: 0; padding-block: var(--space-2);
   .sh-root[data-state^="sparse"] .a-action-card .a-prog { margin-block: var(--space-3) }
   .sh-root[data-state^="sparse"] .a-action-card .a-sp-next { margin-block-end: var(--space-3) }
   .sh-root[data-state^="sparse"] .a-action-card .a-sp-also { max-inline-size: calc(100% - 176px); margin: 0 0 0 var(--space-3); vertical-align: middle }
+}
+
+/* ===== progress card: Mistakes beaten (default) ===== */
+/* The progress card that replaces the Garden (.a-mo). The controller always sets
+   data-garden="1"; data-gstate picks the authored data set, and "none" (states the
+   card does not cover yet) keeps the old Garden. */
+
+/* Swap: the Garden steps aside, the progress card takes its slot. */
+.sh-root[data-garden="1"]:not([data-gstate="none"]) .a-mo { display: none !important }
+.sh-root[data-garden="1"]:not([data-gstate="none"]) .a-prog-dir[data-garden-dir="1"] { display: flex }
+.sh-root[data-garden="1"][data-gstate="pop"] .a-prog-dir [data-gs]:not([data-gs~="pop"]),
+.sh-root[data-garden="1"][data-gstate="sp0"] .a-prog-dir [data-gs]:not([data-gs~="sp0"]),
+.sh-root[data-garden="1"][data-gstate="sp1"] .a-prog-dir [data-gs]:not([data-gs~="sp1"]),
+.sh-root[data-garden="1"][data-gstate="sp2"] .a-prog-dir [data-gs]:not([data-gs~="sp2"]) { display: none !important }
+
+/* Card: same shell as the Garden it replaces, content packed to the top-left so no band of air opens up. */
+.sh-root[data-garden="1"] .a-prog-dir {
+  flex-direction: column; justify-content: flex-start; min-inline-size: 0;
+  padding: var(--space-5) var(--space-6); border-radius: var(--radius-card);
+  background: var(--surface-card); box-shadow: var(--a-card-edge); color: var(--text-body);
+}
+.sh-root[data-garden="1"] .a-prog-dir.is-new { margin-block: var(--space-5) }
+.sh-root[data-garden="1"] .pd-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; column-gap: var(--space-4); row-gap: var(--space-1) }
+.sh-root[data-garden="1"] .pd-h { margin: 0; font: 800 var(--fs-title) / 1.2 var(--font-ui); letter-spacing: var(--ls-headline-ui); color: var(--text-body) }
+.sh-root[data-garden="1"] .pd-note { margin: 0; font: 500 var(--fs-body-sm) / 1.3 var(--font-ui); color: var(--text-secondary) }
+.sh-root[data-garden="1"] .pd-read { display: flex; flex-direction: column; gap: 2px; margin: 6px 0 var(--space-2) }
+.sh-root[data-garden="1"] .pd-sent { font: 600 var(--fs-title) / 1.2 var(--font-ui); letter-spacing: var(--ls-headline-ui); word-spacing: 0.04em; color: var(--text-body); text-wrap: balance }
+.sh-root[data-garden="1"] .pd-sent b { font-weight: 800; color: var(--md-primary) }
+.sh-root[data-garden="1"] .pd-ctx { font: 600 var(--fs-body-sm) / 1.4 var(--font-ui); color: var(--text-secondary); font-variant-numeric: tabular-nums }
+
+/* Rows: name | visual | verdict. One grid for all three directions so they compare like for like. */
+.sh-root[data-garden="1"] .a-prog-dir { --pd-name: 7.5rem; --pd-stat: 8.5rem }
+.sh-root[data-garden="1"] .pd-rows { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; flex: 1 0 auto; align-content: space-around }
+/* Subjects with something to show lead; the open slots (one action each) follow. */
+.sh-root[data-garden="1"] .pd-rows > li:has(> .is-open) { order: 1 }
+.sh-root[data-garden="1"] .pd-row {
+  display: grid; grid-template-columns: var(--pd-name) minmax(0, 1fr) var(--pd-stat); grid-template-areas: "name viz stat";
+  align-items: center; column-gap: var(--space-4); min-block-size: 44px;
+  margin-inline: calc(var(--space-3) * -1); padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-chip); color: inherit; text-decoration: none;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+.sh-root[data-garden="1"] .pd-row:hover { background: var(--md-surface-low) }
+.sh-root[data-garden="1"] .pd-row:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px }
+.sh-root[data-garden="1"] .pd-name { grid-area: name; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 6px; min-inline-size: 0 }
+.sh-root[data-garden="1"] .pd-name > b { font: 700 var(--fs-body-sm) / 1.3 var(--font-ui); color: var(--text-body); white-space: nowrap }
+.sh-root[data-garden="1"] .pd-name > .a-code { white-space: nowrap }
+.sh-root[data-garden="1"] .pd-meta { flex-basis: 100%; display: flex; align-items: center; gap: 6px; font: 600 var(--fs-label) / 1.5 var(--font-mono); color: var(--text-secondary); white-space: nowrap }
+.sh-root[data-garden="1"] .pd-meta .a-est { padding: 0 6px; line-height: 1.5 }
+.sh-root[data-garden="1"] .pd-row > :nth-child(2) { grid-area: viz }
+.sh-root[data-garden="1"] .pd-stat { grid-area: stat; display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); min-inline-size: 0; text-align: end }
+.sh-root[data-garden="1"] .pd-stat:has(.pd-verdict, .pd-sub) { flex-direction: column; align-items: flex-end; gap: 0 }
+.sh-root[data-garden="1"] .pd-verdict { font: 700 var(--fs-body-sm) / 1.25 var(--font-ui); color: var(--text-body) }
+.sh-root[data-garden="1"] .pd-sub { font: 600 var(--fs-label) / 1.5 var(--font-mono); color: var(--text-secondary); white-space: nowrap }
+.sh-root[data-garden="1"] .pd-wait { font: 700 var(--fs-body-sm) / 1.25 var(--font-ui); color: var(--md-primary) }
+.sh-root[data-garden="1"] .pd-go { display: inline-flex; align-items: center; gap: var(--space-1); font: 700 var(--fs-body-sm) / 1.2 var(--font-ui); color: var(--md-primary); white-space: nowrap }
+.sh-root[data-garden="1"] .pd-go .a-ico { inline-size: 16px; block-size: 16px; transition: transform var(--dur-base) var(--ease-out) }
+.sh-root[data-garden="1"] .pd-go .a-ico:dir(rtl) { scale: -1 1 }
+.sh-root[data-garden="1"] .pd-row:hover .pd-go .a-ico { transform: translateX(3px) }
+.sh-root[data-garden="1"] .pd-row.is-open .pd-name > b { color: var(--text-secondary) }
+.sh-root[data-garden="1"] .pd-chip {
+  display: inline-grid; place-items: center; flex: none; inline-size: 28px; block-size: 26px; border-radius: 10px;
+  font: 800 var(--fs-body) / 1 var(--font-ui); color: var(--white); background: var(--g);
+}
+.sh-root[data-garden="1"] .pd-gap { font: 600 var(--fs-body-sm) / 1.2 var(--font-ui); color: var(--text-secondary); white-space: nowrap }
+.sh-root[data-garden="1"] .pd-gap b { font-size: var(--fs-data); color: var(--text-body) }
+.sh-root[data-garden="1"] .a-prog-dir [data-grade="A*"] { --g: var(--sh-grade-astar) }
+.sh-root[data-garden="1"] .a-prog-dir [data-grade="A"] { --g: var(--sh-grade-a) }
+.sh-root[data-garden="1"] .a-prog-dir [data-grade="B"] { --g: var(--sh-grade-b) }
+.sh-root[data-garden="1"] .a-prog-dir [data-grade="C"] { --g: var(--sh-grade-c) }
+
+/* --- 1 · Grade ladder: 30%..90% track, a tick on each real boundary, ring = first paper, dot = now. --- */
+.sh-root[data-garden="1"] .pl-track { position: relative; display: block; block-size: 36px }
+.sh-root[data-garden="1"] .pl-rail { position: absolute; inset-inline: 0; inset-block-start: 24px; block-size: 4px; border-radius: 4px; background: var(--track) }
+.sh-root[data-garden="1"] .pl-tick { position: absolute; inset-block: 0; inset-inline-start: var(--at); inline-size: 0; font-style: normal; --g: var(--md-outline) }
+.sh-root[data-garden="1"] .pl-tick::after { content: ""; position: absolute; inset-block-start: 19px; inset-inline-start: -1px; inline-size: 2px; block-size: 14px; border-radius: var(--radius-pill); background: var(--md-outline) }
+.sh-root[data-garden="1"] .pl-tick b { position: absolute; inset-block-start: 0; inset-inline-start: -1.25em; inline-size: 2.5em; text-align: center; font: 600 var(--fs-label) / 1.2 var(--font-mono); color: var(--text-muted) }
+.sh-root[data-garden="1"] .pl-tick.is-pass::after { background: var(--g) }
+.sh-root[data-garden="1"] .pl-tick.is-pass b { color: var(--text-secondary) }
+.sh-root[data-garden="1"] .pl-tick.is-next::after { inset-block-start: 16px; inset-inline-start: -1.5px; inline-size: 3px; block-size: 20px; background: var(--g) }
+.sh-root[data-garden="1"] .pl-tick.is-next b { font-weight: 800; color: var(--text-body) }
+.sh-root[data-garden="1"] .pl-track.is-est .pl-tick::after { background: none; border-inline-start: 2px dotted var(--g) }
+.sh-root[data-garden="1"] .pl-track.is-est .pl-tick:not(.is-pass, .is-next)::after { border-inline-start-color: var(--md-outline) }
+.sh-root[data-garden="1"] .pl-move { position: absolute; inset-block-start: 24px; inset-inline-start: var(--from); inline-size: calc(var(--to) - var(--from)); block-size: 4px; border-radius: 4px; background: var(--md-primary); transform-origin: 0 50% }
+.sh-root[data-garden="1"] .pl-move:dir(rtl) { transform-origin: 100% 50% }
+.sh-root[data-garden="1"] .pl-first,
+.sh-root[data-garden="1"] .pl-now { position: absolute; inset-block-start: 26px; border-radius: 50% }
+.sh-root[data-garden="1"] .pl-first { inset-inline-start: var(--from); inline-size: 10px; block-size: 10px; margin: -5px 0 0 0; margin-inline-start: -5px; background: var(--surface-card); box-shadow: inset 0 0 0 2px var(--md-primary) }
+.sh-root[data-garden="1"] .pl-now { z-index: 1; inset-inline-start: var(--to); inline-size: 14px; block-size: 14px; margin: -7px 0 0 0; margin-inline-start: -7px; background: var(--md-primary); box-shadow: 0 0 0 3px var(--surface-card) }
+.sh-root[data-garden="1"] .pl-pending { position: absolute; inset-block-start: 26px; inset-inline-start: 0; inline-size: 14px; block-size: 14px; margin: -7px 0 0 0; border-radius: 50%; background: var(--surface-card); outline: 2px dashed var(--md-primary); outline-offset: -2px }
+.sh-root[data-garden="1"] .pd-row.is-wait .pd-wait::before { content: ""; display: inline-block; inline-size: 8px; block-size: 8px; margin-inline-end: 6px; border-radius: 50%; background: var(--md-primary); vertical-align: 1px }
+
+/* Responsive. Side by side (900+) the card shares the row; narrower cells tighten the columns. */
+@container home (min-width: 900px) {
+  .sh-root[data-state^="sparse"][data-garden="1"] .a-prog-dir { --pd-name: 7rem; --pd-stat: 8.75rem; padding-inline: var(--space-5) }
+  .sh-root[data-state^="sparse"][data-garden="1"] .pd-row { column-gap: var(--space-3) }
+}
+/* Phone: name and verdict share a line, the visual takes the full width under them. */
+@container home (max-width: 560px) {
+  .sh-root[data-garden="1"] .a-prog-dir { padding: var(--space-4) var(--space-5) }
+  .sh-root[data-garden="1"] .pd-note { display: none }
+  .sh-root[data-garden="1"] .pd-sent { font-size: var(--fs-body) }
+  .sh-root[data-garden="1"] .pd-read { margin-block: var(--space-1) var(--space-2) }
+  .sh-root[data-garden="1"] .pd-row {
+    grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name stat" "viz viz";
+    row-gap: 2px; padding-block: var(--space-1);
+  }
+  .sh-root[data-garden="1"] .pd-name { column-gap: 6px }
+  .sh-root[data-garden="1"] .pd-meta { flex-basis: auto }
+  .sh-root[data-garden="1"] .pl-track { block-size: 30px }
+  .sh-root[data-garden="1"] .pl-rail, .sh-root[data-garden="1"] .pl-move { inset-block-start: 20px }
+  .sh-root[data-garden="1"] .pl-tick::after { inset-block-start: 15px }
+  .sh-root[data-garden="1"] .pl-tick.is-next::after { inset-block-start: 12px }
+  .sh-root[data-garden="1"] :is(.pl-first, .pl-now, .pl-pending) { inset-block-start: 22px }
+  /* Populated phone: the rows already carry the numbers, so the context line goes and the card stays Garden-sized. */
+  .sh-root[data-garden="1"][data-gstate="pop"] .pd-ctx { display: none }
+  .sh-root[data-garden="1"] .a-prog-dir { padding-block: 14px }
+}
+
+/* Motion (data-motion full only). */
+@media (prefers-reduced-motion: no-preference) {
+  .sh-root[data-garden="1"].a-motion .pl-move { animation: pd-grow var(--dur-slow) var(--a-ease-expo, var(--ease-out)) both }
+  .sh-root[data-garden="1"].a-motion .pl-now { animation: pd-pop var(--dur-slow) var(--a-ease-expo, var(--ease-out)) 120ms both }
+  .sh-root[data-garden="1"].a-motion .pd-row.is-wait .pd-wait::before { animation: pd-breathe 1.6s ease-in-out infinite }
+}
+@keyframes pd-grow { from { transform: scaleX(0) } }
+@keyframes pd-pop { from { opacity: 0; transform: scale(0.4) } }
+@keyframes pd-breathe { 50% { opacity: 0.35 } }
+
+/* Mistakes beaten, accepted in live (session 48a34cc4).
+   Topics where an earlier paper lost marks and a later one got them right; beaten ones are
+   solid chips with a tick, the ones still to beat wait as outlines. */
+.sh-root[data-garden="1"] .a-prog-ladder { gap: var(--space-3) }
+.sh-root[data-garden="1"] .a-prog-ladder .k-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3) }
+.sh-root[data-garden="1"] .a-prog-ladder .k-sub { font: 600 var(--fs-body-sm) / 1.3 var(--font-ui); color: var(--text-secondary) }
+.sh-root[data-garden="1"] .a-prog-ladder .k-big { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2) var(--space-3); margin: var(--space-1) 0 0 }
+.sh-root[data-garden="1"] .a-prog-ladder .k-num { font: 800 var(--fs-display-sm) / 1 var(--font-display); letter-spacing: -0.04em; color: var(--md-primary); font-variant-numeric: tabular-nums }
+.sh-root[data-garden="1"] .a-prog-ladder .k-lead { font: 700 var(--fs-title) / 1.2 var(--font-ui); letter-spacing: var(--ls-headline-ui); color: var(--text-body); text-wrap: balance }
+.sh-root[data-garden="1"] .a-prog-ladder .k-ctx { margin: 0; font: 600 var(--fs-body-sm) / 1.4 var(--font-ui); color: var(--text-secondary); font-variant-numeric: tabular-nums }
+.sh-root[data-garden="1"] .a-prog-ladder .k-go { display: inline-flex; align-items: center; gap: 2px; font: 700 var(--fs-body-sm) / 1.2 var(--font-ui); color: var(--md-primary); text-decoration: none }
+.sh-root[data-garden="1"] .a-prog-ladder .k-go:hover { text-decoration: underline; text-underline-offset: 3px }
+.sh-root[data-garden="1"] .a-prog-ladder .k-go:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; border-radius: var(--radius-chip) }
+.sh-root[data-garden="1"] .a-prog-ladder .k-go .a-ico { inline-size: 14px; block-size: 14px }
+.sh-root[data-garden="1"] .a-prog-ladder .x-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: 0; list-style: none }
+.sh-root[data-garden="1"] .a-prog-ladder .x-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px 6px 8px; border-radius: var(--radius-chip); font: 600 var(--fs-body-sm) / 1.2 var(--font-ui); background: color-mix(in oklch, var(--md-success) 14%, var(--surface-card)); color: var(--text-body) }
+.sh-root[data-garden="1"] .a-prog-ladder .x-tick { inline-size: 9px; block-size: 5px; margin-block-start: -3px; border-inline-start: 2px solid var(--sh-success-text); border-block-end: 2px solid var(--sh-success-text); rotate: -45deg }
+.sh-root[data-garden="1"] .a-prog-ladder .x-code { font: 600 var(--fs-label) / 1 var(--font-mono); color: var(--text-secondary) }
+.sh-root[data-garden="1"] .a-prog-ladder .x-chip.is-open { background: transparent; box-shadow: inset 0 0 0 1.5px var(--border-default); color: var(--text-secondary) }
+.sh-root[data-garden="1"] .a-prog-ladder .x-chip.is-open::before { content: ""; inline-size: 8px; block-size: 8px; border-radius: 0; box-shadow: inset 0 0 0 1.5px var(--text-muted) }
+.sh-root[data-garden="1"] .a-prog-ladder .x-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); padding-block-start: var(--space-3); border-block-start: 1px solid var(--surface-row) }
+.sh-root[data-garden="1"][data-motion="full"] .a-prog-ladder .x-chip:not(.is-open) { animation: xPop .45s var(--a-ease-expo) both }
+.sh-root[data-garden="1"][data-motion="full"] .a-prog-ladder .x-chip:nth-child(2) { animation-delay: 60ms }
+.sh-root[data-garden="1"][data-motion="full"] .a-prog-ladder .x-chip:nth-child(3) { animation-delay: 120ms }
+.sh-root[data-garden="1"][data-motion="full"] .a-prog-ladder .x-chip:nth-child(4) { animation-delay: 180ms }
+@keyframes xPop { from { opacity: 0; translate: 0 4px } }
+
+/* Progress card + next step, mirrored halves (accepted in live, session 105c3b38): two equal
+   columns with the same rhythm on both sides: small label, one big line, its context, and the
+   action pinned to the bottom. Scoped to the direction previews so the default page is unchanged. */
+@container home (min-width: 900px) {
+  .sh-root[data-garden="1"] .a-next-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: stretch }
+  .sh-root[data-garden="1"] .a-next-row > * { padding: var(--space-5) var(--space-6) }
+  .sh-root[data-garden="1"] .a-next-row > .a-action-card { justify-content: flex-start }
+  /* Only the block for the current action becomes a column; a bare .a-act rule would outrank the
+     data-when-action gate in shell.css and reveal every block at once. */
+  .sh-root[data-garden="1"][data-action="marking"] .a-next-row > .a-action-card .a-act[data-when-action="marking"],
+  .sh-root[data-garden="1"][data-action="result"] .a-next-row > .a-action-card .a-act[data-when-action="result"],
+  .sh-root[data-garden="1"][data-action="session"] .a-next-row > .a-action-card .a-act[data-when-action="session"],
+  .sh-root[data-garden="1"][data-action="first-paper"] .a-next-row > .a-action-card .a-act[data-when-action="first-paper"],
+  .sh-root[data-garden="1"][data-action="practice"] .a-next-row > .a-action-card .a-act[data-when-action="practice"],
+  .sh-root[data-garden="1"][data-action="correct"] .a-next-row > .a-action-card .a-act[data-when-action="correct"] { display: flex; flex-direction: column; flex: 1 1 auto }
+  .sh-root[data-garden="1"] .a-next-row > .a-action-card .a-act > a.a-btn { margin-block-start: auto; align-self: flex-start }
+  .sh-root[data-garden="1"] .a-next-row > .a-prog-dir .pd-h { font: 700 var(--fs-body-sm) / 1.3 var(--font-ui); letter-spacing: 0; color: var(--text-secondary) }
+  .sh-root[data-garden="1"] .a-next-row > .a-prog-dir .k-head { min-block-size: 22px; align-items: center }
+  .sh-root[data-garden="1"] .a-next-row > .a-prog-dir > .x-foot { margin-block-start: auto }
+}
+
+/* Your grades: hovering a row replays the climb (accepted in live, session 43f5fae0). The trail
+   grows from the first paper, each grade passed pops as the trail reaches it, and the marker lands
+   on where the student is now, so the order of the scale reads without labels. */
+@media (prefers-reduced-motion: no-preference) {
+  .a-gj-row:hover .a-j-trail { transform-origin: 0 50%; animation: gjGrow .8s var(--a-ease-expo) both }
+  .a-gj-row:hover .a-j-trail:dir(rtl) { transform-origin: 100% 50% }
+  .a-gj-row:hover .a-stone.is-passed { animation: gjPop .4s var(--a-ease-expo) both }
+  .a-gj-row:hover .a-stone.is-passed[data-grade="C"] { animation-delay: .15s }
+  .a-gj-row:hover .a-stone.is-passed[data-grade="B"] { animation-delay: .35s }
+  .a-gj-row:hover .a-stone.is-passed[data-grade="A"] { animation-delay: .55s }
+  .a-gj-row:hover .a-stone.is-passed[data-grade="A*"] { animation-delay: .75s }
+  .a-gj-row:hover .a-j-me { animation: gjLand .5s var(--a-ease-expo) .6s both }
+}
+@keyframes gjGrow { from { transform: scaleX(0) } }
+@keyframes gjPop { 0% { transform: translate(-50%, -50%) scale(.6) } 60% { transform: translate(-50%, -50%) scale(1.15) } 100% { transform: translate(-50%, -50%) scale(1) } }
+@keyframes gjLand { from { transform: translate(-50%, -160%); opacity: 0 } }
+
+/* Mistakes beaten, fuller (accepted in live, session dd403405): on wide screens the chips take a
+   step more size and spacing so the card's middle fills; the footer stays on the bottom line. */
+@container home (min-width: 900px) {
+  .sh-root[data-garden="1"] .a-prog-ladder .x-chips { gap: var(--space-2) var(--space-3); margin-block: var(--space-3) }
+  .sh-root[data-garden="1"] .a-prog-ladder .x-chip { padding: var(--space-2) var(--space-3); font-size: var(--fs-body); min-block-size: 40px }
+  .sh-root[data-garden="1"] .a-prog-ladder .x-foot { margin-block-start: auto }
+}
+
+/* Row polish, also applied at the user's request (live session dd403405, variants 1 and 2).
+   Matched headers: both cards open with the same small label row at the same height and type,
+   so the big lines below line up. Matched actions: the progress card's link becomes a secondary
+   button the height of the next step's primary button, both on one bottom line. */
+@container home (min-width: 900px) {
+  /* Same space under the label on both sides: the progress card's flex gap (space-3) is the space,
+     so its header adds none; the next step's label carries the same space-3 as a margin. */
+  .sh-root[data-garden="1"] .a-next-row > .a-prog-dir .k-head { min-block-size: 24px; margin-block-end: 0 }
+  .sh-root[data-garden="1"] .a-next-row > .a-action-card .a-meta-line { min-block-size: 24px; display: flex; align-items: center; margin-block-end: var(--space-3) }
+  .sh-root[data-garden="1"] .a-next-row > .a-prog-dir .k-big { margin-block-start: 0 }
+  /* The count matches the next step's title size, so the two big lines read on one line. */
+  .sh-root[data-garden="1"] .a-next-row > .a-prog-dir .k-num { font-size: var(--fs-headline); line-height: 1.05 }
+  .sh-root[data-garden="1"] .a-next-row > .a-prog-dir .pd-h,
+  .sh-root[data-garden="1"] .a-next-row > .a-action-card .a-meta-line { font: 700 var(--fs-body-sm) / 1.3 var(--font-ui) }
+  .sh-root[data-garden="1"] .a-next-row > .a-prog-dir .x-foot { border-block-start: 0; padding-block-start: var(--space-4) }
+  .sh-root[data-garden="1"] .a-next-row > .a-prog-dir .x-foot .k-go { min-block-size: 44px; padding-inline: var(--space-4); border-radius: var(--radius-button); background: var(--md-secondary-container); color: var(--md-on-secondary-container); text-decoration: none }
+  .sh-root[data-garden="1"] .a-next-row > .a-prog-dir .x-foot .k-go:hover { background: color-mix(in oklch, var(--md-secondary-container) 85%, var(--md-primary)); text-decoration: none }
+}
+
+/* Floating top bar: semi-translucent like the landing page header (brand.css .brand-header:
+   86% surface + 14px blur), so content scrolling under it stays faintly visible. */
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .as-bar { background: color-mix(in oklch, var(--md-surface-lowest) 86%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px) }
+  .sh-root[data-theme="dark"] .as-bar { background: color-mix(in oklch, var(--surface-card) 86%, transparent) }
+}
+
+/* Hero, consistent surface (accepted in live, session afe76ac6): the same edge and corner as every
+   other card on the page (card-edge ring, card radius) instead of its own border and board radius. */
+.ah-hero.ah-card { border: 0; box-shadow: var(--a-card-edge); border-radius: var(--radius-card) }
+.ah-hero .ah-binny-tile { border-radius: var(--radius-inner) }
+.ah-hero .ah-say { border-radius: var(--radius-chip) }
+
+/* Your grades and Weak topics, relaxed (user: "very dense and compact"). One step more air per
+   row, slightly larger stones, and the same inner inset on both lists so they read as a pair. */
+.a-grades .a-gj { padding: var(--space-2) }
+.a-gj-row { padding-block: var(--space-3) }
+.a-gj .a-journey { block-size: 48px }
+.a-gj .a-stone { inline-size: 32px; block-size: 32px }
+.a-gj .a-j-me { inline-size: 16px; block-size: 16px }
+.a-lanes a { min-block-size: 56px; padding: var(--space-3) var(--space-4); gap: var(--space-5) }
+/* Phones: each subject is its own card with air between (accepted in live, session 2fb62992),
+   instead of rows packed into one list. */
+@container home (max-width: 560px) {
+  .a-grades .a-gj { display: grid; gap: var(--space-3); padding: 0; background: transparent; box-shadow: none }
+  .a-grades .a-gj > li + li { border-block-start: 0 }
+  .a-grades .a-gj-row { grid-template-columns: minmax(0, 1fr); grid-template-areas: "n" "d" "j"; row-gap: var(--space-1); padding: var(--space-4); border-radius: var(--radius-inner); background: var(--surface-card); box-shadow: var(--a-card-edge) }
+  .a-grades .a-gj .a-journey { margin-block: var(--space-3) 0; margin-inline: 16px }
+}
+@container home (max-width: 560px) {
+  .a-gj .a-journey { block-size: 44px }
+  .a-lanes a { min-block-size: 52px; padding-block: var(--space-3); row-gap: var(--space-1) }
 }
