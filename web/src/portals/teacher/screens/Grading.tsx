@@ -667,7 +667,7 @@ export function Grading() {
                           // to say why, or the teacher has nothing to act on.
                           <div className="mt-3 pt-3 border-t border-outline-variant flex flex-col gap-2.5 items-start">
                             <div className="text-body-md text-error">{detail.error}</div>
-                            <EstimateRange gate={regradeGate} audience="teacher" paths={teacherPaths} managedByName={null} />
+                            <EstimateRange gate={regradeGate} audience="teacher" paths={teacherPaths} managedByName={null} headingLevel={2} />
                             <Button
                               variant="ink"
                               size="sm"
@@ -676,7 +676,7 @@ export function Grading() {
                             >
                               {/* The notice above carries its own "Try again" (re-check the balance), so while
                                 blocked this one reads differently instead of repeating the label. */}
-                              {regrade.isPending ? "Queueing…" : regradeGate.block !== null ? "Marking paused" : "Try again"}
+                              {regrade.isPending ? "Queueing…" : regradeGate.block !== null ? "Regrade unavailable" : "Try again"}
                             </Button>
                             {regrade.isError && !parseUsageBlock(regrade.error) ? (
                               <div className="text-body-md text-error">
@@ -789,6 +789,7 @@ export function Grading() {
                       paths={teacherPaths}
                       managedByName={null}
                       subjectUnknown
+                      headingLevel={2}
                     />
                     <Button
                       variant="ink"

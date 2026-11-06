@@ -27,7 +27,10 @@ export function EstimateRange({
   subjectUnknown?: boolean
   headingLevel?: 2 | 3 | 4
 }) {
-  if (gate.request === null) return null
+  // The polite region stays mounted with no request so the first estimate that lands is announced
+  // (a region inserted together with its content is often missed). `empty:sr-only` keeps it out of
+  // flex/grid gaps while it has nothing to say.
+  if (gate.request === null) return <div role="status" className="empty:sr-only" />
   const { estimate } = gate
   const notice = gate.block ? (
     <UsageBlockedNotice
@@ -56,14 +59,16 @@ export function EstimateRange({
     )
   } else {
     const data = estimate.data
+    // A free action (range 0 to 0, e.g. a seeded no-cost action) has no cost to promise: say nothing.
+    const free = data.low === 0 && data.high === 0
     const ownPayer = data.payer === "allowance" || data.payer === "credits"
-    content = (
+    content = free ? null : (
       <p data-testid="estimate-range" className="m-0 text-body-sm text-on-surface-variant">
         Estimated cost: <span className="text-data-sm text-on-surface">{estimateSentence(data)}</span>. You're
         charged the actual cost when it finishes.
-        {subjectUnknown && ownPayer ? " If a teacher's seat covers this paper's subject, the seat pays first." : null}
+        {subjectUnknown && ownPayer && audience === "student" ? " If a teacher's seat covers this paper's subject, the seat pays first." : null}
       </p>
     )
   }
-  return <div role="status">{content}</div>
+  return <div role="status" className="empty:sr-only">{content}</div>
 }

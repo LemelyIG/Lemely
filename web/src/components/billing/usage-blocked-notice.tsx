@@ -39,7 +39,9 @@ export function UsageBlockedNotice({
   if (copy.next === "ask_teacher") {
     next = <p className="m-0 text-body-sm text-on-surface">Ask your lead teacher to raise it.</p>
   } else if (managedByName) {
-    next = <p className="m-0 text-body-sm text-on-surface">Ask {managedByName} to add credits.</p>
+    next = <p className="m-0 text-body-sm text-on-surface">
+        Ask {managedByName} to {block.reason === "no_active_plan" ? "choose a plan" : "add credits"}.
+      </p>
   } else if (paths && copy.next === "buy_credits") {
     next = (
       <div className="flex flex-wrap gap-2">

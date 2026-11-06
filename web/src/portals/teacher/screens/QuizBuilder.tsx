@@ -52,6 +52,7 @@ import { EstimateRange } from "@/components/billing/estimate-range"
 import { billingPaths } from "@/lib/billingPaths"
 import { invalidateUsage } from "@/lib/hooks/useUsageApi"
 import { useMeteredGate } from "@/lib/meteredGate"
+import { generateQuizEstimateRequest } from "@/lib/quizEstimateRequest"
 import { parseUsageBlock } from "@/lib/usageBlock"
 
 /*
@@ -730,12 +731,13 @@ function StepPreview({
   const removed = questions.filter((q) => q.status !== "included")
   const canGenerate = quiz.poolSource != null
   const queryClient = useQueryClient()
-  // The estimate prices what is still missing, not the whole quiz (04 `EstimateRequestDTO.count` is 1–50).
-  const remaining = quiz.requestedCount != null ? Math.min(50, Math.max(1, quiz.requestedCount - included.length)) : null
+  // Prices what is still missing; null (no estimate, no gate) once the requested count is met.
   const generateGate = useMeteredGate(
-    isDraft && canGenerate && quizId
-      ? { action: "generate_quiz", ...(remaining !== null ? { count: remaining } : {}) }
-      : null,
+    generateQuizEstimateRequest({
+      enabled: isDraft && canGenerate && Boolean(quizId),
+      requestedCount: quiz.requestedCount,
+      includedCount: included.length,
+    }),
   )
 
   function handleGenerate() {
@@ -779,7 +781,7 @@ function StepPreview({
       {!canGenerate && isDraft ? (
         <p className="text-body-sm text-on-surface-variant m-0">Choose a question source in step 4 before generating.</p>
       ) : null}
-      {generate.isError && !parseUsageBlock(generate.error) ? (
+      {generate.isError && (generateGate.request === null || !parseUsageBlock(generate.error)) ? (
         <div role="alert" className="text-body-sm text-error">
           Couldn't generate questions: {teacherMutationFailureMessage(generate.error)}
         </div>

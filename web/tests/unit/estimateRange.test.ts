@@ -36,8 +36,8 @@ beforeEach(() => {
 })
 
 describe("EstimateRange", () => {
-  it("renders nothing without a request", () => {
-    expect(render(gate({ request: null }))).toBe("")
+  it("keeps an empty polite status region without a request, so the first estimate is announced", () => {
+    expect(render(gate({ request: null }))).toBe('<div role="status" class="empty:sr-only"></div>')
   })
 
   it("announces the loading state", () => {
@@ -62,10 +62,23 @@ describe("EstimateRange", () => {
     expect(render(gate({}), { subjectUnknown: true })).toContain("seat pays first")
   })
 
+  it("says nothing for a free (0 to 0) estimate, but keeps the status region", () => {
+    state.estimate = okQuery({ ...fx.estimate, low: 0, high: 0, percentLow: 0, percentHigh: 0 })
+    const html = render(gate({}))
+    expect(html).toBe('<div role="status" class="empty:sr-only"></div>')
+    state.estimate = okQuery({ ...fx.estimate, payer: "credits", low: 0, high: 0, percentLow: null, percentHigh: null })
+    expect(render(gate({}))).not.toContain("about 0 credits")
+  })
+
+  it("never tells a teacher that a seat pays first (seats are student-only)", () => {
+    state.estimate = okQuery({ ...fx.estimate, payer: "credits" })
+    expect(render(gate({}), { subjectUnknown: true, audience: "teacher", paths: billingPaths({ role: "teacher" }) })).not.toContain("seat pays first")
+  })
+
   it("keeps a persistent polite status region, even for an estimate-driven block", () => {
-    expect(render(gate({}))).toMatch(/^<div role="status">/)
+    expect(render(gate({}))).toMatch(/^<div role="status"/)
     const blocked = render(gate({ block: { reason: "insufficient_credits", estimate: null }, blockSource: "estimate" }))
-    expect(blocked).toMatch(/^<div role="status">/)
+    expect(blocked).toMatch(/^<div role="status"/)
     expect(blocked).not.toContain('role="alert"')
   })
 
@@ -139,7 +152,8 @@ describe("UsageBlockedNotice", () => {
   })
 
   it("names the manager for any reason that would otherwise link", () => {
-    expect(notice("no_active_plan", { managedByName: "Mona" })).toContain("Ask Mona to add credits.")
+    expect(notice("no_active_plan", { managedByName: "Mona" })).toContain("Ask Mona to choose a plan.")
+    expect(notice("no_active_plan", { managedByName: "Mona" })).not.toContain("add credits")
     expect(notice("outstanding_debt", { managedByName: "Mona" })).not.toContain("href=")
   })
 
