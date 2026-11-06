@@ -13,14 +13,15 @@ export interface AutoTopupFormState {
   monthlyCapMajor: string
 }
 
-/** "Not set up" (06: `enabled: false` and nulls) becomes empty fields. */
+/** "Not set up" (06: `enabled: false` and nulls) becomes empty fields. A saved cap of 0 is the
+ * placeholder a switched-off save sends when no limit was ever typed, so it shows as empty too. */
 export function formFromSettings(settings: AutoTopupSettings): AutoTopupFormState {
   return {
     enabled: settings.enabled,
     thresholdUnits: settings.thresholdUnits === null ? "" : String(settings.thresholdUnits),
     creditPackId: settings.creditPackId,
     savedCardId: settings.savedCardId,
-    monthlyCapMajor: settings.monthlyCapMinor === null ? "" : String(settings.monthlyCapMinor / 100),
+    monthlyCapMajor: settings.monthlyCapMinor ? String(settings.monthlyCapMinor / 100) : "",
   }
 }
 
@@ -28,21 +29,37 @@ function capMinor(form: AutoTopupFormState): number {
   return Math.round((Number(form.monthlyCapMajor) || 0) * 100)
 }
 
-/** 06 `AutoTopupRequest` needs a pack and a positive threshold on every save. */
-export function validateAutoTopup(form: AutoTopupFormState, packs: CreditPack[]): string[] {
-  const errors: string[] = []
+export type AutoTopupField = "creditPackId" | "thresholdUnits" | "savedCardId" | "monthlyCapMajor"
+
+/** The error for each invalid field, in the order the fields sit on the page. 06
+ * `AutoTopupRequest` needs a pack and a positive threshold on every save; the cap is mandatory
+ * once top-up is on (06 requires `monthlyCapMinor`, and the spec makes the charge subject to it). */
+export function fieldErrors(form: AutoTopupFormState, packs: CreditPack[]): Partial<Record<AutoTopupField, string>> {
+  const errors: Partial<Record<AutoTopupField, string>> = {}
   const pack = packs.find((p) => p.id === form.creditPackId) ?? null
-  if (!pack) errors.push("Choose a pack to buy.")
-  if (!(Number(form.thresholdUnits) >= 1)) errors.push("Set a threshold of at least 1 credit.")
+  if (!pack) errors.creditPackId = "Choose a pack to buy."
+  if (!(Number(form.thresholdUnits) >= 1)) errors.thresholdUnits = "Set a threshold of at least 1 credit."
   if (!form.enabled) return errors
-  if (!form.savedCardId) errors.push("Choose a saved card.")
-  if (pack && capMinor(form) < pack.priceMinor) {
-    errors.push(`The monthly limit must cover at least one pack (${formatMoney(pack.priceMinor, pack.currency)}).`)
+  if (!form.savedCardId) errors.savedCardId = "Choose a saved card."
+  if (form.monthlyCapMajor.trim() === "") {
+    errors.monthlyCapMajor = "Set a monthly limit."
+  } else if (pack && capMinor(form) < pack.priceMinor) {
+    errors.monthlyCapMajor = `The monthly limit must cover at least one pack (${formatMoney(pack.priceMinor, pack.currency)}).`
   }
   return errors
 }
 
-export function toUpdate(form: AutoTopupFormState, beneficiaryId: string | null): AutoTopupUpdate {
+const FIELD_ORDER: AutoTopupField[] = ["creditPackId", "thresholdUnits", "savedCardId", "monthlyCapMajor"]
+
+export function validateAutoTopup(form: AutoTopupFormState, packs: CreditPack[]): string[] {
+  const errors = fieldErrors(form, packs)
+  return FIELD_ORDER.flatMap((f) => errors[f] ?? [])
+}
+
+/** `savedCapMinor` is what the server last stored: a switched-off save with no cap typed keeps
+ * it (or sends 0 when there was none) rather than inventing a limit. */
+export function toUpdate(form: AutoTopupFormState, beneficiaryId: string | null, savedCapMinor: number | null = null): AutoTopupUpdate {
+  const cap = form.monthlyCapMajor.trim() === "" && !form.enabled ? (savedCapMinor ?? 0) : capMinor(form)
   return {
     beneficiaryId,
     enabled: form.enabled,
@@ -50,6 +67,40 @@ export function toUpdate(form: AutoTopupFormState, beneficiaryId: string | null)
     // `validateAutoTopup` refuses a save without a pack, so this is never "" on the wire.
     creditPackId: form.creditPackId ?? "",
     savedCardId: form.savedCardId,
-    monthlyCapMinor: capMinor(form),
+    monthlyCapMinor: cap,
   }
+}
+
+function sameForm(a: AutoTopupFormState, b: AutoTopupFormState): boolean {
+  return (
+    a.enabled === b.enabled &&
+    a.thresholdUnits === b.thresholdUnits &&
+    a.creditPackId === b.creditPackId &&
+    a.savedCardId === b.savedCardId &&
+    a.monthlyCapMajor === b.monthlyCapMajor
+  )
+}
+
+/** The form is not remounted when the server copy changes (a save, or a background refetch of
+ * `spentThisMonthMinor`). It adopts the new server values only while the user has not edited
+ * anything since the last adoption; otherwise their in-progress edits stand. */
+export function reconcileForm(
+  form: AutoTopupFormState,
+  baseline: AutoTopupFormState,
+  server: AutoTopupFormState,
+): { form: AutoTopupFormState; baseline: AutoTopupFormState } {
+  if (sameForm(server, baseline)) return { form, baseline }
+  return { form: sameForm(form, baseline) ? server : form, baseline: server }
+}
+
+export function isPristine(form: AutoTopupFormState, baseline: AutoTopupFormState): boolean {
+  return sameForm(form, baseline)
+}
+
+const KNOWN_DISABLED_REASON = "charge_failed"
+
+/** What to say when the server switched top-up off itself. */
+export function disabledNotice(reason: string | null): "charge_failed" | "other" | null {
+  if (reason === null) return null
+  return reason === KNOWN_DISABLED_REASON ? "charge_failed" : "other"
 }
