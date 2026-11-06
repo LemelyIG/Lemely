@@ -8,6 +8,7 @@ import { jobOutcomeText, jobRunsText, webhookErrorText } from "@/lib/adminOpsMod
 import type { BillingHealth, SweeperJobHealth } from "@/lib/billingTypes"
 import { useBillingHealth } from "@/lib/hooks/useAdminBillingApi"
 import { cn } from "@/lib/utils"
+import { RefreshNote } from "./RefreshNote"
 
 /*
  * Billing health (spec §8.5): only what the server recorded. A job that never ran says so, a
@@ -92,13 +93,26 @@ export function Health() {
     return <ErrorState kicker={null} heading="You can't open billing health" body="Billing is for platform admins. Ask one to look at this." />
   }
   return (
-    <QueryState query={health} skeleton={
-        <div className="flex flex-col gap-6">
-          <PageHeaderSkeleton />
-          <ListSkeleton rows={4} />
-        </div>
-      } error={{ heading: "Couldn't load billing health" }}>
-      {(h) => <Loaded h={h} />}
-    </QueryState>
+    <div className="flex flex-col gap-6">
+      {health.data === undefined ? (
+        <QueryState
+          query={health}
+          skeleton={
+            <div className="flex flex-col gap-6">
+              <PageHeaderSkeleton />
+              <ListSkeleton rows={4} />
+            </div>
+          }
+          error={{ heading: "Couldn't load billing health" }}
+        >
+          {() => null}
+        </QueryState>
+      ) : (
+        <>
+          <RefreshNote query={health} />
+          <Loaded h={health.data} />
+        </>
+      )}
+    </div>
   )
 }

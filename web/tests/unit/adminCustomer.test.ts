@@ -128,8 +128,8 @@ describe("CustomerDetail", () => {
     expect(html).toContain("may have gone through")
     expect(html).toContain("Check with Paymob")
     expect(html).not.toContain("was declined")
-    expect(html).not.toContain("Refund pay1")
-    expect(html).not.toContain("Void pay1")
+    expect(html).not.toContain("Refund order PM-1")
+    expect(html).not.toContain("Void order PM-1")
   })
 
   it("shows a declined refund as declined, leaves the payment refundable, and shows what a success took back", () => {
@@ -138,15 +138,15 @@ describe("CustomerDetail", () => {
     expect(html).toContain("was declined")
     expect(html).toContain("Paymob refused it. The payment is unchanged.")
     expect(html).toContain("300 unspent units taken back")
-    expect(html).toContain("Refund pay1")
-    expect(html).not.toContain("Void pay1")
+    expect(html).toContain("Refund order PM-1")
+    expect(html).not.toContain("Void order PM-1")
     expect(html).not.toContain("Check with Paymob")
   })
 
   it("is quiet about a settled payment: no refund or void controls", () => {
     withRefunds([refund({ status: "succeeded" })], { status: "refunded", refundedMinor: 25000 })
     const html = detail()
-    expect(html).not.toContain("Refund pay1")
+    expect(html).not.toContain("Refund order PM-1")
     expect(html).not.toContain("Check with Paymob")
   })
 

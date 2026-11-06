@@ -147,7 +147,7 @@ describe("adjust and void", () => {
     s.m.void = fakeMutation({ isPending: true })
     const user = userEvent.setup()
     renderDetail()
-    const d = await openAction(user, "Void pay1")
+    const d = await openAction(user, "Void order PM-1")
     setReason("same-day mistake")
     const submit = within(d).getByRole("button", { name: "Void" }) as HTMLButtonElement
     expect(submit.disabled).toBe(true)
@@ -312,7 +312,7 @@ describe("refund and void", () => {
   it("prefills what is left, refuses more than that, and sends minor units", async () => {
     const user = userEvent.setup()
     renderDetail()
-    const d = await openAction(user, "Refund pay1")
+    const d = await openAction(user, "Refund order PM-1")
     const amount = screen.getByLabelText(/Refund amount/) as HTMLInputElement
     expect(amount.value).toBe("250.00")
     setReason("duplicate charge")
@@ -329,7 +329,7 @@ describe("refund and void", () => {
     s.m.refund = fakeMutation({ isPending: true })
     const user = userEvent.setup()
     renderDetail()
-    const d = await openAction(user, "Refund pay1")
+    const d = await openAction(user, "Refund order PM-1")
     setReason("duplicate charge")
     const submit = within(d).getByRole("button", { name: "Refund" }) as HTMLButtonElement
     fireEvent.submit(submit.form as HTMLFormElement)
@@ -340,7 +340,7 @@ describe("refund and void", () => {
   it("voids with only a reason", async () => {
     const user = userEvent.setup()
     renderDetail()
-    const d = await openAction(user, "Void pay1")
+    const d = await openAction(user, "Void order PM-1")
     setReason("same-day mistake")
     await user.click(within(d).getByRole("button", { name: "Void" }))
     expect(fake("void").mutate.mock.calls[0][0]).toEqual({ id: "pay1", body: { reason: "same-day mistake" } })
@@ -350,9 +350,9 @@ describe("refund and void", () => {
     s.customer = okQuery({ ...fx.customer, payments: [{ ...fx.adminPayment, refunds: [unknownRefund] }] })
     const user = userEvent.setup()
     renderDetail()
-    expect(screen.queryByRole("button", { name: "Refund pay1" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Refund order PM-1" })).toBeNull()
     expect(screen.getByText(/outcome unknown/)).toBeTruthy()
-    const d = await openAction(user, "Check refund with Paymob for pay1")
+    const d = await openAction(user, "Check refund with Paymob for order PM-1")
     expect(within(d).getByText(/never sends a new refund/)).toBeTruthy()
     setReason("timeout on the first attempt")
     await user.click(within(d).getByRole("button", { name: "Check with Paymob" }))

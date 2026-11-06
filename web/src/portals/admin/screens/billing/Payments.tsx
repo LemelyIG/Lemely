@@ -12,10 +12,13 @@ import { formatUtc, humanize, isForbidden, refundOutcome } from "@/lib/adminBill
 import {
   PAYMENT_STATUS_OPTIONS,
   PROBLEM_SECTIONS,
+  QUEUE_LIST_CAP,
   QUEUE_REFUND_CURRENCY,
   canReconcile,
+  paymentLabel,
   paymentTone,
   problemCount,
+  refreshFailed,
   reconcileNotice,
   sectionCount,
   type ProblemSection,
@@ -25,6 +28,7 @@ import type { AdminPaymentRow, PaymentStatus, ProblemQueue } from "@/lib/billing
 import { useAdminPayments, useProblemQueue, useReconcilePayment } from "@/lib/hooks/useAdminBillingApi"
 import { cn } from "@/lib/utils"
 import { PaymentActions, RefundHistory } from "./PaymentActions"
+import { RefreshNote } from "./RefreshNote"
 import { ReasonedFormDialog } from "./ReasonedFormDialog"
 
 /*
@@ -88,7 +92,7 @@ function PaymentRow({ p, listed, onReconcile }: { p: AdminPaymentRow; listed: bo
       </div>
       <div className="flex flex-wrap gap-2 empty:hidden">
         {canReconcile(p.status) ? (
-          <Button size="sm" variant="secondary" onClick={() => onReconcile(p)} aria-label={`Reconcile ${p.id}`}>
+          <Button size="sm" variant="secondary" onClick={() => onReconcile(p)} aria-label={`Reconcile ${paymentLabel(p)}`}>
             Reconcile
           </Button>
         ) : null}
@@ -175,6 +179,7 @@ function Queue({ q, onReconcile }: { q: ProblemQueue; onReconcile: (p: AdminPaym
           </Group>
         )
       })}
+      <p className="m-0 text-body-sm text-on-surface-variant">Each group lists the latest {QUEUE_LIST_CAP} entries at most. The server sends no totals.</p>
     </div>
   )
 }
@@ -201,15 +206,22 @@ export function Payments() {
         <div role="status" className="empty:hidden">
           {reconcile.data ? <p className="m-0 rounded-md bg-surface-container-low px-3 py-2 text-body-sm text-on-surface">{reconcileNotice(reconcile.data)}</p> : null}
         </div>
-        <QueryState
-          query={problems}
-          skeleton={<ListSkeleton rows={2} />}
-          error={{ heading: "Couldn't load the problem queue", compact: true }}
-          isEmpty={(q) => problemCount(q) === 0}
-          empty={<p className="m-0 text-body-md text-on-surface-variant">No payment problems right now.</p>}
-        >
-          {(q) => <Queue q={q} onReconcile={setReconciling} />}
-        </QueryState>
+        {problems.data === undefined ? (
+          <QueryState query={problems} skeleton={<ListSkeleton rows={2} />} error={{ heading: "Couldn't load the problem queue", compact: true }}>
+            {() => null}
+          </QueryState>
+        ) : (
+          <>
+            <RefreshNote query={problems} />
+            {problemCount(problems.data) > 0 ? (
+              <Queue q={problems.data} onReconcile={setReconciling} />
+            ) : refreshFailed(problems) ? (
+              <p className="m-0 text-body-md text-on-surface-variant">The last successful check found no payment problems.</p>
+            ) : (
+              <p className="m-0 text-body-md text-on-surface-variant">No payment problems right now.</p>
+            )}
+          </>
+        )}
       </section>
 
       <section className="flex flex-col gap-4">
@@ -225,32 +237,43 @@ export function Payments() {
             </Select>
           </div>
         </div>
-        <QueryState
-          query={payments}
-          skeleton={<ListSkeleton />}
-          error={{ heading: "Couldn't load payments" }}
-          isEmpty={(d) => d.pages.every((pg) => pg.items.length === 0)}
-          empty={<p className="m-0 text-body-md text-on-surface-variant">{status ? "No payments with this status." : "No payments yet."}</p>}
-        >
-          {(d) => (
-            <>
-              <ul className={LIST}>
-                {d.pages
-                  .flatMap((pg) => pg.items)
-                  .map((p) => (
-                    <PaymentRow key={p.id} p={p} listed onReconcile={setReconciling} />
-                  ))}
-              </ul>
-              {payments.hasNextPage ? (
-                <div>
-                  <Button variant="secondary" loading={payments.isFetchingNextPage} onClick={() => void payments.fetchNextPage()}>
-                    Load more
-                  </Button>
-                </div>
-              ) : null}
-            </>
-          )}
-        </QueryState>
+        {payments.data === undefined ? (
+          <QueryState query={payments} skeleton={<ListSkeleton />} error={{ heading: "Couldn't load payments" }}>
+            {() => null}
+          </QueryState>
+        ) : (
+          <>
+            <RefreshNote query={payments} />
+            {payments.data.pages.every((pg) => pg.items.length === 0) ? (
+              <p className="m-0 text-body-md text-on-surface-variant">
+                {refreshFailed(payments) ? "The last successful load found no payments." : status ? "No payments with this status." : "No payments yet."}
+              </p>
+            ) : (
+              <>
+                <ul className={LIST}>
+                  {payments.data.pages
+                    .flatMap((pg) => pg.items)
+                    .map((p) => (
+                      <PaymentRow key={p.id} p={p} listed onReconcile={setReconciling} />
+                    ))}
+                </ul>
+                {/* A failed page keeps the rows on screen (v5 flips status to error but keeps data). */}
+                {payments.isFetchNextPageError ? (
+                  <p role="alert" className="m-0 text-body-sm text-on-surface">
+                    Couldn't load more payments.
+                  </p>
+                ) : null}
+                {payments.hasNextPage ? (
+                  <div>
+                    <Button variant="secondary" loading={payments.isFetchingNextPage} onClick={() => void payments.fetchNextPage()}>
+                      {payments.isFetchNextPageError ? "Try again" : "Load more"}
+                    </Button>
+                  </div>
+                ) : null}
+              </>
+            )}
+          </>
+        )}
       </section>
 
       {reconciling ? (

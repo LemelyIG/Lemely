@@ -7,10 +7,12 @@ import { Input } from "@/components/ui/input"
 import { Modal } from "@/components/ui/modal"
 import { Select } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { cn } from "@/lib/utils"
 import {
   REASON_MAX,
   adminBillingFailureMessage,
   fieldErrors,
+  isAmbiguousFailure,
   reasonError,
   tomorrowUtc,
   visibleFields,
@@ -117,7 +119,9 @@ export function ReasonedFormDialog<TBody>({
       footer={
         <div className="flex flex-col gap-3">
           {mutation.isError ? (
-            <p role="alert" className="m-0 text-body-sm text-error">
+            // An answer that never arrived (dropped connection, 5xx) is not a refusal: the change
+            // may have saved, so it is not painted as an error. Only a definite 4xx is crimson.
+            <p role="alert" className={cn("m-0 text-body-sm", isAmbiguousFailure(mutation.error) ? "text-on-surface" : "text-error")}>
               {adminBillingFailureMessage(mutation.error, "save this change", { rolledBackOn502, reload })}
             </p>
           ) : null}

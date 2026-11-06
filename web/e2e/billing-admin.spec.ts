@@ -27,7 +27,7 @@ test("a platform admin sees the problem queue and must give a reason to reconcil
 
   await page.goto("/platform/billing/payments")
   await expect(page.getByRole("heading", { name: "Pending over an hour" })).toBeVisible()
-  await page.getByRole("button", { name: "Reconcile pay7" }).click()
+  await page.getByRole("button", { name: "Reconcile order PM-7" }).click()
   const dialog = page.getByRole("dialog")
   await dialog.getByRole("button", { name: "Reconcile", exact: true }).click()
   // The refusal sits on the Reason field, which takes focus.

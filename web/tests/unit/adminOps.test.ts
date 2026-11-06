@@ -4,6 +4,7 @@ import {
   canReconcile,
   jobOutcomeText,
   jobRunsText,
+  paymentLabel,
   paymentTone,
   problemCount,
   PROBLEM_SECTIONS,
@@ -28,12 +29,12 @@ vi.mock("@/lib/hooks/useAdminBillingApi", () => ({
 import { Health } from "@/portals/admin/screens/billing/Health"
 import { Payments } from "@/portals/admin/screens/billing/Payments"
 
-const infinite = (pages: unknown[]) => ({ ...okQuery({ pages, pageParams: [null] }), hasNextPage: false, isFetchingNextPage: false, fetchNextPage: vi.fn() })
+const infinite = (pages: unknown[], more = false) => ({ ...okQuery({ pages, pageParams: [null] }), hasNextPage: more, isFetchingNextPage: false, fetchNextPage: vi.fn() })
 const emptyQueue = { mismatches: [], stalePending: [], missingCallbacks: [], hmacFailures: [], hmacFailures24h: 0, refundsNeedingAttention: [] }
 const CLEAR = "No payment problems right now."
 
 beforeEach(() => {
-  s.payments = infinite([{ items: [fx.adminPayment, { ...fx.adminPayment, id: "pay2", status: "pending", paidAt: null }], nextCursor: null }])
+  s.payments = infinite([{ items: [fx.adminPayment, { ...fx.adminPayment, id: "pay2", status: "pending", paidAt: null, paymobOrderId: "PM-2" }], nextCursor: null }])
   s.problems = okQuery(fx.problems)
   s.health = okQuery(fx.health)
 })
@@ -59,8 +60,9 @@ describe("ops model", () => {
   })
 
   it("reconciles only what Paymob can still change", () => {
-    expect(["created", "pending", "failed"].every((x) => canReconcile(x as never))).toBe(true)
-    expect(["paid", "failed_mismatch", "refunded", "partially_refunded", "voided"].some((x) => canReconcile(x as never))).toBe(false)
+    expect(["created", "pending"].every((x) => canReconcile(x as never))).toBe(true)
+    // `failed` is settled: plan 07 returns it untouched, so Reconcile would only write an audit row.
+    expect(["failed", "paid", "failed_mismatch", "refunded", "partially_refunded", "voided"].some((x) => canReconcile(x as never))).toBe(false)
   })
 
   it("counts the 24-hour HMAC figure when the server listed fewer rows than it counted", () => {
@@ -82,9 +84,20 @@ describe("ops model", () => {
     expect(jobRunsText(fx.health.jobs[2])).toBe("No runs recorded")
   })
 
-  it("says what Paymob reported without guessing what it said before", () => {
-    expect(reconcileNotice({ id: "pay7", paymobOrderId: "PM-7", status: "pending" })).toBe("Checked with Paymob. Order PM-7 is pending.")
+  it("words each reconcile answer for what the server really knows", () => {
+    const base = { id: "pay7", paymobOrderId: "PM-7" }
+    // An open status can also mean the inquiry errored, so it is never "checked".
+    expect(reconcileNotice({ ...base, status: "pending" })).toBe("Paymob has not reported a final result. Order PM-7 is still pending.")
+    expect(reconcileNotice({ ...base, status: "created" })).toBe("Paymob has not reported a final result. Order PM-7 is still pending.")
+    expect(reconcileNotice({ ...base, status: "failed" })).toBe("Order PM-7 is now marked failed.")
+    expect(reconcileNotice({ ...base, status: "paid" })).toBe("Checked with Paymob. Order PM-7 is paid.")
+    expect(reconcileNotice({ ...base, status: "refunded" })).toBe("Checked with Paymob. Order PM-7 is refunded.")
     expect(reconcileNotice({ id: "pay7", paymobOrderId: null, status: "failed_mismatch" })).toBe("Checked with Paymob. Order pay7 is failed mismatch.")
+  })
+
+  it("names a payment by its Paymob order, else a short id, never the whole UUID", () => {
+    expect(paymentLabel({ id: "0a1b2c3d-1111-2222-3333-444455556666", paymobOrderId: "PM-7" })).toBe("order PM-7")
+    expect(paymentLabel({ id: "0a1b2c3d-1111-2222-3333-444455556666", paymobOrderId: null })).toBe("payment 0a1b2c3d")
   })
 })
 
@@ -121,12 +134,19 @@ describe("Payments", () => {
 
   it("offers Reconcile only on payments Paymob can still change, in the queue and the list", () => {
     s.problems = okQuery({ ...fx.problems, stalePending: [{ ...fx.adminPayment, id: "pay8", status: "pending", paymobOrderId: "PM-8", paidAt: null }] })
+    s.payments = infinite([
+      {
+        items: [fx.adminPayment, { ...fx.adminPayment, id: "pay2", status: "pending", paidAt: null, paymobOrderId: "PM-2" }, { ...fx.adminPayment, id: "pay9", status: "failed", paidAt: null, paymobOrderId: "PM-9" }],
+        nextCursor: null,
+      },
+    ])
     const html = renderStatic(h(Payments))
-    expect(html).toContain('aria-label="Reconcile pay2"')
-    expect(html).toContain('aria-label="Reconcile pay8"')
-    // paid (list) and failed_mismatch (queue) are settled.
-    expect(html).not.toContain('aria-label="Reconcile pay1"')
-    expect(html).not.toContain('aria-label="Reconcile pay7"')
+    expect(html).toContain('aria-label="Reconcile order PM-2"')
+    expect(html).toContain('aria-label="Reconcile order PM-8"')
+    // paid (list), failed (list) and failed_mismatch (queue) are settled: nothing for Paymob to change.
+    expect(html).not.toContain('aria-label="Reconcile order PM-1"')
+    expect(html).not.toContain('aria-label="Reconcile order PM-9"')
+    expect(html).not.toContain('aria-label="Reconcile order PM-7"')
   })
 
   it("shows a refund with no confirmed outcome as unknown, never failed or declined", () => {
@@ -144,6 +164,55 @@ describe("Payments", () => {
     const html = renderStatic(h(Payments))
     expect(html).toContain("load payments")
     expect(html).not.toContain("No payments")
+  })
+
+  it("keeps the loaded rows when a later page fails, with an inline retry", () => {
+    s.payments = {
+      ...infinite([{ items: [fx.adminPayment], nextCursor: "n2" }], true),
+      status: "error",
+      isError: true,
+      isSuccess: false,
+      error: new Error("boom"),
+      isFetchNextPageError: true,
+    }
+    const html = renderStatic(h(Payments))
+    expect(html).toContain("TX-1")
+    expect(html).toContain("load more payments")
+    expect(html).toContain('role="alert"')
+    expect(html).toContain("Try again")
+    expect(html).not.toContain("Load more")
+    expect(html).not.toContain("load payments")
+    expect(html).not.toContain("Last refresh failed")
+  })
+
+  it("keeps the queue on screen with a note when only a background refresh fails", () => {
+    s.problems = { ...okQuery(fx.problems), status: "error", isError: true, isSuccess: false, error: new Error("boom") }
+    const html = renderStatic(h(Payments))
+    expect(html).toContain("Last refresh failed")
+    expect(html).toContain("PM-7")
+    expect(html).not.toContain("load the problem queue")
+    expect(html).not.toContain(CLEAR)
+  })
+
+  it("does not call a stale empty queue clear when the refresh failed", () => {
+    s.problems = { ...okQuery(emptyQueue), status: "error", isError: true, isSuccess: false, error: new Error("boom") }
+    const html = renderStatic(h(Payments))
+    expect(html).toContain("Last refresh failed")
+    expect(html).toContain("last successful check found no payment problems")
+    expect(html).not.toContain(CLEAR)
+  })
+
+  it("keeps the list rows with a note when a refresh of the list fails", () => {
+    s.payments = { ...infinite([{ items: [fx.adminPayment], nextCursor: null }]), status: "error", isError: true, isSuccess: false, error: new Error("boom") }
+    const html = renderStatic(h(Payments))
+    expect(html).toContain("TX-1")
+    expect(html).toContain("Last refresh failed")
+  })
+
+  it("says each group lists the latest entries only, since the server sends no totals", () => {
+    expect(renderStatic(h(Payments))).toContain("latest 100 entries at most")
+    s.problems = okQuery(emptyQueue)
+    expect(renderStatic(h(Payments))).not.toContain("latest 100 entries")
   })
 
   it("lists payer and beneficiary ids, the purpose and the Paymob ids", () => {
@@ -182,6 +251,14 @@ describe("Health", () => {
     const html = renderStatic(h(Health))
     expect(html).toContain("load billing health")
     expect(html).not.toContain("Renewal failures")
+  })
+
+  it("keeps the figures with a note when a refresh fails", () => {
+    s.health = { ...okQuery(fx.health), status: "error", isError: true, isSuccess: false, error: new Error("boom") }
+    const html = renderStatic(h(Health))
+    expect(html).toContain("Last refresh failed")
+    expect(html).toContain("Renewal failures")
+    expect(html).not.toContain("load billing health")
   })
 
   it("says the last success of a failing job and the window the counts cover", () => {

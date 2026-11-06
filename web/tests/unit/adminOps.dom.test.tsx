@@ -34,6 +34,7 @@ vi.mock("@/lib/hooks/useAdminBillingApi", () => ({
   useVoidPayment: () => fakeMutation(),
 }))
 
+import { ReasonedFormDialog } from "@/portals/admin/screens/billing/ReasonedFormDialog"
 import { Payments } from "@/portals/admin/screens/billing/Payments"
 
 const infinite = (items: unknown[], more = false, fetchNextPage = vi.fn()) => ({
@@ -60,7 +61,7 @@ describe("Reconcile", () => {
   it("needs a reason, then sends it with the payment id and nothing else", async () => {
     const user = userEvent.setup()
     render(tree())
-    await user.click(screen.getByRole("button", { name: "Reconcile pay2" }))
+    await user.click(screen.getByRole("button", { name: "Reconcile order PM-2" }))
     const d = dlg()
     expect(within(d).getByRole("heading", { name: "Reconcile payment" })).toBeTruthy()
     expect(within(d).getByText(/Order PM-2/)).toBeTruthy()
@@ -80,7 +81,7 @@ describe("Reconcile", () => {
   it("opens from the problem queue for that payment", async () => {
     const user = userEvent.setup()
     render(tree())
-    await user.click(screen.getByRole("button", { name: "Reconcile pay8" }))
+    await user.click(screen.getByRole("button", { name: "Reconcile order PM-8" }))
     expect(within(dlg()).getByText(/Order PM-8/)).toBeTruthy()
     fireEvent.change(within(dlg()).getByLabelText("Reason"), { target: { value: "stuck for two hours" } })
     await user.click(within(dlg()).getByRole("button", { name: "Reconcile" }))
@@ -90,7 +91,7 @@ describe("Reconcile", () => {
   it("closes on Cancel without sending anything", async () => {
     const user = userEvent.setup()
     render(tree())
-    await user.click(screen.getByRole("button", { name: "Reconcile pay2" }))
+    await user.click(screen.getByRole("button", { name: "Reconcile order PM-2" }))
     await user.click(within(dlg()).getByRole("button", { name: "Cancel" }))
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
     expect(reconcile().mutate).not.toHaveBeenCalled()
@@ -100,13 +101,20 @@ describe("Reconcile", () => {
     s.reconcile = fakeMutation({ isSuccess: true, data: { ...pending, status: "pending" } })
     render(tree())
     const live = screen.getAllByRole("status").map((n) => n.textContent ?? "").join(" ")
-    expect(live).toContain("Checked with Paymob. Order PM-2 is pending.")
+    expect(live).toContain("Paymob has not reported a final result. Order PM-2 is still pending.")
     expect(live.toLowerCase()).not.toMatch(/fail|declin/)
   })
 
-  it("offers nothing to reconcile on a paid payment", () => {
+  it("says a payment is marked failed only when the server answered failed", () => {
+    s.reconcile = fakeMutation({ isSuccess: true, data: { ...pending, status: "failed" } })
+    render(tree())
+    const live = screen.getAllByRole("status").map((n) => n.textContent ?? "").join(" ")
+    expect(live).toContain("Order PM-2 is now marked failed.")
+  })
+
+  it("offers nothing to reconcile on a paid or failed payment", () => {
     s.problems = okQuery(queueWith({}))
-    s.payments = infinite([fx.adminPayment])
+    s.payments = infinite([fx.adminPayment, { ...fx.adminPayment, id: "pay9", status: "failed", paidAt: null, paymobOrderId: "PM-9" }])
     render(tree())
     expect(screen.queryByRole("button", { name: /^Reconcile / })).toBeNull()
   })
@@ -124,6 +132,18 @@ describe("the list", () => {
     await user.selectOptions(screen.getByLabelText("Status"), "")
     expect(s.statuses.at(-1)).toBeNull()
     expect(screen.getByText("No payments yet.")).toBeTruthy()
+  })
+
+  it("keeps the rows after a failed page and retries it with Try again", async () => {
+    const user = userEvent.setup()
+    const next = vi.fn()
+    s.payments = { ...infinite([fx.adminPayment, pending], true, next), status: "error", isError: true, isSuccess: false, error: new Error("boom"), isFetchNextPageError: true }
+    render(tree())
+    expect(screen.getByRole("alert").textContent).toBe("Couldn't load more payments.")
+    expect(screen.getByRole("button", { name: "Reconcile order PM-2" })).toBeTruthy()
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull()
+    await user.click(screen.getByRole("button", { name: "Try again" }))
+    expect(next).toHaveBeenCalledTimes(1)
   })
 
   it("loads the next page on Load more", async () => {
@@ -149,6 +169,46 @@ describe("a refused or failed read", () => {
     render(tree())
     expect(screen.getByText("Couldn't load the problem queue")).toBeTruthy()
     expect(screen.queryByText("No payment problems right now.")).toBeNull()
-    expect(screen.getByRole("button", { name: "Reconcile pay2" })).toBeTruthy()
+    expect(screen.getByRole("button", { name: "Reconcile order PM-2" })).toBeTruthy()
+  })
+})
+
+describe("the dialog's failure tone", () => {
+  const dialogWith = (error: unknown) =>
+    render(
+      h(
+        MemoryRouter,
+        null,
+        h(ReasonedFormDialog, {
+          open: true,
+          onClose: () => {},
+          title: "Void payment",
+          fields: [],
+          initial: {},
+          submitLabel: "Void",
+          mutation: fakeMutation({ isError: true, error }) as never,
+          toBody: () => ({}),
+        }),
+      ),
+    )
+
+  it.each([
+    ["a dropped connection", new ApiError(0, "offline")],
+    ["a server error", new ApiError(502, "bad gateway")],
+    ["a non-API error", new TypeError("fetch failed")],
+  ])("does not paint %s as an error, since the change may have saved", (_n, error) => {
+    dialogWith(error)
+    const note = screen.getByRole("alert")
+    expect(note.className).not.toContain("text-error")
+    expect(note.className).toContain("text-on-surface")
+  })
+
+  it.each([
+    ["a refusal", new ApiError(409, "refund_in_flight")],
+    ["a missing row", new ApiError(404, "gone")],
+    ["a rate limit", new ApiError(429, "slow down")],
+  ])("keeps the error colour for %s", (_n, error) => {
+    dialogWith(error)
+    expect(screen.getByRole("alert").className).toContain("text-error")
   })
 })

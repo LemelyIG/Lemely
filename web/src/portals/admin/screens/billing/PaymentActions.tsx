@@ -13,6 +13,7 @@ import {
   refundOutcome,
   refundableMinor,
 } from "@/lib/adminBillingModel"
+import { paymentLabel } from "@/lib/adminOpsModel"
 import type { AdminPaymentRow } from "@/lib/billingTypes"
 import { useReconcilePayment, useRefundPayment, useVoidPayment } from "@/lib/hooks/useAdminBillingApi"
 import { cn } from "@/lib/utils"
@@ -64,7 +65,7 @@ function CheckWithPaymob({ payment }: { payment: AdminPaymentRow }) {
   const count = openRefunds(payment).length
   return (
     <>
-      <Button size="sm" variant="secondary" onClick={() => setOpen(true)} aria-label={`Check refund with Paymob for ${payment.id}`}>
+      <Button size="sm" variant="secondary" onClick={() => setOpen(true)} aria-label={`Check refund with Paymob for ${paymentLabel(payment)}`}>
         Check with Paymob
       </Button>
       <span role="status" className="sr-only">
@@ -115,11 +116,11 @@ export function PaymentActions({ payment }: { payment: AdminPaymentRow }) {
   const remaining = refundableMinor(payment)
   return (
     <>
-      <Button size="sm" variant="secondary" onClick={() => setOpen("refund")} aria-label={`Refund ${payment.id}`}>
+      <Button size="sm" variant="secondary" onClick={() => setOpen("refund")} aria-label={`Refund ${paymentLabel(payment)}`}>
         Refund
       </Button>
       {canVoid(payment) ? (
-        <Button size="sm" variant="ghost" onClick={() => setOpen("void")} aria-label={`Void ${payment.id}`}>
+        <Button size="sm" variant="ghost" onClick={() => setOpen("void")} aria-label={`Void ${paymentLabel(payment)}`}>
           Void
         </Button>
       ) : null}

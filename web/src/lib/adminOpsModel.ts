@@ -61,12 +61,13 @@ export const PAYMENT_STATUS_OPTIONS: { value: PaymentStatus | ""; label: string 
 ]
 
 /**
- * Whether Paymob's transaction inquiry can still change this payment. A failed payment is
- * included because a late success callback can reopen it. Paid, refunded and mismatched
- * payments are settled: asking again would change nothing.
+ * Whether the Paymob transaction inquiry can still change this payment. Only an open payment
+ * (`created` or `pending`) is asked: plan 07 `reconcile_payment_now` returns any other status
+ * untouched, so offering Reconcile on a failed payment would write an audit row and never ask
+ * Paymob. Paid, failed, refunded and mismatched payments are settled here.
  */
 export function canReconcile(status: PaymentStatus): boolean {
-  return status === "created" || status === "pending" || status === "failed"
+  return status === "created" || status === "pending"
 }
 
 /** Only a payment that really failed, or whose amount did not match, is crimson. */
@@ -85,10 +86,33 @@ export function paymentTone(status: PaymentStatus): BadgeTone {
   return PAYMENT_TONE[status]
 }
 
-/** The reconcile answer in a sentence: what Paymob says now, never a guess at what it said before. */
+/**
+ * The reconcile answer, worded for what the server really knows. A 200 with an open status can
+ * also mean the inquiry itself errored (the server leaves the payment as it was), so an open
+ * payment is never described as checked; only a settled answer says Paymob was asked.
+ */
 export function reconcileNotice(p: Pick<AdminPaymentRow, "id" | "paymobOrderId" | "status">): string {
-  return `Checked with Paymob. Order ${p.paymobOrderId ?? p.id} is ${humanize(p.status).toLowerCase()}.`
+  const order = p.paymobOrderId ?? p.id
+  if (p.status === "pending" || p.status === "created") return `Paymob has not reported a final result. Order ${order} is still pending.`
+  if (p.status === "failed") return `Order ${order} is now marked failed.`
+  return `Checked with Paymob. Order ${order} is ${humanize(p.status).toLowerCase()}.`
 }
+
+/** How a payment is named to a screen reader and in a dialog: its Paymob order, else a short id. */
+export function paymentLabel(p: Pick<AdminPaymentRow, "id" | "paymobOrderId">): string {
+  return p.paymobOrderId ? `order ${p.paymobOrderId}` : `payment ${p.id.slice(0, 8)}`
+}
+
+/**
+ * True while the data on screen is older than the last attempt: React Query v5 keeps `data` but
+ * flips `status` to "error" when a background refresh fails. A failed "Load more" is not one.
+ */
+export function refreshFailed(query: { status: "pending" | "error" | "success"; data: unknown; isFetchNextPageError?: boolean }): boolean {
+  return query.data !== undefined && query.status === "error" && !query.isFetchNextPageError
+}
+
+/** Plan 07 `_QUEUE_LIMIT`: each problem group lists at most this many entries and sends no total. */
+export const QUEUE_LIST_CAP = 100
 
 export function webhookErrorText(h: BillingHealth): string {
   if (h.webhookErrorRate === null) return `No webhooks in ${h.windowHours} hours`

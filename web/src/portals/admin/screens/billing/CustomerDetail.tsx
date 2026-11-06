@@ -25,8 +25,9 @@ import {
   isAmbiguousFailure,
   isForbidden,
 } from "@/lib/adminBillingModel"
+import { paymentTone } from "@/lib/adminOpsModel"
 import { formatBillingDate, formatMoney } from "@/lib/billingFormat"
-import type { AdminMember, AdminPaymentRow, AdminSubscription, PaymentStatus, SubscriptionStatus } from "@/lib/billingTypes"
+import type { AdminMember, AdminPaymentRow, AdminSubscription, SubscriptionStatus } from "@/lib/billingTypes"
 import {
   useAdjustBalance,
   useAdminCancelSubscription,
@@ -64,16 +65,6 @@ const SUB_TONE: Record<SubscriptionStatus, BadgeTone> = {
   expired: "sage",
   inactive: "sage",
   rejected: "sage",
-}
-const PAY_TONE: Record<PaymentStatus, BadgeTone> = {
-  paid: "ok",
-  created: "info",
-  pending: "info",
-  partially_refunded: "info",
-  refunded: "sage",
-  voided: "sage",
-  failed: "err",
-  failed_mismatch: "err",
 }
 
 function Panel({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
@@ -233,7 +224,7 @@ function PaymentItem({ p, customerId }: { p: AdminPaymentRow; customerId: string
         <div className="flex min-w-0 flex-col gap-1">
           <p className="m-0 flex flex-wrap items-center gap-2 text-body-md font-medium text-on-surface">
             {humanize(p.purpose)}
-            <Badge tone={PAY_TONE[p.status]}>{humanize(p.status)}</Badge>
+            <Badge tone={paymentTone(p.status)}>{humanize(p.status)}</Badge>
           </p>
           <p className="m-0 text-body-sm text-on-surface-variant">
             {d(p.createdAt)} · Paymob order <span className="text-data-sm">{p.paymobOrderId ?? "—"}</span>
