@@ -252,17 +252,34 @@ export async function pinContentWidth(page, selector, target) {
  * content: the content box only; `neutral` paints its own background magenta on
  * both sides so a shell background change cannot leak into a content compare.
  */
-export async function capture(page, { capture: mode, selector, neutral = false, originX, report }) {
+export async function capture(page, { capture: mode, selector, neutral = false, originX }) {
   if (mode === "frame") {
     await page.addStyleTag({ content: `${selector} > * { visibility: hidden !important; }` })
-    return stableShot(page, () => page.screenshot({ animations: "disabled", caret: "hide" }))
+    return { png: await stableShot(page, () => page.screenshot({ animations: "disabled", caret: "hide" })), x: undefined }
   }
   if (neutral) await page.addStyleTag({ content: `${selector} { background: rgb(255 0 255) !important; }` })
   await hideChromeOutside(page, selector)
   await snapContentOrigin(page, selector, originX)
   const clip = await contentBox(page, selector)
-  if (report) report.x = clip.x
-  return stableShot(page, () => page.screenshot({ fullPage: true, clip, animations: "disabled", caret: "hide" }))
+  const png = await stableShot(page, () => page.screenshot({ fullPage: true, clip, animations: "disabled", caret: "hide" }))
+  return { png, x: clip.x }
+}
+
+/**
+ * Horizontal overflow at the window's natural layout: the document or the
+ * content root scrolls sideways (scrollWidth > clientWidth). Returns the
+ * overflowing parts (empty when none). Width pinning proves content equivalence
+ * at the baseline width only; this is the cheap check on the real layout.
+ */
+export async function horizontalOverflow(page, selector) {
+  return page.evaluate((sel) => {
+    const out = []
+    const doc = document.documentElement
+    if (doc.scrollWidth > doc.clientWidth) out.push(`document scrollWidth ${doc.scrollWidth} > clientWidth ${doc.clientWidth}`)
+    const el = document.querySelector(sel)
+    if (el && el.scrollWidth > el.clientWidth) out.push(`${sel} scrollWidth ${el.scrollWidth} > clientWidth ${el.clientWidth}`)
+    return out
+  }, selector)
 }
 
 /**

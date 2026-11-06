@@ -90,7 +90,13 @@ export function verdict(result, justification, rule = "gate") {
   return judge(result, justification, rule).outcome
 }
 
-/** Process exit code for a set of rows: 0 only when at least one row ran and every row passes. */
+/**
+ * Process exit code for a set of rows: 0 only when at least one row was actually
+ * compared (pass or pass-justified) and none failed. "captured" rows (never
+ * diffed, need human review) neither pass nor fail, but a run holding only
+ * captured rows compared nothing and exits 1.
+ */
 export function exitCodeFor(rows) {
-  return rows.length > 0 && rows.every((r) => r.outcome !== "fail") ? 0 : 1
+  const compared = rows.some((r) => r.outcome === "pass" || r.outcome === "pass-justified")
+  return compared && rows.every((r) => r.outcome !== "fail") ? 0 : 1
 }

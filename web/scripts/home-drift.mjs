@@ -26,6 +26,7 @@ import {
   contentBox,
   matchContentWidth,
   pinContentWidth,
+  horizontalOverflow,
   openApp,
   openPreview,
   stableShot,
@@ -79,10 +80,13 @@ function expand() {
 const LEGACY_ORIGIN_X = 324
 const LEGACY_ORIGIN_MIN_WIDTH = 820
 const SIDEBAR_COLUMN_WIDTH = 1248
+const OVERFLOW_MIN_WIDTH = 820
+/** Content scenes also get an unpinned natural-width capture at these windows (human review). */
+const NATURAL_CAPTURE_WIDTHS = [768, 1024]
 
 async function shoot(browser, side, item, meta = {}) {
   const { scene, width, theme } = item
-  const { contentWidth: targetWidth } = meta
+  const { contentWidth: targetWidth, natural = false } = meta
   const beforeVsAfter = side === "app" && scene.kind === "before-vs-after"
   const height = HEIGHT[width] ?? 900
   const opened =
@@ -91,6 +95,12 @@ async function shoot(browser, side, item, meta = {}) {
       : await openApp(browser, { width, height, theme, app: scene.app })
   try {
     const selector = SELECTORS[side === "preview" ? "preview" : "app"]
+    if (side === "app" && width >= OVERFLOW_MIN_WIDTH && width < SIDEBAR_COLUMN_WIDTH) {
+      // Natural layout, before any pin: the pin below proves content equivalence
+      // at the baseline width, not that 820-1247 lays out without a sideways scroll.
+      const over = await horizontalOverflow(opened.page, selector)
+      if (over.length) throw new Error(`horizontal overflow at ${width}px: ${over.join("; ")}`)
+    }
     if (scene.capture === "content" && targetWidth !== undefined) {
       // Below the sidebar breakpoint the window keeps its native width (viewport
       // media queries must equal the baseline's) and the content selector is
@@ -103,16 +113,24 @@ async function shoot(browser, side, item, meta = {}) {
       if (!ok) throw new Error(`${item.key}: could not match content width ${targetWidth}`)
     }
     const width_ = scene.capture === "content" ? (await contentBox(opened.page, selector)).width : undefined
-    const report = {}
-    const png = await capture(opened.page, {
+    let originX
+    if (beforeVsAfter && !natural) {
+      originX = meta.originX
+      if (originX === undefined && width >= LEGACY_ORIGIN_MIN_WIDTH) {
+        if (scene.capture === "content" && LEGACY_ORIGIN_X + width_ > width) {
+          throw new Error(`legacy originX ${LEGACY_ORIGIN_X} + content ${width_} exceeds the ${width}px viewport; re-record the baseline with --record-baseline`)
+        }
+        originX = LEGACY_ORIGIN_X
+      }
+    }
+    const { png, x } = await capture(opened.page, {
       capture: scene.capture,
       selector,
       neutral: scene.kind === "before-vs-after",
       // See snapContentOrigin: the baseline's recorded content x, else the legacy constant.
-      originX: beforeVsAfter ? (meta.originX ?? (width >= LEGACY_ORIGIN_MIN_WIDTH ? LEGACY_ORIGIN_X : undefined)) : undefined,
-      report,
+      originX,
     })
-    return { png, contentWidth: width_, contentX: report.x }
+    return { png, contentWidth: width_, contentX: x }
   } finally {
     await opened.context.close()
   }
@@ -166,6 +184,31 @@ function printProvenance(baselineDir) {
   console.log(`baseline provenance (per-key sidecars): ${list || "none"}; missing sha: ${p.missing}; dirty: ${p.dirty}`)
 }
 
+function capturedRow(key, artifact, why = "no baseline at this width") {
+  return {
+    key,
+    diff: null,
+    pct: null,
+    outcome: "captured",
+    reason: `captured, not compared: ${why} - needs human review`,
+    artifact,
+    justification: null,
+  }
+}
+
+/** Unpinned natural-width capture of a content scene: logged for a human, never diffed. */
+async function captureNatural(browser, item, { runDir }) {
+  const key = `${item.key}#natural`
+  try {
+    const only = await shoot(browser, "app", item, { natural: true })
+    const artifact = path.join(runDir, `${item.key}.natural.png`)
+    fs.writeFileSync(artifact, only.png)
+    return capturedRow(key, artifact, "natural unpinned width, real layout")
+  } catch (error) {
+    return { key, diff: null, pct: null, outcome: "fail", reason: `capture failed: ${error.message}`, justification: null }
+  }
+}
+
 /**
  * Compare one scene key and return its report row. A failure to capture (for
  * example the content width cannot be matched) fails that one key and does not
@@ -183,11 +226,12 @@ async function compareItem(browser, item, { baselineDir, runDir, table }) {
       const basePng = path.join(baselineDir, `${key}.png`)
       if (!fs.existsSync(basePng) && scene.baselineless?.includes(item.width)) {
         // A state `develop` could not show at this width (its sidebar column was
-        // still up at 1100 px, so there was no drawer): capture the new side only
-        // so the picture is on file; nothing to diff against.
+        // still up at 1100 px, so there was no drawer): capture the new side only.
+        // Nothing was diffed, so this is "captured", never a pass.
         const only = await shoot(browser, "app", item, {})
-        fs.writeFileSync(path.join(runDir, `${key}.b.png`), only.png)
-        return { key, diff: 0, pct: 0, outcome: "pass", reason: "log-only: no develop baseline at this width (captured, not compared)", justification: null }
+        const artifact = path.join(runDir, `${key}.b.png`)
+        fs.writeFileSync(artifact, only.png)
+        return capturedRow(key, artifact)
       }
       if (!fs.existsSync(basePng)) throw new Error(`no baseline; run with --record-baseline on merged develop`)
       const meta = JSON.parse(fs.readFileSync(path.join(baselineDir, `${key}.json`), "utf8"))
@@ -202,7 +246,7 @@ async function compareItem(browser, item, { baselineDir, runDir, table }) {
     const { outcome, reason } = judge(result, justification, scene.rule ?? "gate")
     return { key, ...result, outcome, reason, justification }
   } catch (error) {
-    return { key, diff: null, pct: 0, outcome: "fail", reason: `capture failed: ${error.message}`, justification: null }
+    return { key, diff: null, pct: null, outcome: "fail", reason: `capture failed: ${error.message}`, justification: null }
   }
 }
 
@@ -282,6 +326,19 @@ async function selftestEndToEnd(browser, width = 1440) {
     const ok = await compareItem(browser, item, { baselineDir, runDir, table: entry })
     assertEqual(ok.outcome, "pass-justified", "mutated baseline, approved")
     assertEqual(exitCodeFor([ok]), 0, "exit code, approved")
+    // A baselineless key with no baseline file is "captured", never "pass"; the
+    // same missing baseline on a key that does not list the width fails.
+    const missing = path.join(baselineDir, `${item.key}.png`)
+    fs.rmSync(missing)
+    const listed = { ...item, scene: { ...scene, baselineless: [width] } }
+    const captured = await compareItem(browser, listed, { baselineDir, runDir, table: {} })
+    assertEqual(captured.outcome, "captured", `baselineless key (${captured.reason})`)
+    assertEqual(captured.diff, null, "captured diff is null")
+    assertEqual(exitCodeFor([captured]), 1, "exit code, captured only")
+    const unlisted = await compareItem(browser, { ...item, scene: { ...scene, baselineless: [width + 1] } }, { baselineDir, runDir, table: {} })
+    assertEqual(unlisted.outcome, "fail", "missing baseline, width not listed baselineless")
+    const none = await compareItem(browser, item, { baselineDir, runDir, table: {} })
+    assertEqual(none.outcome, "fail", "missing baseline, no baselineless list")
     console.log(`selftest end-to-end passed at ${width}px`)
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true })
@@ -307,6 +364,9 @@ function selftestEmptySelection() {
   assertEqual(exitCodeFor([]), 1, "exit code, empty selection")
   assertEqual(exitCodeFor([{ outcome: "pass" }]), 0, "exit code, one pass")
   assertEqual(exitCodeFor([{ outcome: "pass" }, { outcome: "fail" }]), 1, "exit code, one fail")
+  assertEqual(exitCodeFor([{ outcome: "captured" }]), 1, "exit code, only captured rows (nothing compared)")
+  assertEqual(exitCodeFor([{ outcome: "captured" }, { outcome: "pass" }]), 0, "exit code, captured plus a pass")
+  assertEqual(exitCodeFor([{ outcome: "captured" }, { outcome: "fail" }]), 1, "exit code, captured plus a fail")
   console.log("selftest empty selection passed")
 }
 
@@ -323,7 +383,7 @@ async function selftestContentIgnoresChrome(browser) {
     const shoot = async (chrome, body, lift = 0) => {
       await page.setContent(html(chrome, body))
       if (lift) await page.addStyleTag({ content: `#m { transform: translateY(${lift}px); }` })
-      return capture(page, { capture: "content", selector: "#m" })
+      return (await capture(page, { capture: "content", selector: "#m" })).png
     }
     const base = await shoot("#f00", "#0a0")
     const chromeOnly = await shoot("#00f", "#0a0")
@@ -336,20 +396,21 @@ async function selftestContentIgnoresChrome(browser) {
     // A capture moved sideways (a shell that shifts the content column) against
     // an unshifted baseline is judged on content, not position: same content 0
     // px, changed content still differs.
-    const baseX = {}
     await page.setContent(html("#f00", "#0a0"))
     await page.addStyleTag({ content: `#m { width: 300px; }` })
-    const sidewaysBase = await capture(page, { capture: "content", selector: "#m", report: baseX })
+    const baseShot = await capture(page, { capture: "content", selector: "#m" })
+    const sidewaysBase = baseShot.png
+    const baseX = baseShot.x
     const sideways = async (body) => {
       await page.setContent(html("#f00", body))
       await page.addStyleTag({ content: `#m { position: relative; left: 37px; width: 300px; }` })
-      return capture(page, { capture: "content", selector: "#m", originX: baseX.x })
+      return (await capture(page, { capture: "content", selector: "#m", originX: baseX })).png
     }
     const widthPinned = async (body) => {
       await page.setContent(html("#f00", body))
       await page.addStyleTag({ content: `#m { width: 100px; }` })
       if (!(await pinContentWidth(page, "#m", 300))) throw new Error("selftest: pinContentWidth did not reach the target width")
-      return capture(page, { capture: "content", selector: "#m", originX: baseX.x })
+      return (await capture(page, { capture: "content", selector: "#m", originX: baseX })).png
     }
     const sidewaysSame = diffPngs(sidewaysBase, await sideways("#0a0"), path.join(DRIFT_DIR, "selftest", "sideways.diff.png"))
     const sidewaysChanged = diffPngs(sidewaysBase, await sideways("#a0a"), path.join(DRIFT_DIR, "selftest", "sideways-changed.diff.png"))
@@ -365,6 +426,23 @@ async function selftestContentIgnoresChrome(browser) {
     if (same.diff !== 0) throw new Error(`selftest: a fixed/sticky element outside the content leaked into the capture (${same.diff} px)`)
     if (changed.diff === 0) throw new Error("selftest: a real content change did not differ in content mode")
     console.log(`selftest content ignores chrome passed (chrome change ${same.diff} px, content change ${changed.diff} px)`)
+  } finally {
+    await context.close()
+  }
+}
+
+async function selftestOverflow(browser) {
+  // The overflow check must go red on a forced overflow and stay green without.
+  const context = await browser.newContext({ viewport: { width: 1000, height: 600 } })
+  try {
+    const page = await context.newPage()
+    await page.setContent('<body style="margin:0"><main id="m" style="width:100%;height:100px"><div style="height:10px">fits</div></main></body>')
+    const clean = await horizontalOverflow(page, "#m")
+    assertEqual(clean.length, 0, "overflow check on a fitting page")
+    await page.addStyleTag({ content: "#m > div { width: 1400px; }" })
+    const rootOver = await horizontalOverflow(page, "#m")
+    if (rootOver.length < 2) throw new Error(`selftest: forced overflow not detected on document and root (${rootOver.join("; ")})`)
+    console.log(`selftest overflow check passed (forced: ${rootOver.join("; ")})`)
   } finally {
     await context.close()
   }
@@ -430,6 +508,7 @@ async function runSelftest(browser) {
   if (same.diff !== 0) throw new Error("selftest: identical captures differ, the capture is not deterministic")
   if (verdict(changed, null) !== "fail") throw new Error("selftest: a recoloured title did not fail the gate")
   await selftestStableShot(browser)
+  await selftestOverflow(browser)
   await selftestContentIgnoresChrome(browser)
   const realBaseline = path.join(BASELINE_DIR, "teacher-home-content@1440@light.png")
   const before = fs.existsSync(realBaseline) ? fs.readFileSync(realBaseline) : null
@@ -496,28 +575,44 @@ async function main() {
       const pct = row.diff === null ? "     n/a" : row.pct.toFixed(3).padStart(8)
       const note = row.outcome === "fail" ? `  [${row.reason}]` : ""
       console.log(`${row.outcome.padEnd(14)} ${pct}%  ${row.key}${note}`)
+      if (item.scene.capture === "content" && item.scene.kind === "before-vs-after" && NATURAL_CAPTURE_WIDTHS.includes(item.width)) {
+        const natural = await captureNatural(browser, item, { runDir })
+        rows.push(natural)
+        console.log(`${natural.outcome.padEnd(14)}      n/a%  ${natural.key}${natural.outcome === "fail" ? `  [${natural.reason}]` : ""}`)
+      }
     }
   } finally {
     await browser?.close()
     servers.stop()
   }
   fs.writeFileSync(path.join(runDir, "report.json"), JSON.stringify(rows, null, 2))
+  const captured = rows.filter((r) => r.outcome === "captured")
+  const compared = rows.filter((r) => r.outcome !== "captured")
   const md = [
     "| Scene | Difference | % pixels | Justification | Approved | Verdict |",
     "|---|---|---|---|---|---|",
-    ...rows
+    ...compared
       .filter((r) => r.diff === null || r.diff > 0)
       .map(
         (r) =>
-          `| ${r.key} | ${r.justification?.difference ?? "(none)"} | ${r.pct.toFixed(2)} | ${
+          `| ${r.key} | ${r.justification?.difference ?? "(none)"} | ${(r.pct ?? 0).toFixed(2)} | ${
             r.justification?.justification ?? "(missing)"
           } | ${r.justification?.approved ?? "no"} | ${r.outcome}: ${r.reason} |`,
       ),
+    ...(captured.length
+      ? ["", "## Needs human review (not compared)", "", ...captured.map((r) => `- ${r.key}: ${r.reason} (${path.relative(REPO_DIR, r.artifact)})`)]
+      : []),
   ].join("\n")
   fs.writeFileSync(path.join(runDir, "report.md"), md + "\n")
   console.log(`report: ${path.relative(REPO_DIR, runDir)}`)
   const failed = rows.filter((r) => r.outcome === "fail")
   if (failed.length) console.error(`${failed.length} scene key(s) failed`)
+  const needReview = rows.filter((r) => r.outcome === "captured")
+  if (needReview.length) {
+    console.log("Needs human review (not compared):")
+    for (const r of needReview) console.log(`  ${r.key}  ${path.relative(REPO_DIR, r.artifact)}`)
+  }
+  if (rows.length && rows.every((r) => r.outcome === "captured")) console.error("no scene key was compared; only captures were taken")
   process.exitCode = exitCodeFor(rows)
 }
 
