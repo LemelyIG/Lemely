@@ -81,6 +81,10 @@ function sameForm(a: AutoTopupFormState, b: AutoTopupFormState): boolean {
   )
 }
 
+export function isPristine(form: AutoTopupFormState, baseline: AutoTopupFormState): boolean {
+  return sameForm(form, baseline)
+}
+
 /** The form is not remounted when the server copy changes (a save, or a background refetch of
  * `spentThisMonthMinor`). It adopts the new server values only while the user has not edited
  * anything since the last adoption; otherwise their in-progress edits stand. */
@@ -93,10 +97,47 @@ export function reconcileForm(
   return { form: sameForm(form, baseline) ? server : form, baseline: server }
 }
 
-export function isPristine(form: AutoTopupFormState, baseline: AutoTopupFormState): boolean {
-  return sameForm(form, baseline)
+/** Everything the card remembers between renders. `baseline` is the last server copy the form
+ * adopted or was saved as; `saved` is "a save just succeeded and nothing was touched since". */
+export interface AutoTopupState {
+  form: AutoTopupFormState
+  baseline: AutoTopupFormState
+  saved: boolean
 }
 
+export type AutoTopupEvent =
+  | { type: "serverSettings"; server: AutoTopupFormState }
+  | { type: "edit"; patch: Partial<AutoTopupFormState> }
+  | { type: "saveSucceeded"; saved: AutoTopupFormState }
+  | { type: "saveFailed" }
+
+export function initialState(server: AutoTopupFormState): AutoTopupState {
+  return { form: server, baseline: server, saved: false }
+}
+
+export function autoTopupReducer(state: AutoTopupState, event: AutoTopupEvent): AutoTopupState {
+  switch (event.type) {
+    case "serverSettings":
+      return { ...state, ...reconcileForm(state.form, state.baseline, event.server) }
+    case "edit":
+      // Any edit retires "Saved.", so editing and reverting never brings it back.
+      return { ...state, form: { ...state.form, ...event.patch }, saved: false }
+    case "saveSucceeded":
+      return { form: event.saved, baseline: event.saved, saved: true }
+    case "saveFailed":
+      return { ...state, saved: false }
+  }
+}
+
+/** Show "Saved." only while the form still matches what was saved. */
+export function showSaved(state: AutoTopupState): boolean {
+  return state.saved && isPristine(state.form, state.baseline)
+}
+
+/** Top-up can always be switched off; switching it on needs a saved card. */
+export function switchDisabled(form: AutoTopupFormState, hasCard: boolean): boolean {
+  return !hasCard && !form.enabled
+}
 const KNOWN_DISABLED_REASON = "charge_failed"
 
 /** What to say when the server switched top-up off itself. */

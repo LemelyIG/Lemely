@@ -1,8 +1,20 @@
-import { readFileSync } from "node:fs"
 import { createElement as h } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ApiError } from "@/lib/api"
-import { disabledNotice, fieldErrors, formFromSettings, reconcileForm, toUpdate, validateAutoTopup } from "@/lib/autoTopupForm"
+import {
+  autoTopupReducer,
+  disabledNotice,
+  fieldErrors,
+  formFromSettings,
+  initialState,
+  reconcileForm,
+  showSaved,
+  switchDisabled,
+  toUpdate,
+  validateAutoTopup,
+  type AutoTopupEvent,
+  type AutoTopupState,
+} from "@/lib/autoTopupForm"
 import { fx } from "./support/billingFixtures"
 import { fakeMutation, okQuery, renderStatic } from "./support/billingRender"
 
@@ -107,9 +119,12 @@ describe("disabledNotice", () => {
 })
 
 describe("AutoTopupCard", () => {
-  it("does not remount the form on a refetch, so the save result can show", () => {
-    const html = readFileSync("src/portals/billing/AutoTopupCard.tsx", "utf8")
-    expect(html).not.toContain("JSON.stringify(settings.data)")
+  it("lets an enabled setting with no saved card be switched off, but not on", () => {
+    s.settings = okQuery({ ...fx.autoTopup, enabled: true, thresholdUnits: 100, creditPackId: "p1", savedCardId: "card1", monthlyCapMinor: 60000 })
+    s.cards = okQuery({ cards: [] })
+    expect(card()).not.toMatch(/<button(?=[^>]*role="switch")(?=[^>]*\sdisabled="")[^>]*>/)
+    expect(switchDisabled({ ...formFromSettings(fx.autoTopup), enabled: false }, false)).toBe(true)
+    expect(switchDisabled({ ...formFromSettings(fx.autoTopup), enabled: true }, false)).toBe(false)
   })
 
   it("links a failed-charge notice to buying a pack with a new card", () => {
@@ -160,10 +175,52 @@ describe("AutoTopupCard", () => {
     expect(card()).toBe("")
   })
 
-  it("shows save success and failure", () => {
-    s.save = fakeMutation({ isSuccess: true })
-    expect(card()).toContain("Saved.")
+  it("shows a save failure (success is reducer state, covered below)", () => {
     s.save = fakeMutation({ isError: true, error: new ApiError(409, "x", { code: "no_saved_card" }) })
     expect(card()).toContain('role="alert"')
+  })
+})
+
+describe("autoTopupReducer", () => {
+  const server = formFromSettings({ ...fx.autoTopup, enabled: true, thresholdUnits: 100, creditPackId: "p1", savedCardId: "card1", monthlyCapMinor: 60000, spentThisMonthMinor: 0 })
+  const run = (reduce: (s: AutoTopupState, e: AutoTopupEvent) => AutoTopupState, events: AutoTopupEvent[]) =>
+    events.reduce(reduce, initialState(server))
+
+  // A reducer that resets on every serverSettings is the bug being guarded against.
+  const naive = (s: AutoTopupState, e: AutoTopupEvent): AutoTopupState =>
+    e.type === "serverSettings" ? { form: e.server, baseline: e.server, saved: s.saved } : autoTopupReducer(s, e)
+
+  const refetch: AutoTopupEvent = { type: "serverSettings", server: { ...server } }
+  const edit: AutoTopupEvent = { type: "edit", patch: { thresholdUnits: "250" } }
+  const saved = { ...server, thresholdUnits: "250" }
+
+  it("keeps an edit when the server copy is refetched", () => {
+    const events: AutoTopupEvent[] = [edit, { type: "serverSettings", server: { ...server, monthlyCapMajor: "700" } }]
+    expect(run(autoTopupReducer, events).form.thresholdUnits).toBe("250")
+    expect(run(naive, events).form.thresholdUnits).toBe("100")
+  })
+
+  it("adopts the server values while the form is pristine", () => {
+    const next = { ...server, monthlyCapMajor: "700" }
+    expect(run(autoTopupReducer, [{ type: "serverSettings", server: next }]).form).toEqual(next)
+  })
+
+  it("shows Saved after a save and keeps it when the saved data comes back", () => {
+    const events: AutoTopupEvent[] = [edit, { type: "saveSucceeded", saved }, { type: "serverSettings", server: { ...saved } }]
+    expect(showSaved(run(autoTopupReducer, events))).toBe(true)
+    expect(showSaved(run(naive, events))).toBe(true)
+    // Saved data arriving first, then the success event, ends the same way.
+    expect(showSaved(run(autoTopupReducer, [edit, { type: "serverSettings", server: { ...saved } }, { type: "saveSucceeded", saved }]))).toBe(true)
+  })
+
+  it("retires Saved on any edit, so editing and reverting does not bring it back", () => {
+    const after = run(autoTopupReducer, [edit, { type: "saveSucceeded", saved }, { type: "edit", patch: { thresholdUnits: "300" } }, { type: "edit", patch: { thresholdUnits: "250" } }])
+    expect(after.form).toEqual(after.baseline)
+    expect(showSaved(after)).toBe(false)
+  })
+
+  it("clears Saved when a save fails", () => {
+    expect(showSaved(run(autoTopupReducer, [edit, { type: "saveSucceeded", saved }, { type: "saveFailed" }]))).toBe(false)
+    expect(refetch.type).toBe("serverSettings")
   })
 })

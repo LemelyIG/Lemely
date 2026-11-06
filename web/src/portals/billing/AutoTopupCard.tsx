@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useReducer, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
@@ -6,11 +6,13 @@ import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import {
+  autoTopupReducer,
   disabledNotice,
   fieldErrors,
   formFromSettings,
-  isPristine,
-  reconcileForm,
+  initialState,
+  showSaved,
+  switchDisabled,
   toUpdate,
   validateAutoTopup,
   type AutoTopupFormState,
@@ -50,20 +52,24 @@ function Form({
 }) {
   const save = useSaveAutoTopup()
   const server = serverForm(settings, packs)
-  const [state, setState] = useState({ form: server, baseline: server })
+  const [state, dispatch] = useReducer(autoTopupReducer, server, initialState)
   const [seen, setSeen] = useState(settings)
-  // The form stays mounted across refetches; adopt new server values only while it is unedited.
+  // The form stays mounted across refetches; the reducer decides whether new server values win.
   if (seen !== settings) {
     setSeen(settings)
-    setState(reconcileForm(state.form, state.baseline, server))
+    dispatch({ type: "serverSettings", server })
   }
-  const { form, baseline } = state
+  const { form } = state
+  const [announce, setAnnounce] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [focusTick, setFocusTick] = useState(0)
   const formRef = useRef<HTMLFormElement>(null)
   const errors = fieldErrors(form, packs)
   const messages = validateAutoTopup(form, packs)
-  const set = (patch: Partial<AutoTopupFormState>) => setState((s) => ({ ...s, form: { ...s.form, ...patch } }))
+  const set = (patch: Partial<AutoTopupFormState>) => {
+    setAnnounce(false)
+    dispatch({ type: "edit", patch })
+  }
   const noCard = cards.length === 0
   const packGone = settings.creditPackId !== null && server.creditPackId === null
   const shown = (f: keyof typeof errors) => (submitted ? errors[f] : undefined)
@@ -82,15 +88,16 @@ function Form({
         e.preventDefault()
         setSubmitted(true)
         if (messages.length > 0) {
+          setAnnounce(true)
           setFocusTick((n) => n + 1)
           return
         }
         save.mutate(toUpdate(form, beneficiaryId, settings.monthlyCapMinor), {
           onSuccess: (saved) => {
-            const next = serverForm(saved, packs)
-            setState({ form: next, baseline: next })
+            dispatch({ type: "saveSucceeded", saved: serverForm(saved, packs) })
             setSubmitted(false)
           },
+          onError: () => dispatch({ type: "saveFailed" }),
         })
       }}
     >
@@ -114,7 +121,7 @@ function Form({
         description="Buy a pack by card when your credits run low."
         layout="row"
         checked={form.enabled}
-        disabled={noCard}
+        disabled={switchDisabled(form, !noCard)}
         onCheckedChange={(enabled) => set({ enabled })}
       />
       {noCard ? (
@@ -176,7 +183,7 @@ function Form({
         />
       </div>
       {submitted && messages.length > 0 ? (
-        <div role="alert" className="flex flex-col gap-1 text-body-sm text-error">
+        <div role={announce ? "alert" : undefined} className="flex flex-col gap-1 text-body-sm text-error">
           {messages.map((m) => (
             <p key={m} className="m-0">
               {m}
@@ -187,7 +194,7 @@ function Form({
       {save.isError ? (
         <p role="alert" className="m-0 text-body-sm text-error">{billingFailureMessage(save.error, "save auto top-up")}</p>
       ) : null}
-      {save.isSuccess && isPristine(form, baseline) ? (
+      {showSaved(state) ? (
         <p role="status" className="m-0 text-body-sm text-on-surface-variant">Saved.</p>
       ) : null}
       <Button type="submit" variant="primary" loading={save.isPending} className="min-h-11 self-start">
