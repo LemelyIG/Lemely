@@ -619,6 +619,42 @@ def test_stale_pending_for_the_failed_transaction_does_not_reopen_it(
     assert _grants(sm, pid) == []
 
 
+def test_stale_pending_for_an_older_failed_transaction_does_not_reopen_it(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), txn_id=1, success=False))
+    failed_b = transaction_obj(merchant_order_id=str(pid), txn_id=2, success=False)
+    _apply(sm, failed_b)
+    # Transaction 1 already failed; its pending callback arrives after transaction 2 failed.
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), txn_id=1, success=False, pending=True))
+    payment = _payment(sm, pid)
+    assert payment.status is PaymentStatus.failed
+    assert payment.next_reconcile_at is None
+    assert payment.paymob_txn_id == 2
+    assert payment.last_callback is not None
+    assert payment.last_callback["pending"] is False
+    # The reconcile inquiry re-reports transaction 2's failure: it dedupes and stays failed.
+    _apply(sm, failed_b)
+    assert _payment(sm, pid).status is PaymentStatus.failed
+    assert _grants(sm, pid) == []
+
+
+def test_pending_for_a_never_seen_transaction_reopens_after_two_failures(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), txn_id=1, success=False))
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), txn_id=2, success=False))
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), txn_id=3, success=False, pending=True))
+    payment = _payment(sm, pid)
+    assert payment.status is PaymentStatus.pending
+    assert payment.paymob_txn_id == 3
+    assert payment.next_reconcile_at == FIXED_NOW + timedelta(minutes=15)
+
+
 def _refund(pid: uuid.UUID, cents: int) -> dict[str, Any]:
     return transaction_obj(
         merchant_order_id=str(pid), is_refunded=True, refunded_amount_cents=cents

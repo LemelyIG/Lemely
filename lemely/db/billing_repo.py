@@ -583,6 +583,26 @@ class BillingService:
         ).scalar_one_or_none()
         return inserted is not None
 
+    def _has_recorded_failure(self, txn_id: int) -> bool:
+        """True when a final failure (neither success nor pending) is stored for ``txn_id``.
+
+        Paymob transaction ids are globally unique, so the stored events' dedupe keys
+        (``txn:<id>:s0p0...``, see ``transaction_dedupe_key``) answer this without a new column.
+        """
+        return (
+            self._session.scalar(
+                select(
+                    select(PaymobEvent.id)
+                    .where(
+                        PaymobEvent.kind == PaymobEventKind.transaction,
+                        PaymobEvent.dedupe_key.startswith(f"txn:{txn_id}:s0p0"),
+                    )
+                    .exists()
+                )
+            )
+            is True
+        )
+
     def _payment_for_reference(self, reference: object) -> Payment | None:
         if not isinstance(reference, str) or not reference:
             return None
@@ -640,15 +660,15 @@ class BillingService:
             )
             return
 
-        prev_txn = payment.paymob_txn_id
         if (
             payment.status is PaymentStatus.failed
             and obj.get("pending") is True
-            and txn_id == prev_txn
+            and (txn_id == payment.paymob_txn_id or self._has_recorded_failure(txn_id))
         ):
-            # A pending callback for the transaction that already failed is stale (delivered
+            # A pending callback for a transaction that already failed is stale (delivered
             # out of order). Reopening would strand the payment in ``pending``: the reconcile
             # inquiry's failure dedupes against the event already recorded and never lands.
+            # Only a genuinely new attempt (no recorded failure for its id) reopens it.
             log.info(
                 "paymob_stale_pending_after_failure", payment_id=str(payment.id), txn_id=txn_id
             )
