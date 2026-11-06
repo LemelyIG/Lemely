@@ -15,6 +15,11 @@ vi.mock("@/lib/hooks/useTeamApi", () => ({
   useSetSeatScope: () => s.m.scope,
   useSetMemberCap: () => s.m.cap,
   useRemoveSeat: () => s.m.remove,
+  useCreateAssistantInvite: () => s.m.invite,
+  useRevokeAssistantInvite: () => s.m.revoke,
+  useSetAssistantRole: () => s.m.role,
+  useRemoveAssistant: () => s.m.removeAssistant,
+  useJoinTeam: () => s.m.join,
 }))
 vi.mock("@/lib/hooks/useBillingApi", () => ({
   useSeatQuote: () => s.m.quote,
@@ -35,7 +40,8 @@ import { Team } from "@/portals/teacher/screens/team/Team"
 
 beforeEach(() => {
   s.team = okQuery(fx.team)
-  s.m = { scope: fakeMutation(), cap: fakeMutation(), remove: fakeMutation(), quote: fakeMutation(), add: fakeMutation(), reduce: fakeMutation() }
+  s.m = { scope: fakeMutation(), cap: fakeMutation(), remove: fakeMutation(), quote: fakeMutation(), add: fakeMutation(), reduce: fakeMutation(),
+    invite: fakeMutation(), revoke: fakeMutation(), role: fakeMutation(), removeAssistant: fakeMutation(), join: fakeMutation() }
 })
 
 /** Rendered text with the markup stripped, so figures set in their own span read as one sentence. */
@@ -123,6 +129,18 @@ describe("Team screen", () => {
     const html = renderStatic(h(Team))
     expect(html).toContain("managed by the lead teacher")
     expect(html).not.toContain("Try again")
+  })
+
+  it("lists assistants after the seats, and still lets an assistant join a team", () => {
+    const html = renderStatic(h(Team))
+    expect(html.indexOf("Student seats")).toBeLessThan(html.indexOf("Assistants"))
+    expect(html.indexOf("Assistants")).toBeLessThan(html.indexOf("Join a team"))
+    s.team = errorQuery(new ApiError(403, "x"))
+    const refused = renderStatic(h(Team))
+    expect(refused).not.toContain("Invite an assistant")
+    expect(refused).toContain("Join a team")
+    s.team = errorQuery(new ApiError(500, "x"))
+    expect(renderStatic(h(Team))).toContain("Join a team")
   })
 
   it("offers a retry on any other failure", () => {

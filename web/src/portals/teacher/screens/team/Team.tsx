@@ -3,10 +3,12 @@ import { PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
 import { ErrorState } from "@/components/ui/state-views"
 import { useTeam } from "@/lib/hooks/useTeamApi"
+import { AssistantsPanel } from "./AssistantsPanel"
+import { JoinTeamCard } from "./JoinTeamCard"
 import { SeatsPanel } from "./SeatsPanel"
 
 /*
- * `/teacher/team`: the lead teacher's seats (and, from Task 12, assistants). Billing, seats,
+ * `/teacher/team`: the lead teacher's seats and assistants, and joining someone else's team. Billing, seats,
  * caps and assistants stay with the lead teacher (spec §2.3), so an assistant gets 403 here.
  */
 
@@ -26,9 +28,16 @@ export function Team() {
           skeleton={<PageHeaderSkeleton />}
           error={{ heading: "Couldn't load your team", body: "Check your connection and try again." }}
         >
-          {(t) => <SeatsPanel team={t} />}
+          {(t) => (
+            <>
+              <SeatsPanel team={t} />
+              <AssistantsPanel team={t} />
+            </>
+          )}
         </QueryState>
       )}
+      {/* Outside the query: an assistant, who gets a 403 on the team, can still join a team. */}
+      <JoinTeamCard />
     </div>
   )
 }
