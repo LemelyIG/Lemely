@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
-import { useId, useMemo, useState, type ReactNode } from "react"
+import { useId, useState, type ReactNode } from "react"
 import { Link, useParams } from "react-router-dom"
 import { Badge, type BadgeTone } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -22,6 +22,7 @@ import {
   forgiveBody,
   grantBody,
   humanize,
+  isAmbiguousFailure,
   isForbidden,
 } from "@/lib/adminBillingModel"
 import { formatBillingDate, formatMoney } from "@/lib/billingFormat"
@@ -87,6 +88,28 @@ function Panel({ title, action, children }: { title: string; action?: ReactNode;
       {children}
     </section>
   )
+}
+
+/**
+ * After an ambiguous failure (dropped connection, 5xx) of a write that carries no idempotency key,
+ * returns why Submit is blocked until the customer has been refetched, so the figures in the
+ * dialog are fresh before any retry. The hook invalidates the customer on error; this waits for
+ * that refetch to land. A refusal (4xx) changed nothing and never blocks.
+ */
+function useRetryGuard(
+  mutation: { isError: boolean; error: unknown },
+  customer: { dataUpdatedAt: number; isError: boolean },
+): string | null {
+  const [seen, setSeen] = useState<unknown>(null)
+  const [since, setSince] = useState<number | null>(null)
+  if (mutation.isError && mutation.error !== seen && isAmbiguousFailure(mutation.error)) {
+    setSeen(mutation.error)
+    setSince(customer.dataUpdatedAt)
+  }
+  if (since === null || customer.dataUpdatedAt > since) return null
+  return customer.isError
+    ? "Couldn't reload this customer, so the result of the last attempt is unknown. Reload this page before trying again."
+    : "The last attempt may have gone through. Reloading this customer before you can try again."
 }
 
 const Empty = ({ children }: { children: ReactNode }) => <p className="m-0 text-body-sm text-on-surface-variant">{children}</p>
@@ -214,7 +237,7 @@ function PaymentItem({ p, customerId }: { p: AdminPaymentRow; customerId: string
             ) : null}
           </p>
         </div>
-        <p className="m-0 text-end">
+        <p className="m-0 text-start sm:text-end">
           <span className="block text-data-md text-on-surface">{formatMoney(p.amountMinor, p.currency)}</span>
           {p.refundedMinor > 0 ? <span className="block text-body-sm text-on-surface-variant">refunded {formatMoney(p.refundedMinor, p.currency)}</span> : null}
         </p>
@@ -243,9 +266,17 @@ export function CustomerDetail() {
   const extend = useExtendSubscription(userId)
   const cancel = useAdminCancelSubscription(userId)
   const [action, setAction] = useState<Action>(null)
+  const forgiveBlocked = useRetryGuard(forgive, customer)
+  const activateBlocked = useRetryGuard(activate, customer)
+  const extendBlocked = useRetryGuard(extend, customer)
+  const cancelBlocked = useRetryGuard(cancel, customer)
   const [notice, setNotice] = useState<string | null>(null)
-  // One idempotency key per opened grant/adjust dialog (07 `requestId`).
-  const requestId = useMemo(() => (action ? randomUuid() : ""), [action])
+  // One idempotency key per opened grant/adjust dialog (07 `requestId`), minted when it opens.
+  const [requestId, setRequestId] = useState("")
+  const open = (next: NonNullable<Action>) => {
+    setRequestId(randomUuid())
+    setAction(next)
+  }
   const close = () => setAction(null)
   const saved = (what: string) => () => setNotice(`${what} The change and your reason are in the audit log.`)
   const reload = "Reload this page"
@@ -285,14 +316,14 @@ export function CustomerDetail() {
               title="Balance"
               action={
                 <>
-                  <Button size="sm" variant="secondary" onClick={() => setAction({ kind: "grant" })}>
+                  <Button size="sm" variant="secondary" onClick={() => open({ kind: "grant" })}>
                     Grant credits
                   </Button>
-                  <Button size="sm" variant="secondary" onClick={() => setAction({ kind: "adjust" })}>
+                  <Button size="sm" variant="secondary" onClick={() => open({ kind: "adjust" })}>
                     Adjust balance
                   </Button>
                   {c.balance.outstandingDebt > 0 ? (
-                    <Button size="sm" variant="secondary" onClick={() => setAction({ kind: "forgive" })}>
+                    <Button size="sm" variant="secondary" onClick={() => open({ kind: "forgive" })}>
                       Forgive debt
                     </Button>
                   ) : null}
@@ -350,7 +381,7 @@ export function CustomerDetail() {
             <Panel
               title="Subscriptions"
               action={
-                <Button size="sm" variant="secondary" onClick={() => setAction({ kind: "activate" })} disabled={tiers.length === 0}>
+                <Button size="sm" variant="secondary" onClick={() => open({ kind: "activate" })} disabled={tiers.length === 0 || catalogue.isError}>
                   Activate manually
                 </Button>
               }
@@ -360,11 +391,13 @@ export function CustomerDetail() {
                 <Subscription
                   key={s.id}
                   sub={s}
-                  onExtend={() => setAction({ kind: "extend", subscriptionId: s.id })}
-                  onCancel={() => setAction({ kind: "cancel", subscriptionId: s.id })}
+                  onExtend={() => open({ kind: "extend", subscriptionId: s.id })}
+                  onCancel={() => open({ kind: "cancel", subscriptionId: s.id })}
                 />
               ))}
-              {tiers.length === 0 ? (
+              {catalogue.isError ? (
+                <Empty>Couldn't load plans. Reload this page.</Empty>
+              ) : tiers.length === 0 ? (
                 <Empty>{catalogue.isPending ? "Loading plans." : "No plan is on sale for this role, so manual activation is unavailable."}</Empty>
               ) : null}
             </Panel>
@@ -388,17 +421,20 @@ export function CustomerDetail() {
                   </THead>
                   <TBody>
                     {c.usageJobs.map((j) => (
-                      <TR key={j.jobId}>
+                      <TR key={j.jobId} className="[&>td]:align-top">
                         <TD className="whitespace-nowrap">{d(j.createdAt)}</TD>
                         <TD>{j.action}</TD>
                         <TD>{humanize(j.status)}</TD>
                         <TD numeric>
                           {j.estimateLow}–{j.estimateHigh}
                         </TD>
-                        <TD numeric>
+                        <TD numeric className="whitespace-nowrap">
                           {j.charged ?? "—"}
-                          {j.outsideRange ? <span className="block text-body-sm text-on-surface-variant">Outside range</span> : null}
-                          {j.debtCreated ? <span className="block text-body-sm text-on-surface-variant">{j.debtCreated} into debt</span> : null}
+                          {j.outsideRange || j.debtCreated ? (
+                            <span className="block text-body-sm text-on-surface-variant">
+                              {[j.outsideRange ? "Outside range" : "", j.debtCreated ? `${j.debtCreated} into debt` : ""].filter(Boolean).join(" · ")}
+                            </span>
+                          ) : null}
                         </TD>
                         <TD numeric>
                           <span className="text-data-sm">{j.actualCostUsd ?? "—"}</span>
@@ -495,6 +531,7 @@ export function CustomerDetail() {
                 initial={{ units: "" }}
                 submitLabel="Forgive debt"
                 mutation={forgive}
+                blocked={forgiveBlocked}
                 toBody={(v, r) => ({ id: userId, body: forgiveBody(v, r) })}
                 onSaved={saved("Debt forgiven.")}
                 reload={reload}
@@ -515,6 +552,7 @@ export function CustomerDetail() {
                 initial={{ planTierId: tiers[0]?.id ?? "", periodDays: "30" }}
                 submitLabel="Activate"
                 mutation={activate}
+                blocked={activateBlocked}
                 toBody={(v, r) => ({ id: userId, body: activationBody(v, r) })}
                 onSaved={saved("Plan activated.")}
                 reload={reload}
@@ -530,6 +568,7 @@ export function CustomerDetail() {
                 initial={{ days: "7" }}
                 submitLabel="Extend subscription"
                 mutation={extend}
+                blocked={extendBlocked}
                 toBody={(v, r) => ({ id: action.subscriptionId, body: extendBody(v, r) })}
                 onSaved={saved("Subscription extended.")}
                 reload={reload}
@@ -549,6 +588,7 @@ export function CustomerDetail() {
                 initial={{ immediate: false }}
                 submitLabel="Cancel subscription"
                 mutation={cancel}
+                blocked={cancelBlocked}
                 toBody={(v, r) => ({ id: action.subscriptionId, body: cancelBody(v, r) })}
                 onSaved={saved("Subscription cancelled.")}
                 reload={reload}

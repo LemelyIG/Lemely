@@ -478,6 +478,15 @@ export function adminRetry(failureCount: number, error: Error): boolean {
   return failureCount < 2
 }
 
+/**
+ * A failure that does not say whether the server acted: a dropped connection, a 5xx or anything
+ * that is not an API answer. A 4xx is a refusal and changed nothing. After an ambiguous failure
+ * the screen must be refreshed before a write that has no idempotency key is offered again.
+ */
+export function isAmbiguousFailure(error: unknown): boolean {
+  return !(error instanceof ApiError) || error.status === 0 || error.status >= 500
+}
+
 export function isForbidden(error: unknown): boolean {
   return error instanceof ApiError && error.status === 403
 }

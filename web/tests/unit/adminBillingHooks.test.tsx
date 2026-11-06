@@ -12,7 +12,7 @@ vi.mock("@/lib/api", async (importOriginal) => ({
 
 import { ApiError, request } from "@/lib/api"
 import { PartialSaveError, adminBillingFailureMessage } from "@/lib/adminBillingModel"
-import { useUpdateFreeAllowances } from "@/lib/hooks/useAdminBillingApi"
+import { adminBillingKeys, useForgiveDebt, useRefundPayment, useUpdateFreeAllowances, useVoidPayment } from "@/lib/hooks/useAdminBillingApi"
 
 const req = vi.mocked(request)
 
@@ -78,5 +78,47 @@ describe("useUpdateFreeAllowances", () => {
     const { result } = mount()
     await expect(result.current.mutateAsync([student, teacher])).rejects.toBe(refusal)
     expect(req).toHaveBeenCalledTimes(1)
+  })
+})
+
+function mountWith<T>(hook: () => T) {
+  const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
+  const invalidate = vi.spyOn(client, "invalidateQueries")
+  const wrapper = ({ children }: { children: ReactNode }) => h(QueryClientProvider, { client }, children)
+  return { ...renderHook(hook, { wrapper }), invalidate, client }
+}
+
+describe("refetching what a failed write may have changed", () => {
+  const refusal = () => new ApiError(409, "Conflict", { code: "refund_in_flight", message: "A refund is open." })
+
+  it("refetches the billing data after a refused refund, so Refund is not offered on a stale row", async () => {
+    req.mockRejectedValueOnce(refusal())
+    const { result, invalidate } = mountWith(() => useRefundPayment())
+    await expect(result.current.mutateAsync({ id: "pay1", body: { amountMinor: null, reason: "duplicate" } })).rejects.toBeInstanceOf(ApiError)
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: adminBillingKeys.all })
+  })
+
+  it("refetches after a dropped void and after a successful one", async () => {
+    req.mockRejectedValueOnce(new ApiError(0, "net", undefined))
+    const dropped = mountWith(() => useVoidPayment())
+    await expect(dropped.result.current.mutateAsync({ id: "pay1", body: { reason: "mistake" } })).rejects.toBeInstanceOf(ApiError)
+    expect(dropped.invalidate).toHaveBeenCalledWith({ queryKey: adminBillingKeys.all })
+    req.mockResolvedValueOnce({ id: "pay1" })
+    const ok = mountWith(() => useVoidPayment())
+    await ok.result.current.mutateAsync({ id: "pay1", body: { reason: "mistake" } })
+    expect(ok.invalidate).toHaveBeenCalledWith({ queryKey: adminBillingKeys.all })
+  })
+
+  it("refetches the customer after a failed ledger write and stores the answer after a good one", async () => {
+    req.mockRejectedValueOnce(new ApiError(503, "down", undefined))
+    const failed = mountWith(() => useForgiveDebt("u2"))
+    await expect(failed.result.current.mutateAsync({ id: "u2", body: { units: null, reason: "estimator bug" } })).rejects.toBeInstanceOf(ApiError)
+    expect(failed.invalidate).toHaveBeenCalledWith({ queryKey: adminBillingKeys.customer("u2") })
+    const answer = { user: { id: "u2" } }
+    req.mockResolvedValueOnce(answer)
+    const good = mountWith(() => useForgiveDebt("u2"))
+    await good.result.current.mutateAsync({ id: "u2", body: { units: null, reason: "estimator bug" } })
+    expect(good.client.getQueryData(adminBillingKeys.customer("u2"))).toEqual(answer)
+    expect(good.invalidate).not.toHaveBeenCalled()
   })
 })

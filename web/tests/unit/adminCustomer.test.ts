@@ -21,6 +21,7 @@ vi.mock("@/lib/hooks/useAdminBillingApi", () => ({
   useReconcilePayment: () => fakeMutation(),
 }))
 
+import { BillingLayout } from "@/portals/admin/screens/billing/BillingLayout"
 import { CustomerDetail } from "@/portals/admin/screens/billing/CustomerDetail"
 import { Customers } from "@/portals/admin/screens/billing/Customers"
 
@@ -155,5 +156,24 @@ describe("CustomerDetail", () => {
     expect(html).toContain("open billing customers")
     expect(html).not.toContain("Try again")
     expect(html).not.toContain("Error")
+  })
+
+  it("never shows a failed plans read as an empty one", () => {
+    s.catalogue = errorQuery(new ApiError(500, "boom", undefined))
+    const html = detail()
+    expect(html).toContain("Couldn&#x27;t load plans. Reload this page.")
+    expect(html).not.toContain("No plan is on sale")
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Activate manually/)
+  })
+
+  it("keeps the Customers pill active on a customer's page and off on the catalogue", () => {
+    const at = (url: string) => renderAt(h(BillingLayout), "/platform/billing/*", url)
+    const onCustomer = at("/platform/billing/customers/u2")
+    expect(onCustomer).toMatch(/aria-current="true"[^>]*>Customers</)
+    expect(onCustomer).not.toMatch(/aria-current[^>]*>Catalogue</)
+    expect(at("/platform/billing")).toMatch(/aria-current="page"[^>]*>Customers</)
+    const onCatalogue = at("/platform/billing/catalogue")
+    expect(onCatalogue).toMatch(/aria-current="page"[^>]*>Catalogue</)
+    expect(onCatalogue).not.toMatch(/aria-current[^>]*>Customers</)
   })
 })

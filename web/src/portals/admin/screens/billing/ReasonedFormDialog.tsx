@@ -45,6 +45,7 @@ export function ReasonedFormDialog<TBody>({
   onSaved,
   rolledBackOn502 = false,
   reload,
+  blocked = null,
 }: {
   open: boolean
   onClose: () => void
@@ -63,6 +64,11 @@ export function ReasonedFormDialog<TBody>({
   rolledBackOn502?: boolean
   /** How the failure copy tells the admin to check what saved ("Reload this page"). */
   reload?: string
+  /**
+   * Why submitting is not offered right now (null = it is). Used after an ambiguous failure of a
+   * write with no idempotency key: the screen must show fresh data before the admin may retry.
+   */
+  blocked?: string | null
 }) {
   const formId = useId()
   const formRef = useRef<HTMLFormElement>(null)
@@ -91,7 +97,7 @@ export function ReasonedFormDialog<TBody>({
   }, [attempts])
 
   const submit = () => {
-    if (mutation.isPending) return
+    if (mutation.isPending || blocked) return
     setAttempts((n) => n + 1)
     if (!valid) return
     mutation.mutate(toBody(values, reason.trim()), {
@@ -115,11 +121,16 @@ export function ReasonedFormDialog<TBody>({
               {adminBillingFailureMessage(mutation.error, "save this change", { rolledBackOn502, reload })}
             </p>
           ) : null}
+          {blocked ? (
+            <p role="status" className="m-0 text-body-sm text-on-surface">
+              {blocked}
+            </p>
+          ) : null}
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
               Cancel
             </Button>
-            <Button variant="primary" type="submit" form={formId} loading={mutation.isPending}>
+            <Button variant="primary" type="submit" form={formId} loading={mutation.isPending} disabled={blocked !== null}>
               {submitLabel}
             </Button>
           </div>

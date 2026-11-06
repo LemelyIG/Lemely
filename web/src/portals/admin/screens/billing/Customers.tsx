@@ -26,6 +26,12 @@ export function Customers() {
   const [params, setParams] = useSearchParams()
   const q = params.get("q") ?? ""
   const [draft, setDraft] = useState(q)
+  // Back and forward change `q` without touching the input: follow the URL when it moves.
+  const [shownQ, setShownQ] = useState(q)
+  if (q !== shownQ) {
+    setShownQ(q)
+    setDraft(q)
+  }
   const search = useCustomerSearch(q)
   const searched = q.trim().length >= 2
 

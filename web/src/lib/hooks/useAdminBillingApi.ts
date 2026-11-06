@@ -161,7 +161,15 @@ export const useCustomer = (userId: string): UseQueryResult<CustomerDetail, Erro
 
 function useCustomerWrite<V extends { id: string }>(userId: string, fn: (v: V) => Promise<CustomerDetail>): UseMutationResult<CustomerDetail, Error, V> {
   const qc = useQueryClient()
-  return useMutation({ mutationFn: fn, onSuccess: (data) => qc.setQueryData(adminBillingKeys.customer(userId), data) })
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: (data) => qc.setQueryData(adminBillingKeys.customer(userId), data),
+    // A failed write may or may not have landed: refetch so the screen shows what is true. Not
+    // returned, so the failure shows at once instead of waiting for the refetch to finish.
+    onError: () => {
+      void qc.invalidateQueries({ queryKey: adminBillingKeys.customer(userId) })
+    },
+  })
 }
 
 export const useGrantCredits = (userId: string) =>
@@ -181,7 +189,9 @@ function usePaymentWrite<B>(fn: (id: string, b: B) => Promise<AdminPaymentRow>):
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (v: { id: string; body: B }) => fn(v.id, v.body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: adminBillingKeys.all }),
+    // On any outcome: a refusal (409 `refund_in_flight`, `not_voidable`) means the row on screen
+    // is stale, and a dropped request may still have written a refund row.
+    onSettled: () => qc.invalidateQueries({ queryKey: adminBillingKeys.all }),
   })
 }
 

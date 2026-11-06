@@ -17,6 +17,7 @@ import {
   forgiveBody,
   grantBody,
   humanize,
+  isAmbiguousFailure,
   paymentActionState,
   refundAmountErrors,
   refundBody,
@@ -382,5 +383,15 @@ describe("customer view helpers", () => {
     expect(activatableTiers(tiers, "student").map((t: { id: string }) => t.id)).toEqual(["s"])
     expect(activatableTiers(tiers, "teacher").map((t: { id: string }) => t.id)).toEqual(["t"])
     expect(activatableTiers(tiers, "parent").map((t: { id: string }) => t.id)).toEqual(["s", "t"])
+  })
+})
+
+describe("ambiguous failures", () => {
+  it("treats a dropped connection, a 5xx and a non-API error as unknown, and a 4xx as a refusal", () => {
+    expect(isAmbiguousFailure(new ApiError(0, "net", undefined))).toBe(true)
+    expect(isAmbiguousFailure(new ApiError(500, "x", undefined))).toBe(true)
+    expect(isAmbiguousFailure(new ApiError(502, "x", undefined))).toBe(true)
+    expect(isAmbiguousFailure(new Error("boom"))).toBe(true)
+    for (const status of [401, 403, 404, 409, 422, 429]) expect(isAmbiguousFailure(new ApiError(status, "x", undefined))).toBe(false)
   })
 })

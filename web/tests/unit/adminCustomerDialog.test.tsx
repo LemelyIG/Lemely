@@ -3,9 +3,10 @@ import "./support/dom-setup"
 import { createElement as h } from "react"
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { MemoryRouter, Route, Routes } from "react-router-dom"
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { ApiError } from "@/lib/api"
 import { fx } from "./support/billingFixtures"
 import { fakeMutation, okQuery } from "./support/billingRender"
 
@@ -18,10 +19,12 @@ import { fakeMutation, okQuery } from "./support/billingRender"
 type Fake = ReturnType<typeof fakeMutation>
 const s = vi.hoisted(() => ({
   customer: null as unknown,
+  search: null as unknown,
   catalogue: null as unknown,
   m: {} as Record<"grant" | "adjust" | "forgive" | "activate" | "extend" | "cancel" | "refund" | "void" | "reconcile", unknown>,
 }))
 vi.mock("@/lib/hooks/useAdminBillingApi", () => ({
+  useCustomerSearch: () => s.search,
   useCustomer: () => s.customer,
   useAdminCatalogue: () => s.catalogue,
   useGrantCredits: () => s.m.grant,
@@ -36,6 +39,7 @@ vi.mock("@/lib/hooks/useAdminBillingApi", () => ({
 }))
 
 import { CustomerDetail } from "@/portals/admin/screens/billing/CustomerDetail"
+import { Customers } from "@/portals/admin/screens/billing/Customers"
 
 const mk = () => ({
   grant: fakeMutation(), adjust: fakeMutation(), forgive: fakeMutation(), activate: fakeMutation(), extend: fakeMutation(),
@@ -43,13 +47,11 @@ const mk = () => ({
 })
 const fake = (k: keyof typeof s.m) => s.m[k] as Fake
 
-function renderDetail() {
-  return render(
-    h(QueryClientProvider, { client: new QueryClient() },
-      h(MemoryRouter, { initialEntries: ["/platform/billing/customers/u2"] },
-        h(Routes, null, h(Route, { path: "/platform/billing/customers/:userId", element: h(CustomerDetail) })))),
-  )
-}
+const detailTree = () =>
+  h(QueryClientProvider, { client: new QueryClient() },
+    h(MemoryRouter, { initialEntries: ["/platform/billing/customers/u2"] },
+      h(Routes, null, h(Route, { path: "/platform/billing/customers/:userId", element: h(CustomerDetail) }))))
+const renderDetail = () => render(detailTree())
 const setReason = (text = "agreed with the family") => fireEvent.change(screen.getByLabelText("Reason"), { target: { value: text } })
 const change = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } })
 const dlg = () => screen.getByRole("dialog")
@@ -118,6 +120,112 @@ describe("grant and adjust", () => {
     change("Units (negative to debit)", "-40")
     await user.click(within(d).getByRole("button", { name: "Adjust balance" }))
     expect(fake("adjust").mutate.mock.calls[0][0]).toEqual({ id: "u2", body: { units: -40, requestId: expect.any(String), reason: "agreed with the family" } })
+  })
+})
+
+describe("adjust and void", () => {
+  it("re-sends the same adjust key on a re-submit and mints a new one for a reopened dialog", async () => {
+    const user = userEvent.setup()
+    renderDetail()
+    let d = await openAction(user, "Adjust balance")
+    change("Units (negative to debit)", "-40")
+    setReason()
+    await user.click(within(d).getByRole("button", { name: "Adjust balance" }))
+    await user.click(within(d).getByRole("button", { name: "Adjust balance" }))
+    const calls = fake("adjust").mutate.mock.calls
+    expect(calls[1][0].body.requestId).toBe(calls[0][0].body.requestId)
+    await user.click(within(d).getByRole("button", { name: "Cancel" }))
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
+    d = await openAction(user, "Adjust balance")
+    change("Units (negative to debit)", "-40")
+    setReason()
+    await user.click(within(d).getByRole("button", { name: "Adjust balance" }))
+    expect(fake("adjust").mutate.mock.calls[2][0].body.requestId).not.toBe(calls[0][0].body.requestId)
+  })
+
+  it("sends nothing while a void is pending, from the button or from Enter", async () => {
+    s.m.void = fakeMutation({ isPending: true })
+    const user = userEvent.setup()
+    renderDetail()
+    const d = await openAction(user, "Void pay1")
+    setReason("same-day mistake")
+    const submit = within(d).getByRole("button", { name: "Void" }) as HTMLButtonElement
+    expect(submit.disabled).toBe(true)
+    fireEvent.submit(submit.form as HTMLFormElement)
+    fireEvent.click(submit)
+    expect(fake("void").mutate).not.toHaveBeenCalled()
+  })
+})
+
+describe("retry after an ambiguous failure", () => {
+  const stale = (updatedAt: number, debt = 12) => ({ ...okQuery({ ...fx.customer, balance: { ...fx.customer.balance, outstandingDebt: debt } }), dataUpdatedAt: updatedAt })
+
+  it("keeps Submit blocked after a 5xx until the customer has been refetched", async () => {
+    s.m.forgive = fakeMutation({ isError: true, error: new ApiError(503, "down", undefined) })
+    s.customer = stale(1)
+    const user = userEvent.setup()
+    const view = renderDetail()
+    const d = await openAction(user, "Forgive debt")
+    setReason()
+    const submit = within(d).getByRole("button", { name: "Forgive debt" }) as HTMLButtonElement
+    expect(submit.disabled).toBe(true)
+    expect(within(d).getByText(/may have gone through\. Reloading this customer/)).toBeTruthy()
+    fireEvent.submit(submit.form as HTMLFormElement)
+    fireEvent.click(submit)
+    expect(fake("forgive").mutate).not.toHaveBeenCalled()
+    // Same data again (a refetch that returned nothing newer) still blocks.
+    s.customer = stale(1)
+    view.rerender(detailTree())
+    expect((within(dlg()).getByRole("button", { name: "Forgive debt" }) as HTMLButtonElement).disabled).toBe(true)
+    // Fresh data lands: the figure in the note is current and Submit is offered again.
+    s.customer = stale(2, 7)
+    view.rerender(detailTree())
+    const again = within(dlg()).getByRole("button", { name: "Forgive debt" }) as HTMLButtonElement
+    expect(again.disabled).toBe(false)
+    expect(within(dlg()).getByText(/7 units are outstanding/)).toBeTruthy()
+    await user.click(again)
+    expect(fake("forgive").mutate).toHaveBeenCalledTimes(1)
+  })
+
+  it("says so when the reload itself failed, and blocks a dropped extend the same way", async () => {
+    s.customer = { ...okQuery({ ...fx.customer, subscriptions: [manual()] }), dataUpdatedAt: 1, isError: true }
+    s.m.extend = fakeMutation({ isError: true, error: new ApiError(0, "net", undefined) })
+    const user = userEvent.setup()
+    renderDetail()
+    const d = await openAction(user, "Extend subscription")
+    expect((within(d).getByRole("button", { name: "Extend subscription" }) as HTMLButtonElement).disabled).toBe(true)
+    expect(within(d).getByText(/Couldn't reload this customer/)).toBeTruthy()
+  })
+
+  it("never blocks after a refusal, which changed nothing", async () => {
+    s.m.forgive = fakeMutation({ isError: true, error: new ApiError(409, "no", { code: "x", message: "Nothing to forgive." }) })
+    s.customer = stale(1)
+    const user = userEvent.setup()
+    renderDetail()
+    const d = await openAction(user, "Forgive debt")
+    expect((within(d).getByRole("button", { name: "Forgive debt" }) as HTMLButtonElement).disabled).toBe(false)
+  })
+})
+
+describe("customer search input", () => {
+  it("follows the URL when back or forward changes the search", async () => {
+    s.search = okQuery({ hits: [] })
+    function Back() {
+      const go = useNavigate()
+      return h("button", { onClick: () => go(-1) }, "back")
+    }
+    const user = userEvent.setup()
+    render(
+      h(QueryClientProvider, { client: new QueryClient() },
+        h(MemoryRouter, { initialEntries: ["/platform/billing?q=omar"] }, h(Customers), h(Back))),
+    )
+    const input = screen.getByLabelText("Find a customer", { selector: "input" }) as HTMLInputElement
+    expect(input.value).toBe("omar")
+    fireEvent.change(input, { target: { value: "zeina" } })
+    await user.click(screen.getByRole("button", { name: "Search" }))
+    expect(input.value).toBe("zeina")
+    await user.click(screen.getByRole("button", { name: "back" }))
+    await waitFor(() => expect(input.value).toBe("omar"))
   })
 })
 
