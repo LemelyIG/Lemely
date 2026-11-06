@@ -20,6 +20,8 @@ function gate(over: Partial<MeteredGate>): MeteredGate {
     request: req,
     estimate: state.estimate as MeteredGate["estimate"],
     block: null,
+    blockSource: null,
+    retry: () => undefined,
     captureError: () => false,
     clear: () => undefined,
     ...over,
@@ -60,6 +62,30 @@ describe("EstimateRange", () => {
     expect(render(gate({}), { subjectUnknown: true })).toContain("seat pays first")
   })
 
+  it("keeps a persistent polite status region, even for an estimate-driven block", () => {
+    expect(render(gate({}))).toMatch(/^<div role="status">/)
+    const blocked = render(gate({ block: { reason: "insufficient_credits", estimate: null }, blockSource: "estimate" }))
+    expect(blocked).toMatch(/^<div role="status">/)
+    expect(blocked).not.toContain('role="alert"')
+  })
+
+  it("alerts only for a 402 returned by the start action, outside the status region", () => {
+    const html = render(gate({ block: { reason: "insufficient_credits", estimate: null }, blockSource: "start" }))
+    expect(html).toContain('role="alert"')
+    expect(html).not.toContain('role="status"')
+  })
+
+  it("offers Try again on a blocked notice", () => {
+    expect(render(gate({ block: { reason: "insufficient_credits", estimate: null }, blockSource: "estimate" }))).toContain("Try again")
+  })
+
+  it("omits the seat sentence for a seat or no payer", () => {
+    for (const payer of ["seat", "none"] as const) {
+      state.estimate = okQuery({ ...fx.estimate, payer })
+      expect(render(gate({}), { subjectUnknown: true })).not.toContain("seat pays first")
+    }
+  })
+
   it("swaps to the blocked notice when blocked", () => {
     const html = render(gate({ block: { reason: "insufficient_credits", estimate: null } }))
     expect(html).toContain('data-testid="usage-blocked-notice"')
@@ -86,6 +112,31 @@ describe("UsageBlockedNotice", () => {
   it("asks the payer instead of linking when someone else manages billing", () => {
     const html = notice("insufficient_credits", { managedByName: "Mona" })
     expect(html).toContain("Ask Mona to add credits.")
+    expect(html).not.toContain("href=")
+  })
+
+  it("uses a configurable heading level and live role, and Try again only when asked", () => {
+    const html = notice("insufficient_credits", { headingLevel: 2, live: "status" })
+    expect(html).toContain("<h2 ")
+    expect(html).toContain('role="status"')
+    expect(html).not.toContain("Try again")
+    expect(notice("insufficient_credits", { onRetry: () => undefined })).toContain("Try again")
+  })
+
+  it("points outstanding debt at credits", () => {
+    expect(notice("outstanding_debt")).toContain(`href="${paths.packs}"`)
+  })
+
+  it("names the manager for any reason that would otherwise link", () => {
+    expect(notice("no_active_plan", { managedByName: "Mona" })).toContain("Ask Mona to add credits.")
+    expect(notice("outstanding_debt", { managedByName: "Mona" })).not.toContain("href=")
+  })
+
+  it("asks the lead teacher even when links are available", () => {
+    const html = renderStatic(
+      h(UsageBlockedNotice, { block: { reason: "out_of_seat_scope", estimate: null }, audience: "teacher", paths, managedByName: null }),
+    )
+    expect(html).toContain("Ask your lead teacher to raise it.")
     expect(html).not.toContain("href=")
   })
 

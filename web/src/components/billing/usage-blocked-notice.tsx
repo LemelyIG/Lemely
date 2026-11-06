@@ -1,4 +1,4 @@
-import type { ReactNode } from "react"
+import { createElement, type ReactNode } from "react"
 import { Info } from "@phosphor-icons/react"
 import { Link } from "react-router-dom"
 import type { Audience } from "@/lib/billingTypes"
@@ -19,11 +19,20 @@ export function UsageBlockedNotice({
   audience,
   paths,
   managedByName,
+  headingLevel = 3,
+  live = "alert",
+  onRetry,
 }: {
   block: UsageBlock
   audience: Audience
   paths: BillingPaths | null
   managedByName: string | null
+  /** Heading level to fit the surrounding outline. */
+  headingLevel?: 2 | 3 | 4
+  /** `alert` for a 402 the user just hit; `status` (polite) for a block read off the estimate. */
+  live?: "alert" | "status"
+  /** Offers "Try again" once the cause may be fixed (credits bought in another tab). */
+  onRetry?: () => void
 }) {
   const copy = usageBlockCopy(block.reason, audience)
   let next: ReactNode = null
@@ -53,16 +62,25 @@ export function UsageBlockedNotice({
   }
   return (
     <div
-      role="alert"
+      role={live}
       data-testid="usage-blocked-notice"
       data-reason={block.reason}
       className="flex items-start gap-3 rounded-lg bg-surface-container-high p-4 text-on-surface"
     >
       <Info size={20} aria-hidden="true" className="mt-0.5 shrink-0 text-on-surface-variant" />
       <div className="flex flex-col gap-2">
-        <h3 className="m-0 text-body-md font-semibold">{copy.title}</h3>
+        {createElement(`h${headingLevel}`, { className: "m-0 text-body-md font-semibold" }, copy.title)}
         <p className="m-0 text-body-sm text-on-surface-variant">{copy.body}</p>
         {next}
+        {onRetry ? (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="self-start rounded-button px-2 py-1 text-label font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:min-h-11"
+          >
+            Try again
+          </button>
+        ) : null}
       </div>
     </div>
   )

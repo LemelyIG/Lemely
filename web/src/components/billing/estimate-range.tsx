@@ -1,3 +1,4 @@
+import type { ReactNode } from "react"
 import type { Audience } from "@/lib/billingTypes"
 import { estimateSentence } from "@/lib/billingFormat"
 import type { BillingPaths } from "@/lib/billingPaths"
@@ -25,31 +26,41 @@ export function EstimateRange({
   subjectUnknown?: boolean
 }) {
   if (gate.request === null) return null
-  if (gate.block) {
-    return <UsageBlockedNotice block={gate.block} audience={audience} paths={paths} managedByName={managedByName} />
-  }
   const { estimate } = gate
-  if (estimate.isPending) {
-    return (
-      <p role="status" className="m-0 text-body-sm text-on-surface-variant">
-        Working out the cost…
-      </p>
-    )
-  }
-  if (estimate.isError || !estimate.data) {
-    return (
+  const notice = gate.block ? (
+    <UsageBlockedNotice
+      block={gate.block}
+      audience={audience}
+      paths={paths}
+      managedByName={managedByName}
+      live={gate.blockSource === "start" ? "alert" : "status"}
+      onRetry={gate.retry}
+    />
+  ) : null
+  // A 402 from the start action is an alert and sits outside the polite region; everything else
+  // updates inside one persistent status region so changes are announced.
+  if (notice && gate.blockSource === "start") return notice
+  let content: ReactNode
+  if (notice) {
+    content = notice
+  } else if (estimate.isPending) {
+    content = <p className="m-0 text-body-sm text-on-surface-variant">Working out the cost…</p>
+  } else if (estimate.isError || !estimate.data) {
+    content = (
       <p className="m-0 text-body-sm text-on-surface-variant">
         Couldn't estimate the cost right now. You can still start: you're only charged what the job actually costs.
       </p>
     )
+  } else {
+    const data = estimate.data
+    const ownPayer = data.payer === "allowance" || data.payer === "credits"
+    content = (
+      <p data-testid="estimate-range" className="m-0 text-body-sm text-on-surface-variant">
+        Estimated cost: <span className="text-data-sm text-on-surface">{estimateSentence(data)}</span>. You're
+        charged the actual cost when it finishes.
+        {subjectUnknown && ownPayer ? " If a teacher's seat covers this paper's subject, the seat pays first." : null}
+      </p>
+    )
   }
-  const data = estimate.data
-  const ownPayer = data.payer === "allowance" || data.payer === "credits"
-  return (
-    <p data-testid="estimate-range" className="m-0 text-body-sm text-on-surface-variant">
-      Estimated cost: <span className="text-data-sm text-on-surface">{estimateSentence(data)}</span>. You're
-      charged the actual cost when it finishes.
-      {subjectUnknown && ownPayer ? " If a teacher's seat covers this paper's subject, the seat pays first." : null}
-    </p>
-  )
+  return <div role="status">{content}</div>
 }
