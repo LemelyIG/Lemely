@@ -43,7 +43,8 @@ seed data.
   expiry breakdown.
 - Subscriptions are paid by card only at launch and always auto-renew (Paymob recurring is
   card-only, research 02 §6). Prepaid wallet periods are a later follow-up.
-- Billing intervals: monthly and yearly.
+- Billing intervals: monthly and yearly, implemented as 30- and 360-day periods (the Paymob
+  subscription frequencies).
 - Credits come from prepaid packs bought by card (Apple Pay after go-live).
 - Optional auto top-up: when credits fall below a threshold, a saved card is charged for a chosen
   pack, subject to a monthly spend cap.
@@ -107,7 +108,8 @@ Schools are not part of billing. A teacher leases seats to students instead.
 
 - Metered actions include paper marking (student and teacher), regrade, quiz generation and
   preview, self-review, study plans, and any other action that calls an LLM.
-- Before the action, the user sees an estimate as a range: "3–5 credits" when credits will pay,
+- Before the action, the user sees an estimate as a range (marking uses a flat range per
+  action, because counting pages would mean opening untrusted PDFs outside the sandbox): "3–5 credits" when credits will pay,
   or "2–4% of your monthly plan" when an allowance will pay.
 - A job starts only if the available balance across the payer chain covers the top of the range.
 - When the job finishes, the user is charged the actual LLM cost converted to units, with no
@@ -127,7 +129,7 @@ pack or an auto top-up. The payer receives them.
 ### 2.6 Subscription lifecycle
 
 - An upgrade applies immediately. The prorated price difference is charged at once, and the
-  allowance difference is granted at once.
+  prorated allowance difference is granted at once.
 - A downgrade or cancel takes effect at period end. Access continues until then. A teacher
   downgrade that leaves more seated students than seats is refused until seats are freed.
 - A failed renewal gets 3 days of grace while Paymob retries. After that the plan lapses, and
@@ -288,8 +290,9 @@ allowances) the seated student, funded by the teacher.
 
 **Grant spend order** within one owner (reserve and settle use the same order, which also fixes
 lock order and avoids deadlocks): `priority` ascending, then `expires_at` ascending with
-never-expiring last, then `effective_at`, then `id`. Across owners, locks are taken in payer-chain
-order.
+never-expiring last, then `effective_at`, then `id`. Across owners, owner locks are taken first
+in a fixed global order (by user ID), then grant rows in chain order. Locking owners in chain
+order deadlocked when two chains named the same owners in opposite orders.
 
 Default priorities:
 
@@ -370,7 +373,8 @@ Subscription webhooks arrive at `/webhooks/paymob/subscription` with the HMAC in
   2. Charge it as an `upgrade_proration` payment through a merchant-initiated charge on the saved
      card (MOTO Intention, then `payments/pay` with the token).
   3. On a verified callback, PUT the Paymob subscription to the new amount and plan, switch the
-     tier, and grant the allowance difference with `expires_at` = the current `period_end`.
+     tier, and grant the allowance difference, prorated to the time left, with
+     `expires_at` = the current `period_end`.
 - **Downgrade.** Set `pending_plan_tier_id`. Apply it through a Paymob PUT before the next
   renewal. Refused if the new tier's seats cannot hold the active seated students.
 - **Cancel.** Set `cancel_at_period_end`. A sweeper cancels the Paymob subscription at period
@@ -458,7 +462,8 @@ filter and an optional cap.
 
 ### 5.8 Debt repayment
 
-Every new grant to an owner with debt first writes `debt_repay` entries against that owner's
+Every new grant to an owner with debt, except a teacher-funded `seat_allowance` grant, first
+writes `debt_repay` entries against that owner's
 `usage_debts` rows (oldest first), lowering the grant's `remaining` and the debts' `outstanding`
 in the same transaction. Admins can forgive debt (§8), which writes an `adjust` entry and an audit
 row.
