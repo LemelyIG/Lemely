@@ -89,3 +89,8 @@ export function judge(result, justification, rule = "gate") {
 export function verdict(result, justification, rule = "gate") {
   return judge(result, justification, rule).outcome
 }
+
+/** Process exit code for a set of rows: 0 only when at least one row ran and every row passes. */
+export function exitCodeFor(rows) {
+  return rows.length > 0 && rows.every((r) => r.outcome !== "fail") ? 0 : 1
+}

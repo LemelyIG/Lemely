@@ -54,34 +54,53 @@ export async function startServers({ needKit }) {
   }
 }
 
-const KIT_PROBE = "/student-home/variant-a.css?direct"
-const KIT_PROBE_FILE = path.join(WEB_DIR, "dev-previews", "student-home", "variant-a.css")
+const DEV_DIR = path.join(WEB_DIR, "dev-previews")
 
-function sha(buffer) {
-  return createHash("sha256").update(buffer).digest("hex").slice(0, 12)
+/** Drop <script> blocks (Vite rewrites them in dev) and collapse whitespace. */
+function markupOnly(text) {
+  return text.replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, "").replace(/\s+/g, " ").trim()
 }
+
+const sha = (buffer) => createHash("sha256").update(buffer).digest("hex").slice(0, 12)
+
+/**
+ * Files whose served bytes identify the kit. CSS is fetched with `?direct`,
+ * which Vite serves untransformed. The HTML entry is always transformed (client
+ * and refresh scripts injected, inline script moved), so only its script-free
+ * markup is compared.
+ */
+export const KIT_PROBES = [
+  { url: "/student-home/variant-a.css?direct", file: "student-home/variant-a.css" },
+  { url: "/student-home/tokens.css?direct", file: "student-home/tokens.css" },
+  { url: "/student-home-a.html", file: "student-home-a.html", digest: (buf) => sha(markupOnly(buf.toString("utf8"))) },
+]
 
 /**
  * Probe KIT_PORT. Returns false when nothing answers there; true when the
  * server there serves THIS worktree's kit; throws otherwise. "Serves this
- * worktree" = the raw bytes of variant-a.css hash the same as the file on
- * disk. (The design preview server is long-lived and may belong to another
- * worktree, in which case the gate must not silently use it.)
+ * worktree" = every KIT_PROBES file hashes the same as on disk. (The design
+ * preview server is long-lived and may belong to another worktree, in which
+ * case the gate must not silently use it.)
  */
 export async function verifyRunningKit(fetchImpl = fetch) {
-  let res
-  try {
-    res = await fetchImpl(`${KIT_BASE}${KIT_PROBE}`, { signal: AbortSignal.timeout(1500) })
-  } catch {
-    return false
+  const mismatches = []
+  for (const probe of KIT_PROBES) {
+    const digest = probe.digest ?? sha
+    let res
+    try {
+      res = await fetchImpl(`${KIT_BASE}${probe.url}`, { signal: AbortSignal.timeout(1500) })
+    } catch {
+      return false
+    }
+    if (!res.ok) return false
+    const served = digest(Buffer.from(await res.arrayBuffer()))
+    const disk = digest(fs.readFileSync(path.join(DEV_DIR, probe.file)))
+    if (served !== disk) mismatches.push(`${probe.file} served hash ${served}, on-disk hash ${disk}`)
   }
-  if (!res.ok) return false
-  const served = sha(Buffer.from(await res.arrayBuffer()))
-  const disk = sha(fs.readFileSync(KIT_PROBE_FILE))
-  if (served !== disk) {
+  if (mismatches.length) {
     throw new Error(
       `port ${KIT_PORT} serves a design kit that is not this worktree (${WEB_DIR}): ` +
-        `served variant-a.css hash ${served}, on-disk hash ${disk}. ` +
+        `${mismatches.join("; ")}. ` +
         `Stop that server or run it from this worktree; the gate will not start a second kit.`,
     )
   }

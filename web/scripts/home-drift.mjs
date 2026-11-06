@@ -19,6 +19,7 @@ import { chromium } from "@playwright/test"
 import { HEIGHT, SCENES, THEMES, WINDOWS } from "./drift/scenes.mjs"
 import {
   KIT_PORT,
+  KIT_PROBES,
   REPO_DIR,
   SELECTORS,
   capture,
@@ -29,7 +30,7 @@ import {
   startServers,
   verifyRunningKit,
 } from "./drift/harness.mjs"
-import { diffPngs, findJustification, judge, readJustifications, verdict } from "./drift/compare.mjs"
+import { diffPngs, exitCodeFor, findJustification, judge, readJustifications, verdict } from "./drift/compare.mjs"
 import { PNG } from "pngjs"
 
 function parseArgs(argv) {
@@ -96,9 +97,14 @@ function gitHead() {
   return execFileSync("git", ["rev-parse", "HEAD"], { cwd: REPO_DIR, encoding: "utf8" }).trim()
 }
 
+/** True when the working tree has uncommitted changes (`git status --porcelain` is not empty). */
+function gitDirty() {
+  return execFileSync("git", ["status", "--porcelain"], { cwd: REPO_DIR, encoding: "utf8" }).trim() !== ""
+}
+
 /** Write the baseline provenance next to the baseline PNGs. */
 function writeProvenance(baselineDir, extra = {}) {
-  const provenance = { sha: gitHead(), recordedAt: new Date().toISOString(), ...extra }
+  const provenance = { sha: gitHead(), dirty: gitDirty(), recordedAt: new Date().toISOString(), ...extra }
   fs.mkdirSync(baselineDir, { recursive: true })
   fs.writeFileSync(path.join(baselineDir, PROVENANCE_FILE), JSON.stringify(provenance, null, 2) + "\n")
   return provenance
@@ -111,7 +117,7 @@ function printProvenance(baselineDir) {
     return
   }
   const p = JSON.parse(fs.readFileSync(file, "utf8"))
-  console.log(`baseline provenance: git ${p.sha} at ${p.recordedAt}${p.note ? ` (${p.note})` : ""}`)
+  console.log(`baseline provenance: git ${p.sha}${p.dirty === undefined ? "" : p.dirty ? " (dirty tree)" : " (clean tree)"} at ${p.recordedAt}${p.note ? ` (${p.note})` : ""}`)
 }
 
 /**
@@ -143,11 +149,6 @@ async function compareItem(browser, item, { baselineDir, runDir, table }) {
   } catch (error) {
     return { key, diff: null, pct: 0, outcome: "fail", reason: `capture failed: ${error.message}`, justification: null }
   }
-}
-
-/** Process exit code for a set of rows: 0 only when every row passes. */
-export function exitCodeFor(rows) {
-  return rows.some((r) => r.outcome === "fail") ? 1 : 0
 }
 
 function assertEqual(actual, expected, label) {
@@ -231,15 +232,23 @@ async function selftestForeignKit() {
   } catch (error) {
     message = error.message
   }
-  if (!message.includes(String(KIT_PORT)) || (message.match(/hash [0-9a-f]{12}/g) ?? []).length !== 2) {
+  if (!message.includes(String(KIT_PORT)) || (message.match(/hash [0-9a-f]{12}/g) ?? []).length !== 2 * KIT_PROBES.length) {
     throw new Error(`selftest: a foreign kit server was not rejected with both hashes: ${message || "no error"}`)
   }
   assertEqual(await verifyRunningKit(async () => Promise.reject(new Error("refused"))), false, "free port")
   console.log("selftest foreign kit check passed")
 }
 
+function selftestEmptySelection() {
+  assertEqual(exitCodeFor([]), 1, "exit code, empty selection")
+  assertEqual(exitCodeFor([{ outcome: "pass" }]), 0, "exit code, one pass")
+  assertEqual(exitCodeFor([{ outcome: "pass" }, { outcome: "fail" }]), 1, "exit code, one fail")
+  console.log("selftest empty selection passed")
+}
+
 async function runSelftest(browser) {
   selftestVerdicts()
+  selftestEmptySelection()
   await selftestForeignKit()
   // Proves the gate can go red: the same preview twice must be 0 px, and the
   // same preview with its title recoloured must fail.
@@ -276,6 +285,15 @@ async function runSelftest(browser) {
 
 async function main() {
   const items = expand()
+  if (!items.length && !args.recordProvenance && !args.selftest) {
+    console.error(
+      `no scenes matched: --scene ${args.scene.join(",") || "(all)"} --windows ${
+        args.windows?.join(",") ?? "(default)"
+      } --themes ${args.themes?.join(",") ?? "(default)"}`,
+    )
+    process.exitCode = 1
+    return
+  }
   if (args.list) {
     for (const i of items) console.log(i.key)
     return
@@ -284,7 +302,7 @@ async function main() {
     const p = writeProvenance(BASELINE_DIR, {
       note: "provenance-only write; baseline PNGs were captured earlier, not re-captured",
     })
-    console.log(`baseline provenance written: git ${p.sha} at ${p.recordedAt}`)
+    console.log(`baseline provenance written: git ${p.sha}${p.dirty ? " (dirty tree)" : ""} at ${p.recordedAt}`)
     return
   }
   const needKit = args.selftest || items.some((i) => i.scene.kind === "preview-vs-app")
@@ -312,7 +330,7 @@ async function main() {
         console.log(`baseline ${item.key}`)
       }
       const p = writeProvenance(BASELINE_DIR)
-      console.log(`baseline provenance: git ${p.sha} at ${p.recordedAt}`)
+      console.log(`baseline provenance: git ${p.sha}${p.dirty ? " (dirty tree)" : ""} at ${p.recordedAt}`)
       return
     }
     if (items.some((i) => i.scene.kind === "before-vs-after")) printProvenance(BASELINE_DIR)
