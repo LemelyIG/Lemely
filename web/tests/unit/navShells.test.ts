@@ -85,11 +85,15 @@ describe("student and teacher shells mount BottomNav with the five labels in ord
     )
   })
 
-  it("teacher/index.tsx imports BottomNav and orders its five tabs", () => {
-    const source = stripComments(read("portals/teacher/index.tsx"))
+  it("PortalShell mounts BottomNav and appends More after the portal's tabs", () => {
+    const source = stripComments(read("components/shell/PortalShell.tsx"))
     expect(source).toMatch(/import\s*\{[^}]*\bBottomNav\b[^}]*\}\s*from\s*"@\/components\/ui\/nav-shells"/)
-    expect(source).toMatch(
-      /"Overview"[\s\S]*"Grading"[\s\S]*"Review"[\s\S]*"Classes"[\s\S]*"More"/,
-    )
+    expect(source).toMatch(/\.\.\.bottomTabs[\s\S]*"More"/)
+  })
+
+  it("teacher/index.tsx passes its four tabs to PortalShell in order", () => {
+    const source = stripComments(read("portals/teacher/index.tsx"))
+    expect(source).toMatch(/<PortalShell\b/)
+    expect(source).toMatch(/"Overview"[\s\S]*"Grading"[\s\S]*"Review"[\s\S]*"Classes"/)
   })
 })

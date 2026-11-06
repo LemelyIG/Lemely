@@ -23,9 +23,10 @@ const ROOT = path.join(import.meta.dirname, "..", "..")
  * name for the identical reason — the four portals with real chrome worth
  * showing an offline banner over, kept in one list so a fifth portal layout
  * falls into this gate rather than out of it. */
+// The student and teacher layouts are components/shell/PortalShell.tsx (portal shell spec).
 const PORTAL_LAYOUTS = [
   "src/portals/student/index.tsx",
-  "src/portals/teacher/index.tsx",
+  "src/components/shell/PortalShell.tsx",
   "src/portals/parent/index.tsx",
   "src/portals/admin/index.tsx",
 ] as const

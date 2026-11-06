@@ -1,13 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
-import { lazy, Suspense, useState, type ReactNode } from "react"
-import { useQueryClient } from "@tanstack/react-query"
-import { OfflineBanner } from "@/components/ui/offline-banner"
-import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
-import { InstallBanner } from "@/components/InstallBanner"
-import { BadgeSync } from "@/components/badge-sync"
-import { RouteSkeleton } from "@/components/ui/route-skeleton"
-import { ScreenOutlet } from "@/components/ui/screen-outlet"
+import { lazy, type ReactNode } from "react"
 import { Link, NavLink, useLocation } from "react-router-dom"
 import {
   SquaresFour,
@@ -18,19 +11,13 @@ import {
   Books,
   Sparkle,
   Gear,
-  List,
   GraduationCap,
   Lifebuoy,
   type Icon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 import { gradeChipClass } from "@/lib/grade"
-import { ErrorBoundary } from "@/components/ui/error-boundary"
-import { portalErrorFallback } from "@/components/route-error"
-import { NavDrawer } from "@/components/ui/nav-drawer"
-import { BottomNav, type NavShellItem } from "@/components/ui/nav-shells"
-import { EdgeSwipeBack } from "@/components/edge-swipe-back"
-import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
+import type { NavShellItem } from "@/components/ui/nav-shells"
 import { PortalNotFound } from "@/portals/misc/NotFound"
 import { useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import { useProfile } from "@/lib/hooks/useMeApi"
@@ -39,9 +26,9 @@ import { STAFF_INBOX_ERROR, TEACHER_INBOX_EMPTY, staffDestinationFor } from "@/l
 import { navItems, resolveTrail, classesItemActive, type NavItem } from "./data"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
 import { CreateSheet } from "./components/CreateSheet"
-import { ShellTopBar } from "@/components/shell/ShellTopBar"
+import { PortalShell } from "@/components/shell/PortalShell"
 import { ShellIcon } from "@/components/shell/icons"
-import { ShellSidebar, ShellUserBlock, type ShellSidebarContent } from "@/components/shell/ShellSidebar"
+import { ShellUserBlock, type ShellSidebarContent } from "@/components/shell/ShellSidebar"
 import { ShellNavList } from "@/components/shell/ShellNavList"
 import { profileName } from "@/components/shell/ShellAvatar"
 import { SHELL_BUTTON_PRIMARY, SHELL_BUTTON_TONAL } from "@/components/shell/shellStyles"
@@ -392,37 +379,6 @@ function TeacherTopBarActions() {
   )
 }
 
-/**
- * The shared shell's top bar with the teacher's facts. The trail renders at
- * every width (the D1.5 back affordance: a drilled-into screen like
- * `/teacher/students/:id` needs a route back on a laptop too).
- */
-function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
-  const location = useLocation()
-  const { data: profile } = useProfile()
-  // While Settings is a dialog the page underneath is still the page: title
-  // and trail follow the background location.
-  const trail = resolveTrail(
-    underlyingPathname({
-      pathname: location.pathname,
-      state: location.state,
-      overlayBase: TEACHER_SETTINGS_BASE,
-    }),
-  )
-  return (
-    <ShellTopBar
-      title={trail[trail.length - 1]?.label ?? "Overview"}
-      trail={trail}
-      onOpenNav={onOpenNav}
-      navLabel="Open teacher navigation"
-      actions={<TeacherTopBarActions />}
-      notifications={TEACHER_NOTIFICATIONS_PANEL}
-      settingsTo={TEACHER_SETTINGS_BASE}
-      account={{ links: TEACHER_ACCOUNT_LINKS, detail: profile ? roleLabel(profile.role) : null }}
-    />
-  )
-}
-
 /** The four route-backed BottomNav tabs, exported so `navigation.test.ts` can
  * assert each `to` resolves to a mounted route without rendering the shell.
  * Labels declared in tab order ("Overview", "Grading", "Review", "Classes")
@@ -443,145 +399,47 @@ export const TEACHER_BOTTOM_TABS: readonly {
 ]
 
 function TeacherLayout() {
-  const [navOpen, setNavOpen] = useState(false)
   const location = useLocation()
-  const queryClient = useQueryClient()
-
-  /*
-   * Reads the same query
-   * `ClassesNavSection` already subscribes to (`useTeacherClasses()`,
-   * `GET /teacher/classes`) — react-query dedupes by queryKey
-   * (`["teacher", "classes"]`), so this adds no second network request, only
-   * a second subscriber to the one already in flight.
-   *
-   * A pending query used to render the shared route fallback in place of the
-   * whole shell — sidebar and all — rather than the shell with a fallback
-   * inside it. Packet B1 corrects that the same way it does for the student
-   * portal: the shell renders regardless, with `<RouteSkeleton />` standing
-   * in for the content below. A zero-class teacher is no longer redirected:
-   * the home route shows the setup screen instead.
-   */
+  // Same query the class list subscribes to (deduped by key); a pending list
+  // shows the skeleton inside the shell. A zero-class teacher sees setup on home.
   const classesQuery = useTeacherClasses()
-  // Task 9 (C3d): shares its cache/request with `TeacherNav`'s own
-  // `useReviewQueueCount()` subscriber (same query key) — mounting both the
-  // desktop sidebar and this bottom bar costs one network request, not two.
+  // Shares its request with the sidebar's own subscriber (same query key).
   const reviewQueueCount = useReviewQueueCount()
+  const { data: profile } = useProfile()
   const sidebar = useTeacherSidebar()
-
+  // While Settings is a dialog the page underneath is still the page: title
+  // and trail follow the background location. The trail renders at every
+  // width (the D1.5 back affordance for drilled-into screens).
+  const trail = resolveTrail(
+    underlyingPathname({ pathname: location.pathname, state: location.state, overlayBase: TEACHER_SETTINGS_BASE }),
+  )
   return (
-    // `bg-surface`: the shell owns its own ground rather than depending on
-    // `body`'s paint showing through.
-    <div data-portal="teacher" className="flex min-h-dvh bg-surface">
-      <SkipLink />
-      {/* Task 7 (B5a): see student/index.tsx's own comment on this line —
-          same reason, same shape. */}
-      <BadgeSync />
-      <ShellSidebar variant="rail" {...sidebar} />
-
-      <NavDrawer variant="shell" open={navOpen} onClose={() => setNavOpen(false)} title="Lemely">
-        <ShellSidebar variant="drawer" {...sidebar} onClose={() => setNavOpen(false)} />
-      </NavDrawer>
-
-      {/* Packet B3 (Task 4): standalone-only, renders nothing — see the
-          component's own doc comment. */}
-      <EdgeSwipeBack />
-
-      <div className="flex-1 min-w-0 flex flex-col">
-        <TeacherTopBar onOpenNav={() => setNavOpen(true)} />
-        {/* `<main>` is the content area only, not the whole column: the skip
-            link's target must not contain the navigation it skips.
-            `pb-bottom-nav`/`sidebar:pb-8`: clearance for the fixed
-            `BottomNav` below the `sidebar` breakpoint, an ordinary bottom
-            gutter once it is gone. */}
-        <main
-          id={MAIN_CONTENT_ID}
-          tabIndex={-1}
-          className="flex-1 min-w-0 overflow-x-hidden w-full max-w-[1600px] px-page-mobile pt-2 pb-bottom-nav sidebar:pb-8 md:px-page-tablet lg:px-[72px] focus:outline-none"
-        >
-          {/* PR 2 part C: offline recovery banner, above the Suspense/
-              ErrorBoundary content it sits over — it renders nothing while
-              online, so its own `mb-6` is the only spacing this adds. */}
-          <OfflineBanner
-            onRetry={() =>
-              void queryClient.refetchQueries({
-                type: "active",
-                predicate: (query) => query.state.status === "error",
-              })
-            }
-          />
-          {/* Below the offline strip on purpose: connectivity is the transient,
-              self-healing message and belongs on top, while this is a standing fact
-              about the account. Renders nothing, and no margin either, unless the
-              profile has resolved and says the address is unverified. */}
-          <VerifyEmailBanner />
-          {/* Packet A7: same "renders nothing unless there's something to
-              say" shape as the two banners above. Student and teacher only —
-              see the component's own header for why. */}
-          <InstallBanner />
-          {/* Packet B1: the classes-query pending state renders the same
-              `RouteSkeleton` a chunk-load wait does, in the same content
-              slot, rather than blanking the shell below `TeacherTopBar` —
-              see the comment above `classesQuery` for why this is safe to
-              gate on here rather than bailing out of the whole layout. */}
-          {classesQuery.isPending ? (
-            <RouteSkeleton />
-          ) : (
-            <Suspense fallback={<RouteSkeleton />}>
-              {/* PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it
-                  rebuilds each surface") for this portal: a render crash in one
-                  screen stays inside this content slot rather than taking the
-                  sidebar down with it or falling out to the top-level
-                  `errorElement`. Inside `Suspense` so a failed chunk load and a
-                  render throw both land in this boundary.
-                  `resetKey={location.pathname}` clears a caught error on
-                  navigation. */}
-              <ErrorBoundary
-                label="This page"
-                resetKey={location.pathname}
-                fallback={portalErrorFallback}
-              >
-                <ScreenOutlet
-                  overlay={{
-                    routes: teacherContentRoutes(),
-                    overlayBase: TEACHER_SETTINGS_BASE,
-                    fallbackPath: "/teacher",
-                  }}
-                />
-              </ErrorBoundary>
-            </Suspense>
-          )}
-        </main>
-      </div>
-
-      {/* Below the `sidebar` breakpoint, the primary navigation — same
-          shape as the student portal's own BottomNav, see that file's
-          comment on the identical mount. The Review tab's badge (Task 9,
-          C3d) is `reviewQueueCount` above. */}
-      <BottomNav
-        items={[
-          ...TEACHER_BOTTOM_TABS.map(
-            (tab): NavShellItem => ({
-              id: tab.id,
-              to: tab.to,
-              end: tab.end,
-              label: tab.label,
-              icon: <tab.icon size={22} aria-hidden="true" />,
-              badge:
-                tab.id === "review" && reviewQueueCount && reviewQueueCount > 0
-                  ? reviewQueueCount
-                  : undefined,
-            }),
-          ),
-          {
-            id: "more",
-            label: "More",
-            icon: <List size={22} aria-hidden="true" />,
-            onClick: () => setNavOpen(true),
-          },
-        ]}
-        className="sidebar:hidden"
-      />
-    </div>
+    <PortalShell
+      portal="teacher"
+      drawerTitle="Lemely"
+      pending={classesQuery.isPending}
+      overlay={{ routes: teacherContentRoutes(), overlayBase: TEACHER_SETTINGS_BASE, fallbackPath: "/teacher" }}
+      sidebar={sidebar}
+      topBar={{
+        title: trail[trail.length - 1]?.label ?? "Overview",
+        trail,
+        navLabel: "Open teacher navigation",
+        actions: <TeacherTopBarActions />,
+        notifications: TEACHER_NOTIFICATIONS_PANEL,
+        settingsTo: TEACHER_SETTINGS_BASE,
+        account: { links: TEACHER_ACCOUNT_LINKS, detail: profile ? roleLabel(profile.role) : null },
+      }}
+      bottomTabs={TEACHER_BOTTOM_TABS.map(
+        (tab): NavShellItem => ({
+          id: tab.id,
+          to: tab.to,
+          end: tab.end,
+          label: tab.label,
+          icon: <tab.icon size={22} aria-hidden="true" />,
+          badge: tab.id === "review" && reviewQueueCount && reviewQueueCount > 0 ? reviewQueueCount : undefined,
+        }),
+      )}
+    />
   )
 }
 
