@@ -36,6 +36,18 @@ notifications panel, account panel and settings dialog.
 4. Avatar: squircle (kit `Avatar`, DESIGN.md §6), not design A's circle. Logged drift.
 5. Phone bar: keep today's `BottomNav`, not design A's own 4-item bar.
 6. The staged design A preview files are committed (signed WIP commit) before the merge.
+7. Top bar is semi-translucent in both portals, like the landing page header (`brand.css`
+   `.brand-header`): 86% of the bar's surface (light `surface-container-lowest`, dark
+   `surface-container-high`) over a backdrop blur, solid when `backdrop-filter` is unsupported.
+   The blur uses the app's single blur token `--blur-nav` (10px; the landing page uses 14px).
+   Design A has the same rule (`variant-a.css`, commit `c880a54c`). User decision 2026-11-06.
+8. Drift rule as built:
+   - Gate scenes pass at 0 px, or up to 15% only with an entry whose `approved` is "yes".
+   - Teacher frame, drawer, panel and settings scenes, and the student scenes at 1024px, are
+     log-only: they have no cap but still need an approved entry.
+   - Entries start "pending"; only the user approves.
+   - Content scenes hide the shell chrome.
+   - Teacher baselines are pinned to `aa533580` by per-key sidecars.
 
 ## 0. Baseline
 
@@ -52,7 +64,7 @@ through props; the shell has no student or teacher knowledge.
 |---|---|---|
 | `PortalShell.tsx` | Layout: sidebar column, top bar, page well, drawer below 1248px, bottom tabs below the `sidebar` breakpoint, banners, skip link, edge swipe back, error boundary, route skeleton. | Layout parts of `portals/teacher/index.tsx` and `portals/student/index.tsx` |
 | `ShellSidebar.tsx` | Design A sidebar frame: wordmark, nav list slot, labelled group slot, footer slot (primary action and user block). | Teacher `Sidebar`/`SidebarFooter` |
-| `ShellTopBar.tsx` | Floating bar: menu button, page title, primary action, bell, gear, avatar; breadcrumbs only when drilled in. | `TeacherTopBar` |
+| `ShellTopBar.tsx` | Floating, semi-translucent bar: menu button, page title, primary action, bell, gear, avatar; breadcrumbs only when drilled in. | `TeacherTopBar` |
 | `NotificationsPanel.tsx` | Bell panel: recent items, "Mark all read", empty state, footer link to the full page. | `portals/teacher/components/NotificationsMenu.tsx` |
 | `AccountPanel.tsx` | Avatar panel: name, email, one detail line, a list of links, Sign out. | `portals/teacher/components/ProfileMenu.tsx`, `ProfileAvatar.tsx` |
 | `TopBarSheets.tsx` | Phone sheets for the panels. | `portals/teacher/components/TopBarSheets.tsx` |
@@ -99,6 +111,9 @@ actions, account links and settings tabs on `develop`, passed into the same shel
   came from; closing returns to that page. A fresh load of a settings URL opens it over the
   portal home. The page underneath stays mounted and scrolled; overlays do not shift layout (as
   on `develop`).
+- Top bar: semi-translucent over a backdrop blur (Decision 7), so page content scrolling under
+  it stays faintly visible; solid where `backdrop-filter` is unsupported. It lifts with a shadow
+  once the page scrolls under it (light theme), as before.
 - All motion stops under `prefers-reduced-motion`. Light and dark themes match the design.
 
 ## 3. Accessibility
@@ -118,7 +133,12 @@ at least 44px on coarse pointers; 375px top bar keeps a readable title (as on `d
 - Teacher: no teacher design A preview exists. Capture teacher before (merged `develop`) and
   after at the same scenes. Every difference must be a design A shell change and is logged with
   its reason. Page content below the shell must not change.
-- Pass rule: 0 differing pixels, or up to 15% with a written justification per difference.
+- Pass rule: 0 differing pixels, or up to 15% with a written justification per difference that
+  the user has approved (Decision 8). Teacher frame, drawer, panel and settings scenes are
+  log-only. Student scenes at the 1024 window are also log-only: the app shows the drawer there
+  (Decision 1), design A the sidebar.
+- Behaviour check: the content under the scrolled top bar shows through faintly, in both portals
+  and both themes.
 
 ### Other tests
 
@@ -135,3 +155,5 @@ Run only the touched test files, never the full suite.
 | Scene | Difference | % pixels | Justification | Approved |
 |---|---|---|---|---|
 | Student, phone widths | Today's bottom tab bar instead of the design's own 4-item phone bar (≤720px) | (measure) | Phone navigation parity with teacher; user decision 2026-11-06 | Yes |
+| Student, 1024px (all scenes, log-only) | Sidebar hidden; menu button and drawer | (measure) | Drawer below 1248px; user decision 2026-11-06 (Decision 1) | Pending |
+| Teacher frames (log-only) | Top bar semi-translucent (86% surface, backdrop blur) | (measure) | Design A `.as-bar` `@supports` rule; user decision 2026-11-06 (Decision 7) | Pending |

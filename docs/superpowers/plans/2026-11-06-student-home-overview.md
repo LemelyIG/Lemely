@@ -8,6 +8,26 @@
 
 **Tech Stack:** FastAPI + Pydantic (`ApiModel`), SQLAlchemy 2, Alembic, pytest; React 19, TanStack Query, react-router, Tailwind v4 (`@theme` tokens in `web/src/index.css`), Vitest (node env, `renderToStaticMarkup`), Playwright (route mocks, axe, pixelmatch).
 
+## Revised 2026-11-06 for design `c880a54c`
+
+The plan was written against the preview at `0ee846da` and no task had run. The design then changed in live sessions (commit `c880a54c`). What changed here:
+
+- **Garden removed, Mistakes beaten added.** Task 12 is now `MistakesBeaten` (`home/mistakes.ts` copy rules + `MistakesBeaten.tsx`, part `progress`, `data-home="progress"`). Task 12 starts with a STOP: the user confirms assumption A1 (one-paper, sparse3 and new get Mistakes beaten copy) and the preview gets the matching `data-gs` blocks. `home/garden.ts`, `Garden.tsx`, the Garden picker keyboard test and the `GARDEN_PICK` interaction are gone. `home/states.ts` (with `gradeUp`, `joinOr`) moves from Task 14 to Task 12.
+- **New Task 6b** (backend, no migration): `AttemptRepository.topic_marks` + pure `mistakes()` in `overview_home.py` + `MistakesDTO` on `OverviewDTO.mistakes`. Failing pytest first. Task numbers 1–20 are unchanged so every cross-reference still holds.
+- **Wire and view types:** `Overview.mistakes`, `HomeView.mistakes` added; `SubjectRow.lastPaperOn` / `SubjectView.lastPaperOn` removed (only the Garden read it; Task 5 no longer builds it). `firstPct` stays (the grades trail).
+- **Task 8:** API fixtures carry `mistakes` for every data state; `SCORES` loses its third column.
+- **Task 10:** two token aliases for the secondary button (`home-secondary-container`, `home-on-secondary-container`; the preview's light values differ from `index.css`).
+- **Task 11 (hero):** no border, card-edge ring, card radius; Binny tile `rounded-inner` and caption `rounded-chip` at every width; week meta 14px on M.
+- **Task 13 (next step) + Task 18 (row):** mirrored halves at ≥900: two equal columns in every state, both cards pad 20px 24px, the active block is a flex column with its button pinned to the bottom, meta line 24px tall, 700 14px/1.3, 12px below.
+- **Task 14 (grades):** hover replays the climb; relaxed rows (list p-2, rows py-3, journey 48px, stones 32px, marker 16px); phones get one card per subject; labels key removed; the stone keyframes animate `scale` (Tailwind's centring uses the `translate` property, so a `transform: translate()` keyframe would double it).
+- **Task 15 (weak topics):** rows min 56px, padding 12px 16px, gap 20px; phones 52px; subtitle max 70ch, secure note M px-3, dashed slot max 60ch.
+- **Task 16 (exams):** subtitle max 70ch, "today" flag 14px.
+- **Task 17 (skeleton):** the skeleton row is two equal columns at ≥900 and its two cards pad 20px 24px there (the design's `[data-garden="1"] .a-next-row` rules reach the skeleton too).
+- **Tasks 19–20, self-review:** part lists and interactions updated (`progress` replaces `garden`; no `GARDEN_PICK`).
+- The floating top bar translucency is the portal-shell plan's work, not this plan's.
+
+**Line numbers.** Rewritten rows cite `variant-a.css` at `c880a54c`. Rows in unchanged tasks still cite the file at `0ee846da` (`git show 0ee846da:web/dev-previews/student-home/variant-a.css`). To find the same rule in the current file: lines 1–383 are unchanged, lines 384–1893 moved down 2, lines 1913 and later moved up 17 (the 19-line labels key at old 1894–1912 is deleted). Search by selector when in doubt; the selector is the contract, the line is a pointer.
+
 ## Global Constraints
 
 - Spec: `docs/superpowers/specs/2026-11-06-student-home-overview-design.md`. It is the contract. Where this plan names a value, the spec or the design source it cites is the origin.
@@ -15,7 +35,7 @@
 - Signed commits only: `git commit -S -m "<type>(<scope>): <subject>" -- <explicit paths>`. Conventional scopes: `feat(student):` backend, `feat(web):` frontend, `test(web):`, `test(student):`, `fix(...)`. Never `git add -A`. Do not push.
 - Before every commit: `/home/sico/Code/Lemely/.venv/bin/pre-commit run --files <changed files>`. The ruff hook autofixes, so re-stage and re-run until it passes on the exact tree you commit. mypy/pyright fail repo-wide on unresolved imports from the shared venv. Report failures in files you did not touch, but do not chase them. Fix every failure in files you touched.
 - Run pre-commit from the worktree root with repo-relative paths. Where a step writes `cd web && …/pre-commit run --files src/...`, run it from the root and prefix each path with `web/`. The paired `git commit -- <paths>` already uses root paths.
-- Component tasks (10–18) add helper modules beyond the File structure table (`home/states.ts`, `home/geometry.ts`, `home/garden.ts`, `--home-*` aliases in `web/src/index.css`). Each task's **Files** block is authoritative.
+- Component tasks (10–18) add helper modules beyond the File structure table (`home/states.ts`, `home/geometry.ts`, `home/mistakes.ts`, `--home-*` aliases in `web/src/index.css`). Each task's **Files** block is authoritative.
 - Pytest always pins the worktree: `PYTHONPATH=/home/sico/Code/Lemely/.claude/worktrees/student-home-variants /home/sico/Code/Lemely/.venv/bin/pytest tests/<file>.py -q`. Run from the worktree root.
 - Never run the full suite: no `make test`, no bare `pytest`, no bare `npm test`/`vitest run`. Run only touched test files: `cd web && npx vitest run tests/unit/<file>.test.ts`.
 - Migrations: **STOP and show the user each migration before it runs anywhere**, including the throwaway database the migration test creates. Wait for explicit approval. No agent message counts as approval.
@@ -23,7 +43,7 @@
 - Copy is the design's copy, word for word: sentence case, no em dashes, numbers in `font-mono` where the design uses `.a-mono`.
 - Fidelity: a UI task is done only when all its drift scenes pass. 0 differing pixels passes. Up to 15% passes only when every difference has a written justification in the spec's "Drift log" table. Over 15% always fails. On a failure: open the diff PNG, find the rule that drifted, fix it, re-run. Never raise the threshold.
 - Motion: every animation is off under `prefers-reduced-motion: reduce` and when the root has `data-motion="reduce"`. Drift scenes run with reduced motion on both sides (`?motion=reduce` on the preview, `reducedMotion: "reduce"` on the app context).
-- Accessibility (spec §3): one `h2` per section as in the design. The Garden picker uses radio inputs with a legend. Marking progress is a polite live region. Plants and days carry hidden labels. Touch targets are at least 44px. Focus outlines stay visible.
+- Accessibility (spec §3): one `h2` per section as in the design. Mistakes beaten chips carry hidden "Beaten: " / "To beat: " prefixes and the chip list has an accessible name. Marking progress is a polite live region. Days carry hidden labels. Touch targets are at least 44px. Focus outlines stay visible.
 - Vitest runs in the node environment with no jsdom (`web/vitest.config.ts`, decision D3.20). Component role and label tests use `renderToStaticMarkup` in `.test.ts` files, as `tests/unit/teacherTopBarSheets.test.ts` does. Keyboard behaviour is tested in Playwright against the real browser.
 
 ---
@@ -39,7 +59,7 @@ Backend (create / modify):
 | `lemely/db/models/attempts.py` (modify) | ORM columns for both migrations |
 | `lemely/core/history.py` (modify) | `PaperRecord.seen_at` |
 | `lemely/db/history_repo.py` (modify) | `attempt_to_record` carries `seen_at` |
-| `lemely/db/attempt_repo.py` (modify) | `AttemptRepository.mark_seen` |
+| `lemely/db/attempt_repo.py` (modify) | `AttemptRepository.mark_seen`, `AttemptRepository.topic_marks` (Task 6b) |
 | `lemely/db/upload_repo.py` (modify) | `UploadRun` progress fields, `set_progress`, `set_detected_paper` |
 | `lemely/web/upload_progress.py` (create) | `UploadProgressRecorder`: bus events to progress writes |
 | `lemely/db/study_plan_repo.py` (modify) | `upcoming_sessions`, `last_plan_end` |
@@ -47,7 +67,7 @@ Backend (create / modify):
 | `lemely/web/schemas_student.py` (modify) | new DTOs and fields |
 | `lemely/web/routers/student.py` (modify) | overview wiring, seen endpoint, progress wiring, `_run_dto` |
 | `tests/test_migration_0052_attempt_seen_at.py`, `tests/test_migration_0053_upload_progress.py` (create) | migration round trips |
-| `tests/test_student_result_seen.py`, `tests/test_upload_progress.py`, `tests/test_overview_home.py` (create) | behaviour tests |
+| `tests/test_student_result_seen.py`, `tests/test_upload_progress.py`, `tests/test_overview_home.py`, `tests/test_overview_mistakes.py` (create) | behaviour tests |
 
 Frontend:
 
@@ -59,7 +79,8 @@ Frontend:
 | `web/src/portals/student/home/facts.ts` (create) | `toHomeView`, `toHomeFacts`, `homeState`, `pageState` |
 | `web/src/portals/student/home/format.ts` (create) | date, number and article formatting |
 | `web/src/portals/student/home/primitives.tsx` (create) | `Mono`, `Code`, `Vh`, `Icon`, `ButtonLink`, `GradeChip`, `Est`, motion hooks |
-| `web/src/portals/student/home/{StudentHome,HomeHero,Garden,NextStepCard,GradesList,PracticeTargets,ExamsTimeline,HomeSkeleton,HomeError}.tsx` (create) | one component per design section |
+| `web/src/portals/student/home/{StudentHome,HomeHero,MistakesBeaten,NextStepCard,GradesList,PracticeTargets,ExamsTimeline,HomeSkeleton,HomeError}.tsx` (create) | one component per design section |
+| `web/src/portals/student/home/mistakes.ts` (create) | Mistakes beaten copy shapes and chip rules (pure) |
 | `web/dev-previews/student-home/api-fixtures.ts` (create) | API-shaped responses for the 12 data states, built on `fixtures.ts` |
 | `web/scripts/home-drift/overview.mjs` (create) | Overview drift scenes + route mocks |
 | `web/e2e/student-home.spec.ts` (create) | keyboard, mark-seen, axe per state |
@@ -67,7 +88,7 @@ Frontend:
 | `web/src/portals/student/index.tsx` (modify) | route switch |
 | `web/src/portals/student/screens/Overview.tsx` (delete) | replaced |
 
-`model.ts` is **not** changed. Its `HomeFacts` is the decision input shared with the preview and `fixtures.ts`. Adding fields there would change the preview's fixtures and `studentHomeModel.test.ts`. The display-only fields the spec mentions (`firstPct`, `examAvailability`, upload `progress`) go on `HomeView` in `facts.ts` instead, next to the facts. That is the spec's "add to the model types where the components need them", kept out of the shared decision type. Task 8 tests that `toHomeFacts(api)` equals `FIXTURES[state].facts` exactly.
+`model.ts` is **not** changed. Its `HomeFacts` is the decision input shared with the preview and `fixtures.ts`. Adding fields there would change the preview's fixtures and `studentHomeModel.test.ts`. The display-only fields the spec mentions (`firstPct`, `examAvailability`, upload `progress`, `mistakes`) go on `HomeView` in `facts.ts` instead, next to the facts. That is the spec's "add to the model types where the components need them", kept out of the shared decision type. Task 8 tests that `toHomeFacts(api)` equals `FIXTURES[state].facts` exactly.
 
 ---
 
@@ -101,8 +122,30 @@ export interface SubjectRow {
   boundaries: GradeBoundaries | null
   /** True when the boundaries are not the exact published ones for the latest paper. */
   boundariesEstimated: boolean
-  /** ISO date of the latest grade-bearing paper. */
-  lastPaperOn: string | null
+}
+
+export interface MistakeTopic {
+  topic: string
+  subjectCode: string
+}
+
+export interface LastBeaten extends MistakeTopic {
+  /** "0625/42": code, paper number and variant, no session. */
+  paperCode: string
+  /** The paper that beat it is the student's newest paper in that subject. */
+  onLatestPaper: boolean
+}
+
+/** Mistakes beaten card (spec §1 "mistakes"). Derived from question_results, Task 6b. */
+export interface Mistakes {
+  beatenCount: number
+  toBeatCount: number
+  /** Newest beaten first, at most 4. */
+  beaten: MistakeTopic[]
+  /** Newest loss first, at most 4. */
+  toBeat: MistakeTopic[]
+  lastBeaten: LastBeaten | null
+  practise: MistakeTopic | null
 }
 
 export interface LatestResult {
@@ -149,6 +192,7 @@ export interface Overview {
   weakTopics: WeakTopicDto[]
   /** ISO date of the last day of the student's most recent study plan, or null. */
   planEndedOn: string | null
+  mistakes: Mistakes
 }
 
 export interface UploadProgress {
@@ -183,7 +227,7 @@ Python field names in `ApiModel` DTOs are camelCase, as in the existing file (`q
 
 ```ts
 import type { HomeFacts, NextAction, BinnyMood, StreakDay } from "./model"
-import type { Overview, UploadRun, UploadProgress, ExamAvailability, GradeBoundaries } from "@/lib/studentTypes"
+import type { Overview, UploadRun, UploadProgress, ExamAvailability, GradeBoundaries, Mistakes } from "@/lib/studentTypes"
 import type { XpProfile } from "@/lib/xpTypes"
 
 export const HOME_STATES = [
@@ -206,7 +250,6 @@ export interface SubjectView {
   examAvailability: ExamAvailability
   boundaries: GradeBoundaries | null
   boundariesEstimated: boolean
-  lastPaperOn: string | null
 }
 
 export interface WeakTopicView {
@@ -250,6 +293,7 @@ export interface HomeView {
   upload: UploadView | null
   planEndedOn: string | null
   totalPapers: number
+  mistakes: Mistakes               // passed through from the API unchanged
 }
 
 export interface PageQueries {
@@ -304,7 +348,7 @@ export function useInView<T extends Element>(): [React.RefCallback<T>, boolean] 
 
 ### Root data attributes
 
-`StudentHome` renders `<div id="sh-root" data-home="page" data-state={state} data-action={action.kind} data-mood={mood} data-exams={"yes"|"no"} data-motion={"full"|"reduce"}>`. These match `controller.ts`, so selectors and drift scenes line up. Every component root carries `data-home="<part>"`: `hero`, `garden`, `next`, `grades`, `weak`, `exams`, `skeleton`, `error`, `new`.
+`StudentHome` renders `<div id="sh-root" data-home="page" data-state={state} data-action={action.kind} data-mood={mood} data-exams={"yes"|"no"} data-motion={"full"|"reduce"}>`. These match `controller.ts`, so selectors and drift scenes line up. (`controller.ts` also sets `data-garden="1"` and `data-gstate`. They only switch the preview between the old Garden and the progress card; the app has no Garden, so it does not set them.) Every component root carries `data-home="<part>"`: `hero`, `progress`, `next`, `grades`, `weak`, `exams`, `skeleton`, `error`, `new`.
 
 ### Drift scenes (`web/scripts/home-drift/overview.mjs`). Task 9 creates it. Component tasks call it.
 
@@ -312,7 +356,7 @@ export function useInView<T extends Element>(): [React.RefCallback<T>, boolean] 
 export const OVERVIEW_STATES      // the 14 state ids, same order as fixtures.ts STATES
 export const WINDOW_WIDTHS        // [390, 768, 1024, 1440, 1920]
 export const THEMES               // ["light", "dark"]
-export const PARTS                // { hero: {preview: ".ah-hero", app: '[data-home="hero"]'}, garden: {...}, ... page: {preview: "#as-main", app: "main"} }
+export const PARTS                // { hero: {preview: ".ah-hero", app: '[data-home="hero"]'}, progress: {...}, ... page: {preview: "#as-main", app: "main"} }
 export function overviewScenes({ part, states = OVERVIEW_STATES, interactions = [] })  // → Scene[] in home-drift.mjs's format
 export async function mockStudentHome(page, state, overrides = {})  // page.route mocks + clock pin
 ```
@@ -487,7 +531,7 @@ git commit -S -m "feat(student): add attempts.seen_at for unseen results" -- lem
 - Consumes: revision `0052_attempt_seen_at` (Task 1).
 - Produces: `uploads.progress_stage SMALLINT NULL CHECK (1..3)`, `uploads.progress_done INT NULL CHECK (>= 0)`, `uploads.progress_total INT NULL CHECK (>= 0)`, `uploads.detected_paper_label VARCHAR NULL`, `uploads.detected_subject_code VARCHAR NULL`. The ORM attributes have the same names.
 
-The two `detected_*` columns are needed by design A. The marking card says "`0625/42` is being marked", the Garden marks that subject "Marking now", and the grades row says "Your first grade lands here when `0580/42` is marked". `UploadRunDTO` today carries only the filename. Show these two columns in the stop gate as part of migration 2. They are this plan's addition to the spec's "stage, done, total".
+The two `detected_*` columns are needed by design A. The marking card says "`0625/42` is being marked", the grades list marks that subject "Marking now", and its waiting row says "Your first grade lands here when `0580/42` is marked". `UploadRunDTO` today carries only the filename. Show these two columns in the stop gate as part of migration 2. They are this plan's addition to the spec's "stage, done, total".
 
 - [ ] **Step 1: Write the failing migration test**
 
@@ -1204,7 +1248,7 @@ git commit -S -m "feat(student): persist marking progress on the upload" -- leme
   - `SubjectRowDTO` new fields as in Shared interfaces. Enrolled subjects with no paper appear as rows with `papers=0, pct=0, grade="", trend="", barColor="t3", trendUp=False, detail="No papers yet", firstPct=None, boundaries=None`.
 
 Rules:
-- `firstPct = round(records[0].percentage)`; `lastPaperOn = date of records[-1].recorded_at`.
+- `firstPct = round(records[0].percentage)` (the grades trail starts here). No `lastPaperOn`: only the removed Garden read it.
 - `previousGrade` = the grade of the mark-weighted percentage over `records[:-1]`, using the latest paper's boundaries; `None` with one paper.
 - `boundariesEstimated = source != "exact"`.
 - `exam_fields`: the soonest `exam_date >= today` among the subject's entries → `(date, "dated")`; else `"no_timetable"` if any entry says so; else `(None, "no_session")`. A subject with no declared paper has no entries, which is also "no_session" (the student has not said which session they sit).
@@ -1326,7 +1370,7 @@ def test_overview_subject_rows_carry_home_fields(client: TestClient) -> None:
     assert maths["firstPct"] == 46
     assert maths["nextExamOn"] == "2027-05-12"
     assert maths["examAvailability"] == "dated"
-    assert maths["lastPaperOn"] == "2026-11-04"
+    assert "lastPaperOn" not in maths
     assert set(maths["boundaries"]) >= {"A", "B", "C"}
     assert isinstance(maths["boundariesEstimated"], bool)
     assert maths["previousGrade"] is not None
@@ -1425,14 +1469,13 @@ Replace the router's `_grade_for` body with a call to `overview_home.grade_for` 
     examAvailability: ExamAvailability = "no_session"
     boundaries: dict[str, int] | None = None
     boundariesEstimated: bool = False
-    lastPaperOn: date | None = None
 ```
 
 (`from datetime import date, datetime`; `from lemely.web.overview_home import ExamAvailability`.)
 
 Change `_subjects` to `_subjects(history, enrolments, *, calendar: StudentExamCalendar | None, today: date)`:
 1. Group grade-bearing records by code as today.
-2. Build a row for each code that has records, adding `firstPct`, `previousGrade` (`previous_grade(records, boundaries)`), `boundaries` (`rounded_boundaries`), `boundariesEstimated = source != "exact"`, `lastPaperOn = datetime.fromisoformat(records[-1].recorded_at).date()`, and `nextExamOn, examAvailability = exam_fields(calendar, code, today)`.
+2. Build a row for each code that has records, adding `firstPct`, `previousGrade` (`previous_grade(records, boundaries)`), `boundaries` (`rounded_boundaries`), `boundariesEstimated = source != "exact"`, and `nextExamOn, examAvailability = exam_fields(calendar, code, today)`.
 3. For each enrolment code with no records, append the zero row described in Interfaces, with exam fields.
 4. Sort all rows by code.
 5. Only construct `GradeBoundaryStore()` when at least one code has records. Keep the existing comment about `EmptyGradeBoundaryStoreError`.
@@ -1728,6 +1771,401 @@ git commit -S -m "feat(student): overview latest result, upcoming sessions and w
 
 ---
 
+## Task 6b: Overview mistakes (Mistakes beaten)
+
+No migration. Everything comes from existing `question_results` rows.
+
+**Files:**
+- Modify: `lemely/db/attempt_repo.py` (`TopicMarks`, `AttemptRepository.topic_marks`)
+- Modify: `lemely/web/overview_home.py` (`paper_code`, `mistakes`)
+- Modify: `lemely/web/schemas_student.py` (`MistakeTopicDTO`, `LastBeatenDTO`, `MistakesDTO`, `OverviewDTO.mistakes`)
+- Modify: `lemely/web/routers/student.py` (`student_overview`)
+- Modify: `tests/test_overview_home.py` (the `client` fixture overrides `get_attempt_repo`)
+- Test: `tests/test_overview_mistakes.py` (create)
+
+**Interfaces:**
+- Consumes: `QuestionResult` (`attempt_id`, `topic`, `maximum_marks`, `effective_marks` property), `Attempt` (`id`, `user_id`, `deleted_at`); `parse_user_id` (`lemely/db/history_repo.py`); `PaperRecord.attempt_id`, `is_grade_bearing` (`lemely/core/history.py`); `get_attempt_repo` (`lemely/web/deps.py`, already used by Task 3's seen endpoint); `migrated_sessionmaker` (`tests/conftest.py`); `DbHistoryStore`.
+- Produces:
+  - `lemely/db/attempt_repo.py`: `@dataclass(frozen=True, order=True) class TopicMarks: topic: str; awarded: int; maximum: int`, and `AttemptRepository.topic_marks(self, *, user_id: str) -> dict[str, list[TopicMarks]]` keyed by `str(attempt.id)`, each list sorted by topic.
+  - `lemely/web/overview_home.py`: `MISTAKE_LIST_CAP = 4`; `paper_code(metadata: ExamMetadata) -> str` (`"0625/42"`); `mistakes(records: list[PaperRecord], marks: Mapping[str, list[TopicMarks]]) -> MistakesDTO`.
+  - `OverviewDTO.mistakes: MistakesDTO` (default: zero counts, empty lists, nulls). Wire shape = `Mistakes` in Shared interfaces.
+
+Derivation (spec §1 "mistakes", each rule has a test below):
+1. Papers = `records` that are grade-bearing and whose `attempt_id` is a key of `marks`, sorted by `recorded_at` ascending.
+2. For each paper and each `TopicMarks` with `maximum > 0`: outcome `lost = max(maximum - awarded, 0)` for `(subject_code, topic)`.
+3. Beaten = latest outcome `lost == 0` and an earlier outcome `lost > 0`; the beating paper is the first paper after the last loss. To beat = latest outcome `lost > 0`.
+4. `beaten` newest beating paper first, ties by subject code then topic. `toBeat` newest latest paper first, ties by more marks lost, then subject code, then topic. Both capped at 4; counts are totals.
+5. `lastBeaten` = first of `beaten`, with `paperCode` of the beating paper and `onLatestPaper` = that paper is the newest paper of its subject.
+6. `practise` = the to-beat topic with the most marks lost on its latest paper; ties by newer paper, then subject code, then topic.
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/test_overview_mistakes.py`:
+
+```python
+"""GET /student/overview `mistakes` (spec 2026-11-06 §1 "mistakes")."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
+
+from lemely.core.history import PaperRecord
+from lemely.core.schemas import ExamMetadata
+from lemely.db.attempt_repo import AttemptRepository, TopicMarks
+from lemely.db.history_repo import DbHistoryStore
+from lemely.db.models.attempts import Attempt, QuestionResult
+from lemely.db.models.enums import ConfidenceBand, MarkerSource
+from lemely.db.models.users import User
+from lemely.web.overview_home import mistakes, paper_code
+
+
+def _rec(code: str, recorded: str, attempt_id: str | None, *, paper: int = 4, variant: int = 2,
+         grade: str = "C") -> PaperRecord:
+    return PaperRecord(
+        student_id="s",
+        metadata=ExamMetadata(subject_code=code, paper_number=paper, paper_variant=variant,
+                              session_month="May/June", session_year=2024),
+        awarded_marks=40, maximum_marks=80, percentage=50.0, grade=grade, weak_areas=[],
+        recorded_at=recorded, attempt_id=attempt_id,
+    )
+
+
+def _tm(topic: str, awarded: int, maximum: int) -> TopicMarks:
+    return TopicMarks(topic=topic, awarded=awarded, maximum=maximum)
+
+
+def test_paper_code_has_no_session() -> None:
+    meta = ExamMetadata(subject_code="0625", paper_number=4, paper_variant=2, session_month="May/June", session_year=2024)
+    assert paper_code(meta) == "0625/42"
+
+
+def test_beaten_lost_again_and_to_beat() -> None:
+    p1 = _rec("0580", "2026-10-01T10:00:00+00:00", "a1")
+    p2 = _rec("0580", "2026-10-15T10:00:00+00:00", "a2", variant=1)
+    p3 = _rec("0580", "2026-11-04T10:00:00+00:00", "a3", variant=3)
+    marks = {
+        "a1": [_tm("Bearings", 1, 4), _tm("Vectors", 2, 5), _tm("Circles", 3, 3)],
+        "a2": [_tm("Bearings", 4, 4), _tm("Vectors", 5, 5), _tm("Circles", 1, 3)],
+        "a3": [_tm("Vectors", 3, 5), _tm("Circles", 3, 3)],
+    }
+    m = mistakes([p1, p2, p3], marks)
+    # Bearings: lost on p1, full on p2, not tested since -> beaten on p2.
+    # Vectors: lost, full, lost again -> to beat (lost once, NOT right since).
+    # Circles: full, lost, full -> beaten on p3.
+    assert (m.beatenCount, m.toBeatCount) == (2, 1)
+    assert [(t.topic, t.subjectCode) for t in m.beaten] == [("Circles", "0580"), ("Bearings", "0580")]
+    assert [t.topic for t in m.toBeat] == ["Vectors"]
+    assert m.lastBeaten is not None
+    assert (m.lastBeaten.topic, m.lastBeaten.paperCode, m.lastBeaten.onLatestPaper) == ("Circles", "0580/43", True)
+    assert m.practise is not None and (m.practise.topic, m.practise.subjectCode) == ("Vectors", "0580")
+
+
+def test_first_paper_only_has_nothing_beaten() -> None:
+    p1 = _rec("0580", "2026-11-05T09:52:00+00:00", "a1")
+    m = mistakes([p1], {"a1": [_tm("Bearings", 0, 4), _tm("Vectors", 3, 5), _tm("Area", 2, 2)]})
+    assert (m.beatenCount, m.toBeatCount) == (0, 2)
+    assert m.lastBeaten is None
+    # Same paper for both: more marks lost first, then subject code, then topic.
+    assert [t.topic for t in m.toBeat] == ["Bearings", "Vectors"]
+    assert m.practise is not None and m.practise.topic == "Bearings"
+
+
+def test_ordering_caps_and_on_latest_paper() -> None:
+    maths1 = _rec("0580", "2026-10-01T10:00:00+00:00", "m1")
+    add1 = _rec("0606", "2026-10-02T10:00:00+00:00", "d1", paper=2, variant=2)
+    maths2 = _rec("0580", "2026-10-20T10:00:00+00:00", "m2", variant=1)
+    add2 = _rec("0606", "2026-11-03T10:00:00+00:00", "d2", paper=2, variant=1)
+    maths3 = _rec("0580", "2026-11-04T10:00:00+00:00", "m3", variant=3)
+    marks = {
+        "m1": [_tm(t, 0, 2) for t in ("A", "B", "C", "D", "E")],
+        "d1": [_tm("Logs", 0, 6)],
+        "m2": [_tm(t, 2, 2) for t in ("A", "B", "C", "D", "E")],
+        "d2": [_tm("Logs", 6, 6), _tm("Chain", 1, 4)],
+        "m3": [_tm("Circles", 1, 5)],
+    }
+    m = mistakes([maths1, add1, maths2, add2, maths3], marks)
+    assert m.beatenCount == 6
+    # Newest beating paper first: Logs (d2, 3 Nov), then A..E (m2, 20 Oct) by topic; capped at 4.
+    assert [(t.topic, t.subjectCode) for t in m.beaten] == [("Logs", "0606"), ("A", "0580"), ("B", "0580"), ("C", "0580")]
+    assert m.lastBeaten is not None
+    assert (m.lastBeaten.paperCode, m.lastBeaten.onLatestPaper) == ("0606/21", True)
+    # To beat, newest loss first: Circles (m3, 4 Nov) then Chain (d2, 3 Nov).
+    assert [t.topic for t in m.toBeat] == ["Circles", "Chain"]
+    # Practise: most marks lost on its latest paper. Circles lost 4, Chain lost 3.
+    assert m.practise is not None and m.practise.topic == "Circles"
+
+
+def test_beaten_not_on_latest_paper_of_subject() -> None:
+    p1 = _rec("0580", "2026-10-01T10:00:00+00:00", "a1")
+    p2 = _rec("0580", "2026-10-15T10:00:00+00:00", "a2", variant=1)
+    p3 = _rec("0580", "2026-11-04T10:00:00+00:00", "a3", variant=3)
+    marks = {"a1": [_tm("Bearings", 0, 4)], "a2": [_tm("Bearings", 4, 4)], "a3": [_tm("Area", 2, 2)]}
+    m = mistakes([p1, p2, p3], marks)
+    assert m.lastBeaten is not None
+    assert (m.lastBeaten.paperCode, m.lastBeaten.onLatestPaper) == ("0580/41", False)
+
+
+def test_ignores_non_grade_bearing_unknown_attempts_and_zero_maximum() -> None:
+    quiz = _rec("0580", "2026-10-01T10:00:00+00:00", "q1").model_copy(update={"origin": "quiz"})
+    file_store = _rec("0580", "2026-10-02T10:00:00+00:00", None)
+    real = _rec("0580", "2026-10-03T10:00:00+00:00", "a1")
+    later = _rec("0580", "2026-10-04T10:00:00+00:00", "a2", variant=1)
+    marks = {"q1": [_tm("Bearings", 0, 4)], "a1": [_tm("Bearings", 4, 4), _tm("Zero", 0, 0)], "a2": [_tm("Zero", 0, 0)]}
+    m = mistakes([quiz, file_store, real, later], marks)
+    assert (m.beatenCount, m.toBeatCount) == (0, 0)  # the quiz loss does not count as an earlier loss
+    assert m.beaten == [] and m.toBeat == [] and m.lastBeaten is None and m.practise is None
+
+
+def _student(sm: sessionmaker[Session]) -> str:
+    uid = uuid.uuid4()
+    with sm.begin() as s:
+        s.add(User(id=uid, email=f"{uid}@example.test", role="student"))
+    return str(uid)
+
+
+def _attempt(sm: sessionmaker[Session], student: str, recorded: str) -> uuid.UUID:
+    DbHistoryStore(sm).append(student, _rec("0580", recorded, None).model_copy(update={"student_id": student}))
+    with sm() as s:
+        attempt_id = s.scalars(
+            select(Attempt.id).where(
+                Attempt.user_id == uuid.UUID(student), Attempt.recorded_at == datetime.fromisoformat(recorded)
+            )
+        ).one()
+    return attempt_id
+
+
+def _q(attempt_id: uuid.UUID, qid: str, topic: str | None, awarded: int, maximum: int, *, teacher: int | None = None) -> QuestionResult:
+    return QuestionResult(
+        attempt_id=attempt_id, question_id=qid, awarded_marks=awarded, maximum_marks=maximum,
+        confidence_band=ConfidenceBand.high, confidence_score=0.9, marker_source=MarkerSource.ai,
+        topic=topic, teacher_awarded_marks=teacher,
+    )
+
+
+def test_topic_marks_sums_effective_marks_per_topic(migrated_sessionmaker: sessionmaker[Session]) -> None:
+    sm = migrated_sessionmaker
+    student = _student(sm)
+    other = _student(sm)
+    live = _attempt(sm, student, "2026-11-04T10:00:00+00:00")
+    gone = _attempt(sm, student, "2026-10-01T10:00:00+00:00")
+    foreign = _attempt(sm, other, "2026-11-04T10:00:00+00:00")
+    with sm.begin() as s:
+        s.add_all([
+            _q(live, "1a", "Bearings", 1, 3),
+            _q(live, "1b", "Bearings", 2, 2),
+            _q(live, "2", "Vectors", 0, 4, teacher=4),   # teacher override wins
+            _q(live, "3", None, 0, 5),                  # no topic: skipped
+            _q(live, "4", "  ", 0, 5),                  # blank topic: skipped
+            _q(gone, "1", "Bearings", 0, 4),
+            _q(foreign, "1", "Bearings", 0, 4),
+        ])
+        s.get(Attempt, gone).deleted_at = s.get(Attempt, gone).recorded_at
+    marks = AttemptRepository(sm).topic_marks(user_id=student)
+    assert marks == {str(live): [TopicMarks("Bearings", 3, 5), TopicMarks("Vectors", 4, 4)]}
+```
+
+Append to `tests/test_overview_home.py`:
+
+```python
+def test_overview_mistakes_defaults_to_empty(client: TestClient) -> None:
+    body = client.get("/api/student/overview").json()
+    assert body["mistakes"] == {
+        "beatenCount": 0, "toBeatCount": 0, "beaten": [], "toBeat": [], "lastBeaten": None, "practise": None,
+    }
+```
+
+In the same file's `client` fixture, add next to the other overrides (the store is the file store, so it has no attempts; the stub keeps the test hermetic):
+
+```python
+    app.dependency_overrides[get_attempt_repo] = lambda: MagicMock(topic_marks=MagicMock(return_value={}))
+```
+
+and add `get_attempt_repo` to the `lemely.web.deps` import.
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `PYTHONPATH=/home/sico/Code/Lemely/.claude/worktrees/student-home-variants /home/sico/Code/Lemely/.venv/bin/pytest tests/test_overview_mistakes.py tests/test_overview_home.py -q`
+Expected: FAIL with `ImportError: cannot import name 'TopicMarks'` (collection error for the new file) and `KeyError: 'mistakes'` in `test_overview_mistakes_defaults_to_empty`.
+
+- [ ] **Step 3: Implement the repository read**
+
+In `lemely/db/attempt_repo.py` (module level, next to the other small types; add `from dataclasses import dataclass` and import `QuestionResult` and `Attempt` from `lemely.db.models.attempts` if the existing import block lacks them):
+
+```python
+@dataclass(frozen=True, order=True)
+class TopicMarks:
+    """One topic's effective marks on one attempt (spec 2026-11-06 §1 "mistakes")."""
+
+    topic: str
+    awarded: int
+    maximum: int
+```
+
+On `AttemptRepository`:
+
+```python
+    def topic_marks(self, *, user_id: str) -> dict[str, list[TopicMarks]]:
+        """Per live attempt of ``user_id``: effective marks summed per question topic.
+
+        Reads ``QuestionResult.effective_marks`` (teacher override, else self-mark, else AI),
+        never ``awarded_marks``, so a corrected mark reaches the Mistakes beaten card the same
+        way it reaches every other student surface. Rows with a null or blank topic are skipped.
+        Raises ``ValueError`` for a non-UUID id (``parse_user_id``).
+        """
+        uid = parse_user_id(user_id)
+        sums: dict[str, dict[str, list[int]]] = {}
+        with self._sm() as session:
+            rows = session.scalars(
+                select(QuestionResult)
+                .join(Attempt, QuestionResult.attempt_id == Attempt.id)
+                .where(Attempt.user_id == uid, Attempt.deleted_at.is_(None), QuestionResult.topic.is_not(None))
+            ).all()
+            for qr in rows:
+                topic = (qr.topic or "").strip()
+                if not topic:
+                    continue
+                bucket = sums.setdefault(str(qr.attempt_id), {}).setdefault(topic, [0, 0])
+                bucket[0] += qr.effective_marks
+                bucket[1] += qr.maximum_marks
+        return {
+            attempt_id: sorted(TopicMarks(topic, awarded, maximum) for topic, (awarded, maximum) in topics.items())
+            for attempt_id, topics in sums.items()
+        }
+```
+
+The session attribute name is whatever `AttemptRepository.__init__` stores (`self._sm` in `mark_seen`, Task 3). Use the same name. `Attempt.deleted_at.is_(None)` repeats the session-level soft-delete filter on purpose: this read must stay correct even if it is ever run with `INCLUDE_DELETED`.
+
+- [ ] **Step 4: Implement the pure builder and the DTOs**
+
+`lemely/web/schemas_student.py`:
+
+```python
+class MistakeTopicDTO(ApiModel):
+    topic: str
+    subjectCode: str
+
+
+class LastBeatenDTO(MistakeTopicDTO):
+    paperCode: str
+    onLatestPaper: bool
+
+
+class MistakesDTO(ApiModel):
+    """The student home's Mistakes beaten card (spec 2026-11-06 §1)."""
+
+    beatenCount: int = 0
+    toBeatCount: int = 0
+    beaten: list[MistakeTopicDTO] = []
+    toBeat: list[MistakeTopicDTO] = []
+    lastBeaten: LastBeatenDTO | None = None
+    practise: MistakeTopicDTO | None = None
+```
+
+`OverviewDTO` gains `mistakes: MistakesDTO = MistakesDTO()`. If `ApiModel` forbids mutable defaults, use `Field(default_factory=MistakesDTO)` and the same for the two lists, following how the file declares other list defaults.
+
+Append to `lemely/web/overview_home.py`:
+
+```python
+MISTAKE_LIST_CAP = 4
+
+
+def paper_code(metadata: ExamMetadata) -> str:
+    return f"{metadata.subject_code}/{metadata.paper_number}{metadata.paper_variant}"
+
+
+def mistakes(records: list[PaperRecord], marks: Mapping[str, list[TopicMarks]]) -> MistakesDTO:
+    """Beaten and still-to-beat topics, spec 2026-11-06 §1 "mistakes", rules 1-6."""
+    papers = sorted(
+        (r for r in records if is_grade_bearing(r) and r.attempt_id is not None and r.attempt_id in marks),
+        key=lambda r: r.recorded_at,
+    )
+    latest_by_code: dict[str, PaperRecord] = {}
+    outcomes: dict[tuple[str, str], list[tuple[PaperRecord, int]]] = {}
+    for r in papers:
+        code = r.metadata.subject_code
+        latest_by_code[code] = r
+        for tm in marks[r.attempt_id or ""]:
+            if tm.maximum <= 0:
+                continue
+            outcomes.setdefault((code, tm.topic), []).append((r, max(tm.maximum - tm.awarded, 0)))
+
+    beaten: list[tuple[PaperRecord, str, str]] = []
+    to_beat: list[tuple[PaperRecord, int, str, str]] = []
+    for (code, topic), seq in outcomes.items():
+        last_paper, last_lost = seq[-1]
+        if last_lost > 0:
+            to_beat.append((last_paper, last_lost, code, topic))
+            continue
+        losses = [i for i, (_, lost) in enumerate(seq) if lost > 0]
+        if losses:
+            beaten.append((seq[losses[-1] + 1][0], code, topic))
+
+    # Stable sorts, least significant key first.
+    beaten.sort(key=lambda b: (b[1], b[2]))
+    beaten.sort(key=lambda b: b[0].recorded_at, reverse=True)
+    to_beat.sort(key=lambda t: (-t[1], t[2], t[3]))
+    to_beat.sort(key=lambda t: t[0].recorded_at, reverse=True)
+    ranked = sorted(to_beat, key=lambda t: (t[2], t[3]))
+    ranked.sort(key=lambda t: t[0].recorded_at, reverse=True)
+    ranked.sort(key=lambda t: t[1], reverse=True)
+
+    last = None
+    if beaten:
+        paper, code, topic = beaten[0]
+        last = LastBeatenDTO(
+            topic=topic, subjectCode=code, paperCode=paper_code(paper.metadata),
+            onLatestPaper=latest_by_code[code].attempt_id == paper.attempt_id,
+        )
+    return MistakesDTO(
+        beatenCount=len(beaten),
+        toBeatCount=len(to_beat),
+        beaten=[MistakeTopicDTO(topic=t, subjectCode=c) for _, c, t in beaten[:MISTAKE_LIST_CAP]],
+        toBeat=[MistakeTopicDTO(topic=t, subjectCode=c) for _, _, c, t in to_beat[:MISTAKE_LIST_CAP]],
+        lastBeaten=last,
+        practise=MistakeTopicDTO(topic=ranked[0][3], subjectCode=ranked[0][2]) if ranked else None,
+    )
+```
+
+(Imports: `from collections.abc import Mapping` and `from lemely.db.attempt_repo import TopicMarks` under `TYPE_CHECKING`; runtime `from lemely.web.schemas_student import LastBeatenDTO, MistakeTopicDTO, MistakesDTO`.)
+
+Check against the first test before running: Circles is beaten on p3 (4 Nov) and Bearings on p2 (15 Oct), so Circles leads, and p3 is the newest 0580 paper, so `onLatestPaper` is true.
+
+- [ ] **Step 5: Wire the route**
+
+`student_overview` gains `attempts: Annotated[AttemptRepository, Depends(get_attempt_repo)]`. After `user_id` is parsed:
+
+```python
+    marks = attempts.topic_marks(user_id=auth.user_id) if user_id is not None else {}
+```
+
+and `OverviewDTO(..., mistakes=mistakes(history.records, marks))`. A non-UUID test id skips the read, the same guard as the mirror lookup.
+
+Grep the other overview tests for a UUID auth id: `grep -n '"/api/student/overview"' tests/*.py`. Each test client whose `AuthContext.user_id` is a UUID and that does not run against `migrated_sessionmaker` gets the same `get_attempt_repo` stub as Step 1; otherwise the route would open a real database session.
+
+- [ ] **Step 6: Run the tests**
+
+Run: `PYTHONPATH=/home/sico/Code/Lemely/.claude/worktrees/student-home-variants /home/sico/Code/Lemely/.venv/bin/pytest tests/test_overview_mistakes.py tests/test_overview_home.py tests/test_web_student.py -q`
+Expected: all pass. The `migrated_sessionmaker` test needs the local Postgres the other migration tests use; if it is skipped, say so in the report rather than counting it as passed.
+
+- [ ] **Step 7: Prove the "right since" rule can fail**
+
+Temporarily change rule 3 to "any full outcome after a loss": replace `if last_lost > 0:` with `if all(lost > 0 for _, lost in seq):` and `losses[-1] + 1` with `losses[0] + 1`. Run `tests/test_overview_mistakes.py::test_beaten_lost_again_and_to_beat` and confirm it FAILS (Vectors becomes beaten, `beatenCount` 3). Revert both lines, re-run, confirm it passes. Do not commit the mutation.
+
+- [ ] **Step 8: Commit**
+
+```bash
+/home/sico/Code/Lemely/.venv/bin/pre-commit run --files lemely/db/attempt_repo.py lemely/web/overview_home.py lemely/web/schemas_student.py lemely/web/routers/student.py tests/test_overview_mistakes.py tests/test_overview_home.py
+git commit -S -m "feat(student): overview mistakes beaten from question topics" -- lemely/db/attempt_repo.py lemely/web/overview_home.py lemely/web/schemas_student.py lemely/web/routers/student.py tests/test_overview_mistakes.py tests/test_overview_home.py
+```
+
+Add any other test file Step 5 touched to both lists.
+
+---
+
 ## Task 7: Frontend wire types, hooks, mark seen on open
 
 **Files:**
@@ -1737,7 +2175,7 @@ git commit -S -m "feat(student): overview latest result, upcoming sessions and w
 - Test: `web/tests/unit/studentHomeHooks.test.ts`
 
 **Interfaces:**
-- Consumes: endpoints from Tasks 3–6.
+- Consumes: endpoints from Tasks 3–6 and 6b (`Overview.mistakes`; `SubjectRow` has no `lastPaperOn`).
 - Produces: the wire types in Shared interfaces, plus:
   - `useActiveUpload(opts?: { poll?: boolean }): UseQueryResult<UploadRun | null, Error>`. With `poll: true` it refetches every `RUN_POLL_MS` while `data?.status === "processing"`. When a polled run disappears (processing → null), it invalidates `["student", "overview"]` and `["student", "xp"]`.
   - `useMarkResultSeen(): UseMutationResult<void, Error, { paperId: string }>`: `POST /student/results/{paperId}/seen`, then invalidates `["student", "overview"]`.
@@ -1866,7 +2304,7 @@ git commit -S -m "feat(web): home wire types, live active upload, mark result se
  * toHomeFacts(API_FIXTURES[s]) must equal FIXTURES[s].facts (studentHomeFacts.test.ts).
  */
 import type { HomeFacts, HomeSubject } from "@/portals/student/home/model"
-import type { Overview, SubjectRow, UploadRun, WeakTopicDto } from "@/lib/studentTypes"
+import type { Mistakes, Overview, SubjectRow, UploadRun, WeakTopicDto } from "@/lib/studentTypes"
 import type { XpProfile } from "@/lib/xpTypes"
 import { FIXTURES, NOW, type StateId } from "./fixtures.ts"
 
@@ -1882,20 +2320,84 @@ const BOUNDS: Record<string, Record<string, number>> = {
 }
 const ESTIMATED: Record<string, boolean> = { "0580": false, "0606": false, "0625": true }
 
-/** Per state and subject: [pct, firstPct, lastPaperOn]. From the Garden and grades markup. */
-const SCORES: Record<DataStateId, Record<string, [number, number, string] | undefined>> = {
-  populated: { "0580": [76, 49, "2026-11-04"], "0606": [59, 44, "2026-10-30"], "0625": [48, 41, "2026-11-02"] },
-  "result-in": { "0580": [76, 49, "2026-11-04"], "0606": [59, 44, "2026-10-30"], "0625": [48, 41, "2026-11-02"] },
-  marking: { "0580": [76, 49, "2026-11-04"], "0606": [59, 44, "2026-10-30"], "0625": [48, 41, "2026-11-02"] },
-  "no-plan": { "0580": [76, 49, "2026-11-04"], "0606": [59, 44, "2026-10-30"], "0625": [48, 41, "2026-11-02"] },
-  "no-exams": { "0580": [76, 49, "2026-11-04"], "0606": [59, 44, "2026-10-30"], "0625": [48, 41, "2026-11-02"] },
-  "streak-zero": { "0580": [76, 49, "2026-11-01"], "0606": [59, 44, "2026-10-30"], "0625": [48, 41, "2026-10-29"] },
+/** Per state and subject: [pct, firstPct]. From the grades markup (marker and trail start). */
+const SCORES: Record<DataStateId, Record<string, [number, number] | undefined>> = {
+  populated: { "0580": [76, 49], "0606": [59, 44], "0625": [48, 41] },
+  "result-in": { "0580": [76, 49], "0606": [59, 44], "0625": [48, 41] },
+  marking: { "0580": [76, 49], "0606": [59, 44], "0625": [48, 41] },
+  "no-plan": { "0580": [76, 49], "0606": [59, 44], "0625": [48, 41] },
+  "no-exams": { "0580": [76, 49], "0606": [59, 44], "0625": [48, 41] },
+  "streak-zero": { "0580": [76, 49], "0606": [59, 44], "0625": [48, 41] },
   new: {},
-  "one-paper": { "0580": [65, 65, "2026-11-02"] },
+  "one-paper": { "0580": [65, 65] },
   sparse0: {},
-  sparse1: { "0580": [46, 46, "2026-11-05"] },
-  sparse2: { "0580": [58, 46, "2026-11-04"], "0606": [47, 47, "2026-11-03"] },
-  sparse3: { "0580": [60, 46, "2026-10-27"], "0606": [49, 45, "2026-10-27"] },
+  sparse1: { "0580": [46, 46] },
+  sparse2: { "0580": [58, 46], "0606": [47, 47] },
+  sparse3: { "0580": [60, 46], "0606": [49, 45] },
+}
+
+/*
+ * Mistakes beaten card per state. pop/sp1/sp2 values are copied from the progress card markup
+ * (student-home-a.html, section.a-prog-dir data-gs blocks); one-paper, sparse3 and new follow
+ * spec §3 assumption A1. Lists are in API order (Task 6b rules) and capped at 4. Counts include
+ * topics the card does not show: pop "4 still to beat" with 2 shown; sp1 "6" with 4 shown;
+ * sp2 "5 to go" with 2 shown. `practise` is the to-beat topic with the most marks lost.
+ */
+const T = (topic: string, subjectCode: string) => ({ topic, subjectCode })
+const NO_MISTAKES: Mistakes = { beatenCount: 0, toBeatCount: 0, beaten: [], toBeat: [], lastBeaten: null, practise: null }
+const POP_MISTAKES: Mistakes = {
+  beatenCount: 11,
+  toBeatCount: 4,
+  beaten: [T("Moments", "0625"), T("Bearings", "0580"), T("Chain rule", "0606"), T("Vectors", "0580")],
+  toBeat: [T("Logarithms", "0606"), T("Circle theorems", "0580"), T("Waves", "0625"), T("Quadratic inequalities", "0606")],
+  lastBeaten: { topic: "Moments", subjectCode: "0625", paperCode: "0625/42", onLatestPaper: true },
+  practise: T("Logarithms", "0606"),
+}
+const MISTAKES: Record<DataStateId, Mistakes> = {
+  populated: POP_MISTAKES,
+  "result-in": POP_MISTAKES,
+  marking: POP_MISTAKES,
+  "no-plan": POP_MISTAKES,
+  "no-exams": POP_MISTAKES,
+  "streak-zero": POP_MISTAKES,
+  new: NO_MISTAKES,
+  sparse0: NO_MISTAKES,
+  sparse1: {
+    beatenCount: 0,
+    toBeatCount: 6,
+    beaten: [],
+    toBeat: [T("Bearings", "0580"), T("Simultaneous equations", "0580"), T("Vectors", "0580"), T("Circle theorems", "0580")],
+    lastBeaten: null,
+    // The preview's shared footer says "Practise Logarithms" (0606) here; this student has no 0606
+    // paper. Drift-log candidate, spec "Drift log".
+    practise: T("Bearings", "0580"),
+  },
+  sparse2: {
+    beatenCount: 2,
+    toBeatCount: 5,
+    beaten: [T("Bearings", "0580"), T("Vectors", "0580")],
+    toBeat: [T("Circle theorems", "0580"), T("Logarithms", "0606"), T("Transformations", "0580"), T("Simultaneous equations", "0580")],
+    lastBeaten: { topic: "Bearings", subjectCode: "0580", paperCode: "0580/41", onLatestPaper: true },
+    practise: T("Logarithms", "0606"),
+  },
+  // A1: one-paper uses the sp1 shape; 5 to beat, 4 shown, all Maths (no codes on the chips).
+  "one-paper": {
+    beatenCount: 0,
+    toBeatCount: 5,
+    beaten: [],
+    toBeat: [T("Vectors", "0580"), T("Bearings", "0580"), T("Circle theorems", "0580"), T("Simultaneous equations", "0580")],
+    lastBeaten: null,
+    practise: T("Vectors", "0580"),
+  },
+  // A1: sparse3 uses the pop shape with the "come back" context line.
+  sparse3: {
+    beatenCount: 3,
+    toBeatCount: 4,
+    beaten: [T("Bearings", "0580"), T("Chain rule", "0606"), T("Vectors", "0580")],
+    toBeat: [T("Logarithms", "0606"), T("Circle theorems", "0580"), T("Transformations", "0580"), T("Simultaneous equations", "0580")],
+    lastBeaten: { topic: "Bearings", subjectCode: "0580", paperCode: "0580/41", onLatestPaper: true },
+    practise: T("Logarithms", "0606"),
+  },
 }
 
 /** Weak-topic trend and marks to win back, keyed "<code>:<topic>". From the weak-topics markup. */
@@ -1957,7 +2459,6 @@ function subjectRow(state: DataStateId, s: HomeSubject): SubjectRow {
     examAvailability: s.nextExamOn ? "dated" : "no_session",
     boundaries: papers > 0 ? BOUNDS[s.code] : null,
     boundariesEstimated: papers > 0 ? ESTIMATED[s.code] : false,
-    lastPaperOn: papers > 0 ? (score?.[2] ?? null) : null,
   }
 }
 
@@ -1985,6 +2486,7 @@ function build(state: DataStateId): { overview: Overview; xp: XpProfile; upload:
       upcomingSessions: f.upcomingSessions.map((s) => ({ ...s })),
       weakTopics: weak(state, f),
       planEndedOn: state === "sparse3" ? "2026-10-27" : null,
+      mistakes: MISTAKES[state],
     },
     xp: {
       totalXp, level, levelStartXp, nextLevelXp,
@@ -2074,6 +2576,14 @@ describe("toHomeView", () => {
     expect(v.subjects.find((s) => s.code === "0606")?.shortName).toBe("Add Maths")
     expect(v.latestScore).toEqual({ awarded: 61, maximum: 80 })
     expect(v.week).toHaveLength(7)
+    expect(v.mistakes).toBe(overview.mistakes)
+    expect(v.mistakes.beatenCount).toBe(11)
+  })
+
+  it("subjects carry no lastPaperOn (the Garden that read it is gone)", () => {
+    const { overview, xp, upload } = API_FIXTURES.sparse2
+    const v = toHomeView(overview, xp, upload, API_NOW)
+    expect(Object.keys(v.subjects[0])).not.toContain("lastPaperOn")
   })
 
   it("XP failure gives xp null and an empty calendar, nothing else changes", () => {
@@ -2198,7 +2708,7 @@ export const greetingWord = (now: Date): string => greetingFor(now.getHours())
  * model.ts; this file adds the display data design A prints and picks the state.
  */
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
-import type { Overview, UploadRun } from "@/lib/studentTypes"
+import type { ExamAvailability, GradeBoundaries, Mistakes, Overview, UploadProgress, UploadRun } from "@/lib/studentTypes"
 import type { XpProfile } from "@/lib/xpTypes"
 import { binnyMood, deriveNextAction, localISODate, streakStrip, type HomeFacts } from "./model"
 // …the types exported in Shared interfaces (HomeState, DataState, SubjectView, WeakTopicView, XpView,
@@ -2283,7 +2793,7 @@ export function toHomeView(o: Overview, xp: XpProfile | null, upload: UploadRun 
       papers: s.papers, grade: s.grade, previousGrade: s.previousGrade,
       pct: s.papers > 0 ? s.pct : null, firstPct: s.firstPct,
       nextExamOn: s.nextExamOn, examAvailability: s.examAvailability,
-      boundaries: s.boundaries, boundariesEstimated: s.boundariesEstimated, lastPaperOn: s.lastPaperOn,
+      boundaries: s.boundaries, boundariesEstimated: s.boundariesEstimated,
     })),
     weakTopics: [...o.weakTopics].sort((a, b) => a.acc - b.acc),
     latestScore: o.latestResult ? { awarded: o.latestResult.awarded, maximum: o.latestResult.maximum } : null,
@@ -2297,6 +2807,7 @@ export function toHomeView(o: Overview, xp: XpProfile | null, upload: UploadRun 
     upload: live ? { paperLabel: live.paperLabel, subjectCode: live.subjectCode, progress: live.progress, stale: live.stale } : null,
     planEndedOn: o.planEndedOn,
     totalPapers: totalPapers(facts),
+    mistakes: o.mistakes,
   }
 }
 
@@ -2372,7 +2883,7 @@ export const APP_PATH = "/student/home-next"
 export const PARTS = {
   page: { preview: "#as-main", app: "main" },
   hero: { preview: '[data-when-state="ready"] .ah-hero', app: '[data-home="hero"]' },
-  garden: { preview: '[data-when-state="ready"] .a-mo', app: '[data-home="garden"]' },
+  progress: { preview: '[data-when-state="ready"] .a-prog-dir[data-garden-dir="1"]', app: '[data-home="progress"]' },
   next: { preview: ".a-action-card", app: '[data-home="next"]' },
   grades: { preview: ".a-grades", app: '[data-home="grades"]' },
   weak: { preview: ".a-weak", app: '[data-home="weak"]' },
@@ -2521,7 +3032,7 @@ git commit -S -m "test(web): overview drift scenes and API mocks for the student
   - `buttonClass(variant: "primary" | "tonal"): string`: the `.a-btn` classes for a `<button>`.
   - `motionClass(on: boolean, inView: boolean | null, cls: string): string`. Returns `""` when motion is off. Returns `cls` when on. Adds `[animation-play-state:paused]` while `inView === false`. This is the design's "paused on the first frame until the section is in view" rule (variant-a.css:493-501).
   - `GRADE_BG: Readonly<Record<string, string>>`, `GRADE_OUTLINE: Readonly<Record<string, string>>`: grade colour classes for components that size their own grade marks (`.mo-bud`, `.a-stone`, `.a-act-grade`).
-  - Tailwind utilities: colours `home-ink-2`, `home-card`, `home-row`, `home-track`, `home-line`, `home-hover`, `home-control`, `home-gold-ink`, `home-grade-c`; font sizes `text-home-display` (64px), `text-home-display-sm` (40), `text-home-headline` (32), `text-home-title` (21), `text-home-body` (16), `text-home-sm` (14), `text-home-label` (11); the CSS variable `--home-card-edge` (use as `[box-shadow:var(--home-card-edge)]`); keyframes `home-fill`, `home-grow`, `home-rise`, `home-rise-in`, `home-peek`, `home-flip`, `home-pop`, `home-bob`, `home-bob-soft`, `home-jump`, `home-cheer`, `home-blink`, `home-blink-quick`, `home-pulse`.
+  - Tailwind utilities: colours `home-ink-2`, `home-card`, `home-row`, `home-track`, `home-line`, `home-hover`, `home-control`, `home-gold-ink`, `home-grade-c`, `home-secondary-container`, `home-on-secondary-container`; font sizes `text-home-display` (64px), `text-home-display-sm` (40), `text-home-headline` (32), `text-home-title` (21), `text-home-body` (16), `text-home-sm` (14), `text-home-label` (11); the CSS variable `--home-card-edge` (use as `[box-shadow:var(--home-card-edge)]`); keyframes `home-fill`, `home-grow`, `home-rise`, `home-rise-in`, `home-peek`, `home-flip`, `home-pop`, `home-bob`, `home-bob-soft`, `home-jump`, `home-cheer`, `home-blink`, `home-blink-quick`, `home-pulse`.
 
 ### Token map (canonical for every home component)
 
@@ -2551,6 +3062,7 @@ The design's custom properties come from `web/dev-previews/student-home/tokens.c
 | `--md-outline` / `--border-default` (tokens:32,65) | | `outline` |
 | `--md-outline-subtle` / `--border-subtle` (tokens:33,64) | `oklch(0.92 0.01 240)` / `oklch(0.30 0.018 240)` | `outline-variant` (same values in index.css:49/113) |
 | `--border-control` (tokens:66/171) | `oklch(0.85 0.03 240)` / outline | **new** `home-control` |
+| `--md-secondary-container` / `--md-on-secondary-container` (tokens:46-47/138-139) | `oklch(0.88 0.05 238)` / `#042f4f`; dark `oklch(0.30 0.006 235)` / `oklch(0.90 0.037 235)` | **new** `home-secondary-container` / `home-on-secondary-container` (index.css light values are `oklch(0.90 0.037 235)` / `oklch(0.10 0.006 235)`, so the app utilities would drift; dark matches). Used by the Mistakes beaten "Practise" button (Task 12). |
 | `--ah-line` (variant-a:94-95) | border-default / transparent | **new** `home-line` |
 | `--a-card-edge` (variant-a:9,13) | `0 0 0 1.5px var(--border-subtle)` / `none` | `[box-shadow:var(--home-card-edge)]` (not a `shadow-*` utility, because `none` inside Tailwind's shadow composition is invalid) |
 | `--sh-gold-text` (tokens:118) | `oklch(0.20 0.019 80)` both | **new** `home-gold-ink` |
@@ -2615,6 +3127,8 @@ After the `:root[data-theme="dark"] { … }` block (index.css:82-…), add:
   --home-card-edge: 0 0 0 1.5px var(--md-outline-variant);
   --home-gold-ink: oklch(0.20 0.019 80);
   --home-grade-c: oklch(0.47 0.09 75);
+  --home-secondary-container: oklch(0.88 0.05 238);
+  --home-on-secondary-container: #042f4f;
 }
 :root[data-theme="dark"] {
   --home-ink-2: var(--md-on-surface-variant);
@@ -2626,6 +3140,8 @@ After the `:root[data-theme="dark"] { … }` block (index.css:82-…), add:
   --home-control: var(--md-outline);
   --home-card-edge: none;
   --home-grade-c: oklch(0.49 0.09 75);
+  --home-secondary-container: var(--md-secondary-container);
+  --home-on-secondary-container: var(--md-on-secondary-container);
 }
 ```
 
@@ -2641,6 +3157,8 @@ Inside the last `@theme inline { … }` block, add:
   --color-home-control: var(--home-control);
   --color-home-gold-ink: var(--home-gold-ink);
   --color-home-grade-c: var(--home-grade-c);
+  --color-home-secondary-container: var(--home-secondary-container);
+  --color-home-on-secondary-container: var(--home-on-secondary-container);
   --text-home-display: 64px;
   --text-home-display-sm: 40px;
   --text-home-headline: 32px;
@@ -3046,7 +3564,7 @@ The design copy is inconsistent between the hidden day labels of different strip
 
 | Element / design selector | Declarations (file:line) | Tailwind |
 |---|---|---|
-| section `.ah-hero.ah-card` | `display:grid; align-items:center` :108-112; `background surface-card; border 1.5px solid --ah-line` :101-104; radius board :114 overridden to card at D :1415 and M :212 → card everywhere | `grid items-center rounded-card bg-home-card border-[1.5px] border-home-line` |
+| section `.ah-hero.ah-card` | `display:grid; align-items:center` :108-112; `background surface-card` :101-104; **c880a54c :2457** `.ah-hero.ah-card { border: 0; box-shadow: var(--a-card-edge); border-radius: var(--radius-card) }` (session afe76ac6: the same edge and corner as every other card; replaces the 1.5px `--ah-line` border) | `grid items-center rounded-card bg-home-card [box-shadow:var(--home-card-edge)]` (no border classes) |
 | columns / gaps | XL `160px minmax(0,1fr) auto`, col-gap 36 :110-112; X col-gap 24 :195-196; T `160px minmax(0,1fr)`, row-gap 20 :200; S `72px minmax(0,1fr)`, col-gap 20, row-gap 12 :1729-1731; P `56px minmax(0,1fr)`, col-gap 12, row-gap 12 :1747-1749; W row-gap 16 :1632 | `@min-[960px]/home:grid-cols-[160px_minmax(0,1fr)_auto] @min-[1101px]/home:gap-x-9 X gap-x-6 T grid-cols-[160px_minmax(0,1fr)] T gap-x-6 T gap-y-5 S grid-cols-[72px_minmax(0,1fr)] S gap-x-5 S gap-y-3 P grid-cols-[56px_minmax(0,1fr)] P gap-x-3 P gap-y-3 W gap-y-4` |
 | areas | W `"binny greet week" "binny level week"` :1632; T `"greet greet" "binny level" "week week"` :1623; S `"greet greet" "binny level" "binny say" "week week"` :1730; P `"greet greet" "binny level" "say say" "week week"` :1748 | `W [grid-template-areas:'binny_greet_week'_'binny_level_week'] T [grid-template-areas:'greet_greet'_'binny_level'_'week_week'] S [grid-template-areas:'greet_greet'_'binny_level'_'binny_say'_'week_week'] P [grid-template-areas:'greet_greet'_'binny_level'_'say_say'_'week_week']` |
 | align | W `align-items: stretch` :1632 | `W items-stretch` |
@@ -3056,11 +3574,11 @@ The design copy is inconsistent between the hidden day labels of different strip
 | h1 `.ah-greet .a-greet` | `.a-greet` :48-51 `800 display, letter-spacing -.04em, text-body, balance` + :1629 `32px/1.05` | `m-0 font-display font-extrabold text-home-headline leading-[1.05] tracking-[-0.04em] text-on-surface text-balance` |
 | `.ah-greet .a-kicker` | :52 `color text-secondary` + :1630 `margin 4px 0 0; 14px` | `mt-1 text-home-sm text-home-ink-2` |
 | figure `.ah-binny` | :116 `grid-area binny; margin 0; flex column; gap 8`; W :1643,1648 `relative; gap 0; justify-content flex-end`; M :1721 `display: contents` | `[grid-area:binny] m-0 flex flex-col gap-2 W relative W gap-0 W justify-end M contents` |
-| tile `.ah-binny-tile` (button) | :117-122 `grid; center; padding 8; radius tile; bg primary-container`; :1342-1343 reset + focus offset 3px; :522 `cursor pointer; transition transform .35s expo`; T height 80 :1416; W :1644+1649 `relative; overflow visible; h 116; margin-top 32; padding 0; align-content start`; M :215,1722 `grid-area binny; align-self center; flex none; radius 50%; padding 6; min-h 0`; S 72×72 :1733; P 56×56 :1751 | `m-0 border-0 appearance-none grid place-items-center rounded-tile bg-primary-container text-inherit [font:inherit] cursor-pointer transition-transform duration-350 ease-[var(--ease-expo)] focus-visible:outline-offset-[3px] T h-20 T p-2 W relative W overflow-visible W h-[116px] W mt-8 W p-0 W content-start M [grid-area:binny] M self-center M flex-none M rounded-full M p-1.5 M min-h-0 S size-[72px] P size-14` |
+| tile `.ah-binny-tile` (button) | :117-122 `grid; center; padding 8; radius tile; bg primary-container`; :1342-1343 reset + focus offset 3px; :522 `cursor pointer; transition transform .35s expo`; T height 80 :1416; W :1644+1649 `relative; overflow visible; h 116; margin-top 32; padding 0; align-content start`; M :215,1722 `grid-area binny; align-self center; flex none; padding 6; min-h 0` (its `radius 50%` loses to the next rule); S 72×72 :1733; P 56×56 :1751; **c880a54c :2458** `.ah-hero .ah-binny-tile { border-radius: var(--radius-inner) }` (0,2,0) at every width, so the phone tile is a rounded square, not a circle | `m-0 border-0 appearance-none grid place-items-center rounded-inner bg-primary-container text-inherit [font:inherit] cursor-pointer transition-transform duration-350 ease-[var(--ease-expo)] focus-visible:outline-offset-[3px] T h-20 T p-2 W relative W overflow-visible W h-[116px] W mt-8 W p-0 W content-start M [grid-area:binny] M self-center M flex-none M p-1.5 M min-h-0 S size-[72px] P size-14` |
 | tile `svg` | :123 `display block; inline-size auto; h 88`; T h 64 :1417; W :1650 `absolute; inset-inline 0; margin-inline auto; bottom 18; h 128`; S h 58 :1734; P h 44 :1752; always :1652 `transform-origin 50% 100%; transition transform .35s expo` | `[&_svg]:block [&_svg]:w-auto [&_svg]:origin-bottom [&_svg]:transition-transform [&_svg]:duration-350 [&_svg]:ease-[var(--ease-expo)] T [&_svg]:h-16 W [&_svg]:absolute W [&_svg]:inset-x-0 W [&_svg]:mx-auto W [&_svg]:bottom-[18px] W [&_svg]:h-32 S [&_svg]:h-[58px] P [&_svg]:h-11` |
 | ears | :1641,1653 `transform-box fill-box; origin 50% 100%; transition rotate .2s expo` | `[&_.brand-binny-ear]:[transform-box:fill-box] [&_.brand-binny-ear]:origin-bottom [&_.brand-binny-ear]:transition-[rotate] [&_.brand-binny-ear]:duration-200 [&_.brand-binny-ear]:ease-[var(--ease-expo)]` |
 | tile motion | :1655-1659 hover/focus svg `translateY(-6px)`, ears ±10deg, hover eyes bnBlink .3s, active svg `translateY(2px) scale(1.03,.95)` 80ms; :523 eyes aBlink 3.6s, origin 100px 140px; :1667 svg haPeek .7s expo .2s both; :525-526 jump/cheer 500ms expo; :524 lean `rotate(-5deg) translateY(-2px)` | motion only: `[&:is(:hover,:focus-visible)_svg]:[transform:translateY(-6px)] [&:is(:hover,:focus-visible)_.brand-binny-ear-left]:rotate-[-10deg] [&:is(:hover,:focus-visible)_.brand-binny-ear-right]:rotate-[10deg] [&:hover_.brand-binny-eyes]:animate-[home-blink-quick_300ms_linear] [&:active_svg]:[transform:translateY(2px)_scale(1.03,0.95)] [&:active_svg]:duration-75 [&_.brand-binny-eyes]:origin-[100px_140px] [&_.brand-binny-eyes]:animate-[home-blink_3.6s_linear_infinite]`; svg animation per state (see code); lean `[transform:rotate(-5deg)_translateY(-2px)]` |
-| figcaption `.ah-say` | :124-128 `padding 7px 10px; radius 10; bg surface-row; 600 14px/1.35 ui; text-body; pretty`; W :1645+1854 `absolute; z 1; inset-inline 10; bottom -12; padding 5px 10px; 14px/1.3; center; shadow-hover; bg surface-card`; dark no shadow :1875; M :217,1723 `grid-area say; flex 1; padding 8px 12px; justify-self start`; P :1753 `justify-self stretch` | `rounded-[10px] bg-home-row py-[7px] px-2.5 font-sans font-semibold text-home-sm leading-[1.35] text-on-surface text-pretty W absolute W z-[1] W inset-x-2.5 W -bottom-3 W py-[5px] W leading-[1.3] W text-center W shadow-hover W bg-home-card dark:shadow-none M [grid-area:say] M flex-1 M py-2 M px-3 S justify-self-start P justify-self-stretch` |
+| figcaption `.ah-say` | :124-128 `padding 7px 10px; radius 10; bg surface-row; 600 14px/1.35 ui; text-body; pretty`; W :1645+1854 `absolute; z 1; inset-inline 10; bottom -12; padding 5px 10px; 14px/1.3; center; shadow-hover; bg surface-card`; dark no shadow :1875; M :217,1723 `grid-area say; flex 1; padding 8px 12px; justify-self start`; P :1753 `justify-self stretch`; **c880a54c :2459** `.ah-hero .ah-say { border-radius: var(--radius-chip) }` at every width (replaces radius 10) | `rounded-chip bg-home-row py-[7px] px-2.5 font-sans font-semibold text-home-sm leading-[1.35] text-on-surface text-pretty W absolute W z-[1] W inset-x-2.5 W -bottom-3 W py-[5px] W leading-[1.3] W text-center W shadow-hover W bg-home-card dark:shadow-none M [grid-area:say] M flex-1 M py-2 M px-3 S justify-self-start P justify-self-stretch` |
 | `.ah-level` | :130; W self-start :1634 | `[grid-area:level] W self-start` |
 | `.ah-level-row` | :131 `flex wrap; baseline; space-between; gap 6px 20px`; M nowrap :219 | `flex flex-wrap items-baseline justify-between gap-x-5 gap-y-1.5 M flex-nowrap` |
 | `.ah-level-n` | :132 `800 display; -.04em; lining-nums`; D 32/1 :1418; M :1724 `800 21px/1.15 ui; -.02em` | `font-extrabold [font-variant-numeric:lining-nums] D font-display D text-home-headline D leading-none D tracking-[-0.04em] M font-sans M text-home-title M leading-[1.15] M tracking-[-0.02em]` |
@@ -3074,7 +3592,7 @@ The design copy is inconsistent between the hidden day labels of different strip
 | `.ah-week-head` | :154 `flex wrap; baseline; space-between; gap 4px 16px`; mb 8 at D :1421 and M :1725; M gap 2px 12px :232 | `flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 mb-2 M gap-x-3 M gap-y-0.5` |
 | `.ah-week-n` | :155 `800 32px/1 display; -.04em; balance`; M :1724 `800 21px/1.15 ui; -.02em` | `font-extrabold text-balance D font-display D text-home-headline D leading-none D tracking-[-0.04em] M font-sans M text-home-title M leading-[1.15] M tracking-[-0.02em]` |
 | `.ah-streak` (button) | :1344-1352,1887-1892 `reset; radius 10; inherit font; cursor; color transition .15s; hover primary; focus offset 4; coarse padding-block 8 / margin -8; ::after 45px hit area` | `relative m-0 p-0 border-0 rounded-[10px] bg-transparent appearance-none [font:inherit] [letter-spacing:inherit] text-inherit text-start cursor-pointer transition-colors duration-150 ease-out hover:text-primary focus-visible:outline-offset-4 pointer-coarse:py-2 pointer-coarse:-my-2 after:absolute after:content-[''] after:inset-y-[min(0px,calc((100%-45px)/2))] after:inset-x-[min(0px,calc((100%-45px)/2))]` |
-| `.ah-week-meta` | :156 `600 14px/1.4 mono; secondary; tabular`; M 11px nowrap :231 | `font-mono font-semibold text-home-sm leading-[1.4] text-home-ink-2 tabular-nums M text-home-label M whitespace-nowrap` |
+| `.ah-week-meta` | :156 `600 14px/1.4 mono; secondary; tabular`; **c880a54c :231** M `font-size fs-body-sm (14px); line-height 1; nowrap` (was 11px: sentence text stays at least 14px) | `font-mono font-semibold text-home-sm leading-[1.4] text-home-ink-2 tabular-nums M leading-none M whitespace-nowrap` |
 | `.ah-week-body` | :157 `max 46ch; margin -4px 0 12px; 14px; secondary; pretty`; M margin -2px 0 10px :233; 561–959 max none :2221 | `max-w-[46ch] -mt-1 mb-3 text-home-sm text-home-ink-2 text-pretty M -mt-0.5 M mb-2.5 @min-[561px]/home:@max-[960px]/home:max-w-none` |
 | `.ah-strip` | :160 + final :1481 `grid; repeat(7, minmax(0,1fr)); stretch; gap 4; no list styling` | `m-0 p-0 list-none grid grid-cols-7 gap-1` |
 | `.ah-day` | :161 + :1482 `flex column; gap 4; align stretch; center; color secondary` | `flex flex-col items-stretch gap-1 text-center text-home-ink-2` |
@@ -3393,7 +3911,7 @@ function Day(props: { d: StreakDay; i: number; kind: WeekKind; fade: boolean; sh
 const WEEK_N =
   "font-extrabold text-balance @min-[761px]/home:font-display @min-[761px]/home:text-home-headline @min-[761px]/home:leading-none @min-[761px]/home:tracking-[-0.04em] @max-[761px]/home:font-sans @max-[761px]/home:text-home-title @max-[761px]/home:leading-[1.15] @max-[761px]/home:tracking-[-0.02em]"
 const WEEK_META =
-  "font-mono font-semibold text-home-sm leading-[1.4] text-home-ink-2 tabular-nums @max-[761px]/home:text-home-label @max-[761px]/home:whitespace-nowrap"
+  "font-mono font-semibold text-home-sm leading-[1.4] text-home-ink-2 tabular-nums @max-[761px]/home:leading-none @max-[761px]/home:whitespace-nowrap"
 const WEEK_BODY =
   "max-w-[46ch] -mt-1 mb-3 text-home-sm text-home-ink-2 text-pretty @max-[761px]/home:-mt-0.5 @max-[761px]/home:mb-2.5 @min-[561px]/home:@max-[960px]/home:max-w-none"
 const WEEK_HEAD =
@@ -3508,7 +4026,7 @@ export function HomeHero({ view, lean = false }: { view: HomeView; lean?: boolea
       ref={ref}
       data-home="hero"
       aria-label="Level and streak"
-      className="grid items-center rounded-card bg-home-card border-[1.5px] border-home-line
+      className="grid items-center rounded-card bg-home-card [box-shadow:var(--home-card-edge)]
         min-h-[395px] @min-[376px]/home:min-h-[361px] @min-[410px]/home:min-h-[344px] @min-[561px]/home:min-h-[368px] @min-[761px]/home:min-h-[426px] @min-[960px]/home:min-h-[293px] @min-[974px]/home:min-h-[260px] @min-[1010px]/home:min-h-[239px] @min-[1138px]/home:min-h-[205px]
         @min-[960px]/home:grid-cols-[160px_minmax(0,1fr)_auto] @min-[960px]/home:[grid-template-areas:'binny_greet_week'_'binny_level_week'] @min-[960px]/home:gap-y-4 @min-[960px]/home:items-stretch
         @min-[1101px]/home:gap-x-9 @min-[960px]/home:@max-[1101px]/home:gap-x-6
@@ -3537,12 +4055,12 @@ export function HomeHero({ view, lean = false }: { view: HomeView; lean?: boolea
           onClick={onTile}
           onAnimationEnd={() => setJump(null)}
           className={cn(
-            "m-0 border-0 appearance-none grid place-items-center rounded-tile bg-primary-container text-inherit [font:inherit] cursor-pointer transition-transform duration-350 ease-[var(--ease-expo)] focus-visible:outline-offset-[3px]",
+            "m-0 border-0 appearance-none grid place-items-center rounded-inner bg-primary-container text-inherit [font:inherit] cursor-pointer transition-transform duration-350 ease-[var(--ease-expo)] focus-visible:outline-offset-[3px]",
             "[&_svg]:block [&_svg]:w-auto [&_svg]:origin-bottom [&_svg]:transition-transform [&_svg]:duration-350 [&_svg]:ease-[var(--ease-expo)]",
             "[&_.brand-binny-ear]:[transform-box:fill-box] [&_.brand-binny-ear]:origin-bottom [&_.brand-binny-ear]:transition-[rotate] [&_.brand-binny-ear]:duration-200 [&_.brand-binny-ear]:ease-[var(--ease-expo)]",
             "@min-[761px]/home:@max-[960px]/home:h-20 @min-[761px]/home:@max-[960px]/home:p-2 @min-[761px]/home:@max-[960px]/home:[&_svg]:h-16",
             "@min-[960px]/home:relative @min-[960px]/home:overflow-visible @min-[960px]/home:h-[116px] @min-[960px]/home:mt-8 @min-[960px]/home:p-0 @min-[960px]/home:content-start @min-[960px]/home:[&_svg]:absolute @min-[960px]/home:[&_svg]:inset-x-0 @min-[960px]/home:[&_svg]:mx-auto @min-[960px]/home:[&_svg]:bottom-[18px] @min-[960px]/home:[&_svg]:h-32",
-            "@max-[761px]/home:[grid-area:binny] @max-[761px]/home:self-center @max-[761px]/home:flex-none @max-[761px]/home:rounded-full @max-[761px]/home:p-1.5 @max-[761px]/home:min-h-0",
+            "@max-[761px]/home:[grid-area:binny] @max-[761px]/home:self-center @max-[761px]/home:flex-none @max-[761px]/home:p-1.5 @max-[761px]/home:min-h-0",
             "@min-[561px]/home:@max-[761px]/home:size-[72px] @min-[561px]/home:@max-[761px]/home:[&_svg]:h-[58px] @max-[561px]/home:size-14 @max-[561px]/home:[&_svg]:h-11",
             motion &&
               "[&_.brand-binny-eyes]:origin-[100px_140px] [&_.brand-binny-eyes]:animate-[home-blink_3.6s_linear_infinite] [&:is(:hover,:focus-visible)_svg]:[transform:translateY(-6px)] [&:is(:hover,:focus-visible)_.brand-binny-ear-left]:rotate-[-10deg] [&:is(:hover,:focus-visible)_.brand-binny-ear-right]:rotate-[10deg] [&:hover_.brand-binny-eyes]:animate-[home-blink-quick_300ms_linear] [&:active_svg]:[transform:translateY(2px)_scale(1.03,0.95)] [&:active_svg]:duration-75",
@@ -3554,7 +4072,7 @@ export function HomeHero({ view, lean = false }: { view: HomeView; lean?: boolea
         </button>
         <figcaption
           aria-live="polite"
-          className="rounded-[10px] bg-home-row py-[7px] px-2.5 font-sans font-semibold text-home-sm leading-[1.35] text-on-surface text-pretty
+          className="rounded-chip bg-home-row py-[7px] px-2.5 font-sans font-semibold text-home-sm leading-[1.35] text-on-surface text-pretty
             @min-[960px]/home:absolute @min-[960px]/home:z-[1] @min-[960px]/home:inset-x-2.5 @min-[960px]/home:-bottom-3 @min-[960px]/home:py-[5px] @min-[960px]/home:leading-[1.3] @min-[960px]/home:text-center @min-[960px]/home:shadow-hover @min-[960px]/home:bg-home-card dark:shadow-none
             @max-[761px]/home:[grid-area:say] @max-[761px]/home:flex-1 @max-[761px]/home:py-2 @max-[761px]/home:px-3 @min-[561px]/home:@max-[761px]/home:justify-self-start @max-[561px]/home:justify-self-stretch"
         >
@@ -3681,914 +4199,668 @@ git commit -S -m "feat(web): student home hero from design A" -- web/src/portals
 
 ---
 
-## Task 12: Garden
+## Task 12: `MistakesBeaten` (the progress card)
+
+Replaces the Garden (rejected in live session 48a34cc4). Design source at `c880a54c`: `student-home-a.html` `section.a-prog-dir.a-prog-ladder[data-garden-dir="1"]` (ready block, ~line 510) and `section.a-prog-dir.is-new` (new block, ~line 240); `variant-a.css:2234-2248, 2324-2343, 2357-2380, 2384-2401, 2421-2446`; `controller.ts` `GSTATE`.
 
 **Files:**
-- Create: `web/src/portals/student/home/garden.ts` (pure Garden rules: stem heights, leaves, readouts, pots, fill line)
-- Create: `web/src/portals/student/home/Garden.tsx`
+- Create: `web/src/portals/student/home/states.ts` (state families + `gradeUp`, `joinOr`; Task 13 and Tasks 14–16 import it)
+- Create: `web/src/portals/student/home/mistakes.ts` (pure copy rules)
+- Create: `web/src/portals/student/home/MistakesBeaten.tsx`
 - Create: `web/scripts/home-drift/overview.d.mts` (types for the `.mjs` so `web/e2e` type-checks)
-- Create: `web/e2e/student-home.spec.ts` (Garden keyboard test; later tasks append)
-- Create: `web/tests/unit/studentHomeGarden.test.ts`
-- Modify: `web/tests/unit/studentHomeMarkup.test.ts` (created by Task 10; append a `describe("Garden")`)
-- Modify: `web/src/index.css` (append the `home-*` keyframes below the last `@keyframes` block)
-- Modify: `web/scripts/home-drift/overview.mjs` (export `READY_STATES`, `GARDEN_PICK`)
-- Modify: `web/scripts/home-drift.mjs` (register the `garden` part)
+- Create: `web/e2e/student-home.spec.ts` (Mistakes beaten keyboard and hit-area test; later tasks append)
+- Create: `web/tests/unit/studentHomeMistakes.test.ts`
+- Modify: `web/tests/unit/studentHomeMarkup.test.ts` (append `describe("MistakesBeaten")`)
+- Modify: `web/src/index.css` (append the `home-x-pop` keyframe below the last `@keyframes` block)
+- Modify: `web/scripts/home-drift/overview.mjs` (export `READY_STATES`)
+- Modify: `web/scripts/home-drift.mjs` (register the `progress` part)
+- Modify (Step 0, only after the user approves): `web/dev-previews/student-home-a.html`, `web/dev-previews/student-home/controller.ts`, `web/dev-previews/student-home/variant-a.css`
 
 **Interfaces:**
 - Consumes:
-  - Task 8: `HomeView`, `SubjectView`, `DataState`, `toHomeView(o, xp, upload, now)`, `API_FIXTURES`, `API_NOW`, `DataStateId`; `format.ts` `dayMonth`, `longDay`, `indefinite`; `model.ts` `GRADE_ORDER`.
-  - Task 9: `OVERVIEW_STATES`, `overviewScenes({ part, states, interactions })` (interaction objects are `{ id, state, overrides?, preview, app }`), `mockStudentHome(page, state, overrides?)`, `APP_PATH`, `PARTS.garden` (`preview: '[data-when-state="ready"] .a-mo'`, `app: '[data-home="garden"]'`).
-  - Task 10: `Vh`, `Icon` (`name: "arrow"`), `GradeChip` (`kind: "bud"`), `useMotionOn()`. Must be SSR-safe: `false` when `window` is undefined. Also the token map and the `@container/home` root on `#sh-root`.
+  - Task 8: `HomeView` (`state`, `mistakes`), `DataState`, `toHomeView`, `SUBJECT_SHORT_NAMES`, `API_FIXTURES`, `API_NOW`, `DataStateId`; wire type `Mistakes` (Task 7).
+  - Task 9: `OVERVIEW_STATES`, `overviewScenes({ part, states })`, `mockStudentHome(page, state, overrides?)`, `APP_PATH`, `PARTS.progress` (`preview: '[data-when-state="ready"] .a-prog-dir[data-garden-dir="1"]'`, `app: '[data-home="progress"]'`).
+  - Task 10: `Vh`, `Icon` (`name: "arrow"`), `useMotionOn()` (SSR-safe: `false` when `window` is undefined), the token map (`home-card`, `home-row`, `home-ink-2`, `home-secondary-container`, `home-on-secondary-container`, `--home-card-edge`, `text-home-*`), the `@container/home` root.
+  - `model.ts` `GRADE_ORDER` (for `gradeUp`).
 - Produces:
-  - `export function Garden(props: { view: HomeView; variant?: "ghost" }): JSX.Element`. The root is a `<section data-home="garden">`. `variant="ghost"` is the new-student Garden (Task 17 renders it inside the `new` block).
-  - From `garden.ts`:
+  - `states.ts`:
     ```ts
-    export const MANY_PAPER_STATES: ReadonlySet<DataState>   // populated, result-in, marking, no-plan, no-exams, streak-zero
-    export function isSparse(state: DataState): boolean       // state.startsWith("sparse")
-    export function stemPct(pct: number): string              // "76.7%"
-    export function leafStops(papers: number, compact: boolean): number[]
-    export function gradeUp(previous: string | null, grade: string): boolean
-    export interface Readout { pre: string; bold: string; post: string; ctx: string; lead: string | null }
-    export function manyReadout(s: SubjectView): Readout
-    export function manyLabel(s: SubjectView): string
-    export function soloReadout(s: SubjectView): Readout
-    export function sparseReadout(view: HomeView): Readout
-    export type PotKind = "germ" | "seed" | "grown"
-    export interface Pot { s: SubjectView; kind: PotKind; lead: boolean; dry: boolean; val: string; up: boolean; label: string }
-    export function sparsePots(view: HomeView): Pot[]
-    export interface Pip { title: string; done: string; on: boolean }
-    export interface Fill { pips: Pip[]; on: number; doneText: string; next: string }
-    export function gardenFill(view: HomeView): Fill
-    export function joinOr(words: string[]): string          // ["a"] "a"; ["a","b"] "a or b"; ["a","b","c"] "a, b or c"
+    export const MANY_PAPERS_STATES: ReadonlySet<DataState>   // populated, result-in, marking, no-plan, no-exams, streak-zero
+    export function isSparse(s: DataState): boolean             // s.startsWith("sparse")
+    export function isManyPapers(s: DataState): boolean
+    export function gradeUp(previous: string | null, grade: string): boolean   // grade ranks above previous in GRADE_ORDER
+    export function joinOr(words: string[]): string             // ["a"] "a"; ["a","b"] "a or b"; ["a","b","c"] "a, b or c"
     ```
-  - `NextStepCard` (Task 13) imports `gradeUp` and `isSparse`.
+  - `mistakes.ts`:
+    ```ts
+    export type MistakesShape = "pop" | "sp0" | "sp1" | "sp2" | "sp3" | "new"
+    export type MistakesVariant = MistakesShape | "empty" | "open"
+    export interface MistakeChip { topic: string; code: string | null; beaten: boolean }
+    export interface MistakesFoot { remaining: string | null; practise: { label: string; to: string } | null }
+    export interface MistakesCopy {
+      variant: MistakesVariant
+      count: number | null
+      lead: string
+      ctx: string | null
+      chips: MistakeChip[]
+      chipsLabel: string | null
+      foot: MistakesFoot | null
+    }
+    export function mistakesShape(state: DataState): MistakesShape
+    export function mistakesCopy(state: DataState, m: Mistakes): MistakesCopy
+    ```
+  - `export function MistakesBeaten(props: { view: HomeView; placement?: "row" | "new" }): JSX.Element`. Root `<section data-home="progress" aria-labelledby=…>`. `placement` defaults to `"row"` (inside the next-step row, Task 18); `"new"` is the copy inside the new-student block (Task 18 `NewHome`), which takes the `.is-new` margin and none of the row-only rules.
+  - `overview.mjs`: `READY_STATES` (every state but `new` and `loading`).
 
-### Rules derived from the design (each one checked against every value in the markup)
+### Step 0 gate: STOP and get the user's decision on A1 and A2
 
-**Stem height (`--now`) and first-paper line (`--was`).** The many-papers picker (`student-home-a.html` populated block, `page-a.txt` lines 229–242) uses `--now = (pct − 30) / 60 × 100%`, to one decimal:
-76→76.7 ✓, 59→48.3 ✓, 48→30.0 ✓; `--was` 49→31.7 ✓, 44→23.3 ✓, 41→18.3 ✓. The value is clamped to 0–100. The stem is `block-size: calc(var(--now) * 0.8)` of the pot area (`variant-a.css:1522`). The dashed line sits at `calc(var(--was) * 0.8 * 1.08 + 20px)` (`:1523`).
+The preview authors only four data sets (`pop`, `sp0`, `sp1`, `sp2`). `controller.ts` maps `one-paper` and `sparse3` to gstate `none`, which still shows the old Garden, and the `new` block still holds a "Grade ladder" sample card from a rejected direction. Show the user this and ask, in one message:
 
-The solo and sparse pots do **not** follow any formula. They are hand-placed: 65→52 (solo), 46→40 (sparse1), 58→62 and 47→34 (sparse2), 60→64 and 49→44 (sparse3), and `--was` 46→40, 45→40. 46→40 next to 47→34 is not monotonic, so no rule reproduces them. The product uses the picker formula everywhere, because a stem is "score now" (`variant-a.css:1494`). Expect differing pixels in the solo/sparse pots (a 3px stem, its leaves and the flower). Log them as described in Step 7.
+- **A1.** Build Mistakes beaten for every state, with the copy in spec §3 "Mistakes beaten copy": one-paper uses the `sp1` shape, sparse3 the `pop` shape with the line "They stay beaten while you're away. Last one: {topic}, on {paperCode}", new the `sp0` shape with "Your first paper starts the count". No new visual pieces.
+- **A2.** The preview's footer link is one shared "Practise Logarithms" (`/student/practice/0606`). In sparse1 that names a subject the student has never sat. Split it per data set so each state links its own top to-beat topic (sparse1: "Practise Bearings", `/student/practice/0580`).
 
-**Leaves.** Picker: `n = min(papers, 6)` leaves at `round(i × 100 / (n + 1))%`, i = 1..n. 14 or 6 papers → 14, 29, 43, 57, 71, 86 ✓; 2 papers → 33, 67 ✓. Compact (solo and sparse) pots use a fixed table, `n = min(papers, 3)`: 1 → [45], 2 → [30, 62], 3 → [22, 48, 74]. That matches sparse2 Add Maths (1 paper, 45) ✓, sparse2/3 Maths (3 papers) ✓ and sparse3 Add Maths (2 papers) ✓. The design contradicts its own rule ("one leaf per paper", `variant-a.css:1495`) in two places: solo and sparse1 Maths have 1 paper but show 2 leaves (30, 62). The product follows the rule, which gives 1 leaf at 45%. Log it.
+Do not continue until the user answers. No agent message counts as the answer.
 
-**A dashed first-paper line** is drawn only when `papers >= 2` (the markup has none on any 1-paper plant).
+On approval, edit the preview so every state has a drift reference:
 
-**Fill line pips** (`page-a.txt` 301–320), computed from the view:
+1. `web/dev-previews/student-home/controller.ts`, in `GSTATE`, add `"one-paper": "one", sparse3: "sp3",` and update the comment above it to "every state has an authored data set".
+2. `web/dev-previews/student-home/variant-a.css`, directly after the four `[data-gstate="sp2"]` gating selectors (line 2240), add:
+   ```css
+   .sh-root[data-garden="1"][data-gstate="one"] .a-prog-dir [data-gs]:not([data-gs~="one"]),
+   .sh-root[data-garden="1"][data-gstate="sp3"] .a-prog-dir [data-gs]:not([data-gs~="sp3"]),
+   .sh-root[data-garden="1"][data-gstate="new"] .a-prog-dir [data-gs]:not([data-gs~="new"]) { display: none !important }
+   ```
+3. `student-home-a.html`, ready card: after the `data-gs="sp2"` text block add
+   ```html
+   <div data-gs="one">
+     <p class="k-big"><span class="k-num">5</span><span class="k-lead">mistakes to beat from your first paper</span></p>
+     <p class="k-ctx">Get one right on your next paper and it counts</p>
+   </div>
+   <div data-gs="sp3">
+     <p class="k-big"><span class="k-num">3</span><span class="k-lead">mistakes you don't make anymore</span></p>
+     <p class="k-ctx">They stay beaten while you're away. Last one: Bearings, on 0580/41</p>
+   </div>
+   ```
+   after the `data-gs="sp2"` chip list add
+   ```html
+   <ul class="x-chips" data-gs="one" aria-label="Mistakes to beat">
+     <li class="x-chip is-open"><span class="a-vh">To beat: </span>Vectors</li><li class="x-chip is-open"><span class="a-vh">To beat: </span>Bearings</li><li class="x-chip is-open"><span class="a-vh">To beat: </span>Circle theorems</li><li class="x-chip is-open"><span class="a-vh">To beat: </span>Simultaneous equations</li>
+   </ul>
+   <ul class="x-chips" data-gs="sp3" aria-label="Recently beaten and still to beat">
+     <li class="x-chip"><span class="x-tick" aria-hidden="true"></span><span class="a-vh">Beaten: </span>Bearings <span class="x-code">0580</span></li>
+     <li class="x-chip"><span class="x-tick" aria-hidden="true"></span><span class="a-vh">Beaten: </span>Chain rule <span class="x-code">0606</span></li>
+     <li class="x-chip"><span class="x-tick" aria-hidden="true"></span><span class="a-vh">Beaten: </span>Vectors <span class="x-code">0580</span></li>
+     <li class="x-chip is-open"><span class="a-vh">To beat: </span>Logarithms <span class="x-code">0606</span></li>
+     <li class="x-chip is-open"><span class="a-vh">To beat: </span>Circle theorems <span class="x-code">0580</span></li>
+   </ul>
+   ```
+   and replace the footer with
+   ```html
+   <div class="x-foot" data-gs="pop sp1 sp2 one sp3">
+     <span class="k-ctx" data-gs="pop">4 still to beat</span><span class="k-ctx" data-gs="sp1">2 more on the paper</span><span class="k-ctx" data-gs="sp2">3 more still to beat</span><span class="k-ctx" data-gs="one">1 more on the paper</span><span class="k-ctx" data-gs="sp3">4 still to beat</span>
+     <a class="k-go" data-gs="pop sp2 sp3" href="/student/practice/0606">Practise Logarithms <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+     <a class="k-go" data-gs="sp1" href="/student/practice/0580">Practise Bearings <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+     <a class="k-go" data-gs="one" href="/student/practice/0580">Practise Vectors <svg class="a-ico" aria-hidden="true"><use href="#a-i-arrow" /></svg></a>
+   </div>
+   ```
+   (If the user approves A1 but not A2, keep the single shared link with `data-gs` removed, and the sparse1 and one-paper footers become drift-log rows in Step 9.)
+4. `student-home-a.html`, new block: replace the whole `section.a-prog-dir.a-prog-ladder.is-new` (the "Grade ladder" sample) with
+   ```html
+   <section class="a-prog-dir a-prog-ladder is-new" data-garden-dir="1" hidden aria-labelledby="gd1n-h">
+     <header class="k-head"><h2 class="pd-h" id="gd1n-h">Mistakes beaten</h2><span class="k-sub">Lost once, right since</span></header>
+     <div data-gs="new">
+       <p class="k-big"><span class="k-lead">Your first paper starts the count</span></p>
+       <p class="k-ctx">Every mark it loses becomes a mistake to beat</p>
+     </div>
+   </section>
+   ```
+5. Open `student-home-a.html?state=one-paper`, `?state=sparse3`, `?state=new` and `?state=sparse1` at 1440 and 390 in a browser and confirm: one card, no Garden, one footer link. Commit these three files on their own: `git commit -S -m "feat(web): design A preview, Mistakes beaten data sets for one-paper, sparse3 and new" -- web/dev-previews/student-home-a.html web/dev-previews/student-home/controller.ts web/dev-previews/student-home/variant-a.css` (pre-commit first, as always).
 
-| Pip (title) | Done name | On when |
-|---|---|---|
-| First result | first result | `view.facts.latestResult !== null` |
-| Practice targets | practice targets | `view.weakTopics.length > 0` |
-| Exam dates | exam dates | `view.subjects.length > 0 && view.subjects.every((s) => s.nextExamOn !== null)` |
-| 3-day streak | streak | `(view.xp?.streak ?? 0) >= 3` |
-| Study plan | study plan | `view.facts.upcomingSessions.length > 0` |
-| All {n} subjects planted | all subjects planted | `view.subjects.every((s) => s.papers > 0)` |
+If the user rejects A1, stop and report: the build has no agreed design for those three states.
 
-Check against the markup. sparse0: exam dates → 1 ✓. sparse1: result, targets, exams → 3 ✓. sparse2: result, targets, streak 3, plan (0625 has no date, so no exam pip) → 4 ✓. sparse3: result, targets, exams → 3 ✓.
+### Copy rules (spec §3 "Mistakes beaten copy"; checked against every `data-gs` block)
 
-Next line, first match wins: a live upload → "Next: your first result, marking now." ✓ sparse0. State `sparse3` → "Next: one short set restarts your streak." ✓. Any unplanted subjects → `Next: plant ${joinOr(shortNames)}`, plus " and add its exam date" when exactly one subject is unplanted and it has no exam date, then "." ✓ sparse1 "plant Add Maths or Physics." ✓ sparse2 "plant Physics and add its exam date.". Fallbacks the design never shows (no fixture reaches them): "Next: add your exam dates.", "Next: build a study plan.", "Next: keep your streak going.".
+`mistakesShape(state)`: `new` → `new`; `sparse0` → `sp0`; `sparse1`, `one-paper` → `sp1`; `sparse2` → `sp2`; `sparse3` → `sp3`; every other state → `pop` (the `error` page renders its cached data state, so it never reaches this function as `error`).
 
-**Readouts.**
-- Picker: `${short} is up <b>${d} points</b>` / ctx `${first}% → ${pct}% · ${papers} papers`. A negative d reads "is down"; d = 0 reads `${short} is <b>holding steady</b>`. Singular "1 point" / "1 paper". The last three are not in the design.
-- Solo: `${short} has <b>sprouted</b>` / `Grade ${g} · first paper`.
-- sparse0: `Your first seed is <b>germinating</b>` / `${label} is being marked · ${n} subjects planted`. When the label is null: `Your paper is being marked · …`.
-- sparse1: `${short} has <b>sprouted</b>` / `Grade ${g} · your first result`. The lead is the latest result's subject.
-- sparse2: `${short} is <b>up a grade</b>` / `${prev} → ${g} · ${growing} of ${n} subjects growing`. The lead is the first subject with `gradeUp`. With no improved subject: `<b>${growing} of ${n}</b> subjects growing` / `${totalPapers} papers corrected` (not in the design).
-- sparse3: `Your progress <b>is safe</b>` / `Last watered ${dayMonth(max lastPaperOn)} · ${totalPapers} papers kept`.
+`variant`: `new` and `sp0` stay as they are. Otherwise: no data at all (`beatenCount === 0 && toBeatCount === 0`) → `empty`; `sp1` stays `sp1`; nothing beaten in a `pop`/`sp2`/`sp3` state → `open`; else the shape.
 
-### Token and container map used below
+| Variant | `count` | `lead` (n = count; singular when n = 1) | `ctx` |
+|---|---|---|---|
+| `pop` | `beatenCount` | "mistakes you don't make anymore" / "mistake you don't make anymore" | `Last one beaten: ${topic}, on ${paperCode}` |
+| `sp3` | `beatenCount` | same as `pop` | `They stay beaten while you're away. Last one: ${topic}, on ${paperCode}` |
+| `sp2` | `beatenCount` | `mistakes beaten · ${toBeatCount} to go` / `mistake beaten · …` | `onLatestPaper` ? `${topic} beaten on your last ${shortName} paper` : `${topic} beaten on ${paperCode}` |
+| `sp1` | `toBeatCount` | "mistakes to beat from your first paper" / "mistake to beat from your first paper" | "Get one right on your next paper and it counts" |
+| `open` | `toBeatCount` | "mistakes to beat" / "mistake to beat" | "Get one right on your next paper and it counts" |
+| `sp0` | null | "Your first paper is being marked" | "Every mark it loses becomes a mistake to beat" |
+| `new` | null | "Your first paper starts the count" | "Every mark it loses becomes a mistake to beat" |
+| `empty` | null | "No mistakes to beat yet" | "Topics you lose marks on show up here after marking" |
 
-Classes use the app `@theme` utilities where a design token has a 1:1 app token. Four design semantics have no `@theme` utility, so the classes use the v4 var shorthand. Task 10's token map must define these on `#sh-root`, with light and dark values: `--text-secondary`, `--track`, `--a-card-edge` (`0 0 0 1.5px <border-subtle>`, `none` in dark), `--a-ease-expo` (`cubic-bezier(0.16, 1, 0.3, 1)`), and `--night`. If Task 10's map names a row differently, use Task 10's name. The design var in the left column is the contract.
+`topic`, `paperCode`, `onLatestPaper` come from `lastBeaten`; `ctx` is null when `lastBeaten` is null in `pop`/`sp3`/`sp2` (the backend never sends that with `beatenCount > 0`). `shortName` is `SUBJECT_SHORT_NAMES[subjectCode] ?? subjectCode`.
 
-| Design (`tokens.css`) | Class |
-|---|---|
-| `--surface-card` | `bg-surface-container-lowest` |
-| `--surface-row` | `bg-surface-container-low`, `border-surface-container-low` |
-| `--text-body` | `text-on-surface` |
-| `--text-muted` | `text-on-surface-variant`, `border-on-surface-variant` |
-| `--text-secondary` | `text-(--text-secondary)` |
-| `--md-primary` / `--md-primary-container` / `--md-on-primary-container` | `primary` / `primary-container` / `on-primary-container` |
-| `--md-success` / `--sh-success-text` | `bg-success` / `text-success-text` |
-| `--md-secondary` | `bg-secondary` |
-| `--sh-grade-a/-b/-c/-astar` | `grade-a` / `grade-b` / `grade-c` / `grade-a-star` |
-| `--track` | `bg-(--track)` |
-| `--a-card-edge` | `shadow-(--a-card-edge)` |
-| `--fs-title` 21 · `--fs-body` 16 · `--fs-body-sm` 14 · `--fs-label` 11 | `text-[21px]` · `text-base` · `text-sm` · `text-2xs` |
-| `--space-N` | Tailwind spacing `N` (4px unit) |
-| `--radius-card/-chip/-pill` | `rounded-card` / `rounded-chip` / `rounded-pill` |
-| `--font-ui` / `--font-mono` | `font-sans` / `font-mono` |
-| `@container home (min-width: 900px)` / `(max-width: 560px)` | `@min-[900px]/home:` / `@max-[560px]/home:` |
+Chips: beaten chips are `beaten.slice(0, 4)` for `pop`, `sp2`, `sp3`, none otherwise. Open chips are `toBeat.slice(0, beatenShown === 0 ? 4 : 2)` for `pop`, `sp2`, `sp3`, `sp1`, `open`; none for `sp0`, `new`, `empty`. Each chip shows its subject code only when the shown chips span more than one subject code. Check: populated 4 + 2 chips over 0625/0580/0606, codes ✓; sparse1 4 open chips, all 0580, no codes ✓; sparse2 2 + 2 over 0580/0606, codes ✓.
 
-The design's `.a-vh` (`variant-a.css:22`: absolute, 1×1, `clip-path: inset(50%)`, nowrap) is the `Vh` primitive. Elements that must be a specific tag (the radio input, the legend) use `sr-only`, which is visually identical.
+`chipsLabel`: `pop`/`sp3` "Recently beaten and still to beat"; `sp2` "Beaten and still to beat"; `sp1`/`open` "Mistakes to beat"; null when there are no chips (no list is rendered).
 
-### Selector → class mapping (`variant-a.css`)
+Footer (null for `sp0`, `new`, `empty`): `remaining` is `pop`/`sp3` `${toBeatCount} still to beat`; `sp2`/`open` `${toBeatCount − openShown} more still to beat`; `sp1` `${toBeatCount − openShown} more on the paper`; null when the number is 0. `practise` is `{ label: \`Practise ${practise.topic}\`, to: \`/student/practice/${practise.subjectCode}\` }`, null when `practise` is null. The footer is null when both are null. Check: populated "4 still to beat" ✓ (4 total, 2 shown: the design counts the total here); sparse1 6 − 4 = "2 more on the paper" ✓; sparse2 5 − 2 = "3 more still to beat" ✓.
+
+### Selector → class mapping (`variant-a.css` at `c880a54c`)
+
+Row-only rules (`.a-next-row > .a-prog-dir …`, all inside `@container home (min-width: 900px)`) apply only when `placement === "row"`; the component adds those classes conditionally. **W** = `@min-[900px]/home:`, **P** = `@max-[561px]/home:` (≤560, Task 10 breakpoint map).
 
 | Selector (line) | Declarations | Classes |
 |---|---|---|
-| `.a-mo` (1496) | `position: relative; padding: space-5 space-6; border-radius: radius-card; background: surface-card; box-shadow: a-card-edge; color: text-body` | `relative rounded-card bg-surface-container-lowest px-6 py-5 text-on-surface shadow-(--a-card-edge)` |
-| `.a-mo` ≥900 (1508) | `display: grid; grid-template-columns: minmax(200px,280px) minmax(0,1fr); column-gap: space-8; align-content: center` | `@min-[900px]/home:grid @min-[900px]/home:grid-cols-[minmax(200px,280px)_minmax(0,1fr)] @min-[900px]/home:gap-x-8 @min-[900px]/home:content-center` |
-| `.a-mo > .mo-h` / `.mo-read` / `.mo-garden` ≥900 (1509–1511) | col 1 row 1 end / col 1 row 2 start / col 2 rows 1–2, gap space-4 | `@min-[900px]/home:col-start-1 @min-[900px]/home:row-start-1 @min-[900px]/home:self-end` / `…col-start-1 …row-start-2 …self-start` / `…col-start-2 …row-[1/span_2] …gap-4` |
-| sparse `.a-mo` ≥900 (2234–2237) | `grid-template-columns: minmax(0,1fr); align-content: space-between; row-gap: space-2`; children auto; `.mo-read` mb space-2; `.mo-garden` gap space-2 | `@min-[900px]/home:grid @min-[900px]/home:grid-cols-[minmax(0,1fr)] @min-[900px]/home:content-between @min-[900px]/home:gap-y-2`; read `@min-[900px]/home:mb-2` |
-| `.a-mo .mo-h` (1497, 1848) | `margin 0; font: 800 fs-title/1.2 font-ui; letter-spacing: ls-headline-ui (-0.02em); color text-body` | `m-0 font-sans text-[21px] font-extrabold leading-[1.2] tracking-[-0.02em] text-on-surface` |
-| `.a-mo .mo-read` (1566) | `display flex; flex-direction column; align-items flex-start; gap space-1; margin space-2 0 space-3` | `mt-2 mb-3 flex flex-col items-start gap-1` |
-| `.mo-sent` (1567, 1850) | `600 fs-title/1.2 font-ui; -0.02em; text-body; word-spacing 0.04em`; `b` 800, md-primary (1568) | `font-sans text-[21px] font-semibold leading-[1.2] tracking-[-0.02em] text-on-surface [word-spacing:0.04em] [&_b]:font-extrabold [&_b]:text-primary` |
-| `.mo-ctx` (1569) | `600 fs-label/1.3 font-mono; 0.02em; text-secondary; tabular-nums` | `font-mono text-2xs font-semibold leading-[1.3] tracking-[0.02em] tabular-nums text-(--text-secondary)` |
-| `.a-mo .mo-garden` (1516) | `display grid; repeat(3,1fr); gap space-2; margin 0; padding 0; border 0; min-inline-size 0` | `m-0 grid min-w-0 grid-cols-3 gap-2 border-0 p-0` |
-| `.mo-plant` (1517, 1570) | `grid; justify-items center; gap 0; padding space-2 0 space-1; radius-chip; cursor pointer; transition background fast` | `grid justify-items-center gap-0 rounded-chip pt-2 pb-1 transition-colors duration-150` |
-| `.mo-plant:hover` (1518) / `.mo-r:checked + .mo-plant` (1520) | `surface-row` / `md-primary-container` | `hover:bg-surface-container-low` / `bg-primary-container hover:bg-primary-container` (checked is later in the file, so it wins over hover) |
-| `.mo-r:focus-visible + .mo-plant` (1519) | `outline: 2px solid md-primary; offset 2px` | `[input:focus-visible+&]:outline-2 [input:focus-visible+&]:outline-offset-2 [input:focus-visible+&]:outline-primary` (an adjacent-sibling variant: `peer-*` compiles to `~` and would outline every later plant) |
-| `.mo-pot-area` (1521, 1512, 2238) | `relative; flex column; items center; justify end; 64×108`; ≥900 80×136; sparse ≥900 block 112 | `relative flex h-[108px] w-16 flex-col items-center justify-end @min-[900px]/home:w-20` + `@min-[900px]/home:h-[136px]` or (sparse) `@min-[900px]/home:h-[112px]` |
-| `.mo-stem` (1522, 1549) | `relative; flex none; 3px wide; block-size calc(var(--now)*0.8); radius-pill; md-success; transform-origin 50% 100%` | `relative w-[3px] flex-none origin-bottom rounded-pill h-[calc(var(--now)*0.8)]` + tone class |
-| `.mo-r:not(:checked) + .mo-plant :is(.mo-stem,.mo-leaf)` (1533) | `color-mix(md-success 50%, surface-card)` | tone `faded`: `bg-[color-mix(in_oklch,var(--color-success)_50%,var(--color-surface-container-lowest))]` |
-| streak-zero stems/leaves (1790–1794) | `color-mix(md-success 35%, text-muted)`; leaf `rotate 22deg`; stem `rotate 5deg`; flower `opacity .5; saturate(.3)`; bud `saturate(.5)` | tone `rest`: `bg-[color-mix(in_oklch,var(--color-success)_35%,var(--color-on-surface-variant))]`; leaf `rotate-[22deg]`; stem `rotate-5`; `before:opacity-50 before:saturate-30`; bud `saturate-50` |
-| `.mo-sp.is-dry` (2127–2130) | `color-mix(md-success 55%, text-muted)`; leaf `rotate 14deg`; flower `opacity .6; saturate(.4)`; bud `saturate(.6)` | tone `dry`: `bg-[color-mix(in_oklch,var(--color-success)_55%,var(--color-on-surface-variant))]`; leaf `rotate-[14deg]`; `before:opacity-60 before:saturate-40`; bud `saturate-60` |
-| `.mo-stem::before` flower (1542–1546) | `inset-block-end calc(100%+5px); left 50%; translate -50% 0; 10×10; radius-pill; --pc: color-mix(petal 30%, surface-card); background --pc; box-shadow` five petals; petal = grade-a for A, grade-b for B, otherwise grade-c (A* included); unchecked `scale .7` | `before:absolute before:bottom-[calc(100%+5px)] before:left-1/2 before:size-[10px] before:-translate-x-1/2 before:rounded-pill before:bg-(--pc) before:shadow-[0_-12px_0_2px_var(--pc),11.4px_-3.7px_0_2px_var(--pc),7px_9.7px_0_2px_var(--pc),-7px_9.7px_0_2px_var(--pc),-11.4px_-3.7px_0_2px_var(--pc)] before:content-['']`; unchecked `before:scale-70`; `--pc` set inline |
-| `.mo-was` (1523) | `absolute; inset-inline 8px; inset-block-end calc(var(--was)*0.8*1.08+20px); border-top 1.5px dashed text-muted` | `absolute inset-x-2 bottom-[calc(var(--was)*0.8*1.08+20px)] border-t-[1.5px] border-dashed border-on-surface-variant` |
-| `.mo-leaf` (1524–1526) | `absolute; bottom var(--at); 14×8; md-success; radius pill 0`; odd `inset-inline-start 3px`; even `inset-inline-end 3px; scale -1 1` | `absolute bottom-(--at) h-2 w-[14px] rounded-[999px_0]` + tone; odd `start-[3px]`; even `end-[3px] -scale-x-100` |
-| `.mo-bud` (1527–1531, 1872) | `absolute; bottom 100%; left 50%; translate -50% 2px; 24×24 grid center; radius-pill; grade bg; 700 fs-label/1 mono`; A white text, B night, C white | `<GradeChip kind="bud">` (Task 10 implements these declarations) + positioning `absolute bottom-full left-1/2 -translate-x-1/2 translate-y-[2px]` |
-| `.mo-pot` (1531) | `34×20; flex none; radius 4px 4px chip chip; md-secondary` | `h-5 w-[34px] flex-none rounded-[4px_4px_12px_12px] bg-secondary` |
-| `.mo-name` (1532, 1571) | `margin-top space-1; 600 fs-body-sm/1.2 font-ui` | `mt-1 font-sans text-sm font-semibold leading-[1.2]` |
-| `.mo-val` (1572–1573) | `600 fs-label/1.3 mono; text-muted; tabular`; checked md-primary | `font-mono text-2xs font-semibold leading-[1.3] tabular-nums text-on-surface-variant`; checked `text-primary` |
-| `.mo-rest` (1783–1786) | streak-zero: `block; margin space-3 0 0; padding-top space-3; border-top 1px surface-row`; `.mo-sent` 700 fs-body/1.3 text-body; `.mo-ctx` block mt space-1; grid col 1/-1 | `col-span-full mt-3 border-t border-surface-container-low pt-3`; sent `font-sans text-base font-bold leading-[1.3] text-on-surface`; ctx + `mt-1 block` |
-| `.mo-garden-solo` (1802, 1806) | `grid; minmax(0,1fr); justify-items center; align-content center; gap space-3; margin 0`; ≥900 col 2 rows 1–2 | `m-0 grid grid-cols-[minmax(0,1fr)] content-center justify-items-center gap-3 @min-[900px]/home:col-start-2 @min-[900px]/home:row-[1/span_2]` |
-| `.mo-plant.is-solo` (1803) | `cursor default; padding-inline space-6; md-primary-container` | `cursor-default bg-primary-container px-6` |
-| `.mo-seed` (1804) | `margin 0; max 24ch; center; 600 fs-label/1.4 mono; text-secondary` | `m-0 max-w-[24ch] text-center font-mono text-2xs font-semibold leading-[1.4] text-(--text-secondary)` |
-| `.a-mo-ghost` (1810, 1816) | `margin-block space-5` | `my-5` |
-| `.mo-garden-ghost` (1812, 2009, 1820) | `grid; repeat(3,1fr); gap space-4; margin space-3 0 0`; ≥900 col 2 rows 1–2, margin 0 | `mt-3 grid grid-cols-3 gap-4 @min-[900px]/home:col-start-2 @min-[900px]/home:row-[1/span_2] @min-[900px]/home:m-0` |
-| ghost `.mo-plant` (1813, 2010) | `grid; justify-items center; padding space-2 0 space-1; opacity .7` | `grid justify-items-center pt-2 pb-1 opacity-70` |
-| ghost pot area / stem / pot / name (2012, 1814, 2013, 1817, 2011, 1818) | block 96; first stem 56px, 2px dashed text-muted, no flower; pot 48×28, transparent, 2px dashed text-muted; name text-secondary | `h-24`; `h-14 w-0 flex-none border-s-2 border-dashed border-on-surface-variant`; `h-7 w-12 flex-none rounded-[4px_4px_12px_12px] border-2 border-dashed border-on-surface-variant`; name + `text-(--text-secondary)` |
-| `.mo-garden-sp` (2076) | `align-items: end` | `items-end` |
-| `.mo-sp` (2077–2082) | `cursor default; no underline; color inherit; hover transparent`; `.is-lead` primary-container; `a.mo-sp` pointer, hover surface-row, focus-visible outline 2px primary offset 2px | `cursor-default text-inherit no-underline`; lead `bg-primary-container`; link `group cursor-pointer hover:bg-surface-container-low focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary` |
-| `.mo-sp .mo-val` (2083–2086) | `min-block-size 18px`; lead md-primary; `.mo-val-up` success-text | `min-h-[18px]`; `text-primary`; `text-success-text` |
-| `.mo-plant-it` (2087–2089) | `inline-flex; center; gap 2px; 700 fs-body-sm/1.3 font-ui; md-primary`; icon 14px, hover translate 3px | `inline-flex items-center gap-0.5 font-sans text-sm font-bold leading-[1.3] text-primary`; icon `size-[14px] transition-[translate] duration-200 group-hover:translate-x-[3px]` |
-| `.mo-sp-seed` (2092–2096) / `.is-germ` (2105) | `relative; z 1; flex none; 12×8; margin-bottom -3px; radius 50% 50% 45% 45% / 60% 60% 40% 40%; color-mix(success 45%, text-muted)` / 14×9 | `relative z-[1] -mb-[3px] h-2 w-3 flex-none rounded-[50%_50%_45%_45%/60%_60%_40%_40%] bg-[color-mix(in_oklch,var(--color-success)_45%,var(--color-on-surface-variant))]` / `h-[9px] w-[14px]` |
-| `.mo-sp-guide` (2097–2102) | `flex none; 0 wide; 40% tall; margin-bottom space-1; 2px dashed color-mix(text-muted 50%, transparent)`; hover md-primary | `mb-1 h-[40%] w-0 flex-none border-s-2 border-dashed border-[color-mix(in_oklch,var(--color-on-surface-variant)_50%,transparent)] transition-colors duration-150 group-hover:border-primary` |
-| `.mo-sp-shoot` + `::after` (2106–2113) | `absolute; bottom 60%; left 50%; 2×18; translate -50% 0; origin 50% 100%; radius-pill; success`; after `absolute; top 1px; left 1px; 10×6; radius pill 0; success` | `absolute bottom-[60%] left-1/2 h-[18px] w-[2px] -translate-x-1/2 origin-bottom rounded-pill bg-success after:absolute after:top-px after:left-px after:h-[6px] after:w-[10px] after:rounded-[999px_0] after:bg-success after:content-['']` |
-| `.is-germ .mo-pot-area::before` (2114–2118) | `absolute; bottom 6px; left 50%; translate -50%; 56px square; circle; radial-gradient(closest-side, color-mix(success 24%, transparent), transparent)` | `before:absolute before:bottom-[6px] before:left-1/2 before:aspect-square before:w-14 before:-translate-x-1/2 before:rounded-full before:bg-[radial-gradient(closest-side,color-mix(in_oklch,var(--color-success)_24%,transparent),transparent)] before:content-['']` |
-| `.mo-fill` (2133–2138, 2192) | `col 1/-1; grid; auto minmax(96px,168px); areas "t p" "n n"; justify space-between; align center; gap space-1 space-4; margin space-4 0 0; padding-top space-3; border-top 1px surface-row`; ≤560 one column, areas t/p/n, row-gap space-2 | `col-span-full mt-4 grid grid-cols-[auto_minmax(96px,168px)] items-center justify-between gap-x-4 gap-y-1 border-t border-surface-container-low pt-3 [grid-template-areas:'t_p'_'n_n'] @max-[560px]/home:grid-cols-[minmax(0,1fr)] @max-[560px]/home:gap-y-2 @max-[560px]/home:[grid-template-areas:'t'_'p'_'n']` |
-| `.mo-fill-t` / `b` (2139–2140) | `area t; 600 fs-body-sm/1.3 font-ui; text-secondary`; b text-body 700 (mono from `.a-mono`) | `m-0 font-sans text-sm font-semibold leading-[1.3] text-(--text-secondary) [grid-area:t]`; b `font-mono font-bold tabular-nums text-on-surface` |
-| `.mo-pips` / `i` / `.is-on` (2141–2143, 2193) | `area p; flex; gap space-1`; i `flex 1; 6px; radius-pill; track`; on success; ≤560 max 168px | `flex gap-1 [grid-area:p] @max-[560px]/home:max-w-[168px]`; `h-[6px] flex-1 rounded-pill bg-(--track)` / `bg-success` |
-| `.mo-fill-next` (2144) | `area n; 700 fs-body-sm/1.3 font-ui; text-body` | `m-0 font-sans text-sm font-bold leading-[1.3] text-on-surface [grid-area:n]` |
+| `.a-prog-dir` (2236 display, 2243-2247) + `.a-prog-ladder` (2359) | `display flex; flex-direction column; justify-content flex-start; min-inline-size 0; padding space-5 space-6; radius card; surface-card; a-card-edge; text-body`; `gap space-3` | `flex min-w-0 flex-col justify-start gap-3 rounded-card bg-home-card px-6 py-5 text-on-surface [box-shadow:var(--home-card-edge)]` |
+| `.a-prog-dir` P (2326, 2343) | `padding space-4 space-5`, then `padding-block 14px` | `P px-5 P py-[14px]` |
+| sparse `.a-prog-dir` W (2321) | `padding-inline space-5` (0,4,0: beats the row padding below) | when `isSparse(state)`: `W px-5` |
+| row `.a-next-row > *` W (2388) | `padding space-5 space-6` (same as the base, so no class) | — |
+| `.a-prog-dir.is-new` (2248) | `margin-block space-5` | `placement === "new"`: `my-5` |
+| `.k-head` (2360) | `flex; align-items baseline; justify-content space-between; gap space-3` | `flex items-baseline justify-between gap-3` |
+| row `.k-head` W (2400, 2436) | `min-block-size 24px` (2436 wins over 22px); `align-items center`; `margin-block-end 0` | `W min-h-6 W items-center W mb-0` |
+| `.pd-h` (2250) | `margin 0; 800 fs-title/1.2 ui; ls-headline-ui; text-body` | `m-0 font-sans text-home-title font-extrabold leading-[1.2] tracking-[-0.02em] text-on-surface` |
+| row `.pd-h` W (2399, 2441) | `700 fs-body-sm/1.3 ui; letter-spacing 0; text-secondary` | `W text-home-sm W font-bold W leading-[1.3] W tracking-normal W text-home-ink-2` |
+| `.k-sub` (2361) | `600 fs-body-sm/1.3 ui; text-secondary` | `font-sans text-home-sm font-semibold leading-[1.3] text-home-ink-2` |
+| `.k-big` (2362) | `flex; baseline; wrap; gap space-2 space-3; margin space-1 0 0` | `m-0 mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-2` |
+| row `.k-big` W (2438) | `margin-block-start 0` | `W mt-0` |
+| `.k-num` (2363) | `800 fs-display-sm(40)/1 display; -0.04em; md-primary; tabular` | `font-display text-home-display-sm font-extrabold leading-none tracking-[-0.04em] text-primary tabular-nums` |
+| row `.k-num` W (2440) | `fs-headline (32); line-height 1.05` (matches the next step's title) | `W text-home-headline W leading-[1.05]` |
+| `.k-lead` (2364) | `700 fs-title/1.2 ui; ls-headline-ui; text-body; balance` | `font-sans text-home-title font-bold leading-[1.2] tracking-[-0.02em] text-on-surface text-balance` |
+| `.k-ctx` (2365) | `margin 0; 600 fs-body-sm/1.4 ui; text-secondary; tabular` | `m-0 font-sans text-home-sm font-semibold leading-[1.4] text-home-ink-2 tabular-nums` |
+| `.x-chips` (2370, 2424) | `flex; wrap; gap space-2; margin 0; padding 0; no list`; W (all placements) `gap space-2 space-3; margin-block space-3` | `m-0 flex list-none flex-wrap gap-2 p-0 W gap-x-3 W my-3` |
+| `.x-chip` (2371, 2425) | `inline-flex; center; gap 6px; padding 6px 10px 6px 8px; radius chip; 600 fs-body-sm/1.2 ui; bg color-mix(md-success 14%, surface-card); text-body`; W `padding space-2 space-3; fs-body; min-block-size 40px` | `inline-flex items-center gap-[6px] rounded-chip py-[6px] ps-2 pe-2.5 font-sans text-home-sm font-semibold leading-[1.2] W px-3 W py-2 W text-home-body W min-h-10` + beaten `bg-[color-mix(in_oklch,var(--color-success)_14%,var(--color-home-card))] text-on-surface` |
+| `.x-chip.is-open` (2374-2375) | `bg transparent; inset 0 0 0 1.5px border-default; text-secondary`; `::before` 8×8, radius 0, `inset 0 0 0 1.5px text-muted` | `bg-transparent text-home-ink-2 shadow-[inset_0_0_0_1.5px_var(--color-outline)] before:size-2 before:rounded-none before:shadow-[inset_0_0_0_1.5px_var(--color-on-surface-variant)] before:content-['']` |
+| `.x-tick` (2372) | `9×5; margin-block-start -3px; border-inline-start 2px + border-block-end 2px sh-success-text; rotate -45deg` | `h-[5px] w-[9px] -mt-[3px] -rotate-45 border-s-2 border-b-2 border-success-text` |
+| `.x-code` (2373) | `600 fs-label/1 mono; text-secondary` | `font-mono text-home-label font-semibold leading-none text-home-ink-2` |
+| `.x-foot` (2376, 2426) | `flex; wrap; center; space-between; gap space-2 space-4; padding-block-start space-3; border-block-start 1px surface-row`; W (all placements) `margin-block-start auto` | `flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-home-row pt-3 W mt-auto` |
+| row `.x-foot` W (2401, 2443) | `margin-block-start auto`; `border-block-start 0; padding-block-start space-4` | `W border-t-0 W pt-4` |
+| `.k-go` (2366-2369) | `inline-flex; center; gap 2px; 700 fs-body-sm/1.2 ui; md-primary; no underline`; hover underline offset 3px; focus-visible `outline 2px primary; offset 2px; radius chip`; icon 14×14 | `relative inline-flex items-center gap-0.5 font-sans text-home-sm font-bold leading-[1.2] text-primary no-underline hover:underline hover:underline-offset-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary @max-[900px]/home:focus-visible:rounded-chip`; icon `size-[14px]` |
+| `.k-go` hit area (no design rule; spec §3 touch targets) | transparent 44px-tall overlay below 900px, no layout effect | `before:absolute before:inset-x-0 before:-inset-y-[14px] before:content-[''] W before:hidden` |
+| row `.x-foot .k-go` W (2444-2445) | `min-block-size 44px; padding-inline space-4; radius button; md-secondary-container; md-on-secondary-container; no underline`; hover `color-mix(secondary-container 85%, md-primary)`, no underline. Its (0,6,0) radius also wins over the focus radius | `W min-h-11 W px-4 W rounded-button W bg-home-secondary-container W text-home-on-secondary-container W hover:no-underline W hover:bg-[color-mix(in_oklch,var(--color-home-secondary-container)_85%,var(--color-primary))]` |
+| motion (2377-2380) | `[data-motion="full"]`: beaten chips `xPop .45s a-ease-expo both`, `nth-child(2..4)` delays 60/120/180ms | when `useMotionOn()`: beaten chips `animate-[home-x-pop_450ms_var(--ease-expo)_both]` + `style={{ animationDelay: \`${[0, 60, 120, 180][i] ?? 0}ms\` }}` (i = position in the list) |
 
-Motion (`variant-a.css:1534–1562`, `2119–2124`) runs only when `useMotionOn()` is true. Drift scenes run with reduced motion, so these classes never affect a scene: the stem grows from `--was` (`home-gr-up 1.1s expo .2s both`) and sways three times (`home-gr-sway 1.4s ease-in-out 1.3s 3`); the flower opens (`home-gr-open .5s expo 1.2s both`); the picked plant's dashed line flashes (`home-gr-mark 1.1s ease-out .2s both`) and its bud pops (`home-mo-pop dur-slow expo`); the germinating shoot and glow pulse (`home-sp-shoot`/`home-sp-glow 1.8s infinite alternate`). Picking a plant replays its growth through a React `key` change on the stem, which stands in for the design's A/B keyframe swap.
+The design's `.a-vh` is the `Vh` primitive. The wrapper `div` around `.k-big` and `.k-ctx` (the design's `data-gs` block) has no styles; keep it, because the section's `gap-3` sits between it and its neighbours, not between the big line and its context.
 
-- [ ] **Step 1: Write the failing pure-rule tests**
+- [ ] **Step 1: Write the failing rule tests**
 
-`web/tests/unit/studentHomeGarden.test.ts`:
+`web/tests/unit/studentHomeMistakes.test.ts`:
 
 ```ts
 import { describe, expect, it } from "vitest"
-import { API_FIXTURES, API_NOW, type DataStateId } from "../../dev-previews/student-home/api-fixtures"
-import { toHomeView } from "@/portals/student/home/facts"
-import {
-  gardenFill, gradeUp, joinOr, leafStops, manyLabel, manyReadout, sparsePots, sparseReadout, stemPct,
-} from "@/portals/student/home/garden"
+import { API_FIXTURES, type DataStateId } from "../../dev-previews/student-home/api-fixtures"
+import type { Mistakes } from "@/lib/studentTypes"
+import { mistakesCopy, mistakesShape } from "@/portals/student/home/mistakes"
+import { gradeUp, joinOr } from "@/portals/student/home/states"
 
-const view = (s: DataStateId) => {
-  const f = API_FIXTURES[s]
-  return toHomeView(f.overview, f.xp, f.upload, API_NOW)
-}
+const copy = (s: DataStateId) => mistakesCopy(s, API_FIXTURES[s].overview.mistakes)
+const chipText = (s: DataStateId) => copy(s).chips.map((c) => `${c.beaten ? "+" : "-"}${c.topic}${c.code ? ` ${c.code}` : ""}`)
 
-describe("stem and leaves", () => {
-  it("stem height follows (pct - 30) / 60, as the picker markup", () => {
-    expect([76, 59, 48, 49, 44, 41].map(stemPct)).toEqual(["76.7%", "48.3%", "30.0%", "31.7%", "23.3%", "18.3%"])
-    expect(stemPct(10)).toBe("0.0%")
-    expect(stemPct(100)).toBe("100.0%")
-  })
-  it("picker leaves: one per paper up to six, evenly spaced", () => {
-    expect(leafStops(14, false)).toEqual([14, 29, 43, 57, 71, 86])
-    expect(leafStops(6, false)).toEqual([14, 29, 43, 57, 71, 86])
-    expect(leafStops(2, false)).toEqual([33, 67])
-  })
-  it("compact leaves: the sparse table, up to three", () => {
-    expect(leafStops(1, true)).toEqual([45])
-    expect(leafStops(2, true)).toEqual([30, 62])
-    expect(leafStops(3, true)).toEqual([22, 48, 74])
-    expect(leafStops(9, true)).toEqual([22, 48, 74])
+describe("mistakesShape", () => {
+  it.each([
+    ["populated", "pop"], ["result-in", "pop"], ["marking", "pop"], ["no-plan", "pop"], ["no-exams", "pop"],
+    ["streak-zero", "pop"], ["new", "new"], ["sparse0", "sp0"], ["sparse1", "sp1"], ["one-paper", "sp1"],
+    ["sparse2", "sp2"], ["sparse3", "sp3"],
+  ] as const)("%s → %s", (state, shape) => {
+    expect(mistakesShape(state)).toBe(shape)
   })
 })
 
-describe("readouts", () => {
-  it("picker readout and hidden label", () => {
-    const maths = view("populated").subjects.find((s) => s.code === "0580")!
-    expect(manyReadout(maths)).toMatchObject({ pre: "Maths is up ", bold: "27 points", ctx: "49% → 76% · 14 papers" })
-    expect(manyLabel(maths)).toBe("Maths 0580: 49% to 76%, up 27, 14 papers.")
+describe("mistakesCopy: the design's data sets", () => {
+  it("populated (pop)", () => {
+    const c = copy("populated")
+    expect([c.variant, c.count, c.lead, c.ctx]).toEqual(["pop", 11, "mistakes you don't make anymore", "Last one beaten: Moments, on 0625/42"])
+    expect(chipText("populated")).toEqual([
+      "+Moments 0625", "+Bearings 0580", "+Chain rule 0606", "+Vectors 0580", "-Logarithms 0606", "-Circle theorems 0580",
+    ])
+    expect(c.chipsLabel).toBe("Recently beaten and still to beat")
+    expect(c.foot).toEqual({ remaining: "4 still to beat", practise: { label: "Practise Logarithms", to: "/student/practice/0606" } })
   })
-  it.each([
-    ["sparse0", "Your first seed is ", "germinating", "0580/42 is being marked · 3 subjects planted"],
-    ["sparse1", "Maths has ", "sprouted", "Grade C · your first result"],
-    ["sparse2", "Maths is ", "up a grade", "C → B · 2 of 3 subjects growing"],
-    ["sparse3", "Your progress ", "is safe", "Last watered 27 Oct · 5 papers kept"],
-  ] as const)("%s", (s, pre, bold, ctx) => {
-    expect(sparseReadout(view(s))).toMatchObject({ pre, bold, ctx })
+  it("sparse0 (sp0)", () => {
+    const c = copy("sparse0")
+    expect([c.variant, c.count, c.lead, c.ctx]).toEqual(["sp0", null, "Your first paper is being marked", "Every mark it loses becomes a mistake to beat"])
+    expect(c.chips).toEqual([])
+    expect(c.chipsLabel).toBeNull()
+    expect(c.foot).toBeNull()
   })
-  it("gradeUp", () => {
-    expect(gradeUp("C", "B")).toBe(true)
-    expect(gradeUp("B", "B")).toBe(false)
+  it("sparse1 (sp1): to-beat chips without codes", () => {
+    const c = copy("sparse1")
+    expect([c.variant, c.count, c.lead, c.ctx]).toEqual(["sp1", 6, "mistakes to beat from your first paper", "Get one right on your next paper and it counts"])
+    expect(chipText("sparse1")).toEqual(["-Bearings", "-Simultaneous equations", "-Vectors", "-Circle theorems"])
+    expect(c.chipsLabel).toBe("Mistakes to beat")
+    expect(c.foot).toEqual({ remaining: "2 more on the paper", practise: { label: "Practise Bearings", to: "/student/practice/0580" } })
+  })
+  it("sparse2 (sp2)", () => {
+    const c = copy("sparse2")
+    expect([c.variant, c.count, c.lead, c.ctx]).toEqual(["sp2", 2, "mistakes beaten · 5 to go", "Bearings beaten on your last Maths paper"])
+    expect(chipText("sparse2")).toEqual(["+Bearings 0580", "+Vectors 0580", "-Circle theorems 0580", "-Logarithms 0606"])
+    expect(c.chipsLabel).toBe("Beaten and still to beat")
+    expect(c.foot).toEqual({ remaining: "3 more still to beat", practise: { label: "Practise Logarithms", to: "/student/practice/0606" } })
+  })
+})
+
+describe("mistakesCopy: A1 states", () => {
+  it("one-paper uses the sp1 shape", () => {
+    const c = copy("one-paper")
+    expect([c.variant, c.count, c.lead]).toEqual(["sp1", 5, "mistakes to beat from your first paper"])
+    expect(chipText("one-paper")).toEqual(["-Vectors", "-Bearings", "-Circle theorems", "-Simultaneous equations"])
+    expect(c.foot?.remaining).toBe("1 more on the paper")
+  })
+  it("sparse3 uses the pop shape with the come-back line", () => {
+    const c = copy("sparse3")
+    expect([c.variant, c.count, c.lead]).toEqual(["sp3", 3, "mistakes you don't make anymore"])
+    expect(c.ctx).toBe("They stay beaten while you're away. Last one: Bearings, on 0580/41")
+    expect(chipText("sparse3")).toEqual(["+Bearings 0580", "+Chain rule 0606", "+Vectors 0580", "-Logarithms 0606", "-Circle theorems 0580"])
+    expect(c.foot?.remaining).toBe("4 still to beat")
+  })
+  it("new", () => {
+    const c = copy("new")
+    expect([c.variant, c.count, c.lead, c.ctx, c.foot]).toEqual(["new", null, "Your first paper starts the count", "Every mark it loses becomes a mistake to beat", null])
+  })
+})
+
+describe("mistakesCopy: fallbacks the design never shows", () => {
+  const none: Mistakes = { beatenCount: 0, toBeatCount: 0, beaten: [], toBeat: [], lastBeaten: null, practise: null }
+  const t = (topic: string, subjectCode: string) => ({ topic, subjectCode })
+  it("no topic data", () => {
+    const c = mistakesCopy("populated", none)
+    expect([c.variant, c.count, c.lead, c.ctx, c.foot]).toEqual(["empty", null, "No mistakes to beat yet", "Topics you lose marks on show up here after marking", null])
+    expect(mistakesCopy("sparse1", none).variant).toBe("empty")
+  })
+  it("nothing beaten yet in a populated state", () => {
+    const m: Mistakes = { ...none, toBeatCount: 5, toBeat: [t("A", "0580"), t("B", "0580"), t("C", "0580"), t("D", "0580")], practise: t("A", "0580") }
+    const c = mistakesCopy("populated", m)
+    expect([c.variant, c.count, c.lead]).toEqual(["open", 5, "mistakes to beat"])
+    expect(c.chips).toHaveLength(4)
+    expect(c.foot?.remaining).toBe("1 more still to beat")
+  })
+  it("singular and zero remaining", () => {
+    const m: Mistakes = {
+      beatenCount: 1, toBeatCount: 0, beaten: [t("A", "0580")], toBeat: [],
+      lastBeaten: { topic: "A", subjectCode: "0580", paperCode: "0580/42", onLatestPaper: false }, practise: null,
+    }
+    const pop = mistakesCopy("populated", m)
+    expect(pop.lead).toBe("mistake you don't make anymore")
+    expect(pop.foot).toBeNull()
+    const sp2 = mistakesCopy("sparse2", m)
+    expect(sp2.lead).toBe("mistake beaten · 0 to go")
+    expect(sp2.ctx).toBe("A beaten on 0580/42")
+  })
+})
+
+describe("states helpers", () => {
+  it("gradeUp and joinOr", () => {
+    expect(gradeUp("B", "A")).toBe(true)
+    expect(gradeUp("A", "A")).toBe(false)
     expect(gradeUp(null, "A")).toBe(false)
-  })
-  it("joinOr", () => {
-    expect(joinOr(["Physics"])).toBe("Physics")
+    expect(joinOr(["Add Maths"])).toBe("Add Maths")
     expect(joinOr(["Add Maths", "Physics"])).toBe("Add Maths or Physics")
-    expect(joinOr(["A", "B", "C"])).toBe("A, B or C")
-  })
-})
-
-describe("sparse pots", () => {
-  it("sparse0: germinating lead, then seeds", () => {
-    const pots = sparsePots(view("sparse0"))
-    expect(pots.map((p) => [p.s.code, p.kind, p.lead, p.val])).toEqual([
-      ["0580", "germ", true, "Marking now"], ["0606", "seed", false, "Plant it"], ["0625", "seed", false, "Plant it"],
-    ])
-    expect(pots[1].label).toBe("Add Maths 0606: planted, no paper yet. Upload an Add Maths paper to plant it.")
-    expect(pots[2].label).toBe("Physics 0625: planted, no paper yet. Upload a Physics paper to plant it.")
-  })
-  it("sparse2: improved lead shows the step up", () => {
-    const [maths, add] = sparsePots(view("sparse2"))
-    expect([maths.lead, maths.val, maths.up]).toEqual([true, "C → B", true])
-    expect(maths.label).toBe("Maths 0580: grade B, up from C, 3 papers.")
-    expect([add.lead, add.val, add.label]).toEqual([false, "Grade C", "Add Maths 0606: grade C on your first paper."])
-  })
-  it("sparse3: grown pots are dry and carry the last paper date", () => {
-    const [maths] = sparsePots(view("sparse3"))
-    expect([maths.dry, maths.lead, maths.val]).toEqual([true, false, "Grade B"])
-    expect(maths.label).toBe("Maths 0580: grade B, up from C, 3 papers. Last paper 27 October.")
-  })
-})
-
-describe("fill line", () => {
-  it.each([
-    ["sparse0", 1, "exam dates", "Next: your first result, marking now."],
-    ["sparse1", 3, "first result, practice targets, exam dates", "Next: plant Add Maths or Physics."],
-    ["sparse2", 4, "first result, practice targets, streak, study plan", "Next: plant Physics and add its exam date."],
-    ["sparse3", 3, "first result, practice targets, exam dates", "Next: one short set restarts your streak."],
-  ] as const)("%s", (s, on, done, next) => {
-    const fill = gardenFill(view(s))
-    expect(fill.on).toBe(on)
-    expect(fill.doneText).toBe(done)
-    expect(fill.next).toBe(next)
-    expect(fill.pips.map((p) => p.title)).toEqual([
-      "First result", "Practice targets", "Exam dates", "3-day streak", "Study plan", "All 3 subjects planted",
-    ])
+    expect(joinOr(["a", "b", "c"])).toBe("a, b or c")
   })
 })
 ```
 
-Run: `cd web && npx vitest run tests/unit/studentHomeGarden.test.ts`
-Expected: FAIL (`Cannot find module '@/portals/student/home/garden'`).
+Run: `cd web && npx vitest run tests/unit/studentHomeMistakes.test.ts`
+Expected: FAIL, `Cannot find module '@/portals/student/home/mistakes'`.
 
-- [ ] **Step 2: Implement `garden.ts`**
+- [ ] **Step 2: Implement `states.ts` and `mistakes.ts`**
+
+`web/src/portals/student/home/states.ts`:
 
 ```ts
-/*
- * Garden rules (design A, variant-a.css:1494 "Stem = score now, dashed line = first
- * paper, one leaf per paper (max 6), bud = current grade"). Pure: the component and
- * the tests share them. Plan Task 12 lists which design values each rule reproduces.
- */
-import type { DataState, HomeView, SubjectView } from "./facts"
-import { dayMonth, indefinite, longDay } from "./format"
+/* State families design A gates on (shell.css:68-74, variant-a.css sparse rules) and two small
+ * copy helpers the next-step card and the sections share. */
+import type { DataState } from "./facts"
 import { GRADE_ORDER } from "./model"
 
-export const MANY_PAPER_STATES: ReadonlySet<DataState> = new Set<DataState>([
+export const MANY_PAPERS_STATES: ReadonlySet<DataState> = new Set<DataState>([
   "populated", "result-in", "marking", "no-plan", "no-exams", "streak-zero",
 ])
 
-export const isSparse = (state: DataState): boolean => state.startsWith("sparse")
+export const isSparse = (s: DataState): boolean => s.startsWith("sparse")
+export const isManyPapers = (s: DataState): boolean => MANY_PAPERS_STATES.has(s)
 
-export function stemPct(pct: number): string {
-  const v = Math.min(100, Math.max(0, ((pct - 30) / 60) * 100))
-  return `${v.toFixed(1)}%`
-}
-
-const COMPACT_LEAVES: Record<number, number[]> = { 1: [45], 2: [30, 62], 3: [22, 48, 74] }
-
-export function leafStops(papers: number, compact: boolean): number[] {
-  if (compact) return COMPACT_LEAVES[Math.min(papers, 3)] ?? []
-  const n = Math.min(papers, 6)
-  return Array.from({ length: n }, (_, i) => Math.round(((i + 1) * 100) / (n + 1)))
-}
-
-const rank = (g: string): number => (GRADE_ORDER as readonly string[]).indexOf(g)
-
+/** model.ts GRADE_ORDER runs worst first ("U", "E", …, "A", "A*"), so a higher index is a higher
+ * grade. Same comparison as model.ts binnyMood's gradeRank. */
 export function gradeUp(previous: string | null, grade: string): boolean {
-  return previous !== null && rank(previous) >= 0 && rank(grade) > rank(previous)
+  if (previous === null) return false
+  const order = GRADE_ORDER as readonly string[]
+  const now = order.indexOf(grade)
+  const before = order.indexOf(previous)
+  return now !== -1 && before !== -1 && now > before
 }
 
 export function joinOr(words: string[]): string {
   if (words.length <= 1) return words[0] ?? ""
-  return `${words.slice(0, -1).join(", ")} or ${words[words.length - 1]}`
+  return `${words.slice(0, -1).join(", ")} or ${words.at(-1)}`
+}
+```
+
+`GRADE_ORDER` in `model.ts:8` is `["U", "E", "D", "C", "B", "A", "A*"]` (checked at `c880a54c`); the test (`gradeUp("B", "A") === true`) is the contract.
+
+`web/src/portals/student/home/mistakes.ts`:
+
+```ts
+/*
+ * Mistakes beaten copy (spec 2026-11-06 §3 "Mistakes beaten copy"). Pure: state + API data in,
+ * every visible string out. The design's data sets are pop/sp0/sp1/sp2 (student-home-a.html
+ * data-gs); sp3, new and the sp1 reuse for one-paper are assumption A1, approved in Task 12 Step 0.
+ */
+import type { Mistakes } from "@/lib/studentTypes"
+import { SUBJECT_SHORT_NAMES, type DataState } from "./facts"
+
+export type MistakesShape = "pop" | "sp0" | "sp1" | "sp2" | "sp3" | "new"
+export type MistakesVariant = MistakesShape | "empty" | "open"
+export interface MistakeChip { topic: string; code: string | null; beaten: boolean }
+export interface MistakesFoot { remaining: string | null; practise: { label: string; to: string } | null }
+export interface MistakesCopy {
+  variant: MistakesVariant
+  count: number | null
+  lead: string
+  ctx: string | null
+  chips: MistakeChip[]
+  chipsLabel: string | null
+  foot: MistakesFoot | null
 }
 
-const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`
+const SP0_CTX = "Every mark it loses becomes a mistake to beat"
+const FIRST_CTX = "Get one right on your next paper and it counts"
+const one = (n: number, singular: string, plural: string): string => (n === 1 ? singular : plural)
 
-export interface Readout { pre: string; bold: string; post: string; ctx: string; lead: string | null }
-
-export function manyReadout(s: SubjectView): Readout {
-  const pct = s.pct ?? 0
-  const first = s.firstPct ?? pct
-  const d = pct - first
-  const ctx = `${first}% → ${pct}% · ${plural(s.papers, "paper", "papers")}`
-  if (d === 0) return { pre: `${s.shortName} is `, bold: "holding steady", post: "", ctx, lead: s.code }
-  return {
-    pre: `${s.shortName} is ${d > 0 ? "up" : "down"} `,
-    bold: plural(Math.abs(d), "point", "points"),
-    post: "",
-    ctx,
-    lead: s.code,
+export function mistakesShape(state: DataState): MistakesShape {
+  switch (state) {
+    case "new": return "new"
+    case "sparse0": return "sp0"
+    case "sparse1":
+    case "one-paper": return "sp1"
+    case "sparse2": return "sp2"
+    case "sparse3": return "sp3"
+    default: return "pop"
   }
 }
 
-export function manyLabel(s: SubjectView): string {
-  const pct = s.pct ?? 0
-  const first = s.firstPct ?? pct
-  const d = pct - first
-  return `${s.shortName} ${s.code}: ${first}% to ${pct}%, ${d >= 0 ? "up" : "down"} ${Math.abs(d)}, ${plural(s.papers, "paper", "papers")}.`
+function variantOf(shape: MistakesShape, m: Mistakes): MistakesVariant {
+  if (shape === "new" || shape === "sp0") return shape
+  if (m.beatenCount === 0 && m.toBeatCount === 0) return "empty"
+  if (shape === "sp1") return "sp1"
+  if (m.beatenCount === 0) return "open"
+  return shape
 }
 
-export function soloReadout(s: SubjectView): Readout {
-  return { pre: `${s.shortName} has `, bold: "sprouted", post: "", ctx: `Grade ${s.grade} · first paper`, lead: s.code }
+function chipsOf(variant: MistakesVariant, m: Mistakes): MistakeChip[] {
+  const withBeaten = variant === "pop" || variant === "sp2" || variant === "sp3"
+  const withOpen = withBeaten || variant === "sp1" || variant === "open"
+  const beaten = withBeaten ? m.beaten.slice(0, 4) : []
+  const open = withOpen ? m.toBeat.slice(0, beaten.length === 0 ? 4 : 2) : []
+  const shown = [...beaten.map((t) => ({ t, beaten: true })), ...open.map((t) => ({ t, beaten: false }))]
+  const many = new Set(shown.map(({ t }) => t.subjectCode)).size > 1
+  return shown.map(({ t, beaten: b }) => ({ topic: t.topic, code: many ? t.subjectCode : null, beaten: b }))
 }
 
-export function sparseReadout(view: HomeView): Readout {
-  const n = view.subjects.length
-  const growing = view.subjects.filter((s) => s.papers > 0)
-  if (view.state === "sparse0") {
-    const label = view.upload?.paperLabel
-    return {
-      pre: "Your first seed is ", bold: "germinating", post: "",
-      ctx: `${label ?? "Your paper"} is being marked · ${plural(n, "subject", "subjects")} planted`,
-      lead: view.upload?.subjectCode ?? null,
-    }
-  }
-  if (view.state === "sparse1") {
-    const code = view.facts.latestResult?.subjectCode
-    const s = growing.find((x) => x.code === code) ?? growing[0]
-    return { pre: `${s.shortName} has `, bold: "sprouted", post: "", ctx: `Grade ${s.grade} · your first result`, lead: s.code }
-  }
-  if (view.state === "sparse3") {
-    const last = growing.map((s) => s.lastPaperOn).filter((d): d is string => d !== null).sort().at(-1)
-    return {
-      pre: "Your progress ", bold: "is safe", post: "",
-      ctx: `${last ? `Last watered ${dayMonth(last)} · ` : ""}${view.totalPapers} papers kept`,
-      lead: null,
-    }
-  }
-  const up = growing.find((s) => gradeUp(s.previousGrade, s.grade))
-  if (up) {
-    return {
-      pre: `${up.shortName} is `, bold: "up a grade", post: "",
-      ctx: `${up.previousGrade} → ${up.grade} · ${growing.length} of ${n} subjects growing`,
-      lead: up.code,
-    }
-  }
-  return { pre: "", bold: `${growing.length} of ${n}`, post: " subjects growing", ctx: `${view.totalPapers} papers corrected`, lead: null }
+const CHIPS_LABEL: Partial<Record<MistakesVariant, string>> = {
+  pop: "Recently beaten and still to beat",
+  sp3: "Recently beaten and still to beat",
+  sp2: "Beaten and still to beat",
+  sp1: "Mistakes to beat",
+  open: "Mistakes to beat",
 }
 
-export type PotKind = "germ" | "seed" | "grown"
-export interface Pot { s: SubjectView; kind: PotKind; lead: boolean; dry: boolean; val: string; up: boolean; label: string }
+function footOf(variant: MistakesVariant, m: Mistakes, openShown: number): MistakesFoot | null {
+  if (variant === "sp0" || variant === "new" || variant === "empty") return null
+  const left = m.toBeatCount - openShown
+  const remaining =
+    variant === "pop" || variant === "sp3"
+      ? (m.toBeatCount > 0 ? `${m.toBeatCount} still to beat` : null)
+      : left <= 0
+        ? null
+        : variant === "sp1"
+          ? `${left} more on the paper`
+          : `${left} more still to beat`
+  const practise = m.practise
+    ? { label: `Practise ${m.practise.topic}`, to: `/student/practice/${m.practise.subjectCode}` }
+    : null
+  return remaining === null && practise === null ? null : { remaining, practise }
+}
 
-export function sparsePots(view: HomeView): Pot[] {
-  const lead = sparseReadout(view).lead
-  return view.subjects.map((s) => {
-    const name = `${s.shortName} ${s.code}`
-    if (s.papers === 0 && view.totalPapers === 0 && view.upload?.subjectCode === s.code) {
+export function mistakesCopy(state: DataState, m: Mistakes): MistakesCopy {
+  const variant = variantOf(mistakesShape(state), m)
+  const lb = m.lastBeaten
+  const chips = chipsOf(variant, m)
+  const openShown = chips.filter((c) => !c.beaten).length
+  const base = { variant, chips, chipsLabel: chips.length > 0 ? (CHIPS_LABEL[variant] ?? null) : null, foot: footOf(variant, m, openShown) }
+  switch (variant) {
+    case "pop":
+    case "sp3":
       return {
-        s, kind: "germ", lead: true, dry: false, val: "Marking now", up: false,
-        label: `${name}: your first paper is being marked. Its plant appears when the grade lands.`,
+        ...base,
+        count: m.beatenCount,
+        lead: one(m.beatenCount, "mistake you don't make anymore", "mistakes you don't make anymore"),
+        ctx: lb
+          ? variant === "pop"
+            ? `Last one beaten: ${lb.topic}, on ${lb.paperCode}`
+            : `They stay beaten while you're away. Last one: ${lb.topic}, on ${lb.paperCode}`
+          : null,
       }
-    }
-    if (s.papers === 0) {
+    case "sp2":
       return {
-        s, kind: "seed", lead: false, dry: false, val: "Plant it", up: false,
-        label: `${name}: planted, no paper yet. Upload ${indefinite(s.shortName)} ${s.shortName} paper to plant it.`,
+        ...base,
+        count: m.beatenCount,
+        lead: `${one(m.beatenCount, "mistake", "mistakes")} beaten · ${m.toBeatCount} to go`,
+        ctx: lb
+          ? lb.onLatestPaper
+            ? `${lb.topic} beaten on your last ${SUBJECT_SHORT_NAMES[lb.subjectCode] ?? lb.subjectCode} paper`
+            : `${lb.topic} beaten on ${lb.paperCode}`
+          : null,
       }
-    }
-    const isLead = s.code === lead
-    const improved = gradeUp(s.previousGrade, s.grade)
-    const showUp = view.state === "sparse2" && isLead && improved
-    const dry = view.state === "sparse3"
-    const label =
-      s.papers === 1
-        ? `${name}: grade ${s.grade} on your first paper.`
-        : `${name}: grade ${s.grade}${improved ? `, up from ${s.previousGrade}` : ""}, ${s.papers} papers.` +
-          (dry && s.lastPaperOn ? ` Last paper ${longDay(s.lastPaperOn)}.` : "")
-    return {
-      s, kind: "grown", lead: isLead, dry,
-      val: showUp ? `${s.previousGrade} → ${s.grade}` : `Grade ${s.grade}`,
-      up: showUp, label,
-    }
-  })
-}
-
-export interface Pip { title: string; done: string; on: boolean }
-export interface Fill { pips: Pip[]; on: number; doneText: string; next: string }
-
-export function gardenFill(view: HomeView): Fill {
-  const subjects = view.subjects
-  const exams = subjects.length > 0 && subjects.every((s) => s.nextExamOn !== null)
-  const plan = view.facts.upcomingSessions.length > 0
-  const pips: Pip[] = [
-    { title: "First result", done: "first result", on: view.facts.latestResult !== null },
-    { title: "Practice targets", done: "practice targets", on: view.weakTopics.length > 0 },
-    { title: "Exam dates", done: "exam dates", on: exams },
-    { title: "3-day streak", done: "streak", on: (view.xp?.streak ?? 0) >= 3 },
-    { title: "Study plan", done: "study plan", on: plan },
-    { title: `All ${subjects.length} subjects planted`, done: "all subjects planted", on: subjects.every((s) => s.papers > 0) },
-  ]
-  const unplanted = subjects.filter((s) => s.papers === 0)
-  let next: string
-  if (view.upload) next = "Next: your first result, marking now."
-  else if (view.state === "sparse3") next = "Next: one short set restarts your streak."
-  else if (unplanted.length > 0) {
-    const tail = unplanted.length === 1 && unplanted[0].nextExamOn === null ? " and add its exam date" : ""
-    next = `Next: plant ${joinOr(unplanted.map((s) => s.shortName))}${tail}.`
-  } else if (!exams) next = "Next: add your exam dates."
-  else if (!plan) next = "Next: build a study plan."
-  else next = "Next: keep your streak going."
-  return {
-    pips,
-    on: pips.filter((p) => p.on).length,
-    doneText: pips.filter((p) => p.on).map((p) => p.done).join(", "),
-    next,
+    case "sp1":
+      return { ...base, count: m.toBeatCount, lead: one(m.toBeatCount, "mistake to beat from your first paper", "mistakes to beat from your first paper"), ctx: FIRST_CTX }
+    case "open":
+      return { ...base, count: m.toBeatCount, lead: one(m.toBeatCount, "mistake to beat", "mistakes to beat"), ctx: FIRST_CTX }
+    case "sp0":
+      return { ...base, count: null, lead: "Your first paper is being marked", ctx: SP0_CTX }
+    case "new":
+      return { ...base, count: null, lead: "Your first paper starts the count", ctx: SP0_CTX }
+    case "empty":
+      return { ...base, count: null, lead: "No mistakes to beat yet", ctx: "Topics you lose marks on show up here after marking" }
   }
 }
 ```
 
 - [ ] **Step 3: Run the rule tests**
 
-Run: `cd web && npx vitest run tests/unit/studentHomeGarden.test.ts`
-Expected: PASS (all). If a fixture-backed case fails, compare the failing value with `page-a.txt` and fix the rule, never the expected string.
+Run: `cd web && npx vitest run tests/unit/studentHomeMistakes.test.ts`
+Expected: PASS. If a fixture case fails, compare the failing value with the `data-gs` block in `student-home-a.html` and fix the rule, never the expected string.
+
+Prove one rule can fail: change `beaten.length === 0 ? 4 : 2` to `4`, re-run, confirm the populated and sparse2 chip cases FAIL; revert.
 
 - [ ] **Step 4: Write the failing markup tests**
 
-Append to `web/tests/unit/studentHomeMarkup.test.ts`. Reuse the `view` and `html` helpers Task 10 defined there. If Task 10 named them differently, add these two at the top of the new block:
+Append to `web/tests/unit/studentHomeMarkup.test.ts` (reuse its `html` and `viewOf` helpers from Tasks 10–11):
 
 ```ts
-import { Garden } from "@/portals/student/home/Garden"
-// const view = (s: DataStateId) => { const f = API_FIXTURES[s]; return toHomeView(f.overview, f.xp, f.upload, API_NOW) }
-// const html = (el: ReactElement) => renderToStaticMarkup(createElement(MemoryRouter, null, el))
+import { MistakesBeaten } from "@/portals/student/home/MistakesBeaten"
 
-describe("Garden", () => {
-  it("populated: one h2, a radio group with a legend, hidden plant labels", () => {
-    const out = html(createElement(Garden, { view: view("populated") }))
+describe("MistakesBeaten", () => {
+  const card = (s: DataStateId, placement?: "row" | "new") => html(createElement(MistakesBeaten, { view: viewOf(s), placement }))
+
+  it("populated: one h2, the label row, count, chips with hidden prefixes, footer button", () => {
+    const out = card("populated")
+    expect(out).toContain('data-home="progress"')
     expect(out.match(/<h2/g)).toHaveLength(1)
-    expect(out).toContain(">Your Garden</h2>")
-    expect(out).toContain("<fieldset")
-    expect(out).toContain("Pick a subject to see how far it has grown</legend>")
-    expect(out.match(/type="radio"/g)).toHaveLength(3)
-    expect(out.match(/checked=""/g)).toHaveLength(1)
-    expect(out).toContain("Maths 0580: 49% to 76%, up 27, 14 papers.")
-    expect(out).toContain('data-plant="0625"')
-    expect(out).not.toContain("growing on your page")
+    expect(out).toContain(">Mistakes beaten</h2>")
+    expect(out).toContain("Lost once, right since")
+    expect(out).toMatch(/>11<\/span>/)
+    expect(out).toContain("mistakes you don&#x27;t make anymore")
+    expect(out).toContain("Last one beaten: Moments, on 0625/42")
+    expect(out).toContain('aria-label="Recently beaten and still to beat"')
+    expect(out.match(/Beaten: <\/span>/g)).toHaveLength(4)
+    expect(out.match(/To beat: <\/span>/g)).toHaveLength(2)
+    expect(out).toContain("4 still to beat")
+    expect(out).toMatch(/href="\/student\/practice\/0606"[^>]*>Practise Logarithms/)
   })
-  it("one-paper: a single sprout in a labelled group", () => {
-    const out = html(createElement(Garden, { view: view("one-paper") }))
-    expect(out).toContain('role="group" aria-label="Your garden"')
-    expect(out).toContain("Maths 0580: grade B on your first paper.")
-    expect(out).toContain("Mark more papers to see how it grows.")
-    expect(out).not.toContain('type="radio"')
+  it("sparse0: no count, no chips, no footer", () => {
+    const out = card("sparse0")
+    expect(out).toContain("Your first paper is being marked")
+    expect(out).not.toContain("<ul")
+    expect(out).not.toContain("/student/practice/")
   })
-  it.each([
-    ["sparse0", "1 of 6", "Next: your first result, marking now."],
-    ["sparse1", "3 of 6", "Next: plant Add Maths or Physics."],
-    ["sparse2", "4 of 6", "Next: plant Physics and add its exam date."],
-    ["sparse3", "3 of 6", "Next: one short set restarts your streak."],
-  ] as const)("%s: a list of pots and the fill line", (s, count, next) => {
-    const out = html(createElement(Garden, { view: view(s) }))
-    expect(out).toContain('role="list" aria-label="Your garden, one plant per subject"')
-    expect(out.match(/role="listitem"/g)).toHaveLength(3)
-    expect(out).toContain(`${count}</b> growing on your page`)
-    expect(out).toContain(next)
-    expect(out).toContain('href="/student/correct"')
+  it("sparse1: chips carry no subject code", () => {
+    const out = card("sparse1")
+    expect(out).toContain('aria-label="Mistakes to beat"')
+    expect(out).not.toMatch(/>0580<\/span>/)
+    expect(out).toContain("2 more on the paper")
   })
-  it("streak-zero: the garden rests", () => {
-    const out = html(createElement(Garden, { view: view("streak-zero") }))
-    expect(out).toContain("Your garden is resting.")
-    expect(out).toContain("Streak paused. Earn XP today and it grows again.")
-  })
-  it("ghost: dashed preview with no data", () => {
-    const out = html(createElement(Garden, { view: view("new"), variant: "ghost" }))
-    expect(out).toContain("Every subject grows its own plant.")
-    expect(out).toContain("Plant your first by getting a paper marked.")
-    expect(out).toContain("Your first subject")
-    expect(out).not.toContain("%")
+  it("new placement: same card with the new-block margin", () => {
+    const out = card("new", "new")
+    expect(out).toContain("Your first paper starts the count")
+    expect(out).toMatch(/data-home="progress"[^>]*class="[^"]*\bmy-5\b/)
   })
 })
 ```
 
-Run: `cd web && npx vitest run tests/unit/studentHomeMarkup.test.ts -t Garden`
-Expected: FAIL (`Garden` not found).
+Run: `cd web && npx vitest run tests/unit/studentHomeMarkup.test.ts -t MistakesBeaten`
+Expected: FAIL (module missing).
 
-- [ ] **Step 5: Implement `Garden.tsx`**
+- [ ] **Step 5: Implement `MistakesBeaten.tsx`**
 
 ```tsx
 /*
- * Your Garden (design A `.a-mo`, variant-a.css:1494–1573, 1782–1821, 2074–2144,
- * 2228–2238). One plant per subject: stem = score now, dashed line = first
- * paper, a leaf per paper, bud = grade. Four layouts: the many-papers picker
- * (radios + legend), the one-paper sprout, the sparse pots with the fill line,
- * and the new-student ghost. Rules live in garden.ts.
+ * Mistakes beaten (design A progress card, student-home-a.html section.a-prog-dir.a-prog-ladder;
+ * variant-a.css "progress card: Mistakes beaten"). Replaces the Garden. Every string comes from
+ * mistakes.ts; this file only lays it out. Row-only rules (.a-next-row > .a-prog-dir) apply when
+ * placement is "row": the mirrored-halves label row, 32px count and the 44px secondary button.
  */
-import { Fragment, useId, useState, type CSSProperties, type ReactNode } from "react"
+import { useId } from "react"
 import { Link } from "react-router-dom"
 import { cn } from "@/lib/utils"
-import type { HomeView, SubjectView } from "./facts"
-import {
-  gardenFill, leafStops, manyLabel, manyReadout, soloReadout, sparsePots, sparseReadout, stemPct, isSparse,
-  type Pot, type Readout,
-} from "./garden"
-import { GradeChip, Icon, Vh, useMotionOn } from "./primitives"
+import type { HomeView } from "./facts"
+import { mistakesCopy } from "./mistakes"
+import { Icon, Vh, useMotionOn } from "./primitives"
+import { isSparse } from "./states"
 
-type Vars = CSSProperties & Record<`--${string}`, string>
-type Tone = "full" | "faded" | "rest" | "dry"
+const CHIP_DELAY = [0, 60, 120, 180]
 
-const W = "@min-[900px]/home:"
-const SECTION = "relative rounded-card bg-surface-container-lowest px-6 py-5 text-on-surface shadow-(--a-card-edge)"
-const SECTION_SPLIT = `${W}grid ${W}grid-cols-[minmax(200px,280px)_minmax(0,1fr)] ${W}gap-x-8 ${W}content-center`
-const SECTION_STACK = `${W}grid ${W}grid-cols-[minmax(0,1fr)] ${W}content-between ${W}gap-y-2`
-const H2 = "m-0 font-sans text-[21px] font-extrabold leading-[1.2] tracking-[-0.02em] text-on-surface"
-const H2_SPLIT = `${W}col-start-1 ${W}row-start-1 ${W}self-end`
-const READ = "mt-2 mb-3 flex flex-col items-start gap-1"
-const READ_SPLIT = `${W}col-start-1 ${W}row-start-2 ${W}self-start`
-const SENT = "font-sans text-[21px] font-semibold leading-[1.2] tracking-[-0.02em] text-on-surface [word-spacing:0.04em] [&_b]:font-extrabold [&_b]:text-primary"
-const CTX = "font-mono text-2xs font-semibold leading-[1.3] tracking-[0.02em] tabular-nums text-(--text-secondary)"
-const BED = "m-0 grid min-w-0 grid-cols-3 gap-2 border-0 p-0"
-const BED_SPLIT = `${W}col-start-2 ${W}row-[1/span_2] ${W}gap-4`
-const PLANT = "grid justify-items-center gap-0 rounded-chip pt-2 pb-1 transition-colors duration-150"
-const NAME = "mt-1 font-sans text-sm font-semibold leading-[1.2]"
-const VAL = "font-mono text-2xs font-semibold leading-[1.3] tabular-nums text-on-surface-variant"
-const POT = "h-5 w-[34px] flex-none rounded-[4px_4px_12px_12px] bg-secondary"
-const SEED = "relative z-[1] -mb-[3px] h-2 w-3 flex-none rounded-[50%_50%_45%_45%/60%_60%_40%_40%] bg-[color-mix(in_oklch,var(--color-success)_45%,var(--color-on-surface-variant))]"
-
-const TONE: Record<Tone, string> = {
-  full: "bg-success",
-  faded: "bg-[color-mix(in_oklch,var(--color-success)_50%,var(--color-surface-container-lowest))]",
-  rest: "bg-[color-mix(in_oklch,var(--color-success)_35%,var(--color-on-surface-variant))]",
-  dry: "bg-[color-mix(in_oklch,var(--color-success)_55%,var(--color-on-surface-variant))]",
-}
-const PETAL: Record<string, string> = { A: "var(--color-grade-a)", B: "var(--color-grade-b)" }
-const FLOWER =
-  "before:absolute before:bottom-[calc(100%+5px)] before:left-1/2 before:size-[10px] before:-translate-x-1/2 before:rounded-pill before:bg-(--pc) before:shadow-[0_-12px_0_2px_var(--pc),11.4px_-3.7px_0_2px_var(--pc),7px_9.7px_0_2px_var(--pc),-7px_9.7px_0_2px_var(--pc),-11.4px_-3.7px_0_2px_var(--pc)] before:content-['']"
-
-function potArea(stack: boolean): string {
-  return cn(
-    "relative flex h-[108px] w-16 flex-col items-center justify-end",
-    `${W}w-20`,
-    stack ? `${W}h-[112px]` : `${W}h-[136px]`,
-  )
-}
-
-function ReadLine({ r, split, hidden }: { r: Readout; split: boolean; hidden?: boolean }) {
-  return (
-    <p className={cn(READ, split ? READ_SPLIT : `${W}mb-2`)} aria-hidden={hidden ? "true" : undefined}>
-      <span className={SENT}>
-        {r.pre}
-        <b>{r.bold}</b>
-        {r.post}
-      </span>
-      <span className={CTX}>{r.ctx}</span>
-    </p>
-  )
-}
-
-/** Stem, leaves, bud and the first-paper line, inside the pot area. */
-function Growth(props: {
-  s: SubjectView
-  compact: boolean
-  tone: Tone
-  stack: boolean
-  picked: boolean
-  replay?: string
-}) {
-  const { s, compact, tone, stack, picked, replay } = props
+export function MistakesBeaten({ view, placement = "row" }: { view: HomeView; placement?: "row" | "new" }) {
+  const hid = useId()
   const motion = useMotionOn()
-  const was = s.papers >= 2 && s.firstPct !== null
-  const vars: Vars = {
-    "--now": stemPct(s.pct ?? 0),
-    "--was": was ? stemPct(s.firstPct ?? 0) : "0%",
-    "--pc": `color-mix(in oklch, ${PETAL[s.grade] ?? "var(--color-grade-c)"} 30%, var(--color-surface-container-lowest))`,
-  }
-  const leafTilt = tone === "rest" ? "rotate-[22deg]" : tone === "dry" ? "rotate-[14deg]" : ""
-  return (
-    <span className={potArea(stack)} aria-hidden="true" style={vars}>
-      {was && (
-        <span
-          className={cn(
-            "absolute inset-x-2 bottom-[calc(var(--was)*0.8*1.08+20px)] border-t-[1.5px] border-dashed border-on-surface-variant",
-            motion && picked && "animate-[home-gr-mark_1.1s_ease-out_.2s_both]",
-          )}
-        />
-      )}
-      <span
-        key={replay}
-        className={cn(
-          "relative w-[3px] flex-none origin-bottom rounded-pill h-[calc(var(--now)*0.8)]",
-          TONE[tone],
-          FLOWER,
-          tone === "faded" && "before:scale-70",
-          tone === "rest" && "rotate-5 before:opacity-50 before:saturate-30",
-          tone === "dry" && "before:opacity-60 before:saturate-40",
-          motion &&
-            "animate-[home-gr-up_1.1s_var(--a-ease-expo)_.2s_both,home-gr-sway_1.4s_ease-in-out_1.3s_3] before:animate-[home-gr-open_.5s_var(--a-ease-expo)_1.2s_both]",
-        )}
-      >
-        {leafStops(s.papers, compact).map((at, i) => (
-          <span
-            key={at}
-            className={cn(
-              "absolute bottom-(--at) h-2 w-[14px] rounded-[999px_0]",
-              TONE[tone],
-              i % 2 === 0 ? "start-[3px]" : "end-[3px] -scale-x-100",
-              leafTilt,
-            )}
-            style={{ "--at": `${at}%` } as Vars}
-          />
-        ))}
-        <GradeChip
-          grade={s.grade}
-          kind="bud"
-          className={cn(
-            "absolute bottom-full left-1/2 -translate-x-1/2 translate-y-[2px]",
-            tone === "rest" && "saturate-50",
-            tone === "dry" && "saturate-60",
-            motion && picked && "animate-[home-mo-pop_var(--dur-slow)_var(--a-ease-expo)]",
-          )}
-        />
-      </span>
-      <span className={POT} />
-    </span>
-  )
-}
-
-function Shell(props: { stack: boolean; children: ReactNode; labelledBy?: string; ghost?: boolean }) {
+  const row = placement === "row"
+  const c = mistakesCopy(view.state, view.mistakes)
   return (
     <section
-      data-home="garden"
-      aria-label={props.labelledBy ? undefined : "Your momentum"}
-      aria-labelledby={props.labelledBy}
-      className={cn(SECTION, props.stack ? SECTION_STACK : SECTION_SPLIT, props.ghost && "my-5")}
-    >
-      {props.children}
-    </section>
-  )
-}
-
-function PickerGarden({ view }: { view: HomeView }) {
-  const planted = view.subjects.filter((s) => s.papers > 0)
-  const [picked, setPicked] = useState(planted[0]?.code ?? "")
-  const name = useId()
-  const resting = view.state === "streak-zero"
-  const current = planted.find((s) => s.code === picked) ?? planted[0]
-  const cols = planted.length === 3 ? undefined : { gridTemplateColumns: `repeat(${planted.length}, 1fr)` }
-  return (
-    <Shell stack={false}>
-      <h2 className={cn(H2, H2_SPLIT)}>Your Garden</h2>
-      {current && <ReadLine r={manyReadout(current)} split hidden />}
-      <fieldset className={cn(BED, BED_SPLIT)} style={cols}>
-        <legend className="sr-only">Pick a subject to see how far it has grown</legend>
-        {planted.map((s) => {
-          const on = s.code === current?.code
-          const id = `${name}-${s.code}`
-          return (
-            <Fragment key={s.code}>
-              <input
-                className="sr-only"
-                type="radio"
-                name={name}
-                id={id}
-                value={s.code}
-                checked={on}
-                onChange={() => setPicked(s.code)}
-              />
-              <label
-                htmlFor={id}
-                data-plant={s.code}
-                className={cn(
-                  PLANT,
-                  "cursor-pointer hover:bg-surface-container-low",
-                  "[input:focus-visible+&]:outline-2 [input:focus-visible+&]:outline-offset-2 [input:focus-visible+&]:outline-primary",
-                  on && "bg-primary-container hover:bg-primary-container",
-                )}
-              >
-                <Growth
-                  s={s}
-                  compact={false}
-                  tone={resting ? "rest" : on ? "full" : "faded"}
-                  stack={false}
-                  picked={on}
-                  replay={on ? `on-${picked}` : "off"}
-                />
-                <span className={NAME}>{s.shortName}</span>
-                <span className={cn(VAL, on && "text-primary")}>{s.pct}%</span>
-                <Vh>{manyLabel(s)}</Vh>
-              </label>
-            </Fragment>
-          )
-        })}
-      </fieldset>
-      {resting && (
-        <p className="col-span-full mt-3 border-t border-surface-container-low pt-3">
-          <span className="font-sans text-base font-bold leading-[1.3] text-on-surface">Your garden is resting.</span>{" "}
-          <span className={cn(CTX, "mt-1 block")}>Streak paused. Earn XP today and it grows again.</span>
-        </p>
+      data-home="progress"
+      aria-labelledby={hid}
+      className={cn(
+        "flex min-w-0 flex-col justify-start gap-3 rounded-card bg-home-card px-6 py-5 text-on-surface [box-shadow:var(--home-card-edge)]",
+        "@max-[561px]/home:px-5 @max-[561px]/home:py-[14px]",
+        isSparse(view.state) && "@min-[900px]/home:px-5",
+        !row && "my-5",
       )}
-    </Shell>
-  )
-}
-
-function SoloGarden({ view }: { view: HomeView }) {
-  const s = view.subjects.find((x) => x.papers > 0) ?? view.subjects[0]
-  return (
-    <Shell stack={false}>
-      <h2 className={cn(H2, H2_SPLIT)}>Your Garden</h2>
-      <ReadLine r={soloReadout(s)} split />
-      <div
-        role="group"
-        aria-label="Your garden"
-        className={`m-0 grid grid-cols-[minmax(0,1fr)] content-center justify-items-center gap-3 ${W}col-start-2 ${W}row-[1/span_2]`}
-      >
-        <div className={cn(PLANT, "cursor-default bg-primary-container px-6")}>
-          <Growth s={s} compact tone="full" stack={false} picked={false} />
-          <span className={NAME}>{s.shortName}</span>
-          <span className={VAL}>{s.code}</span>
-          <Vh>{`${s.shortName} ${s.code}: grade ${s.grade} on your first paper.`}</Vh>
-        </div>
-        <p className="m-0 max-w-[24ch] text-center font-mono text-2xs font-semibold leading-[1.4] text-(--text-secondary)">
-          Mark more papers to see how it grows.
-        </p>
-      </div>
-    </Shell>
-  )
-}
-
-function SparsePot({ pot }: { pot: Pot }) {
-  const motion = useMotionOn()
-  const base = cn(PLANT, "cursor-default text-inherit no-underline", pot.lead && "bg-primary-container")
-  const val = (
-    <span
-      aria-hidden="true"
-      className={cn(VAL, "min-h-[18px]", pot.lead && "text-primary", pot.up && "text-success-text")}
     >
-      {pot.val}
-    </span>
-  )
-  if (pot.kind === "seed") {
-    return (
-      <Link
-        to="/student/correct"
-        role="listitem"
-        className={cn(
-          base,
-          "group cursor-pointer hover:bg-surface-container-low focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
-        )}
-      >
-        <span className={potArea(true)} aria-hidden="true">
-          <span className="mb-1 h-[40%] w-0 flex-none border-s-2 border-dashed border-[color-mix(in_oklch,var(--color-on-surface-variant)_50%,transparent)] transition-colors duration-150 group-hover:border-primary" />
-          <span className={SEED} />
-          <span className={POT} />
-        </span>
-        <span className={NAME} aria-hidden="true">{pot.s.shortName}</span>
-        <span
-          aria-hidden="true"
-          className="inline-flex min-h-[18px] items-center gap-0.5 font-sans text-sm font-bold leading-[1.3] text-primary"
-        >
-          Plant it <Icon name="arrow" className="size-[14px] transition-[translate] duration-200 group-hover:translate-x-[3px]" />
-        </span>
-        <Vh>{pot.label}</Vh>
-      </Link>
-    )
-  }
-  if (pot.kind === "germ") {
-    return (
-      <div role="listitem" className={base}>
-        <span
-          aria-hidden="true"
+      <header className={cn("flex items-baseline justify-between gap-3", row && `@min-[900px]/home:min-h-6 @min-[900px]/home:items-center @min-[900px]/home:mb-0`)}>
+        <h2
+          id={hid}
           className={cn(
-            potArea(true),
-            "before:absolute before:bottom-[6px] before:left-1/2 before:aspect-square before:w-14 before:-translate-x-1/2 before:rounded-full before:bg-[radial-gradient(closest-side,color-mix(in_oklch,var(--color-success)_24%,transparent),transparent)] before:content-['']",
-            motion && "before:animate-[home-sp-glow_1.8s_ease-in-out_infinite_alternate]",
+            "m-0 font-sans text-home-title font-extrabold leading-[1.2] tracking-[-0.02em] text-on-surface",
+            row && `@min-[900px]/home:text-home-sm @min-[900px]/home:font-bold @min-[900px]/home:leading-[1.3] @min-[900px]/home:tracking-normal @min-[900px]/home:text-home-ink-2`,
           )}
         >
-          <span className={cn(SEED, "h-[9px] w-[14px]")}>
+          Mistakes beaten
+        </h2>
+        <span className="font-sans text-home-sm font-semibold leading-[1.3] text-home-ink-2">Lost once, right since</span>
+      </header>
+      <div>
+        <p className={cn("m-0 mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-2", row && `@min-[900px]/home:mt-0`)}>
+          {c.count !== null && (
             <span
               className={cn(
-                "absolute bottom-[60%] left-1/2 h-[18px] w-[2px] -translate-x-1/2 origin-bottom rounded-pill bg-success after:absolute after:top-px after:left-px after:h-[6px] after:w-[10px] after:rounded-[999px_0] after:bg-success after:content-['']",
-                motion && "animate-[home-sp-shoot_1.8s_var(--a-ease-expo)_infinite_alternate]",
+                "font-display text-home-display-sm font-extrabold leading-none tracking-[-0.04em] text-primary tabular-nums",
+                row && `@min-[900px]/home:text-home-headline @min-[900px]/home:leading-[1.05]`,
               )}
-            />
-          </span>
-          <span className={POT} />
-        </span>
-        <span className={NAME} aria-hidden="true">{pot.s.shortName}</span>
-        {val}
-        <Vh>{pot.label}</Vh>
-      </div>
-    )
-  }
-  return (
-    <div role="listitem" className={base}>
-      <Growth s={pot.s} compact tone={pot.dry ? "dry" : "full"} stack picked={false} />
-      <span className={NAME} aria-hidden="true">{pot.s.shortName}</span>
-      {val}
-      <Vh>{pot.label}</Vh>
-    </div>
-  )
-}
-
-function SparseGarden({ view }: { view: HomeView }) {
-  const fill = gardenFill(view)
-  return (
-    <Shell stack>
-      <h2 className={H2}>Your Garden</h2>
-      <ReadLine r={sparseReadout(view)} split={false} />
-      <div role="list" aria-label="Your garden, one plant per subject" className={cn(BED, "items-end")}>
-        {sparsePots(view).map((pot) => (
-          <SparsePot key={pot.s.code} pot={pot} />
-        ))}
-      </div>
-      <div className="col-span-full mt-4 grid grid-cols-[auto_minmax(96px,168px)] items-center justify-between gap-x-4 gap-y-1 border-t border-surface-container-low pt-3 [grid-template-areas:'t_p'_'n_n'] @max-[560px]/home:grid-cols-[minmax(0,1fr)] @max-[560px]/home:gap-y-2 @max-[560px]/home:[grid-template-areas:'t'_'p'_'n']">
-        <p className="m-0 font-sans text-sm font-semibold leading-[1.3] text-(--text-secondary) [grid-area:t]">
-          <b className="font-mono font-bold tabular-nums text-on-surface">{fill.on} of 6</b> growing on your page
-        </p>
-        <span aria-hidden="true" className="flex gap-1 [grid-area:p] @max-[560px]/home:max-w-[168px]">
-          {fill.pips.map((p) => (
-            <i key={p.title} title={p.title} className={cn("h-[6px] flex-1 rounded-pill", p.on ? "bg-success" : "bg-(--track)")} />
-          ))}
-        </span>
-        <p className="m-0 font-sans text-sm font-bold leading-[1.3] text-on-surface [grid-area:n]">
-          {fill.doneText && <Vh>{`Done: ${fill.doneText}. `}</Vh>}
-          {fill.next}
-        </p>
-      </div>
-    </Shell>
-  )
-}
-
-const GHOST_PLANTS = ["Your first subject", "Next", "Next"] as const
-
-function GhostGarden() {
-  const hid = useId()
-  return (
-    <Shell stack={false} labelledBy={hid} ghost>
-      <h2 id={hid} className={cn(H2, H2_SPLIT)}>
-        Your Garden
-      </h2>
-      <p className={cn(READ, READ_SPLIT)}>
-        <span className={SENT}>Every subject grows its own plant.</span>
-        <span className={CTX}>Plant your first by getting a paper marked.</span>
-      </p>
-      <div aria-hidden="true" className={`mt-3 grid grid-cols-3 gap-4 ${W}col-start-2 ${W}row-[1/span_2] ${W}m-0`}>
-        {GHOST_PLANTS.map((label, i) => (
-          <div key={i} className="grid justify-items-center pt-2 pb-1 opacity-70">
-            <span className={`relative flex h-24 w-16 flex-col items-center justify-end ${W}w-20`}>
-              {i === 0 && <span className="h-14 w-0 flex-none rounded-none border-s-2 border-dashed border-on-surface-variant" />}
-              <span className="h-7 w-12 flex-none rounded-[4px_4px_12px_12px] border-2 border-dashed border-on-surface-variant" />
+            >
+              {c.count}
             </span>
-            <span className={cn(NAME, "text-(--text-secondary)")}>{label}</span>
-          </div>
-        ))}
+          )}
+          <span className="font-sans text-home-title font-bold leading-[1.2] tracking-[-0.02em] text-on-surface text-balance">{c.lead}</span>
+        </p>
+        {c.ctx !== null && <p className="m-0 font-sans text-home-sm font-semibold leading-[1.4] text-home-ink-2 tabular-nums">{c.ctx}</p>}
       </div>
-    </Shell>
+      {c.chips.length > 0 && (
+        <ul aria-label={c.chipsLabel ?? undefined} className={`m-0 flex list-none flex-wrap gap-2 p-0 @min-[900px]/home:gap-x-3 @min-[900px]/home:my-3`}>
+          {c.chips.map((chip, i) => (
+            <li
+              key={`${chip.beaten ? "b" : "o"}:${chip.code ?? ""}:${chip.topic}`}
+              className={cn(
+                "inline-flex items-center gap-[6px] rounded-chip py-[6px] ps-2 pe-2.5 font-sans text-home-sm font-semibold leading-[1.2]",
+                `@min-[900px]/home:px-3 @min-[900px]/home:py-2 @min-[900px]/home:text-home-body @min-[900px]/home:min-h-10`,
+                chip.beaten
+                  ? "bg-[color-mix(in_oklch,var(--color-success)_14%,var(--color-home-card))] text-on-surface"
+                  : "bg-transparent text-home-ink-2 shadow-[inset_0_0_0_1.5px_var(--color-outline)] before:size-2 before:rounded-none before:shadow-[inset_0_0_0_1.5px_var(--color-on-surface-variant)] before:content-['']",
+                motion && chip.beaten && "animate-[home-x-pop_450ms_var(--ease-expo)_both]",
+              )}
+              style={motion && chip.beaten ? { animationDelay: `${CHIP_DELAY[i] ?? 0}ms` } : undefined}
+            >
+              {chip.beaten && <span aria-hidden="true" className="h-[5px] w-[9px] -mt-[3px] -rotate-45 border-s-2 border-b-2 border-success-text" />}
+              <Vh>{chip.beaten ? "Beaten: " : "To beat: "}</Vh>
+              {chip.topic}
+              {chip.code !== null && (
+                <>
+                  {" "}
+                  <span className="font-mono text-home-label font-semibold leading-none text-home-ink-2">{chip.code}</span>
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {c.foot !== null && (
+        <div
+          className={cn(
+            "flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-home-row pt-3",
+            `@min-[900px]/home:mt-auto`,
+            row && `@min-[900px]/home:border-t-0 @min-[900px]/home:pt-4`,
+          )}
+        >
+          {c.foot.remaining !== null && (
+            <span className="m-0 font-sans text-home-sm font-semibold leading-[1.4] text-home-ink-2 tabular-nums">{c.foot.remaining}</span>
+          )}
+          {c.foot.practise !== null && (
+            <Link
+              to={c.foot.practise.to}
+              className={cn(
+                "relative inline-flex items-center gap-0.5 font-sans text-home-sm font-bold leading-[1.2] text-primary no-underline",
+                "hover:underline hover:underline-offset-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary @max-[900px]/home:focus-visible:rounded-chip",
+                `before:absolute before:inset-x-0 before:-inset-y-[14px] before:content-[''] @min-[900px]/home:before:hidden`,
+                row &&
+                  `@min-[900px]/home:min-h-11 @min-[900px]/home:px-4 @min-[900px]/home:rounded-button @min-[900px]/home:bg-home-secondary-container @min-[900px]/home:text-home-on-secondary-container @min-[900px]/home:hover:no-underline @min-[900px]/home:hover:bg-[color-mix(in_oklch,var(--color-home-secondary-container)_85%,var(--color-primary))]`,
+              )}
+            >
+              {c.foot.practise.label} <Icon name="arrow" className="size-[14px]" />
+            </Link>
+          )}
+        </div>
+      )}
+    </section>
   )
-}
-
-export function Garden({ view, variant }: { view: HomeView; variant?: "ghost" }) {
-  if (variant === "ghost") return <GhostGarden />
-  if (view.state === "one-paper") return <SoloGarden view={view} />
-  if (isSparse(view.state)) return <SparseGarden view={view} />
-  return <PickerGarden view={view} />
 }
 ```
 
 Notes for the implementer:
-- The ghost's first stem is fixed at 56px (`variant-a.css:2013`). Its inline `--now: 14%` in the markup is overridden there, so it is not reproduced.
-- The picker readout is `aria-hidden="true"` as in the markup (`page-a.txt:225`). The hidden plant labels carry the same facts.
-- `<i>` pips: `flex-1` makes them flex items, so `display` needs no change.
+- Every class is written out in full (no prefix constants): Tailwind v4 scans source text, not evaluated strings, so `${W}min-h-6` would never generate `@min-[900px]/home:min-h-6`.
+- The chip's text run (`topic`, the space, the code span) must sit in one flex item as in the design, so do not wrap the topic in its own element.
+- `Icon` must forward `className` to the `svg`. If it does not (Task 10), wrap it in a `span` that carries the size.
 
-- [ ] **Step 6: Keyframes**
+- [ ] **Step 6: Keyframe**
 
-Append to `web/src/index.css` after the last `@keyframes` block. Skip `home-rise`/`home-rise-in` if Task 10 already added them, and keep its definitions.
+Append to `web/src/index.css` after the last `@keyframes` block:
 
 ```css
-/* Student home Garden and next-step motion (variant-a.css:569–571, 1536–1562, 2123–2124). */
-@keyframes home-gr-up { from { block-size: calc(var(--was) * 0.8) } }
-@keyframes home-gr-sway { 25% { rotate: 2deg } 75% { rotate: -2deg } }
-@keyframes home-gr-open { from { transform: scale(0); opacity: 0 } }
-@keyframes home-gr-mark { 0%, 60% { border-color: var(--color-primary) } }
-@keyframes home-mo-pop { 40% { scale: 1.25 } }
-@keyframes home-sp-shoot { from { transform: scaleY(0.55) } }
-@keyframes home-sp-glow { from { opacity: 0.35 } }
-@keyframes home-rise { from { transform: translateY(8px); opacity: 0 } }
-@keyframes home-rise-in { from { transform: translateY(8px) scale(0.96); opacity: 0 } }
+/* Mistakes beaten chip pop (variant-a.css:2381 xPop). */
+@keyframes home-x-pop { from { opacity: 0; translate: 0 4px } }
 ```
 
-- [ ] **Step 7: Run the markup tests**
+- [ ] **Step 7: Run the unit tests**
 
-Run: `cd web && npx vitest run tests/unit/studentHomeGarden.test.ts tests/unit/studentHomeMarkup.test.ts`
-Expected: PASS.
+Run: `cd web && npx vitest run tests/unit/studentHomeMistakes.test.ts tests/unit/studentHomeMarkup.test.ts`
+Expected: PASS. React escapes `'` as `&#x27;`, which is why the populated test matches `don&#x27;t`.
 
-- [ ] **Step 8: Keyboard test (Playwright)**
+- [ ] **Step 8: Keyboard and hit-area test (Playwright)**
 
 `web/scripts/home-drift/overview.d.mts`:
 
@@ -4605,9 +4877,9 @@ export declare function mockStudentHome(page: Page, state: string, overrides?: R
 
 ```ts
 /*
- * Student home behaviour the node-environment unit tests cannot see (D3.20):
- * keyboard use of the Garden radios. API mocked from the design fixtures, so the
- * test needs no seeded marks; the session is the seed contract's first student.
+ * Student home behaviour the node-environment unit tests cannot see (D3.20). API mocked from
+ * the design fixtures, so the test needs no seeded marks; the session is the seed contract's
+ * first student.
  */
 import { expect, test, type Page } from "@playwright/test"
 import { APP_PATH, mockStudentHome } from "../scripts/home-drift/overview.mjs"
@@ -4621,45 +4893,37 @@ async function openHome(page: Page, state: string, overrides?: Record<string, un
   await page.locator(`#sh-root[data-state="${state}"]`).waitFor()
 }
 
-test.describe("Garden picker", () => {
-  test("Tab reaches the radio group; arrow keys move the pick and the readout follows", async ({ page }) => {
+test.describe("Mistakes beaten", () => {
+  test("Tab reaches the Practise button; its focus outline is visible", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 })
     await openHome(page, "populated")
-    const garden = page.locator('[data-home="garden"]')
-    const radios = garden.getByRole("radio")
-    await expect(radios).toHaveCount(3)
-    await expect(garden.getByRole("group", { name: "Pick a subject to see how far it has grown" })).toBeVisible()
-    await expect(radios.nth(0)).toBeChecked()
-
+    const go = page.locator('[data-home="progress"]').getByRole("link", { name: "Practise Logarithms" })
     for (let i = 0; i < 80; i += 1) {
       await page.keyboard.press("Tab")
-      if (await radios.nth(0).evaluate((el) => el === document.activeElement)) break
+      if (await go.evaluate((el) => el === document.activeElement)) break
     }
-    await expect(radios.nth(0)).toBeFocused()
-
-    const outline = await garden.locator('[data-plant="0580"]').evaluate((el) => {
+    await expect(go).toBeFocused()
+    const ring = await go.evaluate((el) => {
       const s = getComputedStyle(el)
-      return { style: s.outlineStyle, width: s.outlineWidth }
+      return { style: s.outlineStyle, width: s.outlineWidth, height: el.getBoundingClientRect().height }
     })
-    expect(outline).toEqual({ style: "solid", width: "2px" })
+    expect(ring.style).toBe("solid")
+    expect(ring.width).toBe("2px")
+    expect(ring.height).toBeGreaterThanOrEqual(44)
+  })
 
-    await page.keyboard.press("ArrowRight")
-    await expect(radios.nth(1)).toBeChecked()
-    await expect(radios.nth(1)).toBeFocused()
-    await expect(garden.locator('p[aria-hidden="true"]')).toContainText("Add Maths is up 15 points")
-    await expect(garden.locator('p[aria-hidden="true"]')).toContainText("44% → 59% · 6 papers")
-
-    await page.keyboard.press("ArrowRight")
-    await expect(radios.nth(2)).toBeChecked()
-    await expect(garden.locator('p[aria-hidden="true"]')).toContainText("Physics is up 7 points")
-
-    await page.keyboard.press("ArrowLeft")
-    await expect(radios.nth(1)).toBeChecked()
+  test("on a phone the Practise link keeps a 44px hit area", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 900 })
+    await openHome(page, "populated")
+    const go = page.locator('[data-home="progress"]').getByRole("link", { name: "Practise Logarithms" })
+    const hit = await go.evaluate((el) => parseFloat(getComputedStyle(el, "::before").height))
+    expect(hit).toBeGreaterThanOrEqual(44)
   })
 })
 ```
 
 Run (app dev server and backend as the e2e config boots them): `cd web && npx playwright test e2e/student-home.spec.ts --project=chromium`
-Expected: `1 passed`. If `--project=chromium` is not a project name in `playwright.config.ts`, use the desktop project name it defines.
+Expected: `2 passed`. If `--project=chromium` is not a project name in `playwright.config.ts`, use the desktop project name it defines.
 
 - [ ] **Step 9: Drift scenes**
 
@@ -4668,39 +4932,31 @@ In `web/scripts/home-drift/overview.mjs`, add:
 ```js
 /** States whose ready page is on screen (error shows the banner over the last-known page). */
 export const READY_STATES = OVERVIEW_STATES.filter((s) => s !== "new" && s !== "loading")
-
-/** Spec §4 interaction pair: after a Garden pick (third plant). */
-export const GARDEN_PICK = {
-  id: "garden-pick",
-  state: "populated",
-  preview: async (page) => page.click('label[for="mo2-c"]'),
-  app: async (page) => page.click('[data-home="garden"] [data-plant="0625"]'),
-}
 ```
 
 In `web/scripts/home-drift.mjs`, add next to the Overview registration from Task 9:
 
 ```js
-import { GARDEN_PICK, READY_STATES, overviewScenes } from "./home-drift/overview.mjs"
+import { READY_STATES, overviewScenes } from "./home-drift/overview.mjs"
 // …in the scene list:
-...overviewScenes({ part: "garden", states: READY_STATES, interactions: [GARDEN_PICK] }),
+...overviewScenes({ part: "progress", states: READY_STATES }),
 ```
 
-The new-student ghost is compared inside the `new` part (Task 17), because the preview's ghost sits in `[data-when-state="new"]` and `PARTS.garden.preview` targets the ready block.
+The new-student copy is compared inside the `new` part (Task 18), because the preview's card sits in `[data-when-state="new"]` and `PARTS.progress.preview` targets the ready block.
 
-Run: `cd web && node scripts/home-drift.mjs --only overview:garden`
-Expected: `overview:garden PASS 130/130` (12 states × 5 widths × 2 themes + 10 interaction scenes).
+Run: `cd web && node scripts/home-drift.mjs --only overview:progress`
+Expected: `overview:progress PASS 120/120` (12 states × 5 widths × 2 themes).
 
-Expected first-run failures, and what to do with each:
-- Picker, solo and ghost scenes must reach **0 px**. Any difference there is drift: open the diff, find the row of the mapping table above that differs, and fix it.
-- sparse1–3 and one-paper scenes will differ in the stems, leaves and flowers only, because the design hand-placed those heights and leaf counts (see "Rules"). Confirm each diff image shows nothing outside the plants. Then STOP and show the user one diff per state (light, 1440) with the rule: "stem = score now on the picker's scale; one leaf per paper". Ask for approval. When approved, add one drift-log row per state to the spec, for example: `| overview:garden:sparse1:* | stem 40%→26.7% and 1 leaf instead of 2 on the Maths pot | <measured max %> | Design hand-placed this plant; product follows the design's own rule "stem = score now, one leaf per paper" (variant-a.css:1494–1495) | yes, <date> |`. Then re-run. The script passes these scenes only because they have a justification and are under 15%. If the user rejects the rule, stop and report: no data rule reproduces the hand-placed values.
+Every scene must reach **0 px**: the card has no hand-placed geometry and every value is in the mapping table. On a failure, open the diff PNG, find the mapping row that differs, fix it, re-run. Things to check first: the sparse states' 20px inline padding at ≥900 (2321), the phone's 14px block padding (2343), the chip text size switching to 16px at ≥900 for every chip, and the light secondary-container colour (Task 10 alias, not the app's `secondary-container`). If the user approved A1 but not A2, the sparse1 and one-paper footers differ by the link text: STOP, show one diff per state (light, 1440), and on approval add a drift-log row per state to the spec (`| overview:progress:sparse1:* | footer "Practise Logarithms" → "Practise Bearings" | <measured max %> | the preview's shared link names a subject the student has not sat | yes, <date> |`).
 
 - [ ] **Step 10: Commit**
 
 ```bash
-cd web && /home/sico/Code/Lemely/.venv/bin/pre-commit run --files src/portals/student/home/garden.ts src/portals/student/home/Garden.tsx src/index.css scripts/home-drift/overview.mjs scripts/home-drift/overview.d.mts scripts/home-drift.mjs e2e/student-home.spec.ts tests/unit/studentHomeGarden.test.ts tests/unit/studentHomeMarkup.test.ts ../docs/superpowers/specs/2026-11-06-student-home-overview-design.md
-git commit -S -m "feat(web): student home Garden with picker, sprout, sparse pots and fill line" -- web/src/portals/student/home/garden.ts web/src/portals/student/home/Garden.tsx web/src/index.css web/scripts/home-drift/overview.mjs web/scripts/home-drift/overview.d.mts web/scripts/home-drift.mjs web/e2e/student-home.spec.ts web/tests/unit/studentHomeGarden.test.ts web/tests/unit/studentHomeMarkup.test.ts docs/superpowers/specs/2026-11-06-student-home-overview-design.md
+/home/sico/Code/Lemely/.venv/bin/pre-commit run --files web/src/portals/student/home/states.ts web/src/portals/student/home/mistakes.ts web/src/portals/student/home/MistakesBeaten.tsx web/src/index.css web/scripts/home-drift/overview.mjs web/scripts/home-drift/overview.d.mts web/scripts/home-drift.mjs web/e2e/student-home.spec.ts web/tests/unit/studentHomeMistakes.test.ts web/tests/unit/studentHomeMarkup.test.ts
+git commit -S -m "feat(web): student home Mistakes beaten card" -- web/src/portals/student/home/states.ts web/src/portals/student/home/mistakes.ts web/src/portals/student/home/MistakesBeaten.tsx web/src/index.css web/scripts/home-drift/overview.mjs web/scripts/home-drift/overview.d.mts web/scripts/home-drift.mjs web/e2e/student-home.spec.ts web/tests/unit/studentHomeMistakes.test.ts web/tests/unit/studentHomeMarkup.test.ts
 ```
+
+Add `docs/superpowers/specs/2026-11-06-student-home-overview-design.md` to both lists if Step 9 added drift-log rows.
 
 ---
 
@@ -4716,7 +4972,7 @@ git commit -S -m "feat(web): student home Garden with picker, sprout, sparse pot
 - Consumes:
   - Task 8: `HomeView` (`action`, `state`, `upload`, `latestScore`, `subjects`, `totalPapers`, `facts.now`), `API_FIXTURES`; `format.ts` `dayMonth`, `indefinite`; `model.ts` `localISODate`, `NextAction`.
   - Task 10: `Mono`, `Code`, `Vh`, `Icon`, `ButtonLink` (merges `className` through `cn`, so the overrides below win), `useMotionOn`, `useInView`.
-  - Task 12: `gradeUp`, `isSparse`, `joinOr`; the `home-rise`/`home-rise-in` keyframes.
+  - Task 12: `gradeUp`, `isSparse`, `joinOr` (`states.ts`). Task 10: the `home-rise`/`home-rise-in` keyframes.
   - Task 9: `overviewScenes`, `API_FIXTURES` in `overview.mjs`.
 - Produces: `export function NextStepCard(props: { view: HomeView }): JSX.Element`. The root is `<section data-home="next" data-anim aria-labelledby=…>`. Task 17 places it in the next-step row. The row sets the card's `margin-block-start: 0` (`variant-a.css:1503`), so the card sets no outer margin.
 
@@ -4749,7 +5005,10 @@ Every button ends with `<Icon name="arrow" />`. The also-link ends with `<Icon n
 |---|---|---|
 | `.a-action-card` (328–332) | `padding 44px 56px 48px; radius-board; md-primary-container; on-primary-container` | `rounded-board bg-primary-container px-14 pt-11 pb-12 text-on-primary-container` |
 | ≥761 (1426) | `padding space-6 space-7; radius-card` | `@min-[761px]/home:rounded-card @min-[761px]/home:px-7 @min-[761px]/home:py-6` |
-| ≥900 (1489, 1505–1506) | `padding space-6`; in the row: `flex column; justify center` | `@min-[900px]/home:flex @min-[900px]/home:flex-col @min-[900px]/home:justify-center @min-[900px]/home:p-6` |
+| ≥900 (1489, 1505–1506; **c880a54c :2388-2389** win) | mirrored halves: `padding space-5 space-6` (`.a-next-row > *`, 0,3,0, beats `padding space-6`); `flex column; justify-content flex-start` (was center) | `@min-[900px]/home:flex @min-[900px]/home:flex-col @min-[900px]/home:justify-start @min-[900px]/home:px-6 @min-[900px]/home:py-5` |
+| active `.a-act` ≥900 (**c880a54c :2392-2397**) | `display flex; flex-direction column; flex 1 1 auto`, only on the block for the current action | `@min-[900px]/home:flex @min-[900px]/home:flex-col @min-[900px]/home:flex-auto` on the one rendered block |
+| `.a-act > a.a-btn` ≥900 (**c880a54c :2398**) | `margin-block-start auto; align-self flex-start` (the button sits on the shared bottom line) | `@min-[900px]/home:mt-auto @min-[900px]/home:self-start` in `BTN`. The button must be a direct child of the act block, as in the design. In sparse0 the "While you wait" link is the next flex item, so it lands under the button, as the preview now draws it |
+| `.a-meta-line` ≥900 (**c880a54c :2437, :2442**) | `min-block-size 24px; display flex; align-items center; margin-block-end space-3; font 700 fs-body-sm/1.3 ui` | add `@min-[900px]/home:min-h-6 @min-[900px]/home:font-bold @min-[900px]/home:leading-[1.3]` to `META` (12px and 14px already come from the ≥761 classes) |
 | ≤760 (1255) | `padding space-5` | `@max-[760px]/home:p-5` |
 | `.a-act` (333, 1490) | `max-inline-size 760px`; ≥900 none | `max-w-[760px] @min-[900px]/home:max-w-none` |
 | `.a-meta-line` + `.a-act .a-meta-line` (61–64, 334, 1427, 1257) | `flex; center; gap space-2; margin 0 0 space-4; 600 fs-body/1.2 font-ui; on-primary-container`; ≥761 mb space-3, fs-body-sm; ≤760 mb space-2, fs-body-sm | `m-0 mb-4 flex items-center gap-2 font-sans text-base font-semibold leading-[1.2] text-on-primary-container @min-[761px]/home:mb-3 @min-[761px]/home:text-sm @max-[760px]/home:mb-2 @max-[760px]/home:text-sm` |
@@ -4799,6 +5058,9 @@ describe("NextStepCard", () => {
     expect(out).toContain("Next in your study plan for Additional Mathematics.")
     expect(out).toContain('href="/student/plan/0606/session/s1"')
     expect(out).toContain("Start session")
+    // Only the active block renders (mirrored halves must never reveal another kind's block).
+    expect(out).not.toContain("See your marks")
+    expect(out).not.toContain("Upload a paper")
   })
   it("result, returning student", () => {
     const out = card("result-in")
@@ -4857,6 +5119,8 @@ Expected: FAIL (`NextStepCard` not found).
 
 - [ ] **Step 2: Implement `NextStepCard.tsx`**
 
+The `N`, `M`, `X` constants below are reading shorthand. Tailwind v4 scans source text and never evaluates `${N}rounded-card`, so a template-built class is never generated. When you type the file, write every variant class out in full (`@min-[761px]/home:rounded-card`, `@max-[760px]/home:p-5`, `@min-[900px]/home:max-w-none`, …) and delete the three constants. The drift gate catches any you miss, but expand them up front.
+
 ```tsx
 /*
  * Your next step (design A `.a-action-card`, variant-a.css:327–347, 1307–1337,
@@ -4868,7 +5132,7 @@ import { useId, type ReactNode } from "react"
 import { cn } from "@/lib/utils"
 import type { HomeView, SubjectView } from "./facts"
 import { dayMonth, indefinite } from "./format"
-import { gradeUp, isSparse, joinOr } from "./garden"
+import { gradeUp, isSparse, joinOr } from "./states"
 import { localISODate, type NextAction } from "./model"
 import { ButtonLink, Code, Icon, Mono, Vh, useInView, useMotionOn } from "./primitives"
 
@@ -4879,17 +5143,21 @@ const X = "@min-[900px]/home:"
 const CARD = cn(
   "rounded-board bg-primary-container px-14 pt-11 pb-12 text-on-primary-container",
   `${N}rounded-card ${N}px-7 ${N}py-6`,
-  `${X}flex ${X}flex-col ${X}justify-center ${X}p-6`,
+  // Mirrored halves (c880a54c :2388-2389): in the row at ≥900 the card pads 20px 24px and packs to the top.
+  "@min-[900px]/home:flex @min-[900px]/home:flex-col @min-[900px]/home:justify-start @min-[900px]/home:px-6 @min-[900px]/home:py-5",
   `${M}p-5`,
 )
-const ACT = `max-w-[760px] ${X}max-w-none`
-const META = `m-0 mb-4 flex items-center gap-2 font-sans text-base font-semibold leading-[1.2] text-on-primary-container ${N}mb-3 ${N}text-sm ${M}mb-2 ${M}text-sm`
+// Only the active block is rendered, so the ≥900 flex column can never reveal another kind's block
+// (the design needs per-action selectors for that, c880a54c :2392-2397).
+const ACT = "max-w-[760px] @min-[900px]/home:max-w-none @min-[900px]/home:flex @min-[900px]/home:flex-col @min-[900px]/home:flex-auto"
+// ≥900 (c880a54c :2437, :2442): a 24px label row, 700 14px/1.3, 12px below; the same row the Mistakes beaten card opens with.
+const META = `m-0 mb-4 flex items-center gap-2 font-sans text-base font-semibold leading-[1.2] text-on-primary-container ${N}mb-3 ${N}text-sm ${M}mb-2 ${M}text-sm @min-[900px]/home:min-h-6 @min-[900px]/home:font-bold @min-[900px]/home:leading-[1.3]`
 const CHIP = "rounded-pill bg-surface-container-lowest px-2 py-1 text-on-surface"
 const TITLE = `m-0 font-display text-[64px] font-extrabold leading-[0.98] tracking-[-0.045em] text-balance ${N}text-[32px] ${N}leading-[1.05] ${N}tracking-[-0.04em] ${M}text-[32px]`
 const PAPER = "m-0 font-display text-[32px] font-extrabold leading-[1.1] tracking-[-0.03em] text-balance"
 const FACTS = `m-0 mt-3 text-base text-on-primary-container ${N}mt-2 ${N}text-sm ${M}mt-1 ${M}mb-4`
 const BODY = `mt-4 mb-7 max-w-[52ch] text-base leading-[1.5] text-pretty ${N}mt-2 ${N}mb-5 ${N}text-sm ${M}hidden`
-const BTN = `min-h-14 rounded-button px-7 py-4 text-base transition-[background,transform,box-shadow] hover:-translate-y-0.5 hover:shadow-hover active:scale-97 active:duration-75 ${N}min-h-11 ${N}px-5 ${N}py-3 ${N}text-sm ${M}w-full ${M}justify-center`
+const BTN = `min-h-14 rounded-button px-7 py-4 text-base transition-[background,transform,box-shadow] hover:-translate-y-0.5 hover:shadow-hover active:scale-97 active:duration-75 ${N}min-h-11 ${N}px-5 ${N}py-3 ${N}text-sm ${M}w-full ${M}justify-center @min-[900px]/home:mt-auto @min-[900px]/home:self-start`
 const ACT_GRADE: Record<string, string> = {
   "A*": "bg-grade-a-star", A: "bg-grade-a", B: "bg-grade-b", C: "bg-grade-c", D: "bg-grade-d", E: "bg-grade-e", U: "bg-grade-u",
 }
@@ -5206,7 +5474,7 @@ Notes for the implementer:
 - [ ] **Step 3: Run the markup tests**
 
 Run: `cd web && npx vitest run tests/unit/studentHomeMarkup.test.ts`
-Expected: PASS (Garden and NextStepCard blocks). React escapes `'` as `&#x27;`, which is why no assertion includes "Today's session" or "Let's".
+Expected: PASS (MistakesBeaten and NextStepCard blocks). React escapes `'` as `&#x27;`, which is why no assertion includes "Today's session" or "Let's".
 
 - [ ] **Step 4: Drift scenes**
 
@@ -5264,7 +5532,8 @@ These three tasks share the rules below. Every implementer of Task 14, 15 or 16 
 - **Fixed sizes.** `--fs-*` and `--space-*` are constants in `tokens.css` (`--fs-label` 11px, `--fs-body-sm`/`--fs-data` 14px, `--fs-body` 16px, `--fs-title` 21px, `--fs-headline` 32px; `--space-N` = N×4px). They are written as literal Tailwind values (`text-[14px]`, `p-5`).
 - **Container breakpoints.** `StudentHome` (Task 17) puts `@container/home` on the page column, as `container-name: home` does in the preview. The CSS's `@container home (max-width: 760px)` is `@max-[760px]/home:`; `(min-width: 761px)` is `@min-[761px]/home:`; `(max-width: 560px)` is `@max-[560px]/home:`; `(min-width: 561px) and (max-width: 760px)` is `@min-[561px]/home:@max-[760px]/home:`; `(max-width: 959px)` is `@max-[959px]/home:`. These match the **Task 10 token map**'s breakpoint list.
 - **Cascade.** `variant-a.css` overrides its own rules later in the file (critique waves, the "live steer" tail). Each mapping table gives the **effective** value at each width and cites every line that contributes. Where a later line wins, the earlier one is listed as "overridden".
-- **Shared state helpers.** Task 14 creates `web/src/portals/student/home/states.ts`. If an earlier task (10–13) already created it with the same exports, reuse it and skip that step.
+- **Shared state helpers.** Task 12 creates `web/src/portals/student/home/states.ts` (`MANY_PAPERS_STATES`, `isSparse`, `isManyPapers`, `gradeUp`, `joinOr`). Tasks 14–16 import it and do not recreate it.
+- **Tailwind prefixes.** Where a code block builds classes from a prefix constant, write the classes out in full when you type the file (Tailwind v4 never sees `${X}flex`). The same applies to every task.
 - **Motion.** Entrance animations run only when `useMotionOn()` is true and the section has been seen (`useInView()`). The drift gate runs with reduced motion, so motion is checked by eye in Step "Motion check", not by pixels.
 
 ---
@@ -5272,7 +5541,6 @@ These three tasks share the rules below. Every implementer of Task 14, 15 or 16 
 ## Task 14: `GradesList` (Your grades)
 
 **Files:**
-- Create: `web/src/portals/student/home/states.ts`
 - Create: `web/src/portals/student/home/geometry.ts`
 - Create: `web/src/portals/student/home/GradesList.tsx`
 - Modify: `web/src/index.css` (keyframes in `@theme`)
@@ -5280,9 +5548,8 @@ These three tasks share the rules below. Every implementer of Task 14, 15 or 16 
 - Test: `web/tests/unit/studentHomeGeometry.test.ts` (create), `web/tests/unit/studentHomeMarkup.test.ts` (append; create if absent)
 
 **Interfaces:**
-- Consumes: `HomeView`, `SubjectView`, `DataState` (`facts.ts`, Task 8); `indefinite`, `dayMonth` (`format.ts`, Task 8); `Code`, `Est`, `Icon`, `Mono`, `Vh`, `useMotionOn`, `useInView` (`primitives.tsx`, Task 10); `overviewScenes` (Task 9); `API_FIXTURES`, `API_NOW` (Task 8).
+- Consumes: `HomeView`, `SubjectView`, `DataState` (`facts.ts`, Task 8); `indefinite`, `dayMonth` (`format.ts`, Task 8); `Code`, `Est`, `Icon`, `Mono`, `Vh`, `useMotionOn`, `useInView` (`primitives.tsx`, Task 10); `isSparse` (`states.ts`, Task 12); `overviewScenes` (Task 9); `API_FIXTURES`, `API_NOW` (Task 8).
 - Produces:
-  - `states.ts`: `export const MANY_PAPERS_STATES: ReadonlySet<DataState>` (`populated`, `result-in`, `marking`, `no-plan`, `no-exams`, `streak-zero`); `export function isSparse(s: DataState): boolean` (`s.startsWith("sparse")`); `export function isManyPapers(s: DataState): boolean`.
   - `geometry.ts`: `export const GRADE_STOPS = [["C", 12], ["B", 37], ["A", 62], ["A*", 87]] as const`; `export function nextGrade(pct: number, b: GradeBoundaries): string | null`; `export function journeyPos(pct: number, b: GradeBoundaries): number` (percent of the journey width, 2 decimals). Task 16 adds `examPos` to this file.
   - `export function GradesList(props: { view: HomeView }): JSX.Element`, root `<section data-home="grades">`.
   - `export function gradeRowLabel(s: SubjectView, state: DataState): string`, exported for the markup test.
@@ -5298,7 +5565,10 @@ These three tasks share the rules below. Every implementer of Task 14, 15 or 16 
 - The trail runs from `journeyPos(firstPct)` to `journeyPos(pct)`, width = difference. It is drawn only when `papers >= 2` (no trail in one-paper or sparse1, or for sparse2's 1-paper Additional Mathematics).
 - The distance line is `<Mono>{next − pct}%</Mono> from {a|an} {next}`.
 - The per-stone threshold labels (`.a-j-b`, "C 45%") are in the markup but **never visible**: `variant-a.css:1829` `.a-gj .a-j-b { display: none }` applies at every width. They are not rendered. The row's `aria-label` carries the numbers.
-- `details.a-key` ("What do the labels mean?") renders only in the many-papers states (`data-needs="many-papers"`; hidden in one-paper by `shell.css:70` and in sparse by `variant-a.css:2071`).
+- There is no labels key. `details.a-key` ("What do the labels mean?") was removed in `c880a54c` (its CSS block at old 1894–1912 is gone). Do not render it.
+- **Hover replays the climb** (session 43f5fae0, `c880a54c :2407-2419`), only with `prefers-reduced-motion: no-preference` (`useMotionOn()`): on row hover the trail grows from the first paper (`gjGrow .8s`, origin start), each passed stone pops in grade order (`gjPop .4s`, delays C .15s, B .35s, A .55s, A* .75s), and the marker lands (`gjLand .5s` at .6s). Hover applies to every graded row; the pop applies to every passed stone and the landing to every marker, trail or not.
+- **Relaxed rows** (`c880a54c :2463-2467`): list inset 8px, row padding-block 12px (also waiting rows: `:2464` comes after the lock rows' 8px at `:2146` and has the same specificity), journey 48px tall, stones 32px, marker 16px.
+- **Phones (≤560): one card per subject** (session 2fb62992, `:2471-2479`): the list loses its card (grid, 12px gap, no padding, transparent, no shadow) and the row separators; each row becomes a card (`radius-inner`, `surface-card`, card-edge ring, 16px padding) with name, distance and track on three grid rows (`"n" "d" "j"`, 4px row gap); the journey is 44px tall with 12px above and 16px inline margins. In sparse states the preview keeps a 1px top border on cards 2 and later, because `.sh-root[data-state^="sparse"] .a-gj > li + li` (`:2152`, specificity 0,3,2) out-ranks the phone reset `.a-grades .a-gj > li + li` (0,2,2). Reproduce it (0 px); removing it is a drift-log improvement for the user to approve (spec "Drift log").
 - `.a-est` "estimated" after the code when `boundariesEstimated`.
 - aria-label template (each clause verified against all 11 graded rows in the markup):
   `"{name}, {code}: {pct}%, grade {grade}, {d}% from {a|an} {next}."` + (estimated ? `" Boundaries estimated: no exact boundary for this paper yet; based on past sessions."` : "") + `" C {c}%, B {b}%, A {a}%, A* {a*}%."` + suffix. The suffix is `" Your first paper."` when `papers === 1` and the state is sparse; `" Started at {firstPct}%."` when `papers >= 2`; nothing in one-paper.
@@ -5311,31 +5581,27 @@ These three tasks share the rules below. Every implementer of Task 14, 15 or 16 
 |---|---|---|
 | `section.a-sec` | 591 `margin-block-start: calc(space-5*2)` = 40px; 1439 `@min 761 → 20px`; 1226 `@max 760 → 32px` | `mt-10 @min-[761px]/home:mt-5 @max-[760px]/home:mt-8` |
 | `h2.a-sec-h` | 592–595 `margin: 0 0 12px; font: 800 21px/1.2 font-ui; letter-spacing: ls-headline-ui(-0.02em); color: text-body` (1440 same margin) | `m-0 mb-3 font-(family-name:--font-ui) text-[21px]/[1.2] font-extrabold tracking-[-0.02em] text-(--text-body)` |
-| `details.a-key` | 1895 `margin: -8px 0 12px; font-size: 14px; color: text-secondary` | `-mt-2 mb-3 text-[14px] text-(--text-secondary)` |
-| `.a-key > summary` | 1896–1903 `inline-flex; align-items:center; min-block-size:44px; padding-inline:4px; radius-chip; color text-secondary; 700; cursor:pointer; list-style:none; ::after "+" / open "−" mono ml 8px; hover primary` | `inline-flex items-center min-h-11 px-1 rounded-(--radius-chip) font-bold cursor-pointer list-none [&::-webkit-details-marker]:hidden after:content-['+'] after:ml-2 after:font-(family-name:--font-mono) group-open/key:after:content-['\2212'] hover:text-(--md-primary)` (the `details` carries `group/key`) |
-| `.a-key dl` | 1904 `grid; gap 8px; margin 0; padding 12px 16px; radius-inner; bg md-surface-low`; 1910 `@max 560 gap 12px` | `grid gap-2 m-0 px-4 py-3 rounded-(--radius-inner) bg-(--md-surface-low) @max-[560px]/home:gap-3` |
-| `.a-key dl > div` | 1905 `grid; cols minmax(7rem,max-content) minmax(0,1fr); gap 12px; baseline`; 1909 `@max 560 cols minmax(0,1fr)` | `grid grid-cols-[minmax(7rem,max-content)_minmax(0,1fr)] gap-3 items-baseline @max-[560px]/home:grid-cols-[minmax(0,1fr)]` |
-| `dt` / `dd` | 1906 `color text-body; 700` / 1907 `margin 0` | `text-(--text-body) font-bold` / `m-0` |
-| `ul.a-gj` | 351–354 `margin 0; padding 8px; list-style none; radius-card; bg surface-card; box-shadow a-card-edge`; 1830 `padding 4px` (wins) | `m-0 p-1 list-none rounded-(--radius-card) bg-(--surface-card) shadow-(--a-card-edge)` |
-| `li + li` | 355 `border-block-start: 1px solid border-subtle` (one-paper has one row; 2169 re-asserts it for sparse) | `[&+li]:border-t [&+li]:border-(--border-subtle)` |
-| `a.a-gj-row` (desktop ≥761) | 357–362 `grid; cols 220px 170px minmax(0,1fr) 18px; align center; gap 24px; min-h 64 (1442 → 52; 1831 → 0 wins); padding 4px 20px (1831 padding-block 4px wins); radius-tile; color text-body; transition bg fast, transform/box-shadow base`; 363 hover `bg surface-card; shadow-hover`; 364 focus `outline-offset -2px` | `grid grid-cols-[220px_170px_minmax(0,1fr)_18px] items-center gap-6 min-h-0 px-5 py-1 rounded-(--radius-tile) text-(--text-body) no-underline transition-[background-color,transform,box-shadow] duration-(--dur-base) hover:bg-(--surface-card) hover:shadow-(--shadow-hover) focus-visible:outline-offset-[-2px] group/row` |
-| row ≤760 | 1262–1265 `cols minmax(0,1fr) auto; areas "n d" "j j"; row-gap 4px; padding 12px 16px 8px` (padding-block overridden by 1831 → 4px) | `@max-[760px]/home:grid-cols-[minmax(0,1fr)_auto] @max-[760px]/home:[grid-template-areas:'n_d'_'j_j'] @max-[760px]/home:gap-y-1 @max-[760px]/home:px-4` |
-| row 561–760 | 1737–1740 `cols minmax(160px,240px) minmax(0,1fr); areas "n j" "d j"; column-gap 20px; row-gap 2px; padding 12px 16px` (block → 4px by 1831) | `@min-[561px]/home:@max-[760px]/home:grid-cols-[minmax(160px,240px)_minmax(0,1fr)] @min-[561px]/home:@max-[760px]/home:[grid-template-areas:'n_j'_'d_j'] @min-[561px]/home:@max-[760px]/home:gap-x-5 @min-[561px]/home:@max-[760px]/home:gap-y-0.5` |
-| row ≤560 | 1760 `row-gap 0; padding 12px 16px 4px`; 1836 `padding-block 8px 4px` (wins) | `@max-[560px]/home:gap-y-0 @max-[560px]/home:pt-2 @max-[560px]/home:pb-1` |
+| `ul.a-gj` | 351–354 `margin 0; padding 8px; list-style none; radius-card; bg surface-card; box-shadow a-card-edge`; 1832 `padding 4px` overridden by **c880a54c :2463** `padding space-2` (8px); ≤560 **:2472** `display grid; gap space-3; padding 0; background transparent; box-shadow none` | `m-0 p-2 list-none rounded-(--radius-card) bg-(--surface-card) shadow-(--a-card-edge) @max-[560px]/home:grid @max-[560px]/home:gap-3 @max-[560px]/home:p-0 @max-[560px]/home:bg-transparent @max-[560px]/home:shadow-none` |
+| `li + li` | 355 `border-block-start: 1px solid border-subtle`; ≤560 **:2473** `border-block-start 0`, except in sparse states, where `:2152` (0,3,2) wins and the line stays | `[&+li]:border-t [&+li]:border-(--border-subtle)` + `@max-[560px]/home:[&+li]:border-t-0` only when `!isSparse(state)` |
+| `a.a-gj-row` (≥761) | 357–362 `grid; cols 220px 170px minmax(0,1fr) 18px; align center; gap 24px; min-h 64 (1833 → 0 wins); padding 4px 20px; radius-tile; color text-body; transition bg fast, transform/box-shadow base`; 363 hover `bg surface-card; shadow-hover`; 364 focus `outline-offset -2px`; **c880a54c :2464** `padding-block space-3` wins over 1833/1838 (and over the lock rows' 2146) | `grid grid-cols-[220px_170px_minmax(0,1fr)_18px] items-center gap-6 min-h-0 px-5 py-3 rounded-(--radius-tile) text-(--text-body) no-underline transition-[background-color,transform,box-shadow] duration-(--dur-base) hover:bg-(--surface-card) hover:shadow-(--shadow-hover) focus-visible:outline-offset-[-2px] group/row` |
+| row ≤760 | 1264–1267 `cols minmax(0,1fr) auto; areas "n d" "j j"` | dead: fully overridden by the 561–760 rule and the ≤560 card rule below, so no class |
+| row 561–760 | 1739–1742 `cols minmax(160px,240px) minmax(0,1fr); areas "n j" "d j"; column-gap 20px; row-gap 2px; padding 12px 16px` (block = 12px from :2464) | `@min-[561px]/home:@max-[760px]/home:grid-cols-[minmax(160px,240px)_minmax(0,1fr)] @min-[561px]/home:@max-[760px]/home:[grid-template-areas:'n_j'_'d_j'] @min-[561px]/home:@max-[760px]/home:gap-x-5 @min-[561px]/home:@max-[760px]/home:gap-y-0.5 @min-[561px]/home:@max-[760px]/home:px-4` |
+| row ≤560: one card per subject | **c880a54c :2474** `.a-grades .a-gj-row` (0,2,0): `cols minmax(0,1fr); areas "n" "d" "j"; row-gap space-1; padding space-4; radius-inner; bg surface-card; box-shadow a-card-edge` (overrides 1762, 1838) | `@max-[560px]/home:grid-cols-[minmax(0,1fr)] @max-[560px]/home:[grid-template-areas:'n'_'d'_'j'] @max-[560px]/home:gap-y-1 @max-[560px]/home:p-4 @max-[560px]/home:rounded-(--radius-inner) @max-[560px]/home:bg-(--surface-card) @max-[560px]/home:shadow-(--a-card-edge)` |
 | `.a-gj-name` | 365 `flex; baseline; wrap; gap 2px 8px; min-w 0`; 1266 `grid-area n`; 1741 `561–760 align-self end` | `flex items-baseline flex-wrap gap-x-2 gap-y-0.5 min-w-0 @max-[760px]/home:[grid-area:n] @min-[561px]/home:@max-[760px]/home:self-end` |
 | `.a-gj-name b` | 366 `16px 700`; 1443 `@min 761 14px` | `text-[16px] font-bold @min-[761px]/home:text-[14px]` |
 | `.a-gj-dist` | 367 `14px 600 text-secondary`; 368 mono `text-body`; 1267 `grid-area d`; 1742 `561–760 align-self start` | `text-[14px] font-semibold text-(--text-secondary) [&_.a-mono]:text-(--text-body) @max-[760px]/home:[grid-area:d] @min-[561px]/home:@max-[760px]/home:self-start` (the `Mono` primitive gets `text-(--text-body)` directly) |
-| `.a-journey` | 282 `relative; h 64; margin-inline 18px`; 369/1444/1762 heights overridden; 1832 `block-size 40px; margin-block-end 0` (wins); 1743 `561–760 margin-block-start 8px`; 1268 `grid-area j` | `relative h-10 mx-[18px] mb-0 @max-[760px]/home:[grid-area:j] @min-[561px]/home:@max-[760px]/home:mt-2` |
+| `.a-journey` | 282 `relative; h 64; margin-inline 18px`; 1834 `margin-block-end 0`; 1745 `561–760 margin-block-start 8px`; 1268 `grid-area j`; **c880a54c :2465** `block-size 48px` (all widths); ≤560 **:2478** `block-size 44px` and **:2475** `margin-block space-3 0; margin-inline 16px` | `relative h-12 mx-[18px] mb-0 @max-[760px]/home:[grid-area:j] @min-[561px]/home:@max-[760px]/home:mt-2 @max-[560px]/home:h-11 @max-[560px]/home:mt-3 @max-[560px]/home:mx-4` |
 | `.a-j-line` | 283–286 `absolute; inset-inline -18px; top calc(68% - 2px); h 4px; radius pill; bg md-surface-highest` | `absolute -inset-x-[18px] top-[calc(68%-2px)] h-1 rounded-full bg-(--md-surface-highest)` |
 | `.a-j-trail` | 287–290 `absolute; top calc(68% - 5px); h 10px; radius pill; bg color-mix(primary 30%, transparent)` | `absolute top-[calc(68%-5px)] h-2.5 rounded-full bg-[color-mix(in_oklch,var(--md-primary)_30%,transparent)] origin-left` + inline `insetInlineStart`, `inlineSize` |
-| `.a-stone` | 291–296 `absolute; z 1; top 68%; translate(-50%,-50%); grid center; 34px (1445/1238 30px; 1833 28px wins); radius 50%; font 800 21px/1 font-ui; ls -0.02em; bg surface-card; color text-muted; inset 0 0 0 2px border-default` | `absolute z-[1] top-[68%] -translate-x-1/2 -translate-y-1/2 grid place-items-center size-7 rounded-full font-(family-name:--font-ui) text-[21px]/none font-extrabold tracking-[-0.02em]` + state classes below |
+| `.a-stone` | 291–296 `absolute; z 1; top 68%; translate(-50%,-50%); grid center; radius 50%; font 800 21px/1 font-ui; ls -0.02em; bg surface-card; color text-muted; inset 0 0 0 2px border-default`; size: **c880a54c :2466** `32px` wins over 30px (1240/1447) and 28px (1835) | `absolute z-[1] top-[68%] -translate-x-1/2 -translate-y-1/2 grid place-items-center size-8 rounded-full font-(family-name:--font-ui) text-[21px]/none font-extrabold tracking-[-0.02em]` + state classes below |
 | `.is-ahead` (default) | 295 | `bg-(--surface-card) text-(--text-muted) shadow-[inset_0_0_0_2px_var(--border-default)]` |
 | `.is-passed` | 297 `color white; box-shadow 0 0 0 3px surface-card`; 299–302 bg per grade | `text-white shadow-[0_0_0_3px_var(--surface-card)]` + `bg-(--sh-grade-c)` / `bg-(--sh-grade-b)` / `bg-(--sh-grade-a)` / `bg-(--sh-grade-astar)` |
 | `.is-next` | 298 `color text-body; inset 0 0 0 3px sh-grade-b`; 303 A → grade-a; 304 A* → astar (C uses B's ring: no rule) | `bg-(--surface-card) text-(--text-body)` + `shadow-[inset_0_0_0_3px_var(--sh-grade-b)]` (C, B) / `shadow-[inset_0_0_0_3px_var(--sh-grade-a)]` (A) / `shadow-[inset_0_0_0_3px_var(--sh-grade-astar)]` (A*) |
-| `.a-j-me` | 317–320 `absolute; z 2; top 68%; 18px (1834 → 14px wins); radius 50%; bg primary; shadow 0 0 0 3px surface-card; translate(-50%,-50%)` | `absolute z-[2] top-[68%] size-3.5 rounded-full bg-(--md-primary) shadow-[0_0_0_3px_var(--surface-card)] -translate-x-1/2 -translate-y-1/2` |
+| `.a-j-me` | 317–320 `absolute; z 2; top 68%; radius 50%; bg primary; shadow 0 0 0 3px surface-card; translate(-50%,-50%)`; size **c880a54c :2467** `16px` (wins over 18px and 1836's 14px) | `absolute z-[2] top-[68%] size-4 rounded-full bg-(--md-primary) shadow-[0_0_0_3px_var(--surface-card)] -translate-x-1/2 -translate-y-1/2` |
+| row hover replay (**c880a54c :2407-2419**, `prefers-reduced-motion: no-preference`) | `.a-gj-row:hover .a-j-trail { transform-origin 0 50% (rtl 100% 50%); animation gjGrow .8s a-ease-expo both }`; `.a-gj-row:hover .a-stone.is-passed { animation gjPop .4s a-ease-expo both }` + delays C .15s, B .35s, A .55s, A* .75s; `.a-gj-row:hover .a-j-me { animation gjLand .5s a-ease-expo .6s both }` | when `motion`: trail `group-hover/row:animate-[home-gj-grow_800ms_var(--ease-expo)_both] rtl:origin-right`; passed stone `group-hover/row:animate-[home-gj-pop_400ms_var(--ease-expo)_both]` + its `GJ_DELAY[g]` class; marker `group-hover/row:animate-[home-gj-land_500ms_var(--ease-expo)_600ms_both]` |
 | `.a-j-me-l` | 321–325 `absolute; bottom calc(100% + 8px); left 50%; translateX(-50%); padding 2px 6px; pill; bg primary; color on-primary; nowrap; 700 11px/1.2 mono; tabular`; 2225 `@max 560 bottom calc(100% + 10px)` | `absolute bottom-[calc(100%+8px)] left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded-full bg-(--md-primary) text-(--md-on-primary) whitespace-nowrap font-(family-name:--font-mono) text-[11px]/[1.2] font-bold tabular-nums @max-[560px]/home:bottom-[calc(100%+10px)]` |
 | `.a-gj-go` | 370 `color text-muted; transition transform base, color fast`; 371 row hover `translateX(3px); text-body`; 1269 `@max 760 display none` | `text-(--text-muted) transition-[transform,color] duration-(--dur-base) group-hover/row:translate-x-[3px] group-hover/row:text-(--text-body) @max-[760px]/home:hidden` |
-| `.a-gj-row-lock` | 2163 `padding-block 8px` (wins over 1831 and 1836: later); 2164 dist `text-muted`; 2165 hover wait `border primary; text-body` | add `py-2 @max-[560px]/home:py-2` to the row; dist gets `text-(--text-muted)`; wait gets `group-hover/row:border-(--md-primary) group-hover/row:text-(--text-body)` |
+| `.a-gj-row-lock` | 2146 `padding-block 8px` now loses to **c880a54c :2464** `padding-block space-3` (same specificity, later), so waiting rows share the row padding; 2147 dist `text-muted`; 2148 hover wait `border primary; text-body` | no padding class of its own; dist gets `text-(--text-muted)`; wait gets `group-hover/row:border-(--md-primary) group-hover/row:text-(--text-body)` |
 | `.a-gj-wait` | 2159–2162 `block; padding 8px 12px; 1.5px dashed border-default; radius-chip; text-secondary; 14px; lh 1.4`; 2166–2168 `@max 959 grid-area j; margin-block 8px` | `block px-3 py-2 border-[1.5px] border-dashed border-(--border-default) rounded-(--radius-chip) text-(--text-secondary) text-[14px]/[1.4] @max-[959px]/home:[grid-area:j] @max-[959px]/home:my-2` |
 
 Motion (537–546, `@media (prefers-reduced-motion: no-preference)` scope via `useMotionOn()`): trail `aDraw 500ms expo 150ms both`; marker `aSlide` from the first-paper position; passed stones `aAck 240ms` delayed by when the marker reaches them; next stone `aGlow` 350ms at 550ms. These become `@theme` keyframes in Step 4.
@@ -5381,21 +5647,9 @@ describe("nextGrade", () => {
 Run: `cd web && npx vitest run tests/unit/studentHomeGeometry.test.ts`
 Expected: FAIL, `Cannot find module '@/portals/student/home/geometry'`.
 
-- [ ] **Step 2: Implement `states.ts` and `geometry.ts`**
+- [ ] **Step 2: Implement `geometry.ts`**
 
-`web/src/portals/student/home/states.ts`:
-
-```ts
-/* State families design A gates on (shell.css:68-74, variant-a.css:2049-2071). */
-import type { DataState } from "./facts"
-
-export const MANY_PAPERS_STATES: ReadonlySet<DataState> = new Set<DataState>([
-  "populated", "result-in", "marking", "no-plan", "no-exams", "streak-zero",
-])
-
-export const isSparse = (s: DataState): boolean => s.startsWith("sparse")
-export const isManyPapers = (s: DataState): boolean => MANY_PAPERS_STATES.has(s)
-```
+(`states.ts` already exists from Task 12.)
 
 `web/src/portals/student/home/geometry.ts`:
 
@@ -5458,10 +5712,11 @@ const html = (el: ReactElement) => renderToStaticMarkup(createElement(MemoryRout
 const labels = (markup: string) => [...markup.matchAll(/aria-label="([^"]+)"/g)].map((m) => m[1].replaceAll("&#x27;", "'"))
 
 describe("GradesList", () => {
-  it("populated: closest exam first, design aria-labels verbatim, key shown", () => {
+  it("populated: closest exam first, design aria-labels verbatim, no labels key", () => {
     const out = html(createElement(GradesList, { view: viewOf("populated") }))
     expect(out).toContain(">Your grades</h2>")
-    expect(out).toContain("What do the labels mean?")
+    expect(out).not.toContain("What do the labels mean?")
+    expect(out).not.toContain("<details")
     expect(labels(out)).toEqual([
       "Physics, 0625: 48%, grade C, 4% from a B. Boundaries estimated: no exact boundary for this paper yet; based on past sessions. C 45%, B 52%, A 66%, A* 80%. Started at 41%.",
       "Mathematics, 0580: 76%, grade A, 9% from an A*. C 42%, B 55%, A 70%, A* 85%. Started at 49%.",
@@ -5469,7 +5724,15 @@ describe("GradesList", () => {
     ])
   })
 
-  it("one-paper: no key, no started/first suffix", () => {
+  it("phone cards: list and rows carry the ≤560 card classes; sparse keeps the row separator", () => {
+    const pop = html(createElement(GradesList, { view: viewOf("populated") }))
+    expect(pop).toContain("@max-[560px]/home:rounded-(--radius-inner)")
+    expect(pop).toContain("@max-[560px]/home:[&amp;+li]:border-t-0")
+    const sparse = html(createElement(GradesList, { view: viewOf("sparse2") }))
+    expect(sparse).not.toContain("@max-[560px]/home:[&amp;+li]:border-t-0")
+  })
+
+  it("one-paper: no started/first suffix", () => {
     const out = html(createElement(GradesList, { view: viewOf("one-paper") }))
     expect(out).not.toContain("What do the labels mean?")
     expect(labels(out)).toEqual(["Mathematics, 0580: 65%, grade B, 5% from an A. C 42%, B 55%, A 70%, A* 85%."])
@@ -5510,9 +5773,15 @@ Append inside the `@theme` block of `web/src/index.css` that holds animations. I
   --animate-home-glow: home-glow 350ms var(--ease-expo) both;
   @keyframes home-draw { from { transform: scaleX(0) } }
   @keyframes home-slide { from { inset-inline-start: var(--from) } }
-  @keyframes home-ack { 0%, 100% { transform: translate(-50%, -50%) } 45% { transform: translate(-50%, -50%) scale(1.08) } }
+  @keyframes home-ack { 0%, 100% { scale: 1 } 45% { scale: 1.08 } }
   @keyframes home-glow { 0% { opacity: 0.9; transform: scale(1) } 100% { opacity: 0; transform: scale(1.6) } }
+  /* Hover replay (variant-a.css c880a54c :2417-2419 gjGrow / gjPop / gjLand). */
+  @keyframes home-gj-grow { from { transform: scaleX(0) } }
+  @keyframes home-gj-pop { 0% { scale: 0.6 } 60% { scale: 1.15 } 100% { scale: 1 } }
+  @keyframes home-gj-land { from { translate: -50% -160%; opacity: 0 } }
 ```
+
+Why `scale` and `translate` instead of the design's `transform: translate(-50%, -50%) scale(…)`: Tailwind v4's `-translate-x-1/2 -translate-y-1/2` centre the stone and the marker through the separate `translate` property. A keyframe that animates `transform: translate(-50%, -50%)` would add a second half-size shift on top for the length of the animation. Animating `scale` gives the design's frames exactly; `home-gj-land` animates `translate` itself, from the design's `translate(-50%, -160%)` back to the utility's `-50% -50%`.
 
 `home-slide` animates `inset-inline-start` from the first-paper position instead of the preview's measured `--from` pixel offset (`variant-a.js measureJourneys`). The start and end frames are the same and no script measures anything. `--ease-expo` is the app token matching `--a-ease-expo: cubic-bezier(0.16, 1, 0.3, 1)` (`variant-a.css:7`). If the token map shows the values differ, use `cubic-bezier(0.16,1,0.3,1)` literally.
 
@@ -5528,19 +5797,29 @@ import type { DataState, HomeView, SubjectView } from "./facts"
 import { indefinite } from "./format"
 import { GRADE_STOPS, journeyPos, nextGrade } from "./geometry"
 import { Code, Est, Icon, Mono, useInView, useMotionOn } from "./primitives"
-import { isManyPapers, isSparse } from "./states"
+import { isSparse } from "./states"
 
 const NO_DATE = "9999-12-31"
 
+// Tiers are disjoint (Task 10 rule): ≥761 base, 561–760, ≤560 (one card per subject, c880a54c :2474).
 const ROW = cn(
-  "group/row grid grid-cols-[220px_170px_minmax(0,1fr)_18px] items-center gap-6 min-h-0 px-5 py-1",
+  "group/row grid grid-cols-[220px_170px_minmax(0,1fr)_18px] items-center gap-6 min-h-0 px-5 py-3",
   "rounded-(--radius-tile) text-(--text-body) no-underline",
   "transition-[background-color,transform,box-shadow] duration-(--dur-base)",
   "hover:bg-(--surface-card) hover:shadow-(--shadow-hover) focus-visible:outline-offset-[-2px]",
-  "@max-[760px]/home:grid-cols-[minmax(0,1fr)_auto] @max-[760px]/home:[grid-template-areas:'n_d'_'j_j'] @max-[760px]/home:gap-y-1 @max-[760px]/home:px-4",
-  "@min-[561px]/home:@max-[760px]/home:grid-cols-[minmax(160px,240px)_minmax(0,1fr)] @min-[561px]/home:@max-[760px]/home:[grid-template-areas:'n_j'_'d_j'] @min-[561px]/home:@max-[760px]/home:gap-x-5 @min-[561px]/home:@max-[760px]/home:gap-y-0.5",
-  "@max-[560px]/home:gap-y-0 @max-[560px]/home:pt-2 @max-[560px]/home:pb-1",
+  "@min-[561px]/home:@max-[760px]/home:grid-cols-[minmax(160px,240px)_minmax(0,1fr)] @min-[561px]/home:@max-[760px]/home:[grid-template-areas:'n_j'_'d_j'] @min-[561px]/home:@max-[760px]/home:gap-x-5 @min-[561px]/home:@max-[760px]/home:gap-y-0.5 @min-[561px]/home:@max-[760px]/home:px-4",
+  "@max-[560px]/home:grid-cols-[minmax(0,1fr)] @max-[560px]/home:[grid-template-areas:'n'_'d'_'j'] @max-[560px]/home:gap-y-1 @max-[560px]/home:p-4 @max-[560px]/home:rounded-(--radius-inner) @max-[560px]/home:bg-(--surface-card) @max-[560px]/home:shadow-(--a-card-edge)",
 )
+// One card per subject on phones; sparse states keep the separator (the preview's :2152 out-ranks :2473).
+const itemClass = (sparse: boolean): string =>
+  cn("[&+li]:border-t [&+li]:border-(--border-subtle)", !sparse && "@max-[560px]/home:[&+li]:border-t-0")
+// Hover replay: passed stones pop as the trail reaches them (c880a54c :2411-2414).
+const GJ_DELAY: Record<string, string> = {
+  C: "group-hover/row:[animation-delay:150ms]",
+  B: "group-hover/row:[animation-delay:350ms]",
+  A: "group-hover/row:[animation-delay:550ms]",
+  "A*": "group-hover/row:[animation-delay:750ms]",
+}
 const NAME = "flex items-baseline flex-wrap gap-x-2 gap-y-0.5 min-w-0 @max-[760px]/home:[grid-area:n] @min-[561px]/home:@max-[760px]/home:self-end"
 const NAME_B = "text-[16px] font-bold @min-[761px]/home:text-[14px]"
 const DIST = "text-[14px] font-semibold text-(--text-secondary) @max-[760px]/home:[grid-area:d] @min-[561px]/home:@max-[760px]/home:self-start"
@@ -5594,13 +5873,13 @@ function Journey({ s, motion }: { s: SubjectView; motion: boolean }) {
   const from = s.papers >= 2 && s.firstPct !== null ? journeyPos(s.firstPct, b) : null
   const next = nextGrade(pct, b)
   return (
-    <div className="relative h-10 mx-[18px] mb-0 @max-[760px]/home:[grid-area:j] @min-[561px]/home:@max-[760px]/home:mt-2" aria-hidden="true">
+    <div className="relative h-12 mx-[18px] mb-0 @max-[760px]/home:[grid-area:j] @min-[561px]/home:@max-[760px]/home:mt-2 @max-[560px]/home:h-11 @max-[560px]/home:mt-3 @max-[560px]/home:mx-4" aria-hidden="true">
       <span className="absolute -inset-x-[18px] top-[calc(68%-2px)] h-1 rounded-full bg-(--md-surface-highest)" />
       {from !== null && (
         <span
           className={cn(
-            "absolute top-[calc(68%-5px)] h-2.5 rounded-full origin-left bg-[color-mix(in_oklch,var(--md-primary)_30%,transparent)]",
-            motion && "animate-home-draw [animation-delay:150ms]",
+            "absolute top-[calc(68%-5px)] h-2.5 rounded-full origin-left rtl:origin-right bg-[color-mix(in_oklch,var(--md-primary)_30%,transparent)]",
+            motion && "animate-home-draw [animation-delay:150ms] group-hover/row:animate-[home-gj-grow_800ms_var(--ease-expo)_both]",
           )}
           style={{ insetInlineStart: `${from}%`, inlineSize: `${round2(me - from)}%` }}
         />
@@ -5613,14 +5892,17 @@ function Journey({ s, motion }: { s: SubjectView; motion: boolean }) {
             key={g}
             data-grade={g}
             className={cn(
-              "absolute z-[1] top-[68%] -translate-x-1/2 -translate-y-1/2 grid place-items-center size-7 rounded-full",
+              "absolute z-[1] top-[68%] -translate-x-1/2 -translate-y-1/2 grid place-items-center size-8 rounded-full",
               "font-(family-name:--font-ui) text-[21px]/none font-extrabold tracking-[-0.02em]",
               state === "passed" && cn("text-white shadow-[0_0_0_3px_var(--surface-card)]", PASSED_BG[g]),
               state === "next" && cn("bg-(--surface-card) text-(--text-body)", NEXT_RING[g]),
               state === "ahead" && "bg-(--surface-card) text-(--text-muted) shadow-[inset_0_0_0_2px_var(--border-default)]",
-              motion && state === "passed" && from !== null && at > from && "animate-home-ack",
+              motion && state === "passed" && from !== null && at > from && "animate-home-ack [animation-delay:var(--ack-delay)]",
+              motion && state === "passed" && cn("group-hover/row:animate-[home-gj-pop_400ms_var(--ease-expo)_both]", GJ_DELAY[g]),
             )}
-            style={{ insetInlineStart: `${at}%`, animationDelay: motion ? `${150 + reachAt}ms` : undefined }}
+            // The entrance delay rides in a variable, not an inline animation-delay: an inline
+            // style would beat the hover delay classes and break the C→B→A→A* pop order.
+            style={{ insetInlineStart: `${at}%`, ["--ack-delay" as string]: motion ? `${150 + reachAt}ms` : undefined } as CSSProperties}
           >
             {g}
             {motion && state === "next" && (
@@ -5631,8 +5913,9 @@ function Journey({ s, motion }: { s: SubjectView; motion: boolean }) {
       })}
       <span
         className={cn(
-          "absolute z-[2] top-[68%] size-3.5 rounded-full bg-(--md-primary) shadow-[0_0_0_3px_var(--surface-card)] -translate-x-1/2 -translate-y-1/2",
+          "absolute z-[2] top-[68%] size-4 rounded-full bg-(--md-primary) shadow-[0_0_0_3px_var(--surface-card)] -translate-x-1/2 -translate-y-1/2",
           motion && from !== null && "animate-home-slide [animation-delay:150ms]",
+          motion && "group-hover/row:animate-[home-gj-land_500ms_var(--ease-expo)_600ms_both]",
         )}
         style={{ insetInlineStart: `${me}%`, ["--from" as string]: from !== null ? `${from}%` : undefined } as CSSProperties}
       >
@@ -5649,7 +5932,7 @@ const round2 = (n: number): number => Math.round(n * 100) / 100
 function GradedRow({ s, state, motion }: { s: SubjectView; state: DataState; motion: boolean }) {
   const next = nextGrade(s.pct!, s.boundaries!)
   return (
-    <li className="[&+li]:border-t [&+li]:border-(--border-subtle)">
+    <li className={itemClass(isSparse(state))}>
       <Link className={ROW} to={`/student/subject/${s.code}`} aria-label={gradeRowLabel(s, state)}>
         <span className={NAME}>
           <b className={NAME_B}>{s.name}</b>
@@ -5675,8 +5958,8 @@ function GradedRow({ s, state, motion }: { s: SubjectView; state: DataState; mot
 function WaitingRow({ s, view }: { s: SubjectView; view: HomeView }) {
   const marking = view.upload?.subjectCode === s.code
   return (
-    <li className="[&+li]:border-t [&+li]:border-(--border-subtle)">
-      <Link className={cn(ROW, "py-2 @max-[560px]/home:py-2")} to="/student/correct">
+    <li className={itemClass(isSparse(view.state))}>
+      <Link className={ROW} to="/student/correct">
         <span className={NAME}>
           <b className={NAME_B}>{s.name}</b>
           <Code>{s.code}</Code>
@@ -5706,26 +5989,7 @@ export function GradesList({ view }: { view: HomeView }) {
       <h2 id="a-grades-h" className="m-0 mb-3 font-(family-name:--font-ui) text-[21px]/[1.2] font-extrabold tracking-[-0.02em] text-(--text-body)">
         Your grades
       </h2>
-      {isManyPapers(view.state) && (
-        <details className="group/key -mt-2 mb-3 text-[14px] text-(--text-secondary)">
-          <summary className="inline-flex items-center min-h-11 px-1 rounded-(--radius-chip) font-bold cursor-pointer list-none [&::-webkit-details-marker]:hidden after:content-['+'] after:ml-2 after:font-(family-name:--font-mono) group-open/key:after:content-['\2212'] hover:text-(--md-primary)">
-            What do the labels mean?
-          </summary>
-          <dl className="grid gap-2 m-0 px-4 py-3 rounded-(--radius-inner) bg-(--md-surface-low) @max-[560px]/home:gap-3">
-            {[
-              [<Est key="e" />, "We have no published boundaries for this paper yet, so grades use boundaries from past sessions."],
-              ["Dashed outline", "The next grade you are working towards."],
-              ["Dashed line in Your Garden", "Where a subject started, on your first paper."],
-            ].map(([dt, dd], i) => (
-              <div key={i} className="grid grid-cols-[minmax(7rem,max-content)_minmax(0,1fr)] gap-3 items-baseline @max-[560px]/home:grid-cols-[minmax(0,1fr)]">
-                <dt className="text-(--text-body) font-bold">{dt}</dt>
-                <dd className="m-0">{dd}</dd>
-              </div>
-            ))}
-          </dl>
-        </details>
-      )}
-      <ul className="m-0 p-1 list-none rounded-(--radius-card) bg-(--surface-card) shadow-(--a-card-edge)">
+      <ul className="m-0 p-2 list-none rounded-(--radius-card) bg-(--surface-card) shadow-(--a-card-edge) @max-[560px]/home:grid @max-[560px]/home:gap-3 @max-[560px]/home:p-0 @max-[560px]/home:bg-transparent @max-[560px]/home:shadow-none">
         {graded(view).map((s) => (
           <GradedRow key={s.code} s={s} state={view.state} motion={motion} />
         ))}
@@ -5757,21 +6021,22 @@ Run: `cd web && node scripts/home-drift.mjs --only overview:grades`
 Expected: `overview:grades PASS 120/120` (12 states × 5 widths × 2 themes).
 
 On any FAIL: open the diff PNG it names. The usual causes are:
-- a stone or marker off by a pixel: check `journeyPos` rounding (2 decimals) and the 28px stone size;
-- a row height off: check the cascade rows above (1831 `padding-block 4px`, 2163 lock rows 8px);
+- a stone or marker off by a pixel: check `journeyPos` rounding (2 decimals), the 32px stone and 16px marker (`c880a54c :2466-2467`);
+- a row height off: check the relaxed rows (`:2464` `padding-block 12px` for graded and waiting rows alike, journey 48px, 44px on phones);
+- phone (390) scenes: each subject is its own card (16px padding, 12px gaps, radius-inner); in sparse states the 1px separator above cards 2+ is expected (see "Design facts");
 - grade C colour: `--sh-grade-c` is overridden to `oklch(0.47 0.09 75)` / dark `oklch(0.49 0.09 75)` (`variant-a.css:1870-1871`); the token map must carry the override.
 
 Fix and re-run until it passes. Differences the app cannot avoid (font hinting, sub-pixel anti-aliasing at a fractional `left`) must stay under 15% and get a drift-log row at Task 19.
 
 - [ ] **Step 9: Motion check**
 
-Open `/student/home-next` with the `populated` mocks in a normal browser (motion on). Watch the trails draw, the markers slide from the first paper and the passed stones swell once in order. Then set reduced motion in DevTools (Rendering → `prefers-reduced-motion: reduce`), reload, and confirm nothing moves.
+Open `/student/home-next` with the `populated` mocks in a normal browser (motion on). Watch the trails draw, the markers slide from the first paper and the passed stones swell once in order. Then hover each row: the trail regrows from the first paper, the passed stones pop C, B, A, A* in that order, and the marker drops in last, without the stones jumping sideways (that would mean a keyframe is animating `transform: translate`). Compare side by side with `student-home-a.html?state=populated` hovering the same row. Then set reduced motion in DevTools (Rendering → `prefers-reduced-motion: reduce`), reload, hover again, and confirm nothing moves.
 
 - [ ] **Step 10: Commit**
 
 ```bash
-cd web && /home/sico/Code/Lemely/.venv/bin/pre-commit run --files src/portals/student/home/states.ts src/portals/student/home/geometry.ts src/portals/student/home/GradesList.tsx src/portals/student/home/StudentHome.tsx src/index.css scripts/home-drift.mjs tests/unit/studentHomeGeometry.test.ts tests/unit/studentHomeMarkup.test.ts
-git commit -S -m "feat(web): student home grades list (design A journeys)" -- web/src/portals/student/home/states.ts web/src/portals/student/home/geometry.ts web/src/portals/student/home/GradesList.tsx web/src/portals/student/home/StudentHome.tsx web/src/index.css web/scripts/home-drift.mjs web/tests/unit/studentHomeGeometry.test.ts web/tests/unit/studentHomeMarkup.test.ts
+cd web && /home/sico/Code/Lemely/.venv/bin/pre-commit run --files src/portals/student/home/geometry.ts src/portals/student/home/GradesList.tsx src/portals/student/home/StudentHome.tsx src/index.css scripts/home-drift.mjs tests/unit/studentHomeGeometry.test.ts tests/unit/studentHomeMarkup.test.ts
+git commit -S -m "feat(web): student home grades list (design A journeys)" -- web/src/portals/student/home/geometry.ts web/src/portals/student/home/GradesList.tsx web/src/portals/student/home/StudentHome.tsx web/src/index.css web/scripts/home-drift.mjs web/tests/unit/studentHomeGeometry.test.ts web/tests/unit/studentHomeMarkup.test.ts
 ```
 
 ---
@@ -5786,7 +6051,7 @@ git commit -S -m "feat(web): student home grades list (design A journeys)" -- we
 - Test: `web/tests/unit/studentHomeMarkup.test.ts` (append)
 
 **Interfaces:**
-- Consumes: `HomeView`, `WeakTopicView`, `DataState` (Task 8); `isManyPapers`, `isSparse` (`states.ts`, Task 14); `Code`, `Icon`, `Mono`, `useMotionOn`, `useInView` (Task 10); `overviewScenes` (Task 9).
+- Consumes: `HomeView`, `WeakTopicView`, `DataState` (Task 8); `isManyPapers`, `isSparse` (`states.ts`, Task 12); `Code`, `Icon`, `Mono`, `useMotionOn`, `useInView` (Task 10); `overviewScenes` (Task 9).
 - Produces: `export function PracticeTargets(props: { view: HomeView }): JSX.Element` (root `<section data-home="weak">`); `export function laneLabel(t: WeakTopicView, i: number, view: HomeView): string`.
 
 **Design facts this task encodes** (`page-a.txt` 524–656, `variant-a.css` 597–680, 1680–1695, 1837–1843, 2170–2174):
@@ -5816,7 +6081,7 @@ git commit -S -m "feat(web): student home grades list (design A journeys)" -- we
 | Element | Design rule (line: declarations) | Tailwind classes |
 |---|---|---|
 | `section.a-sec` / `h2.a-sec-h` | as Task 14 (591, 592–595, 1226, 1439) | same strings as Task 14 |
-| `p.a-sec-sub.a-secure-note` | 382 `margin: -8px 0 12px; 14px; text-secondary`; 383 mono `text-body` | `-mt-2 mb-3 text-[14px] text-(--text-secondary)`; `Mono` gets `text-(--text-body)`; `b` stays bold (UA) |
+| `p.a-sec-sub.a-secure-note` | 382 `margin: -8px 0 12px; 14px; text-secondary`; 383 mono `text-body`; **c880a54c :384** `max-inline-size 70ch`; **:385** ≤760 `.a-secure-note { padding-inline space-3 }` (lines up with the card content) | `-mt-2 mb-3 max-w-[70ch] text-[14px] text-(--text-secondary)` + secure note `@max-[760px]/home:px-3`; `Mono` gets `text-(--text-body)`; `b` stays bold (UA) |
 | `.a-ruler` | 599–604 `--lane-cols: 224px minmax(0,1fr) 104px 172px 18px; flex col; gap 12px; padding 20px 24px; radius-card; bg surface-card; shadow a-card-edge`; 1447 `@min 761 padding 16px 20px; radius-tile`; 1272 `@max 760 padding 16px 12px; gap 12px` | `flex flex-col gap-3 px-6 py-5 rounded-(--radius-card) bg-(--surface-card) shadow-(--a-card-edge) @min-[761px]/home:px-5 @min-[761px]/home:py-4 @min-[761px]/home:rounded-(--radius-tile) @max-[760px]/home:px-3 @max-[760px]/home:py-4` |
 | `.a-scale` | 626 `grid; cols lane-cols; gap 16px; padding-inline 12px`; 1273 `@max 760 cols minmax(0,1fr); padding-inline 12px 24px` | `grid grid-cols-[224px_minmax(0,1fr)_104px_172px_18px] gap-4 px-3 @max-[760px]/home:grid-cols-[minmax(0,1fr)] @max-[760px]/home:pr-6` |
 | `.a-scale-gap` | 1274 `@max 760 display none` | `@max-[760px]/home:hidden` |
@@ -5824,9 +6089,9 @@ git commit -S -m "feat(web): student home grades list (design A journeys)" -- we
 | axis `span` | 628–633 `absolute; top 0; translateX(-50%); nowrap; 600 11px/1 mono; text-muted`; first `transform none`; last `translateX(-100%)`; 634 `.is-secure` `a-success-text` | `absolute top-0 -translate-x-1/2 whitespace-nowrap font-(family-name:--font-mono) text-[11px]/none font-semibold text-(--text-muted)`; first: `translate-x-0`; last: `-translate-x-full`; secure: `text-(--a-success-text)` |
 | `ul.a-lanes` | 636 `margin 0; padding 0; list-style none` | `m-0 p-0 list-none` |
 | `li + li` | 637 `border-top 1px border-subtle`; 609 after `.is-top` `transparent` | `[&+li]:border-t [&+li]:border-(--border-subtle)`; the li after top adds `border-t-transparent` |
-| lane `a` (desktop) | 638–643 `grid; cols lane-cols; gap 16px; align center; min-h 48px (1448 @min 761 44px); padding 4px 12px; radius-chip; text-body; no underline`; 374 transition bg fast, transform/shadow base; 375 hover `shadow-hover` (bg overridden by 646); 646 hover `bg surface-hover-tint`; 647 focus `outline-offset -2px` | `group/lane-a grid grid-cols-[224px_minmax(0,1fr)_104px_172px_18px] gap-4 items-center min-h-12 @min-[761px]/home:min-h-11 px-3 py-1 rounded-(--radius-chip) text-(--text-body) no-underline transition-[background-color,transform,box-shadow] duration-(--dur-base) hover:bg-(--surface-hover-tint) hover:shadow-(--shadow-hover) focus-visible:outline-offset-[-2px]` |
-| lane `a` ≤760 | 1276–1279 `cols minmax(0,1fr) auto; areas "n n" "t t" "c d"; row-gap 4px; padding 12px 24px 12px 12px` | `@max-[760px]/home:grid-cols-[minmax(0,1fr)_auto] @max-[760px]/home:[grid-template-areas:'n_n'_'t_t'_'c_d'] @max-[760px]/home:gap-y-1 @max-[760px]/home:py-3 @max-[760px]/home:pl-3 @max-[760px]/home:pr-6` |
-| lane `a` ≤560 | 1838–1840 `areas "n c" "t t"; row-gap 0; padding-block 8px`; 1842 top lane `areas "n c" "t t" "d d"` | `@max-[560px]/home:[grid-template-areas:'n_c'_'t_t'] @max-[560px]/home:gap-y-0 @max-[560px]/home:py-2`; top lane: `@max-[560px]/home:[grid-template-areas:'n_c'_'t_t'_'d_d']` |
+| lane `a` (all widths) | 638–643 `grid; cols lane-cols; align center; radius-chip; text-body; no underline`; 374 transition bg fast, transform/shadow base; 375 hover `shadow-hover` (bg overridden by 646); 646 hover `bg surface-hover-tint`; 647 focus `outline-offset -2px`; **c880a54c :2468** (relaxed, later than every earlier lane rule at the same specificity) `min-block-size 56px; padding space-3 space-4; gap space-5` (both gaps 20px, so the ≤760 row-gap 4px at 1281 and its padding are overridden) | `group/lane-a grid grid-cols-[224px_minmax(0,1fr)_104px_172px_18px] gap-5 items-center min-h-14 px-4 py-3 rounded-(--radius-chip) text-(--text-body) no-underline transition-[background-color,transform,box-shadow] duration-(--dur-base) hover:bg-(--surface-hover-tint) hover:shadow-(--shadow-hover) focus-visible:outline-offset-[-2px]` |
+| lane `a` ≤760 | 1278–1281 `cols minmax(0,1fr) auto; areas "n n" "t t" "c d"` (its row-gap and padding lose to :2468) | `@max-[760px]/home:grid-cols-[minmax(0,1fr)_auto] @max-[760px]/home:[grid-template-areas:'n_n'_'t_t'_'c_d']` |
+| lane `a` ≤560 | 1840–1842 `areas "n c" "t t"` (its row-gap 0 and padding-block 8px lose to the next rule); 1844 top lane `areas "n c" "t t" "d d"`; **c880a54c :2479** `min-block-size 52px; padding-block space-3; row-gap space-1` | `@max-[560px]/home:[grid-template-areas:'n_c'_'t_t'] @max-[560px]/home:min-h-[52px] @max-[560px]/home:gap-y-1`; top lane: `@max-[560px]/home:[grid-template-areas:'n_c'_'t_t'_'d_d']` |
 | `li.is-top > a` | 607 `bg color-mix(primary-container 55%, transparent)`; 608 hover `bg primary-container` | `bg-[color-mix(in_oklch,var(--md-primary-container)_55%,transparent)] hover:bg-(--md-primary-container)` |
 | `.a-lane-name` | 648 `flex baseline wrap gap 2px 8px min-w 0`; 649 `b 16px 700` (1443 @min 761 14px); 1280 `grid-area n` | `flex items-baseline flex-wrap gap-x-2 gap-y-0.5 min-w-0 @max-[760px]/home:[grid-area:n]`; b: `text-[16px] font-bold @min-[761px]/home:text-[14px]` |
 | `.a-lane-act` | 611–614 `flex-basis 100%; inline-flex; center; gap 4px; mt 2px; nowrap; 700 14px/1.3 font-ui; primary`; 615 icon 16px transition; 616 hover icon `translateX(3px)`; 621–624 visibility/opacity, transition opacity fast, visibility delayed; 617 hidden when action is practice | `basis-full inline-flex items-center gap-1 mt-0.5 whitespace-nowrap font-(family-name:--font-ui) text-[14px]/[1.3] font-bold text-(--md-primary) transition-[opacity,visibility] duration-(--dur-fast)`; shown: `visible opacity-100`; hidden: `invisible opacity-0`; icon: `size-4 transition-transform duration-(--dur-base) group-hover/lane-a:translate-x-[3px]` |
@@ -5839,7 +6104,7 @@ git commit -S -m "feat(web): student home grades list (design A journeys)" -- we
 | `.a-chg` | 676 `inline-flex; center; gap 4px; 600 14px/1.2 font-ui; text-secondary`; 677 up `a-success-text`; 678 icon 16px stroke 2.2; 679 down icon `rotate(180deg)`; 1282 `grid-area c` | `inline-flex items-center gap-1 font-(family-name:--font-ui) text-[14px]/[1.2] font-semibold text-(--text-secondary) @max-[760px]/home:[grid-area:c]`; up: `text-(--a-success-text)`; icon: `size-4 [stroke-width:2.2]` |
 | `.a-drop` | 680 `14px 500 text-muted; text-align end; nowrap`; 1283 `grid-area d`; 1841 `@max 560 none`; 1843 top lane `block` | `text-[14px] font-medium text-(--text-muted) text-end whitespace-nowrap @max-[760px]/home:[grid-area:d] @max-[560px]/home:hidden`; top lane: `@max-[560px]/home:block` |
 | `.a-lane-go` | 376 `primary; opacity 0; translateX(-4px); transition opacity, transform base`; 377 hover/focus-visible `opacity 1; transform none`; 618 hidden unless action is practice; 1270 `@max 760 none` | `text-(--md-primary) opacity-0 -translate-x-1 transition-[opacity,transform] duration-(--dur-base) group-hover/lane-a:opacity-100 group-hover/lane-a:translate-x-0 group-focus-visible/lane-a:opacity-100 group-focus-visible/lane-a:translate-x-0 @max-[760px]/home:hidden`; rendered only when `view.action.kind === "practice"` |
-| `.a-lane-lock p` | 2170–2173 `margin 0; padding 12px 16px; 1.5px dashed border-default; radius-chip; text-secondary; 14px; lh 1.4` | `m-0 px-4 py-3 border-[1.5px] border-dashed border-(--border-default) rounded-(--radius-chip) text-(--text-secondary) text-[14px]/[1.4]` |
+| `.a-lane-lock p` | 2153–2156 `margin 0; padding 12px 16px; 1.5px dashed border-default; radius-chip; text-secondary; 14px; lh 1.4`; **c880a54c** `max-inline-size 60ch` | `m-0 max-w-[60ch] px-4 py-3 border-[1.5px] border-dashed border-(--border-default) rounded-(--radius-chip) text-(--text-secondary) text-[14px]/[1.4]` |
 
 Motion (1680–1694, `useMotionOn() && inView`): the band grows from the 70% line (`rlBand .6s`). Each marker and its label race in from 0% to their score (`rlRace .9s`, delay `.35s + i·90ms`). The tail draws (`aDraw .5s`, delay `1.05s + i·90ms`). Chip and drop fade up (`rlIn .4s`, delay `1.1s + i·90ms`).
 
@@ -5935,8 +6200,8 @@ import { isManyPapers } from "./states"
 
 const COLS = "grid-cols-[224px_minmax(0,1fr)_104px_172px_18px]"
 const FIRST_TARGETS = new Set(["sparse0", "sparse1"])
-const SUB = "-mt-2 mb-3 text-[14px] text-(--text-secondary)"
-const SLOT = "m-0 px-4 py-3 border-[1.5px] border-dashed border-(--border-default) rounded-(--radius-chip) text-(--text-secondary) text-[14px]/[1.4]"
+const SUB = "-mt-2 mb-3 max-w-[70ch] text-[14px] text-(--text-secondary)"
+const SLOT = "m-0 max-w-[60ch] px-4 py-3 border-[1.5px] border-dashed border-(--border-default) rounded-(--radius-chip) text-(--text-secondary) text-[14px]/[1.4]"
 
 function subjectPapers(view: HomeView, code: string): number {
   return view.subjects.find((s) => s.code === code)?.papers ?? 0
@@ -5992,11 +6257,11 @@ function Lane({ t, i, view, shown, onActive, motion }: {
         to={`/student/practice/${t.subjectCode}`}
         aria-label={laneLabel(t, i, view)}
         className={cn(
-          "group/lane-a grid gap-4 items-center min-h-12 @min-[761px]/home:min-h-11 px-3 py-1 rounded-(--radius-chip) text-(--text-body) no-underline",
+          "group/lane-a grid gap-5 items-center min-h-14 px-4 py-3 rounded-(--radius-chip) text-(--text-body) no-underline",
           COLS,
           "transition-[background-color,transform,box-shadow] duration-(--dur-base) hover:bg-(--surface-hover-tint) hover:shadow-(--shadow-hover) focus-visible:outline-offset-[-2px]",
-          "@max-[760px]/home:grid-cols-[minmax(0,1fr)_auto] @max-[760px]/home:[grid-template-areas:'n_n'_'t_t'_'c_d'] @max-[760px]/home:gap-y-1 @max-[760px]/home:py-3 @max-[760px]/home:pl-3 @max-[760px]/home:pr-6",
-          "@max-[560px]/home:[grid-template-areas:'n_c'_'t_t'] @max-[560px]/home:gap-y-0 @max-[560px]/home:py-2",
+          "@max-[760px]/home:grid-cols-[minmax(0,1fr)_auto] @max-[760px]/home:[grid-template-areas:'n_n'_'t_t'_'c_d']",
+          "@max-[560px]/home:[grid-template-areas:'n_c'_'t_t'] @max-[560px]/home:min-h-[52px] @max-[560px]/home:gap-y-1",
           top && "bg-[color-mix(in_oklch,var(--md-primary-container)_55%,transparent)] hover:bg-(--md-primary-container) @max-[560px]/home:[grid-template-areas:'n_c'_'t_t'_'d_d']",
         )}
       >
@@ -6094,7 +6359,7 @@ export function PracticeTargets({ view }: { view: HomeView }) {
         {FIRST_TARGETS.has(view.state) ? "Your first practice targets" : "Weak topics"}
       </h2>
       {!waitingForFirst && (
-        <p className={SUB}>
+        <p className={cn(SUB, "@max-[760px]/home:px-3")}>
           A topic counts as <b>secure</b> at <Mono className="text-(--text-body)">70%</Mono> or more of its marks.
         </p>
       )}
@@ -6194,7 +6459,7 @@ git commit -S -m "feat(web): student home practice targets (design A mastery rul
 - Test: `web/tests/unit/studentHomeGeometry.test.ts`, `web/tests/unit/studentHomeMarkup.test.ts` (append)
 
 **Interfaces:**
-- Consumes: `HomeView`, `SubjectView` (Task 8); `dayMonth`, `daysBetween`, `indefinite` (Task 8); `nextGrade` (Task 14); `isSparse` (Task 14); `ButtonLink`, `Code`, `Est`, `GradeChip`, `Icon`, `Mono`, `Vh`, `useMotionOn`, `useInView` (Task 10); `mockStudentHome`, `overviewScenes`, `APP_PATH` (Task 9); the `openHome(page, state)` helper Task 12 defines at the top of `web/e2e/student-home.spec.ts` (if Task 12 named it differently, use its name).
+- Consumes: `HomeView`, `SubjectView` (Task 8); `dayMonth`, `daysBetween`, `indefinite` (Task 8); `nextGrade` (Task 14); `isSparse` (`states.ts`, Task 12); `ButtonLink`, `Code`, `Est`, `GradeChip`, `Icon`, `Mono`, `Vh`, `useMotionOn`, `useInView` (Task 10); `mockStudentHome`, `overviewScenes`, `APP_PATH` (Task 9); the `openHome(page, state)` helper Task 12 defines at the top of `web/e2e/student-home.spec.ts` (if Task 12 named it differently, use its name).
 - Produces: `export function examPos(todayISO: string, examISO: string): number`; `export function ExamsTimeline(props: { view: HomeView }): JSX.Element | null` (root `<section data-home="exams">`, `null` when no subject has a date); `export function practiseName(s: SubjectView): string`.
 
 **Design facts this task encodes** (`page-a.txt` 658–707, `variant-a.css` 379–441, 1456–1478, 1575–1617, 1867, 1913–1915, 2176–2189):
@@ -6221,10 +6486,10 @@ git commit -S -m "feat(web): student home practice targets (design A mastery rul
 | Element | Design rule (line: declarations) | Tailwind classes |
 |---|---|---|
 | `section.a-sec` / `h2.a-sec-h` | as Task 14 | same strings |
-| `p.a-sec-sub#a-exams-sub` | 382–383 | `-mt-2 mb-3 text-[14px] text-(--text-secondary)`; `Mono` `text-(--text-body)` |
+| `p.a-sec-sub#a-exams-sub` | 382–383; **c880a54c :384** `max-inline-size 70ch` | `-mt-2 mb-3 max-w-[70ch] text-[14px] text-(--text-secondary)`; `Mono` `text-(--text-body)` |
 | `.a-xcard.a-xs-card` | 384–387 xcard `padding 20px 24px 24px; radius-card` (1450 @min 761 16/20/20 radius-tile; 1240 @max 760 20px 16px); 1458 `.a-xs-card` (later, same specificity) `padding 16px 20px; radius-tile; bg surface-card; shadow a-card-edge` wins at every width | `px-5 py-4 rounded-(--radius-tile) bg-(--surface-card) shadow-(--a-card-edge)` |
 | `.a-xb` | 388 `relative; h 64; mt 12px`; 1472 `.a-xs-card > .a-xb` `margin-block 0 12px`; 1241 `@max 760 display none` | `relative h-16 mt-0 mb-3 @max-[760px]/home:hidden` |
-| `.a-xb-today` | 389–394 `absolute; bottom calc(100% - 14px); left 0; padding 4px 10px; pill; 700 11px/1.2 font-ui; nowrap`; 1867 `bg primary; color on-primary` (wins over 392); 395 mono `600` | `absolute bottom-[calc(100%-14px)] left-0 px-2.5 py-1 rounded-full bg-(--md-primary) text-(--md-on-primary) font-(family-name:--font-ui) text-[11px]/[1.2] font-bold whitespace-nowrap`; mono: `font-semibold` |
+| `.a-xb-today` | 389–394 `absolute; bottom calc(100% - 14px); left 0; padding 4px 10px; pill; 700 11px/1.2 font-ui (**c880a54c :394** `fs-body-sm`: 14px, a sentence-length flag); nowrap`; 1867 `bg primary; color on-primary` (wins over 392); 395 mono `600` | `absolute bottom-[calc(100%-14px)] left-0 px-2.5 py-1 rounded-full bg-(--md-primary) text-(--md-on-primary) font-(family-name:--font-ui) text-[14px]/[1.2] font-bold whitespace-nowrap`; mono: `font-semibold` |
 | `.a-xb-track` | 396–399 `absolute; inset-inline 0; top 20px; h 14px; overflow hidden; pill; bg primary-container` | `absolute inset-x-0 top-5 h-3.5 overflow-hidden rounded-full bg-(--md-primary-container)` |
 | `.a-xb-weeks` / `i` | 400–403 `absolute; inset-block 3px; inset-inline 0 86%` / `absolute; inset-block 0; w 1px; bg color-mix(on-primary-container 30%, transparent)` | `absolute inset-y-[3px] left-0 right-[86%]` / `absolute inset-y-0 w-px bg-[color-mix(in_oklch,var(--md-on-primary-container)_30%,transparent)]` |
 | `.a-xb-fill` | 404–408 `absolute; inset-block 0; left 0; width (selected pin); radius inherit; bg color-mix(primary 40%, primary-container); origin left`; 1578 `transition width slow expo` | `absolute inset-y-0 left-0 rounded-[inherit] bg-[color-mix(in_oklch,var(--md-primary)_40%,var(--md-primary-container))] origin-left transition-[width] duration-(--dur-slow) ease-(--a-ease-expo)` + inline `width` |
@@ -6440,12 +6705,12 @@ export function ExamsTimeline({ view }: { view: HomeView }) {
       <h2 id="a-exams-h" className="m-0 mb-3 font-(family-name:--font-ui) text-[21px]/[1.2] font-extrabold tracking-[-0.02em] text-(--text-body)">
         Exams
       </h2>
-      <p id="a-exams-sub" aria-live="polite" className="-mt-2 mb-3 text-[14px] text-(--text-secondary)">
+      <p id="a-exams-sub" aria-live="polite" className="-mt-2 mb-3 max-w-[70ch] text-[14px] text-(--text-secondary)">
         First exam: {first.name}, <Mono className="text-(--text-body)">{dayMonth(first.nextExamOn!)}</Mono>
       </p>
       <div className="px-5 py-4 rounded-(--radius-tile) bg-(--surface-card) shadow-(--a-card-edge)">
         <div className="relative h-16 mt-0 mb-3 @max-[760px]/home:hidden" aria-hidden="true">
-          <span className="absolute bottom-[calc(100%-14px)] left-0 px-2.5 py-1 rounded-full bg-(--md-primary) text-(--md-on-primary) font-(family-name:--font-ui) text-[11px]/[1.2] font-bold whitespace-nowrap">
+          <span className="absolute bottom-[calc(100%-14px)] left-0 px-2.5 py-1 rounded-full bg-(--md-primary) text-(--md-on-primary) font-(family-name:--font-ui) text-[14px]/[1.2] font-bold whitespace-nowrap">
             Today · <Mono className="font-semibold">{dayMonth(today)}</Mono>
           </span>
           <span className="absolute inset-x-0 top-5 h-3.5 overflow-hidden rounded-full bg-(--md-primary-container)">
@@ -6694,11 +6959,11 @@ The case with no cached data has no design. It reuses the `.a-error` banner unch
 | `.a-sk-title` | :1977 `block; w min(360px,90%); h 32; radius chip`; M h 30 :2004 | `block w-[min(360px,90%)] h-8 rounded-chip @max-[761px]/home:h-[30px]` |
 | `.a-sk-line` / `.a-sk-short` | :1978-1979 `block; w min(420px,100%) / min(260px,70%); h 14; pill` | `block w-[min(420px,100%)] h-3.5 rounded-pill` / `w-[min(260px,70%)]` |
 | `.a-sk-disc` | :1983 `flex none; 128×128; circle`; M 72×72, self-start :2002 | `flex-none size-32 rounded-full @max-[761px]/home:size-[72px] @max-[761px]/home:self-start` |
-| `.a-next-row.a-sk-next` | :1502 `grid; gap 16; margin-top 20`; ≥900 cols `minmax(0,63%) minmax(300px,1fr)`, stretch :1505; ≤899 action first :1998 | `grid gap-4 mt-5 @min-[900px]/home:grid-cols-[minmax(0,63%)_minmax(300px,1fr)] @min-[900px]/home:items-stretch` |
-| `.a-sk-garden` | :1984 `h var(--sk-garden); column; padding 20`; tiers 288 / 1044:256 / 1084:235 | `h-[288px] @min-[1044px]/home:h-[256px] @min-[1084px]/home:h-[235px] flex-col p-5` |
+| `.a-next-row.a-sk-next` | :1502 `grid; gap 16; margin-top 20`; ≥900 **c880a54c :2387** `.sh-root[data-garden="1"] .a-next-row` (it reaches the skeleton too) `minmax(0,1fr) minmax(0,1fr)`, stretch; **:2388** `.a-next-row > *` pads both skeleton cards `space-5 space-6` (0,3,0, beats `.a-sk-garden`/`.a-sk-action` padding 20px); ≤899 action first :1998 | `grid gap-4 mt-5 @min-[900px]/home:grid-cols-2 @min-[900px]/home:items-stretch`; both cards add `@min-[900px]/home:px-6 @min-[900px]/home:py-5` |
+| `.a-sk-garden` | :1984 `h var(--sk-garden); column; padding 20`; tiers 288 / 1044:256 / 1084:235 | `h-[288px] @min-[1044px]/home:h-[256px] @min-[1084px]/home:h-[235px] flex-col p-5 @min-[900px]/home:px-6 @min-[900px]/home:py-5` (≥900 row padding, c880a54c :2388) |
 | `.a-sk-h` | :1976 `block; flex none; 140×19; mb 12; radius chip` | `block flex-none w-[140px] h-[19px] mb-3 rounded-chip` |
 | `.a-sk-plants` | :1985-1986 `flex 1; grid 3 cols; gap 12; min-h 0`; children radius tile | `flex-1 grid grid-cols-3 gap-3 min-h-0` |
-| `.a-sk-action` | :1987-1988 `h var(--sk-action); column; justify center; start; gap 12; padding 20`; its `.a-sk-h` `margin 0; 180×28`; tiers 199 / ≤357:231 / 761:235 | `h-[199px] @max-[358px]/home:h-[231px] @min-[761px]/home:h-[235px] flex-col justify-center items-start gap-3 p-5 @max-[900px]/home:order-[-1]`; heading `block flex-none w-[180px] h-7 m-0 rounded-chip` |
+| `.a-sk-action` | :1987-1988 `h var(--sk-action); column; justify center; start; gap 12; padding 20`; its `.a-sk-h` `margin 0; 180×28`; tiers 199 / ≤357:231 / 761:235 | `h-[199px] @max-[358px]/home:h-[231px] @min-[761px]/home:h-[235px] flex-col justify-center items-start gap-3 p-5 @min-[900px]/home:px-6 @min-[900px]/home:py-5 @max-[900px]/home:order-[-1]` (≥900 row padding, c880a54c :2388); heading `block flex-none w-[180px] h-7 m-0 rounded-chip` |
 | `.a-sk-btn` | :1980 `block; 160×44; pill` | `block w-40 h-11 rounded-pill` |
 | `.a-sec` | :591 mt 40; M mt 32 :1226; D mt 20 :1439 | `@max-[761px]/home:mt-8 @min-[761px]/home:mt-5` (the two tiers cover every width) |
 | `.a-sk-sec` | :1989 `flex column` | `flex flex-col` |
@@ -6818,8 +7083,8 @@ export function HomeSkeleton() {
         <Skel className="flex-none size-32 rounded-full @max-[761px]/home:size-[72px] @max-[761px]/home:self-start" />
       </div>
 
-      <div className="grid gap-4 mt-5 @min-[900px]/home:grid-cols-[minmax(0,63%)_minmax(300px,1fr)] @min-[900px]/home:items-stretch">
-        <div className={cn(CARD, "h-[288px] @min-[1044px]/home:h-[256px] @min-[1084px]/home:h-[235px] flex-col p-5")}>
+      <div className="grid gap-4 mt-5 @min-[900px]/home:grid-cols-2 @min-[900px]/home:items-stretch">
+        <div className={cn(CARD, "h-[288px] @min-[1044px]/home:h-[256px] @min-[1084px]/home:h-[235px] flex-col p-5 @min-[900px]/home:px-6 @min-[900px]/home:py-5")}>
           <Skel className="block flex-none w-[140px] h-[19px] mb-3 rounded-chip" />
           <span className="flex-1 grid grid-cols-3 gap-3 min-h-0">
             <Skel className="" />
@@ -6827,7 +7092,7 @@ export function HomeSkeleton() {
             <Skel className="" />
           </span>
         </div>
-        <div className={cn(CARD, "h-[199px] @max-[358px]/home:h-[231px] @min-[761px]/home:h-[235px] flex-col justify-center items-start gap-3 p-5 @max-[900px]/home:order-[-1]")}>
+        <div className={cn(CARD, "h-[199px] @max-[358px]/home:h-[231px] @min-[761px]/home:h-[235px] flex-col justify-center items-start gap-3 p-5 @min-[900px]/home:px-6 @min-[900px]/home:py-5 @max-[900px]/home:order-[-1]")}>
           <Skel className="block flex-none w-[180px] h-7 m-0 rounded-chip" />
           <Skel className="block w-[min(420px,100%)] h-3.5 rounded-pill" />
           <Skel className="block w-40 h-11 rounded-pill" />
@@ -6911,11 +7176,11 @@ git commit -S -m "feat(web): student home skeleton and error banner" -- web/src/
 - Test: `web/tests/unit/studentHomeMarkup.test.ts` (append)
 
 **Interfaces:**
-- Consumes: `pageState`, `HomeView`, `PageModel` (Task 8); `useOverview`, `useActiveUpload`, `useXpProfile` (Task 7); `usePullToRefresh` (`web/src/lib/gestures/usePullToRefresh.ts`), `PullIndicator` (`web/src/components/ui/pull-indicator.tsx`); `HomeHero`, `HomeBinny` (Task 11); `Garden` (Task 12: `Garden(props: { view: HomeView; variant?: "ghost" })`); `NextStepCard` (Task 13: `NextStepCard(props: { view: HomeView; onLean?: (on: boolean) => void })`); `GradesList`, `PracticeTargets`, `ExamsTimeline` (Tasks 14–16: `(props: { view: HomeView })`. `ExamsTimeline` renders nothing when no subject has an exam date, the design's `[data-exams="no"] [data-needs="exams"]` rule, shell.css:69); `HomeSkeleton`, `HomeError` (Task 17); `Icon`, `Mono`, `ButtonLink`, `VH_CLASS`, `useMotionOn` (Task 10); `greetingWord`, `dayMonth` (`format.ts`).
+- Consumes: `pageState`, `HomeView`, `PageModel` (Task 8); `useOverview`, `useActiveUpload`, `useXpProfile` (Task 7); `usePullToRefresh` (`web/src/lib/gestures/usePullToRefresh.ts`), `PullIndicator` (`web/src/components/ui/pull-indicator.tsx`); `HomeHero`, `HomeBinny` (Task 11); `MistakesBeaten` (Task 12: `MistakesBeaten(props: { view: HomeView; placement?: "row" | "new" })`); `NextStepCard` (Task 13: `NextStepCard(props: { view: HomeView; onLean?: (on: boolean) => void })`); `GradesList`, `PracticeTargets`, `ExamsTimeline` (Tasks 14–16: `(props: { view: HomeView })`. `ExamsTimeline` renders nothing when no subject has an exam date, the design's `[data-exams="no"] [data-needs="exams"]` rule, shell.css:69); `HomeSkeleton`, `HomeError` (Task 17); `Icon`, `Mono`, `ButtonLink`, `VH_CLASS`, `useMotionOn` (Task 10); `greetingWord`, `dayMonth` (`format.ts`).
 - Produces:
   - `StudentHome(): JSX.Element`: the `/student` route element. Root carries the attributes in Shared interfaces ("Root data attributes").
   - `HomeNotes(props: { view: HomeView }): JSX.Element | null` and `NewHome(props: { view: HomeView }): JSX.Element`, exported for the markup tests.
-  - Row placement contract: `StudentHome` owns how the Garden and next-step cards sit in `.a-next-row` (columns, `order`, `margin-top: 0`, the next card's flex centring). It does this through `[&>[data-home=…]]:` child variants. `Garden` and `NextStepCard` set no grid placement, `order` or top margin of their own. `Garden` owns its internal sparse stacked layout (variant-a.css:2234-2238).
+  - Row placement contract: `StudentHome` owns how the Mistakes beaten and next-step cards sit in `.a-next-row` (columns, stretch, `order`, `margin-top: 0`). It does this through `[&>[data-home=…]]:` child variants. `MistakesBeaten` and `NextStepCard` set no grid placement, `order` or top margin of their own. Each card owns its own ≥900 internals for the mirrored halves: padding, flex column, the pinned bottom action (Tasks 12 and 13).
 
 ### Copy templates
 
@@ -6939,8 +7204,8 @@ git commit -S -m "feat(web): student home skeleton and error banner" -- web/src/
 |---|---|---|
 | root `#sh-root` | shell.css:19-24 `container home; bg surface-page; color text-body; font ui`; variant-a.css:11 `line-height 1.5`, :15-17 selection colours, focus outline 2px primary offset 2, links no underline. The container is the padded main (:748); the shell provides the background | `@container/home relative font-sans leading-normal text-on-surface [&_a]:no-underline [&_::selection]:bg-primary-container [&_::selection]:text-on-primary-container [&_:focus-visible]:outline-2 [&_:focus-visible]:outline-primary [&_:focus-visible]:outline-offset-2` |
 | `.a-page` (ready, new, error, loading) | :37-41 padding/max-width, reset inside the shell by :753 `padding 0; max-inline-size none; margin-inline 0` | (no classes) |
-| `.a-next-row` | :1502 `grid; gap 16; margin-top 20`; ≥900 :1505 `minmax(0,63%) minmax(300px,1fr)`, stretch; sparse ≥900 :2233 `minmax(0,1fr) minmax(0,1fr)` | `grid gap-4 mt-5 @min-[900px]/home:items-stretch` + `@min-[900px]/home:grid-cols-[minmax(0,63%)_minmax(300px,1fr)]` or, for sparse states, `@min-[900px]/home:grid-cols-2` |
-| `.a-next-row > .a-action-card` | :1503 `margin-top 0`; ≥900 :1506 `flex; column; justify center`; ≤899 :1826 `order -1` | `[&>[data-home=next]]:mt-0 @min-[900px]/home:[&>[data-home=next]]:flex @min-[900px]/home:[&>[data-home=next]]:flex-col @min-[900px]/home:[&>[data-home=next]]:justify-center @max-[900px]/home:[&>[data-home=next]]:order-[-1]` |
+| `.a-next-row` | :1502 `grid; gap 16; margin-top 20`; ≥900 **c880a54c :2387** mirrored halves `minmax(0,1fr) minmax(0,1fr); align-items stretch` in every state (replaces 63% / 300px and the sparse-only 50/50 rule) | `grid gap-4 mt-5 @min-[900px]/home:grid-cols-2 @min-[900px]/home:items-stretch` |
+| `.a-next-row > .a-action-card` | :1503 `margin-top 0`; ≤899 :1828 `order -1`. The ≥900 flex column and `justify-content flex-start` (c880a54c :2389) are on the card itself (Task 13) | `[&>[data-home=next]]:mt-0 @max-[900px]/home:[&>[data-home=next]]:order-[-1]` |
 | `.a-note` | :270-274 `flex; wrap; center; gap 4px 12px; margin 0; padding 12px 20px; radius tile; bg surface-card; color secondary; 14px`; :348 `margin-top 12` | `flex flex-wrap items-center gap-x-3 gap-y-1 m-0 mt-3 py-3 px-5 rounded-tile bg-home-card text-home-ink-2 text-home-sm` |
 | `.a-note a` | :275-278 `inline-flex; center; gap 2; margin-left auto; primary; 700; no underline`; :20 hover primary-hover; coarse :1215-1216 `min-h 44; padding-block 10` | `inline-flex items-center gap-0.5 ms-auto text-primary font-bold no-underline hover:text-primary-hover pointer-coarse:min-h-11 pointer-coarse:py-2.5` |
 | `.a-note .a-ico` | :279 16×16 | `size-4` |
@@ -7003,13 +7268,15 @@ describe("NewHome", () => {
     expect(out).toMatch(/href="\/student\/correct"[^>]*>Upload a paper/)
     expect(out).toContain('aria-label="How Lemely works for you"')
     expect(out).toContain('aria-current="step"')
-    expect(out.match(/<li/g)).toHaveLength(3)
+    expect(out.match(/<li/g)).toHaveLength(3) // the new-state progress card has no chips
+    expect(out).toContain('data-home="progress"')
+    expect(out).toContain("Your first paper starts the count")
     expect(out).toContain("Ready when you are.")
   })
 })
 ```
 
-`NewHome` renders `<Garden variant="ghost">` from Task 12, which must be committed before this task. Run: `cd web && npx vitest run tests/unit/studentHomeMarkup.test.ts`. Expected: FAIL (exports missing).
+`NewHome` renders `<MistakesBeaten placement="new">` from Task 12, which must be committed before this task. Run: `cd web && npx vitest run tests/unit/studentHomeMarkup.test.ts`. Expected: FAIL (exports missing).
 
 - [ ] **Step 2: Implement the final `StudentHome.tsx`**
 
@@ -7029,11 +7296,11 @@ import { cn } from "@/lib/utils"
 import { ExamsTimeline } from "./ExamsTimeline"
 import { pageState, type HomeView } from "./facts"
 import { dayMonth, greetingWord } from "./format"
-import { Garden } from "./Garden"
 import { GradesList } from "./GradesList"
 import { HomeBinny, HomeHero } from "./HomeHero"
 import { HomeError } from "./HomeError"
 import { HomeSkeleton } from "./HomeSkeleton"
+import { MistakesBeaten } from "./MistakesBeaten"
 import { NextStepCard } from "./NextStepCard"
 import { PracticeTargets } from "./PracticeTargets"
 import { ButtonLink, Icon, Mono, VH_CLASS, useMotionOn } from "./primitives"
@@ -7152,7 +7419,7 @@ export function NewHome({ view }: { view: HomeView }) {
           </figcaption>
         </figure>
       </article>
-      <Garden view={view} variant="ghost" />
+      <MistakesBeaten view={view} placement="new" />
       <ol aria-label="How Lemely works for you" className="m-0 p-0 list-none grid gap-3 @min-[761px]/home:grid-cols-3 @max-[761px]/home:grid-cols-1">
         <Step n={1} title="Correct your first paper" when="Now" current>
           <span aria-hidden="true" className={cn(GHOST, "flex-col justify-center gap-2 [&_i]:h-2", BAR_I)}>
@@ -7189,18 +7456,13 @@ export function NewHome({ view }: { view: HomeView }) {
 }
 
 function ReadyHome({ view, lean, onLean }: { view: HomeView; lean: boolean; onLean: (on: boolean) => void }) {
-  const sparse = view.state.startsWith("sparse")
   return (
     <div>
       <HomeHero view={view} lean={lean} />
-      <div
-        className={cn(
-          "grid gap-4 mt-5 @min-[900px]/home:items-stretch",
-          sparse ? "@min-[900px]/home:grid-cols-2" : "@min-[900px]/home:grid-cols-[minmax(0,63%)_minmax(300px,1fr)]",
-          "[&>[data-home=next]]:mt-0 @min-[900px]/home:[&>[data-home=next]]:flex @min-[900px]/home:[&>[data-home=next]]:flex-col @min-[900px]/home:[&>[data-home=next]]:justify-center @max-[900px]/home:[&>[data-home=next]]:order-[-1]",
-        )}
-      >
-        <Garden view={view} />
+      {/* Mirrored halves (c880a54c :2387): two equal stretched columns at ≥900 in every state;
+          below 900 the next step leads. */}
+      <div className="grid gap-4 mt-5 @min-[900px]/home:grid-cols-2 @min-[900px]/home:items-stretch [&>[data-home=next]]:mt-0 @max-[900px]/home:[&>[data-home=next]]:order-[-1]">
+        <MistakesBeaten view={view} />
         <NextStepCard view={view} onLean={onLean} />
       </div>
       <HomeNotes view={view} />
@@ -7285,6 +7547,8 @@ Run: `cd web && node scripts/home-drift.mjs --only overview:page`. Expected: `ov
 
 A failure in `page` while every section part passes means the drift is between sections: `.a-next-row` gap and columns, note margins, `.a-sec` top margins (owned by Tasks 14–16), or the order of the next card below 900px. Read the diff, find the band, fix the owning rule, and re-run.
 
+Mirrored-halves check (1024, 1440 and 1920 scenes, every ready state): the two cards in the row are the same height, their label rows ("Mistakes beaten" and the next step's meta line) start on the same line, the count and the next-step title share a top edge, and the "Practise" button and the next-step button share a bottom line. If the page part passes, these hold, because the preview draws them; if it fails in that band, the usual causes are the meta line's 24px row (Task 13), the count's 32px size (Task 12) or a card that sets its own top margin.
+
 - [ ] **Step 5: Commit**
 
 ```bash
@@ -7313,7 +7577,7 @@ git commit -S -m "feat(web): compose the student home page from design A" -- web
 Run every part once more against `/student/home-next`:
 
 ```bash
-cd web && for p in hero garden next grades weak exams skeleton error new page; do node scripts/home-drift.mjs --only overview:$p | tail -1; done
+cd web && for p in hero progress next grades weak exams skeleton error new page; do node scripts/home-drift.mjs --only overview:$p | tail -1; done
 ```
 
 Expected: ten lines, each `overview:<part> PASS n/n`. If any line says FAIL, stop. The task that owns that part is not done.
@@ -7383,7 +7647,7 @@ git commit -S -m "feat(web): student home replaces the Overview screen" -- web/s
 - Modify: `docs/superpowers/specs/2026-11-06-student-home-overview-design.md` (Drift log)
 
 **Interfaces:**
-- Consumes: `overviewScenes`, `mockStudentHome`, `PARTS` (Task 9); the interactions defined in Tasks 12 (`garden-pick`), 13 (`marking-stage-2`) and 16 (`exam-pick`), exported from their tasks' code as `GARDEN_PICK`, `MARKING_STAGE_2`, `EXAM_PICK` in `overview.mjs`.
+- Consumes: `overviewScenes`, `mockStudentHome`, `PARTS` (Task 9); the interactions defined in Tasks 13 (`marking-stage-2`) and 16 (`exam-pick`), exported from their tasks' code as `MARKING_STAGE_2`, `EXAM_PICK` in `overview.mjs`. (The Garden pick is gone with the Garden. The grades hover replay and the chip pop are motion, checked by eye in Tasks 12 and 14.)
 - Produces: the final drift report and the filled drift log.
 
 - [ ] **Step 1: Add the result-opened interaction**
@@ -7420,7 +7684,7 @@ export const RESULT_OPENED = {
 
 The `ResultDTO` literal must match `web/src/lib/studentTypes.ts`'s `Result` type. Copy its field list from there if it differs from the one above.
 
-Register: `overviewScenes({ part: "page", interactions: [GARDEN_PICK, MARKING_STAGE_2, EXAM_PICK, RESULT_OPENED] })`.
+Register: `overviewScenes({ part: "page", interactions: [MARKING_STAGE_2, EXAM_PICK, RESULT_OPENED] })`.
 
 - [ ] **Step 2: Full sweep**
 
@@ -7428,7 +7692,7 @@ Register: `overviewScenes({ part: "page", interactions: [GARDEN_PICK, MARKING_ST
 cd web && node scripts/home-drift.mjs --only overview: 2>&1 | tee ../reports/home-drift/overview-sweep.txt | tail -12
 ```
 
-Expected: one `PASS` line per part. The page part reports `overview:page PASS 180/180` (140 state scenes + 4 interactions × 5 widths × 2 themes). For every scene above 0 px, read its diff image. Either fix the drift (go back to the owning task's component and re-run that part) or, only when the difference is a deliberate improvement or an unavoidable renderer difference such as font hinting of the same glyphs, write its row in Step 4. Anything over 15% fails, with no exceptions.
+Expected: one `PASS` line per part. The page part reports `overview:page PASS 170/170` (140 state scenes + 3 interactions × 5 widths × 2 themes). For every scene above 0 px, read its diff image. Either fix the drift (go back to the owning task's component and re-run that part) or, only when the difference is a deliberate improvement or an unavoidable renderer difference such as font hinting of the same glyphs, write its row in Step 4. Anything over 15% fails, with no exceptions.
 
 - [ ] **Step 3: Behaviour and axe in the real browser**
 
@@ -7523,29 +7787,41 @@ Do not push.
 | §1 overview: `latestResult` with `seen` | 3 (seen), 6 (field) |
 | §1 `firstPct`, `previousGrade`, `nextExamOn`, `examAvailability` per subject | 5 |
 | §1 `upcomingSessions` next 7 days | 6 |
+| §1 `mistakes` (beaten / to beat from `question_results`, effective marks, rules 1–6, no migration) | 6b |
+| §1 `lastPaperOn` dropped, `firstPct` kept for the grades trail | 5, 8 |
 | §1 `UploadRunDTO.progress`, written by the pipeline | 2, 4 |
 | §1 `POST /student/results/{paperId}/seen`, idempotent, own papers only | 3 |
 | §1 two migrations, stop and show each | 1 (Step 3), 2 (Step 3) |
 | §1 frontend queries, `useMarkResultSeen`, upload polling | 7 |
 | §1 `facts.ts` `toHomeFacts`, `homeState`; model decides action/mood/strip | 8 |
-| §2 nine components, markup order and copy | 10–18 |
-| §2 behaviour as hooks (Garden pick, stage walk, motion, count-up, reveal), reduced motion | 10, 11, 12, 13, 15, 16, 18 |
+| §2 nine components, markup order and copy (Mistakes beaten replaces the Garden) | 10–18 (12 = `MistakesBeaten`) |
+| §2 behaviour as hooks (stage walk, motion, count-up, reveal, chip pop, grades hover replay), reduced motion | 10, 11, 12, 13, 14, 15, 16, 18 |
+| §2 mirrored halves at ≥900 (equal columns, 24px label rows, 32px count, pinned actions, 44px secondary button, bigger chips, only the active block) | 12, 13, 17 (skeleton row), 18 (row + page check) |
+| §2 grades: hover replay, relaxed rows, phone cards, no labels key | 14 |
+| §2 weak topics relaxed rows | 15 |
+| §2 hero card surface (no border, card-edge, card radius; tile inner, caption chip radius) | 11 |
+| §2 anti-pattern fixes (≥14px sentences, `.a-est` stays 11px, subtitles 70ch, slot 60ch, secure-note inset) | 11, 12, 15, 16 |
 | §2 light and dark | every drift part runs both themes |
 | §2 old Overview deleted with unused imports | 19 |
 | §3 14 states, fixture wins | 8 (tests per state, spec table updated) |
+| §3 Mistakes beaten copy per state, A1 (one-paper, sparse3, new), fallbacks | 12 (Step 0 gate, `mistakes.ts` tests) |
 | §3 XP/upload failure hides only its piece | 8 (`pageState`, `xp: null`), 11 (hero without XP) |
 | §3 edge cases: long names, 0/1/3+ subjects, exam with no start time, stale upload, offline | 8 (facts), 14–16 (markup tests); offline banner is the shell's |
-| §3 accessibility | 10–18 markup tests, 12/16 keyboard, 20 axe, live region, 44px |
+| §3 accessibility | 10–18 markup tests, 12/16 keyboard, 12 Practise hit area, 20 axe, live region, 44px |
 | §4 drift gate matrix and pass rule | 9, every UI task, 20 |
-| §4 pytest incl. other student's paper, migrations both ways | 1, 2, 3, 4, 5, 6 |
+| §4 pytest incl. other student's paper, migrations both ways, `mistakes` rules | 1, 2, 3, 4, 5, 6, 6b |
+| §4 interaction pairs (stage walk, exam pick, result opened; no Garden pick) | 13, 16, 20 |
+| Drift-log candidates (sparse1 footer link, A1 states, sparse phone separator) | 12 Step 0/9, 14 |
 | §4 rollout after every gate | 19 Step 1 |
 
-Additions beyond the spec, each flagged where it lands: `detected_paper_label` / `detected_subject_code` on uploads (Task 2), enrolled subjects with no paper as overview rows (Task 5), `boundaries` / `boundariesEstimated` / `lastPaperOn` on subject rows (Task 5), `latestResult.awarded/maximum`, `weakTopics` with trend and marks, `planEndedOn` (Task 6), the `attempts.seen_at` backfill (Task 1), `SUBJECT_SHORT_NAMES` (Task 8), and `sparse2` widened to 2–5 papers (Task 8). Design A prints each of these values. Without them the page could not show real data in every state.
+Additions beyond the spec, each flagged where it lands: `detected_paper_label` / `detected_subject_code` on uploads (Task 2), enrolled subjects with no paper as overview rows (Task 5), `boundaries` / `boundariesEstimated` on subject rows (Task 5), `latestResult.awarded/maximum`, `weakTopics` with trend and marks, `planEndedOn` (Task 6), `mistakes.lastBeaten.onLatestPaper` and `.paperCode` (Task 6b), two secondary-container token aliases (Task 10), the 44px hit area on the narrow "Practise" link (Task 12), the `attempts.seen_at` backfill (Task 1), `SUBJECT_SHORT_NAMES` (Task 8), and `sparse2` widened to 2–5 papers (Task 8). Design A prints each of these values. Without them the page could not show real data in every state.
 
 Decisions the user must make during execution (each task stops at the point named):
-- Garden solo and sparse plants: the design places their stems and leaves by hand. The plan uses a formula that matches every picker value, so those scenes differ inside the plants (Task 12 stop plus drift-log rows).
+- A1 and A2 (Task 12 Step 0): Mistakes beaten copy for one-paper, sparse3 and new, and splitting the preview's shared "Practise Logarithms" link per data set. The preview is edited only after the user approves.
+- Grades on phones in sparse states: the preview keeps a 1px separator above cards 2+ (a specificity accident). The build reproduces it; removing it needs approval (Task 14).
+- Garden-era copy that survives in other sections: the sparse2 hero kicker "Physics is still to plant" (Task 11) and the sparse3 practice body "…waters your Add Maths plant" (Task 13). Kept word for word until the user rewords them.
 - Exams in sparse2: the preview checks a hidden Physics radio, so no tile looks selected. 10 scenes are expected to fail at ≤15% (Task 16 drift-log row).
 - Exam dates after 20 May fall outside the timeline the design draws (Task 16).
-- Fallback copy the design never shows: "Top grade", "no change", the empty weak-topics line, "Your paper is being marked" with no label, and Garden "Next:" lines when every subject is planted (Tasks 12–16).
+- Fallback copy the design never shows: "Top grade", "no change", the empty weak-topics line, "Your paper is being marked" with no label, and the Mistakes beaten fallbacks ("No mistakes to beat yet", "mistakes to beat", singulars) (Tasks 12–16).
 - `JoinClassPrompt` from the old Overview is not in design A and disappears at the route switch unless the user places it (Task 19).
 - Binny reuses the marketing component's mood art. Check the bundle budget (Task 19 Step 4).

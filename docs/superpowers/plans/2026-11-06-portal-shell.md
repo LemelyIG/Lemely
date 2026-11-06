@@ -8,6 +8,17 @@
 
 **Tech Stack:** React 19, react-router-dom 7, TanStack Query 5, Radix (`radix-ui`), Tailwind v4 (`@theme` tokens in `web/src/index.css`), Phosphor icons, Vitest 4 (Node environment, no jsdom), Playwright 1.62, pixelmatch + pngjs (new dev deps).
 
+## Revised 2026-11-06
+
+Tasks 0 to 3 are done (commits up to `f7695175`); Task 4 was in progress when this revision was made. Changes:
+
+1. **New Task 4a: translucent top bar.** The floating bar is semi-translucent in both portals, like the landing page header (86% surface, backdrop blur, solid fallback under `@supports`). Design source: `variant-a.css` "Floating top bar: semi-translucent" (commit `c880a54c`).
+2. **Drawer breakpoint is 1248px** (`--breakpoint-shell-lg: 1248px`, user decision), not the 1001px default. Tasks 5 to 9 use 1248. At the 1024px window the app shows the drawer and menu button where design A shows the sidebar, so the student scenes at 1024 are log-only (Task 6 `byWindowRule`).
+3. **Drift rule as built (Tasks 1 to 3)** is now in Global Constraints. In short: gate scenes need an approved entry; teacher frame scenes are log-only; `approved` stays `"pending"` until the user approves; baselines are pinned to `aa533580`. While entries are pending, a drift run exits non-zero. A task's acceptance is "no failure except approval pending" (see **Drift acceptance**).
+4. **Avatar is a squircle** (Decision 4), not design A's circle. Task 6 logs it.
+5. **Task 9** now sends all pending entries to the user in one approval request, checks the baseline sha, and fixes the ledger minors it owns: the axe `aria-prohibited-attr` and `region` failures on the teacher Escape checks. It lists the other minors for the final review.
+6. Short "As built" notes were added to Tasks 0, 3 and 4. Their steps were not changed.
+
 ## Global Constraints
 
 - Contract: `docs/superpowers/specs/2026-11-06-portal-shell-design.md`. Companion: `docs/superpowers/specs/2026-11-06-student-home-overview-design.md` (shares the drift script; that plan runs after this one).
@@ -18,6 +29,14 @@
 - Bell and avatar: panels over the page, as in design A.
 - Styling: Tailwind v4 with the existing `@theme` tokens in `web/src/index.css`. No ported stylesheet. (This plan adds three layout tokens, Task 3, because design A's breakpoints and sidebar width have no token yet.)
 - Fidelity: drift gate is acceptance for every UI task. 0 differing pixels, or up to 15% only with a written justification per difference in the spec's drift log. Over 15% always fails. Read the diff image, fix drift, re-run.
+- Drift rule as built (Tasks 1 to 3; `web/scripts/drift/compare.mjs` `judge`):
+  - Gate scenes (no `rule`, the default) pass at 0 px. With an entry in `web/scripts/drift/justifications.json` whose `approved` is `"yes"`, they also pass up to 15%.
+  - Log scenes (`rule: "log"`) have no cap, but still need an entry, and `approved` must be `"yes"`. These are the teacher frame, drawer, bell, account and settings scenes, and from Task 6 the student scenes at 1024px.
+  - Lookup order: exact key `id@window@theme`, then `id@window`, then `id@*@theme`, then `id`.
+  - Implementers write new or changed entries with `"approved": "pending"`. They never set `"yes"` themselves; only Task 9 does, after the user approves. Editing an entry's `difference` or `justification` resets it to `"pending"`.
+  - Content mode (`capture: "content"`) hides fixed and sticky chrome outside the content selector and snaps the content origin. A content key that differs means the page itself changed.
+  - Teacher baselines carry a per-key sidecar (`reports/.scratch/drift/baseline/<key>.json`) with `sha` `aa533580` (`aa5335801ac9362d02fcc88c9ab9b20afa52fba4`). A sidecar without a sha fails. Never re-record baselines without the user's approval.
+- **Drift acceptance** (what "drift passes" means in Tasks 4a to 8): every key is `pass` or `pass-justified`, or is a `fail` whose reason is exactly `justified but approval is pending (approved must be "yes")`. Any other reason is drift to fix: no justification, over 15% on a gate scene, capture failed, or no sha. The run's exit code stays non-zero until Task 9 gets the approvals. To list the failures that are not pending approval, run this from the repo root: `node -e 'for(const k of require(require("path").resolve(process.argv[1],"report.json")))if(k.outcome==="fail"&&!/approval is pending/.test(k.reason))console.log(k.key,k.reason)' <dir>`. Here `<dir>` is the path the run prints as `report: reports/.scratch/drift/<timestamp>`, and `report.json` is the array of rows `main()` writes. Expected output: nothing.
 - All motion stops under `prefers-reduced-motion`. Light and dark themes match the design.
 - Accessibility: skip link; one labelled `nav` landmark for the sidebar; panels keyboard-reachable with visible focus and focus returned to the trigger; touch targets at least 44px on coarse pointers; 375px top bar keeps a readable title.
 - UI copy: no em dashes (existing copy tests enforce this).
@@ -52,7 +71,8 @@ cd /home/sico/Code/Lemely/.claude/worktrees/student-home-variants/web && npx vit
   tests/unit/adaptRules.test.ts tests/unit/motionDefaults.test.ts tests/unit/utilityExistence.test.ts \
   tests/unit/rtlSafety.test.ts tests/unit/design-tokens.test.ts tests/unit/darkConsumers.test.ts \
   tests/unit/hoverTransition.test.ts tests/unit/checkNativeInvariants.test.ts tests/unit/nativeMechanics.test.ts \
-  tests/unit/shellModel.test.ts tests/unit/shellPanels.test.ts tests/unit/shellTree.test.ts tests/unit/studentShell.test.ts
+  tests/unit/shellModel.test.ts tests/unit/shellPanels.test.ts tests/unit/shellTree.test.ts tests/unit/studentShell.test.ts \
+  tests/unit/shellTopBarGlass.test.ts
 ```
 
 Files in that list that do not exist yet (created by later tasks) are skipped by passing only the ones that exist; Vitest errors on a missing path, so drop not-yet-created files from the command in early tasks.
@@ -74,7 +94,7 @@ Source: `web/dev-previews/student-home/variant-a.css` lines 726 to 1212 (`.as-*`
 | `--fs-label` 11, `--fs-body-sm` 14, `--fs-title` 21, `--fs-headline` 32 | `text-[11px]`, `text-body-sm`, `text-[21px]`, `text-display-md` |
 | `--font-ui` (Schibsted), `--font-mono` | `font-sans` (default), `font-mono` |
 | `--space-1..12` | Tailwind 4px scale (`1`=4px, `2`=8px, `3`=12px, `4`=16px, `6`=24px, `8`=32px, `12`=48px) |
-| `@container ashell (max-width: 1000px)` | `max-shell-lg:` (new token, Task 3) |
+| `@container ashell (max-width: 1000px)` | `max-shell-lg:` (new token, Task 3). As built: below 1248px, the user's decision (Decision 1), not design A's 1000px |
 | `@container ashell (max-width: 720px)` | `max-shell-sm:` (new token, Task 3) |
 | `--as-side: 216px` | `w-shell-sidebar` (new token, Task 3) |
 
@@ -99,7 +119,7 @@ Create:
 | `web/src/components/shell/shellModel.ts` | Pure shell logic: trigger label, panel time label, settings tab keys. |
 | `web/src/components/shell/shellTree.ts` | Pure open-state logic for the expandable sidebar group. |
 | `web/src/components/shell/icons.tsx` | Design A stroke icons (`ShellIcon`). |
-| `web/src/components/shell/ShellAvatar.tsx` | Avatar circle, placeholder, `profileName` (moved from `ProfileAvatar.tsx`). |
+| `web/src/components/shell/ShellAvatar.tsx` | Avatar (squircle as built, Decision 4), placeholder, `profileName` (moved from `ProfileAvatar.tsx`). |
 | `web/src/components/shell/NotificationsPanel.tsx` | Bell panel (moved from `NotificationsMenu.tsx`). |
 | `web/src/components/shell/AccountPanel.tsx` | Avatar panel (moved from `ProfileMenu.tsx`). |
 | `web/src/components/shell/TopBarSheets.tsx` | Generic `ActionSheet` (moved from `TopBarSheets.tsx`). |
@@ -112,15 +132,17 @@ Create:
 | `web/src/portals/student/shell.tsx` | Student shell content passed to `PortalShell`. |
 | `web/src/portals/student/GradeRing.tsx` | Subject grade ring. |
 | `web/src/lib/studentInbox.ts` | Student notification destinations (moved out of the Notifications screen so the shell does not pull the screen into the entry chunk). |
-| `web/tests/unit/shellModel.test.ts`, `shellPanels.test.ts`, `shellTree.test.ts`, `studentShell.test.ts` | Unit tests. |
+| `web/tests/unit/shellModel.test.ts`, `shellPanels.test.ts`, `shellTree.test.ts`, `studentShell.test.ts`, `shellTopBarGlass.test.ts` (Task 4a) | Unit tests. |
 
-Modify: `web/package.json` (dev deps), `web/src/index.css` (3 tokens + 1 utility), `web/src/components/ui/nav-shells.tsx` (export `NavShellLink`), `web/src/components/ui/nav-drawer.tsx` (`variant="shell"`), `web/src/portals/teacher/index.tsx`, `web/src/portals/student/index.tsx`, `web/src/portals/student/data.ts`, `web/src/portals/student/screens/Notifications.tsx`, `web/src/portals/student/screens/Profile.tsx`, `web/src/portals/settings/settingsTabs.ts`, `web/src/portals/settings/SettingsModal.tsx`, `web/e2e/theme.spec.ts`, the pinned tests listed above, the spec's drift log.
+Modify: `web/package.json` (dev deps), `web/src/index.css` (3 tokens + 1 utility; Task 4a adds `.lm-shell-bar-glass`), `web/src/components/ui/nav-shells.tsx` (export `NavShellLink`), `web/src/components/ui/nav-drawer.tsx` (`variant="shell"`), `web/src/portals/teacher/index.tsx`, `web/src/portals/student/index.tsx`, `web/src/portals/student/data.ts`, `web/src/portals/student/screens/Notifications.tsx`, `web/src/portals/student/screens/Profile.tsx`, `web/src/portals/settings/settingsTabs.ts`, `web/src/portals/settings/SettingsModal.tsx`, `web/e2e/theme.spec.ts`, the pinned tests listed above, the spec's drift log.
 
 Delete (moved): `web/src/portals/teacher/components/NotificationsMenu.tsx`, `ProfileMenu.tsx`, `ProfileAvatar.tsx`, `TopBarSheets.tsx`.
 
 ---
 
 ### Task 0: Baseline: merge `origin/develop`, and settle open questions
+
+> **As built (2026-11-06):** the user's answers differ from two bracketed defaults in Step 3. The drawer breakpoint is **1248px**, not 1001px. The avatar is a **squircle**, not a circle. All answers are in the spec's "Decisions (2026-11-06, plan)" list.
 
 **Files:** none created. Merge commit only.
 
@@ -1508,6 +1530,8 @@ git commit -S -m "refactor(web): move teacher top-bar panels into components/she
 
 ### Task 3: Shell styles, icons, tokens, design A panels and `ShellTopBar`; teacher uses it
 
+> **As built (2026-11-06, commits `90da9938..f7695175`):** `--breakpoint-shell-lg` is **1248px**, so every "1001px" or "≤1000" below means "below 1248px". `ShellAvatar` is a squircle (Decision 4). The drift judge enforces approval: entries are written `"pending"` and fail until Task 9 (see the Global Constraints drift rule). Content mode hides the shell chrome. Baseline sidecars carry sha `aa533580`. `ShellTopBar` got `.lm-shell-bar-inset` for the standalone safe area. Task 4a later makes `BAR` translucent.
+
 **Files:**
 - Modify: `web/src/index.css` (tokens near `--breakpoint-sidebar` / `--sidebar-width`; utility near `.w-sidebar`)
 - Create: `web/src/components/shell/shellStyles.ts`, `web/src/components/shell/icons.tsx`, `web/src/components/shell/ShellTopBar.tsx`
@@ -2371,6 +2395,8 @@ git commit -S -m "feat(web): design A top bar and panels in the shared shell; te
 
 ### Task 4: `ShellNavList`, `ShellTree`, `ShellSidebar`, drawer variant; teacher uses the sidebar
 
+> **As built note (2026-11-06, added while this task was in progress):** the rail is hidden below **1248px** (`shell-lg`), not 1001px. Read every "1001px" or "≤1000" below as 1248. The justifications must say "squircle avatar", not "circle avatar", and stay `"pending"`. "Re-run until the command exits 0" means **Drift acceptance** (Global Constraints): only approval-pending failures may remain.
+
 **Files:**
 - Modify: `web/src/components/ui/nav-shells.tsx` (export `NavShellLink`; no behaviour change)
 - Modify: `web/src/components/ui/nav-drawer.tsx` (add `variant?: "default" | "shell"`)
@@ -3112,6 +3138,226 @@ git commit -S -m "feat(web): design A sidebar, subject tree and drawer in the sh
 
 ---
 
+### Task 4a: Translucent top bar (both portals)
+
+The user asked for the floating top bar to be semi-translucent across the whole app, like the landing page header. The reference is `web/src/portals/marketing/brand.css` `.brand-header`: `background: color-mix(in oklch, <surface> 86%, transparent); backdrop-filter: blur(14px)`. Design A already has this: `web/dev-previews/student-home/variant-a.css`, the `@supports` block commented "Floating top bar: semi-translucent like the landing page header". There, `.as-bar` is 86% `--md-surface-lowest` in light and 86% `--surface-card` (high) in dark. The rule comes after the `@container ashell (max-width: 720px)` rule, so the flat phone bar gets it too. `ShellTopBar` is shared, so one change covers student and teacher.
+
+Approach: a named, unlayered class in `web/src/index.css` next to `.lm-shell-bar-inset`. Arbitrary values are not used:
+- `elevationScale.test.ts` allows `backdrop-blur-nav` as the only blur utility, and the radius token is `--blur-nav`.
+- An unlayered rule beats the bar's layered `bg-*` utilities.
+- Those utilities stay in `BAR` as the solid fallback when `backdrop-filter` is unsupported. This matches the preview exactly: solid without `@supports`, translucent with it, phones included.
+
+Blur radius: `var(--blur-nav)` (10px; DESIGN §3.2 item 6 allows one radius). The landing page and the preview use 14px. At scroll 0 only the flat page ground sits under the bar, so the radius makes no pixel difference in any drift scene. The difference is still recorded in the spec (Risks 12).
+
+**Files:**
+- Modify: `web/src/index.css` (one `@supports` block after the `.lm-shell-bar-inset` media blocks)
+- Modify: `web/src/components/shell/ShellTopBar.tsx` (`BAR` gains `lm-shell-bar-glass`)
+- Create: `web/tests/unit/shellTopBarGlass.test.ts`
+- Modify: `web/scripts/drift/checks-shell.mjs` (translucency checks), `web/scripts/drift/justifications.json` (teacher frame entries)
+
+**Interfaces:**
+- Consumes: `BAR` in `ShellTopBar.tsx` (Task 3), `TEACHER_HOME` and `SHELL_CHECKS` in `checks-shell.mjs`, `--blur-nav`, `--md-surface-container-lowest`, `--md-surface-container-high`.
+- Produces: CSS class `.lm-shell-bar-glass`. Also `barIsTranslucent(id, app, theme)` in `checks-shell.mjs`, which returns a check object; Task 6 reuses it for the student bar.
+
+- [ ] **Step 1: Write the failing test `web/tests/unit/shellTopBarGlass.test.ts`**
+
+```ts
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+import { fileURLToPath } from "node:url"
+import { describe, expect, it } from "vitest"
+
+const SRC = join(fileURLToPath(new URL("../../", import.meta.url)), "src")
+const css = readFileSync(join(SRC, "index.css"), "utf8")
+const bar = readFileSync(join(SRC, "components/shell/ShellTopBar.tsx"), "utf8")
+
+/** The whole `@supports (backdrop-filter …) { … }` block that opens with
+ * `.lm-shell-bar-glass`, braces balanced; "" when there is none. */
+function glassBlock(): string {
+  const start = css.search(/@supports \(backdrop-filter: blur\(1px\)\)[^{]*\{\s*@media \(min-width: 721px\)\s*\{\s*\.lm-shell-bar-glass\s*\{/)
+  if (start < 0) return ""
+  let depth = 0
+  for (let i = css.indexOf("{", start); i < css.length; i++) {
+    if (css[i] === "{") depth++
+    else if (css[i] === "}" && --depth === 0) return css.slice(start, i + 1)
+  }
+  return ""
+}
+
+describe("the shell top bar is semi-translucent (portal shell Task 4a)", () => {
+  it("ShellTopBar opts in and keeps its solid surfaces as the fallback", () => {
+    expect(bar).toContain("lm-shell-bar-glass")
+    expect(bar).toMatch(/\bbg-surface-container-lowest\b/)
+    expect(bar).toMatch(/\bdark:bg-surface-container-high\b/)
+  })
+
+  it("the glass rules exist only inside the @supports block, floating bar only (not the flat phone bar)", () => {
+    const block = glassBlock()
+    expect(block).not.toBe("")
+    expect(block).toContain("@media (min-width: 721px)")
+    expect(css.replace(block, "")).not.toMatch(/\.lm-shell-bar-glass\s*\{/)
+  })
+
+  it("86% of the bar's light and dark surface, blurred by the one allowed radius", () => {
+    const block = glassBlock()
+    expect(block).toContain("color-mix(in oklch, var(--md-surface-container-lowest) 86%, transparent)")
+    expect(block).toMatch(
+      /\[data-theme="dark"\] \.lm-shell-bar-glass\s*\{[^}]*color-mix\(in oklch, var\(--md-surface-container-high\) 86%, transparent\)/,
+    )
+    expect(block).toContain("-webkit-backdrop-filter: blur(var(--blur-nav))")
+    expect(block).toMatch(/(?<!-webkit-)backdrop-filter: blur\(var\(--blur-nav\)\)/)
+  })
+})
+```
+
+Run: `cd web && npx vitest run tests/unit/shellTopBarGlass.test.ts`
+Expected: FAIL (3 tests; `lm-shell-bar-glass` not found).
+
+- [ ] **Step 2: Add the class to `web/src/index.css`**
+
+Insert directly after the second `@media (display-mode: standalone) … .lm-shell-bar-inset` block:
+
+```css
+/* The shared shell's floating top bar (ShellTopBar) is semi-translucent, like
+   the landing page header (brand.css .brand-header): 86% of the bar's own
+   surface over a backdrop blur, so a page scrolling under it stays faintly
+   visible. Unlayered, so it beats the bar's layered `bg-*` utilities, which
+   stay as the solid fallback where backdrop-filter is unsupported. The radius
+   is the one DESIGN §3.2 item 6 allows (`--blur-nav`). Floating bar only
+   (above 720px, the `max-shell-sm` edge): the flat phone bar stays transparent
+   and scrolls with the page, as in design A (variant-a.css, "Floating top bar:
+   semi-translucent", which is gated to `@container ashell (min-width: 721px)`). */
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  @media (min-width: 721px) {
+    .lm-shell-bar-glass {
+      background-color: color-mix(in oklch, var(--md-surface-container-lowest) 86%, transparent);
+      -webkit-backdrop-filter: blur(var(--blur-nav));
+      backdrop-filter: blur(var(--blur-nav));
+    }
+    [data-theme="dark"] .lm-shell-bar-glass {
+      background-color: color-mix(in oklch, var(--md-surface-container-high) 86%, transparent);
+    }
+  }
+}
+```
+
+(`--md-*` are the raw `:root` and `:root[data-theme="dark"]` tokens that the `--color-surface-container-*` theme colours resolve to. Design A's dark `--surface-card` is `--md-surface-high`, which is the app's `surface-container-high`; Design A source rules table.)
+
+- [ ] **Step 3: Opt the bar in (`web/src/components/shell/ShellTopBar.tsx`)**
+
+In `BAR`'s first string, add `lm-shell-bar-glass` after `lm-shell-bar-inset`:
+
+```ts
+const BAR = cn(
+  "lm-nav-chrome lm-shell-bar-inset lm-shell-bar-glass sticky top-2 z-nav mx-7 mt-2 mb-6 flex h-14 items-center gap-2 rounded-inner border border-outline-variant bg-surface-container-lowest ps-[17px] pe-[11px] transition-shadow duration-200",
+```
+
+Leave the other `BAR` strings unchanged. The `bg-*` utilities, including `max-shell-sm:bg-transparent`, are the fallback for browsers without `backdrop-filter` and match the preview's own fallback. Extend the component's doc comment with one line: "Semi-translucent over a backdrop blur (`.lm-shell-bar-glass`), like the landing page header."
+
+Run: `cd web && npx vitest run tests/unit/shellTopBarGlass.test.ts tests/unit/elevationScale.test.ts tests/unit/nativeMechanics.test.ts tests/unit/checkNativeInvariants.test.ts tests/unit/design-tokens.test.ts tests/unit/darkConsumers.test.ts tests/unit/contrastRules.test.ts`
+Expected: all pass.
+
+- [ ] **Step 4: Behaviour check: the page shows faintly through the bar when scrolled (`checks-shell.mjs`)**
+
+Add `import { PNG } from "pngjs"` to the imports at the top. After `SHELL_CHECKS` is declared, append:
+
+```js
+/** Mean luma (0..255) of a PNG screenshot. */
+function meanLuma(buffer) {
+  const { data } = PNG.sync.read(buffer)
+  let sum = 0
+  for (let i = 0; i < data.length; i += 4) sum += 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]
+  return sum / (data.length / 4)
+}
+
+/** Alpha of a computed colour: "rgba(r, g, b, a)", "oklch(l c h / a)", "color(srgb r g b / a)"; 1 when opaque. */
+function alphaOf(color) {
+  const slash = color.match(/\/\s*([\d.]+)(%?)\s*\)$/)
+  if (slash) return slash[2] ? Number(slash[1]) / 100 : Number(slash[1])
+  const rgba = color.match(/^rgba\([^)]*,\s*([\d.]+)\)$/)
+  return rgba ? Number(rgba[1]) : 1
+}
+
+/**
+ * Task 4a: the floating bar is 86% opaque over a backdrop blur. The bar is
+ * scrolled into its stuck state, then the same clip of it is shot twice:
+ * once over the plain page and once with a contrasting block fixed under it.
+ * The block must show through faintly: the mean luma moves, but by much less
+ * than a clear bar would let it.
+ */
+export function barIsTranslucent(id, app, theme) {
+  return {
+    id,
+    width: 1440,
+    theme,
+    app,
+    async run(page) {
+      const bar = page.locator("header[data-stuck]").first()
+      const style = await bar.evaluate((el) => {
+        const s = getComputedStyle(el)
+        return { bg: s.backgroundColor, blur: s.backdropFilter || s.webkitBackdropFilter || "" }
+      })
+      if (!/blur\(/.test(style.blur)) throw new Error(`${theme}: bar backdrop-filter is "${style.blur}", expected a blur`)
+      const alpha = alphaOf(style.bg)
+      if (!(alpha > 0.8 && alpha < 0.9)) throw new Error(`${theme}: bar background ${style.bg} has alpha ${alpha}, expected 0.86`)
+      await page.evaluate(() => {
+        document.body.style.minHeight = "3000px"
+        window.scrollTo(0, 400)
+      })
+      await page.waitForFunction(() => document.querySelector("header[data-stuck]")?.getAttribute("data-stuck") === "true")
+      const box = await bar.boundingBox()
+      const clip = { x: box.x + 4, y: box.y + 4, width: box.width - 8, height: box.height - 8 }
+      const plain = meanLuma(await page.screenshot({ clip, animations: "disabled" }))
+      await page.evaluate(
+        ([top, height, colour]) => {
+          const probe = document.createElement("div")
+          probe.style.cssText = `position:fixed;inset-inline:0;top:${top}px;height:${height}px;background:${colour};z-index:0;pointer-events:none`
+          document.body.append(probe)
+        },
+        [box.y, box.height, theme === "dark" ? "#fff" : "#000"],
+      )
+      const covered = meanLuma(await page.screenshot({ clip, animations: "disabled" }))
+      const moved = Math.abs(plain - covered)
+      if (moved < 4) throw new Error(`${theme}: content under the bar is not visible (luma ${plain.toFixed(1)} -> ${covered.toFixed(1)})`)
+      if (moved > 80) throw new Error(`${theme}: the bar is too clear (luma ${plain.toFixed(1)} -> ${covered.toFixed(1)})`)
+    },
+  }
+}
+
+SHELL_CHECKS.push(
+  barIsTranslucent("teacher-bar-translucent-light", TEACHER_HOME, "light"),
+  barIsTranslucent("teacher-bar-translucent-dark", TEACHER_HOME, "dark"),
+)
+```
+
+(The expected movement is about 14% of the probe's distance from the bar colour: about 35 luma units in light and about 30 in dark. A solid bar moves 0, and a clear bar moves more than 150. The bar's text and icons are in both shots, so they cancel out.)
+
+Run: `cd web && npm run build && node scripts/shell-behaviour.mjs --check teacher-bar-translucent`
+Expected: both checks (`-light`, `-dark`) `pass`. (`--check` takes an id prefix.)
+
+Show it can go red: remove `lm-shell-bar-glass` from `BAR`, rebuild and run the same command. Expected: both `FAIL` with "expected a blur". Restore the class and rebuild.
+
+- [ ] **Step 5: Drift (teacher frames change; student is checked in Task 6)**
+
+```bash
+cd /home/sico/Code/Lemely/.claude/worktrees/student-home-variants/web
+node scripts/shell-behaviour.mjs
+node scripts/home-drift.mjs --scene teacher-
+```
+
+Expected: every behaviour check passes. Teacher content keys stay 0 px, because content mode hides the bar. Frame, drawer, bell, account and settings keys may differ only inside the bar's box: 86% of the bar surface over the page ground instead of the solid surface. Check this in the diff images. Then, in `justifications.json`, add to the `difference` of every teacher entry whose scene shows the bar: `; top bar semi-translucent (86% of its surface over a backdrop blur), like the landing page header`. Add to its `justification`: `; design A variant-a.css .as-bar @supports rule (commit c880a54c), user decision 2026-11-06`. Leave or reset `approved` to `"pending"`. **Drift acceptance** (Global Constraints) must hold.
+
+- [ ] **Step 6: Commit**
+
+```bash
+cd /home/sico/Code/Lemely/.claude/worktrees/student-home-variants
+FILES="web/src/index.css web/src/components/shell/ShellTopBar.tsx web/tests/unit/shellTopBarGlass.test.ts web/scripts/drift/checks-shell.mjs web/scripts/drift/justifications.json"
+/home/sico/Code/Lemely/.venv/bin/pre-commit run --files $FILES
+git commit -S -m "feat(web): shell top bar is semi-translucent like the landing page header" -- $FILES
+```
+
+---
+
 ### Task 5: `PortalShell` layout; teacher layout replaced
 
 **Files:**
@@ -3148,7 +3394,7 @@ Design A rule → Tailwind mapping for this task:
 | `.as-app` grid `216px 1fr`, min-height 100dvh, bg `--md-surface-container` | `flex min-h-dvh bg-surface-container` (rail is the 216px flex item) |
 | `.as-col` column, min-inline-size 0 | `flex min-w-0 flex-1 flex-col` |
 | `.as-main` container `home`, padding `4px 72px 40px`, no max width | `@container/home w-full min-w-0 flex-1 px-[72px] pt-1 pb-10` |
-| ≤1000: `.as-main` padding `4px 14px 36px` | `max-shell-lg:px-3.5 max-shell-lg:pb-9` |
+| ≤1000 (app: below 1248px, `max-shell-lg`): `.as-main` padding `4px 14px 36px` | `max-shell-lg:px-3.5 max-shell-lg:pb-9` |
 | ≤720: `.as-main` padding `4px 14px 32px` | not used: below 820px `max-sidebar:pb-bottom-nav` must win so the fixed `BottomNav` never covers content (approved drift). Do not add `max-shell-sm:pb-8`: Tailwind orders the smaller max breakpoint later, so it would override the clearance. |
 | `.as-main:focus` no outline | `focus:outline-none` |
 | `.as-skip` | existing `SkipLink` (same behaviour; style difference logged) |
@@ -3209,7 +3455,7 @@ export interface PortalShellProps {
 
 /**
  * The frame around every student and teacher page (design A `.as-app`): the
- * sidebar column from `shell-lg`, the same sidebar as a drawer below it, the
+ * sidebar column from `shell-lg` (1248px), the same sidebar as a drawer below it, the
  * floating top bar, the page well, and the phone tab bar below the `sidebar`
  * breakpoint (approved drift: design A's own phone bar differs).
  *
@@ -3276,6 +3522,13 @@ export function PortalShell({ portal, sidebar, topBar, bottomTabs, bottomEmphasi
 ```
 
 (`ScreenOutlet` accepts `{ overlay?: ScreenOverlay }` on `develop`; passing `undefined` renders the plain outlet. `max-sidebar:` is Tailwind's max variant of the existing `--breakpoint-sidebar`.)
+
+Width ranges this layout produces (Decision 1):
+- Below 820px (`max-sidebar`): `BottomNav` plus "More", which opens the drawer. The menu button also shows from 721px.
+- 820 to 1247px: no tab bar; the menu button opens the drawer.
+- From 1248px (`shell-lg`): the sidebar column, with no menu button.
+
+The 1024px drift window is in the drawer range.
 
 - [ ] **Step 3: Replace `TeacherLayout`**
 
@@ -3347,7 +3600,7 @@ node scripts/shell-behaviour.mjs
 node scripts/home-drift.mjs --scene teacher-
 ```
 
-Expected: 6 behaviour checks pass; content keys 0 px; frame keys show the page ground (`surface` → `surface-container`) and gutter changes on top of Tasks 3 and 4. Confirm from the diffs, then extend each teacher frame justification's `difference` with "page ground surface-container; main padding 4px 72px 40px (14px below 1001px), no 1600px cap" and its `justification` with "Design A .as-app, .as-main". Re-run until exit 0.
+Expected: every behaviour check passes, including `teacher-sidebar-xor-menu-*` and `teacher-bar-translucent-*`. Content keys are 0 px. Frame keys show the page ground change (`surface` → `surface-container`) and gutter changes on top of Tasks 3, 4 and 4a. The translucent bar now sits over `surface-container`. Confirm this from the diffs. Then add to each teacher frame entry's `difference`: "page ground surface-container; main padding 4px 72px 40px (14px below 1248px), no 1600px cap". Add "Design A .as-app, .as-main" to its `justification`, and leave `approved` as `"pending"`. Re-run until **Drift acceptance** holds (Global Constraints).
 
 - [ ] **Step 7: Commit**
 
@@ -4047,29 +4300,48 @@ async function openPreviewNav(page) {
   else await page.click(".as-menu")
 }
 
+/** Decision 1: the app's drawer range runs to 1247px, design A's only to
+ * 1000px. At the 1024 window the app shows the menu button and a full-width
+ * page where design A shows the 216px sidebar, which no 15% cap can absorb.
+ * So each student scene splits in two. The gate scene keeps 390, 768, 1440
+ * and 1920. A log-only `<id>-1024` scene has no cap but needs an approved
+ * entry, the same rule as the teacher frames. */
+const GATE_WINDOWS = [390, 768, 1440, 1920]
+function byWindowRule(scene) {
+  return [
+    { ...scene, windows: GATE_WINDOWS },
+    { ...scene, id: `${scene.id}-1024`, windows: [1024], rule: "log" },
+  ]
+}
+
 export const STUDENT_SCENES = [
-  ...["populated", "new"].map((state) => ({
-    id: `student-${state}-frame`,
-    kind: "preview-vs-app",
-    capture: "frame",
-    app: student(state),
-    preview: { state },
-  })),
-  {
+  ...["populated", "new"].flatMap((state) =>
+    byWindowRule({
+      id: `student-${state}-frame`,
+      kind: "preview-vs-app",
+      capture: "frame",
+      app: student(state),
+      preview: { state },
+    }),
+  ),
+  ...byWindowRule({
     id: "student-subject-frame",
     kind: "preview-vs-app",
     capture: "frame",
     app: student("populated", { path: "/student/subject/0606" }),
     preview: { state: "populated", act: asRoute({ title: "Add Maths", current: null }) },
-  },
-  {
+  }),
+  ...byWindowRule({
     id: "student-notifications-frame",
     kind: "preview-vs-app",
     capture: "frame",
     app: student("populated", { path: "/student/notifications" }),
     preview: { state: "populated", act: asRoute({ title: "Notifications", current: null }) },
-  },
+  }),
   {
+    // 390 and 768 only: at 1024 design A has no drawer to open (its sidebar
+    // shows from 1001px). The app's 1024 drawer is covered by the
+    // student-sidebar-xor-menu-* behaviour checks instead.
     id: "student-drawer",
     kind: "preview-vs-app",
     capture: "frame",
@@ -4077,24 +4349,26 @@ export const STUDENT_SCENES = [
     app: student("populated", { act: openStudentNav }),
     preview: { state: "populated", act: openPreviewNav },
   },
-  {
+  ...byWindowRule({
     id: "student-bell",
     kind: "preview-vs-app",
     capture: "frame",
     app: student("populated", { act: openBell }),
     preview: { state: "populated", act: (page) => page.click(".as-pop-bell summary") },
-  },
-  {
+  }),
+  ...byWindowRule({
     id: "student-account",
     kind: "preview-vs-app",
     capture: "frame",
     app: student("populated", { act: openAccount }),
     preview: { state: "populated", act: (page) => page.click(".as-pop-me summary") },
-  },
+  }),
 ]
 ```
 
-and change the last line to `export const SHELL_SCENES = [...TEACHER_SCENES, ...STUDENT_SCENES]`.
+and change the last line to `export const SHELL_SCENES = [...TEACHER_SCENES, ...STUDENT_SCENES]`. Task 7 reuses `byWindowRule` (same file) for the settings scenes.
+
+Check before relying on it: in `home-drift.mjs` (around line 62), a scene's `windows` must filter both the default and a `--windows` list. `--windows 1024` should then run only the `-1024` scenes. Confirm with `node scripts/home-drift.mjs --list --scene student-populated-frame`: it should list 4 gate windows × 2 themes plus `student-populated-frame-1024@1024@light` and `@dark`.
 
 - [ ] **Step 11: Append student behaviour checks to `web/scripts/drift/checks-shell.mjs`**
 
@@ -4189,10 +4463,31 @@ SHELL_CHECKS.push(
       if (!box || box.width < 100) throw new Error(`375px: title is ${box?.width ?? 0}px wide`)
     },
   },
+  ...[900, 1024, 1247, 1248, 1300].map((width) => ({
+    // Decision 1, as for the teacher: exactly one of {sidebar column, menu
+    // button} shows above the phone range, and the column starts at 1248px.
+    // This is the check that the 1024 window gets the drawer (the drift
+    // scenes cannot: design A has no drawer at 1024).
+    id: `student-sidebar-xor-menu-${width}`,
+    width,
+    app: STUDENT_HOME,
+    async run(page) {
+      const menu = await page.getByRole("button", { name: "Open student navigation" }).isVisible()
+      const sidebar = await page.getByRole("navigation", { name: "Main", exact: true }).isVisible()
+      if (menu === sidebar) throw new Error(`at ${width}px: menu button visible=${menu}, sidebar visible=${sidebar}; exactly one must show`)
+      if (sidebar !== width >= 1248) throw new Error(`at ${width}px: sidebar column visible=${sidebar}, expected ${width >= 1248} (drawer below 1248px)`)
+      if (menu) {
+        await page.getByRole("button", { name: "Open student navigation" }).click()
+        await page.getByRole("dialog").getByRole("navigation", { name: "Main", exact: true }).waitFor()
+      }
+    },
+  })),
+  barIsTranslucent("student-bar-translucent-light", STUDENT_HOME, "light"),
+  barIsTranslucent("student-bar-translucent-dark", STUDENT_HOME, "dark"),
 )
 ```
 
-(`openNavFromMore`, `assertFocused`, `assertHidden` are the helpers already in this file.) Prove one goes red: temporarily change `Enter` to `Tab` in the first check, run `node scripts/shell-behaviour.mjs --check student-subject-tree-keyboard`, expect `FAIL`, revert.
+(`openNavFromMore`, `assertFocused`, `assertHidden` and `barIsTranslucent` (Task 4a) are helpers already in this file. The sidebar's `nav` is labelled by `navLabel: "Main"` (Step 5). If Task 4 labelled the drawer's `nav` differently, match what `teacher-drawer-has-one-labelled-nav` asserts.) Prove one goes red: temporarily change `Enter` to `Tab` in the first check, run `node scripts/shell-behaviour.mjs --check student-subject-tree-keyboard`, expect `FAIL`, revert.
 
 - [ ] **Step 12: Drift acceptance (student vs design A)**
 
@@ -4205,12 +4500,14 @@ node scripts/home-drift.mjs --scene student-
 
 For each failing key, open `<key>.a.png` (design), `<key>.b.png` (app) and `<key>.diff.png`, fix the Tailwind classes against the mapping tables in Tasks 3 to 6, rebuild, re-run that scene (`--scene student-populated-frame --windows 1440 --themes light` for a quick loop, then the full set). Expected differences that stay, each logged in `justifications.json` (keep each pair ≤15%):
 
-- `student-*-frame@390`, `@768`: `BottomNav` (5 tabs, below 820px) in place of design A's 4-item bar at 720px and below, and no bar at 768px. "Approved: phone navigation parity with teacher; user decision 2026-11-06." Measure and record the %.
-- `student-populated-frame`: sidebar has Tutors and Sessions rows (Task 0 decision 2); the Add Maths group is closed on `/student` (design A opens today's session subject; session data arrives with the Overview plan, which passes `fallbackId`).
+- `student-*-frame@390`, `@768`: `BottomNav` (5 tabs, below 820px) in place of design A's 4-item bar at 720px and below, and no bar at 768px. Justification: "Phone navigation parity with teacher; user decision 2026-11-06 (Decision 5)." Measure and record the %. Write `approved` as `"pending"`; the spec's drift log already shows the user approved it, and Task 9 carries that over.
+- `student-populated-frame`: the sidebar has Tutors and Sessions rows after Friends (Decision 2). The Add Maths group is closed on `/student`: design A opens today's session subject, but session data arrives with the Overview plan, which passes `fallbackId`. The sidebar foot and bar avatar are squircles, not design A's circles (Decision 4, kit `Avatar`, DESIGN.md §6). That last difference applies to every student frame, bell and account key.
+- Every `student-*-1024` key (log-only, no cap): "Sidebar hidden, menu button and drawer at 1024px; design A shows the 216px sidebar from 1001px. Drawer below 1248px, user decision 2026-11-06 (Decision 1)." Also write the same entry's other differences, such as Tutors/Sessions and the squircle.
+- The top bar must match the preview at 0 px in every theme and gate window, including its translucency (Task 4a; the preview has the same `@supports` rule). A difference inside the bar's box is drift to fix, not to justify.
 - `student-bell`: the mono spans in "Thu 12 Nov" and "0580/42" render in the sans face (titles are plain API strings); the friend row shows the fallback bell icon (no friend type in the API); the panel heading is a `<p>` (axe: no heading inside `role="menu"`); at 390px the panel sits 8px below the 36px trigger instead of 4px under the 44px bar.
 - `student-subject-frame`, `student-notifications-frame`: same as `student-populated-frame`.
 
-Every other difference is drift to fix. Re-run until `node scripts/home-drift.mjs --scene student-` exits 0. Also re-run `--scene teacher-` (shared components changed) and expect exit 0.
+Every other difference is drift to fix. Re-run until **Drift acceptance** (Global Constraints) holds for `node scripts/home-drift.mjs --scene student-`. Then re-run `--scene teacher-` (shared components changed) and expect the same. Every new or changed entry is `"pending"`. The streak gap (Decision 3) is not a drift difference: the shell has no streak in design A either.
 
 - [ ] **Step 13: Commit**
 
@@ -4485,20 +4782,31 @@ SHELL_CHECKS.push(
   ["notifications", "/notifications"],
   ["appearance", "/appearance"],
   ["install", "/install"],
-].map(([tab, suffix]) => ({
-  id: `student-settings-${tab}`,
-  kind: "preview-vs-app",
-  capture: "frame",
-  app: student("populated", { path: `/student/settings${suffix}` }),
-  preview: {
-    state: "populated",
-    act: async (page) => {
-      await page.click('[data-a-open="as-settings"]')
-      await page.click(`[data-a-tab="${tab}"]`)
+].flatMap(([tab, suffix]) =>
+  byWindowRule({
+    id: `student-settings-${tab}`,
+    kind: "preview-vs-app",
+    capture: "frame",
+    app: student("populated", { path: `/student/settings${suffix}` }),
+    preview: {
+      state: "populated",
+      act: async (page) => {
+        await page.click('[data-a-open="as-settings"]')
+        await page.click(`[data-a-tab="${tab}"]`)
+      },
     },
-  },
-})),
+  }),
+),
 ```
+
+(At 1024 the page under the scrim has the sidebar in design A but not in the app, so `-1024` is log-only, the same as Task 6.) The preview's settings dialog was rebuilt in `c880a54c` and now has the same geometry as `SettingsModal` on `develop`:
+- `.as-modal`: 960 × 736, radius card, `border: 0`, `--shadow-panel`.
+- `.as-set-rail`: 256px wide, `surface-low`, 1px end border.
+- `.as-set-tabs`: 44px tabs; the current tab is `primary-container` with `primary` text.
+- `.as-set-close-lg` / `-sm`: two close buttons.
+- At 720px and below the dialog is a full-screen sheet with a horizontal tab strip.
+
+The selectors above (`data-a-open="as-settings"`, `data-a-tab`) are unchanged.
 
 - [ ] **Step 8: Run tests, behaviour, drift**
 
@@ -4512,7 +4820,7 @@ node scripts/home-drift.mjs --scene student-settings-
 node scripts/home-drift.mjs --scene teacher-settings-
 ```
 
-Expected: tests pass; all behaviour checks pass. Drift: fix the frame (rail, tabs, header, close buttons, title block) to 0 px where you can. The section bodies are the real settings sections (`ProfileSettingsSection`, `AccountSettingsSection`, …), shared with the teacher dialog; where a body differs from design A's demo rows, either fix it in the shared section (and accept the matching `teacher-settings-*` change, logged) or log it with a justification such as "real device list from `GET /me/devices`; design shows two demo devices". Keep each key ≤15%. Teacher settings keys must also exit 0 (log the border removal and any section change). If a local Supabase stack is up (`supabase status` answers), run `npx playwright test e2e/theme.spec.ts`; otherwise state in the report that it was not run and why.
+Expected: tests pass; all behaviour checks pass. Drift: fix the frame (rail, tabs, header, close buttons, title block) to 0 px where you can. The section bodies are the real settings sections (`ProfileSettingsSection`, `AccountSettingsSection`, …), shared with the teacher dialog; where a body differs from design A's demo rows, either fix it in the shared section (and accept the matching `teacher-settings-*` change, logged) or log it with a justification such as "real device list from `GET /me/devices`; design shows two demo devices". Keep each gate key ≤15%; `-1024` keys are log-only. Teacher settings keys must meet **Drift acceptance** too: log the border removal and any section change, with `approved` `"pending"`. Every student-settings key must meet **Drift acceptance**. If a local Supabase stack is up (`supabase status` answers), run `npx playwright test e2e/theme.spec.ts`; otherwise state in the report that it was not run and why.
 
 - [ ] **Step 9: Commit**
 
@@ -4565,61 +4873,129 @@ git commit -S -m "refactor(web): remove exports orphaned by the shared shell" --
 
 ---
 
-### Task 9: Final verification, axe sweep and drift log
+### Task 9: Final verification, axe sweep, minors and drift approval
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-11-06-portal-shell-design.md` (drift log; decisions recorded in Task 0)
-- Modify: `web/scripts/drift/justifications.json` (approval states)
+- Modify: `docs/superpowers/specs/2026-11-06-portal-shell-design.md` (drift log)
+- Modify: `web/scripts/drift/justifications.json` (approval states, only as the user decides)
+- Modify: the component(s) behind the axe violations in Step 4. Expected: `web/src/components/shell/NotificationsPanel.tsx`, `AccountPanel.tsx` and/or `web/src/portals/teacher/index.tsx`; confirm from the axe output.
 
-**Interfaces:** none produced; this task certifies the tree it runs on. If any later fix commit lands, re-run this task from Step 1.
+**Interfaces:** none produced. This task certifies only the tree it runs on: if any later fix commit lands, re-run it from Step 1.
 
 - [ ] **Step 1: Re-check where you are**
 
 ```bash
 cd /home/sico/Code/Lemely/.claude/worktrees/student-home-variants
 git status --short --branch
+git log --oneline -12
 ```
 
-Expected: clean apart from the staged preview files if the user chose option 3 in Task 0, and the untracked `.impeccable/` folders.
+Expected: branch `design/student-home-variants`, with the Task 4a to 8 commits present. The tree is clean apart from untracked `.impeccable/` folders and any design-preview files the user is editing. Leave those alone and list them in the report.
 
-- [ ] **Step 2: Derive the web gate list from CI and run each one that needs no backend**
+- [ ] **Step 2: Verify the teacher baselines' provenance**
 
 ```bash
+cd web
+node -e 'const fs=require("fs"),p=require("path");const d=p.resolve("../reports/.scratch/drift/baseline");const c={};let missing=0,n=0;for(const f of fs.readdirSync(d))if(f.endsWith(".json")&&f!=="provenance.json"){n++;const m=JSON.parse(fs.readFileSync(p.join(d,f)));if(!m.sha)missing++;else c[m.sha]=(c[m.sha]??0)+1}console.log({n,missing,shas:c})'
+```
+
+Expected: `missing: 0` and exactly one sha, `aa5335801ac9362d02fcc88c9ab9b20afa52fba4`, counting every sidecar.
+- Any other sha, or a sidecar without one, is a stop. Report it and do not re-record: re-recording moves the "before" side and needs the user's approval.
+- The compare step today only checks that a sha exists (ledger minor P1T3). Put this result in the report as the evidence for the pin.
+
+- [ ] **Step 3: Derive the web gate list from CI and run each one that needs no backend**
+
+```bash
+cd /home/sico/Code/Lemely/.claude/worktrees/student-home-variants
 grep -nE "run:|npm run|npx " .github/workflows/ci.yml | grep -iE "web|npm|npx"
 ```
 
-Run every web gate listed there that does not need the backend or Supabase (expected at least: `npm run typecheck`, `npm run lint`, `npm run check:copy`, `npm run check:native`, `npm run build` with its `check:bundle`), from `web/`. Do not run the full Vitest suite; run the **Shell sweep command** instead. Expected: every command exits 0. Report any CI gate you could not run locally and why.
+Run every web gate listed there that needs neither the backend nor Supabase, from `web/`. Expect at least `npm run typecheck`, `npm run lint`, `npm run check:copy`, `npm run check:native`, and `npm run build` with its `check:bundle`. Do not run the full Vitest suite; run the **Shell sweep command** instead. Expected: every command exits 0. Report any CI gate you could not run locally, and why.
 
-- [ ] **Step 3: Behaviour and axe**
+- [ ] **Step 4: Behaviour and axe; resolve the axe minors**
 
 ```bash
 cd web && npm run build && node scripts/shell-behaviour.mjs --axe
 ```
 
-Expected: every check `pass` with no axe violations (the checks leave the shell in its interaction states: bell open, account open, drawer open, settings tabs, both portals). Fix any violation in the component, not by excluding the rule.
+The ledger records two known failures (minor P1T2): `--axe` fails on the teacher Escape checks with `aria-prohibited-attr` and `region`.
+- `aria-prohibited-attr`: an `aria-label` on an element whose role does not allow a name. Typically this is a `<span>` or `<div>` with no role, such as the unread dot or the avatar placeholder. Remove the attribute, give the element a role that allows a name, or use a visually hidden text node.
+- `region`: content outside any landmark. Expect the Radix menu portal, or a top-bar node rendered outside `<header>`, `<main>` or `<nav>`. Fix it in the component: move the node into a landmark, or give the portal container a landmark role if it really is a region.
 
-- [ ] **Step 4: Full drift run**
+Never fix these by excluding the rule or by marking the check `axe: false`.
+
+Expected: every check `pass`, with no axe violations. The checks leave the shell in each interaction state: bell open, account open, drawer open, settings tabs, both portals. If a component changed, re-run the **Shell sweep command**, then do the full drift run in Step 5.
+
+- [ ] **Step 5: Full drift run**
 
 ```bash
 node scripts/home-drift.mjs --scene teacher-,student-
 ```
 
-Expected: exit 0; no `fail`; every non-zero key `pass-justified`. Teacher content keys 0 px (or justified ≤15% with a reason that is a shell change, never a page-content change).
+Expected: **Drift acceptance** holds (Global Constraints). Every key is `pass` or `pass-justified`, or fails only because approval is pending. Teacher content keys are 0 px. If a teacher content key is justified at 15% or less, its reason must be a shell change, never a page-content change. Keep the run's `report: …` directory for Steps 6 and 7.
 
-- [ ] **Step 5: Write the drift log into the spec**
+- [ ] **Step 6: Write the drift log into the spec**
 
-Replace the spec's "Drift log" table with the rows of the run's `report.md` (path printed by the script), one row per scene id (collapse windows and themes into one row when the justification is the same; give the max %). Correct the bottom-tab row: design A has its own 4-item phone bar at 720px and below; the app keeps `BottomNav` (5 tabs) below 820px (user decision 2026-11-06), with the measured %. Add a "Not captured" note for hover colours (design A's `--surface-hover-tint` mapped to `surface-container`) and the pre-mount shell (`index.html` still paints the 252px / 820px sidebar before React mounts; see Risks below).
+Replace the spec's "Drift log" table with the rows of the run's `report.md`:
+- One row per scene id. Collapse windows and themes into one row when the justification is the same, and give the max %.
+- Correct the bottom-tab row. Design A has its own 4-item phone bar at 720px and below; the app keeps `BottomNav` (5 tabs) below 820px (user decision 2026-11-06). Add the measured %.
+- State what "0 px" means: pixelmatch threshold 0.1 (ledger minor P1T1).
+- Add a "Not captured" note for three things. Hover colours: design A's `--surface-hover-tint` is mapped to `surface-container`. The pre-mount shell: `index.html` still paints the 252px / 820px sidebar before React mounts (see Risks 9). The bar's blur radius: 10px `--blur-nav` against the preview's 14px; nothing sits under the bar at scroll 0, so no scene can see it.
 
-- [ ] **Step 6: Ask the user to approve the pending rows (blocking for "Approved")**
+- [ ] **Step 7: One approval request for every pending entry (blocking)**
 
-List every row whose `approved` is `"pending"` with its % and justification, and ask the user to approve or reject each (AskUserQuestion when available). Set `approved` to `"yes"` for approved rows in both `justifications.json` and the spec. Rejected rows are drift to fix: fix, rebuild, re-run Steps 3 and 4.
+Collect every entry whose `approved` is not `"yes"` into one list, with its keys, max % and rule:
 
-- [ ] **Step 7: Commit**
+```bash
+node -e 'const j=require("./scripts/drift/justifications.json");const r=require(require("path").resolve("..",process.argv[1],"report.json"));for(const [id,e] of Object.entries(j)){if(String(e.approved).toLowerCase()==="yes")continue;const keys=r.filter(k=>k.justification?.key===id);const max=Math.max(0,...keys.map(k=>k.pct));console.log(`${id} | ${keys.length} keys | max ${max.toFixed(2)}% | ${e.difference} | ${e.justification}`)}' <report dir>
+```
+
+Send the user **one** message with the whole list, using the spec's drift-log table as the reference. Group it as:
+- teacher frames, drawer, bell, account and settings (log-only);
+- student gate scenes (each at or under 15%);
+- student `-1024` scenes (log-only, Decision 1);
+- carried decisions: bottom tabs (already "Yes" in the spec's drift log), Tutors and Sessions, squircle avatar, translucent bar.
+
+Ask the user to approve or reject each group, and any single row they want to judge on its own. Use AskUserQuestion when available, and do not split this into many questions.
+
+Only after the user answers, set `approved` to `"yes"` for exactly the rows they approved, in both `justifications.json` and the spec. Rejected rows are drift to fix: fix it, rebuild, and re-run Steps 4 and 5. Finally re-run Step 5 and expect **exit 0**, with no failures at all.
+
+- [ ] **Step 8: Minors for the final review**
+
+Do not fix these here. Copy them from `.superpowers/sdd/progress.md` ("Minor findings") into the report as a list for the final review. Mark each one fixed, still open, or moot after Tasks 4a to 8.
+- P1T1:
+  - the empty-selection selftest;
+  - the foreign-kit probes;
+  - `gitDirty` counting untracked files;
+  - `--record-provenance` output on a clean tree;
+  - the "0 px" definition (written in Step 6);
+  - preview identity ignoring the inline script.
+- P1T2:
+  - the `assertFocused` catch masking errors;
+  - the fixed wait in the bell ArrowDown check;
+  - `stableShot` settling on a skeleton;
+  - `formatAge` (confirm Task 3 removed it);
+  - the empty-inbox copy, which has no scene.
+- P1T3:
+  - the harness version in the sidecar;
+  - pinning the expected baseline sha in compare (Step 2 is the manual stand-in);
+  - selftest flakes while the design session edits the kit on port 5180;
+  - the bar margins at 820 to 1247px (likely moot after Tasks 4 and 5; confirm in `teacher-home-frame@1024`);
+  - content scenes cannot see the bar overlapping the first content row (that is the frame scenes' job; confirm in the `@1024` and `@1440` frame diffs).
+- Any minors added by the Task 4 to 8 reviews.
+
+- [ ] **Step 9: Commit**
+
+If Step 4 changed components, commit them first in their own `fix(web):` commit, so the docs commit holds only the log:
 
 ```bash
 cd /home/sico/Code/Lemely/.claude/worktrees/student-home-variants
-/home/sico/Code/Lemely/.venv/bin/pre-commit run --files docs/superpowers/specs/2026-11-06-portal-shell-design.md web/scripts/drift/justifications.json
-git commit -S -m "docs(web): portal shell drift log" -- docs/superpowers/specs/2026-11-06-portal-shell-design.md web/scripts/drift/justifications.json
+FIX="<component files changed in Step 4>"
+/home/sico/Code/Lemely/.venv/bin/pre-commit run --files $FIX
+git commit -S -m "fix(web): shell axe violations (aria-prohibited-attr, region)" -- $FIX
+FILES="docs/superpowers/specs/2026-11-06-portal-shell-design.md web/scripts/drift/justifications.json"
+/home/sico/Code/Lemely/.venv/bin/pre-commit run --files $FILES
+git commit -S -m "docs(web): portal shell drift log and approvals" -- $FILES
 ```
 
 Do not push.
@@ -4628,14 +5004,17 @@ Do not push.
 
 ## Risks and spec gaps found while planning
 
-1. **Drawer breakpoint.** Spec: "drawer below 1248px". Design A CSS: 1000px. The plan uses 1001px (`shell-lg`) and asks the user in Task 0.
+1. **Drawer breakpoint.** Spec: "drawer below 1248px". Design A CSS: 1000px. **Resolved:** 1248px (user, Decision 1; built in Task 3). The 1024px window differs from the design in every student scene, so those keys are log-only (`byWindowRule`, Task 6). The drawer at 1024 is proven by the `*-sidebar-xor-menu-*` behaviour checks.
 2. **Design A's phone bar.** The spec's drift log says the design has no bottom bar; it has a 4-item `.a-bottombar` at 720px and below. The app keeps `BottomNav` below 820px (decision); between 721 and 819px both the menu button and the tab bar show.
 3. **`TopBarSheets` on `develop` is the teacher Create sheet**, not "phone sheets for the panels"; design A has no phone panel sheets (panels drop under the bar). The plan moves it as a generic `ActionSheet`.
-4. **Student destinations without a home in design A**: Tutors and Sessions (Task 0 question); the subject page itself is no longer linked from the sidebar (design A's subject row is a disclosure button only).
-5. **Streak gap**: removing `HeaderStreak` before the Overview hero exists hides the streak at `sm` and up until the Overview plan ships.
+4. **Student destinations without a home in design A**: Tutors and Sessions (resolved: sidebar rows after Friends, Decision 2); the subject page itself is no longer linked from the sidebar (design A's subject row is a disclosure button only).
+5. **Streak gap**: removing `HeaderStreak` before the Overview hero exists hides the streak at `sm` and up until the Overview plan ships (accepted, Decision 3).
 6. **No DOM in Vitest** (D3.20): behaviour tests live in `web/scripts/shell-behaviour.mjs` (Playwright, mocked API), not in Testing Library.
 7. **Data the design shows that the API does not have**: short subject names ("Add Maths"), the ring percentage's meaning (`SubjectRow.pct` is used), today's session subject (opens a subject by default), a friend notification type, mono spans inside titles.
 8. **Teacher frame scenes cannot meet the 15% cap**: the page ground changes from `surface` to `surface-container` under the whole page. Teacher frames are log-only; teacher content scenes are gated (with a neutral background so the ground change cannot leak in).
 9. **Pre-mount shell**: `web/vite/preMountShell.ts` fills `index.html` from `--sidebar-width` (252px) and `--breakpoint-sidebar` (820px), so the first paint before React mounts shows the old sidebar geometry for student and teacher. Fixing it touches the admin portal's shell too; left as a follow-up.
-10. **Circle avatar** contradicts DESIGN.md §6 (Task 0 question).
+10. **Circle avatar** contradicts DESIGN.md §6. **Resolved:** squircle (Decision 4); logged against design A in Task 6.
 11. **New dev dependencies**: `pixelmatch`, `pngjs`. The preview server config uses port 5199; the drift script starts it on 5180 explicitly.
+12. **Translucent bar blur radius** (Task 4a). The landing page and the preview use `blur(14px)`. The app's only allowed blur token is `--blur-nav` (10px; DESIGN §3.2 item 6, `elevationScale.test.ts`). The plan uses the token. At scroll 0 nothing sits under the bar, so no drift scene can see the radius. If the user wants 14px, change `--blur-nav` itself, which also changes the admin header and the marketing `.nav`; do not add a second radius.
+13. **Translucent bar on phones** (Task 4a). Resolved: the translucency applies only where the bar floats (above 720px). The preview rule is gated by `@container ashell (min-width: 721px)` and the app class by `@media (min-width: 721px)`; the flat phone bar stays transparent and scrolls with the page, as DESIGN §3.2 item 6 prefers.
+14. **Approvals pending across tasks.** The drift judge fails on every unapproved entry. From Task 3 to Task 9 the runs exit non-zero by design (102+ pending teacher keys at Task 3). Tasks use **Drift acceptance** rather than the exit code until Task 9 Step 7.

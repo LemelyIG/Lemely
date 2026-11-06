@@ -2447,9 +2447,12 @@ grid-template-areas: "n c" "t t"; row-gap: 0; padding-block: var(--space-2);
 
 /* Floating top bar: semi-translucent like the landing page header (brand.css .brand-header:
    86% surface + 14px blur), so content scrolling under it stays faintly visible. */
+/* Only where the bar floats (above 720px); the flat phone bar stays transparent and scrolls. */
 @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
-  .as-bar { background: color-mix(in oklch, var(--md-surface-lowest) 86%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px) }
-  .sh-root[data-theme="dark"] .as-bar { background: color-mix(in oklch, var(--surface-card) 86%, transparent) }
+  @container ashell (min-width: 721px) {
+    .as-bar { background: color-mix(in oklch, var(--md-surface-lowest) 86%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px) }
+    .sh-root[data-theme="dark"] .as-bar { background: color-mix(in oklch, var(--surface-card) 86%, transparent) }
+  }
 }
 
 /* Hero, consistent surface (accepted in live, session afe76ac6): the same edge and corner as every
