@@ -22,7 +22,7 @@ body:has(.sh-root[data-theme="dark"]) { background: oklch(0.12 0.010 245) }
   background: var(--surface-page); color: var(--text-body);
   font-family: var(--font-ui);
 }
-.sh-root[data-width="desktop"] { max-inline-size: 1280px }
+.sh-root[data-width="desktop"] { max-inline-size: none }
 .sh-root[data-width="mobile"] { max-inline-size: 390px }
 
 /* Exactly one state block is visible at a time. */

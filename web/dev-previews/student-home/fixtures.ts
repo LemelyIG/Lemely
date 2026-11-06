@@ -6,7 +6,7 @@
 import type { BinnyMood, HomeFacts, LatestResult, NextActionKind, XpDay } from "@/portals/student/home/model"
 
 export const STATES = [
-  "populated", "result-in", "new", "one-paper", "marking", "no-plan", "no-exams", "streak-zero", "loading", "error",
+  "populated", "result-in", "new", "one-paper", "sparse0", "sparse1", "sparse2", "sparse3", "marking", "no-plan", "no-exams", "streak-zero", "loading", "error",
 ] as const
 export type StateId = (typeof STATES)[number]
 
@@ -79,6 +79,114 @@ export const FIXTURES: Record<StateId, Fixture> = {
         recordedAt: new Date(2026, 10, 2, 17, 0).toISOString(),
       },
       calendar: [{ day: "2026-11-02", xp: 50 }],
+    },
+    expected: { action: "practice", mood: "idle" },
+  },
+  // Sparse ladder, emptiest to fullest. Subjects picked at sign-up but with no
+  // marked paper yet carry papers: 0 and an empty grade.
+  sparse0: {
+    facts: {
+      now: NOW,
+      activeUpload: { paperLabel: "0580/42" },
+      subjects: [
+        { code: "0580", papers: 0, grade: "", previousGrade: null, nextExamOn: "2027-05-12" },
+        { code: "0606", papers: 0, grade: "", previousGrade: null, nextExamOn: "2027-05-18" },
+        { code: "0625", papers: 0, grade: "", previousGrade: null, nextExamOn: "2027-05-04" },
+      ],
+      upcomingSessions: [],
+      weakTopics: [],
+      latestResult: null,
+      calendar: [{ day: "2026-11-05", xp: 20 }],
+    },
+    expected: { action: "marking", mood: "marking" },
+  },
+  sparse1: {
+    facts: {
+      now: NOW,
+      activeUpload: null,
+      subjects: [
+        { code: "0580", papers: 1, grade: "C", previousGrade: null, nextExamOn: "2027-05-12" },
+        { code: "0606", papers: 0, grade: "", previousGrade: null, nextExamOn: "2027-05-18" },
+        { code: "0625", papers: 0, grade: "", previousGrade: null, nextExamOn: "2027-05-04" },
+      ],
+      upcomingSessions: [],
+      weakTopics: [
+        { topic: "Vectors", subjectCode: "0580", acc: 50 },
+        { topic: "Transformations", subjectCode: "0580", acc: 58 },
+      ],
+      latestResult: {
+        subjectCode: "0580",
+        grade: "C",
+        paperId: "p-0580-42",
+        paperLabel: "0580/42 · m/j 2024",
+        seen: false,
+        recordedAt: new Date(2026, 10, 5, 9, 52).toISOString(),
+      },
+      calendar: [{ day: "2026-11-05", xp: 70 }],
+    },
+    expected: { action: "result", mood: "paper-marked" },
+  },
+  sparse2: {
+    facts: {
+      now: NOW,
+      activeUpload: null,
+      subjects: [
+        { code: "0580", papers: 3, grade: "B", previousGrade: "C", nextExamOn: "2027-05-12" },
+        { code: "0606", papers: 1, grade: "C", previousGrade: null, nextExamOn: "2027-05-18" },
+        { code: "0625", papers: 0, grade: "", previousGrade: null, nextExamOn: null },
+      ],
+      upcomingSessions: [
+        { sessionId: "s1", subjectCode: "0580", title: "Vectors", minutes: 20, scheduledFor: "2026-11-06" },
+      ],
+      weakTopics: [
+        { topic: "Logarithms", subjectCode: "0606", acc: 48 },
+        { topic: "Vectors", subjectCode: "0580", acc: 52 },
+        { topic: "Transformations", subjectCode: "0580", acc: 61 },
+      ],
+      latestResult: {
+        subjectCode: "0580",
+        grade: "B",
+        paperId: "p-0580-41",
+        paperLabel: "0580/41 · o/n 2023",
+        seen: true,
+        recordedAt: new Date(2026, 10, 4, 17, 0).toISOString(),
+      },
+      calendar: [
+        { day: "2026-10-29", xp: 50 }, { day: "2026-10-30", xp: 40 },
+        { day: "2026-11-03", xp: 60 }, { day: "2026-11-04", xp: 40 }, { day: "2026-11-05", xp: 30 },
+      ],
+    },
+    expected: { action: "practice", mood: "grade-improved" },
+  },
+  sparse3: {
+    facts: {
+      now: NOW,
+      activeUpload: null,
+      subjects: [
+        { code: "0580", papers: 3, grade: "B", previousGrade: "C", nextExamOn: "2027-05-12" },
+        { code: "0606", papers: 2, grade: "C", previousGrade: "C", nextExamOn: "2027-05-18" },
+        { code: "0625", papers: 0, grade: "", previousGrade: null, nextExamOn: "2027-05-04" },
+      ],
+      // Every planned session was before 27 Oct, so none is upcoming.
+      upcomingSessions: [],
+      weakTopics: [
+        { topic: "Logarithms", subjectCode: "0606", acc: 51 },
+        { topic: "Vectors", subjectCode: "0580", acc: 57 },
+        { topic: "Transformations", subjectCode: "0580", acc: 63 },
+      ],
+      latestResult: {
+        subjectCode: "0606",
+        grade: "C",
+        paperId: "p-0606-22",
+        paperLabel: "0606/22 · m/j 2024",
+        seen: true,
+        recordedAt: new Date(2026, 9, 27, 16, 0).toISOString(),
+      },
+      calendar: [
+        { day: "2026-10-21", xp: 40 }, { day: "2026-10-22", xp: 30 }, { day: "2026-10-23", xp: 50 },
+        { day: "2026-10-24", xp: 20 }, { day: "2026-10-25", xp: 60 }, { day: "2026-10-26", xp: 30 },
+        { day: "2026-10-27", xp: 40 },
+      ],
     },
     expected: { action: "practice", mood: "idle" },
   },

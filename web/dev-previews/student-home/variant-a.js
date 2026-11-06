@@ -229,7 +229,7 @@ function endCheer() {
 }
 function cheer() {
   const tile = binnyTile()
-  const kept = !["streak-zero", "one-paper"].includes(root.dataset.state)
+  const kept = !["streak-zero", "one-paper", "sparse3"].includes(root.dataset.state)
   if (!tile || !kept) return
   endGreet()
   if (!cheering) {
@@ -283,7 +283,7 @@ function runMarkingDemo() {
 const toolbar = document.querySelector(".sh-toolbar")
 const side = document.getElementById("as-side")
 const pops = [...document.querySelectorAll("details.as-pop")]
-const dialogs = [...document.querySelectorAll("dialog.as-modal, dialog.as-drawer")]
+const dialogs = [...document.querySelectorAll("dialog.as-modal")]
 
 // The preview toolbar is sticky above the shell; the sidebar and top bar stick below it.
 if (toolbar) {
@@ -298,9 +298,10 @@ const syncStuck = () => bar?.classList.toggle("is-stuck", window.scrollY > 0)
 window.addEventListener("scroll", syncStuck, { passive: true })
 syncStuck()
 
-// Settings (modal) and account (drawer): native modal dialogs. The browser keeps focus
-// inside, Esc closes, and closing returns focus to the opener. A click on the backdrop
-// closes too.
+// Settings: a native modal dialog (the teacher's SettingsModal). Focus is trapped inside
+// below, Esc closes, and closing returns focus to the gear. A click on the backdrop closes
+// too. It opens on Profile; the rail's tabs show one section at a time. The account panel
+// is a top-bar popover like the bell (see below), as on the teacher's top bar.
 const themeSelect = document.querySelector('select[data-control="theme"]')
 const darkMQ = window.matchMedia("(prefers-color-scheme: dark)")
 let themeChoice = null
@@ -322,8 +323,45 @@ document.addEventListener("click", (e) => {
   const dlg = document.getElementById(opener.dataset.aOpen)
   closePops()
   if (side?.matches(":popover-open")) side.hidePopover()
-  if (dlg.id === "as-settings") syncThemeRadios()
+  if (dlg.id === "as-settings") {
+    syncThemeRadios()
+    showSettingsTab("profile")
+  }
   dlg.showModal()
+})
+function showSettingsTab(id, { focus = false } = {}) {
+  const dlg = document.getElementById("as-settings")
+  for (const tab of dlg.querySelectorAll("[data-a-tab]")) {
+    const on = tab.dataset.aTab === id
+    if (on) tab.setAttribute("aria-current", "page")
+    else tab.removeAttribute("aria-current")
+    if (on && focus) tab.focus()
+    if (on) tab.scrollIntoView({ block: "nearest", inline: "nearest" })
+  }
+  for (const panel of dlg.querySelectorAll("[data-a-panel]")) panel.hidden = panel.dataset.aPanel !== id
+  dlg.querySelector(".as-set-scroll").scrollTop = 0
+}
+const settingsTabs = document.querySelector(".as-set-tabs")
+settingsTabs?.addEventListener("click", (e) => {
+  const tab = e.target.closest("[data-a-tab]")
+  if (tab) showSettingsTab(tab.dataset.aTab)
+})
+// Arrow keys move between sections (up/down on the rail, left/right on the mobile strip).
+settingsTabs?.addEventListener("keydown", (e) => {
+  const keys = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }
+  const tabs = [...settingsTabs.querySelectorAll("[data-a-tab]")]
+  const i = tabs.indexOf(document.activeElement)
+  if (i < 0) return
+  let next = null
+  if (e.key in keys) next = tabs[(i + keys[e.key] + tabs.length) % tabs.length]
+  else if (e.key === "Home") next = tabs[0]
+  else if (e.key === "End") next = tabs.at(-1)
+  if (!next) return
+  e.preventDefault()
+  showSettingsTab(next.dataset.aTab, { focus: true })
+})
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-a-close]")) e.target.closest("dialog")?.close()
 })
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
 for (const dlg of dialogs) {
@@ -408,7 +446,8 @@ function setSubject(btn, open) {
 function resetSubjects() {
   const state = root.dataset.state
   const rows = [...document.querySelectorAll(".as-subjects > li")].filter((li) => li.querySelector(".as-subj") && inState(li, state))
-  const pick = rows.find((li) => li.hasAttribute("data-current")) ?? rows[0]
+  // Sparse states have no session today: open the first subject, the one with a paper.
+  const pick = (state.startsWith("sparse") ? null : rows.find((li) => li.hasAttribute("data-current"))) ?? rows[0]
   for (const btn of document.querySelectorAll(".as-subj")) setSubject(btn, btn.closest("li") === pick)
 }
 document.querySelector(".as-subjects")?.addEventListener("click", (e) => {
@@ -455,6 +494,14 @@ function resetShell() {
   if (side?.matches(":popover-open")) side.hidePopover()
   resetSubjects()
   resetNotifications()
+  resetExamPick()
+}
+
+// Exams: the first dated exam starts picked. In sparse2 Physics has no date, so Maths leads.
+function resetExamPick() {
+  const code = root.dataset.state === "sparse2" ? "0580" : "0625"
+  const radio = document.getElementById(`xs-many-${code}`)
+  if (radio) radio.checked = true
 }
 
 /* ---------- wiring ---------- */

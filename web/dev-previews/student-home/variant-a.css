@@ -360,7 +360,7 @@
   color: var(--text-body);
   transition: background var(--dur-fast) var(--ease-out), transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
 }
-.a-gj-row:hover { position: relative; z-index: 1; background: var(--surface-card); transform: translateY(-2px); box-shadow: var(--shadow-hover) }
+.a-gj-row:hover { background: var(--surface-card); box-shadow: var(--shadow-hover) }
 .a-gj-row:focus-visible { outline-offset: -2px }
 .a-gj-name { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px var(--space-2); min-inline-size: 0 }
 .a-gj-name b { font-size: var(--fs-body); font-weight: 700 }
@@ -372,7 +372,7 @@
 
 /* Mastery ruler rows: lift on hover and reveal the Practise arrow. */
 .a-lanes a { transition: background var(--dur-fast) var(--ease-out), transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out) }
-.a-lanes a:hover { position: relative; z-index: 1; background: var(--surface-card); transform: translateY(-2px); box-shadow: var(--shadow-hover) }
+.a-lanes a:hover { background: var(--surface-card); box-shadow: var(--shadow-hover) }
 .a-lane-go { color: var(--md-primary); opacity: 0; transform: translateX(-4px); transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out) }
 .a-lanes a:is(:hover, :focus-visible) .a-lane-go { opacity: 1; transform: none }
 
@@ -609,13 +609,19 @@
 .a-lanes > li.is-top + li { border-block-start-color: transparent }
 .a-lanes > li.is-top .a-marker-l { background: transparent }
 .a-lane-act {
-  flex-basis: 100%; display: inline-flex; align-items: center; gap: 4px; margin-block-start: 2px;
+  flex-basis: 100%; display: inline-flex; align-items: center; gap: 4px; margin-block-start: 2px; white-space: nowrap;
   font: 700 var(--fs-body-sm) / 1.3 var(--font-ui); color: var(--md-primary);
 }
 .a-lane-act .a-ico { inline-size: 16px; block-size: 16px; transition: transform var(--dur-base) var(--ease-out) }
 .a-lanes a:hover .a-lane-act .a-ico { transform: translateX(3px) }
 .sh-root[data-action="practice"] .a-lane-act { display: none }
-.sh-root:not([data-action="practice"]) .a-lanes > li.is-top .a-lane-go { display: none }
+.sh-root:not([data-action="practice"]) .a-lanes .a-lane-go { display: none }
+/* One Practise link at a time: the weakest topic by default, the hovered or focused row otherwise.
+   Hidden links keep their line so rows never change height. */
+.a-lane-act { transition: opacity var(--dur-fast) var(--ease-out), visibility 0s linear var(--dur-fast) }
+.a-lanes > li:not(.is-top) .a-lane-act,
+.a-lanes:has(> li:is(:hover, :focus-within)) > li.is-top:not(:hover, :focus-within) .a-lane-act { visibility: hidden; opacity: 0 }
+.a-lanes > li:not(.is-top):is(:hover, :focus-within) .a-lane-act { visibility: visible; opacity: 1; transition-delay: 0s }
 
 .a-scale { display: grid; grid-template-columns: var(--lane-cols); gap: var(--space-4); padding-inline: var(--space-3) }
 .a-scale-axis { grid-column: 2; position: relative; block-size: 16px }
@@ -694,43 +700,22 @@
 .a-step-s { font: 600 var(--fs-label) / 1 var(--font-mono); letter-spacing: var(--ls-label); text-transform: uppercase }
 
 /* Error */
+/* Banner above the last-known page (the ready block stays visible in the error state). */
 .a-error {
-  max-inline-size: 520px; margin-block: var(--space-12); padding: var(--space-8);
-  border-radius: var(--radius-card); background: var(--surface-card); box-shadow: var(--a-card-edge);
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-5);
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-card); background: var(--md-primary-container); box-shadow: var(--a-card-edge);
+  color: var(--md-on-primary-container);
 }
-.a-error-title { margin: 0; font: 800 var(--fs-title) / 1.25 var(--font-ui); color: var(--text-body) }
-.a-error p { margin: var(--space-2) 0 var(--space-6); color: var(--text-secondary) }
+.a-error-text { flex: 1 1 280px; margin: 0; font-size: var(--fs-body-sm); line-height: 1.45 }
+.a-error-title { font-weight: 800 }
+.a-error-retry { flex: none }
 
 /* Loading skeleton: the ready page's boxes at their real sizes (greeting, header,
    big action, three journey rows, ruler, exams), so nothing shifts when data lands. */
 .a-skel { border-radius: var(--radius-tile); background: var(--md-surface-high) }
 .a-motion .a-skel { animation: a-pulse 1.4s ease-in-out infinite alternate }
-.a-skel-head { block-size: 59px; align-items: flex-start }
-.a-skel-title { inline-size: 360px; max-inline-size: 80%; block-size: 32px; border-radius: var(--radius-chip) }
-.a-skel-line { inline-size: 260px; max-inline-size: 60%; block-size: 16px; margin-block-start: var(--space-2); border-radius: var(--radius-pill) }
-.a-skel-header { block-size: 343px; border-radius: var(--radius-card) }
-.a-skel-action { block-size: 235px; margin-block-start: var(--space-5); border-radius: var(--radius-card) }
-.a-skel-h { inline-size: 140px; block-size: 19px; margin-block-end: var(--space-3); border-radius: var(--radius-chip) }
-.a-skel-sub { inline-size: 300px; max-inline-size: 80%; block-size: 22px; margin-block: calc(var(--space-2) * -1) var(--space-3); border-radius: var(--radius-chip) }
-.a-skel-card {
-  display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2);
-  border-radius: var(--radius-card); background: var(--surface-card); box-shadow: var(--a-card-edge);
-}
-.a-skel-rows { block-size: 222px }
-.a-skel-rows .a-skel { flex: 1; border-radius: var(--radius-tile) }
-.a-skel-ruler { block-size: 264px; border-radius: var(--radius-tile) }
-.a-skel-exams { block-size: 365px; border-radius: var(--radius-tile) }
 @keyframes a-pulse { from { opacity: 1 } to { opacity: 0.55 } }
-@container home (max-width: 760px) {
-  .a-skel-title { block-size: 30px }
-  .a-skel-header { block-size: 331px }
-  .a-skel-action { block-size: 199px; margin-block-start: var(--space-4) }
-  .a-skel-h { block-size: 25px }
-  .a-skel-rows { block-size: 391px }
-  .a-skel-sub { block-size: 21px }
-  .a-skel-ruler { block-size: 561px; border-radius: var(--radius-card) }
-  .a-skel-exams { block-size: 664px; border-radius: var(--radius-card) }
-}
 
 /* ---------- App shell: sidebar, top bar, bottom bar ----------
    Teacher parity: every shell size, gap, radius, font size, breakpoint and shared-route icon
@@ -764,13 +749,16 @@
   padding: var(--space-1) var(--as-gutter) 40px; /* teacher .main: 4px 72px 40px */
 }
 .as-main:focus { outline: none }
-.as-main .a-page { padding: 0 }
+/* Teacher .main has no cap: the page fills the padded column at every width. */
+.as-main .a-page { padding: 0; max-inline-size: none; margin-inline: 0 }
 .as-list, .as-subjects, .as-sub, .as-items, .as-links { margin: 0; padding: 0; list-style: none }
 .as-ico {
   inline-size: var(--as-ico); block-size: var(--as-ico); flex: none;
   fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
 }
 .as-lb { min-inline-size: 0; text-box: trim-both cap alphabetic }
+/* The teacher app's Phosphor gear: a filled 256-unit glyph drawn at 20px, as in its top bar. */
+.as-ico-ph { inline-size: 20px; block-size: 20px; fill: currentColor; stroke: none }
 
 .as-skip {
   position: fixed; inset-block-start: var(--space-3); inset-inline-start: var(--space-3); z-index: 60;
@@ -854,11 +842,15 @@
 /* Foot (teacher .foot): the sidebar's Upload. Tonal, so the page's big action stays the
    only filled button in the content and the bar's Upload is the one filled control in the chrome. */
 .as-foot {
-  display: flex; flex-direction: column; gap: var(--space-2);
-  margin-block-start: auto; padding-block-start: var(--space-6);
+  display: flex; flex-direction: column; gap: var(--space-3); /* teacher SidebarFooter: gap-3 */
+  margin-block-start: auto; padding-block-start: var(--space-4); /* teacher: mt-auto border-t pt-4 */
   border-block-start: 1px solid var(--border-subtle);
 }
 .as-foot .as-btn { justify-content: center }
+/* Who is signed in (teacher UserBlock): 32px avatar, name over a 14px secondary line. */
+.as-user { display: flex; align-items: center; gap: var(--as-gap); padding-inline: 2px }
+.as-user .as-who b { overflow: hidden; font: 500 var(--fs-body-sm) / 1.45 var(--font-ui); color: var(--md-on-surface); text-overflow: ellipsis; white-space: nowrap }
+.as-user .as-who small { font: 400 var(--fs-body-sm) / 1.45 var(--font-ui); color: var(--text-muted) }
 
 /* Top bar (teacher .bar): a floating card, sticky 8px below the top. Flat at rest
    (DESIGN.md Elevation): outlined, lifting with the hover shadow once the page scrolls. */
@@ -866,7 +858,8 @@
   position: sticky; inset-block-start: calc(var(--as-top) + var(--space-2)); z-index: 6;
   display: flex; align-items: center; gap: var(--space-2);
   block-size: 56px; margin: var(--space-2) var(--as-bar-x) var(--space-6);
-  padding-block: 0; padding-inline: var(--as-bar-pad) var(--space-3);
+  /* less the 1px border, so the controls sit where the teacher's (whose ring is a shadow) do */
+  padding-block: 0; padding-inline: calc(var(--as-bar-pad) - 1px) calc(var(--space-3) - 1px);
   border: 1px solid var(--border-subtle); border-radius: var(--radius-inner); background: var(--md-surface-lowest);
   transition: box-shadow var(--dur-base) var(--ease-out);
 }
@@ -916,6 +909,8 @@
 /* Notifications popover (teacher .pop-panel). One open at a time; Esc closes and returns
    focus to the bell (variant-a.js). */
 .as-pop { position: relative }
+/* Closed panels keep a layout box inside <details>; take them out of layout entirely. */
+.as-pop:not([open]) .as-pop-panel { display: none }
 .as-pop-panel {
   position: absolute; inset-block-start: calc(100% + var(--space-2)); inset-inline-end: 0; z-index: 30;
   inline-size: 320px; padding: var(--space-2); border-radius: var(--radius-inner);
@@ -1004,61 +999,108 @@
   box-shadow: 0 0 0 2px var(--md-surface-lowest);
 }
 
-/* Settings modal and account drawer: native modal dialogs, so focus stays inside and Esc
-   closes them; closing hands focus back to the settings button or the avatar. Typography
-   follows the teacher's sheets (32px display title, 14px rows, 11px meta). */
-.as-modal, .as-drawer {
-  padding: 0; border: 0; background: var(--md-surface-lowest); color: var(--text-body);
-  box-shadow: var(--shadow-panel); font-family: var(--font-ui);
-}
-.sh-root[data-theme="dark"] :is(.as-modal, .as-drawer) { background: var(--md-surface-high) }
-:is(.as-modal, .as-drawer)::backdrop { background: var(--md-scrim) }
-:is(.as-modal-head, .as-drawer-head) h2 { margin: 0; font: 800 var(--fs-headline) / 1 var(--font-display); letter-spacing: -0.04em }
+/* Settings modal: the teacher app's SettingsModal (portals/settings/SettingsModal.tsx), student
+   sections only. A native modal dialog, so focus stays inside and Esc closes it; closing
+   hands focus back to the gear. Sizes are the teacher's: a 960px x 736px panel (24px
+   radius, outlined, panel shadow), a 256px rail on the low surface with the 32px title and
+   44px section tabs, and a 720px reading column padded 32/40px with a 21px section title,
+   16px group titles and 20px-radius cards of rows. Below 768px it fills the screen and the
+   rail becomes a header with a scrolling strip of tabs. */
 .as-modal {
-  inline-size: min(560px, calc(100vw - var(--space-6))); max-block-size: min(760px, calc(100dvh - var(--space-8)));
-  padding: 22px 0; border-radius: var(--radius-card);
+  inline-size: min(960px, calc(100vw - var(--space-12))); max-inline-size: none;
+  block-size: min(736px, calc(100dvh - var(--space-12))); max-block-size: none;
+  padding: 0; overflow: hidden;
+  border: 0; border-radius: var(--radius-card);
+  background: var(--md-surface); color: var(--text-body); box-shadow: var(--shadow-panel);
+  font-family: var(--font-ui);
 }
 .as-modal[open] { display: flex }
-.as-modal-in { display: flex; flex-direction: column; flex: 1; min-block-size: 0 }
-.as-modal-head, .as-drawer-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3) }
-.as-modal-head { padding: 0 var(--space-4) var(--space-2) 22px }
-.as-modal-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 0 22px }
-.as-set { margin: 0; padding: var(--space-5) 0; border: 0; border-block-start: 1px solid var(--border-subtle) }
-.as-set:first-child { border-block-start: 0; padding-block-start: var(--space-3) }
-.as-set :is(h3, legend) { margin: 0 0 var(--space-3); padding: 0; font: 800 var(--fs-body) / 1.1 var(--font-ui); letter-spacing: -0.02em }
-.as-set legend { float: inline-start; inline-size: 100% }
-.as-set legend + * { clear: both }
-.as-hint { margin: var(--space-3) 0 0; font: 400 var(--fs-body-sm) / 1.5 var(--font-ui); color: var(--text-muted) }
-.as-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4) }
-.as-field { display: flex; flex-direction: column; gap: var(--space-2); font: 600 var(--fs-body-sm) / 1.3 var(--font-ui); color: var(--text-muted) }
-.as-field :is(input, select) {
-  block-size: 44px; padding-inline: var(--space-3); border: 1px solid var(--md-outline); border-radius: var(--radius-chip);
-  background: var(--md-surface-lowest); color: var(--text-body); font: 600 var(--fs-body-sm) / 1 var(--font-ui);
+.as-modal::backdrop { background: var(--md-scrim) }
+.as-set-rail {
+  display: flex; flex-direction: column; flex: none; inline-size: 256px;
+  border-inline-end: 1px solid var(--border-subtle); background: var(--md-surface-low);
+}
+.as-set-rail-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-6) var(--space-5) var(--space-2) }
+.as-set-rail-head h2 { margin: 0; font: 800 var(--fs-headline) / 1.15 var(--font-ui); letter-spacing: var(--ls-headline-ui); color: var(--md-on-surface) }
+.as-set-tabs { display: flex; flex-direction: column; gap: var(--space-1); padding: 0 var(--space-3) var(--space-6); overflow-y: auto; scrollbar-width: thin }
+.as-set-tabs button {
+  display: flex; align-items: center; flex: none; min-block-size: 44px; padding: 0 var(--space-3);
+  border: 0; border-radius: var(--radius-chip); background: transparent; text-align: start; cursor: pointer;
+  font: 600 var(--fs-body-sm) / 1.3 var(--font-ui); color: var(--text-muted);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.as-set-tabs button:hover { background: var(--md-surface-container); color: var(--md-on-surface) }
+.as-set-tabs button[aria-current="page"] { background: var(--md-primary-container); color: var(--md-primary) }
+.as-set-main { position: relative; display: flex; flex-direction: column; flex: 1; min-inline-size: 0; min-block-size: 0 }
+.as-set-scroll { flex: 1; min-block-size: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin }
+.as-set-page {
+  display: flex; flex-direction: column; gap: var(--space-8);
+  inline-size: 100%; max-inline-size: 720px; margin-inline: auto;
+  padding: var(--space-8) 40px 40px;
+}
+.as-set-page[hidden] { display: none }
+.as-set-title { display: flex; flex-direction: column; gap: var(--space-1); padding-inline-end: var(--space-12) }
+.as-set-title h3 { margin: 0; font: 700 var(--fs-title) / 1.25 var(--font-ui); letter-spacing: -0.01em; color: var(--md-on-surface) }
+.as-set-title p, .as-set-sec-head p { margin: 0; max-inline-size: 60ch; font: 400 var(--fs-body-sm) / 1.45 var(--font-ui); color: var(--text-muted) }
+.as-set-sec { display: flex; flex-direction: column; gap: var(--space-3) }
+.as-set-sec-head { display: flex; flex-direction: column; gap: var(--space-1) }
+.as-set-sec-head h4 { margin: 0; font: 700 var(--fs-body) / 1.3 var(--font-ui); color: var(--md-on-surface) }
+.as-set-card {
+  display: flex; flex-direction: column;
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-tile); background: var(--md-surface-lowest);
+}
+.sh-root[data-theme="dark"] .as-set-card { background: var(--md-surface-container) }
+.as-row {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-6);
+  padding: var(--space-4) var(--space-5);
+}
+.as-row + .as-row { border-block-start: 1px solid var(--border-subtle) }
+label.as-row { cursor: pointer }
+.as-row-t { display: flex; flex-direction: column; gap: var(--space-1); min-inline-size: 0 }
+.as-row-l { font: 600 var(--fs-body-sm) / 1.3 var(--font-ui); color: var(--md-on-surface) }
+.as-row-d { max-inline-size: 60ch; font: 400 var(--fs-body-sm) / 1.45 var(--font-ui); color: var(--text-muted); overflow-wrap: anywhere }
+.as-row-c { display: flex; flex-wrap: wrap; align-items: center; flex: none; gap: var(--space-2) }
+.as-set-close {
+  display: grid; place-items: center; flex: none; inline-size: 44px; block-size: 44px; padding: 0;
+  border: 0; border-radius: var(--radius-chip); background: var(--md-surface); color: var(--text-muted); cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+.as-set-close:hover { background: var(--md-surface-low); color: var(--md-on-surface) }
+.as-set-close:active { transform: scale(0.98) }
+.as-set-close-lg { position: absolute; inset-block-start: var(--space-4); inset-inline-end: var(--space-4) }
+.as-set-close-sm { display: none; background: transparent }
+.as-set-close-sm:hover { background: var(--md-surface-container) }
+/* Text field: 16px so iOS does not zoom on focus (the app's --fs-field floor). */
+.as-input {
+  min-inline-size: 200px; block-size: 40px; padding-inline: var(--space-3);
+  border: 1px solid var(--md-outline); border-radius: var(--radius-chip);
+  background: var(--md-surface-lowest); color: var(--text-body); font: 600 var(--fs-body) / 1.3 var(--font-ui);
   transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
 }
-.sh-root[data-theme="dark"] .as-field :is(input, select) { background: var(--md-surface-container) }
-.as-field :is(input, select):focus-visible { outline: none; border-color: var(--md-primary); box-shadow: 0 0 0 3px var(--md-primary-container) }
-.as-switch { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding-block: var(--space-3); cursor: pointer }
-.as-switch + .as-switch { border-block-start: 1px solid var(--border-subtle) }
-.as-switch > span { display: flex; flex-direction: column; gap: 2px }
-.as-switch b { font: 700 var(--fs-body-sm) / 1.3 var(--font-ui) }
-.as-switch small { font: 400 var(--fs-label) / 1.4 var(--font-ui); color: var(--text-muted) }
-.as-switch input {
+.sh-root[data-theme="dark"] .as-input { background: var(--md-surface-high) }
+.as-input:focus-visible { outline: none; border-color: var(--md-primary); box-shadow: 0 0 0 3px var(--md-primary-container) }
+.as-toggle {
   flex: none; position: relative; inline-size: 40px; block-size: 24px; margin: 0;
   border-radius: var(--radius-pill); background: var(--md-surface-highest); appearance: none; cursor: pointer;
   transition: background var(--dur-base) var(--ease-out);
 }
-.as-switch input::before {
+.as-toggle::before {
   content: ""; position: absolute; inset-block-start: var(--space-1); inset-inline-start: var(--space-1);
   inline-size: 16px; block-size: 16px; border-radius: var(--radius-pill); background: var(--white);
   transition: transform var(--dur-base) var(--a-ease-expo);
 }
-.as-switch input:checked { background: var(--md-primary) }
-.as-switch input:checked::before { transform: translateX(var(--space-4)) }
-.as-switch input:checked:dir(rtl)::before { transform: translateX(calc(var(--space-4) * -1)) }
-.sh-root[data-theme="dark"] .as-switch input:checked::before { background: var(--md-on-primary) }
+.as-toggle:checked { background: var(--md-primary) }
+.as-toggle:checked::before { transform: translateX(var(--space-4)) }
+.as-toggle:checked:dir(rtl)::before { transform: translateX(calc(var(--space-4) * -1)) }
+.as-toggle:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px }
+.sh-root[data-theme="dark"] .as-toggle:checked::before { background: var(--md-on-primary) }
+/* Outlined button (teacher .btn.ghost): the settings rows' actions. */
+.as-btn-outline { border: 1.5px solid var(--md-outline); background: var(--md-surface-lowest); color: var(--text-body) }
+.as-btn-outline:hover { background: var(--md-surface-low) }
+.sh-root[data-theme="dark"] .as-btn-outline { background: transparent }
+.as-avatar-md { inline-size: 40px; block-size: 40px; font-size: var(--fs-body-sm) }
 .as-seg {
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-1);
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-1); min-inline-size: 264px;
   padding: var(--space-1); border: 1px solid var(--md-outline); border-radius: var(--radius-button);
 }
 .as-seg label { position: relative; display: grid }
@@ -1070,27 +1112,14 @@
 }
 .as-seg input:checked + span { background: var(--md-primary-container); color: var(--md-primary) }
 .as-seg input:focus-visible + span { outline: 2px solid var(--md-primary); outline-offset: 2px }
-.as-devices { display: flex; flex-direction: column; margin: var(--space-2) 0 0; padding: 0; list-style: none }
-.as-devices li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding-block: var(--space-3) }
-.as-devices li + li { border-block-start: 1px solid var(--border-subtle) }
-.as-devices li > span:first-child { display: flex; flex-direction: column; gap: 2px }
-.as-devices b { font: 700 var(--fs-body-sm) / 1.3 var(--font-ui) }
-.as-devices small { font: 400 var(--fs-label) / 1.4 var(--font-ui); color: var(--text-muted) }
 .as-tag {
   padding: var(--space-1) var(--space-2); border-radius: var(--radius-pill); background: var(--md-primary-container);
   color: var(--md-on-primary-container); font: 600 var(--fs-label) / 1.2 var(--font-ui);
 }
-.as-modal-foot { display: flex; justify-content: flex-end; gap: var(--space-2); padding: var(--space-4) 22px 0; border-block-start: 1px solid var(--border-subtle) }
 
-/* Account drawer (teacher .sheet: 10px from the edges, up to 400px, 24px radius, 22px padding). */
-.as-drawer {
-  position: fixed; inset-block: var(--as-pad-i); inset-inline: auto var(--as-pad-i); margin: 0;
-  inline-size: min(400px, calc(100vw - 2 * var(--as-pad-i))); block-size: auto; max-block-size: none;
-  padding: 22px; border-radius: var(--radius-card);
-}
-.as-drawer[open] { display: flex; flex-direction: column; gap: 6px }
-.as-drawer-head { margin-block-end: 6px }
-.as-drawer-head .as-iconbtn { border-radius: var(--radius-pill); background: var(--md-surface-low) }
+/* Profile menu (teacher .pop.profile): a 260px panel dropped from the avatar, the person
+   first (.who), then the account links (.pop-link). */
+.as-pop-me .as-pop-panel { inline-size: 260px }
 .as-ident {
   display: flex; align-items: center; gap: var(--as-gap); padding: var(--as-pad-i) var(--space-2) var(--space-3);
   margin-block-end: var(--space-1); border-block-end: 1px solid var(--border-subtle);
@@ -1098,11 +1127,8 @@
 .as-ident .as-avatar { inline-size: 38px; block-size: 38px; font-size: var(--fs-body-sm) }
 .as-who { display: flex; flex-direction: column; min-inline-size: 0 }
 .as-who b { font: 700 var(--fs-body-sm) / 1.3 var(--font-ui); color: var(--text-body) }
-.as-who small { font: 400 var(--fs-label) / 1.4 var(--font-ui); color: var(--text-muted) }
-.as-drawer-foot { margin-block-start: auto; padding-block-start: var(--space-2); border-block-start: 1px solid var(--border-subtle) }
+.as-who small { overflow: hidden; font: 400 var(--fs-body-sm) / 1.4 var(--font-ui); color: var(--text-muted); text-overflow: ellipsis; white-space: nowrap }
 .a-motion .as-modal[open] { animation: asPanel var(--dur-base) var(--ease-out) both }
-.a-motion .as-drawer[open] { animation: asDrawerEnd var(--dur-slow) var(--a-ease-expo) both }
-.a-motion .as-drawer[open]:dir(rtl) { animation-name: asDrawer }
 
 /* The sidebar as the teacher's floating drawer (1000px and below); the mobile query turns it
    into a bottom sheet. */
@@ -1139,10 +1165,8 @@
     padding-inline: var(--as-gutter-sm) var(--space-2); border: 0; border-radius: 0; background: transparent; box-shadow: none;
   }
   .as-pop { position: static }
-  .as-pop-panel { inset-inline: var(--as-pad-i); inset-block-start: calc(100% - var(--space-1)); inline-size: auto }
+  .as-pop-panel, .as-pop-me .as-pop-panel { inset-inline: var(--as-pad-i); inset-block-start: calc(100% - var(--space-1)); inline-size: auto }
   .as-main { padding: var(--space-1) var(--as-gutter-sm) var(--space-8) }
-  .as-modal { inline-size: 100vw; max-inline-size: none; max-block-size: calc(100dvh - var(--space-6)); margin-block-end: 0; border-end-start-radius: 0; border-end-end-radius: 0 }
-  .as-fields { grid-template-columns: minmax(0, 1fr) }
   .a-bottombar {
     position: sticky; inset-block-end: 0; z-index: 5;
     display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1157,13 +1181,28 @@
     border-radius: var(--radius-card) var(--radius-card) 0 0;
   }
   .as-side:popover-open .as-side-head .as-wm { visibility: hidden }
-  .as-side:popover-open .as-foot { display: none } /* the bottom bar already has Upload */
+  .as-side:popover-open .as-foot > .as-btn { display: none } /* the bottom bar already has Upload */
   .a-motion .as-side:popover-open, .a-motion .as-side:popover-open:dir(rtl) { animation-name: asSheet }
+}
+/* Settings below 768px (the teacher modal's md breakpoint): it fills the screen and the rail
+   becomes a header over a scrolling strip of tabs; rows stack. */
+@container ashell (max-width: 767px) {
+  .as-modal { flex-direction: column; inline-size: 100cqi; block-size: 100dvh; border: 0; border-radius: 0 }
+  .as-set-rail { inline-size: auto; border-inline-end: 0; border-block-end: 1px solid var(--border-subtle) }
+  .as-set-rail-head { padding: max(env(safe-area-inset-top), var(--space-4)) var(--space-4) var(--space-2) }
+  .as-set-tabs { flex-direction: row; padding: var(--space-1) var(--space-4) var(--space-3); overflow-x: auto; overflow-y: hidden }
+  .as-set-tabs button { white-space: nowrap }
+  .as-set-close-sm { display: grid }
+  .as-set-close-lg { display: none }
+  .as-set-page { gap: var(--space-8); padding: var(--space-6) var(--space-4) max(env(safe-area-inset-bottom), var(--space-8)) }
+  .as-set-title { padding-inline-end: 0 }
+  .as-row { flex-direction: column; align-items: stretch; gap: var(--space-3); padding-inline: var(--space-4) }
+  .as-row-c .as-input { flex: 1 }
+  .as-seg { min-inline-size: 0; flex: 1 }
 }
 
 @keyframes asDrawer { from { transform: translateX(calc(var(--space-8) * -1)); opacity: 0 } }
 @keyframes asDrawerRtl { from { transform: translateX(var(--space-8)); opacity: 0 } }
-@keyframes asDrawerEnd { from { transform: translateX(var(--space-8)); opacity: 0 } }
 @keyframes asSheet { from { transform: translateY(var(--space-12)); opacity: 0 } }
 @keyframes asPanel { from { transform: translateY(calc(var(--space-2) * -1)); opacity: 0 } }
 
@@ -1398,7 +1437,7 @@
   .a-hero, .a-hero-new { padding: var(--space-6) }
 
   .a-sec { margin-block-start: var(--space-5) }
-  .a-sec-h { margin-block-end: var(--space-3); font-size: var(--fs-body) }
+  .a-sec-h { margin-block-end: var(--space-3) }
 
   .a-gj-row { min-block-size: 52px }
   .a-gj-name b, .a-lane-name b, .a-xt-name { font-size: var(--fs-body-sm) }
@@ -1412,4 +1451,794 @@
   .a-xt, .a-xt.is-first { padding: var(--space-4) }
   .a-xt-n { font-size: var(--fs-headline) }
   .a-xt.is-first .a-xt-n { font-size: var(--fs-display-sm) }
+}
+
+/* Exam section: compact strip (accepted in impeccable live, session d9d96681). Timeline
+   (.a-xb) unchanged; rows replace the former countdown tiles. */
+.a-xs-card { padding: var(--space-4) var(--space-5); border-radius: var(--radius-tile); background: var(--surface-card); box-shadow: var(--a-card-edge) }
+.a-xs-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2) }
+.a-xs-item { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: var(--space-3); row-gap: var(--space-1); align-items: center; padding: var(--space-3) var(--space-4); border-radius: var(--radius-chip) }
+.a-xs-item.is-first { background: var(--md-primary-container); color: var(--md-on-primary-container) }
+.a-xs-days { grid-row: 1 / 3; display: flex; flex-direction: column; align-items: center; min-inline-size: 56px }
+.a-xs-n { font: 800 var(--fs-headline) / 1 var(--font-display); letter-spacing: -0.04em; font-variant-numeric: tabular-nums lining-nums }
+.a-xs-u { font: 600 var(--fs-label) / 1.4 var(--font-mono); letter-spacing: var(--ls-label); text-transform: uppercase; color: var(--text-secondary) }
+.is-first .a-xs-u { color: inherit }
+.a-xs-name { display: flex; align-items: baseline; gap: 6px; font-weight: 700; font-size: var(--fs-body-sm); min-inline-size: 0 }
+.a-xs-name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700 }
+.a-xs-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: var(--fs-body-sm); color: var(--text-secondary) }
+.is-first .a-xs-meta { color: inherit }
+.a-xs-meta .a-ico { inline-size: 14px; block-size: 14px; color: var(--text-muted) }
+.a-xs-foot { display: flex; justify-content: flex-end; margin-block-start: var(--space-3) }
+.a-xs-card > .a-xb { margin-block: 0 var(--space-3) }
+.a-xs-act { flex: none; white-space: nowrap }
+@container home (max-width: 760px) {
+.a-xs-list { grid-template-columns: 1fr }
+.a-xs-foot { flex-wrap: wrap }
+}
+
+/* XP strip as full-width tiles: each day fills its column, so the width carries data, not gaps.
+   Placed last so it wins over the earlier container-query sizes at every width. */
+.ah-strip { grid-template-columns: repeat(7, minmax(0, 1fr)); justify-content: stretch; gap: var(--space-1) }
+.ah-day { gap: var(--space-1); align-items: stretch; text-align: center }
+.ah-xp-col { block-size: 30px }
+.ah-xp-bar { inline-size: calc(100% - 12px); block-size: calc(var(--xp, 0) * 24px); border-radius: 4px 4px 0 0 }
+.ah-day-d { inline-size: 100%; max-inline-size: none; aspect-ratio: auto; block-size: 36px; border-radius: var(--radius-chip); font-size: var(--fs-body) }
+
+/* Next-step card sits beside the garden at about a third of the row, so its content stacks. */
+@container home (min-width: 900px) {
+  .a-action-card { padding: var(--space-6) }
+  .a-act { max-inline-size: none }
+  .a-act .a-act-body { margin-block-end: var(--space-5) }
+}
+
+/* Momentum garden: its own card, one plant per subject. Stem = score now,
+   dashed line = first paper, one leaf per paper (max 6), bud = current grade. Radios pick the readout. */
+.a-mo { position: relative; padding: var(--space-5) var(--space-6); border-radius: var(--radius-card); background: var(--surface-card); box-shadow: var(--a-card-edge); color: var(--text-body) }
+  .a-mo .mo-h { margin: 0; font: 800 var(--fs-title)/1.2 var(--font-ui); letter-spacing: var(--ls-headline-ui); color: var(--text-body) }
+  .a-mo :is(.mo-big, .mo-read) { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-1) 0 var(--space-3) }
+  .a-mo :is(.mo-big, .mo-read) b { font: 800 var(--fs-headline)/1 var(--font-display); letter-spacing: -0.04em; color: var(--md-primary) }
+  .a-mo :is(.mo-big, .mo-read) > span { font-size: var(--fs-body-sm); color: var(--text-secondary) }
+/* Momentum and next step are two cards in one row; they stack when narrow. */
+.a-next-row { display: grid; gap: var(--space-4); margin-block-start: var(--space-5) }
+.a-next-row > .a-action-card { margin-block-start: 0 }
+@container home (min-width: 900px) {
+  .a-next-row { grid-template-columns: minmax(0, 63%) minmax(300px, 1fr); align-items: stretch }
+  .a-next-row > .a-action-card { display: flex; flex-direction: column; justify-content: center }
+  /* Wide garden splits: title and readout on the left, plants on the right. */
+  .a-mo { display: grid; grid-template-columns: minmax(200px, 280px) minmax(0, 1fr); column-gap: var(--space-8); align-content: center }
+  .a-mo > .mo-h { grid-column: 1; grid-row: 1; align-self: end }
+  .a-mo > .mo-read { grid-column: 1; grid-row: 2; align-self: start }
+  .a-mo > .mo-garden { grid-column: 2; grid-row: 1 / span 2; gap: var(--space-4) }
+  .a-mo .mo-pot-area { block-size: 136px; inline-size: 80px }
+}
+  .a-mo .mo-read { display: none }
+  .a-mo:has(.mo-r[value="a"]:checked) .mo-read[data-k="a"], .a-mo:has(.mo-r[value="b"]:checked) .mo-read[data-k="b"], .a-mo:has(.mo-r[value="c"]:checked) .mo-read[data-k="c"] { display: flex }
+  .a-mo .mo-garden { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-2); margin: 0; padding: 0; border: 0; min-inline-size: 0 }
+  .a-mo .mo-plant { display: grid; justify-items: center; gap: var(--space-1); padding: var(--space-2) 0 var(--space-1); border-radius: var(--radius-chip); cursor: pointer; transition: background var(--dur-fast) var(--ease-out) }
+  .a-mo .mo-plant:hover { background: var(--surface-row) }
+  .a-mo .mo-r:focus-visible + .mo-plant { outline: 2px solid var(--md-primary); outline-offset: 2px }
+  .a-mo .mo-r:checked + .mo-plant { background: var(--md-primary-container) }
+  .a-mo .mo-pot-area { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; inline-size: 64px; block-size: 108px }
+  .a-mo .mo-stem { position: relative; flex: none; inline-size: 3px; block-size: calc(var(--now) * 0.8); border-radius: var(--radius-pill); background: var(--md-success) }
+  .a-mo .mo-was { position: absolute; inset-inline: 8px; inset-block-end: calc(var(--was) * 0.8 * 1.08 + 20px); border-block-start: 1.5px dashed var(--text-muted) }
+  .a-mo .mo-leaf { position: absolute; inset-block-end: var(--at); inline-size: 14px; block-size: 8px; background: var(--md-success); border-radius: var(--radius-pill) 0 }
+  .a-mo .mo-leaf:nth-child(odd) { inset-inline-start: 3px }
+  .a-mo .mo-leaf:nth-child(even) { inset-inline-end: 3px; scale: -1 1 }
+  .a-mo .mo-bud { position: absolute; inset-block-end: 100%; inset-inline-start: 50%; translate: -50% 2px; display: grid; place-items: center; inline-size: 24px; block-size: 24px; border-radius: var(--radius-pill); background: var(--sh-grade-c); color: var(--night); font: 700 var(--fs-label)/1 var(--font-mono) }
+  /* Small label: B and C grades are too light for white text, so they take ink; A is dark enough for white. */
+  .a-mo .mo-bud[data-grade="A"] { background: var(--sh-grade-a); color: var(--white) }
+  .a-mo .mo-bud[data-grade="B"] { background: var(--sh-grade-b) }
+  .a-mo .mo-pot { inline-size: 34px; block-size: 20px; flex: none; border-radius: 4px 4px var(--radius-chip) var(--radius-chip); background: var(--md-secondary) }
+  .a-mo .mo-name { font-size: var(--fs-body-sm); font-weight: 600 }
+  .a-mo .mo-r:not(:checked) + .mo-plant :is(.mo-stem, .mo-leaf) { background: color-mix(in oklch, var(--md-success) 50%, var(--surface-card)) }
+  .sh-root[data-motion="full"] .a-mo .mo-stem { transform-origin: 50% 100%; animation: moGrow .7s var(--a-ease-expo) both }
+  .sh-root[data-motion="full"] .a-mo .mo-r:checked + .mo-plant .mo-bud { animation: moPop var(--dur-slow) var(--a-ease-expo) }
+  @keyframes moGrow { from { transform: scaleY(0.1) } }
+  @keyframes moPop { 40% { scale: 1.25 } }
+
+/* Momentum garden motion: each stem grows from its first-paper height (dashed line) to today,
+   leaves ride up with it, the flower opens, then the stem sways three times and rests.
+   Picking a plant replays its growth (A/B keyframe swap restarts the animation). */
+            .a-mo .mo-plant { --petal: var(--sh-grade-c) }
+            .a-mo .mo-plant:has(.mo-bud[data-grade="A"]) { --petal: var(--sh-grade-a) }
+            .a-mo .mo-plant:has(.mo-bud[data-grade="B"]) { --petal: var(--sh-grade-b) }
+            .a-mo .mo-stem::before { content: ""; position: absolute; inset-block-end: calc(100% + 5px); inset-inline-start: 50%; translate: -50% 0; inline-size: 10px; block-size: 10px; border-radius: var(--radius-pill); --pc: color-mix(in oklch, var(--petal) 30%, var(--surface-card)); background: var(--pc); box-shadow: 0 -12px 0 2px var(--pc), 11.4px -3.7px 0 2px var(--pc), 7px 9.7px 0 2px var(--pc), -7px 9.7px 0 2px var(--pc), -11.4px -3.7px 0 2px var(--pc) }
+            .a-mo .mo-r:not(:checked) + .mo-plant .mo-stem::before { scale: 0.7 }
+            /* Data growth: picking a plant grows its stem from first-paper height to today, leaves riding up with it.
+            The dashed line is where it started; the stem then settles with a short sway (3 swings, then rest). */
+            .a-mo .mo-stem { transform-origin: 50% 100% }
+            @media (prefers-reduced-motion: no-preference) {
+            .sh-root[data-motion="full"] .a-mo .mo-plant .mo-stem { animation: grUpA 1.1s var(--a-ease-expo) .2s both, grSway 1.4s ease-in-out 1.3s 3 }
+            .sh-root[data-motion="full"] .a-mo .mo-r:checked + .mo-plant .mo-stem { animation-name: grUpB, grSway }
+            .sh-root[data-motion="full"] .a-mo .mo-plant .mo-stem::before { animation: grOpen .5s var(--a-ease-expo) 1.2s both }
+            .sh-root[data-motion="full"] .a-mo .mo-r:checked + .mo-plant .mo-stem::before { animation-name: grOpenB }
+            .sh-root[data-motion="full"] .a-mo .mo-r:checked + .mo-plant .mo-was { animation: grMark 1.1s ease-out .2s both }
+            }
+            @keyframes grUpA { from { block-size: calc(var(--was) * 0.8) } }
+            @keyframes grUpB { from { block-size: calc(var(--was) * 0.8) } }
+            @keyframes grSway { 25% { rotate: 2deg } 75% { rotate: -2deg } }
+            @keyframes grOpen { from { transform: scale(0); opacity: 0 } }
+            @keyframes grOpenB { from { transform: scale(0); opacity: 0 } }
+            @keyframes grMark { 0%, 60% { border-color: var(--md-primary) } }
+
+
+/* Momentum garden type: title, readout as a sentence, each plant shows its current score in mono. */
+.a-mo .mo-read { flex-direction: column; align-items: flex-start; gap: var(--space-1); margin: var(--space-2) 0 var(--space-3) }
+.a-mo .mo-sent { font: 600 var(--fs-title)/1.2 var(--font-ui); letter-spacing: var(--ls-headline-ui); color: var(--text-body) }
+.a-mo .mo-sent b { font: 800 var(--fs-title)/1.2 var(--font-ui); letter-spacing: var(--ls-headline-ui); color: var(--md-primary) }
+.a-mo .mo-ctx { font: 600 var(--fs-label)/1.3 var(--font-mono); letter-spacing: 0.02em; color: var(--text-secondary); font-variant-numeric: tabular-nums }
+.a-mo .mo-plant { gap: 0 }
+.a-mo .mo-name { margin-block-start: var(--space-1); font: 600 var(--fs-body-sm)/1.2 var(--font-ui) }
+.a-mo .mo-val { font: 600 var(--fs-label)/1.3 var(--font-mono); color: var(--text-muted); font-variant-numeric: tabular-nums }
+.a-mo .mo-r:checked + .mo-plant .mo-val { color: var(--md-primary) }
+
+/* Exam strip: click an exam to pick it (timeline fill, pin and practise button follow);
+   hover previews another exam and dims the rest. The repeated .a-xs-card in the hover rules
+   only raises specificity so the preview beats the selection. */
+.a-xb-fill { transition: inline-size var(--dur-slow) var(--a-ease-expo) }
+.a-xb-pin::before { transition: background var(--dur-fast), scale var(--dur-base) var(--a-ease-expo) }
+.a-xb-stem, .a-xb-code { transition: background var(--dur-fast), color var(--dur-fast) }
+.a-xs-item { cursor: pointer; transition: opacity var(--dur-base) var(--ease-out), background var(--dur-fast), color var(--dur-fast), translate var(--dur-base) var(--a-ease-expo) }
+.xs-r:checked + .a-xs-item { background: var(--md-primary-container); color: var(--md-on-primary-container) }
+.xs-r:focus-visible + .a-xs-item { outline: 2px solid var(--md-primary); outline-offset: 2px }
+.a-xs-list:has(> li:hover) > li:not(:hover) .a-xs-item { opacity: 0.65 }
+.a-xs-list > li:hover .a-xs-item { translate: 0 -2px }
+.a-xs-list > li:hover .xs-r:not(:checked) + .a-xs-item { background: var(--surface-row) }
+.a-xs-card:has(.xs-r[name="xs-many"][value="0625"]:checked) .a-xb-fill { inline-size: 30.11% }
+.a-xs-card:has(.xs-r[name="xs-many"][value="0625"]:checked) .a-xb-pin[data-exam="0625"] .a-xb-stem { background: var(--md-primary) }
+.a-xs-card:has(.xs-r[name="xs-many"][value="0625"]:checked) .a-xb-pin[data-exam="0625"]::before { background: var(--md-primary); box-shadow: 0 0 0 3px var(--surface-card); scale: 1.25 }
+.a-xs-card:has(.xs-r[name="xs-many"][value="0625"]:checked) .a-xb-pin[data-exam="0625"] .a-xb-code { color: var(--md-primary); font-weight: 800 }
+.a-xs-card:has(.xs-r[name="xs-many"][value="0580"]:checked) .a-xb-fill { inline-size: 65.05% }
+.a-xs-card:has(.xs-r[name="xs-many"][value="0580"]:checked) .a-xb-pin[data-exam="0580"] .a-xb-stem { background: var(--md-primary) }
+.a-xs-card:has(.xs-r[name="xs-many"][value="0580"]:checked) .a-xb-pin[data-exam="0580"]::before { background: var(--md-primary); box-shadow: 0 0 0 3px var(--surface-card); scale: 1.25 }
+.a-xs-card:has(.xs-r[name="xs-many"][value="0580"]:checked) .a-xb-pin[data-exam="0580"] .a-xb-code { color: var(--md-primary); font-weight: 800 }
+.a-xs-card:has(.xs-r[name="xs-many"][value="0606"]:checked) .a-xb-fill { inline-size: 91.26% }
+.a-xs-card:has(.xs-r[name="xs-many"][value="0606"]:checked) .a-xb-pin[data-exam="0606"] .a-xb-stem { background: var(--md-primary) }
+.a-xs-card:has(.xs-r[name="xs-many"][value="0606"]:checked) .a-xb-pin[data-exam="0606"]::before { background: var(--md-primary); box-shadow: 0 0 0 3px var(--surface-card); scale: 1.25 }
+.a-xs-card:has(.xs-r[name="xs-many"][value="0606"]:checked) .a-xb-pin[data-exam="0606"] .a-xb-code { color: var(--md-primary); font-weight: 800 }
+.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card:has(.a-xs-list > li:hover) .a-xb-pin .a-xb-stem { background: var(--border-default) }
+.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card:has(.a-xs-list > li:hover) .a-xb-pin::before { background: var(--surface-card); box-shadow: inset 0 0 0 3px var(--md-primary); scale: 1 }
+.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card:has(.a-xs-list > li:hover) .a-xb-pin .a-xb-code { color: var(--text-muted); font-weight: 600 }
+.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card:has(li[data-x="0625"]:hover) .a-xb-fill { inline-size: 30.11% }
+.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card:has(li[data-x="0625"]:hover) .a-xb-pin[data-exam="0625"] .a-xb-stem { background: var(--md-primary) }
+.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card:has(li[data-x="0625"]:hover) .a-xb-pin[data-exam="0625"]::before { background: var(--md-primary); box-shadow: 0 0 0 3px var(--surface-card); scale: 1.25 }
+.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card:has(li[data-x="0625"]:hover) .a-xb-pin[data-exam="0625"] .a-xb-code { color: var(--md-primary); font-weight: 800 }
+.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card:has(li[data-x="0580"]:hover) .a-xb-fill { inline-size: 65.05% }
+.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card:has(li[data-x="0580"]:hover) .a-xb-pin[data-exam="0580"] .a-xb-stem { background: var(--md-primary) }
+.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card:has(li[data-x="0580"]:hover) .a-xb-pin[data-exam="0580"]::before { background: var(--md-primary); box-shadow: 0 0 0 3px var(--surface-card); scale: 1.25 }
+.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card:has(li[data-x="0580"]:hover) .a-xb-pin[data-exam="0580"] .a-xb-code { color: var(--md-primary); font-weight: 800 }
+.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card:has(li[data-x="0606"]:hover) .a-xb-fill { inline-size: 91.26% }
+.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card:has(li[data-x="0606"]:hover) .a-xb-pin[data-exam="0606"] .a-xb-stem { background: var(--md-primary) }
+.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card:has(li[data-x="0606"]:hover) .a-xb-pin[data-exam="0606"]::before { background: var(--md-primary); box-shadow: 0 0 0 3px var(--surface-card); scale: 1.25 }
+.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card.a-xs-card:has(li[data-x="0606"]:hover) .a-xb-pin[data-exam="0606"] .a-xb-code { color: var(--md-primary); font-weight: 800 }
+.a-xs-foot .a-xs-act[data-x] { display: none }
+.sh-root:not([data-state="one-paper"]) .a-xs-card:has(.xs-r[name="xs-many"][value="0625"]:checked) .a-xs-act[data-x="0625"] { display: inline-flex }
+.sh-root:not([data-state="one-paper"]) .a-xs-card:has(.xs-r[name="xs-many"][value="0580"]:checked) .a-xs-act[data-x="0580"] { display: inline-flex }
+.sh-root:not([data-state="one-paper"]) .a-xs-card:has(.xs-r[name="xs-many"][value="0606"]:checked) .a-xs-act[data-x="0606"] { display: inline-flex }
+
+
+/* Greeting lives in the hero card: it heads the level column, with level and XP under it.
+   Below 960px it moves to the top of the card. */
+@container home (min-width: 761px) and (max-width: 959px) {
+  .ah-hero { grid-template-areas: "greet greet" "binny level" "week week" }
+}
+@container home (max-width: 760px) {
+  .ah-hero { grid-template-areas: "greet" "binny" "level" "week" }
+}
+.ah-greet { grid-area: greet; min-inline-size: 0 }
+.ah-greet .a-greet { font-size: var(--fs-headline); line-height: 1.05 }
+.ah-greet .a-kicker { margin: var(--space-1) 0 0; font-size: var(--fs-body-sm) }
+@container home (min-width: 960px) {
+  .ah-hero { grid-template-areas: "binny greet week" "binny level week"; row-gap: var(--space-4); align-items: stretch }
+  .ah-greet { align-self: end; padding-block-end: var(--space-4); border-block-end: 1px solid var(--border-subtle) }
+  .ah-level { align-self: start }
+  .ah-binny, .ah-week { align-self: center }
+}
+
+/* Binny peeks out: from 960px the speech line overlaps the tile foot instead of stacking under it,
+   so Binny can stand taller than its tile (ears out the top) without making the card taller.
+   Hover pops Binny up with ears perked and a blink; press squashes. */
+.ah-hero .brand-binny-ear { transform-box: fill-box; transform-origin: 50% 100% }
+@container home (min-width: 960px) {
+  .ah-hero .ah-binny { position: relative; gap: 0 }
+  .ah-hero .ah-binny-tile { block-size: 148px; padding: 8px 8px 22px; align-content: start }
+  .ah-hero .ah-say { position: absolute; z-index: 1; inset-inline: 10px; inset-block-end: -12px; padding: 5px 10px; font-size: var(--fs-label); line-height: 1.3; text-align: center; box-shadow: var(--shadow-hover); background: var(--surface-card) }
+}
+@container home (min-width: 960px) {
+  .ah-hero .ah-binny { justify-content: flex-end }
+  .ah-hero .ah-binny-tile { position: relative; overflow: visible; block-size: 116px; margin-block-start: 32px; padding: 0 }
+  .ah-hero .ah-binny-tile svg { position: absolute; inset-inline: 0; margin-inline: auto; inset-block-end: 18px; block-size: 128px }
+}
+.ah-hero .ah-binny-tile svg { transform-origin: 50% 100%; transition: transform var(--dur-slow) var(--a-ease-expo) }
+.ah-hero .ah-binny-tile .brand-binny-ear { transition: rotate var(--dur-base) var(--a-ease-expo) }
+@media (prefers-reduced-motion: no-preference) {
+  .sh-root[data-motion="full"] .ah-hero .ah-binny-tile:is(:hover, :focus-visible) svg { transform: translateY(-6px) }
+  .sh-root[data-motion="full"] .ah-hero .ah-binny-tile:is(:hover, :focus-visible) .brand-binny-ear-left { rotate: -10deg }
+  .sh-root[data-motion="full"] .ah-hero .ah-binny-tile:is(:hover, :focus-visible) .brand-binny-ear-right { rotate: 10deg }
+  .sh-root[data-motion="full"] .ah-hero .ah-binny-tile:hover .brand-binny-eyes { animation: bnBlink .3s linear }
+  .sh-root[data-motion="full"] .ah-hero .ah-binny-tile:active svg { transform: translateY(2px) scale(1.03, 0.95); transition-duration: 80ms }
+}
+@keyframes bnBlink { 50% { scale: 1 0.1 } }
+
+/* Hero entrance: greeting, Binny peeks up from its tile, level and XP bar fill,
+   the week flips in left to right, and today pops last. Motion-on only. */
+@media (prefers-reduced-motion: no-preference) {
+  .a-motion .ah-hero .ah-greet { animation: haRise .5s var(--a-ease-expo) both }
+  .a-motion .ah-hero .ah-binny-tile:not(.is-jump, .is-cheer) svg { animation: haPeek .7s var(--a-ease-expo) .2s both }
+  .a-motion .ah-hero .ah-level-row { animation: haRise .5s var(--a-ease-expo) .3s both }
+  .a-motion .ah-hero .ah-bar-fill { animation: ahFill .7s var(--a-ease-expo) .45s both }
+  .a-motion .ah-hero .ah-week-head { animation: haRise .5s var(--a-ease-expo) .45s both }
+  .a-motion .ah-hero .ah-day-d { transform-origin: 50% 0; animation: haFlip .45s var(--a-ease-expo) calc(.55s + var(--di, 0) * 60ms) both }
+  .a-motion .ah-hero .ah-xp-bar { animation: aGrow .45s var(--a-ease-expo) calc(.6s + var(--di, 0) * 60ms) both }
+  .a-motion .ah-hero .ah-day.is-today .ah-day-d { animation: haFlip .45s var(--a-ease-expo) .91s both, haPop .4s var(--a-ease-expo) 1.2s }
+}
+@keyframes haRise { from { opacity: 0; transform: translateY(8px) } }
+@keyframes haPeek { from { transform: translateY(40%) } }
+@keyframes haFlip { from { opacity: 0; transform: perspective(300px) rotateX(-80deg) } }
+@keyframes haPop { 50% { scale: 1.12 } }
+
+/* Weak-topics entrance: the secure band grows in from the 70% line, each marker races in
+   from 0% to its score, then the tail and change labels arrive. Waits until scrolled into view. */
+@media (prefers-reduced-motion: no-preference) {
+  .a-motion .a-ruler .a-lane-track::after { transform-origin: 0 50%; animation: rlBand .6s var(--a-ease-expo) both }
+  .a-motion .a-ruler .a-marker { animation: rlRace .9s var(--a-ease-expo) calc(.35s + var(--li, 0) * 90ms) both }
+  .a-motion .a-ruler .a-marker-l { animation: rlRaceL .9s var(--a-ease-expo) calc(.35s + var(--li, 0) * 90ms) both }
+  .a-motion .a-ruler .a-tail { animation: aDraw .5s var(--a-ease-expo) calc(1.05s + var(--li, 0) * 90ms) both }
+  .a-motion .a-ruler :is(.a-chg, .a-drop) { animation: rlIn .4s var(--a-ease-expo) calc(1.1s + var(--li, 0) * 90ms) both }
+}
+@keyframes rlBand { from { transform: scaleX(0) } }
+@keyframes rlRace { from { inset-inline-start: 0% } }
+@keyframes rlRaceL { from { inset-inline-start: 0%; opacity: 0 } }
+@keyframes rlIn { from { opacity: 0; transform: translateY(4px) } }
+.a-motion [data-anim]:not(.is-in) .a-ruler :is(.a-marker, .a-marker-l, .a-tail, .a-chg, .a-drop),
+.a-motion [data-anim]:not(.is-in) .a-ruler .a-lane-track::after { animation-play-state: paused }
+
+/* Sidebar subjects: the grade letter sits in a ring that fills toward the next grade
+   (Maths 40% of A to A*, Add Maths 36% of B to A, Physics 43% of C to B); the open subject is tinted.
+   Upload a paper is the navy primary, like the top bar; its live counter flips to light on navy. */
+.as-side .as-foot .as-btn-primary .as-n.is-hot { background: var(--md-on-primary); color: var(--md-primary) }
+@property --sd-p { syntax: "<percentage>"; inherits: true; initial-value: 0% }
+.as-side .as-ring { --sd-p: var(--p); display: grid; place-items: center; flex: none; inline-size: 28px; block-size: 28px; border-radius: var(--radius-pill); background: conic-gradient(var(--ring) var(--sd-p), var(--md-surface-high) 0); font: 800 var(--fs-label)/1 var(--font-ui); color: var(--md-on-surface); position: relative }
+.as-side .as-ring::before { content: ""; position: absolute; inset: 3px; border-radius: inherit; background: var(--surface-card) }
+.as-side .as-ring > b { position: relative }
+.as-side .as-ring[data-grade="A"] { --ring: var(--sh-grade-a) }
+.as-side .as-ring[data-grade="B"] { --ring: var(--sh-grade-b) }
+.as-side .as-ring[data-grade="C"] { --ring: var(--sh-grade-c) }
+.as-side .as-subj .as-code { display: none }
+.as-side .as-subjects > li[data-current] > .as-subj { background: var(--md-primary-container); color: var(--md-on-primary-container) }
+@media (prefers-reduced-motion: no-preference) {
+  .sh-root[data-motion="full"] .as-side .as-ring { transition: --sd-p .6s var(--a-ease-expo) }
+  .sh-root[data-motion="full"] .as-side .as-subj:hover .as-ring { animation: sdRing .8s var(--a-ease-expo) }
+}
+@keyframes sdRing { from { --sd-p: 0% } }
+
+/* Adapt: hero card and grades on small screens.
+   Phone (≤560): Binny sits beside the level instead of on its own row; level and streak headings step down
+   to the UI title size so the greeting leads; grade rows drop the per-stone boundary labels (the distance line
+   and the stone letters carry them, the row's aria-label keeps the full numbers).
+   Small tablet (561–760): the hero becomes a two-column card and grade rows go side by side. */
+@container home (max-width: 760px) {
+  .ah-binny { display: contents }
+  .ah-binny-tile { grid-area: binny; align-self: center }
+  .ah-say { grid-area: say; justify-self: start }
+  .ah-level-n, .ah-week-n { font: 800 var(--fs-title)/1.15 var(--font-ui); letter-spacing: var(--ls-headline-ui) }
+  .ah-week-head { margin-block-end: var(--space-2) }
+}
+@container home (min-width: 561px) and (max-width: 760px) {
+  .ah-hero {
+    grid-template-columns: 72px minmax(0, 1fr);
+    grid-template-areas: "greet greet" "binny level" "binny say" "week week";
+    column-gap: var(--space-5); row-gap: var(--space-3); padding: var(--space-5) var(--space-6);
+  }
+  .ah-binny-tile { inline-size: 72px; block-size: 72px }
+  .ah-binny-tile svg { block-size: 58px }
+  .ah-week { padding-block-start: var(--space-4) }
+
+  .a-gj-row {
+    grid-template-columns: minmax(160px, 240px) minmax(0, 1fr); grid-template-areas: "n j" "d j";
+    column-gap: var(--space-5); row-gap: 2px; padding: var(--space-3) var(--space-4);
+  }
+  .a-gj-name { align-self: end }
+  .a-gj-dist { align-self: start }
+  .a-gj .a-journey { margin-block: var(--space-2) var(--space-4) }
+}
+@container home (max-width: 560px) {
+  .ah-hero {
+    grid-template-columns: 56px minmax(0, 1fr);
+    grid-template-areas: "greet greet" "binny level" "say say" "week week";
+    column-gap: var(--space-3); row-gap: var(--space-3);
+  }
+  .ah-binny-tile { inline-size: 56px; block-size: 56px }
+  .ah-binny-tile svg { block-size: 44px }
+  .ah-say { justify-self: stretch }
+  .ah-xp-n { font-size: var(--fs-body) }
+  .ah-bar { margin-block-start: 6px; block-size: 8px }
+  .ah-week { padding-block-start: var(--space-3) }
+  .ah-xp-col { block-size: 28px }
+  .ah-xp-bar { block-size: calc(var(--xp, 0) * 20px) }
+
+  .a-gj-row { row-gap: 0; padding: var(--space-3) var(--space-4) var(--space-1) }
+  .a-gj .a-j-b { display: none }
+  .a-gj .a-journey { block-size: 48px; margin-block-end: var(--space-1) }
+}
+
+/* == Critique wave 1: harden (Garden data and states, error, Binny news) == */
+
+/* Error: keep the last-known page under the banner. */
+.sh-root[data-state="error"] [data-when-state~="ready"] { display: block }
+.sh-root[data-state="error"] .a-error-wrap { padding-block-end: 0 }
+.a-error { margin-block-end: var(--space-4) }
+
+/* Binny speaks news only when a result just arrived (next action is "result"). */
+.sh-root:not([data-action="result"]) .ah-say [data-news] { display: none }
+.ah-say [data-quiet] { display: none }
+.sh-root[data-action="session"][data-mood="grade-improved"] .ah-say [data-quiet="session"],
+.sh-root[data-action="session"][data-mood="paper-marked"] .ah-say [data-quiet="session"],
+.sh-root[data-action="practice"][data-mood="grade-improved"] .ah-say [data-quiet="practice"],
+.sh-root[data-action="practice"][data-mood="paper-marked"] .ah-say [data-quiet="practice"] { display: inline }
+.sh-root .ah-binny.is-greeting .ah-say [data-quiet],
+.sh-root .ah-binny.is-cheering .ah-say [data-quiet] { display: none }
+
+/* Garden follows the data. */
+.a-mo .mo-rest { display: none }
+.sh-root[data-state="streak-zero"] .a-mo .mo-rest { display: block; margin: var(--space-3) 0 0; padding-block-start: var(--space-3); border-block-start: 1px solid var(--surface-row) }
+.a-mo .mo-rest .mo-sent { font: 700 var(--fs-body)/1.3 var(--font-ui); color: var(--text-body) }
+.a-mo .mo-rest .mo-ctx { display: block; margin-block-start: var(--space-1) }
+.a-mo > .mo-rest { grid-column: 1 / -1 }
+
+/* Paused streak: the plants droop and lose colour. */
+.sh-root[data-state="streak-zero"] .a-mo .mo-plant :is(.mo-stem, .mo-leaf) { background: color-mix(in oklch, var(--md-success) 35%, var(--text-muted)) }
+.sh-root[data-state="streak-zero"] .a-mo .mo-leaf { rotate: 22deg }
+.sh-root[data-state="streak-zero"] .a-mo .mo-stem { rotate: 5deg }
+.sh-root[data-state="streak-zero"] .a-mo .mo-stem::before { opacity: 0.5; filter: saturate(0.3) }
+.sh-root[data-state="streak-zero"] .a-mo .mo-bud { filter: saturate(0.5) }
+
+/* One paper: a single sprout, no history to compare. */
+.a-mo .mo-read[data-k="solo"] { display: none }
+.sh-root[data-state="one-paper"] .a-mo .mo-read[data-k="solo"] { display: flex }
+.sh-root[data-state="one-paper"] .a-mo .mo-read:not([data-k="solo"]),
+.sh-root[data-state="one-paper"] .a-mo .mo-garden:not(.mo-garden-solo) { display: none !important }
+.sh-root:not([data-state="one-paper"]) .a-mo .mo-garden-solo { display: none }
+.sh-root[data-state="one-paper"] .a-mo .mo-garden-solo { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; align-content: center; gap: var(--space-3); margin: 0 }
+.a-mo .mo-plant.is-solo { cursor: default; padding-inline: var(--space-6); background: var(--md-primary-container) }
+.a-mo .mo-seed { margin: 0; max-inline-size: 24ch; text-align: center; font: 600 var(--fs-label)/1.4 var(--font-mono); color: var(--text-secondary) }
+@container home (min-width: 900px) {
+  .a-mo .mo-garden-solo { grid-column: 2; grid-row: 1 / span 2 }
+}
+
+/* New: ghosted preview of what will grow. */
+.a-mo-ghost { margin-block-start: var(--space-5) }
+.a-mo-ghost .mo-ghost-read { display: flex }
+.a-mo .mo-garden-ghost { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-2); margin: var(--space-3) 0 0 }
+.a-mo .mo-garden-ghost .mo-plant { display: grid; justify-items: center; padding: var(--space-2) 0 var(--space-1); opacity: 0.55 }
+.a-mo .mo-garden-ghost .mo-stem { inline-size: 0; background: transparent; border-inline-start: 2px dashed var(--text-muted); border-radius: 0; animation: none }
+.a-mo .mo-garden-ghost .mo-stem::before { display: none }
+.a-mo-ghost { margin-block-end: var(--space-5) }
+.a-mo .mo-garden-ghost .mo-pot { background: transparent; border: 2px dashed var(--text-muted) }
+.a-mo .mo-garden-ghost .mo-name { color: var(--text-secondary) }
+@container home (min-width: 900px) {
+  .a-mo-ghost > .mo-garden-ghost { grid-column: 2; grid-row: 1 / span 2; margin: 0 }
+}
+
+/* == Critique wave 1: layout (Garden as main progress view, mobile order) == */
+/* Stacked (<900): the next step leads, the Garden follows. Side by side the Garden keeps the wide column. */
+@container home (max-width: 899px) {
+.a-next-row > .a-action-card { order: -1 }
+}
+/* Grades are secondary detail under the Garden: compact rows, thresholds dropped (the stones carry them). */
+.a-gj .a-j-b { display: none }
+.a-grades .a-gj { padding: var(--space-1) }
+.a-gj-row { min-block-size: 0; padding-block: var(--space-1) }
+.a-gj .a-journey { block-size: 40px; margin-block-end: 0 }
+.a-gj .a-stone { inline-size: 28px; block-size: 28px }
+.a-gj .a-j-me { inline-size: 14px; block-size: 14px }
+@container home (max-width: 560px) {
+.a-gj-row { padding-block: var(--space-2) var(--space-1) }
+/* Weak topics: name and change share a line, track below; the marks line stays only on the weakest topic. */
+.a-lanes a {
+grid-template-areas: "n c" "t t"; row-gap: 0; padding-block: var(--space-2);
+}
+.a-lanes a .a-drop { display: none }
+.a-lanes > li.is-top a { grid-template-areas: "n c" "t t" "d d" }
+.a-lanes > li.is-top a .a-drop { display: block }
+}
+
+/* == Critique wave 1: typeset (heading scale and order) == */
+/* Garden heading is an h2 now; matches the other section headings at every width. */
+.a-mo .mo-h { font: 800 var(--fs-title)/1.2 var(--font-ui); letter-spacing: var(--ls-headline-ui); color: var(--text-body) }
+/* Readout sentence: explicit word gap before the bold value (tight tracking ate the space). */
+.a-mo .mo-read > .mo-sent { font-size: var(--fs-title); color: var(--text-body); word-spacing: 0.04em }
+.a-mo .mo-read > .mo-sent b { color: var(--md-primary) }
+/* Binny's line back to body-sm in the peek-out layout. */
+@container home (min-width: 960px) {
+  .ah-hero .ah-say { font-size: var(--fs-body-sm); line-height: 1.3 }
+}
+
+/* == Critique wave 2: quieter + colorize (gold, Today pill, grade C, Binny glow) == */
+/* Streak: earned days are a gold tint, only today is full gold. XP bars stay gold (XP). */
+.ah-day.is-earned .ah-day-d { background: color-mix(in oklch, var(--md-tertiary) 38%, var(--surface-card)); color: var(--text-body) }
+.ah-day.is-earned.is-today .ah-day-d { background: var(--md-tertiary); color: var(--sh-gold-text) }
+/* Streak broken: the old run fades and reads as paused. */
+.sh-root[data-state="streak-zero"] .ah-day.is-earned:not(.is-today) .ah-day-d { background: color-mix(in oklch, var(--md-tertiary) 14%, var(--surface-card)); color: var(--text-muted) }
+.sh-root[data-state="streak-zero"] .ah-day.is-earned:not(.is-today) :is(.ah-xp-bar, .ah-xp-val) { opacity: 0.45 }
+.sh-root[data-state="streak-zero"] .ah-day.is-earned:not(.is-today) .ah-day-w { color: var(--text-muted) }
+
+/* Today pill: primary fill, not Night. */
+.a-xb-today { background: var(--md-primary); color: var(--md-on-primary) }
+
+/* Grade C moves off reward gold to a darker bronze-olive so grades and XP never share a colour. */
+.sh-root { --sh-grade-c: oklch(0.47 0.09 75) }
+.sh-root[data-theme="dark"] { --sh-grade-c: oklch(0.49 0.09 75) }
+.a-mo .mo-bud[data-grade="C"] { color: var(--white) }
+
+/* Binny's speech line: no glow in dark. */
+.sh-root[data-theme="dark"] .ah-say, .sh-root[data-theme="dark"] .ah-hero .ah-say { box-shadow: none }
+
+/* == Critique wave 2: clarify (labels, explanations, targets) == */
+
+/* Skip link: a 44px-tall target. */
+.as-skip { display: inline-flex; align-items: center; min-block-size: 44px; padding-block: 0 }
+
+/* 44px hit areas with the visual size unchanged: the pseudo-element is the extra reach. */
+.as-iconbtn::after {
+  content: ""; position: absolute;
+  inset: min(0px, calc((100% - 44px) / 2));
+}
+.ah-streak { position: relative }
+.ah-streak::after {
+  content: ""; position: absolute;
+  inset-block: min(0px, calc((100% - 45px) / 2));
+  inset-inline: min(0px, calc((100% - 45px) / 2));
+}
+
+/* A short key for the labels that need one. A disclosure, so it works on touch and keyboard. */
+.a-key { margin: calc(var(--space-2) * -1) 0 var(--space-3); font-size: var(--fs-body-sm); color: var(--text-secondary) }
+.a-key > summary {
+  display: inline-flex; align-items: center; min-block-size: 44px; padding-inline: var(--space-1); border-radius: var(--radius-chip);
+  color: var(--text-secondary); font-weight: 700; cursor: pointer; list-style: none;
+}
+.a-key > summary::-webkit-details-marker { display: none }
+.a-key > summary::after { content: "+"; margin-inline-start: var(--space-2); font-family: var(--font-mono) }
+.a-key[open] > summary::after { content: "\2212" }
+.a-key > summary:hover { color: var(--md-primary) }
+.a-key dl { display: grid; gap: var(--space-2); margin: 0; padding: var(--space-3) var(--space-4); border-radius: var(--radius-inner); background: var(--md-surface-low) }
+.a-key dl > div { display: grid; grid-template-columns: minmax(7rem, max-content) minmax(0, 1fr); gap: var(--space-3); align-items: baseline }
+.a-key dt { color: var(--text-body); font-weight: 700 }
+.a-key dd { margin: 0 }
+@container home (max-width: 560px) {
+  .a-key dl > div { grid-template-columns: minmax(0, 1fr) }
+  .a-key dl { gap: var(--space-3) }
+}
+
+/* The exam timeline is aria-hidden, so its compressed range is explained in plain text. */
+.a-xb-note { margin: 0 0 var(--space-3); font-size: var(--fs-body-sm); color: var(--text-secondary) }
+@container home (max-width: 760px) { .a-xb-note { display: none } }
+
+/* == Critique wave 2: onboard (loading skeleton, new state) == */
+
+/* Loading skeleton: same order and same grid as the ready page (hero, next-row, grades, weak topics,
+   exams). Block heights are measured from the ready page per container tier (--sk-*), so nothing jumps
+   when data lands. Shimmer only under .a-motion and never under prefers-reduced-motion. */
+@media (prefers-reduced-motion: reduce) { .a-motion .a-skel { animation: none } }
+/* Heights re-measured on the ready page per content width (the `home` container's content box). */
+[data-when-state="loading"] {
+  --sk-hero: 395px; --sk-garden: 288px; --sk-action: 199px; --sk-grades: 336px; --sk-weak: 563px; --sk-exams: 432px;
+}
+@container home (max-width: 357px) {
+  [data-when-state="loading"] { --sk-action: 231px }
+}
+@container home (max-width: 351px) {
+  [data-when-state="loading"] { --sk-weak: 597px }
+}
+@container home (max-width: 337px) {
+  [data-when-state="loading"] { --sk-grades: 360px }
+}
+@container home (max-width: 327px) {
+  [data-when-state="loading"] { --sk-grades: 379px }
+}
+@container home (max-width: 321px) {
+  [data-when-state="loading"] { --sk-weak: 621px }
+}
+@container home (min-width: 376px) {
+  [data-when-state="loading"] { --sk-hero: 361px; --sk-grades: 323px; --sk-exams: 409px }
+}
+@container home (min-width: 410px) {
+  [data-when-state="loading"] { --sk-hero: 344px }
+}
+@container home (min-width: 561px) {
+  [data-when-state="loading"] { --sk-hero: 368px; --sk-grades: 263px; --sk-weak: 690px }
+}
+@container home (min-width: 761px) {
+  [data-when-state="loading"] { --sk-hero: 426px; --sk-action: 235px; --sk-grades: 239px; --sk-weak: 330px; --sk-exams: 378px }
+}
+@container home (min-width: 802px) {
+  [data-when-state="loading"] { --sk-exams: 363px }
+}
+@container home (min-width: 960px) {
+  [data-when-state="loading"] { --sk-hero: 293px }
+}
+@container home (min-width: 974px) {
+  [data-when-state="loading"] { --sk-hero: 260px }
+}
+@container home (min-width: 1010px) {
+  [data-when-state="loading"] { --sk-hero: 239px }
+}
+@container home (min-width: 1044px) {
+  [data-when-state="loading"] { --sk-garden: 256px; --sk-exams: 340px }
+}
+@container home (min-width: 1084px) {
+  [data-when-state="loading"] { --sk-garden: 235px }
+}
+@container home (min-width: 1138px) {
+  [data-when-state="loading"] { --sk-hero: 205px }
+}
+.a-sk-card { display: flex; border-radius: var(--radius-card); background: var(--surface-card); box-shadow: var(--a-card-edge); box-sizing: border-box }
+.a-sk-h { display: block; flex: none; inline-size: 140px; block-size: 19px; margin-block-end: var(--space-3); border-radius: var(--radius-chip) }
+.a-sk-title { display: block; inline-size: min(360px, 90%); block-size: 32px; border-radius: var(--radius-chip) }
+.a-sk-line { display: block; inline-size: min(420px, 100%); block-size: 14px; border-radius: var(--radius-pill) }
+.a-sk-line.a-sk-short { inline-size: min(260px, 70%) }
+.a-sk-btn { display: block; inline-size: 160px; block-size: 44px; border-radius: var(--radius-pill) }
+.a-sk-hero { block-size: var(--sk-hero); align-items: center; justify-content: space-between; gap: var(--space-6); padding: var(--space-8) }
+.a-sk-col { display: flex; flex-direction: column; gap: var(--space-3); flex: 1 1 auto; min-inline-size: 0 }
+.a-sk-disc { flex: none; inline-size: 128px; block-size: 128px; border-radius: 50% }
+.a-sk-garden { block-size: var(--sk-garden); flex-direction: column; padding: var(--space-5) }
+.a-sk-plants { flex: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); min-block-size: 0 }
+.a-sk-plants > .a-skel { border-radius: var(--radius-tile) }
+.a-sk-action { block-size: var(--sk-action); flex-direction: column; justify-content: center; align-items: flex-start; gap: var(--space-3); padding: var(--space-5) }
+.a-sk-action .a-sk-h { margin: 0; inline-size: 180px; block-size: 28px }
+.a-sk-sec { display: flex; flex-direction: column }
+.a-sk-grades { block-size: calc(var(--sk-grades) + 0px) }
+.a-sk-weak { block-size: var(--sk-weak) }
+.a-sk-exams { block-size: var(--sk-exams) }
+.a-sk-body { flex: 1; display: flex; flex-direction: column; gap: var(--space-2); min-block-size: 0 }
+.a-sk-body.a-sk-card { padding: var(--space-2) }
+.a-sk-body > .a-skel { flex: 1; border-radius: var(--radius-tile) }
+.a-sk-list > .a-skel { border-radius: var(--radius-card) }
+@container home (max-width: 899px) {
+  .a-sk-next > .a-sk-action { order: -1 }
+}
+@container home (max-width: 760px) {
+  .a-sk-hero { flex-direction: column-reverse; align-items: flex-start; justify-content: flex-end; gap: var(--space-4); padding: var(--space-6) var(--space-5) }
+  .a-sk-disc { inline-size: 72px; block-size: 72px; align-self: flex-start }
+  .a-sk-hero .a-sk-col { flex: 0 0 auto; inline-size: 100% }
+  .a-sk-title { block-size: 30px }
+}
+
+/* New: first visit. Hero upload, ghosted Garden, then a preview of what fills in after the first
+   marked paper. Dashed outlines and letters only: no numbers, nothing that looks like data. */
+.a-mo .mo-garden-ghost { gap: var(--space-4) }
+.a-mo .mo-garden-ghost .mo-plant { opacity: 0.7 }
+.a-mo .mo-garden-ghost .mo-pot { inline-size: 48px; block-size: 28px }
+.a-mo .mo-garden-ghost .mo-pot-area { block-size: 96px }
+.a-mo .mo-garden-ghost .mo-plant:first-child .mo-stem { block-size: 56px; border-inline-width: 2px }
+.a-steps li { grid-template-rows: auto auto 1fr; align-content: stretch }
+.a-step-ghost { align-self: end }
+.a-step-ghost {
+  grid-column: 1 / -1; box-sizing: border-box; display: flex; min-block-size: 88px; margin-block-start: var(--space-3); padding: var(--space-3) var(--space-4);
+  border: 2px dashed color-mix(in oklch, currentColor 35%, transparent); border-radius: var(--radius-tile);
+}
+.a-step-ghost i { display: block; font-style: normal }
+.a-g-paper { flex-direction: column; justify-content: center; gap: var(--space-2) }
+.a-g-paper i { block-size: 8px; border-radius: var(--radius-pill); background: color-mix(in oklch, currentColor 22%, transparent) }
+.a-g-paper i:nth-child(1) { inline-size: 55% }
+.a-g-paper i:nth-child(2) { inline-size: 100% }
+.a-g-paper i:nth-child(3) { inline-size: 88% }
+.a-g-paper i:nth-child(4) { inline-size: 64% }
+.a-g-ruler { align-items: center; justify-content: space-between; gap: var(--space-2) }
+.a-g-ruler i {
+  display: grid; place-items: center; inline-size: 36px; block-size: 36px; border-radius: 50%;
+  border: 2px dashed color-mix(in oklch, currentColor 45%, transparent);
+  font: 700 var(--fs-label) / 1 var(--font-mono); color: var(--text-muted);
+}
+.a-g-rows { flex-direction: column; justify-content: center; gap: var(--space-2) }
+.a-g-rows i { block-size: 12px; border-radius: var(--radius-pill); background: color-mix(in oklch, currentColor 22%, transparent) }
+.a-g-rows i:nth-child(1) { inline-size: 100% }
+.a-g-rows i:nth-child(2) { inline-size: 72% }
+.a-g-rows i:nth-child(3) { inline-size: 48% }
+@container home (max-width: 760px) {
+  .a-step-ghost { min-block-size: 72px }
+  .a-g-ruler { max-inline-size: 280px }
+}
+
+/* == Sparse states: sparse0..sparse3 == */
+/* The ladder between "new" and "populated". Every chosen subject has a pot from day one: seeds
+   wait for a first paper, sprouts carry their grade, and one fill line names what grows next.
+   Gating: data-sp lists the sparse states an element belongs to; data-sp-off lists the sparse
+   states (or "all") where an existing element steps aside. Both only hide, so every element keeps
+   its own display value. */
+.sh-root:not([data-state^="sparse"]) [data-sp],
+.sh-root[data-state="sparse0"] [data-sp]:not([data-sp~="sparse0"]),
+.sh-root[data-state="sparse1"] [data-sp]:not([data-sp~="sparse1"]),
+.sh-root[data-state="sparse2"] [data-sp]:not([data-sp~="sparse2"]),
+.sh-root[data-state="sparse3"] [data-sp]:not([data-sp~="sparse3"]),
+.sh-root[data-state^="sparse"] [data-sp-off~="all"],
+.sh-root[data-state="sparse0"] [data-sp-off~="sparse0"],
+.sh-root[data-state="sparse1"] [data-sp-off~="sparse1"],
+.sh-root[data-state="sparse2"] [data-sp-off~="sparse2"],
+.sh-root[data-state="sparse3"] [data-sp-off~="sparse3"] { display: none !important }
+
+/* Shell lists (notifications) use the data-a-show / data-a-hide pair so the bell count follows. */
+.sh-root[data-state="sparse0"] [data-a-show~="sparse0"],
+.sh-root[data-state="sparse1"] [data-a-show~="sparse1"],
+.sh-root[data-state="sparse2"] [data-a-show~="sparse2"],
+.sh-root[data-state="sparse3"] [data-a-show~="sparse3"] { display: revert }
+.sh-root[data-state="sparse0"] [data-a-hide~="sparse0"],
+.sh-root[data-state="sparse1"] [data-a-hide~="sparse1"],
+.sh-root[data-state="sparse2"] [data-a-hide~="sparse2"],
+.sh-root[data-state="sparse3"] [data-a-hide~="sparse3"] { display: none }
+
+/* The populated page's data steps aside. The exam strip stays: its dates are the student's own. */
+.sh-root[data-state^="sparse"] [data-needs="many-papers"]:not(.a-exams *),
+.sh-root[data-state^="sparse"] .ah-week > [data-when-streak] { display: none !important }
+
+/* Garden: three pots, one per chosen subject. */
+.sh-root[data-state^="sparse"] .a-mo .mo-read[data-k="sp"] { display: flex }
+.a-mo .mo-garden-sp { align-items: end }
+.a-mo .mo-sp { cursor: default; text-decoration: none; color: inherit }
+.a-mo .mo-sp:hover { background: transparent }
+.a-mo .mo-sp.is-lead { background: var(--md-primary-container) }
+.a-mo a.mo-sp { cursor: pointer }
+.a-mo a.mo-sp:hover { background: var(--surface-row) }
+.a-mo a.mo-sp:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px }
+.a-mo .mo-sp .mo-val { min-block-size: 18px }
+.a-mo .mo-sp.is-lead .mo-val { color: var(--md-primary) }
+.a-mo .mo-val-up { color: var(--sh-success-text) }
+.a-mo .mo-sp.is-lead .mo-val-up { color: var(--sh-success-text) }
+.a-mo .mo-plant-it { display: inline-flex; align-items: center; gap: 2px; font: 700 var(--fs-body-sm)/1.3 var(--font-ui); color: var(--md-primary) }
+.a-mo .mo-plant-it .a-ico { inline-size: 14px; block-size: 14px; transition: translate var(--dur-base) var(--ease-out) }
+.a-mo a.mo-sp:hover .mo-plant-it .a-ico { translate: 3px 0 }
+
+/* A seed: half-sunk in the pot, with a dashed guide showing where its stem will grow. */
+.a-mo .mo-sp-seed {
+  position: relative; z-index: 1; flex: none; inline-size: 12px; block-size: 8px; margin-block-end: -3px;
+  border-radius: 50% 50% 45% 45% / 60% 60% 40% 40%;
+  background: color-mix(in oklch, var(--md-success) 45%, var(--text-muted));
+}
+.a-mo .mo-sp-guide {
+  flex: none; inline-size: 0; block-size: 40%; margin-block-end: var(--space-1);
+  border-inline-start: 2px dashed color-mix(in oklch, var(--text-muted) 50%, transparent);
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.a-mo a.mo-sp:hover .mo-sp-guide { border-color: var(--md-primary) }
+
+/* Germinating (first paper marking): the seed has split and a shoot is pushing up. */
+.a-mo .is-germ .mo-sp-seed { inline-size: 14px; block-size: 9px }
+.a-mo .mo-sp-shoot {
+  position: absolute; inset-block-end: 60%; inset-inline-start: 50%; inline-size: 2px; block-size: 18px;
+  translate: -50% 0; transform-origin: 50% 100%; border-radius: var(--radius-pill); background: var(--md-success);
+}
+.a-mo .mo-sp-shoot::after {
+  content: ""; position: absolute; inset-block-start: 1px; inset-inline-start: 1px;
+  inline-size: 10px; block-size: 6px; border-radius: var(--radius-pill) 0; background: var(--md-success);
+}
+.a-mo .is-germ .mo-pot-area::before {
+  content: ""; position: absolute; inset-block-end: 6px; inset-inline-start: 50%; translate: -50% 0;
+  inline-size: 56px; aspect-ratio: 1; border-radius: 50%;
+  background: radial-gradient(closest-side, color-mix(in oklch, var(--md-success) 24%, transparent), transparent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .a-motion .a-mo .is-germ .mo-sp-shoot { animation: spShoot 1.8s var(--a-ease-expo) infinite alternate }
+  .a-motion .a-mo .is-germ .mo-pot-area::before { animation: spGlow 1.8s ease-in-out infinite alternate }
+}
+@keyframes spShoot { from { transform: scaleY(0.55) } }
+@keyframes spGlow { from { opacity: 0.35 } }
+
+/* Went quiet: the plants hold their height and grade but dry a little. */
+.a-mo .mo-sp.is-dry :is(.mo-stem, .mo-leaf) { background: color-mix(in oklch, var(--md-success) 55%, var(--text-muted)) }
+.a-mo .mo-sp.is-dry .mo-leaf { rotate: 14deg }
+.a-mo .mo-sp.is-dry .mo-stem::before { opacity: 0.6; filter: saturate(0.4) }
+.a-mo .mo-sp.is-dry .mo-bud { filter: saturate(0.6) }
+
+/* The one "fill your page" cue: a count, six pips, and the next thing that grows. */
+.a-mo > .mo-fill { grid-column: 1 / -1 }
+.a-mo .mo-fill {
+  display: grid; grid-template-columns: auto minmax(96px, 168px); grid-template-areas: "t p" "n n";
+  justify-content: space-between; align-items: center; gap: var(--space-1) var(--space-4);
+  margin: var(--space-4) 0 0; padding-block-start: var(--space-3); border-block-start: 1px solid var(--surface-row);
+}
+.a-mo .mo-fill-t { grid-area: t; margin: 0; font: 600 var(--fs-body-sm)/1.3 var(--font-ui); color: var(--text-secondary) }
+.a-mo .mo-fill-t b { color: var(--text-body); font-weight: 700 }
+.a-mo .mo-pips { grid-area: p; display: flex; gap: var(--space-1) }
+.a-mo .mo-pips i { flex: 1; block-size: 6px; border-radius: var(--radius-pill); background: var(--track) }
+.a-mo .mo-pips i.is-on { background: var(--md-success) }
+.a-mo .mo-fill-next { grid-area: n; margin: 0; font: 700 var(--fs-body-sm)/1.3 var(--font-ui); color: var(--text-body) }
+
+/* Action card: first result, and the waiting-room extras while the first paper marks. */
+.a-act-first {
+  display: inline-flex; align-items: center; padding: 6px 12px; border-radius: var(--radius-pill);
+  background: var(--surface-card); color: var(--md-primary); font: 700 var(--fs-body-sm)/1 var(--font-ui);
+}
+.a-sp-also {
+  display: inline-flex; align-items: center; gap: 2px; min-block-size: 44px; margin-block-start: var(--space-2);
+  color: var(--md-primary); font: 700 var(--fs-body-sm)/1.3 var(--font-ui); text-decoration: none;
+}
+.a-sp-also:hover { text-decoration: underline; text-underline-offset: 3px }
+.a-sp-also .a-ico { inline-size: 16px; block-size: 16px; flex: none }
+
+/* Grades and weak topics: a subject or list with nothing yet waits in a dashed slot with one step. */
+.a-gj-wait {
+  display: block; padding: var(--space-2) var(--space-3); border: 1.5px dashed var(--border-default); border-radius: var(--radius-chip);
+  color: var(--text-secondary); font-size: var(--fs-body-sm); line-height: 1.4;
+}
+.a-gj-row-lock { padding-block: var(--space-2) }
+.a-gj-row-lock .a-gj-dist { color: var(--text-muted) }
+.a-gj-row-lock:hover .a-gj-wait { border-color: var(--md-primary); color: var(--text-body) }
+@container home (max-width: 959px) {
+  .a-gj-row-lock .a-gj-wait { grid-area: j; margin-block: var(--space-2) }
+}
+.sh-root[data-state^="sparse"] .a-gj > li + li { border-block-start: 1px solid var(--border-subtle) }
+.a-lane-lock p {
+  margin: 0; padding: var(--space-3) var(--space-4); border: 1.5px dashed var(--border-default); border-radius: var(--radius-chip);
+  color: var(--text-secondary); font-size: var(--fs-body-sm); line-height: 1.4;
+}
+.sh-root[data-state="sparse0"] .a-weak :is(.a-scale, .a-secure-note) { display: none }
+
+/* Exams: no grade chips before a grade exists; Physics without a date asks for one. */
+.sh-root[data-state^="sparse"] .a-xs-meta > :is(.a-grade-chip, .a-ico, .a-grade-next, .a-est):not([data-sp]) { display: none }
+.a-xs-wait { font: 600 var(--fs-body-sm)/1.3 var(--font-ui); color: var(--text-secondary) }
+.xs-r:checked + .a-xs-item .a-xs-wait { color: inherit }
+.a-xs-nodate .a-xs-item { color: var(--text-body); text-decoration: none; outline: 1.5px dashed var(--border-default); outline-offset: -1.5px }
+.a-xs-nodate .a-xs-item:hover { outline-color: var(--md-primary) }
+.a-xs-nodate .a-xs-n { color: var(--text-muted) }
+.a-xs-nodate .a-xs-wait { color: var(--md-primary); font-weight: 700 }
+.a-xs-foot .a-xs-act[data-sp-x] { display: none }
+.sh-root[data-state^="sparse"] .a-xs-act[data-x="0625"],
+.sh-root:is([data-state="sparse0"], [data-state="sparse1"]) .a-xs-act[data-x="0606"],
+.sh-root[data-state="sparse0"] .a-xs-act[data-x="0580"] { display: none !important }
+.sh-root[data-state^="sparse"] .a-xs-card:has(#xs-many-0625:checked) .a-xs-act[data-sp-x="0625"],
+.sh-root:is([data-state="sparse0"], [data-state="sparse1"]) .a-xs-card:has(#xs-many-0606:checked) .a-xs-act[data-sp-x="0606"] { display: inline-flex }
+
+@container home (max-width: 560px) {
+  .a-mo .mo-fill { grid-template-columns: minmax(0, 1fr); grid-template-areas: "t" "p" "n"; row-gap: var(--space-2) }
+  .a-mo .mo-pips { max-inline-size: 168px }
+}
+
+/* Sidebar: no session today, so no subject is marked current; a subject with no grade yet
+   shows an empty outlined ring with a seed. */
+.sh-root[data-state^="sparse"] .as-side .as-subjects > li[data-current] > .as-subj:not(:hover) { background: transparent; color: inherit }
+.as-side .as-ring.as-ring-seed { background: none; box-shadow: inset 0 0 0 1.5px var(--border-default) }
+.as-side .as-ring.as-ring-seed::before { display: none }
+.as-side .as-ring.as-ring-seed::after {
+  content: ""; inline-size: 8px; block-size: 5px; border-radius: 50% 50% 45% 45% / 60% 60% 40% 40%;
+  background: color-mix(in oklch, var(--md-success) 45%, var(--text-muted));
+}
+
+/* == Critique wave 3: polish == */
+
+/* The hero never changes height between states. The populated hero is the reference; its height per
+   content width (the same tiers the loading skeleton uses) is a floor for every other state, so a
+   state with less text (sparse, streak-zero) pads up to it instead of shrinking the card. */
+.ah-hero { min-block-size: 395px }
+@container home (min-width: 376px) { .ah-hero { min-block-size: 361px } }
+@container home (min-width: 410px) { .ah-hero { min-block-size: 344px } }
+@container home (min-width: 561px) { .ah-hero { min-block-size: 368px } }
+@container home (min-width: 761px) { .ah-hero { min-block-size: 426px } }
+@container home (min-width: 960px) { .ah-hero { min-block-size: 293px } }
+@container home (min-width: 974px) { .ah-hero { min-block-size: 260px } }
+@container home (min-width: 1010px) { .ah-hero { min-block-size: 239px } }
+@container home (min-width: 1138px) { .ah-hero { min-block-size: 205px } }
+/* Full-width week row: the sparse "Day 1" sentence has the whole row, so it stays on one line. */
+@container home (min-width: 561px) and (max-width: 959px) { .ah-week-body { max-inline-size: none } }
+
+/* Phone grade strip: the "now" bubble clears the stone below it (layout unchanged). */
+@container home (max-width: 560px) {
+  .a-gj .a-j-me-l { inset-block-end: calc(100% + 10px) }
+}
+
+/* ===== live steer: sparse desktop white space =====
+   With only a few plants the Garden does not need 63% of the row. On wide screens, sparse states
+   split the row evenly and the Garden stacks: title and readout, then the bed, then the fill line.
+   The marking card gets wider and shorter, so neither card is padded out to match the other. */
+@container home (min-width: 900px) {
+  .sh-root[data-state^="sparse"] .a-next-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) }
+  .sh-root[data-state^="sparse"] .a-mo { grid-template-columns: minmax(0, 1fr); align-content: space-between; row-gap: var(--space-2) }
+  .sh-root[data-state^="sparse"] .a-mo > :is(.mo-h, .mo-read, .mo-garden, .mo-fill) { grid-column: 1; grid-row: auto; align-self: auto }
+  .sh-root[data-state^="sparse"] .a-mo > .mo-read { margin-block-end: var(--space-2) }
+  .sh-root[data-state^="sparse"] .a-mo > .mo-garden { gap: var(--space-2) }
+  .sh-root[data-state^="sparse"] .a-mo .mo-pot-area { block-size: 112px }
+  /* The marking card sets the row height on sparse0: the "while you wait" link sits beside the
+     button and wraps there instead of taking its own line, and the progress block tightens. */
+  .sh-root[data-state^="sparse"] .a-action-card .a-prog { margin-block: var(--space-3) }
+  .sh-root[data-state^="sparse"] .a-action-card .a-sp-next { margin-block-end: var(--space-3) }
+  .sh-root[data-state^="sparse"] .a-action-card .a-sp-also { max-inline-size: calc(100% - 176px); margin: 0 0 0 var(--space-3); vertical-align: middle }
 }
