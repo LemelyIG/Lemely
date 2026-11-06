@@ -66,24 +66,27 @@ export interface CreditExpiryLine {
 const SOON_MS = 30 * 24 * 60 * 60 * 1000
 
 export function creditExpiryLines(buckets: CreditBucket[], now: Date, locale?: string): CreditExpiryLine[] {
-  const byDay = new Map<string, { units: number; at: string | null }>()
+  const byDay = new Map<string, number>()
   for (const b of buckets) {
     if (b.remaining <= 0) continue
     const key = b.expiresAt === null ? "never" : b.expiresAt.slice(0, 10)
-    const prev = byDay.get(key)
-    byDay.set(key, { units: (prev?.units ?? 0) + b.remaining, at: b.expiresAt })
+    byDay.set(key, (byDay.get(key) ?? 0) + b.remaining)
   }
   return [...byDay.entries()]
     .sort(([a], [b]) => (a === "never" ? 1 : b === "never" ? -1 : a.localeCompare(b)))
-    .map(([key, { units, at }]) => ({
-      key,
-      units,
-      label:
-        at === null
-          ? `${formatCredits(units, locale)} never expire`
-          : `${formatCredits(units, locale)} expire ${formatBillingDate(at, locale)}`,
-      soon: at !== null && new Date(at).getTime() - now.getTime() <= SOON_MS,
-    }))
+    .map(([key, units]) => {
+      // Group and label from the same UTC day key, so a bucket's own timestamp never shifts the date.
+      const day = key === "never" ? null : `${key}T00:00:00Z`
+      return {
+        key,
+        units,
+        label:
+          day === null
+            ? `${formatCredits(units, locale)} never expire`
+            : `${formatCredits(units, locale)} expire ${formatBillingDate(day, locale)}`,
+        soon: day !== null && new Date(day).getTime() - now.getTime() <= SOON_MS,
+      }
+    })
 }
 
 export function debtSentence(debtUnits: number, audience: Audience): string | null {

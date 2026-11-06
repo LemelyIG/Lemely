@@ -10,8 +10,14 @@ import { allowanceMeterModel, seatMeterModel, type MeterModel } from "@/lib/usag
 function MeterRow({ model }: { model: MeterModel }) {
   return (
     <div className="flex flex-col gap-1.5" data-state={model.state}>
-      <ProgressBar value={model.barValue} label={model.label} />
-      {model.note ? <p className="m-0 text-body-sm text-on-surface-variant">{model.note}</p> : null}
+      {/* Accent fill in every band: using up an allowance is the plan working, never an error.
+          The high and used-up bands lift the note to full-strength text so they read as a change. */}
+      <ProgressBar value={model.barValue} label={model.label} tone="accent" />
+      {model.note ? (
+        <p className={model.state === "ok" ? "m-0 text-body-sm text-on-surface-variant" : "m-0 text-body-sm font-medium text-on-surface"}>
+          {model.note}
+        </p>
+      ) : null}
     </div>
   )
 }

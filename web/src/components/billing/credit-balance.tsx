@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom"
+import { formatCredits } from "@/lib/billingFormat"
 import type { CreditBalance } from "@/lib/billingTypes"
 import { creditExpiryLines } from "@/lib/usageMeterModel"
 
@@ -27,9 +28,7 @@ export function CreditBalanceCard({
         <h2 id="credit-balance-heading" className="m-0 text-display-sm text-on-surface">
           Credits
         </h2>
-        <span className="text-data-md text-on-surface" aria-label={`${credits.total} credits`}>
-          {new Intl.NumberFormat().format(credits.total)}
-        </span>
+        <span className="text-data-md text-on-surface">{formatCredits(credits.total)}</span>
       </div>
       {lines.length === 0 ? (
         <div className="flex flex-wrap items-center gap-3">
