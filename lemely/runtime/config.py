@@ -1318,6 +1318,65 @@ class EmailSettings(BaseModel):
     api_base_url: str = "https://api.resend.com"
 
 
+#: An optional positive integer id where a blank env var means "not set".
+OptionalId = Annotated[int | None, BeforeValidator(_blank_to_none)]
+
+
+class PaymobSettings(BaseModel):
+    """Paymob (Egypt) credentials and endpoints (billing spec §3, §7).
+
+    Overrides via ``LEMELY_PAYMOB__*`` env vars (``lemely.toml`` ``[paymob]`` also
+    works but is not emitted in ``lemely.toml.example``: every field here is a
+    credential or a deploy-time origin, never a knob someone sets up locally).
+
+    **Every credential defaults to ``None`` and that is a supported state**, as for
+    :class:`EmailSettings` and :class:`PushSettings`: an unregistered GitHub secret
+    renders as ``""``, ``_blank_to_none`` maps it to ``None``, ``checkout_configured``
+    is ``False``, checkout answers 503 and the webhook answers 503. Metering never
+    calls Paymob, so allowances and credits keep working (spec §6).
+
+    ``secret_key`` (``Authorization: Token``) authorises intentions, refunds and voids;
+    ``api_key`` mints the one-hour auth token used for inquiry and subscriptions;
+    ``hmac_secret`` verifies callbacks; ``card_token_key`` (urlsafe base64 of 32
+    bytes) encrypts saved-card tokens at rest. All four are server-only and typed
+    :class:`SecretStr`. ``public_key`` is handed to the browser inside the Unified
+    Checkout URL and is deliberately a plain ``str``, like ``vapid_public_key``.
+
+    ``notification_base_url`` / ``redirection_base_url`` are the public origins the
+    webhook route and the SPA return page are joined onto; ``deploy.yml`` sets them
+    per environment so a staging intention never calls back into production.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    secret_key: OptionalSecret = None
+    public_key: OptionalCredential = None
+    api_key: OptionalSecret = None
+    hmac_secret: OptionalSecret = None
+    card_integration_id: OptionalId = Field(default=None, ge=1)
+    moto_integration_id: OptionalId = Field(default=None, ge=1)
+    apple_pay_integration_id: OptionalId = Field(default=None, ge=1)
+    card_token_key: OptionalSecret = None
+    api_base: AbsoluteOrigin = "https://accept.paymob.com"
+    checkout_base: AbsoluteOrigin = "https://eg.checkout.paymob.com"
+    notification_base_url: AbsoluteOrigin = "https://lemelyig.com"
+    redirection_base_url: AbsoluteOrigin = "https://lemelyig.com"
+    timeout_seconds: float = Field(default=20.0, gt=0)
+
+    @property
+    def checkout_configured(self) -> bool:
+        """True when a one-off card checkout can be created and its callback verified."""
+        return all(
+            value is not None
+            for value in (
+                self.secret_key,
+                self.public_key,
+                self.api_key,
+                self.hmac_secret,
+                self.card_integration_id,
+            )
+        )
+
+
 class _RemovedKeysDotEnvSource(DotEnvSettingsSource):
     """pydantic-settings' ``.env`` source minus every F4-removed key.
 
@@ -1359,6 +1418,7 @@ class Settings(BaseSettings):
     notifications: NotificationsSettings = NotificationsSettings()
     email: EmailSettings = EmailSettings()
     tutoring: TutoringSettings = TutoringSettings()
+    paymob: PaymobSettings = PaymobSettings()
     database: DatabaseSettings = DatabaseSettings()
     supabase: SupabaseSettings = SupabaseSettings()
     auth: AuthSettings = AuthSettings()

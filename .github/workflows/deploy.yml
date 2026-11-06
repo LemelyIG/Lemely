@@ -401,6 +401,18 @@ jobs:
           # simply stays unavailable, exactly like LEMELY_EMAIL__API_KEY
           # above. Generate the pair with `lemely push-keygen`; rotating it
           # invalidates every stored subscription (docs/push-notifications.md).
+          #
+          # Paymob (billing spec §3, §7). The secret key, API key, HMAC secret
+          # and card-token key are repository SECRETS; the public key and the
+          # integration ids are VARIABLES (the public key is handed to every
+          # browser inside the checkout URL). Unset ones render as "", which
+          # `_blank_to_none` maps to None, so this is safe to merge before
+          # Paymob credentials exist: checkout and the webhook answer 503 and
+          # nothing else changes. The two origins follow the environment like
+          # LEMELY_EMAIL__APP_BASE_URL, so a staging intention never calls
+          # back into production. Generate the card-token key with
+          # `python -c "from lemely.runtime.token_cipher import TokenCipher; print(TokenCipher.generate_key())"`;
+          # rotating it makes every stored card token undecryptable.
           env_vars: |-
             LEMELY_RUN_MIGRATIONS=0
             LEMELY_STORAGE__BACKEND=gcs
@@ -425,6 +437,16 @@ jobs:
             LEMELY_PUSH__VAPID_PUBLIC_KEY=${{ vars.VAPID_PUBLIC_KEY }}
             LEMELY_PUSH__VAPID_PRIVATE_KEY=${{ secrets.VAPID_PRIVATE_KEY }}
             LEMELY_PUSH__VAPID_SUBJECT=mailto:support@lemelyig.com
+            LEMELY_PAYMOB__SECRET_KEY=${{ secrets.PAYMOB_SECRET_KEY }}
+            LEMELY_PAYMOB__API_KEY=${{ secrets.PAYMOB_API_KEY }}
+            LEMELY_PAYMOB__HMAC_SECRET=${{ secrets.PAYMOB_HMAC_SECRET }}
+            LEMELY_PAYMOB__CARD_TOKEN_KEY=${{ secrets.PAYMOB_CARD_TOKEN_KEY }}
+            LEMELY_PAYMOB__PUBLIC_KEY=${{ vars.PAYMOB_PUBLIC_KEY }}
+            LEMELY_PAYMOB__CARD_INTEGRATION_ID=${{ vars.PAYMOB_CARD_INTEGRATION_ID }}
+            LEMELY_PAYMOB__MOTO_INTEGRATION_ID=${{ vars.PAYMOB_MOTO_INTEGRATION_ID }}
+            LEMELY_PAYMOB__APPLE_PAY_INTEGRATION_ID=${{ vars.PAYMOB_APPLE_PAY_INTEGRATION_ID }}
+            LEMELY_PAYMOB__NOTIFICATION_BASE_URL=https://${{ needs.resolve-env.outputs.environment == 'production' && 'lemelyig.com' || 'staging.lemelyig.com' }}
+            LEMELY_PAYMOB__REDIRECTION_BASE_URL=https://${{ needs.resolve-env.outputs.environment == 'production' && 'lemelyig.com' || 'staging.lemelyig.com' }}
 
       # Asserts what is SERVING, not what was created. `revision_traffic` above
       # should have sent 100% to the new revision; this step does not trust that.
