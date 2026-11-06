@@ -39,6 +39,11 @@ describe("QuizBuilder.tsx", () => {
     expect(source).toContain("!parseUsageBlock(generate.error)")
     expect(source).toContain("invalidateUsage(")
   })
+
+  it("shows the blocked notice itself when no estimate request exists to carry a 402", () => {
+    expect(source).toContain("generateGate.request === null && generate.isError ? parseUsageBlock(generate.error) : null")
+    expect(source).toMatch(/\{unpricedBlock \? \([\s\S]*?<UsageBlockedNotice[\s\S]*?block=\{unpricedBlock\}[\s\S]*?audience="teacher"/)
+  })
 })
 
 describe("generateQuizEstimateRequest", () => {

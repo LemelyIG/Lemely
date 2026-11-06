@@ -49,6 +49,7 @@ import type {
 import { statusLabel, statusTone } from "./Quizzes"
 import { BackArrow, ForwardArrow } from "@/components/ui/inline-arrow"
 import { EstimateRange } from "@/components/billing/estimate-range"
+import { UsageBlockedNotice } from "@/components/billing/usage-blocked-notice"
 import { billingPaths } from "@/lib/billingPaths"
 import { invalidateUsage } from "@/lib/hooks/useUsageApi"
 import { useMeteredGate } from "@/lib/meteredGate"
@@ -740,6 +741,8 @@ function StepPreview({
     }),
   )
 
+  const unpricedBlock = generateGate.request === null && generate.isError ? parseUsageBlock(generate.error) : null
+
   function handleGenerate() {
     if (generateGate.block) return
     generate.mutate(undefined, {
@@ -781,7 +784,17 @@ function StepPreview({
       {!canGenerate && isDraft ? (
         <p className="text-body-sm text-on-surface-variant m-0">Choose a question source in step 4 before generating.</p>
       ) : null}
-      {generate.isError && (generateGate.request === null || !parseUsageBlock(generate.error)) ? (
+      {unpricedBlock ? (
+        // Count already met, so no estimate gate exists to carry the 402: show its notice directly.
+        <UsageBlockedNotice
+          block={unpricedBlock}
+          audience="teacher"
+          paths={billingPaths({ role: "teacher" })}
+          managedByName={null}
+          live="alert"
+        />
+      ) : null}
+      {generate.isError && !parseUsageBlock(generate.error) ? (
         <div role="alert" className="text-body-sm text-error">
           Couldn't generate questions: {teacherMutationFailureMessage(generate.error)}
         </div>
