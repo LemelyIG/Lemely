@@ -61,9 +61,16 @@ log = structlog.get_logger(__name__)
 CREDIT_EXPIRY_MONTHS: Final = 12
 INTENTION_EXPIRATION_SECONDS: Final = 3600
 RECONCILE_AFTER: Final = timedelta(minutes=15)
+RECONCILE_GIVE_UP_AFTER: Final = timedelta(hours=24)
+RECONCILE_MAX_BACKOFF: Final = timedelta(hours=4)
+RECONCILE_BATCH: Final = 20
+# Past 2**10 the doubling is far beyond the cap; clamping the exponent keeps ``timedelta``
+# multiplication from overflowing on a payment that has been rescheduled for years.
+_MAX_BACKOFF_EXPONENT: Final = 10
 WEBHOOK_PATH: Final = "/api/webhooks/paymob/transaction"
 RETURN_PATH: Final = "/billing/return"
 
+_OPEN: Final = (PaymentStatus.created, PaymentStatus.pending)
 _SETTLED: Final = (PaymentStatus.paid, PaymentStatus.partially_refunded, PaymentStatus.refunded)
 _REDACTED: Final = "[redacted]"
 # Refund progress only moves forward: an out-of-order callback never downgrades it.
@@ -849,11 +856,124 @@ class BillingService:
             raise BillingError("card token key is not configured")
         return cipher.decrypt(card.token, card.user_id)
 
+    # -- reconciliation (spec §5.10) -------------------------------------------
+
+    def reconcile_pending(self, *, now: datetime, limit: int = RECONCILE_BATCH) -> int:
+        """Inquire every open payment that is due; commit after each. Returns how many.
+
+        ``FOR UPDATE SKIP LOCKED`` lets two replicas run this at once without
+        inquiring the same payment twice. A payment still open after the inquiry
+        is pushed back on a doubling schedule (15m, 30m, 1h, 2h, 4h, 4h...) until it
+        is 24 hours old, then marked ``failed``. That give-up needs a *successful*
+        inquiry that shows the payment still open (or no transaction at all): any
+        ``PaymobError`` (timeout, transport, 5xx, an unreadable 2xx, a 4xx), and any
+        answer we cannot read, only reschedules, because a Paymob outage must never
+        fail a payment the customer may have paid (index R20b).
+
+        Lock order is payment row, then ``paymob_events`` insert (index R14): the
+        select below locks the payment and ``_apply_transaction`` receives it, so it
+        neither looks it up nor locks it again.
+
+        One payment that raises an unexpected error cannot block the rest. The
+        select orders by ``next_reconcile_at``, so a row that failed and kept its old
+        schedule would be picked first on every pass and starve everything behind it.
+        It is rolled back, logged as ``paymob_reconcile_error``, pushed back on the
+        same backoff in a fresh transaction, and the batch carries on. It is not
+        counted in the return value, which is the number of payments inquired and
+        committed.
+        """
+        handled = 0
+        for _ in range(limit):
+            payment = self._session.scalars(
+                select(Payment)
+                .where(Payment.status.in_(_OPEN), Payment.next_reconcile_at <= now)
+                .order_by(Payment.next_reconcile_at, Payment.id)
+                .limit(1)
+                .with_for_update(skip_locked=True)
+            ).first()
+            if payment is None:
+                break
+            payment_id = payment.id
+            try:
+                self._reconcile_one(payment, now=now)
+                self._session.commit()
+            except Exception:
+                self._session.rollback()
+                log.exception("paymob_reconcile_error", payment_id=str(payment_id))
+                if not self._back_off_poisoned(payment_id, now=now):
+                    break
+                continue
+            handled += 1
+        return handled
+
+    def _back_off_poisoned(self, payment_id: uuid.UUID, *, now: datetime) -> bool:
+        """Push a payment whose reconcile raised back on the schedule, in a fresh transaction.
+
+        False when even that failed (the database itself is unwell): the caller stops
+        the pass rather than pick the same row again.
+        """
+        try:
+            payment = self._session.scalars(
+                select(Payment)
+                .where(Payment.id == payment_id, Payment.status.in_(_OPEN))
+                .with_for_update(skip_locked=True)
+            ).first()
+            if payment is not None:
+                self._schedule_next(payment, now=now)
+            self._session.commit()
+        except Exception:
+            self._session.rollback()
+            log.exception("paymob_reconcile_backoff_error", payment_id=str(payment_id))
+            return False
+        return True
+
+    def _reconcile_one(self, payment: Payment, *, now: datetime) -> None:
+        try:
+            obj = self._client.inquire_by_order_ref(payment.special_reference)
+        except PaymobError as exc:
+            # The outcome is unknown whatever the flavour: reschedule, never fail.
+            log.warning(
+                "paymob_inquiry_failed",
+                payment_id=str(payment.id),
+                status_code=exc.status_code,
+                timeout=exc.timeout,
+                outcome_unknown=_outcome_unknown(exc),
+            )
+            self._schedule_next(payment, now=now)
+            return
+        if obj is not None:
+            if _as_int(obj.get("id")) is None:
+                # A 2xx object with no transaction id is an unreadable answer, not "no
+                # transaction yet": it must not start the 24-hour countdown.
+                log.warning("paymob_inquiry_unreadable", payment_id=str(payment.id))
+                self._schedule_next(payment, now=now)
+                return
+            self._apply_transaction(obj, source="inquiry", payment=payment)
+        if payment.status not in _OPEN:
+            payment.next_reconcile_at = None
+            return
+        if now - payment.created_at >= RECONCILE_GIVE_UP_AFTER:
+            payment.status = PaymentStatus.failed
+            payment.next_reconcile_at = None
+            log.info("paymob_payment_abandoned", payment_id=str(payment.id))
+            return
+        self._schedule_next(payment, now=now)
+
+    def _schedule_next(self, payment: Payment, *, now: datetime) -> None:
+        payment.reconcile_attempts += 1
+        exponent = min(payment.reconcile_attempts - 1, _MAX_BACKOFF_EXPONENT)
+        payment.next_reconcile_at = now + min(
+            RECONCILE_AFTER * (2**exponent), RECONCILE_MAX_BACKOFF
+        )
+
 
 __all__ = [
     "CREDIT_EXPIRY_MONTHS",
     "INTENTION_EXPIRATION_SECONDS",
     "RECONCILE_AFTER",
+    "RECONCILE_BATCH",
+    "RECONCILE_GIVE_UP_AFTER",
+    "RECONCILE_MAX_BACKOFF",
     "RETURN_PATH",
     "WEBHOOK_PATH",
     "BillingError",

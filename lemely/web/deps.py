@@ -814,6 +814,8 @@ def get_sweeper() -> Sweeper:
     opens no connection (the engine is lazy), and neither does the storage
     backend it carries for the purge job.
     """
+    from lemely.web.deps_billing import get_billing_reconcile_job
+
     settings = get_settings()
     return Sweeper(
         sessionmaker=get_sessionmaker(settings),
@@ -825,6 +827,7 @@ def get_sweeper() -> Sweeper:
         bucket=settings.storage.bucket,
         email_provider=build_transactional_provider(settings),
         email_daily_cap=settings.tutoring.email_daily_cap,
+        billing_reconcile=get_billing_reconcile_job(),
     )
 
 
@@ -1268,3 +1271,8 @@ def reset_singletons() -> None:
     from lemely.web.deps_tutoring import reset_tutoring_singletons
 
     reset_tutoring_singletons()
+    # Billing providers (Paymob client, reconcile job) likewise; this also closes the
+    # cached client's HTTP pool.
+    from lemely.web.deps_billing import reset_billing_singletons
+
+    reset_billing_singletons()

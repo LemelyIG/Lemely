@@ -479,9 +479,12 @@ class Sweeper:
     #: without one keeps exactly the pre-tutoring job set.
     email_provider: TransactionalEmailProvider | None = None
     email_daily_cap: int = 60
+    #: ``billing.reconcile_pending`` (billing spec §5.10), given only when Paymob is
+    #: configured, the same optional-collaborator pattern as ``email_provider``.
+    billing_reconcile: Callable[[datetime], int] | None = None
 
     def sweep_once(self) -> dict[str, int | None]:
-        """Run announcements, streaks, study-plan reminders, purge and tutoring email, once each."""
+        """Run every job the sweeper was given (notifications, purge, email, billing), once each."""
         moment = self.now()
         jobs: list[tuple[str, Callable[[], int]]] = [
             (
@@ -542,6 +545,9 @@ class Sweeper:
                     ),
                 )
             )
+        billing_reconcile = self.billing_reconcile
+        if billing_reconcile is not None:
+            jobs.append(("billing.reconcile_pending", lambda: billing_reconcile(moment)))
         return run_jobs(jobs)
 
 
