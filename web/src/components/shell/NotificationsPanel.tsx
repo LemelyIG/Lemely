@@ -1,14 +1,13 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
-import { Link, useNavigate } from "react-router-dom"
 import type { ReactNode } from "react"
-import { Bell } from "@phosphor-icons/react"
+import { Link, useNavigate } from "react-router-dom"
 import { DropdownMenu } from "radix-ui"
 import { useMarkAllNotificationsRead, useMarkNotificationRead, useNotifications } from "@/lib/hooks/useNotificationApi"
 import type { Notification } from "@/lib/notificationTypes"
-import { showMarkAllRead } from "@/lib/staffInbox"
+import { unreadCountOf } from "@/lib/staffInbox"
 import { cn } from "@/lib/utils"
-import { formatAge } from "./shellModel"
-import { SHEET_FOCUS_RING as FOCUS_RING, IconTile } from "./TopBarSheets"
+import { ShellIcon } from "./icons"
+import { notificationsTriggerLabel, panelTimeLabel } from "./shellModel"
+import { SHELL_FOCUS_RING, SHELL_PANEL } from "./shellStyles"
 
 export interface NotificationsPanelProps {
   /** Badge text from the counts query (`unreadBadgeLabel`), null for none. */
@@ -26,16 +25,13 @@ export interface NotificationsPanelProps {
   previewLimit?: number
 }
 
-type PanelProps = Omit<NotificationsPanelProps, "unread" | "triggerClassName" | "previewLimit"> & {
-  previewLimit: number
-}
+type PanelProps = Omit<NotificationsPanelProps, "unread" | "triggerClassName">
 
-/** Same panel surface as the profile menu, a little wider for a title plus a line of detail. */
-const PANEL_SURFACE =
-  "z-dropdown w-[22rem] max-w-[calc(100vw-20px)] rounded-card bg-surface-container-lowest p-2 text-on-surface shadow-[var(--shadow-float)] dark:bg-surface-container-high motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
+const ITEM =
+  "grid w-full cursor-pointer grid-cols-[32px_minmax(0,1fr)_auto] items-start gap-2.5 rounded-chip p-2 text-start text-body-sm text-on-surface transition-colors duration-150 data-[highlighted]:bg-surface-container-low focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
 
-const ROW =
-  "flex w-full cursor-pointer items-start gap-3 rounded-lg p-2.5 text-start text-on-surface transition-colors duration-150 data-[highlighted]:bg-surface-container-low dark:data-[highlighted]:bg-surface-container-highest focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary"
+const FOOT_LINK =
+  "flex-1 cursor-pointer rounded-chip p-2 text-center text-2xs font-semibold leading-[1.3] text-primary transition-colors duration-150 data-[highlighted]:bg-surface-container-low pointer-coarse:min-h-11 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
 
 function Row({
   notification,
@@ -46,89 +42,88 @@ function Row({
   const navigate = useNavigate()
   const markRead = useMarkNotificationRead()
   const unread = notification.readAt === null
-  const destination = destinationFor(notification)
   return (
     <DropdownMenu.Item
-      className={ROW}
+      className={ITEM}
       onSelect={() => {
         if (unread) markRead.mutate(notification.notificationId)
-        void navigate(destination ?? inboxTo)
+        void navigate(destinationFor(notification) ?? inboxTo)
       }}
     >
-      <IconTile>{iconFor(notification.type)}</IconTile>
-      <span className="min-w-0 flex-1">
-        <span className={cn("line-clamp-2 text-label", unread ? "font-bold" : "font-medium")}>{notification.title}</span>
+      <span className="grid size-8 place-items-center rounded-row bg-primary-container text-primary">
+        {iconFor(notification.type)}
+      </span>
+      <span className="flex min-w-0 flex-col">
+        {unread ? <span className="sr-only">Unread: </span> : null}
+        <b className="line-clamp-2 font-bold text-on-surface [text-wrap:pretty]">{notification.title}</b>
         {notification.body ? (
-          <span className="block truncate text-body-sm text-on-surface-variant">{notification.body}</span>
+          <small className="text-2xs text-on-surface-variant">{notification.body}</small>
         ) : null}
       </span>
-      <span className="flex flex-none flex-col items-end gap-1.5 pt-0.5">
-        <time dateTime={notification.createdAt} className="text-data-sm text-on-surface-variant">
-          {formatAge(notification.createdAt)}
-        </time>
-        {unread ? (
-          <>
-            <span aria-hidden className="h-2 w-2 rounded-pill bg-primary" />
-            <span className="sr-only">Unread</span>
-          </>
-        ) : null}
-      </span>
+      <time
+        dateTime={notification.createdAt}
+        className="flex flex-col items-end gap-2 font-mono text-2xs font-medium leading-[1.3] text-on-surface-variant"
+      >
+        {panelTimeLabel(notification.createdAt)}
+        {unread ? <span aria-hidden="true" className="size-2 rounded-pill bg-primary" /> : null}
+      </time>
     </DropdownMenu.Item>
   )
 }
 
-/** Mounts only while the panel is open, so the inbox is fetched on first open, not on every page load. */
-function Panel({
-  destinationFor,
-  iconFor,
-  inboxTo,
-  footerLinks,
-  emptyMessage,
-  errorHeading,
-  previewLimit,
-}: PanelProps) {
+/** Mounts only while the panel is open, so the inbox is fetched on first open. */
+function Panel({ destinationFor, iconFor, inboxTo, footerLinks, emptyMessage, errorHeading, previewLimit }: PanelProps) {
   const query = useNotifications()
   const markAll = useMarkAllNotificationsRead()
   const page = query.data
+  const hasRows = Boolean(page && page.notifications.length > 0)
+  const unreadRows = page ? unreadCountOf(page) : 0
   return (
     <>
-      <div className="flex items-center justify-between px-2.5 pb-2 pt-1.5">
-        <p className="text-label">Notifications</p>
-        {page && showMarkAllRead(page) ? (
+      <div className="mx-2 my-1.5 flex items-baseline justify-between gap-3">
+        <p className="text-body-sm font-extrabold leading-[1.2] tracking-[-0.01em]">Notifications</p>
+        {hasRows ? (
           <button
             type="button"
             onClick={() => markAll.mutate()}
-            disabled={markAll.isPending}
-            className={cn("rounded-md text-body-sm font-bold text-primary hover:underline disabled:opacity-60", FOCUS_RING)}
+            disabled={unreadRows === 0 || markAll.isPending}
+            className={cn(
+              "-mx-2 -my-1 cursor-pointer rounded-chip px-2 py-1 text-2xs font-semibold leading-[1.3] text-primary transition-colors duration-150 hover:bg-surface-container-low disabled:cursor-default disabled:bg-transparent disabled:text-on-surface-variant pointer-coarse:min-h-11",
+              SHELL_FOCUS_RING,
+            )}
           >
             Mark all read
           </button>
         ) : null}
       </div>
       {query.isPending ? (
-        <p role="status" className="px-2.5 py-6 text-center text-body-sm text-on-surface-variant">Loading</p>
+        <p role="status" className="px-2 pt-2 pb-3 text-body-sm text-on-surface-variant">
+          Loading
+        </p>
       ) : query.isError ? (
-        <div role="alert" className="px-2.5 py-4 text-body-sm">
+        <div role="alert" className="px-2 pt-2 pb-3 text-body-sm">
           <p className="font-bold">{errorHeading}</p>
-          <button type="button" onClick={() => void query.refetch()} className={cn("mt-1 rounded-md font-bold text-primary hover:underline", FOCUS_RING)}>
+          <button
+            type="button"
+            onClick={() => void query.refetch()}
+            className={cn("mt-1 rounded-chip font-bold text-primary hover:underline", SHELL_FOCUS_RING)}
+          >
             Try again
           </button>
         </div>
-      ) : page && page.notifications.length === 0 ? (
-        <div className="px-2.5 py-5 text-center">
-          <p className="text-label">{emptyMessage}</p>
-        </div>
+      ) : !hasRows ? (
+        <p className="px-2 pt-2 pb-3 text-body-sm leading-normal text-on-surface-variant">{emptyMessage}</p>
       ) : (
-        page?.notifications
-          .slice(0, previewLimit)
-          .map((n) => (
+        <div className="flex flex-col">
+          {page!.notifications.slice(0, previewLimit ?? 4).map((n) => (
             <Row key={n.notificationId} notification={n} destinationFor={destinationFor} iconFor={iconFor} inboxTo={inboxTo} />
-          ))
+          ))}
+        </div>
       )}
-      <div className="mt-1 flex items-center justify-around border-t border-outline-variant pt-1">
+      <div className="mt-1 flex gap-1 border-t border-outline-variant pt-1">
         {footerLinks.map((link) => (
           <DropdownMenu.Item key={link.to} asChild>
-            <Link to={link.to} className="cursor-pointer rounded-lg px-3 py-2.5 text-label text-primary data-[highlighted]:bg-surface-container-low dark:data-[highlighted]:bg-surface-container-highest focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary">
+            <Link to={link.to} className={FOOT_LINK}>
               {link.label}
             </Link>
           </DropdownMenu.Item>
@@ -139,28 +134,26 @@ function Panel({
 }
 
 /**
- * The bell in the top bar and the panel it drops, the same shape as the
- * profile menu: Radix DropdownMenu, anchored to the trigger, no scroll lock.
- * `unread` is the badge text from the counts endpoint, which the shell already
- * reads, so the badge shows before the panel is ever opened.
+ * The bell and the panel it drops (Radix DropdownMenu: anchored, no scroll
+ * lock, arrow keys, Escape and outside click close it and focus returns to
+ * the bell). `unread` comes from the counts query the top bar already reads,
+ * so the dot shows before the panel is ever opened.
  */
 export function NotificationsPanel({ unread, triggerClassName, ...panel }: NotificationsPanelProps) {
   return (
     <DropdownMenu.Root modal={false}>
-      <DropdownMenu.Trigger
-        aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"}
-        className={triggerClassName}
-      >
-        <Bell size={20} aria-hidden="true" />
+      <DropdownMenu.Trigger aria-label={notificationsTriggerLabel(unread)} className={triggerClassName}>
+        <ShellIcon name="bell" />
         {unread ? (
-          <span className="absolute -end-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-pill bg-primary px-1 text-data-sm text-on-primary">
-            {unread}
-          </span>
+          <i
+            aria-hidden="true"
+            className="absolute end-[7px] top-1.5 size-2 rounded-pill bg-primary shadow-[0_0_0_2px_var(--color-surface-container-lowest)] dark:shadow-[0_0_0_2px_var(--color-surface-container-high)]"
+          />
         ) : null}
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <DropdownMenu.Content align="end" sideOffset={8} collisionPadding={10} className={PANEL_SURFACE}>
-          <Panel {...panel} previewLimit={panel.previewLimit ?? 4} />
+        <DropdownMenu.Content align="end" sideOffset={8} collisionPadding={10} className={SHELL_PANEL}>
+          <Panel {...panel} />
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>

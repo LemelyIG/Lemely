@@ -151,15 +151,6 @@ describe("headers keep their existing padding while opting into the additive ins
     expect(source).not.toContain("--lm-app-header-pt")
   })
 
-  it("teacher's header replaces py-2.5 with pb-2.5 and lm-app-header-pt-2.5, no inline style", () => {
-    const line = headerLine("portals/teacher/index.tsx")
-    expect(line).toContain("pb-2.5")
-    expect(line).not.toMatch(/\bpy-2\.5\b/)
-    expect(line).toContain("lm-app-header-pt-2.5")
-    const source = readFileSync(join(SRC, "portals/teacher/index.tsx"), "utf8")
-    expect(source).not.toContain("--lm-app-header-pt")
-  })
-
   it("admin's header replaces py-2.5 with pb-2.5 and lm-app-header-pt-2.5, no inline style", () => {
     const line = headerLine("portals/admin/index.tsx")
     expect(line).toContain("pb-2.5")
@@ -180,7 +171,7 @@ describe("lm-nav-chrome coverage", () => {
     "components/ui/nav-drawer.tsx",
     "components/ui/nav-shells.tsx",
     "portals/student/index.tsx",
-    "portals/teacher/index.tsx",
+    "components/shell/ShellTopBar.tsx",
     "portals/admin/index.tsx",
     "portals/marketing/MarketingHeader.tsx",
   ]

@@ -26,7 +26,6 @@ import {
   UploadSimple,
   GraduationCap,
   Lifebuoy,
-  UserCircle,
   type Icon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
@@ -34,21 +33,21 @@ import { gradeChipClass } from "@/lib/grade"
 import { Avatar } from "@/components/ui/avatar"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
 import { portalErrorFallback } from "@/components/route-error"
-import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
+import { NavDrawer } from "@/components/ui/nav-drawer"
 import { BottomNav, SidebarNav, type NavShellItem } from "@/components/ui/nav-shells"
 import { EdgeSwipeBack } from "@/components/edge-swipe-back"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { PortalNotFound } from "@/portals/misc/NotFound"
-import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import { useProfile } from "@/lib/hooks/useMeApi"
-import { useNotificationCounts } from "@/lib/hooks/useNotificationApi"
 import { useReviewQueueCount } from "@/lib/hooks/useReviewQueueCount"
-import { STAFF_INBOX_ERROR, TEACHER_INBOX_EMPTY, staffDestinationFor, unreadBadgeLabel } from "@/lib/staffInbox"
+import { STAFF_INBOX_ERROR, TEACHER_INBOX_EMPTY, staffDestinationFor } from "@/lib/staffInbox"
 import { navItems, resolveTrail, classesItemActive, type NavItem } from "./data"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
 import { CreateSheet } from "./components/CreateSheet"
-import { ShellAvatarPlaceholder } from "@/components/shell/ShellAvatar"
+import { ShellTopBar } from "@/components/shell/ShellTopBar"
+import { ShellIcon } from "@/components/shell/icons"
+import { SHELL_BUTTON_PRIMARY, SHELL_BUTTON_TONAL } from "@/components/shell/shellStyles"
 import {
   HELP_HREF,
   INBOX_TO,
@@ -60,7 +59,6 @@ import {
 import type { AccountLink } from "@/components/shell/AccountPanel"
 import type { NotificationsPanelProps } from "@/components/shell/NotificationsPanel"
 import { underlyingPathname } from "@/lib/nav/backgroundLocation"
-import { useOverlayState } from "@/lib/nav/useOverlayState"
 import { TEACHER_SETTINGS_TABS } from "@/portals/settings/settingsTabs"
 
 const TEACHER_SETTINGS_BASE = "/teacher/settings"
@@ -114,11 +112,6 @@ const TeacherNotifications = lazy(() =>
 // barrel: importing them all through one barrel module means a chunk
 // containing any one of them pulls in the code for all of them, defeating the
 // per-screen splitting this whole file otherwise does.
-// Loaded on its own so Radix's menu stays out of the entry chunk's budget.
-const NotificationsPanel = lazy(() =>
-  import("@/components/shell/NotificationsPanel").then((m) => ({ default: m.NotificationsPanel })),
-)
-const AccountPanel = lazy(() => import("@/components/shell/AccountPanel").then((m) => ({ default: m.AccountPanel })))
 const SettingsModalRoute = lazy(() =>
   import("@/portals/settings/SettingsModal").then((m) => ({
     default: m.SettingsModalRoute,
@@ -177,14 +170,13 @@ const TutorStudentDetail = lazy(() =>
   import("./screens/tutoring/TutorStudentDetail").then((m) => ({ default: m.TutorStudentDetail })),
 )
 
-const TEACHER_TYPE_ICON: Record<string, Icon> = { at_risk_alert: Warning, announcement: Megaphone }
-
 /** The teacher bell panel's portal facts. */
 export const TEACHER_NOTIFICATIONS_PANEL: Omit<NotificationsPanelProps, "unread" | "triggerClassName"> = {
   destinationFor: (notification) => staffDestinationFor("teacher", notification),
   iconFor: (type) => {
-    const Glyph = TEACHER_TYPE_ICON[type] ?? Bell
-    return <Glyph size={20} aria-hidden="true" />
+    if (type === "announcement") return <ShellIcon name="mega" />
+    if (type === "at_risk_alert") return <Warning size={18} aria-hidden="true" />
+    return <ShellIcon name="bell" />
   },
   inboxTo: INBOX_TO,
   footerLinks: [
@@ -197,14 +189,14 @@ export const TEACHER_NOTIFICATIONS_PANEL: Omit<NotificationsPanelProps, "unread"
 
 /** The teacher account panel's links, in order. */
 export const TEACHER_ACCOUNT_LINKS: readonly AccountLink[] = [
-  { id: "profile", label: "Edit profile", to: PROFILE_EDIT_TO, overlay: true, icon: <UserCircle size={20} aria-hidden="true" /> },
-  { id: "settings", label: "Settings", to: SETTINGS_TO, overlay: true, icon: <Gear size={20} aria-hidden="true" /> },
+  { id: "profile", label: "Edit profile", to: PROFILE_EDIT_TO, overlay: true, icon: <ShellIcon name="user" /> },
+  { id: "settings", label: "Settings", to: SETTINGS_TO, overlay: true, icon: <Gear size={18} aria-hidden="true" /> },
   {
     id: "help",
     label: "Help and feedback",
     description: "Email the Lemely team",
     href: HELP_HREF,
-    icon: <Lifebuoy size={20} aria-hidden="true" />,
+    icon: <Lifebuoy size={18} aria-hidden="true" />,
   },
 ]
 
@@ -465,34 +457,34 @@ function Sidebar() {
 // `RouteFallback` (C-11 state-view family); see the student portal for the
 // reasoning, and `state-views.tsx` for why it is not a full `StateView`.
 
-/**
- * Mobile chrome (below `md`, where the aside does not exist): the menu trigger
- * and the breadcrumb trail on one sticky row.
- *
- * The trail renders at every width, not just here — it is the D1.5 back
- * affordance, and a drilled-into screen like `/teacher/students/:id` needs a
- * route back on a laptop too. The *bar* is mobile-only because above `md` the
- * sidebar already carries the logo and the menu button has nothing to open.
- */
-export const TOP_BAR_ICON_BUTTON =
-  "relative flex h-9 w-9 flex-none items-center justify-center rounded-chip text-on-surface-variant transition-colors hover:bg-surface-container hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:h-11 pointer-coarse:w-11"
-
-export function TeacherAccountPanel() {
-  const { data } = useProfile()
+/** The teacher's own bar buttons: Create (tonal) and Upload papers (primary). */
+function TeacherTopBarActions() {
   return (
-    <AccountPanel
-      links={TEACHER_ACCOUNT_LINKS}
-      detail={data ? roleLabel(data.role) : null}
-      triggerClassName="cursor-pointer"
-    />
+    <>
+      <CreateSheet
+        triggerClassName={cn(
+          SHELL_BUTTON_TONAL,
+          "max-sm:w-9 max-sm:justify-center max-sm:px-0 max-sm:pointer-coarse:w-11",
+        )}
+      />
+      <Link to="/teacher/grading" className={cn(SHELL_BUTTON_PRIMARY, "me-2.5 max-shell-sm:hidden")}>
+        <ShellIcon name="up" />
+        Upload papers
+      </Link>
+    </>
   )
 }
 
+/**
+ * The shared shell's top bar with the teacher's facts. The trail renders at
+ * every width (the D1.5 back affordance: a drilled-into screen like
+ * `/teacher/students/:id` needs a route back on a laptop too).
+ */
 function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
   const location = useLocation()
-  const overlayState = useOverlayState()
-  // While Settings is a dialog, the page underneath is still the page: the
-  // title and trail follow the background location, not "/teacher/settings".
+  const { data: profile } = useProfile()
+  // While Settings is a dialog the page underneath is still the page: title
+  // and trail follow the background location.
   const trail = resolveTrail(
     underlyingPathname({
       pathname: location.pathname,
@@ -500,61 +492,17 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
       overlayBase: TEACHER_SETTINGS_BASE,
     }),
   )
-  const title = trail[trail.length - 1]?.label ?? "Overview"
-  const { data: counts } = useNotificationCounts()
-  const unread = unreadBadgeLabel(counts)
-
   return (
-    <>
-      {/* `z-nav`: the bar holds the only navigation that exists below the
-          `sidebar` breakpoint, so it belongs on the nav layer with the
-          sidebar (DESIGN.md §7). Side margins are 16px on mobile, 28px from
-          `md`; the page well below carries its own 72px at `lg`. */}
-      <div className="lm-app-header lm-app-header-pt-2.5 lm-nav-chrome sticky top-2 z-nav mx-4 mb-6 mt-2 flex min-h-14 items-center pb-2.5 gap-0.5 rounded-inner sm:gap-2 bg-surface-container-lowest pe-1 ps-2 ring-1 ring-outline-variant shadow-[var(--shadow-float)] md:mx-7 sm:pe-3 sm:ps-3 md:ps-[18px]">
-        <NavDrawerTrigger
-          onClick={onOpenNav}
-          label="Open teacher navigation"
-          className="-ms-2 sidebar:hidden"
-        />
-        <p className="min-w-0 truncate text-display-sm text-on-surface">
-          {title}
-        </p>
-        <div className="flex-1" />
-        <CreateSheet triggerClassName="inline-flex h-9 flex-none cursor-pointer items-center gap-[7px] rounded-chip bg-secondary-container px-3 btn-text text-on-secondary-container transition-colors hover:bg-secondary-container/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:px-3.5 pointer-coarse:h-11" />
-        <Link
-          to="/teacher/grading"
-          className="me-0 sm:me-2.5 inline-flex h-9 flex-none items-center gap-[7px] rounded-chip bg-primary px-3 btn-text text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary max-sm:justify-center sm:px-3.5 pointer-coarse:h-11 max-sm:pointer-coarse:w-11 max-sm:pointer-coarse:px-0"
-        >
-          <UploadSimple size={16} aria-hidden="true" />
-          <span className="hidden sm:inline">Upload papers</span>
-          <span className="sr-only sm:hidden">Upload papers</span>
-        </Link>
-        <Suspense
-          fallback={
-            <Link to="/teacher/notifications" aria-label="Notifications" className={TOP_BAR_ICON_BUTTON}>
-              <Bell size={20} aria-hidden="true" />
-            </Link>
-          }
-        >
-          <NotificationsPanel {...TEACHER_NOTIFICATIONS_PANEL} unread={unread} triggerClassName={TOP_BAR_ICON_BUTTON} />
-        </Suspense>
-        {/* Below `sm` the bar has no room for a title beside six 44px targets, so
-            the gear folds into the profile menu (which carries Settings). */}
-        <Link to="/teacher/settings" state={overlayState} aria-label="Settings" className={cn(TOP_BAR_ICON_BUTTON, "max-sm:hidden")}>
-          <Gear size={20} aria-hidden="true" />
-        </Link>
-        <Suspense fallback={<ShellAvatarPlaceholder />}>
-          <TeacherAccountPanel />
-        </Suspense>
-      </div>
-      {/* The D1.5 back affordance: one crumb is just the page's own name, which
-          the title already says, so the trail renders only when drilled in. */}
-      {trail.length > 1 ? (
-        <div className="-mt-3 mb-4 px-4 md:px-page-tablet lg:px-[72px]">
-          <Breadcrumbs items={trail} />
-        </div>
-      ) : null}
-    </>
+    <ShellTopBar
+      title={trail[trail.length - 1]?.label ?? "Overview"}
+      trail={trail}
+      onOpenNav={onOpenNav}
+      navLabel="Open teacher navigation"
+      actions={<TeacherTopBarActions />}
+      notifications={TEACHER_NOTIFICATIONS_PANEL}
+      settingsTo={TEACHER_SETTINGS_BASE}
+      account={{ links: TEACHER_ACCOUNT_LINKS, detail: profile ? roleLabel(profile.role) : null }}
+    />
   )
 }
 

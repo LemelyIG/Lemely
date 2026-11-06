@@ -8,8 +8,12 @@ import { EmptyState, ErrorState, OfflineState } from "@/components/ui/state-view
 import { gradeChipClass } from "@/lib/grade"
 import { cn } from "@/lib/utils"
 import { unreadBadgeLabel } from "@/lib/staffInbox"
-import { ClassesNavSection, TEACHER_NOTIFICATIONS_PANEL, TOP_BAR_ICON_BUTTON, TeacherAccountPanel } from "@/portals/teacher"
+import { ClassesNavSection, TEACHER_ACCOUNT_LINKS, TEACHER_NOTIFICATIONS_PANEL } from "@/portals/teacher"
+import { AccountPanel } from "@/components/shell/AccountPanel"
 import { NotificationsPanel } from "@/components/shell/NotificationsPanel"
+import { roleLabel } from "@/portals/teacher/components/topBarActions"
+import { useProfile } from "@/lib/hooks/useMeApi"
+import { SHELL_ICON_BUTTON } from "@/components/shell/shellStyles"
 import { CreateSheet } from "@/portals/teacher/components/CreateSheet"
 import { AtRiskTable } from "@/portals/teacher/home/AtRiskTable"
 import { ClassStrip } from "@/portals/teacher/home/ClassStrip"
@@ -77,11 +81,17 @@ function TopBarCell({ children }: { children: ReactNode }) {
   )
 }
 
+/** The teacher bar's account panel, wired as `TeacherTopBar` wires it. */
+function PreviewAccountPanel() {
+  const { data } = useProfile()
+  return <AccountPanel links={TEACHER_ACCOUNT_LINKS} detail={data ? roleLabel(data.role) : null} />
+}
+
 function BellCell({ seed, badge }: { seed: QuerySeed; badge: string | null }) {
   return (
     <Seeded seed={seed}>
       <TopBarCell>
-        <NotificationsPanel {...TEACHER_NOTIFICATIONS_PANEL} unread={badge} triggerClassName={TOP_BAR_ICON_BUTTON} />
+        <NotificationsPanel {...TEACHER_NOTIFICATIONS_PANEL} unread={badge} triggerClassName={SHELL_ICON_BUTTON} />
       </TopBarCell>
     </Seeded>
   )
@@ -145,14 +155,14 @@ export function TeacherGroup() {
         <StateCell state="default" provenance="live" note="AccountPanel with a seeded profile. Click the avatar.">
           <Seeded seed={SEED_PROFILE}>
             <TopBarCell>
-              <TeacherAccountPanel />
+              <PreviewAccountPanel />
             </TopBarCell>
           </Seeded>
         </StateCell>
         <StateCell state="loading" provenance="prop" note="AccountPanel while the profile is pending: the real hook, never answered.">
           <Seeded seed={{}}>
             <TopBarCell>
-              <TeacherAccountPanel />
+              <PreviewAccountPanel />
             </TopBarCell>
           </Seeded>
         </StateCell>

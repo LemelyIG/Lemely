@@ -96,7 +96,8 @@ const GOOD_FILES: Record<string, string> = {
   "components/ui/nav-drawer.tsx": NAV_DRAWER_FILE,
   "components/ui/nav-shells.tsx": NAV_CHROME_FILE,
   "portals/student/index.tsx": `<main className="min-h-dvh flex flex-col">${NAV_CHROME_FILE}`,
-  "portals/teacher/index.tsx": NAV_CHROME_FILE,
+  "portals/teacher/index.tsx": `<main className="min-h-dvh flex flex-col">`,
+  "components/shell/ShellTopBar.tsx": NAV_CHROME_FILE,
   "portals/admin/index.tsx": NAV_CHROME_FILE,
   "portals/marketing/MarketingHeader.tsx": NAV_CHROME_FILE,
   "routes.tsx": `export const routes = []`,
@@ -396,11 +397,11 @@ const button = cva(
 describe("runChecks — lm-nav-chrome coverage", () => {
   it("fails when a chrome file is missing lm-nav-chrome", () => {
     const input = goodInput()
-    input.files["portals/teacher/index.tsx"] = `<div>no chrome class here</div>`
+    input.files["components/shell/ShellTopBar.tsx"] = `<div>no chrome class here</div>`
     const result = run(input)
     const check = result.checks.find((c) => c.name.includes("lm-nav-chrome"))
     expect(check?.pass).toBe(false)
-    expect(check?.detail).toContain("portals/teacher/index.tsx")
+    expect(check?.detail).toContain("components/shell/ShellTopBar.tsx")
   })
 
   it("fails when nav-drawer.tsx applies lm-nav-chrome only once instead of twice", () => {

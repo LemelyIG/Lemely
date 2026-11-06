@@ -1,32 +1,49 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
 import { Avatar } from "@/components/ui/avatar"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import type { Profile } from "@/lib/meTypes"
 import { cn } from "@/lib/utils"
 
-/** The top-bar avatar's box: 36px, 44px on coarse pointers. */
-export const PROFILE_AVATAR_BOX = "h-9 w-9 pointer-coarse:h-11 pointer-coarse:w-11"
-
-/** The name the avatar's initials and the menu's label come from. */
+/** The name the avatar's initial and the panel's label come from. */
 export function profileName(profile: Pick<Profile, "displayName" | "email">): string {
   return profile.displayName ?? profile.email.split("@")[0]
 }
 
+/** Design A's avatar shows one letter. */
+export function avatarInitial(name: string): string {
+  const first = Array.from(name.trim())[0]
+  return first ? first.toLocaleUpperCase() : "?"
+}
+
+/** `.as-avatar` (32px) and `.as-ident .as-avatar` (38px). The kit's squircle
+ * `Avatar` stands in for design A's circle (user decision, logged as drift). */
+export function ShellAvatar({
+  name,
+  src,
+  size = "sm",
+  className,
+}: {
+  name: string
+  src?: string | null
+  size?: "sm" | "md"
+  className?: string
+}) {
+  const box = size === "sm" ? "size-8" : "size-[38px]"
+  return <Avatar name={name} src={src ?? undefined} size="sm" className={cn("flex-none", box, className)} />
+}
+
 /**
- * What stands in the account panel's slot until the menu's own chunk (and the
- * profile) have loaded: the same avatar, same box, so nothing pops in or
- * shifts when the real trigger replaces it. Initials once the profile is
- * known, an empty squircle before that. Not interactive: the trigger that
- * replaces it is.
+ * What stands in the account panel's slot until its chunk and the profile
+ * have loaded: the same box, so nothing shifts when the trigger replaces it.
+ * Not interactive.
  */
 export function ShellAvatarPlaceholder() {
   const { data } = useProfile()
   return (
-    <span aria-hidden="true" className={cn("flex flex-none rounded-lg", PROFILE_AVATAR_BOX)}>
+    <span aria-hidden="true" className="grid size-9 flex-none place-items-center pointer-coarse:size-11">
       {data ? (
-        <Avatar name={profileName(data)} src={data.avatarUrl ?? undefined} size="sm" className={PROFILE_AVATAR_BOX} />
+        <ShellAvatar name={profileName(data)} src={data.avatarUrl} />
       ) : (
-        <span className={cn("rounded-lg bg-surface-container", PROFILE_AVATAR_BOX)} />
+        <span className="size-8 rounded-lg bg-surface-container" />
       )}
     </span>
   )

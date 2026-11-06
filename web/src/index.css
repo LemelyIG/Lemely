@@ -345,6 +345,12 @@
      `sidebar:` variant. Task 4 (B3) migrates every sidebar's ad hoc
      `min-[820px]:`/`md:` literal onto this token. */
   --breakpoint-sidebar: 820px;
+  /* Portal shell (design A, docs/superpowers/specs/2026-11-06-portal-shell-design.md).
+     `shell-lg:` is where the sidebar is a column (design A's drawer range is
+     max-width 1000px); `max-shell-sm:` is the phone range where the top bar
+     goes flat (design A: max-width 720px). */
+  --breakpoint-shell-lg: 1001px;
+  --breakpoint-shell-sm: 721px;
   /* Packet B3 (Task 4): the retrofit's other two dimensions. `--sidebar-width`
      unifies the student sidebar's old 246px with the teacher/admin 252px —
      one shell, one width, not three portals independently reinventing "how
@@ -356,6 +362,8 @@
      see `readSidebarTokens` there for why the pre-mount shell reads these
      back out of this file rather than a second, hand-typed copy. */
   --sidebar-width: 252px;
+  /* Design A's sidebar column (`--as-side: 216px`), used by components/shell. */
+  --shell-sidebar-width: 216px;
   --bottom-nav-height: 56px;
 
   /* ── Font sizes below text-xs, as size-only rungs ────────────────────── */
@@ -1066,6 +1074,9 @@ html[data-direction="back"]::view-transition-new(root) {
    `.lm-safe-bottom` does for the bar itself. */
 .w-sidebar {
   width: var(--sidebar-width);
+}
+.w-shell-sidebar {
+  width: var(--shell-sidebar-width);
 }
 .pb-bottom-nav {
   padding-bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom));

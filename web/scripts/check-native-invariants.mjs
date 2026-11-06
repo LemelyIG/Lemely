@@ -387,7 +387,8 @@ const CHROME_FILES = [
   "components/ui/nav-drawer.tsx",
   "components/ui/nav-shells.tsx",
   "portals/student/index.tsx",
-  "portals/teacher/index.tsx",
+  // The teacher's floating bar moved into the shared shell (portal-shell plan).
+  "components/shell/ShellTopBar.tsx",
   "portals/admin/index.tsx",
   "portals/marketing/MarketingHeader.tsx",
 ]
