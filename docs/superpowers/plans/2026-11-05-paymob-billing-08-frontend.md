@@ -226,6 +226,7 @@ Behavioural assumptions:
 | `web/src/portals/billing/PlansView.tsx` | Tier and pack cards, interval toggle, checkout start | 4 |
 | `web/src/portals/billing/PlansScreen.tsx` | Route wrappers per role | 4 |
 | `web/src/lib/pricingModel.ts`, `web/src/portals/marketing/Pricing.tsx` | Public `/pricing` page and its links/preselect | 17 |
+| `web/src/lib/auth/signupNext.ts` | Remember a validated `next` across sign-up and verification | 18 |
 | `web/src/portals/billing/CheckoutReturn.tsx` | `/billing/return/:paymentId` polling page | 4 |
 | `web/src/portals/billing/PaymentProgress.tsx` | Inline polling readout for MOTO charges | 5 |
 | `web/src/portals/billing/PlanChangeDialog.tsx` | Upgrade/downgrade quote and confirm | 5 |
@@ -262,6 +263,7 @@ Behavioural assumptions:
 | 15 | Admin payments, problem queue and health | 13 |
 | 16 | Admin money and margin | 13 |
 | 17 | Public pricing page (`/pricing`) and plan preselect | 1, 4 |
+| 18 | Carry `next` through sign-up and email verification | 17 |
 
 Tasks 2, 3, 4 and 13 may run in parallel once Task 1 is merged (disjoint file sets; each commits
 with `git commit -S -- <its paths>`). Tasks 9 and 10 may run in parallel after Task 3.
@@ -11999,7 +12001,7 @@ git commit -S -m "feat(web): admin money and margin" -- $P
 - Produces: types `WirePublicCatalogue`, `PublicTier`, `PublicPack`, `PublicCatalogue`;
   `toPublicCatalogue(w)`; `billingApi.publicCatalogue(audience)`,
   `usePublicCatalogue(audience)`; `chooseHref(tier)`, `signupHref(audience)`,
-  `planPreselect(params)`, `publicCatalogueFailure(err)` from `pricingModel.ts`; screen
+  `planPath(tier)`, `planPreselect(params)`, `publicCatalogueFailure(err)` from `pricingModel.ts`; screen
   `Pricing`; `pricingRoute` from the marketing portal.
 
 Backend (plan 02, resolves M1): `GET /api/billing/public-catalogue?audience=student|teacher`, no
@@ -12016,9 +12018,11 @@ Behaviour:
   packs under `id="packs"`, with "Credits last 12 months from purchase."
 - **Choose plan**: each tier links "Choose {name}" to
   `/login?next=/{audience}/billing/plans?plan={code}&interval={month|year}` (the `next` value
-  URL-encoded; `Login` already honours `?next=` through `safeNextPath`). Under the tiers: "New to
-  Lemely? Create a student account" (or teacher) → `/signup/{audience}`. Packs link "Sign in to
-  buy" to `/login?next=/{audience}/billing/plans#packs`.
+  URL-encoded; `Login` already honours `?next=` through `safeNextPath`), and under it "New to
+  Lemely? Sign up" to `/signup/{audience}?next=<the same plans path>` (Task 18 makes signup carry
+  `next` through email verification). Under the tiers: "New to Lemely? Create a student account"
+  (or teacher) → `/signup/{audience}?next=/{audience}/billing/plans`. Packs link "Sign in to buy"
+  to `/login?next=/{audience}/billing/plans#packs`.
 - **Preselect** on the signed-in plans page: `PlansView` reads `?plan=` and `?interval=`; the
   interval toggle starts on `interval`, and the tier whose `code` matches is marked
   (`data-preselected="true"`, a "Selected on the pricing page" line) with its button first in
@@ -12038,7 +12042,7 @@ import { createElement as h } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ApiError } from "@/lib/api"
 import { toPublicCatalogue } from "@/lib/billingAdapters"
-import { chooseHref, planPreselect, publicCatalogueFailure, signupHref } from "@/lib/pricingModel"
+import { chooseHref, planPath, planPreselect, publicCatalogueFailure, signupHref } from "@/lib/pricingModel"
 import type { WirePublicCatalogue } from "@/lib/billingTypes"
 import { errorQuery, okQuery, pendingQuery, renderStatic } from "./support/billingRender"
 
@@ -12078,8 +12082,10 @@ describe("toPublicCatalogue", () => {
 describe("pricing model", () => {
   it("sends Choose plan through sign-in to the plans page with the tier code", () => {
     const tier = toPublicCatalogue(wire).tiers[1]
-    expect(chooseHref(tier)).toBe(`/login?next=${encodeURIComponent("/teacher/billing/plans?plan=teacher_pro_m&interval=month")}`)
-    expect(signupHref("student")).toBe("/signup/student")
+    expect(planPath(tier)).toBe("/teacher/billing/plans?plan=teacher_pro_m&interval=month")
+    expect(chooseHref(tier)).toBe(`/login?next=${encodeURIComponent(planPath(tier))}`)
+    expect(signupHref("teacher", planPath(tier))).toBe(`/signup/teacher?next=${encodeURIComponent(planPath(tier))}`)
+    expect(signupHref("student")).toBe(`/signup/student?next=${encodeURIComponent("/student/billing/plans")}`)
   })
 
   it("reads a preselection only when both parts are valid", () => {
@@ -12107,7 +12113,8 @@ describe("Pricing", () => {
     expect(html).toContain('id="packs"')
     expect(html).toContain("500 credits")
     expect(html).toContain(`href="${chooseHref(toPublicCatalogue(wire).tiers[1]).replace(/&/g, "&amp;")}"`)
-    expect(html).toContain('href="/signup/teacher"')
+    expect(html).toContain(`href="${signupHref("teacher")}"`)
+    expect(html).toContain(`href="${signupHref("teacher", planPath(toPublicCatalogue(wire).tiers[1]))}"`)
   })
 
   it("has one h1 and the two toggles", () => {
@@ -12260,17 +12267,22 @@ import type { Audience, BillingInterval, PublicTier } from "@/lib/billingTypes"
 /* Public pricing links and preselection. The public catalogue has no ids, so a choice travels
  * by tier code through sign-in to the signed-in plans page, which matches it by code. */
 
+/** The signed-in plans page with this tier preselected. */
+export function planPath(tier: PublicTier): string {
+  return `/${tier.audience}/billing/plans?plan=${encodeURIComponent(tier.code)}&interval=${tier.interval}`
+}
+
 export function chooseHref(tier: PublicTier): string {
-  const next = `/${tier.audience}/billing/plans?plan=${encodeURIComponent(tier.code)}&interval=${tier.interval}`
-  return `/login?next=${encodeURIComponent(next)}`
+  return `/login?next=${encodeURIComponent(planPath(tier))}`
 }
 
 export function packsHref(audience: Audience): string {
   return `/login?next=${encodeURIComponent(`/${audience}/billing/plans#packs`)}`
 }
 
-export function signupHref(audience: Audience): string {
-  return `/signup/${audience}`
+/** Sign-up that lands on the plans page afterwards (Task 18 carries `next` through verification). */
+export function signupHref(audience: Audience, next: string = `/${audience}/billing/plans`): string {
+  return `/signup/${audience}?next=${encodeURIComponent(next)}`
 }
 
 export function planPreselect(params: URLSearchParams): { code: string | null; interval: BillingInterval | null } {
@@ -12302,7 +12314,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { formatCredits, formatMoney, intervalLabel } from "@/lib/billingFormat"
 import type { Audience, BillingInterval } from "@/lib/billingTypes"
 import { usePublicCatalogue } from "@/lib/hooks/useBillingApi"
-import { chooseHref, packsHref, publicCatalogueFailure, signupHref } from "@/lib/pricingModel"
+import { chooseHref, packsHref, planPath, publicCatalogueFailure, signupHref } from "@/lib/pricingModel"
 import { MarketingFrame } from "@/portals/marketing"
 
 /*
@@ -12368,6 +12380,7 @@ export function Pricing() {
                               {tier.features.map((f) => <li key={f}>{f}</li>)}
                             </ul>
                             <Link to={chooseHref(tier)} className={CTA}>Choose {tier.name}</Link>
+                            <Link to={signupHref(audience, planPath(tier))} className={TEXT_LINK}>New to Lemely? Sign up</Link>
                           </CardBody>
                         </Card>
                       </li>
@@ -12529,6 +12542,253 @@ cd /home/sico/Code/Lemely/.claude/worktrees/paymob-integration
 P="web/src/lib/billingTypes.ts web/src/lib/billingAdapters.ts web/src/lib/hooks/useBillingApi.ts web/src/lib/pricingModel.ts web/src/portals/marketing/Pricing.tsx web/src/portals/marketing/index.tsx web/src/routes.tsx web/src/portals/billing/PlansView.tsx web/tests/unit/documentMeta.test.ts web/tests/unit/publicPricing.test.ts web/tests/unit/billingPurchase.test.ts web/tests/unit/billingApi.test.ts web/e2e/billing-pricing.spec.ts"
 git add $P
 git commit -S -m "feat(web): public pricing page with plan preselect" -- $P
+```
+
+---
+
+### Task 18: Carry `next` through sign-up and email verification
+
+**Files:**
+- Create: `web/src/lib/auth/signupNext.ts`
+- Modify: `web/src/portals/auth/SignupDetails.tsx` (read and remember `next`)
+- Modify: `web/src/portals/auth/SignupRoleSelect.tsx` (pass `next` on to the role pages)
+- Modify: `web/src/portals/auth/VerifyEmail.tsx` (use the remembered `next` after verifying)
+- Test: `web/tests/unit/signupNext.test.ts`, `web/tests/unit/signupNextWiring.test.ts`
+
+**Interfaces:**
+- Consumes: `safeNextPath(raw)`, `withNext(base, next)` from `web/src/lib/nextPath.ts` (what
+  `Login` already uses); `portalPathForRole(role)` from `web/src/lib/auth/RequireAuth.tsx` (what
+  `postVerifyPath` returns);
+  Task 17's `signupHref(audience, next)`.
+- Produces: `rememberSignupNext(next, storage?)`, `takeSignupNext(storage?)`,
+  `afterVerifyPath(session, storage?)` from `signupNext.ts`.
+
+How the flow works today (read in the source): `/signup` (role select) links to
+`/signup/student|teacher`; `SignupDetails` creates the account and navigates to
+`/verify-email`; there the user either types the emailed code (`SignedInPending`) or opens the
+emailed link `/verify-email/:token` (`ConfirmScreen`); both then navigate to
+`postVerifyPath(session)` (the role's portal home).
+
+Behaviour:
+
+- `SignupDetails` reads `next` from its URL with `safeNextPath` (same-origin relative paths only:
+  `//evil.example`, `/\evil`, `https://…` and anything without a leading `/` are rejected). On a
+  successful sign-up it stores the validated value with `rememberSignupNext` before navigating
+  to `/verify-email`; a missing or rejected `next` clears any stale value.
+- Both verification paths (typed code and emailed link) navigate to `afterVerifyPath(session)`:
+  the remembered `next`, re-validated, consumed once; otherwise `postVerifyPath(session)`, which
+  keeps today's behaviour exactly.
+- `SignupRoleSelect` forwards a valid `next` to `/signup/student?next=…` and
+  `/signup/teacher?next=…` (`withNext`).
+- Storage is `localStorage`, so the emailed link works when opened in another tab of the same
+  browser. The value is dropped after one use and whenever a different `next` is remembered.
+- A new student's portal may still route through its onboarding gate after landing on `next`;
+  that is the gate's existing behaviour and is not changed here.
+
+**Backend check (flag):** the verification email's link (`/verify-email/:token`) is built by
+the backend auth service, which carries no `next`. This task stays frontend-only, so the choice
+survives verification **in the same browser**. If the emailed link is opened on another device,
+the user lands on their portal home as today and finds the plan from there. Making that
+cross-device case carry the plan would need the backend to append a validated `next` to the
+emailed link; that is not requested here.
+
+- [ ] **Step 1: Write the failing tests**
+
+`web/tests/unit/signupNext.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest"
+import { afterVerifyPath, rememberSignupNext, takeSignupNext } from "@/lib/auth/signupNext"
+
+function memoryStorage(): Storage {
+  const m = new Map<string, string>()
+  return {
+    get length() {
+      return m.size
+    },
+    clear: () => m.clear(),
+    getItem: (k) => m.get(k) ?? null,
+    key: (i) => [...m.keys()][i] ?? null,
+    removeItem: (k) => void m.delete(k),
+    setItem: (k, v) => void m.set(k, v),
+  }
+}
+
+const plans = "/teacher/billing/plans?plan=teacher_pro_m&interval=month"
+
+describe("signup next", () => {
+  it("honours a valid same-origin next once, after verification", () => {
+    const s = memoryStorage()
+    rememberSignupNext(plans, s)
+    expect(afterVerifyPath({ role: "teacher" }, s)).toBe(plans)
+    expect(afterVerifyPath({ role: "teacher" }, s)).toBe("/teacher")
+  })
+
+  it("rejects external, protocol-relative and absolute next values", () => {
+    for (const bad of ["https://evil.example/x", "//evil.example/x", "/\\evil.example", "evil", ""]) {
+      const s = memoryStorage()
+      rememberSignupNext(bad, s)
+      expect(takeSignupNext(s)).toBeNull()
+    }
+  })
+
+  it("keeps today's behaviour with no next, and a new signup clears a stale one", () => {
+    const s = memoryStorage()
+    expect(afterVerifyPath({ role: "student" }, s)).toBe("/student")
+    rememberSignupNext(plans, s)
+    rememberSignupNext(null, s)
+    expect(takeSignupNext(s)).toBeNull()
+    expect(afterVerifyPath(null, s)).toBe("/login")
+  })
+
+  it("re-validates on read, so a tampered stored value is ignored", () => {
+    const s = memoryStorage()
+    s.setItem("lemely.signup.next", "//evil.example")
+    expect(takeSignupNext(s)).toBeNull()
+  })
+})
+```
+
+(`/teacher` and `/student` are the portal homes `portalPathForRole` returns, the same targets
+`postVerifyPath` uses today.)
+
+`web/tests/unit/signupNextWiring.test.ts` (source wiring, like `selfReviewPanelWiring.test.ts`;
+these screens are covered end to end by `e2e/signup.spec.ts`):
+
+```ts
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+import { describe, expect, it } from "vitest"
+import { stripComments } from "./support/jsxSource"
+
+const ROOT = join(import.meta.dirname, "..", "..")
+const read = (p: string) => stripComments(readFileSync(join(ROOT, p), "utf8"))
+
+describe("signup carries next", () => {
+  it("SignupDetails validates next with safeNextPath and remembers it on success", () => {
+    const src = read("src/portals/auth/SignupDetails.tsx")
+    expect(src).toContain('safeNextPath(searchParams.get("next"))')
+    expect(src).toContain("rememberSignupNext(next)")
+  })
+
+  it("both verification paths use afterVerifyPath instead of postVerifyPath", () => {
+    const src = read("src/portals/auth/VerifyEmail.tsx")
+    expect(src.match(/navigate\(afterVerifyPath\(session\), \{ replace: true \}\)/g)?.length).toBe(2)
+    expect(src).not.toContain("navigate(postVerifyPath(session)")
+  })
+
+  it("the role picker forwards a valid next", () => {
+    const src = read("src/portals/auth/SignupRoleSelect.tsx")
+    expect(src).toContain('safeNextPath(searchParams.get("next"))')
+    expect(src).toContain("withNext(choice.to, next)")
+  })
+})
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run: `npx vitest run tests/unit/signupNext.test.ts tests/unit/signupNextWiring.test.ts`
+Expected: FAIL ("Failed to resolve import "@/lib/auth/signupNext"" and the wiring assertions).
+
+- [ ] **Step 3: Write `web/src/lib/auth/signupNext.ts`**
+
+```ts
+import { portalPathForRole } from "@/lib/auth/RequireAuth"
+import type { Session } from "@/lib/auth/storage"
+import { safeNextPath } from "@/lib/nextPath"
+
+/*
+ * Where to go after a new account is verified (e.g. the plan chosen on `/pricing`). Sign-up and
+ * verification are separate screens, and the emailed link may open in another tab, so the
+ * validated `next` is kept in localStorage for one use. It is validated with `safeNextPath` on
+ * the way in and again on the way out, so a tampered value never navigates off-origin.
+ */
+
+const KEY = "lemely.signup.next"
+
+function store(): Storage | null {
+  return typeof localStorage === "undefined" ? null : localStorage
+}
+
+/** Remember a validated `next`, or clear any stale one when it is missing or rejected. */
+export function rememberSignupNext(next: string | null, storage: Storage | null = store()): void {
+  const safe = safeNextPath(next)
+  if (safe) storage?.setItem(KEY, safe)
+  else storage?.removeItem(KEY)
+}
+
+/** Read and drop the remembered `next`. */
+export function takeSignupNext(storage: Storage | null = store()): string | null {
+  const raw = storage?.getItem(KEY) ?? null
+  storage?.removeItem(KEY)
+  return safeNextPath(raw)
+}
+
+/** After verification: the remembered `next`, else today's target (`postVerifyPath`'s rule:
+ * `/login` without a session, the role's portal home with one). */
+export function afterVerifyPath(session: Pick<Session, "role"> | null, storage: Storage | null = store()): string {
+  if (!session) return "/login"
+  return takeSignupNext(storage) ?? portalPathForRole(session.role)
+}
+```
+
+- [ ] **Step 4: Wire the three screens**
+
+`web/src/portals/auth/SignupDetails.tsx`: import `safeNextPath` from `@/lib/nextPath` and
+`rememberSignupNext` from `@/lib/auth/signupNext`. Next to `const inviteCode =
+searchParams.get("code")` add `const next = safeNextPath(searchParams.get("next"))`. In
+`signup.mutate`'s `onSuccess`, as its first statement: `rememberSignupNext(next)`.
+
+`web/src/portals/auth/VerifyEmail.tsx`: import `afterVerifyPath` from `@/lib/auth/signupNext`;
+replace both `navigate(postVerifyPath(session), { replace: true })` calls (the typed-code path
+in `SignedInPending` and `ConfirmScreen`) with `navigate(afterVerifyPath(session), { replace:
+true })`. Remove the `postVerifyPath` import if nothing else uses it.
+
+`web/src/portals/auth/SignupRoleSelect.tsx`: import `useSearchParams` from `react-router-dom` and
+`safeNextPath`, `withNext` from `@/lib/nextPath`. In `SignupRoleSelect`, add `const [searchParams]
+= useSearchParams()` and `const next = safeNextPath(searchParams.get("next"))`, and render
+`<RoleChoiceLink key={choice.to} {...choice} to={withNext(choice.to, next)} />`.
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+Run: `npx vitest run tests/unit/signupNext.test.ts tests/unit/signupNextWiring.test.ts tests/unit/signup.test.ts tests/unit/verifyEmail.test.ts tests/unit/nextPath.test.ts tests/unit/postLoginTarget.test.ts tests/unit/authInputAttributes.test.ts`
+Expected: PASS.
+
+- [ ] **Step 6: Extend the pricing e2e (local stack only)**
+
+Append to `web/e2e/billing-pricing.spec.ts`:
+
+```ts
+test("the pricing page's sign-up link carries the chosen plan as next", async ({ page }) => {
+  await page.route("**/api/billing/public-catalogue?audience=student", (r) => r.fulfill({ json: student }))
+  await page.goto("/pricing")
+  await page.getByRole("link", { name: "New to Lemely? Sign up" }).first().click()
+  await expect(page).toHaveURL(/\/signup\/student\?next=/)
+  expect(new URL(page.url()).searchParams.get("next")).toBe("/student/billing/plans?plan=student_plus_m&interval=month")
+})
+```
+
+Run: `npx playwright test e2e/billing-pricing.spec.ts e2e/signup.spec.ts`
+Expected: all pass (`signup.spec.ts` unchanged, proving the no-`next` path), or "e2e not run:
+local stack down" recorded.
+
+- [ ] **Step 7: Run the frontend gate**
+
+```bash
+npm run typecheck
+npx vitest run tests/unit/signupNext.test.ts tests/unit/signupNextWiring.test.ts tests/unit/signup.test.ts tests/unit/verifyEmail.test.ts tests/unit/nextPath.test.ts tests/unit/postLoginTarget.test.ts $SCAN
+npm run lint && npm run check:copy && npm run build && npm run check:installable
+```
+Expected: all exit 0.
+
+- [ ] **Step 8: Commit**
+
+```bash
+cd /home/sico/Code/Lemely/.claude/worktrees/paymob-integration
+/home/sico/Code/Lemely/.venv/bin/pre-commit run --all-files && graphify update .
+P="web/src/lib/auth/signupNext.ts web/src/portals/auth/SignupDetails.tsx web/src/portals/auth/SignupRoleSelect.tsx web/src/portals/auth/VerifyEmail.tsx web/tests/unit/signupNext.test.ts web/tests/unit/signupNextWiring.test.ts web/e2e/billing-pricing.spec.ts"
+git add $P
+git commit -S -m "feat(web): carry next through sign-up and email verification" -- $P
 ```
 
 ---
