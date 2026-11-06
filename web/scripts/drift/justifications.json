@@ -1,62 +1,67 @@
 {
   "teacher-home-frame": {
-    "difference": "Top bar: 1px outline border instead of ring, 21px/800 title, design A icons, dot instead of count badge, gear visible at every width, 36px menu button, bar 8px shorter below 1248px (drawer range, the user's decision), breadcrumb trail padding moves from 72px to 14px at 721-1247px",
-    "justification": "Design A .as-bar, .as-title, .as-iconbtn, .as-dot, .as-btn (variant-a.css)",
+    "difference": "Top bar: 1px outline border instead of ring, 21px/800 title, design A icons, dot instead of count badge, gear visible at every width, 36px menu button, bar 8px shorter below 1248px (drawer range, the user's decision), breadcrumb trail padding moves from 72px to 14px at 721-1247px; Sidebar 216px (was 252px), design A rows (9px 10px, 18px icons), mono group labels, 32px wordmark, foot with primary Upload and a squircle avatar, no right border but a 1px edge shadow; the sidebar becomes a drawer below 1248px (was 820px)",
+    "justification": "Design A .as-bar, .as-title, .as-iconbtn, .as-dot, .as-btn (variant-a.css); Design A .as-side, .as-list, .as-label, .as-wm, .as-foot, .as-user; drawer range @container ashell (max-width: 1000px), moved to 1248px by the user's decision",
     "approved": "pending"
   },
   "teacher-class-frame": {
-    "difference": "Top bar: 1px outline border instead of ring, 21px/800 title, design A icons, dot instead of count badge, gear visible at every width, 36px menu button, bar 8px shorter below 1248px (drawer range, the user's decision), breadcrumb trail padding moves from 72px to 14px at 721-1247px",
-    "justification": "Design A .as-bar, .as-title, .as-iconbtn, .as-dot, .as-btn (variant-a.css)",
+    "difference": "Top bar: 1px outline border instead of ring, 21px/800 title, design A icons, dot instead of count badge, gear visible at every width, 36px menu button, bar 8px shorter below 1248px (drawer range, the user's decision), breadcrumb trail padding moves from 72px to 14px at 721-1247px; Sidebar 216px (was 252px), design A rows (9px 10px, 18px icons), mono group labels, 32px wordmark, foot with primary Upload and a squircle avatar, no right border but a 1px edge shadow; the sidebar becomes a drawer below 1248px (was 820px)",
+    "justification": "Design A .as-bar, .as-title, .as-iconbtn, .as-dot, .as-btn (variant-a.css); Design A .as-side, .as-list, .as-label, .as-wm, .as-foot, .as-user; drawer range @container ashell (max-width: 1000px), moved to 1248px by the user's decision",
     "approved": "pending"
   },
   "teacher-notifications-frame": {
-    "difference": "Top bar: 1px outline border instead of ring, 21px/800 title, design A icons, dot instead of count badge, gear visible at every width, 36px menu button, bar 8px shorter below 1248px (drawer range, the user's decision), breadcrumb trail padding moves from 72px to 14px at 721-1247px",
-    "justification": "Design A .as-bar, .as-title, .as-iconbtn, .as-dot, .as-btn (variant-a.css)",
+    "difference": "Top bar: 1px outline border instead of ring, 21px/800 title, design A icons, dot instead of count badge, gear visible at every width, 36px menu button, bar 8px shorter below 1248px (drawer range, the user's decision), breadcrumb trail padding moves from 72px to 14px at 721-1247px; Sidebar 216px (was 252px), design A rows (9px 10px, 18px icons), mono group labels, 32px wordmark, foot with primary Upload and a squircle avatar, no right border but a 1px edge shadow; the sidebar becomes a drawer below 1248px (was 820px)",
+    "justification": "Design A .as-bar, .as-title, .as-iconbtn, .as-dot, .as-btn (variant-a.css); Design A .as-side, .as-list, .as-label, .as-wm, .as-foot, .as-user; drawer range @container ashell (max-width: 1000px), moved to 1248px by the user's decision",
     "approved": "pending"
   },
   "teacher-bell": {
-    "difference": "Bell panel: 320px, 32px icon tiles, mono times (9:12/Wed/27 Oct), unread dot under time, design A footer; plus the top bar changes",
-    "justification": "Design A .as-pop-panel, .as-item, .as-pop-foot, .as-bar",
+    "difference": "Bell panel: 320px, 32px icon tiles, mono times (9:12/Wed/27 Oct), unread dot under time, design A footer; plus the top bar changes; and the sidebar changes",
+    "justification": "Design A .as-pop-panel, .as-item, .as-pop-foot, .as-bar, .as-side",
     "approved": "pending"
   },
   "teacher-account": {
-    "difference": "Account panel: 260px, circle avatar, bare 18px icons instead of 40px tiles, 9px row padding, inset 10px each side at 390; plus the top bar changes",
-    "justification": "Design A .as-pop-me, .as-ident, .as-links, .as-bar",
+    "difference": "Account panel: 260px, circle avatar, bare 18px icons instead of 40px tiles, 9px row padding, inset 10px each side at 390; plus the top bar changes; and the sidebar changes",
+    "justification": "Design A .as-pop-me, .as-ident, .as-links, .as-bar, .as-side",
     "approved": "pending"
   },
   "teacher-drawer": {
-    "difference": "Only the top bar behind the drawer scrim changed",
-    "justification": "Design A .as-bar",
+    "difference": "Floating 280px drawer with 24px radius (bottom sheet at 390px) instead of a full-height edge drawer; design A sidebar content with a close button, wordmark hidden in the sheet, no Upload in the sheet; top bar behind the scrim changed",
+    "justification": "Design A .as-side:popover-open and its max-width 720px sheet rule; .as-bar",
     "approved": "pending"
   },
   "teacher-settings-profile": {
-    "difference": "Only the top bar behind the settings dialog changed",
-    "justification": "Design A .as-bar",
+    "difference": "Only the top bar and the sidebar column behind the settings dialog changed",
+    "justification": "Design A .as-bar, .as-side",
     "approved": "pending"
   },
   "teacher-settings-account": {
-    "difference": "Only the top bar behind the settings dialog changed",
-    "justification": "Design A .as-bar",
+    "difference": "Only the top bar and the sidebar column behind the settings dialog changed",
+    "justification": "Design A .as-bar, .as-side",
     "approved": "pending"
   },
   "teacher-settings-notifications": {
-    "difference": "Only the top bar behind the settings dialog changed",
-    "justification": "Design A .as-bar",
+    "difference": "Only the top bar and the sidebar column behind the settings dialog changed",
+    "justification": "Design A .as-bar, .as-side",
     "approved": "pending"
   },
   "teacher-settings-appearance": {
-    "difference": "Only the top bar behind the settings dialog changed",
-    "justification": "Design A .as-bar",
+    "difference": "Only the top bar and the sidebar column behind the settings dialog changed",
+    "justification": "Design A .as-bar, .as-side",
     "approved": "pending"
   },
   "teacher-settings-classes": {
-    "difference": "Only the top bar behind the settings dialog changed",
-    "justification": "Design A .as-bar",
+    "difference": "Only the top bar and the sidebar column behind the settings dialog changed",
+    "justification": "Design A .as-bar, .as-side",
     "approved": "pending"
   },
   "teacher-settings-install": {
-    "difference": "Only the top bar behind the settings dialog changed",
-    "justification": "Design A .as-bar",
+    "difference": "Only the top bar and the sidebar column behind the settings dialog changed",
+    "justification": "Design A .as-bar, .as-side",
+    "approved": "pending"
+  },
+  "teacher-class-content@1024@light": {
+    "difference": "2 px of anti-aliasing noise (+-1 channel on chart and corner edges) in the class analytics page; page content is unchanged",
+    "justification": "From 820 to 1247px the sidebar is a drawer (user decision), so the baseline's content width (613px, rastered at x=324 beside a 252px sidebar) can only be matched by shrinking the window to a narrower layout; no x origin can be matched there (the 1440/1920 keys are pinned to x=324 and are 0 px)",
     "approved": "pending"
   }
 }

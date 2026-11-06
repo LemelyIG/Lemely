@@ -8,7 +8,7 @@ import { EmptyState, ErrorState, OfflineState } from "@/components/ui/state-view
 import { gradeChipClass } from "@/lib/grade"
 import { cn } from "@/lib/utils"
 import { unreadBadgeLabel } from "@/lib/staffInbox"
-import { ClassesNavSection, TEACHER_ACCOUNT_LINKS, TEACHER_NOTIFICATIONS_PANEL } from "@/portals/teacher"
+import { ClassesNavList, TEACHER_ACCOUNT_LINKS, TEACHER_NOTIFICATIONS_PANEL } from "@/portals/teacher"
 import { AccountPanel } from "@/components/shell/AccountPanel"
 import { NotificationsPanel } from "@/components/shell/NotificationsPanel"
 import { roleLabel } from "@/portals/teacher/components/topBarActions"
@@ -189,38 +189,38 @@ export function TeacherGroup() {
             <SidebarNav variant="abyss" items={NAV_ITEMS} />
           </SidebarFrame>
         </StateCell>
-        <StateCell state="default" provenance="prop" note="ClassesNavSection with four seeded classes. The last has no grade, so no chip.">
+        <StateCell state="default" provenance="prop" note="ClassesNavList with four seeded classes. The last has no grade, so no chip.">
           <SidebarFrame>
             <Seeded seed={SEED_CLASSES}>
-              <ClassesNavSection />
+              <ClassesNavList labelledBy="preview-classes" />
             </Seeded>
           </SidebarFrame>
         </StateCell>
         <StateCell state="default" provenance="prop" note="More than five classes: the list caps at five and links to the rest.">
           <SidebarFrame>
             <Seeded seed={SEED_CLASSES_MANY}>
-              <ClassesNavSection />
+              <ClassesNavList labelledBy="preview-classes" />
             </Seeded>
           </SidebarFrame>
         </StateCell>
         <StateCell state="default" provenance="prop" note="No classes yet: a single link to add the first.">
           <SidebarFrame>
             <Seeded seed={SEED_CLASSES_NONE}>
-              <ClassesNavSection />
+              <ClassesNavList labelledBy="preview-classes" />
             </Seeded>
           </SidebarFrame>
         </StateCell>
         <StateCell state="loading" provenance="prop" note="Classes pending.">
           <SidebarFrame>
             <Seeded seed={{}}>
-              <ClassesNavSection />
+              <ClassesNavList labelledBy="preview-classes" />
             </Seeded>
           </SidebarFrame>
         </StateCell>
         <StateCell state="error" provenance="prop" note="Classes failed to load.">
           <SidebarFrame>
             <Seeded seed={SEED_CLASSES_ERROR}>
-              <ClassesNavSection />
+              <ClassesNavList labelledBy="preview-classes" />
             </Seeded>
           </SidebarFrame>
         </StateCell>

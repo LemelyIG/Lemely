@@ -63,7 +63,7 @@ interface NavShellLinkOwnProps {
   children: (isActive: boolean) => ReactNode
 }
 
-function NavShellLink({ item, className, children }: NavShellLinkOwnProps) {
+export function NavShellLink({ item, className, children }: NavShellLinkOwnProps) {
   if (item.to) {
     return (
       <NavLink

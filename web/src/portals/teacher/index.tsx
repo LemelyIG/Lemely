@@ -1,12 +1,11 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
-import { lazy, Suspense, useState } from "react"
+import { lazy, Suspense, useState, type ReactNode } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { InstallBanner } from "@/components/InstallBanner"
 import { BadgeSync } from "@/components/badge-sync"
-import { BrandLockup } from "@/components/ui/brand-lockup"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { ScreenOutlet } from "@/components/ui/screen-outlet"
 import { Link, NavLink, useLocation } from "react-router-dom"
@@ -18,23 +17,18 @@ import {
   Warning,
   Books,
   Sparkle,
-  Bell,
-  Megaphone,
   Gear,
   List,
-  Trash,
-  UploadSimple,
   GraduationCap,
   Lifebuoy,
   type Icon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 import { gradeChipClass } from "@/lib/grade"
-import { Avatar } from "@/components/ui/avatar"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
 import { portalErrorFallback } from "@/components/route-error"
 import { NavDrawer } from "@/components/ui/nav-drawer"
-import { BottomNav, SidebarNav, type NavShellItem } from "@/components/ui/nav-shells"
+import { BottomNav, type NavShellItem } from "@/components/ui/nav-shells"
 import { EdgeSwipeBack } from "@/components/edge-swipe-back"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { PortalNotFound } from "@/portals/misc/NotFound"
@@ -47,6 +41,9 @@ import { ForwardArrow } from "@/components/ui/inline-arrow"
 import { CreateSheet } from "./components/CreateSheet"
 import { ShellTopBar } from "@/components/shell/ShellTopBar"
 import { ShellIcon } from "@/components/shell/icons"
+import { ShellSidebar, ShellUserBlock, type ShellSidebarContent } from "@/components/shell/ShellSidebar"
+import { ShellNavList } from "@/components/shell/ShellNavList"
+import { profileName } from "@/components/shell/ShellAvatar"
 import { SHELL_BUTTON_PRIMARY, SHELL_BUTTON_TONAL } from "@/components/shell/shellStyles"
 import {
   HELP_HREF,
@@ -203,43 +200,40 @@ export const TEACHER_ACCOUNT_LINKS: readonly AccountLink[] = [
 const SIDEBAR_PRIMARY: NavItem["icon"][] = ["overview", "grading", "review", "classes", "atRisk"]
 const SIDEBAR_TOOLS: NavItem["icon"][] = ["schemes", "quizzes", "tutoring", "announcements", "deleted"]
 
-const NAV_ICON: Record<NavItem["icon"], Icon> = {
-  overview: SquaresFour,
-  grading: FileText,
+const NAV_ICON: Record<NavItem["icon"], ReactNode> = {
+  overview: <ShellIcon name="home" />,
+  grading: <FileText size={18} aria-hidden="true" />,
   // The review queue holds the marks the system was not confident enough to
   // apply on its own, so the glyph is a seal with a question in it rather than
   // a checklist: what is waiting here is doubt, not tasks.
-  review: SealQuestion,
-  classes: ChartBar,
-  atRisk: Warning,
-  schemes: Books,
-  quizzes: Sparkle,
-  tutoring: GraduationCap,
-  announcements: Megaphone,
-  notifications: Bell,
-  settings: Gear,
-  deleted: Trash,
+  review: <SealQuestion size={18} aria-hidden="true" />,
+  classes: <ShellIcon name="class" />,
+  atRisk: <Warning size={18} aria-hidden="true" />,
+  schemes: <Books size={18} aria-hidden="true" />,
+  quizzes: <Sparkle size={18} aria-hidden="true" />,
+  tutoring: <GraduationCap size={18} aria-hidden="true" />,
+  announcements: <ShellIcon name="mega" />,
+  notifications: <ShellIcon name="bell" />,
+  settings: <Gear size={18} aria-hidden="true" />,
+  deleted: <ShellIcon name="trash" />,
 }
 
 /*
- * Packet B3 (Task 4): rows now render through the shared `SidebarNav`
- * primitive (`TeacherNav` below) rather than this file's own copy of the
- * active-row/focus-ring/touch-floor styling — the same retrofit the admin
- * portal took. `unread` is resolved here (not inside `NavShellItem.badge`,
- * which is a plain `string | number`) and passed down as the notifications
- * row's own badge value.
+ * Rows render through the shared shell's `ShellNavList` (`useTeacherSidebar`
+ * below). The review-queue count is resolved there (not inside
+ * `NavShellItem.badge`, which is a plain `string | number`) and passed in as
+ * that row's badge value.
  */
 function toNavShellItem(
   item: NavItem,
   options: { forceActive?: boolean; badge?: string | number; urgent?: boolean } = {},
 ): NavShellItem {
-  const Glyph = NAV_ICON[item.icon]
   return {
     id: item.to,
     to: item.to,
     end: item.end,
     label: item.label,
-    icon: <Glyph size={16} aria-hidden="true" />,
+    icon: NAV_ICON[item.icon],
     active: options.forceActive,
     badge: options.badge,
     urgent: options.urgent,
@@ -247,209 +241,132 @@ function toNavShellItem(
 }
 
 /**
- * Sidebar "Your classes" list. Wired to `GET /teacher/classes`
+ * Sidebar "Your classes" list (the shell renders the group label). Wired to `GET /teacher/classes`
  * (`useTeacherClasses()`) — replaces the mock's 3 hardcoded classes
  * (`recentClasses` in `./data.ts`, one of them fake-flagged "active" with no
  * real "current class" concept anywhere in the app to back it). Capped at 5
  * with a link to the full list rather than an unbounded sidebar.
  */
-export function ClassesNavSection() {
+export function ClassesNavList({ labelledBy }: { labelledBy: string }) {
   const { data, isPending, isError } = useTeacherClasses()
 
   return (
-    <div>
-      <div className="text-eyebrow text-on-surface-variant px-2.5 pb-[9px]">Your classes</div>
-      <div className="flex flex-col gap-px">
-        {isPending ? (
-          <div className="px-2.5 py-[7px] text-body-sm text-on-surface-variant">Loading…</div>
-        ) : isError ? (
-          <div className="px-2.5 py-[7px] text-body-sm text-on-surface-variant">Couldn't load classes.</div>
-        ) : data.classes.length === 0 ? (
-          <Link
-            to="/teacher/classes"
-            className="px-2.5 py-[7px] pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-on-primary-container hover:underline rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-          >
-            Add your first class <ForwardArrow />
-          </Link>
-        ) : (
-          <>
-            {data.classes.slice(0, 5).map((c) => (
-              // A `NavLink`, not a plain `Link`: this row is a navigation
-              // destination like any other in the sidebar, so it tells a
-              // teacher which class they are looking at. No `end` — the
-              // default (non-exact) match is deliberate, since this row must
-              // also read as current on the class's `/analytics` child.
-              //
-              // The grade chip is the server's median latest paper grade
-              // (`ClassSummary.grade`), shown only when it exists. The
-              // trailing figure is the real `studentCount`.
-              <NavLink
-                key={c.id}
-                to={`/teacher/classes/${c.id}`}
-                // §6.1's 44px floor on coarse pointers.
-                className={({ isActive }) =>
-                  cn(
-                    "flex items-center gap-2.5 rounded-chip px-2.5 py-1.5 pointer-coarse:min-h-11 text-label transition-colors",
-                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
-                    isActive
-                      ? "bg-primary-container text-primary"
-                      : "text-on-surface hover:bg-surface-container",
-                  )
-                }
-              >
-                <span className="truncate">{c.label}</span>
-                {c.grade ? (
-                  <span className={cn("ms-auto inline-flex h-4.5 min-w-6 flex-none items-center justify-center rounded-md px-1 pt-0.5 text-data-sm font-bold", gradeChipClass(c.grade, { size: "small" }))}>
-                    <span className="sr-only">Median grade </span>
-                    {c.grade}
-                  </span>
-                ) : null}
-                <span className={cn("inline-flex h-4.5 w-6 flex-none items-center justify-end pt-0.5 text-data-sm tabular-nums text-on-surface-variant", !c.grade && "ms-auto")}>
-                  {c.studentCount}
+    <div aria-labelledby={labelledBy} className="flex flex-col gap-px">
+      {isPending ? (
+        <div className="px-2.5 py-[7px] text-body-sm text-on-surface-variant">Loading…</div>
+      ) : isError ? (
+        <div className="px-2.5 py-[7px] text-body-sm text-on-surface-variant">Couldn't load classes.</div>
+      ) : data.classes.length === 0 ? (
+        <Link
+          to="/teacher/classes"
+          className="px-2.5 py-[7px] pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-on-primary-container hover:underline rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+        >
+          Add your first class <ForwardArrow />
+        </Link>
+      ) : (
+        <>
+          {data.classes.slice(0, 5).map((c) => (
+            // A `NavLink`, not a plain `Link`: this row is a navigation
+            // destination like any other in the sidebar, so it tells a
+            // teacher which class they are looking at. No `end` — the
+            // default (non-exact) match is deliberate, since this row must
+            // also read as current on the class's `/analytics` child.
+            //
+            // The grade chip is the server's median latest paper grade
+            // (`ClassSummary.grade`), shown only when it exists. The
+            // trailing figure is the real `studentCount`.
+            <NavLink
+              key={c.id}
+              to={`/teacher/classes/${c.id}`}
+              // §6.1's 44px floor on coarse pointers.
+              className={({ isActive }) =>
+                cn(
+                  "flex items-center gap-2.5 rounded-chip px-2.5 py-1.5 pointer-coarse:min-h-11 text-label transition-colors",
+                  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+                  isActive
+                    ? "bg-primary-container text-primary"
+                    : "text-on-surface hover:bg-surface-container",
+                )
+              }
+            >
+              <span className="truncate">{c.label}</span>
+              {c.grade ? (
+                <span className={cn("ms-auto inline-flex h-4.5 min-w-6 flex-none items-center justify-center rounded-md px-1 pt-0.5 text-data-sm font-bold", gradeChipClass(c.grade, { size: "small" }))}>
+                  <span className="sr-only">Median grade </span>
+                  {c.grade}
                 </span>
-              </NavLink>
-            ))}
-            {data.classes.length > 5 ? (
-              <Link
-                to="/teacher/classes"
-                className="px-2.5 py-[7px] pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-on-surface-variant transition-colors hover:text-on-surface rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-              >
-                See all {data.classes.length} <ForwardArrow />
-              </Link>
-            ) : null}
-          </>
-        )}
-      </div>
+              ) : null}
+              <span className={cn("inline-flex h-4.5 w-6 flex-none items-center justify-end pt-0.5 text-data-sm tabular-nums text-on-surface-variant", !c.grade && "ms-auto")}>
+                {c.studentCount}
+              </span>
+            </NavLink>
+          ))}
+          {data.classes.length > 5 ? (
+            <Link
+              to="/teacher/classes"
+              className="px-2.5 py-[7px] pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-on-surface-variant transition-colors hover:text-on-surface rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+            >
+              See all {data.classes.length} <ForwardArrow />
+            </Link>
+          ) : null}
+        </>
+      )}
     </div>
   )
 }
 
 /**
- * Sidebar identity block. Wired to `GET /api/me/profile` (`useProfile()`) —
- * replaces the mock's hardcoded "Mr H. Sabry / Physics dept · CAIE", which no
- * field anywhere supplies. `displayName` is nullable (a caller who never set
- * one); the fallback is the email's local part, never a fabricated name. The
- * subtitle is the caller's real platform role — the only affiliation-like
- * fact this account actually carries, not an invented department/exam board.
- *
- * The squircle comes from the kit's `<Avatar>` rather than a local circle: see
- * the note on the deleted `portals/teacher/components/Avatar.tsx` in the phase
- * report. DESIGN.md §6 reserves circles for status dots so a dot never reads
- * as a person.
+ * The teacher sidebar's content; the shell renders it as the rail and the
+ * drawer. The identity block's name falls back to the email's local part and
+ * its detail is the caller's real platform role, never a fabricated
+ * department. No at-risk badge: summing per-class `atRiskCount` double-counts
+ * a student in several classes, and the layout has no deduplicated student
+ * count. A missing number beats a wrong one. Notifications and Settings live
+ * in the top bar, so the sidebar carries the work sections and the tools.
  */
-function UserBlock() {
-  const { data, isPending, isError } = useProfile()
-
-  if (isPending || isError || !data) {
-    return (
-      <div className="flex items-center gap-2.5 px-0.5 text-body-sm text-on-surface-variant">
-        {isPending ? "Loading…" : "Signed in"}
-      </div>
-    )
-  }
-
-  const name = data.displayName ?? data.email.split("@")[0]
-  return (
-    <div className="flex items-center gap-2.5">
-      <Avatar name={name} src={data.avatarUrl ?? undefined} size="sm" />
-      <div className="min-w-0">
-        <div className="truncate text-body-sm font-medium text-on-surface">{name}</div>
-        <div className="text-body-sm text-on-surface-variant">{roleLabel(data.role)}</div>
-      </div>
-    </div>
-  )
-}
-
-/**
- * Nav list + "Your classes", with no chrome. Shared by the desktop aside and
- * the mobile drawer for the same reason as the student portal's `NavGroups`:
- * the defect P3.1 fixes is navigation that exists at one width and not
- * another, and two copies of the list is how that comes back.
- */
-function TeacherNav() {
+function useTeacherSidebar(): ShellSidebarContent {
   const location = useLocation()
-  // Same query `ClassesNavSection` below subscribes to — react-query dedupes
-  // by queryKey, so this adds no second request, only a second subscriber to
-  // the classes list already in flight (or cached).
+  // Same query `ClassesNavList` subscribes to: react-query dedupes by queryKey.
   const { data } = useTeacherClasses()
   const visibleClassIds = data?.classes.slice(0, 5).map((c) => c.id) ?? []
-  // Task 9 (C3d): the sidebar's own subscriber to `useReviewQueueCount` —
-  // `BottomNav`'s Review tab below subscribes to the same hook, so the two
-  // badges share one deduped `limit: 1` request (see that hook's own doc
-  // comment on why).
+  // `BottomNav`'s Review tab subscribes to the same hook, so the two badges
+  // share one deduped `limit: 1` request.
   const reviewQueueCount = useReviewQueueCount()
   const reviewBadge = reviewQueueCount && reviewQueueCount > 0 ? reviewQueueCount : undefined
-  // No at-risk badge: summing per-class `atRiskCount` double-counts a student
-  // in several classes, and the layout has no deduplicated student count. A
-  // missing number beats a wrong one.
-
+  const profile = useProfile()
   const toShell = (item: NavItem) =>
     toNavShellItem(item, {
-      forceActive:
-        item.to === "/teacher/classes"
-          ? classesItemActive(location.pathname, visibleClassIds)
-          : undefined,
+      forceActive: item.to === "/teacher/classes" ? classesItemActive(location.pathname, visibleClassIds) : undefined,
       badge: item.badge === "review-queue" ? reviewBadge : undefined,
       urgent: item.badge === "review-queue",
     })
-
-  // Notifications and Settings live in the top bar (icon buttons), so the
-  // sidebar carries the work sections and the tools.
-  const primaryItems = navItems.filter((i) => SIDEBAR_PRIMARY.includes(i.icon)).map(toShell)
-  const toolItems = navItems.filter((i) => SIDEBAR_TOOLS.includes(i.icon)).map(toShell)
-
-  return (
-    // `gap-8`: the three groups (sections, your classes, tools) read as
-    // separate blocks rather than one long list.
-    <div className="flex flex-col gap-8">
-      <SidebarNav variant="abyss" aria-label="Teacher sections" items={primaryItems} />
-      <ClassesNavSection />
-      <SidebarNav variant="abyss" aria-label="Teacher tools" groups={[{ label: "Tools", items: toolItems }]} />
-    </div>
-  )
-}
-
-/**
- * Account link + identity. Also shared between aside and drawer.
- *
- * P3.1 removed the "Open the student portal →" link that used to sit between
- * these two. It could not work for anyone: `RequireAuth` gates `/student` to
- * the `student` role alone, so a teacher, school_admin or platform_admin
- * following it was redirected straight back to `/teacher`. Its twin in the
- * student sidebar pointed the other way and failed the same way. Both are
- * build-era conveniences from before the guard existed.
- */
-function SidebarFooter() {
-  return (
-    <div className="flex flex-col gap-3">
-      <Link
-        to="/teacher/grading"
-        className="inline-flex h-9 w-full items-center justify-center gap-[7px] rounded-chip bg-primary px-3.5 btn-text text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-      >
-        <UploadSimple size={16} aria-hidden="true" />
+  return {
+    navLabel: "Teacher",
+    homeTo: "/teacher",
+    homeLabel: "Lemely, overview",
+    items: navItems.filter((i) => SIDEBAR_PRIMARY.includes(i.icon)).map(toShell),
+    groups: [
+      { id: "classes", label: "Your classes", render: (labelId) => <ClassesNavList labelledBy={labelId} /> },
+      {
+        id: "tools",
+        label: "Tools",
+        render: (labelId) => (
+          <ShellNavList aria-labelledby={labelId} items={navItems.filter((i) => SIDEBAR_TOOLS.includes(i.icon)).map(toShell)} />
+        ),
+      },
+    ],
+    footerAction: (
+      <Link to="/teacher/grading" className={SHELL_BUTTON_PRIMARY}>
+        <ShellIcon name="up" />
         Upload papers
       </Link>
-      <UserBlock />
-    </div>
-  )
-}
-
-function Sidebar() {
-  return (
-    // A well, per DESIGN.md §3.1: `--paper-sunk` is the token whose stated use
-    // is "sidebars, table headers, code blocks, inset areas".
-    <aside className="hidden sidebar:flex w-sidebar flex-none bg-surface-container-lowest border-e border-outline-variant px-3 pb-3 pt-[18px] flex-col gap-4 sticky top-0 h-screen">
-      <BrandLockup className="px-2" />
-
-      <div className="lm-scroll min-h-0 flex-1 overflow-y-auto">
-        <TeacherNav />
-      </div>
-
-      <div className="mt-auto border-t border-outline-variant pt-4">
-        <SidebarFooter />
-      </div>
-    </aside>
-  )
+    ),
+    user: profile.data ? (
+      <ShellUserBlock name={profileName(profile.data)} avatarUrl={profile.data.avatarUrl} detail={roleLabel(profile.data.role)} />
+    ) : (
+      <p className="px-0.5 text-body-sm text-on-surface-variant">{profile.isPending ? "Loading…" : "Signed in"}</p>
+    ),
+  }
 }
 
 // One boundary around the Outlet (not per-route): sidebar and chrome stay
@@ -549,6 +466,7 @@ function TeacherLayout() {
   // `useReviewQueueCount()` subscriber (same query key) — mounting both the
   // desktop sidebar and this bottom bar costs one network request, not two.
   const reviewQueueCount = useReviewQueueCount()
+  const sidebar = useTeacherSidebar()
 
   return (
     // `bg-surface`: the shell owns its own ground rather than depending on
@@ -558,15 +476,10 @@ function TeacherLayout() {
       {/* Task 7 (B5a): see student/index.tsx's own comment on this line —
           same reason, same shape. */}
       <BadgeSync />
-      <Sidebar />
+      <ShellSidebar variant="rail" {...sidebar} />
 
-      <NavDrawer
-        open={navOpen}
-        onClose={() => setNavOpen(false)}
-        title="Lemely"
-        footer={<SidebarFooter />}
-      >
-        <TeacherNav />
+      <NavDrawer variant="shell" open={navOpen} onClose={() => setNavOpen(false)} title="Lemely">
+        <ShellSidebar variant="drawer" {...sidebar} onClose={() => setNavOpen(false)} />
       </NavDrawer>
 
       {/* Packet B3 (Task 4): standalone-only, renders nothing — see the

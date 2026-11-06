@@ -51,11 +51,28 @@ describe("nav-shells.tsx wires NavShellItem through react-router", () => {
 })
 
 describe("every portal shell imports SidebarNav", () => {
-  const PORTALS = ["portals/student/index.tsx", "portals/teacher/index.tsx", "portals/admin/index.tsx"]
+  const PORTALS = ["portals/student/index.tsx", "portals/admin/index.tsx"]
 
   it.each(PORTALS)("%s imports SidebarNav", (file) => {
     const source = read(file)
     expect(source).toMatch(/import\s*\{[^}]*\bSidebarNav\b[^}]*\}\s*from\s*"@\/components\/ui\/nav-shells"/)
+  })
+})
+
+describe("student and teacher render the shared shell sidebar", () => {
+  it("teacher/index.tsx imports from components/shell", () => {
+    expect(read("portals/teacher/index.tsx")).toMatch(/from\s+"@\/components\/shell\//)
+  })
+
+  it("ShellNavList renders its rows through nav-shells' NavShellLink", () => {
+    const source = stripComments(read("components/shell/ShellNavList.tsx"))
+    expect(source).toMatch(/import\s*\{[^}]*\bNavShellLink\b[^}]*\}\s*from\s*"@\/components\/ui\/nav-shells"/)
+  })
+
+  it("ShellSidebar is one nav landmark", () => {
+    const source = stripComments(read("components/shell/ShellSidebar.tsx"))
+    expect(source.match(/<nav\b/g)).toHaveLength(1)
+    expect(source).toContain("aria-label={navLabel}")
   })
 })
 

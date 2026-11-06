@@ -98,7 +98,12 @@ describe("View Transitions are wired from shell chrome", () => {
     expect(sourceOf("src/portals/student/index.tsx")).toContain("viewTransition")
   })
 
-  it.each(["src/portals/teacher/index.tsx", "src/portals/admin/index.tsx"])(
+  it("the shell sidebar renders through ShellNavList, which uses nav-shells' NavLink (viewTransition)", () => {
+    expect(sourceOf("src/components/shell/ShellNavList.tsx")).toContain("NavShellLink")
+    expect(sourceOf("src/components/ui/nav-shells.tsx")).toContain("viewTransition")
+  })
+
+  it.each(["src/portals/admin/index.tsx"])(
     "%s's sidebar renders through nav-shells.tsx, which passes viewTransition on its NavLink",
     (relativePath) => {
       // Teacher and admin sidebars render their nav rows through the shared

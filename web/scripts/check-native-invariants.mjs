@@ -382,7 +382,7 @@ function checkLmAppHeaderPtUtilities(indexCss) {
 
 /** Every top-level nav/header surface applies `lm-nav-chrome`
  * (`-webkit-touch-callout: none; user-select: none`), and the nav drawer
- * applies it twice — to both the dialog panel and its trigger. */
+ * applies it three times: both dialog panel variants (default, shell) and its trigger. */
 const CHROME_FILES = [
   "components/ui/nav-drawer.tsx",
   "components/ui/nav-shells.tsx",
@@ -402,7 +402,7 @@ function checkLmNavChrome(files) {
   const navDrawer = files["components/ui/nav-drawer.tsx"]
   if (navDrawer) {
     const count = (navDrawer.match(/lm-nav-chrome/g) ?? []).length
-    if (count !== 2) offenders.push("components/ui/nav-drawer.tsx (expected lm-nav-chrome twice)")
+    if (count !== 3) offenders.push("components/ui/nav-drawer.tsx (expected lm-nav-chrome 3 times: both panel variants and the trigger)")
   }
   return offenders
 }
@@ -506,7 +506,7 @@ export function runChecks({ indexHtml, indexCss, inputTsx, textareaTsx, swSource
 
   const navChromeOffenders = checkLmNavChrome(allFiles)
   checks.push({
-    name: "every top-level nav/header applies lm-nav-chrome (nav-drawer.tsx twice)",
+    name: "every top-level nav/header applies lm-nav-chrome (nav-drawer.tsx 3 times)",
     pass: navChromeOffenders.length === 0,
     detail: navChromeOffenders.join(", "),
   })

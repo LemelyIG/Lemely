@@ -67,9 +67,11 @@ export interface NavDrawerProps {
   children: ReactNode
   /** Optional block pinned to the drawer foot (identity, cross-portal links). */
   footer?: ReactNode
+  /** `shell`: design A's floating drawer, a bottom sheet below 721px; the children supply their own head and close button. */
+  variant?: "default" | "shell"
 }
 
-export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerProps) {
+export function NavDrawer({ open, onClose, title, children, footer, variant = "default" }: NavDrawerProps) {
   const titleId = useId()
   const panelRef = useRef<HTMLDivElement>(null)
   const previouslyFocused = useRef<HTMLElement | null>(null)
@@ -234,35 +236,50 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
             : undefined
         }
         className={cn(
-          "lm-nav-chrome fixed inset-y-0 start-0 z-modal flex w-[min(20rem,85vw)] flex-col gap-5",
-          "border-e border-outline-variant bg-surface-container-lowest px-4 py-5 shadow-[var(--shadow-float)]",
+          variant === "shell"
+            ? "lm-nav-chrome fixed inset-y-2.5 start-2.5 z-modal flex w-[min(280px,calc(100vw-20px))] flex-col rounded-card bg-surface-container-lowest text-on-surface shadow-[var(--shadow-panel)] max-shell-sm:inset-x-0 max-shell-sm:top-auto max-shell-sm:bottom-0 max-shell-sm:start-0 max-shell-sm:w-full max-shell-sm:max-h-[85dvh] max-shell-sm:rounded-b-none"
+            : cn(
+                "lm-nav-chrome fixed inset-y-0 start-0 z-modal flex w-[min(20rem,85vw)] flex-col gap-5",
+                "border-e border-outline-variant bg-surface-container-lowest px-4 py-5 shadow-[var(--shadow-float)]",
+              ),
           phase === "closing"
             ? "lm-slide-out-start"
             : "motion-safe:animate-[lm-slide-in-start_var(--dur-base)_var(--ease-spring)_both]",
         )}
       >
-        <div className="flex items-center justify-between gap-3">
-          <h2 id={titleId} className="text-display-sm text-on-surface">
-            {title}
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close navigation"
-            className={cn(
-              "-me-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-on-surface-variant transition-colors",
-              "hover:bg-surface-container-low hover:text-on-surface",
-              "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
-              "active:scale-[0.98]",
-            )}
-          >
-            <X size={20} aria-hidden="true" />
-          </button>
-        </div>
+        {variant === "shell" ? (
+          <>
+            <h2 id={titleId} className="sr-only">
+              {title}
+            </h2>
+            {children}
+          </>
+        ) : (
+          <>
+            <div className="flex items-center justify-between gap-3">
+              <h2 id={titleId} className="text-display-sm text-on-surface">
+                {title}
+              </h2>
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Close navigation"
+                className={cn(
+                  "-me-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-on-surface-variant transition-colors",
+                  "hover:bg-surface-container-low hover:text-on-surface",
+                  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+                  "active:scale-[0.98]",
+                )}
+              >
+                <X size={20} aria-hidden="true" />
+              </button>
+            </div>
 
-        <div className="lm-scroll min-h-0 flex-1 overflow-y-auto">{children}</div>
+            <div className="lm-scroll min-h-0 flex-1 overflow-y-auto">{children}</div>
 
-        {footer ? <div className="border-t border-outline-variant pt-4">{footer}</div> : null}
+            {footer ? <div className="border-t border-outline-variant pt-4">{footer}</div> : null}
+          </>
+        )}
       </div>
     </div>,
     document.body,

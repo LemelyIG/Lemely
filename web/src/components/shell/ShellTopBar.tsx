@@ -78,10 +78,10 @@ export function ShellTopBar({
           onClick={onOpenNav}
           aria-label={navLabel}
           aria-haspopup="dialog"
-          // Same variant as the teacher sidebar's `hidden sidebar:flex` (820px), so
-          // exactly one of {sidebar, menu button} shows. Task 4/5 move both to
-          // `shell-lg` (1248px).
-          className={cn(SHELL_ICON_BUTTON, "sidebar:hidden max-shell-sm:hidden")}
+          // Same variant as the sidebar rail's `shell-lg:flex` (1248px), so exactly
+          // one of {sidebar column, menu button} shows. The bar's drawer margins
+          // (`max-shell-lg:`) follow the same breakpoint.
+          className={cn(SHELL_ICON_BUTTON, "shell-lg:hidden max-shell-sm:hidden")}
         >
           <ShellIcon name="menu" />
         </button>

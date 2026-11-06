@@ -230,14 +230,14 @@ export async function matchContentWidth(page, selector, target, height) {
  * content: the content box only; `neutral` paints its own background magenta on
  * both sides so a shell background change cannot leak into a content compare.
  */
-export async function capture(page, { capture: mode, selector, neutral = false }) {
+export async function capture(page, { capture: mode, selector, neutral = false, originX }) {
   if (mode === "frame") {
     await page.addStyleTag({ content: `${selector} > * { visibility: hidden !important; }` })
     return stableShot(page, () => page.screenshot({ animations: "disabled", caret: "hide" }))
   }
   if (neutral) await page.addStyleTag({ content: `${selector} { background: rgb(255 0 255) !important; }` })
   await hideChromeOutside(page, selector)
-  await snapContentOrigin(page, selector)
+  await snapContentOrigin(page, selector, originX)
   const clip = await contentBox(page, selector)
   return stableShot(page, () => page.screenshot({ fullPage: true, clip, animations: "disabled", caret: "hide" }))
 }
@@ -275,8 +275,8 @@ export async function hideChromeOutside(page, selector) {
  * content by the fraction (a `translate`, no reflow) so its origin is whole on
  * both sides and only a real difference remains.
  */
-export async function snapContentOrigin(page, selector) {
-  return page.evaluate((sel) => {
+export async function snapContentOrigin(page, selector, originX) {
+  return page.evaluate(({ sel, originX }) => {
     const el = document.querySelector(sel)
     const r = el.getBoundingClientRect()
     const s = getComputedStyle(el)
@@ -284,9 +284,16 @@ export async function snapContentOrigin(page, selector) {
     const y = r.top + window.scrollY + parseFloat(s.paddingTop)
     const dx = x - Math.round(x)
     const dy = y - Math.round(y)
-    if (dx !== 0 || dy !== 0) el.style.setProperty("translate", `${-dx}px ${-dy}px`, "important")
-    return { dx, dy }
-  }, selector)
+    // `originX`: anti-aliased edges (chart lines, rounded corners) rasterise
+    // with +-1 channel noise that depends on the absolute x of the content, so a
+    // shell that moves the content column sideways (sidebar 252 -> 216 px, or a
+    // drawer in place of the column) leaks 1-70 px of noise into a page that did
+    // not change. The caller names the x the baseline was rastered at; the
+    // content is moved there, so only real differences remain.
+    const shift = originX === undefined ? 0 : originX - Math.round(x)
+    if (dx !== 0 || dy !== 0 || shift !== 0) el.style.setProperty("translate", `${-dx + shift}px ${-dy}px`, "important")
+    return { dx, dy, shift }
+  }, { sel: selector, originX })
 }
 
 /**

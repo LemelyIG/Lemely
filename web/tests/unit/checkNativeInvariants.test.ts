@@ -81,7 +81,8 @@ self.addEventListener("message", (event) => {
 
 const NAV_CHROME_FILE = `<div className="lm-nav-chrome">chrome</div>`
 const NAV_DRAWER_FILE = `
-  <div className="lm-nav-chrome">panel</div>
+  <div className="lm-nav-chrome">default panel</div>
+  <div className="lm-nav-chrome">shell panel</div>
   <button className="lm-nav-chrome">trigger</button>
 `
 
@@ -404,7 +405,7 @@ describe("runChecks — lm-nav-chrome coverage", () => {
     expect(check?.detail).toContain("components/shell/ShellTopBar.tsx")
   })
 
-  it("fails when nav-drawer.tsx applies lm-nav-chrome only once instead of twice", () => {
+  it("fails when nav-drawer.tsx applies lm-nav-chrome only once instead of three times", () => {
     const input = goodInput()
     input.files["components/ui/nav-drawer.tsx"] = `<div className="lm-nav-chrome">panel only</div>`
     const result = run(input)

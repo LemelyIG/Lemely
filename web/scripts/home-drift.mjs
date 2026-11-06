@@ -87,6 +87,12 @@ async function shoot(browser, side, item, targetWidth) {
       capture: scene.capture,
       selector,
       neutral: scene.kind === "before-vs-after",
+      // The merged `develop` shell laid the teacher content out at x=324 (252 px
+      // sidebar + 72 px page padding); see snapContentOrigin. Only where the new
+      // shell still has a sidebar column (1248 px up): below it the content width
+      // can only be matched by shrinking the window, which leaves no room to move
+      // the content to x=324.
+      originX: side === "app" && scene.kind === "before-vs-after" && width >= 1248 ? 324 : undefined,
     })
     return { png, contentWidth: width_ }
   } finally {

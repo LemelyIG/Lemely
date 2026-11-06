@@ -195,10 +195,11 @@ describe("lm-nav-chrome coverage", () => {
     expect(source).toContain("lm-nav-chrome")
   })
 
-  it("nav-drawer.tsx applies it to both the dialog panel and the trigger", () => {
+  it("nav-drawer.tsx applies it to both dialog panel variants and the trigger", () => {
     const source = readFileSync(join(SRC, "components/ui/nav-drawer.tsx"), "utf8")
     const count = (source.match(/lm-nav-chrome/g) ?? []).length
-    expect(count).toBe(2)
+    // default panel + shell panel + trigger
+    expect(count).toBe(3)
   })
 })
 
