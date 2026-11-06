@@ -251,7 +251,7 @@ export function ClassesNavList({ labelledBy }: { labelledBy: string }) {
   const { data, isPending, isError } = useTeacherClasses()
 
   return (
-    <div aria-labelledby={labelledBy} className="flex flex-col gap-px">
+    <div role="group" aria-labelledby={labelledBy} className="flex flex-col gap-px">
       {isPending ? (
         <div className="px-2.5 py-[7px] text-body-sm text-on-surface-variant">Loading…</div>
       ) : isError ? (

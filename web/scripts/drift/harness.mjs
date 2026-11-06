@@ -225,12 +225,34 @@ export async function matchContentWidth(page, selector, target, height) {
 }
 
 /**
+ * Pin the content box of `selector` to `target` px wide at the window's native
+ * width, so viewport media queries stay identical to the baseline's. Inline
+ * width and max-width on the element (border-box, padding added back).
+ */
+export async function pinContentWidth(page, selector, target) {
+  await page.$eval(
+    selector,
+    (el, w) => {
+      const s = getComputedStyle(el)
+      const total = w + parseFloat(s.paddingLeft) + parseFloat(s.paddingRight)
+      el.style.setProperty("box-sizing", "border-box", "important")
+      el.style.setProperty("width", `${total}px`, "important")
+      el.style.setProperty("max-width", `${total}px`, "important")
+      el.style.setProperty("flex-shrink", "0", "important")
+    },
+    target,
+  )
+  await page.waitForTimeout(80)
+  return (await contentBox(page, selector)).width === target
+}
+
+/**
  * frame: the viewport, with the page content hidden (layout kept), so only the
  * shell and any panel or dialog over it is compared.
  * content: the content box only; `neutral` paints its own background magenta on
  * both sides so a shell background change cannot leak into a content compare.
  */
-export async function capture(page, { capture: mode, selector, neutral = false, originX }) {
+export async function capture(page, { capture: mode, selector, neutral = false, originX, report }) {
   if (mode === "frame") {
     await page.addStyleTag({ content: `${selector} > * { visibility: hidden !important; }` })
     return stableShot(page, () => page.screenshot({ animations: "disabled", caret: "hide" }))
@@ -239,6 +261,7 @@ export async function capture(page, { capture: mode, selector, neutral = false, 
   await hideChromeOutside(page, selector)
   await snapContentOrigin(page, selector, originX)
   const clip = await contentBox(page, selector)
+  if (report) report.x = clip.x
   return stableShot(page, () => page.screenshot({ fullPage: true, clip, animations: "disabled", caret: "hide" }))
 }
 

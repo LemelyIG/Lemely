@@ -65,7 +65,10 @@ export const TEACHER_SCENES = [
     kind: "before-vs-after",
     capture: "frame",
     rule: "log",
-    windows: [390, 768],
+    windows: [390, 768, 1100],
+    // develop showed the sidebar column at 1100 px (drawer below 820 only), so
+    // there is no baseline to diff; the key captures the new drawer, log-only.
+    baselineless: [1100],
     app: teacher({ act: openTeacherNav }),
   },
   { id: "teacher-bell", kind: "before-vs-after", capture: "frame", rule: "log", app: teacher({ act: openBell }) },

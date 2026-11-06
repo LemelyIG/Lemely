@@ -58,10 +58,5 @@
     "difference": "Only the top bar and the sidebar column behind the settings dialog changed",
     "justification": "Design A .as-bar, .as-side",
     "approved": "pending"
-  },
-  "teacher-class-content@1024@light": {
-    "difference": "2 px of anti-aliasing noise (+-1 channel on chart and corner edges) in the class analytics page; page content is unchanged",
-    "justification": "From 820 to 1247px the sidebar is a drawer (user decision), so the baseline's content width (613px, rastered at x=324 beside a 252px sidebar) can only be matched by shrinking the window to a narrower layout; no x origin can be matched there (the 1440/1920 keys are pinned to x=324 and are 0 px)",
-    "approved": "pending"
   }
 }

@@ -25,6 +25,7 @@ import {
   capture,
   contentBox,
   matchContentWidth,
+  pinContentWidth,
   openApp,
   openPreview,
   stableShot,
@@ -69,8 +70,20 @@ function expand() {
   return keys
 }
 
-async function shoot(browser, side, item, targetWidth) {
+/**
+ * The x the baseline's content was rastered at when its sidecar does not record
+ * one (baselines recorded before the field existed): the merged `develop`
+ * shell laid the teacher content out at x=324 (252 px sidebar + 72 px page
+ * padding) from 820 px up. Fallback only; a sidecar with `originX` wins.
+ */
+const LEGACY_ORIGIN_X = 324
+const LEGACY_ORIGIN_MIN_WIDTH = 820
+const SIDEBAR_COLUMN_WIDTH = 1248
+
+async function shoot(browser, side, item, meta = {}) {
   const { scene, width, theme } = item
+  const { contentWidth: targetWidth } = meta
+  const beforeVsAfter = side === "app" && scene.kind === "before-vs-after"
   const height = HEIGHT[width] ?? 900
   const opened =
     side === "preview"
@@ -79,22 +92,27 @@ async function shoot(browser, side, item, targetWidth) {
   try {
     const selector = SELECTORS[side === "preview" ? "preview" : "app"]
     if (scene.capture === "content" && targetWidth !== undefined) {
-      const ok = await matchContentWidth(opened.page, selector, targetWidth, height)
+      // Below the sidebar breakpoint the window keeps its native width (viewport
+      // media queries must equal the baseline's) and the content selector is
+      // pinned to the baseline's width; from 1248 up (and preview-vs-app) the
+      // window is resized until the content matches.
+      const ok =
+        beforeVsAfter && width < SIDEBAR_COLUMN_WIDTH
+          ? await pinContentWidth(opened.page, selector, targetWidth)
+          : await matchContentWidth(opened.page, selector, targetWidth, height)
       if (!ok) throw new Error(`${item.key}: could not match content width ${targetWidth}`)
     }
     const width_ = scene.capture === "content" ? (await contentBox(opened.page, selector)).width : undefined
+    const report = {}
     const png = await capture(opened.page, {
       capture: scene.capture,
       selector,
       neutral: scene.kind === "before-vs-after",
-      // The merged `develop` shell laid the teacher content out at x=324 (252 px
-      // sidebar + 72 px page padding); see snapContentOrigin. Only where the new
-      // shell still has a sidebar column (1248 px up): below it the content width
-      // can only be matched by shrinking the window, which leaves no room to move
-      // the content to x=324.
-      originX: side === "app" && scene.kind === "before-vs-after" && width >= 1248 ? 324 : undefined,
+      // See snapContentOrigin: the baseline's recorded content x, else the legacy constant.
+      originX: beforeVsAfter ? (meta.originX ?? (width >= LEGACY_ORIGIN_MIN_WIDTH ? LEGACY_ORIGIN_X : undefined)) : undefined,
+      report,
     })
-    return { png, contentWidth: width_ }
+    return { png, contentWidth: width_, contentX: report.x }
   } finally {
     await opened.context.close()
   }
@@ -111,7 +129,7 @@ function gitDirty() {
 
 /** The per-key sidecar: content width plus the capturing checkout. */
 function sidecarFor(shot) {
-  return JSON.stringify({ contentWidth: shot.contentWidth ?? null, sha: gitHead(), dirty: gitDirty() })
+  return JSON.stringify({ contentWidth: shot.contentWidth ?? null, originX: shot.contentX ?? null, sha: gitHead(), dirty: gitDirty() })
 }
 
 /** Summarise the per-key sidecars: which SHAs are present, and how many keys lack one. */
@@ -160,14 +178,22 @@ async function compareItem(browser, item, { baselineDir, runDir, table }) {
     let b
     if (scene.kind === "preview-vs-app") {
       a = await shoot(browser, "preview", item)
-      b = await shoot(browser, "app", item, a.contentWidth)
+      b = await shoot(browser, "app", item, { contentWidth: a.contentWidth })
     } else {
       const basePng = path.join(baselineDir, `${key}.png`)
+      if (!fs.existsSync(basePng) && scene.baselineless?.includes(item.width)) {
+        // A state `develop` could not show at this width (its sidebar column was
+        // still up at 1100 px, so there was no drawer): capture the new side only
+        // so the picture is on file; nothing to diff against.
+        const only = await shoot(browser, "app", item, {})
+        fs.writeFileSync(path.join(runDir, `${key}.b.png`), only.png)
+        return { key, diff: 0, pct: 0, outcome: "pass", reason: "log-only: no develop baseline at this width (captured, not compared)", justification: null }
+      }
       if (!fs.existsSync(basePng)) throw new Error(`no baseline; run with --record-baseline on merged develop`)
       const meta = JSON.parse(fs.readFileSync(path.join(baselineDir, `${key}.json`), "utf8"))
       if (!meta.sha) throw new Error(`baseline sidecar ${key}.json has no sha; re-record with --record-baseline`)
       a = { png: fs.readFileSync(basePng) }
-      b = await shoot(browser, "app", item, meta.contentWidth ?? undefined)
+      b = await shoot(browser, "app", item, { contentWidth: meta.contentWidth ?? undefined, originX: meta.originX ?? undefined })
     }
     fs.writeFileSync(path.join(runDir, `${key}.a.png`), a.png)
     fs.writeFileSync(path.join(runDir, `${key}.b.png`), b.png)
@@ -221,7 +247,7 @@ async function selftestEndToEnd(browser, width = 1440) {
     fs.writeFileSync(path.join(baselineDir, `${item.key}.png`), shot.png)
     fs.writeFileSync(path.join(baselineDir, `${item.key}.json`), sidecarFor(shot))
     const clean = await compareItem(browser, item, { baselineDir, runDir, table: {} })
-    assertEqual(clean.outcome, "pass", "unmodified baseline")
+    assertEqual(clean.outcome, "pass", `unmodified baseline (${clean.reason}; ${clean.diff} px)`)
     assertEqual(exitCodeFor([clean]), 0, "exit code, unmodified baseline")
     // A sidecar without a sha has no provable origin: that key must fail.
     const sidecarPath = path.join(baselineDir, `${item.key}.json`)
@@ -307,6 +333,33 @@ async function selftestContentIgnoresChrome(browser) {
     const shifted = await shoot("#f00", "#0a0", 0.3)
     const fraction = diffPngs(base, shifted, path.join(DRIFT_DIR, "selftest", "fraction.diff.png"))
     if (fraction.diff !== 0) throw new Error(`selftest: a fractional content origin leaked into the capture (${fraction.diff} px)`)
+    // A capture moved sideways (a shell that shifts the content column) against
+    // an unshifted baseline is judged on content, not position: same content 0
+    // px, changed content still differs.
+    const baseX = {}
+    await page.setContent(html("#f00", "#0a0"))
+    await page.addStyleTag({ content: `#m { width: 300px; }` })
+    const sidewaysBase = await capture(page, { capture: "content", selector: "#m", report: baseX })
+    const sideways = async (body) => {
+      await page.setContent(html("#f00", body))
+      await page.addStyleTag({ content: `#m { position: relative; left: 37px; width: 300px; }` })
+      return capture(page, { capture: "content", selector: "#m", originX: baseX.x })
+    }
+    const widthPinned = async (body) => {
+      await page.setContent(html("#f00", body))
+      await page.addStyleTag({ content: `#m { width: 100px; }` })
+      if (!(await pinContentWidth(page, "#m", 300))) throw new Error("selftest: pinContentWidth did not reach the target width")
+      return capture(page, { capture: "content", selector: "#m", originX: baseX.x })
+    }
+    const sidewaysSame = diffPngs(sidewaysBase, await sideways("#0a0"), path.join(DRIFT_DIR, "selftest", "sideways.diff.png"))
+    const sidewaysChanged = diffPngs(sidewaysBase, await sideways("#a0a"), path.join(DRIFT_DIR, "selftest", "sideways-changed.diff.png"))
+    if (sidewaysSame.diff !== 0) throw new Error(`selftest: a horizontal shift leaked into the capture (${sidewaysSame.diff} px)`)
+    if (sidewaysChanged.diff === 0) throw new Error("selftest: a shifted capture with changed content did not differ")
+    const pinnedSame = diffPngs(sidewaysBase, await widthPinned("#0a0"), path.join(DRIFT_DIR, "selftest", "pinned.diff.png"))
+    const pinnedChanged = diffPngs(sidewaysBase, await widthPinned("#a0a"), path.join(DRIFT_DIR, "selftest", "pinned-changed.diff.png"))
+    if (pinnedSame.diff !== 0) throw new Error(`selftest: a pinned width differed from the same-width baseline (${pinnedSame.diff} px)`)
+    if (pinnedChanged.diff === 0) throw new Error("selftest: a pinned-width capture with changed content did not differ")
+    console.log(`selftest sideways/pinned passed (shift ${sidewaysSame.diff} px, shift+change ${sidewaysChanged.diff} px, pinned ${pinnedSame.diff} px, pinned+change ${pinnedChanged.diff} px)`)
     const same = diffPngs(base, chromeOnly, path.join(DRIFT_DIR, "selftest", "chrome.diff.png"))
     const changed = diffPngs(base, contentChanged, path.join(DRIFT_DIR, "selftest", "content.diff.png"))
     if (same.diff !== 0) throw new Error(`selftest: a fixed/sticky element outside the content leaked into the capture (${same.diff} px)`)
@@ -425,6 +478,7 @@ async function main() {
     if (args.recordBaseline) {
       for (const item of items) {
         if (item.scene.kind !== "before-vs-after") continue
+        if (item.scene.baselineless?.includes(item.width)) continue
         const shot = await shoot(browser, "app", item)
         fs.writeFileSync(path.join(BASELINE_DIR, `${item.key}.png`), shot.png)
         fs.writeFileSync(path.join(BASELINE_DIR, `${item.key}.json`), sidecarFor(shot))

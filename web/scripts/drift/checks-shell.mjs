@@ -124,6 +124,20 @@ SHELL_CHECKS.push(
     },
   },
   {
+    id: "teacher-drawer-menu-button-escape-returns-focus-1100",
+    width: 1100,
+    app: TEACHER_HOME,
+    async run(page) {
+      const menu = page.getByRole("button", { name: "Open teacher navigation" })
+      await menu.click()
+      const dialog = page.getByRole("dialog")
+      await dialog.waitFor()
+      await page.keyboard.press("Escape")
+      await assertHidden(dialog, "drawer opened from the menu button")
+      await assertFocused(menu, "menu button")
+    },
+  },
+  {
     id: "teacher-drawer-has-one-labelled-nav",
     width: 768,
     app: TEACHER_HOME,
