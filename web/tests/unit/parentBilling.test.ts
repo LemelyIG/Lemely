@@ -27,6 +27,7 @@ describe("ParentChildBilling", () => {
       audience: "student",
       beneficiaryId: "c1",
     })
+    expect(typeof s.overviewProps[0].extra).toBe("object")
   })
 
   it("falls back to a generic heading before the child list loads", () => {

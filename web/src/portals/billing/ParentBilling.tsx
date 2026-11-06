@@ -2,6 +2,7 @@ import { CaretRight } from "@phosphor-icons/react"
 import { Link, useParams } from "react-router-dom"
 import { billingPaths } from "@/lib/billingPaths"
 import { useChildren } from "@/lib/hooks/useParentApi"
+import { AutoTopupCard } from "./AutoTopupCard"
 import { BillingOverview } from "./BillingOverview"
 
 /*
@@ -21,6 +22,7 @@ export function ParentChildBilling() {
       beneficiaryId={childId}
       heading={name ? `Plan and billing for ${name}` : "Plan and billing"}
       beneficiaryName={name}
+      extra={<AutoTopupCard beneficiaryId={childId} audience="student" packsHref={billingPaths({ role: "parent", childId }).packs} />}
     />
   )
 }
