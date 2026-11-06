@@ -6,9 +6,10 @@ Seven tables:
   catalogue rows. A job records the ``rate_version`` and ``estimator_version``
   it used.
 * :class:`UsageGrant`: one block of units owned by one account, with a priority
-  and an optional expiry. ``payment_id``, ``subscription_period_id`` and
-  ``teacher_member_id`` are plain UUID columns here; migrations ``0053``,
-  ``0055`` and ``0054`` add their foreign keys when the target tables exist.
+  and an optional expiry. ``payment_id`` is a foreign key to ``payments``
+  (declared here, created by migration ``0053``); ``subscription_period_id`` and
+  ``teacher_member_id`` are plain UUID columns here; migrations ``0055`` and
+  ``0054`` add their foreign keys when the target tables exist.
 * :class:`UsageGrantBalance`: the cached ``remaining`` and ``held`` of a grant.
   ``reconcile_balances`` rebuilds it from the entries.
 * :class:`UsageJob`: one metered action, which is also the usage history row.
@@ -191,7 +192,9 @@ class UsageGrant(TimestampMixin, Base):
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )
     expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
-    payment_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    payment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), sa.ForeignKey("payments.id"), nullable=True
+    )
     subscription_period_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
     )

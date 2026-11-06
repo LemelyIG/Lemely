@@ -120,6 +120,11 @@ EXPECTED_TABLES = {
     "usage_jobs",
     "usage_entries",
     "usage_debts",
+    # Billing payments (lemely/db/models/billing.py, migration 0053).
+    "credit_packs",
+    "payments",
+    "paymob_events",
+    "saved_cards",
 }
 
 # Tables deliberately excluded from `test_every_model_has_timestamps` below.

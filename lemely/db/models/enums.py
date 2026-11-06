@@ -163,6 +163,10 @@ class SubscriptionStatus(enum.Enum):
     ``0019``): a rejection is the platform declining a request, a cancellation is
     the subscriber ending one. They are different events with different parties
     responsible, and X-02's queue is the one place that difference is read.
+
+    ``pending_first_payment`` and ``past_due`` belong to the Paymob paid path
+    (billing spec §4.3). ``inactive`` and ``rejected`` remain the manual
+    activation path's states.
     """
 
     inactive = "inactive"
@@ -170,6 +174,11 @@ class SubscriptionStatus(enum.Enum):
     cancelled = "cancelled"
     expired = "expired"
     rejected = "rejected"
+    #: Paid path (billing spec §4.3, migration 0053): checkout created, first
+    #: payment not yet verified.
+    pending_first_payment = "pending_first_payment"
+    #: Paid path: a renewal failed and the 3-day grace is running.
+    past_due = "past_due"
 
 
 class SeatStatus(enum.Enum):
