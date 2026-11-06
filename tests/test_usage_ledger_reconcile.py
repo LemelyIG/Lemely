@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import uuid
 from datetime import timedelta
@@ -12,7 +13,7 @@ import pytest
 import sqlalchemy as sa
 
 from lemely.db.models.enums import Role
-from lemely.db.models.usage import GrantKind, UsageEntryKind
+from lemely.db.models.usage import GrantKind, UsageEntry, UsageEntryKind
 from lemely.db.usage_ledger_repo import UsageLedger
 from tests._concurrency import _Paused, _wait_until_a_backend_waits_on_a_lock
 from tests.usage_db import (
@@ -198,6 +199,40 @@ def test_reconcile_reports_exactly_one_cached_remaining_held_and_debt_and_repair
     assert balance(sm, held_row.grant_id)[1] == held_row.held
     assert debts(sm, student)[0].outstanding == student_debt.outstanding
     assert reconcile(sm) == []
+
+
+def test_a_row_whose_repair_breaks_a_check_does_not_stop_the_rest(
+    sm: sessionmaker[Session], caplog: pytest.LogCaptureFixture
+) -> None:
+    """One grant is cleanly drifted; another has a stray hold entry, so its recomputed
+    ``held`` (15) exceeds its ``remaining`` (10) and the repair would violate
+    ``held_within_remaining``. The clean one is repaired, both are reported, the run
+    does not raise, and the error names the row that could not be repaired."""
+    owner = add_user(sm)
+    clean = grant(sm, owner, 20)
+    stray = grant(sm, owner, 10)
+    with sm.begin() as session:
+        session.execute(
+            sa.text("UPDATE usage_grant_balances SET remaining = 25 WHERE grant_id = :g"),
+            {"g": clean},
+        )
+        session.add(
+            UsageEntry(
+                grant_id=stray,
+                kind=UsageEntryKind.hold,
+                units=15,
+                event_at=NOW,
+                idempotency_key="stray-hold",
+            )
+        )
+    with caplog.at_level(logging.ERROR, logger="lemely.db.usage_ledger_repo"):
+        drift = reconcile(sm)
+    assert sorted(drift) == sorted([(clean, 25, 20), (stray, 0, 15)])
+    assert balance(sm, clean) == (20, 0)  # repaired
+    assert balance(sm, stray) == (10, 0)  # left as it was: the repair is impossible
+    assert [str(stray) in r.getMessage() for r in caplog.records if r.levelno == logging.ERROR] == [
+        True
+    ]
 
 
 def test_a_clean_ledger_and_an_empty_one_report_nothing(sm: sessionmaker[Session]) -> None:

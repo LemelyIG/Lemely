@@ -24,6 +24,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
 
 from lemely.core.usage_pricing import GRANT_PRIORITY, usd_to_units
 from lemely.core.usage_types import GrantScope, Payer, payer_from_json, payer_to_json
@@ -43,7 +44,7 @@ if TYPE_CHECKING:
     import uuid
     from collections.abc import Sequence
 
-    from sqlalchemy.orm import Session
+    from sqlalchemy.orm import Session, SessionTransaction
 
 logger = logging.getLogger("lemely.db.usage_ledger_repo")
 
@@ -1016,12 +1017,17 @@ class UsageLedger:
         for grant_id in grants:
             balance = self._locked_balance(grant_id)
             [(_gid, _rem, _held, actual_rem, actual_held)] = self._grant_sums(grant_id)
+            found: list[tuple[uuid.UUID, int, int]] = []
             if balance.remaining != actual_rem:
-                drift.append((grant_id, balance.remaining, actual_rem))
-                balance.remaining = actual_rem
+                found.append((grant_id, balance.remaining, actual_rem))
             if balance.held != actual_held:
-                drift.append((grant_id, balance.held, actual_held))
-                balance.held = actual_held
+                found.append((grant_id, balance.held, actual_held))
+            if not found:
+                continue
+            drift.extend(found)
+            savepoint = self._session.begin_nested()  # before the change: it flushes first
+            balance.remaining, balance.held = actual_rem, actual_held
+            self._flush_or_skip(savepoint, f"grant balance {grant_id}", balance)
         for debt_id in drifted_debts:
             debt = self._session.scalars(
                 sa.select(UsageDebt)
@@ -1032,9 +1038,34 @@ class UsageLedger:
             [(_did, _cached, actual_out)] = self._debt_sums(debt_id)
             if debt.outstanding != actual_out:
                 drift.append((debt_id, debt.outstanding, actual_out))
+                savepoint = self._session.begin_nested()  # before the change: it flushes first
                 debt.outstanding = actual_out
-        self._session.flush()
+                self._flush_or_skip(savepoint, f"debt {debt_id}", debt)
         return drift
+
+    def _flush_or_skip(
+        self, savepoint: SessionTransaction, what: str, row: UsageGrantBalance | UsageDebt
+    ) -> None:
+        """Flush the repair staged on ``row`` since ``savepoint`` began; undo it if rejected.
+
+        A recomputed value can break a CHECK (held above remaining when a stray
+        hold entry exists). That row stays as it was, the error is logged naming
+        it, and the sweep goes on: one bad row must not leave the rest of the
+        cache drifted. Its drift is still reported by the caller.
+        """
+        try:
+            self._session.flush()
+        except IntegrityError:
+            savepoint.rollback()
+            self._session.expire(row)  # drop the rejected value, or the next autoflush retries it
+            logger.error(
+                "reconcile could not repair %s: the value recomputed from its entries "
+                "violates a constraint; left unrepaired",
+                what,
+                exc_info=True,
+            )
+        else:
+            savepoint.commit()
 
     def _owners_of(
         self, grant_ids: Sequence[uuid.UUID], debt_ids: Sequence[uuid.UUID]
