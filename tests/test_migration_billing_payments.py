@@ -152,7 +152,11 @@ def test_orm_declares_the_named_objects_of_the_new_tables() -> None:
         "fk_saved_cards_user_id_users",
         "uq_saved_cards_user_id",
     }
-    assert _orm_names("paymob_events") == {"pk_paymob_events", "uq_paymob_events_dedupe_key"}
+    assert _orm_names("paymob_events") == {
+        "pk_paymob_events",
+        "uq_paymob_events_dedupe_key",
+        "ix_paymob_events_dedupe_key_prefix",
+    }
     assert {
         "pk_payments",
         "fk_payments_payer_user_id_users",

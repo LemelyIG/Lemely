@@ -583,11 +583,16 @@ class BillingService:
         ).scalar_one_or_none()
         return inserted is not None
 
-    def _has_recorded_failure(self, txn_id: int) -> bool:
-        """True when a final failure (neither success nor pending) is stored for ``txn_id``.
+    def _has_recorded_final_state(self, txn_id: int) -> bool:
+        """True when any non-pending state (failure, success, void...) is stored for ``txn_id``.
 
         Paymob transaction ids are globally unique, so the stored events' dedupe keys
-        (``txn:<id>:s0p0...``, see ``transaction_dedupe_key``) answer this without a new column.
+        (``txn:<id>:s<success>p<pending>...``, see ``transaction_dedupe_key``) answer this
+        without a new column. ``s_p0`` matches every key whose pending flag is clear:
+        ``_`` is the one-character LIKE wildcard for the success flag, so a failure
+        (``s0p0``), a success carrying an error or a void (``s1p0``) all count. A
+        pending callback for such a transaction is stale. The prefix LIKE is served by
+        ``ix_paymob_events_dedupe_key_prefix`` (``text_pattern_ops``).
         """
         return (
             self._session.scalar(
@@ -595,7 +600,7 @@ class BillingService:
                     select(PaymobEvent.id)
                     .where(
                         PaymobEvent.kind == PaymobEventKind.transaction,
-                        PaymobEvent.dedupe_key.startswith(f"txn:{txn_id}:s0p0"),
+                        PaymobEvent.dedupe_key.like(f"txn:{txn_id}:s_p0%"),
                     )
                     .exists()
                 )
@@ -663,12 +668,13 @@ class BillingService:
         if (
             payment.status is PaymentStatus.failed
             and obj.get("pending") is True
-            and (txn_id == payment.paymob_txn_id or self._has_recorded_failure(txn_id))
+            and (txn_id == payment.paymob_txn_id or self._has_recorded_final_state(txn_id))
         ):
-            # A pending callback for a transaction that already failed is stale (delivered
-            # out of order). Reopening would strand the payment in ``pending``: the reconcile
-            # inquiry's failure dedupes against the event already recorded and never lands.
-            # Only a genuinely new attempt (no recorded failure for its id) reopens it.
+            # A pending callback for a transaction whose final state is already recorded is
+            # stale (delivered out of order). Reopening would strand the payment in
+            # ``pending``: the reconcile inquiry's final state dedupes against the event
+            # already recorded and never lands. Only a genuinely new attempt (no recorded
+            # final state for its id) reopens it.
             log.info(
                 "paymob_stale_pending_after_failure", payment_id=str(payment.id), txn_id=txn_id
             )

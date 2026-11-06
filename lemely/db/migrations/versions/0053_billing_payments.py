@@ -332,6 +332,14 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name=op.f("pk_paymob_events")),
         sa.UniqueConstraint("dedupe_key", name=op.f("uq_paymob_events_dedupe_key")),
     )
+    # Serves the prefix LIKE for a transaction's recorded final state; the unique index
+    # above cannot, under an ICU collation.
+    op.create_index(
+        "ix_paymob_events_dedupe_key_prefix",
+        "paymob_events",
+        ["dedupe_key"],
+        postgresql_ops={"dedupe_key": "text_pattern_ops"},
+    )
 
     # -- saved_cards ----------------------------------------------------------
     op.create_table(
@@ -371,6 +379,7 @@ def downgrade() -> None:
         op.f("fk_usage_grants_payment_id_payments"), "usage_grants", type_="foreignkey"
     )
     op.drop_table("saved_cards")
+    op.drop_index("ix_paymob_events_dedupe_key_prefix", table_name="paymob_events")
     op.drop_table("paymob_events")
     op.drop_table("payments")
     op.drop_table("credit_packs")

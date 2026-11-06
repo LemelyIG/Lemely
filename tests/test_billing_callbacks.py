@@ -641,6 +641,62 @@ def test_stale_pending_for_an_older_failed_transaction_does_not_reopen_it(
     assert _grants(sm, pid) == []
 
 
+def test_stale_pending_for_the_current_transaction_after_a_success_with_error_stays_failed(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The same-transaction clause: the failure's key is ``s1p0``, not ``s0p0``."""
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(
+        sm,
+        transaction_obj(merchant_order_id=str(pid), txn_id=1, success=True, error_occured=True),
+    )
+    assert _payment(sm, pid).status is PaymentStatus.failed
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), txn_id=1, success=False, pending=True))
+    payment = _payment(sm, pid)
+    assert payment.status is PaymentStatus.failed
+    assert payment.paymob_txn_id == 1
+    assert payment.next_reconcile_at is None
+    assert _grants(sm, pid) == []
+
+
+def test_stale_pending_for_an_older_transaction_that_failed_as_success_with_error(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Any recorded non-pending state makes a later pending stale, not only ``s0p0``."""
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(
+        sm,
+        transaction_obj(merchant_order_id=str(pid), txn_id=1, success=True, error_occured=True),
+    )
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), txn_id=2, success=False))
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), txn_id=1, success=False, pending=True))
+    payment = _payment(sm, pid)
+    assert payment.status is PaymentStatus.failed
+    assert payment.paymob_txn_id == 2
+    assert payment.next_reconcile_at is None
+    assert _grants(sm, pid) == []
+
+
+def test_stale_pending_for_a_transaction_that_was_voided_stays_failed(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(
+        sm,
+        transaction_obj(merchant_order_id=str(pid), txn_id=1, success=True, is_voided=True),
+    )
+    assert _payment(sm, pid).status is PaymentStatus.failed
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), txn_id=2, success=False))
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), txn_id=1, success=False, pending=True))
+    payment = _payment(sm, pid)
+    assert payment.status is PaymentStatus.failed
+    assert payment.paymob_txn_id == 2
+    assert payment.next_reconcile_at is None
+
+
 def test_pending_for_a_never_seen_transaction_reopens_after_two_failures(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:

@@ -322,6 +322,16 @@ class PaymobEvent(TimestampMixin, Base):
     """Every verified Paymob callback (and inquiry result), stored once (spec §4.2)."""
 
     __tablename__ = "paymob_events"
+    __table_args__ = (
+        # Backs the prefix LIKE that finds a transaction's recorded final state
+        # (``BillingService._has_recorded_final_state``); a plain btree cannot serve
+        # LIKE under an ICU collation.
+        sa.Index(
+            "ix_paymob_events_dedupe_key_prefix",
+            "dedupe_key",
+            postgresql_ops={"dedupe_key": "text_pattern_ops"},
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")
