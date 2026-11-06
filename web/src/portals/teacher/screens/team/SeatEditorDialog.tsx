@@ -5,18 +5,30 @@ import { Input } from "@/components/ui/input"
 import { Modal } from "@/components/ui/modal"
 import { Select } from "@/components/ui/select"
 import { formatBillingDate } from "@/lib/billingFormat"
-import { billingFailureMessage } from "@/lib/billingOutcome"
 import type { CapPeriod, MeteredAction, SeatRow } from "@/lib/billingTypes"
 import { useRemoveSeat, useSetMemberCap, useSetSeatScope } from "@/lib/hooks/useTeamApi"
-import { SEAT_ACTIONS, SEAT_ACTION_COPY } from "@/lib/teamModel"
+import {
+  SEAT_ACTIONS,
+  SEAT_ACTION_COPY,
+  capBody,
+  capChanged,
+  monthEndInstant,
+  monthEndLabel,
+  scopeBody,
+  scopeChanged,
+  seatActionsIn,
+  teamFailureMessage,
+} from "@/lib/teamModel"
 
 /*
  * A seat's scope and overflow cap (spec §2.2). Subjects route work per subject; actions say
  * what the seat pays for. Weekly study plans are off unless the teacher turns them on.
- * The scope is enforced server-side; this dialog only edits it.
+ * The scope is enforced server-side; this dialog only edits it. Only what changed is sent:
+ * scope first, then the cap, and if the cap fails the teacher is told the scope was saved.
  */
 
 const toggle = <T,>(list: T[], item: T, on: boolean) => (on ? [...new Set([...list, item])] : list.filter((x) => x !== item))
+const scopeKey = (b: { subjects: string[]; actions: string[] }) => JSON.stringify([[...b.subjects].sort(), [...b.actions].sort()])
 
 export function SeatEditorDialog({
   open,
@@ -32,11 +44,13 @@ export function SeatEditorDialog({
   const scope = useSetSeatScope()
   const cap = useSetMemberCap()
   const [subjectCodes, setSubjectCodes] = useState<string[]>(seat.scopeSubjects)
-  const [actions, setActions] = useState<MeteredAction[]>(seat.scopeActions)
+  const [actions, setActions] = useState<MeteredAction[]>(seatActionsIn(seat.scopeActions))
   const [overflow, setOverflow] = useState(seat.capUnits !== null)
   const [capUnits, setCapUnits] = useState(String(seat.capUnits ?? 500))
   const [capPeriod, setCapPeriod] = useState<CapPeriod>(seat.capPeriod)
-  const failure = scope.isError ? scope.error : cap.isError ? cap.error : null
+  // The scope that has already been saved by this dialog, so a retry after a failed cap does not resend it.
+  const [savedScope, setSavedScope] = useState<string | null>(null)
+  const capDraft = capBody(overflow, capUnits, capPeriod)
   // A subject the seat already covers stays editable even when none of the teacher's
   // classes teach it any more, so it can always be switched off.
   const choices = [
@@ -44,20 +58,31 @@ export function SeatEditorDialog({
     ...seat.scopeSubjects.filter((code) => !subjects.some((s) => s.code === code)).map((code) => ({ code, name: code })),
   ]
 
-  const save = () =>
-    scope.mutate(
-      { memberId: seat.memberId, body: { subjects: subjectCodes, actions } },
-      {
-        onSuccess: () =>
-          cap.mutate(
-            {
-              memberId: seat.memberId,
-              body: { capUnits: overflow ? Math.max(1, Math.floor(Number(capUnits) || 1)) : null, capPeriod },
-            },
-            { onSuccess: onClose },
-          ),
-      },
-    )
+  const save = () => {
+    if (!capDraft.ok) return
+    const sBody = scopeBody(subjectCodes, actions)
+    const saveCap = () => {
+      if (capChanged(seat, capDraft.body)) cap.mutate({ memberId: seat.memberId, body: capDraft.body }, { onSuccess: onClose })
+      else onClose()
+    }
+    if (savedScope === null ? scopeChanged(seat, sBody) : savedScope !== scopeKey(sBody)) {
+      scope.mutate(
+        { memberId: seat.memberId, body: sBody },
+        {
+          onSuccess: () => {
+            setSavedScope(scopeKey(sBody))
+            saveCap()
+          },
+        },
+      )
+    } else saveCap()
+  }
+
+  const failure = scope.isError
+    ? teamFailureMessage(scope.error, "save the subjects and actions")
+    : cap.isError
+      ? `${savedScope !== null ? "Your subjects and actions were saved, but the credit limit wasn't. " : ""}${teamFailureMessage(cap.error, "save the credit limit")}`
+      : null
 
   return (
     <Modal
@@ -67,7 +92,9 @@ export function SeatEditorDialog({
       footer={
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" loading={scope.isPending || cap.isPending} onClick={save}>Save seat</Button>
+          <Button variant="primary" loading={scope.isPending || cap.isPending} disabled={!capDraft.ok} onClick={save}>
+            Save seat
+          </Button>
         </div>
       }
     >
@@ -121,7 +148,15 @@ export function SeatEditorDialog({
           />
           {overflow ? (
             <div className="grid gap-3 sm:grid-cols-2">
-              <Input label="Up to (credits)" type="number" inputMode="numeric" min={1} value={capUnits} onChange={(e) => setCapUnits(e.target.value)} />
+              <Input
+                label="Up to (credits)"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                error={capDraft.ok ? undefined : capDraft.error}
+                value={capUnits}
+                onChange={(e) => setCapUnits(e.target.value)}
+              />
               <Select label="Counted" value={capPeriod} onChange={(e) => setCapPeriod(e.target.value === "total" ? "total" : "month")}>
                 <option value="month">per month</option>
                 <option value="total">in total</option>
@@ -131,18 +166,15 @@ export function SeatEditorDialog({
             <p className="m-0 text-body-sm text-on-surface-variant">No overflow. Their own plan or credits pay once the seat's allowance is used.</p>
           )}
         </fieldset>
-        {failure ? <p role="alert" className="m-0 text-body-sm text-error">{billingFailureMessage(failure, "save this seat")}</p> : null}
+        {failure ? <p role="alert" className="m-0 text-body-sm text-error">{failure}</p> : null}
       </div>
     </Modal>
   )
 }
 
-function monthEnd(now: Date): string {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59)).toISOString()
-}
-
 export function RemoveSeatDialog({ open, onClose, seat }: { open: boolean; onClose: () => void; seat: SeatRow }) {
   const remove = useRemoveSeat()
+  const now = new Date()
   return (
     <Modal
       open={open}
@@ -160,10 +192,10 @@ export function RemoveSeatDialog({ open, onClose, seat }: { open: boolean; onClo
     >
       <div className="flex flex-col gap-3">
         <p className="m-0 text-body-md text-on-surface">
-          {seat.studentName} keeps the seat until {formatBillingDate(monthEnd(new Date()))}, then it frees up. Their current monthly
-          allowance runs until it expires.
+          {seat.studentName} keeps the seat until {monthEndLabel(now)}, then it frees up on {formatBillingDate(monthEndInstant(now))}.
+          Their current monthly allowance runs until it expires.
         </p>
-        {remove.isError ? <p role="alert" className="m-0 text-body-sm text-error">{billingFailureMessage(remove.error, "remove this seat")}</p> : null}
+        {remove.isError ? <p role="alert" className="m-0 text-body-sm text-error">{teamFailureMessage(remove.error, "remove this seat")}</p> : null}
       </div>
     </Modal>
   )

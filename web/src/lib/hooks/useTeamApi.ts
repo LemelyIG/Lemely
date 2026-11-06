@@ -1,5 +1,12 @@
-import { useMutation, useQuery, useQueryClient, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query"
-import { request } from "@/lib/api"
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+  type UseMutationResult,
+  type UseQueryResult,
+} from "@tanstack/react-query"
+import { ApiError, request } from "@/lib/api"
 import { toTeamView } from "@/lib/billingAdapters"
 import type {
   AssistantInviteCreate,
@@ -49,9 +56,19 @@ export const teamApi = {
 
 export const teamKeys = { team: ["team"] as const }
 
+/** What every team write refreshes. Seat counts, scope and caps are read together on one screen. */
+export const TEAM_WRITE_KEYS = [teamKeys.team] as const
+
+/** Call after anything that changes the team: a seat write, or a seat purchase settling. */
+export function invalidateTeam(queryClient: Pick<QueryClient, "invalidateQueries">): void {
+  for (const queryKey of TEAM_WRITE_KEYS) void queryClient.invalidateQueries({ queryKey })
+}
+
 export function useTeam(): UseQueryResult<TeamView, Error> {
   return useQuery({
     queryKey: teamKeys.team,
+    // A refusal (an assistant opening the lead teacher's page) will not change on a retry.
+    retry: (failures, error) => failures < 1 && !(error instanceof ApiError && error.status >= 400 && error.status < 500),
     queryFn: async () => {
       const [seats, capacity, assistants, invites, summary, classes] = await Promise.all([
         teamApi.seats(),
@@ -68,7 +85,7 @@ export function useTeam(): UseQueryResult<TeamView, Error> {
 
 function useTeamWrite<TVars, TData>(fn: (vars: TVars) => Promise<TData>): UseMutationResult<TData, Error, TVars> {
   const qc = useQueryClient()
-  return useMutation({ mutationFn: fn, onSuccess: () => qc.invalidateQueries({ queryKey: teamKeys.team }) })
+  return useMutation({ mutationFn: fn, onSuccess: () => invalidateTeam(qc) })
 }
 
 export const useSetSeatScope = () =>

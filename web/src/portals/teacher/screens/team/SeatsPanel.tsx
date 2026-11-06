@@ -6,7 +6,7 @@ import { ProgressBar } from "@/components/ui/progress-bar"
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table"
 import { formatBillingDate, formatPercent } from "@/lib/billingFormat"
 import type { SeatRow, TeamView } from "@/lib/billingTypes"
-import { scopeSummary, seatCapText, seatCapacityModel, seatStatusText } from "@/lib/teamModel"
+import { removableExtraSeats, scopeSummary, seatCapParts, seatCapacityModel, seatStatusText } from "@/lib/teamModel"
 import { AddSeatsDialog, ReduceSeatsDialog } from "./SeatCountDialogs"
 import { RemoveSeatDialog, SeatEditorDialog } from "./SeatEditorDialog"
 
@@ -24,6 +24,17 @@ function SeatUse({ seat }: { seat: SeatRow }) {
       />
       <span className="text-data-sm text-on-surface">{formatPercent(seat.meterFraction)}</span>
     </div>
+  )
+}
+
+/** The overflow line, with the credit figures in the data face. */
+function SeatCap({ seat }: { seat: SeatRow }) {
+  const p = seatCapParts(seat)
+  if (!p) return <>No overflow</>
+  return (
+    <>
+      Up to <span className="text-data-sm">{p.limit}</span> of your credits {p.period} (<span className="text-data-sm">{p.used}</span> used)
+    </>
   )
 }
 
@@ -62,8 +73,13 @@ export function SeatsPanel({ team }: { team: TeamView }) {
   const cap = seatCapacityModel(team)
   const [adding, setAdding] = useState(false)
   const [reducing, setReducing] = useState(false)
-  const [editing, setEditing] = useState<SeatRow | null>(null)
-  const [removing, setRemoving] = useState<SeatRow | null>(null)
+  // Held by id so the dialog always reads the current row after the list refreshes.
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [removingId, setRemovingId] = useState<string | null>(null)
+  const editing = team.seats.find((x) => x.memberId === editingId) ?? null
+  const removing = team.seats.find((x) => x.memberId === removingId) ?? null
+  const removable = removableExtraSeats(team)
+  const reductionPending = team.pendingExtraSeats !== null
   const full = cap.capacity > 0 && cap.free === 0
   return (
     <section aria-labelledby="seats-heading" className="flex flex-col gap-4">
@@ -91,7 +107,7 @@ export function SeatsPanel({ team }: { team: TeamView }) {
           ) : null}
           <div className="flex flex-wrap gap-2">
             <Button variant="primary" onClick={() => setAdding(true)} disabled={!team.planActive || team.subscriptionId === null}>Add seats</Button>
-            {team.extraSeats > 0 ? <Button variant="ghost" onClick={() => setReducing(true)}>Remove extra seats</Button> : null}
+            {team.extraSeats > 0 && !reductionPending ? <Button variant="ghost" onClick={() => setReducing(true)}>Remove extra seats</Button> : null}
           </div>
         </CardBody>
       </Card>
@@ -120,9 +136,9 @@ export function SeatsPanel({ team }: { team: TeamView }) {
                     <TD className="whitespace-nowrap">{seat.studentName}</TD>
                     <TD>{scopeSummary(seat, team.subjects)}</TD>
                     <TD><SeatUse seat={seat} /></TD>
-                    <TD>{seatCapText(seat)}</TD>
+                    <TD><SeatCap seat={seat} /></TD>
                     <TD className="whitespace-nowrap">{seatStatusText(seat)}</TD>
-                    <TD><SeatActions seat={seat} onEdit={() => setEditing(seat)} onRemove={() => setRemoving(seat)} /></TD>
+                    <TD><SeatActions seat={seat} onEdit={() => setEditingId(seat.memberId)} onRemove={() => setRemovingId(seat.memberId)} /></TD>
                   </TR>
                 ))}
               </TBody>
@@ -143,8 +159,8 @@ export function SeatsPanel({ team }: { team: TeamView }) {
                   <span className="text-label text-on-surface-variant">This month</span>
                   <SeatUse seat={seat} />
                 </div>
-                <p className="m-0 text-body-sm text-on-surface-variant">{seatCapText(seat)}</p>
-                <SeatActions stacked seat={seat} onEdit={() => setEditing(seat)} onRemove={() => setRemoving(seat)} />
+                <p className="m-0 text-body-sm text-on-surface-variant"><SeatCap seat={seat} /></p>
+                <SeatActions stacked seat={seat} onEdit={() => setEditingId(seat.memberId)} onRemove={() => setRemovingId(seat.memberId)} />
               </li>
             ))}
           </ul>
@@ -160,10 +176,16 @@ export function SeatsPanel({ team }: { team: TeamView }) {
         />
       ) : null}
       {team.subscriptionId && reducing ? (
-        <ReduceSeatsDialog open onClose={() => setReducing(false)} subscriptionId={team.subscriptionId} extraSeats={team.extraSeats} />
+        <ReduceSeatsDialog
+          open
+          onClose={() => setReducing(false)}
+          subscriptionId={team.subscriptionId}
+          extraSeats={team.extraSeats}
+          removable={removable}
+        />
       ) : null}
-      {editing ? <SeatEditorDialog key={editing.memberId} open onClose={() => setEditing(null)} seat={editing} subjects={team.subjects} /> : null}
-      {removing ? <RemoveSeatDialog key={removing.memberId} open onClose={() => setRemoving(null)} seat={removing} /> : null}
+      {editing ? <SeatEditorDialog key={editing.memberId} open onClose={() => setEditingId(null)} seat={editing} subjects={team.subjects} /> : null}
+      {removing ? <RemoveSeatDialog key={removing.memberId} open onClose={() => setRemovingId(null)} seat={removing} /> : null}
     </section>
   )
 }

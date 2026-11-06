@@ -1,6 +1,7 @@
 import { ApiError } from "@/lib/api"
 import { PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
+import { ErrorState } from "@/components/ui/state-views"
 import { useTeam } from "@/lib/hooks/useTeamApi"
 import { SeatsPanel } from "./SeatsPanel"
 
@@ -16,17 +17,18 @@ export function Team() {
   return (
     <div className="flex flex-col gap-6">
       <h1 className="m-0 text-display-md text-on-surface">Seats and assistants</h1>
-      <QueryState
-        query={team}
-        skeleton={<PageHeaderSkeleton />}
-        error={{
-          heading: isForbidden(team.error) ? "You can't manage seats" : "Couldn't load your team",
-          body: (e) =>
-            isForbidden(e) ? "Seats and assistants are managed by the lead teacher." : "Check your connection and try again.",
-        }}
-      >
-        {(t) => <SeatsPanel team={t} />}
-      </QueryState>
+      {team.status === "error" && isForbidden(team.error) ? (
+        // Retrying cannot change who the teacher is, so this one carries no "Try again".
+        <ErrorState heading="You can't manage seats" body="Seats and assistants are managed by the lead teacher." />
+      ) : (
+        <QueryState
+          query={team}
+          skeleton={<PageHeaderSkeleton />}
+          error={{ heading: "Couldn't load your team", body: "Check your connection and try again." }}
+        >
+          {(t) => <SeatsPanel team={t} />}
+        </QueryState>
+      )}
     </div>
   )
 }
