@@ -213,7 +213,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # tests/test_web_tutoring_authz_parent_sharing.py).
     ("GET", "/api/parent/children/{child_id}/tutor-grants"): PARENT,
     ("GET", "/api/parent/children/{child_id}/tutor-access-log"): PARENT,
-    # ── PUBLIC (16) ────────────────────
+    # ── PUBLIC (17) ────────────────────
     ("POST", "/api/auth/login"): PUBLIC,
     # spec §4: the child-issued parent signup, replacing the retired
     # `/api/auth/otp/*` pair. Public by the same necessity as `/auth/signup`
@@ -258,6 +258,9 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/public/tutors"): PUBLIC,
     ("GET", "/api/public/tutors/{tutor_id}"): PUBLIC,
     ("GET", "/api/public/tutoring-areas"): PUBLIC,
+    # Billing pricing page: active tiers and sellable packs, public fields only (no
+    # ids, Paymob plan or allowances), IP rate-limited (tests/test_web_billing.py).
+    ("GET", "/api/billing/public-catalogue"): PUBLIC,
     # ── STUDENT_OR_PARENT (6) ────────────────────
     # Tutoring SP1-SP2 (SPEC §c.1, row 10). SP2 also needs a verified email.
     ("GET", "/api/tutors"): STUDENT_OR_PARENT,
@@ -276,9 +279,19 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/tutoring/blocks"): STUDENT_OR_TEACHER,
     ("POST", "/api/tutoring/blocks"): STUDENT_OR_TEACHER,
     ("DELETE", "/api/tutoring/blocks/{counterpart_id}"): STUDENT_OR_TEACHER,
-    # ── TUTORING_PARTY (1) ────────────────────
+    # ── TUTORING_PARTY (6) ────────────────────
     # Tutoring R1 (SPEC §c.1): target visibility (O12, O19) is object-level.
     ("POST", "/api/tutoring/reports"): TUTORING_PARTY,
+    # Billing (spec 2026-11-02 §5.5, §7): the same three roles buy and pay.
+    # Role half only. Object-level rules: a parent buys only for a linked child,
+    # a payment is visible to its payer or beneficiary, receipts are the
+    # caller's own payments (tests/test_web_billing.py IDOR cases).
+    ("GET", "/api/billing/catalogue"): TUTORING_PARTY,
+    ("POST", "/api/billing/checkout/pack"): TUTORING_PARTY,
+    ("GET", "/api/billing/payments/{payment_id}"): TUTORING_PARTY,
+    ("GET", "/api/billing/receipts"): TUTORING_PARTY,
+    # Index R3: the caller's own saved cards, masked only.
+    ("GET", "/api/billing/cards"): TUTORING_PARTY,
     # ── AUTH_ANY (19) ────────────────────
     ("GET", "/api/me/devices"): AUTH_ANY,
     ("DELETE", "/api/me/devices/{device_id}"): AUTH_ANY,
@@ -701,8 +714,8 @@ def test_the_sweeps_actually_cover_the_surface() -> None:
     # routes, plus issue #10's verify-email, password-reset/request,
     # password-reset/confirm) + /api/health + invite preview + PR 1 chunk C's
     # client-error sink + the three public tutoring routes (P1 directory, P2
-    # card, P3 areas) + the landing page contact form.
-    assert len(_NON_PUBLIC) == len(ROUTES) - 16
+    # card, P3 areas) + the landing page contact form + the public pricing catalogue.
+    assert len(_NON_PUBLIC) == len(ROUTES) - 17
     assert len(_ROLE_GATED) > 300
     assert len(_REPRESENTATIVE) == 9
     assert len(_REAL_TOKEN_CASES) >= 20

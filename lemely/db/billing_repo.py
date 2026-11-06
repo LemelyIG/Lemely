@@ -347,6 +347,17 @@ def receipts_for(session: Session, payer_user_id: uuid.UUID) -> list[Payment]:
     )
 
 
+def saved_cards_for(session: Session, user_id: uuid.UUID) -> list[SavedCard]:
+    """The user's own active saved cards, newest first (index R3; masked fields only leave)."""
+    return list(
+        session.scalars(
+            select(SavedCard)
+            .where(SavedCard.user_id == user_id, SavedCard.is_active.is_(True))
+            .order_by(SavedCard.created_at.desc(), SavedCard.id)
+        ).all()
+    )
+
+
 def describe_payment(session: Session, payment: Payment) -> str:
     if payment.purpose is PaymentPurpose.credit_pack and payment.credit_pack_id is not None:
         pack = session.get(CreditPack, payment.credit_pack_id)
@@ -1062,5 +1073,6 @@ __all__ = [
     "payment_for_viewer",
     "receipts_for",
     "register_paid_handler",
+    "saved_cards_for",
     "transaction_dedupe_key",
 ]
