@@ -23,7 +23,8 @@ const teachers: PublicCatalogue = {
   packs: [],
 }
 
-const s = vi.hoisted(() => ({ asked: [] as string[], result: (() => null) as (audience: string) => unknown }))
+const s = vi.hoisted(() => ({ asked: [] as string[], session: null as unknown, result: (() => null) as (audience: string) => unknown }))
+vi.mock("@/lib/auth/AuthContext", () => ({ useAuth: () => ({ session: s.session }) }))
 vi.mock("@/lib/hooks/useBillingApi", () => ({
   usePublicCatalogue: (audience: string) => {
     s.asked.push(audience)
@@ -39,6 +40,7 @@ const open = (path = "/pricing") => render(h(MemoryRouter, { initialEntries: [pa
 describe("Pricing toggles", () => {
   beforeEach(() => {
     s.asked = []
+    s.session = null
   })
 
   it("starts on students monthly and switches audience and interval", async () => {
@@ -110,11 +112,51 @@ describe("Pricing rate limit countdown", () => {
     expect(refetch).toHaveBeenCalledTimes(1)
   })
 
-  it("announces the failure once and keeps the ticking sentence out of the alert", () => {
-    const failed = errorQuery(new ApiError(429, "x", undefined, 20))
+  it("announces the reason and initial wait once, then only when Try again unlocks", () => {
+    const failed = errorQuery(new ApiError(429, "x", undefined, 3))
     s.result = () => failed
     open()
-    expect(screen.getByRole("alert").textContent).toContain("Couldn't load prices")
-    expect(screen.getByRole("alert").textContent).not.toContain("second")
+    // The alert (read once) states the reason and the starting wait; it never ticks.
+    expect(screen.getByRole("alert").textContent).toBe("Couldn't load prices. Too many requests. Try again in 3 seconds.")
+    // The status is silent until the lock lifts; the visible timer is the only thing that ticks.
+    const status = screen.getByRole("status")
+    expect(status.textContent).toBe("")
+    act(() => {
+      vi.advanceTimersByTime(1000)
+    })
+    expect(screen.getByRole("alert").textContent).toContain("in 3 seconds")
+    expect(status.textContent).toBe("")
+    expect(screen.getByRole("timer").textContent).toContain("in 2 seconds")
+    act(() => {
+      vi.advanceTimersByTime(2500)
+    })
+    expect(screen.getByRole("status").textContent).toBe("You can try again now.")
+    expect(screen.getByRole("alert").textContent).toContain("in 3 seconds")
+  })
+})
+
+describe("Pricing links by session", () => {
+  beforeEach(() => {
+    s.asked = []
+    s.result = () => okQuery(teachers)
+  })
+
+  it("signed out: Choose plan goes through sign-in with next, and sign-up links are shown", () => {
+    s.session = null
+    open("/pricing?audience=teacher")
+    const next = encodeURIComponent("/teacher/billing/plans?plan=teacher_pro_m&interval=month")
+    expect(screen.getByRole("link", { name: "Choose Teacher Pro" }).getAttribute("href")).toBe(`/login?next=${next}`)
+    expect(screen.getByRole("link", { name: /New to Lemely\? Sign up/ }).getAttribute("href")).toBe(`/signup/teacher?next=${next}`)
+    expect(screen.getByRole("link", { name: "Create a teacher account" })).toBeTruthy()
+  })
+
+  it("signed in: Choose plan goes straight to the plans page and the sign-up links are gone", () => {
+    s.session = { role: "teacher" }
+    open("/pricing?audience=teacher")
+    expect(screen.getByRole("link", { name: "Choose Teacher Pro" }).getAttribute("href")).toBe(
+      "/teacher/billing/plans?plan=teacher_pro_m&interval=month",
+    )
+    expect(screen.queryByRole("link", { name: /Sign up/ })).toBeNull()
+    expect(screen.queryByRole("link", { name: /Create a teacher account/ })).toBeNull()
   })
 })

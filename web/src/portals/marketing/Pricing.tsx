@@ -7,20 +7,32 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 import { CardGridSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
-import { EmptyState, ErrorState, OfflineState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { useAuth } from "@/lib/auth/AuthContext"
 import { formatCredits, formatMoney, intervalLabel } from "@/lib/billingFormat"
 import type { Audience, BillingInterval } from "@/lib/billingTypes"
 import { usePublicCatalogue } from "@/lib/hooks/useBillingApi"
-import { isOfflineFailure } from "@/lib/offlineFailure"
-import { chooseHref, packsHref, planPath, publicCatalogueFailure, rateLimitSeconds, rateLimitSentence, signupHref } from "@/lib/pricingModel"
+import {
+  chooseTarget,
+  extraSeatsLine,
+  packsTarget,
+  planPath,
+  publicCatalogueBody,
+  rateLimitSeconds,
+  rateLimitSentence,
+  signupHref,
+  tiersForInterval,
+} from "@/lib/pricingModel"
 import { MarketingFrame } from "@/portals/marketing"
 
 /*
  * `/pricing`: public prices from `GET /billing/public-catalogue` (plan 02, no auth). Nothing here
- * is a hard-coded number (PRODUCT.md: no fabricated pricing). Choosing a plan goes through sign-in
- * to the signed-in plans page, which preselects the tier by its code, because the public
- * catalogue carries no ids and this page never starts a checkout.
+ * is a hard-coded number (PRODUCT.md: no fabricated pricing). Choosing a plan goes to the
+ * signed-in plans page, which preselects the tier by its code, because the public catalogue
+ * carries no ids and this page never starts a checkout. A signed-out visitor goes through
+ * sign-in or sign-up first (both carry `next`); a signed-in one goes straight there, because
+ * `/login` drops `next` for an existing session.
  *
  * Persuade mode, but the page's job is to be believed: prices, seats and one clear way forward.
  * No eyebrows, no "most popular" badge (nothing in the catalogue says which tier is), and no
@@ -51,15 +63,22 @@ function useCountdown(seconds: number, resetKey: unknown): number {
 }
 
 /**
- * A 429 with a usable `Retry-After`. The failure itself is announced once (`role="alert"`); the
- * ticking sentence is a `timer`, which assistive tech does not re-read every second, and Try again
- * unlocks when it reaches zero so a visitor cannot hammer a route that just told them to wait.
+ * A 429 with a usable `Retry-After`. Screen readers hear it in two coarse steps, never per tick:
+ * the alert states the reason and the initial wait once, and a visually hidden status speaks again
+ * only when Try again unlocks. The visible countdown is a `timer` (silent by default), and Try
+ * again stays locked until it reaches zero so a visitor cannot hammer a route that said wait.
  */
 function RateLimited({ seconds, error, onRetry, retrying }: { seconds: number; error: unknown; onRetry: () => void; retrying: boolean }) {
   const left = useCountdown(seconds, error)
   return (
     <div className="flex max-w-lg flex-col gap-3 rounded-lg border border-outline-variant bg-surface-container-low p-5">
-      <p role="alert" className="m-0 text-body-lg font-medium text-on-surface">
+      <p role="alert" className="sr-only">
+        Couldn&apos;t load prices. {rateLimitSentence(seconds)}
+      </p>
+      <p role="status" className="sr-only">
+        {left === 0 ? rateLimitSentence(0) : ""}
+      </p>
+      <p aria-hidden="true" className="m-0 text-body-lg font-medium text-on-surface">
         Couldn&apos;t load prices
       </p>
       <p role="timer" className="m-0 text-body-md text-on-surface-variant">
@@ -74,27 +93,13 @@ function RateLimited({ seconds, error, onRetry, retrying }: { seconds: number; e
   )
 }
 
-/**
- * Every failed load. Hand-rolled over `QueryState`'s error branch for one reason: its state views
- * carry a mono "Error" kicker above the heading, and this page takes no eyebrows. `QueryState`
- * still renders the pending, empty and success cases, and its own error branch for a 204.
- */
-function PriceFailure({ error, onRetry, retrying }: { error: unknown; onRetry: () => void; retrying: boolean }) {
-  const wait = rateLimitSeconds(error)
-  if (wait !== null) return <RateLimited seconds={wait} error={error} onRetry={onRetry} retrying={retrying} />
-  const action = { label: "Try again", onClick: onRetry }
-  return isOfflineFailure(error) ? (
-    <OfflineState heading="You're offline" body={publicCatalogueFailure(error)} kicker={null} action={action} />
-  ) : (
-    <ErrorState heading="Prices unavailable" body={publicCatalogueFailure(error)} kicker={null} action={action} />
-  )
-}
-
 export function Pricing() {
   const [params] = useSearchParams()
   const [audience, setAudience] = useState<Audience>(params.get("audience") === "teacher" ? "teacher" : "student")
   const [interval, setInterval] = useState<BillingInterval>("month")
   const catalogue = usePublicCatalogue(audience)
+  const signedIn = useAuth().session !== null
+  const wait = catalogue.status === "error" ? rateLimitSeconds(catalogue.error) : null
 
   return (
     <MarketingFrame>
@@ -110,18 +115,18 @@ export function Pricing() {
             <ToggleGroupItem value="year">Yearly</ToggleGroupItem>
           </ToggleGroup>
         </div>
-        {catalogue.status === "error" ? (
-          <PriceFailure error={catalogue.error} onRetry={() => void catalogue.refetch()} retrying={catalogue.isFetching} />
+        {wait !== null ? (
+          <RateLimited seconds={wait} error={catalogue.error} onRetry={() => void catalogue.refetch()} retrying={catalogue.isFetching} />
         ) : (
           <QueryState
             query={catalogue}
             skeleton={<CardGridSkeleton count={3} />}
-            error={{ heading: "Prices unavailable", body: publicCatalogueFailure }}
+            error={{ heading: "Couldn't load prices", body: publicCatalogueBody, kicker: null }}
             isEmpty={(c) => c.tiers.length === 0 && c.packs.length === 0}
             empty={<EmptyState heading="No plans are on sale right now." body="Check back soon." kicker={null} />}
           >
             {(c) => {
-              const tiers = c.tiers.filter((t) => t.interval === interval).sort((a, b) => a.priceMinor - b.priceMinor)
+              const tiers = tiersForInterval(c.tiers, interval)
               return (
                 <>
                   <section aria-labelledby="pricing-plans" className="flex flex-col gap-4">
@@ -139,7 +144,7 @@ export function Pricing() {
                               {tier.includedSeats !== null ? <p className="m-0 text-body-sm text-on-surface">{tier.includedSeats} student seats included</p> : null}
                               {tier.extraSeatPriceMinor !== null ? (
                                 <p className="m-0 text-body-sm text-on-surface-variant">
-                                  Extra seats {formatMoney(tier.extraSeatPriceMinor, tier.currency)} each {intervalLabel(tier.interval)}
+                                  {extraSeatsLine(tier.extraSeatPriceMinor, tier.currency, tier.interval)}
                                 </p>
                               ) : null}
                               <ul className="m-0 flex flex-1 list-none flex-col gap-2 p-0 text-body-sm text-on-surface">
@@ -150,10 +155,12 @@ export function Pricing() {
                                   </li>
                                 ))}
                               </ul>
-                              <Link to={chooseHref(tier)} className={buttonVariants({ variant: "primary" })}>Choose {tier.name}</Link>
-                              <Link to={signupHref(audience, planPath(tier))} className={TEXT_LINK}>
-                                New to Lemely? Sign up<span className="sr-only"> for {tier.name}</span>
-                              </Link>
+                              <Link to={chooseTarget(tier, signedIn)} className={buttonVariants({ variant: "primary" })}>Choose {tier.name}</Link>
+                              {signedIn ? null : (
+                                <Link to={signupHref(audience, planPath(tier))} className={TEXT_LINK}>
+                                  New to Lemely? Sign up<span className="sr-only"> for {tier.name}</span>
+                                </Link>
+                              )}
                             </CardBody>
                           </Card>
                         </li>
@@ -162,10 +169,12 @@ export function Pricing() {
                     {tiers.length === 0 ? (
                       <p className="m-0 text-body-sm text-on-surface-variant">No {interval === "month" ? "monthly" : "yearly"} plans right now.</p>
                     ) : null}
-                    <p className="m-0 text-body-sm text-on-surface-variant">
-                      New to Lemely?{" "}
-                      <Link to={signupHref(audience)} className={TEXT_LINK}>Create a {audience} account</Link>
-                    </p>
+                    {signedIn ? null : (
+                      <p className="m-0 text-body-sm text-on-surface-variant">
+                        New to Lemely?{" "}
+                        <Link to={signupHref(audience)} className={TEXT_LINK}>Create a {audience} account</Link>
+                      </p>
+                    )}
                   </section>
                   <section id="packs" aria-labelledby="pricing-packs" className="flex scroll-mt-24 flex-col gap-4">
                     <h2 id="pricing-packs" className="pricing-section-title text-on-surface">Credit packs</h2>
@@ -184,8 +193,8 @@ export function Pricing() {
                             </div>
                             <div className="flex items-center gap-4">
                               <p className="m-0 text-data-md text-on-surface">{formatMoney(pack.priceMinor, pack.currency)}</p>
-                              <Link to={packsHref(audience)} className={TEXT_LINK}>
-                                Sign in to buy<span className="sr-only"> {pack.name}</span>
+                              <Link to={packsTarget(audience, signedIn)} className={TEXT_LINK}>
+                                {signedIn ? "Choose pack" : "Sign in to buy"}<span className="sr-only"> {pack.name}</span>
                               </Link>
                             </div>
                           </li>

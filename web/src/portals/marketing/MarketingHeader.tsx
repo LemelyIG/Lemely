@@ -39,6 +39,7 @@ export function MarketingHeader() {
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState('')
   const sectionTo = useSectionTo()
+  const onPricing = useLocation().pathname === '/pricing'
   const progress = useRef<HTMLDivElement>(null)
   useEffect(() => {
     let frame = 0
@@ -96,6 +97,9 @@ export function MarketingHeader() {
               {x.label}
             </Link>
           ))}
+          <Link to="/pricing" aria-current={onPricing ? 'page' : undefined}>
+            Pricing
+          </Link>
         </nav>
         <div className="brand-nav-actions">
           <a
@@ -152,6 +156,11 @@ export function MarketingHeader() {
                     </Link>
                   </SheetClose>
                 ))}
+                <SheetClose asChild>
+                  <Link to="/pricing" aria-current={onPricing ? 'page' : undefined}>
+                    Pricing
+                  </Link>
+                </SheetClose>
                 <SheetClose asChild>
                   <a href={marketingLinks.demo} aria-label={DEMO_LABEL}>
                     Book a Demo

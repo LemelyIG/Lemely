@@ -28,7 +28,7 @@ import {
   useStartPackCheckout,
   useStartSubscriptionCheckout,
 } from "@/lib/hooks/useBillingApi"
-import { planPreselect } from "@/lib/pricingModel"
+import { extraSeatsLine, planPreselect } from "@/lib/pricingModel"
 
 /*
  * Plans and credit packs for one audience (spec §2.1, §2.2). Allowance sizes are hidden by
@@ -59,7 +59,11 @@ export function PlansView(props: PlansViewProps) {
   // The public pricing page links here with `?plan=<code>&interval=`; an unknown code matches no tier.
   const [params] = useSearchParams()
   const preselect = planPreselect(params)
-  const [interval, setInterval] = useState<BillingInterval>(() => preselect.interval ?? initialInterval(currentInterval))
+  // The visitor's own toggle wins; until then the preselected tier's interval (so `?plan=` alone
+  // still opens on the right interval), then the URL's, then the held plan's.
+  const [chosen, setChosen] = useState<BillingInterval | null>(null)
+  const preselected = preselect.code ? catalogue.data?.tiers.find((t) => t.code === preselect.code) : undefined
+  const interval: BillingInterval = chosen ?? preselected?.interval ?? preselect.interval ?? initialInterval(currentInterval)
   const [extraSeats, setExtraSeats] = useState(0)
   const [unsafe, setUnsafe] = useState(false)
   // After a successful start the payer is on their way to Paymob; keep the buttons off until the
@@ -158,7 +162,7 @@ export function PlansView(props: PlansViewProps) {
                   <ToggleGroup
                     type="single"
                     value={interval}
-                    onValueChange={(v) => (v === "month" || v === "year" ? setInterval(v) : undefined)}
+                    onValueChange={(v) => (v === "month" || v === "year" ? setChosen(v) : undefined)}
                     aria-label="Billing interval"
                   >
                     <ToggleGroupItem value="month">Monthly</ToggleGroupItem>
@@ -198,7 +202,7 @@ export function PlansView(props: PlansViewProps) {
                           ) : null}
                           {tier.extraSeatPriceMinor !== null ? (
                             <p className="m-0 text-body-sm text-on-surface-variant">
-                              Extra seats {formatMoney(tier.extraSeatPriceMinor, tier.currency)} each {intervalLabel(tier.interval)}
+                              {extraSeatsLine(tier.extraSeatPriceMinor, tier.currency, tier.interval)}
                             </p>
                           ) : null}
                           <ul className="m-0 flex flex-1 list-none flex-col gap-2 p-0 text-body-sm text-on-surface">

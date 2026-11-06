@@ -93,7 +93,7 @@ describe("PlansView", () => {
     s.catalogue = okQuery(fx.teacherCatalogue)
     const html = view({ audience: "teacher", paths: billingPaths({ role: "teacher" }) })
     expect(html).toContain("20 student seats included")
-    expect(html).toMatch(/Extra seats EGP\s30\.00 each per month/)
+    expect(html).toMatch(/Extra seats EGP\s30\.00 each, billed per month/)
     expect(html).toContain('name="extraSeats"')
   })
 
@@ -117,6 +117,20 @@ describe("PlansView", () => {
     expect(html).toMatch(/EGP\s2,500\.00/)
     expect(html).toContain('data-preselected="true"')
     expect(html).toContain("Selected on the pricing page")
+  })
+
+  it("derives the interval from the matched tier when ?plan= has no valid interval", () => {
+    s.catalogue = okQuery({ ...fx.studentCatalogue, tiers: [fx.studentMonthly, fx.studentYearly] })
+    const props = { audience: "student", beneficiaryId: null, paths, currentTierId: null, hasLiveSubscription: false, canManage: true, managedByName: null } as const
+    for (const query of ["plan=student_plus_y", "plan=student_plus_y&interval=week"]) {
+      const html = renderStatic(h(PlansView, props), `/student/billing/plans?${query}`)
+      expect(html).toMatch(/EGP\s2,500\.00/)
+      expect(html).toContain('data-preselected="true"')
+    }
+    // The matched tier's own interval beats a contradicting one in the URL, so the marked card is visible.
+    const clash = renderStatic(h(PlansView, props), "/student/billing/plans?plan=student_plus_y&interval=month")
+    expect(clash).toMatch(/EGP\s2,500\.00/)
+    expect(clash).toContain('data-preselected="true"')
   })
 
   it("ignores an unknown plan code and a bad interval", () => {

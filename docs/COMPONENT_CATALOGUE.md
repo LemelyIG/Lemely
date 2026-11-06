@@ -106,6 +106,10 @@ needsReview })` (per-paper aggregate).
 - `error` defaults to the `warn` (amber) tone rather than `err` (red), per
   PRODUCT.md's guidance to avoid red-heavy error states for exam-stressed
   students; `tone` can override to `err` where genuinely warranted.
+- `kicker?: string | null` is the mono label above the heading ("Error",
+  "Offline", "Empty"). Omit for the per-kind default; `null` drops it, for a
+  page that takes no eyebrows. `QueryState`'s `error.kicker` forwards it to the
+  error, offline and no-data branches.
 
 ## C-12 — Role switcher
 `role-switcher.tsx` — `RoleSwitcher({ roles, currentRoleId, onSwitch })`

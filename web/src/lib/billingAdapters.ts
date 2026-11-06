@@ -283,26 +283,29 @@ export function toAdminCatalogue(w: WireAdminCatalogue): AdminCatalogue {
   }
 }
 
+/** Public tiers: interval-less and unknown-audience tiers are dropped, seat fields only on teacher tiers. */
 export function toPublicCatalogue(w: WirePublicCatalogue): PublicCatalogue {
   return {
     audience: w.audience,
-    tiers: w.planTiers.flatMap((t): PublicTier[] =>
-      t.interval === null
-        ? []
-        : [
-            {
-              code: t.code,
-              name: t.name,
-              audience: t.audience === "teacher" ? "teacher" : "student",
-              interval: t.interval === "yearly" ? "year" : "month",
-              priceMinor: t.priceMinor,
-              currency: t.currency,
-              features: featureLines(t.features),
-              includedSeats: t.includedSeats,
-              extraSeatPriceMinor: t.extraSeatPriceMinor,
-            },
-          ],
-    ),
+    tiers: w.planTiers.flatMap((t): PublicTier[] => {
+      const audience = toAudience(t.audience)
+      const interval = toInterval(t.interval)
+      if (audience === null || interval === null) return []
+      const teacher = audience === "teacher"
+      return [
+        {
+          code: t.code,
+          name: t.name,
+          audience,
+          interval,
+          priceMinor: t.priceMinor,
+          currency: t.currency,
+          features: featureLines(t.features),
+          includedSeats: teacher ? t.includedSeats : null,
+          extraSeatPriceMinor: teacher ? t.extraSeatPriceMinor : null,
+        },
+      ]
+    }),
     packs: w.creditPacks,
   }
 }
