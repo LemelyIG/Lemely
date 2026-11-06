@@ -1,0 +1,137 @@
+import { beforeEach, describe, expect, it, vi } from "vitest"
+
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
+  request: vi.fn(),
+}))
+
+import { ApiError, request } from "@/lib/api"
+import { billingApi, nextPaymentPoll, PAYMENT_POLL_LIMIT_MS, PAYMENT_POLL_MS } from "@/lib/hooks/useBillingApi"
+import { usageApi } from "@/lib/hooks/useUsageApi"
+import { billingErrorCode, billingFailureMessage } from "@/lib/billingOutcome"
+import { billingPaths } from "@/lib/billingPaths"
+
+const req = vi.mocked(request)
+
+beforeEach(() => {
+  req.mockReset()
+  req.mockResolvedValue({})
+})
+
+const calls = () => req.mock.calls.map((c) => [c[0], (c[1] as RequestInit | undefined)?.method ?? "GET"])
+
+describe("billing fetchers (paths without /api: request() adds it)", () => {
+  it("hits every billing route with the right method", async () => {
+    await billingApi.catalogue()
+    await billingApi.summary(null)
+    await billingApi.summary("child 1")
+    await billingApi.startSubscriptionCheckout({ planTierId: "t1", beneficiaryId: null, extraSeats: 2 })
+    await billingApi.startPackCheckout({ creditPackId: "p1", beneficiaryId: "c1" })
+    await billingApi.payment("pay/1")
+    await billingApi.upgradeQuote("s1", "t2")
+    await billingApi.upgrade("s1", "t2")
+    await billingApi.downgrade("s1", "t0")
+    await billingApi.cancel("s1")
+    await billingApi.receipts()
+    await billingApi.autoTopup(null)
+    await billingApi.autoTopup("c1")
+    await billingApi.saveAutoTopup({ beneficiaryId: null, enabled: true, thresholdUnits: 100, creditPackId: "p1", savedCardId: "card1", monthlyCapMinor: 50000 })
+    await billingApi.cards()
+    await billingApi.seatQuote("s1", 3)
+    await billingApi.addSeats("s1", 3)
+    await billingApi.reduceSeats("s1", 1)
+    expect(calls()).toEqual([
+      ["/billing/catalogue", "GET"],
+      ["/billing/summary", "GET"],
+      ["/billing/summary?beneficiaryId=child%201", "GET"],
+      ["/billing/subscriptions/checkout", "POST"],
+      ["/billing/checkout/pack", "POST"],
+      ["/billing/payments/pay%2F1", "GET"],
+      ["/billing/subscriptions/s1/upgrade/quote", "POST"],
+      ["/billing/subscriptions/s1/upgrade", "POST"],
+      ["/billing/subscriptions/s1/downgrade", "POST"],
+      ["/billing/subscriptions/s1/cancel", "POST"],
+      ["/billing/receipts", "GET"],
+      ["/billing/auto-topup", "GET"],
+      ["/billing/auto-topup?beneficiaryId=c1", "GET"],
+      ["/billing/auto-topup", "PUT"],
+      ["/billing/cards", "GET"],
+      ["/billing/subscriptions/s1/seats/quote", "POST"],
+      ["/billing/subscriptions/s1/extra-seats", "POST"],
+      ["/billing/subscriptions/s1/extra-seats/pending", "PUT"],
+    ])
+  })
+
+  it("sends the backend request bodies", async () => {
+    await billingApi.upgrade("s1", "t2")
+    await billingApi.addSeats("s1", 3)
+    await billingApi.reduceSeats("s1", 1)
+    const bodies = req.mock.calls.map((c) => JSON.parse(String((c[1] as RequestInit).body)))
+    expect(bodies).toEqual([{ planTierId: "t2" }, { seats: 3 }, { extraSeats: 1 }])
+  })
+})
+
+describe("usage fetchers", () => {
+  it("posts the flat estimate body and pages history with a cursor", async () => {
+    await usageApi.estimate({ action: "regrade", paperId: "p1" })
+    await usageApi.meter()
+    await usageApi.history(null)
+    await usageApi.history("next 2")
+    expect(calls()).toEqual([
+      ["/usage/estimate", "POST"],
+      ["/usage/meter", "GET"],
+      ["/usage/history?limit=25", "GET"],
+      ["/usage/history?limit=25&cursor=next+2", "GET"],
+    ])
+    expect(JSON.parse(String((req.mock.calls[0][1] as RequestInit).body))).toEqual({ action: "regrade", paperId: "p1" })
+  })
+})
+
+describe("payment polling", () => {
+  it("polls every 2s while confirming and stops at terminal states or after 3 minutes", () => {
+    expect(PAYMENT_POLL_MS).toBe(2000)
+    expect(PAYMENT_POLL_LIMIT_MS).toBe(180_000)
+    expect(nextPaymentPoll(undefined, 0, 1000)).toBe(2000)
+    expect(nextPaymentPoll("pending", 0, 1000)).toBe(2000)
+    expect(nextPaymentPoll("created", 0, 179_999)).toBe(2000)
+    expect(nextPaymentPoll("pending", 0, 180_000)).toBe(false)
+    expect(nextPaymentPoll("paid", 0, 1000)).toBe(false)
+    expect(nextPaymentPoll("failed", 0, 1000)).toBe(false)
+  })
+})
+
+describe("billing failure copy", () => {
+  it("reads both backend error shapes and keeps unknown codes generic", () => {
+    const errorShape = (error: string) => new ApiError(409, "409", { error, message: "x" })
+    const codeShape = (code: string) => new ApiError(409, "409", { code, message: "x" })
+    expect(billingErrorCode(errorShape("no_saved_card"))).toBe("no_saved_card")
+    expect(billingErrorCode(codeShape("no_free_seat"))).toBe("no_free_seat")
+    expect(billingErrorCode(new ApiError(403, "You can only buy for a linked child", "You can only buy for a linked child"))).toBeNull()
+    expect(billingFailureMessage(errorShape("no_saved_card"), "upgrade")).toMatch(/saved card/)
+    expect(billingFailureMessage(errorShape("seats_in_use"), "remove seats")).toMatch(/seat/)
+    expect(billingFailureMessage(errorShape("seats_insufficient"), "downgrade")).toMatch(/seat/)
+    expect(billingFailureMessage(errorShape("weird"), "upgrade")).toBe("Couldn't upgrade. Nothing was charged. Try again.")
+  })
+
+  it("says nothing was charged when offline or when payments are down", () => {
+    expect(billingFailureMessage(new ApiError(0, "x"), "buy credits")).toMatch(/offline/)
+    expect(billingFailureMessage(new ApiError(503, "x"), "buy credits")).toMatch(/Payments are unavailable/)
+    for (const s of [0, 403, 409, 422, 429, 500, 503]) {
+      expect(billingFailureMessage(new ApiError(s, "x"), "pay")).not.toMatch(/[!—]/)
+    }
+  })
+})
+
+describe("billing paths", () => {
+  it("builds per-role billing routes; a parent has no child usage history (M6)", () => {
+    expect(billingPaths({ role: "student" }).plans).toBe("/student/billing/plans")
+    expect(billingPaths({ role: "teacher" }).overview).toBe("/teacher/billing")
+    expect(billingPaths({ role: "parent", childId: "c1" })).toEqual({
+      overview: "/parent/children/c1/billing",
+      plans: "/parent/children/c1/billing/plans",
+      packs: "/parent/children/c1/billing/plans#packs",
+      history: null,
+      receipts: "/parent/billing/receipts",
+    })
+  })
+})
