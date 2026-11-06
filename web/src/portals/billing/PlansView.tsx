@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 import { Check } from "@phosphor-icons/react"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -12,7 +12,15 @@ import { formatCredits, formatMoney, intervalLabel } from "@/lib/billingFormat"
 import { billingFailureMessage } from "@/lib/billingOutcome"
 import type { BillingPaths } from "@/lib/billingPaths"
 import type { Audience, BillingInterval, CreditPack, PlanTier } from "@/lib/billingTypes"
-import { startCheckoutRedirect } from "@/lib/checkoutReturn"
+import {
+  clampExtraSeats,
+  initialInterval,
+  packCheckoutRequest,
+  seatsIncludedLabel,
+  startCheckoutRedirect,
+  subscriptionCheckoutRequest,
+  tiersForInterval,
+} from "@/lib/checkoutReturn"
 import {
   useCatalogue,
   useStartPackCheckout,
@@ -34,24 +42,43 @@ export interface PlansViewProps {
   hasLiveSubscription: boolean
   canManage: boolean
   managedByName: string | null
+  /** The interval the current subscription bills on; the toggle opens there. */
+  currentInterval?: BillingInterval | null
 }
 
 const UNSAFE_URL = "Couldn't start checkout. Nothing was charged. Try again."
 
 export function PlansView(props: PlansViewProps) {
-  const { audience, beneficiaryId, paths, currentTierId, hasLiveSubscription, canManage, managedByName } = props
+  const { audience, beneficiaryId, paths, currentTierId, hasLiveSubscription, canManage, managedByName, currentInterval } = props
   const catalogue = useCatalogue(audience)
   const subCheckout = useStartSubscriptionCheckout()
   const packCheckout = useStartPackCheckout()
-  const [interval, setInterval] = useState<BillingInterval>("month")
+  const [interval, setInterval] = useState<BillingInterval>(() => initialInterval(currentInterval))
   const [extraSeats, setExtraSeats] = useState(0)
   const [unsafe, setUnsafe] = useState(false)
-  const busy = subCheckout.isPending || packCheckout.isPending
+  // After a successful start the payer is on their way to Paymob; keep the buttons off until the
+  // page actually leaves, so a second click cannot create a second pending payment.
+  const busy = subCheckout.isPending || packCheckout.isPending || subCheckout.isSuccess || packCheckout.isSuccess
+  const resetSub = subCheckout.reset
+  const resetPack = packCheckout.reset
+  // Coming back with the browser's Back button can restore this page frozen mid-redirect.
+  useEffect(() => {
+    const onShow = (e: PageTransitionEvent) => {
+      if (!e.persisted) return
+      resetSub()
+      resetPack()
+    }
+    window.addEventListener("pageshow", onShow)
+    return () => window.removeEventListener("pageshow", onShow)
+  }, [resetSub, resetPack])
   const buying = canManage
   const failure = subCheckout.isError ? subCheckout.error : packCheckout.isError ? packCheckout.error : null
 
   const redirect = (res: { paymentId: string; checkoutUrl: string }) => {
-    if (!startCheckoutRedirect(res, paths.overview)) setUnsafe(true)
+    if (startCheckoutRedirect(res, paths.overview)) return
+    setUnsafe(true)
+    subCheckout.reset()
+    packCheckout.reset()
   }
 
   const tierAction = (tier: PlanTier) => {
@@ -68,13 +95,11 @@ export function PlansView(props: PlansViewProps) {
       <Button
         variant="primary"
         disabled={busy}
-        loading={subCheckout.isPending && subCheckout.variables?.planTierId === tier.id}
-        onClick={() =>
-          subCheckout.mutate(
-            { planTierId: tier.id, beneficiaryId, extraSeats: audience === "teacher" ? extraSeats : 0 },
-            { onSuccess: redirect },
-          )
-        }
+        loading={(subCheckout.isPending || subCheckout.isSuccess) && subCheckout.variables?.planTierId === tier.id}
+        onClick={() => {
+          setUnsafe(false)
+          subCheckout.mutate(subscriptionCheckoutRequest(tier, audience, beneficiaryId, extraSeats), { onSuccess: redirect })
+        }}
       >
         Choose {tier.name}
       </Button>
@@ -87,8 +112,11 @@ export function PlansView(props: PlansViewProps) {
       <Button
         variant="secondary"
         disabled={busy}
-        loading={packCheckout.isPending && packCheckout.variables?.creditPackId === pack.id}
-        onClick={() => packCheckout.mutate({ creditPackId: pack.id, beneficiaryId }, { onSuccess: redirect })}
+        loading={(packCheckout.isPending || packCheckout.isSuccess) && packCheckout.variables?.creditPackId === pack.id}
+        onClick={() => {
+          setUnsafe(false)
+          packCheckout.mutate(packCheckoutRequest(pack, beneficiaryId), { onSuccess: redirect })
+        }}
       >
         Buy {pack.name}
       </Button>
@@ -115,7 +143,7 @@ export function PlansView(props: PlansViewProps) {
         empty={<EmptyState heading="No plans are on sale right now." body="Check back soon." />}
       >
         {(c) => {
-          const tiers = c.tiers.filter((t) => t.interval === interval).sort((a, b) => a.priceMinor - b.priceMinor)
+          const tiers = tiersForInterval(c.tiers, interval)
           return (
             <>
               <section aria-labelledby="plans-heading" className="flex flex-col gap-4">
@@ -142,7 +170,7 @@ export function PlansView(props: PlansViewProps) {
                       min={0}
                       max={200}
                       value={extraSeats}
-                      onChange={(e) => setExtraSeats(Math.max(0, Math.min(200, Number(e.target.value) || 0)))}
+                      onChange={(e) => setExtraSeats(clampExtraSeats(Number(e.target.value)))}
                     />
                   </div>
                 ) : null}
@@ -157,7 +185,7 @@ export function PlansView(props: PlansViewProps) {
                             <span className="text-body-sm text-on-surface-variant">{intervalLabel(tier.interval)}</span>
                           </p>
                           {tier.includedSeats !== null ? (
-                            <p className="m-0 text-body-sm text-on-surface">{tier.includedSeats} student seats included</p>
+                            <p className="m-0 text-body-sm text-on-surface">{seatsIncludedLabel(tier.includedSeats)}</p>
                           ) : null}
                           {tier.extraSeatPriceMinor !== null ? (
                             <p className="m-0 text-body-sm text-on-surface-variant">

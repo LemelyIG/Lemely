@@ -9,6 +9,7 @@ const s = vi.hoisted(() => ({
   catalogue: null as unknown,
   summary: null as unknown,
   payment: null as unknown,
+  paymentArg: undefined as unknown,
   subCheckout: null as unknown,
   packCheckout: null as unknown,
 }))
@@ -16,7 +17,10 @@ const s = vi.hoisted(() => ({
 vi.mock("@/lib/hooks/useBillingApi", () => ({
   useCatalogue: () => s.catalogue,
   useBillingSummary: () => s.summary,
-  usePaymentStatus: () => s.payment,
+  usePaymentStatus: (id: unknown) => {
+    s.paymentArg = id
+    return s.payment
+  },
   useStartSubscriptionCheckout: () => s.subCheckout,
   useStartPackCheckout: () => s.packCheckout,
   invalidateBilling: () => undefined,
@@ -93,6 +97,33 @@ describe("PlansView", () => {
     expect(html).toContain('name="extraSeats"')
   })
 
+  it("opens on yearly when the current plan bills yearly, and on monthly otherwise", () => {
+    s.catalogue = okQuery({ ...fx.studentCatalogue, tiers: [fx.studentMonthly, fx.studentYearly] })
+    const yearly = view({ currentInterval: "year", currentTierId: fx.studentYearly.id, hasLiveSubscription: true })
+    expect(yearly).toMatch(/EGP\s2,500\.00/)
+    expect(yearly).toContain("per year")
+    expect(yearly).not.toMatch(/EGP\s250\.00/)
+    const held = view({ currentInterval: null })
+    expect(held).toMatch(/EGP\s250\.00/)
+    expect(held).not.toMatch(/EGP\s2,500\.00/)
+  })
+
+  it("says one seat in the singular", () => {
+    s.catalogue = okQuery({ ...fx.teacherCatalogue, tiers: [{ ...fx.teacherMonthly, includedSeats: 1 }] })
+    const html = view({ audience: "teacher", paths: billingPaths({ role: "teacher" }) })
+    expect(html).toContain("1 student seat included")
+    expect(html).not.toContain("1 student seats")
+  })
+
+  it("keeps every buy button disabled once a checkout has started, until the page leaves", () => {
+    s.packCheckout = fakeMutation({ isSuccess: true })
+    const html = view()
+    const buttons = html.match(/<button[^>]*>/g) ?? []
+    const buy = buttons.filter((b) => !b.includes("data-state") && !b.includes('role="radio"'))
+    expect(buy.length).toBeGreaterThan(0)
+    expect(buy.every((b) => b.includes('disabled=""'))).toBe(true)
+  })
+
   it("renders loading, error and empty states", () => {
     s.catalogue = pendingQuery()
     expect(view()).toContain('aria-label="Loading"')
@@ -119,6 +150,24 @@ describe("BillingRedirect", () => {
 
 describe("CheckoutReturn", () => {
   const at = () => renderAt(h(CheckoutReturn), "/billing/return/:paymentId", "/billing/return/pay1")
+
+  it("ignores Paymob's query parameters: the page asks for its own payment and renders the same", () => {
+    s.payment = Object.assign(okQuery({ ...fx.payment, status: "failed" }), { pollingStopped: false })
+    const plain = at()
+    expect(s.paymentArg).toBe("pay1")
+    const withParams = renderAt(h(CheckoutReturn), "/billing/return/:paymentId", "/billing/return/pay1?success=true&id=999&pending=false&txn_response_code=APPROVED")
+    expect(s.paymentArg).toBe("pay1")
+    expect(withParams).toBe(plain)
+    expect(withParams).toContain("Payment didn")
+    expect(withParams).not.toContain("Credits added")
+  })
+
+  it("labels the section even when the payment cannot load", () => {
+    s.payment = Object.assign(errorQuery(new ApiError(0, "x")), { pollingStopped: false })
+    const html = at()
+    expect(html).toContain('aria-labelledby="return-heading"')
+    expect(html).toContain('id="return-heading"')
+  })
 
   it("announces confirming while pending", () => {
     const html = at()

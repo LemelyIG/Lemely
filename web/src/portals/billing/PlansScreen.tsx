@@ -37,6 +37,7 @@ function SignedInPlans({ scope, audience, beneficiaryId }: { scope: BillingScope
               hasLiveSubscription={isLiveSubscription(s.subscription?.status)}
               canManage={s.canManage}
               managedByName={s.managedByName}
+              currentInterval={s.subscription?.tier.interval ?? null}
             />
           </>
         )}

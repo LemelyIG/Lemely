@@ -1,5 +1,13 @@
 import type { PaymentPhase } from "@/lib/billingFormat"
-import type { CheckoutResponse, PaymentPurpose } from "@/lib/billingTypes"
+import type {
+  Audience,
+  BillingInterval,
+  CheckoutResponse,
+  PackCheckoutRequest,
+  PaymentPurpose,
+  PlanTier,
+  SubscriptionCheckoutRequest,
+} from "@/lib/billingTypes"
 
 /*
  * Leaving for Paymob's hosted checkout and coming back (spec §5.1 steps 3–5). The redirect
@@ -10,8 +18,37 @@ import type { CheckoutResponse, PaymentPurpose } from "@/lib/billingTypes"
 
 const KEY = "lemely.billing.returnTo"
 
+/**
+ * Any parse of a URL string runs against this fixed origin, so "same origin" means the same
+ * thing in the browser and in the node test runner.
+ */
+const ORIGIN = "https://lemely.invalid"
+
+/** Backslash, tab, CR, LF and every other control character: the URL parser rewrites or drops them. */
+// eslint-disable-next-line no-control-regex
+const UNSAFE_CHARS = /[\\\u0000-\u001f\u007f]/
+
+/**
+ * A path on this origin and nothing else. A leading "/" is not enough: "//host", "/\\host",
+ * "/\t/host" and "/\n/host" all resolve to another host once the browser has normalised them,
+ * so the string is parsed and its origin compared.
+ */
 function isSamePath(path: string): boolean {
-  return path.startsWith("/") && !path.startsWith("//")
+  if (!path.startsWith("/") || path.startsWith("//") || UNSAFE_CHARS.test(path)) return false
+  try {
+    return new URL(path, ORIGIN).origin === ORIGIN
+  } catch {
+    return false
+  }
+}
+
+function isHttpsUrl(url: string): boolean {
+  if (!url.startsWith("https://") || UNSAFE_CHARS.test(url)) return false
+  try {
+    return new URL(url).protocol === "https:"
+  } catch {
+    return false
+  }
 }
 
 /** `null` where there is no sessionStorage (the node test runner, a locked-down browser). */
@@ -36,7 +73,7 @@ export function defaultBillingPath(role: string | undefined): string {
 }
 
 export function isSafeCheckoutUrl(url: string): boolean {
-  return url.startsWith("https://") || isSamePath(url)
+  return isHttpsUrl(url) || isSamePath(url)
 }
 
 /** Remember where to come back to, then leave for checkout. False when the URL is unsafe. */
@@ -52,11 +89,55 @@ export function startCheckoutRedirect(
 }
 
 /**
- * Whether the billing and usage caches should be refreshed now: once, when the payment is first
- * seen as paid. `alreadyDone` is the caller's once-per-payment guard.
+ * Refresh the billing and usage caches once per paid payment. `settled` remembers the id of the
+ * payment already refreshed for, so a re-render or a repeated "paid" poll does nothing, while a
+ * different payment seen in the same mount still refreshes. Returns whether it refreshed.
  */
-export function shouldInvalidateBilling(phase: PaymentPhase | null, alreadyDone: boolean): boolean {
-  return phase === "paid" && !alreadyDone
+export function invalidateOnPaid(
+  invalidate: () => void,
+  settled: { current: string | null },
+  paymentId: string,
+  phase: PaymentPhase | null,
+): boolean {
+  if (phase !== "paid" || settled.current === paymentId) return false
+  settled.current = paymentId
+  invalidate()
+  return true
+}
+
+/** The extra-seats field is a 0 to 200 number; anything else becomes the nearest valid value. */
+export function clampExtraSeats(value: number): number {
+  return Math.max(0, Math.min(200, Math.trunc(value) || 0))
+}
+
+/** The body of `POST /billing/subscriptions/checkout`. Only teacher plans carry extra seats. */
+export function subscriptionCheckoutRequest(
+  tier: Pick<PlanTier, "id">,
+  audience: Audience,
+  beneficiaryId: string | null,
+  extraSeats: number,
+): SubscriptionCheckoutRequest {
+  return { planTierId: tier.id, beneficiaryId, extraSeats: audience === "teacher" ? clampExtraSeats(extraSeats) : 0 }
+}
+
+/** The body of `POST /billing/checkout/pack`. `beneficiaryId` is the linked child for a parent. */
+export function packCheckoutRequest(pack: { id: string }, beneficiaryId: string | null): PackCheckoutRequest {
+  return { creditPackId: pack.id, beneficiaryId }
+}
+
+/** The audience's tiers for one interval, cheapest first. */
+export function tiersForInterval(tiers: PlanTier[], interval: BillingInterval): PlanTier[] {
+  return tiers.filter((t) => t.interval === interval).sort((a, b) => a.priceMinor - b.priceMinor)
+}
+
+/** Open on the interval the payer already pays on; a held legacy plan or no plan opens on monthly. */
+export function initialInterval(current: BillingInterval | null | undefined): BillingInterval {
+  return current === "year" ? "year" : "month"
+}
+
+/** "1 student seat included", "20 student seats included". */
+export function seatsIncludedLabel(seats: number): string {
+  return `${seats} student ${seats === 1 ? "seat" : "seats"} included`
 }
 
 export interface ReturnCopy {

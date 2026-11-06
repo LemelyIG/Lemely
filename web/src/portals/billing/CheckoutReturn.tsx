@@ -8,7 +8,7 @@ import { MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { ErrorState } from "@/components/ui/state-views"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { formatMoney, paymentPhase, type PaymentPhase } from "@/lib/billingFormat"
-import { defaultBillingPath, returnCopy, returnToFor, shouldInvalidateBilling } from "@/lib/checkoutReturn"
+import { defaultBillingPath, invalidateOnPaid, returnCopy, returnToFor } from "@/lib/checkoutReturn"
 import { invalidateBilling, usePaymentStatus } from "@/lib/hooks/useBillingApi"
 
 /*
@@ -46,21 +46,22 @@ export function CheckoutReturn() {
   const phaseNow = payment.data ? paymentPhase(payment.data.status) : null
   // The meter, credit balance and receipts on the screens behind this one are stale the moment
   // the payment lands, so refresh them once per paid payment.
-  const invalidated = useRef(false)
+  const settled = useRef<string | null>(null)
   useEffect(() => {
-    if (!shouldInvalidateBilling(phaseNow, invalidated.current)) return
-    invalidated.current = true
-    invalidateBilling(queryClient)
-  }, [phaseNow, queryClient])
+    invalidateOnPaid(() => invalidateBilling(queryClient), settled, paymentId, phaseNow)
+  }, [paymentId, phaseNow, queryClient])
 
   let body: ReactNode
   if (payment.isError) {
     body = (
-      <ErrorState
-        heading="Couldn't load this payment"
-        body="Check your connection and try again. If you paid, the payment is still confirmed on our side."
-        action={{ label: "Try again", onClick: () => void payment.refetch() }}
-      />
+      <>
+        <h1 id="return-heading" className="sr-only">Payment status</h1>
+        <ErrorState
+          heading="Couldn't load this payment"
+          body="Check your connection and try again. If you paid, the payment is still confirmed on our side."
+          action={{ label: "Try again", onClick: () => void payment.refetch() }}
+        />
+      </>
     )
   } else if (!payment.data) {
     body = (
