@@ -48,6 +48,9 @@ const ParentSessionDetail = lazy(() =>
 const ParentChildPlans = lazy(() =>
   import("@/portals/billing/PlansScreen").then((m) => ({ default: m.ParentChildPlans })),
 )
+const ParentChildBilling = lazy(() =>
+  import("@/portals/billing/ParentBilling").then((m) => ({ default: m.ParentChildBilling })),
+)
 const ChildTutorAccess = lazy(() =>
   import("./screens/tutoring/ChildTutorAccess").then((m) => ({ default: m.ChildTutorAccess })),
 )
@@ -122,7 +125,7 @@ function ChildSwitcher() {
           // other child does not take would 404, so only the overview and
           // weaknesses tails carry over; everything else lands on the overview.
           const tail =
-            ["/weaknesses", "/tutoring", "/tutor-access"].find((t) => location.pathname.endsWith(t)) ?? ""
+            ["/weaknesses", "/tutoring", "/tutor-access", "/billing"].find((t) => location.pathname.endsWith(t)) ?? ""
           navigate(`/parent/children/${event.target.value}${tail}`)
         }}
       >
@@ -210,6 +213,14 @@ function ParentTrail() {
       { label: "Overview", to: childOverview },
       { label: "Tutoring", to: `${childOverview}/tutoring` },
       { label: "Session" },
+    )
+  } else if (path === `${childOverview}/billing`) {
+    trail.push({ label: "Overview", to: childOverview }, { label: "Plan and billing" })
+  } else if (path === `${childOverview}/billing/plans`) {
+    trail.push(
+      { label: "Overview", to: childOverview },
+      { label: "Plan and billing", to: `${childOverview}/billing` },
+      { label: "Plans" },
     )
   } else if (/\/subjects\/[^/]+$/.test(path)) {
     trail.push(
@@ -439,6 +450,11 @@ export const parentRoute: RouteObject = {
       path: "children/:childId/tutor-access",
       element: <ChildTutorAccess />,
       handle: { title: "Who they share with", skeleton: "list" },
+    },
+    {
+      path: "children/:childId/billing",
+      element: <ParentChildBilling />,
+      handle: { title: "Plan and billing", skeleton: "page-header" },
     },
     {
       path: "children/:childId/billing/plans",
