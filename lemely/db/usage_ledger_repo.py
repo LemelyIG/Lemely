@@ -607,9 +607,12 @@ class UsageLedger:
         finishes first (settle is then a no-op) or waits for this one.
 
         ``actual_cost_usd`` is quantized to 6 decimal places (half up) first, so the
-        stored USD and the units charged always agree. ``job.charged`` is the actual
+        stored USD and the units charged always agree; a negative cost raises
+        ``ValueError`` before that rounding. ``job.charged`` is the actual
         cost in units; the amount drawn from grants is ``charged - debt_created``.
         """
+        if actual_cost_usd < 0:  # before quantizing: -0.0000001 would round to zero
+            raise ValueError("actual_cost_usd must be >= 0")
         job, payers = self._locked_job(job_id)
         if job.status is not UsageJobStatus.open:
             return job
@@ -691,6 +694,225 @@ class UsageLedger:
             payer=slot.payer,
         )
         slot.balance.held -= held
+
+    def expire_grants(self, *, now: datetime) -> int:
+        """Expire the unheld rest of every grant past ``expires_at`` (§5.7 step 8).
+
+        Units a running job still holds stay on the grant; the sweep after that
+        job lets them go takes them. Returns the number of grants given an
+        ``expire`` entry.
+        """
+        candidates = self._session.execute(
+            sa.select(UsageGrant.id, UsageGrant.owner_user_id)
+            .join(UsageGrantBalance, UsageGrantBalance.grant_id == UsageGrant.id)
+            .where(
+                UsageGrant.expires_at <= now,
+                UsageGrantBalance.remaining > UsageGrantBalance.held,
+            )
+            .order_by(UsageGrant.expires_at, UsageGrant.id)
+        ).all()
+        # One sorted pass over every owner involved, before any grant row is
+        # locked: taking owner locks grant by grant, in expiry order, would
+        # deadlock with a reserve that takes them in ascending UUID order.
+        self._lock_owners([owner_user_id for _, owner_user_id in candidates])
+        expired = 0
+        for grant_id, _owner in candidates:
+            # Re-read under the lock: another transaction may have spent, held or
+            # clawed back the grant between the candidate read and the lock.
+            balance = self._locked_balance(grant_id)
+            amount = balance.remaining - balance.held
+            if amount <= 0:
+                continue
+            count = self._entry_count(grant_id, UsageEntryKind.expire)
+            self._entry(
+                kind=UsageEntryKind.expire,
+                units=-amount,
+                event_at=now,
+                key=f"expire:{count}",
+                grant_id=grant_id,
+            )
+            balance.remaining -= amount
+            expired += 1
+        self._session.flush()
+        return expired
+
+    def claw_back_grant(self, grant_id: uuid.UUID, *, reason: str, now: datetime) -> int:
+        """Remove a refunded grant's unspent, unheld units; spent units stay spent (§6).
+
+        The grant is also closed (``expires_at = now``) so units a running job
+        still holds go to :meth:`expire_grants` when that job lets them go.
+        Returns the units clawed back; a second call returns 0.
+        """
+        grant = self._session.get(UsageGrant, grant_id)
+        if grant is None:
+            raise LookupError(f"no usage grant {grant_id}")
+        self._lock_owners([grant.owner_user_id])
+        balance = self._locked_balance(grant_id)
+        if self._entry_count(grant_id, UsageEntryKind.refund):
+            return 0
+        amount = max(balance.remaining - balance.held, 0)
+        if now > grant.effective_at and (grant.expires_at is None or grant.expires_at > now):
+            grant.expires_at = now
+        if amount:
+            self._entry(
+                kind=UsageEntryKind.refund,
+                units=-amount,
+                event_at=now,
+                key="claw_back",
+                grant_id=grant_id,
+                reason=reason,
+            )
+            balance.remaining -= amount
+        self._session.flush()
+        return amount
+
+    def adjust(
+        self,
+        *,
+        owner_user_id: uuid.UUID,
+        units: int,
+        reason: str,
+        idempotency_key: str,
+        now: datetime,
+    ) -> None:
+        """Admin correction: ``+units`` grants, ``-units`` debits.
+
+        ``+units`` issues a visible ``adjustment`` grant (which repays debt
+        first). ``-units`` debits the owner's own allowance and credits in spend
+        order, never a seat grant (the teacher's money); whatever they cannot
+        cover becomes a job-less ``usage_debts`` row on the owner, because a
+        negative balance exists only as debt (§6). Idempotent on the key.
+        """
+        if units == 0:
+            raise ValueError("units must not be 0")
+        if units > 0:
+            self._issue(
+                owner_user_id=owner_user_id,
+                kind=GrantKind.adjustment,
+                units=units,
+                idempotency_key=idempotency_key,
+                expires_at=None,
+                visible=True,
+                effective_at=now,
+                payment_id=None,
+                subscription_period_id=None,
+                teacher_member_id=None,
+                reason=reason,
+            )
+            return
+        self._lock_owners([owner_user_id])
+        if self._debit_recorded(owner_user_id, idempotency_key):
+            return
+        own = [
+            Payer(owner_user_id=owner_user_id, scope=GrantScope.ALLOWANCE),
+            Payer(owner_user_id=owner_user_id, scope=GrantScope.CREDITS),
+        ]
+        # Plan the whole debit before staging a single entry.
+        need = -units
+        plan: list[tuple[_Slot, int]] = []
+        for slot in self._slots(own, now=now, lock=True):
+            take = min(max(slot.free, 0), need)
+            if take:
+                plan.append((slot, take))
+                need -= take
+        for slot, take in plan:
+            self._entry(
+                kind=UsageEntryKind.adjust,
+                units=-take,
+                event_at=now,
+                key=idempotency_key,
+                grant_id=slot.grant.id,
+                reason=reason,
+            )
+            slot.balance.remaining -= take
+        if need:
+            debt = self._open_debt(owner_user_id, need)
+            self._entry(
+                kind=UsageEntryKind.debt,
+                units=-need,
+                event_at=now,
+                key=idempotency_key,
+                debt_id=debt.id,
+                reason=reason,
+            )
+        self._session.flush()
+
+    def _debit_recorded(self, owner_user_id: uuid.UUID, idempotency_key: str) -> bool:
+        """Whether a negative adjust under this key already wrote to a grant or a debt."""
+        on_grant = (
+            sa.select(UsageEntry.id)
+            .join(UsageGrant, UsageGrant.id == UsageEntry.grant_id)
+            .where(
+                UsageGrant.owner_user_id == owner_user_id,
+                UsageEntry.kind == UsageEntryKind.adjust,
+                UsageEntry.idempotency_key == idempotency_key,
+            )
+        )
+        on_debt = (
+            sa.select(UsageEntry.id)
+            .join(UsageDebt, UsageDebt.id == UsageEntry.debt_id)
+            .where(
+                UsageDebt.owner_user_id == owner_user_id,
+                UsageEntry.kind == UsageEntryKind.debt,
+                UsageEntry.idempotency_key == idempotency_key,
+            )
+        )
+        return bool(
+            self._session.scalar(sa.select(sa.exists(on_grant.union_all(on_debt).subquery())))
+        )
+
+    def forgive_debt(
+        self, owner_user_id: uuid.UUID, *, units: int | None, reason: str, now: datetime
+    ) -> int:
+        """Forgive up to ``units`` of debt, oldest first (``None`` = all); return units forgiven."""
+        if units is not None and units <= 0:
+            raise ValueError("units must be > 0 or None")
+        self._lock_owners([owner_user_id])
+        left = units
+        forgiven = 0
+        for debt in self._open_debts(owner_user_id):
+            amount = debt.outstanding if left is None else min(debt.outstanding, left)
+            if amount == 0:
+                break
+            count = self._session.scalar(
+                sa.select(sa.func.count()).where(
+                    UsageEntry.debt_id == debt.id,
+                    UsageEntry.grant_id.is_(None),
+                    UsageEntry.kind == UsageEntryKind.adjust,
+                )
+            )
+            self._entry(
+                kind=UsageEntryKind.adjust,
+                units=amount,
+                event_at=now,
+                key=f"forgive:{count}",
+                debt_id=debt.id,
+                reason=reason,
+            )
+            debt.outstanding -= amount
+            forgiven += amount
+            if left is not None:
+                left -= amount
+        self._session.flush()
+        return forgiven
+
+    def _locked_balance(self, grant_id: uuid.UUID) -> UsageGrantBalance:
+        return self._session.scalars(
+            sa.select(UsageGrantBalance)
+            .where(UsageGrantBalance.grant_id == grant_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).one()
+
+    def _entry_count(self, grant_id: uuid.UUID, kind: UsageEntryKind) -> int:
+        return int(
+            self._session.scalar(
+                sa.select(sa.func.count()).where(
+                    UsageEntry.grant_id == grant_id, UsageEntry.kind == kind
+                )
+            )
+            or 0
+        )
 
 
 __all__ = ["HELD_KINDS", "REMAINING_KINDS", "InsufficientBalance", "UsageLedger"]
