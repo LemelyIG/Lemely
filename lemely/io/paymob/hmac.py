@@ -97,27 +97,35 @@ def subscription_hmac_message(trigger_type: str, sub_id: int) -> str:
 
 def sign(message: str, secret: str) -> str:
     """HMAC-SHA512 of ``message`` under ``secret``, lowercase hex."""
-    return std_hmac.new(secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha512).hexdigest()
+    return std_hmac.new(
+        secret.encode("utf-8", errors="surrogatepass"),
+        message.encode("utf-8", errors="surrogatepass"),
+        hashlib.sha512,
+    ).hexdigest()
 
 
-def _matches(message: str, received: str, secret: str) -> bool:
-    if not secret or not received:
+def _matches(message: str, received: object, secret: str) -> bool:
+    """Never raises: any malformed input (non-str, non-ASCII, surrogates) is a mismatch."""
+    if not isinstance(received, str) or not isinstance(secret, str) or not secret:
+        return False
+    candidate = received.strip().lower()
+    if not candidate.isascii():
         return False
     expected = sign(message, secret).encode("ascii")
-    return std_hmac.compare_digest(expected, received.strip().lower().encode("utf-8"))
+    return std_hmac.compare_digest(expected, candidate.encode("ascii"))
 
 
-def verify_transaction_hmac(obj: Mapping[str, object], received: str, secret: str) -> bool:
+def verify_transaction_hmac(obj: Mapping[str, object], received: object, secret: str) -> bool:
     """True when ``received`` is Paymob's signature of transaction ``obj``."""
     return _matches(transaction_hmac_message(obj), received, secret)
 
 
-def verify_token_hmac(obj: Mapping[str, object], received: str, secret: str) -> bool:
+def verify_token_hmac(obj: Mapping[str, object], received: object, secret: str) -> bool:
     """True when ``received`` is Paymob's signature of card-token ``obj``."""
     return _matches(token_hmac_message(obj), received, secret)
 
 
-def verify_subscription_hmac(trigger_type: str, sub_id: int, received: str, secret: str) -> bool:
+def verify_subscription_hmac(trigger_type: str, sub_id: int, received: object, secret: str) -> bool:
     """True when ``received`` is Paymob's signature of a subscription callback."""
     return _matches(subscription_hmac_message(trigger_type, sub_id), received, secret)
 

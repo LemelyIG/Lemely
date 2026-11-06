@@ -208,3 +208,32 @@ def test_swapping_two_fields_in_the_order_would_fail() -> None:
     assert swapped != DOCS_MESSAGE
     received = sign(swapped, TEST_HMAC_SECRET)
     assert verify_transaction_hmac(DOCS_OBJ, received, TEST_HMAC_SECRET) is False
+
+
+def test_lone_surrogates_in_any_input_fail_closed_without_raising() -> None:
+    bad = "\ud800"
+    good = sign(DOCS_MESSAGE, TEST_HMAC_SECRET)
+    assert verify_transaction_hmac({**DOCS_OBJ, "currency": bad}, good, TEST_HMAC_SECRET) is False
+    assert verify_token_hmac({**token_obj(), "token": bad}, good, TEST_HMAC_SECRET) is False
+    assert verify_subscription_hmac(bad, 1264, good, TEST_HMAC_SECRET) is False
+    assert verify_transaction_hmac(DOCS_OBJ, bad, TEST_HMAC_SECRET) is False
+    assert verify_transaction_hmac(DOCS_OBJ, good, bad) is False
+
+
+def test_surrogate_message_is_still_signed_deterministically() -> None:
+    assert sign("\ud800", "s") == sign("\ud800", "s")
+
+
+@pytest.mark.parametrize("received", [b"abc", 123, None, ["x"]])
+def test_non_str_received_fails(received: object) -> None:
+    assert verify_transaction_hmac(DOCS_OBJ, received, TEST_HMAC_SECRET) is False  # type: ignore[arg-type]
+    assert verify_subscription_hmac("suspended", 1, received, TEST_HMAC_SECRET) is False  # type: ignore[arg-type]
+
+
+def test_amount_cents_must_be_an_int_a_float_does_not_match() -> None:
+    """Paymob sends ints; JSON ``100000.0`` would stringify as ``100000.0`` and fail."""
+    received = sign(DOCS_MESSAGE, TEST_HMAC_SECRET)
+    assert transaction_hmac_message(DOCS_OBJ).startswith("1000002024")
+    float_obj = {**DOCS_OBJ, "amount_cents": 100000.0}
+    assert transaction_hmac_message(float_obj).startswith("100000.02024")
+    assert verify_transaction_hmac(float_obj, received, TEST_HMAC_SECRET) is False
