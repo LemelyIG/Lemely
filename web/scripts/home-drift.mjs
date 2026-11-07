@@ -192,6 +192,11 @@ function harnessSha() {
   return execFileSync("git", ["log", "-1", "--format=%H", "--", "web/scripts/home-drift.mjs", "web/scripts/drift"], { cwd: REPO_DIR, encoding: "utf8" }).trim()
 }
 
+/** True when the harness files differ from HEAD in the checkout holding them (skip-worktree copies read as clean, so record from a clean checkout). */
+function harnessDirty() {
+  return execFileSync("git", ["status", "--porcelain", "--untracked-files=no", "--", "web/scripts/home-drift.mjs", "web/scripts/drift"], { cwd: REPO_DIR, encoding: "utf8" }).trim() !== ""
+}
+
 /** The per-key sidecar: content size, origin, the capturing checkout and the harness that captured it. */
 function sidecarFor(shot) {
   return JSON.stringify({
@@ -201,6 +206,7 @@ function sidecarFor(shot) {
     sha: gitHead(),
     dirty: gitDirty(),
     harnessSha: harnessSha(),
+    harnessDirty: harnessDirty(),
     harnessHash: harnessHash(),
   })
 }
@@ -210,6 +216,7 @@ function scanSidecars(baselineDir) {
   const shas = {}
   const harnessShas = {}
   const harnessHashes = {}
+  let harnessDirtyCount = 0
   let missing = 0
   let dirty = 0
   for (const f of fs.existsSync(baselineDir) ? fs.readdirSync(baselineDir) : []) {
@@ -218,12 +225,13 @@ function scanSidecars(baselineDir) {
     if (!meta.sha) missing++
     else shas[meta.sha] = (shas[meta.sha] ?? 0) + 1
     if (meta.dirty) dirty++
+    if (meta.harnessDirty) harnessDirtyCount++
     const hs = meta.harnessSha ?? "none"
     const hh = meta.harnessHash ?? "none"
     harnessShas[hs] = (harnessShas[hs] ?? 0) + 1
     harnessHashes[hh] = (harnessHashes[hh] ?? 0) + 1
   }
-  return { shas, missing, dirty, harnessShas, harnessHashes }
+  return { shas, missing, dirty, harnessShas, harnessHashes, harnessDirty: harnessDirtyCount }
 }
 
 /** Write the global provenance summary, derived from the per-key sidecars (the source of truth). */
@@ -536,8 +544,22 @@ async function selftestContentIgnoresChrome(browser) {
     const shadowCropped = dpx(cropTo(noShadow, 560), cropTo(withShadow, 560), "ext-i-cropped")
     if (shadowCropped !== 0) throw new Error(`selftest: (i) the shadow-only difference is not confined to the rows below the root bottom (${shadowCropped} px)`)
     // Text-shadow and outline reach likewise are ink overflow.
-    heightResults["(i) text-shadow below the root bottom"] = [dpx(plain, await extent(560, para(300), "#m > p { text-shadow: 0 30px 2px #000; top: 540px !important; }"), "ext-i-text"), false]
-    heightResults["(i) outline below the root bottom"] = [dpx(plain, await extent(560, para(300) + `<div style="position:absolute;top:530px;left:0;width:40px;height:29px;outline:6px solid #00f"></div>`), "ext-i-outline"), false]
+    // Text-shadow: identical glyphs at the same place (line ends at 558); the variant's shadow is
+    // offset 30px so it paints only below the root bottom. Crop control: 0 px inside the root rows.
+    const shadowText = (shadow) => `<p style="position:absolute;top:538px;left:0;width:300px;margin:0;font:16px/20px monospace;color:#000;text-shadow:${shadow}">aaa</p>`
+    const textPlain = await extent(560, shadowText("none"))
+    const textShadowed = await extent(560, shadowText("0 30px 0 #000"))
+    heightResults["(i) text-shadow painting only below the root bottom"] = [dpx(textPlain, textShadowed, "ext-i-text"), false]
+    const textCropped = dpx(cropTo(textPlain, 560), cropTo(textShadowed, 560), "ext-i-text-cropped")
+    if (textCropped !== 0) throw new Error(`selftest: (i) the text-shadow difference is not confined to the rows below the root bottom (${textCropped} px)`)
+    // Outline: a ring surrounds its box, so an opaque cover (neutral colour) over the root rows hides the
+    // ring's upper part and only the bottom edge of the ring shows below row 560. Crop control: 0 px.
+    const outlineBox = (outline) => `<div style="position:absolute;top:540px;left:20px;width:60px;height:19px;z-index:1;outline:${outline}"></div><div style="position:absolute;top:0;left:0;width:300px;height:560px;z-index:2;background:rgb(255 0 255)"></div>`
+    const outlinePlain = await extent(560, outlineBox("none"))
+    const outlined = await extent(560, outlineBox("6px solid #00f"))
+    heightResults["(i) outline ring showing only below the root bottom"] = [dpx(outlinePlain, outlined, "ext-i-outline"), false]
+    const outlineCropped = dpx(cropTo(outlinePlain, 560), cropTo(outlined, 560), "ext-i-outline-cropped")
+    if (outlineCropped !== 0) throw new Error(`selftest: (i) the outline difference is not confined to the rows below the root bottom (${outlineCropped} px)`)
     // Layout overflow also grows scrollHeight in Chrome (transforms, text overflowing a fixed-height box),
     // so these go red through every walk; the walks are belt and braces for them.
     heightResults["(ii) transformed descendant painting below the root bottom"] = [dpx(plain, await extent(560, para(300) + `<div style="position:absolute;top:540px;left:0;width:40px;height:10px;background:#000;transform:translateY(30px)"></div>`), "ext-ii"), false]

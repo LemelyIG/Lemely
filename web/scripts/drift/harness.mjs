@@ -195,17 +195,22 @@ export async function openPreview(browser, { width, height, theme, preview }) {
 }
 
 /**
- * The content box (padding excluded) of `selector`, in page coordinates. Its
- * height is the painted extent: the content box bottom, or any visible, non-fixed
- * descendant's border-box bottom plus its ink reach (box-shadow offsetY + 1.5 x
- * blur + spread, Skia rasterises a blur out to 3 sigma; outline width + offset;
- * filter drop-shadow), or any text line's bottom plus its text-shadow reach,
- * whichever is lowest, rounded up. Not counted: ::before/::after box-shadow and
- * outline (a pseudo-element's own geometry is not exposed by the DOM; its layout
- * box still grows scrollHeight). Clipped or sr-only text can inflate the extent;
- * that is harmless, the extra rows are neutral fill on both sides. Extra painted content therefore lengthens the
- * capture (compare pads the shorter side with magenta, so it shows as a diff) and
- * pure trailing empty space under the neutral fill stays equal to the pad.
+ * The content box (padding excluded) of `selector`, in page coordinates.
+ *
+ * Its height is the painted extent: the lowest of
+ *   - the content box bottom,
+ *   - any visible, non-fixed descendant's border-box bottom plus its ink reach
+ *     (box-shadow offsetY + 1.5 x blur + spread, since Skia rasterises a blur
+ *     out to 3 sigma; outline width + offset; filter drop-shadow),
+ *   - any text line's bottom plus its text-shadow reach,
+ * rounded up. Extra painted content therefore lengthens the capture (compare
+ * pads the shorter side with magenta, so it shows as a diff) and pure trailing
+ * empty space under the neutral fill stays equal to the pad.
+ *
+ * Not counted: ::before/::after box-shadow and outline (a pseudo-element's own
+ * geometry is not exposed by the DOM; its layout box still grows scrollHeight).
+ * Clipped or sr-only text can inflate the extent; that is harmless, the extra
+ * rows are neutral fill on both sides.
  */
 export async function contentBox(page, selector) {
   return page.$eval(selector, (el) => {
@@ -218,7 +223,8 @@ export async function contentBox(page, selector) {
     const top = r.top + pt
     let bottom = top + Math.max(1, el.scrollHeight - pt - pb)
     const shadowReach = (value) => {
-      // box-shadow / text-shadow lists: split on commas outside parentheses, skip inset, read the px lengths after dropping the colour function.
+      // box-shadow / text-shadow lists: split on commas outside parentheses,
+      // skip inset, read the px lengths after dropping the colour function.
       if (!value || value === "none") return 0
       const parts = []
       let depth = 0
