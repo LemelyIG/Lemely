@@ -51,6 +51,8 @@
   --md-inverse-on-surface: oklch(0.95 0.006 240);
   --md-inverse-primary: #7fb8e0;
   --md-scrim: oklch(0.20 0.03 242 / 0.55);
+  /* Design A's dialog/drawer backdrop: the same scrim hue at 0.4 alpha. */
+  --md-scrim-dialog: oklch(0.20 0.03 242 / 0.4);
   --md-shadow: oklch(0.30 0.06 242);
 
   --grade-a-star: oklch(0.46 0.12 155);
@@ -184,6 +186,7 @@
   --color-inverse-on-surface: var(--md-inverse-on-surface);
   --color-inverse-primary: var(--md-inverse-primary);
   --color-scrim: var(--md-scrim);
+  --color-scrim-dialog: var(--md-scrim-dialog);
 
   --color-grade-a-star: var(--grade-a-star);
   --color-grade-a: var(--grade-a);

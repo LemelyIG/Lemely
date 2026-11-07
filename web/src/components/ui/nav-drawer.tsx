@@ -242,9 +242,9 @@ export function NavDrawer({ open, onClose, title, children, footer, variant = "d
       <div
         className={cn(
           "fixed inset-0 z-scrim motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]",
-          // Design A's `.as-side::backdrop` is the scrim colour at 0.4 alpha;
-          // the app token carries 0.55, and 0.4 / 0.55 = 72.73%.
-          variant === "shell" ? "bg-scrim/[72.73%]" : "bg-scrim",
+          // Design A's `.as-side::backdrop`: the scrim colour at 0.4 alpha
+          // (`--md-scrim-dialog`, next to the 0.55 app scrim in index.css).
+          variant === "shell" ? "bg-scrim-dialog" : "bg-scrim",
         )}
         aria-hidden="true"
         onClick={onClose}

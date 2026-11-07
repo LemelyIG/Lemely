@@ -357,7 +357,7 @@ SHELL_CHECKS.push(
     // (a short title such as "Overview" is under 100px wide and not clipped).
     app: { ...STUDENT_HOME, path: "/student/recently-deleted" },
     async run(page) {
-      const title = page.locator("header p").first()
+      const title = page.locator("header [data-shell-title]").first()
       const box = await title.boundingBox()
       const clipped = await title.evaluate((el) => el.scrollWidth > el.clientWidth + 1)
       if (!box || (clipped && box.width < 100)) throw new Error(`375px: title is ${box?.width ?? 0}px wide and clipped`)
@@ -381,7 +381,7 @@ SHELL_CHECKS.push(
           throw new Error(`375px: ${name} control is not in the bar beside Back`)
         }
       }
-      const title = page.locator("header p").first()
+      const title = page.locator("header [data-shell-title]").first()
       const box = await title.boundingBox()
       const clipped = await title.evaluate((el) => el.scrollWidth > el.clientWidth + 1)
       if (!box || (clipped && box.width < 100)) throw new Error(`375px drilled-in: title is ${box?.width ?? 0}px wide and clipped`)
@@ -435,14 +435,32 @@ SHELL_CHECKS.push(
       const dialog = page.getByRole("dialog", { name: "Settings" })
       await dialog.waitFor()
       if (new URL(page.url()).pathname !== "/student/settings") throw new Error(`URL is ${page.url()}`)
-      const title = await page.locator("header p").first().textContent()
+      const title = await page.locator("header [data-shell-title]").first().textContent()
       if (title !== "Friends") throw new Error(`top bar title under the dialog is "${title}", expected Friends`)
+      const active = await page.locator('nav[aria-label="Main"] a.bg-primary-container').allTextContents()
+      if (active.length !== 1 || active[0].trim() !== "Friends") throw new Error(`sidebar active under the dialog: ${JSON.stringify(active)}, expected Friends`)
       await page.keyboard.press("Escape")
       await assertHidden(dialog, "settings dialog")
       if (new URL(page.url()).pathname !== "/student/friends") throw new Error(`closed to ${page.url()}`)
       const y = await page.evaluate(() => window.scrollY)
       if (y !== 300) throw new Error(`page underneath scrolled to ${y}, expected 300`)
       await assertFocused(gear, "gear")
+    },
+  },
+  {
+    id: "student-notification-settings-link-closes-back-to-inbox",
+    app: { ...STUDENT_HOME, path: "/student/notifications" },
+    async run(page) {
+      await page.getByRole("link", { name: "Notification settings" }).click()
+      const dialog = page.getByRole("dialog", { name: "Settings" })
+      await dialog.waitFor()
+      if (new URL(page.url()).pathname !== "/student/settings/notifications") throw new Error(`URL is ${page.url()}`)
+      // The page underneath must stay the inbox (without the overlay state it falls back to home).
+      const under = (await page.locator("header [data-shell-title]").first().textContent())?.trim()
+      if (under !== "Notifications") throw new Error(`page under the dialog is "${under}", expected Notifications`)
+      await page.keyboard.press("Escape")
+      await assertHidden(dialog, "settings dialog")
+      if (new URL(page.url()).pathname !== "/student/notifications") throw new Error(`closed to ${page.url()}, expected /student/notifications`)
     },
   },
   {
@@ -453,6 +471,8 @@ SHELL_CHECKS.push(
       await dialog.waitFor()
       const current = dialog.locator('nav[data-settings-tabs="rail"] a[aria-current="page"]')
       if ((await current.textContent()) !== "Appearance") throw new Error("fresh load: Appearance tab is not current")
+      const active = await page.locator('nav[aria-label="Main"] a.bg-primary-container').allTextContents()
+      if (active.length !== 1 || active[0].trim() !== "Overview") throw new Error(`fresh load: sidebar active ${JSON.stringify(active)}, expected Overview`)
       await dialog.getByRole("button", { name: "Close settings" }).last().click()
       await assertHidden(dialog, "settings dialog")
       if (new URL(page.url()).pathname !== "/student") throw new Error(`fresh load closed to ${page.url()}`)
@@ -474,7 +494,7 @@ SHELL_CHECKS.push(
       for (let i = 0; i < 40; i++) {
         await page.keyboard.press("Tab")
         if (!(await dialog.evaluate((el) => el.contains(document.activeElement)))) {
-          throw new Error(`settings: focus left the dialog after ${i + 1} Tab presses`)
+          throw new Error(`settings: focus left the dialog after ${i + 1} Tab presses (on ${await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 120))})`)
         }
       }
     },

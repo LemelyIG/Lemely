@@ -48,6 +48,10 @@ describe("nextSettingsTabIndex (arrow keys on the settings tabs)", () => {
     expect(nextSettingsTabIndex(0, "Enter", 5)).toBeNull()
     expect(nextSettingsTabIndex(-1, "ArrowDown", 5)).toBeNull()
   })
+  it.each(["altKey", "ctrlKey", "metaKey"])("ignores a %s-modified key", (mod) => {
+    expect(nextSettingsTabIndex(0, "ArrowDown", 5, { [mod]: true })).toBeNull()
+    expect(nextSettingsTabIndex(1, "Home", 5, { [mod]: true })).toBeNull()
+  })
 })
 
 describe("titleRuns (design A sets codes and dates in the mono face)", () => {

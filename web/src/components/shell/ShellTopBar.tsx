@@ -89,7 +89,7 @@ export function ShellTopBar({
         >
           <ShellIcon name="menu" />
         </button>
-        <p className="me-auto min-w-0 truncate text-title-bar text-on-surface">
+        <p data-shell-title className="me-auto min-w-0 truncate text-title-bar text-on-surface">
           {title}
         </p>
         {actions}

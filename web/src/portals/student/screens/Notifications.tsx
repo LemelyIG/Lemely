@@ -19,6 +19,7 @@ import { setAppBadge } from "@/lib/badging"
 import type { Notification } from "@/lib/notificationTypes"
 import { studentDestinationFor } from "@/lib/studentInbox"
 import { cn } from "@/lib/utils"
+import { useOverlayState } from "@/lib/nav/useOverlayState"
 import { usePullToRefresh } from "@/lib/gestures/usePullToRefresh"
 import { useLongPress } from "@/lib/gestures/useLongPress"
 
@@ -251,6 +252,7 @@ function InboxHeading() {
 
 export function Notifications() {
   const query = useNotifications()
+  const overlayState = useOverlayState()
   const markAll = useMarkAllNotificationsRead()
 
   // Task 7 (B5a): the reader landing on the canonical inbox (D5.9 §1) is
@@ -334,9 +336,12 @@ export function Notifications() {
                       reader notices they are getting too much or too little.
                       The sidebar's Settings entry also reaches this screen
                       (Notification settings), so this is a convenience, not
-                      the only route to it. */}
+                      the only route to it. It carries the overlay state so the
+                      dialog opens over this inbox and Escape returns here,
+                      not to home. */}
                   <Link
                     to="/student/settings/notifications"
+                    state={overlayState}
                     className="text-body-sm text-on-primary-container hover:underline"
                   >
                     Notification settings

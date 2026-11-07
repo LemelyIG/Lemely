@@ -194,6 +194,7 @@ export function SettingsModal({
       links.indexOf(document.activeElement as HTMLAnchorElement),
       event.key,
       links.length,
+      event,
     )
     if (next === null) return
     event.preventDefault()
@@ -230,7 +231,7 @@ export function SettingsModal({
       onKeyDown={handleKeyDown}
     >
       <div
-        className="fixed inset-0 z-scrim bg-scrim/[72.73%] motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
+        className="fixed inset-0 z-scrim bg-scrim-dialog motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
         aria-hidden="true"
         onClick={onClose}
       />

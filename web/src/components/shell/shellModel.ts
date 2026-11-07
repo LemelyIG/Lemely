@@ -48,7 +48,15 @@ const STEP: Record<string, 1 | -1> = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1,
 
 /** Arrow keys move between settings tabs (up/down on the rail, left/right on
  * the phone strip), wrapping; Home and End jump to the ends. */
-export function nextSettingsTabIndex(current: number, key: string, count: number): number | null {
+export function nextSettingsTabIndex(
+  current: number,
+  key: string,
+  count: number,
+  mods: { altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean } = {},
+): number | null {
+  // Alt+Arrow is browser history, Ctrl/Cmd+Arrow belongs to the OS and
+  // assistive tech: only a bare key moves between tabs.
+  if (mods.altKey || mods.ctrlKey || mods.metaKey) return null
   if (current < 0 || count <= 0) return null
   if (key in STEP) return (current + STEP[key] + count) % count
   if (key === "Home") return 0
