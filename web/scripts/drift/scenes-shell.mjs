@@ -207,6 +207,27 @@ export const STUDENT_SCENES = [
     app: student("populated", { act: openAccount }),
     preview: { state: "populated", act: (page) => page.click(".as-pop-me summary") },
   }),
+  ...[
+    ["profile", ""],
+    ["account", "/devices"],
+    ["notifications", "/notifications"],
+    ["appearance", "/appearance"],
+    ["install", "/install"],
+  ].flatMap(([tab, suffix]) =>
+    byWindowRule({
+      id: `student-settings-${tab}`,
+      kind: "preview-vs-app",
+      capture: "frame",
+      app: student("populated", { path: `/student/settings${suffix}` }),
+      preview: {
+        state: "populated",
+        act: async (page) => {
+          await page.click('[data-a-open="as-settings"]')
+          await page.click(`[data-a-tab="${tab}"]`)
+        },
+      },
+    }),
+  ),
 ]
 
 export const SHELL_SCENES = [...TEACHER_SCENES, ...STUDENT_SCENES]

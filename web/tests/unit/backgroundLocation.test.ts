@@ -8,6 +8,7 @@ import {
   readBackgroundIdx,
   readBackgroundLocation,
   resolveBackground,
+  underlyingPathname,
 } from "@/lib/nav/backgroundLocation"
 import { screenKey } from "@/lib/nav/screenKey"
 
@@ -284,5 +285,23 @@ describe("planOverlayOutlet", () => {
     })
     expect(plan.screenLocation).toEqual(classes)
     expect(plan.replaceState).toBeNull()
+  })
+})
+
+describe("underlyingPathname fallbackPath", () => {
+  it("answers the fallback page on a deep link into the overlay when one is given", () => {
+    expect(
+      underlyingPathname({ pathname: `${BASE}/appearance`, state: null, overlayBase: BASE, fallbackPath: "/teacher" }),
+    ).toBe("/teacher")
+  })
+
+  it("still prefers the background in the state", () => {
+    expect(
+      underlyingPathname({ pathname: BASE, state: backgroundState(classes), overlayBase: BASE, fallbackPath: "/teacher" }),
+    ).toBe("/teacher/classes")
+  })
+
+  it("keeps the old answer without a fallback", () => {
+    expect(underlyingPathname({ pathname: BASE, state: null, overlayBase: BASE })).toBe(BASE)
   })
 })

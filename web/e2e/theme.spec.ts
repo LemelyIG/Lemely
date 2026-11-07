@@ -63,7 +63,7 @@ test.describe("theme: Appearance setting", () => {
   }) => {
     await page.emulateMedia({ colorScheme: "dark" })
     await signInAs(page, "student")
-    await page.goto("/student/settings")
+    await page.goto("/student/settings/appearance")
     await waitForRouteReady(page)
 
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark")
@@ -95,7 +95,7 @@ test.describe("theme: Appearance setting", () => {
   }) => {
     await page.emulateMedia({ colorScheme: "light" })
     await signInAs(page, "student")
-    await page.goto("/student/settings")
+    await page.goto("/student/settings/appearance")
     await waitForRouteReady(page)
 
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light")
@@ -115,7 +115,7 @@ test.describe("theme: Appearance setting", () => {
   test("System follows the OS live, with no reload, once selected", async ({ page }) => {
     await page.emulateMedia({ colorScheme: "light" })
     await signInAs(page, "student")
-    await page.goto("/student/settings")
+    await page.goto("/student/settings/appearance")
     await waitForRouteReady(page)
 
     await page.getByRole("radio", { name: "System" }).check()

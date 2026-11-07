@@ -144,6 +144,8 @@ export const crumbs: Record<string, string> = {
   "/student/settings": "Home / Settings",
   "/student/settings/devices": "Home / Settings / Account and devices",
   "/student/settings/notifications": "Home / Settings / Notifications",
+  "/student/settings/appearance": "Home / Settings / Appearance",
+  "/student/settings/install": "Home / Settings / Install Lemely",
   "/student/onboard": "Onboarding",
   "/student/landing": "lemely.com",
 }

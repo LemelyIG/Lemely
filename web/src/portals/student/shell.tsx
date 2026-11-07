@@ -1,4 +1,4 @@
-import { Link, useLocation } from "react-router-dom"
+import { Link, matchPath, useLocation } from "react-router-dom"
 import { ChalkboardTeacher, House, NotePencil, UserCircle, type Icon } from "@phosphor-icons/react"
 import type { AccountLink } from "@/components/shell/AccountPanel"
 import { ShellIcon, type ShellIconName } from "@/components/shell/icons"
@@ -113,11 +113,20 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
   const studentProfile = useStudentProfile()
   const { data: reference } = useReference()
   const subjects = overview.data?.subjects ?? []
-  // While Settings is a dialog, the title follows the page underneath.
+  // While Settings is a dialog, the title, the current sidebar row and the open
+  // subject follow the page underneath (the portal home on a deep link).
   const pagePath = underlyingPathname({
     pathname: location.pathname,
     state: location.state,
     overlayBase: STUDENT_SETTINGS_BASE,
+    fallbackPath: "/student",
+  })
+  const navItems = studentNavItems.map((item) => {
+    const shellItem = toShellItem(item)
+    // The row's own NavLink matches the URL, which is the dialog's while it is open.
+    return pagePath !== location.pathname && matchPath({ path: item.to, end: item.end }, pagePath)
+      ? { ...shellItem, active: true }
+      : shellItem
   })
   const trail = studentShellTrail(pagePath)
   const detail = studentDetailLine(
@@ -141,7 +150,7 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
         navLabel: "Main",
         homeTo: "/student",
         homeLabel: "Lemely, overview",
-        items: studentNavItems.map(toShellItem),
+        items: navItems,
         groups: [
           {
             id: "subjects",
@@ -150,7 +159,7 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
               <ShellTree
                 labelledBy={labelId}
                 rows={subjectRows(subjects)}
-                currentId={currentSubjectCode(location.pathname)}
+                currentId={currentSubjectCode(pagePath)}
                 empty={overview.isPending ? null : "Your subjects show up here after your first marked paper."}
               />
             ),

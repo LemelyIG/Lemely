@@ -2,7 +2,9 @@ import fs from "node:fs"
 import path from "node:path"
 import { describe, expect, it } from "vitest"
 import { teacherRoute } from "@/portals/teacher"
+import { studentRoute } from "@/portals/student"
 import {
+  STUDENT_SETTINGS_TABS,
   TEACHER_SETTINGS_TABS,
   activeSettingsTab,
   settingsTabPath,
@@ -115,5 +117,69 @@ describe("signOutOrder", () => {
   it("handles a list with no current device, and an empty list", () => {
     expect(signOutOrder([{ deviceId: "a", isCurrent: false }])).toEqual(["a"])
     expect(signOutOrder([])).toEqual([])
+  })
+})
+
+const STUDENT_BASE = "/student/settings"
+
+function studentSettingsRoute() {
+  const route = (studentRoute.children ?? []).find((child) => child.path === "settings")
+  if (!route) throw new Error("student portal has no settings route")
+  return route
+}
+
+describe("STUDENT_SETTINGS_TABS (design A dialog)", () => {
+  it("lists design A's five tabs in rail order", () => {
+    expect(STUDENT_SETTINGS_TABS.map((tab) => tab.label)).toEqual([
+      "Profile",
+      "Account and devices",
+      "Notifications",
+      "Appearance",
+      "Install Lemely",
+    ])
+  })
+
+  it("keeps every path the page-based student settings used", () => {
+    const paths = STUDENT_SETTINGS_TABS.map((tab) => settingsTabPath(STUDENT_BASE, tab))
+    for (const legacy of [STUDENT_BASE, `${STUDENT_BASE}/devices`, `${STUDENT_BASE}/notifications`, `${STUDENT_BASE}/install`]) {
+      expect(paths).toContain(legacy)
+    }
+  })
+
+  it("says offline practice, not marking, for students", () => {
+    expect(STUDENT_SETTINGS_TABS.find((t) => t.id === "install")?.description).toBe(
+      "Add Lemely to your home screen for faster access and offline practice.",
+    )
+  })
+
+  it("has no em dash in any label or helper", () => {
+    for (const tab of STUDENT_SETTINGS_TABS) {
+      expect(tab.label).not.toContain("\u2014")
+      expect(tab.description).not.toContain("\u2014")
+    }
+  })
+
+  it("mounts exactly one child route per tab, index for the empty segment", () => {
+    const children = studentSettingsRoute().children ?? []
+    const mounted = children.map((child) => (child.index ? "" : child.path))
+    expect(mounted.sort()).toEqual(STUDENT_SETTINGS_TABS.map((tab) => tab.segment).sort())
+  })
+
+  it("titles every tab route", () => {
+    for (const child of studentSettingsRoute().children ?? []) {
+      expect((child.handle as { title?: string } | undefined)?.title, String(child.path)).toBeTruthy()
+    }
+  })
+
+  it("resolves the active student tab from a pathname", () => {
+    expect(activeSettingsTab(STUDENT_SETTINGS_TABS, STUDENT_BASE, STUDENT_BASE)?.id).toBe("profile")
+    expect(activeSettingsTab(STUDENT_SETTINGS_TABS, STUDENT_BASE, `${STUDENT_BASE}/appearance`)?.id).toBe("appearance")
+    expect(activeSettingsTab(STUDENT_SETTINGS_TABS, STUDENT_BASE, `${STUDENT_BASE}/classes`)).toBeNull()
+  })
+
+  it("renders the settings route as the dialog, not the old page layout", () => {
+    const source = fs.readFileSync(path.join(process.cwd(), "src/portals/student/index.tsx"), "utf8")
+    expect(source).toContain("<SettingsModalRoute")
+    expect(source).not.toContain("<PortalSettingsLayout")
   })
 })

@@ -408,4 +408,85 @@ SHELL_CHECKS.push(
   })),
   barIsTranslucent("student-bar-translucent-light", STUDENT_HOME, "light"),
   barIsTranslucent("student-bar-translucent-dark", STUDENT_HOME, "dark"),
+  {
+    id: "student-settings-opens-over-the-page-and-closes-back",
+    app: {
+      ...STUDENT_HOME,
+      path: "/student/friends",
+      async mocks(page) {
+        await STUDENT_HOME.mocks(page)
+        // The page underneath is real: an empty `{}` would crash it (and the dialog with it).
+        await page.route("**/api/student/friends", (route) =>
+          route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ friendCode: "ABC-123", friends: [], incoming: [], outgoing: [] }),
+          }),
+        )
+      },
+    },
+    async run(page) {
+      await page.evaluate(() => {
+        document.body.style.minHeight = "3000px"
+        window.scrollTo(0, 300)
+      })
+      const gear = page.getByRole("link", { name: "Settings" })
+      await gear.click()
+      const dialog = page.getByRole("dialog", { name: "Settings" })
+      await dialog.waitFor()
+      if (new URL(page.url()).pathname !== "/student/settings") throw new Error(`URL is ${page.url()}`)
+      const title = await page.locator("header p").first().textContent()
+      if (title !== "Friends") throw new Error(`top bar title under the dialog is "${title}", expected Friends`)
+      await page.keyboard.press("Escape")
+      await assertHidden(dialog, "settings dialog")
+      if (new URL(page.url()).pathname !== "/student/friends") throw new Error(`closed to ${page.url()}`)
+      const y = await page.evaluate(() => window.scrollY)
+      if (y !== 300) throw new Error(`page underneath scrolled to ${y}, expected 300`)
+      await assertFocused(gear, "gear")
+    },
+  },
+  {
+    id: "student-settings-fresh-load-opens-over-home",
+    app: { ...STUDENT_HOME, path: "/student/settings/appearance" },
+    async run(page) {
+      const dialog = page.getByRole("dialog", { name: "Settings" })
+      await dialog.waitFor()
+      const current = dialog.locator('nav[data-settings-tabs="rail"] a[aria-current="page"]')
+      if ((await current.textContent()) !== "Appearance") throw new Error("fresh load: Appearance tab is not current")
+      await dialog.getByRole("button", { name: "Close settings" }).last().click()
+      await assertHidden(dialog, "settings dialog")
+      if (new URL(page.url()).pathname !== "/student") throw new Error(`fresh load closed to ${page.url()}`)
+    },
+  },
+  {
+    id: "student-settings-arrow-keys-and-focus-trap",
+    app: { ...STUDENT_HOME, path: "/student/settings" },
+    async run(page) {
+      const dialog = page.getByRole("dialog", { name: "Settings" })
+      await dialog.waitFor()
+      await page.waitForFunction(() => document.activeElement?.getAttribute("aria-current") === "page")
+      await page.keyboard.press("ArrowDown")
+      await page.waitForURL("**/student/settings/devices")
+      const focused = await page.evaluate(() => document.activeElement?.textContent)
+      if (focused !== "Account and devices") throw new Error(`ArrowDown focused "${focused}"`)
+      await page.keyboard.press("End")
+      await page.waitForURL("**/student/settings/install")
+      for (let i = 0; i < 40; i++) {
+        await page.keyboard.press("Tab")
+        if (!(await dialog.evaluate((el) => el.contains(document.activeElement)))) {
+          throw new Error(`settings: focus left the dialog after ${i + 1} Tab presses`)
+        }
+      }
+    },
+  },
+  {
+    id: "teacher-settings-arrow-keys",
+    app: { ...TEACHER_HOME, path: "/teacher/settings" },
+    async run(page) {
+      await page.getByRole("dialog", { name: "Settings" }).waitFor()
+      await page.waitForFunction(() => document.activeElement?.getAttribute("aria-current") === "page")
+      await page.keyboard.press("ArrowUp")
+      await page.waitForURL("**/teacher/settings/install")
+    },
+  },
 )

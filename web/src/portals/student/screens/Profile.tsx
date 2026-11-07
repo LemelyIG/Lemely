@@ -12,6 +12,7 @@ import { Celebrate, CountUp, MilestoneSticker } from "@/components/ui/celebratio
 import { Fire, Snowflake } from "@phosphor-icons/react"
 import { useXpProfile } from "@/lib/hooks/useXpApi"
 import { useProfile } from "@/lib/hooks/useMeApi"
+import { useOverlayState } from "@/lib/nav/useOverlayState"
 import type { XpDay, XpProfile, XpSource } from "@/lib/xpTypes"
 
 /*
@@ -384,6 +385,7 @@ function TrainingLogSkeleton() {
 
 export function Profile() {
   const navigate = useNavigate()
+  const overlayState = useOverlayState()
   const xp = useXpProfile()
   const me = useProfile()
 
@@ -477,7 +479,7 @@ export function Profile() {
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => navigate("/student/settings/devices")}
+          onClick={() => navigate("/student/settings/devices", { state: overlayState })}
         >
           Your devices
         </Button>

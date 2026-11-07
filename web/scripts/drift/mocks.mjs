@@ -105,6 +105,36 @@ export function studentShellMocks(state) {
     await page.route("**/api/student/overview", (route) =>
       json(route, { studentName: "Mariam", forecast: "", subjects: data.subjects, weakGlobal: [], momentum: { points: [] } }),
     )
+    // Overview's join-class prompt reads `classes.length`; the catch-all `{}`
+    // would crash the page under the settings dialog and take the dialog with it.
+    await page.route("**/api/student/classes", (route) =>
+      json(route, { classes: state === "new" ? [] : [{ classId: "class-1", className: "Year 11 Physics" }] }),
+    )
+    // The settings dialog's Account and devices tab: the two devices design A
+    // shows (this browser, a phone used yesterday). The harness clock is fixed at
+    // 2026-11-05 10:00 local time (`NOW` in harness.mjs).
+    const now = new Date(2026, 10, 5, 10, 0)
+    await page.route("**/api/me/devices", (route) =>
+      json(route, {
+        maxDevices: 3,
+        devices: [
+          {
+            deviceId: "device-1",
+            label: null,
+            userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+            lastActiveAt: now.toISOString(),
+            isCurrent: true,
+          },
+          {
+            deviceId: "device-2",
+            label: null,
+            userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+            lastActiveAt: new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(),
+            isCurrent: false,
+          },
+        ],
+      }),
+    )
     await page.route("**/api/notifications", (route) => json(route, { notifications: data.notifications }))
     await page.route("**/api/notifications/counts", (route) => json(route, data.counts))
   }

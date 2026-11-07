@@ -5,7 +5,8 @@ import { Navigate, useLocation } from "react-router-dom"
 import { PortalNotFound } from "@/portals/misc/NotFound"
 import { useStudentProfile } from "@/lib/hooks/useMeApi"
 import { prefetchOnIntent } from "@/lib/prefetchOnIntent"
-import { StudentShell } from "./shell"
+import { STUDENT_SETTINGS_TABS } from "@/portals/settings/settingsTabs"
+import { StudentShell, STUDENT_SETTINGS_BASE } from "./shell"
 
 export { STUDENT_BOTTOM_TABS } from "./shell"
 
@@ -123,18 +124,21 @@ const TutorAccess = lazy(() =>
 // per-screen splitting P6.1b's note above otherwise does. The barrel still
 // exists for other consumers (its own header explains why) — this portal
 // just does not use it for the lazy boundary.
-const PortalSettingsLayout = lazy(() =>
-  import("@/portals/settings/PortalSettingsLayout").then((m) => ({
-    default: m.PortalSettingsLayout,
-  })),
+const SettingsModalRoute = lazy(() =>
+  import("@/portals/settings/SettingsModal").then((m) => ({ default: m.SettingsModalRoute })),
 )
 const ProfileSettingsSection = lazy(() =>
   import("@/portals/settings/ProfileSettings").then((m) => ({
     default: m.ProfileSettingsSection,
   })),
 )
-const DeviceSettingsSection = lazy(() =>
-  import("@/portals/settings/DeviceSettings").then((m) => ({ default: m.DeviceSettingsSection })),
+const AccountSettingsSection = lazy(() =>
+  import("@/portals/settings/AccountSettings").then((m) => ({ default: m.AccountSettingsSection })),
+)
+const AppearanceSettingsSection = lazy(() =>
+  import("@/portals/settings/AppearanceSettings").then((m) => ({
+    default: m.AppearanceSettingsSection,
+  })),
 )
 const NotificationSettingsSection = lazy(() =>
   import("@/portals/settings/NotificationSettings").then((m) => ({
@@ -203,7 +207,13 @@ function StudentLayout() {
     location.pathname,
   )
   if (onboardingRedirect) return <Navigate to={onboardingRedirect} replace />
-  return <StudentShell pending={studentProfile.isPending} prefetchCorrectPaper={prefetchCorrectPaper} />
+  return (
+    <StudentShell
+      pending={studentProfile.isPending}
+      prefetchCorrectPaper={prefetchCorrectPaper}
+      overlay={{ routes: studentContentRoutes(), overlayBase: STUDENT_SETTINGS_BASE, fallbackPath: "/student" }}
+    />
+  )
 }
 
 export const studentRoute: RouteObject = {
@@ -326,24 +336,39 @@ export const studentRoute: RouteObject = {
       handle: { title: "Recently deleted", skeleton: "list" },
     },
     {
+      // A dialog over the current page: PortalShell's ScreenOutlet overlay renders
+      // the page underneath, this route renders the dialog. One child per entry in
+      // STUDENT_SETTINGS_TABS; settingsTabs.test.ts holds the two in step.
       path: "settings",
-      element: <PortalSettingsLayout basePath="/student/settings" />,
+      element: (
+        <SettingsModalRoute
+          tabs={STUDENT_SETTINGS_TABS}
+          basePath={STUDENT_SETTINGS_BASE}
+          fallbackPath="/student"
+        />
+      ),
       handle: { title: "Settings", skeleton: "page-header" },
       children: [
         {
           index: true,
-          element: <ProfileSettingsSection />,
+          // Appearance has its own tab here, so not inside Profile.
+          element: <ProfileSettingsSection appearance={false} />,
           handle: { title: "Profile settings", skeleton: "page-header" },
         },
         {
           path: "devices",
-          element: <DeviceSettingsSection />,
+          element: <AccountSettingsSection />,
           handle: { title: "Account and devices", skeleton: "page-header" },
         },
         {
           path: "notifications",
           element: <NotificationSettingsSection />,
           handle: { title: "Notification settings", skeleton: "page-header" },
+        },
+        {
+          path: "appearance",
+          element: <AppearanceSettingsSection />,
+          handle: { title: "Appearance", skeleton: "page-header" },
         },
         {
           path: "install",
@@ -432,4 +457,14 @@ export const studentRoute: RouteObject = {
       handle: { title: "Page not found", skeleton: "page-header" },
     },
   ],
+}
+
+let contentRoutesCache: RouteObject[] | null = null
+
+/** The portal's child routes minus the settings dialog, matched against the
+ * page underneath while the dialog is open. Built on first use because
+ * `studentRoute` is declared after the layout that reads it. */
+function studentContentRoutes(): RouteObject[] {
+  contentRoutesCache ??= (studentRoute.children ?? []).filter((route) => route.path !== "settings")
+  return contentRoutesCache
 }

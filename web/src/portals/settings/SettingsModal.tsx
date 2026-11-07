@@ -17,6 +17,7 @@ import { portalErrorFallback } from "@/components/route-error"
 import { lockScroll } from "@/lib/scrollLock"
 import { historyIndexOf, overlayCloseAction } from "@/lib/nav/backgroundLocation"
 import { cn } from "@/lib/utils"
+import { nextSettingsTabIndex } from "@/components/shell/shellModel"
 import { activeSettingsTab, settingsTabPath, type SettingsTab } from "./settingsTabs"
 import { SettingsHeadingLevel } from "./SettingsRows"
 
@@ -185,6 +186,21 @@ export function SettingsModal({
     }
   }
 
+  /** Design A: arrow keys move between sections (up/down on the rail,
+   * left/right on the phone strip), Home/End jump; switching replaces history. */
+  function handleTabKeys(event: ReactKeyboardEvent<HTMLElement>) {
+    const links = Array.from(event.currentTarget.querySelectorAll<HTMLAnchorElement>("a"))
+    const next = nextSettingsTabIndex(
+      links.indexOf(document.activeElement as HTMLAnchorElement),
+      event.key,
+      links.length,
+    )
+    if (next === null) return
+    event.preventDefault()
+    links[next].focus()
+    links[next].click()
+  }
+
   const tabLinks = (variant: "rail" | "strip") =>
     tabs.map((tab) => (
       <NavLink
@@ -214,7 +230,7 @@ export function SettingsModal({
       onKeyDown={handleKeyDown}
     >
       <div
-        className="fixed inset-0 z-scrim bg-scrim motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
+        className="fixed inset-0 z-scrim bg-scrim/[72.73%] motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
         aria-hidden="true"
         onClick={onClose}
       />
@@ -227,7 +243,7 @@ export function SettingsModal({
         data-settings-dialog
         className={cn(
           "relative z-modal flex h-dvh w-full flex-col overflow-hidden bg-surface focus:outline-none",
-          "md:h-[min(46rem,calc(100dvh-3rem))] md:max-w-240 md:flex-row md:rounded-card md:border md:border-outline-variant md:shadow-[var(--shadow-float)]",
+          "md:h-[min(46rem,calc(100dvh-3rem))] md:max-w-240 md:flex-row md:rounded-card md:shadow-[var(--shadow-panel)]",
           "motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-spring)_both]",
         )}
       >
@@ -254,6 +270,7 @@ export function SettingsModal({
           <nav
             aria-label="Settings sections"
             data-settings-tabs="strip"
+            onKeyDown={handleTabKeys}
             className="flex gap-1 overflow-x-auto px-4 pt-1 pb-3 lm-scroll md:hidden"
           >
             {tabLinks("strip")}
@@ -261,6 +278,7 @@ export function SettingsModal({
           <nav
             aria-label="Settings sections"
             data-settings-tabs="rail"
+            onKeyDown={handleTabKeys}
             className="hidden flex-col gap-1 overflow-y-auto px-3 pb-6 md:flex"
           >
             {tabLinks("rail")}
