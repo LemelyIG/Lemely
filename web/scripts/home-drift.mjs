@@ -26,7 +26,6 @@ import {
   contentBox,
   matchContentWidth,
   pinContentWidth,
-  pinContentHeight,
   horizontalOverflow,
   openApp,
   openPreview,
@@ -101,7 +100,7 @@ const NATURAL_CAPTURE_WIDTHS = [768, 1024]
 
 async function shoot(browser, side, item, meta = {}) {
   const { scene, width, theme } = item
-  const { contentWidth: targetWidth, contentHeight: targetHeight, natural = false } = meta
+  const { contentWidth: targetWidth, natural = false } = meta
   const beforeVsAfter = side === "app" && scene.kind === "before-vs-after"
   const height = HEIGHT[width] ?? 900
   const opened =
@@ -127,11 +126,6 @@ async function shoot(browser, side, item, meta = {}) {
           ? await pinContentWidth(opened.page, selector, targetWidth)
           : await matchContentWidth(opened.page, selector, targetWidth, height)
       if (!ok) throw new Error(`${item.key}: could not match content width ${targetWidth}`)
-    }
-    // Mirror of the width pin for height: clip to the baseline's recorded box height.
-    if (beforeVsAfter && !natural && scene.capture === "content" && targetHeight !== undefined) {
-      const pin = await pinContentHeight(opened.page, selector, targetHeight)
-      if (!pin.ok) throw new Error(`${item.key}: height pin to ${targetHeight} refused: ${pin.reason}`)
     }
     const box_ = scene.capture === "content" ? await contentBox(opened.page, selector) : undefined
     const width_ = box_?.width
@@ -262,7 +256,6 @@ async function compareItem(browser, item, { baselineDir, runDir, table }) {
       a = { png: fs.readFileSync(basePng) }
       b = await shoot(browser, "app", item, {
         contentWidth: meta.contentWidth ?? undefined,
-        contentHeight: meta.contentHeight ?? pngHeight(a.png),
         originX: meta.originX ?? undefined,
       })
     }
@@ -275,11 +268,6 @@ async function compareItem(browser, item, { baselineDir, runDir, table }) {
   } catch (error) {
     return { key, diff: null, pct: null, outcome: "fail", reason: `capture failed: ${error.message}`, justification: null }
   }
-}
-
-/** Pixel height from a PNG's IHDR (the recorded box height for sidecars without contentHeight); assumes DPR 1. */
-function pngHeight(buffer) {
-  return buffer.readUInt32BE(20)
 }
 
 function assertEqual(actual, expected, label) {
@@ -427,7 +415,7 @@ async function selftestContentIgnoresChrome(browser) {
     const html = (chrome, body) =>
       `<body style="margin:0;background:#fff"><div style="position:fixed;bottom:0;left:0;right:0;height:60px;background:${chrome}"></div>` +
       `<div style="position:sticky;top:0;height:40px;background:${chrome}"></div>` +
-      `<main id="m" style="height:560px;background:${body}"><div style="margin:10px;height:80px;border-radius:24px;background:#fff;border-left:4px solid #036"></div></main></body>`
+      `<main id="m" style="height:560px;background:${body}"><div style="margin:10px;height:80px;border-radius:24px;background:#fff;border-left:4px solid #036"></div></main><div style="height:80px"></div></body>`
     const shoot = async (chrome, body, lift = 0) => {
       await page.setContent(html(chrome, body))
       if (lift) await page.addStyleTag({ content: `#m { transform: translateY(${lift}px); }` })
@@ -466,46 +454,32 @@ async function selftestContentIgnoresChrome(browser) {
     if (sidewaysChanged.diff === 0) throw new Error("selftest: a shifted capture with changed content did not differ")
     const pinnedSame = diffPngs(sidewaysBase, await widthPinned("#0a0"), path.join(DRIFT_DIR, "selftest", "pinned.diff.png"))
     const pinnedChanged = diffPngs(sidewaysBase, await widthPinned("#a0a"), path.join(DRIFT_DIR, "selftest", "pinned-changed.diff.png"))
-    const heightPinned = async (body, boxHeight, appendHtml = "", css = "") => {
-      await page.setContent(html("#f00", body))
-      await page.evaluate(() => {
-        window.__pinnedContentHeight = undefined
-      })
+    // Painted-extent capture height: the capture is as tall as what paints, compare pads the
+    // shorter side with magenta, so extra painted content is a diff and empty trailing space is not.
+    const para = (w) => `<p style="position:absolute;top:520px;left:0;width:${w}px;margin:0;font:16px/20px monospace;color:#000">aaa bbb ccc</p>`
+    const lastCard = `<div style="position:absolute;top:511px;left:20px;width:100px;height:48px;background:#fff;border-bottom:1px solid #888;box-shadow:0 2px 8px rgba(0,0,0,.4)"></div>`
+    const extent = async (boxHeight, appendHtml = "", css = "") => {
+      await page.setContent(html("#f00", "#0a0"))
       await page.addStyleTag({ content: `#m { width: 300px; height: ${boxHeight}px !important; position: relative; } ${css}` })
       if (appendHtml) await page.$eval("#m", (el, h) => el.insertAdjacentHTML("beforeend", h), appendHtml)
-      const { ok } = await pinContentHeight(page, "#m", 560)
-      return { ok, png: ok ? (await capture(page, { capture: "content", selector: "#m", originX: baseX })).png : null }
+      return (await capture(page, { capture: "content", selector: "#m", neutral: true, originX: baseX })).png
     }
-    const tall = await heightPinned("#0a0", 570)
-    const tallChanged = await heightPinned("#a0a", 570)
-    const short = await heightPinned("#0a0", 500)
-    // Real content appended below the baseline height must refuse the pin, not be cropped.
-    const appended = await heightPinned("#0a0", 570, `<div style="position:absolute;top:562px;left:0;width:100px;height:6px;background:#f0f"></div>`)
-    const appendedChild = await heightPinned("#0a0", 570, `<div style="margin-top:480px;height:8px;background:#f0f"></div>`)
-    const pseudo = await heightPinned("#0a0", 570, "", "#m::after { content: ''; position: absolute; top: 562px; left: 0; width: 100px; height: 6px; background: #0ff; }")
-    if (pseudo.ok) throw new Error("selftest: pinContentHeight cropped away a pseudo-element below the baseline height")
-    // A card that starts above the target and whose border and shadow cross it is already compared: accepted.
-    const card = `<div style="position:absolute;top:500px;left:20px;width:100px;height:62px;background:#fff;border-bottom:1px solid #888;box-shadow:0 2px 8px rgba(0,0,0,.4)"></div>`
-    const cardOnly = await heightPinned("#0a0", 580, card)
-    const cardTaller = await heightPinned("#0a0", 600, card)
-    if (!cardOnly.ok || !cardTaller.ok) throw new Error("selftest: pinContentHeight refused a card whose border and shadow cross the baseline height")
-    const cardDiff = diffPngs(cardOnly.png, cardTaller.png, path.join(DRIFT_DIR, "selftest", "card.diff.png"))
-    if (cardDiff.diff !== 0) throw new Error(`selftest: a card crossing the pin differed (${cardDiff.diff} px)`)
-    // The same card plus a separate element that starts below the target: refused.
-    const cardPlus = await heightPinned("#0a0", 580, card + `<div style="position:absolute;top:566px;left:200px;width:40px;height:6px;background:#a0f"></div>`)
-    if (cardPlus.ok) throw new Error("selftest: pinContentHeight accepted a separate element starting below the baseline height")
-    if (!tall.ok || !tallChanged.ok) throw new Error("selftest: pinContentHeight failed on a taller box")
-    if (short.ok) throw new Error("selftest: pinContentHeight accepted a box shorter than the baseline")
-    if (appended.ok) throw new Error("selftest: pinContentHeight cropped away an element below the baseline height")
-    if (appendedChild.ok) throw new Error("selftest: pinContentHeight cropped away an in-flow element below the baseline height")
-    const heightSame = diffPngs(sidewaysBase, tall.png, path.join(DRIFT_DIR, "selftest", "height.diff.png"))
-    const heightChanged = diffPngs(sidewaysBase, tallChanged.png, path.join(DRIFT_DIR, "selftest", "height-changed.diff.png"))
-    if (heightSame.diff !== 0) throw new Error(`selftest: a height-pinned taller box differed from the baseline (${heightSame.diff} px)`)
-    if (heightChanged.diff === 0) throw new Error("selftest: a real content change did not go red with the height pin on")
-    await page.evaluate(() => {
-      window.__pinnedContentHeight = undefined
-    })
-    console.log(`selftest height pin passed (taller box ${heightSame.diff} px, changed content ${heightChanged.diff} px)`)
+    const dpx = (x, y, name) => diffPngs(x, y, path.join(DRIFT_DIR, "selftest", `${name}.diff.png`)).diff
+    const plain = await extent(560, para(300))
+    const cardBase = await extent(560, lastCard + para(300))
+    const heightResults = {
+      "(a) taller empty trailing space": [dpx(plain, await extent(600, para(300)), "ext-a"), true],
+      "(b) element below the old bottom": [dpx(plain, await extent(560, para(300) + `<div style="position:absolute;top:566px;left:0;width:40px;height:8px;background:#a0f"></div>`), "ext-b"), false],
+      "(c) ::after below the old bottom": [dpx(plain, await extent(560, para(300), "#m > div::after { content: ''; position: absolute; top: 562px; left: 0; width: 60px; height: 6px; background: #0ff; }"), "ext-c"), false],
+      "(d) text wrapping onto extra lines": [dpx(plain, await extent(560, para(40)), "ext-d"), false],
+      "(e) card border and shadow in both (same height)": [dpx(cardBase, await extent(560, lastCard + para(300)), "ext-e1"), true],
+      "(e) card border and shadow in both (taller root)": [dpx(cardBase, await extent(600, lastCard + para(300)), "ext-e2"), true],
+    }
+    for (const [label, [diff, zero]] of Object.entries(heightResults)) {
+      if (zero && diff !== 0) throw new Error(`selftest: ${label}: expected 0 px, got ${diff} px`)
+      if (!zero && diff === 0) throw new Error(`selftest: ${label}: expected a diff, got 0 px`)
+    }
+    console.log(`selftest painted extent passed (${Object.entries(heightResults).map(([l, [d]]) => `${l.slice(0, 3)} ${d} px`).join(", ")})`)
     if (pinnedSame.diff !== 0) throw new Error(`selftest: a pinned width differed from the same-width baseline (${pinnedSame.diff} px)`)
     if (pinnedChanged.diff === 0) throw new Error("selftest: a pinned-width capture with changed content did not differ")
     console.log(`selftest sideways/pinned passed (shift ${sidewaysSame.diff} px, shift+change ${sidewaysChanged.diff} px, pinned ${pinnedSame.diff} px, pinned+change ${pinnedChanged.diff} px)`)

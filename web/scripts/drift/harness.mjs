@@ -194,7 +194,15 @@ export async function openPreview(browser, { width, height, theme, preview }) {
   return { context, page }
 }
 
-/** The content box (padding excluded) of `selector`, in page coordinates. */
+/**
+ * The content box (padding excluded) of `selector`, in page coordinates. Its
+ * height is the painted extent: the content box bottom, or any visible, non-fixed
+ * descendant's border-box bottom plus box-shadow reach (offsetY + 1.5 x blur +
+ * spread; Skia rasterises a blur out to 3 sigma), or any text line's bottom,
+ * whichever is lowest, rounded up. Extra painted content therefore lengthens the
+ * capture (compare pads the shorter side with magenta, so it shows as a diff) and
+ * pure trailing empty space under the neutral fill stays equal to the pad.
+ */
 export async function contentBox(page, selector) {
   return page.$eval(selector, (el) => {
     const r = el.getBoundingClientRect()
@@ -203,38 +211,10 @@ export async function contentBox(page, selector) {
     const pr = parseFloat(s.paddingRight)
     const pt = parseFloat(s.paddingTop)
     const pb = parseFloat(s.paddingBottom)
-    const natural = Math.max(1, Math.round(el.scrollHeight - pt - pb))
-    return {
-      x: Math.round(r.left + pl),
-      y: Math.round(r.top + window.scrollY + pt),
-      width: Math.round(r.width - pl - pr),
-      height: window.__pinnedContentHeight ?? natural,
-    }
-  })
-}
-
-/**
- * Pin the content box height to `target` px: the capture clips to it, so extra
- * trailing space (a well that fills the viewport) is not compared. Returns
- * { ok, reason }: not ok when the content is shorter than the target, has an
- * element below it, or paints anything but the flat neutral fill below it.
- */
-export async function pinContentHeight(page, selector, target) {
-  const box = await contentBox(page, selector)
-  const natural = box.height
-  if (natural < target) return { ok: false, reason: "content is shorter than the baseline height" }
-  // Descendants (root excluded), visible and not fixed, as rects relative to the content box.
-  // An element whose top is at or below the target is new content; one whose top is above it
-  // is already compared, and only its painted overflow (border-box bottom plus box-shadow) may
-  // reach into the cropped strip.
-  const owners = await page.$eval(selector, (el, target) => {
-    const s = getComputedStyle(el)
-    const left = el.getBoundingClientRect().left + parseFloat(s.paddingLeft)
-    const top = el.getBoundingClientRect().top + parseFloat(s.paddingTop)
-    const shadowOf = (value) => {
-      // box-shadow lists: split on commas outside parentheses, skip inset, read the px lengths after dropping the colour function.
-      const ext = { x: 0, y: 0 }
-      if (!value || value === "none") return ext
+    const top = r.top + pt
+    let bottom = top + Math.max(1, el.scrollHeight - pt - pb)
+    const shadowReach = (value) => {
+      if (!value || value === "none") return 0
       const parts = []
       let depth = 0
       let cur = ""
@@ -247,63 +227,47 @@ export async function pinContentHeight(page, selector, target) {
         } else cur += ch
       }
       parts.push(cur)
+      let reach = 0
       for (const part of parts) {
         if (/\binset\b/.test(part)) continue
         const nums = (part.replace(/(rgba?|hsla?|color|oklch|oklab|lab|lch)\([^)]*\)/g, "").match(/-?[\d.]+px/g) ?? []).map(parseFloat)
-        const [ox = 0, oy = 0, blur = 0, spread = 0] = nums
-        ext.x = Math.max(ext.x, Math.abs(ox) + 1.5 * blur + spread) // Skia rasterises a blur out to 3 sigma = 1.5 x the CSS blur radius
-        ext.y = Math.max(ext.y, oy + 1.5 * blur + spread)
+        const [, oy = 0, blur = 0, spread = 0] = nums
+        reach = Math.max(reach, oy + 1.5 * blur + spread)
       }
-      return ext
+      return reach
     }
-    const out = { below: false, compared: [] }
+    const fixed = new Map()
+    const underFixed = (node) => {
+      if (node === el) return false
+      if (fixed.has(node)) return fixed.get(node)
+      const out = getComputedStyle(node).position === "fixed" || underFixed(node.parentElement)
+      fixed.set(node, out)
+      return out
+    }
     for (const d of el.querySelectorAll("*")) {
       const cs = getComputedStyle(d)
-      if (cs.position === "fixed" || cs.visibility === "hidden" || cs.display === "none") continue
-      const r = d.getBoundingClientRect()
-      if (!(r.width > 0 && r.height > 0)) continue
-      if (Math.round(r.top - top) >= target) {
-        out.below = true
-        continue
-      }
-      const sh = shadowOf(cs.boxShadow)
-      out.compared.push({
-        bottom: Math.ceil(r.bottom - top + Math.max(0, sh.y)),
-        left: r.left - left - sh.x,
-        right: r.right - left + sh.x,
-      })
+      if (cs.display === "none" || cs.visibility === "hidden" || underFixed(d)) continue
+      const dr = d.getBoundingClientRect()
+      if (!(dr.width > 0 && dr.height > 0)) continue
+      bottom = Math.max(bottom, dr.bottom + Math.max(0, shadowReach(cs.boxShadow)))
     }
-    return out
-  }, target)
-  if (owners.below) return { ok: false, reason: "real content below the baseline height" }
-  const allowedBottom = Math.max(0, ...owners.compared.map((o) => o.bottom))
-  const allowedLeft = Math.min(Infinity, ...owners.compared.map((o) => o.left))
-  const allowedRight = Math.max(-Infinity, ...owners.compared.map((o) => o.right))
-  if (natural > target) {
-    // Pseudo-elements and painted overflow are invisible to the element walk: every
-    // non-neutral pixel in the cropped strip must belong to a compared element's
-    // border or shadow (row < allowedBottom, x inside its painted extent).
-    const handle = await page.addStyleTag({ content: `${selector} { background: rgb(255 0 255) !important; }` })
-    try {
-      await hideChromeOutside(page, selector)
-      const png = await page.screenshot({ fullPage: true, clip: { x: box.x, y: box.y + target, width: box.width, height: natural - target }, animations: "disabled", caret: "hide" })
-      const { data, width } = PNG.sync.read(png)
-      for (let i = 0; i < data.length; i += 4) {
-        if (data[i] === 255 && data[i + 1] === 0 && data[i + 2] === 255 && data[i + 3] === 255) continue
-        const px = (i / 4) % width
-        const row = target + Math.floor(i / 4 / width)
-        if (row >= allowedBottom || px < allowedLeft || px >= allowedRight) {
-          return { ok: false, reason: "non-neutral pixels below the baseline height not owned by a compared element" }
-        }
-      }
-    } finally {
-      await handle.evaluate((el) => el.remove())
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+    const range = document.createRange()
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const parent = n.parentElement
+      if (!n.nodeValue.trim() || !parent || underFixed(parent)) continue
+      const ps = getComputedStyle(parent)
+      if (ps.display === "none" || ps.visibility === "hidden") continue
+      range.selectNodeContents(n)
+      for (const tr of range.getClientRects()) if (tr.width > 0 && tr.height > 0) bottom = Math.max(bottom, tr.bottom)
     }
-  }
-  await page.evaluate((h) => {
-    window.__pinnedContentHeight = h
-  }, target)
-  return { ok: true }
+    return {
+      x: Math.round(r.left + pl),
+      y: Math.round(r.top + window.scrollY + pt),
+      width: Math.round(r.width - pl - pr),
+      height: Math.max(1, Math.ceil(bottom - top)),
+    }
+  })
 }
 
 /** Resize the window until the content box is `target` px wide. */
@@ -352,7 +316,7 @@ export async function capture(page, { capture: mode, selector, neutral = false, 
     await page.addStyleTag({ content: `${selector} > * { visibility: hidden !important; }` })
     return { png: await stableShot(page, () => page.screenshot({ animations: "disabled", caret: "hide" })), x: undefined }
   }
-  if (neutral) await page.addStyleTag({ content: `${selector} { background: rgb(255 0 255) !important; }` })
+  if (neutral) await page.addStyleTag({ content: `html, body, ${selector} { background: rgb(255 0 255) !important; }` })
   await hideChromeOutside(page, selector)
   await snapContentOrigin(page, selector, originX)
   const clip = await contentBox(page, selector)
