@@ -67,7 +67,7 @@ function focusableIn(panel: HTMLElement): HTMLElement[] {
   return Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter((el) =>
     typeof el.checkVisibility === "function"
       ? el.checkVisibility({ visibilityProperty: true })
-      : el.getClientRects().length > 0,
+      : el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden",
   )
 }
 

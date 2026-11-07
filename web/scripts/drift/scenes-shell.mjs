@@ -180,6 +180,19 @@ export const STUDENT_SCENES = [
       },
     },
   },
+  {
+    // The drawer as /student shows it. Log-only: the closed Add Maths group
+    // (no session subject until the Overview plan passes fallbackId) moves the
+    // phone sheet's top and puts 390 light over the 15% gate cap, so the gate
+    // scene above runs on the subject route.
+    id: "student-drawer-home",
+    kind: "preview-vs-app",
+    capture: "frame",
+    rule: "log",
+    windows: [390, 768],
+    app: student("populated", { act: openStudentNav }),
+    preview: { state: "populated", act: openPreviewNav },
+  },
   ...byWindowRule({
     id: "student-bell",
     kind: "preview-vs-app",

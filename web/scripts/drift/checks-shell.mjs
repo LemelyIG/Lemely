@@ -330,7 +330,7 @@ SHELL_CHECKS.push(
     id: "student-bell-escape-returns-focus",
     app: STUDENT_HOME,
     async run(page) {
-      const bell = page.getByRole("button", { name: "Notifications, 2 unread" })
+      const bell = page.getByRole("button", { name: "Notifications, 1 unread" })
       await bell.click()
       await page.getByRole("menu").waitFor()
       await page.keyboard.press("Escape")
@@ -363,6 +363,30 @@ SHELL_CHECKS.push(
       if (!box || (clipped && box.width < 100)) throw new Error(`375px: title is ${box?.width ?? 0}px wide and clipped`)
     },
   },
+  ...[375, 1247, 1248].map((width) => ({
+    // A drilled-in route has no linked crumb, so below the sidebar column
+    // (1248px) the Back control is the way up; at and above it the column is.
+    // At 375 Back shares the bar with the bell, gear and avatar, and the title
+    // must still show 100px of itself (or all of it, when it is shorter).
+    id: `student-drilled-in-back-control-${width}`,
+    width,
+    app: { ...STUDENT_HOME, path: "/student/practice/0606" },
+    async run(page) {
+      const back = page.getByRole("button", { name: "Back", exact: true })
+      const visible = await back.isVisible()
+      if (visible !== width < 1248) throw new Error(`at ${width}px: Back visible=${visible}, expected ${width < 1248}`)
+      if (width !== 375) return
+      for (const name of [/^Notifications/, "Settings", /^Your profile and account/]) {
+        if (!(await page.getByRole(name instanceof RegExp ? "button" : "link", { name }).first().isVisible())) {
+          throw new Error(`375px: ${name} control is not in the bar beside Back`)
+        }
+      }
+      const title = page.locator("header p").first()
+      const box = await title.boundingBox()
+      const clipped = await title.evaluate((el) => el.scrollWidth > el.clientWidth + 1)
+      if (!box || (clipped && box.width < 100)) throw new Error(`375px drilled-in: title is ${box?.width ?? 0}px wide and clipped`)
+    },
+  })),
   ...[900, 1024, 1247, 1248, 1300].map((width) => ({
     // Decision 1, as for the teacher: exactly one of {sidebar column, menu
     // button} shows above the phone range, and the column starts at 1248px.

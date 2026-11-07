@@ -275,7 +275,7 @@ export function studentDetailLine(qualificationLabel: string | null, subjectCoun
 // Centre") were removed in P3.10 chunk c. They were the student-side twin of
 // the fabricated teacher identity P3.7 chunk b deleted, and no field anywhere
 // in the API supplies either one. The sidebar now renders the real caller via
-// `useProfile()` — see `UserBlock` in `portals/student/index.tsx`.
+// `useProfile()` — see `ShellUserBlock` in `components/shell/ShellSidebar.tsx`.
 
 /* ── Paper Result (flagship) ────────────────────────────────────────────── */
 

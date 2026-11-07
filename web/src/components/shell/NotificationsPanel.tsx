@@ -6,7 +6,7 @@ import type { Notification } from "@/lib/notificationTypes"
 import { unreadCountOf } from "@/lib/staffInbox"
 import { cn } from "@/lib/utils"
 import { ShellIcon } from "./icons"
-import { notificationsTriggerLabel, panelTimeLabel } from "./shellModel"
+import { notificationsTriggerLabel, panelTimeLabel, titleRuns } from "./shellModel"
 import { SHELL_FOCUS_RING, SHELL_PANEL } from "./shellStyles"
 
 export interface NotificationsPanelProps {
@@ -55,7 +55,16 @@ function Row({
       </span>
       <span className="flex min-w-0 flex-col">
         {unread ? <span className="sr-only">Unread: </span> : null}
-        <b className="line-clamp-2 font-bold text-on-surface [text-wrap:pretty]">{notification.title}</b>
+        <b className="line-clamp-2 font-bold text-on-surface [text-wrap:pretty]">{titleRuns(notification.title).map((run, i) =>
+            run.mono ? (
+              <span key={i} className="font-mono font-semibold tabular-nums">
+                {run.text}
+              </span>
+            ) : (
+              run.text
+            ),
+          )}
+        </b>
         {notification.body ? (
           <small className="text-2xs leading-normal text-on-surface-variant">{notification.body}</small>
         ) : null}

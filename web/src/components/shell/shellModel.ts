@@ -8,6 +8,24 @@ export function notificationsTriggerLabel(unread: string | null): string {
   return unread ? `Notifications, ${unread} unread` : "Notifications"
 }
 
+/** A run of a notification title, flagged when design A sets it in the mono
+ * face (`<span class="a-mono">`): a paper code ("0580/42") or a day and month
+ * ("12 Nov"). The paper code comes first in the alternation, it is the more
+ * restrictive pattern. */
+export interface TitleRun {
+  text: string
+  mono: boolean
+}
+
+const MONO_RUN = /(\d{4}\/\d{2}|\b\d{1,2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b)/
+
+export function titleRuns(title: string): TitleRun[] {
+  return title
+    .split(MONO_RUN)
+    .map((text, i) => ({ text, mono: i % 2 === 1 }))
+    .filter((run) => run.text !== "")
+}
+
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { nextSettingsTabIndex, notificationsTriggerLabel, panelTimeLabel } from "@/components/shell/shellModel"
+import { nextSettingsTabIndex, notificationsTriggerLabel, panelTimeLabel, titleRuns } from "@/components/shell/shellModel"
 
 const NOW = new Date(2026, 10, 5, 10, 0) // Thu 5 Nov 2026, the preview fixtures' "now"
 
@@ -47,5 +47,23 @@ describe("nextSettingsTabIndex (arrow keys on the settings tabs)", () => {
   it("ignores other keys and an unknown current tab", () => {
     expect(nextSettingsTabIndex(0, "Enter", 5)).toBeNull()
     expect(nextSettingsTabIndex(-1, "ArrowDown", 5)).toBeNull()
+  })
+})
+
+describe("titleRuns (design A sets codes and dates in the mono face)", () => {
+  it("flags a day and month, not the weekday before it", () => {
+    expect(titleRuns("Physics mock moved to Thu 12 Nov")).toEqual([
+      { text: "Physics mock moved to Thu ", mono: false },
+      { text: "12 Nov", mono: true },
+    ])
+  })
+  it("flags a paper code at the start", () => {
+    expect(titleRuns("0580/42 is marked")).toEqual([
+      { text: "0580/42", mono: true },
+      { text: " is marked", mono: false },
+    ])
+  })
+  it("leaves plain titles whole", () => {
+    expect(titleRuns("Welcome")).toEqual([{ text: "Welcome", mono: false }])
   })
 })

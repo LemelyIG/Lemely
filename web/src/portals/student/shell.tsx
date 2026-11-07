@@ -63,6 +63,8 @@ const TYPE_ICON: Record<string, ShellIconName> = {
   announcement: "mega",
   grade_ready: "review",
   study_plan_reminder: "plan",
+  // `streak_warning` keeps the bell: design A's shell set has no flame or
+  // streak glyph, and borrowing "trophy" would read as an achievement.
 }
 
 const STUDENT_NOTIFICATIONS_PANEL: Omit<NotificationsPanelProps, "unread" | "triggerClassName"> = {

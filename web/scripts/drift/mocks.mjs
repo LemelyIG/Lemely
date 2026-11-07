@@ -89,10 +89,9 @@ const STUDENT_DATA = {
     subjects: [row("0580", "Mathematics", "A", 40), row("0606", "Add Maths", "B", 36), row("0625", "Physics", "C", 43)],
     notifications: [
       { notificationId: "sn-1", type: "announcement", title: "Physics mock moved to Thu 12 Nov", body: "Ms Farouk · Year 11 Physics", payload: {}, createdAt: "2026-11-05T09:12:00", readAt: null },
-      { notificationId: "sn-2", type: "friend_added", title: "Youssef added you as a friend", body: "See where you both stand this week", payload: {}, createdAt: "2026-11-05T08:40:00", readAt: null },
       { notificationId: "sn-3", type: "grade_ready", title: "0580/42 is marked", body: "Grade A, up from B", payload: {}, createdAt: "2026-11-04T18:00:00", readAt: "2026-11-04T18:30:00" },
     ],
-    counts: { unread: 2, total: 3, unreadByType: { announcement: 1, friend_added: 1 } },
+    counts: { unread: 1, total: 2, unreadByType: { announcement: 1 } },
   },
   new: { subjects: [], notifications: [], counts: { unread: 0, total: 0, unreadByType: {} } },
 }

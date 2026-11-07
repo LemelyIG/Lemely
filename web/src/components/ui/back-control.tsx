@@ -7,7 +7,8 @@ import { backTarget } from "@/lib/nav/backTarget"
 /*
  * Packet B2a · the one back control below the `sidebar` breakpoint, where
  * there is no sidebar navigation to fall back on. Renders in the student
- * header ahead of `Breadcrumbs` whenever the trail is more than one deep.
+ * shell's top bar (`portals/student/shell.tsx`, `shell-lg:hidden`) whenever
+ * the shell trail is more than one deep.
  *
  * Resolves through `backTarget`: real history (`navigate(-1)`) when this tab
  * has some to go back to, otherwise `fallback` — a deep link followed
