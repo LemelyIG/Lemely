@@ -220,6 +220,20 @@ export async function contentBox(page, selector) {
 export async function pinContentHeight(page, selector, target) {
   const natural = (await contentBox(page, selector)).height
   if (natural < target) return false
+  // Real content extent: the lowest visible, non-fixed descendant edge relative to the content box top.
+  const extent = await page.$eval(selector, (el) => {
+    const s = getComputedStyle(el)
+    const top = el.getBoundingClientRect().top + parseFloat(s.paddingTop)
+    let max = 0
+    for (const d of el.querySelectorAll("*")) {
+      const cs = getComputedStyle(d)
+      if (cs.position === "fixed" || cs.visibility === "hidden" || cs.display === "none") continue
+      const r = d.getBoundingClientRect()
+      if (r.width > 0 && r.height > 0) max = Math.max(max, r.bottom - top)
+    }
+    return max
+  })
+  if (extent > target + 1) return false
   await page.evaluate((h) => {
     window.__pinnedContentHeight = h
   }, target)

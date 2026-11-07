@@ -74,17 +74,17 @@ function expand() {
 
 /**
  * The x the baseline's content was rastered at when its sidecar does not record
- * one (baselines recorded before the field existed). Fallback only; a sidecar
- * with `originX` wins.
+ * one (baselines recorded before the field existed); a sidecar with `originX`
+ * wins. Content x of the merged develop teacher shell (aa533580): <main> was
+ * `px-page-mobile md:px-page-tablet lg:px-[72px]` (16/20/72), sidebar column 252px from 820.
  */
-/** Content x of the merged develop teacher shell (aa533580): <main> was
- * `px-page-mobile md:px-page-tablet lg:px-[72px]` (16/20/72), sidebar column 252px from 820. */
 function legacyOriginX(width) {
   const sidebar = width >= 820 ? 252 : 0
   const gutter = width >= 1024 ? 72 : width >= 768 ? 20 : 16
   return sidebar + gutter
 }
 const SCROLLBAR_WIDTH = 15
+// The guard covers below 820 only: no baseline sidecar exists at 820-1023 (WINDOWS are 390, 768, 1024, 1440, 1920), so the shell relation there is unproven.
 /** Below 820 the legacy content is the window less the scrollbar and both gutters; anything else makes the fallback origin unprovable. */
 function assertLegacyBelowSidebar(width, contentWidth) {
   if (width >= 820 || contentWidth === undefined) return
@@ -131,7 +131,7 @@ async function shoot(browser, side, item, meta = {}) {
     // Mirror of the width pin for height: clip to the baseline's recorded box height.
     if (beforeVsAfter && !natural && scene.capture === "content" && targetHeight !== undefined) {
       if (!(await pinContentHeight(opened.page, selector, targetHeight))) {
-        throw new Error(`${item.key}: content is shorter than the baseline height ${targetHeight}`)
+        throw new Error(`${item.key}: content is shorter than the baseline height ${targetHeight}, or has real content below it (the pin would crop it)`)
       }
     }
     const box_ = scene.capture === "content" ? await contentBox(opened.page, selector) : undefined
@@ -278,7 +278,7 @@ async function compareItem(browser, item, { baselineDir, runDir, table }) {
   }
 }
 
-/** Pixel height from a PNG's IHDR (the recorded box height for sidecars without contentHeight). */
+/** Pixel height from a PNG's IHDR (the recorded box height for sidecars without contentHeight); assumes DPR 1. */
 function pngHeight(buffer) {
   return buffer.readUInt32BE(20)
 }
@@ -467,20 +467,26 @@ async function selftestContentIgnoresChrome(browser) {
     if (sidewaysChanged.diff === 0) throw new Error("selftest: a shifted capture with changed content did not differ")
     const pinnedSame = diffPngs(sidewaysBase, await widthPinned("#0a0"), path.join(DRIFT_DIR, "selftest", "pinned.diff.png"))
     const pinnedChanged = diffPngs(sidewaysBase, await widthPinned("#a0a"), path.join(DRIFT_DIR, "selftest", "pinned-changed.diff.png"))
-    const heightPinned = async (body, boxHeight) => {
+    const heightPinned = async (body, boxHeight, appendHtml = "") => {
       await page.setContent(html("#f00", body))
       await page.evaluate(() => {
         window.__pinnedContentHeight = undefined
       })
-      await page.addStyleTag({ content: `#m { width: 300px; height: ${boxHeight}px !important; }` })
+      await page.addStyleTag({ content: `#m { width: 300px; height: ${boxHeight}px !important; position: relative; }` })
+      if (appendHtml) await page.$eval("#m", (el, h) => el.insertAdjacentHTML("beforeend", h), appendHtml)
       const ok = await pinContentHeight(page, "#m", 560)
       return { ok, png: ok ? (await capture(page, { capture: "content", selector: "#m", originX: baseX })).png : null }
     }
     const tall = await heightPinned("#0a0", 570)
     const tallChanged = await heightPinned("#a0a", 570)
     const short = await heightPinned("#0a0", 500)
+    // Real content appended below the baseline height must refuse the pin, not be cropped.
+    const appended = await heightPinned("#0a0", 570, `<div style="position:absolute;top:562px;left:0;width:100px;height:6px;background:#f0f"></div>`)
+    const appendedChild = await heightPinned("#0a0", 570, `<div style="margin-top:480px;height:8px;background:#f0f"></div>`)
     if (!tall.ok || !tallChanged.ok) throw new Error("selftest: pinContentHeight failed on a taller box")
     if (short.ok) throw new Error("selftest: pinContentHeight accepted a box shorter than the baseline")
+    if (appended.ok) throw new Error("selftest: pinContentHeight cropped away an element below the baseline height")
+    if (appendedChild.ok) throw new Error("selftest: pinContentHeight cropped away an in-flow element below the baseline height")
     const heightSame = diffPngs(sidewaysBase, tall.png, path.join(DRIFT_DIR, "selftest", "height.diff.png"))
     const heightChanged = diffPngs(sidewaysBase, tallChanged.png, path.join(DRIFT_DIR, "selftest", "height-changed.diff.png"))
     if (heightSame.diff !== 0) throw new Error(`selftest: a height-pinned taller box differed from the baseline (${heightSame.diff} px)`)
