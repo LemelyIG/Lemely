@@ -58,6 +58,10 @@ export interface BarChartProps {
    * at one label per bar on a phone; the tooltip and the accessible table
    * still carry every one of them. */
   tickEvery?: number
+  /** Space in px for the left axis labels, where the default (44, or 56 with a
+   * legend) is too narrow for the labels: a horizontal chart's category names, or
+   * a value axis that carries a currency. Without it Nivo clips the label's start. */
+  leftMargin?: number
   ariaLabel: string
   className?: string
 }
@@ -73,6 +77,7 @@ export function BarChart({
   showValues = false,
   tooltipDetail,
   tickEvery = 1,
+  leftMargin,
   ariaLabel,
   className,
 }: BarChartProps) {
@@ -130,9 +135,9 @@ export function BarChart({
       top: 8,
       right: 12,
       bottom: axisBottomLegend ? 44 : 28,
-      left: axisLeftLegend ? 56 : 44,
+      left: leftMargin ?? (axisLeftLegend ? 56 : 44),
     }),
-    [axisBottomLegend, axisLeftLegend],
+    [axisBottomLegend, axisLeftLegend, leftMargin],
   )
 
   if (!ready) {

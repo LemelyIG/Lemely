@@ -8,6 +8,7 @@ import type {
   Catalogue,
   CustomerDetail,
   EstimateResponse,
+  MarginReport,
   PaymentStatusView,
   PlanTier,
   ProblemQueue,
@@ -323,6 +324,43 @@ const health: BillingHealth = {
   failedExtraSeatCharges: 0,
 }
 
+const margin: MarginReport = {
+  windowStart: "2026-08-07T00:00:00Z",
+  windowEnd: "2026-11-05T23:59:59Z",
+  revenue: {
+    recurringMinor: 1150000,
+    packsMinor: 270000,
+    refundedMinor: 20000,
+    netMinor: 1400000,
+    byPurpose: { subscription_first: 600000, subscription_renewal: 550000, credit_pack: 270000 },
+    byPlan: [{ key: "student_plus_m", minor: 600000 }],
+  },
+  cost: {
+    totalUsd: "44.120000",
+    byAction: [
+      { key: "mark_paper", jobs: 420, costUsd: "38.120000" },
+      { key: null, jobs: 3, costUsd: "0.400000" },
+    ],
+    byPlan: [{ key: "student_plus_m", jobs: 300, costUsd: "22.000000" }],
+    byModel: [{ model: "claude-haiku", costUsd: "30.000000" }],
+    unattributedModelUsd: "0.100000",
+  },
+  egpPerUsd: "50.00",
+  costMinor: 220600,
+  marginMinor: 1179400,
+  accuracy: [{ action: "mark_paper", estimatorVersion: 1, jobs: 420, below: 10, above: 19, shareOutside: 0.07, meanOverrunUnits: 1.8, maxOverrunUnits: 6 }],
+  exposure: {
+    outstandingDebtUnits: 340,
+    debtors: 4,
+    topDebtors: [{ userId: "u9", email: "debtor@example.com", outstanding: 120 }],
+    usersAtLimit: 9,
+    creditsExpiring30dUnits: 4200,
+    creditsExpiring30dOwners: 12,
+    creditsExpiredUnusedUnits: 800,
+    expiredJobs: { count: 2, costUsd: "0.420000" },
+  },
+}
+
 export const fx = {
   studentMonthly,
   studentYearly,
@@ -350,4 +388,5 @@ export const fx = {
   customer,
   problems,
   health,
+  margin,
 }

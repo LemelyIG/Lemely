@@ -12,6 +12,7 @@ export const BILLING_AREAS: readonly { to: string; label: string; end?: boolean;
   { to: "/platform/billing", label: "Customers", end: true, also: "/platform/billing/customers/" },
   { to: "/platform/billing/payments", label: "Payments" },
   { to: "/platform/billing/catalogue", label: "Catalogue" },
+  { to: "/platform/billing/margin", label: "Money and margin" },
   { to: "/platform/billing/health", label: "Health" },
 ]
 

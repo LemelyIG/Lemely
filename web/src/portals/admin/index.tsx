@@ -103,6 +103,9 @@ const BillingCatalogue = lazy(() =>
 const BillingPayments = lazy(() =>
   import("./screens/billing/Payments").then((m) => ({ default: m.Payments })),
 )
+const BillingMargin = lazy(() =>
+  import("./screens/billing/Margin").then((m) => ({ default: m.Margin })),
+)
 const BillingHealth = lazy(() =>
   import("./screens/billing/Health").then((m) => ({ default: m.Health })),
 )
@@ -468,6 +471,7 @@ export const platformAdminRoute: RouteObject = {
         { path: "customers/:userId", element: <BillingCustomerDetail />, handle: { title: "Billing customer", skeleton: "page-header" } },
         { path: "payments", element: <BillingPayments />, handle: { title: "Billing payments", skeleton: "list" } },
         { path: "catalogue", element: <BillingCatalogue />, handle: { title: "Billing catalogue", skeleton: "page-header" } },
+        { path: "margin", element: <BillingMargin />, handle: { title: "Billing money and margin", skeleton: "page-header" } },
         { path: "health", element: <BillingHealth />, handle: { title: "Billing health", skeleton: "page-header" } },
       ],
     },
