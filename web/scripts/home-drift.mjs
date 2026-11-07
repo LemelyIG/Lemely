@@ -12,9 +12,11 @@
  * Exit 0 only when every selected scene key passes (see compare.mjs verdict).
  */
 import { execFileSync } from "node:child_process"
+import { createHash } from "node:crypto"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 import { chromium } from "@playwright/test"
 import { HEIGHT, SCENES, THEMES, WINDOWS } from "./drift/scenes.mjs"
 import {
@@ -162,14 +164,52 @@ function gitDirty() {
   return execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], { cwd: REPO_DIR, encoding: "utf8" }).trim() !== ""
 }
 
-/** The per-key sidecar: content width plus the capturing checkout. */
+const HARNESS_DIR = path.dirname(fileURLToPath(import.meta.url))
+
+/** sha256 over the harness source (home-drift.mjs and every file in drift/, by name), so a baseline names the capture code that made it. */
+function harnessHashOf(files) {
+  const h = createHash("sha256")
+  for (const [name, buffer] of [...files].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    h.update(`${name}\0`)
+    h.update(buffer)
+    h.update("\0")
+  }
+  return h.digest("hex")
+}
+
+function harnessHash() {
+  const files = [["home-drift.mjs", fs.readFileSync(path.join(HARNESS_DIR, "home-drift.mjs"))]]
+  const dir = path.join(HARNESS_DIR, "drift")
+  for (const f of fs.readdirSync(dir)) {
+    if (fs.statSync(path.join(dir, f)).isFile()) files.push([`drift/${f}`, fs.readFileSync(path.join(dir, f))])
+  }
+  return harnessHashOf(files)
+}
+
+/** The commit that last touched the harness files in the checkout that holds them; DRIFT_HARNESS_SHA names it when the files were copied into another checkout. */
+function harnessSha() {
+  if (process.env.DRIFT_HARNESS_SHA) return process.env.DRIFT_HARNESS_SHA
+  return execFileSync("git", ["log", "-1", "--format=%H", "--", "web/scripts/home-drift.mjs", "web/scripts/drift"], { cwd: REPO_DIR, encoding: "utf8" }).trim()
+}
+
+/** The per-key sidecar: content size, origin, the capturing checkout and the harness that captured it. */
 function sidecarFor(shot) {
-  return JSON.stringify({ contentWidth: shot.contentWidth ?? null, contentHeight: shot.contentHeight ?? null, originX: shot.contentX ?? null, sha: gitHead(), dirty: gitDirty() })
+  return JSON.stringify({
+    contentWidth: shot.contentWidth ?? null,
+    contentHeight: shot.contentHeight ?? null,
+    originX: shot.contentX ?? null,
+    sha: gitHead(),
+    dirty: gitDirty(),
+    harnessSha: harnessSha(),
+    harnessHash: harnessHash(),
+  })
 }
 
 /** Summarise the per-key sidecars: which SHAs are present, and how many keys lack one. */
 function scanSidecars(baselineDir) {
   const shas = {}
+  const harnessShas = {}
+  const harnessHashes = {}
   let missing = 0
   let dirty = 0
   for (const f of fs.existsSync(baselineDir) ? fs.readdirSync(baselineDir) : []) {
@@ -178,8 +218,12 @@ function scanSidecars(baselineDir) {
     if (!meta.sha) missing++
     else shas[meta.sha] = (shas[meta.sha] ?? 0) + 1
     if (meta.dirty) dirty++
+    const hs = meta.harnessSha ?? "none"
+    const hh = meta.harnessHash ?? "none"
+    harnessShas[hs] = (harnessShas[hs] ?? 0) + 1
+    harnessHashes[hh] = (harnessHashes[hh] ?? 0) + 1
   }
-  return { shas, missing, dirty }
+  return { shas, missing, dirty, harnessShas, harnessHashes }
 }
 
 /** Write the global provenance summary, derived from the per-key sidecars (the source of truth). */
@@ -469,12 +513,38 @@ async function selftestContentIgnoresChrome(browser) {
     const cardBase = await extent(560, lastCard + para(300))
     const heightResults = {
       "(a) taller empty trailing space": [dpx(plain, await extent(600, para(300)), "ext-a"), true],
-      "(b) element below the old bottom": [dpx(plain, await extent(560, para(300) + `<div style="position:absolute;top:566px;left:0;width:40px;height:8px;background:#a0f"></div>`), "ext-b"), false],
-      "(c) ::after below the old bottom": [dpx(plain, await extent(560, para(300), "#m > div::after { content: ''; position: absolute; top: 562px; left: 0; width: 60px; height: 6px; background: #0ff; }"), "ext-c"), false],
+      "(b) absolutely positioned element below the old bottom (grows scrollHeight)": [dpx(plain, await extent(560, para(300) + `<div style="position:absolute;top:566px;left:0;width:40px;height:8px;background:#a0f"></div>`), "ext-b"), false],
+      "(c) ::after on a descendant below the old bottom (grows scrollHeight)": [dpx(plain, await extent(560, para(300), "#m > div::after { content: ''; position: absolute; top: 562px; left: 0; width: 60px; height: 6px; background: #0ff; }"), "ext-c"), false],
       "(d) text wrapping onto extra lines": [dpx(plain, await extent(560, para(40)), "ext-d"), false],
       "(e) card border and shadow in both (same height)": [dpx(cardBase, await extent(560, lastCard + para(300)), "ext-e1"), true],
       "(e) card border and shadow in both (taller root)": [dpx(cardBase, await extent(600, lastCard + para(300)), "ext-e2"), true],
     }
+    // Isolating the walks scrollHeight cannot see. Shadows are ink overflow: a card that ends
+    // above the root bottom, its shadow crossing it, leaves scrollHeight at 560, so only the
+    // descendant walk's shadow reach lengthens the capture. Cropping both captures to the root
+    // bottom proves the whole difference lies in the rows below it (0 px with shadowReach removed).
+    const shadowCard = (shadow) => `<div style="position:absolute;top:520px;left:20px;width:100px;height:39px;background:#fff;border-bottom:1px solid #888;box-shadow:${shadow}"></div>`
+    const withShadow = await extent(560, para(300) + shadowCard("0 40px 2px -4px rgba(0,0,0,.5)"))
+    const noShadow = await extent(560, para(300) + shadowCard("none"))
+    const cropTo = (buffer, rows) => {
+      const src = PNG.sync.read(buffer)
+      const out = new PNG({ width: src.width, height: rows })
+      PNG.bitblt(src, out, 0, 0, src.width, rows, 0, 0)
+      return PNG.sync.write(out)
+    }
+    heightResults["(i) shadow-only difference crossing the root bottom (scrollHeight unchanged)"] = [dpx(noShadow, withShadow, "ext-i"), false]
+    const shadowCropped = dpx(cropTo(noShadow, 560), cropTo(withShadow, 560), "ext-i-cropped")
+    if (shadowCropped !== 0) throw new Error(`selftest: (i) the shadow-only difference is not confined to the rows below the root bottom (${shadowCropped} px)`)
+    // Text-shadow and outline reach likewise are ink overflow.
+    heightResults["(i) text-shadow below the root bottom"] = [dpx(plain, await extent(560, para(300), "#m > p { text-shadow: 0 30px 2px #000; top: 540px !important; }"), "ext-i-text"), false]
+    heightResults["(i) outline below the root bottom"] = [dpx(plain, await extent(560, para(300) + `<div style="position:absolute;top:530px;left:0;width:40px;height:29px;outline:6px solid #00f"></div>`), "ext-i-outline"), false]
+    // Layout overflow also grows scrollHeight in Chrome (transforms, text overflowing a fixed-height box),
+    // so these go red through every walk; the walks are belt and braces for them.
+    heightResults["(ii) transformed descendant painting below the root bottom"] = [dpx(plain, await extent(560, para(300) + `<div style="position:absolute;top:540px;left:0;width:40px;height:10px;background:#000;transform:translateY(30px)"></div>`), "ext-ii"), false]
+    heightResults["(iii) text overflowing a fixed-height element"] = [dpx(plain, await extent(560, para(300) + `<div style="position:absolute;top:540px;left:0;width:30px;height:10px;font:16px/20px monospace;color:#000">aaa bbb ccc ddd</div>`), "ext-iii"), false]
+    // Clipped text inflates the extent without painting: the extra rows are neutral fill on both sides, 0 px.
+    const clippedBox = (text) => `<div style="position:absolute;top:540px;left:0;width:30px;height:10px;overflow:hidden;font:16px/20px monospace;color:#000">${text}</div>`
+    heightResults["(iv) clipped text inflating the extent, nothing extra painted"] = [dpx(await extent(560, para(300) + clippedBox("aaa")), await extent(560, para(300) + clippedBox("aaa bbb ccc ddd")), "ext-iv"), true]
     for (const [label, [diff, zero]] of Object.entries(heightResults)) {
       if (zero && diff !== 0) throw new Error(`selftest: ${label}: expected 0 px, got ${diff} px`)
       if (!zero && diff === 0) throw new Error(`selftest: ${label}: expected a diff, got 0 px`)

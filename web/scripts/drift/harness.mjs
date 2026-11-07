@@ -197,9 +197,13 @@ export async function openPreview(browser, { width, height, theme, preview }) {
 /**
  * The content box (padding excluded) of `selector`, in page coordinates. Its
  * height is the painted extent: the content box bottom, or any visible, non-fixed
- * descendant's border-box bottom plus box-shadow reach (offsetY + 1.5 x blur +
- * spread; Skia rasterises a blur out to 3 sigma), or any text line's bottom,
- * whichever is lowest, rounded up. Extra painted content therefore lengthens the
+ * descendant's border-box bottom plus its ink reach (box-shadow offsetY + 1.5 x
+ * blur + spread, Skia rasterises a blur out to 3 sigma; outline width + offset;
+ * filter drop-shadow), or any text line's bottom plus its text-shadow reach,
+ * whichever is lowest, rounded up. Not counted: ::before/::after box-shadow and
+ * outline (a pseudo-element's own geometry is not exposed by the DOM; its layout
+ * box still grows scrollHeight). Clipped or sr-only text can inflate the extent;
+ * that is harmless, the extra rows are neutral fill on both sides. Extra painted content therefore lengthens the
  * capture (compare pads the shorter side with magenta, so it shows as a diff) and
  * pure trailing empty space under the neutral fill stays equal to the pad.
  */
@@ -214,6 +218,7 @@ export async function contentBox(page, selector) {
     const top = r.top + pt
     let bottom = top + Math.max(1, el.scrollHeight - pt - pb)
     const shadowReach = (value) => {
+      // box-shadow / text-shadow lists: split on commas outside parentheses, skip inset, read the px lengths after dropping the colour function.
       if (!value || value === "none") return 0
       const parts = []
       let depth = 0
@@ -236,6 +241,14 @@ export async function contentBox(page, selector) {
       }
       return reach
     }
+    const inkReach = (cs) => {
+      let reach = Math.max(0, shadowReach(cs.boxShadow))
+      if (cs.outlineStyle !== "none" && parseFloat(cs.outlineWidth) > 0) {
+        reach = Math.max(reach, parseFloat(cs.outlineWidth) + Math.max(0, parseFloat(cs.outlineOffset) || 0))
+      }
+      for (const m of cs.filter.matchAll(/drop-shadow\(([^)]*(?:\([^)]*\))?[^)]*)\)/g)) reach = Math.max(reach, shadowReach(m[1]))
+      return reach
+    }
     const fixed = new Map()
     const underFixed = (node) => {
       if (node === el) return false
@@ -249,7 +262,7 @@ export async function contentBox(page, selector) {
       if (cs.display === "none" || cs.visibility === "hidden" || underFixed(d)) continue
       const dr = d.getBoundingClientRect()
       if (!(dr.width > 0 && dr.height > 0)) continue
-      bottom = Math.max(bottom, dr.bottom + Math.max(0, shadowReach(cs.boxShadow)))
+      bottom = Math.max(bottom, dr.bottom + inkReach(cs))
     }
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
     const range = document.createRange()
@@ -259,13 +272,16 @@ export async function contentBox(page, selector) {
       const ps = getComputedStyle(parent)
       if (ps.display === "none" || ps.visibility === "hidden") continue
       range.selectNodeContents(n)
-      for (const tr of range.getClientRects()) if (tr.width > 0 && tr.height > 0) bottom = Math.max(bottom, tr.bottom)
+      const textReach = Math.max(0, shadowReach(ps.textShadow))
+      for (const tr of range.getClientRects()) if (tr.width > 0 && tr.height > 0) bottom = Math.max(bottom, tr.bottom + textReach)
     }
+    // Height from the rounded y, the same coordinate the clip starts at.
+    const y = Math.round(r.top + window.scrollY + pt)
     return {
       x: Math.round(r.left + pl),
-      y: Math.round(r.top + window.scrollY + pt),
+      y,
       width: Math.round(r.width - pl - pr),
-      height: Math.max(1, Math.ceil(bottom - top)),
+      height: Math.max(1, Math.ceil(bottom + window.scrollY) - y),
     }
   })
 }
