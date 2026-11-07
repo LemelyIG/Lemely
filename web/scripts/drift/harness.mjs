@@ -202,13 +202,28 @@ export async function contentBox(page, selector) {
     const pr = parseFloat(s.paddingRight)
     const pt = parseFloat(s.paddingTop)
     const pb = parseFloat(s.paddingBottom)
+    const natural = Math.max(1, Math.round(el.scrollHeight - pt - pb))
     return {
       x: Math.round(r.left + pl),
       y: Math.round(r.top + window.scrollY + pt),
       width: Math.round(r.width - pl - pr),
-      height: Math.max(1, Math.round(el.scrollHeight - pt - pb)),
+      height: window.__pinnedContentHeight ?? natural,
     }
   })
+}
+
+/**
+ * Pin the content box height to `target` px: the capture clips to it, so extra
+ * trailing space (a well that fills the viewport) is not compared. Fails when
+ * the content is shorter than the target (nothing to clip, a real change).
+ */
+export async function pinContentHeight(page, selector, target) {
+  const natural = (await contentBox(page, selector)).height
+  if (natural < target) return false
+  await page.evaluate((h) => {
+    window.__pinnedContentHeight = h
+  }, target)
+  return true
 }
 
 /** Resize the window until the content box is `target` px wide. */

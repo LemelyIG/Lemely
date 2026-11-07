@@ -26,6 +26,7 @@ import {
   contentBox,
   matchContentWidth,
   pinContentWidth,
+  pinContentHeight,
   horizontalOverflow,
   openApp,
   openPreview,
@@ -73,12 +74,26 @@ function expand() {
 
 /**
  * The x the baseline's content was rastered at when its sidecar does not record
- * one (baselines recorded before the field existed): the merged `develop`
- * shell laid the teacher content out at x=324 (252 px sidebar + 72 px page
- * padding) from 820 px up. Fallback only; a sidecar with `originX` wins.
+ * one (baselines recorded before the field existed). Fallback only; a sidecar
+ * with `originX` wins.
  */
-const LEGACY_ORIGIN_X = 324
-const LEGACY_ORIGIN_MIN_WIDTH = 820
+/** Content x of the merged develop teacher shell (aa533580): <main> was
+ * `px-page-mobile md:px-page-tablet lg:px-[72px]` (16/20/72), sidebar column 252px from 820. */
+function legacyOriginX(width) {
+  const sidebar = width >= 820 ? 252 : 0
+  const gutter = width >= 1024 ? 72 : width >= 768 ? 20 : 16
+  return sidebar + gutter
+}
+const SCROLLBAR_WIDTH = 15
+/** Below 820 the legacy content is the window less the scrollbar and both gutters; anything else makes the fallback origin unprovable. */
+function assertLegacyBelowSidebar(width, contentWidth) {
+  if (width >= 820 || contentWidth === undefined) return
+  const gutter = width >= 768 ? 20 : 16
+  const expected = width - SCROLLBAR_WIDTH - 2 * gutter
+  if (expected !== contentWidth) {
+    throw new Error(`legacy originX at ${width}px: expected content ${expected}px (window - scrollbar - 2 x ${gutter}px gutter), baseline is ${contentWidth}px; re-record the baseline with --record-baseline`)
+  }
+}
 const SIDEBAR_COLUMN_WIDTH = 1248
 const OVERFLOW_MIN_WIDTH = 820
 /** Content scenes also get an unpinned natural-width capture at these windows (human review). */
@@ -86,7 +101,7 @@ const NATURAL_CAPTURE_WIDTHS = [768, 1024]
 
 async function shoot(browser, side, item, meta = {}) {
   const { scene, width, theme } = item
-  const { contentWidth: targetWidth, natural = false } = meta
+  const { contentWidth: targetWidth, contentHeight: targetHeight, natural = false } = meta
   const beforeVsAfter = side === "app" && scene.kind === "before-vs-after"
   const height = HEIGHT[width] ?? 900
   const opened =
@@ -113,15 +128,23 @@ async function shoot(browser, side, item, meta = {}) {
           : await matchContentWidth(opened.page, selector, targetWidth, height)
       if (!ok) throw new Error(`${item.key}: could not match content width ${targetWidth}`)
     }
-    const width_ = scene.capture === "content" ? (await contentBox(opened.page, selector)).width : undefined
+    // Mirror of the width pin for height: clip to the baseline's recorded box height.
+    if (beforeVsAfter && !natural && scene.capture === "content" && targetHeight !== undefined) {
+      if (!(await pinContentHeight(opened.page, selector, targetHeight))) {
+        throw new Error(`${item.key}: content is shorter than the baseline height ${targetHeight}`)
+      }
+    }
+    const box_ = scene.capture === "content" ? await contentBox(opened.page, selector) : undefined
+    const width_ = box_?.width
     let originX
     if (beforeVsAfter && !natural) {
       originX = meta.originX
-      if (originX === undefined && width >= LEGACY_ORIGIN_MIN_WIDTH) {
-        if (scene.capture === "content" && LEGACY_ORIGIN_X + width_ > width) {
-          throw new Error(`legacy originX ${LEGACY_ORIGIN_X} + content ${width_} exceeds the ${width}px viewport; re-record the baseline with --record-baseline`)
+      if (originX === undefined) {
+        assertLegacyBelowSidebar(width, targetWidth)
+        originX = legacyOriginX(width)
+        if (scene.capture === "content" && originX + width_ > width) {
+          throw new Error(`legacy originX ${originX} + content ${width_} exceeds the ${width}px viewport; re-record the baseline with --record-baseline`)
         }
-        originX = LEGACY_ORIGIN_X
       }
     }
     const { png, x } = await capture(opened.page, {
@@ -131,7 +154,7 @@ async function shoot(browser, side, item, meta = {}) {
       // See snapContentOrigin: the baseline's recorded content x, else the legacy constant.
       originX,
     })
-    return { png, contentWidth: width_, contentX: x }
+    return { png, contentWidth: width_, contentHeight: box_?.height, contentX: x }
   } finally {
     await opened.context.close()
   }
@@ -148,7 +171,7 @@ function gitDirty() {
 
 /** The per-key sidecar: content width plus the capturing checkout. */
 function sidecarFor(shot) {
-  return JSON.stringify({ contentWidth: shot.contentWidth ?? null, originX: shot.contentX ?? null, sha: gitHead(), dirty: gitDirty() })
+  return JSON.stringify({ contentWidth: shot.contentWidth ?? null, contentHeight: shot.contentHeight ?? null, originX: shot.contentX ?? null, sha: gitHead(), dirty: gitDirty() })
 }
 
 /** Summarise the per-key sidecars: which SHAs are present, and how many keys lack one. */
@@ -238,7 +261,11 @@ async function compareItem(browser, item, { baselineDir, runDir, table }) {
       const meta = JSON.parse(fs.readFileSync(path.join(baselineDir, `${key}.json`), "utf8"))
       if (!meta.sha) throw new Error(`baseline sidecar ${key}.json has no sha; re-record with --record-baseline`)
       a = { png: fs.readFileSync(basePng) }
-      b = await shoot(browser, "app", item, { contentWidth: meta.contentWidth ?? undefined, originX: meta.originX ?? undefined })
+      b = await shoot(browser, "app", item, {
+        contentWidth: meta.contentWidth ?? undefined,
+        contentHeight: meta.contentHeight ?? pngHeight(a.png),
+        originX: meta.originX ?? undefined,
+      })
     }
     fs.writeFileSync(path.join(runDir, `${key}.a.png`), a.png)
     fs.writeFileSync(path.join(runDir, `${key}.b.png`), b.png)
@@ -251,8 +278,29 @@ async function compareItem(browser, item, { baselineDir, runDir, table }) {
   }
 }
 
+/** Pixel height from a PNG's IHDR (the recorded box height for sidecars without contentHeight). */
+function pngHeight(buffer) {
+  return buffer.readUInt32BE(20)
+}
+
 function assertEqual(actual, expected, label) {
   if (actual !== expected) throw new Error(`selftest: ${label}: expected ${expected}, got ${actual}`)
+}
+
+function selftestLegacyOrigin() {
+  const want = { 390: 16, 768: 20, 819: 20, 820: 272, 1023: 272, 1024: 324, 1440: 324 }
+  for (const [w, x] of Object.entries(want)) assertEqual(legacyOriginX(Number(w)), x, `legacyOriginX(${w})`)
+  assertLegacyBelowSidebar(390, 390 - 15 - 32)
+  assertLegacyBelowSidebar(768, 768 - 15 - 40)
+  assertLegacyBelowSidebar(1440, undefined)
+  let threw = false
+  try {
+    assertLegacyBelowSidebar(768, 700)
+  } catch {
+    threw = true
+  }
+  if (!threw) throw new Error("selftest: a sub-820 legacy baseline with the wrong content width was not rejected")
+  console.log("selftest legacy origin passed")
 }
 
 function selftestVerdicts() {
@@ -419,6 +467,28 @@ async function selftestContentIgnoresChrome(browser) {
     if (sidewaysChanged.diff === 0) throw new Error("selftest: a shifted capture with changed content did not differ")
     const pinnedSame = diffPngs(sidewaysBase, await widthPinned("#0a0"), path.join(DRIFT_DIR, "selftest", "pinned.diff.png"))
     const pinnedChanged = diffPngs(sidewaysBase, await widthPinned("#a0a"), path.join(DRIFT_DIR, "selftest", "pinned-changed.diff.png"))
+    const heightPinned = async (body, boxHeight) => {
+      await page.setContent(html("#f00", body))
+      await page.evaluate(() => {
+        window.__pinnedContentHeight = undefined
+      })
+      await page.addStyleTag({ content: `#m { width: 300px; height: ${boxHeight}px !important; }` })
+      const ok = await pinContentHeight(page, "#m", 560)
+      return { ok, png: ok ? (await capture(page, { capture: "content", selector: "#m", originX: baseX })).png : null }
+    }
+    const tall = await heightPinned("#0a0", 570)
+    const tallChanged = await heightPinned("#a0a", 570)
+    const short = await heightPinned("#0a0", 500)
+    if (!tall.ok || !tallChanged.ok) throw new Error("selftest: pinContentHeight failed on a taller box")
+    if (short.ok) throw new Error("selftest: pinContentHeight accepted a box shorter than the baseline")
+    const heightSame = diffPngs(sidewaysBase, tall.png, path.join(DRIFT_DIR, "selftest", "height.diff.png"))
+    const heightChanged = diffPngs(sidewaysBase, tallChanged.png, path.join(DRIFT_DIR, "selftest", "height-changed.diff.png"))
+    if (heightSame.diff !== 0) throw new Error(`selftest: a height-pinned taller box differed from the baseline (${heightSame.diff} px)`)
+    if (heightChanged.diff === 0) throw new Error("selftest: a real content change did not go red with the height pin on")
+    await page.evaluate(() => {
+      window.__pinnedContentHeight = undefined
+    })
+    console.log(`selftest height pin passed (taller box ${heightSame.diff} px, changed content ${heightChanged.diff} px)`)
     if (pinnedSame.diff !== 0) throw new Error(`selftest: a pinned width differed from the same-width baseline (${pinnedSame.diff} px)`)
     if (pinnedChanged.diff === 0) throw new Error("selftest: a pinned-width capture with changed content did not differ")
     console.log(`selftest sideways/pinned passed (shift ${sidewaysSame.diff} px, shift+change ${sidewaysChanged.diff} px, pinned ${pinnedSame.diff} px, pinned+change ${pinnedChanged.diff} px)`)
@@ -480,6 +550,7 @@ async function selftestStableShot(browser) {
 }
 
 async function runSelftest(browser) {
+  selftestLegacyOrigin()
   selftestVerdicts()
   selftestEmptySelection()
   await selftestForeignKit()

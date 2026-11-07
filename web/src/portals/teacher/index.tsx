@@ -381,10 +381,8 @@ function TeacherTopBarActions() {
 
 /** The four route-backed BottomNav tabs, exported so `navigation.test.ts` can
  * assert each `to` resolves to a mounted route without rendering the shell.
- * Labels declared in tab order ("Overview", "Grading", "Review", "Classes")
- * ahead of `TeacherLayout`'s own "More" so `navShells.test.ts`'s ordered
- * regex over the stripped source sees all five labels in the same order the
- * bar renders them. */
+ * The shell appends the fifth "More" tab itself; `navShells.test.ts` matches
+ * these four labels in tab order ("Overview", "Grading", "Review", "Classes"). */
 export const TEACHER_BOTTOM_TABS: readonly {
   id: string
   label: string

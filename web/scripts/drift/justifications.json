@@ -30,43 +30,33 @@
     "approved": "pending"
   },
   "teacher-settings-profile": {
-    "difference": "Only the top bar and the sidebar column behind the settings dialog changed; top bar semi-translucent (86% of its surface over a backdrop blur), like the landing page header; page ground surface-container; main padding 4px 72px 40px (14px below 1248px), no 1600px cap",
+    "difference": "The top bar and the sidebar column behind the settings dialog changed; top bar semi-translucent (86% of its surface over a backdrop blur), like the landing page header; page ground surface-container; main padding 4px 72px 40px (14px below 1248px), no 1600px cap",
     "justification": "Design A .as-bar, .as-side; design A variant-a.css .as-bar @supports rule (commit c880a54c), user decision 2026-11-06; Design A .as-app, .as-main",
     "approved": "pending"
   },
   "teacher-settings-account": {
-    "difference": "Only the top bar and the sidebar column behind the settings dialog changed; top bar semi-translucent (86% of its surface over a backdrop blur), like the landing page header; page ground surface-container; main padding 4px 72px 40px (14px below 1248px), no 1600px cap",
+    "difference": "The top bar and the sidebar column behind the settings dialog changed; top bar semi-translucent (86% of its surface over a backdrop blur), like the landing page header; page ground surface-container; main padding 4px 72px 40px (14px below 1248px), no 1600px cap",
     "justification": "Design A .as-bar, .as-side; design A variant-a.css .as-bar @supports rule (commit c880a54c), user decision 2026-11-06; Design A .as-app, .as-main",
     "approved": "pending"
   },
   "teacher-settings-notifications": {
-    "difference": "Only the top bar and the sidebar column behind the settings dialog changed; top bar semi-translucent (86% of its surface over a backdrop blur), like the landing page header; page ground surface-container; main padding 4px 72px 40px (14px below 1248px), no 1600px cap",
+    "difference": "The top bar and the sidebar column behind the settings dialog changed; top bar semi-translucent (86% of its surface over a backdrop blur), like the landing page header; page ground surface-container; main padding 4px 72px 40px (14px below 1248px), no 1600px cap",
     "justification": "Design A .as-bar, .as-side; design A variant-a.css .as-bar @supports rule (commit c880a54c), user decision 2026-11-06; Design A .as-app, .as-main",
     "approved": "pending"
   },
   "teacher-settings-appearance": {
-    "difference": "Only the top bar and the sidebar column behind the settings dialog changed; top bar semi-translucent (86% of its surface over a backdrop blur), like the landing page header; page ground surface-container; main padding 4px 72px 40px (14px below 1248px), no 1600px cap",
+    "difference": "The top bar and the sidebar column behind the settings dialog changed; top bar semi-translucent (86% of its surface over a backdrop blur), like the landing page header; page ground surface-container; main padding 4px 72px 40px (14px below 1248px), no 1600px cap",
     "justification": "Design A .as-bar, .as-side; design A variant-a.css .as-bar @supports rule (commit c880a54c), user decision 2026-11-06; Design A .as-app, .as-main",
     "approved": "pending"
   },
   "teacher-settings-classes": {
-    "difference": "Only the top bar and the sidebar column behind the settings dialog changed; top bar semi-translucent (86% of its surface over a backdrop blur), like the landing page header; page ground surface-container; main padding 4px 72px 40px (14px below 1248px), no 1600px cap",
+    "difference": "The top bar and the sidebar column behind the settings dialog changed; top bar semi-translucent (86% of its surface over a backdrop blur), like the landing page header; page ground surface-container; main padding 4px 72px 40px (14px below 1248px), no 1600px cap",
     "justification": "Design A .as-bar, .as-side; design A variant-a.css .as-bar @supports rule (commit c880a54c), user decision 2026-11-06; Design A .as-app, .as-main",
     "approved": "pending"
   },
   "teacher-settings-install": {
-    "difference": "Only the top bar and the sidebar column behind the settings dialog changed; top bar semi-translucent (86% of its surface over a backdrop blur), like the landing page header; page ground surface-container; main padding 4px 72px 40px (14px below 1248px), no 1600px cap",
+    "difference": "The top bar and the sidebar column behind the settings dialog changed; top bar semi-translucent (86% of its surface over a backdrop blur), like the landing page header; page ground surface-container; main padding 4px 72px 40px (14px below 1248px), no 1600px cap",
     "justification": "Design A .as-bar, .as-side; design A variant-a.css .as-bar @supports rule (commit c880a54c), user decision 2026-11-06; Design A .as-app, .as-main",
-    "approved": "pending"
-  },
-  "teacher-home-content@768": {
-    "difference": "Page gutter 14px (was 20px) below 1248px moves the content origin; anti-aliased edges (rounded corners, button curves) re-rasterise at the new x (about 85 px, at most 10 channel levels); the content box is 10px taller because the page well fills the viewport and its top padding is 4px, not 8px (content height is 886px at 1024px, unchanged); no element moves or resizes",
-    "justification": "Design A .as-main padding 4px 14px below the drawer breakpoint (the user's decision moved it to 1248px); page content unchanged",
-    "approved": "pending"
-  },
-  "teacher-class-content@768": {
-    "difference": "Page gutter 14px (was 20px) below 1248px moves the content origin; anti-aliased card corners re-rasterise at the new x (a few hundred pixels, at most a few channel levels); no element moves or resizes",
-    "justification": "Design A .as-main padding 4px 14px below the drawer breakpoint (the user's decision moved it to 1248px); page content unchanged",
     "approved": "pending"
   }
 }
