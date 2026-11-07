@@ -131,11 +131,14 @@ function NotificationRow({ notification }: { notification: Notification }) {
   // `question-row` does — the menu's only item is already a visible,
   // keyboard-reachable button two lines down.
   //
-  // `triggerProps` is still wired, minus its `onClick`: a *tap* on a
-  // notification must not open the menu, but the popover needs the trigger's
-  // ref and ARIA attributes to describe the relationship correctly and to
-  // hand focus back here when Escape closes it (`tabIndex={-1}` makes the
-  // card focusable programmatically without adding a tab stop).
+  // `triggerProps` is still wired for its `ref` only, minus its `onClick`: a
+  // *tap* on a notification must not open the menu, but the popover needs the
+  // trigger's ref to anchor and to hand focus back here when Escape closes it
+  // (`tabIndex={-1}` makes the card focusable programmatically without adding
+  // a tab stop). Its ARIA attributes are left off: the card is a role-less
+  // div, where axe rejects `aria-haspopup` / `aria-expanded` (aria-allowed-attr)
+  // and an `aria-controls` that points at a menu not yet mounted
+  // (aria-valid-attr-value), and the card is not a button.
   const [menuOpen, setMenuOpen] = useState(false)
   const longPress = useLongPress({ onLongPress: () => setMenuOpen(true) })
 
@@ -148,9 +151,6 @@ function NotificationRow({ notification }: { notification: Notification }) {
         <Card
           ref={triggerProps.ref}
           tabIndex={-1}
-          aria-haspopup={unread ? triggerProps["aria-haspopup"] : undefined}
-          aria-expanded={unread ? triggerProps["aria-expanded"] : undefined}
-          aria-controls={unread ? triggerProps["aria-controls"] : undefined}
           className={cn(
             "transition-colors outline-none",
             // Same unread marker as S-28's, for the same reason: a bold title
