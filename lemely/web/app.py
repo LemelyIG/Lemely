@@ -45,6 +45,7 @@ from lemely.web.routers import (
     parent,
     parent_bookings,
     parent_tutor_access,
+    paymob_webhooks,
     placement,
     practice,
     quiz,
@@ -228,6 +229,7 @@ def create_app() -> FastAPI:
     app.include_router(tutoring_reports.router)
     app.include_router(admin_tutoring_reports.router)
     app.include_router(billing.router)
+    app.include_router(paymob_webhooks.router)
 
     @app.exception_handler(EmptyGradeBoundaryStoreError)
     async def _thresholds_not_ingested(

@@ -213,7 +213,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # tests/test_web_tutoring_authz_parent_sharing.py).
     ("GET", "/api/parent/children/{child_id}/tutor-grants"): PARENT,
     ("GET", "/api/parent/children/{child_id}/tutor-access-log"): PARENT,
-    # ── PUBLIC (17) ────────────────────
+    # ── PUBLIC (18) ────────────────────
     ("POST", "/api/auth/login"): PUBLIC,
     # spec §4: the child-issued parent signup, replacing the retired
     # `/api/auth/otp/*` pair. Public by the same necessity as `/auth/signup`
@@ -261,6 +261,10 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # Billing pricing page: active tiers and sellable packs, public fields only (no
     # ids, Paymob plan or allowances), IP rate-limited (tests/test_web_billing.py).
     ("GET", "/api/billing/public-catalogue"): PUBLIC,
+    # Billing spec 2026-11-02 §5.1/§6: Paymob's server-to-server callbacks hold
+    # no Lemely token; the HMAC in the query string is the only authenticity
+    # check (401 on mismatch, inside the handler). tests/test_web_paymob_webhooks.py.
+    ("POST", "/api/webhooks/paymob/transaction"): PUBLIC,
     # ── STUDENT_OR_PARENT (6) ────────────────────
     # Tutoring SP1-SP2 (SPEC §c.1, row 10). SP2 also needs a verified email.
     ("GET", "/api/tutors"): STUDENT_OR_PARENT,
@@ -714,8 +718,9 @@ def test_the_sweeps_actually_cover_the_surface() -> None:
     # routes, plus issue #10's verify-email, password-reset/request,
     # password-reset/confirm) + /api/health + invite preview + PR 1 chunk C's
     # client-error sink + the three public tutoring routes (P1 directory, P2
-    # card, P3 areas) + the landing page contact form + the public pricing catalogue.
-    assert len(_NON_PUBLIC) == len(ROUTES) - 17
+    # card, P3 areas) + the landing page contact form + the public pricing catalogue
+    # + the Paymob webhook.
+    assert len(_NON_PUBLIC) == len(ROUTES) - 18
     assert len(_ROLE_GATED) > 300
     assert len(_REPRESENTATIVE) == 9
     assert len(_REAL_TOKEN_CASES) >= 20
