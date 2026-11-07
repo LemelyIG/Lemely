@@ -17,6 +17,19 @@ beforeEach(() => {
 
 const r = { reason: "because" }
 
+describe("margin request", () => {
+  it("sends the half-open window and the rate, and omits the rate when there is none", async () => {
+    await api.margin("2026-10-01", "2026-11-05", "50")
+    await api.margin("2026-10-01", "2026-11-05", null)
+    await api.margin("2026-10-01", "2026-11-05")
+    expect(req.mock.calls.map((c) => c[0])).toEqual([
+      "/admin/billing/margin?from=2026-10-01T00%3A00%3A00Z&to=2026-11-06T00%3A00%3A00Z&egpPerUsd=50",
+      "/admin/billing/margin?from=2026-10-01T00%3A00%3A00Z&to=2026-11-06T00%3A00%3A00Z",
+      "/admin/billing/margin?from=2026-10-01T00%3A00%3A00Z&to=2026-11-06T00%3A00%3A00Z",
+    ])
+  })
+})
+
 describe("admin billing fetchers (plan 07; request() adds /api)", () => {
   it("hits every admin billing route with the right method", async () => {
     await api.catalogue()
@@ -66,7 +79,7 @@ describe("admin billing fetchers (plan 07; request() adds /api)", () => {
       ["/admin/billing/payments/p1/reconcile", "POST"],
       ["/admin/billing/payments?status=pending&cursor=c+2", "GET"],
       ["/admin/billing/problems", "GET"],
-      ["/admin/billing/margin?from=2026-10-01T00%3A00%3A00Z&to=2026-11-30T23%3A59%3A59Z", "GET"],
+      ["/admin/billing/margin?from=2026-10-01T00%3A00%3A00Z&to=2026-12-01T00%3A00%3A00Z", "GET"],
       ["/admin/billing/health", "GET"],
     ])
   })

@@ -62,6 +62,12 @@ export interface BarChartProps {
    * legend) is too narrow for the labels: a horizontal chart's category names, or
    * a value axis that carries a currency. Without it Nivo clips the label's start. */
   leftMargin?: number
+  /** How many ticks the value axis aims for (default 4). A narrow horizontal chart, whose
+   * value labels sit side by side, asks for fewer. */
+  valueTickCount?: number
+  /** Space in px right of the plot (default 12). A horizontal chart's last value label is
+   * centred on the plot's end and spills past it by half its width. */
+  rightMargin?: number
   ariaLabel: string
   className?: string
 }
@@ -78,6 +84,8 @@ export function BarChart({
   tooltipDetail,
   tickEvery = 1,
   leftMargin,
+  valueTickCount = 4,
+  rightMargin = 12,
   ariaLabel,
   className,
 }: BarChartProps) {
@@ -121,23 +129,23 @@ export function BarChart({
    * keeps the even division, which is correct for it.
    */
   const valueTickValues = useMemo(() => {
-    if (!data.every((d) => Number.isInteger(d.value))) return 4
+    if (!data.every((d) => Number.isInteger(d.value))) return valueTickCount
     const max = Math.max(0, ...data.map((d) => d.value))
     if (max === 0) return [0]
-    const step = Math.max(1, Math.ceil(max / 4))
+    const step = Math.max(1, Math.ceil(max / valueTickCount))
     const ticks: number[] = []
     for (let v = 0; v <= max; v += step) ticks.push(v)
     return ticks
-  }, [data])
+  }, [data, valueTickCount])
 
   const margin = useMemo(
     () => ({
       top: 8,
-      right: 12,
+      right: rightMargin,
       bottom: axisBottomLegend ? 44 : 28,
       left: leftMargin ?? (axisLeftLegend ? 56 : 44),
     }),
-    [axisBottomLegend, axisLeftLegend, leftMargin],
+    [axisBottomLegend, axisLeftLegend, leftMargin, rightMargin],
   )
 
   if (!ready) {

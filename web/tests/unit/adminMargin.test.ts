@@ -1,7 +1,20 @@
 import { createElement as h } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ApiError } from "@/lib/api"
-import { accuracyFlag, costByActionBars, defaultRange, formatShare, formatUsd, marginShare, rangeProblem, revenueBars } from "@/lib/marginModel"
+import {
+  MAX_RANGE_DAYS,
+  accuracyFlag,
+  costByActionBars,
+  defaultRange,
+  formatShare,
+  formatUsd,
+  marginShare,
+  rangeProblem,
+  rateParam,
+  rateProblem,
+  revenueBars,
+  windowOf,
+} from "@/lib/marginModel"
 import { fx } from "./support/billingFixtures"
 import { errorQuery, okQuery, pendingQuery, renderStatic } from "./support/billingRender"
 
@@ -50,11 +63,14 @@ describe("margin model", () => {
     expect(accuracyFlag({ ...fx.margin.accuracy[0], shareOutside: 0.2 })).toBeNull()
   })
 
-  it("defaults to the last 90 days as whole UTC days", () => {
-    expect(defaultRange(new Date("2026-11-05T12:00:00Z"))).toEqual({ from: "2026-08-07", to: "2026-11-05" })
+  it("defaults to exactly 90 inclusive UTC days", () => {
+    expect(defaultRange(new Date("2026-11-05T12:00:00Z"))).toEqual({ from: "2026-08-08", to: "2026-11-05" })
     // 23:30 UTC is still the 5th; a local-time round would roll it to the 6th east of UTC.
-    expect(defaultRange(new Date("2026-11-05T23:30:00Z"))).toEqual({ from: "2026-08-07", to: "2026-11-05" })
-    expect(defaultRange(new Date("2026-11-06T00:30:00Z"))).toEqual({ from: "2026-08-08", to: "2026-11-06" })
+    expect(defaultRange(new Date("2026-11-05T23:30:00Z"))).toEqual({ from: "2026-08-08", to: "2026-11-05" })
+    expect(defaultRange(new Date("2026-11-06T00:30:00Z"))).toEqual({ from: "2026-08-09", to: "2026-11-06" })
+    const r = defaultRange(new Date("2026-11-05T12:00:00Z"))
+    const w = windowOf(r)
+    expect((Date.parse(w.end) - Date.parse(w.start)) / 86_400_000).toBe(90)
   })
 
   it("names the field that makes a range unsendable", () => {
@@ -65,10 +81,46 @@ describe("margin model", () => {
     expect(rangeProblem({ from: "2026-11-06", to: "2026-11-05" })?.field).toBe("to")
   })
 
-  it("shows USD with cents and keeps sub-cent costs visible", () => {
+  it("rejects what the server refuses: more than 400 days, and a date that is not a full real day", () => {
+    // 400 inclusive days is the longest window the server takes; 401 is a 422.
+    expect(rangeProblem({ from: "2025-10-02", to: "2026-11-05" })).toBeNull()
+    expect(rangeProblem({ from: "2025-10-01", to: "2026-11-05" })).toEqual({ field: "to", message: `A range can cover at most ${MAX_RANGE_DAYS} days.` })
+    // A date input accepts a five-digit year; as text it sorts after 2026 and would pass an order check.
+    expect(rangeProblem({ from: "2026-01-01", to: "12345-01-01" })?.field).toBe("to")
+    expect(rangeProblem({ from: "12345-01-01", to: "2026-01-01" })?.field).toBe("from")
+    expect(rangeProblem({ from: "2026-02-30", to: "2026-03-05" })?.field).toBe("from")
+    expect(rangeProblem({ from: "2026-2-3", to: "2026-03-05" })?.field).toBe("from")
+  })
+
+  it("sends a half-open window that ends at the start of the day after `to`", () => {
+    expect(windowOf({ from: "2026-10-01", to: "2026-11-05" })).toEqual({ start: "2026-10-01T00:00:00Z", end: "2026-11-06T00:00:00Z" })
+    expect(windowOf({ from: "2026-12-31", to: "2026-12-31" })).toEqual({ start: "2026-12-31T00:00:00Z", end: "2027-01-01T00:00:00Z" })
+    expect(windowOf({ from: "2028-02-28", to: "2028-02-28" }).end).toBe("2028-02-29T00:00:00Z")
+    expect(windowOf({ from: "2028-02-29", to: "2028-02-29" }).end).toBe("2028-03-01T00:00:00Z")
+    expect(() => windowOf({ from: "2026-02-30", to: "2026-03-05" })).toThrow(RangeError)
+  })
+
+  it("accepts a USD to EGP rate above 0 and up to 10,000, and says why otherwise", () => {
+    expect(rateProblem("")).toBeNull()
+    expect(rateProblem("50")).toBeNull()
+    expect(rateProblem(" 48.5 ")).toBeNull()
+    expect(rateProblem("10000")).toBeNull()
+    expect(rateProblem("10000.01")).toMatch(/at most 10,000/)
+    expect(rateProblem("0")).toMatch(/more than 0/)
+    expect(rateProblem("-5")).toMatch(/number/)
+    expect(rateProblem("1e3")).toMatch(/number/)
+    expect(rateProblem("fifty")).toMatch(/number/)
+    expect(rateParam("  ")).toBeNull()
+    expect(rateParam(" 48.5 ")).toBe("48.5")
+  })
+
+  it("shows USD with cents, keeps sub-cent costs visible and never shows a real cost as zero", () => {
     expect(formatUsd("44.120000")).toBe("USD 44.12")
     expect(formatUsd("0.400000")).toBe("USD 0.40")
     expect(formatUsd("0.000412")).toBe("USD 0.0004")
+    expect(formatUsd("0.000049")).toBe("under USD 0.0001")
+    expect(formatUsd("0.000050")).toBe("USD 0.0001")
+    expect(formatUsd("0.000000")).toBe("USD 0.00")
   })
 })
 
@@ -91,6 +143,8 @@ describe("Margin", () => {
     s.report = okQuery(noRate)
     const html = renderStatic(h(Margin))
     expect(html).toContain("No USD to EGP rate set")
+    expect(html).toContain("Enter an EGP per USD rate above to work out cost in EGP and margin.")
+    expect(html).not.toContain("/platform/billing/catalogue")
     expect(html).toContain("USD 44.12")
     expect(html.match(/Not available/g)?.length).toBe(3)
     // A missing rate is never a zero cost, a zero margin or a percentage.
@@ -126,6 +180,15 @@ describe("Margin", () => {
   it("states an empty accuracy table", () => {
     s.report = okQuery({ ...fx.margin, accuracy: [] })
     expect(renderStatic(h(Margin))).toContain("nothing to score")
+  })
+
+  it("marks stale figures as updating while a new range loads", () => {
+    s.report = { ...okQuery(fx.margin), isPlaceholderData: true }
+    const html = renderStatic(h(Margin))
+    expect(html).toContain("Updating for the new range or rate.")
+    expect(html).toContain('aria-busy="true"')
+    s.report = okQuery(fx.margin)
+    expect(renderStatic(h(Margin))).not.toContain("Updating for")
   })
 
   it("shows the loading skeleton and a readable failure", () => {

@@ -10,17 +10,23 @@ import { QueryState } from "@/components/ui/query-state"
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table"
 import { ErrorState } from "@/components/ui/state-views"
 import { isForbidden } from "@/lib/adminBillingModel"
+import { cn } from "@/lib/utils"
 import { formatCredits, formatMoney, formatPercent } from "@/lib/billingFormat"
 import type { MarginReport } from "@/lib/billingTypes"
 import { useMarginReport } from "@/lib/hooks/useAdminBillingApi"
 import {
   accuracyFlag,
   costByActionBars,
+  MAX_RANGE_DAYS,
   defaultRange,
+  loadRate,
   formatShare,
   formatUsd,
   marginShare,
   rangeProblem,
+  rateParam,
+  rateProblem,
+  saveRate,
   revenueBars,
   type DayRange,
 } from "@/lib/marginModel"
@@ -46,6 +52,7 @@ const NO_RATE = "No USD to EGP rate set"
 const REVENUE_AXIS_PX = 104
 const NAME_PX_PER_CHAR = 7
 const NAME_AXIS_MAX_PX = 150
+const VALUE_LABEL_SPILL_PX = 24
 const categoryAxisPx = (bars: readonly { label: string }[]) =>
   Math.min(NAME_AXIS_MAX_PX, Math.max(...bars.map((b) => b.label.length), 0) * NAME_PX_PER_CHAR + 16)
 
@@ -108,11 +115,7 @@ function Money({ r }: { r: MarginReport }) {
       <p className="m-0 text-body-sm text-on-surface-variant">
         {noRate ? (
           <>
-            {NO_RATE}, so cost in EGP and margin can&apos;t be worked out. Add one in the{" "}
-            <Link to="/platform/billing/catalogue" className="text-primary underline underline-offset-2">
-              catalogue
-            </Link>
-            .
+            {NO_RATE}. Enter an EGP per USD rate above to work out cost in EGP and margin.
           </>
         ) : (
           <>
@@ -148,7 +151,7 @@ function Charts({ r }: { r: MarginReport }) {
         isEmpty={r.cost.byAction.length === 0}
         emptyBody="No metered jobs settled in this range."
       >
-        <BarChart data={bars} horizontal formatValue={usdFigure} leftMargin={categoryAxisPx(bars)} ariaLabel="LLM cost by action, in USD" />
+        <BarChart data={bars} horizontal formatValue={usdFigure} leftMargin={categoryAxisPx(bars)} valueTickCount={2} rightMargin={VALUE_LABEL_SPILL_PX} ariaLabel="LLM cost by action, in USD" />
       </ChartFrame>
     </div>
   )
@@ -327,44 +330,69 @@ function Exposure({ r }: { r: MarginReport }) {
 }
 
 export function Margin() {
-  // What the fields show, and the last range that was valid. Only a valid range is sent.
+  // What the fields show, and the last value of each that was valid. Only valid values are sent.
   const [draft, setDraft] = useState<DayRange>(() => defaultRange(new Date()))
   const [applied, setApplied] = useState<DayRange>(draft)
+  const [rateText, setRateText] = useState(loadRate)
+  const [appliedRate, setAppliedRate] = useState<string | null>(() => rateParam(rateText))
   const problem = rangeProblem(draft)
-  const report = useMarginReport(applied.from, applied.to)
+  const rateError = rateProblem(rateText)
+  const report = useMarginReport(applied.from, applied.to, appliedRate)
+  const forbidden = report.status === "error" && isForbidden(report.error)
 
   function edit(next: DayRange) {
     setDraft(next)
     if (rangeProblem(next) === null) setApplied(next)
   }
 
+  function editRate(text: string) {
+    setRateText(text)
+    if (rateProblem(text) === null) {
+      setAppliedRate(rateParam(text))
+      saveRate(text)
+    }
+  }
+
   return (
     <div className="flex flex-col gap-8">
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-start gap-3">
-          <div className="w-48">
-            <Input label="From" type="date" value={draft.from} max={draft.to || undefined} error={problem?.field === "from" ? problem.message : undefined} onChange={(e) => edit({ ...draft, from: e.target.value })} />
-          </div>
-          <div className="w-48">
-            <Input label="To" type="date" value={draft.to} min={draft.from || undefined} error={problem?.field === "to" ? problem.message : undefined} onChange={(e) => edit({ ...draft, to: e.target.value })} />
-          </div>
-        </div>
-        <p className="m-0 text-body-sm text-on-surface-variant">Whole UTC days, both included. Defaults to the last 90 days.</p>
-      </div>
-      {report.status === "error" && isForbidden(report.error) ? (
+      {forbidden ? (
         <ErrorState kicker={null} heading="You can't see money and margin" body="Billing is for platform admins. Ask one to look at this." />
       ) : (
-        <QueryState query={report} skeleton={<PageHeaderSkeleton />} error={{ heading: "Couldn't load money and margin" }}>
-          {(r) => (
-            <>
-              <Money r={r} />
-              <Charts r={r} />
-              <Breakdowns r={r} />
-              <Accuracy r={r} />
-              <Exposure r={r} />
-            </>
-          )}
-        </QueryState>
+        <>
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-start gap-3">
+              <div className="w-48">
+                <Input label="From" type="date" value={draft.from} max={draft.to || undefined} error={problem?.field === "from" ? problem.message : undefined} onChange={(e) => edit({ ...draft, from: e.target.value })} />
+              </div>
+              <div className="w-48">
+                <Input label="To" type="date" value={draft.to} min={draft.from || undefined} error={problem?.field === "to" ? problem.message : undefined} onChange={(e) => edit({ ...draft, to: e.target.value })} />
+              </div>
+              <div className="w-48">
+                <Input label="EGP per USD" inputMode="decimal" autoComplete="off" value={rateText} error={rateError ?? undefined} onChange={(e) => editRate(e.target.value)} />
+              </div>
+            </div>
+            <p className="m-0 max-w-prose text-body-sm text-on-surface-variant">
+              Whole UTC days, both included, up to {MAX_RANGE_DAYS} days. Defaults to the last 90 days. The rate turns LLM cost into EGP; it is kept in this
+              browser, not on the server.
+            </p>
+          </div>
+          <QueryState query={report} skeleton={<PageHeaderSkeleton />} error={{ heading: "Couldn't load money and margin" }}>
+            {(r) => (
+              <div className={cn("flex flex-col gap-8 transition-opacity", report.isPlaceholderData && "opacity-60")} aria-busy={report.isPlaceholderData === true}>
+                {report.isPlaceholderData ? (
+                  <p role="status" className="m-0 text-body-sm text-on-surface-variant">
+                    Updating for the new range or rate.
+                  </p>
+                ) : null}
+                <Money r={r} />
+                <Charts r={r} />
+                <Breakdowns r={r} />
+                <Accuracy r={r} />
+                <Exposure r={r} />
+              </div>
+            )}
+          </QueryState>
+        </>
       )}
     </div>
   )

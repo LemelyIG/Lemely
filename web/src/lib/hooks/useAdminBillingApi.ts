@@ -1,4 +1,5 @@
 import {
+  keepPreviousData,
   useInfiniteQuery,
   useMutation,
   useQuery,
@@ -10,6 +11,7 @@ import {
 } from "@tanstack/react-query"
 import { request } from "@/lib/api"
 import { PartialSaveError, adminRetry } from "@/lib/adminBillingModel"
+import { windowOf } from "@/lib/marginModel"
 import { toAdminCatalogue } from "@/lib/billingAdapters"
 import type {
   AdminAdjustRequest,
@@ -87,9 +89,14 @@ export const adminBillingApi = {
     return request<AdminPaymentsPage>(qs ? `${B}/payments?${qs}` : `${B}/payments`)
   },
   problems: () => request<ProblemQueue>(`${B}/problems`),
-  /** `from`/`to` are calendar days; the route takes ISO datetimes (whole days, UTC). */
-  margin: (from: string, to: string) =>
-    request<MarginReport>(`${B}/margin?from=${enc(`${from}T00:00:00Z`)}&to=${enc(`${to}T23:59:59Z`)}`),
+  /** `from`/`to` are calendar days, both included. The route takes a half-open ISO window
+   * (whole UTC days) and the USD to EGP rate as a parameter: the server stores none, and
+   * without it the report has no EGP cost or margin. */
+  margin: (from: string, to: string, egpPerUsd?: string | null) => {
+    const w = windowOf({ from, to })
+    const rate = egpPerUsd ? `&egpPerUsd=${enc(egpPerUsd)}` : ""
+    return request<MarginReport>(`${B}/margin?from=${enc(w.start)}&to=${enc(w.end)}${rate}`)
+  },
   health: () => request<BillingHealth>(`${B}/health`),
 }
 
@@ -100,7 +107,7 @@ export const adminBillingKeys = {
   customer: (userId: string) => ["admin", "billing", "customer", userId] as const,
   payments: (status: PaymentStatus | null) => ["admin", "billing", "payments", status ?? "all"] as const,
   problems: ["admin", "billing", "problems"] as const,
-  margin: (from: string, to: string) => ["admin", "billing", "margin", from, to] as const,
+  margin: (from: string, to: string, egpPerUsd: string | null = null) => ["admin", "billing", "margin", from, to, egpPerUsd] as const,
   health: ["admin", "billing", "health"] as const,
 }
 
@@ -212,8 +219,15 @@ export function useAdminPayments(status: PaymentStatus | null): UseInfiniteQuery
 export const useProblemQueue = (): UseQueryResult<ProblemQueue, Error> =>
   useQuery({ queryKey: adminBillingKeys.problems, queryFn: adminBillingApi.problems, refetchInterval: 60_000, retry: adminRetry })
 
-export const useMarginReport = (from: string, to: string): UseQueryResult<MarginReport, Error> =>
-  useQuery({ queryKey: adminBillingKeys.margin(from, to), queryFn: () => adminBillingApi.margin(from, to), retry: adminRetry })
+/** `placeholderData` keeps the last report on screen while a new range or rate loads, so editing
+ * a field does not flash the skeleton; the screen marks those figures as updating. */
+export const useMarginReport = (from: string, to: string, egpPerUsd: string | null = null): UseQueryResult<MarginReport, Error> =>
+  useQuery({
+    queryKey: adminBillingKeys.margin(from, to, egpPerUsd),
+    queryFn: () => adminBillingApi.margin(from, to, egpPerUsd),
+    retry: adminRetry,
+    placeholderData: keepPreviousData,
+  })
 
 export const useBillingHealth = (): UseQueryResult<BillingHealth, Error> =>
   useQuery({ queryKey: adminBillingKeys.health, queryFn: adminBillingApi.health, refetchInterval: 60_000, retry: adminRetry })
