@@ -173,7 +173,7 @@ export async function openApp(browser, { width, height, theme, app }) {
   if (surface) await surface.stub(page, surface.states[app.state ?? Object.keys(surface.states)[0]])
   if (app.mocks) await app.mocks(page)
   await page.goto(`${APP_BASE}${app.path ?? surface.route}`, { waitUntil: "networkidle" })
-  await page.addStyleTag({ content: STILL_CSS })
+  await page.addStyleTag({ content: STILL_CSS + (app.css ?? "") })
   await page.evaluate(() => document.fonts.ready)
   if (app.act) await app.act(page, { width, theme })
   await page.waitForTimeout(150)

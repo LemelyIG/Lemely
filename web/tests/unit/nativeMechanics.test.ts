@@ -142,14 +142,8 @@ describe("headers keep their existing padding while opting into the additive ins
     return line ?? ""
   }
 
-  it("student's header replaces py-4 with pb-4 and lm-app-header-pt-4, no inline style", () => {
-    const line = headerLine("portals/student/index.tsx")
-    expect(line).toContain("pb-4")
-    expect(line).not.toMatch(/(?<!p)\bpy-4\b/)
-    expect(line).toContain("lm-app-header-pt-4")
-    const source = readFileSync(join(SRC, "portals/student/index.tsx"), "utf8")
-    expect(source).not.toContain("--lm-app-header-pt")
-  })
+  // The student header moved to components/shell/ShellTopBar.tsx (portal shell
+  // spec), which carries its own inset (`lm-shell-bar-inset`).
 
   it("admin's header replaces py-2.5 with pb-2.5 and lm-app-header-pt-2.5, no inline style", () => {
     const line = headerLine("portals/admin/index.tsx")
@@ -184,7 +178,7 @@ describe("lm-nav-chrome coverage", () => {
   const CHROME_FILES = [
     "components/ui/nav-drawer.tsx",
     "components/ui/nav-shells.tsx",
-    "portals/student/index.tsx",
+    // The student and teacher bars are components/shell/ShellTopBar.tsx.
     "components/shell/ShellTopBar.tsx",
     "portals/admin/index.tsx",
     "portals/marketing/MarketingHeader.tsx",
@@ -320,9 +314,9 @@ describe("min-h-dvh alone, no min-h-screen fallback", () => {
     "portals/misc/FullPageState.tsx",
     "portals/parent/index.tsx",
     "portals/auth/Login.tsx",
-    "portals/student/index.tsx",
+    // The student and teacher layouts are components/shell/PortalShell.tsx.
+    "components/shell/PortalShell.tsx",
     "portals/settings/SettingsFrame.tsx",
-    "portals/teacher/index.tsx",
     "portals/admin/index.tsx",
     "portals/marketing/index.tsx",
   ]

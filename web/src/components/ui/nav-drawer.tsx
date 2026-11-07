@@ -59,6 +59,18 @@ import { GESTURE_INTERACTIVE_SELECTOR } from "@/lib/gestures/interactiveSelector
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
+/** Focusable descendants a user can actually reach: the shell sidebar hides
+ * its wordmark (`visibility: hidden`) and Upload (`display: none`) in the
+ * phone sheet, and focus() on either silently does nothing, so the first and
+ * last stops must skip them. */
+function focusableIn(panel: HTMLElement): HTMLElement[] {
+  return Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter((el) =>
+    typeof el.checkVisibility === "function"
+      ? el.checkVisibility({ visibilityProperty: true })
+      : el.getClientRects().length > 0,
+  )
+}
+
 export interface NavDrawerProps {
   open: boolean
   onClose: () => void
@@ -119,7 +131,7 @@ export function NavDrawer({ open, onClose, title, children, footer, variant = "d
 
     // Defer a frame so the panel is mounted before we look inside it.
     const raf = requestAnimationFrame(() => {
-      const first = panelRef.current?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)
+      const first = panelRef.current ? focusableIn(panelRef.current)[0] : undefined
       ;(first ?? panelRef.current)?.focus()
     })
 
@@ -207,7 +219,7 @@ export function NavDrawer({ open, onClose, title, children, footer, variant = "d
 
     const panel = panelRef.current
     if (!panel) return
-    const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+    const focusable = focusableIn(panel)
     if (focusable.length === 0) {
       event.preventDefault()
       return
@@ -228,7 +240,12 @@ export function NavDrawer({ open, onClose, title, children, footer, variant = "d
   return createPortal(
     <div className="fixed inset-0 z-modal" onKeyDown={handleKeyDown}>
       <div
-        className="fixed inset-0 z-scrim bg-scrim motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
+        className={cn(
+          "fixed inset-0 z-scrim motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]",
+          // Design A's `.as-side::backdrop` is the scrim colour at 0.4 alpha;
+          // the app token carries 0.55, and 0.4 / 0.55 = 72.73%.
+          variant === "shell" ? "bg-scrim/[72.73%]" : "bg-scrim",
+        )}
         aria-hidden="true"
         onClick={onClose}
       />

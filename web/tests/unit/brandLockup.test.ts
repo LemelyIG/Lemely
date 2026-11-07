@@ -21,7 +21,6 @@ function sourceOf(relativePath: string): string {
 const BRAND_LOCKUP_FILE = "src/components/ui/brand-lockup.tsx"
 
 const LOCKUP_SITES = [
-  "src/portals/student/index.tsx",
   "src/components/shell/ShellSidebar.tsx",
   "src/portals/parent/index.tsx",
   "src/portals/admin/index.tsx",

@@ -17,6 +17,7 @@ import {
 } from "@/lib/hooks/useNotificationApi"
 import { setAppBadge } from "@/lib/badging"
 import type { Notification } from "@/lib/notificationTypes"
+import { studentDestinationFor } from "@/lib/studentInbox"
 import { cn } from "@/lib/utils"
 import { usePullToRefresh } from "@/lib/gestures/usePullToRefresh"
 import { useLongPress } from "@/lib/gestures/useLongPress"
@@ -85,19 +86,7 @@ export function typeLabel(type: string): string {
  * action", the bridge returns the root, because a click has to go somewhere.
  */
 export function destinationFor(notification: Notification): string | null {
-  switch (notification.type) {
-    case "announcement":
-      return "/student/announcements"
-    case "streak_warning":
-      return "/student/profile"
-    case "study_plan_reminder": {
-      const { subjectCode, sessionId } = notification.payload
-      if (!subjectCode || !sessionId) return null
-      return `/student/plan/${encodeURIComponent(subjectCode)}/session/${encodeURIComponent(sessionId)}`
-    }
-    default:
-      return null
-  }
+  return studentDestinationFor(notification)
 }
 
 /**

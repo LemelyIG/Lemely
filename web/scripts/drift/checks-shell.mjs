@@ -5,7 +5,7 @@
  * and throws on the first broken expectation. Later tasks append checks.
  */
 import { PNG } from "pngjs"
-import { teacherShellMocks } from "./mocks.mjs"
+import { STUDENT_PROFILE, studentShellMocks, teacherShellMocks } from "./mocks.mjs"
 
 /** Radix hands focus back a frame after the panel unmounts, so poll briefly rather than read once. */
 export async function assertFocused(locator, label) {
@@ -268,4 +268,120 @@ export function barIsTranslucent(id, app, theme) {
 SHELL_CHECKS.push(
   barIsTranslucent("teacher-bar-translucent-light", TEACHER_HOME, "light"),
   barIsTranslucent("teacher-bar-translucent-dark", TEACHER_HOME, "dark"),
+)
+
+const STUDENT_HOME = { path: "/student", profile: STUDENT_PROFILE, mocks: studentShellMocks("populated") }
+
+SHELL_CHECKS.push(
+  {
+    id: "student-subject-tree-keyboard",
+    app: STUDENT_HOME,
+    async run(page) {
+      const physics = page.getByRole("button", { name: /Physics/ })
+      if ((await physics.getAttribute("aria-expanded")) !== "false") throw new Error("tree: Physics should start closed on /student")
+      await physics.focus()
+      await page.keyboard.press("Enter")
+      if ((await physics.getAttribute("aria-expanded")) !== "true") throw new Error("tree: Enter did not expand Physics")
+      const practice = page.locator(`#${await physics.getAttribute("aria-controls")} a`, { hasText: "Practice" })
+      await practice.waitFor()
+      await page.keyboard.press("Space")
+      if ((await physics.getAttribute("aria-expanded")) !== "false") throw new Error("tree: Space did not collapse Physics")
+      await practice.waitFor({ state: "hidden" })
+    },
+  },
+  {
+    id: "student-subject-tree-opens-current-route",
+    app: { ...STUDENT_HOME, path: "/student/practice/0606" },
+    async run(page) {
+      const addMaths = page.getByRole("button", { name: /Add Maths/ })
+      if ((await addMaths.getAttribute("aria-expanded")) !== "true") throw new Error("tree: route subject 0606 should start open")
+    },
+  },
+  {
+    id: "student-drawer-traps-focus-and-escape-returns",
+    width: 768,
+    app: STUDENT_HOME,
+    async run(page) {
+      const { more, dialog } = await openNavFromMore(page)
+      for (let i = 0; i < 40; i++) {
+        await page.keyboard.press("Tab")
+        if (!(await dialog.evaluate((el) => el.contains(document.activeElement)))) {
+          throw new Error(`drawer: focus left the dialog after ${i + 1} Tab presses`)
+        }
+      }
+      await page.keyboard.press("Escape")
+      await assertHidden(dialog, "drawer")
+      await assertFocused(more, "More tab")
+    },
+  },
+  {
+    id: "student-phone-sheet-hides-wordmark-and-upload",
+    width: 390,
+    app: STUDENT_HOME,
+    async run(page) {
+      const { dialog } = await openNavFromMore(page)
+      if (await dialog.getByRole("link", { name: "Upload a paper" }).isVisible()) throw new Error("sheet: Upload should be hidden (bottom bar has it)")
+      // visibility:hidden drops the link from the accessibility tree, so find it by its label attribute.
+      const visibility = await dialog.locator('a[aria-label="Lemely, overview"]').evaluate((el) => getComputedStyle(el).visibility)
+      if (visibility !== "hidden") throw new Error("sheet: wordmark should be visibility:hidden")
+    },
+  },
+  {
+    id: "student-bell-escape-returns-focus",
+    app: STUDENT_HOME,
+    async run(page) {
+      const bell = page.getByRole("button", { name: "Notifications, 2 unread" })
+      await bell.click()
+      await page.getByRole("menu").waitFor()
+      await page.keyboard.press("Escape")
+      await assertHidden(page.getByRole("menu"), "bell panel")
+      await assertFocused(bell, "bell trigger")
+    },
+  },
+  {
+    id: "student-account-escape-returns-focus",
+    app: STUDENT_HOME,
+    async run(page) {
+      const avatar = page.getByRole("button", { name: "Your profile and account, Mariam" })
+      await avatar.click()
+      await page.getByRole("menuitem", { name: "Sign out" }).waitFor()
+      await page.keyboard.press("Escape")
+      await assertFocused(avatar, "avatar trigger")
+    },
+  },
+  {
+    id: "student-375-title-readable",
+    width: 375,
+    // A long section title, so the bar's buttons squeeze it. Readable means the
+    // whole title shows, or at least 100px of it does before the ellipsis
+    // (a short title such as "Overview" is under 100px wide and not clipped).
+    app: { ...STUDENT_HOME, path: "/student/recently-deleted" },
+    async run(page) {
+      const title = page.locator("header p").first()
+      const box = await title.boundingBox()
+      const clipped = await title.evaluate((el) => el.scrollWidth > el.clientWidth + 1)
+      if (!box || (clipped && box.width < 100)) throw new Error(`375px: title is ${box?.width ?? 0}px wide and clipped`)
+    },
+  },
+  ...[900, 1024, 1247, 1248, 1300].map((width) => ({
+    // Decision 1, as for the teacher: exactly one of {sidebar column, menu
+    // button} shows above the phone range, and the column starts at 1248px.
+    // This is the check that the 1024 window gets the drawer (the drift
+    // scenes cannot: design A has no drawer at 1024).
+    id: `student-sidebar-xor-menu-${width}`,
+    width,
+    app: STUDENT_HOME,
+    async run(page) {
+      const menu = await page.getByRole("button", { name: "Open student navigation" }).isVisible()
+      const sidebar = await page.getByRole("navigation", { name: "Main", exact: true }).isVisible()
+      if (menu === sidebar) throw new Error(`at ${width}px: menu button visible=${menu}, sidebar visible=${sidebar}; exactly one must show`)
+      if (sidebar !== width >= 1248) throw new Error(`at ${width}px: sidebar column visible=${sidebar}, expected ${width >= 1248} (drawer below 1248px)`)
+      if (menu) {
+        await page.getByRole("button", { name: "Open student navigation" }).click()
+        await page.getByRole("dialog").getByRole("navigation", { name: "Main", exact: true }).waitFor()
+      }
+    },
+  })),
+  barIsTranslucent("student-bar-translucent-light", STUDENT_HOME, "light"),
+  barIsTranslucent("student-bar-translucent-dark", STUDENT_HOME, "dark"),
 )

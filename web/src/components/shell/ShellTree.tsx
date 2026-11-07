@@ -3,7 +3,7 @@ import type { NavShellItem } from "@/components/ui/nav-shells"
 import { cn } from "@/lib/utils"
 import { ShellIcon } from "./icons"
 import { ShellNavList } from "./ShellNavList"
-import { initialOpenIds, openOnNavigate, toggleOpen } from "./shellTree"
+import { currentRowId, initialOpenIds, openOnNavigate, toggleOpen } from "./shellTree"
 import { SHELL_FOCUS_RING } from "./shellStyles"
 
 export interface ShellTreeRow {
@@ -36,6 +36,7 @@ export function ShellTree({ labelledBy, rows, currentId, fallbackId = null, empt
   const baseId = useId()
   const rowIds = rows.map((r) => r.id)
   const [open, setOpen] = useState(() => initialOpenIds(rowIds, currentId, fallbackId))
+  const tinted = currentRowId(rowIds, currentId, fallbackId)
   useEffect(() => {
     setOpen((prev) => openOnNavigate(prev, currentId && rowIds.includes(currentId) ? currentId : null))
     // rowIds is derived from rows; re-run when the route or the row set changes.
@@ -50,7 +51,7 @@ export function ShellTree({ labelledBy, rows, currentId, fallbackId = null, empt
         const expanded = open.has(row.id)
         const subId = `${baseId}-${row.id}`
         return (
-          <li key={row.id}>
+          <li key={row.id} data-current={row.id === tinted || undefined}>
             <button
               type="button"
               aria-expanded={expanded}
@@ -58,7 +59,11 @@ export function ShellTree({ labelledBy, rows, currentId, fallbackId = null, empt
               title={row.title}
               onClick={() => setOpen((prev) => toggleOpen(prev, row.id))}
               className={cn(
-                "group flex w-full cursor-pointer items-center gap-2.5 rounded-chip px-2.5 py-1.5 text-start text-label text-on-surface transition-colors duration-150 hover:bg-surface-container pointer-coarse:min-h-11",
+                "group flex w-full cursor-pointer items-center gap-2.5 rounded-chip px-2.5 py-1.5 text-start text-label transition-colors duration-150 pointer-coarse:min-h-11",
+                // Design A tints the current row (`li[data-current] > .as-subj`), hover included.
+                row.id === tinted
+                  ? "bg-primary-container text-on-primary-container"
+                  : "text-on-surface hover:bg-surface-container",
                 SHELL_FOCUS_RING,
               )}
             >

@@ -1,4 +1,4 @@
-import { teacherShellMocks } from "./mocks.mjs"
+import { STUDENT_PROFILE, studentShellMocks, teacherShellMocks } from "./mocks.mjs"
 
 const teacher = (extra) => ({ surface: "teacher-overview", state: "populated", mocks: teacherShellMocks, ...extra })
 
@@ -82,4 +82,118 @@ export const TEACHER_SCENES = [
   })),
 ]
 
-export const SHELL_SCENES = [...TEACHER_SCENES]
+/** The app reserves the scrollbar's space on html (`scrollbar-gutter: stable`,
+ * index.css); headless Chromium hides scrollbars, so the preview has no such
+ * strip. Dropping the reservation in the capture compares both at the full
+ * window width. (A page-environment difference, not a shell rule.) */
+const NO_GUTTER = "html{scrollbar-gutter:auto!important}"
+
+const student = (state, extra = {}) => ({
+  path: "/student",
+  profile: STUDENT_PROFILE,
+  mocks: studentShellMocks(state),
+  css: NO_GUTTER,
+  ...extra,
+})
+
+/** Make the preview stand for another route: its route-dependent parts are a
+ * title and which row is current (design A rules), nothing else. */
+function asRoute({ title, current }) {
+  return (page) =>
+    page.evaluate(
+      ([t, c]) => {
+        document.querySelector(".as-title").textContent = t
+        for (const a of document.querySelectorAll(".as-list a[aria-current]")) a.removeAttribute("aria-current")
+        if (c) document.querySelector(`.as-list a[href="${c}"]`)?.setAttribute("aria-current", "page")
+      },
+      [title, current],
+    )
+}
+
+async function openStudentNav(page) {
+  const more = page.getByRole("button", { name: "More", exact: true })
+  if (await more.isVisible()) await more.click()
+  else await page.getByRole("button", { name: "Open student navigation" }).click()
+  await page.getByRole("dialog").waitFor()
+}
+async function openPreviewNav(page) {
+  const more = page.locator(".a-bottombar button[popovertarget]")
+  if (await more.isVisible()) await more.click()
+  else await page.click(".as-menu")
+}
+
+/** Decision 1: the app's drawer range runs to 1247px, design A's only to
+ * 1000px. At the 1024 window the app shows the menu button and a full-width
+ * page where design A shows the 216px sidebar, which no 15% cap can absorb.
+ * So each student scene splits in two. The gate scene keeps 390, 768, 1440
+ * and 1920. A log-only `<id>-1024` scene has no cap but needs an approved
+ * entry, the same rule as the teacher frames. */
+const GATE_WINDOWS = [390, 768, 1440, 1920]
+function byWindowRule(scene) {
+  return [
+    { ...scene, windows: GATE_WINDOWS },
+    { ...scene, id: `${scene.id}-1024`, windows: [1024], rule: "log" },
+  ]
+}
+
+export const STUDENT_SCENES = [
+  ...["populated", "new"].flatMap((state) =>
+    byWindowRule({
+      id: `student-${state}-frame`,
+      kind: "preview-vs-app",
+      capture: "frame",
+      app: student(state),
+      preview: { state },
+    }),
+  ),
+  ...byWindowRule({
+    id: "student-subject-frame",
+    kind: "preview-vs-app",
+    capture: "frame",
+    app: student("populated", { path: "/student/subject/0606" }),
+    preview: { state: "populated", act: asRoute({ title: "Add Maths", current: null }) },
+  }),
+  ...byWindowRule({
+    id: "student-notifications-frame",
+    kind: "preview-vs-app",
+    capture: "frame",
+    app: student("populated", { path: "/student/notifications" }),
+    preview: { state: "populated", act: asRoute({ title: "Notifications", current: null }) },
+  }),
+  {
+    // 390 and 768 only: at 1024 design A has no drawer to open (its sidebar
+    // shows from 1001px). The app's 1024 drawer is covered by the
+    // student-sidebar-xor-menu-* behaviour checks instead.
+    id: "student-drawer",
+    kind: "preview-vs-app",
+    capture: "frame",
+    windows: [390, 768],
+    // On the subject route, so the app's tree opens and tints Add Maths as
+    // design A does (on /student the app has no fallback subject until the
+    // Overview plan; that closed group alone moves the phone sheet's top).
+    app: student("populated", { path: "/student/subject/0606", act: openStudentNav }),
+    preview: {
+      state: "populated",
+      act: async (page) => {
+        await asRoute({ title: "Add Maths", current: null })(page)
+        await openPreviewNav(page)
+      },
+    },
+  },
+  ...byWindowRule({
+    id: "student-bell",
+    kind: "preview-vs-app",
+    capture: "frame",
+    app: student("populated", { act: openBell }),
+    preview: { state: "populated", act: (page) => page.click(".as-pop-bell summary") },
+  }),
+  ...byWindowRule({
+    id: "student-account",
+    kind: "preview-vs-app",
+    capture: "frame",
+    app: student("populated", { act: openAccount }),
+    preview: { state: "populated", act: (page) => page.click(".as-pop-me summary") },
+  }),
+]
+
+export const SHELL_SCENES = [...TEACHER_SCENES, ...STUDENT_SCENES]

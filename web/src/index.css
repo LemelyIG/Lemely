@@ -62,6 +62,9 @@
   --grade-f: oklch(0.53 0.135 30);
   --grade-g: oklch(0.52 0.138 22);
   --grade-u: oklch(0.50 0.14 15);
+  /* The student sidebar's grade-C ring (design A `--sh-grade-c`): bronze-olive,
+     off reward gold so grades and XP never share a colour. */
+  --grade-c-ring: oklch(0.47 0.09 75);
 
   /* Mascot only (student surfaces and the marketing page) */
   --binny-steel: oklch(0.80 0.01 240);
@@ -80,6 +83,7 @@
 }
 
 :root[data-theme="dark"] {
+  --grade-c-ring: oklch(0.49 0.09 75);
   --md-primary: #7fb8e0;
   --md-primary-hover: #9ccaea;
   --md-on-primary: #042f4f;

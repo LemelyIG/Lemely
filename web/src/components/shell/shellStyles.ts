@@ -22,6 +22,9 @@ export const SHELL_ICON_BUTTON =
   "relative grid size-9 flex-none cursor-pointer place-items-center rounded-chip text-on-surface-variant transition-colors duration-150 hover:bg-surface-container-low hover:text-on-surface data-[state=open]:bg-surface-container-low data-[state=open]:text-on-surface pointer-coarse:size-11 " +
   SHELL_FOCUS_RING
 
-/** `.as-pop-panel` (+ its ≤720px inset rule). */
+/** `.as-pop-panel` (+ its ≤720px inset rule). `!rounded-inner`: Radix focuses the
+ * panel on open, and the unlayered global `:focus-visible` sets a 2px radius.
+ * `max-shell-sm:-mt-2`: on phones design A drops the panel from the 44px bar,
+ * 4px above its bottom (`calc(100% - 4px)`), not 8px below the 36px trigger. */
 export const SHELL_PANEL =
-  "z-dropdown w-80 rounded-inner bg-surface-container-lowest p-2 text-on-surface shadow-[var(--shadow-panel)] dark:bg-surface-container-highest dark:shadow-[0_0_0_1px_var(--color-outline)] max-shell-sm:w-[calc(100vw-20px)] max-w-[var(--radix-dropdown-menu-content-available-width)] motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out)_both]"
+  "z-dropdown w-80 !rounded-inner bg-surface-container-lowest p-2 text-on-surface shadow-[var(--shadow-panel)] dark:bg-surface-container-highest dark:shadow-[0_0_0_1px_var(--color-outline)] max-shell-sm:w-[calc(100vw-20px)] max-shell-sm:-mt-2 max-w-[var(--radix-dropdown-menu-content-available-width)] motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out)_both]"

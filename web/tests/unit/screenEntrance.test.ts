@@ -66,7 +66,6 @@ describe("screen-outlet.tsx", () => {
 describe("every portal layout renders <ScreenOutlet instead of a bare <Outlet", () => {
   // The student and teacher layouts are components/shell/PortalShell.tsx (portal shell spec).
   const PORTAL_LAYOUTS = [
-    "src/portals/student/index.tsx",
     "src/components/shell/PortalShell.tsx",
     "src/portals/admin/index.tsx",
     "src/portals/parent/index.tsx",
@@ -95,8 +94,8 @@ describe("View Transitions are wired from shell chrome", () => {
     expect(sourceOf("src/components/ui/back-control.tsx")).toContain("viewTransition")
   })
 
-  it("student's sidebar NavLink passes viewTransition inline", () => {
-    expect(sourceOf("src/portals/student/index.tsx")).toContain("viewTransition")
+  it("the student shell's Upload link passes viewTransition inline", () => {
+    expect(sourceOf("src/portals/student/shell.tsx")).toContain("viewTransition")
   })
 
   it("the shell sidebar renders through ShellNavList, which uses nav-shells' NavLink (viewTransition)", () => {

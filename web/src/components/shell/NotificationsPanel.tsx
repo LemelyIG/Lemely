@@ -28,7 +28,7 @@ export interface NotificationsPanelProps {
 type PanelProps = Omit<NotificationsPanelProps, "unread" | "triggerClassName">
 
 const ITEM =
-  "grid w-full cursor-pointer grid-cols-[32px_minmax(0,1fr)_auto] items-start gap-2.5 rounded-chip p-2 text-start text-body-sm text-on-surface transition-colors duration-150 data-[highlighted]:bg-surface-container-low focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
+  "grid w-full cursor-pointer grid-cols-[32px_minmax(0,1fr)_auto] items-start gap-2.5 rounded-chip p-2 text-start text-(length:--fs-body-sm) leading-normal text-on-surface transition-colors duration-150 data-[highlighted]:bg-surface-container-low focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
 
 const FOOT_LINK =
   "flex-1 cursor-pointer rounded-chip p-2 text-center text-2xs font-semibold leading-[1.3] text-primary transition-colors duration-150 data-[highlighted]:bg-surface-container-low pointer-coarse:min-h-11 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
@@ -57,7 +57,7 @@ function Row({
         {unread ? <span className="sr-only">Unread: </span> : null}
         <b className="line-clamp-2 font-bold text-on-surface [text-wrap:pretty]">{notification.title}</b>
         {notification.body ? (
-          <small className="text-2xs text-on-surface-variant">{notification.body}</small>
+          <small className="text-2xs leading-normal text-on-surface-variant">{notification.body}</small>
         ) : null}
       </span>
       <time
@@ -81,7 +81,8 @@ function Panel({ destinationFor, iconFor, inboxTo, footerLinks, emptyMessage, er
   return (
     <>
       <div className="mx-2 my-1.5 flex items-baseline justify-between gap-3">
-        <p className="text-body-sm font-extrabold leading-[1.2] tracking-[-0.01em]">Notifications</p>
+        {/* Not `text-body-sm`: that unlayered `font:` shorthand would undo the weight and leading. */}
+        <p className="text-(length:--fs-body-sm) font-extrabold leading-[1.2] tracking-[-0.01em]">Notifications</p>
         {hasRows ? (
           <button
             type="button"
@@ -112,7 +113,7 @@ function Panel({ destinationFor, iconFor, inboxTo, footerLinks, emptyMessage, er
           </button>
         </div>
       ) : !hasRows ? (
-        <p className="px-2 pt-2 pb-3 text-body-sm leading-normal text-on-surface-variant">{emptyMessage}</p>
+        <p className="px-2 pt-2 pb-3 text-(length:--fs-body-sm) leading-normal text-on-surface-variant">{emptyMessage}</p>
       ) : (
         <div className="flex flex-col">
           {page!.notifications.slice(0, previewLimit ?? 4).map((n) => (
@@ -147,7 +148,7 @@ export function NotificationsPanel({ unread, triggerClassName, ...panel }: Notif
         {unread ? (
           <i
             aria-hidden="true"
-            className="absolute end-[7px] top-1.5 size-2 rounded-pill bg-primary shadow-[0_0_0_2px_var(--color-surface-container-lowest)] dark:shadow-[0_0_0_2px_var(--color-surface-container-high)]"
+            className="absolute end-[7px] top-1.5 size-2 rounded-pill bg-primary shadow-[0_0_0_2px_var(--color-surface-container-lowest)]"
           />
         ) : null}
       </DropdownMenu.Trigger>

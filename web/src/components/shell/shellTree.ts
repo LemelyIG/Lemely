@@ -15,6 +15,18 @@ export function initialOpenIds(
   return new Set()
 }
 
+/** The tinted row (design A `li[data-current]`): the route's row, else the
+ * fallback (today's session subject), else none. */
+export function currentRowId(
+  rowIds: readonly string[],
+  currentId: string | null,
+  fallbackId: string | null = null,
+): string | null {
+  if (currentId && rowIds.includes(currentId)) return currentId
+  if (fallbackId && rowIds.includes(fallbackId)) return fallbackId
+  return null
+}
+
 export function toggleOpen(open: ReadonlySet<string>, id: string): Set<string> {
   const next = new Set(open)
   if (next.has(id)) next.delete(id)

@@ -64,7 +64,8 @@ export function ShellSidebar({ variant, navLabel, homeTo, homeLabel, items, grou
           aria-label={homeLabel}
           className={cn("inline-flex self-start rounded-chip px-2 pt-0.5 pb-2", SHELL_FOCUS_RING, !rail && "max-shell-sm:invisible")}
         >
-          <BrandLockup as="span" className="[--wm-size:32px] [&_svg]:w-[0.451em]" />
+          {/* `!`: the unlayered `.wordmark-sm` (26px) beats a plain layered utility. */}
+          <BrandLockup as="span" className="[--wm-size:32px]! [&_svg]:w-[0.451em]" />
         </Link>
         {onClose ? (
           <button type="button" onClick={onClose} aria-label="Close menu" className={SHELL_ICON_BUTTON}>
@@ -90,8 +91,8 @@ export function ShellUserBlock({ name, avatarUrl, detail }: { name: string; avat
     <div className="flex items-center gap-2.5 px-0.5">
       <ShellAvatar name={name} src={avatarUrl} />
       <span className="flex min-w-0 flex-col">
-        <b className="truncate text-body-sm font-medium text-on-surface">{name}</b>
-        {detail ? <small className="text-body-sm text-on-surface-variant">{detail}</small> : null}
+        <b className="truncate text-(length:--fs-body-sm) font-medium leading-[1.45] text-on-surface">{name}</b>
+        {detail ? <small className="truncate text-body-sm text-on-surface-variant">{detail}</small> : null}
       </span>
     </div>
   )

@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { MemoryRouter } from "react-router-dom"
 import { describe, expect, it } from "vitest"
 import { ShellTree } from "@/components/shell/ShellTree"
-import { initialOpenIds, openOnNavigate, toggleOpen } from "@/components/shell/shellTree"
+import { currentRowId, initialOpenIds, openOnNavigate, toggleOpen } from "@/components/shell/shellTree"
 
 const ROWS = ["0580", "0606", "0625"]
 
@@ -18,6 +18,20 @@ describe("initialOpenIds", () => {
   it("opens nothing when neither matches", () => {
     expect([...initialOpenIds(ROWS, null)]).toEqual([])
     expect([...initialOpenIds(ROWS, null, "9999")]).toEqual([])
+  })
+})
+
+describe("currentRowId (design A tints li[data-current])", () => {
+  it("is the route's row when it is one of the rows", () => {
+    expect(currentRowId(ROWS, "0606", "0625")).toBe("0606")
+  })
+  it("is the fallback row when the route matches none", () => {
+    expect(currentRowId(ROWS, null, "0625")).toBe("0625")
+    expect(currentRowId(ROWS, "9999", "0625")).toBe("0625")
+  })
+  it("is null when neither matches", () => {
+    expect(currentRowId(ROWS, null)).toBeNull()
+    expect(currentRowId(ROWS, "9999", "1234")).toBeNull()
   })
 })
 
@@ -83,6 +97,11 @@ describe("ShellTree markup", () => {
     expect(html).toMatch(/aria-expanded="false"[^>]*title="Mathematics · 0580"|title="Mathematics · 0580"[^>]*aria-expanded="false"/)
     expect(html).toMatch(/<ul[^>]*hidden=""[^>]*>[\s\S]*?\/student\/practice\/0580/)
     expect(html).toContain('aria-expanded="true"')
+  })
+  it("marks only the current row's item data-current (the tinted row)", () => {
+    const items = html.match(/<li[^>]*>/g) ?? []
+    expect(items.filter((li) => li.includes("data-current"))).toHaveLength(1)
+    expect(html).toMatch(/<li data-current="true"><button[^>]*aria-controls="[^"]*0606"/)
   })
   it("renders the empty message when there are no rows", () => {
     const empty = renderToStaticMarkup(

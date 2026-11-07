@@ -69,10 +69,11 @@ export function AccountPanel({ links, detail, triggerClassName }: AccountPanelPr
           <div className="mb-1 flex items-center gap-2.5 border-b border-outline-variant px-2 pt-2.5 pb-3">
             <ShellAvatar name={name} src={data.avatarUrl} size="md" />
             <span className="flex min-w-0 flex-col">
-              <b className="text-body-sm font-bold leading-[1.3] text-on-surface">{name}</b>
-              <small className="truncate text-body-sm leading-[1.4] text-on-surface-variant">{data.email}</small>
+              {/* `--fs-body-sm` alone, not `text-body-sm`: its unlayered `font:` shorthand would undo weight and leading. */}
+              <b className="text-(length:--fs-body-sm) font-bold leading-[1.3] text-on-surface">{name}</b>
+              <small className="truncate text-(length:--fs-body-sm) leading-[1.4] text-on-surface-variant">{data.email}</small>
               {detail ? (
-                <small className="truncate text-body-sm leading-[1.4] text-on-surface-variant">{detail}</small>
+                <small className="truncate text-(length:--fs-body-sm) leading-[1.4] text-on-surface-variant">{detail}</small>
               ) : null}
             </span>
           </div>
