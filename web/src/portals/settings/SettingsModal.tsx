@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
@@ -149,21 +150,35 @@ export function SettingsModal({
     }
   }, [])
 
-  // Focus must not fall to <body> while the dialog is open. A panel that
-  // swaps its content (the lazy tab's skeleton giving way to the real
-  // controls, a list re-rendering) unmounts the focused element, and the
-  // browser then parks focus on <body>: behind the inert app root, outside
-  // the dialog's key handler, so Tab would walk out of the modal. When that
-  // happens, put focus back on the dialog itself.
-  useEffect(() => {
-    const panel = panelRef.current
-    if (!panel) return
-    const observer = new MutationObserver(() => {
+  // Focus must not leave the dialog by Tab. A panel that swaps content or
+  // disables the focused control (a save pending) leaves focus on <body>,
+  // behind the inert app root and outside the dialog's own key handler, so
+  // Tab would walk out of the modal. This listener sits on the document, sees
+  // that Tab, and seats focus back in the panel. Nested dialogs and listboxes
+  // (a confirmation, a select popup) portal to `body` and manage their own.
+  useLayoutEffect(() => {
+    function guardTab(event: KeyboardEvent) {
+      if (event.key !== "Tab") return
+      const panel = panelRef.current
+      if (!panel) return
       const active = document.activeElement
-      if (!active || active === document.body) panel.focus({ preventScroll: true })
-    })
-    observer.observe(panel, { childList: true, subtree: true })
-    return () => observer.disconnect()
+      if (active && active !== document.body) {
+        if (panel.contains(active)) return
+        const nested = active.closest('[role="dialog"],[role="listbox"]')
+        if (nested && nested !== panel) return
+      }
+      event.preventDefault()
+      const stops = tabbable(panel)
+      const current = Array.from(
+        panel.querySelectorAll<HTMLElement>('nav a[aria-current="page"]'),
+      ).find(isShown)
+      const target = event.shiftKey
+        ? (stops[stops.length - 1] ?? panel)
+        : (current ?? stops[0] ?? panel)
+      target.focus()
+    }
+    document.addEventListener("keydown", guardTab)
+    return () => document.removeEventListener("keydown", guardTab)
   }, [])
 
   // A new tab starts at the top of the panel, and the phone tab strip keeps

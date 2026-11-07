@@ -495,15 +495,73 @@ SHELL_CHECKS.push(
       // Focus must stay inside the dialog while the panel swaps its content: a
       // focused control that unmounts would otherwise drop focus to <body>.
       await page.waitForFunction(() => document.activeElement?.closest("[role=dialog]"))
+      // The URL changes before the lazy panel does: the previous panel stays
+      // mounted until the new one has loaded. Tab through the loaded panel, not
+      // one that is about to be swapped out from under the focused control.
+      await dialog.getByRole("heading", { name: "Install the app" }).waitFor()
+      await dialog.locator('[role="status"]').waitFor({ state: "detached" })
       for (let i = 0; i < 40; i++) {
         await page.keyboard.press("Tab")
         if (!(await dialog.evaluate((el) => el.contains(document.activeElement)))) {
           throw new Error(`settings: focus left the dialog after ${i + 1} Tab presses (on ${await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 120))})`)
         }
       }
-      // Settle, then confirm focus is still inside after any late panel swap.
-      await page.waitForTimeout(300)
+      // Settled (skeleton gone): focus is still inside after the panel swap.
+      await dialog.locator('[role="status"]').waitFor({ state: "detached" })
       if (!(await dialog.evaluate((el) => el.contains(document.activeElement)))) throw new Error("settings: focus left the dialog after the panel settled")
+    },
+  },
+  {
+    id: "student-settings-tab-survives-focused-control-disabled",
+    app: { ...STUDENT_HOME, path: "/student/settings/appearance" },
+    async run(page) {
+      const dialog = page.getByRole("dialog", { name: "Settings" })
+      await dialog.waitFor()
+      await dialog.locator('[role="status"]').waitFor({ state: "detached" })
+      // A panel control that is focused and then disabled (a save pending) drops focus to <body>.
+      const lost = await page.evaluate(() => {
+        const dlg = document.querySelector("[role=dialog]")
+        const control = Array.from(dlg.querySelectorAll("button, input, select")).find(
+          (el) => !el.closest("nav") && !el.getAttribute("aria-label")?.startsWith("Close") && el.getClientRects().length > 0,
+        )
+        if (!control) return "no panel control"
+        control.focus()
+        control.disabled = true
+        return null
+      })
+      if (lost) throw new Error(lost)
+      await page.waitForTimeout(50)
+      await page.keyboard.press("Tab")
+      if (!(await dialog.evaluate((el) => el.contains(document.activeElement)))) {
+        throw new Error(`Tab after the focused control was disabled left the dialog (on ${await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 120))})`)
+      }
+      // The same for a focused control that unmounts (a panel content swap).
+      await page.evaluate(() => {
+        const dlg = document.querySelector("[role=dialog]")
+        const control = Array.from(dlg.querySelectorAll("button, input, select")).find(
+          (el) => !el.closest("nav") && !el.getAttribute("aria-label")?.startsWith("Close") && !el.disabled && el.getClientRects().length > 0,
+        )
+        control.focus()
+        // Detach the whole panel content (as a Suspense swap does), then leave the
+        // sequential-focus start at the document, as a re-mounted subtree does.
+        control.closest("[role=region]")?.firstElementChild?.remove()
+        document.body.tabIndex = -1
+        document.body.focus()
+        document.body.removeAttribute("tabindex")
+        // Browsers resume Tab from the selection: park it past the dialog, so only
+        // the dialog's own guard can bring focus back in.
+        getSelection()?.collapse(document.body, document.body.childNodes.length)
+      })
+      if ((await page.evaluate(() => document.activeElement === document.body)) === false) throw new Error("test setup: focus did not reach body")
+      await page.keyboard.press("Tab")
+      // The guard seats focus on the current tab, whatever the browser would pick.
+      const landed = await page.evaluate(() => {
+        const el = document.activeElement
+        return `${el?.closest("[role=dialog]") ? "inside" : "outside"}:${el?.getAttribute("aria-current")}`
+      })
+      if (landed !== "inside:page") {
+        throw new Error(`Tab after the focused control unmounted did not seat focus on the current tab (got ${landed})`)
+      }
     },
   },
   {
