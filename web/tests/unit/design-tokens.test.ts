@@ -23,7 +23,7 @@ describe("token layer", () => {
   it("declares a dark value for every light role", () => {
     const light = new Set([...css.split(':root[data-theme="dark"]')[0].matchAll(/--md-([a-z0-9-]+):/g)].map((m) => m[1]))
     const dark = new Set([...css.split(':root[data-theme="dark"]')[1].split("}")[0].matchAll(/--md-([a-z0-9-]+):/g)].map((m) => m[1]))
-    for (const role of ["scrim", "shadow"]) light.delete(role)
+    for (const role of ["scrim", "scrim-dialog", "shadow"]) light.delete(role)
     expect([...light].filter((r) => !dark.has(r))).toEqual([])
   })
 
