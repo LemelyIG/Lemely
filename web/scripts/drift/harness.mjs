@@ -12,6 +12,7 @@ import { createHash } from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { PNG } from "pngjs"
 import { SURFACES, SESSION, PROFILE } from "../capture_surface.mjs"
 import { assertPortFree, startPreview } from "../serve_guard.mjs"
 
@@ -214,30 +215,95 @@ export async function contentBox(page, selector) {
 
 /**
  * Pin the content box height to `target` px: the capture clips to it, so extra
- * trailing space (a well that fills the viewport) is not compared. Fails when
- * the content is shorter than the target (nothing to clip, a real change).
+ * trailing space (a well that fills the viewport) is not compared. Returns
+ * { ok, reason }: not ok when the content is shorter than the target, has an
+ * element below it, or paints anything but the flat neutral fill below it.
  */
 export async function pinContentHeight(page, selector, target) {
-  const natural = (await contentBox(page, selector)).height
-  if (natural < target) return false
-  // Real content extent: the lowest visible, non-fixed descendant edge relative to the content box top.
-  const extent = await page.$eval(selector, (el) => {
+  const box = await contentBox(page, selector)
+  const natural = box.height
+  if (natural < target) return { ok: false, reason: "content is shorter than the baseline height" }
+  // Descendants (root excluded), visible and not fixed, as rects relative to the content box.
+  // An element whose top is at or below the target is new content; one whose top is above it
+  // is already compared, and only its painted overflow (border-box bottom plus box-shadow) may
+  // reach into the cropped strip.
+  const owners = await page.$eval(selector, (el, target) => {
     const s = getComputedStyle(el)
+    const left = el.getBoundingClientRect().left + parseFloat(s.paddingLeft)
     const top = el.getBoundingClientRect().top + parseFloat(s.paddingTop)
-    let max = 0
+    const shadowOf = (value) => {
+      // box-shadow lists: split on commas outside parentheses, skip inset, read the px lengths after dropping the colour function.
+      const ext = { x: 0, y: 0 }
+      if (!value || value === "none") return ext
+      const parts = []
+      let depth = 0
+      let cur = ""
+      for (const ch of value) {
+        if (ch === "(") depth++
+        if (ch === ")") depth--
+        if (ch === "," && depth === 0) {
+          parts.push(cur)
+          cur = ""
+        } else cur += ch
+      }
+      parts.push(cur)
+      for (const part of parts) {
+        if (/\binset\b/.test(part)) continue
+        const nums = (part.replace(/(rgba?|hsla?|color|oklch|oklab|lab|lch)\([^)]*\)/g, "").match(/-?[\d.]+px/g) ?? []).map(parseFloat)
+        const [ox = 0, oy = 0, blur = 0, spread = 0] = nums
+        ext.x = Math.max(ext.x, Math.abs(ox) + 1.5 * blur + spread) // Skia rasterises a blur out to 3 sigma = 1.5 x the CSS blur radius
+        ext.y = Math.max(ext.y, oy + 1.5 * blur + spread)
+      }
+      return ext
+    }
+    const out = { below: false, compared: [] }
     for (const d of el.querySelectorAll("*")) {
       const cs = getComputedStyle(d)
       if (cs.position === "fixed" || cs.visibility === "hidden" || cs.display === "none") continue
       const r = d.getBoundingClientRect()
-      if (r.width > 0 && r.height > 0) max = Math.max(max, r.bottom - top)
+      if (!(r.width > 0 && r.height > 0)) continue
+      if (Math.round(r.top - top) >= target) {
+        out.below = true
+        continue
+      }
+      const sh = shadowOf(cs.boxShadow)
+      out.compared.push({
+        bottom: Math.ceil(r.bottom - top + Math.max(0, sh.y)),
+        left: r.left - left - sh.x,
+        right: r.right - left + sh.x,
+      })
     }
-    return max
-  })
-  if (extent > target + 1) return false
+    return out
+  }, target)
+  if (owners.below) return { ok: false, reason: "real content below the baseline height" }
+  const allowedBottom = Math.max(0, ...owners.compared.map((o) => o.bottom))
+  const allowedLeft = Math.min(Infinity, ...owners.compared.map((o) => o.left))
+  const allowedRight = Math.max(-Infinity, ...owners.compared.map((o) => o.right))
+  if (natural > target) {
+    // Pseudo-elements and painted overflow are invisible to the element walk: every
+    // non-neutral pixel in the cropped strip must belong to a compared element's
+    // border or shadow (row < allowedBottom, x inside its painted extent).
+    const handle = await page.addStyleTag({ content: `${selector} { background: rgb(255 0 255) !important; }` })
+    try {
+      await hideChromeOutside(page, selector)
+      const png = await page.screenshot({ fullPage: true, clip: { x: box.x, y: box.y + target, width: box.width, height: natural - target }, animations: "disabled", caret: "hide" })
+      const { data, width } = PNG.sync.read(png)
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i] === 255 && data[i + 1] === 0 && data[i + 2] === 255 && data[i + 3] === 255) continue
+        const px = (i / 4) % width
+        const row = target + Math.floor(i / 4 / width)
+        if (row >= allowedBottom || px < allowedLeft || px >= allowedRight) {
+          return { ok: false, reason: "non-neutral pixels below the baseline height not owned by a compared element" }
+        }
+      }
+    } finally {
+      await handle.evaluate((el) => el.remove())
+    }
+  }
   await page.evaluate((h) => {
     window.__pinnedContentHeight = h
   }, target)
-  return true
+  return { ok: true }
 }
 
 /** Resize the window until the content box is `target` px wide. */

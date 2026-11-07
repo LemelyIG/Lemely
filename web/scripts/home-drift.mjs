@@ -130,9 +130,8 @@ async function shoot(browser, side, item, meta = {}) {
     }
     // Mirror of the width pin for height: clip to the baseline's recorded box height.
     if (beforeVsAfter && !natural && scene.capture === "content" && targetHeight !== undefined) {
-      if (!(await pinContentHeight(opened.page, selector, targetHeight))) {
-        throw new Error(`${item.key}: content is shorter than the baseline height ${targetHeight}, or has real content below it (the pin would crop it)`)
-      }
+      const pin = await pinContentHeight(opened.page, selector, targetHeight)
+      if (!pin.ok) throw new Error(`${item.key}: height pin to ${targetHeight} refused: ${pin.reason}`)
     }
     const box_ = scene.capture === "content" ? await contentBox(opened.page, selector) : undefined
     const width_ = box_?.width
@@ -467,14 +466,14 @@ async function selftestContentIgnoresChrome(browser) {
     if (sidewaysChanged.diff === 0) throw new Error("selftest: a shifted capture with changed content did not differ")
     const pinnedSame = diffPngs(sidewaysBase, await widthPinned("#0a0"), path.join(DRIFT_DIR, "selftest", "pinned.diff.png"))
     const pinnedChanged = diffPngs(sidewaysBase, await widthPinned("#a0a"), path.join(DRIFT_DIR, "selftest", "pinned-changed.diff.png"))
-    const heightPinned = async (body, boxHeight, appendHtml = "") => {
+    const heightPinned = async (body, boxHeight, appendHtml = "", css = "") => {
       await page.setContent(html("#f00", body))
       await page.evaluate(() => {
         window.__pinnedContentHeight = undefined
       })
-      await page.addStyleTag({ content: `#m { width: 300px; height: ${boxHeight}px !important; position: relative; }` })
+      await page.addStyleTag({ content: `#m { width: 300px; height: ${boxHeight}px !important; position: relative; } ${css}` })
       if (appendHtml) await page.$eval("#m", (el, h) => el.insertAdjacentHTML("beforeend", h), appendHtml)
-      const ok = await pinContentHeight(page, "#m", 560)
+      const { ok } = await pinContentHeight(page, "#m", 560)
       return { ok, png: ok ? (await capture(page, { capture: "content", selector: "#m", originX: baseX })).png : null }
     }
     const tall = await heightPinned("#0a0", 570)
@@ -483,6 +482,18 @@ async function selftestContentIgnoresChrome(browser) {
     // Real content appended below the baseline height must refuse the pin, not be cropped.
     const appended = await heightPinned("#0a0", 570, `<div style="position:absolute;top:562px;left:0;width:100px;height:6px;background:#f0f"></div>`)
     const appendedChild = await heightPinned("#0a0", 570, `<div style="margin-top:480px;height:8px;background:#f0f"></div>`)
+    const pseudo = await heightPinned("#0a0", 570, "", "#m::after { content: ''; position: absolute; top: 562px; left: 0; width: 100px; height: 6px; background: #0ff; }")
+    if (pseudo.ok) throw new Error("selftest: pinContentHeight cropped away a pseudo-element below the baseline height")
+    // A card that starts above the target and whose border and shadow cross it is already compared: accepted.
+    const card = `<div style="position:absolute;top:500px;left:20px;width:100px;height:62px;background:#fff;border-bottom:1px solid #888;box-shadow:0 2px 8px rgba(0,0,0,.4)"></div>`
+    const cardOnly = await heightPinned("#0a0", 580, card)
+    const cardTaller = await heightPinned("#0a0", 600, card)
+    if (!cardOnly.ok || !cardTaller.ok) throw new Error("selftest: pinContentHeight refused a card whose border and shadow cross the baseline height")
+    const cardDiff = diffPngs(cardOnly.png, cardTaller.png, path.join(DRIFT_DIR, "selftest", "card.diff.png"))
+    if (cardDiff.diff !== 0) throw new Error(`selftest: a card crossing the pin differed (${cardDiff.diff} px)`)
+    // The same card plus a separate element that starts below the target: refused.
+    const cardPlus = await heightPinned("#0a0", 580, card + `<div style="position:absolute;top:566px;left:200px;width:40px;height:6px;background:#a0f"></div>`)
+    if (cardPlus.ok) throw new Error("selftest: pinContentHeight accepted a separate element starting below the baseline height")
     if (!tall.ok || !tallChanged.ok) throw new Error("selftest: pinContentHeight failed on a taller box")
     if (short.ok) throw new Error("selftest: pinContentHeight accepted a box shorter than the baseline")
     if (appended.ok) throw new Error("selftest: pinContentHeight cropped away an element below the baseline height")
