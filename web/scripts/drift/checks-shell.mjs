@@ -455,7 +455,8 @@ SHELL_CHECKS.push(
       const dialog = page.getByRole("dialog", { name: "Settings" })
       await dialog.waitFor()
       if (new URL(page.url()).pathname !== "/student/settings/notifications") throw new Error(`URL is ${page.url()}`)
-      // The page underneath must stay the inbox (without the overlay state it falls back to home).
+      // Regression guard, state parity with the teacher portal: the page underneath
+      // must stay the inbox, not change to home or blank, when the link opens the dialog.
       const under = (await page.locator("header [data-shell-title]").first().textContent())?.trim()
       if (under !== "Notifications") throw new Error(`page under the dialog is "${under}", expected Notifications`)
       await page.keyboard.press("Escape")
@@ -491,12 +492,18 @@ SHELL_CHECKS.push(
       if (focused !== "Account and devices") throw new Error(`ArrowDown focused "${focused}"`)
       await page.keyboard.press("End")
       await page.waitForURL("**/student/settings/install")
+      // Focus must stay inside the dialog while the panel swaps its content: a
+      // focused control that unmounts would otherwise drop focus to <body>.
+      await page.waitForFunction(() => document.activeElement?.closest("[role=dialog]"))
       for (let i = 0; i < 40; i++) {
         await page.keyboard.press("Tab")
         if (!(await dialog.evaluate((el) => el.contains(document.activeElement)))) {
           throw new Error(`settings: focus left the dialog after ${i + 1} Tab presses (on ${await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 120))})`)
         }
       }
+      // Settle, then confirm focus is still inside after any late panel swap.
+      await page.waitForTimeout(300)
+      if (!(await dialog.evaluate((el) => el.contains(document.activeElement)))) throw new Error("settings: focus left the dialog after the panel settled")
     },
   },
   {

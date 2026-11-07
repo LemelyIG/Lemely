@@ -149,6 +149,23 @@ export function SettingsModal({
     }
   }, [])
 
+  // Focus must not fall to <body> while the dialog is open. A panel that
+  // swaps its content (the lazy tab's skeleton giving way to the real
+  // controls, a list re-rendering) unmounts the focused element, and the
+  // browser then parks focus on <body>: behind the inert app root, outside
+  // the dialog's key handler, so Tab would walk out of the modal. When that
+  // happens, put focus back on the dialog itself.
+  useEffect(() => {
+    const panel = panelRef.current
+    if (!panel) return
+    const observer = new MutationObserver(() => {
+      const active = document.activeElement
+      if (!active || active === document.body) panel.focus({ preventScroll: true })
+    })
+    observer.observe(panel, { childList: true, subtree: true })
+    return () => observer.disconnect()
+  }, [])
+
   // A new tab starts at the top of the panel, and the phone tab strip keeps
   // the current tab in view.
   useEffect(() => {
