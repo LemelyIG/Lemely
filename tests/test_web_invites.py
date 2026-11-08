@@ -18,6 +18,7 @@ they are for.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -31,8 +32,9 @@ from sqlalchemy.orm import Session, sessionmaker
 from lemely.db.base import Base
 from lemely.db.class_repo import ClassService
 from lemely.db.invite_repo import InviteService
-from lemely.db.models import School, SchoolClass, SchoolMembership, Seat, User
-from lemely.db.models.enums import MembershipRole, Role, SeatStatus
+from lemely.db.models import Invite, School, SchoolClass, SchoolMembership, Seat, User
+from lemely.db.models.enums import InviteRole, MembershipRole, Role, SeatStatus
+from lemely.db.models.team import AssistantRole
 from lemely.db.parent_repo import ParentLinkService
 from lemely.runtime.config import DatabaseSettings
 from lemely.web.app import create_app
@@ -307,6 +309,51 @@ def test_redeem_route_of_a_non_parent_invite_by_a_parent_is_403(
 
     assert res.status_code == 403
     _assert_role_mismatch_detail_is_non_revealing(res.json()["detail"], invite.code)
+
+
+def _seed_assistant_invite(sm: sessionmaker[Session], teacher_id: uuid.UUID) -> Invite:
+    """Insert an assistant invite directly: nothing mints one until the team router lands."""
+    invite = Invite(
+        code=f"ASST{uuid.uuid4().hex[:6].upper()}",
+        role=InviteRole.assistant,
+        created_by=teacher_id,
+        team_teacher_id=teacher_id,
+        assistant_role=AssistantRole.marker,
+        expires_at=datetime.now(UTC) + timedelta(days=1),
+    )
+    with sm.begin() as session:
+        session.add(invite)
+    return invite
+
+
+def test_redeem_route_of_an_assistant_invite_is_the_fixed_403_and_stays_unredeemed(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    lead = _seed_user(pg_sessionmaker, Role.teacher)
+    helper = _seed_user(pg_sessionmaker, Role.teacher)
+    invite = _seed_assistant_invite(pg_sessionmaker, lead)
+
+    client = _client(pg_sessionmaker, role=Role.teacher, user_id=helper)
+    res = client.post(f"/api/invites/{invite.code}/redeem")
+
+    assert res.status_code == 403
+    assert res.json()["detail"] == "This invite is not for your account type."
+    with pg_sessionmaker() as session:
+        stored = session.get(Invite, invite.id)
+        assert stored is not None
+        assert stored.redeemed_by is None
+
+
+def test_preview_route_of_an_assistant_invite_reports_the_assistant_role(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    lead = _seed_user(pg_sessionmaker, Role.teacher)
+    invite = _seed_assistant_invite(pg_sessionmaker, lead)
+
+    res = _client(pg_sessionmaker, role=None).get(f"/api/invites/{invite.code}")
+
+    assert res.status_code == 200
+    assert res.json()["role"] == "assistant"
 
 
 def _assert_role_mismatch_detail_is_non_revealing(detail: str, code: str) -> None:

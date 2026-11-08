@@ -69,9 +69,12 @@ class InvitePreviewDTO(ApiModel):
     ``childName`` is set only for a ``role="parent"`` preview — the child's
     display name, or ``"your child"`` when blank (never their email or id,
     the identical disclosure discipline the other three fields already carry).
+
+    ``role="assistant"`` previews a teacher's assistant invite; it carries no other
+    field. It is redeemed through the team route, not ``RedeemInviteResponseDTO``.
     """
 
-    role: Literal["student", "teacher", "parent"]
+    role: Literal["student", "teacher", "parent", "assistant"]
     schoolName: str | None = None
     className: str | None = None
     teacherName: str | None = None

@@ -10,12 +10,18 @@ constraints make that a database fact:
 * ``assistant``: ``role_preset`` and ``permissions`` (JSONB toggles over the preset)
   are set; both scope columns are null.
 
+``permissions`` is ``JSONB(none_as_null=True)``: plain ``JSONB`` writes ``None`` as the
+JSON ``null`` value, which is not SQL ``NULL`` and would violate ``seat_fields``. The
+scope columns are ``ARRAY``, which stores ``None`` as SQL ``NULL`` already.
+
 ``cap_units`` caps the teacher's credits a seat may overflow into (null means no
 overflow), or the teacher's balance an assistant may draw (null means no limit), per
 ``cap_period``. A removed seat keeps its row. ``status`` moves ``active`` → ``leaving``
 (``leaves_at`` = end of the month removal was requested) → ``removed``, so a rejoin
 reuses the row and the seat count (active plus leaving seats ≤ the plan's seats) is a
 plain COUNT under the subscription row lock (``lemely/db/teacher_team_repo.py``).
+``ix_teacher_members_leaves_at`` (partial, ``WHERE status = 'leaving'``) serves the
+month-end sweep that moves due ``leaving`` rows to ``removed``.
 
 The four enums mirror nothing in ``lemely.core`` except :class:`AssistantRole`, which
 ``lemely.core.team_permissions.AssistantRole`` mirrors; ``tests/test_team_schema.py``
@@ -80,6 +86,11 @@ class TeacherMember(TimestampMixin, Base):
         sa.CheckConstraint("status <> 'active' OR leaves_at IS NULL", name="active_has_no_date"),
         sa.Index("ix_teacher_members_member_user_id", "member_user_id"),
         sa.Index("ix_teacher_members_teacher_kind_status", "teacher_user_id", "kind", "status"),
+        sa.Index(
+            "ix_teacher_members_leaves_at",
+            "leaves_at",
+            postgresql_where=sa.text("status = 'leaving'"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -101,7 +112,9 @@ class TeacherMember(TimestampMixin, Base):
     role_preset: Mapped[AssistantRole | None] = mapped_column(
         sa.Enum(AssistantRole, name="assistantrole"), nullable=True
     )
-    permissions: Mapped[dict[str, bool] | None] = mapped_column(JSONB, nullable=True)
+    permissions: Mapped[dict[str, bool] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
     cap_units: Mapped[int | None] = mapped_column(sa.BigInteger, nullable=True)
     cap_period: Mapped[CapPeriod] = mapped_column(
         sa.Enum(CapPeriod, name="capperiod"),

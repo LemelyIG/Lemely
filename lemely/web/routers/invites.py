@@ -145,6 +145,22 @@ def _mintable_invite_role(role: InviteRole) -> Literal["student", "teacher"]:
     raise ValueError(f"Invite role {role!r} has no mintable wire representation")
 
 
+def _redeemed_invite_role(role: InviteRole) -> Literal["student", "teacher", "parent"]:
+    """Narrow :class:`InviteRole` onto :attr:`RedeemInviteResponseDTO.role`'s wire literal.
+
+    ``assistant`` has no representation here: :meth:`InviteService.redeem` refuses an
+    assistant invite before it redeems anything, so a result never carries that role.
+    The explicit raise keeps the narrowing type-checked without a ``cast``.
+    """
+    if role is InviteRole.student:
+        return "student"
+    if role is InviteRole.teacher:
+        return "teacher"
+    if role is InviteRole.parent:
+        return "parent"
+    raise ValueError(f"Invite role {role!r} has no redeemable wire representation")
+
+
 def _invite_to_dto(invite: Invite) -> InviteCodeDTO:
     """Convert a freshly minted ``Invite`` row into its wire DTO.
 
@@ -258,7 +274,7 @@ def redeem_invite(
         ) from exc
     send_after_commit(redeem_notices(result), service=notifications, transport=transport)
     return RedeemInviteResponseDTO(
-        role=result.role.value,
+        role=_redeemed_invite_role(result.role),
         schoolId=str(result.school_id) if result.school_id is not None else None,
         classId=str(result.class_id) if result.class_id is not None else None,
         childId=str(result.child_id) if result.child_id is not None else None,

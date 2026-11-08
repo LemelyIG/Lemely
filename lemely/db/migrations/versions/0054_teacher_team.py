@@ -16,11 +16,20 @@ Paymob billing Phase 03 (spec §4.4).
   It compares ``role::text`` because the enum value added in this transaction cannot
   be used as an enum literal before commit, so the ``ADD VALUE`` needs no
   ``autocommit_block`` (which would commit every earlier revision of the same run).
-* ``usage_grants.teacher_member_id`` gets its FK to ``teacher_members``.
+  Any later revision that runs in the same transaction as this one, as in a
+  base-to-head upgrade, must likewise compare ``role::text`` and never name
+  ``'assistant'`` as an ``inviterole`` literal.
+* ``usage_grants.teacher_member_id`` gets its FK to ``teacher_members`` (``ON DELETE
+  RESTRICT``, stated).
+* ``ix_teacher_members_leaves_at``: partial index (``WHERE status = 'leaving'``) for the
+  month-end sweep.
 
-``downgrade`` removes all of it. Assistant invites are deleted first (they would violate
-the narrower target check). Postgres cannot drop an enum label, so ``inviterole`` is
-renamed and recreated with its three original labels, as 0053 does for
+``downgrade`` drops every seat and assistant (the whole ``teacher_members`` table) and
+every assistant invite. It refuses to run while any ``usage_grants`` row has a
+``teacher_member_id``: such a grant cannot be deleted (``usage_entries`` RESTRICT) or
+detached (``ck_usage_grants_seat_link``), so dropping the table would orphan it and the
+next upgrade would fail on the foreign key. Postgres cannot drop an enum label, so
+``inviterole`` is renamed and recreated with its three original labels, as 0053 does for
 ``subscriptionstatus``, and the four new enums are dropped.
 """
 
@@ -153,6 +162,12 @@ def upgrade() -> None:
         "teacher_members",
         ["teacher_user_id", "kind", "status"],
     )
+    op.create_index(
+        "ix_teacher_members_leaves_at",
+        "teacher_members",
+        ["leaves_at"],
+        postgresql_where=sa.text("status = 'leaving'"),
+    )
 
     op.add_column(
         "invites",
@@ -186,11 +201,26 @@ def upgrade() -> None:
         "teacher_members",
         ["teacher_member_id"],
         ["id"],
+        ondelete="RESTRICT",
     )
 
 
 def downgrade() -> None:
-    """Downgrade schema: remove everything above and restore the three original labels."""
+    """Downgrade schema: remove everything above and restore the three original labels.
+
+    Refuses while a seat grant exists (see the module docstring), and drops every seat
+    and assistant otherwise.
+    """
+    seat_grant = op.get_bind().execute(
+        sa.text("SELECT 1 FROM usage_grants WHERE teacher_member_id IS NOT NULL LIMIT 1")
+    )
+    if seat_grant.first() is not None:
+        raise RuntimeError(
+            "Cannot downgrade 0054_teacher_team: usage_grants still has seat grants "
+            "(teacher_member_id IS NOT NULL). A seat grant can be neither deleted nor "
+            "detached, so dropping teacher_members would orphan it and the next upgrade "
+            "would fail. Downgrading past 0054 is not possible once seat grants exist."
+        )
     op.drop_constraint(
         op.f("fk_usage_grants_teacher_member_id_teacher_members"),
         "usage_grants",

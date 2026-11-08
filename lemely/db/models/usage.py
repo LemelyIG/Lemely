@@ -188,10 +188,15 @@ class UsageGrant(TimestampMixin, Base):
     visible: Mapped[bool] = mapped_column(sa.Boolean, nullable=False)
     teacher_member_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        sa.ForeignKey("teacher_members.id"),
+        sa.ForeignKey("teacher_members.id", ondelete="RESTRICT"),
         nullable=True,
     )
-    """The seat a ``seat_allowance`` grant belongs to (FK added by 0054_teacher_team)."""
+    """The seat a ``seat_allowance`` grant belongs to (FK added by 0054_teacher_team).
+
+    ``RESTRICT``, stated: ``teacher_members`` rows are never deleted (status ``removed``
+    instead), and a seat grant must never lose its seat link, which would turn it into
+    a plain allowance.
+    """
     priority: Mapped[int] = mapped_column(sa.SmallInteger, nullable=False)
     units: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
     effective_at: Mapped[datetime] = mapped_column(

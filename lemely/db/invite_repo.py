@@ -178,6 +178,10 @@ class InviteRoleMismatchError(InviteError):
     :attr:`~lemely.db.models.enums.Role.parent`. Nothing else is checked
     here — a bare ``classes.join_code`` and every other role combination
     keep their pre-existing, unchecked behaviour.
+
+    A third case, for every caller: an ``assistant`` invite
+    (:attr:`~lemely.db.models.enums.InviteRole.assistant`) is never redeemable through
+    :meth:`InviteService.redeem`. It is redeemed only by the teacher-team route.
     """
 
 
@@ -764,12 +768,20 @@ class InviteService:
                 ``caller_role`` is not
                 :attr:`~lemely.db.models.enums.Role.parent`, or ``code`` is
                 a student/teacher invite and ``caller_role`` *is*
-                :attr:`~lemely.db.models.enums.Role.parent` (→ 403).
+                :attr:`~lemely.db.models.enums.Role.parent`, or ``code`` is an
+                assistant invite, which this method never consumes (→ 403).
         """
         user_uuid = _as_uuid(user_id)
         with self._sessionmaker() as session, session.begin():
             invite = self._find_live_invite(session, code, for_update=True)
             if invite is not None:
+                if invite.role is InviteRole.assistant:
+                    # An assistant invite attaches the redeemer to a teacher's team and
+                    # is consumed only by the team route's own redemption. Refused
+                    # before `_redeem_invite` so this path can never mark it redeemed.
+                    raise InviteRoleMismatchError(
+                        f"Invite {code!r} is an assistant invite; it is not redeemable here"
+                    )
                 if invite.role is InviteRole.parent:
                     if caller_role is not Role.parent:
                         raise InviteRoleMismatchError(

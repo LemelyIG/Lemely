@@ -77,6 +77,7 @@ def test_orm_declares_the_named_objects() -> None:
         "ck_teacher_members_active_has_no_date",
         "ix_teacher_members_member_user_id",
         "ix_teacher_members_teacher_kind_status",
+        "ix_teacher_members_leaves_at",
     }
 
 
@@ -170,6 +171,80 @@ def test_migrated_check_constraints_refuse_bad_rows(
             ),
             {"t": teacher},
         )
+
+
+def test_leaving_sweep_index_is_partial_on_leaving_seats(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    with migrated_sessionmaker() as session:
+        definition = session.execute(
+            sa.text(
+                "SELECT indexdef FROM pg_indexes "
+                "WHERE tablename = 'teacher_members' AND indexname = 'ix_teacher_members_leaves_at'"
+            )
+        ).scalar_one()
+    assert "(leaves_at)" in definition
+    assert "WHERE" in definition
+    assert "'leaving'" in definition
+
+
+def test_seat_grant_fk_restricts_deleting_the_member(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """``RESTRICT`` is stated, not left to the ``NO ACTION`` default."""
+    with migrated_sessionmaker() as session:
+        definition = session.execute(
+            sa.text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = :n"),
+            {"n": GRANT_FK},
+        ).scalar_one()
+    assert "ON DELETE RESTRICT" in definition
+
+
+def test_downgrade_refuses_while_a_seat_grant_exists(
+    migrated_sessionmaker_with_downgrade: tuple[sessionmaker[Session], Callable[[str], None]],
+) -> None:
+    """A seat grant cannot be deleted (ledger entries RESTRICT) or nulled (seat_link CHECK).
+
+    Dropping ``teacher_members`` would orphan it and make the next upgrade fail with a
+    foreign-key violation, so the downgrade stops, and the revision stays at 0054.
+    """
+    sm, downgrade_to = migrated_sessionmaker_with_downgrade
+    teacher, student, member = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    with sm.begin() as session:
+        for uid, role in ((teacher, "teacher"), (student, "student")):
+            session.execute(
+                sa.text("INSERT INTO users (id, email, role) VALUES (:u, :e, :r)"),
+                {"u": uid, "e": f"{uid}@example.com", "r": role},
+            )
+        session.execute(
+            sa.text(
+                "INSERT INTO teacher_members (id, teacher_user_id, member_user_id, kind, "
+                "scope_subjects, scope_actions) "
+                "VALUES (:m, :t, :s, 'student_seat', '{}', '{}')"
+            ),
+            {"m": member, "t": teacher, "s": student},
+        )
+        session.execute(
+            sa.text(
+                "INSERT INTO usage_grants (owner_user_id, kind, visible, teacher_member_id, "
+                "priority, units, idempotency_key) "
+                "VALUES (:t, 'seat_allowance', false, :m, 10, 100, 'seat-grant-1')"
+            ),
+            {"t": teacher, "m": member},
+        )
+
+    with pytest.raises(RuntimeError, match="seat grant"):
+        downgrade_to(DOWN_REVISION)
+
+    with sm() as session:
+        assert current_revision(session) == REVISION
+        assert TABLE in public_tables(session)
+        assert GRANT_FK in object_names(session, ["usage_grants"])
+        left = session.execute(
+            sa.text("SELECT count(*) FROM usage_grants WHERE teacher_member_id = :m"),
+            {"m": member},
+        ).scalar_one()
+        assert left == 1
 
 
 def test_upgrade_downgrade_upgrade_round_trip(

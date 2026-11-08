@@ -6,6 +6,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 import pytest
+import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
 from lemely.core.team_permissions import AssistantRole as CoreAssistantRole
@@ -73,6 +74,37 @@ def test_a_valid_seat_and_assistant_insert(sm: sessionmaker[Session]) -> None:
     add_assistant(sm, teacher_id=teacher, assistant_id=helper)
     with sm() as session:
         assert session.query(TeacherMember).count() == 2
+
+
+def test_none_permissions_is_stored_as_sql_null_not_json_null(
+    sm: sessionmaker[Session],
+) -> None:
+    """``permissions=None`` through the ORM must be SQL NULL, or a seat's CHECK fails.
+
+    Plain ``JSONB`` writes ``None`` as the JSON ``null`` value, which is not ``IS NULL``
+    and so violates ``ck_teacher_members_seat_fields`` the moment code clears it.
+    """
+    teacher, student = add_user(sm, Role.teacher), add_user(sm)
+    member_id = uuid.uuid4()
+    _insert(
+        sm,
+        TeacherMember(
+            id=member_id,
+            teacher_user_id=teacher,
+            member_user_id=student,
+            kind=TeacherMemberKind.student_seat,
+            scope_subjects=[],
+            scope_actions=["mark_paper"],
+            permissions=None,
+            cap_period=CapPeriod.month,
+        ),
+    )
+    with sm() as session:
+        is_sql_null = session.execute(
+            sa.text("SELECT permissions IS NULL FROM teacher_members WHERE id = :i"),
+            {"i": member_id},
+        ).scalar_one()
+        assert is_sql_null is True
 
 
 def test_seat_without_scope_is_refused(sm: sessionmaker[Session]) -> None:
