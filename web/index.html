@@ -83,7 +83,15 @@
       property="og:description"
       content="Lemely marks a photographed or uploaded CAIE past-paper attempt against the official marking scheme, with method marks, and returns per-question marks, a grade, and the topics to work on."
     />
-    <meta property="og:image" content="/brand/og-card.png" />
+    <!--
+      Absolute: scrapers resolve a relative og:image inconsistently, and several
+      (Facebook, LinkedIn, Slack) drop it. The canonical `<link>` and `og:url`
+      are written per route by `applyDocumentMeta`, since one static value here
+      would claim the landing page's address for every route.
+    -->
+    <meta property="og:url" content="https://lemelyig.com/" />
+    <meta property="og:image" content="https://lemelyig.com/brand/og-card.png" />
+    <link rel="canonical" href="https://lemelyig.com/" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <!--
@@ -97,6 +105,33 @@
       would crop it to a square and cut the mark's tick in half.
     -->
     <meta name="twitter:card" content="summary_large_image" />
+
+    <!--
+      Site-wide entity data. A `type="application/ld+json"` block is data, not
+      script: the browser never executes it, so the CSP's `script-src 'self'`
+      (pinned by `headers.test.ts`) does not apply and needs no exception.
+    -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://lemelyig.com/#organization",
+            "name": "Lemely",
+            "url": "https://lemelyig.com/",
+            "logo": "https://lemelyig.com/pwa-512x512.png"
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://lemelyig.com/#website",
+            "name": "Lemely",
+            "url": "https://lemelyig.com/",
+            "publisher": { "@id": "https://lemelyig.com/#organization" }
+          }
+        ]
+      }
+    </script>
 
     <!--
       PR 2 part B: the pre-mount shell (DESIGN.md §12's loading tiers, staged

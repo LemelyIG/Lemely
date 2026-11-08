@@ -8,6 +8,7 @@ import {
   DEFAULT_DESCRIPTION,
   DEFAULT_TITLE,
   SITE_NAME,
+  canonicalUrl,
   formatTitle,
   isPageMeta,
   pageMetaFromMatches,
@@ -343,5 +344,24 @@ describe("the defaults are the same in the HTML and in the module", () => {
   it("points the icon at the real brand mark and not the build-era favicon", () => {
     expect(html).toContain('href="/brand/mark-favicon.svg"')
     expect(html).not.toContain("/favicon.svg\"")
+  })
+})
+
+describe("canonical URL and sitemap", () => {
+  it("collapses /landing to the root and keeps other paths", () => {
+    expect(canonicalUrl("/landing")).toBe("https://lemelyig.com/")
+    expect(canonicalUrl("/")).toBe("https://lemelyig.com/")
+    expect(canonicalUrl("/tutors/abc")).toBe("https://lemelyig.com/tutors/abc")
+  })
+
+  it("lists only public routes in sitemap.xml and links it from robots.txt", () => {
+    const pub = path.join(import.meta.dirname, "..", "..", "public")
+    const locs = [...fs.readFileSync(path.join(pub, "sitemap.xml"), "utf8").matchAll(/<loc>([^<]+)<\/loc>/g)].map(
+      (m) => m[1],
+    )
+    expect(locs).toEqual(["https://lemelyig.com/", "https://lemelyig.com/data", "https://lemelyig.com/tutors"])
+    expect(fs.readFileSync(path.join(pub, "robots.txt"), "utf8")).toContain(
+      "Sitemap: https://lemelyig.com/sitemap.xml",
+    )
   })
 })
