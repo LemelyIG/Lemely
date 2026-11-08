@@ -159,22 +159,22 @@ Teacher (before = merged `develop`, after = this branch). Every row is log-only 
 | Scene | Difference | Max % | Justification | Approved |
 |---|---|---|---|---|
 | Teacher content: home, class, notifications (390 to 1920, both themes; gate) | None. Page content is unchanged | 0 px (30 keys) | Content capture hides the shell and snaps the content origin, so a difference here would mean the page changed | n/a |
-| Teacher frames: home, class, notifications (30 keys, log-only) | Design A shell: 216px sidebar (was 252px), drawer below 1248px (was 820px), top bar 21px/800 title, dot instead of count badge, translucent bar (86% surface, backdrop blur), page ground `surface-container`, main padding 72px (14px in drawer range) | 3.11 | Design A `.as-bar`, `.as-side`, `.as-main`; drawer breakpoint is user Decision 1; translucent bar is Decision 7 | Pending |
-| Teacher drawer (390, 768; 4 keys, log-only) | Drawer is design A's `.as-side` sheet (was the old drawer) | 62.15 | Design A `.as-side`; the drawer's geometry and rows changed wholesale | Pending |
-| Teacher bell (10 keys, log-only) | Panel over the page under the bar, design A `.as-pop-panel` (was a sheet on phones) | 6.74 | Design A `.as-pop-bell` | Pending |
-| Teacher account (10 keys, log-only) | Panel over the page under the bar, design A `.as-pop-me` | 12.55 | Design A `.as-pop-me` | Pending |
-| Teacher settings: profile, account, notifications, appearance, classes, install (60 keys, log-only) | Settings open as a dialog over the page (was a page); the 390px keys pass at 0 px | 62.41 | Spec section Settings dialog; design A `.as-settings` | Pending |
+| Teacher frames: home, class, notifications (30 keys, log-only) | Design A shell: 216px sidebar (was 252px), drawer below 1248px (was 820px), top bar 21px/800 title, dot instead of count badge, translucent bar (86% surface, backdrop blur), page ground `surface-container`, main padding 72px (14px in drawer range) | 3.11 | Design A `.as-bar`, `.as-side`, `.as-main`; drawer breakpoint is user Decision 1; translucent bar is Decision 7 | Yes (user, 2026-11-07) |
+| Teacher drawer (390, 768; 4 keys, log-only) | Drawer is design A's `.as-side` sheet (was the old drawer) | 62.15 | Design A `.as-side`; the drawer's geometry and rows changed wholesale | Yes (user, 2026-11-07) |
+| Teacher bell (10 keys, log-only) | Panel over the page under the bar, design A `.as-pop-panel` (was a sheet on phones) | 6.74 | Design A `.as-pop-bell` | Yes (user, 2026-11-07) |
+| Teacher account (10 keys, log-only) | Panel over the page under the bar, design A `.as-pop-me` | 12.55 | Design A `.as-pop-me` | Yes (user, 2026-11-07) |
+| Teacher settings: profile, account, notifications, appearance, classes, install (60 keys, log-only) | Settings open as a dialog over the page (was a page); the 390px keys pass at 0 px | 62.41 | Spec section Settings dialog; design A `.as-settings` | Yes (user, 2026-11-07) |
 
 Student (before = design A preview kit, after = the app).
 
 | Scene | Difference | Max % | Justification | Approved |
 |---|---|---|---|---|
-| Student frames: populated, new, subject, notifications (32 keys at 390, 768, 1440, 1920; gate) | Tutors and Sessions rows after Friends, so Subjects sits 74px lower; Add Maths closed and untinted until the Overview plan passes `fallbackId`; kit squircle avatar (not design A's circle); `BottomNav` in place of design A's phone bar | 1.51 | Decisions 2, 4, 5 and the temporary Add Maths deferral | Pending |
-| Student bell and account (16 keys at 390, 768, 1440, 1920; gate) | Same sidebar and avatar differences as the frames; bell and account panels as in design A | 1.75 | Decisions 2 and 4 | Pending |
-| Student drawer, on the subject route (390, 768; 4 keys; gate) | Tutors and Sessions rows; closed untinted Add Maths | 9.14 | Decision 2; Add Maths deferral | Pending |
-| Student drawer, on `/student` (390, 768; 4 keys, log-only) | As above, with the closed Add Maths group moving the phone sheet's top | 17.21 | Add Maths deferral (temporary, P2 Task 13/18) | Pending |
-| Student settings: profile, account, notifications, appearance, install (40 keys at 390, 768, 1440, 1920; gate) | Dialog chrome and section bodies differ from design A (for example Appearance uses radios, design A a segmented control) | 10.33 | Shared `portals/settings` sections reused; see the open restyle decision below | Pending |
-| Student at 1024px: every scene above (22 keys, log-only) | Sidebar hidden; menu button and drawer instead of design A's sidebar | 5.40 | Drawer below 1248px; user Decision 1 | Pending |
+| Student frames: populated, new, subject, notifications (32 keys at 390, 768, 1440, 1920; gate) | Tutors and Sessions rows after Friends, so Subjects sits 74px lower; Add Maths closed and untinted until the Overview plan passes `fallbackId`; kit squircle avatar (not design A's circle); `BottomNav` in place of design A's phone bar | 1.51 | Decisions 2, 4, 5 and the temporary Add Maths deferral | Yes (user, 2026-11-07) |
+| Student bell and account (16 keys at 390, 768, 1440, 1920; gate) | Same sidebar and avatar differences as the frames; bell and account panels as in design A | 1.75 | Decisions 2 and 4 | Yes (user, 2026-11-07) |
+| Student drawer, on the subject route (390, 768; 4 keys; gate) | Tutors and Sessions rows; closed untinted Add Maths | 9.14 | Decision 2; Add Maths deferral | Yes (user, 2026-11-07) |
+| Student drawer, on `/student` (390, 768; 4 keys, log-only) | As above, with the closed Add Maths group moving the phone sheet's top | 17.21 | Add Maths deferral (temporary, P2 Task 13/18) | Yes (user, 2026-11-07) |
+| Student settings: profile, account, notifications, appearance, install (40 keys at 390, 768, 1440, 1920; gate) | Dialog chrome and section bodies differ from design A (for example Appearance uses radios, design A a segmented control) | 10.33 | Shared `portals/settings` sections reused; see the open restyle decision below | Yes (user, 2026-11-07) |
+| Student at 1024px: every scene above (22 keys, log-only) | Sidebar hidden; menu button and drawer instead of design A's sidebar | 5.40 | Drawer below 1248px; user Decision 1 | Yes (user, 2026-11-07) |
 | Student, phone widths | Today's `BottomNav` (5 tabs, below 820px) in place of design A's own 4-item phone bar (720px and below); between 721 and 819px the menu button and the tab bar both show; no bar at 768px in design A | 1.44 at 390, 0.33 at 768 (populated frame) | Phone navigation parity with teacher; user decision 2026-11-06 (Decision 5) | Yes |
 
 ### Not captured
@@ -182,4 +182,9 @@ Student (before = design A preview kit, after = the app).
 - Hover colours: design A's `--surface-hover-tint` is mapped to `surface-container`; hover states are not in any scene.
 - The pre-mount shell: `index.html` still paints the 252px / 820px sidebar before React mounts (see Risks 9).
 - The bar's blur radius: 10px `--blur-nav` against the preview's 14px. Nothing sits under the bar at scroll 0, so no scene can see it.
-- Teacher natural-height content (12 keys) and the teacher drawer at 1100px (2 keys) are captured and not compared; they need human eyes.
+- Teacher natural-height content (12 keys) and the teacher drawer at 1100px (2 keys) are captured and not compared; they need human eyes. The user reviewed all 14 captures on 2026-11-07 and accepted them ("They look right").
+
+### Follow-ups from the approval round (user, 2026-11-07)
+
+- Settings section bodies are restyled to design A's `.as-set-*` rows (segmented control and so on) in both portals, checked against the preview through the drift gate.
+- `PortalSettingsLayout` and `DeviceSettingsSection` are retired. The top-level `/settings` lane opens the dialog instead.
