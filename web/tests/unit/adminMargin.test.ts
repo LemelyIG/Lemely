@@ -89,6 +89,9 @@ describe("margin model", () => {
     expect(rangeProblem({ from: "2026-01-01", to: "12345-01-01" })?.field).toBe("to")
     expect(rangeProblem({ from: "12345-01-01", to: "2026-01-01" })?.field).toBe("from")
     expect(rangeProblem({ from: "2026-02-30", to: "2026-03-05" })?.field).toBe("from")
+    expect(rangeProblem({ from: "9999-12-30", to: "9999-12-31" })?.field).toBe("from")
+    expect(rangeProblem({ from: "1969-12-31", to: "1970-01-02" })?.field).toBe("from")
+    expect(rangeProblem({ from: "9998-12-30", to: "9998-12-31" })).toBeNull()
     expect(rangeProblem({ from: "2026-2-3", to: "2026-03-05" })?.field).toBe("from")
   })
 
@@ -98,6 +101,9 @@ describe("margin model", () => {
     expect(windowOf({ from: "2028-02-28", to: "2028-02-28" }).end).toBe("2028-02-29T00:00:00Z")
     expect(windowOf({ from: "2028-02-29", to: "2028-02-29" }).end).toBe("2028-03-01T00:00:00Z")
     expect(() => windowOf({ from: "2026-02-30", to: "2026-03-05" })).toThrow(RangeError)
+    // The day after the last allowed year is still four digits; 9999-12-31 would roll into a five-digit year.
+    expect(windowOf({ from: "9998-12-31", to: "9998-12-31" }).end).toBe("9999-01-01T00:00:00Z")
+    expect(() => windowOf({ from: "9999-12-31", to: "9999-12-31" })).toThrow(RangeError)
   })
 
   it("accepts a USD to EGP rate above 0 and up to 10,000, and says why otherwise", () => {

@@ -129,10 +129,11 @@ export function BarChart({
    * keeps the even division, which is correct for it.
    */
   const valueTickValues = useMemo(() => {
-    if (!data.every((d) => Number.isInteger(d.value))) return valueTickCount
+    const count = Math.max(1, valueTickCount)
+    if (!data.every((d) => Number.isInteger(d.value))) return count
     const max = Math.max(0, ...data.map((d) => d.value))
     if (max === 0) return [0]
-    const step = Math.max(1, Math.ceil(max / valueTickCount))
+    const step = Math.max(1, Math.ceil(max / count))
     const ticks: number[] = []
     for (let v = 0; v <= max; v += step) ticks.push(v)
     return ticks

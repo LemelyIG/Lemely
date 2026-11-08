@@ -9,6 +9,9 @@ const DAY_MS = 24 * 60 * 60 * 1000
 const RANGE_DAYS = 90
 /** The server answers 422 for a window longer than this many days. */
 export const MAX_RANGE_DAYS = 400
+/** Years a range may use: after the epoch, and early enough that the day after `to` is still a four-digit year. */
+const MIN_YEAR = 1970
+const MAX_YEAR = 9998
 /** The server takes `egpPerUsd` > 0 and <= this. */
 export const MAX_RATE = 10_000
 
@@ -62,6 +65,9 @@ export function defaultRange(now: Date): DayRange {
  * day that does not exist (`2026-02-30`) and a five-digit year, which a date input allows. */
 function dayMs(day: string): number | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null
+  // `windowOf` adds a day, so the last year must leave room for it to stay four digits.
+  const year = Number(day.slice(0, 4))
+  if (year < MIN_YEAR || year > MAX_YEAR) return null
   const ms = Date.parse(`${day}T00:00:00Z`)
   return Number.isNaN(ms) || new Date(ms).toISOString().slice(0, 10) !== day ? null : ms
 }
