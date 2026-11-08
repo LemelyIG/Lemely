@@ -228,6 +228,15 @@ def test_rejoin_after_removal_reactivates_with_fresh_scope(sm: sessionmaker[Sess
     )
     class_id, _ = add_class(sm, teacher_id=teacher, subject_code="0580")
     assert join(sm, class_id, student) == old
+    with sm() as session:  # the unique (teacher, member) pair holds: the row was updated
+        assert (
+            session.scalar(
+                sa.select(sa.func.count())
+                .select_from(TeacherMember)
+                .where(TeacherMember.member_user_id == student)
+            )
+            == 1
+        )
     [seat] = run(sm, lambda team: team.seats_for_student(student))
     assert seat.status is TeacherMemberStatus.active
     assert seat.leaves_at is None
@@ -850,3 +859,45 @@ def test_store_commits_on_exit_and_rolls_back_on_error(sm: sessionmaker[Session]
         team.request_removal(seat, now=NOW)
     [row] = run(sm, lambda team: team.seats_for_student(student))
     assert row.status is TeacherMemberStatus.leaving
+
+
+def test_a_removed_assistant_becomes_a_seat_by_updating_the_same_row(
+    sm: sessionmaker[Session],
+) -> None:
+    teacher, person = add_user(sm, Role.teacher), add_user(sm)
+    add_teacher_plan(sm, teacher, included_seats=1)
+    old = add_assistant(
+        sm,
+        teacher_id=teacher,
+        assistant_id=person,
+        permissions={"mark": True},
+        status=TeacherMemberStatus.removed,
+    )
+    class_id, _ = add_class(sm, teacher_id=teacher, subject_code="0580")
+    assert join(sm, class_id, person) == old
+    with sm() as session:
+        [row] = session.scalars(
+            sa.select(TeacherMember).where(TeacherMember.member_user_id == person)
+        ).all()
+    assert row.id == old
+    assert row.kind is TeacherMemberKind.student_seat
+    assert (row.role_preset, row.permissions) == (None, None)
+    assert row.status is TeacherMemberStatus.active
+    assert row.scope_subjects == ["0580"]
+    assert row.scope_actions == default_seat_actions()
+    assert run(sm, lambda team: team.seats_used(teacher)) == 1
+
+
+def test_a_removed_assistant_cannot_take_a_seat_when_full(sm: sessionmaker[Session]) -> None:
+    teacher, s1, person = add_user(sm, Role.teacher), add_user(sm), add_user(sm)
+    add_teacher_plan(sm, teacher, included_seats=1)
+    add_seat(sm, teacher_id=teacher, student_id=s1)
+    add_assistant(sm, teacher_id=teacher, assistant_id=person, status=TeacherMemberStatus.removed)
+    class_id, _ = add_class(sm, teacher_id=teacher, subject_code="0580")
+    with pytest.raises(NoFreeSeat):
+        join(sm, class_id, person)
+    with sm() as session:  # still an assistant row: nothing was converted
+        row = session.scalars(
+            sa.select(TeacherMember).where(TeacherMember.member_user_id == person)
+        ).one()
+    assert row.kind is TeacherMemberKind.assistant

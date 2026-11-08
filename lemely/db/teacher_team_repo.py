@@ -43,7 +43,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, null, select, update
 
 from lemely.core.metered_actions import SEAT_ACTIONS, MeteredAction
 from lemely.db.models import ClassEnrollment, PlanTier, SchoolClass, Subject, Subscription, User
@@ -166,14 +166,16 @@ class TeacherTeamService:
         ``study_plan`` (:func:`default_seat_actions`). A later join adds the class
         subject to the seat. A ``leaving`` seat stays ``leaving`` (the teacher's
         removal stands); a ``removed`` seat is reactivated with fresh defaults if a
-        seat is free. The claim takes the locks of the module docstring's steps 1 and
-        2 and issues no grant. ``now`` is the claim instant, which Phase 05's
-        seat-allowance-on-claim hook takes from the caller.
+        seat is free. The table keeps one row per (teacher, member) pair for ever, so a
+        reactivation, or a removed assistant becoming a seat, UPDATEs that row (status,
+        kind and column shape) and never inserts. The claim takes the locks of the
+        module docstring's steps 1 and 2 and issues no grant. ``now`` is the claim
+        instant, which Phase 05's seat-allowance-on-claim hook takes from the caller.
 
         Raises:
             NoFreeSeat: A new or reactivated seat would exceed the plan's seats.
             TeamStateError: The class does not exist, the student is the class's own
-                teacher, or the pair is an assistant.
+                teacher, or the pair is a live (non-removed) assistant.
         """
         del now  # the claim is instant-independent; Phase 05 issues the allowance
         cls = self._session.get(SchoolClass, class_id)
@@ -184,9 +186,17 @@ class TeacherTeamService:
             raise TeamStateError("A teacher cannot take a seat in their own class")
         capacity = self._capacity(teacher_id, lock=True)
         existing = self._member_row(teacher_id, student_user_id, lock=True)
-        if existing is not None and existing.kind is not TeacherMemberKind.student_seat:
+        if (
+            existing is not None
+            and existing.kind is not TeacherMemberKind.student_seat
+            and existing.status is not TeacherMemberStatus.removed
+        ):
             raise TeamStateError("This account is already this teacher's assistant")
-        if existing is not None and existing.status is not TeacherMemberStatus.removed:
+        if (
+            existing is not None
+            and existing.kind is TeacherMemberKind.student_seat
+            and existing.status is not TeacherMemberStatus.removed
+        ):
             subject = cls.subject_code
             current = list(existing.scope_subjects or [])
             if subject is not None and subject not in current:
@@ -209,7 +219,11 @@ class TeacherTeamService:
             )
             self._session.add(member)
         else:
+            # One row per (teacher, member) pair, ever: reuse it, never INSERT a second.
+            # A removed assistant becomes a seat by changing the row's kind and column shape.
             member = existing
+            if member.kind is not TeacherMemberKind.student_seat:
+                self._convert_assistant_to_seat(member)
             member.status = TeacherMemberStatus.active
             member.leaves_at = None
             member.scope_subjects = subjects
@@ -394,6 +408,28 @@ class TeacherTeamService:
             return 0
         extra, included = row
         return int(included or 0) + int(extra or 0)
+
+    def _convert_assistant_to_seat(self, member: TeacherMember) -> None:
+        """Change a removed assistant row into a seat row in one UPDATE.
+
+        ``permissions`` is JSONB, and the ORM writes ``None`` to JSONB as the JSON value
+        ``null``, which the ``seat_fields`` CHECK (``permissions IS NULL``) rejects. A
+        Core ``UPDATE`` with ``sa.null()`` writes SQL NULL, and one statement changes the
+        kind and the column shape together so the CHECKs hold.
+        """
+        self._session.execute(
+            update(TeacherMember)
+            .where(TeacherMember.id == member.id)
+            .values(
+                kind=TeacherMemberKind.student_seat,
+                role_preset=None,
+                permissions=null(),
+                scope_subjects=[],
+                scope_actions=[],
+            )
+            .execution_options(synchronize_session=False)
+        )
+        self._session.refresh(member)
 
     def _member_row(
         self, teacher_user_id: uuid.UUID, member_user_id: uuid.UUID, *, lock: bool
