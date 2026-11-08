@@ -87,6 +87,7 @@ from lemely.db.models.study_plan import StudyPlan as StudyPlanTable
 from lemely.db.models.study_plan import StudyPlanActivityType
 from lemely.db.models.study_plan import StudyPlanSession as StudyPlanSessionTable
 from lemely.db.models.teacher_papers import TeacherPaper
+from lemely.db.models.team import TeacherMember
 from lemely.db.models.thresholds import ComponentThreshold, OptionThreshold
 from lemely.db.models.users import Device, Friendship, ParentChildLink, User
 
@@ -117,6 +118,7 @@ def import_all_models() -> None:
         quizzes,
         study_plan,
         teacher_papers,
+        team,
         thresholds,
         tutoring,
         usage,
@@ -220,6 +222,7 @@ __all__ = [
     "Subscription",
     "SubscriptionStatus",
     "SyllabusPaper",
+    "TeacherMember",
     "TeacherPaper",
     "TimestampMixin",
     "Upload",

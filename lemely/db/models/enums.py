@@ -424,11 +424,17 @@ class InviteRole(enum.StrEnum):
     caller redeems, and the only thing standing between that and an
     escalation would be a validation nobody had written yet. A narrower type
     cannot express the mistake.
+
+    ``assistant`` (paymob billing Phase 03, spec §4.4) is a teacher's single-use,
+    expiring invite for another teacher account to become their assistant. Its target
+    is ``invites.team_teacher_id``; it is redeemed only through
+    ``POST /api/teacher/team/assistants/redeem``.
     """
 
     student = "student"
     teacher = "teacher"
     parent = "parent"
+    assistant = "assistant"
 
 
 class RevisionSource(enum.Enum):

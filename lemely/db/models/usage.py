@@ -7,9 +7,10 @@ Seven tables:
   it used.
 * :class:`UsageGrant`: one block of units owned by one account, with a priority
   and an optional expiry. ``payment_id`` is a foreign key to ``payments``
-  (declared here, created by migration ``0053``); ``subscription_period_id`` and
-  ``teacher_member_id`` are plain UUID columns here; migrations ``0055`` and
-  ``0054`` add their foreign keys when the target tables exist.
+  (declared here, created by migration ``0053``); ``teacher_member_id`` is a foreign
+  key to ``teacher_members`` (migration ``0054``); ``subscription_period_id`` is a
+  plain UUID column here, and migration ``0055`` adds its foreign key when the target
+  table exists.
 * :class:`UsageGrantBalance`: the cached ``remaining`` and ``held`` of a grant.
   ``reconcile_balances`` rebuilds it from the entries.
 * :class:`UsageJob`: one metered action, which is also the usage history row.
@@ -185,7 +186,12 @@ class UsageGrant(TimestampMixin, Base):
     )
     kind: Mapped[GrantKind] = mapped_column(sa.Enum(GrantKind, name="grantkind"), nullable=False)
     visible: Mapped[bool] = mapped_column(sa.Boolean, nullable=False)
-    teacher_member_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    teacher_member_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        sa.ForeignKey("teacher_members.id"),
+        nullable=True,
+    )
+    """The seat a ``seat_allowance`` grant belongs to (FK added by 0054_teacher_team)."""
     priority: Mapped[int] = mapped_column(sa.SmallInteger, nullable=False)
     units: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
     effective_at: Mapped[datetime] = mapped_column(
