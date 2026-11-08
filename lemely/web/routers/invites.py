@@ -52,6 +52,7 @@ from lemely.db.models import Invite
 from lemely.db.models.enums import InviteRole, ParentLinkEvent, Role
 from lemely.db.notification_repo import NotificationService
 from lemely.db.parent_repo import MAX_LINKED_PARENTS
+from lemely.db.teacher_team_repo import TeamError
 from lemely.web.deps import (
     AuthContext,
     get_auth_context,
@@ -61,6 +62,7 @@ from lemely.web.deps import (
 )
 from lemely.web.push import NotificationTransport
 from lemely.web.schemas_invites import InviteCodeDTO, InvitePreviewDTO, RedeemInviteResponseDTO
+from lemely.web.team_http import team_error_to_http
 from lemely.web.tutoring_http import tutoring_error
 from lemely.web.tutoring_notify import class_join_notices, parent_link_notices, send_after_commit
 
@@ -259,6 +261,10 @@ def redeem_invite(
     the caller's linked parents (new enrolment in a tutor's school-less class),
     get their inbox notices; the change has committed by then, and a failed
     notice never fails the redemption.
+
+    **409 ``no_free_seat``** (paymob billing Phase 03): a class code whose teacher has
+    no free seat; the invite stays unredeemed. Any other team refusal (the caller is
+    the teacher's assistant) is a 409 ``conflict``, through ``team_error_to_http``.
     """
     try:
         result = service.redeem(auth.user_id, code, caller_role=Role(auth.role))
@@ -272,6 +278,8 @@ def redeem_invite(
         raise HTTPException(
             status_code=403, detail="This invite is not for your account type."
         ) from exc
+    except TeamError as exc:
+        raise team_error_to_http(exc) from exc
     send_after_commit(redeem_notices(result), service=notifications, transport=transport)
     return RedeemInviteResponseDTO(
         role=_redeemed_invite_role(result.role),

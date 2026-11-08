@@ -50,6 +50,7 @@ import secrets
 import unicodedata
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 
 from sqlalchemy import and_, delete, func, or_, select, true
@@ -62,6 +63,8 @@ from lemely.db.models import ClassEnrollment, School, SchoolClass, SchoolMembers
 from lemely.db.models.enums import MembershipRole, Role, SeatStatus
 from lemely.db.models.tutoring import TutorBooking, TutorDataGrant, TutorProfile
 from lemely.db.parent_repo import ParentLinkService
+from lemely.db.teacher_team_repo import NoFreeSeat, TeacherTeamService, TeamStateError
+from lemely.runtime.config import Settings
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -193,16 +196,30 @@ class ClassService:
     ownership before touching any row; there is no super-role bypass.
     """
 
-    def __init__(self, sessionmaker: sessionmaker[Session]) -> None:
+    def __init__(
+        self, sessionmaker: sessionmaker[Session], *, enforce_teacher_seats: bool | None = None
+    ) -> None:
         """Wire the service to a session factory.
 
         Builds its own :class:`~lemely.db.parent_repo.ParentLinkService` on the
         same factory: the class-join notice reads a student's linked parents
         through that service (the single ``parent_child_links`` query), inside
         the enrolment's transaction.
+
+        ``enforce_teacher_seats`` (paymob billing Phase 03, spec §4.4; index R5): when
+        true, a student's join of a school-less class that finds no free teacher seat is
+        refused with :class:`~lemely.db.teacher_team_repo.NoFreeSeat` and the enrolment
+        rolls back. When false, the seat is still claimed if one is free, and otherwise
+        the student is enrolled without one. ``None`` (the default) reads
+        ``Settings().team.enforce_teacher_seats``, which is true unless
+        ``LEMELY_TEAM__ENFORCE_TEACHER_SEATS`` turns it off (only ``tests/conftest.py``
+        does). ``lemely.web.deps.get_class_service`` passes the loaded setting.
         """
         self._sessionmaker = sessionmaker
         self._parent_links = ParentLinkService(sessionmaker)
+        if enforce_teacher_seats is None:
+            enforce_teacher_seats = Settings().team.enforce_teacher_seats
+        self._enforce_teacher_seats = enforce_teacher_seats
 
     # -- Introspection ------------------------------------------------------
 
@@ -649,8 +666,18 @@ class ClassService:
         tutor profile is the fact that makes the class a side door. A re-join,
         a school class and a teacher without a profile tell nobody.
 
+        A school-less class also claims or extends the joining student's seat with the
+        class teacher, in the same transaction (:meth:`_claim_teacher_seat`). A school
+        class never attempts a claim.
+
         Raises:
             JoinCodeError: No class carries ``join_code``.
+            NoFreeSeat: ``enforce_teacher_seats`` is on, the class has no school, the
+                caller is a student, and the teacher has no free seat. Nothing is
+                written: the enrolment and any outbox rows roll back.
+            TeamStateError: ``enforce_teacher_seats`` is on and the claim is refused
+                for the pair's state (the caller is the teacher's assistant, or owns
+                the class). Nothing is written.
         """
         student_uuid = _as_uuid(student_id)
         with self._sessionmaker() as session, session.begin():
@@ -665,6 +692,8 @@ class ClassService:
                 .on_conflict_do_nothing(index_elements=["class_id", "student_id"])
                 .returning(ClassEnrollment.id)
             ).first()
+            if cls.school_id is None:
+                self._claim_teacher_seat(session, cls, student_uuid)
             tutor_join = None
             if enrollment_id is not None and cls.school_id is None:
                 tutor_join = self._queue_tutor_class_join(
@@ -786,6 +815,28 @@ class ClassService:
             .execution_options(synchronize_session=False)
         ).all()
         return len(removed)
+
+    def _claim_teacher_seat(
+        self, session: Session, cls: SchoolClass, student_uuid: uuid.UUID
+    ) -> None:
+        """Claim or extend the joining student's seat with the class teacher (spec §4.4).
+
+        Only a ``student`` account takes a seat: a teacher redeeming a class code
+        does not. Runs in a savepoint, so when not enforced a refused claim (no free
+        seat, or a pair state that cannot hold a seat) leaves the enrolment in place;
+        when enforced the error propagates and the whole join rolls back.
+        """
+        student = session.get(User, student_uuid)
+        if student is None or student.role is not Role.student:
+            return
+        try:
+            with session.begin_nested():
+                TeacherTeamService(session).claim_seat_for_class_join(
+                    student_user_id=student_uuid, class_id=cls.id, now=datetime.now(UTC)
+                )
+        except (NoFreeSeat, TeamStateError):
+            if self._enforce_teacher_seats:
+                raise
 
     def _queue_tutor_class_join(
         self,

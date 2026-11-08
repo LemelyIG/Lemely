@@ -1252,6 +1252,22 @@ class TutoringSettings(BaseModel):
     email_daily_cap: int = Field(default=60, ge=0)
 
 
+class TeamSettings(BaseModel):
+    """Teacher seats and assistants (paymob billing spec §2.2, §4.4).
+
+    Overrides via ``lemely.toml`` under ``[team]`` or ``LEMELY_TEAM__*`` env vars.
+
+    ``enforce_teacher_seats`` is true in every deployed environment: a student's join
+    of a school-less class whose teacher has no free seat is refused (409
+    ``no_free_seat``). ``tests/conftest.py`` sets it false for the suite, so class-join
+    tests written before seats need no plan; the seat tests enforce explicitly. Not
+    emitted to ``lemely.toml.example``: nobody setting Lemely up turns it off.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    enforce_teacher_seats: bool = True
+
+
 class EmailSettings(BaseModel):
     """Transactional-email credentials for the account-lifecycle mails (D7.7).
 
@@ -1418,6 +1434,7 @@ class Settings(BaseSettings):
     notifications: NotificationsSettings = NotificationsSettings()
     email: EmailSettings = EmailSettings()
     tutoring: TutoringSettings = TutoringSettings()
+    team: TeamSettings = TeamSettings()
     paymob: PaymobSettings = PaymobSettings()
     database: DatabaseSettings = DatabaseSettings()
     supabase: SupabaseSettings = SupabaseSettings()

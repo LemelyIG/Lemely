@@ -136,6 +136,22 @@ def _disable_dotenv_file() -> Iterator[None]:
         Settings.model_config["env_file"] = original
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _disable_teacher_seat_enforcement() -> Iterator[None]:
+    """Class joins in the suite need no teacher plan (paymob billing Phase 03, index R5).
+
+    ``ClassService`` reads ``settings.team.enforce_teacher_seats``; with it off, a join
+    with no free seat enrols without one. The seat tests build an enforcing
+    ``ClassService(sm, enforce_teacher_seats=True)`` themselves.
+    """
+    patch = pytest.MonkeyPatch()
+    patch.setenv("LEMELY_TEAM__ENFORCE_TEACHER_SEATS", "0")
+    try:
+        yield
+    finally:
+        patch.undo()
+
+
 @pytest.fixture(autouse=True)
 def _reset_structlog_config() -> Iterator[None]:
     """Undo any real ``configure_logging()`` call so ``capture_logs()`` stays reliable.

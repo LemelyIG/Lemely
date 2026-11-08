@@ -66,6 +66,7 @@ from lemely.db.notification_repo import NotificationService
 from lemely.db.parent_repo import ParentLinkService
 from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
 from lemely.db.student_profile_repo import StudentProfileService, SubjectEnrolmentRow
+from lemely.db.teacher_team_repo import TeamError
 from lemely.db.upload_repo import IDEMPOTENCY_KEY_WINDOW, StudentUploadRepository, UploadRun
 from lemely.db.xp_repo import UserZoneReader, XpService, civil_date_in_zone
 from lemely.io.det.profiles import get_profile
@@ -143,6 +144,7 @@ from lemely.web.services.grading import (
     extract_answers,
     grade_paper,
 )
+from lemely.web.team_http import team_error_to_http
 from lemely.web.tutoring_http import NO_STORE
 from lemely.web.tutoring_notify import send_after_commit
 from lemely.web.upload_utils import check_scan_geometry, check_upload_cap, safe_upload_name
@@ -1342,11 +1344,17 @@ def student_join_class(
     school-less class whose teacher holds a tutor profile queues an email to
     each of the student's linked parents in the enrolment's transaction, and
     sends each an inbox notice here, after commit.
+
+    A teacher with no free seat refuses the join with a 409 ``no_free_seat`` (paymob
+    billing Phase 03); nothing is enrolled. Any other team refusal (the caller is the
+    teacher's assistant) is a 409 ``conflict``, through ``team_error_to_http``.
     """
     try:
         joined = service.join_by_code_with_notice(auth.user_id, payload.joinCode)
     except JoinCodeError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TeamError as exc:
+        raise team_error_to_http(exc) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     send_after_commit(

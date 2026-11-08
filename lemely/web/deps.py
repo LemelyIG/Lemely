@@ -444,8 +444,16 @@ def get_class_service() -> ClassService:
     class ownership/enrolment needs no account-creation seam, so there is no
     GoTrue dependency here at all. Tests override this dependency with a
     service built on a throwaway Postgres database.
+
+    Teacher seats are enforced unless ``settings.team.enforce_teacher_seats`` is off
+    (paymob billing Phase 03): a student's join of a school-less class with no free
+    seat is a 409 ``no_free_seat``.
     """
-    return ClassService(get_sessionmaker(get_settings()))
+    settings = get_settings()
+    return ClassService(
+        get_sessionmaker(settings),
+        enforce_teacher_seats=settings.team.enforce_teacher_seats,
+    )
 
 
 @lru_cache(maxsize=1)
