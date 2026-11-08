@@ -706,8 +706,10 @@ class BillingService:
         anyone holding a genuine signature could edit it to point at another payment.
         The signed Paymob order id (stored as ``paymob_order_id`` at checkout) selects the
         row, and a reference that is present must then agree with it. A callback that
-        matches nothing is logged at error level and changes nothing; the reconcile
-        inquiry still reaches the payment from our side, which needs no ``order.id``.
+        matches nothing is logged at error level and settles nothing; the reconcile
+        inquiry reaches the payment from our side, which needs no ``order.id``. When the
+        reference names an open payment that has no order yet, reconcile is re-armed
+        (``_rearm_reconcile_for_reference``).
         """
         order_id = _as_int(order_map.get("id"))
         payment = (
@@ -719,6 +721,8 @@ class BillingService:
         )
         if payment is not None and self._answers_for(payment, obj):
             return payment
+        if payment is None:
+            self._rearm_reconcile_for_reference(order_map.get("merchant_order_id"))
         log.error(
             "paymob_callback_unmatched",
             reason="reference_mismatch" if payment is not None else "no_payment_for_order",
@@ -728,8 +732,39 @@ class BillingService:
         )
         return None
 
+    def _rearm_reconcile_for_reference(self, reference: object) -> None:
+        """Make an open payment with no recorded Paymob order due for an inquiry now.
+
+        A payment whose checkout outcome was unknown has no ``paymob_order_id``, so a
+        genuine callback cannot be matched by its signed order id. The callback names the
+        payment only through the unsigned reference, so it is not believed: nothing is
+        settled from it. It is a hint that Paymob has the transaction, and the inquiry
+        (keyed on our own reference, answered by Paymob) is the trusted path. Setting
+        ``next_reconcile_at`` re-arms reconcile and lifts a stuck payment's cleared
+        schedule. Only an open payment with no order is touched, and only to bring its
+        schedule forward, so a forged hint costs at most one inquiry per pass.
+        """
+        if not isinstance(reference, str) or not reference:
+            return
+        payment = self._session.scalars(
+            select(Payment).where(Payment.special_reference == reference).with_for_update()
+        ).one_or_none()
+        if payment is None or payment.paymob_order_id is not None or payment.status not in _OPEN:
+            return
+        now = self._now()
+        if payment.next_reconcile_at is None or payment.next_reconcile_at > now:
+            payment.next_reconcile_at = now
+            log.warning("paymob_callback_rearmed_reconcile", payment_id=str(payment.id))
+
     @staticmethod
     def _is_child_transaction(obj: JsonMap) -> bool:
+        """True for a refund/void child. Any of the three markers is enough.
+
+        Only ``has_parent_transaction`` is under the HMAC; ``is_refund`` and ``is_void``
+        are not. They are not dropped (Paymob's refund shape is not pinned down), so the
+        caller keys a child's event apart from the transaction key, and a disagreement
+        between the signed and unsigned markers is logged.
+        """
         return (
             _is_true(obj.get("is_refund"))
             or _is_true(obj.get("is_void"))
@@ -761,7 +796,25 @@ class BillingService:
                 self._record_event(PaymobEventKind.transaction, f"unmatched:{txn_id}", safe)
                 return
         child = self._is_child_transaction(obj)
-        if not self._record_event(PaymobEventKind.transaction, transaction_dedupe_key(obj), safe):
+        if child and (
+            (_is_true(obj.get("is_refund")) or _is_true(obj.get("is_void")))
+            != _is_true(obj.get("has_parent_transaction"))
+        ):
+            log.warning(
+                "paymob_child_marker_mismatch",
+                txn_id=txn_id,
+                payment_id=str(payment.id),
+                is_refund=_is_true(obj.get("is_refund")),
+                is_void=_is_true(obj.get("is_void")),
+                has_parent_transaction=_is_true(obj.get("has_parent_transaction")),
+            )
+        # A child is keyed apart: ``is_refund``/``is_void`` are unsigned, so a payer who
+        # resends their own signed success with one set must not use up the ``txn:`` key
+        # the genuine callback and the reconcile inquiry need.
+        event_key = transaction_dedupe_key(obj)
+        if child:
+            event_key = f"child:{event_key}"
+        if not self._record_event(PaymobEventKind.transaction, event_key, safe):
             log.info("paymob_duplicate_transaction", txn_id=txn_id, source=source)
             if not child and _is_true(obj.get("is_refunded")) and payment.status in _SETTLED:
                 # The refunded total is not signed, so it is not part of the key: a second,

@@ -530,3 +530,19 @@ def test_a_malformed_signed_callback_is_logged_with_type_and_id_only(client: Tes
     (entry,) = [e for e in logs if e["event"] == "paymob_callback_malformed"]
     assert entry["log_level"] == "error"
     assert entry["callback_type"] == "TRANSACTION"
+
+
+def test_a_forged_child_marker_cannot_block_the_genuine_callback(
+    client: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    sm = migrated_sessionmaker
+    pid = _payment(sm)
+    genuine = transaction_obj(merchant_order_id=str(pid))
+    signature = sign_transaction(genuine)
+    forged = {**genuine, "is_refund": True}  # is_refund is outside the signature
+    assert sign_transaction(forged) == signature
+    assert _post(client, transaction_callback(forged), signature).status_code == 200
+    assert _status(sm, pid) is PaymentStatus.created
+    assert _post(client, transaction_callback(genuine), signature).status_code == 200
+    assert _status(sm, pid) is PaymentStatus.paid
+    assert _count(sm, UsageGrant) == 1

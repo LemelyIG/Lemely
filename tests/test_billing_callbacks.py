@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import pytest
 import sqlalchemy as sa
 from pydantic import SecretStr
+from structlog.testing import capture_logs
 
 from lemely.db import billing_repo
 from lemely.db.billing_repo import BillingService, MalformedCallback, add_months
@@ -243,6 +244,50 @@ def test_a_payment_without_a_paymob_order_ignores_a_callback(
     _apply(sm, transaction_obj(merchant_order_id=str(pid)))
     assert _payment(sm, pid).status is PaymentStatus.created
     assert _grants(sm, pid) == []
+
+
+def test_a_forged_child_marker_does_not_consume_the_transaction_key(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """is_refund/is_void are unsigned: resending a signed success with one set is a child.
+
+    It is still treated as a child, but must not use up the ``txn:`` key the genuine
+    callback (and the reconcile inquiry) need, or the payment is stuck paid-but-ungranted.
+    """
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    genuine = transaction_obj(merchant_order_id=str(pid))
+    for marker in ("is_refund", "is_void"):
+        with capture_logs() as logs:
+            _apply(sm, {**genuine, marker: True})
+        assert any(e["event"] == "paymob_child_marker_mismatch" for e in logs), marker
+        assert _payment(sm, pid).status is PaymentStatus.created
+        assert _grants(sm, pid) == []
+    keys = sorted(e.dedupe_key for e in _events(sm))
+    assert keys and all(k.startswith("child:") for k in keys)
+    _apply(sm, genuine)
+    assert _payment(sm, pid).status is PaymentStatus.paid
+    assert len(_grants(sm, pid)) == 1
+    _apply(sm, genuine)  # and a replay of the genuine callback still dedupes
+    assert len(_grants(sm, pid)) == 1
+
+
+def test_a_genuine_child_agrees_with_its_signed_marker_and_is_not_warned(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    with capture_logs() as logs:
+        _apply(
+            sm,
+            transaction_obj(
+                merchant_order_id=str(pid),
+                txn_id=192036466,
+                is_refund=True,
+                has_parent_transaction=True,
+            ),
+        )
+    assert not any(e["event"] == "paymob_child_marker_mismatch" for e in logs)
 
 
 def test_a_refund_total_that_grows_is_applied_through_the_same_dedupe_key(

@@ -495,6 +495,76 @@ def test_a_stuck_payment_is_still_paid_by_a_late_callback(
     assert _grant_count(sm, pid) == 1
 
 
+def test_a_late_callback_for_a_stuck_payment_without_an_order_rearms_reconcile(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """No ``paymob_order_id`` (unknown intention outcome), stuck for over a week.
+
+    A genuine callback cannot be matched by its signed order id, and settles nothing
+    itself. It re-arms reconcile, whose inquiry is the trusted path, and that pays it.
+    """
+    sm = migrated_sessionmaker
+    pid = _due_payment(sm, age=RECONCILE_STUCK_AFTER)
+    client = FakePaymobClient()
+    client.inquiry_response = PaymobError("down", status_code=503)
+    _reconcile(sm, client)
+    assert _payment(sm, pid).next_reconcile_at is None  # stuck: reconcile has stopped
+    callback = transaction_obj(merchant_order_id=str(pid))
+    with sm.begin() as session:
+        BillingService(
+            session, client, PAYMOB_SETTINGS, now=lambda: FIXED_NOW
+        ).apply_transaction_callback(callback)
+    payment = _payment(sm, pid)
+    assert payment.status is PaymentStatus.created  # the callback settled nothing
+    assert _grant_count(sm, pid) == 0
+    assert payment.next_reconcile_at == FIXED_NOW  # re-armed, due now
+    client.inquiry_response = dict(callback)
+    assert _reconcile(sm, client) == 1
+    payment = _payment(sm, pid)
+    assert payment.status is PaymentStatus.paid
+    assert payment.paymob_order_id == 265715202
+    assert _grant_count(sm, pid) == 1
+
+
+@pytest.mark.parametrize(
+    ("status", "order_id"),
+    [(PaymentStatus.paid, None), (PaymentStatus.failed, None), (PaymentStatus.created, 111)],
+)
+def test_a_callback_rearms_only_an_open_payment_that_has_no_order(
+    migrated_sessionmaker: sessionmaker[Session], status: PaymentStatus, order_id: int | None
+) -> None:
+    sm = migrated_sessionmaker
+    pid = _due_payment(sm, age=RECONCILE_STUCK_AFTER, status=status, paymob_order_id=order_id)
+    with sm.begin() as session:  # stuck: the schedule was cleared, so a re-arm would show
+        stuck = session.get(Payment, pid)
+        assert stuck is not None
+        stuck.next_reconcile_at = None
+    with sm.begin() as session:
+        BillingService(
+            session, FakePaymobClient(), PAYMOB_SETTINGS, now=lambda: FIXED_NOW
+        ).apply_transaction_callback(transaction_obj(merchant_order_id=str(pid)))
+    assert _payment(sm, pid).next_reconcile_at is None
+    assert _grant_count(sm, pid) == 0
+
+
+def test_a_forged_child_marker_does_not_block_the_reconcile_inquiry(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    pid = _due_payment(sm, age=timedelta(minutes=20), paymob_order_id=265715202)
+    genuine = transaction_obj(merchant_order_id=str(pid))
+    with sm.begin() as session:
+        BillingService(
+            session, FakePaymobClient(), PAYMOB_SETTINGS, now=lambda: FIXED_NOW
+        ).apply_transaction_callback({**genuine, "is_refund": True})
+    assert _payment(sm, pid).status is PaymentStatus.created
+    client = FakePaymobClient()
+    client.inquiry_response = dict(genuine)
+    assert _reconcile(sm, client) == 1
+    assert _payment(sm, pid).status is PaymentStatus.paid
+    assert _grant_count(sm, pid) == 1
+
+
 def test_closed_payments_are_never_inquired(migrated_sessionmaker: sessionmaker[Session]) -> None:
     sm = migrated_sessionmaker
     _due_payment(sm, age=timedelta(hours=1), status=PaymentStatus.paid)
