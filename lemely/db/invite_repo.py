@@ -105,7 +105,7 @@ from lemely.db.class_repo import (
     ClassService,
     JoinCodeError,
 )
-from lemely.db.invite_codes import generate_invite_code
+from lemely.db.invite_codes import constraint_name, generate_invite_code
 from lemely.db.models import Invite, School, SchoolClass, SchoolMembership, Seat, User
 from lemely.db.models.enums import InviteRole, MembershipRole, Role, SeatStatus
 from lemely.db.parent_repo import MAX_LINKED_PARENTS, ParentLimitReachedError
@@ -934,7 +934,10 @@ class InviteService:
                 teacher_name = self._teacher_name(session, cls.teacher_id)
                 school_name = school_name or self._school_name(session, cls.school_id)
         if invite.team_teacher_id is not None:
-            teacher_name = self._teacher_name(session, invite.team_teacher_id)
+            # Public, pre-account preview: the lead teacher's display name only, never
+            # the email `_teacher_name` falls back to.
+            lead = session.get(User, invite.team_teacher_id)
+            teacher_name = ((lead.display_name or "").strip() or None) if lead else None
         return InvitePreview(
             role=invite.role,
             school_name=school_name,
@@ -1093,15 +1096,7 @@ def _is_reusable_child_violation(exc: IntegrityError) -> bool:
     fixable code collision (mirrors ``notification_repo``'s and ``xp_repo``'s
     identical narrow-match discipline for the same reason).
     """
-    return _constraint_name(exc) == _REUSABLE_CHILD_CONSTRAINT_NAME
-
-
-def _constraint_name(exc: IntegrityError) -> str | None:
-    """Best-effort constraint name off a psycopg ``IntegrityError``."""
-    orig = getattr(exc, "orig", None)
-    diag = getattr(orig, "diag", None)
-    name = getattr(diag, "constraint_name", None)
-    return str(name) if name is not None else None
+    return constraint_name(exc) == _REUSABLE_CHILD_CONSTRAINT_NAME
 
 
 def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:

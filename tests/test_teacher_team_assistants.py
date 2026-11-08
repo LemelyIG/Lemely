@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from lemely.core.team_permissions import TeamPermission, effective_permissions
 from lemely.db.class_repo import ClassService
@@ -24,10 +25,12 @@ from lemely.db.models.team import (
 )
 from lemely.db.parent_repo import ParentLinkService
 from lemely.db.teacher_team_repo import (
+    MAX_ASSISTANT_INVITE_TTL,
     MAX_LIVE_ASSISTANT_INVITES,
     AssistantInviteLimitError,
     AssistantInviteNotFound,
     AssistantInviteRedeemed,
+    InvalidInviteExpiry,
     InvalidPermissions,
     NotATeacher,
     TeacherTeamService,
@@ -66,16 +69,45 @@ def run[T](sm: sessionmaker[Session], fn: Callable[[TeacherTeamService], T]) -> 
         return fn(TeacherTeamService(session))
 
 
-FAR = NOW + timedelta(days=3650)
-"""Expiry for invites a test redeems or previews: InviteService.preview reads the real
-clock, so a near expiry would make these tests fail once the calendar passes it."""
+def expiry(days: float = 7) -> datetime:
+    """An expiry ``days`` from the real clock.
+
+    Minting checks the expiry against the real clock (``MAX_ASSISTANT_INVITE_TTL``) and
+    ``InviteService.preview`` reads it too, so a fixed calendar date would fail once the
+    calendar passes it. Redemptions pass ``NOW``, which is earlier than any such expiry.
+    """
+    return datetime.now(UTC) + timedelta(days=days)
 
 
 def mint(sm: sessionmaker[Session], teacher: uuid.UUID, role: AssistantRole) -> str:
     return run(
         sm,
-        lambda team: team.create_assistant_invite(teacher, role=role, expires_at=FAR).code,
+        lambda team: team.create_assistant_invite(teacher, role=role, expires_at=expiry()).code,
     )
+
+
+def add_invite(
+    sm: sessionmaker[Session],
+    teacher: uuid.UUID,
+    *,
+    expires_at: datetime,
+    role: AssistantRole = AssistantRole.viewer,
+) -> str:
+    """Insert an assistant invite directly, bypassing the mint-time expiry check."""
+    code = generate_invite_code()
+    with sm.begin() as session:
+        session.add(
+            Invite(
+                code=code,
+                role=InviteRole.assistant,
+                created_by=teacher,
+                team_teacher_id=teacher,
+                assistant_role=role,
+                expires_at=expires_at,
+                reusable=False,
+            )
+        )
+    return code
 
 
 def redeem(sm: sessionmaker[Session], code: str, user: uuid.UUID) -> uuid.UUID:
@@ -108,14 +140,20 @@ def test_invite_codes_keep_their_published_shape() -> None:
 
 def test_create_assistant_invite_is_single_use_and_expiring(sm: sessionmaker[Session]) -> None:
     teacher = add_user(sm, Role.teacher)
-    code = mint(sm, teacher, AssistantRole.marker)
+    wanted = expiry()
+    code = run(
+        sm,
+        lambda team: (
+            team.create_assistant_invite(teacher, role=AssistantRole.marker, expires_at=wanted).code
+        ),
+    )
     invite = invite_row(sm, code)
     assert invite.role is InviteRole.assistant
     assert invite.team_teacher_id == teacher
     assert invite.created_by == teacher
     assert invite.assistant_role is AssistantRole.marker
     assert invite.reusable is False
-    assert invite.expires_at == FAR
+    assert invite.expires_at == wanted
 
 
 @pytest.mark.parametrize("role", [Role.student, Role.parent, Role.school_admin])
@@ -143,6 +181,40 @@ def test_naive_expiry_is_refused(sm: sessionmaker[Session]) -> None:
         )
 
 
+@pytest.mark.parametrize("days", [-1, -0.0001])
+def test_the_expiry_must_be_in_the_future(sm: sessionmaker[Session], days: float) -> None:
+    teacher = add_user(sm, Role.teacher)
+    past = expiry(days)
+    with pytest.raises(InvalidInviteExpiry):
+        run(
+            sm,
+            lambda team: team.create_assistant_invite(
+                teacher, role=AssistantRole.viewer, expires_at=past
+            ),
+        )
+    mint(sm, teacher, AssistantRole.viewer)  # a future expiry is fine
+
+
+def test_the_expiry_is_capped_at_the_longest_ttl(sm: sessionmaker[Session]) -> None:
+    teacher = add_user(sm, Role.teacher)
+    ttl_days = MAX_ASSISTANT_INVITE_TTL.total_seconds() / 86400
+    with pytest.raises(InvalidInviteExpiry):
+        run(
+            sm,
+            lambda team: team.create_assistant_invite(
+                teacher, role=AssistantRole.viewer, expires_at=expiry(ttl_days + 0.01)
+            ),
+        )
+    run(  # a minute inside the bound is accepted
+        sm,
+        lambda team: team.create_assistant_invite(
+            teacher, role=AssistantRole.viewer, expires_at=expiry(ttl_days - 0.001)
+        ),
+    )
+    with sm() as session:
+        assert session.scalar(select(func.count()).select_from(Invite)) == 1
+
+
 def test_live_assistant_invites_are_capped(sm: sessionmaker[Session]) -> None:
     teacher = add_user(sm, Role.teacher)
     for _ in range(MAX_LIVE_ASSISTANT_INVITES):
@@ -155,15 +227,9 @@ def test_live_assistant_invites_are_capped(sm: sessionmaker[Session]) -> None:
 
 def test_expired_and_redeemed_invites_free_the_cap(sm: sessionmaker[Session]) -> None:
     teacher, helper = add_user(sm, Role.teacher), add_user(sm, Role.teacher)
-    stale = datetime.now(UTC) - timedelta(minutes=1)  # the cap reads the database clock
     for _ in range(MAX_LIVE_ASSISTANT_INVITES - 1):
         mint(sm, teacher, AssistantRole.viewer)
-    run(
-        sm,
-        lambda team: team.create_assistant_invite(
-            teacher, role=AssistantRole.viewer, expires_at=stale
-        ),
-    )
+    add_invite(sm, teacher, expires_at=expiry(-0.001))  # the cap reads the database clock
     redeem(sm, mint(sm, teacher, AssistantRole.viewer), helper)
     mint(sm, teacher, AssistantRole.viewer)  # 19 live + 1 expired + 1 redeemed: one slot left
     with pytest.raises(AssistantInviteLimitError):
@@ -181,14 +247,14 @@ def test_concurrent_mints_cannot_pass_the_cap(sm: sessionmaker[Session]) -> None
     def second_mint() -> object:
         with sm.begin() as session:
             return TeacherTeamService(session).create_assistant_invite(
-                teacher, role=AssistantRole.viewer, expires_at=FAR
+                teacher, role=AssistantRole.viewer, expires_at=expiry()
             )
 
     first = sm()
     first.begin()
     try:
         TeacherTeamService(first).create_assistant_invite(
-            teacher, role=AssistantRole.viewer, expires_at=FAR
+            teacher, role=AssistantRole.viewer, expires_at=expiry()
         )
         worker = _Paused(second_mint)
         _wait_until_a_backend_waits_on_a_lock(sm)
@@ -300,20 +366,52 @@ def test_two_sessions_redeeming_one_code_consume_it_exactly_once(
     assert [m.member_user_id for m in member_rows(sm, teacher)] == [h1]
 
 
+def test_two_invites_redeemed_at_once_by_one_user_leave_one_row(
+    sm: sessionmaker[Session],
+) -> None:
+    teacher, helper = add_user(sm, Role.teacher), add_user(sm, Role.teacher)
+    invite_a = mint(sm, teacher, AssistantRole.marker)
+    invite_b = mint(sm, teacher, AssistantRole.viewer)
+
+    def redeem_b() -> object:
+        with sm.begin() as session:
+            return TeacherTeamService(session).redeem_assistant_invite(
+                code=invite_b, user_id=helper, now=NOW
+            )
+
+    first = sm()
+    first.begin()
+    try:
+        TeacherTeamService(first).redeem_assistant_invite(code=invite_a, user_id=helper, now=NOW)
+        worker = _Paused(redeem_b)
+        _wait_until_a_backend_waits_on_a_lock(sm)
+        first.commit()
+    finally:
+        first.close()
+    worker.join()
+    assert type(worker.error) is TeamStateError  # the mapped violation, not a raw IntegrityError
+    [row] = member_rows(sm, teacher)
+    assert (row.member_user_id, row.role_preset) == (helper, AssistantRole.marker)
+    assert invite_row(sm, invite_a).redeemed_by == helper
+    assert invite_row(sm, invite_b).redeemed_by is None  # B was rolled back, not burnt
+
+
+def test_an_unrelated_integrity_error_on_the_pair_insert_is_not_mapped(
+    sm: sessionmaker[Session],
+) -> None:
+    teacher = add_user(sm, Role.teacher)
+    # A member that is no user: a foreign-key violation, not the pair race.
+    with sm() as session, pytest.raises(IntegrityError):
+        TeacherTeamService(session)._insert_assistant(teacher, uuid.uuid4(), AssistantRole.viewer)
+
+
 def test_expired_or_unknown_or_foreign_codes_are_not_found(sm: sessionmaker[Session]) -> None:
     teacher, helper, child = (
         add_user(sm, Role.teacher),
         add_user(sm, Role.teacher),
         add_user(sm, Role.student),
     )
-    expired = run(
-        sm,
-        lambda team: (
-            team.create_assistant_invite(
-                teacher, role=AssistantRole.viewer, expires_at=NOW - timedelta(seconds=1)
-            ).code
-        ),
-    )
+    expired = add_invite(sm, teacher, expires_at=NOW - timedelta(seconds=1))
     parent_code = (
         InviteService(sm, ClassService(sm), ParentLinkService(sm))
         .mint_parent_invite(child, reusable=False)
@@ -336,6 +434,15 @@ def test_naive_redeem_clock_is_refused(sm: sessionmaker[Session]) -> None:
         )
 
 
+def test_naive_list_clock_is_refused(sm: sessionmaker[Session]) -> None:
+    teacher = add_user(sm, Role.teacher)
+    with pytest.raises(ValueError, match="timezone-aware"):
+        run(
+            sm,
+            lambda team: team.list_assistant_invites(teacher, now=datetime(2026, 11, 14, 12, 0)),
+        )
+
+
 def test_list_and_revoke_assistant_invites(sm: sessionmaker[Session]) -> None:
     teacher, other, helper = (
         add_user(sm, Role.teacher),
@@ -344,12 +451,7 @@ def test_list_and_revoke_assistant_invites(sm: sessionmaker[Session]) -> None:
     )
     live = mint(sm, teacher, AssistantRole.viewer)
     redeem(sm, mint(sm, teacher, AssistantRole.viewer), helper)
-    run(
-        sm,
-        lambda team: team.create_assistant_invite(
-            teacher, role=AssistantRole.viewer, expires_at=NOW - timedelta(seconds=1)
-        ),
-    )
+    add_invite(sm, teacher, expires_at=NOW - timedelta(seconds=1))
     invites = run(sm, lambda team: team.list_assistant_invites(teacher, now=NOW))
     assert [i.code for i in invites] == [live]  # redeemed and expired ones are not listed
     invite_id = invites[0].id
@@ -686,6 +788,17 @@ def test_generic_preview_names_the_lead_teacher(sm: sessionmaker[Session]) -> No
     assert preview.class_name is None
     assert preview.school_name is None
     assert preview.child_name is None
+
+
+@pytest.mark.parametrize("blank", [None, "", "   "])
+def test_preview_never_falls_back_to_the_teachers_email(
+    sm: sessionmaker[Session], blank: str | None
+) -> None:
+    teacher = add_user(sm, Role.teacher, display_name=blank)
+    code = mint(sm, teacher, AssistantRole.viewer)
+    preview = InviteService(sm, ClassService(sm), ParentLinkService(sm)).preview(code)
+    assert preview.role is InviteRole.assistant
+    assert preview.teacher_name is None
 
 
 def test_generic_redeem_refuses_an_assistant_invite(sm: sessionmaker[Session]) -> None:

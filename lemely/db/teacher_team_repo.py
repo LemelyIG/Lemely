@@ -41,7 +41,7 @@ own exactly like an unknown id.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Final
 
 from sqlalchemy import func, select, update
@@ -49,7 +49,7 @@ from sqlalchemy.exc import IntegrityError
 
 from lemely.core.metered_actions import SEAT_ACTIONS, MeteredAction
 from lemely.core.team_permissions import UnknownPermissionError, validate_overrides
-from lemely.db.invite_codes import generate_invite_code
+from lemely.db.invite_codes import constraint_name, generate_invite_code
 from lemely.db.models import (
     ClassEnrollment,
     Invite,
@@ -85,6 +85,10 @@ _HELD: Final = (TeacherMemberStatus.active, TeacherMemberStatus.leaving)
 
 MAX_LIVE_ASSISTANT_INVITES: Final = 20
 """Cap on a teacher's live (unexpired, unredeemed) assistant invites, as for parent links."""
+
+MAX_ASSISTANT_INVITE_TTL: Final = timedelta(days=30)
+"""Longest an assistant invite may live. Spec §4.4 says only "expire"; the frontend
+contract (index A24, ``expiresInDays`` 1-30) sets the bound."""
 
 _INVITE_CODE_ATTEMPTS: Final = 8
 
@@ -129,6 +133,10 @@ class NotATeacher(TeamStateError):
     """
 
 
+class InvalidInviteExpiry(TeamError):
+    """An invite expiry is not in the future or is beyond the longest allowed (→ 422)."""
+
+
 class InvalidPermissions(TeamError):
     """Permission toggles name something that is not a team permission (→ 422)."""
 
@@ -151,13 +159,7 @@ def _require_aware(value: datetime, name: str) -> None:
 
 
 _INVITE_CODE_CONSTRAINT: Final = "ix_invites_code"
-
-
-def _constraint_name(exc: IntegrityError) -> str | None:
-    """Best-effort constraint name off a psycopg ``IntegrityError``."""
-    diag = getattr(getattr(exc, "orig", None), "diag", None)
-    name = getattr(diag, "constraint_name", None)
-    return str(name) if name is not None else None
+_PAIR_CONSTRAINT: Final = "uq_teacher_members_teacher_member"
 
 
 def month_end(now: datetime) -> datetime:
@@ -448,11 +450,18 @@ class TeacherTeamService:
 
         Raises:
             ValueError: ``expires_at`` is naive.
+            InvalidInviteExpiry: ``expires_at`` is not after now, or is more than
+                :data:`MAX_ASSISTANT_INVITE_TTL` ahead.
             NotATeacher: ``teacher_user_id`` is not a teacher account.
             AssistantInviteLimitError: The teacher holds the most live invites allowed.
             TeamError: No unique code after several attempts (astronomically unlikely).
         """
         _require_aware(expires_at, "expires_at")
+        issued = datetime.now(UTC)
+        if not issued < expires_at <= issued + MAX_ASSISTANT_INVITE_TTL:
+            raise InvalidInviteExpiry(
+                f"An assistant invite must expire within {MAX_ASSISTANT_INVITE_TTL.days} days"
+            )
         lead_role = self._session.scalar(
             select(User.role).where(User.id == teacher_user_id).with_for_update(key_share=True)
         )
@@ -486,7 +495,7 @@ class TeacherTeamService:
                     self._session.add(invite)
                     self._session.flush()
             except IntegrityError as exc:
-                if _constraint_name(exc) != _INVITE_CODE_CONSTRAINT:
+                if constraint_name(exc) != _INVITE_CODE_CONSTRAINT:
                     raise
                 continue
             return invite
@@ -742,8 +751,9 @@ class TeacherTeamService:
         """Insert the pair's first row as an assistant.
 
         The pair row is unique, so a concurrent redemption of a second invite by the same
-        user (no row existed to lock) ends in a constraint violation here; it is reported
-        as the state error it is, and the caller's transaction rolls the invite back.
+        user (no row existed to lock) ends in a violation of that constraint here; it is
+        reported as the state error it is, and the caller's transaction rolls the invite
+        back. Any other violation is not this race and propagates.
         """
         member = TeacherMember(
             teacher_user_id=teacher_user_id,
@@ -760,6 +770,8 @@ class TeacherTeamService:
                 self._session.add(member)
                 self._session.flush()
         except IntegrityError as exc:
+            if constraint_name(exc) != _PAIR_CONSTRAINT:
+                raise
             raise TeamStateError("This account already has a place on this team") from exc
         return member
 
@@ -799,6 +811,7 @@ class TeacherTeamStore:
 
 __all__ = [
     "LIVE_PLAN_STATUSES",
+    "MAX_ASSISTANT_INVITE_TTL",
     "MAX_LIVE_ASSISTANT_INVITES",
     "SEAT_ACTIONS_OFF_BY_DEFAULT",
     "TEACHER_AUDIENCE",
@@ -806,6 +819,7 @@ __all__ = [
     "AssistantInviteNotFound",
     "AssistantInviteRedeemed",
     "InvalidCap",
+    "InvalidInviteExpiry",
     "InvalidPermissions",
     "InvalidScope",
     "NoFreeSeat",
