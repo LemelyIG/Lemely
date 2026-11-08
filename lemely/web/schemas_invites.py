@@ -70,8 +70,9 @@ class InvitePreviewDTO(ApiModel):
     display name, or ``"your child"`` when blank (never their email or id,
     the identical disclosure discipline the other three fields already carry).
 
-    ``role="assistant"`` previews a teacher's assistant invite; it carries no other
-    field. It is redeemed through the team route, not ``RedeemInviteResponseDTO``.
+    ``role="assistant"`` previews a teacher's assistant invite; it names only the lead
+    teacher (``teacherName``) and carries no school, class or child field. It is
+    redeemed through the team route, not ``RedeemInviteResponseDTO``.
     """
 
     role: Literal["student", "teacher", "parent", "assistant"]

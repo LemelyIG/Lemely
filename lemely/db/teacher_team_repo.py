@@ -45,12 +45,24 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 
 from lemely.core.metered_actions import SEAT_ACTIONS, MeteredAction
-from lemely.db.models import ClassEnrollment, PlanTier, SchoolClass, Subject, Subscription, User
+from lemely.core.team_permissions import UnknownPermissionError, validate_overrides
+from lemely.db.invite_codes import generate_invite_code
+from lemely.db.models import (
+    ClassEnrollment,
+    Invite,
+    PlanTier,
+    SchoolClass,
+    Subject,
+    Subscription,
+    User,
+)
 from lemely.db.models.billing import PlanAudience
-from lemely.db.models.enums import SubscriptionStatus
+from lemely.db.models.enums import InviteRole, Role, SubscriptionStatus
 from lemely.db.models.team import (
+    AssistantRole,
     CapPeriod,
     TeacherMember,
     TeacherMemberKind,
@@ -59,7 +71,7 @@ from lemely.db.models.team import (
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
 
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -70,6 +82,11 @@ TEACHER_AUDIENCE: Final = PlanAudience.teacher
 """``plan_tiers.audience`` of a teacher tier (Phase 02)."""
 
 _HELD: Final = (TeacherMemberStatus.active, TeacherMemberStatus.leaving)
+
+MAX_LIVE_ASSISTANT_INVITES: Final = 20
+"""Cap on a teacher's live (unexpired, unredeemed) assistant invites, as for parent links."""
+
+_INVITE_CODE_ATTEMPTS: Final = 8
 
 SEAT_ACTIONS_OFF_BY_DEFAULT: Final = frozenset({MeteredAction.STUDY_PLAN})
 """Seat actions a teacher turns on per seat (spec §2.2: study plans are off by default)."""
@@ -104,6 +121,14 @@ class InvalidCap(TeamError):
     """A cap is negative (→ 422)."""
 
 
+class NotATeacher(TeamStateError):
+    """The account is not a teacher, so it cannot lead or join a team as an assistant (→ 403).
+
+    A :class:`TeamStateError` subclass: a caller that handles only the base class still
+    refuses the request, as a 409.
+    """
+
+
 class InvalidPermissions(TeamError):
     """Permission toggles name something that is not a team permission (→ 422)."""
 
@@ -123,6 +148,16 @@ class AssistantInviteLimitError(TeamError):
 def _require_aware(value: datetime, name: str) -> None:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{name} must be timezone-aware")
+
+
+_INVITE_CODE_CONSTRAINT: Final = "ix_invites_code"
+
+
+def _constraint_name(exc: IntegrityError) -> str | None:
+    """Best-effort constraint name off a psycopg ``IntegrityError``."""
+    diag = getattr(getattr(exc, "orig", None), "diag", None)
+    name = getattr(diag, "constraint_name", None)
+    return str(name) if name is not None else None
 
 
 def month_end(now: datetime) -> datetime:
@@ -399,6 +434,265 @@ class TeacherTeamService:
         ).all()
         return len(released)
 
+    # -- Assistants ------------------------------------------------------------------
+
+    def create_assistant_invite(
+        self, teacher_user_id: uuid.UUID, *, role: AssistantRole, expires_at: datetime
+    ) -> Invite:
+        """Mint a single-use, expiring assistant invite for the teacher's team (spec §4.4).
+
+        Only a teacher account leads a team, so only a teacher can mint. The mint is
+        serialised per teacher by a lock on the teacher's ``users`` row, so the
+        live-invite cap holds under concurrent mints. The lock is ``FOR NO KEY UPDATE``:
+        it queues other mints but not the foreign-key checks of unrelated inserts.
+
+        Raises:
+            ValueError: ``expires_at`` is naive.
+            NotATeacher: ``teacher_user_id`` is not a teacher account.
+            AssistantInviteLimitError: The teacher holds the most live invites allowed.
+            TeamError: No unique code after several attempts (astronomically unlikely).
+        """
+        _require_aware(expires_at, "expires_at")
+        lead_role = self._session.scalar(
+            select(User.role).where(User.id == teacher_user_id).with_for_update(key_share=True)
+        )
+        if lead_role is not Role.teacher:
+            raise NotATeacher("Only a teacher account can invite assistants")
+        live = self._session.scalar(
+            select(func.count())
+            .select_from(Invite)
+            .where(
+                Invite.team_teacher_id == teacher_user_id,
+                Invite.redeemed_by.is_(None),
+                Invite.expires_at > func.now(),
+            )
+        )
+        if int(live or 0) >= MAX_LIVE_ASSISTANT_INVITES:
+            raise AssistantInviteLimitError(
+                f"A teacher may hold at most {MAX_LIVE_ASSISTANT_INVITES} live assistant invites"
+            )
+        for _ in range(_INVITE_CODE_ATTEMPTS):
+            invite = Invite(
+                code=generate_invite_code(),
+                role=InviteRole.assistant,
+                created_by=teacher_user_id,
+                team_teacher_id=teacher_user_id,
+                assistant_role=AssistantRole(role),
+                expires_at=expires_at,
+                reusable=False,
+            )
+            try:
+                with self._session.begin_nested():
+                    self._session.add(invite)
+                    self._session.flush()
+            except IntegrityError as exc:
+                if _constraint_name(exc) != _INVITE_CODE_CONSTRAINT:
+                    raise
+                continue
+            return invite
+        raise TeamError("Could not generate a unique invite code; please retry")
+
+    def redeem_assistant_invite(
+        self, *, code: str, user_id: uuid.UUID, now: datetime
+    ) -> TeacherMember:
+        """Attach ``user_id`` to the invite's teacher as an assistant (spec §2.3).
+
+        The invite row is locked first, so two redemptions of one code serialise and the
+        second sees it consumed. An invite is consumed exactly once. Replaying it by the
+        same user returns their active row untouched (role and toggles kept). A replay
+        after the assistant was removed is refused: the invite is spent, and only a new
+        one brings them back. A removed assistant who redeems a fresh invite has the
+        same row reactivated (UPDATE, never a second row) with the invite's role and no
+        toggles. Nothing is consumed when a check below refuses.
+
+        Raises:
+            ValueError: ``now`` is naive.
+            AssistantInviteNotFound: No unexpired assistant invite has ``code``.
+            AssistantInviteRedeemed: The invite was already used (by anyone), and the
+                caller is not its redeemer with an active assistant row.
+            NotATeacher: The redeemer is not a teacher account.
+            TeamStateError: The redeemer is the lead teacher, or already holds a seat or
+                an assistant row (live) with them.
+        """
+        _require_aware(now, "now")
+        invite = self._session.scalars(
+            select(Invite).where(Invite.code == code).with_for_update()
+        ).first()
+        if (
+            invite is None
+            or invite.role is not InviteRole.assistant
+            or invite.team_teacher_id is None
+            or invite.assistant_role is None
+            or (invite.expires_at is not None and invite.expires_at <= now)
+        ):
+            raise AssistantInviteNotFound("Unknown assistant invite")
+        teacher_id = invite.team_teacher_id
+        if invite.redeemed_by is not None:
+            if invite.redeemed_by == user_id:
+                member = self._member_row(teacher_id, user_id, lock=True)
+                if (
+                    member is not None
+                    and member.kind is TeacherMemberKind.assistant
+                    and member.status is TeacherMemberStatus.active
+                ):
+                    return member
+            raise AssistantInviteRedeemed("This assistant invite has already been used")
+        if teacher_id == user_id:
+            raise TeamStateError("A teacher cannot be their own assistant")
+        redeemer_role = self._session.scalar(select(User.role).where(User.id == user_id))
+        if redeemer_role is not Role.teacher:
+            raise NotATeacher("Only a teacher account can be an assistant")
+        member = self._member_row(teacher_id, user_id, lock=True)
+        if member is not None and member.kind is not TeacherMemberKind.assistant:
+            raise TeamStateError("This account already holds a seat with this teacher")
+        if member is not None and member.status is not TeacherMemberStatus.removed:
+            raise TeamStateError("This account already assists this teacher")
+        if member is None:
+            member = self._insert_assistant(teacher_id, user_id, invite.assistant_role)
+        else:
+            member.status = TeacherMemberStatus.active
+            member.leaves_at = None
+            member.role_preset = invite.assistant_role
+            member.permissions = {}
+            member.cap_units = None
+            member.cap_period = CapPeriod.month
+        invite.redeemed_by = user_id
+        invite.redeemed_at = now
+        self._session.flush()
+        return member
+
+    def list_assistant_invites(self, teacher_user_id: uuid.UUID, *, now: datetime) -> list[Invite]:
+        """Return the teacher's unredeemed, unexpired assistant invites, oldest first.
+
+        Raises:
+            ValueError: ``now`` is naive.
+        """
+        _require_aware(now, "now")
+        stmt = (
+            select(Invite)
+            .where(
+                Invite.team_teacher_id == teacher_user_id,
+                Invite.redeemed_by.is_(None),
+                Invite.expires_at > now,
+            )
+            .order_by(Invite.created_at, Invite.id)
+        )
+        return list(self._session.scalars(stmt))
+
+    def revoke_assistant_invite(self, teacher_user_id: uuid.UUID, invite_id: uuid.UUID) -> None:
+        """Delete the teacher's own unredeemed assistant invite (index R3).
+
+        Locks the invite row, so a revoke racing a redemption of the same code ends with
+        exactly one of them winning.
+
+        Raises:
+            AssistantInviteNotFound: Unknown, another teacher's, or already redeemed;
+                one answer for all three.
+        """
+        invite = self._session.scalars(
+            select(Invite)
+            .where(
+                Invite.id == invite_id,
+                Invite.team_teacher_id == teacher_user_id,
+                Invite.redeemed_by.is_(None),
+            )
+            .with_for_update()
+        ).first()
+        if invite is None:
+            raise AssistantInviteNotFound(f"Unknown assistant invite: {invite_id}")
+        self._session.delete(invite)
+        self._session.flush()
+
+    def assistant_membership(
+        self, assistant_user_id: uuid.UUID, teacher_user_id: uuid.UUID
+    ) -> TeacherMember | None:
+        """Return the active assistant row linking the two accounts, or ``None``."""
+        stmt = select(TeacherMember).where(
+            TeacherMember.teacher_user_id == teacher_user_id,
+            TeacherMember.member_user_id == assistant_user_id,
+            TeacherMember.kind == TeacherMemberKind.assistant,
+            TeacherMember.status == TeacherMemberStatus.active,
+        )
+        return self._session.scalars(stmt).first()
+
+    def memberships_for_assistant(self, assistant_user_id: uuid.UUID) -> list[TeacherMember]:
+        """Return every team the account actively assists, oldest first."""
+        stmt = (
+            select(TeacherMember)
+            .where(
+                TeacherMember.member_user_id == assistant_user_id,
+                TeacherMember.kind == TeacherMemberKind.assistant,
+                TeacherMember.status == TeacherMemberStatus.active,
+            )
+            .order_by(TeacherMember.created_at, TeacherMember.id)
+        )
+        return list(self._session.scalars(stmt))
+
+    def list_assistants(self, teacher_user_id: uuid.UUID) -> list[TeacherMember]:
+        """Return the teacher's active assistants, oldest first."""
+        stmt = (
+            select(TeacherMember)
+            .where(
+                TeacherMember.teacher_user_id == teacher_user_id,
+                TeacherMember.kind == TeacherMemberKind.assistant,
+                TeacherMember.status == TeacherMemberStatus.active,
+            )
+            .order_by(TeacherMember.created_at, TeacherMember.id)
+        )
+        return list(self._session.scalars(stmt))
+
+    def update_assistant(
+        self,
+        member_id: uuid.UUID,
+        *,
+        role: AssistantRole | None,
+        permissions: Mapping[str, object] | None,
+    ) -> TeacherMember:
+        """Change an assistant's role preset and/or toggles; ``None`` leaves a field as is.
+
+        ``permissions`` replaces the stored overrides (``{}`` clears them). It is checked
+        by :func:`~lemely.core.team_permissions.validate_overrides` before anything is
+        written, so a refused toggle leaves the role unchanged too. Billing, seats and
+        assistants are not team permissions, so no toggle can name them.
+
+        Raises:
+            TeamMemberNotFound: No such member.
+            TeamStateError: The member is a seat or removed.
+            InvalidPermissions: A toggle is not a team permission or not a bool.
+        """
+        member = self._locked_member(member_id)
+        if (
+            member.kind is not TeacherMemberKind.assistant
+            or member.status is TeacherMemberStatus.removed
+        ):
+            raise TeamStateError("Only an active assistant has a role")
+        if permissions is not None:
+            try:
+                member.permissions = validate_overrides(permissions)
+            except UnknownPermissionError as exc:
+                raise InvalidPermissions(str(exc)) from exc
+        if role is not None:
+            member.role_preset = AssistantRole(role)
+        self._session.flush()
+        return member
+
+    def remove_assistant(self, member_id: uuid.UUID) -> None:
+        """Remove an assistant at once (no month-end period; assistants have no allowance).
+
+        Raises:
+            TeamMemberNotFound: No such member.
+            TeamStateError: The member is a seat or already removed.
+        """
+        member = self._locked_member(member_id)
+        if (
+            member.kind is not TeacherMemberKind.assistant
+            or member.status is TeacherMemberStatus.removed
+        ):
+            raise TeamStateError("Only an active assistant can be removed this way")
+        member.status = TeacherMemberStatus.removed
+        member.leaves_at = None
+        self._session.flush()
+
     # -- Internals ---------------------------------------------------------------
 
     def _capacity(self, teacher_user_id: uuid.UUID, *, lock: bool) -> int:
@@ -442,6 +736,33 @@ class TeacherTeamService:
             raise TeamMemberNotFound(f"Unknown team member: {member_id}")
         return member
 
+    def _insert_assistant(
+        self, teacher_user_id: uuid.UUID, member_user_id: uuid.UUID, role: AssistantRole
+    ) -> TeacherMember:
+        """Insert the pair's first row as an assistant.
+
+        The pair row is unique, so a concurrent redemption of a second invite by the same
+        user (no row existed to lock) ends in a constraint violation here; it is reported
+        as the state error it is, and the caller's transaction rolls the invite back.
+        """
+        member = TeacherMember(
+            teacher_user_id=teacher_user_id,
+            member_user_id=member_user_id,
+            kind=TeacherMemberKind.assistant,
+            role_preset=role,
+            permissions={},
+            cap_units=None,
+            cap_period=CapPeriod.month,
+            status=TeacherMemberStatus.active,
+        )
+        try:
+            with self._session.begin_nested():
+                self._session.add(member)
+                self._session.flush()
+        except IntegrityError as exc:
+            raise TeamStateError("This account already has a place on this team") from exc
+        return member
+
     def _joined_subjects(
         self, student_user_id: uuid.UUID, teacher_user_id: uuid.UUID, *, also: str | None
     ) -> list[str]:
@@ -478,6 +799,7 @@ class TeacherTeamStore:
 
 __all__ = [
     "LIVE_PLAN_STATUSES",
+    "MAX_LIVE_ASSISTANT_INVITES",
     "SEAT_ACTIONS_OFF_BY_DEFAULT",
     "TEACHER_AUDIENCE",
     "AssistantInviteLimitError",
@@ -487,6 +809,7 @@ __all__ = [
     "InvalidPermissions",
     "InvalidScope",
     "NoFreeSeat",
+    "NotATeacher",
     "TeacherTeamService",
     "TeacherTeamStore",
     "TeamError",

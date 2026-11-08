@@ -91,7 +91,6 @@ who it links to in one row.
 
 from __future__ import annotations
 
-import secrets
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -106,6 +105,7 @@ from lemely.db.class_repo import (
     ClassService,
     JoinCodeError,
 )
+from lemely.db.invite_codes import generate_invite_code
 from lemely.db.models import Invite, School, SchoolClass, SchoolMembership, Seat, User
 from lemely.db.models.enums import InviteRole, MembershipRole, Role, SeatStatus
 from lemely.db.parent_repo import MAX_LINKED_PARENTS, ParentLimitReachedError
@@ -185,14 +185,6 @@ class InviteRoleMismatchError(InviteError):
     """
 
 
-# Alphabet excludes visually-ambiguous characters (0/O, 1/I/L), mirroring
-# `class_repo._JOIN_CODE_ALPHABET` for the same reason: a holder must be able
-# to reliably transcribe a code read off a screen or a slip of paper. The
-# length differs from a class join code's on purpose, so the two families
-# read as visually distinct even though `preview`/`redeem` accept either
-# interchangeably.
-_INVITE_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-_INVITE_CODE_LENGTH = 10
 _INVITE_CODE_MAX_ATTEMPTS = 8
 
 #: Name of the partial unique index `Invite.__table_args__` declares on
@@ -941,6 +933,8 @@ class InviteService:
                 class_name = cls.name
                 teacher_name = self._teacher_name(session, cls.teacher_id)
                 school_name = school_name or self._school_name(session, cls.school_id)
+        if invite.team_teacher_id is not None:
+            teacher_name = self._teacher_name(session, invite.team_teacher_id)
         return InvitePreview(
             role=invite.role,
             school_name=school_name,
@@ -1064,7 +1058,7 @@ class InviteService:
         """
         for _ in range(_INVITE_CODE_MAX_ATTEMPTS):
             invite = Invite(
-                code=_generate_invite_code(),
+                code=generate_invite_code(),
                 role=role,
                 created_by=created_by,
                 school_id=school_id,
@@ -1086,11 +1080,6 @@ class InviteService:
                 continue
             return invite
         raise InviteError("Could not generate a unique invite code; please retry")
-
-
-def _generate_invite_code() -> str:
-    """Generate a random invite code from a non-ambiguous alphabet."""
-    return "".join(secrets.choice(_INVITE_CODE_ALPHABET) for _ in range(_INVITE_CODE_LENGTH))
 
 
 def _is_reusable_child_violation(exc: IntegrityError) -> bool:
