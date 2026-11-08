@@ -332,7 +332,8 @@ def test_an_inquiry_answer_for_another_payment_is_refused(
     """A's inquiry returning B's success must neither pay A nor use up B's transaction event."""
     sm = migrated_sessionmaker
     a = _due_payment(sm, age=timedelta(minutes=20))
-    b = _due_payment(sm, age=timedelta(minutes=5))  # not due: only A is inquired
+    # Not due: only A is inquired. B carries the Paymob order its own callback names.
+    b = _due_payment(sm, age=timedelta(minutes=5), paymob_order_id=265715202)
     b_success = transaction_obj(merchant_order_id=str(b))
     client = FakePaymobClient()
     client.inquiry_response = b_success
@@ -481,7 +482,7 @@ def test_a_stuck_payment_is_still_paid_by_a_late_callback(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:
     sm = migrated_sessionmaker
-    pid = _due_payment(sm, age=RECONCILE_STUCK_AFTER)
+    pid = _due_payment(sm, age=RECONCILE_STUCK_AFTER, paymob_order_id=265715202)
     client = FakePaymobClient()
     client.inquiry_response = PaymobError("down", status_code=503)
     _reconcile(sm, client)
@@ -538,11 +539,11 @@ def test_reconcile_locks_the_payment_before_recording_its_event(
     ) -> None:
         statements.append(statement)
 
-    # ``_payment_for_reference`` would lock the row a second time; reconcile already holds it.
-    def forbidden(self: BillingService, reference: object) -> Payment | None:
-        raise AssertionError("reconcile must not look the payment up by reference again")
+    # ``_payment_for_callback`` would lock the row a second time; reconcile already holds it.
+    def forbidden(self: BillingService, obj: object, order_map: object) -> Payment | None:
+        raise AssertionError("reconcile must not look the payment up by order again")
 
-    monkeypatch.setattr(BillingService, "_payment_for_reference", forbidden)
+    monkeypatch.setattr(BillingService, "_payment_for_callback", forbidden)
     with sm() as session:
         bind = session.get_bind()
         assert isinstance(bind, sa.engine.Engine)

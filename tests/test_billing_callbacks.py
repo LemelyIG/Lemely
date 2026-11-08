@@ -101,7 +101,7 @@ def test_a_successful_callback_marks_paid_and_grants_once(
     assert grant.owner_user_id == payer
     assert grant.units == 100
     (event,) = _events(sm)
-    assert event.dedupe_key == "txn:192036465:s1p0v0r0:0"
+    assert event.dedupe_key == "txn:192036465:s1p0v0r0"
     assert event.processed_at == FIXED_NOW
 
 
@@ -193,6 +193,76 @@ def test_an_unknown_reference_is_recorded_and_ignored(
     _apply(sm, transaction_obj(merchant_order_id=reference))
     assert _payment(sm, pid).status is PaymentStatus.created
     assert len(_events(sm)) == 1
+
+
+def test_the_dedupe_key_holds_signed_fields_only() -> None:
+    """refunded_amount_cents and the merchant reference sit outside the HMAC."""
+    base = transaction_obj(merchant_order_id="a")
+    edited = transaction_obj(merchant_order_id="b", refunded_amount_cents=777)
+    assert billing_repo.transaction_dedupe_key(base) == billing_repo.transaction_dedupe_key(edited)
+
+
+def test_a_reference_that_disagrees_with_the_signed_order_pays_nothing(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The signed order.id names X1; the unsigned reference names X2: neither moves."""
+    sm = migrated_sessionmaker
+    payer = seed_user(sm)
+    pack = seed_pack(sm)
+    x1 = seed_payment(sm, payer=payer, beneficiary=payer, pack_id=pack, paymob_order_id=265715202)
+    x2 = seed_payment(sm, payer=payer, beneficiary=payer, pack_id=pack, paymob_order_id=111)
+    _apply(sm, transaction_obj(merchant_order_id=str(x2), order_id=265715202))
+    assert _payment(sm, x1).status is PaymentStatus.created
+    assert _payment(sm, x2).status is PaymentStatus.created
+    assert _grants(sm, x1) == [] and _grants(sm, x2) == []
+    # The audit row does not use up the key X1's genuine callback needs.
+    (event,) = _events(sm)
+    assert event.dedupe_key == "unmatched:192036465"
+    _apply(sm, transaction_obj(merchant_order_id=str(x1), order_id=265715202))
+    assert _payment(sm, x1).status is PaymentStatus.paid
+    assert _payment(sm, x2).status is PaymentStatus.created
+    assert len(_grants(sm, x1)) == 1 and _grants(sm, x2) == []
+
+
+def test_a_callback_is_matched_by_the_signed_order_not_the_reference(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), order_id=999))
+    assert _payment(sm, pid).status is PaymentStatus.created
+    assert _grants(sm, pid) == []
+
+
+def test_a_payment_without_a_paymob_order_ignores_a_callback(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    payer = seed_user(sm)
+    pid = seed_payment(sm, payer=payer, beneficiary=payer, pack_id=seed_pack(sm))
+    _apply(sm, transaction_obj(merchant_order_id=str(pid)))
+    assert _payment(sm, pid).status is PaymentStatus.created
+    assert _grants(sm, pid) == []
+
+
+def test_a_refund_total_that_grows_is_applied_through_the_same_dedupe_key(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The refunded amount is state, not identity: the second, larger total still lands."""
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid)))
+    for amount in (4000, 4000, 10000, 4000):
+        _apply(
+            sm,
+            transaction_obj(
+                merchant_order_id=str(pid), is_refunded=True, refunded_amount_cents=amount
+            ),
+        )
+    payment = _payment(sm, pid)
+    assert payment.status is PaymentStatus.refunded
+    assert (payment.last_callback or {})["refunded_amount_cents"] == 10000
+    assert len(_events(sm)) == 2  # the payment and its refund state, however often resent
 
 
 def test_refund_and_void_flags_on_a_paid_payment(
@@ -297,13 +367,74 @@ def test_a_token_callback_stores_the_card_encrypted_for_the_payer(
     assert "tok-secret-123" not in str(event.payload)
 
 
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"token": "short"},
+        {"token": "has space in it 12345"},
+        {"token": "x" * 513},
+        {"masked_pan": "4569876truefalse"},
+        {"masked_pan": "12345"},
+        {"masked_pan": "x" * 24},
+        {"card_subtype": "10000"},
+        {"card_subtype": ""},
+        {"card_subtype": "MasterCard2"},
+        {"card_subtype": "A" * 21},
+        {"created_at": ""},
+        {"created_at": "not-a-date"},
+        {"created_at": "10000"},
+        {"created_at": None},
+        {"token_id": "abc"},
+        {"order_id": "abc"},
+    ],
+)
+def test_a_token_callback_of_the_wrong_shape_is_malformed(
+    migrated_sessionmaker: sessionmaker[Session], overrides: dict[str, Any]
+) -> None:
+    sm = migrated_sessionmaker
+    seed_payment(
+        sm,
+        payer=seed_user(sm),
+        beneficiary=seed_user(sm),
+        pack_id=seed_pack(sm),
+        paymob_order_id=265715202,
+    )
+    obj = token_obj()
+    mapping = {"token_id": "id"}
+    for key, value in overrides.items():
+        obj[mapping.get(key, key)] = value
+    with pytest.raises(MalformedCallback):
+        _apply_token(sm, obj)
+    assert _cards(sm) == []
+    assert _events(sm) == []
+
+
+@pytest.mark.parametrize(
+    "subtype", ["MasterCard", "Visa", "Meeza", "Amex", "American Express", "Discover"]
+)
+def test_real_card_brands_are_accepted(
+    migrated_sessionmaker: sessionmaker[Session], subtype: str
+) -> None:
+    sm = migrated_sessionmaker
+    seed_payment(
+        sm,
+        payer=seed_user(sm),
+        beneficiary=seed_user(sm),
+        pack_id=seed_pack(sm),
+        paymob_order_id=265715202,
+    )
+    _apply_token(sm, token_obj(card_subtype=subtype))
+    (card,) = _cards(sm)
+    assert card.brand == subtype
+
+
 def test_the_same_card_twice_refreshes_one_row(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:
     sm = migrated_sessionmaker
     _setup(sm)
-    _apply_token(sm, token_obj(token_id=1, token="tok-a", masked_pan="xxxx-xxxx-xxxx-1111"))
-    _apply_token(sm, token_obj(token_id=2, token="tok-a", masked_pan="xxxx-xxxx-xxxx-2222"))
+    _apply_token(sm, token_obj(token_id=1, token="tok-card-a", masked_pan="xxxx-xxxx-xxxx-1111"))
+    _apply_token(sm, token_obj(token_id=2, token="tok-card-a", masked_pan="xxxx-xxxx-xxxx-2222"))
     (card,) = _cards(sm)
     assert card.masked_pan == "xxxx-xxxx-xxxx-2222"
     assert card.paymob_token_id == 2
@@ -519,9 +650,9 @@ def test_the_same_card_for_the_same_user_keeps_a_stable_fingerprint(
 ) -> None:
     sm = migrated_sessionmaker
     _setup(sm)
-    _apply_token(sm, token_obj(token_id=1, token="tok-a"))
+    _apply_token(sm, token_obj(token_id=1, token="tok-card-a"))
     first = _cards(sm)[0].token_fingerprint
-    _apply_token(sm, token_obj(token_id=2, token="tok-a"))
+    _apply_token(sm, token_obj(token_id=2, token="tok-card-a"))
     (card,) = _cards(sm)
     assert card.token_fingerprint == first
 

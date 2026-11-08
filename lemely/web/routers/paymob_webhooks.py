@@ -13,7 +13,8 @@ HMAC is in the query string for both. Order of operations:
 4. Verified -> one ``sessionmaker.begin()`` transaction applies it; the 200 is
    sent only after that commits. Duplicates and unknown references are 200
    no-ops inside :class:`BillingService`, so Paymob stops retrying them. A
-   callback the service rejects as malformed is 400. Any other failure rolls the
+   callback the service rejects as malformed (including a TOKEN body whose fields
+   have the wrong shape) is 400, logged at error level. Any other failure rolls the
    transaction back and answers 500, so Paymob retries; the log line carries the
    exception type only, never its message (a driver error can echo parameters).
 
@@ -22,8 +23,10 @@ with 200 and ignored: no state changes, so no verification is needed.
 
 PUBLIC by necessity: Paymob holds no Lemely token. Authenticity is the HMAC
 alone (Paymob publishes no source IPs). Not rate-limited: a limiter keyed by IP
-would throttle Paymob itself. The raw body, card tokens and the received HMAC
-are never logged.
+would throttle Paymob itself. This application never logs the raw body, card tokens
+or the received HMAC. The HMAC is a query parameter, so it does appear in the access
+logs of uvicorn and Cloud Run; it signs one finished transaction and grants nothing
+that the callback itself would not.
 """
 
 from __future__ import annotations
@@ -133,6 +136,14 @@ def paymob_transaction_callback(
             else:
                 service.apply_token_callback(obj)
     except MalformedCallback as exc:
+        # Signed yet malformed: a re-split signature, or a Paymob format change. Worth a
+        # human look, so error level, with the type and a truncated id only.
+        log.error(
+            "paymob_callback_malformed",
+            callback_type=kind,
+            obj_id=str(obj.get("id"))[:40],
+            reason=str(exc)[:120],
+        )
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     except Exception as exc:
         # sm.begin() has rolled back. Answer 5xx so Paymob retries; never a 200 for

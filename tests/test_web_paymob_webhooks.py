@@ -21,12 +21,18 @@ from lemely.db.models.billing import (
     SavedCard,
 )
 from lemely.db.models.usage import UsageGrant
+from lemely.io.paymob.hmac import (
+    token_hmac_message,
+    transaction_hmac_message,
+    verify_token_hmac,
+)
 from lemely.runtime.config import PaymobSettings, Settings
 from lemely.web import create_app
 from lemely.web.deps import get_settings
 from lemely.web.deps_billing import get_billing_sessionmaker, get_paymob_client
 from tests.paymob_fixtures import (
     PAYMOB_SETTINGS,
+    TEST_HMAC_SECRET,
     FakePaymobClient,
     seed_pack,
     seed_payment,
@@ -385,3 +391,142 @@ def test_a_failed_attempt_leaves_the_retry_free_to_apply(
     assert _post(http, transaction_callback(obj), signature).status_code == 200
     assert _status(sm, pid) is PaymentStatus.paid
     assert _count(sm, UsageGrant) == 1
+
+
+# -- forged identity: a signature re-pointed at someone else's payment -------------
+
+
+def _two_payments(sm: sessionmaker[Session]) -> tuple[uuid.UUID, uuid.UUID]:
+    """X1 (the attacker's, Paymob order 265715202) and X2 (a victim's, order 111)."""
+    pack = seed_pack(sm)
+    attacker = seed_user(sm)
+    victim = seed_user(sm)
+    x1 = seed_payment(
+        sm, payer=attacker, beneficiary=attacker, pack_id=pack, paymob_order_id=265715202
+    )
+    x2 = seed_payment(sm, payer=victim, beneficiary=victim, pack_id=pack, paymob_order_id=111)
+    return x1, x2
+
+
+def test_a_signed_callback_re_pointed_at_another_payment_changes_nothing(
+    client: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    """merchant_order_id and refunded_amount_cents are not under the HMAC.
+
+    The payer of X1 holds a genuine signature for X1's transaction. Editing the
+    unsigned reference to X2 must neither pay X2 nor use up the event X1 needs.
+    """
+    sm = migrated_sessionmaker
+    x1, x2 = _two_payments(sm)
+    genuine = transaction_obj(merchant_order_id=str(x1), order_id=265715202)
+    signature = sign_transaction(genuine)
+    forged = transaction_obj(merchant_order_id=str(x2), order_id=265715202, refunded_amount_cents=7)
+    assert sign_transaction(forged) == signature  # the edits really are outside the signature
+
+    with capture_logs() as logs:
+        response = _post(client, transaction_callback(forged), signature)
+    assert response.status_code == 200  # nothing for Paymob to retry
+    assert any(e["log_level"] == "error" for e in logs)
+    assert _status(sm, x2) is PaymentStatus.created
+    assert _status(sm, x1) is PaymentStatus.created
+    assert _count(sm, UsageGrant) == 0
+
+    # The genuine callback still settles X1, exactly once, and X2 stays untouched.
+    assert _post(client, transaction_callback(genuine), signature).status_code == 200
+    assert _status(sm, x1) is PaymentStatus.paid
+    assert _status(sm, x2) is PaymentStatus.created
+    with sm() as session:
+        grants = session.scalars(sa.select(UsageGrant)).all()
+    assert [g.payment_id for g in grants] == [x1]
+
+
+def test_an_unsigned_refund_amount_neither_dedupes_nor_re_applies(
+    client: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    sm = migrated_sessionmaker
+    pid = _payment(sm)
+    genuine = transaction_obj(merchant_order_id=str(pid))
+    signature = sign_transaction(genuine)
+    assert _post(client, transaction_callback(genuine), signature).status_code == 200
+    tampered = {**genuine, "refunded_amount_cents": 9999}
+    assert _post(client, transaction_callback(tampered), signature).status_code == 200
+    assert _count(sm, PaymobEvent) == 1
+    assert _status(sm, pid) is PaymentStatus.paid
+    assert _count(sm, UsageGrant) == 1
+
+
+def test_a_callback_for_a_payment_with_no_paymob_order_is_left_to_reconciliation(
+    client: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    sm = migrated_sessionmaker
+    payer = seed_user(sm)
+    pid = seed_payment(sm, payer=payer, beneficiary=payer, pack_id=seed_pack(sm))
+    obj = transaction_obj(merchant_order_id=str(pid))
+    assert _post(client, transaction_callback(obj), sign_transaction(obj)).status_code == 200
+    assert _status(sm, pid) is PaymentStatus.created
+    assert _count(sm, UsageGrant) == 0
+
+
+# -- forged shape: a transaction signature re-split into a TOKEN body ---------------
+
+
+def _resplit_as_token(txn_obj: dict[str, Any]) -> dict[str, Any]:
+    """A TOKEN obj whose signed string equals the transaction's signed string.
+
+    Paymob concatenates the fields with no separator and ``type`` is unsigned, so the
+    transaction's 20 values can be cut into the token's 8 slots.
+    """
+    pieces = [
+        "10000",  # card_subtype
+        "2026-11-05T10:00:05.123456",  # created_at
+        "EGPfalsefalse",  # email
+        "192036465",  # id
+        "4569876truefalsefalsefalsetruefalse",  # masked_pan
+        "265715202",  # merchant_id
+        "302852",  # order_id
+        "false2346MasterCardcardtrue",  # token
+    ]
+    crafted = {
+        "card_subtype": pieces[0],
+        "created_at": pieces[1],
+        "email": pieces[2],
+        "id": int(pieces[3]),
+        "masked_pan": pieces[4],
+        "merchant_id": int(pieces[5]),
+        "order_id": pieces[6],
+        "token": pieces[7],
+    }
+    assert token_hmac_message(crafted) == transaction_hmac_message(txn_obj)
+    return crafted
+
+
+def test_a_transaction_signature_re_split_into_a_token_body_saves_no_card(
+    client: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    sm = migrated_sessionmaker
+    _payment(sm)
+    txn = transaction_obj()
+    signature = sign_transaction(txn)
+    crafted = _resplit_as_token(txn)
+    assert verify_token_hmac(crafted, signature, TEST_HMAC_SECRET)  # the HMAC alone passes it
+    with capture_logs() as logs:
+        response = _post(client, token_callback(crafted), signature)
+    assert response.status_code == 400
+    assert _count(sm, SavedCard) == 0
+    assert _count(sm, PaymobEvent) == 0
+    malformed = [e for e in logs if e["event"] == "paymob_callback_malformed"]
+    assert malformed
+    assert all(e["log_level"] == "error" for e in malformed)
+    assert signature not in json.dumps(logs, default=str)
+    assert crafted["token"] not in json.dumps(logs, default=str)
+
+
+def test_a_malformed_signed_callback_is_logged_with_type_and_id_only(client: TestClient) -> None:
+    obj = transaction_obj()
+    del obj["id"]
+    with capture_logs() as logs:
+        response = _post(client, transaction_callback(obj), sign_transaction(obj))
+    assert response.status_code == 400
+    (entry,) = [e for e in logs if e["event"] == "paymob_callback_malformed"]
+    assert entry["log_level"] == "error"
+    assert entry["callback_type"] == "TRANSACTION"

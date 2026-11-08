@@ -22,6 +22,7 @@ transaction back so Paymob retries and reconciliation tries again.
 from __future__ import annotations
 
 import calendar
+import re
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -232,12 +233,57 @@ def _flag(value: object) -> str:
 
 
 def transaction_dedupe_key(obj: JsonMap) -> str:
-    """Transaction id plus the state flags (spec §4.2): a new state is a new event."""
+    """Transaction id plus the state flags (spec §4.2): a new state is a new event.
+
+    Built from HMAC-signed fields only (``id``, ``success``, ``pending``, ``is_voided``,
+    ``is_refunded``). A key that held an unsigned field (``refunded_amount_cents``)
+    would let a replayed signature mint fresh keys at will. The refunded total is
+    state, not identity: see ``_apply_transaction``.
+    """
     return (
         f"txn:{obj.get('id')}:s{_flag(obj.get('success'))}p{_flag(obj.get('pending'))}"
         f"v{_flag(obj.get('is_voided'))}r{_flag(obj.get('is_refunded'))}"
-        f":{_as_int(obj.get('refunded_amount_cents')) or 0}"
     )
+
+
+# Shapes of a genuine TOKEN callback's fields (research 02 §2.2). The HMAC cannot vouch for
+# them: ``type`` is unsigned and Paymob joins the signed values with no separator, so a
+# transaction callback's signature can be re-split into a TOKEN body whose every slot
+# holds attacker-chosen text. A transaction's signed string begins with ``amount_cents``
+# (digits), so a real brand name (letters first) and an ISO ``created_at`` cannot both
+# appear in the slots they would have to occupy.
+_CARD_TOKEN_RE: Final = re.compile(r"[A-Za-z0-9_.:+/=~-]{8,512}")
+_MASKED_PAN_RE: Final = re.compile(r"[\dXx* -]{8,23}")
+_CARD_SUBTYPE_RE: Final = re.compile(r"[A-Za-z][A-Za-z ]{1,19}")
+
+
+def _validate_token_callback(obj: JsonMap) -> tuple[int, str]:
+    """The ``(token id, token)`` of a well-formed TOKEN ``obj``, else ``MalformedCallback``.
+
+    The messages name the field, never the value: they reach logs and the 400 body.
+    """
+    token_id = _as_int(obj.get("id"))
+    if token_id is None:
+        raise MalformedCallback("token callback has no integer id")
+    if _as_int(obj.get("order_id")) is None:
+        raise MalformedCallback("token callback has no integer order_id")
+    token = obj.get("token")
+    if not isinstance(token, str) or _CARD_TOKEN_RE.fullmatch(token) is None:
+        raise MalformedCallback("token callback has a malformed token")
+    masked_pan = obj.get("masked_pan")
+    if not isinstance(masked_pan, str) or _MASKED_PAN_RE.fullmatch(masked_pan) is None:
+        raise MalformedCallback("token callback has a malformed masked_pan")
+    subtype = obj.get("card_subtype")
+    if not isinstance(subtype, str) or _CARD_SUBTYPE_RE.fullmatch(subtype) is None:
+        raise MalformedCallback("token callback has a malformed card_subtype")
+    created_at = obj.get("created_at")
+    try:
+        if not isinstance(created_at, str) or not created_at:
+            raise ValueError("created_at is not a string")
+        datetime.fromisoformat(created_at)
+    except ValueError as exc:
+        raise MalformedCallback("token callback has a malformed created_at") from exc
+    return token_id, token
 
 
 def _is_token_key(key: object) -> bool:
@@ -653,12 +699,42 @@ class BillingService:
             is True
         )
 
-    def _payment_for_reference(self, reference: object) -> Payment | None:
-        if not isinstance(reference, str) or not reference:
-            return None
-        return self._session.scalars(
-            select(Payment).where(Payment.special_reference == reference).with_for_update()
-        ).one_or_none()
+    def _payment_for_callback(self, obj: JsonMap, order_map: JsonMap) -> Payment | None:
+        """The payment a callback is for, found by the *signed* ``order.id``, or ``None``.
+
+        ``order.merchant_order_id`` is not under the HMAC, so it cannot select the row:
+        anyone holding a genuine signature could edit it to point at another payment.
+        The signed Paymob order id (stored as ``paymob_order_id`` at checkout) selects the
+        row, and a reference that is present must then agree with it. A callback that
+        matches nothing is logged at error level and changes nothing; the reconcile
+        inquiry still reaches the payment from our side, which needs no ``order.id``.
+        """
+        order_id = _as_int(order_map.get("id"))
+        payment = (
+            self._session.scalars(
+                select(Payment).where(Payment.paymob_order_id == order_id).with_for_update()
+            ).one_or_none()
+            if order_id is not None
+            else None
+        )
+        if payment is not None and self._answers_for(payment, obj):
+            return payment
+        log.error(
+            "paymob_callback_unmatched",
+            reason="reference_mismatch" if payment is not None else "no_payment_for_order",
+            order_id=str(order_map.get("id"))[:32],
+            merchant_order_id=str(order_map.get("merchant_order_id"))[:64],
+            txn_id=_as_int(obj.get("id")),
+        )
+        return None
+
+    @staticmethod
+    def _is_child_transaction(obj: JsonMap) -> bool:
+        return (
+            _is_true(obj.get("is_refund"))
+            or _is_true(obj.get("is_void"))
+            or _is_true(obj.get("has_parent_transaction"))
+        )
 
     def _apply_transaction(
         self, obj: JsonMap, *, source: str, payment: Payment | None = None
@@ -678,23 +754,23 @@ class BillingService:
         # taking the event's unique-key row first here would deadlock against it. Every
         # path that touches both must follow payment-then-event.
         if payment is None:
-            payment = self._payment_for_reference(order_map.get("merchant_order_id"))
+            payment = self._payment_for_callback(obj, order_map)
+            if payment is None:
+                # An audit row under its own key: the key ``txn:<id>:...`` is the one the
+                # genuine callback for this transaction needs, and must stay free.
+                self._record_event(PaymobEventKind.transaction, f"unmatched:{txn_id}", safe)
+                return
+        child = self._is_child_transaction(obj)
         if not self._record_event(PaymobEventKind.transaction, transaction_dedupe_key(obj), safe):
             log.info("paymob_duplicate_transaction", txn_id=txn_id, source=source)
+            if not child and _is_true(obj.get("is_refunded")) and payment.status in _SETTLED:
+                # The refunded total is not signed, so it is not part of the key: a second,
+                # larger total arrives under the same one. Re-running the refund step is
+                # idempotent and monotonic (the largest total and the furthest status win),
+                # and it runs only for a callback that already passed the signed checks.
+                self._apply_post_payment_flags(payment, obj, safe, txn_id=txn_id)
             return
-        if payment is None:
-            log.warning(
-                "paymob_unknown_reference",
-                merchant_order_id=str(order_map.get("merchant_order_id"))[:64],
-                txn_id=txn_id,
-                source=source,
-            )
-            return
-        if (
-            _is_true(obj.get("is_refund"))
-            or _is_true(obj.get("is_void"))
-            or _is_true(obj.get("has_parent_transaction"))
-        ):
+        if child:
             # A refund/void child; the parent's own callback carries the state.
             log.info("paymob_child_transaction", payment_id=str(payment.id), txn_id=txn_id)
             return
@@ -830,10 +906,7 @@ class BillingService:
         Never commits. The token is sealed for, and fingerprinted under, the payer's
         user id (R22), and the stored event never holds the raw token.
         """
-        token_id = _as_int(obj.get("id"))
-        token = obj.get("token")
-        if token_id is None or not isinstance(token, str) or not token:
-            raise MalformedCallback("token callback lacks an id or a token")
+        token_id, token = _validate_token_callback(obj)
         payload = _redact_tokens({**dict(obj), "token": _REDACTED})
         dedupe_key = f"token:{token_id}:{obj.get('order_id')}"
         if not self._record_event(PaymobEventKind.token, dedupe_key, payload):
