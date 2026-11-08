@@ -22,12 +22,13 @@ order:
 3. the ledger: the owner advisory locks in ascending user-id order, then the grant
    rows in chain order (index R14, ``lemely.db.usage_ledger_repo``).
 
-Steps 1 and 2 are taken here. Step 3 is never taken here: a claim touches no ledger
-row, so it never issues a grant. The seat allowance on a claim is issued by Phase 05's
-``grant_seat_allowance_on_claim`` after the claim returns, in the same transaction,
-which puts it at step 3. That grant is a ``seat_allowance`` grant, which the ledger
-never uses to repay the student's own debt (index R13), and the seat's ``cap_units``
-and ``cap_period`` bound what the student may overflow into the teacher's credits.
+Steps 1 and 2 are taken here. Step 3 is not taken in this module's Phase 03 body: a
+claim touches no ledger row. Phase 05 (Task 10 Step 4) calls
+``grant_seat_allowance_on_claim`` inside ``claim_seat_for_class_join``, before each of
+its two returns, which puts the ledger locks at step 3 of the same transaction. That
+grant is a ``seat_allowance`` grant, which the ledger never uses to repay the student's
+own debt (index R13), and the seat's ``cap_units`` and ``cap_period`` bound what the
+student may overflow into the teacher's credits.
 ``set_scope``, ``set_cap`` and ``request_removal`` lock only the member row (step 2).
 ``release_due`` is one ``UPDATE`` and locks no subscription row: releasing a seat only
 ever frees capacity.
@@ -43,7 +44,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 
-from sqlalchemy import func, null, select, update
+from sqlalchemy import func, select, update
 
 from lemely.core.metered_actions import SEAT_ACTIONS, MeteredAction
 from lemely.db.models import ClassEnrollment, PlanTier, SchoolClass, Subject, Subscription, User
@@ -119,8 +120,18 @@ class AssistantInviteLimitError(TeamError):
     """The teacher already holds the most live assistant invites allowed (→ 409)."""
 
 
+def _require_aware(value: datetime, name: str) -> None:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"{name} must be timezone-aware")
+
+
 def month_end(now: datetime) -> datetime:
-    """Return the first instant of the UTC month after ``now`` (a seat's ``leaves_at``)."""
+    """Return the first instant of the UTC month after ``now`` (a seat's ``leaves_at``).
+
+    Raises:
+        ValueError: ``now`` is naive; a naive instant has no month in UTC.
+    """
+    _require_aware(now, "now")
     current = now.astimezone(UTC)
     if current.month == 12:
         return datetime(current.year + 1, 1, 1, tzinfo=UTC)
@@ -167,36 +178,36 @@ class TeacherTeamService:
         subject to the seat. A ``leaving`` seat stays ``leaving`` (the teacher's
         removal stands); a ``removed`` seat is reactivated with fresh defaults if a
         seat is free. The table keeps one row per (teacher, member) pair for ever, so a
-        reactivation, or a removed assistant becoming a seat, UPDATEs that row (status,
-        kind and column shape) and never inserts. The claim takes the locks of the
-        module docstring's steps 1 and 2 and issues no grant. ``now`` is the claim
-        instant, which Phase 05's seat-allowance-on-claim hook takes from the caller.
+        reactivation UPDATEs that row (status, scope, cap) and never inserts. The row
+        keeps its original ``created_at``, so a reactivated seat sorts as old as its
+        first claim in :meth:`seats_for_student`, which Phase 04's payer chain uses to
+        decide which seat pays first ("older seat pays first"). An assistant row, live
+        or removed, is never converted to a seat.
+
+        The claim takes the locks of the module docstring's steps 1 and 2 and issues
+        no grant itself. ``now`` is the claim instant, passed on to Phase 05's
+        seat-allowance-on-claim hook.
 
         Raises:
             NoFreeSeat: A new or reactivated seat would exceed the plan's seats.
-            TeamStateError: The class does not exist, the student is the class's own
-                teacher, or the pair is a live (non-removed) assistant.
+            TeamStateError: The class does not exist, belongs to a school (school
+                classes enrol through school seats, spec §2.8), the student is the
+                class's own teacher, or the pair is an assistant (live or removed).
         """
-        del now  # the claim is instant-independent; Phase 05 issues the allowance
+        del now  # the claim itself is instant-independent; Phase 05 adds the allowance
         cls = self._session.get(SchoolClass, class_id)
         if cls is None:
             raise TeamStateError(f"Unknown class: {class_id}")
+        if cls.school_id is not None:
+            raise TeamStateError("A school class enrols through school seats, not teacher seats")
         teacher_id = cls.teacher_id
         if student_user_id == teacher_id:
             raise TeamStateError("A teacher cannot take a seat in their own class")
         capacity = self._capacity(teacher_id, lock=True)
         existing = self._member_row(teacher_id, student_user_id, lock=True)
-        if (
-            existing is not None
-            and existing.kind is not TeacherMemberKind.student_seat
-            and existing.status is not TeacherMemberStatus.removed
-        ):
+        if existing is not None and existing.kind is not TeacherMemberKind.student_seat:
             raise TeamStateError("This account is already this teacher's assistant")
-        if (
-            existing is not None
-            and existing.kind is TeacherMemberKind.student_seat
-            and existing.status is not TeacherMemberStatus.removed
-        ):
+        if existing is not None and existing.status is not TeacherMemberStatus.removed:
             subject = cls.subject_code
             current = list(existing.scope_subjects or [])
             if subject is not None and subject not in current:
@@ -220,10 +231,7 @@ class TeacherTeamService:
             self._session.add(member)
         else:
             # One row per (teacher, member) pair, ever: reuse it, never INSERT a second.
-            # A removed assistant becomes a seat by changing the row's kind and column shape.
             member = existing
-            if member.kind is not TeacherMemberKind.student_seat:
-                self._convert_assistant_to_seat(member)
             member.status = TeacherMemberStatus.active
             member.leaves_at = None
             member.scope_subjects = subjects
@@ -373,7 +381,11 @@ class TeacherTeamService:
 
         Run by the ``seats.release_due`` sweeper job (registered in Phase 05). The
         current seat grant runs to its own expiry (spec §5.9).
+
+        Raises:
+            ValueError: ``now`` is naive.
         """
+        _require_aware(now, "now")
         released = self._session.scalars(
             update(TeacherMember)
             .where(
@@ -398,7 +410,11 @@ class TeacherTeamService:
                 Subscription.status.in_(LIVE_PLAN_STATUSES),
                 PlanTier.audience == TEACHER_AUDIENCE,
             )
-            .order_by(Subscription.created_at, Subscription.id)
+            .order_by(
+                Subscription.payer_user_id.is_(None),  # a paid row beats a manual one (R25)
+                Subscription.created_at,
+                Subscription.id,
+            )
             .limit(1)
         )
         if lock:
@@ -408,28 +424,6 @@ class TeacherTeamService:
             return 0
         extra, included = row
         return int(included or 0) + int(extra or 0)
-
-    def _convert_assistant_to_seat(self, member: TeacherMember) -> None:
-        """Change a removed assistant row into a seat row in one UPDATE.
-
-        ``permissions`` is JSONB, and the ORM writes ``None`` to JSONB as the JSON value
-        ``null``, which the ``seat_fields`` CHECK (``permissions IS NULL``) rejects. A
-        Core ``UPDATE`` with ``sa.null()`` writes SQL NULL, and one statement changes the
-        kind and the column shape together so the CHECKs hold.
-        """
-        self._session.execute(
-            update(TeacherMember)
-            .where(TeacherMember.id == member.id)
-            .values(
-                kind=TeacherMemberKind.student_seat,
-                role_preset=None,
-                permissions=null(),
-                scope_subjects=[],
-                scope_actions=[],
-            )
-            .execution_options(synchronize_session=False)
-        )
-        self._session.refresh(member)
 
     def _member_row(
         self, teacher_user_id: uuid.UUID, member_user_id: uuid.UUID, *, lock: bool

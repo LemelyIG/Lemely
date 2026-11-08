@@ -12,9 +12,9 @@ import sqlalchemy as sa
 from sqlalchemy.exc import OperationalError
 
 from lemely.core.metered_actions import SEAT_ACTIONS, MeteredAction
-from lemely.db.models import Subscription
+from lemely.db.models import PlanTier, School, Subscription
 from lemely.db.models.billing import PlanAudience
-from lemely.db.models.enums import Role, SubscriptionStatus
+from lemely.db.models.enums import PlanInterval, Role, SubscriptionStatus
 from lemely.db.models.team import (
     CapPeriod,
     TeacherMember,
@@ -75,6 +75,39 @@ def _set_scope_of(
     member: uuid.UUID, subjects: list[str], actions: list[str], team: TeacherTeamService
 ) -> None:
     team.set_scope(member, subjects=subjects, actions=actions)
+
+
+def add_manual_teacher_plan(
+    sm: sessionmaker[Session], teacher_id: uuid.UUID, *, included_seats: int
+) -> None:
+    """Seed a manual or complimentary subscription: ``payer_user_id`` is NULL (index R25)."""
+    tier_id = uuid.uuid4()
+    with sm.begin() as session:
+        session.add(
+            PlanTier(
+                id=tier_id,
+                code=f"manual_{tier_id.hex[:8]}",
+                name="Manual",
+                price_minor=0,
+                interval=PlanInterval.monthly,
+                audience=PlanAudience.teacher,
+                allowance_units=0,
+                included_seats=included_seats,
+                seat_allowance_units=0,
+                extra_seat_price_minor=0,
+                is_active=True,
+            )
+        )
+        session.flush()
+        session.add(
+            Subscription(
+                user_id=teacher_id,
+                payer_user_id=None,
+                plan_tier_id=tier_id,
+                status=SubscriptionStatus.active,
+                extra_seats=0,
+            )
+        )
 
 
 def join(sm: sessionmaker[Session], class_id: uuid.UUID, student: uuid.UUID) -> uuid.UUID:
@@ -861,7 +894,7 @@ def test_store_commits_on_exit_and_rolls_back_on_error(sm: sessionmaker[Session]
     assert row.status is TeacherMemberStatus.leaving
 
 
-def test_a_removed_assistant_becomes_a_seat_by_updating_the_same_row(
+def test_a_removed_assistant_is_refused_and_the_row_is_unchanged(
     sm: sessionmaker[Session],
 ) -> None:
     teacher, person = add_user(sm, Role.teacher), add_user(sm)
@@ -874,30 +907,79 @@ def test_a_removed_assistant_becomes_a_seat_by_updating_the_same_row(
         status=TeacherMemberStatus.removed,
     )
     class_id, _ = add_class(sm, teacher_id=teacher, subject_code="0580")
-    assert join(sm, class_id, person) == old
-    with sm() as session:
-        [row] = session.scalars(
-            sa.select(TeacherMember).where(TeacherMember.member_user_id == person)
-        ).all()
-    assert row.id == old
-    assert row.kind is TeacherMemberKind.student_seat
-    assert (row.role_preset, row.permissions) == (None, None)
-    assert row.status is TeacherMemberStatus.active
-    assert row.scope_subjects == ["0580"]
-    assert row.scope_actions == default_seat_actions()
-    assert run(sm, lambda team: team.seats_used(teacher)) == 1
-
-
-def test_a_removed_assistant_cannot_take_a_seat_when_full(sm: sessionmaker[Session]) -> None:
-    teacher, s1, person = add_user(sm, Role.teacher), add_user(sm), add_user(sm)
-    add_teacher_plan(sm, teacher, included_seats=1)
-    add_seat(sm, teacher_id=teacher, student_id=s1)
-    add_assistant(sm, teacher_id=teacher, assistant_id=person, status=TeacherMemberStatus.removed)
-    class_id, _ = add_class(sm, teacher_id=teacher, subject_code="0580")
-    with pytest.raises(NoFreeSeat):
+    with pytest.raises(TeamStateError):
         join(sm, class_id, person)
-    with sm() as session:  # still an assistant row: nothing was converted
+    with sm() as session:
         row = session.scalars(
             sa.select(TeacherMember).where(TeacherMember.member_user_id == person)
         ).one()
+    assert row.id == old
     assert row.kind is TeacherMemberKind.assistant
+    assert row.status is TeacherMemberStatus.removed
+    assert row.permissions == {"mark": True}
+    assert (row.scope_subjects, row.scope_actions) == (None, None)
+    assert run(sm, lambda team: team.seats_used(teacher)) == 0
+
+
+def test_a_school_class_never_claims_a_teacher_seat(sm: sessionmaker[Session]) -> None:
+    teacher, student = add_user(sm, Role.teacher), add_user(sm)
+    add_teacher_plan(sm, teacher, included_seats=1)
+    school_id = uuid.uuid4()
+    with sm.begin() as session:
+        session.add(School(id=school_id, name="Team Test School"))
+    class_id, _ = add_class(sm, teacher_id=teacher, subject_code="0580", school_id=school_id)
+    with pytest.raises(TeamStateError):
+        join(sm, class_id, student)
+    assert run(sm, lambda team: team.seats_used(teacher)) == 0
+
+
+def test_the_paid_plan_beats_a_manual_one_for_capacity(sm: sessionmaker[Session]) -> None:
+    """Index R25: a manual row (no payer) older than the paid row must not win."""
+    teacher = add_user(sm, Role.teacher)
+    add_manual_teacher_plan(sm, teacher, included_seats=1)
+    add_teacher_plan(sm, teacher, included_seats=3)
+    assert run(sm, lambda team: team.seat_capacity(teacher)) == 3
+    with sm.begin() as session:  # the paid row is chosen under the lock too
+        assert TeacherTeamService(session)._capacity(teacher, lock=True) == 3
+
+
+def test_a_manual_plan_alone_still_gives_its_seats(sm: sessionmaker[Session]) -> None:
+    teacher = add_user(sm, Role.teacher)
+    add_manual_teacher_plan(sm, teacher, included_seats=2)
+    assert run(sm, lambda team: team.seat_capacity(teacher)) == 2
+
+
+def test_month_end_and_release_due_refuse_naive_datetimes(sm: sessionmaker[Session]) -> None:
+    naive = datetime(2026, 11, 14, 12, 0)
+    with pytest.raises(ValueError, match="timezone-aware"):
+        month_end(naive)
+    with pytest.raises(ValueError, match="timezone-aware"):
+        run(sm, lambda team: team.release_due(now=naive))
+    teacher, student = add_user(sm, Role.teacher), add_user(sm)
+    seat = add_seat(sm, teacher_id=teacher, student_id=student)
+    with pytest.raises(ValueError, match="timezone-aware"):
+        run(sm, lambda team: team.request_removal(seat, now=naive))
+    [row] = run(sm, lambda team: team.seats_for_student(student))
+    assert row.status is TeacherMemberStatus.active
+
+
+def test_a_reactivated_seat_keeps_its_original_created_at(sm: sessionmaker[Session]) -> None:
+    """A rejoin updates the row, so the seat stays as old as its first claim."""
+    teacher, student = add_user(sm, Role.teacher), add_user(sm)
+    add_teacher_plan(sm, teacher, included_seats=1)
+    old = add_seat(
+        sm,
+        teacher_id=teacher,
+        student_id=student,
+        status=TeacherMemberStatus.removed,
+        leaves_at=month_end(NOW),
+    )
+    with sm() as session:
+        before = session.get(TeacherMember, old)
+        assert before is not None
+        created = before.created_at
+    class_id, _ = add_class(sm, teacher_id=teacher, subject_code="0580")
+    join(sm, class_id, student)
+    [seat] = run(sm, lambda team: team.seats_for_student(student))
+    assert seat.id == old
+    assert seat.created_at == created
