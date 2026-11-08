@@ -2481,3 +2481,364 @@ grid-template-areas: "n c" "t t"; row-gap: 0; padding-block: var(--space-2);
   .a-gj .a-journey { block-size: 44px }
   .a-lanes a { min-block-size: 52px; padding-block: var(--space-3); row-gap: var(--space-1) }
 }
+
+/* =====================================================================================
+   Native phone frame (brief 2026-11-08 §3, §5, §6). Shell below 721px only.
+   Desktop and tablet stay design A: every rule below sits in the ashell <=720px query, or
+   targets an element that is display:none at 721px and up (.as-lt, .as-ptr, .as-grab,
+   .as-back, the A toolbar). Platform values are tokens (tokens.css, --pf-*); the selectors
+   below read .sh-root[data-platform] so they outrank the shell's own phone rules.
+   ===================================================================================== */
+
+/* Phone-only elements: absent everywhere else. */
+.as-lt, .as-ptr, .as-grab, .as-back { display: none }
+/* The A toolbar shows only when previewing the 390px frame (width=mobile). */
+.sh-toolbar-a { display: none }
+body:has(> .sh-root[data-width="mobile"]) .sh-toolbar-a { display: flex }
+
+@property --pf-rr { syntax: "<percentage>"; inherits: false; initial-value: 0% }
+@property --pf-ro { syntax: "<number>"; inherits: false; initial-value: 0 }
+
+@container ashell (max-width: 720px) {
+  .sh-root[data-platform] * { -webkit-tap-highlight-color: transparent }
+  .sh-root[data-platform] .as-app { background: var(--pf-page) }
+
+  /* ---------- 1. Large-title header ----------
+     Tab root: the bar row holds the actions; the title sits below at large-title size and the
+     inline title fades into the pinned bar when the large title's bottom crosses the bar
+     (one threshold). Detail: the compact bar with back + title from the start. */
+  .sh-root[data-platform] .as-bar {
+    position: sticky; inset-block-start: var(--as-top); z-index: 6;
+    display: flex; align-items: center; gap: 0;
+    block-size: calc(var(--pf-bar-h) + env(safe-area-inset-top));
+    margin: 0; padding: env(safe-area-inset-top) var(--space-2) 0;
+    border: 0; border-radius: 0; background: transparent; box-shadow: none;
+  }
+  .sh-root[data-platform] .as-bar.is-stuck { box-shadow: none }
+  /* The bar's surface is a layer under its content, so it can fade without fading the icons. */
+  .sh-root[data-platform] .as-bar::before {
+    content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+    opacity: 0; transition: opacity var(--dur-base) var(--ease-out);
+  }
+  .sh-root[data-platform="ios"] .as-bar::before {
+    border-block-end: var(--pf-hairline) solid var(--pf-hair);
+    background: var(--pf-glass);
+    -webkit-backdrop-filter: blur(var(--pf-glass-blur)) saturate(1.6); backdrop-filter: blur(var(--pf-glass-blur)) saturate(1.6);
+  }
+  .sh-root[data-platform="android"] .as-bar::before { background: var(--pf-bar-raised) }
+  .sh-root[data-platform] .as-bar.is-raised::before { opacity: 1 }
+
+  .sh-root[data-platform] .as-title {
+    min-inline-size: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font: 600 17px / 22px var(--font-ui); letter-spacing: -0.01em; color: var(--md-on-surface);
+    opacity: 0; transition: opacity var(--dur-fast) var(--ease-out);
+  }
+  .sh-root[data-platform] .as-bar.is-collapsed .as-title,
+  .sh-root[data-platform][data-page="detail"] .as-title { opacity: 1 }
+  .sh-root[data-platform="ios"] .as-title {
+    position: absolute; inset-inline: var(--pf-title-inset); inset-block-end: 0;
+    block-size: var(--pf-bar-h); line-height: var(--pf-bar-h); text-align: center;
+  }
+  .sh-root[data-platform="ios"][data-page="detail"] .as-title { inset-inline: var(--pf-title-inset-detail) }
+  .sh-root[data-platform="ios"] .as-pop-bell { margin-inline-start: auto } /* actions sit at the end */
+  .sh-root[data-platform="android"] .as-title { flex: 1; margin-inline: var(--space-3) var(--space-2) }
+  .sh-root[data-platform="android"][data-page="detail"] .as-title { margin-inline-start: var(--space-1) }
+
+  /* Bar actions: 44px (iOS) / 48px (Material) targets. iOS tints them primary; Material keeps
+     trailing icons on-surface-variant. */
+  .sh-root[data-platform] .as-bar .as-iconbtn { inline-size: var(--pf-iconbtn); block-size: var(--pf-iconbtn); border-radius: var(--radius-pill) }
+  .sh-root[data-platform="ios"] .as-bar .as-iconbtn { color: var(--md-primary) }
+  .sh-root[data-platform="android"] .as-bar .as-iconbtn { color: var(--md-on-surface-variant) }
+  .sh-root[data-platform] .as-bar .as-ico { inline-size: 22px; block-size: 22px }
+  .sh-root[data-platform] .as-bar .as-ico-ph { inline-size: 22px; block-size: 22px }
+  .sh-root[data-platform] .as-bar .as-dot { inset-block-start: 9px; inset-inline-end: 9px; box-shadow: 0 0 0 2px var(--pf-page) }
+  .sh-root[data-platform] .as-bar :is(.as-iconbtn:hover, details[open] > .as-iconbtn) { background: transparent }
+
+  /* Detail page: back, title, one action. */
+  .sh-root[data-platform][data-page="detail"] .as-back { display: flex }
+  .sh-root[data-platform][data-page="detail"] :is(.as-pop-me, [data-a-open="as-settings"]) { display: none }
+  .sh-root[data-platform="ios"] .as-back {
+    align-items: center; inline-size: auto; padding-inline: 0 var(--space-2); gap: 0;
+    color: var(--md-primary); font: 400 17px / 22px var(--font-ui);
+  }
+  .sh-root[data-platform="ios"] .as-back .as-ico { inline-size: 26px; block-size: 26px; stroke-width: 2.3 }
+  .sh-root[data-platform="ios"] .as-back-md,
+  .sh-root[data-platform="android"] :is(.as-back-ios, .as-back-l) { display: none }
+  .sh-root[data-platform="android"] .as-back { color: var(--md-on-surface) }
+  .sh-root[data-platform] .as-back .as-ico:dir(rtl) { transform: scaleX(-1) }
+
+  .sh-root[data-platform][data-page="root"] .as-lt {
+    display: block; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+    margin: 0; padding: 2px var(--space-4) var(--space-2);
+    font: 800 34px / 41px var(--font-display); letter-spacing: -0.03em; color: var(--md-on-surface);
+    text-wrap: balance; overflow-wrap: anywhere;
+    transition: opacity var(--dur-fast) var(--ease-out);
+  }
+  .sh-root[data-platform] .as-bar.is-collapsed ~ .as-lt { opacity: 0 }
+  .sh-root[data-platform] .as-main { padding: var(--space-1) var(--pf-group-margin) var(--space-8) }
+  .sh-root[data-platform][data-page="detail"] .as-main { padding-block-start: var(--space-4) }
+  /* A pushed page in the demo: the overview's lower sections stand in for detail content. */
+  .sh-root[data-platform][data-page="detail"] :is(.ah-hero, .a-next-row) { display: none }
+  .sh-root[data-platform][data-page="detail"] .a-sec:first-of-type,
+  .sh-root[data-platform][data-page="detail"] .a-ready > .a-sec.a-grades { margin-block-start: 0 }
+
+  /* ---------- 2. Tab bar ---------- */
+  .sh-root[data-platform] .a-bottombar {
+    position: sticky; inset-block-end: 0; z-index: 5;
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: start;
+    block-size: calc(var(--pf-tab-h) + env(safe-area-inset-bottom));
+    padding: 0 0 env(safe-area-inset-bottom); border: 0;
+  }
+  .sh-root[data-platform] .a-bottombar :is(a, button) {
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+    block-size: var(--pf-tab-h); color: var(--md-on-surface-variant);
+    font: 500 var(--pf-tab-label) / 1.2 var(--font-ui); letter-spacing: 0.01em;
+  }
+  .sh-root[data-platform] .a-bottombar :is(a, button) .as-ico {
+    box-sizing: content-box; inline-size: var(--pf-tab-ico); block-size: var(--pf-tab-ico);
+    padding: 0; border-radius: 0; background: none; stroke-width: 1.6;
+  }
+  /* Selected: outline icon turns filled (the stroke stays, so the glyph keeps its size). */
+  .sh-root[data-platform] .a-bottombar a[aria-current="page"],
+  .sh-root[data-platform] .as-app:has(.as-side:popover-open) .a-bottombar button { color: var(--md-primary); font-weight: 600 }
+  .sh-root[data-platform] .a-bottombar a[aria-current="page"] .as-ico,
+  .sh-root[data-platform] .as-app:has(.as-side:popover-open) .a-bottombar button .as-ico { fill: currentColor }
+  .sh-root[data-platform] .a-bottombar :is(a, button):hover .as-ico { background: none }
+  .sh-root[data-platform] .a-bottombar .as-n { inset-block-start: 3px; inset-inline-start: calc(50% + 5px); box-shadow: none }
+
+  .sh-root[data-platform="ios"] .a-bottombar {
+    border-block-start: var(--pf-hairline) solid var(--pf-hair);
+    background: var(--pf-glass);
+    -webkit-backdrop-filter: blur(var(--pf-glass-blur)) saturate(1.6); backdrop-filter: blur(var(--pf-glass-blur)) saturate(1.6);
+  }
+  .sh-root[data-platform="ios"] .a-bottombar :is(a, button) { gap: 2px; padding-block-start: 6px }
+
+  .sh-root[data-platform="android"] .a-bottombar { background: var(--pf-nav) }
+  .sh-root[data-platform="android"] .a-bottombar :is(a, button) { gap: var(--space-1); padding-block-start: var(--space-3) }
+  .sh-root[data-platform="android"] .a-bottombar :is(a, button) .as-ico {
+    padding: calc((var(--pf-pill-h) - var(--pf-tab-ico)) / 2) calc((var(--pf-pill-w) - var(--pf-tab-ico)) / 2);
+    border-radius: var(--radius-pill);
+  }
+  .sh-root[data-platform="android"] .a-bottombar :is(a, button) { font-weight: 500 }
+  .sh-root[data-platform="android"] .a-bottombar a[aria-current="page"],
+  .sh-root[data-platform="android"] .as-app:has(.as-side:popover-open) .a-bottombar button { color: var(--md-on-surface); font-weight: 700 }
+  .sh-root[data-platform="android"] .a-bottombar a[aria-current="page"] .as-ico,
+  .sh-root[data-platform="android"] .as-app:has(.as-side:popover-open) .a-bottombar button .as-ico {
+    background: var(--md-secondary-container); color: var(--md-on-secondary-container);
+  }
+  .sh-root[data-platform="android"] .a-bottombar .as-n { inset-block-start: 10px; inset-inline-start: calc(50% + 6px) }
+
+  /* ---------- 3. Bottom sheets: bell, avatar, settings, More ---------- */
+  .sh-root[data-platform] .as-grab {
+    display: block; flex: none; inline-size: var(--pf-grab-w); block-size: var(--pf-grab-h);
+    margin: var(--pf-grab-gap); margin-inline: auto; border-radius: var(--radius-pill); background: var(--pf-grab);
+    touch-action: none;
+  }
+  .sh-root[data-platform] :is(.as-pop .as-pop-panel, .as-pop-me .as-pop-panel) {
+    position: fixed; inset: auto 0 var(--pf-kb, 0px); z-index: 41;
+    inline-size: 100cqi; max-block-size: var(--pf-sheet-large); margin-inline: auto;
+    padding: 0 var(--space-2) calc(var(--space-3) + env(safe-area-inset-bottom));
+    overflow-y: auto; overscroll-behavior: contain;
+    border-radius: var(--radius-card) var(--radius-card) 0 0;
+    background: var(--pf-sheet-bg); box-shadow: none;
+  }
+  .sh-root[data-platform] .as-pop[open]::before {
+    content: ""; position: fixed; inset: 0; z-index: 40; background: var(--md-scrim);
+  }
+  .sh-root[data-platform] .as-pop-head { margin: var(--space-1) var(--space-2) var(--space-2) }
+  .sh-root[data-platform] .as-pop-head h2 { font: 700 var(--fs-title) / 1.25 var(--font-ui); letter-spacing: -0.01em }
+  .sh-root[data-platform] .as-textbtn { font-size: var(--fs-body-sm) }
+  .sh-root[data-platform] .as-item { min-block-size: var(--pf-row-min); padding: var(--space-3) var(--space-2); font-size: var(--fs-body) }
+  .sh-root[data-platform] .as-item-t small { font-size: var(--fs-body-sm) }
+  .sh-root[data-platform] .as-pop-foot a { font-size: var(--fs-body-sm) }
+  .sh-root[data-platform] .as-ident { padding-block-start: 0 }
+  .sh-root[data-platform] .as-links :is(a, button) { min-block-size: var(--pf-row-min); font-size: var(--fs-body) }
+
+  .sh-root[data-platform] .as-modal {
+    inset: auto 0 var(--pf-kb, 0px); flex-direction: column; margin: 0 auto;
+    inline-size: 100cqi; block-size: var(--pf-sheet-large);
+    border: 0; border-radius: var(--radius-card) var(--radius-card) 0 0;
+    background: var(--pf-sheet-bg); box-shadow: none;
+  }
+  .sh-root[data-platform] .as-set-rail { background: transparent; border-block-end: var(--pf-hairline) solid var(--pf-sep) }
+  .sh-root[data-platform] .as-set-rail-head { padding: 0 var(--space-2) var(--space-1) var(--space-4) }
+  .sh-root[data-platform] .as-set-rail-head h2 { font: 700 var(--fs-title) / 1.25 var(--font-ui); letter-spacing: -0.01em }
+  .sh-root[data-platform] .as-set-close-sm { border-radius: var(--radius-pill); background: var(--md-surface-high) }
+  .sh-root[data-platform] .as-set-tabs { padding-block-start: 0 }
+  .sh-root[data-platform] .as-set-page { padding-block-end: calc(var(--space-8) + env(safe-area-inset-bottom)) }
+
+  .sh-root[data-platform] .as-side:popover-open {
+    inset-block-end: var(--pf-kb, 0px); padding-block-start: 0; max-block-size: var(--pf-sheet-large);
+    background: var(--pf-sheet-bg); box-shadow: none;
+  }
+  .sh-root[data-platform] .as-side:popover-open .as-side-head { margin-block-start: calc(var(--space-2) * -1) }
+
+  /* Drag and snap. The sheet moves with `translate`, so it composes with the entrance animation. */
+  .sh-root[data-platform] .is-sheet-snapping { transition: translate var(--pf-sheet-dur) var(--pf-sheet-ease) }
+  .sh-root.a-motion[data-platform] .as-pop[open] .as-pop-panel,
+  .sh-root.a-motion[data-platform] .as-modal[open],
+  .sh-root.a-motion[data-platform] .as-side:popover-open,
+  .sh-root.a-motion[data-platform] .as-side:popover-open:dir(rtl) { animation: pfSheetIn var(--pf-sheet-dur) var(--pf-sheet-ease) both }
+  .sh-root.a-motion[data-platform] .as-pop[open]::before { animation: pfFadeIn var(--pf-sheet-dur) linear both }
+
+  /* iOS: at the large detent the page behind scales back under the sheet. */
+  .sh-root[data-platform="ios"] .as-app {
+    transform-origin: 50% calc(var(--pf-sy, 0px) + env(safe-area-inset-top));
+    transition: transform var(--pf-sheet-dur) var(--pf-sheet-ease), border-radius var(--pf-sheet-dur) var(--pf-sheet-ease);
+  }
+  .sh-root[data-platform="ios"][data-sheet="large"] .as-app {
+    transform: translateY(calc(env(safe-area-inset-top) + 10px)) scale(var(--pf-sheet-scale));
+    border-radius: var(--pf-group-radius); overflow: clip;
+  }
+
+  /* ---------- 4. Edge-to-edge grouped content ----------
+     Cards lose the floating inset outline and become groups: inset-grouped (iOS, 12px radius,
+     16px margins) or full-width (Material, square, no inner separators). Data-heavy blocks
+     (charts, the grade journeys, the ruler, the exam countdown) are one group each. */
+  .sh-root[data-platform] :is(.ah-card, .a-action-card, .a-prog-dir, .a-mo, .a-ruler, .a-xs-card, .a-gj, .a-hero, .a-error, .a-sk-card) {
+    border: 0; border-radius: var(--pf-group-radius); box-shadow: none;
+  }
+  /* No copy may rewrap (the hero's height is a standing rule). iOS groups are 4px narrower
+     (16px margins); the Mistakes beaten card gives back those 4px so its header stays on one line.
+     Material groups bleed to the screen edge but keep the page's 14px gutter as a border in the
+     group's own colour, so the page container (and every query on it) keeps its width. */
+  .sh-root[data-platform="ios"] .a-prog-dir { padding-inline: 18px }
+  .sh-root[data-platform="android"] .as-main { padding-inline: var(--as-gutter-sm) }
+  .sh-root[data-platform="android"] :is(.ah-card, .a-action-card, .a-prog-dir, .a-mo, .a-ruler, .a-xs-card, .a-gj, .a-hero, .a-error, .a-sk-card) {
+    margin-inline: calc(var(--as-gutter-sm) * -1); border-inline: var(--as-gutter-sm) solid var(--pf-group);
+  }
+  .sh-root[data-platform="android"] :is(.a-action-card, .a-error) { border-inline-color: var(--md-primary-container) }
+  .sh-root[data-platform="android"] .a-sk-card { border-inline-color: var(--surface-card) }
+  /* List groups take the 16px Material list inset from their own row padding instead. */
+  .sh-root[data-platform="android"] :is(.a-gj, .a-ruler, .a-xs-card) { border-inline-width: 0 }
+  .sh-root[data-platform="android"] :is(.a-sec-h, .a-sec-sub, .a-secure-note) { padding-inline: 2px } /* 14 + 2 = the 16px list inset */
+  .sh-root[data-platform] .a-next-row { gap: var(--space-5) }
+  .sh-root[data-platform] .a-sec { margin-block-start: var(--space-7) }
+  /* Section headers: the label style, inset to the rows' content. */
+  .sh-root[data-platform] .a-sec-h {
+    margin: 0 0 var(--space-2); padding-inline: var(--space-4);
+    font: 600 var(--fs-label) / 1.3 var(--font-mono); letter-spacing: var(--ls-label); text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .sh-root[data-platform] :is(.a-sec-sub, .a-secure-note) { margin: calc(var(--space-1) * -1) 0 var(--space-2); padding-inline: var(--space-4) }
+  /* Your grades: one group of rows, not a card per subject. */
+  .sh-root[data-platform] .a-grades .a-gj { display: block; padding: 0; background: var(--pf-group); overflow: clip }
+  .sh-root[data-platform] .a-grades .a-gj > li { position: relative; border-block-start: 0 }
+  .sh-root[data-platform] .a-grades .a-gj-row {
+    min-block-size: var(--pf-row-min); padding: var(--space-4);
+    border-radius: 0; background: transparent; box-shadow: none;
+  }
+  .sh-root[data-platform] .a-lanes > li { position: relative; border-block-start: 0 }
+  /* iOS separators: hairlines inset from the leading edge. Material groups have none. */
+  .sh-root[data-platform="ios"] :is(.a-grades .a-gj, .a-lanes) > li + li::before {
+    content: ""; position: absolute; inset-block-start: 0; inset-inline: var(--pf-sep-inset) 0; z-index: 1;
+    block-size: var(--pf-hairline); background: var(--pf-sep); pointer-events: none;
+  }
+  .sh-root[data-platform="ios"] .a-lanes > li.is-top + li::before { display: none }
+  .sh-root[data-platform="android"] .a-ready > .a-sec > :is(.a-sec-h) { margin-block-end: var(--space-2) }
+
+  /* No hover-only affordances on phones: touch leaves :hover stuck after a tap. */
+  .sh-root[data-platform] :is(.a-gj-row, .a-lanes a):hover { box-shadow: none }
+  .sh-root[data-platform] .a-gj-row:hover { background: transparent }
+  .sh-root[data-platform] .a-lanes > li:not(.is-top) > a:hover { background: transparent }
+
+  /* ---------- 5. Press states ----------
+     variant-a.js adds .is-press on pointerdown (under 50ms, before :active) and .is-release on
+     lift. One layer drawn as a background image, so it follows the element's radius and never
+     clips badges. iOS: an 8% dim plus scale 0.97 on buttons. Material: a 10% state layer that
+     ripples out from the touch point. */
+  .sh-root[data-platform] :is(.is-press, .is-release) {
+    background-image: radial-gradient(circle at var(--pf-rx, 50%) var(--pf-ry, 50%),
+      color-mix(in oklch, var(--pf-layer-ink) calc(var(--pf-ro) * var(--pf-press-layer)), transparent) var(--pf-rr),
+      transparent var(--pf-rr)) !important;
+  }
+  .sh-root[data-platform="ios"] :is(.is-press, .is-release) { --pf-layer-ink: var(--pf-ink-dim) }
+  .sh-root[data-platform="android"] :is(.is-press, .is-release) { --pf-layer-ink: currentColor }
+  .sh-root[data-platform] .is-press { --pf-rr: 100%; --pf-ro: 1 }
+  .sh-root[data-platform] .is-release { --pf-rr: 100%; --pf-ro: 0; animation: pfLayerOut 220ms linear }
+  .sh-root[data-platform="android"] .is-press { animation: pfRipple var(--pf-ripple-dur) cubic-bezier(0.2, 0, 0, 1) }
+  .sh-root[data-platform="ios"] :is(.a-btn, .as-btn, .as-iconbtn, .as-set-close, .k-go, .a-xs-act).is-press { scale: var(--pf-press-scale) }
+  .sh-root[data-platform="ios"] :is(.a-btn, .as-btn, .as-iconbtn, .as-set-close, .k-go, .a-xs-act).is-release {
+    animation: pfLayerOut 220ms linear, pfScaleBack 220ms var(--ease-out);
+  }
+  /* iOS tab items dim their glyph and label instead of drawing a layer. */
+  .sh-root[data-platform="ios"] .a-bottombar :is(.is-press, .is-release) { background-image: none !important }
+  .sh-root[data-platform="ios"] .a-bottombar .is-press { opacity: 0.55 }
+
+  /* ---------- 6. Pull to refresh (tab root) ---------- */
+  .sh-root[data-platform][data-page="root"] .as-ptr { display: block; position: relative; z-index: 4; block-size: 0 }
+  /* iOS: the content follows the finger. Material: the content stays; only the disc moves. */
+  .sh-root[data-platform="ios"] .as-col[data-ptr] :is(.as-lt, .as-main) { translate: 0 var(--pf-pull, 0px) }
+  .sh-root[data-platform="ios"] .as-col[data-ptr="settling"] :is(.as-lt, .as-main) { transition: translate var(--dur-slow) var(--a-ease-expo) }
+  .sh-root[data-platform] .as-col:not([data-ptr]) .as-ptr > * { visibility: hidden }
+  .as-ptr-ios, .as-ptr-md { display: none }
+  /* iOS: the activity indicator sits in the gap the content leaves; spokes appear one by one. */
+  .sh-root[data-platform="ios"] .as-ptr-ios {
+    position: absolute; inset-inline: 0; inset-block-start: calc(var(--pf-pull, 0px) / 2 - 14px);
+    display: block; inline-size: 28px; block-size: 28px; margin-inline: auto;
+  }
+  .sh-root[data-platform="ios"] .as-ptr-ios i {
+    position: absolute; inset-block-start: 1px; inset-inline-start: calc(50% - 1.25px);
+    inline-size: 2.5px; block-size: 7.5px; border-radius: var(--radius-pill); background: var(--md-on-surface-variant);
+    transform-origin: 50% 13px; rotate: calc(var(--i) * 45deg);
+    opacity: clamp(0, calc(var(--pf-pull-p, 0) * 8 - var(--i)), 1);
+  }
+  .sh-root[data-platform="ios"] .as-ptr-ios i:nth-child(1) { --i: 0 } .sh-root[data-platform="ios"] .as-ptr-ios i:nth-child(2) { --i: 1 }
+  .sh-root[data-platform="ios"] .as-ptr-ios i:nth-child(3) { --i: 2 } .sh-root[data-platform="ios"] .as-ptr-ios i:nth-child(4) { --i: 3 }
+  .sh-root[data-platform="ios"] .as-ptr-ios i:nth-child(5) { --i: 4 } .sh-root[data-platform="ios"] .as-ptr-ios i:nth-child(6) { --i: 5 }
+  .sh-root[data-platform="ios"] .as-ptr-ios i:nth-child(7) { --i: 6 } .sh-root[data-platform="ios"] .as-ptr-ios i:nth-child(8) { --i: 7 }
+  .sh-root[data-platform="ios"] .as-col[data-ptr="refreshing"] .as-ptr-ios i { opacity: calc(1 - var(--i) * 0.11) }
+  .sh-root[data-platform="ios"] .as-col[data-ptr="refreshing"] .as-ptr-ios { animation: pfSpin 0.8s steps(8) infinite }
+  /* Material: the indicator disc slides down over the content, its arc growing with the pull. */
+  .sh-root[data-platform="android"] .as-ptr-md {
+    position: absolute; inset-inline: 0; inset-block-start: -44px; z-index: 1;
+    display: grid; place-items: center; inline-size: 40px; block-size: 40px; margin-inline: auto;
+    border-radius: var(--radius-pill); background: var(--md-surface-high); color: var(--md-primary);
+    box-shadow: 0 1px 3px oklch(0.3 0.06 242 / 0.3);
+    translate: 0 calc(min(var(--pf-pull, 0px), 108px) + 0px);
+    opacity: clamp(0, calc(var(--pf-pull-p, 0) * 3), 1);
+  }
+  .sh-root[data-platform="android"] .as-col[data-ptr="settling"] .as-ptr-md { transition: translate var(--dur-slow) var(--a-ease-expo), opacity var(--dur-base) linear, scale var(--dur-base) var(--ease-out); scale: 0 }
+  .sh-root[data-platform="android"] .as-ptr-md svg { inline-size: 24px; block-size: 24px; rotate: calc(var(--pf-pull-p, 0) * 270deg - 90deg) }
+  .sh-root[data-platform="android"] .as-ptr-md circle {
+    fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round;
+    stroke-dasharray: calc(var(--pf-pull-p, 0) * 40) 60;
+  }
+  .sh-root[data-platform="android"] .as-col[data-ptr="refreshing"] .as-ptr-md svg { animation: pfSpin 1s linear infinite }
+  .sh-root[data-platform="android"] .as-col[data-ptr="refreshing"] .as-ptr-md circle { stroke-dasharray: 30 60 }
+}
+
+/* iOS large detent: black behind the scaled-back page. data-sheet is only set on phones. */
+.sh-root[data-platform="ios"][data-sheet="large"] { background: oklch(0.1 0.01 245) }
+
+/* Collapse, scroll-driven where supported (Chrome 115+, Safari 26+): the inline title and the
+   bar's surface track the large title's exit past the bar. variant-a.js toggles the same end
+   state at the same threshold for older engines and for reduced motion (where a time-free
+   class flip replaces the scrubbed fade). */
+@supports (view-timeline: --pf-a) and (timeline-scope: --pf-a) {
+  @media (prefers-reduced-motion: no-preference) {
+    @container ashell (max-width: 720px) {
+      .sh-root[data-platform][data-motion="full"][data-page="root"] .as-col { timeline-scope: --pf-lt }
+      .sh-root[data-platform][data-motion="full"][data-page="root"] .as-lt {
+        view-timeline: --pf-lt block;
+        view-timeline-inset: calc(var(--as-top) + env(safe-area-inset-top) + var(--pf-bar-h)) 0px;
+        animation: pfFadeOut linear both; animation-timeline: --pf-lt; animation-range: exit 0% exit 100%;
+      }
+      .sh-root[data-platform][data-motion="full"][data-page="root"] .as-bar::before,
+      .sh-root[data-platform][data-motion="full"][data-page="root"] .as-title {
+        animation: pfFadeIn linear both; animation-timeline: --pf-lt; animation-range: exit 70% exit 100%;
+      }
+      .sh-root[data-platform][data-motion="full"][data-page="detail"] .as-bar::before {
+        animation: pfFadeIn linear both; animation-timeline: scroll(root block); animation-range: 0px 12px;
+      }
+    }
+  }
+}
+
+@keyframes pfSheetIn { from { transform: translateY(100%) } }
+@keyframes pfFadeIn { from { opacity: 0 } to { opacity: 1 } }
+@keyframes pfFadeOut { from { opacity: 1 } to { opacity: 0 } }
+@keyframes pfRipple { from { --pf-rr: 0% } }
+@keyframes pfLayerOut { from { --pf-ro: 1 } to { --pf-ro: 0 } }
+@keyframes pfScaleBack { from { scale: var(--pf-press-scale) } to { scale: 1 } }
+@keyframes pfSpin { to { rotate: 360deg } }

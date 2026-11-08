@@ -2,7 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="robots" content="noindex, nofollow" />
     <title>Student home: variant A</title>
     <link rel="stylesheet" href="./student-home/tokens.css" />
@@ -47,15 +48,33 @@
       <symbol id="t-trash" viewBox="0 0 24 24"><path d="M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13 M10 11v6 M14 11v6"/></symbol>
       <symbol id="t-more" viewBox="0 0 24 24"><path d="M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M14 14h6v6h-6z"/></symbol>
       <symbol id="t-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+      <!-- Phone frame: the back affordance per platform (iOS chevron, Material arrow), drawn
+           toward inline-start; the CSS mirrors them in RTL. -->
+      <symbol id="t-back-ios" viewBox="0 0 24 24"><path d="M15 4.5 7.5 12l7.5 7.5"/></symbol>
+      <symbol id="t-back-md" viewBox="0 0 24 24"><path d="M20 12H4.5 M10.5 6 4.5 12l6 6"/></symbol>
       <!-- Settings: the teacher app's gear (Phosphor Gear, regular weight), verbatim. Filled, not stroked. -->
       <symbol id="t-gear" viewBox="0 0 256 256"><path d="M128,80a48,48,0,1,0,48,48A48.05,48.05,0,0,0,128,80Zm0,80a32,32,0,1,1,32-32A32,32,0,0,1,128,160Zm88-29.84q.06-2.16,0-4.32l14.92-18.64a8,8,0,0,0,1.48-7.06,107.21,107.21,0,0,0-10.88-26.25,8,8,0,0,0-6-3.93l-23.72-2.64q-1.48-1.56-3-3L186,40.54a8,8,0,0,0-3.94-6,107.71,107.71,0,0,0-26.25-10.87,8,8,0,0,0-7.06,1.49L130.16,40Q128,40,125.84,40L107.2,25.11a8,8,0,0,0-7.06-1.48A107.6,107.6,0,0,0,73.89,34.51a8,8,0,0,0-3.93,6L67.32,64.27q-1.56,1.49-3,3L40.54,70a8,8,0,0,0-6,3.94,107.71,107.71,0,0,0-10.87,26.25,8,8,0,0,0,1.49,7.06L40,125.84Q40,128,40,130.16L25.11,148.8a8,8,0,0,0-1.48,7.06,107.21,107.21,0,0,0,10.88,26.25,8,8,0,0,0,6,3.93l23.72,2.64q1.49,1.56,3,3L70,215.46a8,8,0,0,0,3.94,6,107.71,107.71,0,0,0,26.25,10.87,8,8,0,0,0,7.06-1.49L125.84,216q2.16.06,4.32,0l18.64,14.92a8,8,0,0,0,7.06,1.48,107.21,107.21,0,0,0,26.25-10.88,8,8,0,0,0,3.93-6l2.64-23.72q1.56-1.48,3-3L215.46,186a8,8,0,0,0,6-3.94,107.71,107.71,0,0,0,10.87-26.25,8,8,0,0,0-1.49-7.06Zm-16.1-6.5a73.93,73.93,0,0,1,0,8.68,8,8,0,0,0,1.74,5.48l14.19,17.73a91.57,91.57,0,0,1-6.23,15L187,173.11a8,8,0,0,0-5.1,2.64,74.11,74.11,0,0,1-6.14,6.14,8,8,0,0,0-2.64,5.1l-2.51,22.58a91.32,91.32,0,0,1-15,6.23l-17.74-14.19a8,8,0,0,0-5-1.75h-.48a73.93,73.93,0,0,1-8.68,0,8,8,0,0,0-5.48,1.74L100.45,215.8a91.57,91.57,0,0,1-15-6.23L82.89,187a8,8,0,0,0-2.64-5.1,74.11,74.11,0,0,1-6.14-6.14,8,8,0,0,0-5.1-2.64L46.43,170.6a91.32,91.32,0,0,1-6.23-15l14.19-17.74a8,8,0,0,0,1.74-5.48,73.93,73.93,0,0,1,0-8.68,8,8,0,0,0-1.74-5.48L40.2,100.45a91.57,91.57,0,0,1,6.23-15L69,82.89a8,8,0,0,0,5.1-2.64,74.11,74.11,0,0,1,6.14-6.14A8,8,0,0,0,82.89,69L85.4,46.43a91.32,91.32,0,0,1,15-6.23l17.74,14.19a8,8,0,0,0,5.48,1.74,73.93,73.93,0,0,1,8.68,0,8,8,0,0,0,5.48-1.74L155.55,40.2a91.57,91.57,0,0,1,15,6.23L173.11,69a8,8,0,0,0,2.64,5.1,74.11,74.11,0,0,1,6.14,6.14,8,8,0,0,0,5.1,2.64l22.58,2.51a91.32,91.32,0,0,1,6.23,15l-14.19,17.74A8,8,0,0,0,199.87,123.66Z"/></symbol>
     </svg>
+
+    <!-- Preview controls. Hidden at the default width so the desktop drift baselines see the
+         page alone; width=mobile shows them above the 390px frame. -->
+    <nav class="sh-toolbar sh-toolbar-a" aria-label="Preview controls">
+      <a data-variant-link="a">A</a> <a data-variant-link="b">B</a> <a data-variant-link="c">C</a>
+      <label>State <select data-control="state"></select></label>
+      <label>Theme <select data-control="theme"></select></label>
+      <label>Motion <select data-control="motion"></select></label>
+      <label>Width <select data-control="width"></select></label>
+      <label>Platform <select data-control="platform"></select></label>
+      <label>Page <select data-control="page"></select></label>
+      <span class="sh-demo">Demo data</span>
+    </nav>
 
     <div id="sh-root" class="sh-root">
     <a class="as-skip" href="#as-main">Skip to content</a>
     <div class="as-app">
       <!-- Sidebar on desktop; on mobile the same nav opens as the "More" sheet (popover). -->
       <nav class="as-side" id="as-side" aria-label="Main" popover>
+        <div class="as-grab" aria-hidden="true"></div>
         <div class="as-side-head">
           <a class="as-wm" href="/student" aria-label="Lemely, overview"><svg class="as-wm-clip" aria-hidden="true"><use href="#a-i-clip" /></svg><span>eme</span><svg class="as-wm-clip" aria-hidden="true"><use href="#a-i-clip" /></svg><span>y</span></a>
           <button type="button" class="as-iconbtn as-side-close" popovertarget="as-side" popovertargetaction="hide" aria-label="Close menu"><svg class="as-ico" aria-hidden="true"><use href="#t-x" /></svg></button>
@@ -107,11 +126,15 @@
       <div class="as-col">
         <header class="as-bar">
           <button type="button" class="as-iconbtn as-menu" popovertarget="as-side" aria-label="Menu"><svg class="as-ico" aria-hidden="true"><use href="#t-menu" /></svg></button>
-          <p class="as-title">Overview</p>
+          <!-- Phone detail pages only: back to the tab root (iOS chevron plus the root's title,
+               Material arrow). -->
+          <button type="button" class="as-iconbtn as-back" data-a-back aria-label="Back to Overview"><svg class="as-ico as-back-ios" aria-hidden="true"><use href="#t-back-ios" /></svg><svg class="as-ico as-back-md" aria-hidden="true"><use href="#t-back-md" /></svg><span class="as-back-l" aria-hidden="true">Overview</span></button>
+          <p class="as-title" data-a-title>Overview</p>
           <a class="as-btn as-btn-primary as-bar-upload" href="/student/correct"><svg class="as-ico" aria-hidden="true"><use href="#t-up" /></svg><span>Upload a paper</span></a>
           <details class="as-pop as-pop-bell">
             <summary class="as-iconbtn" aria-label="Notifications"><svg class="as-ico" aria-hidden="true"><use href="#t-bell" /></svg><i class="as-dot" hidden></i></summary>
             <div class="as-pop-panel">
+              <div class="as-grab" aria-hidden="true"></div>
               <div class="as-pop-head">
                 <h2>Notifications</h2>
                 <button type="button" class="as-textbtn" data-a-markread>Mark all read</button>
@@ -151,6 +174,7 @@
           <details class="as-pop as-pop-me">
             <summary class="as-iconbtn as-me" aria-label="Your profile and account, Mariam"><span class="as-avatar" aria-hidden="true">M</span></summary>
             <div class="as-pop-panel">
+              <div class="as-grab" aria-hidden="true"></div>
               <div class="as-ident">
                 <span class="as-avatar" aria-hidden="true">M</span>
                 <span class="as-who"><b>Mariam</b><small>mariam.hassan@student.lemely.app</small><small><span data-a-hide="new one-paper">IGCSE · 3 subjects</span><span data-a-show="one-paper">IGCSE · 1 subject</span><span data-a-show="new">IGCSE · no subjects yet</span></small></span>
@@ -164,6 +188,15 @@
             </div>
           </details>
         </header>
+        <!-- Phone frame only (hidden at 721px and up). The pull-to-refresh indicator, one per
+             platform, and the large title the bar's inline title collapses from. The large title
+             is aria-hidden: the bar's title carries the page name for assistive tech. -->
+        <div class="as-ptr" aria-hidden="true">
+          <span class="as-ptr-ios"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+          <span class="as-ptr-md"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /></svg></span>
+        </div>
+        <p class="a-vh" aria-live="polite" data-a-ptr-live></p>
+        <p class="as-lt" aria-hidden="true" data-a-lt>Overview</p>
 
         <main id="as-main" class="as-main" tabindex="-1">
       <section data-when-state="loading" aria-busy="true" aria-label="Loading your overview" class="a-page">
@@ -937,7 +970,8 @@
       <!-- Settings: the teacher app's SettingsModal (rail of sections, one section at a time),
            student sections only. A native modal dialog: focus stays inside, Esc closes, and
            closing hands focus back to the gear. Changes apply as they are made; no Save. -->
-      <dialog class="as-modal" id="as-settings" aria-labelledby="as-settings-h">
+      <dialog class="as-modal" id="as-settings" aria-labelledby="as-settings-h" data-detents="medium large">
+        <div class="as-grab" aria-hidden="true"></div>
         <div class="as-set-rail">
           <div class="as-set-rail-head">
             <h2 id="as-settings-h">Settings</h2>

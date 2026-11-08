@@ -8,6 +8,10 @@ const CONTROLS = {
   theme: ["light", "dark"],
   motion: ["full", "reduce"],
   width: ["desktop", "mobile"],
+  /* Phone frame (design A, shell below 721px): which platform's native chrome to draw, and
+     whether the page is a tab root (large title) or a pushed detail page (compact bar + back). */
+  platform: ["ios", "android"],
+  page: ["root", "detail"],
 } as const
 type ControlName = keyof typeof CONTROLS
 
@@ -18,7 +22,9 @@ function readParams(): Record<ControlName, string> {
     const allowed = CONTROLS[name] as readonly string[]
     return v && allowed.includes(v) ? v : allowed[0]
   }
-  return { state: pick("state"), theme: pick("theme"), motion: pick("motion"), width: pick("width") }
+  return Object.fromEntries(
+    (Object.keys(CONTROLS) as ControlName[]).map((name) => [name, pick(name)]),
+  ) as Record<ControlName, string>
 }
 
 /* Progress card (Mistakes beaten) is the default. gstate names which authored data
@@ -42,6 +48,8 @@ function apply(root: HTMLElement, variant: Variant, params: Record<ControlName, 
     theme: params.theme,
     motion: params.motion,
     width: params.width,
+    platform: params.platform,
+    page: params.page,
     exams: facts.subjects.some((s) => s.nextExamOn !== null) ? "yes" : "no",
   })
   root.dataset.garden = "1"
@@ -70,5 +78,15 @@ export function mountHome(variant: Variant): void {
       apply(root, variant, params)
     })
   }
+  /* In-page controls (the phone frame's back button, a tap on the active tab) change a param
+     the same way the toolbar does, so the URL and the toolbar stay in step. */
+  root.addEventListener("sh:param", (e) => {
+    const { name, value } = (e as CustomEvent<{ name: ControlName; value: string }>).detail
+    if (!(CONTROLS[name] as readonly string[]).includes(value)) return
+    params[name] = value
+    const select = document.querySelector<HTMLSelectElement>(`select[data-control="${name}"]`)
+    if (select) select.value = value
+    apply(root, variant, params)
+  })
   apply(root, variant, params)
 }

@@ -126,6 +126,62 @@
   --sh-grade-u: var(--grade-u);
 }
 
+/* Native phone frame (design A, shell below 721px). Brief 2026-11-08 §3. One name per
+   measurement, a value per platform; nothing reads these at 721px and up. iOS numbers follow the
+   HIG (via third-party measurements), Android numbers follow Material 3. */
+.sh-root[data-platform="ios"] {
+  --pf-bar-h: 44px;            /* compact navigation bar, under the status bar */
+  --pf-title-inset: 144px;     /* centred inline title clears three 44px actions */
+  --pf-title-inset-detail: 124px; /* ...or the back chevron with its label */
+  --pf-tab-h: 49px;            /* tab bar, plus the home-indicator inset */
+  --pf-tab-label: 10px;
+  --pf-tab-ico: 24px;
+  --pf-group-radius: 12px;     /* inset-grouped section */
+  --pf-group-margin: 16px;
+  --pf-row-min: 44px;
+  --pf-sep-inset: 16px;        /* separators start at the row's leading content */
+  --pf-iconbtn: 44px;
+  --pf-grab-w: 36px;
+  --pf-grab-h: 5px;
+  --pf-grab-gap: 5px 6px;      /* space above / below the grabber */
+  --pf-sheet-medium: 50dvh;
+  --pf-sheet-large: calc(100dvh - max(env(safe-area-inset-top), 20px) - 10px);
+  --pf-sheet-dur: 320ms;
+  --pf-sheet-ease: cubic-bezier(0.32, 0.72, 0, 1); /* iOS sheet spring, critically damped */
+  --pf-sheet-scale: 0.94;      /* the page behind, at the large detent */
+  --pf-glass-blur: 14px;       /* the landing page header's glass (brand.css .brand-header) */
+  --pf-glass-mix: 86%;
+  --pf-hairline: 0.5px;
+  --pf-press-scale: 0.97;
+  --pf-press-layer: 8%;
+  --pf-ptr-threshold: 64px;
+  --pf-ptr-hold: 56px;
+}
+.sh-root[data-platform="android"] {
+  --pf-bar-h: 64px;            /* M3 small top app bar */
+  --pf-tab-h: 80px;            /* M3 navigation bar */
+  --pf-tab-label: 12px;
+  --pf-tab-ico: 24px;
+  --pf-pill-w: 64px;           /* M3 active indicator */
+  --pf-pill-h: 32px;
+  --pf-group-radius: 0px;      /* full-width list group */
+  --pf-group-margin: 0px;
+  --pf-row-min: 56px;          /* one-line list item; 72 and 88 for two and three lines */
+  --pf-sep-inset: 0px;
+  --pf-iconbtn: 48px;
+  --pf-grab-w: 32px;
+  --pf-grab-h: 4px;
+  --pf-grab-gap: 22px 22px;    /* M3 drag handle: centred in a 48dp touch area */
+  --pf-sheet-medium: 50dvh;
+  --pf-sheet-large: calc(100dvh - max(env(safe-area-inset-top), 24px) - 24px);
+  --pf-sheet-dur: 300ms;
+  --pf-sheet-ease: cubic-bezier(0.05, 0.7, 0.1, 1); /* M3 emphasized decelerate */
+  --pf-press-layer: 10%;       /* M3 pressed state layer */
+  --pf-ripple-dur: 450ms;
+  --pf-ptr-threshold: 64px;
+  --pf-ptr-hold: 64px;
+}
+
 /* Dark scheme: same names, DESIGN.md dark-* values. On dark the accent is Tide, never Abyss. */
 .sh-root[data-theme="dark"] {
   --md-primary: #7fb8e0;
@@ -173,3 +229,31 @@
   --shadow-panel: none;
   color-scheme: dark;
 }
+
+/* Phone frame colours, per platform and scheme. Roles only (DESIGN.md Roles Only Rule).
+   iOS: grouped page, groups on the card surface, chrome as the landing header's glass.
+   Android: groups one tonal step up from the page, chrome lifting surface -> surface-container. */
+.sh-root[data-platform] {
+  --pf-group: var(--surface-card);
+  --pf-sheet-bg: var(--md-surface-low);
+  --pf-sep: var(--md-outline);
+  --pf-hair: var(--md-outline-subtle);
+  --pf-grab: var(--md-outline);
+  --pf-ink-dim: oklch(0 0 0);   /* iOS press dims toward black in light... */
+}
+.sh-root[data-platform="ios"] {
+  --pf-page: var(--md-surface-container);
+  --pf-glass: color-mix(in oklch, var(--md-surface-lowest) var(--pf-glass-mix), transparent);
+}
+.sh-root[data-platform="android"] {
+  --pf-page: var(--md-surface-low);
+  --pf-bar-raised: var(--md-surface-container);
+  --pf-nav: var(--md-surface-container);
+  --pf-grab: color-mix(in oklch, var(--md-on-surface-variant) 40%, transparent); /* M3 drag handle */
+}
+.sh-root[data-platform][data-theme="dark"] { --pf-ink-dim: oklch(1 0 0) } /* ...and toward white in dark */
+.sh-root[data-platform="ios"][data-theme="dark"] {
+  --pf-page: var(--md-surface-lowest);
+  --pf-glass: color-mix(in oklch, var(--md-surface-low) var(--pf-glass-mix), transparent);
+}
+.sh-root[data-platform="android"][data-theme="dark"] { --pf-page: var(--md-surface) }

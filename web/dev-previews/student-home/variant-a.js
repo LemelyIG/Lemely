@@ -538,3 +538,314 @@ resetExam()
 observeSections()
 runMarkingDemo()
 resetShell()
+
+/* ======================================================================================
+   Native phone frame (brief 2026-11-08 §3, §6). Everything here acts only while the shell is
+   phone-sized (721px and up keeps design A), and reads the platform from data-platform.
+   ====================================================================================== */
+const PHONE_MAX = 720
+const isPhone = () => root.clientWidth <= PHONE_MAX
+const platform = () => root.dataset.platform
+const col = document.querySelector(".as-col")
+const largeTitle = document.querySelector("[data-a-lt]")
+const barTitle = document.querySelector("[data-a-title]")
+const tabBar = document.querySelector(".a-bottombar")
+const ROOT_TITLE = barTitle?.textContent ?? "Overview"
+/* A long pushed-page title, so the compact bar's truncation is on show. */
+const DETAIL_TITLE = "0625 Physics · Paper 4 · May/June 2024"
+const setParam = (name, value) => root.dispatchEvent(new CustomEvent("sh:param", { detail: { name, value } }))
+const haptic = () => {
+  if (platform() === "android") navigator.vibrate?.(10)
+}
+
+/* ---------- 1. collapse: one threshold, the large title's bottom crossing the bar ---------- */
+function syncBar() {
+  if (!bar) return
+  if (!isPhone()) {
+    bar.classList.remove("is-collapsed", "is-raised")
+    return
+  }
+  root.style.setProperty("--pf-sy", `${window.scrollY}px`)
+  if (root.dataset.page === "detail") {
+    bar.classList.remove("is-collapsed")
+    bar.classList.toggle("is-raised", window.scrollY > 0)
+    return
+  }
+  const crossed = largeTitle ? largeTitle.getBoundingClientRect().bottom <= bar.getBoundingClientRect().bottom + 0.5 : false
+  bar.classList.toggle("is-collapsed", crossed)
+  bar.classList.toggle("is-raised", crossed)
+}
+let barFrame = 0
+window.addEventListener(
+  "scroll",
+  () => {
+    if (barFrame) return
+    barFrame = requestAnimationFrame(() => {
+      barFrame = 0
+      syncBar()
+    })
+  },
+  { passive: true },
+)
+
+function syncPage() {
+  const detail = root.dataset.page === "detail"
+  if (barTitle) barTitle.textContent = detail && isPhone() ? DETAIL_TITLE : ROOT_TITLE
+  syncBar()
+}
+document.querySelector("[data-a-back]")?.addEventListener("click", () => {
+  setParam("page", "root")
+  window.scrollTo({ top: 0 })
+})
+
+/* ---------- 2. tab bar: tapping the active tab scrolls to top, again pops to the root ---------- */
+tabBar?.addEventListener("click", (e) => {
+  const tab = e.target.closest('a[aria-current="page"]')
+  if (!tab || !isPhone()) return
+  e.preventDefault()
+  if (root.dataset.page === "detail") {
+    setParam("page", "root")
+    window.scrollTo({ top: 0 })
+    return
+  }
+  window.scrollTo({ top: 0, behavior: motionOn() ? "smooth" : "auto" })
+})
+
+/* ---------- 3. bottom sheets: grabber, detents, drag to dismiss ---------- */
+const settings = document.getElementById("as-settings")
+const sheetOf = (el) => (el.matches("details") ? el.querySelector(".as-pop-panel") : el)
+const sheetOpen = (el) => (el.matches("details, dialog") ? el.open : el.matches(":popover-open"))
+const sheetHosts = [...pops, ...dialogs, side].filter(Boolean)
+let active = null // { host, sheet, detents, detent }
+
+function detentOffset(s, detent) {
+  if (detent !== "medium") return 0
+  const medium = window.innerHeight * 0.5
+  return Math.max(0, s.offsetHeight - medium)
+}
+function setDetent(detent, { animate = true } = {}) {
+  if (!active) return
+  active.detent = detent
+  const { sheet } = active
+  sheet.classList.toggle("is-sheet-snapping", animate && motionOn())
+  sheet.style.translate = `0 ${detentOffset(sheet, detent)}px`
+  // Only top-layer sheets scale the page back: the bell and avatar panels live inside it.
+  root.dataset.sheet = active.host.matches("details") ? "fit" : detent
+  if (animate) haptic()
+}
+function openSheet(host) {
+  if (!isPhone()) return
+  const sheet = sheetOf(host)
+  const detents = (host.dataset.detents ?? "fit").split(" ")
+  active = { host, sheet, detents, detent: detents[0] }
+  setDetent(detents[0], { animate: false })
+}
+function closeSheetState(host) {
+  if (active?.host !== host) return
+  active.sheet.style.translate = ""
+  active.sheet.classList.remove("is-sheet-snapping")
+  active = null
+  delete root.dataset.sheet
+}
+function dismissSheet() {
+  if (!active) return
+  const { host, sheet } = active
+  const finish = () => {
+    if (host.matches("details")) host.open = false
+    else if (host.matches("dialog")) host.close()
+    else host.hidePopover()
+  }
+  if (!motionOn()) return finish()
+  sheet.classList.add("is-sheet-snapping")
+  sheet.style.translate = `0 ${sheet.offsetHeight}px`
+  delete root.dataset.sheet
+  sheet.addEventListener("transitionend", finish, { once: true })
+  setTimeout(finish, 450) // in case the transition is skipped
+}
+for (const host of sheetHosts) {
+  const sync = () => (sheetOpen(host) ? openSheet(host) : closeSheetState(host))
+  if (host.matches("dialog")) new MutationObserver(sync).observe(host, { attributes: true, attributeFilter: ["open"] })
+  else host.addEventListener("toggle", sync)
+}
+// The test and review hook: jump the open sheet to a detent.
+window.__asSheetDetent = (d) => active?.detents.includes(d) && setDetent(d)
+
+// A tap on the bell or avatar sheet's scrim (the details element's own ::before) closes it.
+document.addEventListener("click", (e) => {
+  if (isPhone() && e.target.matches?.("details.as-pop[open]")) dismissSheet()
+})
+
+// Drag from the grabber or the sheet's header. Down past a quarter of the sheet (or a fling)
+// steps down a detent or dismisses; up steps to the large detent where there is one.
+const DRAG_HANDLES = ".as-grab, .as-pop-head, .as-ident, .as-set-rail-head, .as-side-head"
+let drag = null
+document.addEventListener("pointerdown", (e) => {
+  if (!active || !isPhone() || e.button > 0) return
+  const handle = e.target.closest(DRAG_HANDLES)
+  if (!handle || !active.sheet.contains(handle) || e.target.closest("button:not(.as-grab), a")) return
+  const base = detentOffset(active.sheet, active.detent)
+  drag = { id: e.pointerId, y0: e.clientY, base, dy: 0, samples: [[e.timeStamp, e.clientY]] }
+  active.sheet.classList.remove("is-sheet-snapping")
+  handle.setPointerCapture?.(e.pointerId)
+})
+document.addEventListener("pointermove", (e) => {
+  if (!drag || e.pointerId !== drag.id) return
+  let dy = e.clientY - drag.y0
+  const canGrow = active.detent === "medium" && active.detents.includes("large")
+  if (dy < 0 && !canGrow) dy /= 4 // rubber band past the top detent
+  if (dy < 0 && canGrow) dy = Math.max(dy, -drag.base - 24)
+  drag.dy = dy
+  drag.samples = [...drag.samples, [e.timeStamp, e.clientY]].filter(([t]) => e.timeStamp - t <= 100)
+  active.sheet.style.translate = `0 ${Math.max(drag.base + dy, -24)}px`
+})
+const endDrag = (e) => {
+  if (!drag || e.pointerId !== drag.id) return
+  const { dy, samples } = drag
+  drag = null
+  // Release velocity over the last 100ms of movement, in px per ms.
+  const [t0, y0] = samples[0]
+  const v = e.timeStamp - t0 > 0 ? (e.clientY - y0) / (e.timeStamp - t0) : 0
+  const h = active.sheet.offsetHeight
+  if (dy > h * 0.25 || v > 0.6) {
+    if (active.detent === "large" && active.detents.includes("medium") && dy < h * 0.5 && v < 1.4) setDetent("medium")
+    else dismissSheet()
+  } else if ((dy < -40 || v < -0.6) && active.detents.includes("large")) setDetent("large")
+  else setDetent(active.detent)
+}
+document.addEventListener("pointerup", endDrag)
+document.addEventListener("pointercancel", endDrag)
+// Scrolling the settings content at the medium detent expands the sheet, as on iOS.
+settings?.querySelector(".as-set-scroll")?.addEventListener(
+  "scroll",
+  (e) => {
+    if (active?.host === settings && active.detent === "medium" && e.target.scrollTop > 8) setDetent("large")
+  },
+  { passive: true },
+)
+// Keyboard: iOS ignores interactive-widget, so lift sheets above it by the visual viewport.
+window.visualViewport?.addEventListener("resize", () => {
+  const vv = window.visualViewport
+  const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
+  root.style.setProperty("--pf-kb", `${Math.round(kb)}px`)
+})
+
+/* ---------- 5. press states: under 50ms, iOS dim (+ scale on buttons), Material ripple ---------- */
+const TAPPABLE = 'a[href], button:not(:disabled), summary, label.mo-plant, .as-seg label, label.as-row'
+const RELEASE_MS = 230
+document.addEventListener("touchstart", () => {}, { passive: true }) // lets iOS Safari run :active
+document.addEventListener(
+  "pointerdown",
+  (e) => {
+    if (!isPhone() || e.button > 0) return
+    let el = e.target.closest(TAPPABLE)
+    if (!el || !root.contains(el) || el.closest(".ah-binny-tile, .sh-toolbar")) return
+    // Material tabs: the state layer belongs on the active-indicator pill, not the whole column.
+    if (platform() === "android" && el.closest(".a-bottombar")) el = el.querySelector(".as-ico") ?? el
+    const r = el.getBoundingClientRect()
+    el.style.setProperty("--pf-rx", `${e.clientX - r.left}px`)
+    el.style.setProperty("--pf-ry", `${e.clientY - r.top}px`)
+    el.classList.remove("is-release")
+    el.classList.add("is-press")
+    let lifted = false
+    const lift = () => {
+      if (lifted) return
+      lifted = true
+      el.classList.remove("is-press")
+      el.classList.add("is-release")
+      setTimeout(() => el.classList.remove("is-release"), RELEASE_MS)
+      window.removeEventListener("pointerup", lift)
+      window.removeEventListener("pointercancel", lift)
+      window.removeEventListener("scroll", lift)
+    }
+    window.addEventListener("pointerup", lift)
+    window.addEventListener("pointercancel", lift)
+    window.addEventListener("scroll", lift, { passive: true })
+  },
+  { capture: true },
+)
+
+/* ---------- 6. pull to refresh on the tab root ---------- */
+const PTR_MAX = 140
+const ptrLive = document.querySelector("[data-a-ptr-live]")
+let ptr = null
+const tokenPx = (name) => parseFloat(getComputedStyle(root).getPropertyValue(name)) || 64
+function setPull(px) {
+  const threshold = tokenPx("--pf-ptr-threshold")
+  col.style.setProperty("--pf-pull", `${px}px`)
+  col.style.setProperty("--pf-pull-p", String(Math.min(1, px / threshold)))
+}
+function settlePull() {
+  col.dataset.ptr = "settling"
+  setPull(0)
+  setTimeout(() => {
+    if (col.dataset.ptr === "settling") delete col.dataset.ptr
+  }, 400)
+}
+function refresh() {
+  col.dataset.ptr = "refreshing"
+  setPull(tokenPx("--pf-ptr-hold"))
+  col.style.setProperty("--pf-pull-p", "1")
+  haptic()
+  setTimeout(() => {
+    if (ptrLive) ptrLive.textContent = "Overview is up to date."
+    settlePull()
+  }, motionOn() ? 1200 : 600)
+}
+const canPull = () => isPhone() && root.dataset.page === "root" && !active && window.scrollY <= 0 && col.dataset.ptr !== "refreshing"
+document.addEventListener(
+  "touchstart",
+  (e) => {
+    if (!canPull() || e.touches.length !== 1 || !col.contains(e.target)) return
+    ptr = { y0: e.touches[0].clientY, armed: false }
+  },
+  { passive: true },
+)
+document.addEventListener(
+  "touchmove",
+  (e) => {
+    if (!ptr) return
+    const dy = e.touches[0].clientY - ptr.y0
+    if (dy <= 0 || window.scrollY > 0) {
+      if (col.dataset.ptr === "pulling") settlePull()
+      ptr = null
+      return
+    }
+    e.preventDefault()
+    col.dataset.ptr = "pulling"
+    const pull = PTR_MAX * (1 - Math.exp(-dy / (PTR_MAX * 1.6))) // eases toward PTR_MAX
+    setPull(pull)
+    const over = pull >= tokenPx("--pf-ptr-threshold")
+    if (over && !ptr.armed) haptic()
+    ptr.armed = over
+  },
+  { passive: false },
+)
+document.addEventListener("touchend", () => {
+  if (!ptr) return
+  const { armed } = ptr
+  ptr = null
+  if (col.dataset.ptr !== "pulling") return
+  if (armed) refresh()
+  else settlePull()
+})
+// The review hook: show the indicator mid-pull (p 0-1), or run a refresh ("run").
+window.__asPullDemo = (p = "run") => {
+  if (p === "run") return refresh()
+  col.dataset.ptr = "pulling"
+  setPull(tokenPx("--pf-ptr-threshold") * p)
+}
+
+/* ---------- wiring ---------- */
+function syncFrame() {
+  if (!isPhone()) {
+    if (active) closeSheetState(active.host)
+    document.documentElement.style.removeProperty("overscroll-behavior-y")
+  } else {
+    // The page owns the pull: contain the root scroller so the browser's own refresh stays out.
+    document.documentElement.style.overscrollBehaviorY = "contain"
+  }
+  syncPage()
+}
+new MutationObserver(syncFrame).observe(root, { attributes: true, attributeFilter: ["data-page", "data-platform", "data-width"] })
+new ResizeObserver(syncFrame).observe(root)
+syncFrame()
