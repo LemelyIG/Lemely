@@ -125,6 +125,8 @@ EXPECTED_TABLES = {
     "payments",
     "paymob_events",
     "saved_cards",
+    # Teacher team (lemely/db/models/team.py, migration 0054).
+    "teacher_members",
 }
 
 # Tables deliberately excluded from `test_every_model_has_timestamps` below.
