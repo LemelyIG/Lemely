@@ -686,14 +686,6 @@ body {
    links are laid out as flex or inline-flex by the kit and are handled at their
    own components, where the centring is known. */
 @media (pointer: coarse) {
-  /* Every tap target drops the double-tap-to-zoom delay. Links and summaries
-     live here only: they stay out of the min-block-size rule below, so inline
-     prose links keep their line-height. */
-  a[href],
-  summary {
-    touch-action: manipulation;
-  }
-
   button,
   [role="button"],
   [role="tab"],
@@ -704,6 +696,14 @@ body {
     min-block-size: 44px;
     /* Removes the ~300ms double-tap-to-zoom delay a finger otherwise pays on
        every one of these controls before the browser commits to a single tap. */
+    touch-action: manipulation;
+  }
+
+  /* Every tap target drops the double-tap-to-zoom delay. Links and summaries
+     live here only: they stay out of the min-block-size rule above, so inline
+     prose links keep their line-height. */
+  a[href],
+  summary {
     touch-action: manipulation;
   }
 
