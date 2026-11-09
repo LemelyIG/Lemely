@@ -20,6 +20,7 @@ from tests._concurrency import _Paused, _wait_until_a_backend_waits_on_a_lock
 from tests.usage_db import (
     NOW,
     add_rate,
+    add_seat_member,
     add_user,
     balance,
     debts,
@@ -140,7 +141,8 @@ def test_settle_beyond_the_chain_creates_debt_that_blocks_and_is_repaid(
 def test_debt_lands_on_the_payer_of_last_resort_not_the_teacher(
     sm: sessionmaker[Session],
 ) -> None:
-    student, teacher, member = add_user(sm), add_user(sm, Role.teacher), uuid.uuid4()
+    student, teacher = add_user(sm), add_user(sm, Role.teacher)
+    member = add_seat_member(sm, student, teacher)
     seat = grant(sm, student, 10, kind=GrantKind.seat_allowance, teacher_member_id=member)
     teacher_credits = grant(sm, teacher, 100, kind=GrantKind.credit_pack, visible=True)
     chain = seat_chain(student, teacher, member, cap=5)
@@ -240,7 +242,8 @@ def test_settle_with_stranded_holds_raises_and_writes_nothing(
     sm: sessionmaker[Session],
 ) -> None:
     """The chain still reaches the seat grant but no longer the teacher's credits."""
-    student, teacher, member = add_user(sm), add_user(sm, Role.teacher), uuid.uuid4()
+    student, teacher = add_user(sm), add_user(sm, Role.teacher)
+    member = add_seat_member(sm, student, teacher)
     seat = grant(sm, student, 5, kind=GrantKind.seat_allowance, teacher_member_id=member)
     credits = grant(sm, teacher, 50, kind=GrantKind.credit_pack, visible=True)
     chain = seat_chain(student, teacher, member, cap=100)

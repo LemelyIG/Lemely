@@ -23,6 +23,7 @@ from tests.usage_db import (
     RATE_VERSION,
     add_debt,
     add_rate,
+    add_seat_member,
     add_user,
     balance,
     debts,
@@ -63,7 +64,8 @@ def reconcile(factory: sessionmaker[Session]) -> list[tuple[uuid.UUID, int, int]
 def _busy_ledger(factory: sessionmaker[Session]) -> uuid.UUID:
     """Every entry kind at least once; returns the student, who ends up in debt."""
     add_rate(factory)
-    student, teacher, member = add_user(factory), add_user(factory, Role.teacher), uuid.uuid4()
+    student, teacher = add_user(factory), add_user(factory, Role.teacher)
+    member = add_seat_member(factory, student, teacher)
     grant(factory, student, 10, expires_at=NOW + timedelta(minutes=1))
     grant(factory, student, 6, kind=GrantKind.seat_allowance, teacher_member_id=member)
     pack = grant(factory, teacher, 50, kind=GrantKind.credit_pack, visible=True)

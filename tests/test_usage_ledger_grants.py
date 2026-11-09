@@ -15,6 +15,7 @@ from lemely.db.usage_ledger_repo import UsageLedger
 from tests.usage_db import (
     NOW,
     add_debt,
+    add_seat_member,
     add_user,
     balance,
     debts,
@@ -114,7 +115,8 @@ def test_new_grant_repays_debts_oldest_first(sm: sessionmaker[Session]) -> None:
 def test_seat_allowance_does_not_repay_the_students_debt(sm: sessionmaker[Session]) -> None:
     student = add_user(sm)
     add_debt(sm, student, 30)
-    seat = grant(sm, student, 40, kind=GrantKind.seat_allowance, teacher_member_id=uuid.uuid4())
+    member = add_seat_member(sm, student)
+    seat = grant(sm, student, 40, kind=GrantKind.seat_allowance, teacher_member_id=member)
     assert balance(sm, seat) == (40, 0)
     assert debts(sm, student)[0].outstanding == 30
 
@@ -137,7 +139,8 @@ def test_has_debt(sm: sessionmaker[Session]) -> None:
 
 
 def test_available_filters_by_scope_and_validity(sm: sessionmaker[Session]) -> None:
-    owner, member = add_user(sm), uuid.uuid4()
+    owner = add_user(sm)
+    member = add_seat_member(sm, owner)
     grant(sm, owner, 10)  # hidden allowance
     grant(sm, owner, 20, kind=GrantKind.credit_pack, visible=True)
     grant(sm, owner, 40, kind=GrantKind.seat_allowance, teacher_member_id=member)
@@ -158,7 +161,8 @@ def test_available_filters_by_scope_and_validity(sm: sessionmaker[Session]) -> N
 def test_available_skips_an_indebted_payer_but_not_a_debt_exempt_seat(
     sm: sessionmaker[Session],
 ) -> None:
-    student, member = add_user(sm), uuid.uuid4()
+    student = add_user(sm)
+    member = add_seat_member(sm, student)
     grant(sm, student, 25, kind=GrantKind.seat_allowance, teacher_member_id=member)
     grant(sm, student, 10)
     add_debt(sm, student, 3)  # added after the grants, so nothing repays it
@@ -215,7 +219,8 @@ def test_meter_fraction_sums_current_period_allowances(sm: sessionmaker[Session]
 
 
 def test_meter_fraction_reads_the_seat_grant_for_in_scope_work(sm: sessionmaker[Session]) -> None:
-    student, member = add_user(sm), uuid.uuid4()
+    student = add_user(sm)
+    member = add_seat_member(sm, student)
     grant(sm, student, 40, kind=GrantKind.seat_allowance, teacher_member_id=member)
     grant(sm, student, 100)
     with sm() as session:

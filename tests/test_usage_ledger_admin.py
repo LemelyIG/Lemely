@@ -21,6 +21,7 @@ from tests.usage_db import (
     RATE_VERSION,
     add_debt,
     add_rate,
+    add_seat_member,
     add_user,
     balance,
     debts,
@@ -142,7 +143,8 @@ def test_negative_adjust_debits_own_grants_then_records_debt_never_a_seat(
     sm: sessionmaker[Session],
 ) -> None:
     owner = add_user(sm)
-    seat = grant(sm, owner, 100, kind=GrantKind.seat_allowance, teacher_member_id=uuid.uuid4())
+    member = add_seat_member(sm, owner)
+    seat = grant(sm, owner, 100, kind=GrantKind.seat_allowance, teacher_member_id=member)
     allowance = grant(sm, owner, 5)
     credits = grant(sm, owner, 20, kind=GrantKind.credit_pack, visible=True)
     with sm.begin() as session:

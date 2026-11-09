@@ -43,6 +43,7 @@ from lemely.db.models.usage import (
 from lemely.db.models.users import User
 from lemely.db.usage_ledger_repo import UsageLedger
 from lemely.runtime.config import DatabaseSettings
+from tests.team_db import add_seat
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -140,6 +141,18 @@ def grant(
             teacher_member_id=teacher_member_id,
         )
         return issued.id
+
+
+def add_seat_member(
+    factory: sessionmaker[Session], student: uuid.UUID, teacher: uuid.UUID | None = None
+) -> uuid.UUID:
+    """A real ``student_seat`` row, so a seat grant's ``teacher_member_id`` FK holds.
+
+    ``usage_grants.teacher_member_id`` references ``teacher_members`` (migration
+    0054): a seat grant needs a seat that exists. Seeds a teacher too when none is given.
+    """
+    teacher_id = teacher if teacher is not None else add_user(factory, Role.teacher)
+    return add_seat(factory, teacher_id=teacher_id, student_id=student)
 
 
 def own_chain(owner: uuid.UUID) -> list[Payer]:

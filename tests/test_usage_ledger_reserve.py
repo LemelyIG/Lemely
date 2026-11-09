@@ -22,6 +22,7 @@ from tests.usage_db import (
     NOW,
     RATE_VERSION,
     add_debt,
+    add_seat_member,
     add_user,
     balance,
     debts,
@@ -132,7 +133,8 @@ def test_reserve_validates(sm: sessionmaker[Session]) -> None:
 
 
 def test_debt_blocks_the_owners_own_balance_but_not_a_seat(sm: sessionmaker[Session]) -> None:
-    student, teacher, member = add_user(sm), add_user(sm, Role.teacher), uuid.uuid4()
+    student, teacher = add_user(sm), add_user(sm, Role.teacher)
+    member = add_seat_member(sm, student, teacher)
     own = grant(sm, student, 50)
     seat = grant(sm, student, 8, kind=GrantKind.seat_allowance, teacher_member_id=member)
     add_debt(sm, student, 1)
@@ -360,7 +362,8 @@ def test_a_failed_close_leaves_no_pending_writes_in_the_session(
     sm: sessionmaker[Session],
 ) -> None:
     """The chain reaches the seat grant (released first) but not the teacher's credits."""
-    student, teacher, member = add_user(sm), add_user(sm, Role.teacher), uuid.uuid4()
+    student, teacher = add_user(sm), add_user(sm, Role.teacher)
+    member = add_seat_member(sm, student, teacher)
     seat = grant(sm, student, 5, kind=GrantKind.seat_allowance, teacher_member_id=member)
     credits = grant(sm, teacher, 50, kind=GrantKind.credit_pack, visible=True)
     chain = seat_chain(student, teacher, member, cap=100)
