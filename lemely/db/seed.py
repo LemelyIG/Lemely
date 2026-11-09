@@ -49,6 +49,7 @@ from lemely.db.models.academic import Subject
 from lemely.db.models.enums import ExamBoard, QualificationLevel, Role
 from lemely.db.parent_repo import ParentLinkService
 from lemely.db.session import get_sessionmaker, session_scope
+from lemely.db.usage_catalogue_repo import ensure_usage_catalogue
 from lemely.io import syllabus_topics
 from lemely.runtime.config import Settings, load_settings
 from lemely.runtime.errors import AuthError, LemelyError
@@ -363,6 +364,8 @@ def seed_reference_data(settings: Settings | None = None) -> int:
                 subject.name = spec.name
                 subject.qualification_level = spec.qualification_level
                 subject.active = True
+        # Billing spec §4.1: version-1 usage rates, estimators and signup packs.
+        ensure_usage_catalogue(session, now=datetime.now(UTC))
     syllabus_topics.invalidate_reference_cache()
     return added
 
