@@ -6,13 +6,15 @@ import uuid
 from typing import TYPE_CHECKING, Annotated
 
 import pytest
+import sqlalchemy as sa
 from fastapi import Depends, FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from sqlalchemy.dialects.postgresql import JSONB
 
 from lemely.core.team_permissions import TeamPermission
 from lemely.db.models.enums import Role
-from lemely.db.models.team import AssistantRole, TeacherMemberStatus
+from lemely.db.models.team import AssistantRole, TeacherMember, TeacherMemberStatus
 from lemely.db.teacher_team_repo import (
     TeacherTeamService,
     TeacherTeamStore,
@@ -340,6 +342,65 @@ def test_an_unreadable_row_fails_closed(sm: sessionmaker[Session]) -> None:
     assert _code(body) == "team_permission_denied"
     with sm() as session:
         assert assistant_has_permission(session, helper, lead, TeamPermission.VIEW_RESULTS) is None
+
+
+def _store_raw_permissions(sm: sessionmaker[Session], member_id: uuid.UUID, raw_json: str) -> None:
+    """Write ``raw_json`` straight into ``permissions``, as a hand edit or a bad import could."""
+    with sm.begin() as session:
+        session.execute(
+            sa.update(TeacherMember)
+            .where(TeacherMember.id == member_id)
+            .values(permissions=sa.cast(sa.literal(raw_json), JSONB))
+        )
+
+
+@pytest.mark.parametrize(
+    "raw_json",
+    ["[]", '"x"', "5", "true", "null", "[1, 2]", '{"mark": "yes"}', '{"mark": 1}'],
+    ids=["empty-list", "string", "number", "bool", "json-null", "list", "str-toggle", "int-toggle"],
+)
+def test_malformed_stored_toggles_fail_closed_with_the_uniform_403(
+    sm: sessionmaker[Session], raw_json: str
+) -> None:
+    lead, helper = add_user(sm, Role.teacher), add_user(sm, Role.teacher)
+    member = add_assistant(sm, teacher_id=lead, assistant_id=helper, role=AssistantRole.co_teacher)
+    _store_raw_permissions(sm, member, raw_json)
+    status, body = _call(sm, "/view", caller=helper, acting_for=str(lead))
+    assert status == 403
+    assert _code(body) == "team_permission_denied"
+    with sm() as session:
+        for perm in TeamPermission:
+            assert assistant_has_permission(session, helper, lead, perm) is None
+
+
+@pytest.mark.parametrize("lead_role", [Role.student, Role.parent, Role.school_admin])
+def test_an_assistant_row_under_a_lead_who_is_no_longer_a_teacher_is_403(
+    sm: sessionmaker[Session], lead_role: Role
+) -> None:
+    """The row is hand-seeded: nothing in the schema stops a lead's role from changing."""
+    lead, helper = add_user(sm, lead_role), add_user(sm, Role.teacher)
+    add_assistant(sm, teacher_id=lead, assistant_id=helper, role=AssistantRole.co_teacher)
+    status, body = _call(sm, "/view", caller=helper, acting_for=str(lead))
+    assert status == 403
+    assert _code(body) == "team_permission_denied"
+    with sm() as session:
+        assert assistant_has_permission(session, helper, lead, TeamPermission.VIEW_RESULTS) is None
+
+
+def test_a_lead_who_is_a_teacher_still_passes_the_role_recheck(sm: sessionmaker[Session]) -> None:
+    lead, helper = add_user(sm, Role.teacher), add_user(sm, Role.teacher)
+    add_assistant(sm, teacher_id=lead, assistant_id=helper, role=AssistantRole.viewer)
+    assert _call(sm, "/view", caller=helper, acting_for=str(lead))[0] == 200
+
+
+def test_a_padded_acting_header_is_accepted(sm: sessionmaker[Session]) -> None:
+    """Servers differ on trimming header values; padding must not change the answer."""
+    lead, helper = add_user(sm, Role.teacher), add_user(sm, Role.teacher)
+    member = add_assistant(sm, teacher_id=lead, assistant_id=helper, role=AssistantRole.viewer)
+    status, body = _call(sm, "/view", caller=helper, acting_for=f"  {lead}\t")
+    assert status == 200
+    assert body["member"] == str(member)
+    assert _call(sm, "/manage", caller=lead, acting_for=f" {lead} ")[0] == 200
 
 
 def test_billing_and_seat_management_are_not_team_permissions() -> None:

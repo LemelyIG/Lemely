@@ -40,6 +40,7 @@ own exactly like an unknown id.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Final
@@ -78,7 +79,7 @@ from lemely.db.usage_ledger_repo import HELD_KINDS, UsageLedger
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Iterator, Mapping, Sequence
+    from collections.abc import Iterator, Sequence
 
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -651,18 +652,36 @@ class TeacherTeamService:
         """Return the active assistant row if it grants ``perm`` for that lead, else ``None``.
 
         The single rule behind ``require_team_permission`` and Phase 04's estimate route:
-        the row's role preset with its toggles applied (spec §2.3) must include ``perm``.
-        No row, a removed row, a missing permission, an unreadable row and the lead
-        themselves are all ``None``.
+        the row's role preset with its toggles applied (spec §2.3) must include ``perm``,
+        and the lead must still be a teacher account. No row, a removed row, a lead who
+        is no longer a teacher, a missing permission, an unreadable row (toggles that
+        are not a JSON object of bools, or an unknown preset) and the lead themselves
+        are all ``None``: the check fails closed and never raises.
         """
         if assistant_user_id == lead_teacher_user_id:
             return None
-        member = self.assistant_membership(assistant_user_id, lead_teacher_user_id)
+        # One indexed query: the lead's current role rides along as a join, so a lead
+        # who was demoted or re-roled after the row was written confers nothing.
+        member = self._session.scalars(
+            select(TeacherMember)
+            .join(User, User.id == TeacherMember.teacher_user_id)
+            .where(
+                TeacherMember.teacher_user_id == lead_teacher_user_id,
+                TeacherMember.member_user_id == assistant_user_id,
+                TeacherMember.kind == TeacherMemberKind.assistant,
+                TeacherMember.status == TeacherMemberStatus.active,
+                User.role == Role.teacher,
+            )
+        ).first()
         if member is None or member.role_preset is None:
             return None
+        toggles: object = member.permissions
+        if not isinstance(toggles, Mapping):
+            # JSONB can hold any value ([], "x", 5, null); only an object is a toggle set.
+            return None
         try:
-            granted = effective_permissions(member.role_preset, member.permissions or {})
-        except ValueError:
+            granted = effective_permissions(member.role_preset, toggles)
+        except (ValueError, TypeError, AttributeError):
             # A row whose toggles or preset cannot be read grants nothing (fail closed).
             return None
         return member if perm in granted else None

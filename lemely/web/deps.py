@@ -1165,7 +1165,7 @@ def require_team_permission(
         if len(acting_teacher) != 1:
             raise _team_permission_denied()
         try:
-            lead_id = uuid.UUID(acting_teacher[0])
+            lead_id = uuid.UUID(acting_teacher[0].strip())
         except ValueError:
             raise _team_permission_denied() from None
         if lead_id == actor_id:
