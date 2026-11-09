@@ -492,6 +492,19 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "Metering pure rules stay pure (billing spec §5.6)"
+type = "forbidden"
+source_modules = ["lemely.core.metered_actions"]
+forbidden_modules = [
+  "lemely.db",
+  "lemely.web",
+  "lemely.io",
+  "lemely.app",
+  "sqlalchemy",
+  "fastapi",
+]
+
+[[tool.importlinter.contracts]]
 name = "Usage pricing stays pure (Paymob billing spec §3)"
 type = "forbidden"
 source_modules = [
