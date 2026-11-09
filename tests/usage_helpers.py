@@ -27,6 +27,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session, sessionmaker
 
+    from lemely.web.usage import UsageMeter
+
 #: A Wednesday, so "this ISO week" and "this calendar month" are unambiguous.
 NOW = datetime(2026, 11, 4, 10, 0, tzinfo=UTC)
 
@@ -147,3 +149,10 @@ def jobs_for(sm: sessionmaker[Session], actor: uuid.UUID) -> list[UsageJob]:
                 .order_by(UsageJob.created_at, UsageJob.id)
             )
         )
+
+
+def enforcing_meter(sm: sessionmaker[Session], now: datetime = NOW) -> UsageMeter:
+    """A meter that enforces on ``sm`` whatever the suite's ``LEMELY_USAGE__ENFORCE`` says."""
+    from lemely.web.usage import UsageMeter
+
+    return UsageMeter(sm, enforce=True, now=lambda: now)

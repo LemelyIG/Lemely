@@ -137,6 +137,22 @@ def _disable_dotenv_file() -> Iterator[None]:
 
 
 @pytest.fixture(scope="session", autouse=True)
+def _disable_usage_enforcement() -> Iterator[None]:
+    """Route tests run without the usage ledger (paymob billing phase 04, deviation 11).
+
+    Every metered route reads ``settings.usage.enforce`` through ``get_usage_meter``; with
+    it off, ``UsageMeter`` returns exempt contexts and never touches the ledger. The
+    metering tests override ``get_usage_meter`` with an enforcing meter on their own DB.
+    """
+    patch = pytest.MonkeyPatch()
+    patch.setenv("LEMELY_USAGE__ENFORCE", "0")
+    try:
+        yield
+    finally:
+        patch.undo()
+
+
+@pytest.fixture(scope="session", autouse=True)
 def _disable_teacher_seat_enforcement() -> Iterator[None]:
     """Class joins in the suite need no teacher plan (paymob billing Phase 03, index R5).
 

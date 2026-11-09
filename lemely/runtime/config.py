@@ -1246,6 +1246,22 @@ class NotificationsSettings(BaseModel):
     study_plan_reminder_hour: int = Field(default=8, ge=0, le=23)
 
 
+class UsageSettings(BaseModel):
+    """Usage metering (paymob billing spec §2.4, §5.7).
+
+    Overrides via ``lemely.toml`` under ``[usage]`` or ``LEMELY_USAGE__*`` env vars.
+
+    ``enforce`` is true in every deployed environment: every LLM-backed route reserves
+    against the usage ledger and answers 402 when the payer chain cannot cover the top of
+    the estimate. ``tests/conftest.py`` sets it false for the suite, so route tests written
+    before metering need no ledger; the metering tests build an enforcing ``UsageMeter``
+    themselves. Not emitted to ``lemely.toml.example``: nobody setting Lemely up turns it off.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    enforce: bool = True
+
+
 class TutoringSettings(BaseModel):
     """The tutoring marketplace (spec docs/tutoring/SPEC.md §b).
 
@@ -1445,6 +1461,7 @@ class Settings(BaseSettings):
     notifications: NotificationsSettings = NotificationsSettings()
     email: EmailSettings = EmailSettings()
     tutoring: TutoringSettings = TutoringSettings()
+    usage: UsageSettings = UsageSettings()
     team: TeamSettings = TeamSettings()
     paymob: PaymobSettings = PaymobSettings()
     database: DatabaseSettings = DatabaseSettings()
