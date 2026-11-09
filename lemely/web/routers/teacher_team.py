@@ -168,9 +168,10 @@ def _assistant_dtos(
 
 
 def _membership_dtos(
-    team: TeacherTeamService, members: Sequence[TeacherMember]
+    team: TeacherTeamService, rows: Sequence[tuple[TeacherMember, bool]]
 ) -> list[MembershipDTO]:
-    names = team.display_names([m.teacher_user_id for m in members])
+    """One DTO per ``(membership, lead available to assistants)`` pair."""
+    names = team.display_names([m.teacher_user_id for m, _ in rows])
     return [
         MembershipDTO(
             memberId=str(member.id),
@@ -178,8 +179,9 @@ def _membership_dtos(
             teacherName=names.get(member.teacher_user_id) or "Teacher",
             role=member.role_preset.value if member.role_preset is not None else "viewer",
             effectivePermissions=_sorted_permissions(member),
+            available=available,
         )
-        for member in members
+        for member, available in rows
     ]
 
 
@@ -347,7 +349,8 @@ def redeem_assistant_invite(
             member = team.redeem_assistant_invite(
                 code=body.code, user_id=uuid.UUID(auth.user_id), now=datetime.now(UTC)
             )
-            return _membership_dtos(team, [member])[0]
+            available = team.lead_is_available(member.teacher_user_id)
+            return _membership_dtos(team, [(member, available)])[0]
     except TeamError as exc:
         raise team_error_to_http(exc) from exc
 
@@ -393,8 +396,8 @@ def remove_assistant(member_id: str, auth: LeadTeacher, store: Store) -> Respons
 def list_memberships(auth: LeadTeacher, store: Store) -> MembershipListDTO:
     """The teams the caller assists, with their effective permissions (for the UI's switcher)."""
     with store.transaction() as team:
-        members = team.memberships_for_assistant(uuid.UUID(auth.user_id))
-        return MembershipListDTO(memberships=_membership_dtos(team, members))
+        rows = team.memberships_with_availability(uuid.UUID(auth.user_id))
+        return MembershipListDTO(memberships=_membership_dtos(team, rows))
 
 
 __all__ = ["router"]

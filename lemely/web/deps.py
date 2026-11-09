@@ -1114,6 +1114,24 @@ def _team_permission_denied() -> HTTPException:
     )
 
 
+def _team_lead_unavailable() -> HTTPException:
+    """The refusal for a lead whose team assistants cannot reach (school data).
+
+    Distinct from :func:`_team_permission_denied` so a client can say "this team is
+    unavailable right now" instead of "you may not". It is raised only for a caller who
+    holds an active assistant row under that lead (the lead is already someone they
+    know), so it does not widen the header probe: a stranger, a removed assistant or an
+    unknown id still get the uniform ``team_permission_denied``.
+    """
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "code": "team_lead_unavailable",
+            "message": "This teacher's team isn't available to assistants right now.",
+        },
+    )
+
+
 def require_team_permission(
     perm: TeamPermission, *roles: Role
 ) -> Callable[[AuthContext, TeacherTeamStore, list[str] | None], TeamActor]:
@@ -1128,10 +1146,13 @@ def require_team_permission(
       active assistant row under that teacher whose effective permissions
       (:func:`~lemely.db.teacher_team_repo.assistant_has_permission`) include ``perm``.
       Anything else (malformed or repeated header, unknown or stranger lead, removed
-      assistant, missing permission, non-teacher caller, or a lead who belongs to a
-      school or owns a school class) is the same 403 ``team_permission_denied``.
-      The school refusal is evaluated live on every request inside
-      ``assistant_has_permission``: school-scoped data (the shared question-bank tier,
+      assistant, missing permission, non-teacher caller) is the same 403
+      ``team_permission_denied``.
+      A lead who belongs to a school or owns a school class is refused too, but with
+      the distinct 403 ``team_lead_unavailable``, and only to a caller who holds an
+      active assistant row under that lead (anyone else gets the uniform code above).
+      The refusal is evaluated live on every request inside
+      ``assistant_access``: school-scoped data (the shared question-bank tier,
       school rosters, analytics, invite codes) is out of the team spec's scope, so an
       assistant never reaches it, and a lead who joins a school mid-session loses the
       assistant path at once. The lead acting for themselves, a ``school_admin`` and a
@@ -1187,8 +1208,10 @@ def require_team_permission(
         if auth.role != Role.teacher.value:
             raise _team_permission_denied()
         with store.transaction() as team:
-            member = team.assistant_has_permission(actor_id, lead_id, perm)
-            member_id = member.id if member is not None else None
+            access = team.assistant_access(actor_id, lead_id, perm)
+            member_id = access.member.id if access.member is not None else None
+        if access.lead_unavailable:
+            raise _team_lead_unavailable()
         if member_id is None:
             raise _team_permission_denied()
         log.info(

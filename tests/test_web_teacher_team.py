@@ -807,6 +807,7 @@ def test_membership_wire_fields_are_exactly_the_frontend_contract(
         "teacherName": "Ms Hoda",
         "role": "viewer",
         "effectivePermissions": ["view_results", "view_usage"],
+        "available": True,
     }
 
 

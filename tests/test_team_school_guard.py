@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
+import sqlalchemy as sa
 import structlog
 from fastapi.testclient import TestClient
 from sqlalchemy import event
@@ -28,7 +29,7 @@ from lemely.db.class_repo import ClassService
 from lemely.db.invite_repo import InviteService
 from lemely.db.models import School, SchoolMembership
 from lemely.db.models.enums import MembershipRole, Role
-from lemely.db.models.team import AssistantRole
+from lemely.db.models.team import AssistantRole, TeacherMember, TeacherMemberStatus
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
 from lemely.db.notification_repo import NotificationService
 from lemely.db.parent_repo import ParentLinkService
@@ -37,7 +38,11 @@ from lemely.db.quiz_repo import QuizService
 from lemely.db.review_repo import ReviewService
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.db.teacher_paper_repo import TeacherPaperRepository
-from lemely.db.teacher_team_repo import TeacherTeamStore, assistant_has_permission
+from lemely.db.teacher_team_repo import (
+    TeacherTeamService,
+    TeacherTeamStore,
+    assistant_has_permission,
+)
 from lemely.io.history_store import HistoryStore
 from lemely.web.app import create_app
 from lemely.web.deps import (
@@ -80,6 +85,9 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
 DENIED = "team_permission_denied"
+DENIED_MESSAGE = "You do not have permission to do this for that teacher."
+UNAVAILABLE = "team_lead_unavailable"
+UNAVAILABLE_MESSAGE = "This teacher's team isn't available to assistants right now."
 
 
 @pytest.fixture(scope="module")
@@ -167,12 +175,21 @@ class _Team:
         )
 
 
-def _assert_denied(resp_status: int, body: dict[str, object], where: str) -> None:
+def _assert_refused(
+    resp_status: int,
+    body: dict[str, object],
+    where: str,
+    *,
+    code: str = UNAVAILABLE,
+    message: str = UNAVAILABLE_MESSAGE,
+) -> None:
+    """A 403 with exactly this ``{code, message}`` detail (default: the school-lead refusal)."""
     assert resp_status == 403, where
-    assert body["detail"] == {
-        "code": DENIED,
-        "message": "You do not have permission to do this for that teacher.",
-    }, where
+    assert body["detail"] == {"code": code, "message": message}, where
+
+
+def _assert_uniform_denial(resp_status: int, body: dict[str, object], where: str) -> None:
+    _assert_refused(resp_status, body, where, code=DENIED, message=DENIED_MESSAGE)
 
 
 def _hit_every_school_reachable_route(
@@ -208,7 +225,7 @@ def test_an_outsider_assistant_is_refused_for_a_lead_with_a_school_membership(
     results = _hit_every_school_reachable_route(_client(sm, team.helper, tmp_path), team)
     assert len(results) == 11
     for label, code, body in results:
-        _assert_denied(code, body, label)
+        _assert_refused(code, body, label)
 
 
 def test_an_outsider_assistant_is_refused_for_a_lead_who_owns_a_school_class(
@@ -218,7 +235,7 @@ def test_an_outsider_assistant_is_refused_for_a_lead_who_owns_a_school_class(
     results = _hit_every_school_reachable_route(_client(sm, team.helper, tmp_path), team)
     assert len(results) == 11
     for label, code, body in results:
-        _assert_denied(code, body, label)
+        _assert_refused(code, body, label)
 
 
 def test_the_same_assistant_still_works_for_a_school_less_lead(
@@ -253,7 +270,7 @@ def test_a_lead_who_joins_a_school_mid_session_immediately_loses_the_assistant_p
     assert client.get("/api/teacher/classes", headers=headers).status_code == 200
     _join_school(sm, team.lead, _add_school(sm))
     resp = client.get("/api/teacher/classes", headers=headers)
-    _assert_denied(resp.status_code, resp.json(), "after joining a school")
+    _assert_refused(resp.status_code, resp.json(), "after joining a school")
 
 
 def test_a_lead_who_is_given_a_school_class_mid_session_loses_the_assistant_path(
@@ -265,7 +282,7 @@ def test_a_lead_who_is_given_a_school_class_mid_session_loses_the_assistant_path
     assert client.get("/api/teacher/classes", headers=headers).status_code == 200
     add_class(sm, teacher_id=team.lead, subject_code="0580", school_id=_add_school(sm))
     resp = client.get("/api/teacher/classes", headers=headers)
-    _assert_denied(resp.status_code, resp.json(), "after a school class appeared")
+    _assert_refused(resp.status_code, resp.json(), "after a school class appeared")
 
 
 def test_leaving_the_school_restores_the_path(sm: sessionmaker[Session], tmp_path: Path) -> None:
@@ -395,3 +412,156 @@ def test_no_audit_event_on_the_self_path_or_a_refusal(
         resp = helper_client.get("/api/teacher/classes", headers=_acting_for(team.lead))
     assert resp.status_code == 403
     assert [row for row in refused_logs if row["event"] == "team_acting"] == []
+
+
+# -- the distinct code reaches only a caller with standing -------------------------------
+
+
+def test_a_stranger_acting_for_a_school_lead_gets_the_uniform_denial(
+    sm: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """No active row, no information: the header cannot probe who holds school data."""
+    team = _Team(sm)
+    _join_school(sm, team.lead, _add_school(sm))
+    stranger = add_user(sm, Role.teacher)
+    client = _client(sm, stranger, tmp_path)
+    headers = _acting_for(team.lead)
+    for path in ("/api/teacher/classes", "/api/teacher/review"):
+        resp = client.get(path, headers=headers)
+        _assert_uniform_denial(resp.status_code, resp.json(), path)
+    resp = client.post("/api/classes", json={"name": "x"}, headers=headers)
+    _assert_uniform_denial(resp.status_code, resp.json(), "create")
+
+
+def test_a_removed_assistant_of_a_school_lead_gets_the_uniform_denial(
+    sm: sessionmaker[Session], tmp_path: Path
+) -> None:
+    team = _Team(sm)
+    _join_school(sm, team.lead, _add_school(sm))
+    with sm.begin() as session:
+        session.execute(
+            sa.update(TeacherMember)
+            .where(TeacherMember.member_user_id == team.helper)
+            .values(status=TeacherMemberStatus.removed)
+        )
+    resp = _client(sm, team.helper, tmp_path).get(
+        "/api/teacher/classes", headers=_acting_for(team.lead)
+    )
+    _assert_uniform_denial(resp.status_code, resp.json(), "removed assistant")
+
+
+def test_a_non_teacher_borrowing_a_school_lead_gets_the_uniform_denial(
+    sm: sessionmaker[Session], tmp_path: Path
+) -> None:
+    team = _Team(sm)
+    _join_school(sm, team.lead, _add_school(sm))
+    admin = add_user(sm, Role.school_admin)
+    resp = _client(sm, admin, tmp_path, Role.school_admin).get(
+        "/api/teacher/classes", headers=_acting_for(team.lead)
+    )
+    _assert_uniform_denial(resp.status_code, resp.json(), "school_admin with the header")
+
+
+def test_a_viewer_of_a_school_lead_is_told_the_team_is_unavailable_not_denied(
+    sm: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """A member without the permission still learns the real reason: the lead is unavailable."""
+    team = _Team(sm)
+    viewer = add_user(sm, Role.teacher)
+    add_assistant(sm, teacher_id=team.lead, assistant_id=viewer, role=AssistantRole.viewer)
+    client = _client(sm, viewer, tmp_path)
+    headers = _acting_for(team.lead)
+    # Before the lead joins a school, the missing permission is the uniform denial.
+    before = client.post("/api/classes", json={"name": "x"}, headers=headers)
+    _assert_uniform_denial(before.status_code, before.json(), "viewer, school-less lead")
+    _join_school(sm, team.lead, _add_school(sm))
+    after = client.post("/api/classes", json={"name": "x"}, headers=headers)
+    _assert_refused(after.status_code, after.json(), "viewer, school lead")
+
+
+# -- GET /api/teacher/team/memberships: available -----------------------------------------
+
+
+def _memberships(client: TestClient) -> list[dict[str, object]]:
+    resp = client.get("/api/teacher/team/memberships")
+    assert resp.status_code == 200
+    rows: list[dict[str, object]] = resp.json()["memberships"]
+    return rows
+
+
+def test_memberships_report_availability_per_lead_live(
+    sm: sessionmaker[Session], tmp_path: Path
+) -> None:
+    helper = add_user(sm, Role.teacher)
+    free = add_user(sm, Role.teacher, display_name="Free")
+    member = add_user(sm, Role.teacher, display_name="Member")
+    owner = add_user(sm, Role.teacher, display_name="Owner")
+    for lead in (free, member, owner):
+        add_assistant(sm, teacher_id=lead, assistant_id=helper)
+    _join_school(sm, member, _add_school(sm))
+    add_class(sm, teacher_id=owner, subject_code=None, school_id=_add_school(sm))
+    client = _client(sm, helper, tmp_path)
+
+    rows = _memberships(client)
+    assert {r["teacherName"]: r["available"] for r in rows} == {
+        "Free": True,
+        "Member": False,
+        "Owner": False,
+    }
+    # A school-less class does not count, and joining a school flips the flag at once.
+    add_class(sm, teacher_id=free, subject_code=None)
+    assert {r["teacherName"]: r["available"] for r in _memberships(client)}["Free"] is True
+    _join_school(sm, free, _add_school(sm))
+    assert {r["teacherName"]: r["available"] for r in _memberships(client)}["Free"] is False
+
+
+def test_the_availability_flag_uses_the_guards_predicate(sm: sessionmaker[Session]) -> None:
+    """The list flag and the guard cannot disagree: each lead is available iff access works."""
+    helper = add_user(sm, Role.teacher)
+    leads = [add_user(sm, Role.teacher) for _ in range(3)]
+    for lead in leads:
+        add_assistant(sm, teacher_id=lead, assistant_id=helper)
+    _join_school(sm, leads[1], _add_school(sm))
+    add_class(sm, teacher_id=leads[2], subject_code=None, school_id=_add_school(sm))
+    with sm() as session:
+        service = TeacherTeamService(session)
+        flags = {m.teacher_user_id: ok for m, ok in service.memberships_with_availability(helper)}
+        for lead in leads:
+            access = service.assistant_access(helper, lead, TeamPermission.VIEW_RESULTS)
+            assert flags[lead] is (access.member is not None)
+            assert access.lead_unavailable is (not flags[lead])
+            assert service.lead_is_available(lead) is flags[lead]
+
+
+def test_listing_memberships_with_availability_costs_a_flat_query_count(
+    sm: sessionmaker[Session], tmp_path: Path
+) -> None:
+    solo, busy = add_user(sm, Role.teacher), add_user(sm, Role.teacher)
+    add_assistant(sm, teacher_id=add_user(sm, Role.teacher), assistant_id=solo)
+    for index in range(20):
+        lead = add_user(sm, Role.teacher)
+        add_assistant(sm, teacher_id=lead, assistant_id=busy)
+        if index % 2:
+            _join_school(sm, lead, _add_school(sm))
+        else:
+            add_class(sm, teacher_id=lead, subject_code=None, school_id=_add_school(sm))
+
+    def count(user: uuid.UUID) -> int:
+        engine = sm.kw["bind"]
+        seen: list[str] = []
+
+        def record(*args: object) -> None:
+            seen.append(str(args[2]))
+
+        event.listen(engine, "before_cursor_execute", record)
+        try:
+            assert (
+                _client(sm, user, tmp_path).get("/api/teacher/team/memberships").status_code == 200
+            )
+        finally:
+            event.remove(engine, "before_cursor_execute", record)
+        return len(seen)
+
+    one, many = count(solo), count(busy)
+    assert one == many
+    assert many <= 4

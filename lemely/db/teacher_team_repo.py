@@ -42,6 +42,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Final
 
@@ -88,7 +89,8 @@ if TYPE_CHECKING:
     import uuid
     from collections.abc import Iterator, Sequence
 
-    from sqlalchemy.orm import Session, sessionmaker
+    from sqlalchemy import ColumnElement
+    from sqlalchemy.orm import InstrumentedAttribute, Session, sessionmaker
 
 LIVE_PLAN_STATUSES: Final = (SubscriptionStatus.active, SubscriptionStatus.past_due)
 """Subscription states whose seats count (``past_due`` is the 3-day grace, spec §5.2)."""
@@ -236,6 +238,37 @@ def month_start(now: datetime) -> datetime:
     _require_aware(now, "now")
     current = now.astimezone(UTC)
     return datetime(current.year, current.month, 1, tzinfo=UTC)
+
+
+@dataclass(frozen=True)
+class AssistantAccess:
+    """The outcome of one assistant-acting-for-a-lead lookup.
+
+    ``member`` is the granting row, or ``None``. ``lead_unavailable`` is ``True`` only
+    when the assistant holds an active row under the lead and the lead holds school data.
+    """
+
+    member: TeacherMember | None
+    lead_unavailable: bool
+
+
+def lead_has_school_data(
+    lead_teacher_user_id: ColumnElement[uuid.UUID] | InstrumentedAttribute[uuid.UUID] | uuid.UUID,
+) -> ColumnElement[bool]:
+    """SQL predicate: the lead holds a school membership or owns a school class.
+
+    The one definition behind the assistant guard's refusal and the ``available`` flag on
+    the memberships list. It accepts a literal id or a column of an enclosing query (the
+    ``EXISTS`` subqueries auto-correlate), so one statement serves a single lead or a
+    whole list of them.
+    """
+    return or_(
+        exists().where(SchoolMembership.user_id == lead_teacher_user_id),
+        exists().where(
+            SchoolClass.teacher_id == lead_teacher_user_id,
+            SchoolClass.school_id.is_not(None),
+        ),
+    )
 
 
 class TeacherTeamService:
@@ -687,6 +720,62 @@ class TeacherTeamService:
         )
         return self._session.scalars(stmt).first()
 
+    def assistant_access(
+        self,
+        assistant_user_id: uuid.UUID,
+        lead_teacher_user_id: uuid.UUID,
+        perm: TeamPermission,
+    ) -> AssistantAccess:
+        """Resolve what ``assistant_user_id`` may do for that lead: a grant, or why not.
+
+        The single rule behind ``require_team_permission`` and Phase 04's estimate route:
+        the row's role preset with its toggles applied (spec §2.3) must include ``perm``,
+        and the lead must still be a teacher account. No row, a removed row, a lead who
+        is no longer a teacher, a missing permission, an unreadable row (toggles that
+        are not a JSON object of bools, or an unknown preset) and the lead themselves
+        all yield no grant: the check fails closed and never raises.
+
+        School data is never reachable through an assistant (Phase 03 follow-up). A lead
+        who holds any ``school_memberships`` row, or owns any class with a non-null
+        ``school_id`` (:func:`lead_has_school_data`), confers nothing: the school's shared
+        question-bank tier, its rosters, analytics and invite codes are school-scoped data
+        that team permissions were never meant to cover, and school billing is out of the
+        team spec's scope. The rule lives here, not in the router guard, so every caller
+        (including Phase 04's estimate route) inherits it, and it is evaluated in the
+        same statement as the permission lookup, live on every call: a lead who joins a
+        school (or has a school class created for them) loses the assistant path on the
+        very next request. The lead acting for themselves never reaches this method.
+
+        ``lead_unavailable`` is set only when the assistant holds an active row under a
+        teacher lead and that lead holds school data, so a caller can tell "your team is
+        unavailable right now" from "you have no standing here". A caller with no active
+        row never learns anything about the lead.
+        """
+        if assistant_user_id == lead_teacher_user_id:
+            return AssistantAccess(member=None, lead_unavailable=False)
+        # One query, one round trip: the lead's current role and the school-data flag
+        # ride along as a join and a column, so a lead who was demoted, re-roled or moved
+        # into a school after the row was written confers nothing.
+        row = self._session.execute(
+            select(TeacherMember, lead_has_school_data(TeacherMember.teacher_user_id))
+            .join(User, User.id == TeacherMember.teacher_user_id)
+            .where(
+                TeacherMember.teacher_user_id == lead_teacher_user_id,
+                TeacherMember.member_user_id == assistant_user_id,
+                TeacherMember.kind == TeacherMemberKind.assistant,
+                TeacherMember.status == TeacherMemberStatus.active,
+                User.role == Role.teacher,
+            )
+        ).first()
+        if row is None:
+            return AssistantAccess(member=None, lead_unavailable=False)
+        member, school_data = row
+        if school_data:
+            return AssistantAccess(member=None, lead_unavailable=True)
+        if member.role_preset is None or perm not in member_effective_permissions(member):
+            return AssistantAccess(member=None, lead_unavailable=False)
+        return AssistantAccess(member=member, lead_unavailable=False)
+
     def assistant_has_permission(
         self,
         assistant_user_id: uuid.UUID,
@@ -695,58 +784,23 @@ class TeacherTeamService:
     ) -> TeacherMember | None:
         """Return the active assistant row if it grants ``perm`` for that lead, else ``None``.
 
-        The single rule behind ``require_team_permission`` and Phase 04's estimate route:
-        the row's role preset with its toggles applied (spec §2.3) must include ``perm``,
-        and the lead must still be a teacher account. No row, a removed row, a lead who
-        is no longer a teacher, a missing permission, an unreadable row (toggles that
-        are not a JSON object of bools, or an unknown preset) and the lead themselves
-        are all ``None``: the check fails closed and never raises.
-
-        School data is never reachable through an assistant (Phase 03 follow-up). A lead
-        who holds any ``school_memberships`` row, or owns any class with a non-null
-        ``school_id``, confers nothing: the school's shared question-bank tier, its
-        rosters, analytics and invite codes are school-scoped data that team permissions
-        were never meant to cover, and school billing is out of the team spec's scope.
-        The rule lives here, not in the router guard, so every caller of this method
-        (including Phase 04's estimate route) inherits it, and it is evaluated in the
-        same statement as the permission lookup, live on every call: a lead who joins a
-        school (or has a school class created for them) loses the assistant path on the
-        very next request. The lead acting for themselves never reaches this method.
+        :meth:`assistant_access` with the reason dropped: every refusal, including the
+        school-data one, is ``None``. See there for the rule.
         """
-        if assistant_user_id == lead_teacher_user_id:
-            return None
-        # One query, one round trip: the lead's current role and the school-data refusal
-        # ride along as a join and two NOT EXISTS predicates, so a lead who was demoted,
-        # re-roled or moved into a school after the row was written confers nothing.
-        member = self._session.scalars(
-            select(TeacherMember)
-            .join(User, User.id == TeacherMember.teacher_user_id)
-            .where(
-                TeacherMember.teacher_user_id == lead_teacher_user_id,
-                TeacherMember.member_user_id == assistant_user_id,
-                TeacherMember.kind == TeacherMemberKind.assistant,
-                TeacherMember.status == TeacherMemberStatus.active,
-                User.role == Role.teacher,
-                ~exists().where(SchoolMembership.user_id == lead_teacher_user_id),
-                ~exists().where(
-                    SchoolClass.teacher_id == lead_teacher_user_id,
-                    SchoolClass.school_id.is_not(None),
-                ),
-            )
-        ).first()
-        if member is None or member.role_preset is None:
-            return None
-        granted = member_effective_permissions(member)
-        return member if perm in granted else None
+        return self.assistant_access(assistant_user_id, lead_teacher_user_id, perm).member
 
-    def memberships_for_assistant(self, assistant_user_id: uuid.UUID) -> list[TeacherMember]:
-        """Return every team the account actively assists, oldest first.
+    def memberships_with_availability(
+        self, assistant_user_id: uuid.UUID
+    ) -> list[tuple[TeacherMember, bool]]:
+        """Return every team the account actively assists, oldest first, with availability.
 
         Teams whose lead is no longer a teacher account are left out: such a row confers
-        nothing (:meth:`assistant_has_permission`), so it is not offered either.
+        nothing (:meth:`assistant_access`), so it is not offered either. The flag is
+        ``False`` for a lead who holds school data (:func:`lead_has_school_data`, the
+        guard's own predicate), computed in the same statement: no per-team query.
         """
         stmt = (
-            select(TeacherMember)
+            select(TeacherMember, ~lead_has_school_data(TeacherMember.teacher_user_id))
             .join(User, User.id == TeacherMember.teacher_user_id)
             .where(
                 TeacherMember.member_user_id == assistant_user_id,
@@ -756,7 +810,19 @@ class TeacherTeamService:
             )
             .order_by(TeacherMember.created_at, TeacherMember.id)
         )
-        return list(self._session.scalars(stmt))
+        return [(member, bool(available)) for member, available in self._session.execute(stmt)]
+
+    def memberships_for_assistant(self, assistant_user_id: uuid.UUID) -> list[TeacherMember]:
+        """Return every team the account actively assists, oldest first.
+
+        See :meth:`memberships_with_availability`, which also says whether each lead is
+        available to assistants.
+        """
+        return [m for m, _ in self.memberships_with_availability(assistant_user_id)]
+
+    def lead_is_available(self, lead_teacher_user_id: uuid.UUID) -> bool:
+        """Whether assistants may act for this lead: they hold no school data."""
+        return not bool(self._session.scalar(select(lead_has_school_data(lead_teacher_user_id))))
 
     def list_assistants(self, teacher_user_id: uuid.UUID) -> list[TeacherMember]:
         """Return the teacher's active assistants, oldest first."""
@@ -1069,6 +1135,7 @@ __all__ = [
     "MAX_LIVE_ASSISTANT_INVITES",
     "SEAT_ACTIONS_OFF_BY_DEFAULT",
     "TEACHER_AUDIENCE",
+    "AssistantAccess",
     "AssistantInviteLimitError",
     "AssistantInviteNotFound",
     "AssistantInviteRedeemed",
@@ -1085,6 +1152,7 @@ __all__ = [
     "TeamStateError",
     "assistant_has_permission",
     "default_seat_actions",
+    "lead_has_school_data",
     "member_effective_permissions",
     "member_toggles",
     "month_end",

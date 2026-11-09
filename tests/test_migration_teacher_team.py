@@ -50,10 +50,15 @@ INVITE_OBJECTS = {
 }
 INVITE_COLUMNS = {"team_teacher_id", "assistant_role"}
 GRANT_FK = "fk_usage_grants_teacher_member_id_teacher_members"
+#: Indexes for the assistant guard's school-data refusal, by owning table.
+GUARD_INDEXES = {
+    "school_memberships": "ix_school_memberships_user_id",
+    "classes": "ix_classes_teacher_id",
+}
 PREVIOUS_INVITE_ROLE_LABELS = ["student", "teacher", "parent"]
 
 #: Every table 0054 creates or alters, for the parity check.
-PARITY_TABLES = (TABLE, "invites", "usage_grants")
+PARITY_TABLES = (TABLE, "invites", "usage_grants", "school_memberships", "classes")
 PARITY_ENUMS = (*NEW_TYPES, "inviterole")
 
 
@@ -88,6 +93,16 @@ def test_orm_invites_declares_the_named_objects() -> None:
     assert "ck_invites_ck_invites_target" not in names
 
 
+def test_orm_declares_the_guard_indexes_on_the_leads_id() -> None:
+    columns = {"school_memberships": ["user_id"], "classes": ["teacher_id"]}
+    for table_name, index_name in GUARD_INDEXES.items():
+        indexes = {
+            str(index.name): [str(c.name) for c in index.columns]
+            for index in Base.metadata.tables[table_name].indexes
+        }
+        assert indexes[index_name] == columns[table_name], table_name
+
+
 def test_revision_is_in_the_history_after_0053() -> None:
     """In the history and chained from 0053; never asserted to be head (index R10)."""
     script_dir = ScriptDirectory.from_config(Config("alembic.ini"))
@@ -103,6 +118,8 @@ def test_objects_present_by_name(migrated_sessionmaker: sessionmaker[Session]) -
         assert object_names(session, [TABLE]) == _orm_names()
         assert object_names(session, ["invites"]) >= INVITE_OBJECTS
         assert GRANT_FK in object_names(session, ["usage_grants"])
+        for table_name, index_name in GUARD_INDEXES.items():
+            assert index_name in object_names(session, [table_name]), index_name
         assert "assistant" in enum_labels(session, "inviterole")
         assert enum_labels(session, "assistantrole") == ["co_teacher", "marker", "viewer"]
         assert column_names(session, "invites") >= INVITE_COLUMNS
@@ -290,6 +307,8 @@ def test_upgrade_downgrade_upgrade_round_trip(
         assert not (INVITE_OBJECTS - {"ck_invites_target"}) & object_names(session, ["invites"])
         assert not INVITE_COLUMNS & column_names(session, "invites")
         assert GRANT_FK not in object_names(session, ["usage_grants"])
+        for table_name, index_name in GUARD_INDEXES.items():
+            assert index_name not in object_names(session, [table_name]), index_name
         # The enums are gone, and ``inviterole`` is back to its three labels.
         assert not any(type_exists(session, name) for name in NEW_TYPES)
         assert enum_labels(session, "inviterole") == PREVIOUS_INVITE_ROLE_LABELS
@@ -308,6 +327,8 @@ def test_upgrade_downgrade_upgrade_round_trip(
         assert object_names(session, [TABLE]) == _orm_names()
         assert object_names(session, ["invites"]) >= INVITE_OBJECTS
         assert GRANT_FK in object_names(session, ["usage_grants"])
+        for table_name, index_name in GUARD_INDEXES.items():
+            assert index_name in object_names(session, [table_name]), index_name
         assert "assistant" in enum_labels(session, "inviterole")
         assert all(type_exists(session, name) for name in NEW_TYPES)
         # The surviving parent invite still satisfies the widened checks.

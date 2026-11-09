@@ -23,6 +23,10 @@ Paymob billing Phase 03 (spec §4.4).
   RESTRICT``, stated).
 * ``ix_teacher_members_leaves_at``: partial index (``WHERE status = 'leaving'``) for the
   month-end sweep.
+* ``ix_school_memberships_user_id`` and ``ix_classes_teacher_id``: neither table had an
+  index leading with the lead's id, and the assistant guard's school-data refusal looks
+  both up on every request. Both tables already exist, so ``downgrade`` drops just the
+  two indexes.
 
 ``downgrade`` drops every seat and assistant (the whole ``teacher_members`` table) and
 every assistant invite. It refuses to run while any ``usage_grants`` row has a
@@ -182,6 +186,11 @@ def upgrade() -> None:
     )
     op.add_column("invites", sa.Column("assistant_role", _enum("assistantrole"), nullable=True))
     op.create_index("ix_invites_team_teacher_id", "invites", ["team_teacher_id"])
+    # The assistant guard refuses a lead who holds school data on every request: one
+    # lookup per table by the lead's id, which no earlier migration indexes (the unique
+    # constraint on school_memberships leads with school_id).
+    op.create_index("ix_school_memberships_user_id", "school_memberships", ["user_id"])
+    op.create_index("ix_classes_teacher_id", "classes", ["teacher_id"])
     op.drop_constraint(op.f("ck_invites_target"), "invites", type_="check")
     op.create_check_constraint(
         op.f("ck_invites_target"),
@@ -231,6 +240,8 @@ def downgrade() -> None:
     op.drop_constraint(op.f("ck_invites_target"), "invites", type_="check")
     op.create_check_constraint(op.f("ck_invites_target"), "invites", _TARGET_CHECK)
     op.drop_index("ix_invites_team_teacher_id", table_name="invites")
+    op.drop_index("ix_classes_teacher_id", table_name="classes")
+    op.drop_index("ix_school_memberships_user_id", table_name="school_memberships")
     op.drop_column("invites", "assistant_role")
     op.drop_column("invites", "team_teacher_id")
     op.drop_table("teacher_members")

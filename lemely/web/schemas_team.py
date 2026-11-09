@@ -121,6 +121,9 @@ class MembershipDTO(ApiModel):
     teacherName: str
     role: AssistantRoleLiteral
     effectivePermissions: list[str]
+    # False while the lead holds school data (a school membership or a school class):
+    # assistants cannot act for that lead until that stops being true.
+    available: bool
 
 
 class MembershipListDTO(ApiModel):
