@@ -1,9 +1,26 @@
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { captureWaitlistUtm, readWaitlistUtm } from "@/portals/marketing/waitlist/utm"
 import { sessionLabel, sessionShort } from "@/portals/admin/screens/Waitlist"
 
+// The suite runs in the node environment. Node 22 (CI) has no sessionStorage
+// global, so each test gets a fresh in-memory one.
+function memoryStorage(): Storage {
+  const data = new Map<string, string>()
+  return {
+    get length() {
+      return data.size
+    },
+    clear: () => data.clear(),
+    getItem: (key) => data.get(key) ?? null,
+    key: (index) => [...data.keys()][index] ?? null,
+    removeItem: (key) => void data.delete(key),
+    setItem: (key, value) => void data.set(key, String(value)),
+  }
+}
+
 describe("waitlist UTM capture", () => {
-  afterEach(() => sessionStorage.clear())
+  beforeEach(() => vi.stubGlobal("sessionStorage", memoryStorage()))
+  afterEach(() => vi.unstubAllGlobals())
 
   it("keeps utm_* from the arrival URL for the tab", () => {
     captureWaitlistUtm("?utm_source=waitlist_share&utm_medium=chat&x=1")
