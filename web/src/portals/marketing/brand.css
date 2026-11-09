@@ -28,7 +28,7 @@
 /* Desktop header wrap is 1240px, hero wrap 1304px: slide only the logo out by the difference so it lines up with the hero headline. */
 @media(min-width:1051px) { .brand-nav > a:first-child { transform:translateX(calc((min(100vw, 1240px) - min(100vw, 1304px)) / 2)); } }
 .brand-desktop-nav,.brand-nav-actions { display:flex; align-items:center; gap:28px; font-size:14px; font-weight:600; }
-.marketing-brand .brand-nav-actions>a:last-of-type { border-radius:10px; font-family:var(--brand-body); color:var(--brand-white); }
+.marketing-brand .brand-nav-actions>a:last-of-type { border-radius:10px; font-family:var(--brand-body); }
 .marketing-brand .brand-menu-trigger { display:none; }
 .brand-desktop-nav a { color:var(--brand-nav-link); transition:color .2s; }
 .marketing-brand .brand-menu-trigger { min-width:44px; min-height:44px; }
@@ -50,8 +50,8 @@ body[data-scroll-locked] .brand-mobile-upload { display:none; }
 .brand-hero h1 span { color:var(--brand-abyss); }
 .brand-hero-copy>p:not(.brand-fine) { font-size:20px; color:var(--brand-muted); line-height:1.5; max-width:520px; }
 .brand-actions { display:flex; flex-wrap:wrap; gap:12px; }
-.marketing-brand .brand-actions a { font:700 17px/1.4 var(--brand-body); padding:16px 24px; border-radius:14px; min-height:56px; }
-.marketing-brand .brand-actions a:first-child { background:var(--brand-abyss); color:var(--brand-white); }
+.marketing-brand .brand-actions :is(a, button) { font:700 17px/1.4 var(--brand-body); padding:16px 24px; border-radius:14px; min-height:56px; }
+.marketing-brand .brand-actions :is(a, button):first-child { background:var(--brand-abyss); color:var(--brand-white); }
 .marketing-brand .brand-actions a:last-child { background:transparent; border:1.5px solid var(--brand-border); color:var(--brand-abyss); }
 .brand-hero-art { position:relative; min-width:0; }
 .brand-hero-art::before { content:''; position:absolute; inset:-28px -20px -28px 24px; background:var(--brand-wash); border-radius:44px; transform:rotate(-2.5deg); }
@@ -163,7 +163,7 @@ body[data-scroll-locked] .brand-mobile-upload { display:none; }
   .marketing-brand .brand-menu-trigger { display:inline-flex; }
   .brand-hero-grid { gap:36px; }
   .marketing-brand .brand-hero h1 { font-size:72px; }
-  .brand-actions a { width:100%; }
+  .brand-actions :is(a, button) { width:100%; }
   .brand-chart-head .brand-label { font-size:12px; }
   .brand-teacher-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:48px; }
   .brand-walkthrough { grid-template-columns:minmax(0,1fr); }
@@ -185,7 +185,7 @@ body[data-scroll-locked] .brand-mobile-upload { display:none; }
   .brand-hero-copy { gap:28px; }
   .brand-hero-copy>p:not(.brand-fine) { font-size:20px; }
   .brand-actions { flex-direction:column; }
-  .marketing-brand .brand-actions a { width:100%; padding:16px 24px; min-height:0; line-height:normal; text-align:center; }
+  .marketing-brand .brand-actions :is(a, button) { width:100%; padding:16px 24px; min-height:0; line-height:normal; text-align:center; }
   .brand-fine { font-size:12px; letter-spacing:.04em; line-height:16px; max-width:none; }
   .brand-chart-head { gap:12px; }
   .brand-chart-head strong { display:block; font-size:16px; line-height:21px; margin-bottom:2px; }
@@ -250,8 +250,8 @@ body[data-scroll-locked] .brand-mobile-upload { display:none; }
 
   .brand-closing p { font-size:20px; line-height:30px; }
   .brand-closing .brand-actions { align-items:center; margin-block:28px 0; gap:12px; }
-  .marketing-brand .brand-closing .brand-actions a { width:auto; padding:18px 28px; font-size:18px; white-space:normal; line-height:normal; }
-  .marketing-brand .brand-closing .brand-actions a:first-child { font-weight:800; }
+  .marketing-brand .brand-closing .brand-actions :is(a, button) { width:auto; padding:18px 28px; font-size:18px; white-space:normal; line-height:normal; }
+  .marketing-brand .brand-closing .brand-actions :is(a, button):first-child { font-weight:800; }
   .marketing-brand .brand-closing .brand-actions a:last-child { border-width:0; box-shadow:inset 0 0 0 1.5px var(--brand-closing-ring); }
   .brand-contact label,.brand-contact [data-slot=label] { font-size:14px; font-weight:700; }
   .brand-footer-grid { display:flex; flex-wrap:wrap; gap:12px 20px; }
@@ -268,8 +268,14 @@ body[data-scroll-locked] .brand-mobile-upload { display:none; }
   .brand-contact textarea { height:87px; }
   .brand-predicted { flex-direction:column; gap:2px; text-align:center; }
   .brand-metric strong { font-size:44px; }
-  .marketing-brand .brand-closing .brand-actions a { max-width:100%; }
+  .marketing-brand .brand-closing .brand-actions :is(a, button) { max-width:100%; }
 }
 @media(prefers-reduced-motion:reduce) {
   .marketing-brand *, .marketing-brand *::before, .marketing-brand *::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; }
 }
+
+/* Waitlist CTAs: header "Join the waitlist" (hidden on phones; the sticky bar covers them) and the menu's primary. */
+.marketing-brand .brand-join { display:none; }
+@media (min-width:640px) { .marketing-brand .brand-join { display:inline-flex; white-space:nowrap; min-height:40px; } }
+.brand-menu nav button.brand-menu-signup { justify-content:center; margin-top:12px; width:100%; }
+button.brand-mobile-upload { border:0; cursor:pointer; font:inherit; }

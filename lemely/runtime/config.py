@@ -1252,6 +1252,42 @@ class TutoringSettings(BaseModel):
     email_daily_cap: int = Field(default=60, ge=0)
 
 
+class EdgeSettings(BaseModel):
+    """What proves a request came through the Cloudflare Worker.
+
+    The Worker adds ``X-Lemely-Edge-Secret`` to every request it forwards. Where a route uses
+    the edge guard (:func:`lemely.web.edge.edge_caller`), a request without the matching header
+    is refused when ``origin_secret`` is set, and only then is ``CF-Connecting-IP`` trusted as
+    the caller's address. Unset (dev, tests) the guard is off and the socket peer is used.
+    Deployed it is ``LEMELY_EDGE__ORIGIN_SECRET``; never put it in ``lemely.toml``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    origin_secret: OptionalCredential = None
+    # The value being rotated out: still accepted (never sent by the Worker) so a rotation can
+    # roll out without refusing requests that carry the old one. Blank means unset.
+    origin_secret_previous: OptionalCredential = None
+
+
+class WaitlistSettings(BaseModel):
+    """The landing-page waitlist's scheduled digest.
+
+    ``digest_secret`` guards ``POST /api/internal/waitlist/digest``, which Cloud Scheduler
+    calls once a day with the value in an ``X-Cron-Secret`` header. Unset (the default) the
+    endpoint answers 404, so a machine with no secret never exposes a trigger. Never put it
+    in ``lemely.toml``: deployed it is the ``LEMELY_WAITLIST__DIGEST_SECRET`` environment
+    variable.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    digest_secret: OptionalCredential = None
+    # Cloudflare Turnstile for step 1 (``POST /api/waitlist``). With no secret the check is
+    # skipped (dev, tests); with one, a missing or invalid token is refused. The site key is
+    # public and reaches the SPA through ``GET /api/waitlist/config``.
+    turnstile_secret_key: OptionalCredential = None
+    turnstile_site_key: OptionalCredential = None
+
+
 class EmailSettings(BaseModel):
     """Transactional-email credentials for the account-lifecycle mails (D7.7).
 
@@ -1359,6 +1395,8 @@ class Settings(BaseSettings):
     notifications: NotificationsSettings = NotificationsSettings()
     email: EmailSettings = EmailSettings()
     tutoring: TutoringSettings = TutoringSettings()
+    waitlist: WaitlistSettings = WaitlistSettings()
+    edge: EdgeSettings = EdgeSettings()
     database: DatabaseSettings = DatabaseSettings()
     supabase: SupabaseSettings = SupabaseSettings()
     auth: AuthSettings = AuthSettings()

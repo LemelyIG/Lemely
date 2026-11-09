@@ -399,6 +399,8 @@ module = [
   "lemely.core.flashcards",
   "lemely.core.at_risk",
   "lemely.core.class_analytics",
+  # Annotated validators on the DTO fields make the plugin inject Any into __init__.
+  "lemely.web.schemas_waitlist",
 ]
 disallow_any_explicit = false
 

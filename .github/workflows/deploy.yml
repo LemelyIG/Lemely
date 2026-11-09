@@ -190,8 +190,43 @@ jobs:
               )
           PY
 
-  deploy-backend:
+  # The Worker half of the edge secret (web/worker/index.ts `ORIGIN_SECRET`). It runs BEFORE
+  # deploy-backend and deploy-frontend, so by the time a backend revision that enforces the
+  # secret takes traffic, the Worker is already sending it (an extra header is harmless to a
+  # backend that does not check it yet). Both halves come from the same GitHub secret,
+  # EDGE_ORIGIN_SECRET, so they cannot drift. Skipped when it is not set: the backend treats an
+  # empty value as "no edge check", so a deploy before the secret exists changes nothing.
+  # In CI `wrangler secret put` creates a draft Worker if none exists yet (its default when
+  # non-interactive), which the first `wrangler deploy` then replaces, secrets kept. Rotation
+  # needs the backend's EDGE_ORIGIN_SECRET_PREVIOUS: see docs/ci-cd.md.
+  edge-secret:
     needs: [resolve-env, migrate]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-env.outputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      # Pinned to web/package.json's wrangler (^4.124.0); no `npm ci` for one command.
+      - name: Push Worker edge secret
+        env:
+          EDGE_ORIGIN_SECRET: ${{ secrets.EDGE_ORIGIN_SECRET }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          DEPLOY_ENV: ${{ needs.resolve-env.outputs.environment }}
+        working-directory: web
+        run: |
+          if [ -z "$EDGE_ORIGIN_SECRET" ]; then
+            echo "::warning::EDGE_ORIGIN_SECRET is not set: leaving the Worker without an edge secret."
+            exit 0
+          fi
+          printf '%s' "$EDGE_ORIGIN_SECRET" | npx --yes wrangler@4.124.0 secret put ORIGIN_SECRET --env "$DEPLOY_ENV"
+
+  deploy-backend:
+    needs: [resolve-env, migrate, edge-secret]
     runs-on: ubuntu-latest
     environment: ${{ needs.resolve-env.outputs.environment }}
     permissions:
@@ -401,6 +436,14 @@ jobs:
           # simply stays unavailable, exactly like LEMELY_EMAIL__API_KEY
           # above. Generate the pair with `lemely push-keygen`; rotating it
           # invalidates every stored subscription (docs/push-notifications.md).
+          #
+          # Waitlist edge protection. Like the keys above, an unset secret renders
+          # as the empty string, which `_blank_to_none` maps to None: no edge
+          # check, no Turnstile check, digest endpoint answers 404. Safe to merge
+          # before the secrets exist. EDGE_ORIGIN_SECRET must be the same value
+          # the Worker is given (the `edge-secret` job, which runs BEFORE this one).
+          # EDGE_ORIGIN_SECRET_PREVIOUS is the value being rotated out: accepted, never
+          # sent (docs/ci-cd.md, "Rotating the edge secret").
           env_vars: |-
             LEMELY_RUN_MIGRATIONS=0
             LEMELY_STORAGE__BACKEND=gcs
@@ -425,6 +468,11 @@ jobs:
             LEMELY_PUSH__VAPID_PUBLIC_KEY=${{ vars.VAPID_PUBLIC_KEY }}
             LEMELY_PUSH__VAPID_PRIVATE_KEY=${{ secrets.VAPID_PRIVATE_KEY }}
             LEMELY_PUSH__VAPID_SUBJECT=mailto:support@lemelyig.com
+            LEMELY_EDGE__ORIGIN_SECRET=${{ secrets.EDGE_ORIGIN_SECRET }}
+            LEMELY_EDGE__ORIGIN_SECRET_PREVIOUS=${{ secrets.EDGE_ORIGIN_SECRET_PREVIOUS }}
+            LEMELY_WAITLIST__TURNSTILE_SECRET_KEY=${{ secrets.TURNSTILE_SECRET_KEY }}
+            LEMELY_WAITLIST__TURNSTILE_SITE_KEY=${{ secrets.TURNSTILE_SITE_KEY }}
+            LEMELY_WAITLIST__DIGEST_SECRET=${{ secrets.WAITLIST_DIGEST_SECRET }}
 
       # Asserts what is SERVING, not what was created. `revision_traffic` above
       # should have sent 100% to the new revision; this step does not trust that.
@@ -583,16 +631,37 @@ jobs:
             exit 1
           fi
 
-  # Runs in parallel with deploy-backend (needs `migrate` only), so the SPA
-  # build and Worker deploy overlap the image build and rollout instead of
-  # queueing behind them. The Worker only needs the backend's canonical URL,
+      # Cloud Scheduler jobs, reconciled from .github/scheduler-jobs.json by
+      # scripts/scheduler_reconcile.py: missing jobs are created, existing ones are
+      # rewritten (so a rotated secret propagates), and managed jobs no longer in the
+      # file are deleted, which is how a rename or a removal takes effect. Only jobs named
+      # lemely-<environment>-* that carry the `managed-by=lemely-deploy` description marker
+      # are ever deleted (Cloud Scheduler has no labels), so nothing else in the project can
+      # be touched. A job whose secret is empty is skipped with a warning and left alone.
+      # Runs last, after the serving-revision and health checks, so a bad rollout never
+      # re-points the schedule. The URI is the public host, so the call takes the Worker
+      # path like every other API call. Each job's secret must also be mapped below: add the
+      # `NAME: ${{ secrets.NAME }}` line when adding a job that names a new one.
+      - name: Reconcile Cloud Scheduler jobs
+        env:
+          WAITLIST_DIGEST_SECRET: ${{ secrets.WAITLIST_DIGEST_SECRET }}
+        run: |
+          python3 scripts/scheduler_reconcile.py \
+            --environment "${{ needs.resolve-env.outputs.environment }}" \
+            --host "https://${{ needs.resolve-env.outputs.environment == 'production' && 'lemelyig.com' || 'staging.lemelyig.com' }}" \
+            --project "${{ vars.GCP_PROJECT_ID }}" \
+            --location us-central1
+
+  # Runs in parallel with deploy-backend (both need `migrate` and the quick
+  # `edge-secret` job, nothing else), so the SPA build and Worker deploy overlap
+  # the image build and rollout instead of queueing behind them. The Worker only needs the backend's canonical URL,
   # which is a property of the Cloud Run SERVICE and does not change per
   # revision, so it is read from the service directly rather than from
   # deploy-backend's output. The smoke test still waits for both jobs. The
   # price is a short window in which the new SPA can be live while the old
   # backend still serves; the smoke test proves the pair converged.
   deploy-frontend:
-    needs: [resolve-env, migrate]
+    needs: [resolve-env, migrate, edge-secret]
     runs-on: ubuntu-latest
     environment: ${{ needs.resolve-env.outputs.environment }}
     permissions:
@@ -625,7 +694,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: web/package-lock.json
 

@@ -598,6 +598,39 @@ def render_example_toml() -> str:
     lines.append("# tutoring mails went out in the last 24 hours, further ones are skipped, not")
     lines.append("# sent. 60 sits below Resend's 100/day free quota, which account mail shares.")
     lines.append(f"email_daily_cap = {s.tutoring.email_daily_cap}")
+    lines.append("")
+
+    lines.append("[waitlist]")
+    lines.append("# Shared secret for POST /api/internal/waitlist/digest, the daily applicant")
+    lines.append("# digest Cloud Scheduler triggers (sent in an X-Cron-Secret header). Unset, the")
+    lines.append("# endpoint answers 404. NEVER put it in this file: deployed it is the")
+    lines.append("# LEMELY_WAITLIST__DIGEST_SECRET environment variable.")
+    lines.append('# digest_secret = "..."')
+    lines.append("# Cloudflare Turnstile for the waitlist's first step. Unset, verification is")
+    lines.append("# skipped (local dev). The secret key is LEMELY_WAITLIST__TURNSTILE_SECRET_KEY;")
+    lines.append("# the site key is public and is served to the page by GET /api/waitlist/config.")
+    lines.append('# turnstile_secret_key = "..."')
+    lines.append('# turnstile_site_key = "0x4AAAA..."')
+    lines.append("")
+
+    lines.append("[edge]")
+    lines.append(
+        "# Shared secret the Cloudflare Worker sends as X-Lemely-Edge-Secret. Where a route"
+    )
+    lines.append("# uses the edge guard (the waitlist routes), a request without it is refused and")
+    lines.append("# only then is CF-Connecting-IP trusted for rate limiting. Unset (local dev) the")
+    lines.append("# guard is off. NEVER put it in this file: deployed it is the")
+    lines.append(
+        "# LEMELY_EDGE__ORIGIN_SECRET environment variable, and the Worker's ORIGIN_SECRET."
+    )
+    lines.append('# origin_secret = "..."')
+    lines.append(
+        "# The value being rotated out: still accepted, never sent by the Worker. Blank is"
+    )
+    lines.append(
+        "# unset (LEMELY_EDGE__ORIGIN_SECRET_PREVIOUS). See docs/ci-cd.md for the rotation."
+    )
+    lines.append('# origin_secret_previous = "..."')
 
     # No trailing blank line: pre-commit's end-of-file-fixer collapses a double
     # trailing newline in lemely.toml.example, which would drift from this

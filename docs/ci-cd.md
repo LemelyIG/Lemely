@@ -600,6 +600,10 @@ these directly in GitHub — nothing here needs to be typed anywhere else.
 | `GEMINI_API_KEY` | Env secret (staging + production) | Reuse the key from your local `.env`, or mint a new one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey). Fine to reuse the same key for both environments. |
 | `ANTHROPIC_API_KEY` | Env secret (staging + production) — required only when a task tag resolves to a `claude-` model (development option; not used by default) | [console.anthropic.com](https://console.anthropic.com) → API Keys. The default `gemini.correction_model` is `gemini-3.1-flash-lite`, so leaving it empty is fine unless you configure a `claude-` model. Set a spend limit on the Anthropic workspace. Never put the value in the repo. |
 | `RESEND_API_KEY` | Env secret (staging + production) — **optional** | [resend.com](https://resend.com) → API Keys → Create, with *Sending access* only. Leave it unset and the deploy still succeeds: an absent secret renders as the empty string, which the backend reads as *not configured* and falls back to the offline mock provider, so nothing sends. Setting it is the entire switch-on. **Reusing one key across both environments shares one 100/day free-tier allowance** — a staging smoke test spends production's quota, so mint a second Resend account for staging or leave staging unset. See `docs/email-delivery.md`. |
+| `EDGE_ORIGIN_SECRET` | Env secret (staging + production) — optional | A long random string you make up (`openssl rand -hex 32`; letters, digits and `_ . ~ + / : = @ -` only). One value feeds both the backend (`LEMELY_EDGE__ORIGIN_SECRET`) and the Worker (`ORIGIN_SECRET`), so they cannot drift. Unset, the edge check is off. See "Edge secret and scheduled jobs" below. |
+| `EDGE_ORIGIN_SECRET_PREVIOUS` | Env secret (staging + production) — optional, only while rotating | The value being rotated out: the backend still accepts it, the Worker never sends it. Leave unset otherwise. |
+| `TURNSTILE_SECRET_KEY` / `TURNSTILE_SITE_KEY` | Env secret (staging + production) — optional | Cloudflare dashboard → Turnstile → add a widget for `lemelyig.com` / `staging.lemelyig.com`. The site key is public, the secret key is not. Unset, the waitlist skips the bot check. |
+| `WAITLIST_DIGEST_SECRET` | Env secret (staging + production) — optional | A random string. The backend's digest endpoint and the Cloud Scheduler job's `X-Cron-Secret` header both use it. Unset, the endpoint answers 404 and the scheduler job is skipped with a warning. |
 
 **No new secret or variable for GCS.** The upload bucket and the runtime service
 account `deploy.yml` deploys as are both just names `deploy.yml` derives itself from
@@ -706,6 +710,92 @@ runs turned up, none of which are obvious from the config:
   created>`, which is how you tell it apart from a container that started
   and then died.
 
+## Edge secret and scheduled jobs
+
+Two pieces of `deploy.yml` automate infrastructure that used to be manual.
+
+### The edge secret
+
+The Cloudflare Worker adds `X-Lemely-Edge-Secret` to every request it proxies, and routes that use
+the edge guard (`lemely/web/edge.py`; today the public waitlist routes) refuse a request without
+it. Only then is `CF-Connecting-IP` trusted as the caller's address for rate limiting. This closes
+the gap above where the `*.run.app` URL bypasses the Worker.
+
+- GitHub secret `EDGE_ORIGIN_SECRET` (per environment) feeds both halves: the **`edge-secret`**
+  job runs `wrangler secret put ORIGIN_SECRET`, and `deploy-backend` passes
+  `LEMELY_EDGE__ORIGIN_SECRET`. The `edge-secret` job runs **before** `deploy-backend` and
+  `deploy-frontend` (both `needs` it), so the Worker is already sending the secret when a backend
+  that checks it takes traffic. An empty secret skips the push and the backend treats empty as
+  "no check", so deploying before the secret exists changes nothing. In CI `wrangler secret put`
+  creates a draft Worker if none exists yet; the first `wrangler deploy` replaces it, keeping the
+  secret.
+- **Enabling it for the first time (two deploys).** The Worker that is live when you first set
+  the secret is still the old code, which does not send the header, so a backend that enforces the
+  secret would refuse every waitlist call until the new Worker is out. Deploy this code once with
+  `EDGE_ORIGIN_SECRET` unset (the new Worker ships, the backend checks nothing; an empty secret
+  means unset, and the waitlist routes serve normally), then add `EDGE_ORIGIN_SECRET` and deploy
+  again.
+- **Rotating the edge secret without refusing requests.** The backend accepts the current secret
+  and an optional previous one (`EDGE_ORIGIN_SECRET_PREVIOUS` -> `LEMELY_EDGE__ORIGIN_SECRET_PREVIOUS`;
+  blank means unset). Because the Worker is updated before the backend rolls out, a one-step swap
+  would briefly refuse waitlist calls. Use three deploys:
+  1. Keep `EDGE_ORIGIN_SECRET` as it is and set `EDGE_ORIGIN_SECRET_PREVIOUS` to the **new** value.
+     The backend now accepts both; the Worker still sends the old one.
+  2. Set `EDGE_ORIGIN_SECRET` to the **new** value and `EDGE_ORIGIN_SECRET_PREVIOUS` to the **old**
+     one. The Worker switches to the new value first, and every backend revision accepts both.
+  3. Clear `EDGE_ORIGIN_SECRET_PREVIOUS`.
+
+  If the waitlist form can be refused for the whole backend build and rollout (several minutes),
+  set `EDGE_ORIGIN_SECRET` to the new value in one deploy and skip the rest.
+
+### Cloud Scheduler jobs
+
+`.github/scheduler-jobs.json` is the desired state, and `scripts/scheduler_reconcile.py` brings
+Cloud Scheduler (`us-central1`) in line with it as the **last step of `deploy-backend`**, after the
+serving-revision and health checks. Today it holds the daily waitlist digest
+(`0 7 * * *` UTC, `POST /api/internal/waitlist/digest` on the public host).
+
+- Jobs are named `lemely-<environment>-<id>`. Missing jobs are created, existing ones are
+  rewritten (schedule, URI and the `X-Cron-Secret` header, so a rotated secret propagates), and
+  jobs that are no longer in the file are deleted, which is how renames and removals take effect.
+- **Ownership.** Cloud Scheduler jobs have no labels, so every job it creates carries
+  `managed-by=lemely-deploy` in its description. Deletion only ever touches jobs whose name starts
+  with `lemely-<environment>-` **and** whose description has that marker. Anything else in the
+  project is left alone. If a desired name is already taken by a job without the marker, the step
+  fails and changes nothing.
+- A job whose secret is empty is skipped with a `::warning::` and is not deleted. Any gcloud error
+  fails the step. Secrets are never printed.
+- Each job names a GitHub secret in the file; it must also be mapped into that step's `env`
+  (a test checks this). Adding a job is: add the entry, add the secret line if it is new, deploy.
+- A pending claim on the digest (the backend claims each UTC day before sending) answers 503
+  `digest_pending` instead of pretending it was sent; it becomes takeable after five minutes. Every
+  job is created and updated with `--max-retry-attempts=3 --min-backoff=6m --max-backoff=30m`
+  (`RETRY_FLAGS` in the script), so a failed or pending run is retried, and the first retry lands
+  after that five-minute lease.
+
+**One-time setup per environment project** (once per GCP project; `PROJECT_ID` and `SA_EMAIL` are
+`GCP_PROJECT_ID` and `GCP_SERVICE_ACCOUNT`):
+
+```
+gcloud services enable cloudscheduler.googleapis.com --project=PROJECT_ID
+
+gcloud iam roles create lemelyDeploySchedulerManager --project=PROJECT_ID \
+  --title="Lemely deploy: manage Cloud Scheduler jobs" --stage=GA \
+  --permissions=cloudscheduler.jobs.create,cloudscheduler.jobs.update,cloudscheduler.jobs.delete,cloudscheduler.jobs.get,cloudscheduler.jobs.list,cloudscheduler.locations.get
+
+gcloud projects add-iam-policy-binding PROJECT_ID \
+  --member="serviceAccount:SA_EMAIL" \
+  --role="projects/PROJECT_ID/roles/lemelyDeploySchedulerManager" --condition=None
+```
+
+`roles/cloudscheduler.admin` also works but is broader. No `iam.serviceAccounts.actAs` is needed:
+the jobs carry no OIDC or OAuth token, only the secret header.
+
+To trigger the digest by hand once a deploy has created the job:
+`gcloud scheduler jobs run lemely-<environment>-waitlist-digest --project=PROJECT_ID --location=us-central1`.
+If Cloudflare's bot protection challenges Cloud Scheduler's requests (403 HTML in the job log), add a
+WAF skip rule for `/api/internal/*`.
+
 ## Known gaps this setup doesn't close
 
 Carried over from `docs/deployment.md` §5, still true here — not
@@ -734,6 +824,8 @@ regressions this pipeline introduced, just not solved by it:
   answers a paper's status from the same Postgres row, so this is a
   scheduling gap, not a correctness one — and it has not been observed
   either way, because this branch has not been deployed.
-- Everything else in `docs/deployment.md` §5 (no scheduler,
-  `/api/teacher/overview`'s N+1) is unchanged by this pipeline — it deploys
-  the app as-is, it doesn't fix it.
+- Everything else in `docs/deployment.md` §5 (`/api/teacher/overview`'s N+1)
+  is unchanged by this pipeline — it deploys the app as-is, it doesn't fix it.
+  The in-process notification sweeper still needs `--min-instances=1` for timely
+  delivery; the waitlist digest does not, because Cloud Scheduler (see "Edge
+  secret and scheduled jobs" above) wakes the service itself.

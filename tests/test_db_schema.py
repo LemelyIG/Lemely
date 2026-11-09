@@ -112,6 +112,8 @@ EXPECTED_TABLES = {
     "tutor_access_audit",
     "tutoring_reports",
     "tutoring_blocks",
+    "waitlist_applicants",
+    "waitlist_digest_log",
 }
 
 # Tables deliberately excluded from `test_every_model_has_timestamps` below.
@@ -142,6 +144,7 @@ TABLES_WITHOUT_TIMESTAMPS = {
     "parent_link_events",
     "tutor_access_audit",
     "tutor_evidence_uploads",
+    "waitlist_digest_log",  # keyed by day; one row per claimed digest
 }
 
 
@@ -283,7 +286,7 @@ def test_0043_merge_heads_joins_the_develop_and_branch_chains() -> None:
         "0042_question_result_source_box",
         "0039_paper_soft_delete",
     }
-    assert script_dir.get_heads() == ["0051_tutor_evidence_uploads"]
+    assert script_dir.get_heads() == ["0052_waitlist_applicants"]
 
 
 def test_every_enum_column_binds_its_value_not_its_member_name() -> None:

@@ -325,6 +325,19 @@ in all of these files.
   `alsoTeachesClasses` has a name in it, and the "still counted in their results"
   line is always there (SPEC §d S-38). Copy: `lib/tutoring/accessView.ts`.
 
+## Toggle — `choice` variant, `chip` size (landing waitlist form)
+- `web/src/components/ui/toggle.tsx` — `<Toggle variant="choice" size="chip" pressed onPressedChange>`.
+- Added for the landing waitlist form's wrapping option sets (levels, subjects, exam
+  boards, sessions). No new primitive: `Toggle` already carries the right semantics
+  (`aria-pressed`, `data-state`), and `ToggleGroup` is a joined segmented control that
+  does not wrap, so the existing toggle gained one variant and one size.
+- `choice`: outline at rest, filled `primary` when on, so "picked" never reads as hover.
+  `chip`: 44px high, 12px radius, 16px side padding.
+- The "Other" subject opens `portals/marketing/waitlist/SubjectPicker.tsx`, an ARIA
+  combobox over a multiselectable listbox (44px options, `aria-activedescendant`,
+  Esc closes the picker before the dialog). It is waitlist-specific, not a catalogue
+  primitive.
+
 ## Known follow-ups for the P2.5.3 retrofit
 - Two pre-token-system components duplicate new library components and
   should be deleted in favor of the new ones once screens are retrofitted:
