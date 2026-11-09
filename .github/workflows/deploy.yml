@@ -208,7 +208,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version-file: .nvmrc
 
       # Pinned to web/package.json's wrangler (^4.124.0); no `npm ci` for one command.
       - name: Push Worker edge secret
@@ -694,7 +694,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: web/package-lock.json
 
