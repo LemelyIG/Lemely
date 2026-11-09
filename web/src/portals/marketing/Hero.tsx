@@ -25,7 +25,7 @@ export function Hero() {
           </p>
           <ConversionActions />
           <p className="brand-fine">
-            First paper free · No card
+            Free to apply · No card
             <span className="brand-desktop-copy"> · </span>
             <br className="brand-mobile-copy" />
             Cambridge IGCSE, O Level &amp; A Level

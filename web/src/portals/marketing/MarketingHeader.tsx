@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { List, X } from '@phosphor-icons/react'
 import { BrandLockup } from '@/components/ui/brand-lockup'
-import { Button, buttonVariants } from '@/components/ui/button'
+import { Button } from '@/components/ui/button'
 import {
   Sheet,
   SheetTrigger,
@@ -14,6 +14,7 @@ import {
   SheetClose,
 } from '@/components/ui/sheet'
 import { marketingLinks } from './content'
+import { useWaitlist } from './waitlist/WaitlistDialog'
 
 export const sectionLinks = [
   { id: 'how', href: '/landing#how', label: 'How it works' },
@@ -39,6 +40,8 @@ export function MarketingHeader() {
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState('')
   const sectionTo = useSectionTo()
+  const waitlist = useWaitlist()
+  const menuTrigger = useRef<HTMLButtonElement>(null)
   const progress = useRef<HTMLDivElement>(null)
   useEffect(() => {
     let frame = 0
@@ -108,15 +111,21 @@ export function MarketingHeader() {
           <Link className="brand-signin" to={marketingLinks.login}>
             Sign in
           </Link>
-          <Link
-            className={buttonVariants({ variant: 'primary', size: 'sm' })}
-            to={marketingLinks.signup}
-          >
+          <Link className="brand-signin" to={marketingLinks.signup}>
             Sign up
           </Link>
+          <Button
+            className="brand-join"
+            variant="primary"
+            size="sm"
+            onClick={(e) => waitlist.open(e.currentTarget)}
+          >
+            Join the waitlist
+          </Button>
           <Sheet open={open} onOpenChange={setOpen}>
             <SheetTrigger asChild>
               <Button
+                ref={menuTrigger}
                 className="brand-menu-trigger"
                 variant="ghost"
                 aria-label="Open menu"
@@ -125,7 +134,7 @@ export function MarketingHeader() {
               </Button>
             </SheetTrigger>
             <SheetContent
-              className="marketing-brand brand-menu"
+              className="marketing-brand lw-light brand-menu"
               showCloseButton={false}
             >
               <SheetClose asChild>
@@ -161,13 +170,19 @@ export function MarketingHeader() {
                   <Link to={marketingLinks.login}>Sign in</Link>
                 </SheetClose>
                 <SheetClose asChild>
-                  <Link
-                    className={`${buttonVariants({ variant: 'primary', size: 'lg' })} brand-menu-signup`}
-                    to={marketingLinks.signup}
-                  >
-                    Sign up
-                  </Link>
+                  <Link to={marketingLinks.signup}>Sign up</Link>
                 </SheetClose>
+                <Button
+                  variant="primary"
+                  size="lg"
+                  className="brand-menu-signup"
+                  onClick={() => {
+                    setOpen(false)
+                    window.setTimeout(() => waitlist.open(menuTrigger.current), 0)
+                  }}
+                >
+                  Join the waitlist
+                </Button>
               </nav>
             </SheetContent>
           </Sheet>

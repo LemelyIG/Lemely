@@ -165,7 +165,8 @@ export function TR({ className, selected, disabled, onClick, onKeyDown, ...props
       tabIndex={interactive ? 0 : undefined}
       role={interactive ? "button" : undefined}
       aria-disabled={disabled || undefined}
-      aria-selected={selected || undefined}
+      // The open row is "current", not "pressed" or "selected": `aria-selected` is not allowed on role=button (axe).
+      aria-current={selected ? "true" : undefined}
       {...props}
     />
   )

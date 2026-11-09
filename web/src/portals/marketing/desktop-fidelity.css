@@ -43,7 +43,7 @@
   .marketing-brand .brand-hero h1 { font-size: clamp(64px, 8vw, 112px); }
   .brand-hero-copy>p:not(.brand-fine) { color: var(--brand-lead); }
   .brand-hero-copy>.brand-fine { font-size: 12px; line-height: normal; letter-spacing: .04em; color: var(--brand-hint); }
-  .marketing-brand .brand-actions a { line-height: normal; min-height: 0; height: auto; }
+  .marketing-brand .brand-actions :is(a, button) { line-height: normal; min-height: 0; height: auto; }
   .marketing-brand .brand-actions a:last-child { border: 0; box-shadow: inset 0 0 0 1.5px var(--brand-ring); }
   .brand-chart { display: flex; flex-direction: column; gap: 6px; border: 0; box-shadow: var(--brand-chart-shadow); }
   .brand-chart-head { gap: 12px; }
@@ -127,8 +127,8 @@
   .marketing-brand .brand-closing h2 { font-size: clamp(56px, 8vw, 112px); letter-spacing: -.05em; line-height: .88; margin: 0 0 28px; }
   .brand-closing p { font-size: 20px; line-height: 1.5; max-width: 560px; color: var(--brand-closing-text); }
   .brand-closing .brand-actions { margin-block: 28px 0; }
-  .marketing-brand .brand-closing .brand-actions a { font-size: 18px; font-weight: 700; padding: 18px 28px; }
-  .marketing-brand .brand-closing .brand-actions a:first-child { font-weight: 800; }
+  .marketing-brand .brand-closing .brand-actions :is(a, button) { font-size: 18px; font-weight: 700; padding: 18px 28px; }
+  .marketing-brand .brand-closing .brand-actions :is(a, button):first-child { font-weight: 800; }
   .marketing-brand .brand-closing .brand-actions a:last-child { border: 0; box-shadow: inset 0 0 0 1.5px var(--brand-closing-ring); }
 
   /* Footer */

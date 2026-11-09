@@ -1,0 +1,29 @@
+/* Waitlist preview styles. Never shipped. */
+@import "../../src/index.css";
+@source "../../src";
+@source "./";
+
+@import "../../src/portals/marketing/waitlist/waitlist.css";
+body { margin: 0; background: var(--md-surface); color: var(--md-on-surface); font-family: "Schibsted Grotesk Variable", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+*, *::before, *::after { box-sizing: border-box; }
+
+/* dev toolbar */
+.lw-bar { position: sticky; top: 0; z-index: 90; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 10px 16px; background: oklch(0.16 0.014 245); color: oklch(0.95 0.006 240); font: 600 13px/1.2 "Schibsted Grotesk Variable", sans-serif; }
+.lw-bar b { font: 600 11px/1 "JetBrains Mono Variable", monospace; letter-spacing: .08em; text-transform: uppercase; color: #7fb8e0; }
+.lw-bar button { min-height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid oklch(0.38 0.02 240); background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.lw-bar button[aria-pressed="true"] { background: #7fb8e0; color: #042f4f; border-color: #7fb8e0; }
+.lw-bar .grp { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+/* gallery frames */
+.lw-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 560px), 1fr)); gap: 32px 24px; padding: 24px 16px 64px; background: oklch(0.90 0.02 240); }
+.lw-gallery figure { margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.lw-gallery figcaption { font: 600 11px/1.2 "JetBrains Mono Variable", monospace; letter-spacing: .08em; text-transform: uppercase; color: oklch(0.35 0.02 240); }
+.lw-frame { border-radius: 24px; overflow: hidden; }
+.lw-frame.mobile { max-width: 390px; border-radius: 24px 24px 0 0; align-self: start; }
+.lw-theme-demo { padding: 16px; background: #130e10; color: #fff; font-size: 14px; }
+
+/* preview-only: keep admin chrome below the sticky dev toolbar */
+.lw-admin aside[aria-label^="Applicant"] { top: var(--lw-bar, 52px); }
+.lw-admin > aside:first-child { top: var(--lw-bar, 52px); height: calc(100vh - var(--lw-bar, 52px)); }
+@media (min-width: 640px) { .lw-admin[data-panel="true"] > main { padding-inline-end: 452px; } }
+

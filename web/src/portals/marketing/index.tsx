@@ -8,6 +8,7 @@ import { DEFAULT_TITLE, DEFAULT_DESCRIPTION } from "@/lib/meta/documentMeta"
 import type { PageMeta } from "@/lib/meta/documentMeta"
 import { MarketingHeader } from "./MarketingHeader"
 import { MarketingFooter } from "./MarketingFooter"
+import { WaitlistProvider } from "./waitlist/WaitlistDialog"
 import "./marketing.css"
 import "./brand-tokens.css"
 import "./brand.css"
@@ -56,12 +57,15 @@ function HashScroll() {
 }
 
 export function MarketingFrame({ children }: { children: React.ReactNode }) {
-  return <div className="marketing-brand min-h-dvh">
-    <SkipLink />
-    <MarketingHeader />
-    <main id={MAIN_CONTENT_ID} tabIndex={-1}>{children}</main>
-    <MarketingFooter />
-  </div>
+  /* `lw-light`: the marketing frame is light-only, whatever the app theme or OS prefers. */
+  return <WaitlistProvider>
+    <div className="marketing-brand lw-light min-h-dvh">
+      <SkipLink />
+      <MarketingHeader />
+      <main id={MAIN_CONTENT_ID} tabIndex={-1}>{children}</main>
+      <MarketingFooter />
+    </div>
+  </WaitlistProvider>
 }
 
 /**
