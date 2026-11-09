@@ -39,7 +39,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated, Final, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from lemely.db.invite_repo import (
     InviteAlreadyRedeemedError,
@@ -60,7 +60,13 @@ from lemely.web.deps import (
     get_notification_service,
     get_push_transport,
 )
+from lemely.web.deps_invites import (
+    INVITE_PREVIEW_GLOBAL_KEY,
+    InvitePreviewLimiters,
+    get_invite_preview_limiters,
+)
 from lemely.web.push import NotificationTransport
+from lemely.web.routers.client_errors import _client_ip
 from lemely.web.schemas_invites import InviteCodeDTO, InvitePreviewDTO, RedeemInviteResponseDTO
 from lemely.web.team_http import team_error_to_http
 from lemely.web.tutoring_http import tutoring_error
@@ -179,10 +185,21 @@ def _invite_to_dto(invite: Invite) -> InviteCodeDTO:
     )
 
 
+def _preview_rate_limited(retry_after: int) -> HTTPException:
+    """The generic 429 both preview limiters answer with, ``Retry-After`` included."""
+    return HTTPException(
+        status.HTTP_429_TOO_MANY_REQUESTS,
+        f"Too many requests; retry in {retry_after}s.",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
 @router.get("/{code}", response_model=InvitePreviewDTO)
 def preview_invite(
     code: str,
+    request: Request,
     service: Annotated[InviteService, Depends(get_invite_service)],
+    limiters: Annotated[InvitePreviewLimiters, Depends(get_invite_preview_limiters)],
 ) -> InvitePreviewDTO:
     """G-08: resolve a code to what its holder is about to join. Public.
 
@@ -190,8 +207,20 @@ def preview_invite(
     single "enter a code" box has no way to ask which kind its holder was
     given (see :meth:`~lemely.db.invite_repo.InviteService.preview`). Every
     field on the response is something the holder already learned from
-    whoever handed them the code; there is no id, no roster, no count.
+    whoever handed them the code; there is no id, no roster, no count, and the
+    teacher is named by display name only, never by email.
+
+    Rate-limited per client IP and across every caller (**429** with
+    ``Retry-After``, a generic body): a class join code is unlimited-use and the
+    route is anonymous, so it is otherwise a free code-guessing oracle. The per-IP
+    limiter is consulted first so one address cannot burn the shared budget.
+    ``POST .../redeem`` is not limited here.
     """
+    client_ip = _client_ip(request)
+    if not limiters.per_client.allow(client_ip):
+        raise _preview_rate_limited(limiters.per_client.retry_after(client_ip))
+    if not limiters.global_.allow(INVITE_PREVIEW_GLOBAL_KEY):
+        raise _preview_rate_limited(limiters.global_.retry_after(INVITE_PREVIEW_GLOBAL_KEY))
     try:
         preview = service.preview(code)
     except InviteNotFoundError as exc:

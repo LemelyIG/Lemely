@@ -931,13 +931,10 @@ class InviteService:
             cls = session.get(SchoolClass, invite.class_id)
             if cls is not None:  # pragma: no cover - class_id is FK-guaranteed to resolve
                 class_name = cls.name
-                teacher_name = self._teacher_name(session, cls.teacher_id)
+                teacher_name = self._public_teacher_name(session, cls.teacher_id)
                 school_name = school_name or self._school_name(session, cls.school_id)
         if invite.team_teacher_id is not None:
-            # Public, pre-account preview: the lead teacher's display name only, never
-            # the email `_teacher_name` falls back to.
-            lead = session.get(User, invite.team_teacher_id)
-            teacher_name = ((lead.display_name or "").strip() or None) if lead else None
+            teacher_name = self._public_teacher_name(session, invite.team_teacher_id)
         return InvitePreview(
             role=invite.role,
             school_name=school_name,
@@ -951,7 +948,7 @@ class InviteService:
             role=InviteRole.student,
             school_name=self._school_name(session, cls.school_id),
             class_name=cls.name,
-            teacher_name=self._teacher_name(session, cls.teacher_id),
+            teacher_name=self._public_teacher_name(session, cls.teacher_id),
             child_name=None,
         )
 
@@ -989,11 +986,18 @@ class InviteService:
         school = session.get(School, school_id)
         return school.name if school is not None else None
 
-    def _teacher_name(self, session: Session, teacher_id: uuid.UUID) -> str | None:
+    def _public_teacher_name(self, session: Session, teacher_id: uuid.UUID) -> str | None:
+        """The teacher's stripped display name for the anonymous preview, or ``None``.
+
+        Never the email: the preview is unauthenticated and a class join code is
+        unlimited-use and widely shared, so a fallback to ``email`` would let anyone
+        who guesses codes harvest teacher addresses. A blank name reads as ``None``
+        and the client omits the possessive.
+        """
         teacher = session.get(User, teacher_id)
-        if teacher is None:  # pragma: no cover - SchoolClass.teacher_id is a NOT NULL FK
+        if teacher is None:  # pragma: no cover - the teacher id is a NOT NULL FK
             return None
-        return teacher.display_name or teacher.email
+        return (teacher.display_name or "").strip() or None
 
     # -- Internals: ownership and quota ------------------------------------------
 
