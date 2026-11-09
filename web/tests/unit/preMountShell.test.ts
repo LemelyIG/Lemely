@@ -406,7 +406,7 @@ describe("NIT (c): index.html's tier 3 copy matches FULL_PAGE_STATE_COPY[\"slow-
     // markup rather than from the copy table above, so this also catches a
     // future edit that types new tier 3 copy directly into index.html
     // without going through fullPageStateCopy.ts at all.
-    const heading = REAL_INDEX_HTML.match(/<h1 class="lm-shell-heading">([\s\S]*?)<\/h1>/)
+    const heading = REAL_INDEX_HTML.match(/<h2 class="lm-shell-heading">([\s\S]*?)<\/h2>/)
     const body = REAL_INDEX_HTML.match(/<p class="lm-shell-body-copy">([\s\S]*?)<\/p>/)
     const reload = REAL_INDEX_HTML.match(
       /<button type="button" class="lm-shell-reload"[^>]*>([\s\S]*?)<\/button>/,

@@ -73,7 +73,7 @@
     <title>Lemely, marking for CAIE past papers</title>
     <meta
       name="description"
-      content="Lemely marks a photographed or uploaded CAIE past-paper attempt against the official marking scheme, with method marks, and returns per-question marks, a grade, and the topics to work on."
+      content="Lemely marks Cambridge IGCSE, O Level and A Level past papers against the official mark scheme, with method marks, a grade and topics to work on."
     />
 
     <meta property="og:type" content="website" />
@@ -81,7 +81,7 @@
     <meta property="og:title" content="Lemely, marking for CAIE past papers" />
     <meta
       property="og:description"
-      content="Lemely marks a photographed or uploaded CAIE past-paper attempt against the official marking scheme, with method marks, and returns per-question marks, a grade, and the topics to work on."
+      content="Lemely marks Cambridge IGCSE, O Level and A Level past papers against the official mark scheme, with method marks, a grade and topics to work on."
     />
     <!--
       Absolute: scrapers resolve a relative og:image inconsistently, and several
@@ -685,6 +685,13 @@
         `/platform` — there is no literal `/admin` route in this router.
       -->
       <script src="/shell-init.js"></script>
+      <!--
+        The one `<h1>` a crawler that reads the static HTML sees. React replaces
+        `#root` on mount and the landing hero supplies its own `<h1>`, so there
+        is never more than one in the live DOM. The tier 3 heading below is an
+        `<h2>` for the same reason.
+      -->
+      <h1 class="lm-shell-sr">Lemely: marking for Cambridge IGCSE, O Level and A Level past papers</h1>
       <div class="lm-shell" role="status">
         <span class="lm-shell-sr">Loading</span>
 
@@ -809,7 +816,7 @@
                 stroke-linecap="round"
               />
           </svg>
-          <h1 class="lm-shell-heading">Still loading</h1>
+          <h2 class="lm-shell-heading">Still loading</h2>
           <p class="lm-shell-body-copy">
             Your connection seems slow. We're still trying, and you can reload if you'd rather
             start again.
