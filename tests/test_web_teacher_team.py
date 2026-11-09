@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import event, func, select
 from sqlalchemy.dialects.postgresql import JSONB
 
-from lemely.db.models import Invite
+from lemely.db.models import Invite, School
 from lemely.db.models.enums import Role
 from lemely.db.models.team import AssistantRole, TeacherMember, TeacherMemberStatus
 from lemely.db.models.usage import GrantKind, UsageEntryKind
@@ -46,6 +46,7 @@ from lemely.web.ratelimit import SlidingWindowLimiter
 from lemely.web.team_http import team_error_to_http
 from tests.team_db import (
     add_assistant,
+    add_class,
     add_entry,
     add_grant,
     add_seat,
@@ -521,10 +522,30 @@ def test_invite_then_redeem_then_membership(sm: sessionmaker[Session]) -> None:
     assert redeemed.json()["teacherId"] == str(lead)
     assert redeemed.json()["teacherName"] == "Ms Hoda"
     assert redeemed.json()["effectivePermissions"] == ["mark", "regrade", "view_results"]
+    assert redeemed.json()["available"] is True
     memberships = client(sm, helper).get(f"{BASE}/memberships").json()["memberships"]
     assert [m["teacherId"] for m in memberships] == [str(lead)]
     assistants = client(sm, lead).get(f"{BASE}/assistants").json()["assistants"]
     assert [a["assistantId"] for a in assistants] == [str(helper)]
+
+
+def test_redeeming_for_a_lead_who_owns_a_school_class_reports_unavailable(
+    sm: sessionmaker[Session],
+) -> None:
+    lead, helper = add_user(sm, Role.teacher), add_user(sm, Role.teacher)
+    school_id = uuid.uuid4()
+    with sm.begin() as session:
+        session.add(School(id=school_id, name="Redeem Test School", seat_quota=5))
+    add_class(sm, teacher_id=lead, subject_code=None, school_id=school_id)
+    code = (
+        client(sm, lead).post(f"{BASE}/assistants/invites", json={"role": "viewer"}).json()["code"]
+    )
+    redeemed = client(sm, helper).post(f"{BASE}/assistants/redeem", json={"code": code})
+    assert redeemed.status_code == 200
+    assert redeemed.json()["teacherId"] == str(lead)
+    assert redeemed.json()["available"] is False
+    [row] = client(sm, helper).get(f"{BASE}/memberships").json()["memberships"]
+    assert row["available"] is False
 
 
 def test_invite_wire_fields_are_exactly_the_frontend_contract(sm: sessionmaker[Session]) -> None:

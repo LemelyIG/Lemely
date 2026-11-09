@@ -1762,8 +1762,8 @@ def quiz_preview(
 ) -> QuizPreviewDTO:
     """Preview a quiz assembled from existing questions, topping up via generation.
 
-    Takes ``auth`` explicitly (the router already requires a staff role) so
-    the reuse pool can be scoped to this caller rather than read from a
+    The preview is scoped to the acting teacher (``actor.lead_teacher_user_id``:
+    the caller's own id, or the lead's for an assistant) rather than read from a
     process-global pool — see :func:`_existing_questions`.
     """
     # The guard has already parsed the token subject (401 otherwise), so this is the
