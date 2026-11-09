@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from lemely.db.class_repo import ClassService
+from lemely.db.invite_codes import generate_invite_code
 from lemely.db.invite_repo import InviteService
 from lemely.db.models import ClassEnrollment, Invite, School
 from lemely.db.models.enums import InviteRole, Role
@@ -227,7 +228,7 @@ def test_invite_redeem_of_a_bare_join_code_answers_409(sm: sessionmaker[Session]
 
 def test_class_invite_redeem_answers_409_and_stays_unredeemed(sm: sessionmaker[Session]) -> None:
     teacher, class_id, _ = _full_class(sm)
-    invite_code = f"C{uuid.uuid4().hex[:9].upper()}"
+    invite_code = generate_invite_code()
     with sm.begin() as session:
         session.add(
             Invite(code=invite_code, role=InviteRole.student, created_by=teacher, class_id=class_id)

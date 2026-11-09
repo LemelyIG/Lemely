@@ -5,9 +5,9 @@ helper both modules share) so ``lemely/db/teacher_team_repo.py`` can
 mint assistant invites without importing ``invite_repo`` (which imports
 ``class_repo``, which imports ``teacher_team_repo``). Codes are unchanged.
 
-The alphabet excludes visually ambiguous characters (0/O, 1/I/L), mirroring
-``class_repo._JOIN_CODE_ALPHABET``: a holder must be able to transcribe a code read
-off a screen. The length differs from a class join code's so the two families look
+The alphabet excludes the visually ambiguous characters 0, O, 1 and I (L is included),
+mirroring ``class_repo._JOIN_CODE_ALPHABET``: a holder must be able to transcribe a code
+read off a screen. The length differs from a class join code's so the two families look
 different.
 """
 

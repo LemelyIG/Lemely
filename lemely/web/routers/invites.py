@@ -333,6 +333,9 @@ def redeem_invite(
     get their inbox notices; the change has committed by then, and a failed
     notice never fails the redemption.
 
+    A code that cannot be one this app minted (``is_wellformed_code``) is a **404** before
+    any limiter, same body as an unknown code, and spends no budget.
+
     **429** (``Retry-After``, generic body): per user on every attempt, and a per-user
     budget of unknown codes (404s only), checked before the lookup. The 404 / 403 / 409
     split above tells an account which codes exist, so guessing is what the miss budget
@@ -342,6 +345,9 @@ def redeem_invite(
     no free seat; the invite stays unredeemed. A 409 ``conflict`` means the caller's
     account can't hold a seat with this teacher (``team_error_to_http``).
     """
+    if not is_wellformed_code(code):
+        # Same 404 body as an unknown code, before any limiter: a malformed code is not a guess.
+        raise HTTPException(status_code=404, detail=f"Unknown code: {code!r}")
     if not limiters.per_user.allow(auth.user_id):
         raise _rate_limited(limiters.per_user.retry_after(auth.user_id))
     spent = limiters.misses.retry_after(auth.user_id)

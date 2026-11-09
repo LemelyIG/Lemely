@@ -20,6 +20,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.db.base import Base
+from lemely.db.class_repo import _generate_join_code
 from lemely.db.models import (
     ClassEnrollment,
     PlanTier,
@@ -108,7 +109,7 @@ def add_class(
     school_id: uuid.UUID | None = None,
 ) -> tuple[uuid.UUID, str]:
     class_id = uuid.uuid4()
-    join_code = f"J{uuid.uuid4().hex[:6].upper()}"
+    join_code = _generate_join_code()
     with factory.begin() as session:
         session.add(
             SchoolClass(

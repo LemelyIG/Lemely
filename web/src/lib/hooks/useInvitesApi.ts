@@ -73,6 +73,8 @@ export function normalizeInviteCode(raw: string): string {
  * answers 404 to anything else without looking it up, so sending it only costs
  * a round trip; the entry screen blocks it instead.
  */
+// Hard-coded copy of the server's format: keep in step with `is_wellformed_code` in
+// `lemely/web/routers/invites.py` and `INVITE_CODE_ALPHABET` in `lemely/db/invite_codes.py`.
 const INVITE_CODE_PATTERN = /^(?:[ABCDEFGHJKLMNPQRSTUVWXYZ2-9]{7}|[ABCDEFGHJKLMNPQRSTUVWXYZ2-9]{10})$/
 
 export function isInviteCodeFormat(code: string): boolean {

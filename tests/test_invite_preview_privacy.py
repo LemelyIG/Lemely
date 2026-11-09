@@ -674,6 +674,11 @@ def test_default_preview_limiters_enforce_the_named_constants() -> None:
 # -- Redeem rate limiting ------------------------------------------------------------
 
 
+def _miss_code(i: int) -> str:
+    """A well-formed code that does not exist (``i`` < 8): it reaches the lookup and 404s."""
+    return "ZZZZZZ" + "23456789"[i]
+
+
 def _redeem_client(
     sm: sessionmaker[Session], limiters: InviteRedeemLimiters, user_id: uuid.UUID
 ) -> TestClient:
@@ -697,9 +702,9 @@ def test_redeem_unknown_code_misses_trip_a_429_with_retry_after(
     student, _ = _seed_student(pg_sessionmaker, "Probe")
     client = _redeem_client(pg_sessionmaker, _redeem_limiters(clock), student)
     for i in range(_REDEEM_MISS_LIMIT):
-        assert client.post(f"/api/invites/NOSUCH{i}/redeem").status_code == 404
+        assert client.post(f"/api/invites/{_miss_code(i)}/redeem").status_code == 404
 
-    res = client.post("/api/invites/NOSUCHMORE/redeem")
+    res = client.post(f"/api/invites/{_miss_code(7)}/redeem")
 
     assert res.status_code == 429
     assert int(res.headers["Retry-After"]) >= 1
@@ -711,7 +716,25 @@ def test_redeem_unknown_code_misses_trip_a_429_with_retry_after(
 
     clock.advance(3601.0)
 
-    assert client.post("/api/invites/NOSUCHAGAIN/redeem").status_code == 404
+    assert client.post(f"/api/invites/{_miss_code(6)}/redeem").status_code == 404
+
+
+def test_malformed_redeem_codes_are_a_404_that_spends_no_budget(
+    pg_sessionmaker: sessionmaker[Session], clock: FakeClock
+) -> None:
+    student, _ = _seed_student(pg_sessionmaker, "Typo")
+    client = _redeem_client(pg_sessionmaker, _redeem_limiters(clock, per_user=100), student)
+    for bad in [*_MALFORMED_CODES] * 3:
+        res = client.post(f"/api/invites/{bad}/redeem")
+        assert res.status_code == 404
+        assert res.json() == {"detail": f"Unknown code: {bad!r}"}
+
+    # Nothing was spent: the whole miss budget is still there, then it trips as usual.
+    for i in range(_REDEEM_MISS_LIMIT):
+        assert client.post(f"/api/invites/{_miss_code(i)}/redeem").status_code == 404
+    assert client.post(f"/api/invites/{_miss_code(7)}/redeem").status_code == 429
+    # And a malformed code is still just a 404 once that budget is spent.
+    assert client.post("/api/invites/NOSUCHCODE/redeem").status_code == 404
 
 
 def test_redeem_miss_budget_is_per_user(
@@ -722,8 +745,8 @@ def test_redeem_miss_budget_is_per_user(
     limiters = _redeem_limiters(clock)
     probing = _redeem_client(pg_sessionmaker, limiters, prober)
     for i in range(_REDEEM_MISS_LIMIT):
-        assert probing.post(f"/api/invites/NOSUCH{i}/redeem").status_code == 404
-    assert probing.post("/api/invites/NOSUCHMORE/redeem").status_code == 429
+        assert probing.post(f"/api/invites/{_miss_code(i)}/redeem").status_code == 404
+    assert probing.post(f"/api/invites/{_miss_code(7)}/redeem").status_code == 429
 
     code = _seed_class_invite(pg_sessionmaker)
     assert (
@@ -741,7 +764,7 @@ def test_valid_redeem_still_works_under_the_limit(
     client = _redeem_client(pg_sessionmaker, _redeem_limiters(clock), student)
     # A couple of typos spend part of the miss budget but never block a real code.
     for i in range(_REDEEM_MISS_LIMIT - 1):
-        assert client.post(f"/api/invites/TYPO{i}/redeem").status_code == 404
+        assert client.post(f"/api/invites/{_miss_code(i)}/redeem").status_code == 404
 
     res = client.post(f"/api/invites/{_seed_class_invite(pg_sessionmaker)}/redeem")
 
@@ -759,8 +782,8 @@ def test_valid_redeems_do_not_consume_the_miss_budget(
         assert client.post(f"/api/invites/{code}/redeem").status_code == 200
 
     for i in range(_REDEEM_MISS_LIMIT):
-        assert client.post(f"/api/invites/NOSUCH{i}/redeem").status_code == 404
-    assert client.post("/api/invites/NOSUCHMORE/redeem").status_code == 429
+        assert client.post(f"/api/invites/{_miss_code(i)}/redeem").status_code == 404
+    assert client.post(f"/api/invites/{_miss_code(7)}/redeem").status_code == 429
 
 
 def test_redeem_per_user_attempt_limit_returns_429(
