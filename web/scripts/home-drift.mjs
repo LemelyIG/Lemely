@@ -107,8 +107,8 @@ async function shoot(browser, side, item, meta = {}) {
   const height = HEIGHT[width] ?? 900
   const opened =
     side === "preview"
-      ? await openPreview(browser, { width, height, theme, preview: scene.preview })
-      : await openApp(browser, { width, height, theme, app: scene.app })
+      ? await openPreview(browser, { width, height, theme, preview: scene.preview, platform: scene.platform })
+      : await openApp(browser, { width, height, theme, app: scene.app, platform: scene.platform })
   try {
     const selector = SELECTORS[side === "preview" ? "preview" : "app"]
     // App side only: the preview kit is a static mock with its own fixed layout; the shipped shell is what must not scroll sideways.

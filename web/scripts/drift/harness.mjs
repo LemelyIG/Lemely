@@ -14,6 +14,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { PNG } from "pngjs"
 import { SURFACES, SESSION, PROFILE } from "../capture_surface.mjs"
+import { previewNativeQuery } from "./native-preview.mjs"
 import { assertPortFree, startPreview } from "../serve_guard.mjs"
 
 export const WEB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
@@ -141,22 +142,31 @@ function json(route, body, status = 200) {
   return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) })
 }
 
-async function newContext(browser, { width, height, theme }) {
+/** UA strings the app's resolver maps to each platform (src/lib/platform.ts). */
+export const PLATFORM_UA = {
+  ios: "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1",
+  android: "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36",
+}
+
+async function newContext(browser, { width, height, theme, platform }) {
+  const device = platform ? { userAgent: PLATFORM_UA[platform], isMobile: true, hasTouch: true } : {}
+  if (platform && !device.userAgent) throw new Error(`unknown platform ${platform}`)
   return browser.newContext({
     viewport: { width, height },
     deviceScaleFactor: 1,
     reducedMotion: "reduce",
     colorScheme: theme,
+    ...device,
   })
 }
 
 /** Open the real app at a route with mocked API and the scene's theme. */
-export async function openApp(browser, { width, height, theme, app }) {
+export async function openApp(browser, { width, height, theme, app, platform }) {
   const surface = app.surface ? SURFACES[app.surface] : null
   if (app.surface && !surface) throw new Error(`unknown capture surface ${app.surface}`)
   const session = { ...SESSION, ...(surface?.session ?? {}), ...(app.session ?? {}) }
   const profile = { ...PROFILE, ...(surface?.profile ?? {}), ...(app.profile ?? {}) }
-  const context = await newContext(browser, { width, height, theme })
+  const context = await newContext(browser, { width, height, theme, platform })
   await context.addInitScript(
     ([sess, chosenTheme]) => {
       window.localStorage.setItem("lemely.session", JSON.stringify(sess))
@@ -173,6 +183,10 @@ export async function openApp(browser, { width, height, theme, app }) {
   if (surface) await surface.stub(page, surface.states[app.state ?? Object.keys(surface.states)[0]])
   if (app.mocks) await app.mocks(page)
   await page.goto(`${APP_BASE}${app.path ?? surface.route}`, { waitUntil: "networkidle" })
+  if (platform) {
+    const got = await page.evaluate(() => document.documentElement.dataset.platform)
+    if (got !== platform) throw new Error(`html[data-platform] is ${got}, expected ${platform}`)
+  }
   await page.addStyleTag({ content: STILL_CSS + (app.css ?? "") })
   await page.evaluate(() => document.fonts.ready)
   if (app.act) await app.act(page, { width, theme })
@@ -181,12 +195,18 @@ export async function openApp(browser, { width, height, theme, app }) {
 }
 
 /** Open the design A preview in a state, with its toolbar removed. */
-export async function openPreview(browser, { width, height, theme, preview }) {
-  const context = await newContext(browser, { width, height, theme })
+export async function openPreview(browser, { width, height, theme, preview, platform }) {
+  const context = await newContext(browser, { width, height, theme, platform })
   const page = await context.newPage()
   await page.clock.setFixedTime(NOW)
-  const query = new URLSearchParams({ state: preview.state, theme, motion: "reduce", width: "desktop" })
+  const query = platform
+    ? previewNativeQuery({ state: preview.state, theme, platform, page: preview.page ?? "root" })
+    : new URLSearchParams({ state: preview.state, theme, motion: "reduce", width: "desktop" })
   await page.goto(`${KIT_BASE}/student-home-a.html?${query}`, { waitUntil: "networkidle" })
+  if (platform) {
+    const got = await page.evaluate(() => document.querySelector(".sh-root")?.dataset.platform)
+    if (got !== platform) throw new Error(`preview .sh-root data-platform is ${got}, expected ${platform}`)
+  }
   await page.addStyleTag({ content: STILL_CSS + PREVIEW_CSS })
   await page.evaluate(() => document.fonts.ready)
   if (preview.act) await preview.act(page, { width, theme })

@@ -10,6 +10,7 @@
  */
 import path from "node:path"
 import { chromium } from "@playwright/test"
+import { NATIVE_CHECKS } from "./drift/checks-native.mjs"
 import { SHELL_CHECKS } from "./drift/checks-shell.mjs"
 import { WEB_DIR, openApp, startServers } from "./drift/harness.mjs"
 
@@ -24,7 +25,7 @@ const withAxe = argv.includes("--axe")
 const AXE = path.join(WEB_DIR, "node_modules", "axe-core", "axe.min.js")
 
 async function main() {
-  const checks = SHELL_CHECKS.filter((c) => c.id.startsWith(prefix))
+  const checks = [...SHELL_CHECKS, ...NATIVE_CHECKS].filter((c) => c.id.startsWith(prefix))
   if (!checks.length) {
     console.error(`no checks match --check ${prefix}`)
     process.exitCode = 1
@@ -38,9 +39,10 @@ async function main() {
       const width = check.width ?? 1440
       const { context, page } = await openApp(browser, {
         width,
-        height: width <= 390 ? 844 : 900,
+        height: width === 412 ? 915 : width <= 390 ? 844 : 900,
         theme: check.theme ?? "light",
         app: check.app,
+        platform: check.platform,
       })
       try {
         await check.run(page)
