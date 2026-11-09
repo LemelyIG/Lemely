@@ -173,14 +173,14 @@ export function buildManifest(mode: string) {
         type: "image/jpeg",
         form_factor: "wide" as const,
         label:
-          "The student dashboard: subjects this session with predicted grades, a momentum chart, and weakest topics.",
+          "The student dashboard: level and streak, today's study session, and predicted grades per subject.",
       },
       {
         src: "screenshots/dashboard-narrow.jpg",
         sizes: "780x1688",
         type: "image/jpeg",
         form_factor: "narrow" as const,
-        label: "The student dashboard on a phone: subjects this session and predicted grades.",
+        label: "The student dashboard on a phone: level, streak and today's study session.",
       },
     ],
     widgets: [

@@ -191,6 +191,20 @@ async function main() {
           }),
         }),
       )
+      // `JoinClassPrompt` (Overview.tsx) reads `.classes.length`, so the `{}`
+      // catch-all above crashes the screen into its error boundary. One class
+      // also keeps the join prompt out of the photographed dashboard.
+      await page.route("**/api/student/classes", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            classes: [
+              { classId: "capture-class", name: "Year 11 Physics", subjectCode: "0625", schoolName: "Nile International" },
+            ],
+          }),
+        }),
+      )
       await surface.stub(page, state)
       await page.goto(`${BASE}${surface.route}`, { waitUntil: "domcontentloaded" })
       await page.waitForTimeout(1400)
