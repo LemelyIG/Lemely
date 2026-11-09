@@ -15,6 +15,7 @@ import {
   canRedeemInviteAs,
   describeInvitePreview,
   INVITE_ROLE_MISMATCH_MESSAGE,
+  isInviteCodeFormat,
   isTerminalRedeemFailure,
   normalizeInviteCode,
   previewErrorCopy,
@@ -97,8 +98,9 @@ import { AuthFrame } from "./Login"
 
 /** The pre-lookup step: a code field, optionally pre-filled from `/join/:code`
  * (spec §G-08's first bullet). Submitting moves the screen to the lookup
- * result rather than validating anything client-side beyond "not empty" —
- * the server is the only real authority on whether a code exists. */
+ * result. The only client-side check is the code's *shape* (`isInviteCodeFormat`):
+ * the server 404s a malformed code without a lookup, so the button waits for a
+ * well-formed one. Whether a well-formed code exists is still the server's call. */
 function CodeEntryStep({
   code,
   onChangeCode,
@@ -129,7 +131,7 @@ function CodeEntryStep({
         className="font-mono tracking-[0.08em]"
       />
 
-      <Button type="submit" variant="accent" size="lg" disabled={code.trim().length === 0}>
+      <Button type="submit" variant="accent" size="lg" disabled={!isInviteCodeFormat(normalizeInviteCode(code))}>
         Find my invite
       </Button>
     </form>
@@ -280,7 +282,9 @@ function JoinWithCodeScreen({ initialCode }: { initialCode: string }) {
   // separate is what stops every keystroke firing a request — the lookup only
   // (re)starts on an explicit submit, or once here on mount for a deep link.
   const [codeInput, setCodeInput] = useState(initialCode)
-  const [activeCode, setActiveCode] = useState(initialCode)
+  // A deep link whose code is malformed never reaches the lookup: the field is
+  // pre-filled and the entry step waits for a well-formed code.
+  const [activeCode, setActiveCode] = useState(isInviteCodeFormat(initialCode) ? initialCode : "")
 
   const preview = useInvitePreview(activeCode)
   const redeem = useRedeemInvite()
@@ -288,7 +292,7 @@ function JoinWithCodeScreen({ initialCode }: { initialCode: string }) {
   const handleSubmitCode = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const normalized = normalizeInviteCode(codeInput)
-    if (!normalized) return
+    if (!isInviteCodeFormat(normalized)) return
     setCodeInput(normalized)
     setActiveCode(normalized)
   }

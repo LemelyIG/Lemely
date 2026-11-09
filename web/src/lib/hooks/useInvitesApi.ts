@@ -49,20 +49,34 @@ import type { InvitePreview } from "@/lib/authTypes"
 // ---------------------------------------------------------------------------
 
 /**
- * Trim and uppercase a typed or deep-linked code.
+ * Clean a typed, pasted or deep-linked code: drop every space and dash, uppercase.
  *
  * Both code families this resolves against are minted from all-uppercase,
- * non-ambiguous alphabets (`invite_repo.py`'s `_INVITE_CODE_ALPHABET`,
+ * non-ambiguous alphabets (`invite_codes.py`'s `INVITE_CODE_ALPHABET`,
  * `class_repo.py`'s `_JOIN_CODE_ALPHABET` — neither contains a lowercase
- * letter), and both are matched with a case-sensitive `==` in SQL. So a
- * correctly-minted code is already a no-op under this function, and the only
- * effect this ever has is turning a holder's lowercase transcription of a
- * code read off a screen or a slip of paper into the one casing that can
- * actually match — silently failing that transcription as "not found" would
- * be a worse, unexplained failure than normalising it before the lookup.
+ * letter, a space or a dash), and both are matched with a case-sensitive `==`
+ * in SQL. So a correctly-minted code is already a no-op under this function.
+ * What it forgives is how a holder copies a code: lowercase, trailing
+ * whitespace, or one written in groups ("K7P-4RQ2", "K7P4 RQ2"). Silently
+ * failing that transcription as "not found" would be a worse, unexplained
+ * failure than normalising it before the lookup.
  */
 export function normalizeInviteCode(raw: string): string {
-  return raw.trim().toUpperCase()
+  return raw.replace(/[\s-]/g, "").toUpperCase()
+}
+
+/**
+ * Whether a (normalised) code has the shape of one this app mints: 7 characters
+ * (a class join code) or 10 (every invite code) from the non-ambiguous
+ * alphabet `invite_codes.py` and `class_repo.py` share (no 0, 1, I or O).
+ * Mirrors `is_wellformed_code` in `lemely/web/routers/invites.py`. The server
+ * answers 404 to anything else without looking it up, so sending it only costs
+ * a round trip; the entry screen blocks it instead.
+ */
+const INVITE_CODE_PATTERN = /^(?:[ABCDEFGHJKLMNPQRSTUVWXYZ2-9]{7}|[ABCDEFGHJKLMNPQRSTUVWXYZ2-9]{10})$/
+
+export function isInviteCodeFormat(code: string): boolean {
+  return INVITE_CODE_PATTERN.test(code)
 }
 
 /**
@@ -281,8 +295,9 @@ export interface RedeemInviteResult {
  * ever *adds* a bearer token when one is stored (`lib/api.ts`'s
  * `authHeaders`) rather than requiring one.
  *
- * `enabled` is false for an empty code, both so mounting this screen with
- * nothing typed or deep-linked yet fires no request, and so the query key for
+ * `enabled` is false for a code that is not well-formed (so an empty one too):
+ * mounting this screen with nothing typed or deep-linked yet fires no request, a
+ * malformed code is never sent (the server would 404 it unlooked-up), and the query key for
  * "nothing to look up" (`["invites", "preview", ""]`) never collides with a
  * real code's key. No `fallback`, matching every other read in this family
  * (`useAdminApi.ts`'s own note): a 404 must reach the screen as a real query
@@ -294,7 +309,7 @@ export function useInvitePreview(code: string): UseQueryResult<InvitePreview, Er
   return useQuery({
     queryKey: ["invites", "preview", trimmed],
     queryFn: () => request<InvitePreview>(`/invites/${encodeURIComponent(trimmed)}`),
-    enabled: trimmed.length > 0,
+    enabled: isInviteCodeFormat(trimmed),
     // A 404 or 429 will not change on a retry (and a retry spends the route's rate limit).
     retry: (count, err) => count < 1 && !(err instanceof ApiError && err.status >= 400 && err.status < 500),
   })

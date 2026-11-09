@@ -17,11 +17,17 @@ deterrents, and making the pair atomic would hold a lock across a database looku
 
 from __future__ import annotations
 
+import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
 from lemely.web.ratelimit import SlidingWindowLimiter
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # -- Public preview: GET /api/invites/{code} ---------------------------------------
 
@@ -55,24 +61,91 @@ _INVITE_PREVIEW_PER_CLIENT_MISS_WINDOW_SECONDS = 60.0
 _INVITE_PREVIEW_GLOBAL_MISS_LIMIT = 300
 _INVITE_PREVIEW_GLOBAL_MISS_WINDOW_SECONDS = 60.0
 
+#: Codes an IP has already resolved (a 200) stay "known" to that IP for this long, so a
+#: client that has spent its per-IP miss budget (a few typos) can still re-open the code it
+#: already used. Only that IP's own miss refusal is bypassed; the 240 per-call limit and the
+#: global miss budget still apply. The memory is bounded: at most 8 codes per IP (oldest
+#: dropped first) and at most 10 000 IPs (least recently used dropped first).
+_INVITE_PREVIEW_RESOLVED_TTL_SECONDS = 60.0
+_INVITE_PREVIEW_RESOLVED_CODES_PER_IP = 8
+_INVITE_PREVIEW_RESOLVED_MAX_IPS = 10_000
+
 #: The key the global miss limiter tracks its one shared bucket under. Not a real client
 #: identity: ``SlidingWindowLimiter`` is keyed by arbitrary strings.
 INVITE_PREVIEW_GLOBAL_KEY = "__global__"
 
 
+class ResolvedCodeMemory:
+    """A bounded, per-IP memory of codes that recently previewed successfully (in-process).
+
+    Per Cloud Run instance, like the limiters. Entries expire ``ttl_seconds`` after they
+    were last resolved; each IP keeps at most ``codes_per_ip`` codes and the map at most
+    ``max_ips`` IPs, evicting the oldest, so a flood of distinct IPs or codes cannot grow
+    it without bound. The clock is injected so tests drive expiry.
+    """
+
+    def __init__(
+        self,
+        *,
+        ttl_seconds: float,
+        codes_per_ip: int,
+        max_ips: int,
+        clock: Callable[[], float],
+    ) -> None:
+        self._ttl = ttl_seconds
+        self._codes_per_ip = codes_per_ip
+        self._max_ips = max_ips
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._by_ip: OrderedDict[str, OrderedDict[str, float]] = OrderedDict()
+
+    def knows(self, ip: str, code: str) -> bool:
+        """Whether ``ip`` resolved ``code`` within the TTL."""
+        with self._lock:
+            codes = self._by_ip.get(ip)
+            if codes is None:
+                return False
+            resolved_at = codes.get(code)
+            if resolved_at is None:
+                return False
+            if self._clock() - resolved_at >= self._ttl:
+                del codes[code]
+                if not codes:
+                    del self._by_ip[ip]
+                return False
+            return True
+
+    def remember(self, ip: str, code: str) -> None:
+        """Record that ``ip`` just resolved ``code``."""
+        with self._lock:
+            codes = self._by_ip.get(ip)
+            if codes is None:
+                if len(self._by_ip) >= self._max_ips:
+                    self._by_ip.popitem(last=False)
+                codes = OrderedDict()
+                self._by_ip[ip] = codes
+            codes[code] = self._clock()
+            codes.move_to_end(code)
+            while len(codes) > self._codes_per_ip:
+                codes.popitem(last=False)
+            self._by_ip.move_to_end(ip)
+
+
 @dataclass(frozen=True, slots=True)
 class InvitePreviewLimiters:
-    """The three :class:`SlidingWindowLimiter` instances guarding the public preview.
+    """The limiters (and one memory) guarding the public preview.
 
     ``per_client`` throttles one caller (keyed by IP) on every call. ``per_client_misses``
     (keyed by IP) and ``global_misses`` cap unknown-code lookups per caller and across all
     callers: the route checks each before the lookup (``retry_after`` > 0 means spent) and
-    records a miss with ``allow`` only on a 404.
+    records a miss with ``allow`` only on a 404. ``resolved`` remembers the codes an IP
+    already resolved: those skip that IP's own miss refusal and nothing else.
     """
 
     per_client: SlidingWindowLimiter
     per_client_misses: SlidingWindowLimiter
     global_misses: SlidingWindowLimiter
+    resolved: ResolvedCodeMemory
 
 
 @lru_cache(maxsize=1)
@@ -96,6 +169,12 @@ def get_invite_preview_limiters() -> InvitePreviewLimiters:
         global_misses=SlidingWindowLimiter(
             limit=_INVITE_PREVIEW_GLOBAL_MISS_LIMIT,
             window_seconds=_INVITE_PREVIEW_GLOBAL_MISS_WINDOW_SECONDS,
+            clock=time.monotonic,
+        ),
+        resolved=ResolvedCodeMemory(
+            ttl_seconds=_INVITE_PREVIEW_RESOLVED_TTL_SECONDS,
+            codes_per_ip=_INVITE_PREVIEW_RESOLVED_CODES_PER_IP,
+            max_ips=_INVITE_PREVIEW_RESOLVED_MAX_IPS,
             clock=time.monotonic,
         ),
     )
@@ -156,6 +235,7 @@ __all__ = [
     "INVITE_PREVIEW_GLOBAL_KEY",
     "InvitePreviewLimiters",
     "InviteRedeemLimiters",
+    "ResolvedCodeMemory",
     "get_invite_preview_limiters",
     "get_invite_redeem_limiters",
     "reset_invite_singletons",

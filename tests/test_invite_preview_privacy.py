@@ -23,7 +23,8 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.db.base import Base
-from lemely.db.class_repo import ClassService
+from lemely.db.class_repo import ClassService, _generate_join_code
+from lemely.db.invite_codes import generate_invite_code
 from lemely.db.invite_repo import InviteService
 from lemely.db.models import Invite, School, SchoolClass, User
 from lemely.db.models.enums import InviteRole, Role
@@ -37,11 +38,13 @@ from lemely.web.deps_invites import (
     INVITE_PREVIEW_GLOBAL_KEY,
     InvitePreviewLimiters,
     InviteRedeemLimiters,
+    ResolvedCodeMemory,
     get_invite_preview_limiters,
     get_invite_redeem_limiters,
     reset_invite_singletons,
 )
 from lemely.web.ratelimit import SlidingWindowLimiter
+from lemely.web.routers.invites import is_wellformed_code
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -52,6 +55,8 @@ _BLANK_NAMES = [None, "", "   "]
 _PER_CLIENT_LIMIT = 3
 _GLOBAL_MISS_LIMIT = 5
 _PER_CLIENT_MISS_LIMIT = 4
+# Right length and alphabet, so it reaches the lookup and 404s there (a real miss).
+_UNKNOWN_CODE = "ZZZZZZZZZZ"
 _REDEEM_PER_USER_LIMIT = 5
 _REDEEM_MISS_LIMIT = 3
 
@@ -110,6 +115,10 @@ def clock() -> FakeClock:
     return FakeClock()
 
 
+def _memory(clock: FakeClock) -> ResolvedCodeMemory:
+    return ResolvedCodeMemory(ttl_seconds=60.0, codes_per_ip=8, max_ips=100, clock=clock)
+
+
 def _limiters(clock: FakeClock) -> InvitePreviewLimiters:
     return InvitePreviewLimiters(
         per_client=SlidingWindowLimiter(limit=_PER_CLIENT_LIMIT, window_seconds=60.0, clock=clock),
@@ -119,6 +128,7 @@ def _limiters(clock: FakeClock) -> InvitePreviewLimiters:
         global_misses=SlidingWindowLimiter(
             limit=_GLOBAL_MISS_LIMIT, window_seconds=60.0, clock=clock
         ),
+        resolved=_memory(clock),
     )
 
 
@@ -165,6 +175,7 @@ def open_client(pg_sessionmaker: sessionmaker[Session]) -> Iterator[TestClient]:
                 limit=1000, window_seconds=60.0, clock=FakeClock()
             ),
             global_misses=SlidingWindowLimiter(limit=1000, window_seconds=60.0, clock=FakeClock()),
+            resolved=_memory(FakeClock()),
         ),
     )
     try:
@@ -187,7 +198,7 @@ def _seed_teacher(sm: sessionmaker[Session], display_name: str | None) -> tuple[
 
 def _seed_class(sm: sessionmaker[Session], teacher_id: uuid.UUID) -> tuple[uuid.UUID, str]:
     class_id = uuid.uuid4()
-    join_code = f"JOIN{uuid.uuid4().hex[:6].upper()}"
+    join_code = _generate_join_code()
     with sm.begin() as session:
         school = School(id=uuid.uuid4(), name="Privacy Test School", seat_quota=5)
         session.add(school)
@@ -212,7 +223,7 @@ def _mint_class_invite_code(
 
 
 def _seed_assistant_invite(sm: sessionmaker[Session], teacher_id: uuid.UUID) -> str:
-    code = f"ASST{uuid.uuid4().hex[:6].upper()}"
+    code = generate_invite_code()
     with sm.begin() as session:
         session.add(
             Invite(
@@ -384,9 +395,9 @@ def test_unknown_codes_count_toward_the_per_client_limit(
     pg_sessionmaker: sessionmaker[Session], limited_client: TestClient
 ) -> None:
     for _ in range(_PER_CLIENT_LIMIT):
-        assert _get(limited_client, "NOSUCHCODE", "203.0.113.7") == 404
+        assert _get(limited_client, _UNKNOWN_CODE, "203.0.113.7") == 404
 
-    assert _get(limited_client, "NOSUCHCODE", "203.0.113.7") == 429
+    assert _get(limited_client, _UNKNOWN_CODE, "203.0.113.7") == 429
 
 
 def test_a_flood_of_unknown_codes_exhausts_the_miss_budget_until_the_window_passes(
@@ -396,10 +407,10 @@ def test_a_flood_of_unknown_codes_exhausts_the_miss_budget_until_the_window_pass
     # Rotating X-Forwarded-For gets a fresh per-client bucket every time, so only the
     # global miss budget binds the guesser.
     for i in range(_GLOBAL_MISS_LIMIT):
-        assert _get(limited_client, "NOSUCHCODE", f"192.0.2.{i}") == 404
+        assert _get(limited_client, _UNKNOWN_CODE, f"192.0.2.{i}") == 404
 
     refused = limited_client.get(
-        "/api/invites/NOSUCHCODE", headers={"X-Forwarded-For": "192.0.2.99"}
+        f"/api/invites/{_UNKNOWN_CODE}", headers={"X-Forwarded-For": "192.0.2.99"}
     )
     assert refused.status_code == 429
     assert int(refused.headers["Retry-After"]) >= 1
@@ -421,8 +432,8 @@ def test_real_hits_do_not_consume_the_miss_budget(
 
     # The whole miss budget is still there.
     for i in range(_GLOBAL_MISS_LIMIT):
-        assert _get(limited_client, "NOSUCHCODE", f"198.51.100.{i}") == 404
-    assert _get(limited_client, "NOSUCHCODE", "198.51.100.99") == 429
+        assert _get(limited_client, _UNKNOWN_CODE, f"198.51.100.{i}") == 404
+    assert _get(limited_client, _UNKNOWN_CODE, "198.51.100.99") == 429
 
 
 def test_one_ip_past_its_limit_does_not_spend_the_shared_miss_budget(
@@ -433,7 +444,7 @@ def test_one_ip_past_its_limit_does_not_spend_the_shared_miss_budget(
     refused guesses spend the shared budget and IP B is locked out too."""
     code = _seed_join_code(pg_sessionmaker)
     statuses = [
-        _get(limited_client, "NOSUCHCODE", "203.0.113.7") for _ in range(_GLOBAL_MISS_LIMIT * 2)
+        _get(limited_client, _UNKNOWN_CODE, "203.0.113.7") for _ in range(_GLOBAL_MISS_LIMIT * 2)
     ]
     assert statuses == [404] * _PER_CLIENT_LIMIT + [429] * (
         _GLOBAL_MISS_LIMIT * 2 - _PER_CLIENT_LIMIT
@@ -455,26 +466,192 @@ def test_one_ip_cannot_drain_the_global_miss_budget(
         global_misses=SlidingWindowLimiter(
             limit=_GLOBAL_MISS_LIMIT, window_seconds=60.0, clock=clock
         ),
+        resolved=_memory(clock),
     )
     client = TestClient(_app(pg_sessionmaker, limiters))
     code = _seed_join_code(pg_sessionmaker)
     try:
         for _ in range(_PER_CLIENT_MISS_LIMIT):
-            assert _get(client, "NOSUCHCODE", "203.0.113.7") == 404
+            assert _get(client, _UNKNOWN_CODE, "203.0.113.7") == 404
 
-        refused = client.get("/api/invites/NOSUCHCODE", headers={"X-Forwarded-For": "203.0.113.7"})
+        refused = client.get(
+            f"/api/invites/{_UNKNOWN_CODE}", headers={"X-Forwarded-For": "203.0.113.7"}
+        )
         assert refused.status_code == 429
         assert int(refused.headers["Retry-After"]) >= 1
         # A's refused requests did not record misses: the shared budget is nearly intact,
         # and a valid code from another IP is served.
         assert _get(client, code, "198.51.100.9") == 200
-        assert _get(client, "NOSUCHCODE", "198.51.100.9") == 404
+        assert _get(client, _UNKNOWN_CODE, "198.51.100.9") == 404
         # A itself is shut out, valid codes included, until its window rolls.
         assert _get(client, code, "203.0.113.7") == 429
         clock.advance(61.0)
         assert _get(client, code, "203.0.113.7") == 200
     finally:
         reset_invite_singletons()
+
+
+def _tight_client(
+    sm: sessionmaker[Session],
+    clock: FakeClock,
+    *,
+    per_client: int = 100,
+    per_client_misses: int = _PER_CLIENT_MISS_LIMIT,
+    global_misses: int = _GLOBAL_MISS_LIMIT,
+) -> TestClient:
+    """Per-IP calls roomy by default, so the miss budgets are the ones that bind."""
+    return TestClient(
+        _app(
+            sm,
+            InvitePreviewLimiters(
+                per_client=SlidingWindowLimiter(limit=per_client, window_seconds=60.0, clock=clock),
+                per_client_misses=SlidingWindowLimiter(
+                    limit=per_client_misses, window_seconds=60.0, clock=clock
+                ),
+                global_misses=SlidingWindowLimiter(
+                    limit=global_misses, window_seconds=60.0, clock=clock
+                ),
+                resolved=_memory(clock),
+            ),
+        )
+    )
+
+
+# -- Malformed codes are not guesses ------------------------------------------------
+
+_MALFORMED_CODES = [
+    "A",
+    "ABC",
+    "NOSUCHCODE",  # right length, but O is not in the alphabet
+    "abcdefg",  # lowercase
+    "JOIN-CODE",
+    "ZZZZZZZZ",  # 8 characters
+    "ZZZZZZZZZZZ",  # 11 characters
+    "ZZZZZZ!",
+    "ZZZZZZ0",  # 0 is not in the alphabet
+    "ZZZZZZZZZ1",
+]
+
+
+@pytest.mark.parametrize("code", _MALFORMED_CODES)
+def test_a_malformed_code_is_a_404_that_spends_no_budget(
+    pg_sessionmaker: sessionmaker[Session], clock: FakeClock, code: str
+) -> None:
+    client = _tight_client(pg_sessionmaker, clock, per_client=3)
+    # Far more malformed requests than any budget allows: all 404, never a 429.
+    for _ in range(40):
+        res = client.get(f"/api/invites/{code}", headers={"X-Forwarded-For": "203.0.113.7"})
+        assert res.status_code == 404
+        assert res.json() == {"detail": f"Unknown code: {code!r}"}
+
+    # Nothing was spent: the per-IP call limit (3) is intact, so three real previews pass.
+    valid = _seed_join_code(pg_sessionmaker)
+    for _ in range(3):
+        assert _get(client, valid, "203.0.113.7") == 200
+
+
+def test_malformed_codes_are_not_refused_by_a_spent_miss_budget_but_valid_format_ones_are(
+    pg_sessionmaker: sessionmaker[Session], clock: FakeClock
+) -> None:
+    client = _tight_client(pg_sessionmaker, clock)
+    # Valid-format unknown codes still spend the per-IP miss budget.
+    for _ in range(_PER_CLIENT_MISS_LIMIT):
+        assert _get(client, _UNKNOWN_CODE, "203.0.113.7") == 404
+    assert _get(client, _UNKNOWN_CODE, "203.0.113.7") == 429
+
+    # With that budget spent, a malformed code is still just a 404, not a 429.
+    assert _get(client, "NOSUCHCODE", "203.0.113.7") == 404
+
+
+def test_malformed_codes_do_not_spend_the_global_miss_budget(
+    pg_sessionmaker: sessionmaker[Session], clock: FakeClock
+) -> None:
+    client = _tight_client(pg_sessionmaker, clock, per_client_misses=1000)
+    for i in range(_GLOBAL_MISS_LIMIT * 4):
+        assert _get(client, "NOSUCHCODE", f"192.0.2.{i}") == 404
+
+    for i in range(_GLOBAL_MISS_LIMIT):
+        assert _get(client, _UNKNOWN_CODE, f"198.51.100.{i}") == 404
+    assert _get(client, _UNKNOWN_CODE, "198.51.100.99") == 429
+
+
+def test_the_code_format_matches_every_code_the_app_mints() -> None:
+    """Drift guard: if a generator's alphabet or length changes, the preview would 404
+    real codes. Both generators, many samples."""
+    for _ in range(500):
+        assert is_wellformed_code(generate_invite_code())
+        assert is_wellformed_code(_generate_join_code())
+
+
+@pytest.mark.parametrize("code", [*_MALFORMED_CODES, "", " ", "ZZZZZZZ ", "ZZZZZZZ\n"])
+def test_is_wellformed_code_rejects_what_the_app_never_mints(code: str) -> None:
+    assert not is_wellformed_code(code)
+
+
+# -- Codes this IP already resolved --------------------------------------------------
+
+
+def test_an_ip_with_a_spent_miss_budget_still_gets_a_code_it_resolved_earlier(
+    pg_sessionmaker: sessionmaker[Session], clock: FakeClock
+) -> None:
+    client = _tight_client(pg_sessionmaker, clock)
+    known = _seed_join_code(pg_sessionmaker)
+    other = _seed_join_code(pg_sessionmaker)
+    assert _get(client, known, "203.0.113.7") == 200
+    for _ in range(_PER_CLIENT_MISS_LIMIT):
+        assert _get(client, _UNKNOWN_CODE, "203.0.113.7") == 404
+
+    assert _get(client, known, "203.0.113.7") == 200  # resolved earlier by this IP
+    assert _get(client, other, "203.0.113.7") == 429  # a new valid code is refused
+    # Another IP is unaffected, and the memory is per IP.
+    assert _get(client, other, "198.51.100.9") == 200
+    assert _get(client, known, "198.51.100.10") == 200
+
+
+def test_a_remembered_code_never_bypasses_the_global_miss_budget(
+    pg_sessionmaker: sessionmaker[Session], clock: FakeClock
+) -> None:
+    client = _tight_client(pg_sessionmaker, clock, per_client_misses=1000)
+    known = _seed_join_code(pg_sessionmaker)
+    assert _get(client, known, "203.0.113.7") == 200
+    for i in range(_GLOBAL_MISS_LIMIT):
+        assert _get(client, _UNKNOWN_CODE, f"192.0.2.{i}") == 404
+
+    assert _get(client, known, "203.0.113.7") == 429
+
+
+def test_a_remembered_code_still_counts_toward_the_per_call_limit(
+    pg_sessionmaker: sessionmaker[Session], clock: FakeClock
+) -> None:
+    client = _tight_client(pg_sessionmaker, clock, per_client=_PER_CLIENT_LIMIT)
+    known = _seed_join_code(pg_sessionmaker)
+    for _ in range(_PER_CLIENT_LIMIT):
+        assert _get(client, known, "203.0.113.7") == 200
+
+    assert _get(client, known, "203.0.113.7") == 429
+
+
+def test_resolved_code_memory_expires_and_is_bounded() -> None:
+    clock = FakeClock()
+    memory = ResolvedCodeMemory(ttl_seconds=60.0, codes_per_ip=2, max_ips=2, clock=clock)
+
+    memory.remember("a", "C1")
+    assert memory.knows("a", "C1")
+    assert not memory.knows("a", "C2")
+    assert not memory.knows("b", "C1")
+    clock.advance(61.0)
+    assert not memory.knows("a", "C1")  # expired
+
+    memory.remember("a", "C1")
+    memory.remember("a", "C2")
+    memory.remember("a", "C3")  # per-IP cap: C1 (oldest) is dropped
+    assert not memory.knows("a", "C1")
+    assert memory.knows("a", "C2") and memory.knows("a", "C3")
+
+    memory.remember("b", "C1")
+    memory.remember("c", "C1")  # max IPs: "a" (least recently used) is dropped
+    assert not memory.knows("a", "C2")
+    assert memory.knows("b", "C1") and memory.knows("c", "C1")
 
 
 def test_default_preview_limiters_enforce_the_named_constants() -> None:

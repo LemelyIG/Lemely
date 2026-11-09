@@ -7,6 +7,7 @@ import {
   describeInvitePreview,
   isSeatQuotaExceededError,
   isTerminalRedeemFailure,
+  isInviteCodeFormat,
   normalizeInviteCode,
   previewErrorCopy,
   redeemFailureMessage,
@@ -32,6 +33,37 @@ describe("normalizeInviteCode", () => {
 
   it("collapses whitespace-only input to empty", () => {
     expect(normalizeInviteCode("   ")).toBe("")
+  })
+
+  it("strips inner whitespace and dashes", () => {
+    expect(normalizeInviteCode("k7p-4rq2")).toBe("K7P4RQ2")
+    expect(normalizeInviteCode(" 7hkpx 2wcqy ")).toBe("7HKPX2WCQY")
+    expect(normalizeInviteCode("7HK-PX2\tWCQY\n")).toBe("7HKPX2WCQY")
+  })
+})
+
+describe("isInviteCodeFormat", () => {
+  it("accepts a 7-character join code and a 10-character invite code", () => {
+    expect(isInviteCodeFormat("LLLLLLL")).toBe(true) // L is in the minting alphabet
+    expect(isInviteCodeFormat("K7P4RQ2")).toBe(true)
+    expect(isInviteCodeFormat("7HKPX2WCQY")).toBe(true)
+  })
+
+  it("rejects the wrong length", () => {
+    expect(isInviteCodeFormat("")).toBe(false)
+    expect(isInviteCodeFormat("K7P4RQ")).toBe(false)
+    expect(isInviteCodeFormat("K7P4RQ2X")).toBe(false)
+    expect(isInviteCodeFormat("7HKPX2WCQYZ")).toBe(false)
+  })
+
+  it("rejects characters outside the non-ambiguous alphabet", () => {
+    for (const bad of ["K7P4RQ0", "K7P4RQ1", "K7P4RQI", "K7P4RQO", "k7p4rq2", "K7P-4RQ"]) {
+      expect(isInviteCodeFormat(bad), bad).toBe(false)
+    }
+  })
+
+  it("accepts a code once normalised", () => {
+    expect(isInviteCodeFormat(normalizeInviteCode(" k7p-4rq2 "))).toBe(true)
   })
 })
 

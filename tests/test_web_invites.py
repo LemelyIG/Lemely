@@ -30,7 +30,8 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.db.base import Base
-from lemely.db.class_repo import ClassService
+from lemely.db.class_repo import ClassService, _generate_join_code
+from lemely.db.invite_codes import generate_invite_code
 from lemely.db.invite_repo import InviteService
 from lemely.db.models import Invite, School, SchoolClass, SchoolMembership, Seat, User
 from lemely.db.models.enums import InviteRole, MembershipRole, Role, SeatStatus
@@ -114,7 +115,7 @@ def _seed_class(
                 teacher_id=teacher_id,
                 school_id=school_id,
                 name="Web Test Class",
-                join_code=f"JOIN{uuid.uuid4().hex[:6].upper()}",
+                join_code=_generate_join_code(),
             )
         )
     return class_id
@@ -314,7 +315,7 @@ def test_redeem_route_of_a_non_parent_invite_by_a_parent_is_403(
 def _seed_assistant_invite(sm: sessionmaker[Session], teacher_id: uuid.UUID) -> Invite:
     """Insert an assistant invite directly: nothing mints one until the team router lands."""
     invite = Invite(
-        code=f"ASST{uuid.uuid4().hex[:6].upper()}",
+        code=generate_invite_code(),
         role=InviteRole.assistant,
         created_by=teacher_id,
         team_teacher_id=teacher_id,

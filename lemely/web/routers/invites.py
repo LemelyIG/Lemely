@@ -41,6 +41,8 @@ from typing import TYPE_CHECKING, Annotated, Final, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from lemely.db.class_repo import _JOIN_CODE_ALPHABET, _JOIN_CODE_LENGTH
+from lemely.db.invite_codes import INVITE_CODE_ALPHABET, INVITE_CODE_LENGTH
 from lemely.db.invite_repo import (
     InviteAlreadyRedeemedError,
     InviteNotFoundError,
@@ -187,6 +189,25 @@ def _invite_to_dto(invite: Invite) -> InviteCodeDTO:
     )
 
 
+_CODE_ALPHABETS: Final = {
+    INVITE_CODE_LENGTH: frozenset(INVITE_CODE_ALPHABET),
+    _JOIN_CODE_LENGTH: frozenset(_JOIN_CODE_ALPHABET),
+}
+"""Every code family the preview accepts, by length: ``invites.code`` (student, teacher,
+parent and assistant invites, ``invite_codes.generate_invite_code``) and
+``classes.join_code`` (``class_repo._generate_join_code``)."""
+
+
+def is_wellformed_code(code: str) -> bool:
+    """Whether ``code`` could be a code this app ever minted (right length and alphabet).
+
+    A code that fails this cannot exist, so the preview answers 404 without spending any
+    limiter or touching the database: a mistyped or truncated code is not a guess.
+    """
+    alphabet = _CODE_ALPHABETS.get(len(code))
+    return alphabet is not None and alphabet.issuperset(code)
+
+
 def _rate_limited(retry_after: int) -> HTTPException:
     """The generic 429 every invite limiter answers with, ``Retry-After`` included."""
     return HTTPException(
@@ -217,16 +238,24 @@ def preview_invite(
     two budgets of *misses* only: per client IP and global. Both are checked before the
     lookup and spent only when the code is unknown (404), so a flood of valid previews
     can never lock real students out; only guessing spends them, and the per-IP one stops
-    a couple of addresses draining the global one. A class join code is unlimited-use
-    and the route is anonymous, so without this it is a free code-guessing oracle.
+    a couple of addresses draining the global one. A code an IP already resolved (kept
+    briefly, bounded) skips that IP's own miss refusal, never the global one. A code that
+    cannot be one this app minted (wrong length or alphabet) is a 404 before any limiter.
+    A class join code is unlimited-use and the route is anonymous, so without this it is a
+    free code-guessing oracle.
     """
+    if not is_wellformed_code(code):
+        # Same body as the service's unknown-code 404, and before any limiter.
+        raise HTTPException(status_code=404, detail=f"Unknown code: {code!r}")
     client_ip = _client_ip(request)
     if not limiters.per_client.allow(client_ip):
         raise _rate_limited(limiters.per_client.retry_after(client_ip))
-    for misses, key in (
-        (limiters.per_client_misses, client_ip),
-        (limiters.global_misses, INVITE_PREVIEW_GLOBAL_KEY),
-    ):
+    # A code this IP already resolved skips this IP's own miss refusal only.
+    known = limiters.resolved.knows(client_ip, code)
+    budgets = [(limiters.global_misses, INVITE_PREVIEW_GLOBAL_KEY)]
+    if not known:
+        budgets.insert(0, (limiters.per_client_misses, client_ip))
+    for misses, key in budgets:
         spent = misses.retry_after(key)
         if spent:
             raise _rate_limited(spent)
@@ -236,6 +265,7 @@ def preview_invite(
         limiters.per_client_misses.allow(client_ip)  # record the miss
         limiters.global_misses.allow(INVITE_PREVIEW_GLOBAL_KEY)
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    limiters.resolved.remember(client_ip, code)
     return InvitePreviewDTO(
         role=preview.role.value,
         schoolName=preview.school_name,
@@ -343,6 +373,7 @@ def redeem_invite(
 
 __all__ = [
     "PARENT_LIMIT_MESSAGE",
+    "is_wellformed_code",
     "parent_link_change_notices",
     "redeem_notices",
     "router",
