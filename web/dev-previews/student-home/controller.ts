@@ -10,7 +10,7 @@ const CONTROLS = {
   width: ["desktop", "mobile"],
   /* Phone frame (design A, shell below 721px): which platform's native chrome to draw, and
      whether the page is a tab root (large title) or a pushed detail page (compact bar + back). */
-  platform: ["ios", "android"],
+  platform: ["other", "ios", "android"],
   page: ["root", "detail"],
 } as const
 type ControlName = keyof typeof CONTROLS
@@ -20,6 +20,7 @@ function readParams(): Record<ControlName, string> {
   const pick = (name: ControlName) => {
     const v = q.get(name)
     const allowed = CONTROLS[name] as readonly string[]
+    if (name === "platform" && !v && q.get("width") === "mobile") return "ios"
     return v && allowed.includes(v) ? v : allowed[0]
   }
   return Object.fromEntries(
@@ -48,10 +49,12 @@ function apply(root: HTMLElement, variant: Variant, params: Record<ControlName, 
     theme: params.theme,
     motion: params.motion,
     width: params.width,
-    platform: params.platform,
     page: params.page,
     exams: facts.subjects.some((s) => s.nextExamOn !== null) ? "yes" : "no",
   })
+  /* `other` has no attribute: every phone-frame rule keys off [data-platform]'s presence. */
+  if (params.platform === "other") delete root.dataset.platform
+  else root.dataset.platform = params.platform
   root.dataset.garden = "1"
   root.dataset.gstate = GSTATE[params.state as StateId] ?? "none"
   document.querySelectorAll("[data-binny]").forEach((slot) => renderBinny(slot, mood))

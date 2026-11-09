@@ -149,7 +149,7 @@
   --pf-sheet-dur: 320ms;
   --pf-sheet-ease: cubic-bezier(0.32, 0.72, 0, 1); /* iOS sheet spring, critically damped */
   --pf-sheet-scale: 0.94;      /* the page behind, at the large detent */
-  --pf-glass-blur: 14px;       /* the landing page header's glass (brand.css .brand-header) */
+  --pf-glass-blur: var(--blur-nav, 10px); /* the app's one blur (index.css --blur-nav); the preview does not define it, so 10px */
   --pf-glass-mix: 86%;
   --pf-hairline: 0.5px;
   --pf-press-scale: 0.97;

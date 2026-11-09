@@ -544,8 +544,9 @@ resetShell()
    phone-sized (721px and up keeps design A), and reads the platform from data-platform.
    ====================================================================================== */
 const PHONE_MAX = 720
-const isPhone = () => root.clientWidth <= PHONE_MAX
 const platform = () => root.dataset.platform
+/* No data-platform means `other`: design A keeps its own phone frame and none of this runs. */
+const isPhone = () => Boolean(root.dataset.platform) && root.clientWidth <= PHONE_MAX
 const col = document.querySelector(".as-col")
 const largeTitle = document.querySelector("[data-a-lt]")
 const barTitle = document.querySelector("[data-a-title]")

@@ -407,6 +407,78 @@
   --breakpoint-tablet: 1180px;
 }
 
+/* ── Native frame tokens (docs/superpowers/plans/2026-11-08-native-mobile-frame.md, Task 0).
+   Values from the committed design A preview at 4447a571 (student-home/tokens.css --pf-*,
+   variant-a.css "Native phone frame"). Raw values for the native frame live here and nowhere else. */
+:root {
+  /* Header */
+  --native-large-title-size: 34px;          /* .as-lt: 800 34px/41px Bricolage (variant-a.css) */
+  --native-large-title-lh: 41px;
+  --native-large-title-pad: 2px 16px 8px;   /* .as-lt padding: 2px var(--space-4) var(--space-2) */
+  --native-inline-title-size: 17px;         /* .as-title: 600 17px/22px Schibsted */
+  --native-inline-title-lh: 22px;
+  --native-bar-h-ios: 44px;                 /* --pf-bar-h */
+  --native-bar-h-android: 64px;
+  --native-bar-pad-inline: 8px;             /* .as-bar padding-inline: var(--space-2) */
+  --native-title-inset-ios: 144px;          /* --pf-title-inset: centred title clears three 44px actions */
+  --native-title-inset-detail-ios: 124px;   /* --pf-title-inset-detail: clears the back chevron and label */
+  --native-iconbtn-ios: 44px;               /* --pf-iconbtn */
+  --native-iconbtn-android: 48px;
+  --native-bar-icon: 22px;                  /* .as-bar .as-ico */
+  /* Tab bar */
+  --native-tabbar-h-ios: 49px;              /* --pf-tab-h, plus the home indicator inset */
+  --native-tabbar-h-android: 80px;
+  --native-tab-label-ios: 10px;             /* --pf-tab-label */
+  --native-tab-label-android: 12px;
+  --native-tab-icon: 24px;                  /* --pf-tab-ico, both platforms */
+  --native-tab-pill-w: 64px;                /* --pf-pill-w/h: M3 active indicator */
+  --native-tab-pill-h: 32px;
+  --native-tab-press-opacity-ios: 0.55;     /* iOS tab items dim instead of drawing a layer */
+  /* Sheets */
+  --native-grabber-w-ios: 36px;             /* --pf-grab-w/h/gap */
+  --native-grabber-h-ios: 5px;
+  --native-grabber-gap-ios: 5px 6px;        /* above / below */
+  --native-grabber-w-android: 32px;
+  --native-grabber-h-android: 4px;
+  --native-grabber-gap-android: 22px 22px;  /* M3 drag handle centred in a 48dp touch area */
+  --native-sheet-medium: 50dvh;             /* --pf-sheet-medium, both platforms */
+  --native-sheet-large-ios: calc(100dvh - max(env(safe-area-inset-top), 20px) - 10px);
+  --native-sheet-large-android: calc(100dvh - max(env(safe-area-inset-top), 24px) - 24px);
+  --native-sheet-scale-back: 0.94;          /* --pf-sheet-scale, iOS only */
+  --native-sheet-backdrop: oklch(0.1 0.01 245); /* behind the scaled-back page, both themes */
+  --native-action-row-h: 56px;              /* brief §3.3 action sheet rows; no preview value */
+  --dur-sheet-ios: 320ms;                   /* --pf-sheet-dur */
+  --dur-sheet-android: 300ms;
+  --ease-ios-spring: cubic-bezier(0.32, 0.72, 0, 1);              /* --pf-sheet-ease (iOS) */
+  --ease-m3-emphasized-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1); /* --pf-sheet-ease (Android) */
+  --ease-m3-emphasized: cubic-bezier(0.2, 0, 0, 1);               /* ripple; Android push slides */
+  /* Grouped content */
+  --native-group-radius-ios: 12px;          /* --pf-group-radius (Android: 0) */
+  --native-group-inset-ios: 16px;           /* --pf-group-margin (Android: 0, full-bleed) */
+  --native-gutter-android: 14px;            /* the page gutter Android keeps (preview --as-gutter-sm = PortalShell max-shell-lg:px-3.5) */
+  --native-sep-inset-ios: 16px;             /* --pf-sep-inset (Android: no separators) */
+  --native-row-min-ios: 44px;               /* --pf-row-min */
+  --native-row-1-android: 56px;
+  --native-row-2-android: 72px;             /* brief §3.4 */
+  --native-row-3-android: 88px;             /* brief §3.4 */
+  /* Glass (iOS only). The blur is the app's one blur, var(--blur-nav); not repeated here. */
+  --native-glass-mix: 86%;                  /* --pf-glass-mix */
+  --native-glass-saturate: 1.6;             /* saturate(1.6) */
+  --native-hairline: 0.5px;                 /* --pf-hairline */
+  /* Press */
+  --native-press-dim: 8%;                   /* --pf-press-layer (iOS) */
+  --native-press-ink-light: oklch(0 0 0);   /* --pf-ink-dim: iOS dims toward black in light... */
+  --native-press-ink-dark: oklch(1 0 0);    /* ...and toward white in dark */
+  --native-press-scale: 0.97;               /* --pf-press-scale, buttons only */
+  --native-state-pressed: 10%;              /* --pf-press-layer (Android) */
+  --native-ripple-dur: 450ms;               /* --pf-ripple-dur, eased by --ease-m3-emphasized */
+  /* Gestures */
+  --native-parallax: 0.3;                   /* brief §3.6 */
+  --native-ptr-threshold: 64px;             /* --pf-ptr-threshold, both platforms */
+  --native-ptr-hold-ios: 56px;              /* --pf-ptr-hold: where the content rests while refreshing */
+  --native-ptr-hold-android: 64px;
+}
+
 
 /* The student Overview's subject ledger (P4.1). A named utility rather than an
    arbitrary `grid-cols-[...]` so the template is stated once and reviewable.
