@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -38,6 +38,8 @@ from lemely.db.models.team import (
     TeacherMemberKind,
     TeacherMemberStatus,
 )
+from lemely.db.models.usage import GrantKind, UsageEntry, UsageEntryKind, UsageGrantBalance
+from lemely.db.usage_ledger_repo import UsageLedger
 from lemely.runtime.config import DatabaseSettings
 
 if TYPE_CHECKING:
@@ -227,3 +229,60 @@ def add_assistant(
             )
         )
     return member_id
+
+
+def add_grant(
+    factory: sessionmaker[Session],
+    *,
+    owner_id: uuid.UUID,
+    kind: GrantKind,
+    units: int,
+    at: datetime,
+    teacher_member_id: uuid.UUID | None = None,
+) -> uuid.UUID:
+    """Issue a grant through Phase 01's ledger, usable from ``at - 60 days`` for a year."""
+    with factory.begin() as session:
+        grant = UsageLedger(session).issue_grant(
+            owner_user_id=owner_id,
+            kind=kind,
+            units=units,
+            idempotency_key=f"test:{uuid.uuid4()}",
+            expires_at=at + timedelta(days=365),
+            visible=kind in (GrantKind.credit_pack, GrantKind.auto_topup),
+            effective_at=at - timedelta(days=60),
+            teacher_member_id=teacher_member_id,
+        )
+        return grant.id
+
+
+def add_entry(
+    factory: sessionmaker[Session],
+    *,
+    grant_id: uuid.UUID,
+    member_id: uuid.UUID | None,
+    kind: UsageEntryKind,
+    units: int,
+    at: datetime,
+) -> None:
+    """Append one ledger line directly (settle lines are negative, hold lines positive)."""
+    with factory.begin() as session:
+        session.add(
+            UsageEntry(
+                grant_id=grant_id,
+                teacher_member_id=member_id,
+                kind=kind,
+                units=units,
+                event_at=at,
+                idempotency_key=f"test:{uuid.uuid4()}",
+            )
+        )
+
+
+def set_remaining(factory: sessionmaker[Session], grant_id: uuid.UUID, remaining: int) -> None:
+    """Set a grant's cached balance (what ``UsageLedger.meter_fraction`` reads)."""
+    with factory.begin() as session:
+        session.execute(
+            sa.update(UsageGrantBalance)
+            .where(UsageGrantBalance.grant_id == grant_id)
+            .values(remaining=remaining)
+        )

@@ -15,9 +15,11 @@ from lemely.db.teacher_team_repo import (
     AssistantInviteNotFound,
     AssistantInviteRedeemed,
     InvalidCap,
+    InvalidInviteExpiry,
     InvalidPermissions,
     InvalidScope,
     NoFreeSeat,
+    NotATeacher,
     TeamError,
     TeamMemberNotFound,
 )
@@ -36,14 +38,34 @@ def no_free_seat_error() -> HTTPException:
     return _error(409, "no_free_seat", NO_FREE_SEAT_MESSAGE)
 
 
+def lead_only_error() -> HTTPException:
+    """Return the 403 a team route gives a request that asks to act for another teacher.
+
+    Seats, caps, assistants and invites belong to the caller's own team, so an
+    ``X-Lemely-Acting-Teacher`` header naming anyone else is refused, never honoured.
+    The body is fixed copy and echoes nothing from the header.
+    """
+    return _error(
+        403,
+        "team_lead_only",
+        "Seats and assistants are managed by the lead teacher.",
+    )
+
+
 def team_error_to_http(exc: TeamError) -> HTTPException:
     """Map a :class:`TeamError` onto its HTTP status and fixed body.
 
-    An error with no dedicated entry (``TeamStateError`` and the base class) is a 409
+    :class:`NotATeacher` is checked before its parent :class:`TeamStateError`. An error
+    with no dedicated entry (``TeamStateError`` and the base class) is a 409
     ``conflict``: the request is well-formed but the team's current state refuses it.
     """
     if isinstance(exc, NoFreeSeat):
         return no_free_seat_error()
+    # Before the fallback below: NotATeacher subclasses TeamStateError, which is a 409.
+    if isinstance(exc, NotATeacher):
+        return _error(403, "not_a_teacher", "Only a teacher account can do this.")
+    if isinstance(exc, InvalidInviteExpiry):
+        return _error(422, "invalid_expiry", "Choose an expiry between 1 and 30 days.")
     if isinstance(exc, (TeamMemberNotFound, AssistantInviteNotFound)):
         return _error(404, "not_found", "Not found.")
     if isinstance(exc, InvalidScope):
@@ -59,4 +81,4 @@ def team_error_to_http(exc: TeamError) -> HTTPException:
     return _error(409, "conflict", "That change is not possible right now.")
 
 
-__all__ = ["NO_FREE_SEAT_MESSAGE", "no_free_seat_error", "team_error_to_http"]
+__all__ = ["NO_FREE_SEAT_MESSAGE", "lead_only_error", "no_free_seat_error", "team_error_to_http"]

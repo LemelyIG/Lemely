@@ -81,10 +81,28 @@ ALL_ROLES = frozenset(role.value for role in Role)
 
 # (method, path) → the guard that route must carry. Reviewed, not inferred.
 EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
-    # ── TEACHER (24) ────────────────────
+    # ── TEACHER (37) ────────────────────
     ("POST", "/api/classes"): TEACHER,
     ("DELETE", "/api/classes/{class_id}"): TEACHER,
     ("PATCH", "/api/classes/{class_id}"): TEACHER,
+    # Paymob billing Phase 03 (spec §2.2, §2.3, §7): the teacher-team router. Lead
+    # teacher only, acting on the caller's own team; an assistant never reaches
+    # another teacher's seats, caps or assistants through it (row-level proof:
+    # tests/test_web_teacher_team.py). Redeeming an assistant invite needs a
+    # teacher account, hence TEACHER on that route too.
+    ("GET", "/api/teacher/team/seats"): TEACHER,
+    ("GET", "/api/teacher/team/capacity"): TEACHER,
+    ("PUT", "/api/teacher/team/seats/{member_id}/scope"): TEACHER,
+    ("DELETE", "/api/teacher/team/seats/{member_id}"): TEACHER,
+    ("PUT", "/api/teacher/team/members/{member_id}/cap"): TEACHER,
+    ("GET", "/api/teacher/team/assistants"): TEACHER,
+    ("POST", "/api/teacher/team/assistants/invites"): TEACHER,
+    ("GET", "/api/teacher/team/invites"): TEACHER,
+    ("DELETE", "/api/teacher/team/invites/{invite_id}"): TEACHER,
+    ("POST", "/api/teacher/team/assistants/redeem"): TEACHER,
+    ("PATCH", "/api/teacher/team/assistants/{member_id}"): TEACHER,
+    ("DELETE", "/api/teacher/team/assistants/{member_id}"): TEACHER,
+    ("GET", "/api/teacher/team/memberships"): TEACHER,
     # Tutoring T1-T5 (SPEC §c.1). ADR-T01: role half only; "owns a tutor
     # profile" is object-level (tests/test_web_tutor.py,
     # tests/test_web_tutoring_authz_profiles.py), invisible to this sweep.

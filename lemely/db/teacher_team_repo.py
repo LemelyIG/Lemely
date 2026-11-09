@@ -73,6 +73,8 @@ from lemely.db.models.team import (
     TeacherMemberKind,
     TeacherMemberStatus,
 )
+from lemely.db.models.usage import UsageEntry, UsageEntryKind, UsageGrant
+from lemely.db.usage_ledger_repo import HELD_KINDS, UsageLedger
 
 if TYPE_CHECKING:
     import uuid
@@ -178,6 +180,17 @@ def month_end(now: datetime) -> datetime:
     if current.month == 12:
         return datetime(current.year + 1, 1, 1, tzinfo=UTC)
     return datetime(current.year, current.month + 1, 1, tzinfo=UTC)
+
+
+def month_start(now: datetime) -> datetime:
+    """Return the first instant of ``now``'s UTC month (a ``month`` cap's window start).
+
+    Raises:
+        ValueError: ``now`` is naive; a naive instant has no month in UTC.
+    """
+    _require_aware(now, "now")
+    current = now.astimezone(UTC)
+    return datetime(current.year, current.month, 1, tzinfo=UTC)
 
 
 class TeacherTeamService:
@@ -732,6 +745,47 @@ class TeacherTeamService:
         member.leaves_at = None
         self._session.flush()
 
+    # -- Usage reads (team screens) ------------------------------------------------------
+
+    def cap_used(self, member: TeacherMember, *, now: datetime) -> int:
+        """Units the member drew from the teacher's grants in its cap window, plus open holds.
+
+        The same sum as Phase 01's ``UsageLedger._cap_used`` for the payer the chain
+        builds from this row (owner = the teacher, ``teacher_member_id`` = this row,
+        window = this UTC month for ``month``, none for ``total``): settled draws in the
+        window, negated, plus the hold and release lines still netting to an open hold.
+        A seat's own ``seat_allowance`` grants are owned by the student, so they never
+        count against the cap.
+
+        Raises:
+            ValueError: ``now`` is naive.
+        """
+        _require_aware(now, "now")
+        base = (
+            select(func.coalesce(func.sum(UsageEntry.units), 0))
+            .join(UsageGrant, UsageGrant.id == UsageEntry.grant_id)
+            .where(
+                UsageGrant.owner_user_id == member.teacher_user_id,
+                UsageEntry.teacher_member_id == member.id,
+            )
+        )
+        settled = base.where(UsageEntry.kind == UsageEntryKind.settle)
+        if member.cap_period is CapPeriod.month:
+            settled = settled.where(UsageEntry.event_at >= month_start(now))
+        held = base.where(UsageEntry.kind.in_(HELD_KINDS))
+        return -int(self._session.scalar(settled) or 0) + int(self._session.scalar(held) or 0)
+
+    def seat_meter_fraction(self, member: TeacherMember, *, now: datetime) -> float | None:
+        """Share of the seat's current allowance used (``UsageLedger.meter_fraction``).
+
+        ``None`` for an assistant, and for a seat with no current ``seat_allowance`` grant.
+        """
+        if member.kind is not TeacherMemberKind.student_seat:
+            return None
+        return UsageLedger(self._session).meter_fraction(
+            member.member_user_id, teacher_member_id=member.id, now=now
+        )
+
     # -- Internals ---------------------------------------------------------------
 
     def _capacity(self, teacher_user_id: uuid.UUID, *, lock: bool) -> int:
@@ -874,4 +928,5 @@ __all__ = [
     "assistant_has_permission",
     "default_seat_actions",
     "month_end",
+    "month_start",
 ]
