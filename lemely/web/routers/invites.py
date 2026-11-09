@@ -63,7 +63,9 @@ from lemely.web.deps import (
 from lemely.web.deps_invites import (
     INVITE_PREVIEW_GLOBAL_KEY,
     InvitePreviewLimiters,
+    InviteRedeemLimiters,
     get_invite_preview_limiters,
+    get_invite_redeem_limiters,
 )
 from lemely.web.push import NotificationTransport
 from lemely.web.routers.client_errors import _client_ip
@@ -185,8 +187,8 @@ def _invite_to_dto(invite: Invite) -> InviteCodeDTO:
     )
 
 
-def _preview_rate_limited(retry_after: int) -> HTTPException:
-    """The generic 429 both preview limiters answer with, ``Retry-After`` included."""
+def _rate_limited(retry_after: int) -> HTTPException:
+    """The generic 429 every invite limiter answers with, ``Retry-After`` included."""
     return HTTPException(
         status.HTTP_429_TOO_MANY_REQUESTS,
         f"Too many requests; retry in {retry_after}s.",
@@ -210,20 +212,23 @@ def preview_invite(
     whoever handed them the code; there is no id, no roster, no count, and the
     teacher is named by display name only, never by email.
 
-    Rate-limited per client IP and across every caller (**429** with
-    ``Retry-After``, a generic body): a class join code is unlimited-use and the
-    route is anonymous, so it is otherwise a free code-guessing oracle. The per-IP
-    limiter is consulted first so one address cannot burn the shared budget.
-    ``POST .../redeem`` is not limited here.
+    Rate-limited, **429** with ``Retry-After`` and a generic body: per client IP on
+    every call (consulted first, so one address cannot spend the shared budget), and a
+    global budget of *misses* only. The global budget is checked before the lookup and
+    spent only when the code is unknown (404), so a flood of valid previews can never
+    lock real students out; only guessing spends it. A class join code is unlimited-use
+    and the route is anonymous, so without this it is a free code-guessing oracle.
     """
     client_ip = _client_ip(request)
     if not limiters.per_client.allow(client_ip):
-        raise _preview_rate_limited(limiters.per_client.retry_after(client_ip))
-    if not limiters.global_.allow(INVITE_PREVIEW_GLOBAL_KEY):
-        raise _preview_rate_limited(limiters.global_.retry_after(INVITE_PREVIEW_GLOBAL_KEY))
+        raise _rate_limited(limiters.per_client.retry_after(client_ip))
+    spent = limiters.global_misses.retry_after(INVITE_PREVIEW_GLOBAL_KEY)
+    if spent:
+        raise _rate_limited(spent)
     try:
         preview = service.preview(code)
     except InviteNotFoundError as exc:
+        limiters.global_misses.allow(INVITE_PREVIEW_GLOBAL_KEY)  # record the miss
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return InvitePreviewDTO(
         role=preview.role.value,
@@ -241,6 +246,7 @@ def redeem_invite(
     service: Annotated[InviteService, Depends(get_invite_service)],
     notifications: Annotated[NotificationService, Depends(get_notification_service)],
     transport: Annotated[NotificationTransport, Depends(get_push_transport)],
+    limiters: Annotated[InviteRedeemLimiters, Depends(get_invite_redeem_limiters)],
 ) -> RedeemInviteResponseDTO:
     """Redeem a code for the authenticated caller. Idempotent.
 
@@ -291,13 +297,24 @@ def redeem_invite(
     get their inbox notices; the change has committed by then, and a failed
     notice never fails the redemption.
 
+    **429** (``Retry-After``, generic body): per user on every attempt, and a per-user
+    budget of unknown codes (404s only), checked before the lookup. The 404 / 403 / 409
+    split above tells an account which codes exist, so guessing is what the miss budget
+    stops; a real user mistypes a code a few times at most.
+
     **409 ``no_free_seat``** (paymob billing Phase 03): a class code whose teacher has
     no free seat; the invite stays unredeemed. A 409 ``conflict`` means the caller's
     account can't hold a seat with this teacher (``team_error_to_http``).
     """
+    if not limiters.per_user.allow(auth.user_id):
+        raise _rate_limited(limiters.per_user.retry_after(auth.user_id))
+    spent = limiters.misses.retry_after(auth.user_id)
+    if spent:
+        raise _rate_limited(spent)
     try:
         result = service.redeem(auth.user_id, code, caller_role=Role(auth.role))
     except InviteNotFoundError as exc:
+        limiters.misses.allow(auth.user_id)  # record the miss
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except InviteParentLimitError as exc:
         raise tutoring_error(409, "parent_limit", PARENT_LIMIT_MESSAGE) from exc

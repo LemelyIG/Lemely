@@ -295,6 +295,8 @@ export function useInvitePreview(code: string): UseQueryResult<InvitePreview, Er
     queryKey: ["invites", "preview", trimmed],
     queryFn: () => request<InvitePreview>(`/invites/${encodeURIComponent(trimmed)}`),
     enabled: trimmed.length > 0,
+    // A 404 or 429 will not change on a retry (and a retry spends the route's rate limit).
+    retry: (count, err) => count < 1 && !(err instanceof ApiError && err.status >= 400 && err.status < 500),
   })
 }
 

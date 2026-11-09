@@ -1,9 +1,11 @@
-"""The public invite preview never exposes a teacher email and is rate-limited.
+"""The invite routes never expose a teacher email, and are rate-limited.
 
 ``GET /api/invites/{code}`` is unauthenticated and a class join code is unlimited-use
 and widely shared, so (a) a blank teacher display name must read as ``null``, never fall
-back to the teacher's email, and (b) the route is throttled per client IP and across
-every caller. Gemini is never involved; Postgres is a throwaway database per test.
+back to the teacher's email, and (b) the route is throttled per client IP plus a global
+budget that only unknown codes (misses) spend. ``POST .../redeem`` is throttled per user,
+with a per-user budget of unknown codes. Gemini is never involved; Postgres is a
+throwaway database per test.
 """
 
 from __future__ import annotations
@@ -30,11 +32,13 @@ from lemely.db.parent_repo import ParentLinkService
 from lemely.runtime.config import DatabaseSettings
 from lemely.web import deps_invites
 from lemely.web.app import create_app
-from lemely.web.deps import get_invite_service
+from lemely.web.deps import AuthContext, get_auth_context, get_invite_service
 from lemely.web.deps_invites import (
     INVITE_PREVIEW_GLOBAL_KEY,
     InvitePreviewLimiters,
+    InviteRedeemLimiters,
     get_invite_preview_limiters,
+    get_invite_redeem_limiters,
     reset_invite_singletons,
 )
 from lemely.web.ratelimit import SlidingWindowLimiter
@@ -46,7 +50,9 @@ if TYPE_CHECKING:
 
 _BLANK_NAMES = [None, "", "   "]
 _PER_CLIENT_LIMIT = 3
-_GLOBAL_LIMIT = 5
+_GLOBAL_MISS_LIMIT = 5
+_REDEEM_PER_USER_LIMIT = 5
+_REDEEM_MISS_LIMIT = 3
 
 
 class FakeClock:
@@ -106,7 +112,18 @@ def clock() -> FakeClock:
 def _limiters(clock: FakeClock) -> InvitePreviewLimiters:
     return InvitePreviewLimiters(
         per_client=SlidingWindowLimiter(limit=_PER_CLIENT_LIMIT, window_seconds=60.0, clock=clock),
-        global_=SlidingWindowLimiter(limit=_GLOBAL_LIMIT, window_seconds=60.0, clock=clock),
+        global_misses=SlidingWindowLimiter(
+            limit=_GLOBAL_MISS_LIMIT, window_seconds=60.0, clock=clock
+        ),
+    )
+
+
+def _redeem_limiters(
+    clock: FakeClock, *, per_user: int = _REDEEM_PER_USER_LIMIT
+) -> InviteRedeemLimiters:
+    return InviteRedeemLimiters(
+        per_user=SlidingWindowLimiter(limit=per_user, window_seconds=600.0, clock=clock),
+        misses=SlidingWindowLimiter(limit=_REDEEM_MISS_LIMIT, window_seconds=3600.0, clock=clock),
     )
 
 
@@ -140,7 +157,7 @@ def open_client(pg_sessionmaker: sessionmaker[Session]) -> Iterator[TestClient]:
         pg_sessionmaker,
         InvitePreviewLimiters(
             per_client=SlidingWindowLimiter(limit=1000, window_seconds=60.0, clock=FakeClock()),
-            global_=SlidingWindowLimiter(limit=1000, window_seconds=60.0, clock=FakeClock()),
+            global_misses=SlidingWindowLimiter(limit=1000, window_seconds=60.0, clock=FakeClock()),
         ),
     )
     try:
@@ -270,7 +287,41 @@ def test_previews_name_the_teacher_by_stripped_display_name(
         _assert_no_email(res.text, email)
 
 
-# -- Rate limiting -------------------------------------------------------------------
+# -- A parent invite names the child, stripped, never the email ----------------------
+
+
+def _seed_student(sm: sessionmaker[Session], display_name: str | None) -> tuple[uuid.UUID, str]:
+    uid = uuid.uuid4()
+    email = f"private.student.{uid.hex[:8]}@leaky-school.example"
+    with sm.begin() as session:
+        session.add(User(id=uid, email=email, role=Role.student, display_name=display_name))
+    return uid, email
+
+
+@pytest.mark.parametrize(
+    ("display_name", "expected"),
+    [("  Amira  ", "Amira"), ("   ", "your child"), ("", "your child"), (None, "your child")],
+)
+def test_parent_invite_preview_names_the_child_stripped(
+    pg_sessionmaker: sessionmaker[Session],
+    open_client: TestClient,
+    display_name: str | None,
+    expected: str,
+) -> None:
+    student, email = _seed_student(pg_sessionmaker, display_name)
+    service = InviteService(
+        pg_sessionmaker, ClassService(pg_sessionmaker), ParentLinkService(pg_sessionmaker)
+    )
+    code = service.mint_parent_invite(student, reusable=False).code
+
+    res = open_client.get(f"/api/invites/{code}")
+
+    assert res.status_code == 200
+    assert res.json()["childName"] == expected
+    _assert_no_email(res.text, email)
+
+
+# -- Preview rate limiting -----------------------------------------------------------
 
 
 def _seed_join_code(sm: sessionmaker[Session]) -> str:
@@ -322,22 +373,7 @@ def test_per_client_window_expires(
     assert _get(limited_client, code, "203.0.113.7") == 200
 
 
-def test_global_cap_returns_429_even_for_a_fresh_ip(
-    pg_sessionmaker: sessionmaker[Session], limited_client: TestClient
-) -> None:
-    code = _seed_join_code(pg_sessionmaker)
-    # A caller rotating X-Forwarded-For gets a fresh per-client bucket every time, so
-    # only the global cap binds it.
-    for i in range(_GLOBAL_LIMIT):
-        assert _get(limited_client, code, f"192.0.2.{i}") == 200
-
-    res = limited_client.get(f"/api/invites/{code}", headers={"X-Forwarded-For": "192.0.2.200"})
-
-    assert res.status_code == 429
-    assert int(res.headers["Retry-After"]) >= 1
-
-
-def test_unknown_codes_count_toward_the_limit(
+def test_unknown_codes_count_toward_the_per_client_limit(
     pg_sessionmaker: sessionmaker[Session], limited_client: TestClient
 ) -> None:
     for _ in range(_PER_CLIENT_LIMIT):
@@ -346,23 +382,199 @@ def test_unknown_codes_count_toward_the_limit(
     assert _get(limited_client, "NOSUCHCODE", "203.0.113.7") == 429
 
 
-def test_default_limiters_enforce_the_named_constants() -> None:
+def test_a_flood_of_unknown_codes_exhausts_the_miss_budget_until_the_window_passes(
+    pg_sessionmaker: sessionmaker[Session], limited_client: TestClient, clock: FakeClock
+) -> None:
+    code = _seed_join_code(pg_sessionmaker)
+    # Rotating X-Forwarded-For gets a fresh per-client bucket every time, so only the
+    # global miss budget binds the guesser.
+    for i in range(_GLOBAL_MISS_LIMIT):
+        assert _get(limited_client, "NOSUCHCODE", f"192.0.2.{i}") == 404
+
+    refused = limited_client.get(
+        "/api/invites/NOSUCHCODE", headers={"X-Forwarded-For": "192.0.2.99"}
+    )
+    assert refused.status_code == 429
+    assert int(refused.headers["Retry-After"]) >= 1
+    # The route refuses new requests outright, a real code included, until the window rolls.
+    assert _get(limited_client, code, "192.0.2.100") == 429
+
+    clock.advance(61.0)
+
+    assert _get(limited_client, code, "192.0.2.100") == 200
+
+
+def test_real_hits_do_not_consume_the_miss_budget(
+    pg_sessionmaker: sessionmaker[Session], limited_client: TestClient
+) -> None:
+    code = _seed_join_code(pg_sessionmaker)
+    # Far more valid previews, from distinct IPs, than the miss budget allows.
+    for i in range(_GLOBAL_MISS_LIMIT * 4):
+        assert _get(limited_client, code, f"192.0.2.{i}") == 200
+
+    # The whole miss budget is still there.
+    for i in range(_GLOBAL_MISS_LIMIT):
+        assert _get(limited_client, "NOSUCHCODE", f"198.51.100.{i}") == 404
+    assert _get(limited_client, "NOSUCHCODE", "198.51.100.99") == 429
+
+
+def test_one_ip_past_its_limit_does_not_spend_the_shared_miss_budget(
+    pg_sessionmaker: sessionmaker[Session], limited_client: TestClient
+) -> None:
+    """The per-IP limiter runs before the lookup, so an address's refused requests never
+    record a miss and a fresh IP is still served. If the order is swapped, IP A's
+    refused guesses spend the shared budget and IP B is locked out too."""
+    code = _seed_join_code(pg_sessionmaker)
+    statuses = [
+        _get(limited_client, "NOSUCHCODE", "203.0.113.7") for _ in range(_GLOBAL_MISS_LIMIT * 2)
+    ]
+    assert statuses == [404] * _PER_CLIENT_LIMIT + [429] * (
+        _GLOBAL_MISS_LIMIT * 2 - _PER_CLIENT_LIMIT
+    )
+
+    assert _get(limited_client, code, "198.51.100.9") == 200
+
+
+def test_default_preview_limiters_enforce_the_named_constants() -> None:
     reset_invite_singletons()
     try:
         limiters = get_invite_preview_limiters()
         assert get_invite_preview_limiters() is limiters
         per_client = sum(limiters.per_client.allow("203.0.113.7") for _ in range(10_000))
-        global_ = sum(limiters.global_.allow(INVITE_PREVIEW_GLOBAL_KEY) for _ in range(10_000))
-        assert per_client == deps_invites._INVITE_PREVIEW_PER_CLIENT_LIMIT
-        assert global_ == deps_invites._INVITE_PREVIEW_GLOBAL_LIMIT
+        misses = sum(limiters.global_misses.allow(INVITE_PREVIEW_GLOBAL_KEY) for _ in range(10_000))
+        assert per_client == deps_invites._INVITE_PREVIEW_PER_CLIENT_LIMIT == 240
+        assert misses == deps_invites._INVITE_PREVIEW_GLOBAL_MISS_LIMIT
+    finally:
+        reset_invite_singletons()
+
+
+# -- Redeem rate limiting ------------------------------------------------------------
+
+
+def _redeem_client(
+    sm: sessionmaker[Session], limiters: InviteRedeemLimiters, user_id: uuid.UUID
+) -> TestClient:
+    app = _app(sm)
+    app.dependency_overrides[get_invite_redeem_limiters] = lambda: limiters
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(user_id), role=Role.student.value
+    )
+    return TestClient(app)
+
+
+def _seed_class_invite(sm: sessionmaker[Session]) -> str:
+    teacher, _ = _seed_teacher(sm, "Mr Redeem")
+    class_id, _ = _seed_class(sm, teacher)
+    return _mint_class_invite_code(sm, teacher, class_id)
+
+
+def test_redeem_unknown_code_misses_trip_a_429_with_retry_after(
+    pg_sessionmaker: sessionmaker[Session], clock: FakeClock
+) -> None:
+    student, _ = _seed_student(pg_sessionmaker, "Probe")
+    client = _redeem_client(pg_sessionmaker, _redeem_limiters(clock), student)
+    for i in range(_REDEEM_MISS_LIMIT):
+        assert client.post(f"/api/invites/NOSUCH{i}/redeem").status_code == 404
+
+    res = client.post("/api/invites/NOSUCHMORE/redeem")
+
+    assert res.status_code == 429
+    assert int(res.headers["Retry-After"]) >= 1
+    assert res.json() == {"detail": f"Too many requests; retry in {res.headers['Retry-After']}s."}
+    # Spent budget refuses before any lookup, a valid code included.
+    assert (
+        client.post(f"/api/invites/{_seed_class_invite(pg_sessionmaker)}/redeem").status_code == 429
+    )
+
+    clock.advance(3601.0)
+
+    assert client.post("/api/invites/NOSUCHAGAIN/redeem").status_code == 404
+
+
+def test_redeem_miss_budget_is_per_user(
+    pg_sessionmaker: sessionmaker[Session], clock: FakeClock
+) -> None:
+    prober, _ = _seed_student(pg_sessionmaker, "Probe")
+    other, _ = _seed_student(pg_sessionmaker, "Other")
+    limiters = _redeem_limiters(clock)
+    probing = _redeem_client(pg_sessionmaker, limiters, prober)
+    for i in range(_REDEEM_MISS_LIMIT):
+        assert probing.post(f"/api/invites/NOSUCH{i}/redeem").status_code == 404
+    assert probing.post("/api/invites/NOSUCHMORE/redeem").status_code == 429
+
+    code = _seed_class_invite(pg_sessionmaker)
+    assert (
+        _redeem_client(pg_sessionmaker, limiters, other)
+        .post(f"/api/invites/{code}/redeem")
+        .status_code
+        == 200
+    )
+
+
+def test_valid_redeem_still_works_under_the_limit(
+    pg_sessionmaker: sessionmaker[Session], clock: FakeClock
+) -> None:
+    student, _ = _seed_student(pg_sessionmaker, "Real Student")
+    client = _redeem_client(pg_sessionmaker, _redeem_limiters(clock), student)
+    # A couple of typos spend part of the miss budget but never block a real code.
+    for i in range(_REDEEM_MISS_LIMIT - 1):
+        assert client.post(f"/api/invites/TYPO{i}/redeem").status_code == 404
+
+    res = client.post(f"/api/invites/{_seed_class_invite(pg_sessionmaker)}/redeem")
+
+    assert res.status_code == 200
+    assert res.json()["role"] == "student"
+
+
+def test_valid_redeems_do_not_consume_the_miss_budget(
+    pg_sessionmaker: sessionmaker[Session], clock: FakeClock
+) -> None:
+    student, _ = _seed_student(pg_sessionmaker, "Repeat")
+    client = _redeem_client(pg_sessionmaker, _redeem_limiters(clock, per_user=100), student)
+    code = _seed_class_invite(pg_sessionmaker)
+    for _ in range(_REDEEM_MISS_LIMIT * 3):
+        assert client.post(f"/api/invites/{code}/redeem").status_code == 200
+
+    for i in range(_REDEEM_MISS_LIMIT):
+        assert client.post(f"/api/invites/NOSUCH{i}/redeem").status_code == 404
+    assert client.post("/api/invites/NOSUCHMORE/redeem").status_code == 429
+
+
+def test_redeem_per_user_attempt_limit_returns_429(
+    pg_sessionmaker: sessionmaker[Session], clock: FakeClock
+) -> None:
+    student, _ = _seed_student(pg_sessionmaker, "Hammer")
+    client = _redeem_client(pg_sessionmaker, _redeem_limiters(clock), student)
+    code = _seed_class_invite(pg_sessionmaker)
+    for _ in range(_REDEEM_PER_USER_LIMIT):
+        assert client.post(f"/api/invites/{code}/redeem").status_code == 200
+
+    res = client.post(f"/api/invites/{code}/redeem")
+
+    assert res.status_code == 429
+    assert int(res.headers["Retry-After"]) >= 1
+
+
+def test_default_redeem_limiters_enforce_the_named_constants() -> None:
+    reset_invite_singletons()
+    try:
+        limiters = get_invite_redeem_limiters()
+        assert get_invite_redeem_limiters() is limiters
+        per_user = sum(limiters.per_user.allow("user") for _ in range(10_000))
+        misses = sum(limiters.misses.allow("user") for _ in range(10_000))
+        assert per_user == deps_invites._INVITE_REDEEM_PER_USER_LIMIT
+        assert misses == deps_invites._INVITE_REDEEM_MISS_LIMIT == 10
     finally:
         reset_invite_singletons()
 
 
 def test_reset_invite_singletons_evicts_a_populated_cache() -> None:
     get_invite_preview_limiters()
+    get_invite_redeem_limiters()
     assert get_invite_preview_limiters.cache_info().currsize == 1
+    assert get_invite_redeem_limiters.cache_info().currsize == 1
 
     reset_invite_singletons()
 
     assert get_invite_preview_limiters.cache_info().currsize == 0
+    assert get_invite_redeem_limiters.cache_info().currsize == 0

@@ -966,7 +966,7 @@ class InviteService:
         if invite.child_id is not None:
             child = session.get(User, invite.child_id)
             if child is not None:  # pragma: no cover - child_id is FK-guaranteed to resolve
-                child_name = child.display_name or "your child"
+                child_name = (child.display_name or "").strip() or "your child"
             linked = self._parent_link_service.linked_parent_ids_in_session(
                 session, invite.child_id
             )
