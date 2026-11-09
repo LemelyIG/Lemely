@@ -8,6 +8,16 @@
 
 **Tech Stack:** FastAPI + Pydantic (`ApiModel`), SQLAlchemy 2, Alembic, pytest; React 19, TanStack Query, react-router, Tailwind v4 (`@theme` tokens in `web/src/index.css`), Vitest (node env, `renderToStaticMarkup`), Playwright (route mocks, axe, pixelmatch).
 
+## Adjusted 2026-11-08 for the native mobile frame
+
+`docs/superpowers/plans/2026-11-08-native-mobile-frame.md` lands first. Adjust these tasks when you run them (task text is not rewritten):
+- **Task 9 (drift scenes):** add native scenes for the home (`platform: "ios"|"android"`, 390x844, preview `?platform=…&page=root`) next to the existing `other` scenes, using `NATIVE_PREVIEW`/`previewNativeQuery` (`web/scripts/drift/native-preview.mjs`). The existing 390 scenes keep running without a UA (design A).
+- **Task 10 (home primitives):** home sections on the native frame use `ListGroup`/`ListRow` (`web/src/components/ui/list-group.tsx`) and the `native:` card rules; do not add a second card look.
+- **Task 14 (Your grades):** the "one card per subject at 560px and narrower" rule is design A (`other`). On the native frame the list is one `ListGroup` (iOS inset-grouped, Android full-width), per the preview's native page.
+- **Task 18 (StudentHome):** drop its own `usePullToRefresh` and `PullIndicator`; the shell's `ShellPullToRefresh` already covers root pages (native frame D6). On phones the page title is the shell's large title ("Overview"). The home's top heading must be a `PageHeading` (`web/src/components/ui/page-heading.tsx`, native frame D11): `repeatsTitle` when it names the page (visually hidden on phones), `repeatsTitle={false}` for a greeting such as "Hi, Mariam" (stays visible). A raw `<h1>` fails `pageHeading.test.ts`, and the native frame's `native-*-one-heading-/student` checks fail on a visible duplicate or on anything but one `h1`. The hero height is unchanged by the native frame.
+- **Task 19:** the old `Overview.tsx` no longer has a pull-to-refresh to remove (native frame Task 13 did it).
+- **Task 20 (sweep):** include `--scene native-`, the behaviour runner's `native-` checks, and `tests/unit/pageHeading.test.ts`.
+
 ## Revised 2026-11-06 for design `c880a54c`
 
 The plan was written against the preview at `0ee846da` and no task had run. The design then changed in live sessions (commit `c880a54c`). What changed here:
