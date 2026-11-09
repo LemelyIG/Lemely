@@ -46,6 +46,63 @@ describe("the adopted-route allow-list", () => {
     }
   })
 
+  // An exact snapshot. The list decides which requests carry the acting header, so changing it
+  // should be a deliberate edit to this test as well, in the same diff a reviewer reads. The
+  // pytest `tests/test_acting_routes_parity.py` checks the same list against the backend's adopted
+  // routes, so a backend adoption that is not mirrored here fails there.
+  it("is exactly this list", () => {
+    expect([...ADOPTED_ROUTES]).toEqual([
+    // teacher.py
+    "/papers/upload",
+    "/papers",
+    "/papers/:id/regrade",
+    "/papers/deleted",
+    "/papers/:id",
+    "/papers/:id/restore",
+    "/papers/:id/preview",
+    "/grading/queue",
+    "/quizzes/pools",
+    "/quizzes/preview",
+    "/quizzes/generate",
+    "/teacher/overview",
+    "/teacher/students/:id",
+    "/teacher/at-risk",
+    "/teacher/at-risk/:id/acknowledge",
+    "/teacher/at-risk/:id/acknowledge/:reason",
+    // classes.py
+    "/teacher/classes",
+    "/classes",
+    "/classes/:id",
+    "/classes/:id/analytics",
+    "/classes/:id/roster",
+    "/classes/:id/enroll",
+    "/classes/:id/students/:id",
+    "/classes/:id/papers",
+    "/classes/:id/papers/:id/unshare",
+    "/school/classes/:id/invite-code",
+    // quiz.py
+    "/teacher/quizzes",
+    "/teacher/quizzes/pool-count",
+    "/teacher/quizzes/:id",
+    "/teacher/quizzes/:id/status",
+    "/teacher/quizzes/:id/questions/generate",
+    "/teacher/quizzes/:id/questions/:ref",
+    "/teacher/quizzes/:id/assignments",
+    "/teacher/quizzes/:id/assignments/:id",
+    "/teacher/quizzes/:id/assignments/:id/results",
+    // review.py
+    "/teacher/review",
+    "/teacher/review/bulk-approve",
+    "/teacher/review/:id",
+    "/teacher/review/:id/crop",
+    "/teacher/review/:id/resolve",
+    "/teacher/review/:id/dismiss",
+    // announcements.py
+    "/teacher/announcements",
+    "/teacher/announcements/:id",
+    ])
+  })
+
   it("has no duplicate or malformed entry", () => {
     expect(new Set(ADOPTED_ROUTES).size).toBe(ADOPTED_ROUTES.length)
     for (const template of ADOPTED_ROUTES) {
