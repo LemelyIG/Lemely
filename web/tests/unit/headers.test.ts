@@ -79,8 +79,12 @@ describe("public/_headers", () => {
      * asserted above and again here, because a host allowlist and an inline
      * escape hatch are not the same concession.
      */
-    it("allows only the Cloudflare beacon host in script-src, never an inline escape hatch", () => {
-      expect(cspLine).toContain("script-src 'self' https://static.cloudflareinsights.com;")
+    it("allows only the Cloudflare beacon and Turnstile hosts in script-src, never an inline escape hatch", () => {
+      expect(cspLine).toContain(
+        "script-src 'self' https://static.cloudflareinsights.com https://challenges.cloudflare.com;",
+      )
+      // Turnstile (the waitlist's bot check) renders in an iframe from the same host.
+      expect(cspLine).toContain("frame-src https://challenges.cloudflare.com;")
       expect(cspLine).not.toMatch(/script-src[^;]*nonce-/)
       expect(cspLine).not.toMatch(/script-src[^;]*sha(256|384|512)-/)
       expect(cspLine).not.toMatch(/script-src[^;]*\*/)
