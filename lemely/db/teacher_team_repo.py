@@ -45,7 +45,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Final
 
-from sqlalchemy import and_, case, func, or_, select, true, update
+from sqlalchemy import and_, case, exists, func, or_, select, true, update
 from sqlalchemy.exc import IntegrityError
 
 from lemely.core.metered_actions import SEAT_ACTIONS, MeteredAction
@@ -61,6 +61,7 @@ from lemely.db.models import (
     Invite,
     PlanTier,
     SchoolClass,
+    SchoolMembership,
     Subject,
     Subscription,
     User,
@@ -700,11 +701,23 @@ class TeacherTeamService:
         is no longer a teacher, a missing permission, an unreadable row (toggles that
         are not a JSON object of bools, or an unknown preset) and the lead themselves
         are all ``None``: the check fails closed and never raises.
+
+        School data is never reachable through an assistant (Phase 03 follow-up). A lead
+        who holds any ``school_memberships`` row, or owns any class with a non-null
+        ``school_id``, confers nothing: the school's shared question-bank tier, its
+        rosters, analytics and invite codes are school-scoped data that team permissions
+        were never meant to cover, and school billing is out of the team spec's scope.
+        The rule lives here, not in the router guard, so every caller of this method
+        (including Phase 04's estimate route) inherits it, and it is evaluated in the
+        same statement as the permission lookup, live on every call: a lead who joins a
+        school (or has a school class created for them) loses the assistant path on the
+        very next request. The lead acting for themselves never reaches this method.
         """
         if assistant_user_id == lead_teacher_user_id:
             return None
-        # One indexed query: the lead's current role rides along as a join, so a lead
-        # who was demoted or re-roled after the row was written confers nothing.
+        # One query, one round trip: the lead's current role and the school-data refusal
+        # ride along as a join and two NOT EXISTS predicates, so a lead who was demoted,
+        # re-roled or moved into a school after the row was written confers nothing.
         member = self._session.scalars(
             select(TeacherMember)
             .join(User, User.id == TeacherMember.teacher_user_id)
@@ -714,6 +727,11 @@ class TeacherTeamService:
                 TeacherMember.kind == TeacherMemberKind.assistant,
                 TeacherMember.status == TeacherMemberStatus.active,
                 User.role == Role.teacher,
+                ~exists().where(SchoolMembership.user_id == lead_teacher_user_id),
+                ~exists().where(
+                    SchoolClass.teacher_id == lead_teacher_user_id,
+                    SchoolClass.school_id.is_not(None),
+                ),
             )
         ).first()
         if member is None or member.role_preset is None:

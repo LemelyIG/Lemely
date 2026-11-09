@@ -1572,11 +1572,9 @@ def quiz_pools(
     too: ``POST /quizzes/generate`` (below) is the only path that ever fills
     it (D3.7's "the bank ships empty" consequence).
     """
-    auth = actor.auth
-    try:
-        caller_uuid = uuid.UUID(auth.user_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    # The guard has already parsed the token subject (401 otherwise), so this is the
+    # acting teacher's id as a UUID: the caller's own, or the lead's for an assistant.
+    caller_uuid = actor.lead_teacher_user_id
     resolved_subject = subject_code or _infer_subject_code(history_store) or "0000"
     school_ids = class_service.member_school_ids(caller_uuid)
 
@@ -1768,11 +1766,9 @@ def quiz_preview(
     the reuse pool can be scoped to this caller rather than read from a
     process-global pool — see :func:`_existing_questions`.
     """
-    auth = actor.auth
-    try:
-        caller_uuid = uuid.UUID(auth.user_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    # The guard has already parsed the token subject (401 otherwise), so this is the
+    # acting teacher's id as a UUID: the caller's own, or the lead's for an assistant.
+    caller_uuid = actor.lead_teacher_user_id
     quiz, _reused = _build_quiz(
         settings,
         history_store,
@@ -1810,11 +1806,9 @@ def quiz_generate(
     fills the bank's generated pool (D3.7 consequence): the bank ships
     empty, and stays empty for a subject until a teacher generates here.
     """
-    auth = actor.auth
-    try:
-        caller_uuid = uuid.UUID(auth.user_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    # The guard has already parsed the token subject (401 otherwise), so this is the
+    # acting teacher's id as a UUID: the caller's own, or the lead's for an assistant.
+    caller_uuid = actor.lead_teacher_user_id
     quiz, reused_prompts = _build_quiz(
         settings,
         history_store,

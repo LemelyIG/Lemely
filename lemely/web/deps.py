@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated, Final
 
+import structlog
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -91,6 +92,8 @@ if TYPE_CHECKING:
     from lemely.core.self_review import EvidenceJudge
     from lemely.core.team_permissions import TeamPermission
     from lemely.io.storage import StorageBackend
+
+log = structlog.get_logger(__name__)
 
 
 @lru_cache(maxsize=1)
@@ -1125,8 +1128,19 @@ def require_team_permission(
       active assistant row under that teacher whose effective permissions
       (:func:`~lemely.db.teacher_team_repo.assistant_has_permission`) include ``perm``.
       Anything else (malformed or repeated header, unknown or stranger lead, removed
-      assistant, missing permission, non-teacher caller) is the same 403
-      ``team_permission_denied``.
+      assistant, missing permission, non-teacher caller, or a lead who belongs to a
+      school or owns a school class) is the same 403 ``team_permission_denied``.
+      The school refusal is evaluated live on every request inside
+      ``assistant_has_permission``: school-scoped data (the shared question-bank tier,
+      school rosters, analytics, invite codes) is out of the team spec's scope, so an
+      assistant never reaches it, and a lead who joins a school mid-session loses the
+      assistant path at once. The lead acting for themselves, a ``school_admin`` and a
+      ``platform_admin`` never take this branch and are unaffected.
+
+    Each successful assistant resolution emits one ``team_acting`` audit event
+    (``actor_user_id``, ``lead_teacher_user_id``, ``member_id``, ``permission``; ids
+    only, no emails or tokens) from here, because structlog context bound in a sync
+    dependency does not reach the handler. The self path logs nothing.
 
     A student, parent or admin can never borrow a teacher's identity through the
     header: the role check has already run on them, and the assistant branch also
@@ -1177,6 +1191,13 @@ def require_team_permission(
             member_id = member.id if member is not None else None
         if member_id is None:
             raise _team_permission_denied()
+        log.info(
+            "team_acting",
+            actor_user_id=str(actor_id),
+            lead_teacher_user_id=str(lead_id),
+            member_id=str(member_id),
+            permission=str(perm),
+        )
         return TeamActor(
             actor_user_id=actor_id,
             lead_teacher_user_id=lead_id,
