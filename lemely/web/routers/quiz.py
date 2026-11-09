@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Annotated, NoReturn
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
 
+from lemely.core.team_permissions import TeamPermission
 from lemely.db.class_repo import ClassNotFoundError, ClassOwnershipError
 from lemely.db.models.enums import QuestionSource, QuizStatus, Role, XpSource
 from lemely.db.quiz_marking_repo import QuizMarkingError, QuizMarkingService
@@ -60,12 +61,14 @@ from lemely.db.xp_repo import XpService
 from lemely.runtime.events import current_run_id
 from lemely.web.deps import (
     AuthContext,
+    TeamActor,
     get_quiz_marking_service,
     get_quiz_results_service,
     get_quiz_service,
     get_quiz_taking_service,
     get_xp_service,
     require_role,
+    require_team_permission,
 )
 from lemely.web.schemas_analytics import TopicWeaknessDTO
 from lemely.web.schemas_quiz import (
@@ -110,6 +113,11 @@ _STAFF_ROLES = (Role.teacher, Role.school_admin, Role.platform_admin)
 router = APIRouter(
     prefix="/api/teacher/quizzes", dependencies=[Depends(require_role(*_STAFF_ROLES))]
 )
+
+# Paymob billing Phase 03 (spec §2.3): an assistant may use these for their lead teacher.
+# Each passes the router's STAFF triple, so the wired role guard is unchanged.
+_TEAM_VIEW = require_team_permission(TeamPermission.VIEW_RESULTS, *_STAFF_ROLES)
+_TEAM_QUIZ = require_team_permission(TeamPermission.GENERATE_QUIZ, *_STAFF_ROLES)
 
 #: Student-side quiz-taking routes (S-26). A second router, not a second
 #: prefix under ``router``: the role gate differs (student vs the staff
@@ -514,10 +522,11 @@ def _trigger_marking_in_background(
 @router.post("", response_model=QuizSummaryDTO, status_code=201)
 def create_quiz(
     body: CreateQuizRequestDTO,
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_QUIZ)],
     service: Annotated[QuizService, Depends(get_quiz_service)],
 ) -> QuizSummaryDTO:
     """Create a draft quiz: entering step 1 of the builder (§1.4)."""
+    auth = actor.auth
     try:
         row = service.create_quiz(auth.user_id, body.subjectCode, body.title)
     except ValueError as exc:
@@ -527,10 +536,11 @@ def create_quiz(
 
 @router.get("", response_model=QuizListDTO)
 def list_quizzes(
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     service: Annotated[QuizService, Depends(get_quiz_service)],
 ) -> QuizListDTO:
     """Every quiz the caller owns, most recently created first."""
+    auth = actor.auth
     try:
         rows = service.list_quizzes(auth.user_id)
     except ValueError as exc:
@@ -540,7 +550,7 @@ def list_quizzes(
 
 @router.get("/pool-count", response_model=QuizPoolCountDTO)
 def quiz_pool_count(
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     service: Annotated[QuizService, Depends(get_quiz_service)],
     subject_code: str,
     requested_count: int = 0,
@@ -553,6 +563,7 @@ def quiz_pool_count(
     Registered ahead of ``GET /{quiz_id}`` so ``"pool-count"`` is never
     mistaken for a quiz id.
     """
+    auth = actor.auth
     source_enum = _parse_source(source)
     try:
         result = service.pool_count(
@@ -571,7 +582,7 @@ def quiz_pool_count(
 @router.get("/{quiz_id}", response_model=QuizDetailDTO)
 def get_quiz(
     quiz_id: str,
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     service: Annotated[QuizService, Depends(get_quiz_service)],
 ) -> QuizDetailDTO:
     """One owned quiz plus every materialized question row (§1.5).
@@ -581,6 +592,7 @@ def get_quiz(
     uses (see ``ClassService``'s docstring for the accepted 403-vs-404
     existence-oracle trade-off).
     """
+    auth = actor.auth
     try:
         detail = service.get_quiz(auth.user_id, quiz_id)
     except (QuizNotFoundError, QuizOwnershipError) as exc:
@@ -594,7 +606,7 @@ def get_quiz(
 def patch_quiz_draft(
     quiz_id: str,
     body: UpdateQuizDraftRequestDTO,
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_QUIZ)],
     service: Annotated[QuizService, Depends(get_quiz_service)],
 ) -> QuizSummaryDTO:
     """Partial-update a draft quiz's step-2/3/4 fields.
@@ -603,6 +615,7 @@ def patch_quiz_draft(
     resource's state, not a conflicting concurrent write) rejects the whole
     patch: §1.4 forbids editing a live quiz under students mid-attempt.
     """
+    auth = actor.auth
     pool_source = _parse_source(body.poolSource)
     try:
         row = service.patch_draft(
@@ -627,10 +640,11 @@ def patch_quiz_draft(
 def set_quiz_status(
     quiz_id: str,
     body: SetQuizStatusRequestDTO,
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_QUIZ)],
     service: Annotated[QuizService, Depends(get_quiz_service)],
 ) -> QuizSummaryDTO:
     """Transition a quiz's status. Never backwards (§1.4)."""
+    auth = actor.auth
     new_status = _parse_status(body.status)
     try:
         row = service.set_status(auth.user_id, quiz_id, new_status)
@@ -647,7 +661,7 @@ def set_quiz_status(
 )
 def generate_quiz_questions(
     quiz_id: str,
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_QUIZ)],
     service: Annotated[QuizService, Depends(get_quiz_service)],
 ) -> GenerateQuizQuestionsResponseDTO:
     """Materialize the quiz's question set from the bank (§1.5/§3).
@@ -655,6 +669,7 @@ def generate_quiz_questions(
     Additive: calling again after raising ``requestedCount`` tops the set
     up rather than replacing it (see ``QuizService.generate_questions``).
     """
+    auth = actor.auth
     try:
         result = service.generate_questions(auth.user_id, quiz_id)
     except (QuizNotFoundError, QuizOwnershipError, QuizValidationError) as exc:
@@ -668,7 +683,7 @@ def generate_quiz_questions(
 def remove_quiz_question(
     quiz_id: str,
     question_ref: str,
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_QUIZ)],
     service: Annotated[QuizService, Depends(get_quiz_service)],
 ) -> QuizSummaryDTO:
     """Curate a question out of a draft. Kept (``status=removed``), not deleted.
@@ -677,6 +692,7 @@ def remove_quiz_question(
     removal) rather than the removed row itself — the caller already has
     the row it just asked to remove.
     """
+    auth = actor.auth
     try:
         service.remove_question(auth.user_id, quiz_id, question_ref)
         row = service.get_quiz(auth.user_id, quiz_id).quiz
@@ -696,7 +712,7 @@ def remove_quiz_question(
 def create_quiz_assignment(
     quiz_id: str,
     body: CreateQuizAssignmentRequestDTO,
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_QUIZ)],
     service: Annotated[QuizService, Depends(get_quiz_service)],
 ) -> QuizAssignmentDTO:
     """Assign an owned quiz to a class. A ``draft`` quiz becomes ``assigned``.
@@ -706,6 +722,7 @@ def create_quiz_assignment(
     ``included`` question, is ``closed``/``archived``, is already assigned to
     this class, or ``closesAt`` is earlier than ``dueAt``.
     """
+    auth = actor.auth
     due_at = _parse_datetime(body.dueAt, field="dueAt")
     closes_at = _parse_datetime(body.closesAt, field="closesAt")
     try:
@@ -729,7 +746,7 @@ def create_quiz_assignment(
 @router.get("/{quiz_id}/assignments", response_model=QuizAssignmentListDTO)
 def list_quiz_assignments(
     quiz_id: str,
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     service: Annotated[QuizService, Depends(get_quiz_service)],
 ) -> QuizAssignmentListDTO:
     """Every assignment of an owned quiz, with live roster size and submission counts.
@@ -737,6 +754,7 @@ def list_quiz_assignments(
     Counts only (§1.6/chunk-E brief) — no marks, no averages, no per-student
     results. T-10's results aggregation is chunk F.
     """
+    auth = actor.auth
     try:
         rows = service.list_assignments(auth.user_id, auth.role, quiz_id)
     except (QuizNotFoundError, QuizOwnershipError) as exc:
@@ -752,7 +770,7 @@ def list_quiz_assignments(
 def delete_quiz_assignment(
     quiz_id: str,
     assignment_id: str,
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_QUIZ)],
     service: Annotated[QuizService, Depends(get_quiz_service)],
 ) -> None:
     """Unassign a quiz from a class. Refused (422) once any student has started.
@@ -761,6 +779,7 @@ def delete_quiz_assignment(
     once a submission exists beyond ``not_started`` would silently destroy
     that student's work.
     """
+    auth = actor.auth
     try:
         service.delete_assignment(auth.user_id, quiz_id, assignment_id)
     except (QuizNotFoundError, QuizOwnershipError, QuizValidationError) as exc:
@@ -781,7 +800,7 @@ def delete_quiz_assignment(
 def quiz_assignment_results(
     quiz_id: str,
     assignment_id: str,
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     service: Annotated[QuizResultsService, Depends(get_quiz_results_service)],
 ) -> QuizAssignmentResultsDTO:
     """Return T-10 class results for one **assignment** (§1.6 — never per quiz).
@@ -796,6 +815,7 @@ def quiz_assignment_results(
     the quiz is not the caller's — quiz ownership stays strictly
     ``teacher_id``-scoped, with no ``school_admin`` view.
     """
+    auth = actor.auth
     try:
         results = service.assignment_results(auth.user_id, auth.role, quiz_id, assignment_id)
     except (QuizNotFoundError, QuizOwnershipError, QuizValidationError) as exc:

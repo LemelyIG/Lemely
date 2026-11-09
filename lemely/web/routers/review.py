@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Annotated, NoReturn
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Response
 
+from lemely.core.team_permissions import TeamPermission
 from lemely.db.models.enums import Role
 from lemely.db.review_repo import (
     CROP_ABSENT_DETAIL,
@@ -52,11 +53,12 @@ from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 from lemely.runtime import sandbox
 from lemely.runtime.config import Settings  # noqa: TC001
 from lemely.web.deps import (
-    AuthContext,
+    TeamActor,
     get_review_service,
     get_settings,
     get_storage_backend,
     require_role,
+    require_team_permission,
 )
 from lemely.web.schemas_review import (
     BulkApproveRequestDTO,
@@ -83,6 +85,11 @@ _STAFF_ROLES = (Role.teacher, Role.school_admin, Role.platform_admin)
 router = APIRouter(
     prefix="/api/teacher/review", dependencies=[Depends(require_role(*_STAFF_ROLES))]
 )
+
+# Paymob billing Phase 03 (spec §2.3): an assistant may use these for their lead teacher.
+# Each passes the router's STAFF triple, so the wired role guard is unchanged.
+_TEAM_VIEW = require_team_permission(TeamPermission.VIEW_RESULTS, *_STAFF_ROLES)
+_TEAM_MARK = require_team_permission(TeamPermission.MARK, *_STAFF_ROLES)
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +243,7 @@ def _detail_to_dto(detail: ReviewItemDetail) -> ReviewItemDetailDTO:
 
 @router.get("", response_model=ReviewQueueListDTO)
 def list_review_queue(
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     service: Annotated[ReviewService, Depends(get_review_service)],
     class_id: str | None = None,
     reason: str | None = None,
@@ -261,6 +268,7 @@ def list_review_queue(
     re-implemented here); this route only turns its ``ReviewQueuePage`` into
     the wire DTO.
     """
+    auth = actor.auth
     if not 1 <= limit <= 200:
         raise HTTPException(status_code=422, detail="limit must be between 1 and 200")
     parsed_cursor = _decode_cursor(cursor) if cursor is not None else None
@@ -287,7 +295,7 @@ def list_review_queue(
 @router.get("/{item_id}", response_model=ReviewItemDetailDTO)
 def get_review_item(
     item_id: str,
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     service: Annotated[ReviewService, Depends(get_review_service)],
 ) -> ReviewItemDetailDTO:
     """T-08: full detail for one review item.
@@ -296,6 +304,7 @@ def get_review_item(
     anywhere is a 404; a malformed (non-UUID) id is a clean 422 — the same
     split ``teacher_student_detail`` documents at length.
     """
+    auth = actor.auth
     try:
         detail = service.get_item(auth.user_id, auth.role, item_id)
     except (ReviewNotFoundError, ReviewOwnershipError) as exc:
@@ -349,7 +358,7 @@ _RENDER_REFUSED_EVENTS = {
 )
 def get_review_item_crop(
     item_id: str,
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     settings: Annotated[Settings, Depends(get_settings)],
     service: Annotated[ReviewService, Depends(get_review_service)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
@@ -383,6 +392,7 @@ def get_review_item_crop(
     absences is evaluated, so an out-of-scope caller learns nothing about
     scans at all (triage F9; the broader 403-vs-404 question is #248).
     """
+    auth = actor.auth
     try:
         object_path, box = service.get_item_crop_source(auth.user_id, auth.role, item_id)
     except ReviewError as exc:
@@ -487,7 +497,7 @@ def get_review_item_crop(
 @router.post("/bulk-approve", response_model=BulkApproveResponseDTO)
 def bulk_approve_review_items(
     body: BulkApproveRequestDTO,
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_MARK)],
     service: Annotated[ReviewService, Depends(get_review_service)],
 ) -> BulkApproveResponseDTO:
     """T-07 bulk-approve: accept-as-is every id in scope; skip-and-report the rest.
@@ -499,6 +509,7 @@ def bulk_approve_review_items(
     all-or-nothing; malformed input is a different failure mode and is
     rejected wholesale.
     """
+    auth = actor.auth
     try:
         item_ids = [uuid.UUID(raw) for raw in body.itemIds]
     except ValueError as exc:
@@ -517,7 +528,7 @@ def bulk_approve_review_items(
 def resolve_review_item(
     item_id: str,
     body: ResolveReviewRequestDTO,
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_MARK)],
     service: Annotated[ReviewService, Depends(get_review_service)],
 ) -> ReviewQueueItemDTO:
     """T-08: accept the AI mark as-is, or override it with a note to the student.
@@ -526,6 +537,7 @@ def resolve_review_item(
     409; an out-of-range ``overrideMarks`` (or one supplied for an item with no
     underlying question result) is a 422.
     """
+    auth = actor.auth
     breakdown = body.breakdown.model_dump(exclude_none=True) if body.breakdown is not None else None
     try:
         row = service.resolve(
@@ -552,7 +564,7 @@ def resolve_review_item(
 def dismiss_review_item(
     item_id: str,
     body: DismissReviewRequestDTO,
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_MARK)],
     service: Annotated[ReviewService, Depends(get_review_service)],
 ) -> ReviewQueueItemDTO:
     """T-08: dismiss an integrity flag. No student-visible record survives this.
@@ -561,6 +573,7 @@ def dismiss_review_item(
     409; dismissing a non-integrity item (``low_confidence``/``manual``) is a
     422 — see ``ReviewService.dismiss``.
     """
+    auth = actor.auth
     try:
         row = service.dismiss(auth.user_id, auth.role, item_id, note=body.note)
     except (

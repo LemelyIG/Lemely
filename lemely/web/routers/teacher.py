@@ -68,6 +68,7 @@ from lemely.core.schemas import (
     WeaknessReport,
     marker_scored,
 )
+from lemely.core.team_permissions import TeamPermission
 from lemely.db.at_risk_repo import (
     AtRiskAcknowledgementRow,
     AtRiskAckOwnershipError,
@@ -113,8 +114,8 @@ from lemely.runtime.config import Settings, llm_key_configured
 from lemely.runtime.events import Event, EventType, bus, current_run_id
 from lemely.web.deps import (
     AuthContext,
+    TeamActor,
     get_at_risk_ack_service,
-    get_auth_context,
     get_class_service,
     get_gemini_client,
     get_history_store,
@@ -127,6 +128,7 @@ from lemely.web.deps import (
     get_teacher_paper_deletion_service,
     get_teacher_paper_repo,
     require_role,
+    require_team_permission,
 )
 from lemely.web.schemas import (
     question_to_dto,
@@ -286,6 +288,15 @@ _AT_RISK_GRADES = {"D", "E", "F", "G", "U"}
 # reasoning) — not re-imported from there to avoid a classes<->teacher import
 # cycle (``classes.py`` already imports from this module).
 _STAFF_ROLES = (Role.teacher, Role.school_admin, Role.platform_admin)
+
+# Paymob billing Phase 03 (spec §2.3): routes an assistant may use for their lead
+# teacher. All pass the router's STAFF triple, so the wired role guard is unchanged.
+_TEAM_VIEW = require_team_permission(TeamPermission.VIEW_RESULTS, *_STAFF_ROLES)
+_TEAM_MARK = require_team_permission(TeamPermission.MARK, *_STAFF_ROLES)
+_TEAM_REGRADE = require_team_permission(TeamPermission.REGRADE, *_STAFF_ROLES)
+_TEAM_QUIZ = require_team_permission(TeamPermission.GENERATE_QUIZ, *_STAFF_ROLES)
+_TEAM_MANAGE_CLASSES = require_team_permission(TeamPermission.MANAGE_CLASSES, *_STAFF_ROLES)
+_TEAM_MANAGE_STUDENTS = require_team_permission(TeamPermission.MANAGE_STUDENTS, *_STAFF_ROLES)
 
 #: Per-band ceiling on how many previously generated bank questions
 #: :func:`_existing_questions` pulls in as reuse material. A bound, not a
@@ -878,7 +889,7 @@ def _student_delta(history: StudentHistory) -> float | None:
 
 @router.post("/papers/upload", response_model=UploadResponseDTO)
 async def upload_paper(
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    actor: Annotated[TeamActor, Depends(_TEAM_MARK)],
     settings: Annotated[Settings, Depends(get_settings)],
     repo: Annotated[TeacherPaperRepository, Depends(get_teacher_paper_repo)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
@@ -903,6 +914,7 @@ async def upload_paper(
     in the process — health checks included — for as long as it took, exactly
     the shape decision D6.13 removed from this route once already.
     """
+    auth = actor.auth
     uploaded_by, _ = _viewer(auth)
     paper_id = uuid.uuid4()
     prefix = f"teacher/{uploaded_by}/{paper_id.hex}"
@@ -1013,10 +1025,11 @@ def _batch_tabs(rows: list[TeacherPaperRow]) -> list[BatchTabDTO]:
 
 @router.get("/papers", response_model=PaperListDTO)
 def list_papers(
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     repo: Annotated[TeacherPaperRepository, Depends(get_teacher_paper_repo)],
 ) -> PaperListDTO:
     """Return every paper visible to the caller (DS11) as grid cards plus batch tabs."""
+    auth = actor.auth
     viewer_id, viewer_role = _viewer(auth)
     rows = repo.list_visible(viewer_id=viewer_id, viewer_role=viewer_role)
     return PaperListDTO(
@@ -1028,7 +1041,7 @@ def list_papers(
 @router.post("/papers/{paper_id}/regrade", status_code=202)
 def regrade_paper(
     paper_id: str,
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    actor: Annotated[TeamActor, Depends(_TEAM_REGRADE)],
     settings: Annotated[Settings, Depends(get_settings)],
     repo: Annotated[TeacherPaperRepository, Depends(get_teacher_paper_repo)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
@@ -1047,6 +1060,7 @@ def regrade_paper(
     call won the claim: either way the row is (or already was) in flight, and
     the console keeps polling for the outcome.
     """
+    auth = actor.auth
     row = _require_paper(repo, auth, paper_id)
     _start_run_if_claimed(row.id, settings, repo, storage, history_store, gemini_client, corpus)
     return {"paperId": paper_id, "status": "processing"}
@@ -1085,7 +1099,7 @@ def _raise_for_deletion(exc: PaperDeletionError) -> NoReturn:
 
 @router.get("/papers/deleted", response_model=DeletedTeacherPapersDTO)
 def list_deleted_papers(
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     service: Annotated[TeacherPaperDeletionService, Depends(get_teacher_paper_deletion_service)],
 ) -> DeletedTeacherPapersDTO:
     """The caller's still-restorable console deletions (R2, review amendment R7-R10).
@@ -1095,6 +1109,7 @@ def list_deleted_papers(
     that route — the same ordering concern Task 8's
     ``GET /student/attempts/deleted`` documents for its own router.
     """
+    auth = actor.auth
     rows = service.list_deleted(auth.user_id)
     return DeletedTeacherPapersDTO(
         papers=[_deleted_teacher_paper_dto(r) for r in rows], retentionDays=RETENTION_DAYS
@@ -1104,7 +1119,7 @@ def list_deleted_papers(
 @router.delete("/papers/{paper_id}", status_code=204)
 def delete_paper(
     paper_id: str,
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    actor: Annotated[TeamActor, Depends(_TEAM_MANAGE_CLASSES)],
     service: Annotated[TeacherPaperDeletionService, Depends(get_teacher_paper_deletion_service)],
 ) -> Response:
     """Soft-delete this teacher's own console paper and withdraw its open review items (R2).
@@ -1114,6 +1129,7 @@ def delete_paper(
     unknown id (:meth:`TeacherPaperDeletionService.delete`'s own docstring).
     A run still in flight is stopped, not merely hidden.
     """
+    auth = actor.auth
     try:
         service.delete(auth.user_id, paper_id)
     except PaperDeletionError as exc:
@@ -1124,7 +1140,7 @@ def delete_paper(
 @router.post("/papers/{paper_id}/restore", status_code=204)
 def restore_paper(
     paper_id: str,
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    actor: Annotated[TeamActor, Depends(_TEAM_MANAGE_CLASSES)],
     service: Annotated[TeacherPaperDeletionService, Depends(get_teacher_paper_deletion_service)],
 ) -> Response:
     """Undo the deletion of this teacher's own console paper within the retention window (R2).
@@ -1132,6 +1148,7 @@ def restore_paper(
     204 on success. 404 if the id is not the caller's own or was never
     deleted; 410 once the restore window has closed.
     """
+    auth = actor.auth
     try:
         service.restore(auth.user_id, paper_id)
     except PaperDeletionError as exc:
@@ -1142,7 +1159,7 @@ def restore_paper(
 @router.get("/papers/{paper_id}", response_model=PaperDetailDTO)
 def get_paper(
     paper_id: str,
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     repo: Annotated[TeacherPaperRepository, Depends(get_teacher_paper_repo)],
 ) -> PaperDetailDTO:
     """Return the grade detail (questions, weak areas, pipeline) for a visible paper.
@@ -1152,6 +1169,7 @@ def get_paper(
     An unknown *or invisible* id is a 404 (DS11): this never reveals whether a
     paper exists to a caller who may not see it.
     """
+    auth = actor.auth
     row = _require_paper(repo, auth, paper_id)
     kind = _row_kind(row)
     report = row.report if kind in ("graded", "review") else None
@@ -1186,7 +1204,7 @@ def get_paper(
 def get_paper_preview(
     paper_id: str,
     request: Request,
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     settings: Annotated[Settings, Depends(get_settings)],
     repo: Annotated[TeacherPaperRepository, Depends(get_teacher_paper_repo)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
@@ -1239,6 +1257,7 @@ def get_paper_preview(
     process (the sandbox disabled) gets the same fixed message: the
     exception's text goes to the ``paper_preview_failed`` log line only.
     """
+    auth = actor.auth
     row = _require_paper(repo, auth, paper_id)
     etag = preview_etag(row)
     caching = {"ETag": etag, "Cache-Control": _PREVIEW_CACHE_CONTROL}
@@ -1288,7 +1307,7 @@ def get_paper_preview(
 
 @router.get("/grading/queue", response_model=GradingQueueDTO)
 def grading_queue(
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     repo: Annotated[TeacherPaperRepository, Depends(get_teacher_paper_repo)],
 ) -> GradingQueueDTO:
     """Return low-confidence questions flagged for teacher review across visible papers.
@@ -1307,6 +1326,7 @@ def grading_queue(
     product-owner-rejected outcome, on the most visible surface, with no
     ``ReviewQueueItem`` row involved.
     """
+    auth = actor.auth
     viewer_id, viewer_role = _viewer(auth)
     rows: list[QueueRowDTO] = []
     for row in repo.list_visible(viewer_id=viewer_id, viewer_role=viewer_role):
@@ -1533,7 +1553,7 @@ def _existing_questions(
 
 @router.get("/quizzes/pools", response_model=QuizPoolsDTO)
 def quiz_pools(
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_QUIZ)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     class_service: Annotated[ClassService, Depends(get_class_service)],
     bank_service: Annotated[QuestionBankService, Depends(get_question_bank_service)],
@@ -1552,6 +1572,7 @@ def quiz_pools(
     too: ``POST /quizzes/generate`` (below) is the only path that ever fills
     it (D3.7's "the bank ships empty" consequence).
     """
+    auth = actor.auth
     try:
         caller_uuid = uuid.UUID(auth.user_id)
     except ValueError as exc:
@@ -1731,7 +1752,7 @@ def _quiz_to_preview(quiz: GeneratedQuiz) -> QuizPreviewDTO:
 
 @router.post("/quizzes/preview", response_model=QuizPreviewDTO)
 def quiz_preview(
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_QUIZ)],
     settings: Annotated[Settings, Depends(get_settings)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
@@ -1747,6 +1768,7 @@ def quiz_preview(
     the reuse pool can be scoped to this caller rather than read from a
     process-global pool — see :func:`_existing_questions`.
     """
+    auth = actor.auth
     try:
         caller_uuid = uuid.UUID(auth.user_id)
     except ValueError as exc:
@@ -1767,7 +1789,7 @@ def quiz_preview(
 
 @router.post("/quizzes/generate", response_model=QuizPreviewDTO)
 def quiz_generate(
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_QUIZ)],
     settings: Annotated[Settings, Depends(get_settings)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
@@ -1788,6 +1810,7 @@ def quiz_generate(
     fills the bank's generated pool (D3.7 consequence): the bank ships
     empty, and stays empty for a subject until a teacher generates here.
     """
+    auth = actor.auth
     try:
         caller_uuid = uuid.UUID(auth.user_id)
     except ValueError as exc:
@@ -1948,7 +1971,7 @@ def _acknowledgement_index(
 
 @router.get("/teacher/overview", response_model=OverviewDTO)
 def teacher_overview(
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     review_service: Annotated[ReviewService, Depends(get_review_service)],
@@ -1972,6 +1995,7 @@ def teacher_overview(
     (declining trend / predicted below target / inactive) — see ``_at_risk``.
     Each flag carries its acknowledged state (D3.5) via ``_acknowledgement_index``.
     """
+    auth = actor.auth
     try:
         visible = _visible_students(service, auth)
     except ValueError as exc:
@@ -2405,7 +2429,7 @@ def _student_detail_dto(
 @router.get("/teacher/students/{student_id}", response_model=StudentDetailDTO)
 def teacher_student_detail(
     student_id: str,
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
@@ -2446,6 +2470,7 @@ def teacher_student_detail(
     an ephemeral paper id, not yet a verified real-student identity — see
     ``upload_paper``'s docstring). There is nothing honest to compute here.
     """
+    auth = actor.auth
     try:
         visible = _visible_students(service, auth)
     except ValueError as exc:
@@ -2498,7 +2523,7 @@ def _at_risk_severity_key(entry: AtRiskListEntryDTO) -> tuple[int, int]:
 
 @router.get("/teacher/at-risk", response_model=AtRiskListDTO)
 def teacher_at_risk_list(
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
@@ -2530,6 +2555,7 @@ def teacher_at_risk_list(
     gathered first so this stays a single bulk query for the whole list
     rather than one per student across potentially many classes.
     """
+    auth = actor.auth
     try:
         rows = service.list_classes(auth.user_id, auth.role)
     except ValueError as exc:
@@ -2593,7 +2619,7 @@ def teacher_at_risk_list(
 def acknowledge_at_risk_flag(
     student_id: str,
     body: AcknowledgeAtRiskRequestDTO,
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_MANAGE_STUDENTS)],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
@@ -2618,6 +2644,7 @@ def acknowledge_at_risk_flag(
     ``reason`` string (not one of ``AtRiskReason``'s values) with the same
     422, since by definition it cannot be firing.
     """
+    auth = actor.auth
     try:
         visible = _visible_students(service, auth)
     except ValueError as exc:
@@ -2678,7 +2705,7 @@ def acknowledge_at_risk_flag(
 def unacknowledge_at_risk_flag(
     student_id: str,
     reason: str,
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_MANAGE_STUDENTS)],
     service: Annotated[ClassService, Depends(get_class_service)],
     ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
 ) -> None:
@@ -2692,6 +2719,7 @@ def unacknowledge_at_risk_flag(
     student is no longer inactive); there is nothing left to protect by
     rejecting it.
     """
+    auth = actor.auth
     try:
         visible = _visible_students(service, auth)
     except ValueError as exc:
