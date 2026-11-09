@@ -90,6 +90,8 @@ def seat(
             cap_units=cap_units,
             cap_period=cap_period,
             created_at=created_at,
+            # ck_teacher_members_leaving_has_date: a leaving seat carries its end date.
+            leaves_at=NOW + timedelta(days=20) if status is TeacherMemberStatus.leaving else None,
         )
         session.add(row)
         session.flush()
@@ -112,6 +114,8 @@ def assistant(
             kind=TeacherMemberKind.assistant,
             status=TeacherMemberStatus.active,
             role_preset=role,
+            # ck_teacher_members_assistant_fields: an assistant row has a permissions object.
+            permissions={},
             cap_units=cap_units,
             cap_period=cap_period,
         )
