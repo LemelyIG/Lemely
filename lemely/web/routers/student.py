@@ -1346,8 +1346,9 @@ def student_join_class(
     sends each an inbox notice here, after commit.
 
     A teacher with no free seat refuses the join with a 409 ``no_free_seat`` (paymob
-    billing Phase 03); nothing is enrolled. Any other team refusal (the caller is the
-    teacher's assistant) is a 409 ``conflict``, through ``team_error_to_http``.
+    billing Phase 03); nothing is enrolled. A 409 ``conflict`` means the caller's
+    account can't hold a seat with this teacher (``team_error_to_http``). Re-joining a
+    class the caller is already in never fails on seats.
     """
     try:
         joined = service.join_by_code_with_notice(auth.user_id, payload.joinCode)

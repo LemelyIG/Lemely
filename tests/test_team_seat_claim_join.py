@@ -13,6 +13,12 @@ from lemely.db.class_repo import ClassService
 from lemely.db.invite_repo import InviteService
 from lemely.db.models import ClassEnrollment, Invite, School
 from lemely.db.models.enums import InviteRole, Role
+from lemely.db.models.team import (
+    CapPeriod,
+    TeacherMember,
+    TeacherMemberKind,
+    TeacherMemberStatus,
+)
 from lemely.db.parent_repo import ParentLinkService
 from lemely.db.teacher_team_repo import (
     AssistantInviteLimitError,
@@ -38,11 +44,13 @@ from tests.team_db import (
     add_teacher_plan,
     add_user,
     emptied_after,
+    enrol,
     team_database,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
     from fastapi import FastAPI
     from sqlalchemy.orm import Session, sessionmaker
@@ -345,3 +353,123 @@ def test_invite_redeem_route_answers_409_conflict_for_a_team_state_error(
     assert resp.status_code == 409
     assert resp.json()["detail"]["code"] == "conflict"
     assert not _enrolled(sm, class_id, helper)
+
+
+# ── The savepoint: a refused soft-mode claim leaves nothing behind ───────────
+
+
+def test_soft_mode_refusal_rolls_back_what_the_claim_wrote(
+    sm: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    teacher, student = add_user(sm, Role.teacher), add_user(sm)
+    class_id, code = add_class(sm, teacher_id=teacher, subject_code="0580")
+
+    def writes_then_refuses(
+        self: TeacherTeamService, *, student_user_id: uuid.UUID, class_id: uuid.UUID, now: object
+    ) -> TeacherMember:
+        self._session.add(
+            TeacherMember(
+                teacher_user_id=teacher,
+                member_user_id=student_user_id,
+                kind=TeacherMemberKind.student_seat,
+                scope_subjects=[],
+                scope_actions=[],
+                cap_period=CapPeriod.month,
+                status=TeacherMemberStatus.active,
+            )
+        )
+        self._session.flush()
+        raise NoFreeSeat("refused after writing")
+
+    monkeypatch.setattr(TeacherTeamService, "claim_seat_for_class_join", writes_then_refuses)
+    ClassService(sm, enforce_teacher_seats=False).join_by_code_with_notice(student, code)
+    assert _enrolled(sm, class_id, student)
+    assert _seats(sm, student) == []
+    with sm() as session:
+        rows = session.scalar(
+            select(func.count())
+            .select_from(TeacherMember)
+            .where(TeacherMember.member_user_id == student)
+        )
+    assert rows == 0
+
+
+# ── Re-joins are idempotent, whatever the seat state ─────────────────────────
+
+
+def test_a_rejoin_without_a_free_seat_keeps_the_enrolment_when_enforced(
+    sm: sessionmaker[Session],
+) -> None:
+    teacher, student = add_user(sm, Role.teacher), add_user(sm)
+    class_id, code = add_class(sm, teacher_id=teacher, subject_code="0580")
+    enrol(sm, class_id, student)  # enrolled before seats existed: no plan, no seat
+    ClassService(sm, enforce_teacher_seats=True).join_by_code_with_notice(student, code)
+    assert _enrolled(sm, class_id, student)
+    assert _seats(sm, student) == []
+
+
+def test_a_rejoin_with_a_team_state_error_keeps_the_enrolment_when_enforced(
+    sm: sessionmaker[Session],
+) -> None:
+    teacher, helper = add_user(sm, Role.teacher), add_user(sm)
+    add_teacher_plan(sm, teacher, included_seats=1)
+    add_assistant(sm, teacher_id=teacher, assistant_id=helper)
+    class_id, code = add_class(sm, teacher_id=teacher, subject_code="0580")
+    enrol(sm, class_id, helper)
+    ClassService(sm, enforce_teacher_seats=True).join_by_code_with_notice(helper, code)
+    assert _enrolled(sm, class_id, helper)
+
+
+def test_a_first_join_is_still_refused_for_the_same_teacher(sm: sessionmaker[Session]) -> None:
+    teacher, student, newcomer = add_user(sm, Role.teacher), add_user(sm), add_user(sm)
+    class_id, code = add_class(sm, teacher_id=teacher, subject_code="0580")
+    enrol(sm, class_id, student)
+    service = ClassService(sm, enforce_teacher_seats=True)
+    service.join_by_code_with_notice(student, code)
+    with pytest.raises(NoFreeSeat):
+        service.join_by_code_with_notice(newcomer, code)
+    assert not _enrolled(sm, class_id, newcomer)
+
+
+def test_student_join_route_rejoin_answers_200_not_409(sm: sessionmaker[Session]) -> None:
+    teacher, student = add_user(sm, Role.teacher), add_user(sm)
+    class_id, code = add_class(sm, teacher_id=teacher, subject_code="0580")
+    enrol(sm, class_id, student)
+    resp = _client(sm, student).post("/api/student/classes/join", json={"joinCode": code})
+    assert resp.status_code == 200
+    assert resp.json()["classId"] == str(class_id)
+
+
+def test_invite_redeem_rejoin_answers_200_not_409(sm: sessionmaker[Session]) -> None:
+    teacher, student = add_user(sm, Role.teacher), add_user(sm)
+    class_id, code = add_class(sm, teacher_id=teacher, subject_code="0580")
+    enrol(sm, class_id, student)
+    resp = _client(sm, student).post(f"/api/invites/{code}/redeem")
+    assert resp.status_code == 200
+    assert resp.json()["classId"] == str(class_id)
+
+
+# ── The default reads the TOML-honouring loader, lazily ──────────────────────
+
+
+def test_the_default_switch_honours_lemely_toml(
+    sm: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "lemely.toml").write_text("[team]\nenforce_teacher_seats = false\n")
+    monkeypatch.delenv("LEMELY_TEAM__ENFORCE_TEACHER_SEATS", raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert ClassService(sm)._enforce_teacher_seats is False
+    (tmp_path / "lemely.toml").write_text("[team]\nenforce_teacher_seats = true\n")
+    assert ClassService(sm)._enforce_teacher_seats is True
+
+
+def test_the_default_switch_is_read_at_claim_time_not_construction(
+    sm: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    teacher, student = add_user(sm, Role.teacher), add_user(sm)
+    class_id, code = add_class(sm, teacher_id=teacher, subject_code="0580")
+    service = ClassService(sm)  # built under the suite switch (off)
+    monkeypatch.setenv("LEMELY_TEAM__ENFORCE_TEACHER_SEATS", "1")
+    with pytest.raises(NoFreeSeat):
+        service.join_by_code_with_notice(student, code)
+    assert not _enrolled(sm, class_id, student)

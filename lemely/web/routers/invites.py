@@ -263,8 +263,8 @@ def redeem_invite(
     notice never fails the redemption.
 
     **409 ``no_free_seat``** (paymob billing Phase 03): a class code whose teacher has
-    no free seat; the invite stays unredeemed. Any other team refusal (the caller is
-    the teacher's assistant) is a 409 ``conflict``, through ``team_error_to_http``.
+    no free seat; the invite stays unredeemed. A 409 ``conflict`` means the caller's
+    account can't hold a seat with this teacher (``team_error_to_http``).
     """
     try:
         result = service.redeem(auth.user_id, code, caller_role=Role(auth.role))
