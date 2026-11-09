@@ -494,7 +494,7 @@ forbidden_modules = [
 [[tool.importlinter.contracts]]
 name = "Metering pure rules stay pure (billing spec §5.6)"
 type = "forbidden"
-source_modules = ["lemely.core.metered_actions"]
+source_modules = ["lemely.core.metered_actions", "lemely.core.payer_chain"]
 forbidden_modules = [
   "lemely.db",
   "lemely.web",
