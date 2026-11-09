@@ -18,7 +18,7 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, SecurityScopes
 
 from lemely.auth.email import EmailProvider, MockEmailProvider, ResendEmailProvider
 from lemely.auth.gotrue import HttpGoTrueBackend
@@ -26,6 +26,7 @@ from lemely.auth.mirror import DbUserMirror, UserMirror
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
 from lemely.auth.tokens import decode_token
+from lemely.core.access import is_allowed_email
 from lemely.db.admin_repo import PlatformAdminService
 from lemely.db.announcement_repo import AnnouncementService
 from lemely.db.at_risk_repo import AtRiskAckService
@@ -899,12 +900,71 @@ _bearer_scheme = HTTPBearer(auto_error=False, description="Supabase-compatible a
 _ROLE_VALUES: frozenset[str] = frozenset(role.value for role in Role)
 
 
+#: Security scope that exempts a route from the verified-email half of the access gate. Declared
+#: as ``Security(get_auth_context, scopes=[ALLOW_UNVERIFIED_SCOPE])``. Only the two routes an
+#: unverified allowed-domain account needs in order to *become* verified carry it
+#: (``/api/auth/verify-email/code`` and ``/api/auth/verify-email/resend``); the domain check still
+#: applies to them. ``tests/test_access_gate.py`` pins that list.
+ALLOW_UNVERIFIED_SCOPE = "access:allow-unverified"
+
+
+def access_restricted_detail(reason: str) -> dict[str, str]:
+    """The ``detail`` of a 403 access refusal: a stable code plus why, never a domain."""
+    return {"code": "access_restricted", "reason": reason}
+
+
+def enforce_access(
+    auth: AuthContext,
+    settings: Settings,
+    mirror: UserMirror,
+    *,
+    allow_unverified: bool,
+) -> None:
+    """Refuse a signed-in caller whose account is not let in by ``[access]``.
+
+    A no-op when access is open. Otherwise the caller's **stored** email and verification state
+    are read from ``public.users`` on every request (not the token's claims), so a session
+    already open is cut off the moment the account stops qualifying. The address must be on the
+    allow-list and, unless ``allow_unverified``, its inbox must have been proven
+    (``users.email_verified_at``), because anyone can sign up as ``someone@allowed.com`` and only
+    the verification link or code shows they own it. A missing row or a malformed ``sub`` is
+    refused the same way.
+
+    Raises:
+        HTTPException: **403** ``{"code": "access_restricted", "reason": "domain" | "unverified"}``.
+    """
+    access = settings.access
+    if not access.restricted:
+        return
+    try:
+        user = mirror.get_by_id(uuid.UUID(auth.user_id))
+    except ValueError:
+        user = None
+    if user is None or not is_allowed_email(user.email, access.allowed_email_domains):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=access_restricted_detail("domain")
+        )
+    if not allow_unverified and user.email_verified_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=access_restricted_detail("unverified")
+        )
+
+
 def get_auth_context(
+    security_scopes: SecurityScopes,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)],
     settings: Annotated[Settings, Depends(get_settings)],
     devices: Annotated[DeviceRegistry, Depends(get_device_registry)],
+    mirror: Annotated[UserMirror, Depends(get_user_mirror)],
 ) -> AuthContext:
     """Validate the ``Authorization: Bearer`` token and return the caller.
+
+    **This is the one authentication dependency**: ``require_role`` and every route that wants
+    "any signed-in role" go through it, and nothing else decodes a bearer token
+    (``tests/test_access_gate.py`` walks the route table and the source to prove it). That is
+    why the access gate (``[access] allowed_email_domains``, :func:`enforce_access`) lives here:
+    a caller who is not let in is refused on every authenticated route at once, not route by
+    route.
 
     Decodes the token (HS256, shared ``jwt_secret``) via
     :func:`~lemely.auth.tokens.decode_token`, then requires a recognised platform
@@ -919,7 +979,8 @@ def get_auth_context(
 
     Raises:
         HTTPException: 401 when the token is absent or fails validation, or when
-            its session has been invalidated.
+            its session has been invalidated. 403 ``access_restricted`` when access is
+            restricted and the account is not on the allow-list or is not verified.
     """
     if credentials is None or not credentials.credentials:
         raise HTTPException(
@@ -947,13 +1008,17 @@ def get_auth_context(
             detail="This session has been signed out",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return AuthContext(
+    auth = AuthContext(
         user_id=claims.sub,
         role=claims.app_role,
         email=claims.email,
         phone=claims.phone,
         session_id=claims.session_id,
     )
+    enforce_access(
+        auth, settings, mirror, allow_unverified=ALLOW_UNVERIFIED_SCOPE in security_scopes.scopes
+    )
+    return auth
 
 
 def require_role(*allowed: Role) -> Callable[[AuthContext], AuthContext]:

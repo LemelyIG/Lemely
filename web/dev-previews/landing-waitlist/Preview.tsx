@@ -27,32 +27,32 @@ const adminRouter = createMemoryRouter([platformAdminRoute], { initialEntries: [
 
 const SCENES: { cap: string; seed: WaitlistSeed; mobile?: boolean }[] = [
   { cap: "Neutral (step 1, nothing entered)", seed: { step: 1 } },
-  { cap: "Step 1, student picked, mobile sheet", seed: { step: 1, role: "student", email: "student01@example.com" }, mobile: true },
+  { cap: "Step 1, student picked, mobile sheet", seed: { step: 1, role: "student", email: "student01@example.com", name: "Sample Student" }, mobile: true },
   { cap: "Step 1, validation errors", seed: { step: 1, email: "student01@school", errors: { email: "Enter an email like name@school.com.", role: "Pick the option that fits you." } } },
-  { cap: "Step 1, submitting, mobile", seed: { step: 1, role: "teacher", email: "teacher02@example.com", status: "submitting" }, mobile: true },
-  { cap: "Step 1, network error", seed: { step: 1, role: "parent", email: "parent03@example.com", status: "network" } },
-  { cap: "Step 1, rate-limited, mobile", seed: { step: 1, role: "centre_admin", email: "centre04@example.com", status: "rate" }, mobile: true },
-  { cap: "Already on the list (skips step 2)", seed: { step: 1, role: "student", email: "student01@example.com", duplicate: true } },
-  { cap: "Step 2, student, top 8 subjects + Other", seed: { step: 2, role: "student", email: "student01@example.com", levels: ["o_level"], subjects: ["biology", "physics"], boards: ["caie"] } },
-  { cap: "Step 2, student, mobile sheet", seed: { step: 2, role: "student", email: "student01@example.com", levels: ["o_level"], subjects: ["biology"] }, mobile: true },
-  { cap: "Step 2, picker open, searching", seed: { step: 2, role: "student", email: "student01@example.com", subjects: ["biology", "french"], pickerOpen: true } },
-  { cap: "Step 2, centre administrator (no session)", seed: { step: 2, role: "centre_admin", email: "centre04@example.com", levels: ["o_level", "a_level"], subjects: ["chemistry", "economics"], centre: "Example Learning Centre" } },
-  { cap: "Step 2, parent, error, mobile", seed: { step: 2, role: "parent", email: "parent03@example.com", errors: { subjects: "Pick at least one subject." } }, mobile: true },
-  { cap: "Step 2, teacher, a selected subject kept visible + phone error", seed: { step: 2, role: "teacher", email: "teacher02@example.com", levels: ["as_level", "a_level"], subjects: ["french"], otherSubjects: ["Robotics"], phone: "12", whatsapp: true, errors: { phone: "That number looks too short or too long." } } },
-  { cap: "Step 2, submitting", seed: { step: 2, role: "student", email: "student01@example.com", subjects: ["biology"], status: "submitting" } },
-  { cap: "Success, student (Binny), mobile", seed: { step: "done", role: "student", email: "student01@example.com" }, mobile: true },
-  { cap: "Success, teacher", seed: { step: "done", role: "teacher", email: "teacher02@example.com" } },
-  { cap: "Success, parent", seed: { step: "done", role: "parent", email: "parent03@example.com" } },
-  { cap: "Success, centre administrator", seed: { step: "done", role: "centre_admin", email: "centre04@example.com" } },
+  { cap: "Step 1, submitting, mobile", seed: { step: 1, role: "teacher", email: "teacher02@example.com", name: "Teacher Example", status: "submitting" }, mobile: true },
+  { cap: "Step 1, network error", seed: { step: 1, role: "parent", email: "parent03@example.com", name: "Parent Example", status: "network" } },
+  { cap: "Step 1, rate-limited, mobile", seed: { step: 1, role: "centre_admin", email: "centre04@example.com", name: "Centre Example", status: "rate" }, mobile: true },
+  { cap: "Already on the list (skips step 2)", seed: { step: 1, role: "student", email: "student01@example.com", name: "Sample Student", duplicate: true } },
+  { cap: "Step 2, student, top 8 subjects + Other", seed: { step: 2, role: "student", email: "student01@example.com", name: "Sample Student", levels: ["o_level"], subjects: ["biology", "physics"], boards: ["caie"] } },
+  { cap: "Step 2, student, mobile sheet", seed: { step: 2, role: "student", email: "student01@example.com", name: "Sample Student", levels: ["o_level"], subjects: ["biology"] }, mobile: true },
+  { cap: "Step 2, picker open, searching", seed: { step: 2, role: "student", email: "student01@example.com", name: "Sample Student", subjects: ["biology", "french"], pickerOpen: true } },
+  { cap: "Step 2, centre administrator (no session)", seed: { step: 2, role: "centre_admin", email: "centre04@example.com", name: "Centre Example", levels: ["o_level", "a_level"], subjects: ["chemistry", "economics"], centre: "Example Learning Centre" } },
+  { cap: "Step 2, parent, error, mobile", seed: { step: 2, role: "parent", email: "parent03@example.com", name: "Parent Example", errors: { subjects: "Pick at least one subject." } }, mobile: true },
+  { cap: "Step 2, teacher, a selected subject kept visible + phone error", seed: { step: 2, role: "teacher", email: "teacher02@example.com", name: "Teacher Example", levels: ["as_level", "a_level"], subjects: ["french"], otherSubjects: ["Robotics"], phone: "12", whatsapp: true, errors: { phone: "That number looks too short or too long." } } },
+  { cap: "Step 2, submitting", seed: { step: 2, role: "student", email: "student01@example.com", name: "Sample Student", subjects: ["biology"], status: "submitting" } },
+  { cap: "Success, student (Binny), mobile", seed: { step: "done", role: "student", email: "student01@example.com", name: "Sample Student" }, mobile: true },
+  { cap: "Success, teacher", seed: { step: "done", role: "teacher", email: "teacher02@example.com", name: "Teacher Example" } },
+  { cap: "Success, parent", seed: { step: "done", role: "parent", email: "parent03@example.com", name: "Parent Example" } },
+  { cap: "Success, centre administrator", seed: { step: "done", role: "centre_admin", email: "centre04@example.com", name: "Centre Example" } },
 ]
 
 function Gallery() {
   return (
-    <div className="lw-light lw-gallery">
+    <div className="lw-gallery">
       {SCENES.map((s) => (
         <figure key={s.cap}>
           <figcaption>{s.cap}</figcaption>
-          <div className={`lw-frame ${s.mobile ? "mobile" : ""} lw-light flex flex-col`} style={{ background: "var(--md-surface-container-lowest)", boxShadow: "var(--shadow-panel)", maxHeight: 780, maxWidth: s.mobile ? 390 : 560 }}>
+          <div className={`lw-frame ${s.mobile ? "mobile" : ""} flex flex-col`} style={{ background: "var(--md-surface-container-lowest)", boxShadow: "var(--shadow-panel)", maxHeight: 780, maxWidth: s.mobile ? 390 : 560 }}>
             {s.mobile ? <div className="lw-grab" aria-hidden /> : null}
             <WaitlistPanel seed={s.seed} mobile={s.mobile} client={fakeClient} onClose={() => {}} />
           </div>
@@ -83,11 +83,11 @@ export function Preview() {
       {bare ? null : <div className="lw-bar" role="toolbar" aria-label="Preview controls">
         <b>Waitlist preview</b>
         <span className="grp">{P("Landing + live dialog", view === "landing", () => setView("landing"))}{P("All modal states", view === "modal", () => setView("modal"))}{P("Admin queue", view === "admin", () => setView("admin"))}</span>
-        <span className="grp"><b>App theme</b>{P("Light", theme === "light", () => setTheme("light"))}{P("Dark", theme === "dark", () => setTheme("dark"))}</span>
+        <span className="grp"><b>Signed-in theme</b>{P("Light", theme === "light", () => setTheme("light"))}{P("Dark", theme === "dark", () => setTheme("dark"))}</span>
         {view === "admin" ? <span className="grp"><b>State</b>{(["data", "loading", "empty", "error"] as const).map((s) => P(s, admin === s, () => { qs.set("admin", s); location.search = qs.toString() }))}</span> : null}
         {view === "landing" ? <span className="grp"><span>Try emails containing "dup", "rate" or "offline" in the live dialog.</span></span> : null}
       </div>}
-      {!bare && theme === "dark" && view !== "admin" ? <div className="lw-theme-demo"><b>Proof of light-only.</b> This strip follows the app theme (dark now). The landing and dialog below keep the light roles.</div> : null}
+      {!bare && theme === "dark" && view !== "admin" ? <div className="lw-theme-demo"><b>Signed-in dark.</b> The root rule is signed in ? preference : light. A signed-out visitor is always light, so this view shows what a signed-in dark user sees.</div> : null}
       <WaitlistClientContext.Provider value={fakeClient}>
         {view === "landing" ? <RouterProvider router={router} /> : null}
       </WaitlistClientContext.Provider>

@@ -65,6 +65,9 @@ export function BrandLockup({
         size === "sm" ? "wordmark-sm" : "wordmark-md",
         className,
       )}
+      // `aria-label` is not allowed on a bare div/span (axe `aria-prohibited-attr`): an image when it is
+      // only the mark, a group when a caller adds content after the wordmark.
+      role={children ? "group" : "img"}
       aria-label={casing === "lower" ? "lemely" : "Lemely"}
     >
       <span className="inline-flex items-end">

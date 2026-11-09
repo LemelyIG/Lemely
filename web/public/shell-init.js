@@ -33,8 +33,20 @@
     // this file cannot import that module (it runs before any bundle
     // exists), so the table is duplicated here in plain ES5;
     // `tests/unit/themeInit.test.ts` pins the two against each other.
+    // The one rule (`resolveEffectiveTheme` in theme.ts): signed in ? preference : light.
+    // "Signed in" is whatever `lib/auth/storage.ts` persists synchronously: a parseable
+    // `lemely.session` object. No stored session means light, never OS dark.
+    var signedIn = false
+    try {
+      var storedSession = localStorage.getItem("lemely.session")
+      signedIn = !!storedSession && JSON.parse(storedSession) !== null
+    } catch (sessionError) {
+      signedIn = false
+    }
     var resolvedTheme
-    if (storedTheme === "light") {
+    if (!signedIn) {
+      resolvedTheme = "light"
+    } else if (storedTheme === "light") {
       resolvedTheme = "light"
     } else if (storedTheme === "dark") {
       resolvedTheme = "dark"

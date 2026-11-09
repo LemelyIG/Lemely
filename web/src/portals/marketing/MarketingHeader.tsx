@@ -134,7 +134,7 @@ export function MarketingHeader() {
               </Button>
             </SheetTrigger>
             <SheetContent
-              className="marketing-brand lw-light brand-menu"
+              className="marketing-brand brand-menu"
               showCloseButton={false}
             >
               <SheetClose asChild>

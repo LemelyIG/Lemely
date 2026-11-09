@@ -3,10 +3,16 @@ import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 
 import {
+  WAITLIST_LIMITS,
+  WAITLIST_NAME_REQUIRED,
+  WAITLIST_NAME_TOO_LONG,
   WAITLIST_PHONE_MESSAGE,
+  normaliseWaitlistName,
   normaliseWaitlistPhone,
   parseFieldErrors,
+  validateWaitlistName,
   validateWaitlistPhone,
+  waitlistFirstName,
 } from "../../src/lib/waitlist-api"
 
 /*
@@ -51,5 +57,38 @@ describe("parseFieldErrors", () => {
   it("is empty for anything else", () => {
     expect(parseFieldErrors(null)).toEqual({})
     expect(parseFieldErrors({ detail: "turnstile_failed" })).toEqual({})
+  })
+})
+
+describe("waitlist name rules (the server's: 1 to 100 characters after trimming, unicode allowed)", () => {
+  it("is required: blank or whitespace is refused", () => {
+    expect(validateWaitlistName("")).toBe(WAITLIST_NAME_REQUIRED)
+    expect(validateWaitlistName("   \t ")).toBe(WAITLIST_NAME_REQUIRED)
+  })
+
+  it("accepts one character, the cap, and unicode names", () => {
+    expect(validateWaitlistName("A")).toBeNull()
+    expect(validateWaitlistName("x".repeat(WAITLIST_LIMITS.name))).toBeNull()
+    expect(validateWaitlistName("مريم أحمد")).toBeNull()
+    expect(validateWaitlistName("Zoë O'Brien-Smith")).toBeNull()
+  })
+
+  it("counts characters after trimming and collapsing, not raw length", () => {
+    expect(validateWaitlistName("  " + "x".repeat(WAITLIST_LIMITS.name) + "  ")).toBeNull()
+    expect(validateWaitlistName("x".repeat(WAITLIST_LIMITS.name + 1))).toBe(WAITLIST_NAME_TOO_LONG)
+    expect(validateWaitlistName("😀".repeat(WAITLIST_LIMITS.name))).toBeNull()
+  })
+
+  it("normalises to trimmed text with inner whitespace collapsed", () => {
+    expect(normaliseWaitlistName("  Sam   Student ")).toBe("Sam Student")
+  })
+
+  it("greets by the first word", () => {
+    expect(waitlistFirstName("  Sam   Student ")).toBe("Sam")
+    expect(waitlistFirstName("")).toBe("")
+  })
+
+  it("maps a server 422 on name to the name field", () => {
+    expect(parseFieldErrors({ detail: [{ loc: ["body", "name"], msg: "String should have at least 1 character" }] }).name).toBeTruthy()
   })
 })

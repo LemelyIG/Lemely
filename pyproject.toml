@@ -383,6 +383,7 @@ module = [
   "lemely.web.schemas_invites",
   "lemely.web.schemas_client_errors",
   "lemely.web.schemas_contact",
+  "lemely.web.schemas_access",
   "lemely.web.schemas_widget",
   "lemely.web.schemas_tutoring",
   "lemely.web.schemas_tutoring_admin",

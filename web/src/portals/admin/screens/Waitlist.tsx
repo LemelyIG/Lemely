@@ -1,12 +1,13 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
-import { useEffect, useMemo, useState, type ReactNode } from "react"
-import { createPortal } from "react-dom"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   ArrowDown,
   ArrowUp,
   CaretLeft,
   CaretRight,
+  Check,
+  Copy,
   DownloadSimple,
   MagnifyingGlass,
   WarningCircle,
@@ -23,6 +24,7 @@ import { ListSkeleton } from "@/components/ui/loading-shapes"
 import { adminLoadFailureMessage } from "@/lib/adminOutcome"
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
 import {
   WAITLIST_BOARDS,
   WAITLIST_BOARD_LABELS,
@@ -54,29 +56,11 @@ import {
  * (`WaitlistQueueView`: everything drawn) so the dev preview and the tests can render
  * every state without a backend.
  *
- * Rows are one line each. The table shares the screen with a 380px side panel, so the
- * subject, board and session cells truncate or abbreviate and carry the full text in a
- * `title`; the side panel always has the whole value.
+ * Rows are one line each, so the subject, board and session cells truncate or abbreviate and
+ * carry the full text in a `title`. A row opens a right-hand sheet (the shared `Sheet`, full
+ * screen on a phone) that shows everything collected about the applicant, grouped, with the
+ * status and note editable in place.
  */
-
-/** Below `lg` the applicant panel is a full-screen overlay; from `lg` it sits beside the table. */
-function useWide(): boolean {
-  const query = "(min-width: 1024px)"
-  const [wide, setWide] = useState(() => window.matchMedia(query).matches)
-  useEffect(() => {
-    const mq = window.matchMedia(query)
-    const on = () => setWide(mq.matches)
-    mq.addEventListener("change", on)
-    return () => mq.removeEventListener("change", on)
-  }, [])
-  return wide
-}
-
-function PanelHost({ wide, children }: { wide: boolean; children: ReactNode }) {
-  // A portal, not `position: fixed` in place: an ancestor with a transform (the screen
-  // entrance animation) would otherwise become the overlay's containing block.
-  return wide ? children : createPortal(children, document.body)
-}
 
 const SHORT_ROLE: Record<WaitlistApplicant["role"], string> = {
   student: "Student",
@@ -188,14 +172,12 @@ export function WaitlistQueueView({
   actionError,
   onDismissError,
 }: WaitlistQueueViewProps) {
-  const wide = useWide()
   const items = useMemo(() => page.items, [page])
   const counts = page.counts
   const [emailDraft, setEmailDraft] = useState(query.q ?? "")
   const [range, setRange] = useState("")
   const sessions = useMemo(() => examSessionOptions(), [])
   const idx = items.findIndex((r) => r.id === selectedId)
-  const current = idx >= 0 ? items[idx] : undefined
   const sort: WaitlistSort = query.sort ?? "created_at"
   const order = query.order ?? "desc"
   const status = query.status ?? "all"
@@ -214,7 +196,6 @@ export function WaitlistQueueView({
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
       if (/INPUT|TEXTAREA|SELECT/.test(t.tagName) || selectedId === null) return
-      if (e.key === "Escape") onSelect(null)
       if (e.key === "j" || e.key === "ArrowDown") {
         e.preventDefault()
         onSelect(items[Math.min(items.length - 1, idx + 1)]?.id ?? null)
@@ -227,6 +208,12 @@ export function WaitlistQueueView({
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
   }, [selectedId, idx, items, onSelect])
+
+  // Closing the sheet returns focus to the row that opened it (Radix would look for a trigger).
+  const focusRow = (id: string | null) => {
+    if (id === null) return
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`tr[data-row-id="${CSS.escape(id)}"]`)?.focus())
+  }
 
   const clear = () => {
     setEmailDraft("")
@@ -295,9 +282,9 @@ export function WaitlistQueueView({
 
       <div className="grid grid-cols-2 items-end gap-3 sm:grid-cols-4 2xl:grid-cols-8">
         <Input
-          label="Email"
+          label="Search"
           type="search"
-          placeholder="Search email"
+          placeholder="Name or email"
           value={emailDraft}
           onChange={(e) => setEmailDraft(e.target.value)}
           leadingIcon={<MagnifyingGlass size={16} aria-hidden />}
@@ -356,7 +343,7 @@ export function WaitlistQueueView({
         </p>
       ) : null}
 
-      <div className={current ? "grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_380px]" : ""}>
+      <div>
         <div className="flex min-w-0 flex-col gap-3">
           {total === 0 && !filtersActive ? (
             <EmptyState
@@ -374,6 +361,7 @@ export function WaitlistQueueView({
               <Table density="operate">
                 <THead>
                   <TR>
+                    <TH className="px-2.5" aria-sort={ariaSort("name")} style={{ minWidth: 140 }}>{sortBtn("name", "Name")}</TH>
                     <TH className="px-2.5" aria-sort={ariaSort("email")} style={{ minWidth: 184 }}>{sortBtn("email", "Email")}</TH>
                     <TH className="px-2.5" aria-sort={ariaSort("role")} style={{ width: 72 }}>{sortBtn("role", "Role")}</TH>
                     <TH className="px-2.5" style={{ minWidth: 120 }}>Subjects</TH>
@@ -385,7 +373,10 @@ export function WaitlistQueueView({
                 </THead>
                 <TBody>
                   {items.map((r) => (
-                    <TR key={r.id} selected={r.id === selectedId} onClick={() => onSelect(r.id)} aria-label={r.email}>
+                    <TR key={r.id} data-row-id={r.id} selected={r.id === selectedId} onClick={() => onSelect(r.id)} aria-label={r.name ? `${r.name}, ${r.email}` : r.email}>
+                      <TD className="max-w-48 truncate px-2.5 text-body-sm font-medium" title={r.name ?? "No name given"}>
+                        {r.name ?? <span className="text-on-surface-variant">-</span>}
+                      </TD>
                       <TD className="lw-mono whitespace-nowrap px-2.5 text-[13px]" title={r.emailConfirmed ? r.email : `${r.email} (email not confirmed)`}>
                         {r.email}
                         {r.emailConfirmed ? null : (
@@ -409,7 +400,7 @@ export function WaitlistQueueView({
               </Table>
               <div className="flex flex-wrap items-center justify-between gap-2 text-body-sm text-on-surface-variant">
                 <span>
-                  Showing {(pageNo - 1) * pageSize + 1} to {Math.min(total, pageNo * pageSize)} of {total}. Select a row, then <Kbd>j</Kbd> <Kbd>k</Kbd> move between applicants and <Kbd>Esc</Kbd> closes the panel.
+                  Showing {(pageNo - 1) * pageSize + 1} to {Math.min(total, pageNo * pageSize)} of {total}. Select a row, then <Kbd>j</Kbd> <Kbd>k</Kbd> move between applicants and <Kbd>Esc</Kbd> closes the sheet.
                 </span>
                 {total > pageSize ? (
                   <span className="flex gap-1">
@@ -422,58 +413,175 @@ export function WaitlistQueueView({
           )}
         </div>
 
-        {current ? (
-          <PanelHost wide={wide}>
-          <aside
-            aria-label={`Applicant ${current.email}`}
-            className="flex flex-col border border-outline-variant bg-surface-container-lowest max-lg:fixed max-lg:inset-0 max-lg:z-modal lg:sticky lg:top-4 lg:max-h-[calc(100dvh-2rem)] lg:rounded-xl"
-          >
-            <div className="flex items-center justify-between gap-2 border-b border-outline-variant p-3">
-              <div className="flex gap-1">
-                <Button variant="ghost" aria-label="Previous applicant" className="min-h-11 min-w-11" disabled={idx === 0} onClick={() => onSelect(items[idx - 1].id)}><CaretLeft size={18} /></Button>
-                <Button variant="ghost" aria-label="Next applicant" className="min-h-11 min-w-11" disabled={idx === items.length - 1} onClick={() => onSelect(items[idx + 1].id)}><CaretRight size={18} /></Button>
-              </div>
-              <span className="lw-mono text-[12px] text-on-surface-variant">{idx + 1} of {items.length}</span>
-              <Button variant="ghost" aria-label="Close panel" className="min-h-11 min-w-11" onClick={() => onSelect(null)}><X size={18} /></Button>
-            </div>
-            <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-5">
-              <div className="flex flex-col gap-2">
-                <h2 className="lw-mono m-0 break-all text-[16px] font-semibold">{current.email}</h2>
-                <div className="flex flex-wrap gap-1.5">
-                  <Chip tone="accent">{WAITLIST_ROLE_LABELS[current.role]}</Chip>
-                  {current.partial ? <Chip tone="neutral">Partial: stopped after step 1</Chip> : null}
-                  {current.emailConfirmed ? null : <Chip tone="neutral">Unconfirmed</Chip>}
-                </div>
-              </div>
-              <Select label="Status" value={current.status} onChange={(e) => onUpdate(current.id, { status: e.target.value as WaitlistStatus })}>
-                {WAITLIST_STATUSES.map((s) => <option key={s} value={s}>{s[0].toUpperCase() + s.slice(1)}</option>)}
-              </Select>
-              <NoteField applicant={current} onCommit={(adminNote) => onUpdate(current.id, { adminNote })} />
-              <dl className="m-0 grid grid-cols-[96px_1fr] gap-x-3 gap-y-3 text-body-sm">
-                {([
-                  ["Levels", current.levels.map((l) => WAITLIST_LEVEL_LABELS[l]).join(", ")],
-                  ["Subjects", subjectsText(current)],
-                  ["Exam board", current.examBoards.map((b) => WAITLIST_BOARD_LABELS[b]).join(", ")],
-                  ["Session", sessionLabel(current.examSession)],
-                  ["Centre", current.centreName ?? ""],
-                  ["Phone", current.phone ? `${current.phone}${current.phoneHasWhatsapp ? " (WhatsApp)" : ""}` : ""],
-                  ["Source", current.utmSource ? `utm_source=${current.utmSource}` : "Direct"],
-                  ["Applied", fullDate(current.createdAt)],
-                  ["Consent", `"${current.consentText}" Saved ${shortDate(current.consentAt)}.`],
-                ] as const).map(([k, v]) => (
-                  <div key={k} className="contents">
-                    <dt className="lw-label self-start pt-0.5">{k}</dt>
-                    <dd className={`m-0 break-words ${k === "Phone" || k === "Applied" ? "lw-mono" : ""} ${v ? "" : "text-on-surface-variant"}`}>{v || "Not provided"}</dd>
-                  </div>
-                ))}
-              </dl>
-              <p className="m-0 text-body-sm text-on-surface-variant">Phone numbers are shown to platform admins only and never go in the daily digest.</p>
-            </div>
-          </aside>
-          </PanelHost>
-        ) : null}
+        <ApplicantSheet
+          items={items}
+          index={idx}
+          onSelect={onSelect}
+          onUpdate={onUpdate}
+          onClosed={focusRow}
+        />
       </div>
     </div>
+  )
+}
+
+function CopyButton({ value, label }: { value: string; label: string }) {
+  const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    if (!copied) return
+    const t = setTimeout(() => setCopied(false), 1600)
+    return () => clearTimeout(t)
+  }, [copied])
+  return (
+    <button
+      type="button"
+      className="-my-2.5 inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1 rounded-lg px-2 text-body-sm font-semibold text-on-primary-container transition-colors hover:bg-surface-container-low focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+      aria-label={label}
+      onClick={() => {
+        void navigator.clipboard?.writeText(value).then(() => setCopied(true), () => undefined)
+      }}
+    >
+      {copied ? <Check size={16} aria-hidden /> : <Copy size={16} aria-hidden />}
+      <span aria-live="polite">{copied ? "Copied" : ""}</span>
+    </button>
+  )
+}
+
+type Detail = { label: string; value: string; mono?: boolean; copy?: string }
+
+function DetailGroup({ title, rows }: { title: string; rows: Detail[] }) {
+  return (
+    <section aria-label={title} className="flex flex-col gap-3 border-t border-outline-variant pt-5">
+      <h3 className="m-0 text-[16px] font-bold leading-snug text-on-surface">{title}</h3>
+      <dl className="m-0 grid grid-cols-[104px_minmax(0,1fr)] gap-x-3 gap-y-2.5 text-body-sm">
+        {rows.map((r) => (
+          <div key={r.label} className="contents">
+            <dt className="lw-label self-start pt-1.5">{r.label}</dt>
+            <dd className={`m-0 flex min-w-0 items-start justify-between gap-2 break-words pt-1 ${r.mono ? "lw-mono" : ""} ${r.value ? "" : "text-on-surface-variant"}`}>
+              <span className="min-w-0 break-words">{r.value || "Not provided"}</span>
+              {r.copy ? <CopyButton value={r.copy} label={`Copy ${r.label.toLowerCase()}`} /> : null}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  )
+}
+
+const yesNo = (v: boolean) => (v ? "Yes" : "No")
+
+/** The detail sheet: everything collected about one applicant, grouped, with status and note editable. */
+function ApplicantSheet({
+  items,
+  index,
+  onSelect,
+  onUpdate,
+  onClosed,
+}: {
+  items: WaitlistApplicant[]
+  index: number
+  onSelect: (id: string | null) => void
+  onUpdate: (id: string, update: WaitlistUpdate) => void
+  /** Called with the id that was open once the sheet has closed, so the row can take focus back. */
+  onClosed: (id: string | null) => void
+}) {
+  const current = index >= 0 ? items[index] : undefined
+  const lastId = useRef<string | null>(null)
+  if (current) lastId.current = current.id
+  return (
+    <Sheet open={Boolean(current)} onOpenChange={(open) => !open && onSelect(null)}>
+      {current ? (
+        <SheetContent
+          side="right"
+          showCloseButton={false}
+          className="w-full gap-0 p-0 sm:max-w-[560px]"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault()
+            onClosed(lastId.current)
+          }}
+        >
+          <div className="flex items-center justify-between gap-2 border-b border-outline-variant p-3">
+            <div className="flex gap-1">
+              <Button variant="ghost" aria-label="Previous applicant" className="min-h-11 min-w-11" disabled={index === 0} onClick={() => onSelect(items[index - 1].id)}><CaretLeft size={18} /></Button>
+              <Button variant="ghost" aria-label="Next applicant" className="min-h-11 min-w-11" disabled={index === items.length - 1} onClick={() => onSelect(items[index + 1].id)}><CaretRight size={18} /></Button>
+            </div>
+            <span className="lw-mono text-[12px] text-on-surface-variant">{index + 1} of {items.length}</span>
+            <Button variant="ghost" aria-label="Close applicant" className="min-h-11 min-w-11" onClick={() => onSelect(null)}><X size={18} /></Button>
+          </div>
+          <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-5">
+            <div className="flex flex-col gap-2">
+              <SheetTitle className="m-0 break-words text-display-sm">{current.name ?? "No name given"}</SheetTitle>
+              <SheetDescription className="lw-mono m-0 break-all text-[13px]">{current.email}</SheetDescription>
+              <div className="flex flex-wrap gap-1.5">
+                <Chip tone="accent">{WAITLIST_ROLE_LABELS[current.role]}</Chip>
+                {current.partial ? <Chip tone="neutral">Partial: stopped after step 1</Chip> : null}
+                {current.emailConfirmed ? null : <Chip tone="neutral">Unconfirmed</Chip>}
+              </div>
+            </div>
+            <Select label="Status" value={current.status} onChange={(e) => onUpdate(current.id, { status: e.target.value as WaitlistStatus })}>
+              {WAITLIST_STATUSES.map((st) => <option key={st} value={st}>{st[0].toUpperCase() + st.slice(1)}</option>)}
+            </Select>
+            <NoteField applicant={current} onCommit={(adminNote) => onUpdate(current.id, { adminNote })} />
+            <DetailGroup
+              title="Applicant"
+              rows={[
+                { label: "Name", value: current.name ?? "" },
+                { label: "Email", value: current.email, mono: true, copy: current.email },
+                { label: "Role", value: WAITLIST_ROLE_LABELS[current.role] },
+                { label: "Centre name", value: current.centreName ?? "" },
+              ]}
+            />
+            <DetailGroup
+              title="Study"
+              rows={[
+                { label: "Levels", value: current.levels.map((l) => WAITLIST_LEVEL_LABELS[l]).join(", ") },
+                { label: "Subjects", value: current.subjects.map(waitlistSubjectLabel).join(", ") },
+                { label: "Other subjects", value: current.otherSubjects.join(", ") },
+                { label: "Exam boards", value: current.examBoards.map((b) => WAITLIST_BOARD_LABELS[b]).join(", ") },
+                { label: "Exam session", value: sessionLabel(current.examSession) },
+              ]}
+            />
+            <DetailGroup
+              title="Contact"
+              rows={[
+                { label: "Phone", value: current.phone ?? "", mono: true, copy: current.phone ?? undefined },
+                { label: "WhatsApp", value: current.phone ? yesNo(current.phoneHasWhatsapp) : "" },
+                { label: "Email confirmed", value: yesNo(current.emailConfirmed) },
+              ]}
+            />
+            <DetailGroup
+              title="Consent"
+              rows={[
+                { label: "Version", value: current.consentVersion, mono: true },
+                { label: "Wording", value: current.consentText },
+                { label: "Consented at", value: fullDate(current.consentAt), mono: true },
+              ]}
+            />
+            <DetailGroup
+              title="Source"
+              rows={[
+                { label: "utm_source", value: current.utmSource ?? "", mono: true },
+                { label: "utm_medium", value: current.utmMedium ?? "", mono: true },
+                { label: "utm_campaign", value: current.utmCampaign ?? "", mono: true },
+                { label: "utm_content", value: current.utmContent ?? "", mono: true },
+                { label: "utm_term", value: current.utmTerm ?? "", mono: true },
+              ]}
+            />
+            <DetailGroup
+              title="Record"
+              rows={[
+                { label: "Created", value: fullDate(current.createdAt), mono: true },
+                { label: "Updated", value: fullDate(current.updatedAt), mono: true },
+                { label: "Completed", value: current.completedAt ? fullDate(current.completedAt) : "", mono: true },
+                { label: "Partial", value: current.partial ? "Yes: stopped after step 1" : "No" },
+                { label: "ID", value: current.id, mono: true },
+              ]}
+            />
+            <p className="m-0 text-body-sm text-on-surface-variant">Phone numbers are shown to platform admins only and never go in the daily digest.</p>
+          </div>
+        </SheetContent>
+      ) : null}
+    </Sheet>
   )
 }
 

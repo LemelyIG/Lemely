@@ -880,3 +880,26 @@ def test_get_storage_backend_hands_the_project_number_to_gcs(
     finally:
         monkeypatch.undo()
         reset_singletons()
+
+
+# ---------------------------------------------------------------------------
+# list_objects (the account purge's prefix sweep)
+# ---------------------------------------------------------------------------
+
+
+def test_list_objects_lists_blobs_under_the_prefix() -> None:
+    client = MagicMock()
+    blobs = [MagicMock(), MagicMock()]
+    blobs[0].name, blobs[1].name = "uploads/u/b.pdf", "uploads/u/a.pdf"
+    client.list_blobs.return_value = blobs
+    keys = GcsStorageBackend(_client=client).list_objects("b", "uploads/u/")
+    assert keys == ["uploads/u/a.pdf", "uploads/u/b.pdf"]
+    client.list_blobs.assert_called_once_with("b", prefix="uploads/u/")
+
+
+def test_list_objects_checks_the_evidence_bucket_is_private_before_listing() -> None:
+    client = MagicMock()
+    client.get_bucket.return_value = _bucket_metadata(None, uniform=True)  # not private
+    with pytest.raises(Exception, match=r"(?i)public|private|prevent"):
+        _evidence_backend(client).list_objects(_EVIDENCE, "tutor-evidence/t/")
+    client.list_blobs.assert_not_called()

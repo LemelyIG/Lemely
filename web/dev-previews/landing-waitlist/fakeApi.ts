@@ -11,7 +11,7 @@ const json = (body: unknown, status = 200) =>
 function page(q: URLSearchParams, mode: AdminMode): WaitlistPage {
   const base = (mode === "empty" ? [] : rows).filter(
     (r) =>
-      (!q.get("q") || r.email.includes(q.get("q")!.toLowerCase())) &&
+      (!q.get("q") || r.email.includes(q.get("q")!.toLowerCase()) || (r.name ?? "").toLowerCase().includes(q.get("q")!.toLowerCase())) &&
       (!q.get("role") || r.role === q.get("role")) &&
       (!q.get("level") || r.levels.includes(q.get("level") as never)) &&
       (!q.get("subject") || r.subjects.includes(q.get("subject")!) || (q.get("subject") === "other" && r.otherSubjects.length > 0)) &&
@@ -24,7 +24,7 @@ function page(q: URLSearchParams, mode: AdminMode): WaitlistPage {
   const counts = { all: base.length, new: c((r) => r.status === "new"), contacted: c((r) => r.status === "contacted"), invited: c((r) => r.status === "invited"), declined: c((r) => r.status === "declined"), partial: c((r) => r.partial) }
   const status = q.get("status") as WaitlistQuery["status"] | null
   const items = base.filter((r) => !status || (status === "partial" ? r.partial : r.status === status))
-  const key = ({ created_at: "createdAt", email: "email", role: "role", status: "status", exam_session: "examSession" } as const)[(q.get("sort") as never) ?? "created_at"]
+  const key = ({ created_at: "createdAt", email: "email", name: "name", role: "role", status: "status", exam_session: "examSession" } as const)[(q.get("sort") as never) ?? "created_at"]
   items.sort((a, b) => ((a[key] ?? "") < (b[key] ?? "") ? -1 : 1) * (q.get("order") === "asc" ? 1 : -1))
   return { items, total: items.length, page: 1, pageSize: 50, counts }
 }

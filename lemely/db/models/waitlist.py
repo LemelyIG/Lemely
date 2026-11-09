@@ -1,6 +1,6 @@
 """ORM model for the public landing-page waitlist (migration ``0052_waitlist_applicants``).
 
-One row per applicant. Step 1 of the two-step form creates the row with an email and a role
+One row per applicant. Step 1 of the two-step form creates the row with an email, a name and a role
 (``completed_at`` NULL, a partial applicant); step 2 fills the rest with a one-time completion
 token whose SHA-256 digest is stored here and cleared on use. The consent wording shown to the
 applicant and the instant they accepted it are kept per row so the policy can change later
@@ -59,6 +59,8 @@ class WaitlistApplicant(TimestampMixin, Base):
         UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")
     )
     email: Mapped[str] = mapped_column(sa.String(254), nullable=False)
+    #: Applicant's name from step 1; NULL only for rows created before migration 0053.
+    name: Mapped[str | None] = mapped_column(sa.String(100))
     role: Mapped[WaitlistRole] = mapped_column(
         sa.Enum(WaitlistRole, name="waitlistrole"), nullable=False
     )

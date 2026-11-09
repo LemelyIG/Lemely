@@ -52,3 +52,20 @@ export function resolveTheme(pref: ThemePreference, systemPrefersDark: boolean):
   if (pref === "system") return systemPrefersDark ? "dark" : "light"
   return pref
 }
+
+/**
+ * The one rule behind every surface and state: **effective theme = signed in ? the user's
+ * preference : light.** An anonymous visitor (landing, sign-in, error and loading states, the
+ * coming-soon screen, every portalled popup) is never shown dark, whatever the OS says. A
+ * signed-in user gets their own choice, resolved exactly as `resolveTheme` does. The
+ * `data-theme` attribute on `<html>` carries the result, so every portal inherits it.
+ * `public/shell-init.js` repeats this rule in ES5 for the paint before the bundle loads;
+ * `themeInit.test.ts` pins the two together.
+ */
+export function resolveEffectiveTheme(
+  signedIn: boolean,
+  pref: ThemePreference,
+  systemPrefersDark: boolean,
+): ResolvedTheme {
+  return signedIn ? resolveTheme(pref, systemPrefersDark) : "light"
+}

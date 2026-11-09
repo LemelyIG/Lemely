@@ -462,4 +462,14 @@ describe("the shell's brand mark is the v5 Clip Letters paperclip, not the retir
     expect(wordmark).not.toContain("lm-shell-mark-pulse")
     expect(REAL_INDEX_HTML.match(/class="lm-shell-mark lm-shell-mark-pulse"/g)).toHaveLength(1)
   })
+
+  it("keys the shell's dark paint on data-theme alone, so an anonymous visitor never gets dark from the OS", () => {
+    // The theme rule (signed in ? preference : light) is decided in public/shell-init.js and
+    // written to <html data-theme>. If the shell also reacted to prefers-color-scheme, an
+    // anonymous visitor on a dark OS would see a dark loading shell before React mounts.
+    const html = readFileSync(join(ROOT, "index.html"), "utf8")
+    expect(html).not.toMatch(/prefers-color-scheme/)
+    expect(html).toMatch(/\[data-theme="dark"\] #root/)
+  })
+
 })

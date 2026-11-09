@@ -25,8 +25,10 @@ from pydantic import (
 from lemely.core.waitlist import (
     ALL_SUBJECTS,
     CONSENT_VERSIONS,
+    MAX_NAME_LENGTH,
     MAX_OTHER_SUBJECT_LENGTH,
     MAX_OTHER_SUBJECTS,
+    clean_name,
     is_valid_exam_session,
     normalise_email,
     normalise_phone,
@@ -43,7 +45,7 @@ LevelLit = Literal["o_level", "as_level", "a_level"]
 BoardLit = Literal["caie", "edexcel", "oxford_aqa", "other"]
 StatusLit = Literal["new", "contacted", "invited", "declined"]
 StatusFilterLit = Literal["new", "contacted", "invited", "declined", "partial"]
-SortLit = Literal["created_at", "email", "role", "status", "exam_session"]
+SortLit = Literal["created_at", "email", "name", "role", "status", "exam_session"]
 
 
 def _clean(value: object) -> object:
@@ -85,6 +87,13 @@ def _e164(value: str | None) -> str | None:
     return number
 
 
+def _name(value: str) -> str:
+    return clean_name(value)
+
+
+# ``max_length`` here is a cheap guard against huge bodies; the real 1-100 rule runs on the
+# trimmed, whitespace-collapsed text in ``clean_name`` (so padding never counts).
+PersonName = Annotated[str, Field(max_length=MAX_NAME_LENGTH * 4), AfterValidator(_name)]
 Email = Annotated[
     str,
     BeforeValidator(_strip),
@@ -144,9 +153,10 @@ Honeypot = Annotated[Annotated[str, Field(max_length=200)] | None, BeforeValidat
 
 
 class WaitlistCreateDTO(ApiModel):
-    """Step 1: email, role, consent wording and the arrival's UTM tags."""
+    """Step 1: email, name, role, consent wording and the arrival's UTM tags."""
 
     email: Email
+    name: PersonName
     role: RoleLit
     consentVersion: Annotated[str, Field(min_length=1, max_length=40)]
     utmSource: ShortText = None
@@ -220,6 +230,7 @@ class WaitlistApplicantDTO(ApiModel):
 
     id: UUID
     email: str
+    name: str | None
     role: RoleLit
     centreName: str | None
     levels: list[str]

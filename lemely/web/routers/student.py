@@ -50,6 +50,7 @@ from lemely.core.history import (
     is_paper,
 )
 from lemely.core.loose_schemas import MarkScheme
+from lemely.core.object_keys import sibling_scheme_key
 from lemely.core.schemas import ExamMetadata, WeaknessReport
 from lemely.db.attempt_repo import AttemptRepository, UploadDeletedError
 from lemely.db.class_repo import ClassService, JoinCodeError
@@ -1038,7 +1039,7 @@ def student_correct(
 
                 # A sibling mark_scheme.pdf, if the student uploaded one, lives
                 # next to the scan under the same object-key prefix.
-                scheme_object_path = f"{Path(owned.storage_path).parent.as_posix()}/mark_scheme.pdf"
+                scheme_object_path = sibling_scheme_key(owned.storage_path)
                 sibling_scheme: Path | None = None
                 try:
                     scheme_bytes = storage_backend.download(

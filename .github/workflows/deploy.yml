@@ -437,6 +437,11 @@ jobs:
           # above. Generate the pair with `lemely push-keygen`; rotating it
           # invalidates every stored subscription (docs/push-notifications.md).
           #
+          # Access gate, pre-launch: only verified @lemelyig.com accounts may sign up, log
+          # in or call an authenticated route, in staging AND production (this one job
+          # deploys both). Everyone else gets 403 access_restricted. To open access at
+          # launch, set the value empty (docs/ci-cd.md, "Access gate").
+          #
           # Waitlist edge protection. Like the keys above, an unset secret renders
           # as the empty string, which `_blank_to_none` maps to None: no edge
           # check, no Turnstile check, digest endpoint answers 404. Safe to merge
@@ -473,6 +478,7 @@ jobs:
             LEMELY_WAITLIST__TURNSTILE_SECRET_KEY=${{ secrets.TURNSTILE_SECRET_KEY }}
             LEMELY_WAITLIST__TURNSTILE_SITE_KEY=${{ secrets.TURNSTILE_SITE_KEY }}
             LEMELY_WAITLIST__DIGEST_SECRET=${{ secrets.WAITLIST_DIGEST_SECRET }}
+            LEMELY_ACCESS__ALLOWED_EMAIL_DOMAINS=lemelyig.com
 
       # Asserts what is SERVING, not what was created. `revision_traffic` above
       # should have sent 100% to the new revision; this step does not trust that.

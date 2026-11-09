@@ -5,7 +5,7 @@ appear here and in nowhere else. Responses are ``private, no-store``.
 
 * ``GET /api/admin/waitlist``: one page plus chip counts. Filters: ``role``, ``level``,
   ``subject``, ``board``, ``session``, ``status`` (a status or ``partial``), ``emailConfirmed``,
-  ``createdFrom`` / ``createdTo`` (inclusive dates), ``q`` (email substring). ``sort`` and
+  ``createdFrom`` / ``createdTo`` (inclusive dates), ``q`` (email or name substring). ``sort`` and
   ``order`` as listed.
 * ``GET /api/admin/waitlist/export.csv``: every column of the filtered set, formula-safe.
 * ``GET /api/admin/waitlist/{id}`` and ``PATCH`` (status and/or note).
@@ -51,6 +51,7 @@ _MAX_PAGE_SIZE: Final = 200
 CSV_COLUMNS: Final = (
     "id",
     "email",
+    "name",
     "role",
     "status",
     "centre_name",
@@ -107,6 +108,7 @@ def _dto(row: WaitlistApplicant) -> WaitlistApplicantDTO:
     return WaitlistApplicantDTO(
         id=row.id,
         email=row.email,
+        name=row.name,
         role=row.role.value,
         centreName=row.centre_name,
         levels=list(row.levels),
@@ -167,6 +169,7 @@ def _csv(rows: Sequence[WaitlistApplicant]) -> str:
         values: dict[str, object] = {
             "id": row.id,
             "email": row.email,
+            "name": row.name,
             "role": row.role.value,
             "status": row.status.value,
             "centre_name": row.centre_name,

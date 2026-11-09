@@ -176,7 +176,13 @@ def admin(client: TestClient) -> TestClient:
 def step1(
     client: TestClient, email: str = "sara@example.com", role: str = "student", **extra: object
 ) -> Response:
-    body = {"email": email, "role": role, "consentVersion": CONSENT_VERSION, **extra}
+    body = {
+        "email": email,
+        "name": "Sara Hassan",
+        "role": role,
+        "consentVersion": CONSENT_VERSION,
+        **extra,
+    }
     return client.post("/api/waitlist", json=body)
 
 
@@ -264,6 +270,78 @@ def test_step1_validation(client: TestClient) -> None:
         client.post("/api/waitlist", json={"email": "a@b.co", "role": "student"}).status_code == 422
     )
     assert step1(client, "a@b.co", extra_field="x").status_code == 422
+
+
+def test_step1_stores_the_name_trimmed_and_collapsed(
+    client: TestClient, sm: sessionmaker[Session]
+) -> None:
+    response = step1(client, "n1@example.com", name="  Sara \u00a0  Ahmed\u2003Hassan  ")
+
+    assert response.status_code == 200
+    assert row_for(sm, "n1@example.com").name == "Sara Ahmed Hassan"
+
+
+@pytest.mark.parametrize("name", ["سارة أحمد", "Zoë Müller-Åberg", "李小龍", "O'Brien Jr."])
+def test_step1_accepts_any_unicode_letters(
+    client: TestClient, sm: sessionmaker[Session], name: str
+) -> None:
+    assert step1(client, "u@example.com", name=name).status_code == 200
+    assert row_for(sm, "u@example.com").name == name
+
+
+def test_step1_name_length_counts_the_trimmed_text(
+    client: TestClient, sm: sessionmaker[Session]
+) -> None:
+    assert step1(client, "l1@example.com", name="a" * 100).status_code == 200
+    padded = "  " + "a" * 50 + "      " + "b" * 49 + "  "  # 50 + 1 + 49 after collapsing
+    assert step1(client, "l2@example.com", name=padded).status_code == 200
+    assert len(row_for(sm, "l2@example.com").name or "") == 100
+    assert step1(client, "l3@example.com", name="a" * 101).status_code == 422
+    assert step1(client, "l4@example.com", name="a" * 5000).status_code == 422
+    assert count_rows(sm) == 2
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        pytest.param({}, id="missing"),
+        pytest.param({"name": ""}, id="empty"),
+        pytest.param({"name": "   \u00a0 "}, id="blank"),
+        pytest.param({"name": None}, id="null"),
+        pytest.param({"name": 7}, id="not-a-string"),
+        pytest.param({"name": "Sara\x00"}, id="nul"),
+        pytest.param({"name": "Sara\nHassan"}, id="newline"),
+        pytest.param({"name": "Sara\tHassan"}, id="tab"),
+        pytest.param({"name": "Sara\x7f"}, id="delete"),
+        pytest.param({"name": "Sara\x85Hassan"}, id="c1-control"),
+    ],
+)
+def test_step1_refuses_a_bad_name_with_an_inline_field_error(
+    client: TestClient, sm: sessionmaker[Session], bad: dict[str, object]
+) -> None:
+    body: dict[str, object] = {
+        "email": "bad@example.com",
+        "role": "student",
+        "consentVersion": CONSENT_VERSION,
+        **bad,
+    }
+
+    response = client.post("/api/waitlist", json=body)
+
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["body", "name"]
+    assert count_rows(sm) == 0
+
+
+def test_a_duplicate_email_does_not_overwrite_the_stored_name(
+    client: TestClient, sm: sessionmaker[Session]
+) -> None:
+    step1(client, "keep@example.com", name="First Name")
+
+    again = step1(client, "keep@example.com", name="Second Name")
+
+    assert again.json() == {"status": "already_listed"}
+    assert row_for(sm, "keep@example.com").name == "First Name"
 
 
 def test_honeypot_looks_like_success_but_stores_nothing(
@@ -706,6 +784,7 @@ def test_csv_has_every_column_and_respects_filters(admin: TestClient) -> None:
     expected_columns = {
         "id",
         "email",
+        "name",
         "role",
         "status",
         "centre_name",
@@ -731,9 +810,87 @@ def test_csv_has_every_column_and_respects_filters(admin: TestClient) -> None:
         "updated_at",
     }
     assert set(rows[0]) == expected_columns
+    assert list(rows[0])[:3] == ["id", "email", "name"]  # name sits right after email
+    assert rows[0]["name"] == "Sara Hassan"
     assert rows[0]["subjects"] == "biology; physics"
     assert rows[0]["phone"] == "+20 100 123 4567"  # spaced so spreadsheets keep it as text
     assert "completion_token_hash" not in rows[0]
+
+
+def test_list_and_detail_carry_the_name_and_old_rows_have_null(
+    admin: TestClient, sm: sessionmaker[Session]
+) -> None:
+    step1(admin, "named@example.com", name="Nour Salem")
+    step1(admin, "old@example.com")
+    with sm.begin() as session:
+        session.execute(
+            sa.update(WaitlistApplicant)
+            .where(WaitlistApplicant.email == "old@example.com")
+            .values(name=None)
+        )
+
+    items = {i["email"]: i for i in admin.get("/api/admin/waitlist").json()["items"]}
+    assert items["named@example.com"]["name"] == "Nour Salem"
+    assert items["old@example.com"]["name"] is None
+    detail = admin.get(f"/api/admin/waitlist/{items['named@example.com']['id']}").json()
+    assert detail["name"] == "Nour Salem"
+    assert admin.get(f"/api/admin/waitlist/{items['old@example.com']['id']}").json()["name"] is None
+
+
+def test_admin_search_matches_the_name_case_insensitively(admin: TestClient) -> None:
+    step1(admin, "a1@example.com", name="Nour Salem")
+    step1(admin, "a2@example.com", name="سارة أحمد")
+    step1(admin, "a3@example.com", name="Omar Khaled")
+
+    def search(q: str) -> set[str]:
+        return set(emails(admin.get("/api/admin/waitlist", params={"q": q})))
+
+    assert search("NOUR") == {"a1@example.com"}
+    assert search("our sal") == {"a1@example.com"}
+    assert search("سارة") == {"a2@example.com"}
+    assert search("a3@") == {"a3@example.com"}  # email search still works
+    assert search("nobody") == set()
+    assert search("%") == set()  # wildcards stay literal in the name match too
+
+
+def test_admin_can_sort_by_name_with_unnamed_rows_last(
+    admin: TestClient, sm: sessionmaker[Session]
+) -> None:
+    step1(admin, "s1@example.com", name="Charlie")
+    step1(admin, "s2@example.com", name="alice")
+    step1(admin, "s3@example.com", name="Bob")
+    step1(admin, "s4@example.com", name="Zed")
+    with sm.begin() as session:
+        session.execute(
+            sa.update(WaitlistApplicant)
+            .where(WaitlistApplicant.email == "s4@example.com")
+            .values(name=None)
+        )
+
+    asc = emails(admin.get("/api/admin/waitlist", params={"sort": "name", "order": "asc"}))
+    desc = emails(admin.get("/api/admin/waitlist", params={"sort": "name", "order": "desc"}))
+
+    assert asc[-1] == "s4@example.com"
+    assert desc[-1] == "s4@example.com"
+    assert set(asc[:3]) == {"s1@example.com", "s2@example.com", "s3@example.com"}
+    assert asc[:3] == list(reversed(desc[:3]))
+
+
+def test_detail_dto_exposes_every_model_column_except_the_token_fields() -> None:
+    from lemely.db.models.waitlist import WaitlistApplicant as Model
+    from lemely.web.schemas_waitlist import WaitlistApplicantDTO
+
+    token_fields = {"completion_token_hash", "completion_token_expires_at"}
+    columns = {c.key for c in sa.inspect(Model).column_attrs} - token_fields
+    camel = {
+        "".join(part if i == 0 else part.title() for i, part in enumerate(c.split("_")))
+        for c in columns
+    }
+    # ``admin_note`` is published as ``adminNote``; ``partial`` is derived from ``completed_at``.
+    exposed = set(WaitlistApplicantDTO.model_fields) - {"partial"}
+
+    assert exposed == camel
+    assert not any("token" in f.lower() for f in WaitlistApplicantDTO.model_fields)
 
 
 def test_csv_neutralises_formula_injection(admin: TestClient, sm: sessionmaker[Session]) -> None:
@@ -746,6 +903,7 @@ def test_csv_neutralises_formula_injection(admin: TestClient, sm: sessionmaker[S
         "utm_term": "\tTAB",
         "admin_note": "\r=1+1",
         "centre_name": "=1+1",
+        "name": "=cmd|' /C calc'!A0",
     }
     with sm.begin() as session:
         session.execute(
@@ -855,6 +1013,7 @@ def test_explicit_nulls_for_optional_fields_are_accepted(
         "/api/waitlist",
         json={
             "email": "nulls@example.com",
+            "name": "Nulls",
             "role": "student",
             "consentVersion": CONSENT_VERSION,
             "utmSource": None,
@@ -933,6 +1092,7 @@ def test_digest_goes_out_again_the_next_utc_day(
     repo = WaitlistRepository(sm)
     repo.create(
         email="a@example.com",
+        name="Test Applicant",
         role="student",
         consent_version=CONSENT_VERSION,
         consent_text=CONSENT,
@@ -947,6 +1107,7 @@ def test_digest_goes_out_again_the_next_utc_day(
     assert send_waitlist_digest(repo, provider, now=evening).sent
     repo.create(
         email="b@example.com",
+        name="Test Applicant",
         role="teacher",
         consent_version=CONSENT_VERSION,
         consent_text=CONSENT,
@@ -1011,6 +1172,7 @@ def test_a_late_then_early_digest_neither_repeats_nor_misses_an_applicant(
     repo = WaitlistRepository(sm)
     repo.create(
         email="a@example.com",
+        name="Test Applicant",
         role="student",
         consent_version=CONSENT_VERSION,
         consent_text=CONSENT,
@@ -1018,6 +1180,7 @@ def test_a_late_then_early_digest_neither_repeats_nor_misses_an_applicant(
     )
     repo.create(
         email="b@example.com",
+        name="Test Applicant",
         role="teacher",
         consent_version=CONSENT_VERSION,
         consent_text=CONSENT,
@@ -1054,6 +1217,7 @@ def test_the_first_digest_ever_covers_the_last_24_hours(
     repo = WaitlistRepository(sm)
     repo.create(
         email="old@example.com",
+        name="Test Applicant",
         role="student",
         consent_version=CONSENT_VERSION,
         consent_text=CONSENT,
@@ -1080,7 +1244,12 @@ def test_consent_text_is_owned_by_the_server(client: TestClient, sm: sessionmake
 
     unknown = client.post(
         "/api/waitlist",
-        json={"email": "c2@example.com", "role": "student", "consentVersion": "1999-01-v0"},
+        json={
+            "email": "c2@example.com",
+            "name": "C Two",
+            "role": "student",
+            "consentVersion": "1999-01-v0",
+        },
     )
     assert unknown.status_code == 422
     assert unknown.json()["detail"][0]["loc"] == ["body", "consentVersion"]
@@ -1089,6 +1258,7 @@ def test_consent_text_is_owned_by_the_server(client: TestClient, sm: sessionmake
         "/api/waitlist",
         json={
             "email": "c3@example.com",
+            "name": "C Three",
             "role": "student",
             "consentVersion": CONSENT_VERSION,
             "consentText": "I agree to anything",
@@ -1214,7 +1384,7 @@ def test_a_chunked_body_over_the_cap_is_413_and_a_small_one_still_works(
     client: TestClient, sm: sessionmaker[Session]
 ) -> None:
     def chunks(total: int) -> Iterator[bytes]:
-        yield b'{"email":"chunk@example.com","role":"student",'
+        yield b'{"email":"chunk@example.com","name":"Chunk","role":"student",'
         yield b'"consentVersion":"' + CONSENT_VERSION.encode() + b'","utmSource":"'
         yield b"x" * total
         yield b'"}'
@@ -1245,7 +1415,12 @@ def test_with_an_edge_secret_a_request_that_skipped_the_worker_is_403(
     limiter_clock: LimiterClock,
 ) -> None:
     with build_client(sm, clock, provider, limiter_clock, edge_secret=EDGE) as tc:
-        body = {"email": "e@example.com", "role": "student", "consentVersion": CONSENT_VERSION}
+        body = {
+            "email": "e@example.com",
+            "name": "E",
+            "role": "student",
+            "consentVersion": CONSENT_VERSION,
+        }
         for secret_header in ({}, {"X-Lemely-Edge-Secret": "wrong"}):
             assert tc.post("/api/waitlist", json=body, headers=secret_header).status_code == 403
             assert (
@@ -1273,7 +1448,12 @@ def test_rate_limits_key_on_the_edge_ip_only_when_the_secret_matched(
     limiter_clock: LimiterClock,
 ) -> None:
     def post(tc: TestClient, n: int, headers: dict[str, str]) -> int:
-        body = {"email": f"k{n}@example.com", "role": "student", "consentVersion": CONSENT_VERSION}
+        body = {
+            "email": f"k{n}@example.com",
+            "name": "K",
+            "role": "student",
+            "consentVersion": CONSENT_VERSION,
+        }
         return tc.post("/api/waitlist", json=body, headers=headers).status_code
 
     # Secret configured and sent: each Worker-verified address has its own bucket.
@@ -1414,6 +1594,7 @@ def test_digest_window_end_comes_from_the_database_clock(
     repo = FixedDbClockRepo(sm, db_clock)
     repo.create(
         email="a@example.com",
+        name="Test Applicant",
         role="student",
         consent_version=CONSENT_VERSION,
         consent_text=CONSENT,
@@ -1441,6 +1622,7 @@ def test_a_failed_send_whose_release_also_fails_does_not_advance_the_cursor(
     repo = WaitlistRepository(sm)
     repo.create(
         email="a@example.com",
+        name="Test Applicant",
         role="student",
         consent_version=CONSENT_VERSION,
         consent_text=CONSENT,
@@ -1476,6 +1658,7 @@ def test_a_failed_send_with_a_clean_release_leaves_the_cursor_and_the_day_free(
     repo = WaitlistRepository(sm)
     repo.create(
         email="a@example.com",
+        name="Test Applicant",
         role="student",
         consent_version=CONSENT_VERSION,
         consent_text=CONSENT,
@@ -1612,7 +1795,12 @@ def test_one_ipv6_64_shares_a_bucket_and_ipv4_addresses_do_not(
 ) -> None:
     def post(tc: TestClient, n: int, ip: str) -> int:
         headers = {"X-Lemely-Edge-Secret": EDGE, "CF-Connecting-IP": ip}
-        body = {"email": f"v{n}@example.com", "role": "student", "consentVersion": CONSENT_VERSION}
+        body = {
+            "email": f"v{n}@example.com",
+            "name": "V",
+            "role": "student",
+            "consentVersion": CONSENT_VERSION,
+        }
         return tc.post("/api/waitlist", json=body, headers=headers).status_code
 
     with build_client(
@@ -1724,6 +1912,7 @@ def test_a_pending_claim_is_not_reported_as_sent_and_is_taken_over_after_its_lea
     repo = WaitlistRepository(sm)
     repo.create(
         email="a@example.com",
+        name="Test Applicant",
         role="student",
         consent_version=CONSENT_VERSION,
         consent_text=CONSENT,

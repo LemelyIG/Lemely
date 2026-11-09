@@ -3,7 +3,7 @@
 Two unauthenticated writes, like :mod:`lemely.web.routers.contact` (and listed ``PUBLIC`` in
 ``tests/test_authz_matrix_complete.py``):
 
-* ``POST /api/waitlist`` (step 1) creates a partial applicant from email, role, UTM tags and
+* ``POST /api/waitlist`` (step 1) creates a partial applicant from email, name, role, UTM tags and
   the consent version, and returns a one-time completion token. An address already on the list
   gets ``{"status": "already_listed"}`` with **no token and no change**, so nobody can
   overwrite another applicant's details. The two outcomes run the same single statement.
@@ -155,6 +155,7 @@ def join_waitlist(
     _charge_global(limiters)
     token = repo.create(
         email=body.email,
+        name=body.name,
         role=body.role,
         consent_version=body.consentVersion,
         consent_text=CONSENT_VERSIONS[body.consentVersion],

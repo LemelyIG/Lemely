@@ -111,6 +111,7 @@ export function QuestionRow({
 
   return (
     <Popover
+      label="Question actions"
       open={hasMenu && menuOpen}
       onOpenChange={setMenuOpen}
       className="block"

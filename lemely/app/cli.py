@@ -1117,6 +1117,66 @@ def tutoring_recompute_ratings_cmd(ctx: click.Context, tutor: str | None) -> Non
     )
 
 
+@cli.group("admin")
+def admin_group() -> None:
+    """Operator tools for a shared environment."""
+
+
+@admin_group.command("purge-users")
+@click.option(
+    "--keep-domain",
+    "keep_domains",
+    multiple=True,
+    help="Email domain whose verified accounts survive (repeatable). Default: "
+    "[access] allowed_email_domains.",
+)
+@click.option(
+    "--execute",
+    is_flag=True,
+    help="Actually delete. Without it this is a dry run that deletes nothing.",
+)
+@click.option(
+    "--include-unverified-allowlisted",
+    is_flag=True,
+    help="Also delete keep-domain accounts whose email was never verified (kept by default).",
+)
+@click.option(
+    "--i-know-this-is-production",
+    "allow_production",
+    is_flag=True,
+    help="Override the refusal on a target positively detected as production.",
+)
+@click.option(
+    "--target-is-unrecognised",
+    "allow_unrecognised",
+    is_flag=True,
+    help="Override the refusal on a target that is not local, staging or production.",
+)
+@click.pass_context
+def admin_purge_users_cmd(
+    ctx: click.Context,
+    keep_domains: tuple[str, ...],
+    execute: bool,
+    include_unverified_allowlisted: bool,
+    allow_production: bool,
+    allow_unrecognised: bool,
+) -> None:
+    """Delete every account outside the allow-list, with its data (staging only)."""
+    from lemely.app.purge_cli import purge_users_command
+
+    code = purge_users_command(
+        _get_settings(ctx),
+        keep_domains=keep_domains,
+        execute=execute,
+        include_unverified_allowlisted=include_unverified_allowlisted,
+        allow_production=allow_production,
+        allow_unrecognised=allow_unrecognised,
+        json_output=bool(ctx.obj.get("json_output", False)),
+    )
+    if code:
+        ctx.exit(code)
+
+
 @cli.group("question-bank")
 def question_bank_group() -> None:
     """Question-bank survey and generated-question import (P3.5 chunk B)."""

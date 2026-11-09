@@ -36,8 +36,7 @@ function useMobile() {
 
 /**
  * One shared application surface: a centred dialog from `sm` up, a bottom sheet below it.
- * Light-only: the Sheet portals to <body>, outside the marketing frame's lock, so the
- * `lw-light` class goes on the portalled content itself.
+ * The Sheet portals to <body>, so it takes its theme from `<html data-theme>` like the page.
  */
 /** Lets a harness or test swap the network client without touching the marketing frame. */
 export const WaitlistClientContext = createContext<WaitlistClient>(liveWaitlistClient)
@@ -81,7 +80,7 @@ export function WaitlistProvider({
               event.preventDefault()
               opener.current?.focus()
             }}
-            className="lw-light lw-dialog gap-0 p-0"
+            className="lw-dialog gap-0 p-0"
           >
             {mobile ? <div className="lw-grab" aria-hidden /> : null}
             <SheetDescription className="sr-only">

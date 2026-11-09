@@ -262,6 +262,14 @@ class GcsStorageBackend:
         except GoogleAPICallError as exc:
             raise ExternalServiceError(f"Storage delete failed: {exc}") from exc
 
+    def list_objects(self, bucket: str, prefix: str) -> list[str]:
+        """Every object key in ``bucket`` that starts with ``prefix`` (the account purge)."""
+        self._require_private_evidence_bucket(bucket)
+        try:
+            return sorted(blob.name for blob in self._client().list_blobs(bucket, prefix=prefix))
+        except GoogleAPICallError as exc:
+            raise ExternalServiceError(f"Storage list failed: {exc}") from exc
+
     def _signing_token(self) -> str:
         """Mint an access token that IAM signBlob will actually accept.
 

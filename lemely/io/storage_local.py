@@ -100,6 +100,14 @@ class LocalFileStorageBackend:
             media_type = mimetypes.guess_type(object_path)[0] or "application/octet-stream"
         return f"data:{media_type};base64,{base64.b64encode(data).decode('ascii')}"
 
+    def list_objects(self, bucket: str, prefix: str) -> list[str]:
+        """Every object key in ``bucket`` that starts with ``prefix`` (the account purge)."""
+        base = self._root / bucket
+        if not base.is_dir():
+            return []
+        keys = (p.relative_to(base).as_posix() for p in base.rglob("*") if p.is_file())
+        return sorted(k for k in keys if k.startswith(prefix))
+
     def delete(self, bucket: str, object_path: str) -> None:
         """Remove the file if present. Missing is not an error."""
         target = self._path(bucket, object_path)

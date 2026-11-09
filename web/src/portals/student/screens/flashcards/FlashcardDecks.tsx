@@ -327,6 +327,7 @@ function DeckRow({
 
   return (
     <Popover
+      label="Deck actions"
       open={menuOpen}
       onOpenChange={setMenuOpen}
       className="block"

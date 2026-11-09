@@ -704,6 +704,7 @@ _DEPENDENCIES_BEFORE_T09: dict[tuple[str, str], frozenset[str]] = {
             "HTTPBearer",
             "get_auth_context",
             "get_device_registry",
+            "get_user_mirror",
             "get_parent_link_service",
             "get_settings",
             "require_role.<locals>._guard",
@@ -714,6 +715,7 @@ _DEPENDENCIES_BEFORE_T09: dict[tuple[str, str], frozenset[str]] = {
             "HTTPBearer",
             "get_auth_context",
             "get_device_registry",
+            "get_user_mirror",
             "get_invite_service",
             "get_settings",
         }
@@ -724,6 +726,7 @@ _DEPENDENCIES_BEFORE_T09: dict[tuple[str, str], frozenset[str]] = {
             "get_auth_context",
             "get_class_service",
             "get_device_registry",
+            "get_user_mirror",
             "get_settings",
             "require_role.<locals>._guard",
         }

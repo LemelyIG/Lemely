@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import re
 import secrets
+import unicodedata
 from datetime import date, timedelta
 from typing import Final
 
@@ -110,6 +111,34 @@ TOKEN_TTL_HOURS: Final = 24
 _CSV_FORMULA_PREFIXES: Final = ("=", "+", "-", "@", "\t", "\r")
 #: ``+`` then only digits and spaces (an exported phone) cannot form a formula, so it stays usable.
 _PLAIN_PHONE_RE: Final = re.compile(r"^\+\d[\d ]{6,24}$")
+
+
+MAX_NAME_LENGTH: Final = 100
+#: ZWNJ and ZWJ are format characters but part of real Persian and Indic names: kept.
+_JOINERS: Final = frozenset("\u200c\u200d")
+_NAME_CONTROL_RE: Final = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def clean_name(raw: str) -> str:
+    """Return the stored form of an applicant's name, or raise ``ValueError`` with the reason.
+
+    Invisible format characters (Unicode category Cf: zero-width space, bidi controls, BOM) are
+    removed first, except ZWNJ and ZWJ, which real names use. A name with nothing but format
+    characters counts as empty. Surrounding whitespace is
+    trimmed and runs of whitespace inside collapse to one space. Any
+    Unicode letters are fine (Arabic, accented, CJK). Control characters (including tabs and
+    line breaks) are refused rather than silently rewritten, and the length limit counts the
+    trimmed result.
+    """
+    if _NAME_CONTROL_RE.search(raw):
+        raise ValueError("Name cannot contain control characters.")
+    stripped = "".join(ch for ch in raw if ch in _JOINERS or unicodedata.category(ch) != "Cf")
+    name = " ".join(stripped.split())
+    if not any(unicodedata.category(ch) != "Cf" for ch in name):
+        raise ValueError("Enter your name.")
+    if len(name) > MAX_NAME_LENGTH:
+        raise ValueError(f"Name must be {MAX_NAME_LENGTH} characters or fewer.")
+    return name
 
 
 def normalise_email(email: str) -> str:

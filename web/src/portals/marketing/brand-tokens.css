@@ -120,3 +120,44 @@
   color: var(--md-on-surface);
   background: var(--md-surface);
 }
+
+/*
+ * Dark theme (a signed-in user's choice; anonymous visitors are always light, see
+ * `lib/theme/theme.ts`). The roles flip on their own: this file only holds what a flip cannot
+ * fix. Light is untouched, so every rule here is scoped to `data-theme="dark"`.
+ */
+/* "Coming soon" tag: the gold fill stays light in dark, so its label must be the dark on-tertiary role. */
+:root[data-theme="dark"] .marketing-brand .brand-coming { color: var(--md-on-tertiary); }
+/* The "+120 XP" label sits on the Abyss tile in dark as well; the grade-D orange is too dim there, so it borrows the gold of the XP bar beside it. Roles only: no colour literals in this file. */
+:root[data-theme="dark"] .marketing-brand [data-art-scene="xp"] { --brand-art-35: var(--brand-art-13); }
+
+/*
+ * The two bands that are dark in light mode ("Marked like an examiner" and the teachers band) and
+ * the closing band must stay dark in dark mode, one surface step apart from the page, not flip to a
+ * light fill. The inverse roles that normally colour them turn light in dark, so the band-local
+ * tokens are re-pointed at the dark surface ladder. Everything inside reads these tokens, so cards,
+ * rules, the accuracy panel, the metric stack and the dot grid follow.
+ */
+:root[data-theme="dark"] .marketing-brand :is(.brand-proof, .brand-teachers) {
+  --brand-night: var(--md-surface-container);
+  --brand-night-panel: var(--md-surface-container-high);
+  --brand-night-card: var(--md-surface-container-high);
+  --brand-night-rule: var(--md-outline-variant);
+  --brand-night-ring: var(--md-outline-variant);
+  --brand-night-dot: var(--md-outline);
+  --brand-night-muted: var(--md-on-surface-variant);
+  --brand-night-body: var(--md-on-surface-variant);
+  --brand-white: var(--md-on-surface);
+  --brand-tide: var(--md-primary);
+}
+/* Closing band: the Abyss container (deep navy), with Tide as its accent. */
+:root[data-theme="dark"] .marketing-brand .brand-closing {
+  background: var(--md-primary-container);
+  --brand-white: var(--md-on-surface);
+  --brand-tide: var(--md-primary);
+  --brand-night-muted: var(--md-on-primary-container);
+  --brand-closing-text: var(--md-on-primary-container);
+  --brand-closing-ring: var(--md-primary);
+}
+:root[data-theme="dark"] .marketing-brand .brand-closing .brand-actions :is(a, button):first-child { color: var(--md-on-primary); }
+:root[data-theme="dark"] .marketing-brand .brand-closing-bubble { color: var(--md-on-primary); }

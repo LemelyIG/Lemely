@@ -11,7 +11,9 @@ import pytest
 from lemely.core.waitlist import (
     ALL_SUBJECTS,
     LEVELS,
+    MAX_NAME_LENGTH,
     TOP_SUBJECTS,
+    clean_name,
     csv_safe,
     exam_session_options,
     hash_token,
@@ -162,3 +164,48 @@ _PHONE_CASES = json.loads(
 def test_phone_fixture_cases(case: dict[str, str | None]) -> None:
     """The shared fixture the TS validator is also tested against (web/tests/unit)."""
     assert normalise_phone(str(case["raw"])) == case["e164"]
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("Sara", "Sara"),
+        ("  Sara   Hassan ", "Sara Hassan"),
+        ("Sara\u00a0\u2003Hassan", "Sara Hassan"),
+        ("سارة  أحمد", "سارة أحمد"),
+        ("Sa\u200bra\u200e \u202eHassan\u2066\ufeff", "Sara Hassan"),
+        ("\u200b Sara \u200f", "Sara"),
+        (
+            "\u0639\u0644\u06cc\u200c\u0631\u0636\u0627",
+            "\u0639\u0644\u06cc\u200c\u0631\u0636\u0627",
+        ),
+        (
+            "\u200b\u0639\u0644\u06cc\u200c\u202e\u0631\u0636\u0627\u200b",
+            "\u0639\u0644\u06cc\u200c\u0631\u0636\u0627",
+        ),
+        ("क\u200dष", "क\u200dष"),
+        ("a" * MAX_NAME_LENGTH, "a" * MAX_NAME_LENGTH),
+        (" " * 5 + "a" * MAX_NAME_LENGTH + " " * 5, "a" * MAX_NAME_LENGTH),
+    ],
+)
+def test_clean_name_trims_and_collapses(raw: str, expected: str) -> None:
+    assert clean_name(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "",
+        "   ",
+        "\u00a0",
+        "a" * (MAX_NAME_LENGTH + 1),
+        "a\x00b",
+        "a\nb",
+        "a\tb",
+        "a\x7fb",
+        "a\x9fb",
+    ],
+)
+def test_clean_name_refuses_blank_long_and_control_characters(raw: str) -> None:
+    with pytest.raises(ValueError):
+        clean_name(raw)

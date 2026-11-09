@@ -219,8 +219,10 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # tests/test_web_tutoring_authz_parent_sharing.py).
     ("GET", "/api/parent/children/{child_id}/tutor-grants"): PARENT,
     ("GET", "/api/parent/children/{child_id}/tutor-access-log"): PARENT,
-    # ── PUBLIC (20) ────────────────────
+    # ── PUBLIC (21) ────────────────────
     ("POST", "/api/auth/login"): PUBLIC,
+    # Whether sign-in is restricted (a boolean, never the domains): read before any account exists.
+    ("GET", "/api/access/config"): PUBLIC,
     # spec §4: the child-issued parent signup, replacing the retired
     # `/api/auth/otp/*` pair. Public by the same necessity as `/auth/signup`
     # itself — there is no caller identity yet, only an invite code and (from
@@ -717,7 +719,7 @@ def test_the_sweeps_actually_cover_the_surface() -> None:
     # client-error sink + the three public tutoring routes (P1 directory, P2
     # card, P3 areas) + the landing page contact form + the four waitlist routes
     # (config, step 1, step 2, secret-guarded digest trigger).
-    assert len(_NON_PUBLIC) == len(ROUTES) - 20
+    assert len(_NON_PUBLIC) == len(ROUTES) - 21
     assert len(_ROLE_GATED) > 300
     assert len(_REPRESENTATIVE) == 9
     assert len(_REAL_TOKEN_CASES) >= 20

@@ -131,7 +131,7 @@ export const MAX_OTHER_SUBJECTS = 5
 export const MAX_OTHER_SUBJECT_LENGTH = 60
 
 /** Length caps the server enforces. */
-export const WAITLIST_LIMITS = { centreName: 120, adminNote: 2000 } as const
+export const WAITLIST_LIMITS = { name: 100, centreName: 120, adminNote: 2000 } as const
 
 /**
  * The next four sittings, soonest first, mirroring the server's window
@@ -196,6 +196,26 @@ export function normaliseWaitlistPhone(raw: string): string | null {
   else number = `+20${cleaned}`
   if (number.startsWith('+20')) return EGYPT_MOBILE.test(number) ? number : null
   return E164.test(number) ? number : null
+}
+
+/** The name as the server stores it: trimmed, inner whitespace collapsed. */
+export function normaliseWaitlistName(raw: string): string {
+  return raw.trim().replace(/\s+/g, ' ')
+}
+
+export const WAITLIST_NAME_REQUIRED = 'Enter your full name.'
+export const WAITLIST_NAME_TOO_LONG = `Use ${WAITLIST_LIMITS.name} characters or fewer.`
+
+/** An error message for the name field, or `null` when it is 1 to 100 characters after trimming. */
+export function validateWaitlistName(raw: string): string | null {
+  const name = normaliseWaitlistName(raw)
+  if (name === '') return WAITLIST_NAME_REQUIRED
+  return [...name].length > WAITLIST_LIMITS.name ? WAITLIST_NAME_TOO_LONG : null
+}
+
+/** The first word of a name, for a greeting; `''` when there is none. */
+export function waitlistFirstName(raw: string): string {
+  return normaliseWaitlistName(raw).split(' ')[0] ?? ''
 }
 
 /** An error message for the phone field, or `null` when blank (it is optional) or valid. */
@@ -264,6 +284,8 @@ export interface WaitlistUtm {
 
 export interface WaitlistStep1 extends WaitlistUtm {
   email: string
+  /** Full name, required: 1 to 100 characters after trimming (`validateWaitlistName`). */
+  name: string
   role: WaitlistRole
   /** `WAITLIST_CONSENT_VERSION`: the server stores that version's canonical wording. */
   consentVersion: string
@@ -363,6 +385,8 @@ export function waitlistFailureCopy(error: unknown): string {
 export interface WaitlistApplicant {
   id: string
   email: string
+  /** `null` on rows from before the name field existed. */
+  name: string | null
   role: WaitlistRole
   centreName: string | null
   levels: WaitlistLevel[]
@@ -402,7 +426,7 @@ export interface WaitlistCounts {
   partial: number
 }
 
-export type WaitlistSort = 'created_at' | 'email' | 'role' | 'status' | 'exam_session'
+export type WaitlistSort = 'created_at' | 'email' | 'name' | 'role' | 'status' | 'exam_session'
 
 export interface WaitlistQuery {
   role?: WaitlistRole
@@ -416,7 +440,7 @@ export interface WaitlistQuery {
   /** Inclusive, `YYYY-MM-DD`. */
   createdFrom?: string
   createdTo?: string
-  /** Email substring. */
+  /** Email or name substring. */
   q?: string
   sort?: WaitlistSort
   order?: 'asc' | 'desc'

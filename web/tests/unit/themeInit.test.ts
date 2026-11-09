@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
+import vm from "node:vm"
 import { describe, expect, it } from "vitest"
 
 /*
@@ -41,9 +42,59 @@ describe("shell-init.js: flash-free theme init", () => {
     // Pins shell-init.js's inline table against theme.ts's resolveTheme so
     // the two cannot silently diverge: stored "light"/"dark" win outright,
     // anything else falls back to the OS signal.
+    expect(source).toMatch(/!signedIn/)
+    expect(source).toContain("lemely.session")
     expect(source).toMatch(/storedTheme === "light"/)
     expect(source).toMatch(/storedTheme === "dark"/)
     expect(source).toMatch(/prefersDark \? "dark" : "light"/)
+  })
+})
+
+/** Runs the real `shell-init.js` against stand-in browser globals and returns what it paints. */
+function runShellInit(opts: { session?: string | null; theme?: string | null; osDark: boolean }) {
+  const store: Record<string, string> = {}
+  if (opts.session != null) store["lemely.session"] = opts.session
+  if (opts.theme != null) store["lemely.theme"] = opts.theme
+  const dataset: Record<string, string> = {}
+  const sandbox = {
+    localStorage: { getItem: (k: string) => (k in store ? store[k] : null) },
+    window: { matchMedia: () => ({ matches: opts.osDark }) },
+    location: { pathname: "/landing" },
+    document: {
+      documentElement: { dataset },
+      querySelector: () => null,
+      getElementById: () => ({ dataset: {} }),
+      addEventListener: () => {},
+    },
+  }
+  vm.runInNewContext(readFileSync(join(ROOT, "public/shell-init.js"), "utf8"), sandbox)
+  return dataset.theme
+}
+
+describe("shell-init.js: effective theme = signed in ? preference : light (executed)", () => {
+  const SESSION = JSON.stringify({ accessToken: "a.b.c", refreshToken: null, userId: "u1", role: "student" })
+
+  it("paints light for an anonymous visitor even when the OS is dark", () => {
+    expect(runShellInit({ osDark: true })).toBe("light")
+  })
+
+  it("paints light for an anonymous visitor whose device once stored a dark preference", () => {
+    expect(runShellInit({ theme: "dark", osDark: true })).toBe("light")
+  })
+
+  it("treats an unparseable or null stored session as anonymous", () => {
+    expect(runShellInit({ session: "not json", theme: "dark", osDark: true })).toBe("light")
+    expect(runShellInit({ session: "null", theme: "dark", osDark: true })).toBe("light")
+  })
+
+  it("paints the stored preference for a signed-in user", () => {
+    expect(runShellInit({ session: SESSION, theme: "dark", osDark: false })).toBe("dark")
+    expect(runShellInit({ session: SESSION, theme: "light", osDark: true })).toBe("light")
+  })
+
+  it("follows the OS for a signed-in user on System (or no stored preference)", () => {
+    expect(runShellInit({ session: SESSION, osDark: true })).toBe("dark")
+    expect(runShellInit({ session: SESSION, theme: "system", osDark: false })).toBe("light")
   })
 })
 

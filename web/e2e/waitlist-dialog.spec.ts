@@ -26,6 +26,7 @@ test('Back then Continue sends one POST and keeps the picked subject', async ({ 
   await page.locator('.brand-hero .brand-actions button').click()
   const dialog = page.getByRole('dialog')
   await dialog.getByLabel('Email').fill('student@example.com')
+  await dialog.getByLabel('Full name').fill('Sam Student')
   await dialog.getByText('Student', { exact: true }).click()
   await dialog.getByRole('button', { name: /Continue/ }).click()
 

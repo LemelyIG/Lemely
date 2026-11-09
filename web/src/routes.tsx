@@ -14,6 +14,8 @@ import { RequireAuth, portalPathForRole } from "@/lib/auth/RequireAuth"
 import { DEFAULT_TITLE, DEFAULT_DESCRIPTION } from "@/lib/meta/documentMeta"
 import type { PageMeta } from "@/lib/meta/documentMeta"
 import { safeNextPath } from "@/lib/nextPath"
+import { AccessGate } from "@/portals/access/AccessGate"
+import { ComingSoon } from "@/portals/access/ComingSoon"
 /*
  * P3.1 (DECISION D1.4). Deliberately a static import, unlike every screen in
  * this file, which are all `React.lazy`.
@@ -410,7 +412,22 @@ export const appRoutes: RouteObject[] = [
         "Sign in to Lemely to mark a past paper, review a class, or follow a child's progress.",
       skeleton: "standalone",
     } satisfies PageMeta,
-    element: <LoginRoute><Suspense fallback={<RouteSkeleton />}><Login /></Suspense></LoginRoute>,
+    element: <LoginRoute><AccessGate allowTeam><Suspense fallback={<RouteSkeleton />}><Login /></Suspense></AccessGate></LoginRoute>,
+  },
+  /*
+   * Pre-launch. Shown instead of the sign-in and signup forms while access is restricted
+   * (`AccessGate`), and navigated to when any API call is refused with 403 `access_restricted`
+   * (`main.tsx`). Public and static: it needs no session and no config call.
+   */
+  {
+    path: "/coming-soon",
+    errorElement,
+    handle: {
+      title: "Coming soon",
+      description: "The Lemely app is coming soon. Join the waitlist to hear when it opens.",
+      skeleton: "standalone",
+    } satisfies PageMeta,
+    element: <ComingSoon />,
   },
   /*
    * PR 2 part A2 · `/session-ended`. `RequireAuth` sends a dead session here
@@ -472,9 +489,11 @@ export const appRoutes: RouteObject[] = [
     } satisfies PageMeta,
     element: (
       <LoginRoute>
-        <Suspense fallback={<RouteSkeleton />}>
-          <SignupRoleSelect />
-        </Suspense>
+        <AccessGate failClosed allowTeam>
+          <Suspense fallback={<RouteSkeleton />}>
+            <SignupRoleSelect />
+          </Suspense>
+        </AccessGate>
       </LoginRoute>
     ),
   },
@@ -514,9 +533,11 @@ export const appRoutes: RouteObject[] = [
       skeleton: "standalone",
     } satisfies PageMeta,
     element: (
-      <Suspense fallback={<RouteSkeleton />}>
-        <SignupDetails role="student" />
-      </Suspense>
+      <AccessGate failClosed allowTeam>
+        <Suspense fallback={<RouteSkeleton />}>
+          <SignupDetails role="student" />
+        </Suspense>
+      </AccessGate>
     ),
   },
   // G-03, teacher variant (D7.1, D7.2). The same `SignupDetails`, the other
@@ -531,9 +552,11 @@ export const appRoutes: RouteObject[] = [
       skeleton: "standalone",
     } satisfies PageMeta,
     element: (
-      <Suspense fallback={<RouteSkeleton />}>
-        <SignupDetails role="teacher" />
-      </Suspense>
+      <AccessGate failClosed allowTeam>
+        <Suspense fallback={<RouteSkeleton />}>
+          <SignupDetails role="teacher" />
+        </Suspense>
+      </AccessGate>
     ),
   },
   /*
@@ -561,9 +584,11 @@ export const appRoutes: RouteObject[] = [
     } satisfies PageMeta,
     element: (
       <LoginRoute>
-        <Suspense fallback={<RouteSkeleton />}>
-          <SignupParent />
-        </Suspense>
+        <AccessGate failClosed allowTeam>
+          <Suspense fallback={<RouteSkeleton />}>
+            <SignupParent />
+          </Suspense>
+        </AccessGate>
       </LoginRoute>
     ),
   },
@@ -585,7 +610,7 @@ export const appRoutes: RouteObject[] = [
     handle: {
       title: "Verify your email",
       description:
-        "Check whether a Lemely account's email address is verified. Everything except marking a paper stays open in the meantime.",
+        "Check whether a Lemely account's email address is verified, ask for a new link, or enter the code from the email.",
       skeleton: "standalone",
     } satisfies PageMeta,
     element: (
@@ -675,9 +700,11 @@ export const appRoutes: RouteObject[] = [
       skeleton: "standalone",
     } satisfies PageMeta,
     element: (
-      <Suspense fallback={<RouteSkeleton />}>
-        <JoinWithCode />
-      </Suspense>
+      <AccessGate failClosed>
+        <Suspense fallback={<RouteSkeleton />}>
+          <JoinWithCode />
+        </Suspense>
+      </AccessGate>
     ),
   },
   // G-08, deep-linked preview. Same exception as `/join` above, same
@@ -694,9 +721,11 @@ export const appRoutes: RouteObject[] = [
       skeleton: "standalone",
     } satisfies PageMeta,
     element: (
-      <Suspense fallback={<RouteSkeleton />}>
-        <JoinWithCode />
-      </Suspense>
+      <AccessGate failClosed>
+        <Suspense fallback={<RouteSkeleton />}>
+          <JoinWithCode />
+        </Suspense>
+      </AccessGate>
     ),
   },
   // G-11 (devices section). Top-level rather than inside a portal subtree: the

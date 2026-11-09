@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,8 +25,15 @@ from pydantic import (
 from pydantic_settings import (
     BaseSettings,
     DotEnvSettingsSource,
+    NoDecode,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
+)
+
+# A multi-label DNS name (letters, digits, inner hyphens); the matching rule proper is
+# ``lemely.core.access`` (``runtime`` may not import ``core``).
+_ACCESS_DOMAIN = re.compile(
+    r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+"
 )
 
 
@@ -1288,6 +1296,60 @@ class WaitlistSettings(BaseModel):
     turnstile_site_key: OptionalCredential = None
 
 
+class AccessSettings(BaseModel):
+    """Who may create or use an account while Lemely is not launched.
+
+    ``allowed_email_domains`` is the allow-list. **Empty means open** (local dev, tests, and the
+    day access is opened): no check runs anywhere. Non-empty, only accounts whose verified email
+    domain equals an entry may sign up, log in or call any authenticated route; everyone else
+    gets 403 ``access_restricted``. Matching is exact and case-insensitive
+    (:func:`lemely.core.access.is_allowed_email`); a subdomain is not its parent.
+
+    Deployed it is ``LEMELY_ACCESS__ALLOWED_EMAIL_DOMAINS``, a comma-separated list
+    (``lemelyig.com`` or ``lemelyig.com,example.org``); in ``lemely.toml`` a list. A JSON array
+    in the environment works too. Setting it empty opens access again.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # ``NoDecode`` keeps pydantic-settings from JSON-parsing the env value, so a plain
+    # ``lemelyig.com`` is accepted as well as ``["lemelyig.com"]``.
+    allowed_email_domains: Annotated[list[str], NoDecode] = Field(default_factory=list)
+
+    @field_validator("allowed_email_domains", mode="before")
+    @classmethod
+    def _parse_domains(cls, value: object) -> object:
+        """Accept a comma/space-separated string or a list; normalise and validate each entry."""
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped.startswith("["):
+                import json
+
+                value = json.loads(stripped)
+            else:
+                value = stripped.replace(",", " ").split()
+        if not isinstance(value, list | tuple):
+            return value
+        domains: list[str] = []
+        for entry in value:
+            if not isinstance(entry, str):
+                raise ValueError(f"allowed_email_domains entries must be strings, got {entry!r}")
+            text = entry.strip()
+            if not text:
+                continue
+            domain = text.lower().removeprefix("@")
+            if not text.isascii() or not _ACCESS_DOMAIN.fullmatch(domain):
+                raise ValueError(f"{entry!r} is not a domain such as 'lemelyig.com'")
+            if domain not in domains:
+                domains.append(domain)
+        return domains
+
+    @property
+    def restricted(self) -> bool:
+        """Whether access is limited to :attr:`allowed_email_domains` (a non-empty list)."""
+        return bool(self.allowed_email_domains)
+
+
 class EmailSettings(BaseModel):
     """Transactional-email credentials for the account-lifecycle mails (D7.7).
 
@@ -1396,6 +1458,7 @@ class Settings(BaseSettings):
     email: EmailSettings = EmailSettings()
     tutoring: TutoringSettings = TutoringSettings()
     waitlist: WaitlistSettings = WaitlistSettings()
+    access: AccessSettings = AccessSettings()
     edge: EdgeSettings = EdgeSettings()
     database: DatabaseSettings = DatabaseSettings()
     supabase: SupabaseSettings = SupabaseSettings()

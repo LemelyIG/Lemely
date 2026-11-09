@@ -710,6 +710,184 @@ runs turned up, none of which are obvious from the config:
   created>`, which is how you tell it apart from a container that started
   and then died.
 
+## Access gate and staging purge
+
+Before launch only verified `@lemelyig.com` accounts get in, in staging and production. The gate is
+`LEMELY_ACCESS__ALLOWED_EMAIL_DOMAINS` (`[access] allowed_email_domains` in `lemely.toml`), a
+comma-separated list that `deploy.yml` sets to `lemelyig.com` for both environments.
+
+What it does, server side:
+
+- **Signup, login, refresh, parent OTP and invite/seat account creation** answer `403` with
+  `{"detail": {"code": "access_restricted", "reason": "domain"}}` for any other address, and create
+  nothing (no GoTrue user, no `users` row, no token, no mail).
+- **Every authenticated route** answers the same `403` to a signed-in caller whose stored email is
+  not on the list, or (`"reason": "unverified"`) is on it but was never verified
+  (`users.email_verified_at`). That cuts off sessions that are already open, on the next request.
+  Only `POST /api/auth/verify-email/code` and `.../resend` skip the verified check, so an
+  `@lemelyig.com` account can still prove its inbox; they still require an allowed domain.
+- **Public and unaffected:** the landing, `/api/waitlist*`, `/api/contact`, `/api/health`,
+  `/api/internal/*` and static assets. `GET /api/access/config` returns `{"restricted": bool}`
+  (never the domains) so the SPA can show the "coming soon" screen.
+- Matching is exact and case-insensitive: `x@sub.lemelyig.com`, `x@lemelyig.com.evil.com`,
+  `x@lemelyig.co`, quoted-local-part tricks and non-ASCII lookalikes are all refused.
+- The gate only refuses accounts; the purge below is what removes them.
+
+**Opening access at launch:** set the variable to an empty value (change the one line in
+`deploy.yml`, or `LEMELY_ACCESS__ALLOWED_EMAIL_DOMAINS=` on the Cloud Run service) and redeploy. An
+empty list means open: no check runs anywhere, and `/api/access/config` reports
+`{"restricted": false}`.
+
+Supabase Auth is only used by the backend (the browser never talks to it), so the gate covers
+every path. As defense in depth the owner may still turn off "Allow new users to sign up" in the
+Supabase dashboard (Authentication > Sign In / Providers) for both projects: the backend creates
+users with the service-role key, which that switch does not block.
+
+### Purging non-allow-listed accounts (staging and production)
+
+`lemely admin purge-users` deletes every account outside the allow-list with its data **and its
+files**. The owner has decided this applies to production too: before launch, accounts, data and
+files of users without an `@lemelyig.com` email are not kept. It is a dry run unless `--execute`
+is given.
+
+**Order for production. Do not reorder.**
+
+1. **Release deploy.** It brings the database to Alembic head. The purge needs the current schema and
+   refuses to run on any other.
+2. **Database backup** (Supabase dashboard, Database > Backups, or a `pg_dump`), confirmed before
+   continuing. Object deletes are permanent unless the buckets have versioning or soft delete
+   turned on (check this; the bootstrap script does not set it).
+3. **Dry run** (below). It prints a count summary first (accounts kept, unverified allow-listed
+   accounts that are kept, accounts to delete, dependent rows, storage objects per bucket), then
+   a warning if the storage configuration is unsafe, the **kept accounts whose data is affected**
+   (for example a kept student's class or booking owned by a purged teacher or tutor), rows per
+   table, and the full list of accounts (id, email, role, created_at). Nothing is deleted.
+4. **Owner confirms** the list, including the affected kept accounts. Unverified `@lemelyig.com`
+   accounts are kept. **Check the privileged section first:** the summary lists any
+   `platform_admin` or `school_admin` account in the delete list under a `!!!` banner. The rule is
+   unchanged (only verified `@lemelyig.com` accounts survive), so an admin on another address,
+   including the owner's own personal address, would lose console access. Move that admin to an
+   `@lemelyig.com` address and verify it before executing.
+5. **Execute**: the same command with `--execute`.
+
+#### Recommended: run it as a one-off Cloud Run job
+
+The job runs the backend image as the service's own runtime service account with the service's
+own environment, so the database URL, Supabase service-role key, `gcs` backend and the three
+bucket names are exactly what production uses, and nothing is saved on a laptop. The runtime
+service account already holds `roles/storage.objectAdmin` (delete and list objects) and
+`roles/storage.legacyBucketReader` (bucket metadata) on all three buckets
+(`scripts/gcp-bootstrap.sh`), which is everything the purge needs. The person running the
+commands needs `roles/run.developer`, `roles/iam.serviceAccountUser` on the runtime service
+account, and `roles/logging.viewer`.
+
+```bash
+PROJECT=<gcp-project-id>; ENV=staging            # or: ENV=production
+REGION=us-central1; SERVICE=lemely-backend-$ENV
+SA=lemely-backend-$ENV@$PROJECT.iam.gserviceaccount.com
+IMAGE=$(gcloud run services describe $SERVICE --project $PROJECT --region $REGION \
+  --format='value(spec.template.spec.containers[0].image)')
+# The service's env vars, joined with a delimiter that cannot occur in a URL or key. They pass
+# through this shell's memory only; nothing is written to disk.
+ENVVARS=$(gcloud run services describe $SERVICE --project $PROJECT --region $REGION --format=json \
+  | jq -r '.spec.template.spec.containers[0].env
+      | if any(.[]; has("valueFrom")) then error("a Secret Manager reference needs --set-secrets") else . end
+      | map("\(.name)=\(.value)") | join("##")')
+[ -n "$ENVVARS" ] || { echo "env copy failed; do not continue" >&2; return 1 2>/dev/null || exit 1; }
+
+# Dry run (staging):
+gcloud run jobs deploy lemely-purge-$ENV --project $PROJECT --region $REGION \
+  --image "$IMAGE" --service-account "$SA" --set-env-vars "^##^$ENVVARS" \
+  --command python --max-retries 0 --task-timeout 3600 --memory 1Gi \
+  --args=-m,lemely.app.cli,admin,purge-users,--keep-domain,lemelyig.com
+# Dry run (production): the same, with the extra flag
+#   --args=-m,lemely.app.cli,admin,purge-users,--keep-domain,lemelyig.com,--i-know-this-is-production
+gcloud run jobs execute lemely-purge-$ENV --project $PROJECT --region $REGION --wait
+gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=lemely-purge-$ENV" \
+  --project $PROJECT --freshness=1h --order=asc --format='value(textPayload)'
+
+# Execute (staging), after the owner has confirmed the dry-run output:
+gcloud run jobs update lemely-purge-$ENV --project $PROJECT --region $REGION \
+  --args=-m,lemely.app.cli,admin,purge-users,--keep-domain,lemelyig.com,--execute
+# Execute (production):
+#   --args=-m,lemely.app.cli,admin,purge-users,--keep-domain,lemelyig.com,--execute,--i-know-this-is-production
+gcloud run jobs execute lemely-purge-$ENV --project $PROJECT --region $REGION --wait
+# read the logs as above; then remove the job
+gcloud run jobs delete lemely-purge-$ENV --project $PROJECT --region $REGION --quiet
+```
+
+`--max-retries 0` matters: a failed run is read and re-run by a person, not retried blindly. The
+env-var copy fails loudly if any variable is a Secret Manager reference (`valueFrom`); the deploy
+workflow sets all of them as plain values today. If that ever changes, map those with
+`--set-secrets` and drop them from the copy.
+
+#### Fallback: run it locally
+
+Only if the job route is unavailable. Export every one of these (use the target environment's
+values; never reuse staging's for production) and authenticate with
+`gcloud auth application-default login` as a principal that holds `roles/storage.objectAdmin` and
+`roles/storage.legacyBucketReader` on the three buckets:
+
+```bash
+export LEMELY_DATABASE__URL='postgresql+psycopg://...'   # session pooler URL of the target
+export LEMELY_SUPABASE__URL='https://<ref>.supabase.co'
+export LEMELY_SUPABASE__SERVICE_ROLE_KEY='...'
+export LEMELY_STORAGE__BACKEND=gcs
+export LEMELY_STORAGE__GCS_PROJECT=<gcp-project-id>
+export LEMELY_STORAGE__GCS_PROJECT_NUMBER=<gcp-project-number>
+export LEMELY_STORAGE__BUCKET=<project>-uploads-<env>
+export LEMELY_STORAGE__AVATAR_BUCKET=<project>-avatars-<env>
+export LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET=<project>-tutor-evidence-<env>
+lemely admin purge-users --keep-domain lemelyig.com [--i-know-this-is-production]
+```
+
+#### What the tool does and refuses
+
+- **Execute order: objects, then database, then Auth.** It collects the object keys the doomed
+  rows name (uploaded scans and an upload's sibling `mark_scheme.pdf`, teacher papers and their
+  schemes, avatars, tutor evidence) and also lists each purged user's key prefix
+  (`uploads/{id}/`, `teacher/{id}/`, `{id}/` in the avatar bucket, `tutor-evidence/{profile}/`)
+  for objects no row references. It deletes the objects first; a missing object counts as done.
+  **If any object fails, no database row is touched** and the failures are listed, so fixing the
+  cause and re-running the same command retries. A key that a surviving row also references is
+  kept.
+- Then it deletes the rows in one transaction (children first, composite foreign keys
+  included; the keys are read from the database, so a new table is covered), then the matching
+  Supabase Auth users. The Auth step treats an already-deleted user as done and lists every
+  failure; the exit code is 1 if any step failed, and re-running finishes the job (it also removes
+  Auth users that have no `users` row and are not on the allow-list; with
+  `--include-unverified-allowlisted` also keep-domain ones without a row).
+- A verified allow-listed account is never deleted. `--include-unverified-allowlisted` also
+  deletes the unverified ones. Run the purge in a quiet window: with that flag, a colleague signing
+  up mid-run (their Auth user exists a moment before their row) would be deleted too.
+- **Schema check:** it refuses unless the database is at Alembic head, naming the revision it
+  found and the one it expects.
+- **Environment check, two flags.** A target positively identified as production is refused unless
+  `--i-know-this-is-production` is given. A target the tool cannot recognise as local, staging or
+  production (a mistyped URL looks like this) is refused unless `--target-is-unrecognised` is
+  given; the production flag never covers it, so typing it for production cannot also get past a
+  wrong URL.
+- **Storage check:** outside a local database `--execute` refuses unless the backend is `gcs`, all
+  three bucket names are set explicitly and each names the detected environment (`staging` or
+  `production`), and every bucket answers with the configured credentials. A dry run prints the
+  same problems as a warning. A default `local` backend would delete nothing and still report
+  success, which is why this is enforced.
+- **uuid columns with no foreign key** are listed in `NON_FK_UUID_COLUMNS` with their disposition
+  (`lemely/db/user_purge.py`), and a test fails if a migration adds one that is not. Today:
+  `friendships.pair_low/pair_high` are derived copies of the cascading requester and addressee, so
+  the friendship goes with the user; `tutoring_admin_access` ids are an append-only admin read log
+  kept by design (tutoring SPEC SC-23; it holds ids of profiles, bookings, evidence and reports,
+  no account data, and `admin_user_id` is cleared); `ai_detection_removal_audit_log.source_id` is a
+  `review_queue` row id written once by migration 0037.
+- **Waitlist applicants are never touched**; they are not users. The tool stops with an error if
+  a future migration ever links that table to `users`.
+- **Gate cost:** while access is restricted every authenticated request does one extra `users`
+  read (and a route that also needs a verified email reads the same row twice). It goes away when
+  access opens; if it matters, the gate can later hand its row to the dependencies that follow.
+- **Gate side effect:** while access is restricted the API never returns verification dev links
+  or codes, and a deployed service with a restricted gate and no `LEMELY_EMAIL__API_KEY` refuses
+  to start (set the key in both environments before this deploys).
+
 ## Edge secret and scheduled jobs
 
 Two pieces of `deploy.yml` automate infrastructure that used to be manual.

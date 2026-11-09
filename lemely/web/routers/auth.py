@@ -17,7 +17,7 @@ import uuid
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Security
 
 from lemely.auth.cooldown import CooldownError, CooldownStoreProtocol
 from lemely.auth.mirror import UserMirror
@@ -36,6 +36,7 @@ from lemely.db.notification_repo import NotificationService
 from lemely.runtime.config import Settings
 from lemely.runtime.errors import AuthError
 from lemely.web.deps import (
+    ALLOW_UNVERIFIED_SCOPE,
     AuthContext,
     get_auth_context,
     get_auth_service,
@@ -264,6 +265,9 @@ def signup(
             status_code=403,
             detail="Self-service signup can only create a student or teacher account.",
         )
+    # Before the cooldown: a refused address must keep answering 403 access_restricted on every
+    # retry, never a 429 that hides the refusal.
+    service.require_access(body.email)
     if mirror.get_by_email(body.email) is None:
         try:
             cooldown.check_and_stamp(body.email)
@@ -375,6 +379,7 @@ def request_parent_code(
     D3.16.
     """
     _require_live_parent_invite(invite_service, body.inviteCode)
+    service.require_access(body.email)  # before the cooldown, as in signup
     if mirror.get_by_email(body.email) is not None:
         raise HTTPException(status_code=400, detail=_EMAIL_TAKEN_DETAIL)
     try:
@@ -551,7 +556,7 @@ def verify_email(
 @router.post("/auth/verify-email/code", response_model=VerifyEmailResponseDTO)
 def verify_email_code(
     body: VerifyEmailCodeRequestDTO,
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    auth: Annotated[AuthContext, Security(get_auth_context, scopes=[ALLOW_UNVERIFIED_SCOPE])],
     service: Annotated[AuthService, Depends(get_auth_service)],
 ) -> VerifyEmailResponseDTO:
     """Verify the **authenticated caller's** email by code (DS15). 400 on any failure.
@@ -573,7 +578,7 @@ def verify_email_code(
 
 @router.post("/auth/verify-email/resend", response_model=ResendVerificationResponseDTO)
 def resend_verification(
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    auth: Annotated[AuthContext, Security(get_auth_context, scopes=[ALLOW_UNVERIFIED_SCOPE])],
     service: Annotated[AuthService, Depends(get_auth_service)],
     cooldown: Annotated[CooldownStoreProtocol, Depends(get_resend_verification_cooldown_store)],
 ) -> ResendVerificationResponseDTO:

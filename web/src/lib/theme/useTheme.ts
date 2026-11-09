@@ -1,9 +1,10 @@
 import { useCallback, useLayoutEffect, useSyncExternalStore } from "react"
 import { applyTheme } from "./applyTheme"
+import { getSession, subscribeToSession } from "@/lib/auth/storage"
 import {
   THEME_STORAGE_KEY,
   readThemePreference,
-  resolveTheme,
+  resolveEffectiveTheme,
   type ResolvedTheme,
   type ThemePreference,
 } from "./theme"
@@ -58,6 +59,29 @@ function systemPrefersDark(): boolean {
  * whichever one happened to hold a still-live listener.
  * ════════════════════════════════════════════════════════════════════════
  */
+
+/** Whether a session is stored. Read synchronously from the same key `getSession` reads, so it
+ * is right on the first render (no async flash); kept live by `subscribeToSession` (login,
+ * logout, a refused refresh, the 403 access cut-off) and by the `storage` event (other tabs). */
+function readSignedIn(): boolean {
+  try {
+    return getSession() !== null
+  } catch {
+    return false
+  }
+}
+
+let currentSignedIn: boolean = readSignedIn()
+
+function setSignedIn(next: boolean): void {
+  if (next === currentSignedIn) return
+  currentSignedIn = next
+  notify()
+}
+
+function getSignedInSnapshot(): boolean {
+  return currentSignedIn
+}
 
 let currentPreference: ThemePreference = readStoredPreference()
 let currentSystemDark: boolean = systemPrefersDark()
@@ -125,6 +149,8 @@ function ensureListenersAttached(): void {
   if (listenersAttached || typeof window === "undefined") return
   listenersAttached = true
   window.addEventListener("storage", handleThemeStorageEvent)
+  window.addEventListener("storage", () => setSignedIn(readSignedIn()))
+  subscribeToSession((session) => setSignedIn(session !== null))
   if (window.matchMedia) {
     const media = window.matchMedia(DARK_QUERY)
     media.addEventListener("change", (event) => handleSystemDarkChange(event.matches))
@@ -149,12 +175,15 @@ export const themeStore = {
   subscribe,
   getPreferenceSnapshot,
   getSystemDarkSnapshot,
+  getSignedInSnapshot,
+  setSignedIn,
   setPreference: setStorePreference,
   handleStorageEvent: handleThemeStorageEvent,
 }
 
 export interface UseThemeResult {
   preference: ThemePreference
+  /** What paints: the user's preference when signed in, always light otherwise. */
   resolved: ResolvedTheme
   setPreference: (preference: ThemePreference) => void
 }
@@ -179,7 +208,8 @@ export interface UseThemeResult {
 export function useTheme(): UseThemeResult {
   const preference = useSyncExternalStore(subscribe, getPreferenceSnapshot)
   const systemDark = useSyncExternalStore(subscribe, getSystemDarkSnapshot)
-  const resolved = resolveTheme(preference, systemDark)
+  const signedIn = useSyncExternalStore(subscribe, getSignedInSnapshot)
+  const resolved = resolveEffectiveTheme(signedIn, preference, systemDark)
 
   useLayoutEffect(() => {
     const root = document.documentElement

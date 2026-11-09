@@ -23,6 +23,4 @@ body { margin: 0; background: var(--md-surface); color: var(--md-on-surface); fo
 .lw-theme-demo { padding: 16px; background: #130e10; color: #fff; font-size: 14px; }
 
 /* preview-only: keep admin chrome below the sticky dev toolbar */
-.lw-admin aside[aria-label^="Applicant"] { top: var(--lw-bar, 52px); }
 .lw-admin > aside:first-child { top: var(--lw-bar, 52px); height: calc(100vh - var(--lw-bar, 52px)); }
-@media (min-width: 640px) { .lw-admin[data-panel="true"] > main { padding-inline-end: 452px; } }

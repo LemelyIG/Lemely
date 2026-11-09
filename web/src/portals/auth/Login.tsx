@@ -11,6 +11,7 @@ import { isDeviceLimitChallenge, type DeviceLimitChallenge } from "@/lib/deviceT
 import { takeSessionExpired } from "@/lib/auth/storage"
 import { safeNextPath } from "@/lib/nextPath"
 import { signInFailureMessage } from "@/lib/authOutcome"
+import { useTeamSuffix } from "@/portals/access/team"
 import { cn } from "@/lib/utils"
 import { DeviceLimitNotice } from "./DeviceLimitNotice"
 
@@ -122,6 +123,7 @@ export function Login() {
   const navigate = useNavigate()
   const location = useLocation()
   const [searchParams] = useSearchParams()
+  const teamSuffix = useTeamSuffix()
   // PR 2 part A2: where a dead session (`RequireAuth`) or `/session-ended`'s
   // own "Sign in again" link carried the reader from. Re-validated here with
   // the same allowlist those two apply — a `?next=` is exactly as untrusted
@@ -199,7 +201,7 @@ export function Login() {
            */}
           <p className="text-body-sm text-on-surface-variant">
             New to Lemely?{" "}
-            <Link to="/signup" className={LINK_CLASS}>
+            <Link to={`/signup${teamSuffix}`} className={LINK_CLASS}>
               Create an account
             </Link>
           </p>

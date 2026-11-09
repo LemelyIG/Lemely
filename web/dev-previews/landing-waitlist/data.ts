@@ -3,6 +3,8 @@ import type { WaitlistStatus } from "@/lib/waitlist-api"
 /* Clearly fake seed rows for the admin queue preview. Every email is @example.com. */
 
 
+/* Clearly fake names; the oldest row has none, as rows from before the field existed do. */
+const NAMES: (string | null)[] = ["Sample Student One", "Teacher Example", "Partial Applicant", "Parent Example", "Example Centre Lead", "Sample Student Two", "Declined Example", "Teacher Sample", "Partial Two", "Parent Sample", "Centre Example Two", "Student Example Three", "Teacher Example Two", "Sample Student Four", "Parent Example Two", "Student Example Five", "Partial Three", "Teacher Example Three", "Student Sample Six", "Centre Sample Three", "Student Example Seven", "Parent Example Three", "Student Sample Eight", "Teacher Example Four", null]
 const CONSENT = "Applying opts you in to Lemely emails."
 type Raw = { role: string; levels: string[]; subjects: string[]; other?: string; boards: string[]; session: string; phone?: string; whatsapp?: boolean; centre?: string; status: WaitlistStatus; partial: boolean; note: string; created: string; source: string }
 const rows: Raw[] = [
@@ -42,6 +44,7 @@ const SESSION: Record<string, string> = { "May/June 2027": "2027-mj", "Oct/Nov 2
 export const APPLICANTS: WaitlistApplicant[] = rows.map((r, i) => ({
   id: String(i + 1),
   email: `${r.role}${String(i + 1).padStart(2, "0")}@example.com`,
+  name: NAMES[i] ?? null,
   role: (r.role === "centre" ? "centre_admin" : r.role) as WaitlistRole,
   centreName: r.centre ?? null,
   levels: r.levels.map((l) => LEVEL[l]).filter((l): l is WaitlistLevel => !!l),
@@ -58,7 +61,7 @@ export const APPLICANTS: WaitlistApplicant[] = rows.map((r, i) => ({
   status: r.status,
   adminNote: r.note || null,
   utmSource: r.source === "direct" ? null : r.source,
-  utmMedium: null, utmCampaign: null, utmContent: null, utmTerm: null,
+  utmMedium: r.source === "direct" ? null : "share", utmCampaign: r.source === "direct" ? null : "launch", utmContent: null, utmTerm: null,
   completedAt: r.partial ? null : r.created,
   partial: r.partial,
   createdAt: r.created,

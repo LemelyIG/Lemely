@@ -24,15 +24,18 @@ import {
   TOP_SUBJECTS,
   WAITLIST_CONSENT_TEXT,
   WAITLIST_CONSENT_VERSION,
-  WAITLIST_LIMITS,
   WAITLIST_ROLES,
   WAITLIST_ROLE_LABELS,
   WaitlistError,
   completeWaitlist,
   examSessionOptions,
   getWaitlistConfig,
+  normaliseWaitlistName,
   normaliseWaitlistPhone,
+  validateWaitlistName,
   validateWaitlistPhone,
+  waitlistFirstName,
+  WAITLIST_LIMITS,
   waitlistFieldErrors,
   type WaitlistConfig,
   joinWaitlist,
@@ -68,13 +71,14 @@ export const liveWaitlistClient: WaitlistClient = {
 }
 
 type Status = 'idle' | 'submitting' | 'network' | 'rate' | 'failed'
-type FieldErrors = Partial<Record<'email' | 'role' | 'subjects' | 'phone' | 'centre', string>>
+type FieldErrors = Partial<Record<'email' | 'name' | 'role' | 'subjects' | 'phone' | 'centre', string>>
 
 /** Initial state, so a state can be shown without clicking through to it (preview gallery, tests). */
 export interface WaitlistSeed {
   step: 1 | 2 | 'done'
   role?: WaitlistRole
   email?: string
+  name?: string
   status?: Status
   errors?: FieldErrors
   duplicate?: boolean
@@ -186,6 +190,7 @@ export function WaitlistPanel({
   const [step, setStep] = useState<WaitlistSeed['step']>(seed.step)
   const [role, setRole] = useState<WaitlistRole | undefined>(seed.role)
   const [email, setEmail] = useState(seed.email ?? '')
+  const [name, setName] = useState(seed.name ?? '')
   const [status, setStatus] = useState<Status>(seed.status ?? 'idle')
   const [failure, setFailure] = useState('')
   const [errors, setErrors] = useState<FieldErrors>(seed.errors ?? {})
@@ -217,6 +222,7 @@ export function WaitlistPanel({
   const sessions = useMemo(() => examSessionOptions(), [])
   const body = useRef<HTMLDivElement>(null)
   const r = role ?? 'none'
+  const firstName = waitlistFirstName(name)
   const topValues: readonly string[] = TOP_SUBJECTS.map((x) => x.value)
   const extraSubjects = subjects.filter((v) => !topValues.includes(v))
   const title = dup ? "You're already on the list" : HEADLINE[r]
@@ -264,6 +270,7 @@ export function WaitlistPanel({
     if (Object.keys(fieldErrors).length) {
       const mapped: FieldErrors = {}
       if (fieldErrors.email) mapped.email = fieldErrors.email
+      if (fieldErrors.name) mapped.name = fieldErrors.name
       if (fieldErrors.role) mapped.role = fieldErrors.role
       if (fieldErrors.subjects || fieldErrors.otherSubjects) mapped.subjects = fieldErrors.subjects ?? fieldErrors.otherSubjects
       if (fieldErrors.phone) mapped.phone = fieldErrors.phone
@@ -290,6 +297,8 @@ export function WaitlistPanel({
   async function attemptJoin(): Promise<WaitlistStep1Result | null> {
     const e: FieldErrors = {}
     if (!EMAIL_RE.test(email.trim())) e.email = 'Enter an email like name@school.com.'
+    const nameError = validateWaitlistName(name)
+    if (nameError) e.name = nameError
     if (!role) e.role = 'Pick the option that fits you.'
     setErrors(e)
     if (Object.keys(e).length || !role) return null
@@ -315,6 +324,7 @@ export function WaitlistPanel({
     setStatus('submitting')
     return client.join({
       email: email.trim(),
+      name: normaliseWaitlistName(name),
       role,
       consentVersion: WAITLIST_CONSENT_VERSION,
       website: honeypot,
@@ -483,11 +493,13 @@ export function WaitlistPanel({
                 <dl className="m-0 grid grid-cols-[64px_1fr] items-baseline gap-x-3 gap-y-2 text-body-md">
                   <dt className="lw-label">Email</dt>
                   <dd className="m-0 break-all font-semibold">{email}</dd>
+                  <dt className="lw-label">Name</dt>
+                  <dd className="m-0 font-semibold">{normaliseWaitlistName(name)}</dd>
                   <dt className="lw-label">Role</dt>
                   <dd className="m-0 font-semibold">{WAITLIST_ROLE_LABELS[role]}</dd>
                 </dl>
                 <p className="m-0 text-body-sm text-on-surface-variant">
-                  Your email is saved, so these two can't change here.
+                  Your email and name are saved, so these can't change here.
                 </p>
               </>
             ) : (
@@ -507,6 +519,24 @@ export function WaitlistPanel({
                 !EMAIL_RE.test(email.trim()) &&
                 setErrors((x) => ({ ...x, email: 'Enter an email like name@school.com.' }))
               }
+            />
+            <Input
+              label="Full name"
+              className="min-h-11"
+              autoComplete="name"
+              placeholder="Your full name"
+              maxLength={WAITLIST_LIMITS.name * 2}
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value)
+                if (errors.name) setErrors((x) => ({ ...x, name: undefined }))
+              }}
+              error={errors.name}
+              onBlur={() => {
+                // An empty field is only flagged on submit, so tabbing past it stays quiet.
+                const message = name.trim() ? validateWaitlistName(name) : null
+                if (message) setErrors((x) => ({ ...x, name: message }))
+              }}
             />
             <div className="lw-roles">
               <RadioGroup
@@ -699,7 +729,7 @@ export function WaitlistPanel({
                 <span className="flex size-6 items-center justify-center rounded-full bg-success text-on-primary">
                   <Check size={14} weight="bold" aria-hidden />
                 </span>
-                You're on the list
+                {firstName ? `You're on the list, ${firstName}` : "You're on the list"}
               </p>
               <p className="m-0 max-w-[44ch] text-body-md text-on-surface-variant">
                 We saved <span className="font-semibold text-on-surface">{email}</span>. We'll email

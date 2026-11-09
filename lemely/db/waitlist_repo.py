@@ -1,6 +1,6 @@
 """Persistence for the landing-page waitlist (``waitlist_applicants``).
 
-The public flow is two writes: :meth:`WaitlistRepository.create` (step 1: email, role, UTM,
+The public flow is two writes: :meth:`WaitlistRepository.create` (step 1: email, name, role, UTM,
 consent; returns the one-time completion token) and :meth:`WaitlistRepository.complete`
 (step 2: the rest, redeemed with that token). Only the SHA-256 digest of the token is stored.
 The admin side reads and filters the queue, edits status and note, and exports the filtered
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session, sessionmaker
 
-SORT_COLUMNS: Final = ("created_at", "email", "role", "status", "exam_session")
+SORT_COLUMNS: Final = ("created_at", "email", "name", "role", "status", "exam_session")
 PARTIAL: Final = "partial"
 UTM_FIELDS: Final = ("utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term")
 _TOP_SUBJECTS: Final = 5
@@ -119,7 +119,13 @@ def _conditions(
             < datetime.combine(filters.created_to + timedelta(days=1), time.min, UTC)
         )
     if filters.q:
-        out.append(model.email.icontains(filters.q.strip().lower(), autoescape=True))
+        needle = filters.q.strip().lower()
+        out.append(
+            sa.or_(
+                model.email.icontains(needle, autoescape=True),
+                model.name.icontains(needle, autoescape=True),
+            )
+        )
     return out
 
 
@@ -141,6 +147,7 @@ class WaitlistRepository:
         self,
         *,
         email: str,
+        name: str,
         role: str,
         consent_version: str,
         consent_text: str,
@@ -156,6 +163,7 @@ class WaitlistRepository:
         moment = self._now()
         values: dict[str, object] = {
             "email": email,
+            "name": name,
             "role": WaitlistRole(role),
             "consent_version": consent_version,
             "consent_text": consent_text,
@@ -307,6 +315,8 @@ class WaitlistRepository:
             WaitlistApplicant, sort if sort in SORT_COLUMNS else "created_at"
         )
         primary = column.desc() if descending else column.asc()
+        if sort == "name":
+            primary = primary.nulls_last()
         return primary, WaitlistApplicant.id.asc()
 
     # -- digest --------------------------------------------------------------------

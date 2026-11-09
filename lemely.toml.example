@@ -452,6 +452,15 @@ study_plan_reminder_hour = 8
 # sent. 60 sits below Resend's 100/day free quota, which account mail shares.
 email_daily_cap = 60
 
+[access]
+# Who may sign up, log in or call an authenticated route while Lemely is not
+# launched. Empty means open (local dev). Non-empty, only accounts with a VERIFIED
+# email on one of these domains get in; everyone else is answered 403
+# access_restricted. Exact match, so a subdomain is not its parent. Deployed it
+# is LEMELY_ACCESS__ALLOWED_EMAIL_DOMAINS (comma-separated); deploy.yml sets it
+# to lemelyig.com for staging and production. Empty it to open access.
+allowed_email_domains = []
+
 [waitlist]
 # Shared secret for POST /api/internal/waitlist/digest, the daily applicant
 # digest Cloud Scheduler triggers (sent in an X-Cron-Secret header). Unset, the

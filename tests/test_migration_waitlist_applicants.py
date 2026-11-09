@@ -50,13 +50,12 @@ def _insert(session: Session, email: str, token_hash: str | None = None) -> None
     )
 
 
-def test_revision_chains_from_0051_and_is_the_head() -> None:
+def test_revision_chains_from_0051() -> None:
     script_dir = ScriptDirectory.from_config(Config("alembic.ini"))
     revision = script_dir.get_revision(REVISION)
     assert revision is not None
     assert revision.down_revision == DOWN_REVISION
     assert len(REVISION) <= 32  # alembic_version.version_num is varchar(32)
-    assert head_revision() == REVISION
 
 
 def test_migrated_schema_matches_the_orm(migrated_sessionmaker: sessionmaker[Session]) -> None:
@@ -110,6 +109,6 @@ def test_upgrade_downgrade_upgrade_round_trip(
     upgrade_head()
 
     with sm() as session:
-        assert current_revision(session) == REVISION
+        assert current_revision(session) == head_revision()
         assert TABLE in public_tables(session)
         assert session.execute(sa.text(f"SELECT count(*) FROM {TABLE}")).scalar_one() == 0  # noqa: S608 - constant

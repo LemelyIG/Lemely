@@ -1,3 +1,4 @@
+import { isAccessRestricted } from "@/lib/access-api"
 import {
   useMutation,
   useQuery,
@@ -33,6 +34,9 @@ export function useProfile(): UseQueryResult<Profile, Error> {
   return useQuery({
     queryKey: PROFILE_KEY,
     queryFn: () => request<Profile>("/me/profile"),
+    // The pre-launch gate refuses this read for an unverified account (403 `access_restricted`).
+    // Retrying cannot change that, so fail at once and let the caller use its fallback copy.
+    retry: (count, error) => !isAccessRestricted(error) && count < 1,
   })
 }
 

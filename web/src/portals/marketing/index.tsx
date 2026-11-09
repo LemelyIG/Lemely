@@ -57,9 +57,10 @@ function HashScroll() {
 }
 
 export function MarketingFrame({ children }: { children: React.ReactNode }) {
-  /* `lw-light`: the marketing frame is light-only, whatever the app theme or OS prefers. */
+  /* No theme pin here: `<html data-theme>` is the one switch (anonymous visitors light, signed-in
+     users their own choice, `lib/theme/theme.ts`), so the frame and every portal agree. */
   return <WaitlistProvider>
-    <div className="marketing-brand lw-light min-h-dvh">
+    <div className="marketing-brand min-h-dvh">
       <SkipLink />
       <MarketingHeader />
       <main id={MAIN_CONTENT_ID} tabIndex={-1}>{children}</main>

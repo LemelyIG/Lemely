@@ -286,7 +286,7 @@ def test_0043_merge_heads_joins_the_develop_and_branch_chains() -> None:
         "0042_question_result_source_box",
         "0039_paper_soft_delete",
     }
-    assert script_dir.get_heads() == ["0052_waitlist_applicants"]
+    assert script_dir.get_heads() == ["0053_waitlist_applicant_name"]
 
 
 def test_every_enum_column_binds_its_value_not_its_member_name() -> None:

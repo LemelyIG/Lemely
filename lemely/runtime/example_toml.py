@@ -22,9 +22,10 @@ template developers copy.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
-from lemely.runtime.config import NotificationsSettings, Settings
+from lemely.runtime.config import AccessSettings, NotificationsSettings, Settings
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -598,6 +599,20 @@ def render_example_toml() -> str:
     lines.append("# tutoring mails went out in the last 24 hours, further ones are skipped, not")
     lines.append("# sent. 60 sits below Resend's 100/day free quota, which account mail shares.")
     lines.append(f"email_daily_cap = {s.tutoring.email_daily_cap}")
+    lines.append("")
+
+    lines.append("[access]")
+    lines.append("# Who may sign up, log in or call an authenticated route while Lemely is not")
+    lines.append(
+        "# launched. Empty means open (local dev). Non-empty, only accounts with a VERIFIED"
+    )
+    lines.append("# email on one of these domains get in; everyone else is answered 403")
+    lines.append("# access_restricted. Exact match, so a subdomain is not its parent. Deployed it")
+    lines.append("# is LEMELY_ACCESS__ALLOWED_EMAIL_DOMAINS (comma-separated); deploy.yml sets it")
+    lines.append("# to lemelyig.com for staging and production. Empty it to open access.")
+    # The shipped default (open), not the live value: deployed environments set it, and an
+    # example file documents what ships (same reason as `sweeper_enabled` above).
+    lines.append(f"allowed_email_domains = {json.dumps(AccessSettings().allowed_email_domains)}")
     lines.append("")
 
     lines.append("[waitlist]")

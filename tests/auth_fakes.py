@@ -106,6 +106,8 @@ class FakeUserMirror:
                 terms_accepted_at=terms_accepted_at,
             )
         else:
+            if existing.email.lower() != email.lower():
+                existing.email_verified_at = None
             existing.email = email
             existing.role = role
             if phone is not None:

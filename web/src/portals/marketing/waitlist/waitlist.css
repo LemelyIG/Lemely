@@ -1,69 +1,13 @@
-/* Waitlist: light-only lock, application dialog/sheet and admin queue styles. */
+/* Waitlist: application dialog/sheet and admin queue styles. */
 /*
- * LIGHT-ONLY SCOPE. The app themes via :root[data-theme="dark"], which swaps
- * the --md-* roles. Re-declaring the light roles on an element pins that
- * subtree to light, whatever <html> says. Because the Sheet portals to <body>,
- * the class goes on the portaled content itself, not on a page wrapper.
- * Values are the :root block of src/index.css, verbatim.
+ * THEMING. Nothing here pins a theme. `<html data-theme>` carries the one rule (anonymous
+ * visitors are always light, signed-in users get their own choice, see `lib/theme/theme.ts`),
+ * and the dialog's Sheet portals to <body>, so it inherits the same roles as the page behind it.
  */
-.lw-light {
-  color-scheme: light;
-  /* The ring and the floating-panel shadow are derived tokens, so the dark values would
-     otherwise be inherited through the lock (Tide ring on white is ~2:1). */
-  --focus-ring: var(--md-primary);
-  --shadow-panel: 0 30px 60px -40px oklch(0.3 0.06 242 / 0.45), 0 0 0 1px oklch(0.92 0.01 240);
-  --md-primary: #042f4f;
-  --md-primary-hover: #0a3d62;
-  --md-on-primary: #ffffff;
-  --md-primary-container: oklch(0.92 0.035 235);
-  --md-on-primary-container: #042f4f;
-  --md-secondary: oklch(0.40 0.010 235);
-  --md-on-secondary: #ffffff;
-  --md-secondary-container: oklch(0.90 0.037 235);
-  --md-on-secondary-container: oklch(0.10 0.006 235);
-  --md-tertiary: oklch(0.80 0.13 80);
-  --md-on-tertiary: oklch(0.20 0.019 80);
-  --md-tertiary-container: oklch(0.95 0.098 80);
-  --md-on-tertiary-container: oklch(0.30 0.022 80);
-  --md-error: oklch(0.53 0.20 25);
-  --md-on-error: #ffffff;
-  --md-error-container: oklch(0.95 0.067 25);
-  --md-on-error-container: oklch(0.30 0.117 25);
-  --md-success: oklch(0.60 0.12 150);
-  --md-success-text: oklch(0.49 0.12 150);
-  --md-success-container: oklch(0.95 0.04 150);
-  --md-on-success-container: oklch(0.32 0.08 150);
-  --md-surface: oklch(0.985 0.004 240);
-  --md-surface-container-lowest: #ffffff;
-  --md-surface-container-low: oklch(0.97 0.006 240);
-  --md-surface-container: oklch(0.955 0.008 240);
-  --md-surface-container-high: oklch(0.94 0.01 240);
-  --md-surface-container-highest: oklch(0.92 0.012 240);
-  --md-on-surface: #130e10;
-  --md-on-surface-variant: oklch(0.47 0.02 240);
-  --md-outline: oklch(0.87 0.012 240);
-  --md-outline-variant: oklch(0.92 0.01 240);
-  --md-inverse-surface: oklch(0.16 0.014 245);
-  --md-inverse-on-surface: oklch(0.95 0.006 240);
-  --md-inverse-primary: #7fb8e0;
-  --md-scrim: oklch(0.20 0.03 242 / 0.55);
-  --md-shadow: oklch(0.30 0.06 242);
-  --grade-a-star: oklch(0.46 0.12 155);
-  --grade-a: oklch(0.52 0.12 132);
-  --grade-b: oklch(0.58 0.12 110);
-  --grade-c: oklch(0.63 0.12 88);
-  --grade-d: oklch(0.59 0.125 62);
-  --grade-e: oklch(0.54 0.13 38);
-  --grade-f: oklch(0.53 0.135 30);
-  --grade-g: oklch(0.52 0.138 22);
-  --grade-u: oklch(0.50 0.14 15);
-  --binny-steel: oklch(0.80 0.01 240);
-  --binny-cheek: oklch(0.72 0.10 15);
-  color: var(--md-on-surface);
-}
 /* Grade D at L 0.59 is 4.24:1 on white; the "+120 XP" label in the landing art is small text.
-   Same hue, lower lightness: 4.5:1+. Scoped to the marketing frame so other portals keep --grade-d. */
-.marketing-brand.lw-light {
+   Same hue, lower lightness: 4.5:1+. Light theme only, scoped to the marketing frame so other
+   portals keep --grade-d. */
+:root:not([data-theme="dark"]) .marketing-brand {
   --brand-art-35: oklch(0.52 0.125 62);
 }
 /* panel */
