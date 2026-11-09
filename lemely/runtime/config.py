@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -345,6 +346,16 @@ class GeminiSettings(BaseModel):
     # three marks. Not with `correction_retry_keep_higher`.
     correction_retry_median: bool = True
     correction_retry_median_below: float = Field(default=0.86, ge=0.0, le=1.0)
+
+    @field_validator("pricing")
+    @classmethod
+    def _prices_are_finite_and_non_negative(
+        cls, value: dict[str, list[float]]
+    ) -> dict[str, list[float]]:
+        for model, rates in value.items():
+            if any(not math.isfinite(rate) or rate < 0 for rate in rates):
+                raise ValueError(f"pricing[{model!r}]: rates must be finite and non-negative")
+        return value
 
     @field_validator("claude_cache_for")
     @classmethod

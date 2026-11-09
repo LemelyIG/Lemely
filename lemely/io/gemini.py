@@ -2162,10 +2162,6 @@ class GeminiClient:
             usd_now += extra_usd_now
             usd_2027 += extra_usd_2027
         usd_rounded = round(usd, 6)
-        # Billing spec §5.7 step 4: the open usage job (if any) is charged this call.
-        # `usd` is today's price, including an explicit cache's storage, and the
-        # warn-and-fall-back price for an unpriced model, never the NaN record value.
-        record_llm_cost(usd_decimal(usd))
         attempt, question_id = _call_labels.get()
         thinking = (
             self.resolved_thinking(task_tag, model, _call_leaf_kind.get())
@@ -2216,6 +2212,16 @@ class GeminiClient:
                 _thread_state.last_record = record
             else:
                 _thread_state.last_record = None
+        # Billing spec §5.7 step 4: the open usage job (if any) is charged this call. `usd`
+        # is today's price, including an explicit cache's storage, and the warn-and-fall-back
+        # price for an unpriced model, never the NaN record value. This runs after the
+        # counters, the ledger and the call record so that a price the accumulator refuses
+        # (a NaN or negative override that slipped past config) skips only this feed: the
+        # money is already spent, so the call must not fail (spec §2.4).
+        try:
+            record_llm_cost(usd_decimal(usd))
+        except ValueError:
+            log.error("usage_cost_unrecordable", model=model, task_tag=task_tag, usd=usd)
         if new_total is not None:
             for threshold in crossed:
                 bus.publish(
