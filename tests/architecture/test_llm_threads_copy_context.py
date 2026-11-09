@@ -9,7 +9,9 @@ The scan is deliberately wider than "``pool.submit`` is wrapped":
 - every ``.submit`` / ``.apply_async`` / ``.map`` style dispatch is checked on any receiver,
   and an alias (``submit = pool.submit``) or ``getattr(pool, "submit")`` is refused outright;
 - every way of starting a worker (``ThreadPoolExecutor``, ``ProcessPoolExecutor``,
-  ``ThreadPool``, ``Pool``, ``Thread``, a ``Thread`` subclass, ``Timer``, ``run_in_executor``)
+  ``ThreadPool``, ``Pool``, ``Thread``, a ``Thread`` subclass, ``Timer``, ``Process``,
+  ``_thread.start_new_thread``, ``run_in_executor``), also when imported under another name or
+  fetched with ``getattr``
   is refused unless the file is on a per-file allowlist with a reason.
 
 The accepted way to submit is ``pool.submit(contextvars.copy_context().run, fn, *args)``
@@ -39,6 +41,9 @@ _WORKER_STARTERS = frozenset(
         "Pool",
         "Thread",
         "Timer",
+        "Process",
+        "start_new_thread",
+        "start_joinable_thread",
         "run_in_executor",
     }
 )
@@ -105,6 +110,13 @@ class _Scan(ast.NodeVisitor):
             self._flag(node, f"class {node.name} subclasses Thread")
         self.generic_visit(node)
 
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        # ``from threading import Thread as T`` would hide the constructor from the name check.
+        for alias in node.names:
+            if alias.asname and alias.name in _WORKER_STARTERS | _SUBMIT_METHODS | _MAP_METHODS:
+                self._flag(node, f"{alias.name} imported as {alias.asname} hides a worker")
+        self.generic_visit(node)
+
     def visit_Call(self, node: ast.Call) -> None:
         func = node.func
         name = _name_of(func)
@@ -127,7 +139,7 @@ class _Scan(ast.NodeVisitor):
             and func.id == "getattr"
             and len(node.args) >= 2
             and isinstance(node.args[1], ast.Constant)
-            and node.args[1].value in _SUBMIT_METHODS | _MAP_METHODS
+            and node.args[1].value in _SUBMIT_METHODS | _MAP_METHODS | _WORKER_STARTERS
         ):
             self._flag(node, f"getattr(..., {node.args[1].value!r}) hides a dispatch")
         self.generic_visit(node)
@@ -203,6 +215,26 @@ _RED = {
     "Thread subclass": ("class W(threading.Thread):\n    pass\n", "subclasses Thread"),
     "Timer": ("threading.Timer(0, f).start()\n", "Timer starts"),
     "run_in_executor": ("loop.run_in_executor(None, f)\n", "run_in_executor starts"),
+    "multiprocessing.Process": ("multiprocessing.Process(target=f).start()\n", "Process starts"),
+    "_thread.start_new_thread": ("_thread.start_new_thread(f, ())\n", "start_new_thread starts"),
+    "aliased Thread import": (
+        "from threading import Thread as T\nT(target=f).start()\n",
+        "imported as T",
+    ),
+    "aliased Timer import": (
+        "from threading import Timer as Tm\nTm(0, f).start()\n",
+        "imported as Tm",
+    ),
+    "aliased start_new_thread import": (
+        "from _thread import start_new_thread as go\ngo(f, ())\n",
+        "imported as go",
+    ),
+    "aliased executor import": (
+        "from concurrent.futures import ThreadPoolExecutor as TPE\nTPE(2)\n",
+        "imported as TPE",
+    ),
+    "getattr Thread": ("getattr(threading, 'Thread')(target=f).start()\n", "hides a dispatch"),
+    "getattr Timer": ("getattr(threading, 'Timer')(0, f).start()\n", "hides a dispatch"),
 }
 
 

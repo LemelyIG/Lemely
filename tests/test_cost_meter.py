@@ -28,6 +28,8 @@ from lemely.io.gemini import (
     _reset_process_counters,
     prefix_cache_storage_usd,
     price_call,
+    process_call_records,
+    record_calls,
 )
 from lemely.io.llm.cost_meter import CostAccumulator, cost_scope, record_llm_cost, usd_decimal
 from lemely.io.llm.errors import CapTruncatedError
@@ -285,10 +287,13 @@ def test_a_bad_price_never_fails_a_paid_call(bad: float) -> None:
             model_pricing={"gemini-3.8-flash": [bad, 0.4]},
             ledger=ledger,
         )
-        with cost_scope() as acc, capture_logs() as logs:
+        with cost_scope() as acc, capture_logs() as logs, record_calls():
             reply = _generate(client)
+            records = process_call_records()
     assert reply.value == "a"
     assert acc.calls == 0
+    [record] = records
+    assert (record.task_tag, record.input_tokens) == ("extraction", 10_000)
     assert [e["event"] for e in logs if e["event"] == "usage_cost_unrecordable"] == [
         "usage_cost_unrecordable"
     ]
