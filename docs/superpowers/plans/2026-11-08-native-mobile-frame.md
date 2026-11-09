@@ -77,9 +77,9 @@ These are planner decisions where the brief left room or conflicted with the cod
 
 - [x] ~~Should a screen's own top `<h1>` that repeats the large title be visually hidden on native?~~ Answered 2026-11-09: yes, the large title replaces it on phones (D11, Task 5b).
 - [x] ~~Do Android standalone users want an in-app swipe-back at all?~~ Answered 2026-11-09: yes, keep it alongside iOS (D5).
-- [ ] Should the paper result route be immersive (D8) or keep the tab bar? It is a long reading page.
-- [ ] **Glass blur radius.** The preview's glass uses `blur(14px)` (the landing header's glass); the app's only allowed blur is `--blur-nav: 10px` (DESIGN §3.2 item 6, `elevationScale.test.ts`), which the desktop floating bar also uses. The plan keeps `var(--blur-nav)`, so the native glass is 4px softer than the preview. Raising `--blur-nav` moves the approved desktop drift; a second blur token breaks the one-blur rule. Decide before Task 4.
-- [ ] **Pull-to-refresh indicator.** The preview draws a per-platform indicator (iOS spokes that follow the pull and hold the content 56px down; an M3 disc that holds at 64px). The plan reuses the app's existing `PullIndicator` (brief §7 "reuse what exists") and only takes the 64px threshold. Drift never captures a pull, so nothing gates it. Port the preview's indicators, or keep `PullIndicator`? Decide before Task 13.
+- [x] ~~Should the paper result route be immersive (D8)?~~ Answered 2026-11-09: no. The paper result keeps the tab bar. Only the camera, the correction run and teacher mark review are immersive.
+- [x] ~~Glass blur radius?~~ Answered 2026-11-09: keep the one-blur rule. Task 0 changes the preview's phone glass from `blur(14px)` to `var(--blur-nav)` (10px), touching phone and `[data-platform]` rules only, so desktop stays at 0 px. The app uses `var(--blur-nav)`.
+- [x] ~~Pull-to-refresh indicator?~~ Answered 2026-11-09: port the preview's per-platform indicators in Task 13: the iOS 8-spoke indicator with the content following the pull and holding 56px down, and the Android M3 disc with a growing arc, content still, holding at 64px. They replace `PullIndicator` inside the native frame. `PullIndicator` stays for anything outside the native frame.
 
 ## File structure
 
