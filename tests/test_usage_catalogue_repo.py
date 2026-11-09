@@ -164,6 +164,37 @@ def test_an_admin_version_wins_once_effective(migrated_sessionmaker: sessionmake
         assert current_rate_version(session, MeteredAction.MARK_PAPER, now=NOW) == 2
 
 
+def test_the_higher_version_wins_even_with_an_earlier_effective_from(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    with migrated_sessionmaker.begin() as session:
+        ensure_usage_catalogue(session, now=NOW)
+        session.add(
+            UsageEstimator(
+                version=2,
+                action="mark_paper",
+                input_kind=EstimatorInputKind.none,
+                base_low=7,
+                base_high=8,
+                per_input_low=0,
+                per_input_high=0,
+                effective_from=datetime(2025, 6, 1, tzinfo=UTC),
+            )
+        )
+        session.add(
+            UsageRate(
+                version=2,
+                action="mark_paper",
+                units_per_usd=3000,
+                effective_from=datetime(2025, 6, 1, tzinfo=UTC),
+            )
+        )
+    with migrated_sessionmaker.begin() as session:
+        params = current_estimator(session, MeteredAction.MARK_PAPER, now=NOW)
+        assert (params.version, params.base_low) == (2, 7)
+        assert current_rate_version(session, MeteredAction.MARK_PAPER, now=NOW) == 2
+
+
 def test_student_signup_is_a_hidden_one_time_allowance(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:

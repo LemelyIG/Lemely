@@ -144,6 +144,9 @@ def current_estimator(session: Session, action: MeteredAction, *, now: datetime)
     """The newest estimator in effect at ``now``; seeds the defaults if none exists."""
     row = _latest_estimator(session, action, now)
     if row is None:
+        # Seed-on-miss. If every row for this action is dated in the future (an admin moved
+        # them, or ``now`` predates CATALOGUE_EFFECTIVE_FROM), the miss survives seeding:
+        # each lookup re-runs these no-op inserts and then raises MeteringUnconfigured.
         ensure_usage_catalogue(session, now=now)
         row = _latest_estimator(session, action, now)
     if row is None:
@@ -162,6 +165,9 @@ def current_rate_version(session: Session, action: MeteredAction, *, now: dateti
     """The newest rate version in effect at ``now``; seeds the defaults if none exists."""
     row = _latest_rate(session, action, now)
     if row is None:
+        # Seed-on-miss. If every row for this action is dated in the future (an admin moved
+        # them, or ``now`` predates CATALOGUE_EFFECTIVE_FROM), the miss survives seeding:
+        # each lookup re-runs these no-op inserts and then raises MeteringUnconfigured.
         ensure_usage_catalogue(session, now=now)
         row = _latest_rate(session, action, now)
     if row is None:
