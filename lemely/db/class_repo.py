@@ -326,7 +326,10 @@ class ClassService:
         :class:`~lemely.db.quiz_taking_repo.QuizTakingService` uses for every
         student-side quiz scoping decision (P3.5 chunk E). Do not write a
         second ``ClassEnrollment`` query anywhere else for that purpose — see
-        that module's docstring.
+        that module's docstring. The one deliberate exception is
+        :func:`lemely.db.usage_context_repo.quiz_assignment_target`: this method opens
+        its own session, so metering cannot call it inside the billing transaction. It
+        repeats the same predicate as a subquery, and a test pins that both agree.
         """
         student_uuid = _as_uuid(student_id)
         with self._sessionmaker() as session:

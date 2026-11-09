@@ -319,9 +319,14 @@ def quiz_assignment_target(
     """The caller's own assignment: its quiz's subject and included question count.
 
     Ownership is ``QuizTakingService._load_permitted``'s rule: the assignment targets the
-    caller directly, or a class the caller is enrolled in. (That service reads enrolment
-    through its own session; this one stays in the metering transaction.) A foreign,
-    unknown or malformed id all return ``None``, so an id cannot be probed.
+    caller directly, or a class the caller is enrolled in. A foreign, unknown or malformed
+    id all return ``None``, so an id cannot be probed.
+
+    The enrolment subquery is a second reader of ``ClassEnrollment`` beside
+    ``ClassService.enrolled_class_ids`` (the seam ``QuizTakingService`` uses), on purpose:
+    that seam opens its own session, and this check must read inside the billing
+    transaction. ``test_quiz_target_visibility_matches_the_enrolment_seam`` pins that the
+    two agree; change them together.
     """
     sid, aid = _uuid(student_id), _uuid(assignment_id)
     if sid is None or aid is None:

@@ -18,6 +18,7 @@ from sqlalchemy import event
 from lemely.core.metered_actions import MeteredAction, UsageTarget
 from lemely.core.payer_chain import ChainContext, build_payer_chain
 from lemely.core.usage_types import GrantScope, Payer
+from lemely.db.class_repo import ClassService
 from lemely.db.models import School, SchoolMembership
 from lemely.db.models.attempts import Attempt, QuestionResult, QuestionResultPoint
 from lemely.db.models.enums import (
@@ -1140,3 +1141,30 @@ def test_quiz_assignment_target_of_an_empty_quiz_counts_zero(
     assert _target(sm, assigned.owner, assigned.assignment_id) == UsageTarget(
         subject_code="0625", input_count=0
     )
+
+
+def test_quiz_target_visibility_matches_the_enrolment_seam(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The in-transaction enrolment subquery agrees with ``enrolled_class_ids``."""
+    sm = migrated_sessionmaker
+    teacher, student = seed_user(sm, Role.teacher), seed_user(sm)
+    enrolled = [add_class(sm, teacher_id=teacher, subject_code="0580")[0] for _ in range(2)]
+    other = add_class(sm, teacher_id=teacher, subject_code="0580")[0]
+    for class_id in enrolled:
+        enrol(sm, class_id, student)
+    quiz_id = uuid.uuid4()
+    assignments: dict[uuid.UUID, uuid.UUID] = {}
+    with sm.begin() as session:
+        session.add(Quiz(id=quiz_id, teacher_id=teacher, subject_code="0580", title="Recap"))
+        session.flush()
+        for class_id in (*enrolled, other):
+            assignment = QuizAssignment(quiz_id=quiz_id, class_id=class_id, assigned_by=teacher)
+            session.add(assignment)
+            session.flush()
+            assignments[class_id] = assignment.id
+    seam = set(ClassService(sm).enrolled_class_ids(student))
+    assert seam == set(enrolled)
+    for class_id, assignment_id in assignments.items():
+        visible = _target(sm, student, str(assignment_id)) is not None
+        assert visible == (class_id in seam)
