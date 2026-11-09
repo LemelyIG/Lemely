@@ -175,13 +175,14 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
       topBar={{
         title: studentPageTitle(pagePath, subjects),
         trail,
+        backFallback: "/student",
         navLabel: "Open student navigation",
         actions: (
           <>
             {/* Packet B2a: a drilled-in page's trail has no linked crumb
                 ("Practice / 0580"), so below the sidebar column this is the
                 way back. Never on a section page, which design A shows bare. */}
-            {trail.length > 1 ? <BackControl fallback="/student" className="shell-lg:hidden" /> : null}
+            {trail.length > 1 ? <BackControl fallback="/student" className="shell-lg:hidden native:hidden" /> : null}
             {/* Not on the upload screen itself, where it would do nothing. */}
             {location.pathname === "/student/correct" ? null : upload("me-2.5 max-shell-sm:hidden")}
           </>

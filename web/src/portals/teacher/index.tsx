@@ -421,6 +421,7 @@ function TeacherLayout() {
       topBar={{
         title: trail[trail.length - 1]?.label ?? "Overview",
         trail,
+        backFallback: "/teacher",
         navLabel: "Open teacher navigation",
         actions: <TeacherTopBarActions />,
         notifications: TEACHER_NOTIFICATIONS_PANEL,

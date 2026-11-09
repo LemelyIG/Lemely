@@ -1161,6 +1161,168 @@ html[data-direction="back"]::view-transition-new(root) {
   }
 }
 
+/* ── Native frame: top bar (native frame Task 4). Phone width on iOS/Android
+   only. Unlayered and more specific than .lm-shell-bar-inset, so it replaces
+   the flat design A phone bar's margins, height and transparency. */
+@media (max-width: 720px) {
+  :root[data-platform="ios"] { --native-bar-h: var(--native-bar-h-ios); }
+  :root[data-platform="android"] { --native-bar-h: var(--native-bar-h-android); }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar {
+    position: sticky;
+    top: 0;
+    margin: 0;
+    height: auto;
+    min-height: calc(var(--native-bar-h) + env(safe-area-inset-top));
+    padding-top: env(safe-area-inset-top);
+    padding-inline: var(--native-bar-pad-inline);
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar {
+    isolation: isolate;
+    background-color: transparent; /* the page ground shows until the surface layer fades in */
+  }
+  /* The bar's surface is a layer under its content (preview .as-bar::before), so it
+     fades without fading the icons. */
+  /* The surface layer is positioned at the base rung, so every bar child is positioned
+     too and paints above it (the scale has no negative rung). */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar > :not(.lm-native-inline-title) {
+    position: relative;
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: var(--z-index-base);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--dur-base) var(--ease-out-soft);
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar:is([data-collapsed="true"], [data-title-level="detail"][data-stuck="true"])::before {
+    opacity: 1;
+  }
+  /* iOS: glass with a hairline. Android: M3 lift-on-scroll, no shadow, no hairline. */
+  :root[data-platform="ios"] .lm-native-bar::before {
+    background: color-mix(in oklch, var(--md-surface-container-lowest) var(--native-glass-mix), transparent);
+    -webkit-backdrop-filter: blur(var(--blur-nav)) saturate(var(--native-glass-saturate));
+    backdrop-filter: blur(var(--blur-nav)) saturate(var(--native-glass-saturate));
+    border-block-end: var(--native-hairline) solid var(--md-outline-variant);
+  }
+  :root[data-theme="dark"][data-platform="ios"] .lm-native-bar::before {
+    background: color-mix(in oklch, var(--md-surface-container-low) var(--native-glass-mix), transparent);
+  }
+  :root[data-platform="android"] .lm-native-bar::before {
+    background: var(--md-surface-container);
+  }
+  /* Actions: 44px (iOS) / 48px (Android) targets with 22px glyphs; iOS tints them primary,
+     Android keeps on-surface-variant. Root and detail both put the actions at the end. */
+  :root[data-platform="ios"] .lm-native-bar { --native-iconbtn: var(--native-iconbtn-ios); justify-content: flex-end; }
+  :root[data-platform="android"] .lm-native-bar { --native-iconbtn: var(--native-iconbtn-android); }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar .lm-native-iconbtn {
+    inline-size: var(--native-iconbtn);
+    block-size: var(--native-iconbtn);
+    border-radius: 9999px;
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar .lm-native-iconbtn svg {
+    inline-size: var(--native-bar-icon);
+    block-size: var(--native-bar-icon);
+  }
+  :root[data-platform="ios"] .lm-native-bar .lm-native-iconbtn { color: var(--md-primary); }
+  :root[data-platform="android"] .lm-native-bar .lm-native-iconbtn { color: var(--md-on-surface-variant); }
+  /* Detail: back, title, one action. */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-title-level="detail"] :is([data-shell-action="settings"], [data-shell-action="account"]) {
+    display: none;
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-back { margin-inline-end: auto; }
+  :root[data-platform="ios"] .lm-native-back {
+    inline-size: auto;
+    padding-inline-end: var(--space-2);
+    font-size: var(--native-inline-title-size);
+    line-height: var(--native-inline-title-lh);
+  }
+  :root[data-platform="ios"] .lm-native-back-md,
+  :root[data-platform="android"] :is(.lm-native-back-ios, .lm-native-back-label) { display: none; }
+  :root[data-platform="android"] .lm-native-back { color: var(--md-on-surface); }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-back svg:dir(rtl) { transform: scaleX(-1); }
+  /* Inline title. */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-inline-title {
+    font-size: var(--native-inline-title-size);
+    line-height: var(--native-inline-title-lh);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--md-on-surface);
+    transition: opacity var(--dur-fast) var(--ease-out-soft);
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-title-level="root"]:not([data-collapsed="true"]) .lm-native-inline-title {
+    opacity: 0;
+  }
+  /* iOS: centred over the bar, clear of three actions (root) or the back label (detail). */
+  :root[data-platform="ios"] .lm-native-inline-title {
+    position: absolute;
+    inset-inline: var(--native-title-inset-ios);
+    inset-block-end: 0;
+    block-size: var(--native-bar-h);
+    line-height: var(--native-bar-h);
+    text-align: center;
+  }
+  :root[data-platform="ios"] .lm-native-bar[data-title-level="detail"] .lm-native-inline-title {
+    inset-inline: var(--native-title-inset-detail-ios);
+  }
+  /* Android: start-aligned in the row. */
+  :root[data-platform="android"] .lm-native-inline-title {
+    position: relative;
+    flex: 1;
+    margin-inline: var(--space-3) var(--space-2);
+  }
+  /* Large title. */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-large-title {
+    margin: 0;
+    padding: var(--native-large-title-pad);
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: var(--native-large-title-size);
+    line-height: var(--native-large-title-lh);
+    letter-spacing: -0.03em;
+    color: var(--md-on-surface);
+    text-wrap: balance;
+    overflow-wrap: anywhere;
+    /* Long titles ("0625 Physics · Paper 4 · May/June 2024") wrap to 2 lines. */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    transition: opacity var(--dur-fast) var(--ease-out-soft);
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-collapsed="true"] + .lm-native-large-title {
+    opacity: 0;
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-title-level="detail"] + .lm-native-large-title {
+    display: none;
+  }
+}
+/* Collapse, scroll-driven where supported (Chrome 115+, Safari 26+), as in the preview:
+   the inline title and the bar's surface fade in over 70% to 100% of the large title's
+   exit, and the large title fades out over its whole exit. Elsewhere, and under reduced
+   motion, data-collapsed flips the same end state at the same threshold. */
+@supports (animation-timeline: scroll()) {
+  @media (prefers-reduced-motion: no-preference) and (max-width: 720px) {
+    @keyframes lm-native-fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes lm-native-fade-out { from { opacity: 1; } to { opacity: 0; } }
+    :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-title-level="root"] :is(.lm-native-inline-title),
+    :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-title-level="root"]::before {
+      animation: lm-native-fade-in linear both;
+      animation-timeline: scroll(root block);
+      animation-range: calc(var(--lm-large-title-block) * 0.7) var(--lm-large-title-block);
+    }
+    :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-title-level="root"] + .lm-native-large-title {
+      animation: lm-native-fade-out linear both;
+      animation-timeline: scroll(root block);
+      animation-range: 0px var(--lm-large-title-block);
+    }
+  }
+}
+
 /* §14 rule 3 forbids an arbitrary value — an inline `style` prop setting a
    raw spacing literal is the same violation in a different syntax, so these
    are named classes instead, off the same `--spacing` scale `py-4`/`py-2.5`

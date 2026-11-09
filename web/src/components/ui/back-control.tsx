@@ -4,6 +4,24 @@ import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { backTarget } from "@/lib/nav/backTarget"
 
+/** The history-or-fallback back action, shared by BackControl and the native bar's NativeBack. */
+export function useBackAction(fallback: string): () => void {
+  const navigate = useNavigate()
+  return () => {
+    const target = backTarget(window.history.state?.idx, fallback)
+    if (target.kind === "history") {
+      // react-router's delta overload (`navigate(-1)`) calls `router.go()`
+      // directly and ignores an options argument entirely — `viewTransition`
+      // only exists on the `to`-argument overload's `NavigateOptions`, so a
+      // real history pop plays no View Transition here. The route fallback
+      // below is the one branch that can actually request one.
+      navigate(-1)
+    } else {
+      navigate(target.to, { replace: true, viewTransition: true })
+    }
+  }
+}
+
 /*
  * Packet B2a · the one back control below the `sidebar` breakpoint, where
  * there is no sidebar navigation to fall back on. Renders in the student
@@ -24,21 +42,7 @@ export function BackControl({
   label?: string
   className?: string
 }) {
-  const navigate = useNavigate()
-
-  function handleClick() {
-    const target = backTarget(window.history.state?.idx, fallback)
-    if (target.kind === "history") {
-      // react-router's delta overload (`navigate(-1)`) calls `router.go()`
-      // directly and ignores an options argument entirely — `viewTransition`
-      // only exists on the `to`-argument overload's `NavigateOptions`, so a
-      // real history pop plays no View Transition here. The route fallback
-      // below is the one branch that can actually request one.
-      navigate(-1)
-    } else {
-      navigate(target.to, { replace: true, viewTransition: true })
-    }
-  }
+  const handleClick = useBackAction(fallback)
 
   return (
     <Button variant="ghost" size="sm" onClick={handleClick} className={className}>

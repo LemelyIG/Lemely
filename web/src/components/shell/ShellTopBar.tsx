@@ -1,7 +1,8 @@
-import { lazy, Suspense, useEffect, useState, type ReactNode } from "react"
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { Gear } from "@phosphor-icons/react"
 import { Breadcrumbs, type Crumb } from "@/components/ui/breadcrumbs"
+import { useNativeFrame } from "@/lib/useNativeFrame"
 import { useNotificationCounts } from "@/lib/hooks/useNotificationApi"
 import { useOverlayState } from "@/lib/nav/useOverlayState"
 import { unreadBadgeLabel } from "@/lib/staffInbox"
@@ -10,6 +11,9 @@ import type { AccountPanelProps } from "./AccountPanel"
 import type { NotificationsPanelProps } from "./NotificationsPanel"
 import { ShellAvatarPlaceholder } from "./ShellAvatar"
 import { ShellIcon } from "./icons"
+import { NativeBack } from "./NativeBack"
+import { titleLevelFor } from "./largeTitle"
+import { useLargeTitleCollapse } from "./useLargeTitleCollapse"
 import { SHELL_ICON_BUTTON } from "./shellStyles"
 
 // Lazy so Radix's menu stays out of the entry chunk's budget (check:bundle).
@@ -29,6 +33,10 @@ export interface ShellTopBarProps {
   actions?: ReactNode
   notifications: Omit<NotificationsPanelProps, "unread" | "triggerClassName">
   settingsTo: string
+  /** Overrides the trail-derived level (native frame D2). */
+  titleLevel?: "root" | "detail"
+  /** Where the native back chevron goes when there is no history (portal root). */
+  backFallback: string
   account: Omit<AccountPanelProps, "triggerClassName">
 }
 
@@ -68,15 +76,31 @@ export function ShellTopBar({
   actions,
   notifications,
   settingsTo,
+  titleLevel,
+  backFallback,
   account,
 }: ShellTopBarProps) {
   const overlayState = useOverlayState()
   const { data: counts } = useNotificationCounts()
   const unread = unreadBadgeLabel(counts)
   const stuck = useScrolled()
+  const { native } = useNativeFrame()
+  const level = titleLevel ?? titleLevelFor(trail)
+  const largeRef = useRef<HTMLParagraphElement>(null)
+  const collapsed = useLargeTitleCollapse(largeRef, native && level === "root")
+  /** iOS shows the parent page's title beside the chevron (preview `.as-back-l`). */
+  const backLabel = trail.at(-2)?.label ?? title
   return (
     <>
-      <header data-stuck={stuck} className={BAR}>
+      <header
+        data-stuck={stuck}
+        data-title-level={level}
+        data-collapsed={collapsed}
+        className={cn(BAR, "lm-native-bar")}
+      >
+        {level === "detail" ? (
+          <NativeBack fallback={backFallback} label={backLabel} />
+        ) : null}
         <button
           type="button"
           onClick={onOpenNav}
@@ -89,7 +113,7 @@ export function ShellTopBar({
         >
           <ShellIcon name="menu" />
         </button>
-        <p data-shell-title className="me-auto min-w-0 truncate text-title-bar text-on-surface">
+        <p data-shell-title className="me-auto min-w-0 truncate text-title-bar text-on-surface lm-native-inline-title">
           {title}
         </p>
         {actions}
@@ -102,21 +126,28 @@ export function ShellTopBar({
         >
           <NotificationsPanel {...notifications} unread={unread} triggerClassName={SHELL_ICON_BUTTON} />
         </Suspense>
-        <Link
-          to={settingsTo}
-          state={overlayState}
-          aria-label="Settings"
-          aria-haspopup="dialog"
-          className={SHELL_ICON_BUTTON}
-        >
-          <Gear size={20} aria-hidden="true" />
-        </Link>
-        <Suspense fallback={<ShellAvatarPlaceholder />}>
-          <AccountPanel {...account} />
-        </Suspense>
+        <span data-shell-action="settings" className="contents">
+          <Link
+            to={settingsTo}
+            state={overlayState}
+            aria-label="Settings"
+            aria-haspopup="dialog"
+            className={SHELL_ICON_BUTTON}
+          >
+            <Gear size={20} aria-hidden="true" />
+          </Link>
+        </span>
+        <span data-shell-action="account" className="contents">
+          <Suspense fallback={<ShellAvatarPlaceholder />}>
+            <AccountPanel {...account} />
+          </Suspense>
+        </span>
       </header>
+      <p ref={largeRef} aria-hidden="true" data-shell-large-title className="lm-native-large-title hidden">
+        {title}
+      </p>
       {trail.length > 1 ? (
-        <div className="-mt-3 mb-4 px-[72px] max-shell-lg:px-3.5">
+        <div className="-mt-3 mb-4 px-[72px] max-shell-lg:px-3.5 native:hidden">
           <Breadcrumbs items={[...trail]} />
         </div>
       ) : null}
