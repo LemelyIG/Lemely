@@ -28,6 +28,7 @@
  */
 import { UserSwitch, X } from "@phosphor-icons/react"
 import { lackedSummary } from "@/lib/actingModel"
+import { leadAccess } from "@/lib/actingLeadState"
 import { ROLE_COPY } from "@/lib/assistantRoles"
 import { useActingTeacher } from "./acting-state"
 
@@ -91,10 +92,12 @@ export function ActingNoticeView({ message, onDismiss }: { message: string; onDi
 
 /**
  * Mounted once at the top of the teacher content column. Shows while acting for a lead, or, after
- * a choice was dropped, the reason. Nothing otherwise, and no margin either.
+ * a choice was dropped, the reason. Nothing otherwise, and no margin either. While the lead cannot
+ * be worked for, the panel that replaces the page says so, and this stays out of its way.
  */
-export function ActingBanner() {
+export function ActingBanner({ classListError, pathname }: { classListError?: unknown; pathname?: string }) {
   const { lead, choose, notice, dismissNotice } = useActingTeacher()
+  if (lead && leadAccess(lead, classListError, pathname ?? "") !== "ok") return null
   if (lead) {
     return (
       <ActingBannerView

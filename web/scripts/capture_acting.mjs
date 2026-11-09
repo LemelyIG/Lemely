@@ -48,8 +48,13 @@ function fakeJwt(hoursAhead = 24) {
 const SESSION = { accessToken: fakeJwt(), refreshToken: fakeJwt(72), userId: "capture-assistant", role: "teacher" }
 const PROFILE = { userId: "capture-assistant", email: "sara.ali@example.com", displayName: "Sara Ali", role: "teacher" }
 
-const MARKER = { memberId: "m1", teacherId: HASSAN, teacherName: "Mr Hassan", role: "marker", effectivePermissions: ["mark", "regrade", "view_results"] }
-const CO_TEACHER = { memberId: "m2", teacherId: AHMED, teacherName: "Ms Ahmed", role: "co_teacher", effectivePermissions: ["mark", "regrade", "generate_quiz", "manage_classes", "view_results", "manage_students", "view_usage"] }
+const MARKER = { memberId: "m1", teacherId: HASSAN, teacherName: "Mr Hassan", role: "marker", effectivePermissions: ["mark", "regrade", "view_results"], available: true }
+const CO_TEACHER = { memberId: "m2", teacherId: AHMED, teacherName: "Ms Ahmed", role: "co_teacher", effectivePermissions: ["mark", "regrade", "generate_quiz", "manage_classes", "view_results", "manage_students", "view_usage"], available: true }
+const SCHOOL = "33333333-3333-4333-8333-333333333333"
+// A lead who holds school data: assistants cannot act for them right now.
+const SCHOOL_LEAD = { memberId: "m3", teacherId: SCHOOL, teacherName: "Dr Nasr", role: "co_teacher", effectivePermissions: ["mark", "view_results"], available: false }
+// A marker the lead gave no access to results.
+const NO_VIEW = { ...MARKER, effectivePermissions: ["mark"] }
 
 const cls = (id, label, n, code, join, avg) => ({ id, label, studentCount: n, average: avg, subjectCode: code, schoolId: null, joinCode: join, atRiskCount: 1, lastActivityAt: "2026-08-13T14:10:00Z", topWeakness: "Thermal physics" })
 
@@ -103,7 +108,8 @@ const STATES = {
   "acting-quizzes-marker": { route: "/teacher/quizzes", memberships: [MARKER, CO_TEACHER], stored: HASSAN, expect: "Thermal physics check", expectGone: "+ New quiz" },
   "acting-announcements-marker": { route: "/teacher/announcements", memberships: [MARKER, CO_TEACHER], stored: HASSAN, expect: "Your role on Mr Hassan's team doesn't allow this." },
   "acting-classes-co-teacher": { route: "/teacher/classes", memberships: [MARKER, CO_TEACHER], stored: AHMED, expect: "Y12 Further Maths", expectPresent: "+ New class" },
-  "acting-unavailable": { route: "/teacher", memberships: [MARKER, CO_TEACHER], stored: HASSAN, refuseClassesFor: HASSAN, expect: "You can't work for Mr Hassan right now" },
+  "acting-lead-unavailable": { route: "/teacher", memberships: [MARKER, CO_TEACHER], stored: HASSAN, refuseClasses: { lead: HASSAN, code: "team_lead_unavailable" }, expect: "You can't work for Mr Hassan right now" },
+  "acting-no-view": { route: "/teacher", memberships: [NO_VIEW, CO_TEACHER], stored: HASSAN, refuseClasses: { lead: HASSAN, code: "team_permission_denied" }, expect: "Your role can't view Mr Hassan's classes" },
   "refused-by-server": {
     route: "/teacher/classes",
     memberships: [MARKER, CO_TEACHER],
@@ -133,7 +139,21 @@ const STATES = {
   "own-account-billing": { route: "/teacher/billing", memberships: [MARKER, CO_TEACHER], stored: HASSAN, expect: "This page is about your own account, not Mr Hassan's." },
   // Looks the same as `own-account-team` on purpose: a lead who cannot be worked for must not take
   // the caller's own pages with them. Captured as evidence of that, exempt from the duplicate check.
-  "own-account-while-unavailable": { route: "/teacher/team", memberships: [MARKER, CO_TEACHER], stored: HASSAN, teamForbidden: true, refuseClassesFor: HASSAN, mayMatchOther: true, expect: "This page is about your own account, not Mr Hassan's." },
+  "own-account-while-unavailable": { route: "/teacher/team", memberships: [MARKER, CO_TEACHER], stored: HASSAN, teamForbidden: true, refuseClasses: { lead: HASSAN, code: "team_lead_unavailable" }, mayMatchOther: true, expect: "This page is about your own account, not Mr Hassan's." },
+  "switcher-unavailable-lead": {
+    route: "/teacher",
+    memberships: [MARKER, SCHOOL_LEAD],
+    async act(page) {
+      const aside = page.locator("aside").first()
+      if (!(await aside.isVisible())) {
+        await page.getByRole("button", { name: "Open teacher navigation" }).click()
+        await page.waitForTimeout(500)
+      }
+      await page.getByRole("button", { name: /^Working as/ }).last().click()
+      await page.getByText("Not available right now").waitFor()
+    },
+  },
+  "membership-unavailable-dropped": { route: "/teacher", memberships: [MARKER, SCHOOL_LEAD], stored: SCHOOL, expect: "Dr Nasr's team isn't available to you right now" },
   "membership-ended": { route: "/teacher", memberships: [CO_TEACHER], stored: HASSAN, expect: "Your access to that team has ended" },
   "checking-stored-choice": { route: "/teacher", memberships: [MARKER, CO_TEACHER], stored: HASSAN, holdMemberships: true },
   "no-memberships": { route: "/teacher/classes", memberships: [], expect: "My Y9 Chemistry", expectGone: "Working as" },
@@ -175,7 +195,9 @@ async function stub(page, state, calls) {
       return state.teamForbidden ? json(route, { detail: { code: "team_lead_only", message: "x" } }, 403) : json(route, {})
     }
     if (p === "/teacher/classes") {
-      if (lead && lead === state.refuseClassesFor) return json(route, DENIED, 403)
+      if (lead && state.refuseClasses && lead === state.refuseClasses.lead) {
+        return json(route, { detail: { code: state.refuseClasses.code, message: "x" } }, 403)
+      }
       return json(route, CLASSES[key] ?? CLASSES.self)
     }
     if (p === "/teacher/overview") return json(route, OVERVIEW)

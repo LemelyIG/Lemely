@@ -31,7 +31,6 @@ import {
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 import { ActingTeacherProvider } from "@/components/acting/acting-context"
-import { isLeadUnavailable } from "@/lib/actingTeacher"
 import { useActingTeacher, useCan } from "@/components/acting/acting-state"
 import { gradeChipClass } from "@/lib/grade"
 import { Avatar } from "@/components/ui/avatar"
@@ -43,7 +42,7 @@ import { EdgeSwipeBack } from "@/components/edge-swipe-back"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { PortalNotFound } from "@/portals/misc/NotFound"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
-import { useTeacherClasses } from "@/lib/hooks/useTeacherApi"
+import { useTeacherClasses } from "@/lib/hooks/useShellQueries"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import { useNotificationCounts } from "@/lib/hooks/useNotificationApi"
 import { useReviewQueueCount } from "@/lib/hooks/useReviewQueueCount"
@@ -189,8 +188,8 @@ const TutorStudentDetail = lazy(() =>
 const ActingSwitcher = lazy(() =>
   import("@/components/acting/acting-switcher").then((m) => ({ default: m.ActingSwitcher })),
 )
-const ActingUnavailable = lazy(() =>
-  import("@/components/acting/acting-unavailable").then((m) => ({ default: m.ActingUnavailableView })),
+const ActingGuard = lazy(() =>
+  import("@/components/acting/acting-guard").then((m) => ({ default: m.ActingGuard })),
 )
 const ActingBanner = lazy(() =>
   import("@/components/acting/acting-banner").then((m) => ({ default: m.ActingBanner })),
@@ -201,9 +200,18 @@ const ActingBanner = lazy(() =>
  * outside the content boundary (in the sidebar, above the page), where a throw would reach the
  * router's error screen. Missing, they cost the cue and the switcher; the 403s still read right.
  */
-function ActingPiece({ children, resetKey }: { children: ReactNode; resetKey?: unknown }) {
+function ActingPiece({
+  children,
+  resetKey,
+  orElse = null,
+}: {
+  children: ReactNode
+  resetKey?: unknown
+  /** Rendered if the piece fails to load: the page itself, for the guard that wraps it. */
+  orElse?: ReactNode
+}) {
   return (
-    <ErrorBoundary label="Working as" resetKey={resetKey} fallback={() => null}>
+    <ErrorBoundary label="Working as" resetKey={resetKey} fallback={() => orElse}>
       <Suspense fallback={null}>{children}</Suspense>
     </ErrorBoundary>
   )
@@ -626,15 +634,31 @@ function TeacherLayout() {
    * the home route shows the setup screen instead.
    */
   const classesQuery = useTeacherClasses()
-  // The server refused the lead's class list itself (a role with nothing, a removed assistant, a
-  // lead whose plan does not allow it: it answers all of them the same way). Every screen below
-  // would only repeat the refusal, so say it once. Not retried (`queryClient`), and the pages that
-  // are about the caller's own account stay reachable.
-  const leadUnavailable = isLeadUnavailable(lead, classesQuery.error, location.pathname)
   // Task 9 (C3d): shares its cache/request with `TeacherNav`'s own
   // `useReviewQueueCount()` subscriber (same query key) — mounting both the
   // desktop sidebar and this bottom bar costs one network request, not two.
   const reviewQueueCount = useReviewQueueCount()
+
+  // PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it rebuilds each surface") for this
+  // portal: a render crash in one screen stays inside this content slot rather than taking the
+  // sidebar down with it or falling out to the top-level `errorElement`. Inside `Suspense` so a
+  // failed chunk load and a render throw both land in this boundary. `resetKey={location.pathname}`
+  // clears a caught error on navigation.
+  const content = (
+    <ErrorBoundary
+      label="This page"
+      resetKey={location.pathname}
+      fallback={portalErrorFallback}
+    >
+      <ScreenOutlet
+        overlay={{
+          routes: teacherContentRoutes(),
+          overlayBase: TEACHER_SETTINGS_BASE,
+          fallbackPath: "/teacher",
+        }}
+      />
+    </ErrorBoundary>
+  )
 
   return (
     // `bg-surface`: the shell owns its own ground rather than depending on
@@ -674,9 +698,9 @@ function TeacherLayout() {
           {/* Who the teacher is working as, first and standing: it is the one fact that changes
               what every control below does. Renders nothing, and no margin, unless acting for a
               lead (or a choice was just dropped, and then it says why). */}
-          {(lead && !leadUnavailable) || actingNotice ? (
+          {lead || actingNotice ? (
             <ActingPiece>
-              <ActingBanner />
+              <ActingBanner classListError={classesQuery.error} pathname={location.pathname} />
             </ActingPiece>
           ) : null}
           {/* PR 2 part C: offline recovery banner, above the Suspense/
@@ -706,33 +730,26 @@ function TeacherLayout() {
               gate on here rather than bailing out of the whole layout. */}
           {classesQuery.isPending ? (
             <RouteSkeleton />
-          ) : leadUnavailable && lead ? (
-            <ActingPiece>
-              <ActingUnavailable leadName={lead.teacherName} onSwitchBack={() => choose(null)} />
-            </ActingPiece>
           ) : (
             <Suspense fallback={<RouteSkeleton />}>
-              {/* PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it
-                  rebuilds each surface") for this portal: a render crash in one
-                  screen stays inside this content slot rather than taking the
-                  sidebar down with it or falling out to the top-level
-                  `errorElement`. Inside `Suspense` so a failed chunk load and a
-                  render throw both land in this boundary.
-                  `resetKey={location.pathname}` clears a caught error on
-                  navigation. */}
-              <ErrorBoundary
-                label="This page"
-                resetKey={location.pathname}
-                fallback={portalErrorFallback}
-              >
-                <ScreenOutlet
-                  overlay={{
-                    routes: teacherContentRoutes(),
-                    overlayBase: TEACHER_SETTINGS_BASE,
-                    fallbackPath: "/teacher",
-                  }}
-                />
-              </ErrorBoundary>
+              {/* The server refusing the lead's class list (the lead cannot be reached, or this role
+                  cannot see classes) would make every screen below repeat the refusal, so while
+                  acting a lazily loaded guard says it once. Not acting: the page, as before. If
+                  the guard cannot load, the page renders without it. */}
+              {lead ? (
+                <ActingPiece resetKey={location.pathname} orElse={content}>
+                  <ActingGuard
+                    lead={lead}
+                    classListError={classesQuery.error}
+                    pathname={location.pathname}
+                    onSwitchBack={() => choose(null)}
+                  >
+                    {content}
+                  </ActingGuard>
+                </ActingPiece>
+              ) : (
+                content
+              )}
             </Suspense>
           )}
         </main>

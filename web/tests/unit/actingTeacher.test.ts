@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { hashKey } from "@tanstack/react-query"
-import { ApiError, fetchBlobUrl, isTeamPermissionDenied, request, streamActivity, uploadWithProgress } from "@/lib/api"
+import { ApiError, fetchBlobUrl, isTeamLeadUnavailable, isTeamPermissionDenied, teamDeniedText, request, streamActivity, uploadWithProgress } from "@/lib/api"
 import {
   ACTING_TEACHER_HEADER,
   actingQueryHash,
@@ -11,14 +11,17 @@ import {
   getActingLead,
   isActingPartitionHash,
   isActingRoute,
-  isLeadUnavailable,
+  looksLikeTeamLeadUnavailable,
   looksLikeTeamPermissionDenied,
-  OWN_ACCOUNT_PATH,
+  looksLikeTeamRefusal,
+  teamLeadUnavailableMessage,
   readStoredLeadId,
   setActingLead,
   storeLeadId,
+  switchActingLead,
   teamPermissionDeniedMessage,
 } from "@/lib/actingTeacher"
+import { leadAccess, OWN_ACCOUNT_PATH } from "@/lib/actingLeadState"
 import { queryClient } from "@/lib/queryClient"
 import { shouldPersistQuery } from "@/lib/offline/persistAllowlist"
 import { describeQueryFailure } from "@/lib/queryFailure"
@@ -470,6 +473,68 @@ describe("the query cache is partitioned by who is being acted for", () => {
   })
 })
 
+describe("a refetch of an inactive entry cannot cross identities", () => {
+  const KEY = ["teacher", "classes"] as const
+  const load = () => queryClient.fetchQuery({ queryKey: KEY, queryFn: () => request<{ owner: string }>("/teacher/classes"), staleTime: 0 })
+
+  beforeEach(() => {
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
+      const lead = ((init?.headers ?? {}) as Record<string, string>)[ACTING_TEACHER_HEADER]
+      return ok({ owner: lead ? `lead:${lead}` : "me" })
+    })
+  })
+
+  it("leaves no entry for another identity to refetch, and the caller's view never holds a lead's data", async () => {
+    // The caller's own list, cached.
+    expect(await load()).toEqual({ owner: "me" })
+    // Switch to a lead the way the provider does, and load theirs.
+    switchActingLead(queryClient, LEAD)
+    expect(await load()).toEqual({ owner: `lead:${LEAD.leadId}` })
+
+    // Something refetches every entry, active or not (`type: "all"`). With the caller's entry gone
+    // there is nothing for it to fetch as the lead and write under the caller's key.
+    fetchMock.mockClear()
+    await queryClient.refetchQueries({ type: "all" })
+    for (const call of fetchMock.mock.calls) {
+      expect(((call[1] as RequestInit).headers as Record<string, string>)[ACTING_TEACHER_HEADER]).toBe(LEAD.leadId)
+    }
+
+    // Back to the caller: their entry was dropped, not poisoned.
+    switchActingLead(queryClient, null)
+    expect(queryClient.getQueryData(KEY)).toBeUndefined()
+    expect(await load()).toEqual({ owner: "me" })
+  })
+
+  it("drops the previous lead's entries when the next lead is picked, and keeps the own-account roots", async () => {
+    queryClient.setQueryData(["team", "memberships"], ["kept"])
+    switchActingLead(queryClient, LEAD)
+    queryClient.setQueryData(KEY, { owner: "hassan" })
+    switchActingLead(queryClient, OTHER)
+    expect(queryClient.getQueryData(KEY)).toBeUndefined()
+    switchActingLead(queryClient, LEAD)
+    expect(queryClient.getQueryData(KEY)).toBeUndefined()
+    expect(queryClient.getQueryData(["team", "memberships"])).toEqual(["kept"])
+  })
+
+  it("cancels what is in flight for the old identity before it switches", async () => {
+    let aborted = false
+    fetchMock.mockImplementation(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            aborted = true
+            reject(new DOMException("aborted", "AbortError"))
+          })
+        }),
+    )
+    const pending = queryClient.fetchQuery({ queryKey: KEY, queryFn: ({ signal }) => request("/teacher/classes", { signal }) }).catch(() => "cancelled")
+    await Promise.resolve()
+    switchActingLead(queryClient, LEAD)
+    expect(await pending).toBe("cancelled")
+    expect(aborted).toBe(true)
+  })
+})
+
 /* ── The tab's remembered choice ────────────────────────────────────────────────────────────── */
 
 describe("remembering the choice for this tab", () => {
@@ -523,49 +588,85 @@ describe("remembering the choice for this tab", () => {
 
 /* ── A lead that cannot be worked for ───────────────────────────────────────────────────────── */
 
-describe("a lead the server will not let the assistant read", () => {
-  const refusal = () => new ApiError(403, "x", { code: "team_permission_denied", message: "x" })
+describe("the two refusals an assistant can get", () => {
+  const denied403 = () => new ApiError(403, "x", { code: "team_permission_denied", message: "x" })
+  const unavailable403 = () => new ApiError(403, "x", { code: "team_lead_unavailable", message: "x" })
+  const hasView = { permissions: ["mark", "view_results"] as never[] }
+  const noView = { permissions: ["mark"] as never[] }
 
-  it("recognises the refusal by shape, whatever built the error", () => {
-    expect(looksLikeTeamPermissionDenied(refusal())).toBe(true)
-    expect(looksLikeTeamPermissionDenied({ status: 403, detail: { code: "team_permission_denied" } })).toBe(true)
-    expect(looksLikeTeamPermissionDenied(new ApiError(403, "x", { code: "email_unverified" }))).toBe(false)
-    expect(looksLikeTeamPermissionDenied(new ApiError(403, "x", "Caller does not own class"))).toBe(false)
-    expect(looksLikeTeamPermissionDenied(new ApiError(404, "x", { code: "team_permission_denied" }))).toBe(false)
-    expect(looksLikeTeamPermissionDenied(null)).toBe(false)
-    expect(looksLikeTeamPermissionDenied("team_permission_denied")).toBe(false)
+  it("recognises each by shape, whatever built the error", () => {
+    expect(looksLikeTeamPermissionDenied(denied403())).toBe(true)
+    expect(looksLikeTeamLeadUnavailable(unavailable403())).toBe(true)
+    expect(looksLikeTeamPermissionDenied(unavailable403())).toBe(false)
+    expect(looksLikeTeamLeadUnavailable(denied403())).toBe(false)
+    expect(looksLikeTeamRefusal(denied403())).toBe(true)
+    expect(looksLikeTeamRefusal(unavailable403())).toBe(true)
+    expect(looksLikeTeamLeadUnavailable({ status: 403, detail: { code: "team_lead_unavailable" } })).toBe(true)
+    for (const other of [new ApiError(403, "x", { code: "email_unverified" }), new ApiError(403, "x", "Caller does not own class"), new ApiError(404, "x", { code: "team_lead_unavailable" }), null, "team_lead_unavailable"]) {
+      expect(looksLikeTeamRefusal(other)).toBe(false)
+    }
   })
 
-  it("is unavailable when acting and the class list was refused, on the lead's pages", () => {
-    expect(isLeadUnavailable(LEAD, refusal(), "/teacher")).toBe(true)
-    expect(isLeadUnavailable(LEAD, refusal(), "/teacher/classes/c1/roster")).toBe(true)
-    expect(isLeadUnavailable(LEAD, refusal(), "/teacher/quizzes")).toBe(true)
+  it("words the unavailable refusal as the lead's, and keeps it apart from the role's", async () => {
+    setActingLead(LEAD)
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ detail: { code: "team_lead_unavailable", message: "x" } }), { status: 403 }))
+    const err = await request("/teacher/classes").catch((e: unknown) => e)
+    expect(isTeamLeadUnavailable(err)).toBe(true)
+    expect(isTeamPermissionDenied(err)).toBe(false)
+    expect((err as ApiError).message).toBe("Mr Hassan's team isn't available to you right now.")
+    expect((err as ApiError).readerMessage).toBe("Mr Hassan's team isn't available to you right now.")
+    expect(teamDeniedText(err)).toBe("Mr Hassan's team isn't available to you right now.")
+    expect(describeQueryFailure(err)).toBe("Mr Hassan's team isn't available to you right now.")
+    expect(teacherMutationFailureMessage(err)).toBe("Mr Hassan's team isn't available to you right now.")
+    expect(classInviteCodeFailureMessage(err)).toBe("Mr Hassan's team isn't available to you right now.")
+    expect(teamLeadUnavailableMessage(null)).toBe("This team isn't available to you right now.")
   })
 
-  it("is not unavailable when not acting, when the failure is anything else, or when nothing failed", () => {
-    expect(isLeadUnavailable(null, refusal(), "/teacher")).toBe(false)
-    expect(isLeadUnavailable(LEAD, new ApiError(500, "x"), "/teacher")).toBe(false)
-    expect(isLeadUnavailable(LEAD, new ApiError(0, "x"), "/teacher")).toBe(false)
-    expect(isLeadUnavailable(LEAD, null, "/teacher")).toBe(false)
+  it("is 'unavailable' when the lead's class list is refused as unavailable, on the lead's pages", () => {
+    for (const path of ["/teacher", "/teacher/classes/c1/roster", "/teacher/quizzes"]) {
+      expect(leadAccess(hasView, unavailable403(), path), path).toBe("unavailable")
+      // Whatever the role holds: a lead that cannot be reached is not about the role.
+      expect(leadAccess(noView, unavailable403(), path), path).toBe("unavailable")
+    }
   })
 
-  it("leaves the caller's own pages reachable", () => {
+  it("is 'no-view' when the role lacks view_results and the class list is refused as denied", () => {
+    expect(leadAccess(noView, denied403(), "/teacher")).toBe("no-view")
+    expect(leadAccess(noView, denied403(), "/teacher/classes")).toBe("no-view")
+  })
+
+  it("treats a refusal that contradicts the role as the lead being unavailable until the list catches up", () => {
+    // The role has view_results, yet the server says no: access changed after the list loaded.
+    expect(leadAccess(hasView, denied403(), "/teacher")).toBe("unavailable")
+  })
+
+  it("is fine when not acting, when the failure is anything else, or when nothing failed", () => {
+    expect(leadAccess(null, unavailable403(), "/teacher")).toBe("ok")
+    expect(leadAccess(null, denied403(), "/teacher")).toBe("ok")
+    expect(leadAccess(hasView, new ApiError(500, "x"), "/teacher")).toBe("ok")
+    expect(leadAccess(hasView, new ApiError(0, "x"), "/teacher")).toBe("ok")
+    expect(leadAccess(hasView, null, "/teacher")).toBe("ok")
+  })
+
+  it("leaves the caller's own pages reachable under either refusal", () => {
     for (const path of ["/teacher/team", "/teacher/billing", "/teacher/billing/plans", "/teacher/settings/profile", "/teacher/notifications", "/teacher/tutoring/availability"]) {
       expect(OWN_ACCOUNT_PATH.test(path), path).toBe(true)
-      expect(isLeadUnavailable(LEAD, refusal(), path), path).toBe(false)
+      expect(leadAccess(hasView, unavailable403(), path), path).toBe("ok")
+      expect(leadAccess(noView, denied403(), path), path).toBe("ok")
     }
-    // Look-alikes are the lead's pages, not the caller's.
     for (const path of ["/teacher/teamwork", "/teacher/billingx", "/teacher/classes", "/teacher"]) {
       expect(OWN_ACCOUNT_PATH.test(path), path).toBe(false)
     }
   })
 
-  it("is not asked again: the shared client retries a server failure once, and a refusal never", () => {
+  it("is never asked again: a server failure is retried once, neither refusal ever", () => {
     const retry = queryClient.getDefaultOptions().queries?.retry as (count: number, error: Error) => boolean
     expect(typeof retry).toBe("function")
     expect(retry(0, new ApiError(500, "x"))).toBe(true)
     expect(retry(0, new ApiError(0, "x"))).toBe(true)
     expect(retry(1, new ApiError(500, "x"))).toBe(false)
-    expect(retry(0, refusal())).toBe(false)
+    expect(retry(0, denied403())).toBe(false)
+    expect(retry(0, unavailable403())).toBe(false)
   })
 })
+

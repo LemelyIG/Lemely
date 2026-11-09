@@ -1,4 +1,4 @@
-import { ApiError, isTeamPermissionDenied, teamDeniedText } from "@/lib/api"
+import { ApiError, teamDeniedText } from "@/lib/api"
 
 /*
  * P4.5 · What a teacher is told when something does not go through.
@@ -118,7 +118,7 @@ export function teacherMutationFailureMessage(err: unknown): string {
  */
 export function classInviteCodeFailureMessage(err: unknown): string {
   const status = err instanceof ApiError ? err.status : null
-  if (isTeamPermissionDenied(err)) return teacherMutationFailureMessage(err)
+  if (teamDeniedText(err) !== null) return teacherMutationFailureMessage(err)
   if (status === 404 || status === 403) {
     return "This class is no longer available to you. Reload and try again."
   }
@@ -144,7 +144,7 @@ export function classInviteCodeFailureMessage(err: unknown): string {
  */
 export function classPaperActionFailureMessage(err: unknown): string {
   const status = err instanceof ApiError ? err.status : null
-  if (isTeamPermissionDenied(err)) return teacherMutationFailureMessage(err)
+  if (teamDeniedText(err) !== null) return teacherMutationFailureMessage(err)
   if (status === 404 || status === 403) {
     return "This class or paper is no longer available to you. Reload and try again."
   }

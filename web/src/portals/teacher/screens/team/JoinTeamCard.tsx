@@ -38,7 +38,10 @@ function JoinedTeams() {
             {list.map((t) => (
               <li key={t.memberId} className="flex flex-wrap items-baseline justify-between gap-x-4 text-body-sm">
                 <span className="text-on-surface">{t.teacherName}</span>
-                <span className="text-on-surface-variant">{ROLE_COPY[t.role].label}</span>
+                <span className="text-on-surface-variant">
+                  {ROLE_COPY[t.role].label}
+                  {t.available === false ? ", not available right now" : ""}
+                </span>
               </li>
             ))}
           </ul>

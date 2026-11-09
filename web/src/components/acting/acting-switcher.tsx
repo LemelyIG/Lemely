@@ -36,6 +36,7 @@ export function ActingSwitcher({ className }: { className?: string }) {
   const { memberships, lead, choose } = useActingTeacher()
   if (memberships.length === 0) return null
 
+  // Teams whose lead assistants cannot reach right now stay in the list, disabled, with the reason.
   const options = switcherOptions(memberships).map((o) => ({
     ...o,
     icon: <UserSwitch size={16} aria-hidden="true" className="flex-none text-on-surface-variant" />,

@@ -21,6 +21,11 @@ export interface JoinedTeam {
   role: AssistantRole
   /** What this assistant may do on that team now, as the server computed it. Unknown names dropped. */
   permissions: TeamPermission[]
+  /**
+   * False while the lead holds school data (`MembershipDTO.available`). The team stays listed, but
+   * acting for it is refused with `team_lead_unavailable`, so the UI does not offer to.
+   */
+  available: boolean
 }
 
 export const fetchMemberships = () => request<{ memberships: WireMembership[] }>("/teacher/team/memberships")
@@ -46,6 +51,9 @@ export function useMemberships(options: { enabled?: boolean } = {}): UseQueryRes
         teacherName: m.teacherName,
         role: m.role,
         permissions: TEAM_PERMISSIONS.filter((p) => m.effectivePermissions.includes(p)),
+        // Only an explicit `false` makes a team unavailable, so a response without the field (an
+        // older server) leaves it selectable, as it always was.
+        available: m.available !== false,
       }))
     },
   })

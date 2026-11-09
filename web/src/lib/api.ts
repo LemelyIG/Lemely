@@ -5,7 +5,9 @@ import { parseRetryAfter } from "./routeError"
 import {
   actingHeaders,
   actingLeadFor,
+  looksLikeTeamLeadUnavailable,
   looksLikeTeamPermissionDenied,
+  teamLeadUnavailableMessage,
   teamPermissionDeniedMessage,
   type ActingLead,
 } from "./actingTeacher"
@@ -101,17 +103,23 @@ export function isTeamPermissionDenied(err: unknown): boolean {
   return err instanceof ApiError && looksLikeTeamPermissionDenied(err)
 }
 
+/** True for the server's 403 `team_lead_unavailable` (the lead's team cannot be reached right now). */
+export function isTeamLeadUnavailable(err: unknown): boolean {
+  return err instanceof ApiError && looksLikeTeamLeadUnavailable(err)
+}
+
 /**
  * The refusal as a reader sees it. The server's own message ("You do not have permission to do
  * this for that teacher.") names no team; the lead's name is only known here.
  */
 function refusalFor(status: number, detail: unknown, lead: ActingLead | null): string | null {
   if (status !== 403) return null
-  if (typeof detail !== "object" || detail === null) return null
-  if ((detail as { code?: unknown }).code !== "team_permission_denied") return null
-  // Only an acting request can earn this refusal; if one ever arrives without a lead in hand it
+  const probe = { status, detail }
+  // Only an acting request can earn these refusals; if one ever arrives without a lead in hand it
   // still gets a sentence rather than "403 ", just without a name in it.
-  return teamPermissionDeniedMessage(lead?.leadName ?? null)
+  if (looksLikeTeamPermissionDenied(probe)) return teamPermissionDeniedMessage(lead?.leadName ?? null)
+  if (looksLikeTeamLeadUnavailable(probe)) return teamLeadUnavailableMessage(lead?.leadName ?? null)
+  return null
 }
 
 /** The ApiError for a failed response, with the client's own sentence attached where it has one. */
@@ -128,11 +136,13 @@ function failure(
 }
 
 /**
- * The sentence for an assistant's refused action, or `null` when `err` is not that refusal. What
- * an outcome module returns instead of its own 403 wording.
+ * The sentence for an assistant's refusal (either code), or `null` when `err` is not one. What an
+ * outcome module returns instead of its own 403 wording.
  */
 export function teamDeniedText(err: unknown): string | null {
-  return isTeamPermissionDenied(err) ? ((err as ApiError).readerMessage ?? teamPermissionDeniedMessage(null)) : null
+  if (isTeamPermissionDenied(err)) return (err as ApiError).readerMessage ?? teamPermissionDeniedMessage(null)
+  if (isTeamLeadUnavailable(err)) return (err as ApiError).readerMessage ?? teamLeadUnavailableMessage(null)
+  return null
 }
 
 /** Build the base headers for a request: JSON content-type + bearer token

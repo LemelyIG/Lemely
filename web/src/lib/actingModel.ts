@@ -21,8 +21,17 @@ export function leadLabel(team: TeamLabelSource): string {
 }
 
 /** The switcher's options: "Me" first, then each team the caller assists. Ids are the lead's user id. */
-export function switcherOptions(teams: readonly (TeamLabelSource & { teacherId: string })[]): { id: string; label: string }[] {
-  return [{ id: SELF_OPTION_ID, label: "Me" }, ...teams.map((t) => ({ id: t.teacherId, label: leadLabel(t) }))]
+export function switcherOptions(
+  teams: readonly (TeamLabelSource & { teacherId: string; available?: boolean })[],
+): { id: string; label: string; disabled?: boolean; description?: string }[] {
+  return [
+    { id: SELF_OPTION_ID, label: "Me" },
+    ...teams.map((t) =>
+      t.available === false
+        ? { id: t.teacherId, label: leadLabel(t), disabled: true, description: "Not available right now" }
+        : { id: t.teacherId, label: leadLabel(t) },
+    ),
+  ]
 }
 
 /**
@@ -58,4 +67,4 @@ export function lackedSummary(granted: readonly TeamPermission[]): string | null
   return `Your role can't ${list}.`
 }
 
-export { membershipEndedNotice, MEMBERSHIP_UNCONFIRMED_NOTICE, ownAccountNote } from "@/lib/actingNotices"
+export { leadUnavailableNotice, membershipEndedNotice, MEMBERSHIP_UNCONFIRMED_NOTICE, ownAccountNote } from "@/lib/actingNotices"

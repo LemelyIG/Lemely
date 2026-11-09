@@ -185,6 +185,62 @@ export function endSession(caches: SessionCaches = defaultSessionCaches): Promis
 }
 
 /*
+ * Another tab changed who is signed in.
+ *
+ * `localStorage` is shared by every tab and `sessionStorage` is not, so the session can change
+ * underneath a tab that is mid-way through "working as" someone, or simply holding the previous
+ * person's cache. This tab hears of it only through the `storage` event. When the user id in the
+ * session changes (a different person signed in, or the session was removed), this tab forgets
+ * who it was acting for, drops its in-memory and persisted query cache so none of the previous
+ * person's data can be shown to the next, and tells `AuthContext`, which is how a signed-out tab
+ * reaches the sign-in screen. A token refresh keeps the same user id and does nothing here.
+ */
+
+/** The user id inside a raw stored session, or `null` when absent or unreadable. */
+export function sessionUserIdOf(raw: string | null): string | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as { userId?: unknown }
+    return typeof parsed.userId === "string" ? parsed.userId : null
+  } catch {
+    return null
+  }
+}
+
+export interface SessionStorageChange {
+  key: string | null
+  oldValue: string | null
+  newValue: string | null
+}
+
+/**
+ * Handle one `storage` event. Exported (with injectable caches) so the rule can be tested without
+ * a second tab. A `null` key means the whole store was cleared, which is a change.
+ */
+export function handleSessionStorageEvent(
+  event: SessionStorageChange,
+  caches: SessionCaches = defaultSessionCaches,
+): boolean {
+  if (event.key !== null && event.key !== SESSION_KEY) return false
+  const before = sessionUserIdOf(event.oldValue)
+  const after = sessionUserIdOf(event.newValue)
+  if (event.key !== null && before === after) return false
+  clearActingLead()
+  caches.clearQueries()
+  void Promise.resolve(caches.removePersistedQueries()).catch(() => undefined)
+  notify(getSession())
+  return true
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (event) => {
+    // Only `localStorage` carries the session; `sessionStorage` events (the acting choice) are this tab's own.
+    if (event.storageArea !== null && event.storageArea !== window.localStorage) return
+    handleSessionStorageEvent(event)
+  })
+}
+
+/*
  * Whether the session that just ended did so because it expired, rather than
  * because the user chose to sign out — the difference between "Signed out" and
  * "Your session expired, please sign in again", which is the whole point of

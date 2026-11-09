@@ -41,11 +41,12 @@ import { useNavigate } from "react-router-dom"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { useAuth } from "@/lib/auth/AuthContext"
-import { membershipEndedNotice, MEMBERSHIP_UNCONFIRMED_NOTICE } from "@/lib/actingNotices"
+import { leadUnavailableNotice, membershipEndedNotice, MEMBERSHIP_UNCONFIRMED_NOTICE } from "@/lib/actingNotices"
 import {
   readStoredLeadId,
   setActingLead,
   storeLeadId,
+  switchActingLead,
   useActingLead,
 } from "@/lib/actingTeacher"
 import { useMemberships, type JoinedTeam } from "@/lib/hooks/useMemberships"
@@ -92,24 +93,31 @@ export function ActingTeacherProvider({ children }: { children: ReactNode }) {
     if (checked || storedId === null) return
     if (membershipsQuery.isPending) return
     const match = membershipsQuery.isSuccess ? teams.find((t) => t.teacherId === storedId) : undefined
-    if (match) {
-      setActingLead({ leadId: match.teacherId, leadName: match.teacherName })
+    if (match?.available) {
+      switchActingLead(queryClient, { leadId: match.teacherId, leadName: match.teacherName })
     } else {
+      // Not on the list, not readable, or a lead assistants cannot reach right now: in every case
+      // nothing is sent for them, and the person is told which.
       storeLeadId(null)
-      setNotice(membershipsQuery.isSuccess ? membershipEndedNotice(null) : MEMBERSHIP_UNCONFIRMED_NOTICE)
+      setNotice(
+        match
+          ? leadUnavailableNotice(match.teacherName)
+          : membershipsQuery.isSuccess
+            ? membershipEndedNotice(null)
+            : MEMBERSHIP_UNCONFIRMED_NOTICE,
+      )
     }
     setChecked(true)
-  }, [checked, storedId, membershipsQuery.isPending, membershipsQuery.isSuccess, teams])
+  }, [checked, storedId, membershipsQuery.isPending, membershipsQuery.isSuccess, teams, queryClient])
 
   // After that: a membership that goes away (or is renamed) while it is selected.
   useEffect(() => {
     if (!checked || actingLead === null || !membershipsQuery.isSuccess) return
     const still = teams.find((t) => t.teacherId === actingLead.leadId)
-    if (!still) {
-      void queryClient.cancelQueries()
-      setActingLead(null)
+    if (!still || !still.available) {
+      switchActingLead(queryClient, null)
       storeLeadId(null)
-      setNotice(membershipEndedNotice(actingLead.leadName))
+      setNotice(still ? leadUnavailableNotice(still.teacherName) : membershipEndedNotice(actingLead.leadName))
       navigate("/teacher")
     } else if (still.teacherName !== actingLead.leadName) {
       setActingLead({ leadId: still.teacherId, leadName: still.teacherName })
@@ -119,11 +127,10 @@ export function ActingTeacherProvider({ children }: { children: ReactNode }) {
   const choose = useCallback(
     (teacherId: string | null) => {
       const target = teacherId === null ? null : teams.find((t) => t.teacherId === teacherId)
-      if (teacherId !== null && !target) return
-      // Stop what is in flight for the old identity first: a retry that fires after the switch
-      // would send the new header and write its answer under the old key.
-      void queryClient.cancelQueries()
-      setActingLead(target ? { leadId: target.teacherId, leadName: target.teacherName } : null)
+      // Not on the list, or a lead assistants cannot reach right now: nothing to switch to.
+      if (teacherId !== null && !target?.available) return
+      // Cancel, switch, purge the other identities' entries: see `switchActingLead`.
+      switchActingLead(queryClient, target ? { leadId: target.teacherId, leadName: target.teacherName } : null)
       storeLeadId(target ? target.teacherId : null)
       setNotice(null)
       // A deep link into one teacher's class means nothing to the other.
@@ -138,13 +145,15 @@ export function ActingTeacherProvider({ children }: { children: ReactNode }) {
     () => ({
       memberships: teams,
       lead,
-      acting: lead !== null,
-      can: (permission) => lead === null || lead.permissions.includes(permission),
+      acting: actingLead !== null,
+      // Acting for someone whose membership is not (or no longer) in the list can do nothing:
+      // `lead` is null then, and "no lead" must not read as "working as myself".
+      can: (permission) => (actingLead === null ? true : lead !== null && lead.permissions.includes(permission)),
       choose,
       notice,
       dismissNotice,
     }),
-    [teams, lead, choose, notice, dismissNotice],
+    [teams, lead, actingLead, choose, notice, dismissNotice],
   )
 
   // After a change of identity the control that had focus is gone with the old tree.

@@ -12,6 +12,13 @@ export function membershipEndedNotice(leadName: string | null): string {
     : "Your access to that team has ended, so you're working as yourself again."
 }
 
+/** A selected lead's team stopped being available to assistants (a school came into the picture). */
+export function leadUnavailableNotice(leadName: string | null): string {
+  return leadName
+    ? `${leadName}'s team isn't available to you right now, so you're working as yourself.`
+    : "That team isn't available to you right now, so you're working as yourself."
+}
+
 /** The stored choice could not be checked, so nothing is sent on anyone's behalf. */
 export const MEMBERSHIP_UNCONFIRMED_NOTICE =
   "We couldn't confirm your access to that team, so you're working as yourself. Pick the team again to retry."

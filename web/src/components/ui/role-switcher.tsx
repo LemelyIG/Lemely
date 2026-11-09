@@ -19,6 +19,13 @@ export interface RoleOption {
   id: string
   label: string
   icon?: ReactNode
+  /**
+   * An option that is listed but cannot be picked (`aria-disabled`, still reachable by keyboard so
+   * its `description` can be read). Choosing it does nothing.
+   */
+  disabled?: boolean
+  /** A second, quieter line under the label: why an option is disabled, or what it is. */
+  description?: string
 }
 
 export interface RoleSwitcherProps {
@@ -115,7 +122,9 @@ export function RoleSwitcher({
                 type="button"
                 role="menuitemradio"
                 aria-checked={active}
+                aria-disabled={role.disabled ? true : undefined}
                 onClick={() => {
+                  if (role.disabled) return
                   setOpen(false)
                   if (!active) onSwitch(role.id)
                 }}
@@ -123,10 +132,16 @@ export function RoleSwitcher({
                   // §6.1 touch floor — see the note in nav-shells.tsx.
                   "flex w-full items-center gap-2.5 px-3 py-2 pointer-coarse:min-h-11 text-start text-body-md transition-[background-color,transform] hover:bg-surface-container-low active:scale-[0.98]",
                   active ? "font-medium text-on-surface" : "text-on-surface-variant",
+                  role.disabled && "cursor-not-allowed opacity-60 hover:bg-transparent active:scale-100",
                 )}
               >
                 {role.icon}
-                <span className="min-w-0 flex-1">{role.label}</span>
+                <span className="min-w-0 flex-1">
+                  {role.label}
+                  {role.description ? (
+                    <span className="block text-body-sm text-on-surface-variant">{role.description}</span>
+                  ) : null}
+                </span>
                 {active ? <Check size={14} className="text-primary" /> : null}
               </button>
             )

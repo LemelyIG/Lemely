@@ -1,4 +1,4 @@
-import { hashKey, type QueryKey } from "@tanstack/react-query"
+import { hashKey, type QueryClient, type QueryKey } from "@tanstack/react-query"
 import { useSyncExternalStore } from "react"
 
 /*
@@ -222,38 +222,72 @@ export function isActingPartitionHash(queryHash: string): boolean {
   return queryHash.includes(PARTITION_MARK)
 }
 
-/**
- * Pages that are about the caller's own account whoever they act for: team, billing, settings, the
- * notification inbox and the tutoring marketplace. They stay reachable when a lead is unavailable.
- */
-export const OWN_ACCOUNT_PATH = /^\/teacher\/(team|billing|settings|notifications|tutoring)(\/|$)/
-
-/* ── Recognising the refusal ─────────────────────────────────────────────────────────────────── */
-
-/**
- * True for the server's 403 `team_permission_denied`, judged by shape so modules that cannot import
- * `api.ts` (the query client: `api` reaches `auth/storage`, which reaches the client) can use it.
- * `isTeamPermissionDenied` in `api.ts` is this plus an `ApiError` check.
- */
-export function looksLikeTeamPermissionDenied(err: unknown): boolean {
-  if (typeof err !== "object" || err === null) return false
-  const { status, detail } = err as { status?: unknown; detail?: unknown }
-  return (
-    status === 403 &&
-    typeof detail === "object" &&
-    detail !== null &&
-    (detail as { code?: unknown }).code === "team_permission_denied"
-  )
+/** The lead id a cache entry belongs to, or `null` for the caller's own (unmarked) entries. */
+export function partitionOfHash(queryHash: string): string | null {
+  const at = queryHash.indexOf(PARTITION_MARK)
+  return at < 0 ? null : queryHash.slice(at + PARTITION_MARK.length)
 }
 
 /**
- * Whether the lead being acted for should be treated as unavailable: the server refused the lead's
- * class list itself, on a page that is about the lead's work. It answers a removed assistant, a lead
- * on a plan that does not allow it, and a role with nothing the same way, so this does not say
- * which; it says there is nothing to work on here and offers the way back.
+ * Drop every cache entry that is not the current identity's, keeping the own-account roots.
+ *
+ * Partitioning keeps two identities' data from sharing an entry, but a request still reads who is
+ * being acted for when it is SENT, not when its entry was made. An inactive entry for another
+ * identity that gets refetched (`refetchQueries({ type: "all" })`, a focus or reconnect refetch
+ * of something left mounted) would be fetched as the current lead and written under the other
+ * identity's key. With no entry for any other identity in the cache there is nothing to refetch,
+ * so that cannot happen, and a lead's data does not outlive the switch in memory either.
  */
-export function isLeadUnavailable(lead: unknown, classListError: unknown, pathname: string): boolean {
-  return lead !== null && looksLikeTeamPermissionDenied(classListError) && !OWN_ACCOUNT_PATH.test(pathname)
+export function purgeOtherPartitions(client: Pick<QueryClient, "removeQueries">): void {
+  const own = current?.leadId ?? null
+  client.removeQueries({
+    predicate: (query) => !OWN_ACCOUNT_ROOTS.has(query.queryKey[0]) && partitionOfHash(query.queryHash) !== own,
+  })
+}
+
+/**
+ * Change who is being acted for, in the one order that is safe: stop what is in flight for the old
+ * identity (a retry after the switch would send the new header and write under the old key), switch,
+ * then purge the entries that now belong to neither the new identity nor the own-account roots.
+ */
+export function switchActingLead(client: QueryClient, lead: ActingLead | null): void {
+  void client.cancelQueries()
+  setActingLead(lead)
+  purgeOtherPartitions(client)
+}
+
+/* ── Recognising the refusal ─────────────────────────────────────────────────────────────────── */
+
+/** The two 403 codes `require_team_permission` raises for an assistant's request (`lemely/web/deps.py`). */
+const PERMISSION_DENIED = "team_permission_denied"
+const LEAD_UNAVAILABLE = "team_lead_unavailable"
+
+function refusalCode(err: unknown): string | null {
+  if (typeof err !== "object" || err === null) return null
+  const { status, detail } = err as { status?: unknown; detail?: unknown }
+  if (status !== 403 || typeof detail !== "object" || detail === null) return null
+  const code = (detail as { code?: unknown }).code
+  return typeof code === "string" ? code : null
+}
+
+/**
+ * True for the server's 403 `team_permission_denied`: the role (or the membership) does not allow
+ * this. Judged by shape so modules that cannot import `api.ts` (the query client: `api` reaches
+ * `auth/storage`, which reaches the client) can use it. `isTeamPermissionDenied` in `api.ts` is this
+ * plus an `ApiError` check.
+ */
+export function looksLikeTeamPermissionDenied(err: unknown): boolean {
+  return refusalCode(err) === PERMISSION_DENIED
+}
+
+/** True for 403 `team_lead_unavailable`: the lead's team cannot be reached by assistants right now. */
+export function looksLikeTeamLeadUnavailable(err: unknown): boolean {
+  return refusalCode(err) === LEAD_UNAVAILABLE
+}
+
+/** Either refusal. Neither will change on a second ask, so neither is retried. */
+export function looksLikeTeamRefusal(err: unknown): boolean {
+  return looksLikeTeamPermissionDenied(err) || looksLikeTeamLeadUnavailable(err)
 }
 
 /* ── Copy ────────────────────────────────────────────────────────────────────────────────────── */
@@ -266,4 +300,9 @@ export function teamPermissionDeniedMessage(leadName: string | null): string {
   return leadName
     ? `Your role on ${leadName}'s team doesn't allow this.`
     : "Your role on this team doesn't allow this."
+}
+
+/** The sentence for a lead whose team assistants cannot reach right now (403 `team_lead_unavailable`). */
+export function teamLeadUnavailableMessage(leadName: string | null): string {
+  return leadName ? `${leadName}'s team isn't available to you right now.` : "This team isn't available to you right now."
 }

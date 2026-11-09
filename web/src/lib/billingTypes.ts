@@ -554,6 +554,8 @@ export interface WireMembership {
   teacherName: string
   role: AssistantRole
   effectivePermissions: string[]
+  /** False while the lead holds school data: assistants cannot act for that lead until that changes. */
+  available: boolean
 }
 
 /** 03 `UpdateAssistantRequestDTO`. */
