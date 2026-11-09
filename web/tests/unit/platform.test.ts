@@ -2,11 +2,12 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { runInNewContext } from "node:vm"
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it } from "vitest"
 import { isNativeFrame, PHONE_MEDIA } from "@/lib/useNativeFrame"
-import { resolvePlatform, type Platform } from "@/lib/platform"
+import { readPlatform, type Platform } from "@/lib/platform"
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url))
+const SHELL_INIT = join(ROOT, "public/shell-init.js")
 
 const UA = {
   iphone: "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1",
@@ -17,7 +18,13 @@ const UA = {
   crios: "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/141.0 Mobile/15E148 Safari/604.1",
 }
 
-const CASES: [string, Parameters<typeof resolvePlatform>[0], Platform][] = [
+interface NavInput {
+  uaDataPlatform?: string | null
+  userAgent: string
+  maxTouchPoints: number
+}
+
+const CASES: [string, NavInput, Platform][] = [
   ["iPhone Safari", { userAgent: UA.iphone, maxTouchPoints: 5 }, "ios"],
   ["iPhone Chrome (CriOS)", { userAgent: UA.crios, maxTouchPoints: 5 }, "ios"],
   ["iPadOS desktop UA with touch", { userAgent: UA.ipadOs, maxTouchPoints: 5 }, "ios"],
@@ -29,39 +36,81 @@ const CASES: [string, Parameters<typeof resolvePlatform>[0], Platform][] = [
   ["desktop Linux", { uaDataPlatform: "Linux", userAgent: UA.linux, maxTouchPoints: 0 }, "other"],
 ]
 
-describe("resolvePlatform", () => {
-  it.each(CASES)("%s", (_name, input, want) => {
-    expect(resolvePlatform(input)).toBe(want)
-  })
-})
+interface Sandbox {
+  htmlDataset: Record<string, string>
+  rootDataset: Record<string, string>
+}
 
-/** Run public/shell-init.js in a sandbox and return the data-platform it set. */
-function shellInitPlatform(input: Parameters<typeof resolvePlatform>[0]): string | undefined {
-  const source = readFileSync(join(ROOT, "public/shell-init.js"), "utf8")
-  const html = { dataset: {} as Record<string, string> }
+/** Run public/shell-init.js in a vm sandbox with the given navigator. */
+function runShellInit(navigator: object): Sandbox {
+  const source = readFileSync(SHELL_INIT, "utf8")
+  const htmlDataset: Record<string, string> = {}
+  const rootDataset: Record<string, string> = {}
   runInNewContext(source, {
     document: {
-      documentElement: html,
+      documentElement: { dataset: htmlDataset },
       querySelector: () => null,
-      getElementById: () => ({ dataset: {} }),
+      getElementById: () => ({ dataset: rootDataset }),
       addEventListener: () => {},
     },
-    navigator: {
-      userAgent: input.userAgent,
-      maxTouchPoints: input.maxTouchPoints,
-      userAgentData: input.uaDataPlatform ? { platform: input.uaDataPlatform } : undefined,
-    },
+    navigator,
     localStorage: { getItem: () => null },
-    matchMedia: () => ({ matches: false }),
     window: { matchMedia: () => ({ matches: false }) },
     location: { pathname: "/student" },
   })
-  return html.dataset.platform
+  return { htmlDataset, rootDataset }
 }
 
-describe("shell-init.js sets html[data-platform] before paint, same table as resolvePlatform", () => {
+function navigatorFor(input: NavInput): object {
+  return {
+    userAgent: input.userAgent,
+    maxTouchPoints: input.maxTouchPoints,
+    userAgentData: input.uaDataPlatform ? { platform: input.uaDataPlatform } : undefined,
+  }
+}
+
+describe("shell-init.js is the platform resolver: it sets html[data-platform] before paint", () => {
   it.each(CASES)("%s", (_name, input, want) => {
-    expect(shellInitPlatform(input)).toBe(want)
+    expect(runShellInit(navigatorFor(input)).htmlDataset.platform).toBe(want)
+  })
+
+  it("a throwing navigator getter leaves data-platform unset but still runs theme and data-shell", () => {
+    const hostile = {
+      get userAgent(): string {
+        throw new Error("navigator blocked")
+      },
+    }
+    const { htmlDataset, rootDataset } = runShellInit(hostile)
+    expect(htmlDataset.platform).toBeUndefined()
+    expect(htmlDataset.theme).toBe("light")
+    expect(rootDataset.shell).toBe("portal")
+  })
+})
+
+describe("readPlatform reads html[data-platform] back", () => {
+  const g = globalThis as { document?: unknown }
+  const original = g.document
+  afterEach(() => {
+    g.document = original
+  })
+
+  function withAttribute(value: string | undefined): void {
+    g.document = { documentElement: { dataset: value === undefined ? {} : { platform: value } } }
+  }
+
+  it.each([["ios"], ["android"], ["other"]] as const)("maps %s to itself", (value) => {
+    withAttribute(value)
+    expect(readPlatform()).toBe(value)
+  })
+
+  it.each([["windows"], [""], [undefined]])("maps unknown or missing (%s) to other", (value) => {
+    withAttribute(value)
+    expect(readPlatform()).toBe("other")
+  })
+
+  it("returns other when there is no document", () => {
+    g.document = undefined
+    expect(readPlatform()).toBe("other")
   })
 })
 
@@ -74,6 +123,8 @@ describe("native frame = phone width AND ios|android", () => {
     ["android", true, true],
     ["other", true, false],
     ["ios", false, false],
+    ["android", false, false],
+    ["other", false, false],
   ] as const)("%s phone=%s -> %s", (platform, phone, want) => {
     expect(isNativeFrame(platform, phone)).toBe(want)
   })

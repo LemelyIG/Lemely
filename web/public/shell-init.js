@@ -9,9 +9,9 @@
  */
 ;(function () {
   // Platform for the native phone frame (docs/superpowers/plans/
-  // 2026-11-08-native-mobile-frame.md). Same table as src/lib/platform.ts's
-  // resolvePlatform, duplicated in ES5 because this runs before any bundle;
-  // tests/unit/platform.test.ts runs this file and pins the two together.
+  // 2026-11-08-native-mobile-frame.md). This is the ONLY platform resolver:
+  // src/lib/platform.ts's readPlatform just reads data-platform back.
+  // tests/unit/platform.test.ts runs this file against the decision table.
   try {
     var nav = window.navigator || navigator
     var ua = (nav && nav.userAgent) || ""
