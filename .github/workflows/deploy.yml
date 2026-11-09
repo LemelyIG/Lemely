@@ -792,3 +792,45 @@ jobs:
             echo "::error::https://$HOST/api/health reports revision $ACTUAL but the revision just deployed is $EXPECTED. The frontend's BACKEND_URL points at a different revision."
           fi
           exit 1
+
+  # Production only, and only when the deploy changed what users get: tell IndexNow (Bing,
+  # Yandex and others) which public URLs to recrawl. Best effort by construction: it needs the
+  # frontend deploy AND the smoke test to have succeeded (so a failed deploy is never masked and
+  # the live host is known to answer), and `continue-on-error` plus a script that always exits 0
+  # mean it can never turn the run red. Staging is skipped, so staging URLs are never submitted.
+  # "Changed" is judged against the last SUBMITTED production commit, recorded as a
+  # `frontend-submitted-<sha>` artifact, not against `github.event.before`: a skipped or failed
+  # earlier deploy cannot hide a change. See docs/ci-cd.md and scripts/indexnow_submit.py.
+  indexnow:
+    needs: [resolve-env, deploy-frontend, smoke-test]
+    if: needs.resolve-env.outputs.environment == 'production'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Submit changed public URLs to IndexNow
+        id: submit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 scripts/indexnow_submit.py
+
+      # Only after an accepted submission, so a failed one is retried by the next deploy.
+      - name: Record the submitted commit
+        if: steps.submit.outputs.submitted == 'true'
+        run: touch submitted
+      - name: Upload the marker
+        if: steps.submit.outputs.submitted == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-submitted-${{ github.sha }}
+          path: submitted
+          retention-days: 90
+          overwrite: true

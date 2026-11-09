@@ -796,6 +796,28 @@ To trigger the digest by hand once a deploy has created the job:
 If Cloudflare's bot protection challenges Cloud Scheduler's requests (403 HTML in the job log), add a
 WAF skip rule for `/api/internal/*`.
 
+### IndexNow after a production frontend change
+
+The `indexnow` job tells IndexNow (Bing, Yandex and others) which public URLs to recrawl.
+
+- **Production only.** `if: needs.resolve-env.outputs.environment == 'production'`; staging never
+  runs it, so staging URLs are never submitted. It `needs` `deploy-frontend` and `smoke-test`, so it
+  runs only after a good deploy and never masks a failed one.
+- **Only when the frontend changed.** `scripts/indexnow_submit.py` diffs HEAD against the commit of
+  the last *submitted* production deploy. That commit is recorded as an artifact named
+  `frontend-submitted-<sha>` (kept 90 days), uploaded only after IndexNow accepted a submission,
+  and found through the Actions artifacts API (`actions: read`). This beats `github.event.before`
+  (a skipped or failed earlier deploy cannot hide a change) and a Worker tag (no Cloudflare
+  read access needed). If there is no marker, it expired, or git cannot diff the commit, the script
+  submits. The frontend path list (`FRONTEND_INCLUDE` / `FRONTEND_EXCLUDE`, excluding `web/tests`,
+  `web/e2e`, `web/dev-previews`) lives only in that script.
+- **The submission.** The script checks `https://lemelyig.com/<key>.txt` serves the key, then POSTs
+  `{host, key, keyLocation, urlList}` (URLs from `web/public/sitemap.xml`) to
+  `https://api.indexnow.org/indexnow`. 200 and 202 are success; 400, 403, 422 and 429 log a
+  `::warning::`. The key is public (`web/public/<key>.txt`), so no secret is involved.
+- **Never fails the deploy.** The job is `continue-on-error` and the script always exits 0. Try it
+  with `python scripts/indexnow_submit.py --dry-run [--force]`.
+
 ## Known gaps this setup doesn't close
 
 Carried over from `docs/deployment.md` §5, still true here — not
