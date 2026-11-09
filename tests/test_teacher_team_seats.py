@@ -518,7 +518,13 @@ def test_default_seat_actions_are_the_seat_actions_minus_the_opt_in_ones() -> No
     assert default_seat_actions() == sorted(
         action.value for action in SEAT_ACTIONS if action is not MeteredAction.STUDY_PLAN
     )
-    assert default_seat_actions() == ["mark_paper", "self_review"]
+    assert default_seat_actions() == [
+        "generate_flashcards",
+        "mark_paper",
+        "mark_quiz",
+        "self_review",
+    ]
+    assert "study_plan" not in default_seat_actions()
 
 
 # ── capacity and claim: more edges ──────────────────────────────────────────
