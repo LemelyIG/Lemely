@@ -48,7 +48,12 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from lemely.core.metered_actions import SEAT_ACTIONS, MeteredAction
-from lemely.core.team_permissions import UnknownPermissionError, validate_overrides
+from lemely.core.team_permissions import (
+    TeamPermission,
+    UnknownPermissionError,
+    effective_permissions,
+    validate_overrides,
+)
 from lemely.db.invite_codes import constraint_name, generate_invite_code
 from lemely.db.models import (
     ClassEnrollment,
@@ -624,6 +629,31 @@ class TeacherTeamService:
         )
         return self._session.scalars(stmt).first()
 
+    def assistant_has_permission(
+        self,
+        assistant_user_id: uuid.UUID,
+        lead_teacher_user_id: uuid.UUID,
+        perm: TeamPermission,
+    ) -> TeacherMember | None:
+        """Return the active assistant row if it grants ``perm`` for that lead, else ``None``.
+
+        The single rule behind ``require_team_permission`` and Phase 04's estimate route:
+        the row's role preset with its toggles applied (spec §2.3) must include ``perm``.
+        No row, a removed row, a missing permission, an unreadable row and the lead
+        themselves are all ``None``.
+        """
+        if assistant_user_id == lead_teacher_user_id:
+            return None
+        member = self.assistant_membership(assistant_user_id, lead_teacher_user_id)
+        if member is None or member.role_preset is None:
+            return None
+        try:
+            granted = effective_permissions(member.role_preset, member.permissions or {})
+        except ValueError:
+            # A row whose toggles or preset cannot be read grants nothing (fail closed).
+            return None
+        return member if perm in granted else None
+
     def memberships_for_assistant(self, assistant_user_id: uuid.UUID) -> list[TeacherMember]:
         """Return every team the account actively assists, oldest first."""
         stmt = (
@@ -795,6 +825,18 @@ class TeacherTeamService:
         return sorted(subjects)
 
 
+def assistant_has_permission(
+    session: Session,
+    assistant_user_id: uuid.UUID,
+    lead_teacher_user_id: uuid.UUID,
+    perm: TeamPermission,
+) -> TeacherMember | None:
+    """:meth:`TeacherTeamService.assistant_has_permission` for a caller holding a session."""
+    return TeacherTeamService(session).assistant_has_permission(
+        assistant_user_id, lead_teacher_user_id, perm
+    )
+
+
 class TeacherTeamStore:
     """Opens one transaction per unit of team work (routers and the team guard)."""
 
@@ -829,6 +871,7 @@ __all__ = [
     "TeamError",
     "TeamMemberNotFound",
     "TeamStateError",
+    "assistant_has_permission",
     "default_seat_actions",
     "month_end",
 ]
