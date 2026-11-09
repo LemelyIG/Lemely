@@ -4,7 +4,7 @@
 
 **Goal:** Below the `shell-sm` breakpoint (720px and narrower), on iPhone and Android, the student and teacher portals run in a native frame. That frame has a pinned large-title header that collapses, a per-platform tab bar, bottom sheets instead of dialogs and popovers, edge-to-edge grouped lists, press feedback, swipe-back and pull-to-refresh. Desktop, tablet and the `other` platform keep design A unchanged.
 
-**Architecture:** A boot-time resolver in `public/shell-init.js` sets `html[data-platform="ios|android|other"]` before first paint. Tailwind v4 custom variants (`ios:`, `android:`, and `native:` = phone width AND ios|android) and a `useNativeFrame()` hook key every change off it. There are no separate component trees. `ShellTopBar`, `BottomNav`, `Modal`, `ConfirmModal`, `Sheet`, the shell panels, `Popover`, `Card` and the new `ListGroup`/`ListRow` vary by unlayered `lm-native-*` classes, `native:` utilities, and one JS switch where the markup has to differ (sheets). The design A preview, `student-home-a.html` with `?platform=ios|android&page=root|detail`, is the reference. The existing drift gate gains platform emulation (UA, touch, mobile) and a native scene list. Every UI task is accepted against it. The desktop and `other`-platform scenes must stay exactly as they are.
+**Architecture:** A boot-time resolver in `public/shell-init.js` sets `html[data-platform="ios|android|other"]` before first paint. Tailwind v4 custom variants (`ios:`, `android:`, and `native:` = phone width AND ios|android) and a `useNativeFrame()` hook key every change off it. There are no separate component trees. `ShellTopBar`, `BottomNav`, `Modal`, `ConfirmModal`, `Sheet`, the shell panels, `Popover`, `Card` and the new `ListGroup`/`ListRow` vary by unlayered `lm-native-*` classes, `native:` utilities, and one JS switch where the markup has to differ (sheets). On native phones the shell's large title replaces a screen's own heading when that heading repeats it: screens render their top heading through one `PageHeading` component, which is visually hidden on the native frame and stays the page's one `h1` for assistive technology (D11). The design A preview, `student-home-a.html` with `?platform=ios|android&page=root|detail` (committed at `4447a571` and approved as the port reference), is the reference. The existing drift gate gains platform emulation (UA, touch, mobile) and a native scene list. Every UI task is accepted against it. The desktop and `other`-platform scenes must stay exactly as they are.
 
 **Tech Stack:** React 19, react-router-dom 7, TanStack Query 5, Radix (`radix-ui`), Tailwind v4 (`@theme inline` tokens and `@custom-variant` in `web/src/index.css`), Phosphor icons (`regular`/`fill` weights), Vitest 4 (Node, no DOM), Playwright 1.62 + pixelmatch (existing drift harness and behaviour runner).
 
@@ -42,7 +42,7 @@
 ```bash
 cd /home/sico/Code/Lemely/.claude/worktrees/student-home-variants/web && npx vitest run \
   tests/unit/platform.test.ts tests/unit/nativeFrameCss.test.ts tests/unit/nativeTopBar.test.ts \
-  tests/unit/nativeTabBar.test.ts tests/unit/sheetMath.test.ts tests/unit/nativeSheets.test.ts \
+  tests/unit/nativeTabBar.test.ts tests/unit/pageHeading.test.ts tests/unit/sheetMath.test.ts tests/unit/nativeSheets.test.ts \
   tests/unit/listGroup.test.ts tests/unit/pressFeedback.test.ts tests/unit/edgeSwipeBack.test.ts \
   tests/unit/shellPullToRefresh.test.ts tests/unit/tableOrList.test.ts \
   tests/unit/nativeMechanics.test.ts tests/unit/checkNativeInvariants.test.ts tests/unit/themeInit.test.ts \
@@ -60,20 +60,26 @@ These are planner decisions where the brief left room or conflicted with the cod
 
 - **D1. `other` keeps design A at every width.** The brief says "Desktop and `other` keep design A". So a narrow desktop window, or any unrecognised phone browser, shows today's flat design A phone bar, not the native frame. Consequence: all 390px scenes recorded so far run as `other` and stay untouched. The native frame gets its own scenes with UA emulation.
 - **D2. Page title API: no new route field.** `ShellTopBar` keeps `title` and derives the level from the existing trail: `titleLevel = trail.length > 1 ? "detail" : "root"`. An optional `titleLevel` prop overrides it. Root pages get the large title. Detail pages get the compact bar with a leading back chevron. The bar renders the chevron itself on native from a new required `backFallback` prop (the portal root). Student's existing in-actions `BackControl` gets `native:hidden`.
-- **D3. The large title lives outside `<main>`**, in `ShellTopBar`'s fragment, and is `aria-hidden="true"`. The bar's inline title stays the accessible name, so screen readers do not hear it twice. This also keeps it in the drift harness's "frame" capture, which hides `main > *`.
+- **D3. The large title lives outside `<main>`**, in `ShellTopBar`'s fragment, and is always `aria-hidden="true"`. It is never a heading for assistive technology. The bar's inline title stays plain text (not a heading), as it is on desktop today. The page's one `h1` is the screen's own heading inside `<main>` (D11). Keeping the large title out of `<main>` also keeps it in the drift harness's "frame" capture, which hides `main > *`.
 - **D4. Select stays a native `<select>`.** The brief lists selects among the sheets, but `ui/select.tsx` is deliberately native. Its doc comment records why: the OS picker on iOS and Android already is the platform's own sheet or wheel. A custom listbox sheet would be a worse picker and would re-implement typeahead and screen-reader semantics. Task 9 makes only Popover a sheet and pins Select as native with a test. If the user wants a custom select sheet anyway, it becomes a follow-up.
-- **D5. Edge swipe-back = iOS standalone only.** The brief's rule is "all phone sessions where the browser has no own back gesture; defer to iOS Safari tabs and Android system back". Applied literally, that leaves iOS (and iPadOS) standalone, where swipe-back is installed with the new interactive parallax. It is **removed** on Android standalone, where it competed with the system back gesture. Today's gate is "any standalone". So this narrows it, even though the brief's wording says "extends".
+- **D5. Edge swipe-back = standalone on both platforms (user decision, 2026-11-09).** Lemely's edge swipe runs in standalone display on iOS and Android, and stays off in browser tabs, where Safari's swipe and Chrome's own back take over. That is today's gate (`standalone`), unchanged: Task 12 only makes the gesture interactive (finger-following, parallax, fling) and does not narrow or widen where it runs. The earlier draft's "iOS standalone only" is reverted.
 - **D6. Pull-to-refresh moves into the shell.** One `ShellPullToRefresh` wraps `<main>` content on root-level pages (`titleLevel === "root"`) in both portals. It refetches active queries. This covers "every list and overview root" without wiring 15 screens by hand. The three per-screen copies (student Overview, Notifications, Announcements) are removed, so two gestures never nest.
 - **D7. Status bar `black-translucent` flips three pinned gates.** `nativeMechanics.test.ts`, `checkNativeInvariants.test.ts` and `scripts/check-native-invariants.mjs` currently assert `"default"`. The meta only affects iOS home-screen apps, so standalone mode is the only place it matters. Task 3 flips the gates and pads every non-shell standalone root with the top safe-area inset.
 - **D8. Immersive routes hide the tab bar on native:** student `correct` (camera and correction run), student paper result (paper review) and teacher review-a-mark. A route opts in with `handle.immersive: true`.
 - **D9. Phone scene sizes.** The user's instruction is 390×844 for **both** platforms (gate scenes). The brief's proof also asks for 412×915 on Android. That is added as a log-only scene (`native-android-412-*`) so the screenshot exists without gating on a size the preview may not tune.
-- **D10. Sheet dismissal thresholds:** a drag of more than 25% of the sheet's height, or a fling faster than 0.5 px/ms, dismisses. Otherwise the sheet snaps to the nearest detent. Swipe-back commits at 35% of width or the same fling (the brief's number). Non-dismissible dialogs (`ConfirmModal`) get no grabber and no drag.
+- **D10. Sheet dismissal thresholds:** a drag of more than 25% of the sheet's height, or a fling faster than 0.5 px/ms, dismisses. Otherwise the sheet snaps to the nearest detent. Swipe-back commits at 35% of width or the same fling (the brief's number). Non-dismissible dialogs (`ConfirmModal`) get no grabber and no drag. Detents follow the preview: the bell and account panels are content-fit sheets, the settings sheet and `Modal size="lg"` open at medium and drag up to large.
+- **D11. One page heading on phones (user decision, 2026-11-09).** On the native frame the shell's large title **replaces** a screen's own heading when that heading repeats the page title. Desktop and tablet keep the screen's heading visible.
+  - **Accessibility:** exactly one `h1` reaches assistive technology on every page, and it is the screen's own heading inside `<main>`. On native phones a repeating heading is visually hidden (`sr-only`), not removed, so it stays in the accessibility tree and in heading navigation. The large title stays `aria-hidden` (D3). Screen readers therefore never get two `h1`s (the large title is hidden from them) and never get zero (the screen's heading is still there).
+  - **Mechanism:** one shared component, `PageHeading` (`web/src/components/ui/page-heading.tsx`), renders every screen's top `h1`. Its required `repeatsTitle` prop says whether the heading repeats the shell title. `repeatsTitle` adds `native:sr-only`. A heading that says something else (a greeting such as "Hi, Mariam") passes `repeatsTitle={false}` and stays visible. A unit source scan forbids a raw `<h1>` in the student and teacher screens, so no screen can bypass the component. The existing `sr-only` `h1` pattern (`query-state.tsx` `srHeading`, the Overview's `<h1 className="sr-only">`) stays allowed: it is already invisible.
+  - **Rollout:** Task 5b migrates the screens' `h1`s (51 student and teacher files contain `<h1` at `4447a571`) and adds a behaviour check that fails when a native page shows a visible heading repeating the bar title, or exposes other than one `h1`.
 
 ## Open questions (not blocking; record answers in the ledger)
 
-- [ ] Should a screen's own top `<h1>` that repeats the large title be visually hidden on native? Many of the 93 screens hand-roll an `<h1>`, and some will read twice visually (large title plus page heading). Task 10 hides only the shared shapes it touches. A per-screen sweep is a follow-up, or it can wait for P2's new home.
-- [ ] Do Android standalone users want an in-app swipe-back at all (D5)? The default is no: the system back is reliable there.
+- [x] ~~Should a screen's own top `<h1>` that repeats the large title be visually hidden on native?~~ Answered 2026-11-09: yes, the large title replaces it on phones (D11, Task 5b).
+- [x] ~~Do Android standalone users want an in-app swipe-back at all?~~ Answered 2026-11-09: yes, keep it alongside iOS (D5).
 - [ ] Should the paper result route be immersive (D8) or keep the tab bar? It is a long reading page.
+- [ ] **Glass blur radius.** The preview's glass uses `blur(14px)` (the landing header's glass); the app's only allowed blur is `--blur-nav: 10px` (DESIGN §3.2 item 6, `elevationScale.test.ts`), which the desktop floating bar also uses. The plan keeps `var(--blur-nav)`, so the native glass is 4px softer than the preview. Raising `--blur-nav` moves the approved desktop drift; a second blur token breaks the one-blur rule. Decide before Task 4.
+- [ ] **Pull-to-refresh indicator.** The preview draws a per-platform indicator (iOS spokes that follow the pull and hold the content 56px down; an M3 disc that holds at 64px). The plan reuses the app's existing `PullIndicator` (brief §7 "reuse what exists") and only takes the 64px threshold. Drift never captures a pull, so nothing gates it. Port the preview's indicators, or keep `PullIndicator`? Decide before Task 13.
 
 ## File structure
 
@@ -91,14 +97,17 @@ Create:
 | `web/src/components/shell/tabTap.ts` | Pure: `activeTabTap`. |
 | `web/src/lib/gestures/sheetMath.ts` | Pure: detents, release decision, swipe-back release. |
 | `web/src/components/ui/bottom-sheet.tsx` | `BottomSheetSurface`, `SheetGrabber`, `useSheetScaleBack`, `useKeyboardInset`. |
-| `web/src/components/shell/PanelSheet.tsx` | Bell and avatar panel content as a native sheet. |
+| `web/src/components/shell/NativeBack.tsx` | The native bar's back control: iOS chevron plus the parent title, Android arrow. |
+| `web/src/components/ui/page-heading.tsx` | `PageHeading`: every screen's top `h1`; visually hidden on native when it repeats the title (D11). |
+| `web/src/components/shell/PanelSheet.tsx` | Bell and avatar trigger plus a `Modal` (a sheet on native). |
+| `web/src/components/ui/use-dialog-focus.ts` | `useDialogFocus`: first focus, Tab cycle and focus return, shared by `Modal` and the native `Popover`. |
 | `web/src/components/ui/list-group.tsx` | `ListGroup`, `ListRow` (iOS inset-grouped, Android full-width). |
 | `web/src/lib/pressFeedback.ts` | `pressOrigin` (pure), `installPressFeedback` (one delegated listener). |
 | `web/src/components/shell/ShellPullToRefresh.tsx` | Shell-level pull-to-refresh for root pages. |
 | `web/src/components/ui/table-or-list.tsx` | `TableOrList`: list rows on native, with a "View table" escape hatch. |
-| `web/tests/unit/{platform,nativeFrameCss,nativeTopBar,nativeTabBar,sheetMath,nativeSheets,listGroup,pressFeedback,edgeSwipeBack,shellPullToRefresh,tableOrList}.test.ts` | Unit tests. |
+| `web/tests/unit/{platform,nativeFrameCss,nativeTopBar,nativeTabBar,pageHeading,sheetMath,nativeSheets,listGroup,pressFeedback,shellPullToRefresh,tableOrList}.test.ts` | Unit tests (`edgeSwipeBack.test.ts` already exists and is extended). |
 
-Modify: `web/public/shell-init.js`, `web/index.html`, `web/src/index.css`, `web/scripts/drift/harness.mjs`, `web/scripts/drift/scenes.mjs`, `web/scripts/shell-behaviour.mjs`, `web/scripts/check-native-invariants.mjs`, `web/scripts/drift/justifications.json`, `web/src/components/shell/{ShellTopBar,PortalShell,NotificationsPanel,AccountPanel,shellStyles}.tsx|ts`, `web/src/components/ui/{nav-shells,modal,confirm-modal,sheet,popover,card,button,select}.tsx`, `web/src/components/edge-swipe-back.tsx`, `web/src/lib/nav/edgeSwipeBack.ts`, `web/src/lib/haptics.ts`, `web/src/lib/gestures/useLongPress.ts`, `web/src/portals/settings/{SettingsModal,SettingsRows}.tsx`, `web/src/portals/student/{shell.tsx,index.tsx}`, `web/src/portals/teacher/index.tsx`, student `Overview`/`Notifications`/`Announcements` screens (PTR removal), teacher table screens (Tasks 14 and 15), `web/tests/unit/{nativeMechanics,checkNativeInvariants,themeInit}.test.ts`, `DESIGN.md`, `docs/superpowers/plans/2026-11-06-student-home-overview.md` (adjustment note only).
+Modify: `web/public/shell-init.js`, `web/index.html`, `web/src/index.css`, `web/scripts/drift/harness.mjs`, `web/scripts/home-drift.mjs`, `web/scripts/drift/scenes.mjs`, `web/scripts/shell-behaviour.mjs`, `web/scripts/check-native-invariants.mjs`, `web/scripts/drift/justifications.json`, `web/src/components/shell/{ShellTopBar,PortalShell,NotificationsPanel,AccountPanel,shellStyles}.tsx|ts`, `web/src/components/ui/{nav-shells,modal,confirm-modal,sheet,popover,card,button,select,back-control,route-skeleton}.tsx`, `web/src/components/edge-swipe-back.tsx`, `web/src/components/root-outlet.tsx`, `web/src/lib/nav/edgeSwipeBack.ts`, `web/src/lib/haptics.ts`, `web/src/lib/gestures/useLongPress.ts`, `web/src/portals/settings/{SettingsModal,SettingsRows}.tsx`, `web/src/portals/student/{shell.tsx,index.tsx}`, `web/src/portals/teacher/index.tsx`, every student and teacher screen with a top `h1` (Task 5b), student `Overview`/`Notifications`/`Announcements` screens (PTR removal), teacher table screens (Tasks 14 and 15), `web/tests/unit/{nativeMechanics,checkNativeInvariants,themeInit}.test.ts`, `DESIGN.md`, `docs/superpowers/plans/2026-11-06-student-home-overview.md` (adjustment note only).
 
 ## Per-task model suggestion
 
@@ -110,6 +119,7 @@ Modify: `web/public/shell-init.js`, `web/index.html`, `web/src/index.css`, `web/
 | 3 PWA meta and touch CSS | sonnet | opus |
 | 4 large-title header | sonnet (high effort) | opus |
 | 5 tab bar | sonnet | opus |
+| 5b page heading sweep | sonnet (screen batches may fan out, disjoint commit paths) | opus |
 | 6 sheet primitive | sonnet (high effort) | opus |
 | 7 Modal / ConfirmModal sheets | sonnet | opus |
 | 8 panels and settings sheets | sonnet | opus |
@@ -123,26 +133,35 @@ Modify: `web/public/shell-init.js`, `web/index.html`, `web/src/index.css`, `web/
 | 16 final verification and approvals | sonnet | opus |
 | 17 DESIGN.md and P2 note | sonnet | opus (low) |
 
-Waves: 0 → 1 → 2 → 3, then {4, 6} in parallel (disjoint files), then 5 after 4, {7, 8, 9} after 6, then {10, 11}, {12, 13}, then 14 → 15, 16, 17. Parallel agents must be given their commit paths up front (they share one index).
+Order: 0 → 1 → 2 → 3 → 4 → 5 → 5b → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16, with 17 alongside 16 (docs only, disjoint paths). The tasks run one at a time because every task from 4 to 14 shares at least one file with its neighbours (`web/src/index.css`, `PortalShell.tsx`, `ShellTopBar.tsx`, `checks-native.mjs`, `nativeSheets.test.ts` or `justifications.json`), and `git commit -- <paths>` would sweep one agent's half-done edits into another's commit. The only fan-outs are inside Task 5b and Task 15: disjoint screen sets per agent, with one named owner for the shared test and check files. Parallel agents must be given their commit paths up front (they share one index).
 
 ---
 
 ### Task 0: Pull exact values from the committed preview into tokens
 
-The designer agent is adding the phone frame to `web/dev-previews/student-home-a.html`, with `?platform=ios|android&page=root|detail`. This task starts only after that work is **committed**. Never read uncommitted preview edits.
+The phone frame is committed in `web/dev-previews/student-home-a.html` at `4447a571` ("feat(web): native phone frame in design A preview"), with `?platform=ios|android&page=root|detail`, and the user approved it as the port reference. Read it at that commit (`git show 4447a571:<path>`), never from uncommitted edits. The token values and selectors below are pre-filled from the designer's report on that commit. This task **verifies each one** against the committed files and corrects any that differ.
+
+Designer-reported hooks (verify in Step 1):
+- Root attributes on `.sh-root`: `[data-platform]`, `[data-page]`, and `[data-sheet="medium|large|fit"]` while a phone sheet is open.
+- Elements: `.as-lt` (large title), `.as-back` with `.as-back-ios`, `.as-back-md` and `.as-back-l`, `.as-grab`, `.as-ptr` with `.as-ptr-ios` and `.as-ptr-md`, and `[data-detents]`.
+- State classes: `.as-bar.is-collapsed` and `.is-raised`, `.is-press` and `.is-release`, `.is-sheet-snapping`, and `.as-col[data-ptr="pulling|refreshing|settling"]`.
+- Custom properties set by JS: `--pf-rx`, `--pf-ry`, `--pf-rr`, `--pf-ro`, `--pf-pull`, `--pf-pull-p`, `--pf-sy`, `--pf-kb`.
+- Params: `platform=ios|android`, `page=root|detail`. The preview toolbar shows only with `width=mobile`, so drift uses `width=desktop` at a 390px viewport (the shell container is then 390px wide and the phone frame applies, with no toolbar in the capture).
 
 **Files:**
 - Modify: `web/src/index.css` (one new `:root` block, "Native frame tokens", directly after the `@theme inline` blocks)
+- Modify: `web/dev-previews/student-home/controller.ts`, `web/dev-previews/student-home/variant-a.js` (Step 1b only: the preview's default platform is `other`)
 - Create: `web/scripts/drift/native-preview.mjs`
 - Create: `web/tests/unit/nativeFrameCss.test.ts` (token part; Task 1 extends it)
 
 **Interfaces:**
 - Consumes: the committed preview HTML, CSS and JS for the phone frame.
+- Preview contract after Step 1b: no `platform` param means `other` (no `data-platform`, design A's own phone frame); the native frame applies only with an explicit `platform=ios|android`.
 - Produces:
-  - CSS custom properties: `--native-large-title-size`, `--native-large-title-lh`, `--native-inline-title-size`, `--native-bar-h-ios`, `--native-bar-h-android`, `--native-bar-pad-inline`, `--native-tabbar-h-ios`, `--native-tabbar-h-android`, `--native-tab-label-size`, `--native-tab-pill-w`, `--native-tab-pill-h`, `--native-grabber-w-ios`, `--native-grabber-h-ios`, `--native-grabber-w-android`, `--native-grabber-h-android`, `--native-group-radius-ios`, `--native-group-inset`, `--native-row-min-ios`, `--native-row-1-android`, `--native-row-2-android`, `--native-row-3-android`, `--native-press-dim`, `--native-state-pressed`, `--native-press-scale`, `--native-sheet-scale-back`, `--native-sheet-medium`, `--native-parallax`, `--native-hairline`, `--ease-ios-spring`, `--ease-m3-emphasized`, `--dur-sheet`.
-  - `native-preview.mjs` exports `NATIVE_PREVIEW` (selectors: `bar`, `largeTitle`, `inlineTitle`, `back`, `bell`, `settings`, `avatar`, `sheet`, `tabbar`) and `previewNativeQuery({ state, theme, platform, page })` (`URLSearchParams`).
+  - CSS custom properties: the `TOKENS` list in Step 2 (one name per measurement, a value per platform where the preview differs).
+  - `native-preview.mjs` exports `NATIVE_PREVIEW` (selectors: `root`, `bar`, `largeTitle`, `inlineTitle`, `back`, `bell`, `settings`, `avatar`, `sheet`, `tabbar`) and `previewNativeQuery({ state, theme, platform, page })` (`URLSearchParams`).
 
-- [ ] **Step 1: Confirm the preview is committed and find its phone-frame rules**
+- [ ] **Step 1: Confirm the preview commit and read its phone-frame rules**
 
 ```bash
 cd /home/sico/Code/Lemely/.claude/worktrees/student-home-variants
@@ -150,12 +169,36 @@ git status --short web/dev-previews
 git log --oneline -5 -- web/dev-previews/student-home-a.html web/dev-previews/student-home
 ```
 
-Expected: no `M` lines for `web/dev-previews/` (anything uncommitted means stop and report), and a recent designer commit that mentions the phone frame. Then list the preview's phone-frame selectors and custom properties:
+Expected: `4447a571` in the log. Uncommitted `M` lines under `web/dev-previews/` are someone else's work in progress: ignore them and read only the committed files. Then list the phone-frame tokens, selectors and JS hooks at that commit:
 
 ```bash
-grep -nE "platform|data-page|large-title|grabber|tabbar|sheet" web/dev-previews/student-home/variant-a.css | head -80
-grep -nE "platform|page" web/dev-previews/student-home/controller.ts | head -40
+git show 4447a571:web/dev-previews/student-home/tokens.css | grep -nE -- "--pf-|data-platform"
+git show 4447a571:web/dev-previews/student-home/variant-a.css | sed -n '/Native phone frame/,$p' | grep -nE "as-(bar|lt|title|back|grab|ptr|pop|modal|iconbtn)|a-bottombar|data-sheet|is-(collapsed|raised|press|release|sheet-snapping)|animation-range|font:"
+git show 4447a571:web/dev-previews/student-home/variant-a.js | grep -nE "data(set)?\.(platform|page|sheet|ptr)|--pf-|is-collapsed|is-raised|detents"
+git show 4447a571:web/dev-previews/student-home-a.html | grep -nE "as-bar|as-lt|as-title|as-back|as-pop-bell|as-pop-me|as-settings|a-bottombar"
 ```
+
+Check every value in Step 3's block and every selector in Step 4 against this output. Where the commit differs from the pre-filled value, use the commit's value and note it in the commit body.
+
+- [ ] **Step 1b: The preview defaults to `other` (design A's own phone frame), like the app (D1)**
+
+Evidence: a P1 drift run on `4447a571` (`reports/.scratch/drift/2026-11-09T09-32-00-158Z`) failed 9 keys at 23 to 68%: `student-bell@390` (light and dark), `student-account@390` (light and dark), and `student-settings-{profile,account,notifications,appearance,install}@390@light`. Cause: `controller.ts` lists `platform: ["ios", "android"]`, so a URL without `platform` resolves to `ios`. The harness's `openPreview` passes `width=desktop` and no platform, so at a 390px viewport the preview now draws the native frame (with sheets) where the app, running as `other`, keeps design A.
+
+Fix it in the preview, at the source of the default:
+- `web/dev-previews/student-home/controller.ts`: `CONTROLS.platform` becomes `["other", "ios", "android"]`, so a missing or unknown `platform` resolves to `other`. In `apply`, `other` **removes** `root.dataset.platform` (`delete root.dataset.platform`) instead of writing it: every phone-frame rule keys off the attribute's presence (`.sh-root[data-platform]`), so `data-platform="other"` would still draw the native frame. Keep the user's view unchanged: when the URL has `width=mobile` and no `platform`, `pick("platform")` returns `ios`, and the controller writes `platform=ios` into the URL (`history.replaceState`), so the toolbar's default choice is an explicit `ios` and the variant links carry it.
+- `web/dev-previews/student-home/variant-a.js`: `isPhone()` also requires the attribute (`Boolean(root.dataset.platform) && root.clientWidth <= PHONE_MAX`), so the collapse, sheet, press and pull-to-refresh code never sets `is-collapsed`, `data-sheet`, `is-press` or `data-ptr` on design A.
+
+Verify:
+
+```bash
+cd /home/sico/Code/Lemely/.claude/worktrees/student-home-variants/web
+npm run build
+node scripts/home-drift.mjs --scene teacher-,student-
+git diff --stat -- scripts/drift/justifications.json
+grep -c '"approved": "yes"' scripts/drift/justifications.json
+```
+
+Expected: the drift run exits 0, except keys the run reports as captured (new baselines); the 9 keys above pass again. `justifications.json` is unchanged and still has 48 `"approved": "yes"` entries. Then open the preview with `?platform=ios&page=root&width=mobile` and with `?width=mobile` and no platform: both show the iOS native frame with the toolbar, as before.
 
 - [ ] **Step 2: Write the token test (fails: block missing)**
 
@@ -170,16 +213,32 @@ const SRC = join(fileURLToPath(new URL("../../", import.meta.url)), "src")
 export const css = readFileSync(join(SRC, "index.css"), "utf8")
 
 const TOKENS = [
-  "--native-large-title-size", "--native-large-title-lh", "--native-inline-title-size",
+  // header
+  "--native-large-title-size", "--native-large-title-lh", "--native-large-title-pad",
+  "--native-inline-title-size", "--native-inline-title-lh",
   "--native-bar-h-ios", "--native-bar-h-android", "--native-bar-pad-inline",
-  "--native-tabbar-h-ios", "--native-tabbar-h-android", "--native-tab-label-size",
-  "--native-tab-pill-w", "--native-tab-pill-h",
-  "--native-grabber-w-ios", "--native-grabber-h-ios", "--native-grabber-w-android", "--native-grabber-h-android",
-  "--native-group-radius-ios", "--native-group-inset", "--native-row-min-ios",
-  "--native-row-1-android", "--native-row-2-android", "--native-row-3-android",
-  "--native-press-dim", "--native-state-pressed", "--native-press-scale",
-  "--native-sheet-scale-back", "--native-sheet-medium", "--native-parallax", "--native-hairline",
-  "--ease-ios-spring", "--ease-m3-emphasized", "--dur-sheet",
+  "--native-title-inset-ios", "--native-title-inset-detail-ios",
+  "--native-iconbtn-ios", "--native-iconbtn-android", "--native-bar-icon",
+  // tab bar
+  "--native-tabbar-h-ios", "--native-tabbar-h-android", "--native-tab-label-ios", "--native-tab-label-android",
+  "--native-tab-icon", "--native-tab-pill-w", "--native-tab-pill-h", "--native-tab-press-opacity-ios",
+  // sheets
+  "--native-grabber-w-ios", "--native-grabber-h-ios", "--native-grabber-gap-ios",
+  "--native-grabber-w-android", "--native-grabber-h-android", "--native-grabber-gap-android",
+  "--native-sheet-medium", "--native-sheet-large-ios", "--native-sheet-large-android",
+  "--native-sheet-scale-back", "--native-sheet-backdrop", "--native-action-row-h",
+  "--dur-sheet-ios", "--dur-sheet-android",
+  "--ease-ios-spring", "--ease-m3-emphasized", "--ease-m3-emphasized-decelerate",
+  // grouped content
+  "--native-group-radius-ios", "--native-group-inset-ios", "--native-gutter-android", "--native-sep-inset-ios",
+  "--native-row-min-ios", "--native-row-1-android", "--native-row-2-android", "--native-row-3-android",
+  // glass
+  "--native-glass-mix", "--native-glass-saturate", "--native-hairline",
+  // press
+  "--native-press-dim", "--native-press-ink-light", "--native-press-ink-dark", "--native-press-scale",
+  "--native-state-pressed", "--native-ripple-dur",
+  // gestures
+  "--native-parallax", "--native-ptr-threshold",
 ]
 
 function tokenBlock(): string {
@@ -211,92 +270,143 @@ Expected: FAIL (block missing).
 
 - [ ] **Step 3: Add the token block, with the preview's exact values**
 
-Seed it with the brief's numbers below. Then replace **each** value with the one the committed preview uses (Step 1 output), and cite the preview's line in a trailing comment. Where the preview has no value, keep the brief's number and mark the comment `brief §N`.
+The values below are the committed preview's (designer report on `4447a571`, `tokens.css` `--pf-*` and the phone-frame block of `variant-a.css`). Verify each against Step 1's output and cite the preview's line in the trailing comment. Where the preview has no value, the brief's number stays and the comment says `brief §N`.
+
+Colours are not tokens here: the phone frame uses existing roles. The preview's names map to the app's as follows: preview `--md-surface-lowest`/`-low`/`-high` are the app's `--md-surface-container-lowest`/`-low`/`-high`, preview `--md-outline-subtle` is `--md-outline-variant`, and preview `--surface-card` is `--md-surface-container-lowest` in light and `--md-surface-container-high` in dark. The surfaces later tasks use, from the preview:
+
+| Surface | iOS light / dark | Android light / dark |
+|---|---|---|
+| Page ground | `surface-container` / `surface-container-lowest` | `surface-container-low` / `surface` |
+| Groups (cards, list groups) | `surface-container-lowest` / `surface-container-high` | same |
+| Sheets | `surface-container-low` (both themes) | same |
+| Bar at rest | transparent (the page shows) | transparent (the page shows) |
+| Bar raised (collapsed, or a scrolled detail) | glass: 86% `surface-container-lowest` / 86% `surface-container-low`, blur, saturate 1.6, 0.5px `outline-variant` hairline | `surface-container`, no hairline |
+| Tab bar | the same glass, hairline on top | `surface-container` |
+| Separators / grabber | `outline` / `outline` | none / 40% `on-surface-variant` |
 
 ```css
 /* ── Native frame tokens (docs/superpowers/plans/2026-11-08-native-mobile-frame.md, Task 0).
-   Values pulled from the committed design A preview (student-home-a.html,
-   ?platform=ios|android). Raw px for the native frame live here and nowhere else. */
+   Values from the committed design A preview at 4447a571 (student-home/tokens.css --pf-*,
+   variant-a.css "Native phone frame"). Raw values for the native frame live here and nowhere else. */
 :root {
-  --native-large-title-size: 34px;   /* brief §3.1: Bricolage 800 */
+  /* Header */
+  --native-large-title-size: 34px;          /* .as-lt: 800 34px/41px Bricolage */
   --native-large-title-lh: 41px;
-  --native-inline-title-size: 17px;  /* brief §3.1: Schibsted 600 */
-  --native-bar-h-ios: 44px;
+  --native-large-title-pad: 2px 16px 8px;   /* .as-lt padding: 2px var(--space-4) var(--space-2) */
+  --native-inline-title-size: 17px;         /* .as-title: 600 17px/22px Schibsted */
+  --native-inline-title-lh: 22px;
+  --native-bar-h-ios: 44px;                 /* --pf-bar-h */
   --native-bar-h-android: 64px;
-  --native-bar-pad-inline: 16px;
-  --native-tabbar-h-ios: 49px;       /* brief §3.2, plus the home indicator inset */
-  --native-tabbar-h-android: 80px;   /* brief §3.2: 80dp */
-  --native-tab-label-size: 11px;
-  --native-tab-pill-w: 64px;         /* brief §3.2: M3 active indicator 64x32 */
+  --native-bar-pad-inline: 8px;             /* .as-bar padding-inline: var(--space-2) */
+  --native-title-inset-ios: 144px;          /* --pf-title-inset: centred title clears three 44px actions */
+  --native-title-inset-detail-ios: 124px;   /* --pf-title-inset-detail: clears the back chevron and label */
+  --native-iconbtn-ios: 44px;               /* --pf-iconbtn */
+  --native-iconbtn-android: 48px;
+  --native-bar-icon: 22px;                  /* .as-bar .as-ico */
+  /* Tab bar */
+  --native-tabbar-h-ios: 49px;              /* --pf-tab-h, plus the home indicator inset */
+  --native-tabbar-h-android: 80px;
+  --native-tab-label-ios: 10px;             /* --pf-tab-label */
+  --native-tab-label-android: 12px;
+  --native-tab-icon: 24px;                  /* --pf-tab-ico, both platforms */
+  --native-tab-pill-w: 64px;                /* --pf-pill-w/h: M3 active indicator */
   --native-tab-pill-h: 32px;
-  --native-grabber-w-ios: 36px;      /* brief §3.3 */
+  --native-tab-press-opacity-ios: 0.55;     /* iOS tab items dim instead of drawing a layer */
+  /* Sheets */
+  --native-grabber-w-ios: 36px;             /* --pf-grab-w/h/gap */
   --native-grabber-h-ios: 5px;
+  --native-grabber-gap-ios: 5px 6px;        /* above / below */
   --native-grabber-w-android: 32px;
   --native-grabber-h-android: 4px;
-  --native-group-radius-ios: 12px;   /* brief §3.4: 10 to 12 */
-  --native-group-inset: 16px;
-  --native-row-min-ios: 44px;
+  --native-grabber-gap-android: 22px 22px;  /* M3 drag handle centred in a 48dp touch area */
+  --native-sheet-medium: 50dvh;             /* --pf-sheet-medium, both platforms */
+  --native-sheet-large-ios: calc(100dvh - max(env(safe-area-inset-top), 20px) - 10px);
+  --native-sheet-large-android: calc(100dvh - max(env(safe-area-inset-top), 24px) - 24px);
+  --native-sheet-scale-back: 0.94;          /* --pf-sheet-scale, iOS only */
+  --native-sheet-backdrop: oklch(0.1 0.01 245); /* behind the scaled-back page, both themes */
+  --native-action-row-h: 56px;              /* brief §3.3 action sheet rows; no preview value */
+  --dur-sheet-ios: 320ms;                   /* --pf-sheet-dur */
+  --dur-sheet-android: 300ms;
+  --ease-ios-spring: cubic-bezier(0.32, 0.72, 0, 1);              /* --pf-sheet-ease (iOS) */
+  --ease-m3-emphasized-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1); /* --pf-sheet-ease (Android) */
+  --ease-m3-emphasized: cubic-bezier(0.2, 0, 0, 1);               /* ripple; Android push slides */
+  /* Grouped content */
+  --native-group-radius-ios: 12px;          /* --pf-group-radius (Android: 0) */
+  --native-group-inset-ios: 16px;           /* --pf-group-margin (Android: 0, full-bleed) */
+  --native-gutter-android: 14px;            /* the page gutter Android keeps (preview --as-gutter-sm = PortalShell max-shell-lg:px-3.5) */
+  --native-sep-inset-ios: 16px;             /* --pf-sep-inset (Android: no separators) */
+  --native-row-min-ios: 44px;               /* --pf-row-min */
   --native-row-1-android: 56px;
-  --native-row-2-android: 72px;
-  --native-row-3-android: 88px;
-  --native-press-dim: 8%;            /* brief §3.5 */
-  --native-state-pressed: 10%;
-  --native-press-scale: 0.97;
-  --native-sheet-scale-back: 0.94;
-  --native-sheet-medium: 50dvh;
-  --native-parallax: 0.3;            /* brief §3.6 */
-  --native-hairline: 0.5px;
-  --ease-ios-spring: cubic-bezier(0.32, 0.72, 0, 1);
-  --ease-m3-emphasized: cubic-bezier(0.2, 0, 0, 1);
-  --dur-sheet: 300ms;                /* brief §6: 250 to 350ms */
+  --native-row-2-android: 72px;             /* brief §3.4 */
+  --native-row-3-android: 88px;             /* brief §3.4 */
+  /* Glass (iOS only) */
+  --native-glass-mix: 86%;                  /* --pf-glass-mix */
+  --native-glass-saturate: 1.6;             /* saturate(1.6) */
+  --native-hairline: 0.5px;                 /* --pf-hairline */
+  /* Press */
+  --native-press-dim: 8%;                   /* --pf-press-layer (iOS) */
+  --native-press-ink-light: oklch(0 0 0);   /* --pf-ink-dim: iOS dims toward black in light... */
+  --native-press-ink-dark: oklch(1 0 0);    /* ...and toward white in dark */
+  --native-press-scale: 0.97;               /* --pf-press-scale, buttons only */
+  --native-state-pressed: 10%;              /* --pf-press-layer (Android) */
+  --native-ripple-dur: 450ms;               /* --pf-ripple-dur, eased by --ease-m3-emphasized */
+  /* Gestures */
+  --native-parallax: 0.3;                   /* brief §3.6 */
+  --native-ptr-threshold: 64px;             /* --pf-ptr-threshold, both platforms */
 }
 ```
+
+Values that are not tokens because they are behaviour, not measurements: the collapse fades the inline title and the bar's surface over 70% to 100% of the large title's exit, and the large title's own opacity over its whole exit (Task 4); the hero height is unchanged.
 
 Run: `cd web && npx vitest run tests/unit/nativeFrameCss.test.ts tests/unit/design-tokens.test.ts tests/unit/motionDefaults.test.ts`
 Expected: PASS. If `design-tokens.test.ts` rejects a raw value (for example an off-scale px), add the token to that test's documented allow-list with a one-line reason pointing at this block. Do not move the value into a component.
 
 - [ ] **Step 4: Record the preview selectors (`web/scripts/drift/native-preview.mjs`)**
 
-Fill each selector from the committed preview markup (Step 1). The keys are fixed, because later tasks import them.
+The keys are fixed, because later tasks import them. The selectors are pre-filled from the designer's hooks; confirm each one matches exactly one element (or the stated set) in the committed markup at `4447a571`.
 
 ```js
 /*
  * The design A preview's native phone frame (student-home-a.html with
- * ?platform=ios|android&page=root|detail), as committed by the designer.
+ * ?platform=ios|android&page=root|detail), as committed at 4447a571.
  * Selectors are read off the committed markup; update them here, nowhere else.
+ * State hooks the scenes may wait on: `.as-bar.is-collapsed` (root, scrolled past
+ * the large title), `.as-bar.is-raised` (bar surface shown), and
+ * `.sh-root[data-sheet="medium|large|fit"]` (a phone sheet is open).
  */
 export const NATIVE_PREVIEW = {
-  bar: "<the preview's phone bar selector>",
-  largeTitle: "<the preview's large title selector>",
-  inlineTitle: "<the preview's inline (bar) title selector>",
-  back: "<the preview's back chevron selector>",
-  bell: "<the preview's bell trigger selector>",
-  settings: "<the preview's settings trigger selector>",
-  avatar: "<the preview's avatar trigger selector>",
-  sheet: "<the preview's open sheet panel selector>",
-  tabbar: "<the preview's tab bar selector>",
+  root: ".sh-root",
+  bar: ".as-bar",
+  largeTitle: ".as-lt",
+  inlineTitle: ".as-title",
+  back: ".as-back",
+  bell: ".as-pop-bell > summary",
+  settings: '[data-a-open="as-settings"]',
+  avatar: ".as-pop-me > summary",
+  sheet: ".as-pop[open] > .as-pop-panel, .as-modal[open]",
+  tabbar: ".a-bottombar",
 }
 
+/** `width: "desktop"` on purpose: at a 390px viewport the shell container is
+ * 390px, so the phone frame applies; `width=mobile` would add the preview
+ * toolbar above the frame and into the capture. */
 export function previewNativeQuery({ state, theme, platform, page }) {
   return new URLSearchParams({ state, theme, motion: "reduce", width: "desktop", platform, page })
 }
 ```
 
-The angle-bracket strings are not placeholders left for later. Step 4 **is** the step that replaces them, from the committed markup. The task is not done while any `<` remains:
-
-```bash
-cd web && node -e 'const s=require("fs").readFileSync("scripts/drift/native-preview.mjs","utf8");if(/"<[^"]*>"/.test(s)){console.error("unfilled selector");process.exit(1)}'
-```
-
-Expected: exit 0.
+Verify each selector against the committed preview at 390×844, for both platforms and both pages (a throwaway script under `reports/.scratch/`, not committed): `root`, `bar`, `largeTitle` (root page), `inlineTitle`, `back` (detail page), `bell`, `settings`, `avatar` and `tabbar` each match exactly one visible element; after clicking `bell`, `sheet` matches one visible element and `root` has `data-sheet="fit"`; after clicking `settings`, `root` has `data-sheet="medium"`. Any selector that fails is corrected here from the markup, and the correction is named in the commit body.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 cd /home/sico/Code/Lemely/.claude/worktrees/student-home-variants
-/home/sico/Code/Lemely/.venv/bin/pre-commit run --files web/src/index.css web/scripts/drift/native-preview.mjs web/tests/unit/nativeFrameCss.test.ts
-SKIP=import-linter git commit -S -m "feat(web): native frame tokens from the design A phone preview" -- web/src/index.css web/scripts/drift/native-preview.mjs web/tests/unit/nativeFrameCss.test.ts
+FILES="web/src/index.css web/scripts/drift/native-preview.mjs web/tests/unit/nativeFrameCss.test.ts web/dev-previews/student-home/controller.ts web/dev-previews/student-home/variant-a.js"
+/home/sico/Code/Lemely/.venv/bin/pre-commit run --files $FILES
+SKIP=import-linter git commit -S -m "feat(web): native frame tokens from the design A phone preview; preview defaults to other" -- $FILES
 ```
+
+Step 1b may be committed on its own first (`fix(web): design A preview defaults to the other platform`), so the P1 drift is green again before the token work; if so, drop the two preview paths from `FILES` here.
 
 ---
 
@@ -614,7 +724,7 @@ async function newContext(browser, { width, height, theme, platform }) {
   }
 ```
 
-`openPreview` takes `platform`. When `platform` is set, it builds its query with `previewNativeQuery({ state: preview.state, theme, platform, page: preview.page ?? "root" })` (import from `./native-preview.mjs`). Otherwise it uses today's query unchanged.
+`openPreview` takes `platform`. When `platform` is set, it builds its query with `previewNativeQuery({ state: preview.state, theme, platform, page: preview.page ?? "root" })` (import from `./native-preview.mjs`), so every native scene passes `platform` explicitly. Otherwise it uses today's query unchanged, with no `platform` param, which the preview resolves to `other` (Task 0 Step 1b). After loading a native preview, assert the frame is on: `document.querySelector(".sh-root").dataset.platform === platform`, and throw otherwise, the same way `openApp` asserts the app's resolver.
 
 In `home-drift.mjs` line ~110, pass `platform: scene.platform` to both `openPreview` and `openApp`. In `scenes.mjs`, add `412: 915` to `HEIGHT` and append `NATIVE_SCENES`.
 
@@ -634,6 +744,9 @@ const NO_GUTTER = "html{scrollbar-gutter:auto!important}"
 const DETAIL_PATH = "/student/practice/0606"
 /** The app's bar title on DETAIL_PATH (studentPageTitle); confirmed in Step 2. */
 const DETAIL_TITLE = "Practice"
+/** The app's iOS back label on DETAIL_PATH: the parent crumb's label (Task 4
+ * NativeBack); confirmed in Step 2. The preview's `.as-back-l` reads "Overview". */
+const DETAIL_BACK_LABEL = "Overview"
 
 const app = (extra = {}) => ({
   path: "/student",
@@ -649,6 +762,7 @@ async function scrollPast(page) {
 }
 async function previewScroll(page) {
   await page.evaluate(() => window.scrollTo(0, 240))
+  await page.waitForSelector(`${NATIVE_PREVIEW.bar}.is-collapsed`)
 }
 async function openAppSheet(page, name) {
   await page.getByRole("button", { name }).first().click()
@@ -674,21 +788,37 @@ export const NATIVE_SCENES = [
     preview: {
       state: "populated",
       page: "detail",
-      // The preview's detail title is fixed; make it read what the app's route says.
-      act: (page) => page.evaluate(([sel, title]) => {
-        for (const el of document.querySelectorAll(sel)) el.textContent = title
-      }, [NATIVE_PREVIEW.inlineTitle, DETAIL_TITLE]),
+      // The preview's detail title and back label are fixed; make them read what the app's route says.
+      act: (page) => page.evaluate(([title, titleText, backLabel, backText]) => {
+        for (const el of document.querySelectorAll(title)) el.textContent = titleText
+        for (const el of document.querySelectorAll(backLabel)) el.textContent = backText
+      }, [NATIVE_PREVIEW.inlineTitle, DETAIL_TITLE, `${NATIVE_PREVIEW.back} .as-back-l`, DETAIL_BACK_LABEL]),
     },
   })),
   ...perPlatform((platform) => ({
     id: `native-${platform}-bell`, kind: "preview-vs-app", capture: "frame", platform, windows: [390],
     app: app({ act: (page) => openAppSheet(page, /^Notifications/) }),
-    preview: { state: "populated", page: "root", act: (page) => page.click(NATIVE_PREVIEW.bell) },
+    preview: {
+      state: "populated",
+      page: "root",
+      act: async (page) => {
+        await page.click(NATIVE_PREVIEW.bell)
+        await page.waitForSelector(`${NATIVE_PREVIEW.root}[data-sheet="fit"]`)
+      },
+    },
   })),
   ...perPlatform((platform) => ({
+    // The preview's settings sheet opens at the medium detent (data-detents="medium large").
     id: `native-${platform}-settings`, kind: "preview-vs-app", capture: "frame", platform, windows: [390],
     app: app({ path: "/student/settings" }),
-    preview: { state: "populated", page: "root", act: (page) => page.click(NATIVE_PREVIEW.settings) },
+    preview: {
+      state: "populated",
+      page: "root",
+      act: async (page) => {
+        await page.click(NATIVE_PREVIEW.settings)
+        await page.waitForSelector(`${NATIVE_PREVIEW.root}[data-sheet="medium"]`)
+      },
+    },
   })),
   // Teachers share the frame; no teacher preview exists, so log-only captures.
   ...perPlatform((platform) => ({
@@ -708,7 +838,7 @@ export const NATIVE_SCENES = [
 ]
 ```
 
-Before running, check the detail title. Open `/student/practice/0606` in the app at 390 and read the bar's `[data-shell-title]`. If it is not "Practice", set `DETAIL_TITLE` to the app's title. The preview is made to match the app's route title, never the other way round.
+Before running, check the detail title and back label. Open `/student/practice/0606` in the app at 390 and read the bar's `[data-shell-title]`, and the label of the trail's second-to-last crumb (the `topBar.trail` the student shell builds for that route). Set `DETAIL_TITLE` and `DETAIL_BACK_LABEL` to those. The preview is made to match the app's route, never the other way round.
 
 - [ ] **Step 3: The behaviour checks file (`web/scripts/drift/checks-native.mjs`)**
 
@@ -877,7 +1007,8 @@ Expected: identical outcomes to Task 2's run. Drift runs in a browser tab, not s
 
 ```bash
 cd /home/sico/Code/Lemely/.claude/worktrees/student-home-variants
-FILES="web/index.html web/src/index.css web/tests/unit/nativeMechanics.test.ts web/tests/unit/checkNativeInvariants.test.ts web/scripts/check-native-invariants.mjs <roots from Step 4>"
+FILES="web/index.html web/src/index.css web/tests/unit/nativeMechanics.test.ts web/tests/unit/checkNativeInvariants.test.ts web/scripts/check-native-invariants.mjs"
+# Append each root Step 4 changed (FILES="$FILES <that path>"), one per file it lists in the commit body.
 /home/sico/Code/Lemely/.venv/bin/pre-commit run --files $FILES
 SKIP=import-linter git commit -S -m "feat(web): black-translucent status bar, text-size-adjust and touch chrome rules" -- $FILES
 ```
@@ -887,21 +1018,23 @@ SKIP=import-linter git commit -S -m "feat(web): black-translucent status bar, te
 ### Task 4: Sticky collapsing large-title header (ShellTopBar native variant)
 
 **Page title API (decided here, D2/D3):** `ShellTopBarProps.title` stays the single title string. The level is `titleLevel ?? titleLevelFor(trail)`, where `titleLevelFor(trail) = trail.length > 1 ? "detail" : "root"`. New required prop: `backFallback: string`, the portal root that the native back chevron falls back to. On native:
-- `root`: the bar row holds only the actions. A large title, `<p aria-hidden data-shell-large-title>`, sits under the bar, outside `<main>`. The inline `[data-shell-title]` fades in once the large title's bottom crosses the bar.
-- `detail`: no large title. There is a leading back chevron and the inline title from the start, and the breadcrumb row is hidden.
+- `root`: the bar row holds only the actions. A large title, `<p aria-hidden data-shell-large-title>`, sits under the bar, outside `<main>`. The inline `[data-shell-title]` and the bar's surface fade in over the last 30% of the large title's exit (70% to 100%), the large title fades out over its whole exit, and `data-collapsed` flips at the one threshold: the large title's bottom crossing the bar.
+- `detail`: no large title. The bar is back, title, one action (the bell): a leading native back control (iOS chevron plus the parent page's title, Android arrow), the inline title from the start, and the settings and account actions hidden. The breadcrumb row is hidden.
 
 **Files:**
-- Create: `web/src/components/shell/largeTitle.ts`, `web/src/components/shell/useLargeTitleCollapse.ts`, `web/tests/unit/nativeTopBar.test.ts`
-- Modify: `web/src/components/shell/ShellTopBar.tsx`, `web/src/index.css` (native bar block), `web/src/portals/student/shell.tsx` (`backFallback`, `native:hidden` on the in-actions `BackControl`), `web/src/portals/teacher/index.tsx` (`backFallback`), `web/scripts/drift/checks-native.mjs`, `web/scripts/drift/justifications.json`
+- Create: `web/src/components/shell/largeTitle.ts`, `web/src/components/shell/useLargeTitleCollapse.ts`, `web/src/components/shell/NativeBack.tsx`, `web/tests/unit/nativeTopBar.test.ts`
+- Modify: `web/src/components/shell/ShellTopBar.tsx`, `web/src/components/shell/shellStyles.ts` (`lm-native-iconbtn` on `SHELL_ICON_BUTTON`), `web/src/components/ui/back-control.tsx` (extract `useBackAction`), `web/src/index.css` (native bar block), `web/src/portals/student/shell.tsx` (`backFallback`, `native:hidden` on the in-actions `BackControl`), `web/src/portals/teacher/index.tsx` (`backFallback`), `web/scripts/drift/checks-native.mjs`, `web/scripts/drift/justifications.json`
 
 **Interfaces:**
-- Consumes: `useNativeFrame` (Task 1), the tokens (Task 0), `BackControl` (`@/components/ui/back-control`, props `fallback`, `className`).
+- Consumes: `useNativeFrame` (Task 1), the tokens (Task 0), `BackControl` (`@/components/ui/back-control`, props `fallback`, `label`, `className`), `Crumb` (`@/components/ui/breadcrumbs`).
 - Produces:
   - `titleLevelFor(trail: readonly unknown[]): "root" | "detail"`
   - `largeTitleCollapsed(scrollY: number, titleHeight: number): boolean`
   - `useLargeTitleCollapse(ref: RefObject<HTMLElement | null>, enabled: boolean): boolean`
+  - `useBackAction(fallback: string): () => void` (exported from `back-control.tsx`; `BackControl` and `NativeBack` both call it, so the history-or-fallback logic exists once)
+  - `NativeBack({ fallback, label }: { fallback: string; label: string })`
   - `ShellTopBarProps` gains `titleLevel?: "root" | "detail"` and `backFallback: string`.
-  - DOM contract: `header[data-title-level][data-collapsed]`, `[data-shell-large-title]`, and CSS classes `.lm-native-bar`, `.lm-native-large-title`.
+  - DOM contract: `header[data-title-level][data-collapsed]`, `[data-shell-large-title]`, `[data-shell-action="settings"|"account"]`, and CSS classes `.lm-native-bar`, `.lm-native-large-title`, `.lm-native-inline-title`, `.lm-native-back`, `.lm-native-iconbtn`.
 
 - [ ] **Step 1: Failing tests (`web/tests/unit/nativeTopBar.test.ts`)**
 
@@ -939,32 +1072,56 @@ describe("one collapse threshold: the large title's bottom crossing the bar", ()
 })
 
 describe("ShellTopBar native markup", () => {
-  it("marks the bar and renders an aria-hidden large title outside main", () => {
+  it("marks the bar and renders an aria-hidden large title outside main (D3)", () => {
     expect(bar).toContain("lm-native-bar")
     expect(bar).toContain("data-title-level={level}")
     expect(bar).toContain("data-collapsed={collapsed}")
     expect(bar).toMatch(/<p[^>]*aria-hidden="true"[^>]*data-shell-large-title/)
   })
-  it("renders the native back chevron only for details, from backFallback", () => {
-    expect(bar).toMatch(/level === "detail" \? \(\s*<BackControl fallback=\{backFallback\}/)
+  it("renders the native back only for details, from backFallback and the parent crumb", () => {
+    expect(bar).toMatch(/level === "detail" \? \(\s*<NativeBack fallback=\{backFallback\} label=\{backLabel\}/)
+  })
+  it("marks the settings and account actions so details can hide them", () => {
+    expect(bar).toContain('data-shell-action="settings"')
+    expect(bar).toContain('data-shell-action="account"')
+  })
+  it("one back logic: BackControl and NativeBack share useBackAction", () => {
+    const back = readFileSync(join(SRC, "components/ui/back-control.tsx"), "utf8")
+    const native = readFileSync(join(SRC, "components/shell/NativeBack.tsx"), "utf8")
+    expect(back).toMatch(/export function useBackAction\(fallback: string\)/)
+    expect(back).toContain("useBackAction(fallback)")
+    expect(native).toContain("useBackAction(fallback)")
+    expect(native).not.toContain("backTarget(")
   })
 })
 
-describe("native bar CSS", () => {
+describe("native bar CSS (preview 4447a571)", () => {
   const block = css.slice(css.indexOf("/* ── Native frame: top bar"))
   it("is sticky under the status bar, phone width and ios|android only", () => {
     expect(block).toMatch(/@media \(max-width: 720px\)/)
     expect(block).toMatch(/:root:is\(\[data-platform="ios"\], \[data-platform="android"\]\) \.lm-native-bar \{[^}]*position: sticky;[^}]*top: 0;[^}]*padding-top: env\(safe-area-inset-top\);/)
   })
-  it("iOS goes glass with a hairline when collapsed; Android lifts to surface-container", () => {
-    expect(block).toMatch(/\[data-platform="ios"\] \.lm-native-bar:is\(\[data-collapsed="true"\][^{]*\{[^}]*backdrop-filter: blur\(var\(--blur-nav\)\)/)
-    expect(block).toMatch(/\[data-platform="ios"\] \.lm-native-bar:is\(\[data-collapsed="true"\][^{]*\{[^}]*box-shadow: inset 0 calc\(-1 \* var\(--native-hairline\)\) 0 var\(--md-outline-variant\)/)
-    expect(block).toMatch(/\[data-platform="android"\] \.lm-native-bar:is\(\[data-collapsed="true"\][^{]*\{[^}]*background-color: var\(--md-surface-container\)/)
+  it("the bar's surface is a layer under its content, transparent at rest", () => {
+    expect(block).toMatch(/\.lm-native-bar::before \{[^}]*z-index: -1;[^}]*opacity: 0;/)
+    expect(block).toMatch(/\.lm-native-bar:is\(\[data-collapsed="true"\], \[data-title-level="detail"\]\[data-stuck="true"\]\)::before \{[^}]*opacity: 1;/)
   })
-  it("scroll-driven fade only where supported and motion is allowed", () => {
+  it("iOS raises to glass with a hairline; Android to surface-container", () => {
+    expect(block).toMatch(/\[data-platform="ios"\] \.lm-native-bar::before \{[^}]*background: color-mix\(in oklch, var\(--md-surface-container-lowest\) var\(--native-glass-mix\), transparent\);[^}]*backdrop-filter: blur\(var\(--blur-nav\)\) saturate\(var\(--native-glass-saturate\)\);[^}]*border-block-end: var\(--native-hairline\) solid var\(--md-outline-variant\)/)
+    expect(block).toMatch(/\[data-theme="dark"\]\[data-platform="ios"\] \.lm-native-bar::before \{[^}]*var\(--md-surface-container-low\) var\(--native-glass-mix\)/)
+    expect(block).toMatch(/\[data-platform="android"\] \.lm-native-bar::before \{[^}]*background: var\(--md-surface-container\)/)
+  })
+  it("inline title: 17/22 Schibsted 600; iOS centred between the 144px (root) and 124px (detail) insets", () => {
+    expect(block).toMatch(/\[data-platform="ios"\] \.lm-native-inline-title \{[^}]*inset-inline: var\(--native-title-inset-ios\)/)
+    expect(block).toMatch(/\[data-platform="ios"\] \.lm-native-bar\[data-title-level="detail"\] \.lm-native-inline-title \{[^}]*inset-inline: var\(--native-title-inset-detail-ios\)/)
+  })
+  it("details show back, title and one action", () => {
+    expect(block).toMatch(/\.lm-native-bar\[data-title-level="detail"\] :is\(\[data-shell-action="settings"\], \[data-shell-action="account"\]\) \{[^}]*display: none/)
+  })
+  it("scroll-driven fades only where supported and motion is allowed: 70-100% for the bar, the whole exit for the large title", () => {
     expect(block).toMatch(/@supports \(animation-timeline: scroll\(\)\)\s*\{\s*@media \(prefers-reduced-motion: no-preference\) and \(max-width: 720px\)/)
     expect(block).toContain("animation-timeline: scroll(root block)")
-    expect(block).toContain("animation-range: calc(var(--lm-large-title-block) - 16px) var(--lm-large-title-block)")
+    expect(block).toContain("animation-range: calc(var(--lm-large-title-block) * 0.7) var(--lm-large-title-block)")
+    expect(block).toContain("animation-range: 0px var(--lm-large-title-block)")
   })
 })
 ```
@@ -1039,9 +1196,46 @@ export function useLargeTitleCollapse(ref: RefObject<HTMLElement | null>, enable
 }
 ```
 
-- [ ] **Step 4: `ShellTopBar.tsx`**
+- [ ] **Step 4: `useBackAction`, `NativeBack` and `ShellTopBar.tsx`**
 
-Add `useRef`, `BackControl`, `useNativeFrame`, `titleLevelFor` and `useLargeTitleCollapse` imports. Extend the props:
+In `back-control.tsx`, move `BackControl`'s `handleClick` body (the `backTarget` history-or-fallback decision, comments included) into an exported hook, and make `BackControl` call it. Its rendered markup does not change:
+
+```tsx
+/** The history-or-fallback back action, shared by BackControl and the native bar's NativeBack. */
+export function useBackAction(fallback: string): () => void {
+  const navigate = useNavigate()
+  return () => {
+    const target = backTarget(window.history.state?.idx, fallback)
+    if (target.kind === "history") navigate(-1) // (keep the existing comment on why no viewTransition here)
+    else navigate(target.to, { replace: true, viewTransition: true })
+  }
+}
+```
+
+and in `BackControl`: `const handleClick = useBackAction(fallback)`.
+
+`web/src/components/shell/NativeBack.tsx`, the preview's `.as-back` (an iOS chevron plus the parent page's title, a Material arrow on Android; both glyphs render and CSS shows one):
+
+```tsx
+import { ArrowLeft, CaretLeft } from "@phosphor-icons/react"
+import { useBackAction } from "@/components/ui/back-control"
+
+/** Native frame Task 4: the detail bar's leading back control (preview `.as-back`). */
+export function NativeBack({ fallback, label }: { fallback: string; label: string }) {
+  const back = useBackAction(fallback)
+  return (
+    <button type="button" onClick={back} aria-label={`Back to ${label}`} className="lm-native-back lm-native-iconbtn hidden native:flex">
+      <CaretLeft className="lm-native-back-ios" aria-hidden="true" />
+      <ArrowLeft className="lm-native-back-md" aria-hidden="true" />
+      <span className="lm-native-back-label" aria-hidden="true">{label}</span>
+    </button>
+  )
+}
+```
+
+`shellStyles.ts`: append `lm-native-iconbtn` to `SHELL_ICON_BUTTON` (it does nothing outside the native block).
+
+In `ShellTopBar.tsx`, add `useRef`, `NativeBack`, `useNativeFrame`, `titleLevelFor` and `useLargeTitleCollapse` imports. Extend the props:
 
 ```ts
   /** Overrides the trail-derived level (native frame D2). */
@@ -1057,6 +1251,8 @@ In the component body:
   const level = titleLevel ?? titleLevelFor(trail)
   const largeRef = useRef<HTMLParagraphElement>(null)
   const collapsed = useLargeTitleCollapse(largeRef, native && level === "root")
+  /** iOS shows the parent page's title beside the chevron (preview `.as-back-l`). */
+  const backLabel = trail.at(-2)?.label ?? title
 ```
 
 The header becomes:
@@ -1069,13 +1265,14 @@ The header becomes:
         className={cn(BAR, "lm-native-bar")}
       >
         {level === "detail" ? (
-          <BackControl fallback={backFallback} className="hidden native:flex" />
+          <NativeBack fallback={backFallback} label={backLabel} />
         ) : null}
         {/* menu button unchanged */}
         <p data-shell-title className="me-auto min-w-0 truncate text-title-bar text-on-surface lm-native-inline-title">
           {title}
         </p>
-        {/* actions, bell, gear, avatar unchanged */}
+        {/* actions and bell unchanged; wrap the gear in <span data-shell-action="settings" className="contents">
+            and the avatar panel in <span data-shell-action="account" className="contents"> */}
       </header>
       <p ref={largeRef} aria-hidden="true" data-shell-large-title className="lm-native-large-title hidden">
         {title}
@@ -1087,7 +1284,7 @@ The header becomes:
       ) : null}
 ```
 
-The large title has `hidden` by default and is shown only by the native CSS for `root`. A `hidden` element measures 0, so the hook's `largeTitleCollapsed` returns false for it.
+The large title has `hidden` by default and is shown only by the native CSS for `root`. A `hidden` element measures 0, so the hook's `largeTitleCollapsed` returns false for it. If `Crumb.label` is not a string, render `backLabel` with the same text the breadcrumb shows for that crumb.
 
 - [ ] **Step 5: Native bar CSS (`web/src/index.css`, after the `.lm-shell-bar-glass` block)**
 
@@ -1110,76 +1307,146 @@ The large title has `hidden` by default and is shown only by the native CSS for 
     border-radius: 0;
     box-shadow: none;
   }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar {
+    isolation: isolate;
+    background-color: transparent; /* the page ground shows until the surface layer fades in */
+  }
+  /* The bar's surface is a layer under its content (preview .as-bar::before), so it
+     fades without fading the icons. */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--dur-base) var(--ease-out-soft);
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar:is([data-collapsed="true"], [data-title-level="detail"][data-stuck="true"])::before {
+    opacity: 1;
+  }
+  /* iOS: glass with a hairline. Android: M3 lift-on-scroll, no shadow, no hairline. */
+  :root[data-platform="ios"] .lm-native-bar::before {
+    background: color-mix(in oklch, var(--md-surface-container-lowest) var(--native-glass-mix), transparent);
+    -webkit-backdrop-filter: blur(var(--blur-nav)) saturate(var(--native-glass-saturate));
+    backdrop-filter: blur(var(--blur-nav)) saturate(var(--native-glass-saturate));
+    border-block-end: var(--native-hairline) solid var(--md-outline-variant);
+  }
+  :root[data-theme="dark"][data-platform="ios"] .lm-native-bar::before {
+    background: color-mix(in oklch, var(--md-surface-container-low) var(--native-glass-mix), transparent);
+  }
+  :root[data-platform="android"] .lm-native-bar::before {
+    background: var(--md-surface-container);
+  }
+  /* Actions: 44px (iOS) / 48px (Android) targets with 22px glyphs; iOS tints them primary,
+     Android keeps on-surface-variant. Root and detail both put the actions at the end. */
+  :root[data-platform="ios"] .lm-native-bar { --native-iconbtn: var(--native-iconbtn-ios); justify-content: flex-end; }
+  :root[data-platform="android"] .lm-native-bar { --native-iconbtn: var(--native-iconbtn-android); }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar .lm-native-iconbtn {
+    inline-size: var(--native-iconbtn);
+    block-size: var(--native-iconbtn);
+    border-radius: 9999px;
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar .lm-native-iconbtn svg {
+    inline-size: var(--native-bar-icon);
+    block-size: var(--native-bar-icon);
+  }
+  :root[data-platform="ios"] .lm-native-bar .lm-native-iconbtn { color: var(--md-primary); }
+  :root[data-platform="android"] .lm-native-bar .lm-native-iconbtn { color: var(--md-on-surface-variant); }
+  /* Detail: back, title, one action. */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-title-level="detail"] :is([data-shell-action="settings"], [data-shell-action="account"]) {
+    display: none;
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-back { margin-inline-end: auto; }
+  :root[data-platform="ios"] .lm-native-back {
+    inline-size: auto;
+    padding-inline-end: var(--space-2);
+    font-size: var(--native-inline-title-size);
+    line-height: var(--native-inline-title-lh);
+  }
+  :root[data-platform="ios"] .lm-native-back-md,
+  :root[data-platform="android"] :is(.lm-native-back-ios, .lm-native-back-label) { display: none; }
+  :root[data-platform="android"] .lm-native-back { color: var(--md-on-surface); }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-back svg:dir(rtl) { transform: scaleX(-1); }
+  /* Inline title. */
   :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-inline-title {
     font-size: var(--native-inline-title-size);
+    line-height: var(--native-inline-title-lh);
     font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--md-on-surface);
     transition: opacity var(--dur-fast) var(--ease-out-soft);
   }
   :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-title-level="root"]:not([data-collapsed="true"]) .lm-native-inline-title {
     opacity: 0;
   }
-  /* iOS: the inline title is centred over the bar. */
+  /* iOS: centred over the bar, clear of three actions (root) or the back label (detail). */
   :root[data-platform="ios"] .lm-native-inline-title {
     position: absolute;
-    inset-inline: 25%;
-    bottom: calc((var(--native-bar-h) - 1lh) / 2);
+    inset-inline: var(--native-title-inset-ios);
+    inset-block-end: 0;
+    block-size: var(--native-bar-h);
+    line-height: var(--native-bar-h);
     text-align: center;
   }
+  :root[data-platform="ios"] .lm-native-bar[data-title-level="detail"] .lm-native-inline-title {
+    inset-inline: var(--native-title-inset-detail-ios);
+  }
+  /* Android: start-aligned in the row. */
+  :root[data-platform="android"] .lm-native-inline-title {
+    flex: 1;
+    margin-inline: var(--space-3) var(--space-2);
+  }
+  /* Large title. */
   :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-large-title {
     margin: 0;
-    padding-inline: var(--native-bar-pad-inline);
-    padding-bottom: 8px;
+    padding: var(--native-large-title-pad);
     font-family: var(--font-display);
     font-weight: 800;
     font-size: var(--native-large-title-size);
     line-height: var(--native-large-title-lh);
+    letter-spacing: -0.03em;
     color: var(--md-on-surface);
+    text-wrap: balance;
+    overflow-wrap: anywhere;
     /* Long titles ("0625 Physics · Paper 4 · May/June 2024") wrap to 2 lines. */
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
+    transition: opacity var(--dur-fast) var(--ease-out-soft);
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-collapsed="true"] + .lm-native-large-title {
+    opacity: 0;
   }
   :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-title-level="detail"] + .lm-native-large-title {
     display: none;
   }
-  /* iOS: transparent at rest, glass with a hairline once content is under it. */
-  :root[data-platform="ios"] .lm-native-bar {
-    background-color: transparent;
-  }
-  :root[data-platform="ios"] .lm-native-bar:is([data-collapsed="true"], [data-title-level="detail"][data-stuck="true"]) {
-    background-color: color-mix(in oklch, var(--md-surface-container-lowest) 86%, transparent);
-    -webkit-backdrop-filter: blur(var(--blur-nav));
-    backdrop-filter: blur(var(--blur-nav));
-    box-shadow: inset 0 calc(-1 * var(--native-hairline)) 0 var(--md-outline-variant);
-  }
-  :root[data-theme="dark"][data-platform="ios"] .lm-native-bar:is([data-collapsed="true"], [data-title-level="detail"][data-stuck="true"]) {
-    background-color: color-mix(in oklch, var(--md-surface-container-high) 86%, transparent);
-  }
-  /* Android: M3 lift-on-scroll, no shadow, no hairline. */
-  :root[data-platform="android"] .lm-native-bar {
-    background-color: var(--md-surface);
-  }
-  :root[data-platform="android"] .lm-native-bar:is([data-collapsed="true"], [data-title-level="detail"][data-stuck="true"]) {
-    background-color: var(--md-surface-container);
-  }
 }
+/* Collapse, scroll-driven where supported (Chrome 115+, Safari 26+), as in the preview:
+   the inline title and the bar's surface fade in over 70% to 100% of the large title's
+   exit, and the large title fades out over its whole exit. Elsewhere, and under reduced
+   motion, data-collapsed flips the same end state at the same threshold. */
 @supports (animation-timeline: scroll()) {
   @media (prefers-reduced-motion: no-preference) and (max-width: 720px) {
-    @keyframes lm-native-title-in {
-      from { opacity: 0; transform: translateY(4px); }
-      to { opacity: 1; transform: none; }
-    }
-    :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-title-level="root"] .lm-native-inline-title {
-      animation: lm-native-title-in linear both;
+    @keyframes lm-native-fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes lm-native-fade-out { from { opacity: 1; } to { opacity: 0; } }
+    :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-title-level="root"] :is(.lm-native-inline-title),
+    :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-title-level="root"]::before {
+      animation: lm-native-fade-in linear both;
       animation-timeline: scroll(root block);
-      animation-range: calc(var(--lm-large-title-block) - 16px) var(--lm-large-title-block);
+      animation-range: calc(var(--lm-large-title-block) * 0.7) var(--lm-large-title-block);
+    }
+    :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-title-level="root"] + .lm-native-large-title {
+      animation: lm-native-fade-out linear both;
+      animation-timeline: scroll(root block);
+      animation-range: 0px var(--lm-large-title-block);
     }
   }
 }
 ```
 
-The `--md-surface` and dark mappings above are the starting point. If the preview (Task 0) uses different surfaces for the phone bar, use the preview's surfaces and say so in the commit body. The inline-title `opacity: 0` rule is overridden by the animation's `both` fill where scroll timelines exist. Elsewhere `data-collapsed` toggles it with a short transition, which `motionDefaults` already strips under reduced motion.
+The surfaces are the preview's (Task 0's surface table). The glass blur stays `var(--blur-nav)` (10px) under the one-blur rule; the preview's 14px is an open question. The inline-title, bar-surface and large-title `opacity` rules are overridden by the animations' `both` fill where scroll timelines exist. Elsewhere `data-collapsed` toggles them with a short transition, which `motionDefaults` already strips under reduced motion.
 
 - [ ] **Step 6: Portals pass `backFallback`**
 
@@ -1188,8 +1455,8 @@ The `--md-surface` and dark mappings above are the starting point. If the previe
 
 Update `studentShell.test.ts` only where it pins the `BackControl` class string.
 
-Run: `cd web && npx vitest run tests/unit/nativeTopBar.test.ts tests/unit/studentShell.test.ts tests/unit/shellTopBarGlass.test.ts tests/unit/nativeMechanics.test.ts tests/unit/elevationScale.test.ts tests/unit/utilityExistence.test.ts tests/unit/rtlSafety.test.ts`
-Expected: PASS. If `rtlSafety` rejects the `inset-inline`, `padding-inline` or `text-align: center` rules, those are logical already; fix anything physical it names.
+Run: `cd web && npx vitest run tests/unit/nativeTopBar.test.ts tests/unit/studentShell.test.ts tests/unit/shellTopBarGlass.test.ts tests/unit/shellPanels.test.ts tests/unit/nativeMechanics.test.ts tests/unit/elevationScale.test.ts tests/unit/utilityExistence.test.ts tests/unit/rtlSafety.test.ts tests/unit/a11yRules.test.ts`
+Expected: PASS. If `rtlSafety` rejects the `inset-inline`, `padding-inline` or `text-align: center` rules, those are logical already; fix anything physical it names. If `shellPanels.test.ts` pins `SHELL_ICON_BUTTON`'s exact string, add `lm-native-iconbtn` to the pinned string and add that test file to Step 9's `FILES`.
 
 - [ ] **Step 7: Behaviour checks (append to `checks-native.mjs`)**
 
@@ -1227,6 +1494,11 @@ NATIVE_CHECKS.push(
       if (await page.locator("[data-shell-large-title]").isVisible()) throw new Error("detail shows a large title")
       const backs = await page.getByRole("button", { name: /back/i }).or(page.getByRole("link", { name: /back/i })).filter({ visible: true }).count()
       if (backs !== 1) throw new Error(`expected one visible back control, got ${backs}`)
+      const label = page.locator("header .lm-native-back-label")
+      if ((await label.isVisible()) !== (platform === "ios")) throw new Error("the back label shows on iOS only")
+      for (const action of ["settings", "account"]) {
+        if (await page.locator(`header [data-shell-action="${action}"] :is(a, button)`).first().isVisible()) throw new Error(`detail shows the ${action} action`)
+      }
     },
   })),
   {
@@ -1257,7 +1529,7 @@ Expected: every behaviour check passes. The `student-,teacher-` outcomes are unc
 
 ```bash
 cd /home/sico/Code/Lemely/.claude/worktrees/student-home-variants
-FILES="web/src/components/shell/largeTitle.ts web/src/components/shell/useLargeTitleCollapse.ts web/src/components/shell/ShellTopBar.tsx web/src/index.css web/src/portals/student/shell.tsx web/src/portals/teacher/index.tsx web/tests/unit/nativeTopBar.test.ts web/tests/unit/studentShell.test.ts web/scripts/drift/checks-native.mjs web/scripts/drift/justifications.json"
+FILES="web/src/components/shell/largeTitle.ts web/src/components/shell/useLargeTitleCollapse.ts web/src/components/shell/NativeBack.tsx web/src/components/shell/ShellTopBar.tsx web/src/components/shell/shellStyles.ts web/src/components/ui/back-control.tsx web/src/index.css web/src/portals/student/shell.tsx web/src/portals/teacher/index.tsx web/tests/unit/nativeTopBar.test.ts web/tests/unit/studentShell.test.ts web/scripts/drift/checks-native.mjs web/scripts/drift/justifications.json"
 /home/sico/Code/Lemely/.venv/bin/pre-commit run --files $FILES
 SKIP=import-linter git commit -S -m "feat(web): native large-title header that collapses into the pinned bar" -- $FILES
 ```
@@ -1314,17 +1586,32 @@ describe("BottomNav native markup", () => {
   it("PortalShell hides the tab bar on immersive routes on native", () => {
     expect(shell).toMatch(/immersive && "native:hidden"/)
   })
+  it("main clears the native tab bar through one per-platform height", () => {
+    expect(shell).toContain("lm-native-main")
+    expect(shell).toContain("data-immersive={immersive || undefined}")
+  })
 })
 
-describe("tab bar CSS", () => {
+describe("tab bar CSS (preview 4447a571)", () => {
   const block = css.slice(css.indexOf("/* ── Native frame: tab bar"))
-  it("iOS: 49px + home indicator, glass, small labels", () => {
-    expect(block).toMatch(/\[data-platform="ios"\] \.lm-native-tabbar \{[^}]*min-height: calc\(var\(--native-tabbar-h-ios\) \+ env\(safe-area-inset-bottom\)\)/)
-    expect(block).toMatch(/\[data-platform="ios"\] \.lm-native-tabbar \{[^}]*backdrop-filter: blur\(var\(--blur-nav\)\)/)
+  it("one --native-tabbar-h per platform, which main's padding reads", () => {
+    expect(block).toMatch(/:root\[data-platform="ios"\] \{[^}]*--native-tabbar-h: var\(--native-tabbar-h-ios\)/)
+    expect(block).toMatch(/:root\[data-platform="android"\] \{[^}]*--native-tabbar-h: var\(--native-tabbar-h-android\)/)
+    expect(block).toMatch(/\.lm-native-main:not\(\[data-immersive\]\) \{[^}]*padding-bottom: calc\(var\(--native-tabbar-h\) \+ env\(safe-area-inset-bottom\)\)/)
   })
-  it("Android: 80dp with a 64x32 secondary-container pill behind the active icon", () => {
+  it("iOS: 49px + home indicator, glass, 10px labels", () => {
+    expect(block).toMatch(/\[data-platform="ios"\] \.lm-native-tabbar \{[^}]*min-height: calc\(var\(--native-tabbar-h-ios\) \+ env\(safe-area-inset-bottom\)\)/)
+    expect(block).toMatch(/\[data-platform="ios"\] \.lm-native-tabbar \{[^}]*backdrop-filter: blur\(var\(--blur-nav\)\) saturate\(var\(--native-glass-saturate\)\)/)
+    expect(block).toMatch(/\[data-theme="dark"\]\[data-platform="ios"\] \.lm-native-tabbar \{[^}]*var\(--md-surface-container-low\) var\(--native-glass-mix\)/)
+    expect(block).toMatch(/\[data-platform="ios"\] \.lm-native-tabbar \.lm-native-tab-label \{[^}]*font-size: var\(--native-tab-label-ios\)/)
+  })
+  it("Android: 80dp, 12px labels, a 64x32 secondary-container pill behind the active icon", () => {
     expect(block).toMatch(/\[data-platform="android"\] \.lm-native-tabbar \{[^}]*min-height: calc\(var\(--native-tabbar-h-android\) \+ env\(safe-area-inset-bottom\)\)/)
+    expect(block).toMatch(/\[data-platform="android"\] \.lm-native-tabbar \.lm-native-tab-label \{[^}]*font-size: var\(--native-tab-label-android\)/)
     expect(block).toMatch(/\[data-platform="android"\] \.lm-native-tabbar \[aria-current="page"\] \.lm-native-tab-icon::before \{[^}]*inline-size: var\(--native-tab-pill-w\);[^}]*block-size: var\(--native-tab-pill-h\);[^}]*background: var\(--md-secondary-container\)/)
+  })
+  it("24px icons on both platforms", () => {
+    expect(block).toMatch(/\.lm-native-tabbar \.lm-native-tab-icon svg \{[^}]*inline-size: var\(--native-tab-icon\);[^}]*block-size: var\(--native-tab-icon\)/)
   })
 })
 ```
@@ -1367,25 +1654,44 @@ Also add `lm-native-tab-icon` to the icon span's classes and `lm-native-tab-labe
 - [ ] **Step 4: Tab bar CSS (`index.css`, after the top bar block)**
 
 ```css
-/* ── Native frame: tab bar (native frame Task 5). */
+/* ── Native frame: tab bar (native frame Task 5; preview .a-bottombar). */
 @media (max-width: 720px) {
+  :root[data-platform="ios"] { --native-tabbar-h: var(--native-tabbar-h-ios); }
+  :root[data-platform="android"] { --native-tabbar-h: var(--native-tabbar-h-android); }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-main:not([data-immersive]) {
+    padding-bottom: calc(var(--native-tabbar-h) + env(safe-area-inset-bottom));
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-main[data-immersive] {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-tabbar .lm-native-tab-icon svg {
+    inline-size: var(--native-tab-icon);
+    block-size: var(--native-tab-icon);
+  }
   :root[data-platform="ios"] .lm-native-tabbar {
     min-height: calc(var(--native-tabbar-h-ios) + env(safe-area-inset-bottom));
     border-top: var(--native-hairline) solid var(--md-outline-variant);
-    background-color: color-mix(in oklch, var(--md-surface-container-lowest) 86%, transparent);
-    -webkit-backdrop-filter: blur(var(--blur-nav));
-    backdrop-filter: blur(var(--blur-nav));
+    background-color: color-mix(in oklch, var(--md-surface-container-lowest) var(--native-glass-mix), transparent);
+    -webkit-backdrop-filter: blur(var(--blur-nav)) saturate(var(--native-glass-saturate));
+    backdrop-filter: blur(var(--blur-nav)) saturate(var(--native-glass-saturate));
   }
   :root[data-theme="dark"][data-platform="ios"] .lm-native-tabbar {
-    background-color: color-mix(in oklch, var(--md-surface-container-high) 86%, transparent);
+    background-color: color-mix(in oklch, var(--md-surface-container-low) var(--native-glass-mix), transparent);
   }
   :root[data-platform="ios"] .lm-native-tabbar .lm-native-tab-label {
-    font-size: var(--native-tab-label-size);
+    font-size: var(--native-tab-label-ios);
+  }
+  :root[data-platform="ios"] .lm-native-tabbar [aria-current="page"] {
+    color: var(--md-primary);
+    font-weight: 600;
   }
   :root[data-platform="android"] .lm-native-tabbar {
     min-height: calc(var(--native-tabbar-h-android) + env(safe-area-inset-bottom));
     border-top: 0;
     background-color: var(--md-surface-container);
+  }
+  :root[data-platform="android"] .lm-native-tabbar .lm-native-tab-label {
+    font-size: var(--native-tab-label-android);
   }
   :root[data-platform="android"] .lm-native-tabbar .lm-native-tab-icon {
     isolation: isolate;
@@ -1402,7 +1708,12 @@ Also add `lm-native-tab-icon` to the icon span's classes and `lm-native-tab-labe
     border-radius: 9999px;
     background: var(--md-secondary-container);
   }
+  /* Selected: the label stays on-surface (bold); only the icon takes on-secondary-container. */
   :root[data-platform="android"] .lm-native-tabbar [aria-current="page"] {
+    color: var(--md-on-surface);
+    font-weight: 700;
+  }
+  :root[data-platform="android"] .lm-native-tabbar [aria-current="page"] .lm-native-tab-icon {
     color: var(--md-on-secondary-container);
   }
 }
@@ -1430,7 +1741,7 @@ In `PortalShell.tsx`:
   }
 ```
 
-Pass `onActiveTap` to `BottomNav`, and give it `className={cn("sidebar:hidden", immersive && "native:hidden")}`. Add the imports `cn` (`@/lib/utils`), `useMatches` and `useNavigate` (`react-router-dom`) and `activeTabTap` (`./tabTap`). On `<main>`, add `native:pb-[calc(var(--native-tabbar-h-ios)+env(safe-area-inset-bottom))]` with an `android:` twin using `--native-tabbar-h-android`, so content clears the taller native bar. Drop both when `immersive`.
+Pass `onActiveTap` to `BottomNav`, and give it `className={cn("sidebar:hidden", immersive && "native:hidden")}`. Add the imports `cn` (`@/lib/utils`), `useMatches` and `useNavigate` (`react-router-dom`) and `activeTabTap` (`./tabTap`). On `<main>`, add the class `lm-native-main` and `data-immersive={immersive || undefined}`. The unlayered native rule above then pads it by the platform's tab bar height (so content clears the taller native bar) and drops that padding on immersive routes. It is a class, not a `native:pb-[…]` utility, because a variant utility and the existing `max-sidebar:pb-bottom-nav` have the same specificity and their order in the build is not something to rely on.
 
 Routes: add `immersive: true` to the `handle` of student `correct` ("Mark a paper"), the student paper-result route ("Paper result") and teacher review-a-mark ("Review a mark"). Do not change their `title` or `skeleton`.
 
@@ -1500,6 +1811,186 @@ SKIP=import-linter git commit -S -m "feat(web): native tab bar per platform, act
 
 ---
 
+### Task 5b: One page heading on phones: `PageHeading` and the heading sweep (D11)
+
+On the native frame the shell's large title replaces a screen's own heading when that heading repeats the page title. The screen's `h1` stays the page's one heading for assistive technology, and stays visible on desktop and tablet. This runs right after Task 5, so the native root and detail drift keys never carry a "duplicate heading" difference.
+
+**Files:**
+- Create: `web/src/components/ui/page-heading.tsx`, `web/tests/unit/pageHeading.test.ts`
+- Modify: every student and teacher screen with a top `h1` (list them in Step 1; 51 files under `web/src/portals/student` and `web/src/portals/teacher` contain `<h1` at `4447a571`), `web/scripts/drift/checks-native.mjs`
+
+**Interfaces:**
+- Produces: `PageHeading(props: HTMLAttributes<HTMLHeadingElement> & { repeatsTitle: boolean })`. It renders `<h1 data-page-heading={repeatsTitle ? "title" : "own"}>`, and adds `native:sr-only` when `repeatsTitle`. The prop is required, so every heading states whether it repeats the shell title.
+- Rule: no raw `<h1` in `web/src/portals/{student,teacher}/**/*.tsx`, except an always-hidden `<h1 className="sr-only">` (the existing pattern for screens whose visible heading lives elsewhere).
+
+**Accessibility contract (D3 + D11):** on every page, exactly one `h1` is in the accessibility tree: the screen's own, inside `<main>`. The large title is `aria-hidden` (Task 4) and the bar's inline title is plain text. `native:sr-only` hides the repeating heading visually only, so heading navigation and the page's name for screen readers are unchanged on phones.
+
+**What "repeats the title" means:** the heading names the same page as the shell title. Decide per heading while migrating. As a mechanical floor, the behaviour check treats two texts as repeating when they are equal after lowercasing, collapsing whitespace, and dropping a leading "your " or "my " ("Your classes" repeats "Classes"). A heading that says something else ("Hi, Mariam", a paper's full name under a "Practice" title) passes `repeatsTitle={false}` and stays visible.
+
+- [ ] **Step 1: Inventory**
+
+```bash
+cd /home/sico/Code/Lemely/.claude/worktrees/student-home-variants/web
+grep -rn "<h1" src/portals/student src/portals/teacher --include='*.tsx'
+```
+
+For each hit, note the screen, its route's shell title (`studentPageTitle` / the teacher route `handle.title`), the heading's text, and your `repeatsTitle` call. Comment-only hits and `<h1 className="sr-only">` stay as they are. Put the table in the commit body.
+
+- [ ] **Step 2: Failing tests (`web/tests/unit/pageHeading.test.ts`)**
+
+```ts
+import { readdirSync, readFileSync, statSync } from "node:fs"
+import { join } from "node:path"
+import { fileURLToPath } from "node:url"
+import { createElement } from "react"
+import { renderToStaticMarkup } from "react-dom/server"
+import { describe, expect, it } from "vitest"
+import { PageHeading } from "@/components/ui/page-heading"
+
+const SRC = join(fileURLToPath(new URL("../../", import.meta.url)), "src")
+
+describe("PageHeading (D11)", () => {
+  it("a repeating heading is visually hidden on the native frame only, and stays an h1", () => {
+    const out = renderToStaticMarkup(createElement(PageHeading, { repeatsTitle: true, className: "text-display-md" }, "Classes"))
+    expect(out).toMatch(/^<h1 data-page-heading="title" class="[^"]*\bnative:sr-only\b[^"]*">Classes<\/h1>$/)
+    expect(out).toContain("text-display-md")
+  })
+  it("a heading that says something else stays visible everywhere", () => {
+    const out = renderToStaticMarkup(createElement(PageHeading, { repeatsTitle: false }, "Hi, Mariam"))
+    expect(out).toMatch(/^<h1 data-page-heading="own"/)
+    expect(out).not.toContain("sr-only")
+  })
+})
+
+describe("no screen bypasses PageHeading", () => {
+  const walk = (dir: string): string[] =>
+    readdirSync(dir).flatMap((f) => {
+      const p = join(dir, f)
+      return statSync(p).isDirectory() ? walk(p) : p.endsWith(".tsx") ? [p] : []
+    })
+  it("student and teacher screens render no raw <h1> except an always-hidden one", () => {
+    const offenders: string[] = []
+    for (const file of [...walk(join(SRC, "portals/student")), ...walk(join(SRC, "portals/teacher"))]) {
+      for (const [i, line] of readFileSync(file, "utf8").split("\n").entries()) {
+        const code = line.replace(/\/\/.*$/, "").replace(/\/\*.*?\*\//g, "")
+        if (/^\s*\*/.test(line)) continue // block comment body
+        if (/<h1\b/.test(code) && !/<h1 className="sr-only">/.test(code)) offenders.push(`${file.slice(SRC.length + 1)}:${i + 1}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+})
+```
+
+Run: `cd web && npx vitest run tests/unit/pageHeading.test.ts`
+Expected: FAIL (module missing; the scan lists every raw `<h1>`). Keep the scan's offender list: it is the migration worklist.
+
+- [ ] **Step 3: `page-heading.tsx`**
+
+```tsx
+import type { HTMLAttributes } from "react"
+import { cn } from "@/lib/utils"
+
+/*
+ * Every student and teacher screen's top heading (native frame D11). On the native
+ * frame the shell's large title already shows the page title, so a heading that
+ * repeats it is visually hidden there (`native:sr-only`) and stays the page's one
+ * h1 for assistive technology; the large title itself is aria-hidden. Desktop,
+ * tablet and `other` see the heading as before. `repeatsTitle` is required: say
+ * whether this heading names the same page as the shell title.
+ */
+export function PageHeading({ repeatsTitle, className, ...props }: HTMLAttributes<HTMLHeadingElement> & { repeatsTitle: boolean }) {
+  return <h1 data-page-heading={repeatsTitle ? "title" : "own"} className={cn(className, repeatsTitle && "native:sr-only")} {...props} />
+}
+```
+
+Run the test again: the two `PageHeading` cases pass; the scan still fails. Commit the component on its own now, so every migration commit in Step 4 builds:
+
+```bash
+cd /home/sico/Code/Lemely/.claude/worktrees/student-home-variants
+/home/sico/Code/Lemely/.venv/bin/pre-commit run --files web/src/components/ui/page-heading.tsx
+SKIP=import-linter git commit -S -m "feat(web): PageHeading, the one screen h1 that native phones hide when it repeats the title" -- web/src/components/ui/page-heading.tsx
+```
+
+- [ ] **Step 4: Migrate the screens**
+
+For each offender: `<h1 className="…">` becomes `<PageHeading repeatsTitle={…} className="…">`, with the same classes, children and attributes, and the import from `@/components/ui/page-heading`. Change nothing else on the line. Desktop markup is identical apart from `data-page-heading`, so the existing drift keys cannot move.
+
+If a screen's wrapper only exists to space the heading (a `div` holding the `h1` and nothing else), leave it: the native drift scenes show whether an empty gap remains, and Task 10's grouped layout revisits page spacing.
+
+This step may fan out to up to three agents with disjoint screen sets (student A to M, student N to Z, teacher). Each commits only its own screens with `git commit -S -- <its paths>`; the agent that owns Step 2's test and Step 5's checks commits those.
+
+Run: `cd web && npx vitest run tests/unit/pageHeading.test.ts tests/unit/a11yRules.test.ts tests/unit/utilityExistence.test.ts`
+Expected: PASS, with an empty offender list.
+
+- [ ] **Step 5: Behaviour check: one h1, no visible duplicate on native**
+
+Append to `checks-native.mjs`:
+
+```js
+/** D11: two heading texts "repeat" when equal after these steps (see Task 5b). */
+const normTitle = (s) => s.trim().toLowerCase().replace(/\s+/g, " ").replace(/^(your|my) /, "")
+
+/** Tab roots of both portals plus the detail paths other checks use. Add a route
+ * here when a screen's heading changes; skip only routes the mocks cannot serve,
+ * with the reason in a comment. */
+const HEADING_ROUTES = [
+  ...[...STUDENT_TAB_PATHS, DETAIL_PATH, TAB_DRILL_PATH].map((path) => ({ ...NATIVE_HOME, path })),
+  ...TEACHER_TAB_PATHS.map((path) => ({ ...NATIVE_TEACHER_HOME, path })),
+]
+
+NATIVE_CHECKS.push(
+  ...["ios", "android"].flatMap((platform) =>
+    HEADING_ROUTES.map((app) => ({
+      id: `native-${platform}-one-heading-${app.path}`,
+      platform,
+      app,
+      async run(page) {
+        const h1s = await page.getByRole("heading", { level: 1 }).count()
+        if (h1s !== 1) throw new Error(`${app.path}: ${h1s} level-1 headings reach assistive technology, expected 1`)
+        const { title, headings } = await page.evaluate(() => ({
+          title: document.querySelector("header [data-shell-title]")?.textContent ?? "",
+          headings: [...document.querySelectorAll("main :is(h1, h2, [role=heading])")]
+            .filter((el) => {
+              const r = el.getBoundingClientRect()
+              return el.checkVisibility() && r.width > 1 && r.height > 1
+            })
+            .map((el) => ({ text: el.textContent ?? "", html: el.outerHTML.slice(0, 120) })),
+        }))
+        const dupes = headings.filter((h) => normTitle(h.text) === normTitle(title))
+        if (dupes.length) throw new Error(`${app.path}: visible heading repeats the large title: ${dupes.map((h) => h.html).join(" | ")}`)
+      },
+    })),
+  ),
+)
+```
+
+`DETAIL_PATH` and `TAB_DRILL_PATH` move to the top of `checks-native.mjs` as exported constants (Task 2's scenes import `DETAIL_PATH` from there; Task 5's re-tap check already uses `TAB_DRILL_PATH`), so one value serves every check. Define `STUDENT_TAB_PATHS` and `TEACHER_TAB_PATHS` beside them: the `to` of each entry in `STUDENT_BOTTOM_TABS` (`web/src/portals/student/shell.tsx`) and `TEACHER_BOTTOM_TABS` (`web/src/portals/teacher/index.tsx`), minus the raised Correct action, which is immersive and has no shell title.
+
+Show it can go red: in one migrated screen whose heading repeats its title (name it from Step 1's table), set `repeatsTitle={false}`, rebuild, and expect `native-ios-one-heading-<that path>` FAIL "visible heading repeats the large title". Then delete that screen's `h1` entirely, rebuild, and expect FAIL "0 level-1 headings". Restore it and rebuild.
+
+- [ ] **Step 6: Verify and commit**
+
+```bash
+cd web && npm run build
+node scripts/shell-behaviour.mjs --check native-
+node scripts/home-drift.mjs --scene native-ios-root,native-android-root,native-ios-detail,native-android-detail
+node scripts/home-drift.mjs --scene student-,teacher-
+```
+
+Expected: every behaviour check passes; the `student-,teacher-` outcomes are unchanged (desktop markup only gains `data-page-heading`); the native root and detail keys are no further from the preview than after Task 5, and any entry that named a duplicate heading loses that text.
+
+```bash
+cd /home/sico/Code/Lemely/.claude/worktrees/student-home-variants
+FILES="web/tests/unit/pageHeading.test.ts web/scripts/drift/checks-native.mjs web/scripts/drift/scenes-native.mjs"
+/home/sico/Code/Lemely/.venv/bin/pre-commit run --files $FILES
+SKIP=import-linter git commit -S -m "test(web): one h1 per page and no duplicate title on native phones" -- $FILES
+```
+
+The component is committed in Step 3 and the screen migrations in Step 4, in batches, each with its own explicit paths.
+
+---
+
 ### Task 6: Sheet primitive upgrade (grabber, drag-to-dismiss, detents, iOS scale-back, keyboard)
 
 **Files:**
@@ -1513,9 +2004,9 @@ SKIP=import-linter git commit -S -m "feat(web): native tab bar per platform, act
   - `sheetRelease(input: { dy: number; velocity: number; height: number; detent: Detent; detents: readonly Detent[]; dismissible: boolean }): { kind: "dismiss" } | { kind: "snap"; detent: Detent }`
   - `swipeBackRelease(input: { dx: number; velocity: number; width: number }): "commit" | "cancel"` (used by Task 12)
   - `DISMISS_FRACTION = 0.25`, `FLING_PX_PER_MS = 0.5`, `SWIPE_COMMIT_FRACTION = 0.35`
-  - `BottomSheetSurface(props: BottomSheetSurfaceProps)`, where `BottomSheetSurfaceProps = { detents?: readonly Detent[]; initialDetent?: Detent; dismissible?: boolean; onDismiss: () => void; closing?: boolean; className?: string; children: ReactNode; panelRef?: Ref<HTMLDivElement> } & HTMLAttributes<HTMLDivElement>`. The props spread onto the panel, so callers keep `role`, `aria-*`, `tabIndex` and `onAnimationEnd` there.
+  - `BottomSheetSurface` (`forwardRef<HTMLDivElement, BottomSheetSurfaceProps>`), where `BottomSheetSurfaceProps = { detents?: readonly Detent[]; initialDetent?: Detent; dismissible?: boolean; onDismiss: () => void; closing?: boolean; header?: ReactNode; className?: string; children: ReactNode } & HTMLAttributes<HTMLDivElement>`. The ref is the panel. The remaining props spread onto the panel, so callers keep `role`, `aria-*`, `tabIndex` and `onAnimationEnd` there.
   - `SheetGrabber()`, `useSheetScaleBack(active: boolean)`, `useKeyboardInset(): number`
-  - CSS: `.lm-sheet`, `.lm-sheet-grabber`, `.lm-sheet[data-detent]`, `html[data-sheet-depth]`.
+  - CSS: `.lm-sheet`, `.lm-sheet-grabber`, `.lm-sheet[data-detent]`, `html[data-sheet-depth]`, and the custom property `--native-sheet-sy` (the scroll offset the scale-back pivots on, the preview's `--pf-sy`).
 
 - [ ] **Step 1: Failing tests (`web/tests/unit/sheetMath.test.ts`)**
 
@@ -1595,9 +2086,16 @@ describe("sheet CSS", () => {
     expect(block).toMatch(/\[data-platform="ios"\] \.lm-sheet-grabber \{[^}]*inline-size: var\(--native-grabber-w-ios\);[^}]*block-size: var\(--native-grabber-h-ios\)/)
     expect(block).toMatch(/\[data-platform="android"\] \.lm-sheet-grabber \{[^}]*inline-size: var\(--native-grabber-w-android\);[^}]*block-size: var\(--native-grabber-h-android\)/)
   })
-  it("iOS scales the page back at the large detent; reduced motion keeps it instant", () => {
+  it("iOS scales the page back at the large detent, pivoting on the visible top; reduced motion keeps it instant", () => {
     expect(block).toMatch(/:root\[data-platform="ios"\]\[data-sheet-depth\] #root \{[^}]*scale: var\(--native-sheet-scale-back\)/)
+    expect(block).toMatch(/:root\[data-platform="ios"\] #root \{[^}]*transform-origin: 50% calc\(var\(--native-sheet-sy, 0px\) \+ env\(safe-area-inset-top\)\)/)
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*#root[\s\S]*transition: none/)
+  })
+  it("per-platform large detent, motion and grabber (preview 4447a571)", () => {
+    expect(block).toMatch(/:root\[data-platform="ios"\] \{[^}]*--native-sheet-large: var\(--native-sheet-large-ios\);[^}]*--native-sheet-dur: var\(--dur-sheet-ios\);[^}]*--native-sheet-ease: var\(--ease-ios-spring\)/)
+    expect(block).toMatch(/:root\[data-platform="android"\] \{[^}]*--native-sheet-large: var\(--native-sheet-large-android\);[^}]*--native-sheet-dur: var\(--dur-sheet-android\);[^}]*--native-sheet-ease: var\(--ease-m3-emphasized-decelerate\)/)
+    expect(block).toMatch(/\.lm-sheet \{[^}]*background: var\(--md-surface-container-low\)/)
+    expect(block).toMatch(/\[data-platform="ios"\] \.lm-sheet-grabber \{[^}]*margin-block: var\(--native-grabber-gap-ios\)/)
   })
   it("the sheet sits above the keyboard", () => {
     expect(block).toContain("bottom: var(--lm-keyboard-inset, 0px)")
@@ -1689,17 +2187,25 @@ export function SheetGrabber() {
   return <span aria-hidden="true" className="lm-sheet-grabber" />
 }
 
-/** iOS: while any sheet sits at the large detent, the page behind scales back. */
+/** iOS: while any sheet sits at the large detent, the page behind scales back.
+ * It pivots on the top of what the reader sees: `lockScroll` pins the body at
+ * `top: -scrollY`, so the scroll offset is read from there when it is locked. */
 export function useSheetScaleBack(active: boolean): void {
   useEffect(() => {
     if (!active || readPlatform() !== "ios") return
     const root = document.documentElement
+    const body = document.body.style
+    const scrollY = body.position === "fixed" ? -parseFloat(body.top || "0") : window.scrollY
+    root.style.setProperty("--native-sheet-sy", `${scrollY}px`)
     const depth = Number(root.dataset.sheetDepth ?? 0) + 1
     root.dataset.sheetDepth = String(depth)
     return () => {
       const next = Number(root.dataset.sheetDepth ?? 1) - 1
       if (next > 0) root.dataset.sheetDepth = String(next)
-      else delete root.dataset.sheetDepth
+      else {
+        delete root.dataset.sheetDepth
+        root.style.removeProperty("--native-sheet-sy")
+      }
     }
   }, [active])
 }
@@ -1776,7 +2282,7 @@ export const BottomSheetSurface = forwardRef<HTMLDivElement, BottomSheetSurfaceP
       className={cn("lm-sheet", className)}
       {...panel}
     >
-      <div data-sheet-drag-region className="flex flex-col items-center gap-2 pt-2 select-none">
+      <div data-sheet-drag-region className="flex flex-col items-center select-none">
         {dismissible || detents.length > 1 ? <SheetGrabber /> : null}
         {header}
       </div>
@@ -1793,40 +2299,61 @@ Note: `readPlatform() === "android"` and `haptic("tap")` must sit on the same li
 - [ ] **Step 4: Sheet CSS (`index.css`)**
 
 ```css
-/* ── Native frame: sheets (native frame Task 6). Only rendered on the native
-   frame; desktop dialogs never use .lm-sheet. */
+/* ── Native frame: sheets (native frame Task 6; preview .as-pop-panel / .as-modal).
+   Only rendered on the native frame; desktop dialogs never use .lm-sheet. */
+:root[data-platform="ios"] {
+  --native-sheet-large: var(--native-sheet-large-ios);
+  --native-sheet-dur: var(--dur-sheet-ios);
+  --native-sheet-ease: var(--ease-ios-spring);
+}
+:root[data-platform="android"] {
+  --native-sheet-large: var(--native-sheet-large-android);
+  --native-sheet-dur: var(--dur-sheet-android);
+  --native-sheet-ease: var(--ease-m3-emphasized-decelerate);
+}
 .lm-sheet {
   position: fixed;
   inset-inline: 0;
   bottom: var(--lm-keyboard-inset, 0px);
-  z-index: var(--z-modal);
+  z-index: var(--z-index-modal);
   display: flex;
   flex-direction: column;
-  max-block-size: calc(100dvh - env(safe-area-inset-top) - 10px - var(--lm-keyboard-inset, 0px));
+  max-block-size: calc(var(--native-sheet-large) - var(--lm-keyboard-inset, 0px));
   padding-bottom: env(safe-area-inset-bottom);
-  background: var(--md-surface-container-lowest);
+  background: var(--md-surface-container-low);
   border-start-start-radius: var(--radius-card);
   border-start-end-radius: var(--radius-card);
-  transition: translate var(--dur-sheet) var(--ease-ios-spring);
+  transition: translate var(--native-sheet-dur) var(--native-sheet-ease);
 }
-:root[data-theme="dark"] .lm-sheet { background: var(--md-surface-container-high); }
-:root[data-platform="android"] .lm-sheet { transition-timing-function: var(--ease-m3-emphasized); }
 .lm-sheet[data-detent="medium"] { block-size: var(--native-sheet-medium); }
-.lm-sheet[data-detent="large"] { block-size: calc(100dvh - env(safe-area-inset-top) - 10px - var(--lm-keyboard-inset, 0px)); }
-.lm-sheet:not([data-closing]) { animation: lm-sheet-in var(--dur-sheet) var(--ease-ios-spring) both; }
+.lm-sheet[data-detent="large"] { block-size: calc(var(--native-sheet-large) - var(--lm-keyboard-inset, 0px)); }
+.lm-sheet:not([data-closing]) { animation: lm-sheet-in var(--native-sheet-dur) var(--native-sheet-ease) both; }
 .lm-sheet[data-closing] { animation: lm-sheet-out var(--dur-fast) var(--ease-in-soft) both; }
 @keyframes lm-sheet-in { from { translate: 0 100%; } }
 @keyframes lm-sheet-out { to { translate: 0 100%; } }
 .lm-sheet-grabber {
   display: block;
+  flex: none;
   border-radius: 9999px;
-  background: var(--md-outline-variant);
+  touch-action: none;
 }
-:root[data-platform="ios"] .lm-sheet-grabber { inline-size: var(--native-grabber-w-ios); block-size: var(--native-grabber-h-ios); }
-:root[data-platform="android"] .lm-sheet-grabber { inline-size: var(--native-grabber-w-android); block-size: var(--native-grabber-h-android); }
+:root[data-platform="ios"] .lm-sheet-grabber {
+  inline-size: var(--native-grabber-w-ios);
+  block-size: var(--native-grabber-h-ios);
+  margin-block: var(--native-grabber-gap-ios);
+  background: var(--md-outline);
+}
+:root[data-platform="android"] .lm-sheet-grabber {
+  inline-size: var(--native-grabber-w-android);
+  block-size: var(--native-grabber-h-android);
+  margin-block: var(--native-grabber-gap-android);
+  background: color-mix(in oklch, var(--md-on-surface-variant) 40%, transparent);
+}
+/* iOS large detent: the page behind scales back, pivoting on the top of the visible area
+   (--native-sheet-sy, written by useSheetScaleBack), over a near-black backdrop. */
 :root[data-platform="ios"] #root {
-  transition: scale var(--dur-sheet) var(--ease-ios-spring), border-radius var(--dur-sheet) var(--ease-ios-spring);
-  transform-origin: 50% 0;
+  transition: scale var(--native-sheet-dur) var(--native-sheet-ease), translate var(--native-sheet-dur) var(--native-sheet-ease), border-radius var(--native-sheet-dur) var(--native-sheet-ease);
+  transform-origin: 50% calc(var(--native-sheet-sy, 0px) + env(safe-area-inset-top));
 }
 :root[data-platform="ios"][data-sheet-depth] #root {
   scale: var(--native-sheet-scale-back);
@@ -1834,8 +2361,10 @@ Note: `readPlatform() === "android"` and `haptic("tap")` must sit on the same li
   border-radius: var(--native-group-radius-ios);
   overflow: clip;
 }
-:root[data-platform="ios"][data-sheet-depth] body { background: var(--md-inverse-surface); }
+:root[data-platform="ios"][data-sheet-depth] body { background: var(--native-sheet-backdrop); }
 ```
+
+The `10px` drop and the 40% grabber mix are the preview's own numbers (`.as-app` transform, `--pf-grab`); if `design-tokens.test.ts` flags either, move it into the token block with that citation.
 
 Inside the existing `@media (prefers-reduced-motion: reduce)` block, add:
 
@@ -1848,7 +2377,7 @@ Inside the existing `@media (prefers-reduced-motion: reduce)` block, add:
   }
 ```
 
-`#root` is the React mount (`index.html`). Sheets portal into `document.body`, outside `#root`, so they never scale. If `--z-modal` is not the variable name for `z-modal`, use the one `@theme` defines for that utility. Check with `grep -n "z-modal\|--z-" web/src/index.css`.
+`#root` is the React mount (`index.html`). Sheets portal into `document.body`, outside `#root`, so they never scale. The modal layer is `--z-index-modal` (the `z-modal` utility's variable in `index.css`).
 
 - [ ] **Step 5: `ui/sheet.tsx` uses it on native**
 
@@ -1958,6 +2487,12 @@ describe("ConfirmModal (Task 7)", () => {
     expect(src).toMatch(/platform === "ios"[\s\S]*presentation="action-sheet"/)
     expect(src).toContain("lm-action-sheet-cancel")
   })
+  it("the action sheet's visible title is aria-hidden; Modal's sr-only copy labels the dialog", () => {
+    expect(src).toMatch(/<div aria-hidden="true"[^>]*>\s*<p[^>]*>\{title\}<\/p>/)
+    const modal = read("components/ui/modal.tsx")
+    expect(modal).toMatch(/presentation === "action-sheet"[\s\S]*<h2 id=\{titleId\} className="sr-only">/)
+    expect(modal).toMatch(/<p id=\{descriptionId\} className="sr-only">/)
+  })
   it("stays non-dismissible (no scrim close, no drag, no grabber)", () => {
     expect(src).toContain("dismissible={false}")
   })
@@ -2002,7 +2537,15 @@ Restructure the return so the panel `<div ref={panelRef} role="dialog" …>` is 
           header={presentation === "action-sheet" ? null : heading}
           className={cn("gap-4 px-4 pb-4", presentation === "action-sheet" && "lm-action-sheet", className)}
         >
-          {presentation === "action-sheet" ? children : (<>{body}{foot}</>)}
+          {presentation === "action-sheet" ? (
+            <>
+              <h2 id={titleId} className="sr-only">{title}</h2>
+              {description ? <p id={descriptionId} className="sr-only">{description}</p> : null}
+              {children}
+            </>
+          ) : (
+            <>{body}{foot}</>
+          )}
         </BottomSheetSurface>
       </div>,
       document.body,
@@ -2021,13 +2564,15 @@ The role appears exactly once, as `role: "dialog"` in `panelProps`. The desktop 
   const { native, platform } = useNativeFrame()
   if (native && platform === "ios") {
     return (
-      <Modal open={open} onClose={onCancel} title={title} description={description} size="sm" dismissible={false} hideCloseButton presentation="action-sheet">
+      <Modal open={open} onClose={onCancel} title={title} description={consequence} size="sm" dismissible={false} hideCloseButton presentation="action-sheet">
         <div className="lm-action-sheet-group">
-          <div className="flex flex-col gap-1 px-4 py-3 text-center">
-            <h2 className="text-label text-on-surface-variant">{title}</h2>
+          {/* Visible copy only: Modal's sr-only title and description are what
+              aria-labelledby and aria-describedby point at, so nothing is read twice. */}
+          <div aria-hidden="true" className="flex flex-col gap-1 px-4 py-3 text-center">
+            <p className="text-label text-on-surface-variant">{title}</p>
             <p className="text-body-sm text-on-surface-variant">{consequence}</p>
-            {error ? <p className="text-body-sm text-error">{error}</p> : null}
           </div>
+          {error ? <p role="alert" className="px-4 pb-3 text-center text-body-sm text-error">{error}</p> : null}
           <button type="button" className="lm-action-sheet-row text-error" onClick={() => onConfirm()} disabled={pending} aria-busy={pending || undefined}>
             {pending ? (pendingLabel ?? confirmLabel) : confirmLabel}
           </button>
@@ -2040,12 +2585,12 @@ The role appears exactly once, as `role: "dialog"` in `panelProps`. The desktop 
   }
 ```
 
-The Android native case falls through to today's `Modal` call, which renders as a content-fit sheet with the footer buttons (the M3 dialog-style sheet). There is no `haptic("tap")` on iOS, which has no Vibration API. The safe path keeps the weight: Cancel is semibold in its own group (`lm-action-sheet-cancel`). The `title` id: the action sheet still needs `aria-labelledby`. Pass `title` through `Modal`, which renders a visually hidden `<h2 id={titleId}>` when `presentation === "action-sheet"`. Add that `sr-only` heading inside `modal.tsx`'s native branch.
+The Android native case falls through to today's `Modal` call, which renders as a content-fit sheet with the footer buttons (the M3 dialog-style sheet). There is no `haptic("tap")` on iOS, which has no Vibration API. The safe path keeps the weight: Cancel is semibold in its own group (`lm-action-sheet-cancel`). Labelling: when `presentation === "action-sheet"`, `modal.tsx`'s native branch renders a visually hidden `<h2 id={titleId}>{title}</h2>` and, when `description` is set, a visually hidden `<p id={descriptionId}>{description}</p>`, so `aria-labelledby` and `aria-describedby` always point at real elements. The visible copy in `ConfirmModal` is `aria-hidden`, so a screen reader hears the title and consequence once.
 
-CSS (`index.css`, sheet block):
+CSS (`index.css`, sheet block). Groups use the group surface (Task 0's table):
 
 ```css
-.lm-action-sheet { background: transparent; gap: 8px; padding-inline: 8px; }
+.lm-action-sheet { background: transparent; gap: var(--space-2); padding-inline: var(--space-2); }
 .lm-action-sheet-group,
 .lm-action-sheet-cancel {
   border-radius: var(--native-group-radius-ios);
@@ -2055,8 +2600,8 @@ CSS (`index.css`, sheet block):
 .lm-action-sheet-row {
   display: block;
   inline-size: 100%;
-  min-block-size: 56px;
-  border-top: var(--native-hairline) solid var(--md-outline-variant);
+  min-block-size: var(--native-action-row-h);
+  border-top: var(--native-hairline) solid var(--md-outline);
   font-size: var(--native-inline-title-size);
   text-align: center;
 }
@@ -2103,7 +2648,7 @@ NATIVE_CHECKS.push(
 )
 ```
 
-The three `<…>` strings are filled in **by this step** from the call sites you chose. The task is not done while any remain. Run `grep -n '"<' web/scripts/drift/checks-native.mjs` and expect nothing.
+The four `<…>` strings (two routes, two trigger labels) are filled in **by this step** from the call sites you chose. The task is not done while any remain. Run `grep -nE '"<|/<' web/scripts/drift/checks-native.mjs` and expect nothing.
 
 Show it can go red: force `native` to false in `modal.tsx`, rebuild, and expect `native-android-modal-back-closes` FAIL "not a sheet". Restore it.
 
@@ -2128,11 +2673,11 @@ SKIP=import-linter git commit -S -m "feat(web): Modal and ConfirmModal open as n
 
 **Files:**
 - Create: `web/src/components/shell/PanelSheet.tsx`
-- Modify: `web/src/components/shell/NotificationsPanel.tsx`, `web/src/components/shell/AccountPanel.tsx`, `web/src/portals/settings/SettingsModal.tsx`, `web/tests/unit/nativeSheets.test.ts`, `web/tests/unit/shellPanels.test.ts` (only where it pins the menu-only markup), `web/scripts/drift/checks-native.mjs`, `web/scripts/drift/justifications.json`
+- Modify: `web/src/components/shell/NotificationsPanel.tsx`, `web/src/components/shell/AccountPanel.tsx`, `web/src/portals/settings/SettingsModal.tsx`, `web/src/components/ui/modal.tsx` (only if its focus return needs the fix named in Step 2; then add it to Step 6's `FILES`), `web/tests/unit/nativeSheets.test.ts`, `web/tests/unit/shellPanels.test.ts` (only where it pins the menu-only markup), `web/scripts/drift/checks-native.mjs`, `web/scripts/drift/justifications.json`
 
 **Interfaces:**
-- Consumes: `BottomSheetSurface`, `useNativeFrame`, `useDialogHistory`, `lockScroll`.
-- Produces: `PanelSheet(props: { triggerLabel: string; triggerClassName?: string; trigger: ReactNode; title: string; children: (close: () => void) => ReactNode })`. It is a button plus a portal dialog with the full `Modal`-equivalent contract. `NotificationsPanel` and `AccountPanel` render it when `native`, and Radix `DropdownMenu` otherwise. Their panel body is factored into `NotificationsBody({ onNavigate, Row })` and `AccountBody({ onNavigate, Row })`. `Row` is `DropdownMenu.Item asChild` in the menu, and a plain `Fragment` wrapper in the sheet.
+- Consumes: `Modal` (Task 7: a sheet on native), `BottomSheetSurface`, `useNativeFrame`.
+- Produces: `PanelSheet(props: { triggerLabel: string; triggerClassName?: string; trigger: ReactNode; title: string; children: (close: () => void) => ReactNode })`. It is a trigger button that owns `open`, plus a `Modal` (`size="md"`, so a content-fit sheet, the preview's `data-sheet="fit"`). `Modal` already carries the dialog contract (focus, Tab cycle, focus return, Escape, history, scroll lock), so `PanelSheet` writes none of it. `NotificationsPanel` and `AccountPanel` render it when `native`, and Radix `DropdownMenu` otherwise. Their panel body is factored into `NotificationsBody({ onNavigate, Row })` and `AccountBody({ onNavigate, Row })`. `Row` is `DropdownMenu.Item asChild` in the menu, and a plain `Fragment` wrapper in the sheet.
 
 - [ ] **Step 1: Failing tests (append to `nativeSheets.test.ts`)**
 
@@ -2146,18 +2691,19 @@ describe("shell panels on the native frame (Task 8)", () => {
       expect(src).toContain("<DropdownMenu.Root modal={false}>")
     })
   }
-  it("PanelSheet keeps the dialog contract", () => {
+  it("PanelSheet reuses Modal's dialog contract instead of copying it", () => {
     const src = read("components/shell/PanelSheet.tsx")
-    expect(src).toContain('role="dialog"')
-    expect(src).toContain('aria-modal="true"')
-    expect(src).toContain("useDialogHistory(")
-    expect(src).toContain("lockScroll()")
-    expect(src).toMatch(/previouslyFocused\.current\?\.focus\(\)/)
+    expect(src).toMatch(/<Modal\b[^>]*open=\{open\}[^>]*size="md"/)
+    expect(src).toContain('aria-haspopup="dialog"')
+    expect(src).toContain("aria-expanded={open}")
+    expect(src).not.toContain("FOCUSABLE_SELECTOR")
+    expect(src).not.toContain('role="dialog"')
   })
-  it("SettingsModal is a large-detent sheet on native and keeps routing close", () => {
+  it("SettingsModal is a medium/large sheet on native (preview data-detents) and keeps routing close", () => {
     const src = read("portals/settings/SettingsModal.tsx")
     expect(src).toContain("useNativeFrame()")
-    expect(src).toMatch(/initialDetent="large"/)
+    expect(src).toMatch(/detents=\{\["medium", "large"\]\}/)
+    expect(src).toMatch(/initialDetent="medium"/)
     expect(src).toMatch(/onDismiss=\{onClose\}/)
   })
 })
@@ -2168,7 +2714,34 @@ Expected: FAIL.
 
 - [ ] **Step 2: `PanelSheet.tsx`**
 
-Write it as a small dialog. Its focus, Escape, Tab-trap, history and scroll-lock code is the same contract as `modal.tsx`, but it must not import `Modal`. A `Modal` needs `open` state owned by the caller, and the shell panels own their trigger. The trigger is a `<button aria-haspopup="dialog" aria-expanded={open}>`. The body is `<BottomSheetSurface role="dialog" aria-modal="true" aria-labelledby={titleId} detents={["medium", "large"]} initialDetent="medium" onDismiss={close} header={<h2 id={titleId} className="text-title-bar text-on-surface">{title}</h2>}>{children(close)}</BottomSheetSurface>`, portalled to `document.body` with the scrim. Copy the `FOCUSABLE_SELECTOR`, the rAF first-focus and the Tab-cycle code from `modal.tsx` verbatim, and keep the comment that says so. Use `useDialogHistory({ open, dismissible: true, onClose: close })`.
+`PanelSheet` owns the `open` state and its trigger, and hands the dialog to `Modal`, which on native is already a sheet with the full contract (Task 7). `PanelSheet` only renders on native, so this `Modal` always takes its sheet branch.
+
+```tsx
+import { useState, type ReactNode } from "react"
+import { Modal } from "@/components/ui/modal"
+
+/** Native frame Task 8: the bell and account panels as content-fit sheets
+ * (preview: `data-sheet="fit"`, no scale-back). Modal owns focus, Escape,
+ * history and scroll lock; focus returns to this trigger on close. */
+export function PanelSheet({ triggerLabel, triggerClassName, trigger, title, children }: {
+  triggerLabel: string; triggerClassName?: string; trigger: ReactNode; title: string; children: (close: () => void) => ReactNode
+}) {
+  const [open, setOpen] = useState(false)
+  const close = () => setOpen(false)
+  return (
+    <>
+      <button type="button" aria-label={triggerLabel} aria-haspopup="dialog" aria-expanded={open} className={triggerClassName} onClick={() => setOpen(true)}>
+        {trigger}
+      </button>
+      <Modal open={open} onClose={close} title={title} size="md" hideCloseButton>
+        {children(close)}
+      </Modal>
+    </>
+  )
+}
+```
+
+If `Modal` does not return focus to the element that was focused before it opened, fix that in `Modal` (both branches benefit), not here.
 
 - [ ] **Step 3: Split the two panel bodies and branch**
 
@@ -2189,7 +2762,7 @@ In `NotificationsPanel.tsx`, move everything inside `DropdownMenu.Content` into 
 
 - [ ] **Step 4: `SettingsModal.tsx` on native**
 
-When `native`, wrap the existing panel markup in `BottomSheetSurface` with `detents={["large"]} initialDetent="large" onDismiss={onClose}`. The scale-back follows from `detent === "large"` on iOS. Keep the existing routing-based close (`onClose` is already `overlayCloseAction`), and keep the existing focus and Escape code. The mobile top tabs stay as they are. Drop the `pt-[max(env(safe-area-inset-top),1rem)]` top padding on native: the sheet already starts below the safe area.
+When `native`, wrap the existing panel markup in `BottomSheetSurface` with `detents={["medium", "large"]} initialDetent="medium" onDismiss={onClose}`, as the preview's settings sheet (`data-detents="medium large"`, opening at medium). Dragging the grabber up snaps to large, and on iOS the scale-back follows from `detent === "large"`. Keep the existing routing-based close (`onClose` is already `overlayCloseAction`), and keep the existing focus and Escape code. The mobile top tabs stay as they are. Drop the `pt-[max(env(safe-area-inset-top),1rem)]` top padding on native: the sheet already starts below the safe area.
 
 - [ ] **Step 5: Behaviour checks and drift**
 
@@ -2220,11 +2793,18 @@ NATIVE_CHECKS.push(
       await page.getByRole("link", { name: "Settings" }).click()
       const dialog = page.getByRole("dialog")
       await dialog.waitFor()
-      const scaled = await page.evaluate(() => document.documentElement.hasAttribute("data-sheet-depth"))
-      if (!scaled) throw new Error("iOS large detent did not scale the page back")
+      const depth = () => page.evaluate(() => document.documentElement.hasAttribute("data-sheet-depth"))
+      if (await depth()) throw new Error("settings opened at large; the preview opens it at medium")
+      const grab = await dialog.locator(".lm-sheet-grabber").boundingBox()
+      await page.mouse.move(grab.x + grab.width / 2, grab.y + 2)
+      await page.mouse.down()
+      await page.mouse.move(grab.x + grab.width / 2, grab.y - 300, { steps: 8 })
+      await page.mouse.up()
+      await page.waitForFunction(() => document.documentElement.hasAttribute("data-sheet-depth"))
       await page.goBack()
       await dialog.waitFor({ state: "detached" })
       if (new URL(page.url()).pathname !== "/student") throw new Error("back did not return to the page")
+      if (await depth()) throw new Error("the page stayed scaled back after the sheet closed")
     },
   },
 )
@@ -2253,11 +2833,14 @@ SKIP=import-linter git commit -S -m "feat(web): bell, account and settings open 
 ### Task 9: Popover becomes a sheet; Select stays native (D4)
 
 **Files:**
-- Modify: `web/src/components/ui/popover.tsx`, `web/src/components/ui/select.tsx` (doc comment only), `web/tests/unit/nativeSheets.test.ts`, `web/scripts/drift/checks-native.mjs`
+- Create: `web/src/components/ui/use-dialog-focus.ts`
+- Modify: `web/src/components/ui/popover.tsx`, `web/src/components/ui/modal.tsx` (uses `useDialogFocus`; behaviour unchanged), `web/src/components/ui/select.tsx` (doc comment only), `web/tests/unit/nativeSheets.test.ts`, `web/scripts/drift/checks-native.mjs`
 
 **Interfaces:**
 - Consumes: `BottomSheetSurface`, `useNativeFrame`, `useDialogHistory`, `lockScroll`.
-- Produces: the same `PopoverProps` as today. On native, `contentClassName` is ignored and the content renders in a content-fit sheet with `aria-labelledby` pointing at the trigger.
+- Produces:
+  - `useDialogFocus(panelRef: RefObject<HTMLElement | null>, open: boolean): (event: KeyboardEvent) => void`. It is `modal.tsx`'s existing focus code, moved: on open it remembers `document.activeElement` and focuses the first focusable element in the panel (one rAF later); the returned handler cycles Tab and Shift+Tab inside the panel; on close it returns focus to the remembered element. `FOCUSABLE_SELECTOR` moves with it.
+  - The same `PopoverProps` as today. On native, `contentClassName` is ignored and the content renders in a content-fit sheet with `aria-labelledby` pointing at the trigger.
 
 - [ ] **Step 1: Failing tests (append)**
 
@@ -2268,6 +2851,13 @@ describe("Popover and Select (Task 9, D4)", () => {
     expect(src).toContain("useNativeFrame()")
     expect(src).toContain("<BottomSheetSurface")
     expect(src).toMatch(/renderTrigger: \(props: PopoverRenderProps\) => ReactNode/)
+  })
+  it("one focus trap: Modal and the native Popover share useDialogFocus", () => {
+    for (const f of ["components/ui/modal.tsx", "components/ui/popover.tsx"]) {
+      expect(read(f), f).toContain("useDialogFocus(")
+      expect(read(f), f).not.toContain("FOCUSABLE_SELECTOR =")
+    }
+    expect(read("components/ui/use-dialog-focus.ts")).toContain("FOCUSABLE_SELECTOR")
   })
   it("Select stays a native <select>: the OS picker is already the platform sheet", () => {
     const src = read("components/ui/select.tsx")
@@ -2280,23 +2870,27 @@ describe("Popover and Select (Task 9, D4)", () => {
 
 - [ ] **Step 2: Implement**
 
-In `popover.tsx`, when `native && open`, render `createPortal(<><scrim onClick={close}/><BottomSheetSurface role="dialog" aria-modal="true" aria-labelledby={triggerId} id={contentId} detents={["content"]} onDismiss={() => setOpen(false)}>{children}</BottomSheetSurface></>, document.body)`. Add `useDialogHistory({ open: native && open, dismissible: true, onClose: () => setOpen(false) })` and `lockScroll` while it is open on native. The outside-click and Escape logic stays for desktop. `triggerProps` gains an `id` (`triggerId`). `triggerProps["aria-haspopup"]` stays `"dialog"`.
+First move `modal.tsx`'s focus code (`FOCUSABLE_SELECTOR`, the `previouslyFocused` ref, the rAF first-focus effect, focus return, and the Tab-cycle branch of `handleKeyDown`) into `useDialogFocus` in `use-dialog-focus.ts`, and make `Modal` call it. `Modal`'s behaviour must not change: `node scripts/shell-behaviour.mjs` (desktop focus trap and Escape checks) proves it in Step 4.
+
+In `popover.tsx`, when `native && open`, render `createPortal(<><scrim onClick={close}/><BottomSheetSurface ref={sheetRef} role="dialog" aria-modal="true" aria-labelledby={triggerId} id={contentId} tabIndex={-1} onKeyDown={onSheetKeyDown} detents={["content"]} onDismiss={() => setOpen(false)}>{children}</BottomSheetSurface></>, document.body)`, where `onSheetKeyDown` runs `useDialogFocus(sheetRef, native && open)`'s handler and closes on Escape. Add `useDialogHistory({ open: native && open, dismissible: true, onClose: () => setOpen(false) })` and `lockScroll` while it is open on native. The outside-click and Escape logic stays for desktop. `triggerProps` gains an `id` (`triggerId`). `triggerProps["aria-haspopup"]` stays `"dialog"`.
 
 In `select.tsx`, add to the doc comment: `Native frame D4 (docs/superpowers/plans/2026-11-08-native-mobile-frame.md): on iOS and Android phones the native picker already is the platform's sheet or wheel, so this stays native there too.`
 
 - [ ] **Step 3: Behaviour check**
 
-Append a check on student Notifications (`/student/notifications`), one of the two `Popover` call sites. Open its popover trigger on iOS, expect `getByRole("dialog")` with class `lm-sheet`, press Escape, and expect it detached. Show it can go red the same way as Task 7 (force `native` false).
+Append a check on student Notifications (`/student/notifications`), one of the three `Popover` call sites (`Notifications.tsx`, `flashcards/FlashcardDecks.tsx`, `ui/question-row.tsx`). Open its popover trigger on iOS, expect `getByRole("dialog")` with class `lm-sheet` and focus inside it, press Escape, and expect it detached with focus back on the trigger. Show it can go red the same way as Task 7 (force `native` false).
 
 - [ ] **Step 4: Verify and commit**
 
 ```bash
-cd web && npx vitest run tests/unit/nativeSheets.test.ts tests/unit/a11yRules.test.ts && npm run build && node scripts/shell-behaviour.mjs --check native- && node scripts/home-drift.mjs --scene student-,teacher-
+cd web && npx vitest run tests/unit/nativeSheets.test.ts tests/unit/a11yRules.test.ts tests/unit/overlayExit.test.ts && npm run build && node scripts/shell-behaviour.mjs && node scripts/home-drift.mjs --scene student-,teacher-
 ```
+
+Expected: all behaviour checks pass, the desktop `SHELL_CHECKS` included (they cover `Modal`'s focus trap after the hook move).
 
 ```bash
 cd /home/sico/Code/Lemely/.claude/worktrees/student-home-variants
-FILES="web/src/components/ui/popover.tsx web/src/components/ui/select.tsx web/tests/unit/nativeSheets.test.ts web/scripts/drift/checks-native.mjs"
+FILES="web/src/components/ui/use-dialog-focus.ts web/src/components/ui/modal.tsx web/src/components/ui/popover.tsx web/src/components/ui/select.tsx web/tests/unit/nativeSheets.test.ts web/scripts/drift/checks-native.mjs"
 /home/sico/Code/Lemely/.venv/bin/pre-commit run --files $FILES
 SKIP=import-linter git commit -S -m "feat(web): Popover opens as a native sheet on phones; Select stays native" -- $FILES
 ```
@@ -2307,13 +2901,15 @@ SKIP=import-linter git commit -S -m "feat(web): Popover opens as a native sheet 
 
 **Files:**
 - Create: `web/src/components/ui/list-group.tsx`, `web/tests/unit/listGroup.test.ts`
-- Modify: `web/src/components/ui/card.tsx` (native classes), `web/src/components/shell/PortalShell.tsx` (native page ground and main padding), `web/src/components/shell/NotificationsPanel.tsx` and `AccountPanel.tsx` (sheet rows use `ListRow`), `web/src/portals/settings/SettingsRows.tsx` (sections become `ListGroup` on native), `web/src/components/ui/route-skeleton.tsx` (list skeleton in the group shape on native), `web/scripts/drift/justifications.json`
+- Modify: `web/src/components/ui/card.tsx` (`lm-native-card`), `web/src/components/shell/PortalShell.tsx` (`lm-native-page` on the root; `lm-native-main` from Task 5 gets the iOS margin), `web/src/components/shell/NotificationsPanel.tsx` and `AccountPanel.tsx` (sheet rows use `ListRow`), `web/src/portals/settings/SettingsRows.tsx` (sections take the group look on native), `web/src/components/ui/route-skeleton.tsx` (list skeleton in the group shape on native), `web/src/index.css`, `web/scripts/drift/justifications.json`
 
 **Interfaces:**
 - Produces:
   - `ListGroup(props: { label?: string; footer?: ReactNode; children: ReactNode; className?: string })`: a `<section>` with an optional label header (the `label` style) and a rows container.
   - `ListRow(props: { title: ReactNode; subtitle?: ReactNode; leading?: ReactNode; trailing?: ReactNode; to?: string; onClick?: () => void; lines?: 1 | 2 | 3 })`: a `Link` when `to`, a `button` when `onClick`, otherwise a `div`.
-  - Card native classes. Main native padding `px-4`, and ground `surface-container-low`.
+  - Unlayered native classes (phone width on iOS/Android only, so an Android tablet or a desktop never sees them): `.lm-native-page` (page ground), `.lm-native-card`, `.lm-native-group`, `.lm-native-group-label`, `.lm-native-row[data-lines]`. Classes, not `native:`/`ios:`/`android:` utilities, because they must beat the base `border`/`rounded-lg`/`px-3.5` utilities regardless of build order, and because a bare `ios:`/`android:` utility is not width-gated.
+
+Layout from the preview (`variant-a.css` section 4): iOS groups are inset-grouped, 12px radius, inside a 16px page margin (`lm-native-main` goes from 14px to 16px on iOS). Android groups are full-bleed with no radius, but the page keeps its 14px gutter: a 16px Android padding would push the 390px-wide `@container/home` past its 376px query, and the preview found the same. So an Android card bleeds with a negative 14px margin and gives the 14px back as a transparent inline border, which shows the card's own background (`background-clip` defaults to `border-box`), so its content keeps its width and nothing rewraps. Android list groups bleed the same way with no border, because their rows already carry the 16px Material list inset.
 
 - [ ] **Step 1: Failing tests (`web/tests/unit/listGroup.test.ts`)**
 
@@ -2338,26 +2934,48 @@ describe("ListGroup / ListRow (brief §3.4)", () => {
     expect(out).toContain(">Subjects<")
     expect(out).toMatch(/<a[^>]*href="\/student\/subject\/0625"/)
   })
-  it("iOS: inset-grouped radius, 44px rows, separators inset from the leading edge", () => {
-    const out = html(createElement(ListGroup, null, createElement(ListRow, { title: "A" })))
-    expect(out).toContain("ios:rounded-[var(--native-group-radius-ios)]")
-    expect(out).toContain("ios:min-h-[var(--native-row-min-ios)]")
-    expect(out).toContain("lm-list-row")
+  it("rows carry the native class and their line count", () => {
+    const out = html(createElement(ListGroup, null, createElement(ListRow, { title: "A", subtitle: "B" })))
+    expect(out).toContain("lm-native-group")
+    expect(out).toMatch(/class="[^"]*\blm-list-row\b[^"]*\blm-native-row\b[^"]*" data-lines="2"/)
   })
-  it("Android: full width, 56/72/88 by line count, no separators", () => {
-    for (const [lines, token] of [[1, "--native-row-1-android"], [2, "--native-row-2-android"], [3, "--native-row-3-android"]] as const) {
-      expect(html(createElement(ListRow, { title: "A", lines }))).toContain(`android:min-h-[var(${token})]`)
+})
+
+describe("grouped-list CSS (preview 4447a571, variant-a.css section 4)", () => {
+  const css = readFileSync(join(SRC, "index.css"), "utf8")
+  const start = css.indexOf("/* ── Native frame: grouped lists")
+  const block = css.slice(start, css.indexOf("/* ── Native frame:", start + 1))
+  it("every native rule sits inside the phone-width media block", () => {
+    const media = block.indexOf("@media (max-width: 720px) {")
+    expect(media).toBeGreaterThan(-1)
+    expect(block.slice(0, media)).not.toContain("lm-native-")
+  })
+  it("page ground per platform and theme", () => {
+    expect(block).toMatch(/:root\[data-platform="ios"\] \.lm-native-page \{[^}]*background-color: var\(--md-surface-container\)/)
+    expect(block).toMatch(/:root\[data-theme="dark"\]\[data-platform="ios"\] \.lm-native-page \{[^}]*background-color: var\(--md-surface-container-lowest\)/)
+    expect(block).toMatch(/:root\[data-platform="android"\] \.lm-native-page \{[^}]*background-color: var\(--md-surface-container-low\)/)
+    expect(block).toMatch(/:root\[data-theme="dark"\]\[data-platform="android"\] \.lm-native-page \{[^}]*background-color: var\(--md-surface\)/)
+  })
+  it("iOS: 16px page margin, 12px groups, 44px rows, hairline separators inset 16px", () => {
+    expect(block).toMatch(/:root\[data-platform="ios"\] \.lm-native-main \{[^}]*padding-inline: var\(--native-group-inset-ios\)/)
+    expect(block).toMatch(/:root\[data-platform="ios"\] :is\(\.lm-native-card, \.lm-native-group\) \{[^}]*border-radius: var\(--native-group-radius-ios\)/)
+    expect(block).toMatch(/:root\[data-platform="ios"\] \.lm-native-row \{[^}]*min-height: var\(--native-row-min-ios\)/)
+    expect(block).toMatch(/:root\[data-platform="ios"\] \.lm-native-row \+ \.lm-native-row::before \{[^}]*inset-inline: var\(--native-sep-inset-ios\) 0;[^}]*block-size: var\(--native-hairline\);[^}]*background: var\(--md-outline\)/)
+  })
+  it("Android: full-bleed, square, 14px gutter kept as a transparent border on cards, 56/72/88 rows, no separators", () => {
+    expect(block).toMatch(/:root\[data-platform="android"\] \.lm-native-card \{[^}]*margin-inline: calc\(-1 \* var\(--native-gutter-android\)\);[^}]*border-inline: var\(--native-gutter-android\) solid transparent/)
+    expect(block).toMatch(/:root\[data-platform="android"\] \.lm-native-group \{[^}]*margin-inline: calc\(-1 \* var\(--native-gutter-android\)\)/)
+    for (const n of [1, 2, 3]) {
+      expect(block).toMatch(new RegExp(`:root\\[data-platform="android"\\] \\.lm-native-row\\[data-lines="${n}"\\] \\{[^}]*min-height: var\\(--native-row-${n}-android\\)`))
     }
-    expect(html(createElement(ListGroup, null, createElement(ListRow, { title: "A" })))).toContain("android:rounded-none")
+    expect(block).toMatch(/:root\[data-platform="android"\] \.lm-list-row \+ \.lm-list-row \{[^}]*border-top: 0/)
   })
 })
 
 describe("Card on the native frame", () => {
   const card = readFileSync(join(SRC, "components/ui/card.tsx"), "utf8")
-  it("drops the outline; iOS insets, Android bleeds full width", () => {
-    expect(card).toContain("native:border-0")
-    expect(card).toContain("native:ios:rounded-[var(--native-group-radius-ios)]")
-    expect(card).toContain("native:android:-mx-4 native:android:rounded-none")
+  it("carries the native card class; design A classes unchanged", () => {
+    expect(card).toContain('"bg-surface-container-lowest border border-outline-variant rounded-lg lm-native-card"')
   })
 })
 ```
@@ -2379,26 +2997,19 @@ import { cn } from "@/lib/utils"
  * (56/72/88 by line count, 16px padding, no separators). Design A, desktop
  * and `other` get the card look: surface-container-lowest, outline, radius-lg.
  */
-const ROW_H = { 1: "android:min-h-[var(--native-row-1-android)]", 2: "android:min-h-[var(--native-row-2-android)]", 3: "android:min-h-[var(--native-row-3-android)]" } as const
-
 export function ListGroup({ label, footer, children, className }: { label?: string; footer?: ReactNode; children: ReactNode; className?: string }) {
   const id = useId()
   return (
     <section aria-labelledby={label ? id : undefined} className={cn("flex flex-col gap-2", className)}>
       {label ? (
-        <h2 id={id} className="px-1 text-label text-on-surface-variant native:px-4">
+        <h2 id={id} className="lm-native-group-label px-1 text-label text-on-surface-variant">
           {label}
         </h2>
       ) : null}
-      <div
-        className={cn(
-          "overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest dark:bg-surface-container-high",
-          "native:border-0 ios:rounded-[var(--native-group-radius-ios)] android:-mx-4 android:rounded-none",
-        )}
-      >
+      <div className="lm-native-group overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest dark:bg-surface-container-high">
         {children}
       </div>
-      {footer ? <div className="px-1 text-body-sm text-on-surface-variant native:px-4">{footer}</div> : null}
+      {footer ? <div className="lm-native-group-label px-1 text-body-sm text-on-surface-variant">{footer}</div> : null}
     </section>
   )
 }
@@ -2409,11 +3020,7 @@ export function ListRow({
   title: ReactNode; subtitle?: ReactNode; leading?: ReactNode; trailing?: ReactNode
   to?: string; onClick?: () => void; lines?: 1 | 2 | 3
 }) {
-  const cls = cn(
-    "lm-list-row lm-press flex w-full items-center gap-3 px-4 py-2.5 text-start",
-    "ios:min-h-[var(--native-row-min-ios)]",
-    ROW_H[lines],
-  )
+  const cls = "lm-list-row lm-native-row lm-press flex w-full items-center gap-3 px-4 py-2.5 text-start"
   const inner = (
     <>
       {leading ? <span className="flex-none">{leading}</span> : null}
@@ -2424,49 +3031,84 @@ export function ListRow({
       {trailing ? <span className="flex-none text-on-surface-variant">{trailing}</span> : null}
     </>
   )
-  if (to) return <Link to={to} viewTransition className={cls}>{inner}</Link>
-  if (onClick) return <button type="button" onClick={onClick} className={cls}>{inner}</button>
-  return <div className={cls}>{inner}</div>
+  if (to) return <Link to={to} viewTransition className={cls} data-lines={lines}>{inner}</Link>
+  if (onClick) return <button type="button" onClick={onClick} className={cls} data-lines={lines}>{inner}</button>
+  return <div className={cls} data-lines={lines}>{inner}</div>
 }
 ```
 
 `lm-press` gets its native rules in Task 11. `utilityExistence.test.ts` needs every `lm-` class defined, so this task adds the marker rule `.lm-press { --lm-press: 1; }` below. It has no visual effect; Task 11 keeps it and adds the native rules after it.
 
-CSS for the iOS separator (`index.css`, new block):
+CSS (`index.css`, new block):
 
 ```css
-/* ── Native frame: grouped lists (native frame Task 10). */
+/* ── Native frame: grouped lists (native frame Task 10; preview variant-a.css section 4). */
 /* Opt-in marker for press feedback; Task 11 adds the native rules. */
 .lm-press { --lm-press: 1; }
 .lm-list-row + .lm-list-row { border-top: 1px solid var(--md-outline-variant); }
 @media (max-width: 720px) {
-  :root[data-platform="android"] .lm-list-row + .lm-list-row { border-top: 0; }
-  :root[data-platform="ios"] .lm-list-row + .lm-list-row {
-    border-top: 0;
-    box-shadow: inset calc(var(--native-group-inset)) var(--native-hairline) 0 -0.25px var(--md-outline-variant);
+  /* Page ground. */
+  :root[data-platform="ios"] .lm-native-page { background-color: var(--md-surface-container); }
+  :root[data-theme="dark"][data-platform="ios"] .lm-native-page { background-color: var(--md-surface-container-lowest); }
+  :root[data-platform="android"] .lm-native-page { background-color: var(--md-surface-container-low); }
+  :root[data-theme="dark"][data-platform="android"] .lm-native-page { background-color: var(--md-surface); }
+  /* Cards and list groups lose the floating outline. */
+  :root:is([data-platform="ios"], [data-platform="android"]) :is(.lm-native-card, .lm-native-group) {
+    border: 0;
+    box-shadow: none;
   }
+  /* iOS: inset-grouped inside a 16px page margin. */
+  :root[data-platform="ios"] .lm-native-main { padding-inline: var(--native-group-inset-ios); }
+  :root[data-platform="ios"] :is(.lm-native-card, .lm-native-group) { border-radius: var(--native-group-radius-ios); }
+  :root[data-platform="ios"] .lm-native-group-label { padding-inline: var(--space-4); }
+  :root[data-platform="ios"] .lm-native-row { position: relative; min-height: var(--native-row-min-ios); }
+  :root[data-platform="ios"] .lm-list-row + .lm-list-row { border-top: 0; }
+  :root[data-platform="ios"] .lm-native-row + .lm-native-row::before {
+    content: "";
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline: var(--native-sep-inset-ios) 0;
+    block-size: var(--native-hairline);
+    background: var(--md-outline);
+    pointer-events: none;
+  }
+  /* Android: full-bleed and square; the 14px page gutter stays (container query). */
+  :root[data-platform="android"] .lm-native-card {
+    border-radius: 0;
+    margin-inline: calc(-1 * var(--native-gutter-android));
+    border-inline: var(--native-gutter-android) solid transparent;
+  }
+  :root[data-platform="android"] .lm-native-group {
+    border-radius: 0;
+    margin-inline: calc(-1 * var(--native-gutter-android));
+  }
+  :root[data-platform="android"] .lm-native-group-label { padding-inline: calc(var(--space-4) - var(--native-gutter-android)); }
+  :root[data-platform="android"] .lm-native-row[data-lines="1"] { min-height: var(--native-row-1-android); }
+  :root[data-platform="android"] .lm-native-row[data-lines="2"] { min-height: var(--native-row-2-android); }
+  :root[data-platform="android"] .lm-native-row[data-lines="3"] { min-height: var(--native-row-3-android); }
+  :root[data-platform="android"] .lm-list-row + .lm-list-row { border-top: 0; }
 }
 ```
 
-The iOS separator is drawn inset from the inline-start edge by 16px. If `rtlSafety` rejects the inset `box-shadow`'s physical x offset, replace it with a `::before` line using `inset-inline-start: var(--native-group-inset); inset-inline-end: 0`.
+The iOS separator is a `::before` hairline with logical insets, so it mirrors in RTL. The Android card's border is `transparent` on purpose: the card's own background paints under it, so the 14px reads as card, whatever surface the card uses.
 
 - [ ] **Step 3: Card and PortalShell**
 
-`card.tsx` class string:
+`card.tsx` class string (design A's classes unchanged; the native look is the unlayered rule above):
 
 ```ts
-"bg-surface-container-lowest border border-outline-variant rounded-lg native:border-0 native:ios:rounded-[var(--native-group-radius-ios)] native:android:-mx-4 native:android:rounded-none"
+"bg-surface-container-lowest border border-outline-variant rounded-lg lm-native-card"
 ```
 
 Data-heavy blocks (charts, mark tables, the grade ladder) already sit in one `Card`, so they become one full-width group. No per-screen change is needed for that.
 
-In `PortalShell.tsx`: the root `div` gets `native:bg-surface-container-low`, and `<main>` gets `native:px-4`.
+In `PortalShell.tsx`: the root `div` gets `lm-native-page` (it keeps `bg-surface-container` for design A). `<main>` already has `lm-native-main` (Task 5); the rule above gives it the iOS margin and leaves Android's 14px.
 
 - [ ] **Step 4: Roll out to shell-owned and shared surfaces**
 
 - `NotificationsBody` and `AccountBody` (Task 8): when rendered in the sheet, rows become `ListRow` inside one `ListGroup`. The menu rows are untouched.
-- `SettingsRows.tsx`: each settings section's container gets the `ListGroup` look on native. Add the native classes from `ListGroup`'s container to its section wrapper; do not change its desktop classes. Read the file first, and change only the section wrapper and row classes.
-- `route-skeleton.tsx`: the `list` skeleton renders its rows inside a `ListGroup`-shaped container on native (`native:` classes only), so loading looks like the group.
+- `SettingsRows.tsx`: each settings section's container gets the group look on native. Add `lm-native-group` to its section wrapper and `lm-native-row` (with `data-lines`) to its rows; do not change its desktop classes. Read the file first, and change only the section wrapper and row classes.
+- `route-skeleton.tsx`: the `list` skeleton's container gets `lm-native-group` and its rows `lm-native-row`, so loading looks like the group on native and is unchanged elsewhere.
 
 Run: `cd web && npx vitest run tests/unit/listGroup.test.ts tests/unit/routeSkeleton.test.ts tests/unit/settingsTabs.test.ts tests/unit/shellPanels.test.ts tests/unit/utilityExistence.test.ts tests/unit/rtlSafety.test.ts tests/unit/darkConsumers.test.ts tests/unit/contrastRules.test.ts`
 Expected: PASS.
@@ -2477,7 +3119,7 @@ Expected: PASS.
 cd web && npm run build && node scripts/home-drift.mjs --scene native- && node scripts/home-drift.mjs --scene student-,teacher-
 ```
 
-Expected: existing scenes are unchanged (no `native:` class applies without a platform). Native bell and settings keys move toward 0 px. Update their entries with any remaining differences (pending).
+Expected: existing scenes are unchanged (no native rule applies without a platform). Native root, detail, bell and settings keys move toward 0 px. Update their entries with any remaining differences (pending).
 
 ```bash
 cd /home/sico/Code/Lemely/.claude/worktrees/student-home-variants
@@ -2492,7 +3134,9 @@ SKIP=import-linter git commit -S -m "feat(web): grouped list primitives and edge
 
 **Files:**
 - Create: `web/src/lib/pressFeedback.ts`, `web/tests/unit/pressFeedback.test.ts`
-- Modify: `web/src/index.css` (native press rules after the `.lm-press` marker), `web/src/components/ui/button.tsx` (recipe base gets `lm-press`), `web/src/components/ui/nav-shells.tsx` (tab and row cells), `web/src/components/shell/shellStyles.ts` (`SHELL_ICON_BUTTON`), `web/src/components/shell/PortalShell.tsx` (install once)
+- Modify: `web/src/index.css` (a native press block after Task 10's grouped-lists block), `web/src/components/ui/button.tsx` (recipe base gets `lm-press lm-press-scale`), `web/src/components/ui/nav-shells.tsx` (tab and row cells get `lm-press`), `web/src/components/shell/shellStyles.ts` (`SHELL_ICON_BUTTON` gets `lm-press lm-press-scale`), `web/src/components/shell/PortalShell.tsx` (install once)
+
+Preview behaviour (`variant-a.css` section 5): one layer drawn as a background image, so it follows the element's radius and never clips a badge (no `overflow: hidden`). iOS dims 8% toward black in light and white in dark, and scales buttons (not rows or tabs) to 0.97; iOS tab items dim their glyph and label (opacity 0.55) instead of drawing a layer. Android draws a 10% `currentColor` state layer that ripples out from the touch point over 450ms with `cubic-bezier(0.2, 0, 0, 1)`.
 
 **Interfaces:**
 - Produces:
@@ -2520,15 +3164,21 @@ describe("pressOrigin", () => {
   })
 })
 
-describe("press CSS (brief §3.5)", () => {
+describe("press CSS (preview 4447a571, variant-a.css section 5)", () => {
   const block = css.slice(css.indexOf("/* ── Native frame: press states"))
-  it("iOS: dim plus scale while pressed", () => {
-    expect(block).toMatch(/\[data-platform="ios"\] \.lm-press:is\(:active, \[data-pressed\]\) \{[^}]*scale: var\(--native-press-scale\)/)
-    expect(block).toMatch(/background-color: color-mix\(in oklch, currentColor var\(--native-press-dim\), transparent\)/)
+  it("one background-image layer, so it follows the radius and never clips a badge", () => {
+    expect(block).toMatch(/\.lm-press\[data-pressed\] \{[^}]*background-image: radial-gradient\(circle at var\(--lm-press-x\) var\(--lm-press-y\), color-mix\(in oklch, var\(--lm-press-ink\) var\(--lm-press-layer\), transparent\) var\(--lm-press-rr\)/)
+    expect(block).not.toMatch(/\.lm-press[^{]*\{[^}]*overflow: hidden/)
   })
-  it("Android: state layer plus a ripple from the touch point", () => {
-    expect(block).toMatch(/\[data-platform="android"\] \.lm-press\[data-pressed\]::after \{[^}]*radial-gradient\(circle at var\(--lm-press-x\) var\(--lm-press-y\)/)
-    expect(block).toContain("var(--native-state-pressed)")
+  it("iOS: 8% toward black in light and white in dark; buttons scale to 0.97", () => {
+    expect(block).toMatch(/:root\[data-platform="ios"\] \{[^}]*--lm-press-ink: var\(--native-press-ink-light\);[^}]*--lm-press-layer: var\(--native-press-dim\)/)
+    expect(block).toMatch(/:root\[data-theme="dark"\]\[data-platform="ios"\] \{[^}]*--lm-press-ink: var\(--native-press-ink-dark\)/)
+    expect(block).toMatch(/\[data-platform="ios"\] \.lm-press-scale\[data-pressed\] \{[^}]*scale: var\(--native-press-scale\)/)
+    expect(block).toMatch(/\[data-platform="ios"\] \.lm-native-tabbar \.lm-press\[data-pressed\] \{[^}]*background-image: none;[^}]*opacity: var\(--native-tab-press-opacity-ios\)/)
+  })
+  it("Android: a 10% currentColor layer rippling out over 450ms", () => {
+    expect(block).toMatch(/:root\[data-platform="android"\] \{[^}]*--lm-press-ink: currentColor;[^}]*--lm-press-layer: var\(--native-state-pressed\)/)
+    expect(block).toMatch(/\[data-platform="android"\] \.lm-press\[data-pressed\] \{[^}]*animation: lm-ripple var\(--native-ripple-dur\) var\(--ease-m3-emphasized\)/)
   })
   it("visible in under 50ms: no transition delay on the press-in", () => {
     expect(block).not.toMatch(/\.lm-press[^{]*\{[^}]*transition-delay/)
@@ -2536,11 +3186,13 @@ describe("press CSS (brief §3.5)", () => {
 })
 
 describe("press is applied to the primitives", () => {
-  it("button, tab, shell icon button, list row", () => {
-    expect(read("components/ui/button.tsx")).toContain("lm-press")
+  it("buttons and shell icon buttons scale; tabs and list rows only dim", () => {
+    expect(read("components/ui/button.tsx")).toContain("lm-press lm-press-scale")
+    expect(read("components/shell/shellStyles.ts")).toContain("lm-press lm-press-scale")
     expect(read("components/ui/nav-shells.tsx")).toContain("lm-press")
-    expect(read("components/shell/shellStyles.ts")).toContain("lm-press")
+    expect(read("components/ui/nav-shells.tsx")).not.toContain("lm-press-scale")
     expect(read("components/ui/list-group.tsx")).toContain("lm-press")
+    expect(read("components/ui/list-group.tsx")).not.toContain("lm-press-scale")
   })
 })
 
@@ -2606,49 +3258,49 @@ export function installPressFeedback(root: Document | HTMLElement): () => void {
 }
 ```
 
-- [ ] **Step 3: CSS (after Task 10's `.lm-press` marker rule)**
+- [ ] **Step 3: CSS (a new block after Task 10's grouped-lists block)**
 
 ```css
-/* ── Native frame: press states (native frame Task 11). Phone width on
-   iOS/Android; design A keeps its own active:scale-[0.98] rules. */
+/* ── Native frame: press states (native frame Task 11; preview variant-a.css section 5).
+   Phone width on iOS/Android; design A keeps its own active:scale-[0.98] rules.
+   One layer drawn as a background image (no ::after, no overflow: hidden), so it
+   follows the element's radius and never clips a badge. */
+@property --lm-press-rr { syntax: "<length-percentage>"; inherits: false; initial-value: 0px; }
 @media (max-width: 720px) {
+  :root[data-platform="ios"] { --lm-press-ink: var(--native-press-ink-light); --lm-press-layer: var(--native-press-dim); }
+  :root[data-theme="dark"][data-platform="ios"] { --lm-press-ink: var(--native-press-ink-dark); }
+  :root[data-platform="android"] { --lm-press-ink: currentColor; --lm-press-layer: var(--native-state-pressed); }
   :root:is([data-platform="ios"], [data-platform="android"]) .lm-press {
-    position: relative;
-    isolation: isolate;
-    transition: scale var(--dur-instant) var(--ease-out-soft), background-color var(--dur-instant) var(--ease-out-soft);
+    transition: scale var(--dur-instant) var(--ease-out-soft);
   }
-  :root[data-platform="ios"] .lm-press:is(:active, [data-pressed]) {
-    scale: var(--native-press-scale);
-    background-color: color-mix(in oklch, currentColor var(--native-press-dim), transparent);
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-press[data-pressed] {
+    --lm-press-rr: var(--lm-press-r);
+    background-image: radial-gradient(circle at var(--lm-press-x) var(--lm-press-y), color-mix(in oklch, var(--lm-press-ink) var(--lm-press-layer), transparent) var(--lm-press-rr), transparent var(--lm-press-rr));
   }
-  :root[data-platform="android"] .lm-press { overflow: hidden; }
-  :root[data-platform="android"] .lm-press[data-pressed]::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: -1;
-    pointer-events: none;
-    background:
-      radial-gradient(circle at var(--lm-press-x) var(--lm-press-y), color-mix(in oklch, currentColor var(--native-state-pressed), transparent) 0 var(--lm-press-r), transparent var(--lm-press-r)),
-      color-mix(in oklch, currentColor var(--native-state-pressed), transparent);
-    animation: lm-ripple var(--dur-base) var(--ease-out-soft) both;
+  :root[data-platform="ios"] .lm-press-scale[data-pressed] { scale: var(--native-press-scale); }
+  /* iOS tab items dim their glyph and label instead of drawing a layer. */
+  :root[data-platform="ios"] .lm-native-tabbar .lm-press[data-pressed] {
+    background-image: none;
+    opacity: var(--native-tab-press-opacity-ios);
+  }
+  /* Android: the layer ripples out from the touch point. */
+  :root[data-platform="android"] .lm-press[data-pressed] {
+    animation: lm-ripple var(--native-ripple-dur) var(--ease-m3-emphasized);
   }
 }
-@keyframes lm-ripple {
-  from { clip-path: circle(0 at var(--lm-press-x) var(--lm-press-y)); }
-  to { clip-path: circle(var(--lm-press-r) at var(--lm-press-x) var(--lm-press-y)); }
-}
+@keyframes lm-ripple { from { --lm-press-rr: 0px; } }
 ```
 
-In the reduced-motion block, add `.lm-press, .lm-press::after { transition: none; animation: none; }`. The state layer stays visible, but the ripple does not grow.
+In the reduced-motion block, add `.lm-press { transition: none; animation: none; }`. The state layer still shows at full size, but the ripple does not grow and the scale is instant.
 
-The press-in has no delay. The CSS transition runs from the first frame, so the press shows in under 50ms.
+The press-in has no delay. `data-pressed` is set on `pointerdown`, before `:active`, so the layer shows in the first frame (under 50ms). If an element already paints a `background-image` of its own (a gradient button), the press layer replaces it while pressed; check `button.tsx`'s variants and, if one uses a gradient, leave `lm-press` off that variant.
 
 - [ ] **Step 4: Apply and install**
 
-- `button.tsx`: add `lm-press` to the `cva` base string.
+- `button.tsx`: add `lm-press lm-press-scale` to the `cva` base string.
 - `nav-shells.tsx`: add `lm-press` to the `BottomNav` cell and both `SidebarNav` row recipes.
-- `shellStyles.ts`: add `lm-press` to `SHELL_ICON_BUTTON`.
+- `shellStyles.ts`: add `lm-press lm-press-scale` to `SHELL_ICON_BUTTON` (next to Task 4's `lm-native-iconbtn`).
+- `index.css`: `.lm-press-scale` needs a definition outside the media block for `utilityExistence`: add `.lm-press-scale { --lm-press-scale: 1; }` beside Task 10's `.lm-press` marker.
 - `list-group.tsx`: already has it.
 - `PortalShell.tsx`: `useEffect(() => installPressFeedback(document), [])`.
 
@@ -2665,71 +3317,79 @@ Expected: no drift anywhere. The press state is not captured at rest, and `.lm-p
 
 ```bash
 cd /home/sico/Code/Lemely/.claude/worktrees/student-home-variants
-FILES="web/src/lib/pressFeedback.ts web/src/index.css web/src/components/ui/button.tsx web/src/components/ui/nav-shells.tsx web/src/components/shell/shellStyles.ts web/src/components/shell/PortalShell.tsx web/tests/unit/pressFeedback.test.ts <hover-only fixes from Step 1>"
+FILES="web/src/lib/pressFeedback.ts web/src/index.css web/src/components/ui/button.tsx web/src/components/ui/nav-shells.tsx web/src/components/shell/shellStyles.ts web/src/components/shell/PortalShell.tsx web/tests/unit/pressFeedback.test.ts"
+# Append each file Step 1's hover-only scan made you change (FILES="$FILES <that path>"); none if the scan was clean.
 /home/sico/Code/Lemely/.venv/bin/pre-commit run --files $FILES
 SKIP=import-linter git commit -S -m "feat(web): native press states, iOS dim and scale, Android state layer and ripple" -- $FILES
 ```
 
 ---
 
-### Task 12: Interactive edge swipe-back (iOS standalone, D5)
+### Task 12: Interactive edge swipe-back (standalone on iOS and Android, D5)
+
+The gate does not change: the edge swipe runs in standalone display on both platforms, as it does today, and stays off in browser tabs (Safari's own swipe, Chrome's own back). This task makes the gesture interactive: the column follows the finger with a parallax underlay, and the release commits at 35% width or a fast fling.
 
 **Files:**
-- Modify: `web/src/lib/nav/edgeSwipeBack.ts` (`edgeSwipeEnabled`), `web/src/components/edge-swipe-back.tsx` (interactive transform, parallax, release), `web/src/components/shell/PortalShell.tsx` (`data-shell-column` on the column div), `web/src/index.css` (swipe underlay and `data-direction="swipe"`), `web/tests/unit/edgeSwipeBack.test.ts` (create, or extend the existing one if present: `ls web/tests/unit | grep -i edge`)
+- Modify: `web/src/lib/nav/edgeSwipeBack.ts` (`markSwipeNav`, `consumeSwipeNav`), `web/src/components/edge-swipe-back.tsx` (interactive transform, parallax, release), `web/src/components/root-outlet.tsx` (`data-direction="swipe"` for one navigation), `web/src/components/shell/PortalShell.tsx` (`data-shell-column` on the column div), `web/src/index.css` (swipe underlay and `data-direction="swipe"`), `web/scripts/drift/harness.mjs` (`app.init`), `web/scripts/drift/checks-native.mjs`, `web/tests/unit/edgeSwipeBack.test.ts` (exists; extend it)
 
 **Interfaces:**
-- Consumes: `swipeBackRelease` (Task 6), `readPlatform`, `useDragGesture` (its `onProgress`, `transformTarget` and `touchAction` options exist).
-- Produces: `edgeSwipeEnabled(input: { platform: Platform; standalone: boolean; phone: boolean }): boolean`. `edgeSwipeDecision` loses its `standalone` field, because the gate moves to `edgeSwipeEnabled`.
+- Consumes: `swipeBackRelease` (Task 6), `useDragGesture` (its `onProgress`, `transformTarget` and `touchAction` options exist), `isStandaloneDisplay` (unchanged gate).
+- Produces: `markSwipeNav(): void` and `consumeSwipeNav(): boolean` in `edgeSwipeBack.ts` (a one-shot flag: the next navigation is a swipe). `edgeSwipeDecision` and `EdgeSwipeInput` keep their `standalone` field and behaviour.
 
 - [ ] **Step 1: Failing tests**
 
 ```ts
-// web/tests/unit/edgeSwipeBack.test.ts (append if the file exists)
-import { describe, expect, it } from "vitest"
-import { edgeSwipeEnabled } from "@/lib/nav/edgeSwipeBack"
+// web/tests/unit/edgeSwipeBack.test.ts (append)
+import { consumeSwipeNav, edgeSwipeDecision, markSwipeNav } from "@/lib/nav/edgeSwipeBack"
 
-describe("edge swipe-back gate (native frame D5)", () => {
-  it.each([
-    ["ios", true, true, true],     // iOS home-screen app: no system back gesture
-    ["ios", false, true, false],   // iOS Safari tab: the system swipe wins
-    ["android", true, true, false],// Android: system back (gesture or button) wins
-    ["other", true, true, false],
-    ["ios", true, false, false],   // iPad width: not the phone frame
-  ] as const)("%s standalone=%s phone=%s -> %s", (platform, standalone, phone, want) => {
-    expect(edgeSwipeEnabled({ platform, standalone, phone })).toBe(want)
+describe("the swipe navigation flag is one-shot (Task 12)", () => {
+  it("consumes once, then reads false", () => {
+    expect(consumeSwipeNav()).toBe(false)
+    markSwipeNav()
+    expect(consumeSwipeNav()).toBe(true)
+    expect(consumeSwipeNav()).toBe(false)
   })
+})
+
+describe("edge swipe-back runs in standalone only, whatever the platform (native frame D5)", () => {
+  const base = { startX: 4, dx: 200, dy: 2, viewportWidth: 390, dir: 1 as const }
+  it("standalone: back", () => expect(edgeSwipeDecision({ ...base, standalone: true })).toBe("back"))
+  it("browser tab: none", () => expect(edgeSwipeDecision({ ...base, standalone: false })).toBe("none"))
 })
 ```
 
-Update any existing `edgeSwipeDecision` tests that pass `standalone`: drop the field, and remove the case "standalone false → none", which is now `edgeSwipeEnabled`'s job.
+Keep the existing `edgeSwipeDecision` tests as they are. Merge the imports with the file's existing ones (one `vitest` import, one import from `@/lib/nav/edgeSwipeBack`). If the file already has both standalone cases, skip the second `describe`.
 
 - [ ] **Step 2: Logic**
 
-In `edgeSwipeBack.ts`:
+In `edgeSwipeBack.ts`, add:
 
 ```ts
-import type { Platform } from "@/lib/platform"
-
-/** Native frame D5: only where the browser gives no back gesture of its own:
- * an iOS (or iPadOS) home-screen app on the phone frame. iOS Safari tabs and
- * every Android session already have a system back. */
-export function edgeSwipeEnabled({ platform, standalone, phone }: { platform: Platform; standalone: boolean; phone: boolean }): boolean {
-  return platform === "ios" && standalone && phone
+let swipeNavPending = false
+/** Native frame Task 12: the next navigation comes from a committed edge swipe. */
+export function markSwipeNav(): void {
+  swipeNavPending = true
+}
+/** Read once by RootOutlet's direction effect; the flag clears as it is read. */
+export function consumeSwipeNav(): boolean {
+  const pending = swipeNavPending
+  swipeNavPending = false
+  return pending
 }
 ```
 
-Remove `standalone` from `EdgeSwipeInput` and from `edgeSwipeDecision`'s body. Update the file's header comment to say the gate moved.
+Do not change `edgeSwipeDecision`, `EdgeSwipeInput` or the `standalone` gate (D5).
 
 - [ ] **Step 3: Interactive component**
 
 In `edge-swipe-back.tsx`:
-- `enabled: edgeSwipeEnabled({ platform: readPlatform(), standalone, phone })`, with `phone` from `useNativeFrame()`.
+- `enabled` stays `standalone`, computed as today (`isStandaloneDisplay`), on every platform.
 - `transformTarget`: a ref to `document.querySelector("[data-shell-column]")`.
 - `touchAction: "pan-y"`.
 - `onProgress(dx)`: set `--lm-swipe-progress` (0..1) on `html` and `data-swiping` on `html`. The column follows the finger through `useDragGesture`'s own transform. The underlay is drawn by CSS (below).
-- `onCommit(dx, dy)`: compute the velocity from the last two progress samples, kept in a ref with `performance.now()`. If `swipeBackRelease({ dx: dx * dir, velocity, width })` is `"commit"` and `edgeSwipeDecision(...)` is `"back"`, set `html[data-direction="swipe"]` and navigate exactly as today. Otherwise let the hook spring back. Always clear `data-swiping` and `--lm-swipe-progress`.
+- `onCommit(dx, dy)`: compute the velocity from the last two progress samples, kept in a ref with `performance.now()`. If `swipeBackRelease({ dx: dx * dir, velocity, width })` is `"commit"` and `edgeSwipeDecision(...)` is `"back"`, call `markSwipeNav()` and navigate exactly as today. Otherwise let the hook spring back. Always clear `data-swiping` and `--lm-swipe-progress`.
 
-`RootOutlet` sets `data-direction` in a layout effect on navigation. After a swipe it must keep `"swipe"` for that one navigation. Set a module flag `swipeNavPending = true` before `navigate`, and have `RootOutlet` read and clear it: `document.documentElement.dataset.direction = consumeSwipeNav() ? "swipe" : navigationDirection(type)`. Export `consumeSwipeNav` from `edgeSwipeBack.ts`.
+`RootOutlet` (`web/src/components/root-outlet.tsx`) sets `data-direction` in a layout effect on navigation. After a swipe it must use `"swipe"` for that one navigation: `document.documentElement.dataset.direction = consumeSwipeNav() ? "swipe" : navigationDirection(type)`.
 
 CSS (`index.css`):
 
@@ -2737,7 +3397,7 @@ CSS (`index.css`):
 /* ── Native frame: swipe-back (native frame Task 12). The column follows the
    finger; the shell ground under it shows a dimmed parallax strip. */
 html[data-swiping] [data-shell-column] {
-  box-shadow: calc(-1 * var(--native-group-inset)) 0 var(--native-group-inset) color-mix(in oklch, var(--md-shadow) 18%, transparent);
+  box-shadow: calc(-1 * var(--space-4)) 0 var(--space-4) color-mix(in oklch, var(--md-shadow) 18%, transparent);
 }
 html[data-swiping] body::before {
   content: "";
@@ -2802,18 +3462,38 @@ NATIVE_CHECKS.push(
     },
   },
   {
-    id: "native-android-no-swipe-back",
+    id: "native-android-standalone-swipe-back",
     platform: "android",
-    app: { ...NATIVE_HOME, path: "/student/classes", init: STANDALONE },
+    app: { ...NATIVE_HOME, path: "/student", init: STANDALONE },
     async run(page) {
+      await page.getByRole("link", { name: "Classes" }).first().click()
+      await page.waitForURL(/\/student\/classes/)
+      await page.mouse.move(4, 400)
+      await page.mouse.down()
+      await page.mouse.move(60, 402, { steps: 4 })
+      if (!(await page.evaluate(() => document.documentElement.hasAttribute("data-swiping")))) throw new Error("Android standalone did not start an interactive swipe (D5 keeps it)")
+      await page.mouse.move(250, 404, { steps: 6 })
+      await page.mouse.up()
+      await page.waitForURL(/\/student$/)
+    },
+  },
+  ...["ios", "android"].map((platform) => ({
+    id: `native-${platform}-browser-tab-no-swipe-back`,
+    platform,
+    // No STANDALONE init: a browser tab, where Safari's swipe and Chrome's back take over.
+    app: { ...NATIVE_HOME, path: "/student" },
+    async run(page) {
+      await page.getByRole("link", { name: "Classes" }).first().click()
+      await page.waitForURL(/\/student\/classes/)
       await page.mouse.move(4, 400)
       await page.mouse.down()
       await page.mouse.move(250, 402, { steps: 6 })
+      const swiping = await page.evaluate(() => document.documentElement.hasAttribute("data-swiping"))
       await page.mouse.up()
       await page.waitForTimeout(400)
-      if (!/\/student\/classes/.test(page.url())) throw new Error("Android installed an in-app swipe-back (D5)")
+      if (swiping || !/\/student\/classes/.test(page.url())) throw new Error("the in-app swipe-back ran in a browser tab")
     },
-  },
+  })),
   {
     id: "native-ios-swipe-keeps-text-selectable",
     platform: "ios",
@@ -2826,7 +3506,7 @@ NATIVE_CHECKS.push(
 )
 ```
 
-Show it can go red: return `false` from `edgeSwipeEnabled`, rebuild, and expect the first check FAIL "did not start". Restore it.
+Show it can go red: force `enabled: false` in `edge-swipe-back.tsx`, rebuild, and expect `native-ios-standalone-swipe-back` and `native-android-standalone-swipe-back` to FAIL "did not start". Then force `enabled: true`, rebuild, and expect both `browser-tab-no-swipe-back` checks to FAIL. Restore it and rebuild.
 
 - [ ] **Step 5: Verify and commit**
 
@@ -2838,12 +3518,14 @@ cd web && npx vitest run tests/unit/edgeSwipeBack.test.ts tests/unit/navigationD
 cd /home/sico/Code/Lemely/.claude/worktrees/student-home-variants
 FILES="web/src/lib/nav/edgeSwipeBack.ts web/src/components/edge-swipe-back.tsx web/src/components/root-outlet.tsx web/src/components/shell/PortalShell.tsx web/src/index.css web/scripts/drift/harness.mjs web/scripts/drift/checks-native.mjs web/tests/unit/edgeSwipeBack.test.ts"
 /home/sico/Code/Lemely/.venv/bin/pre-commit run --files $FILES
-SKIP=import-linter git commit -S -m "feat(web): interactive swipe-back with parallax on iOS home-screen apps" -- $FILES
+SKIP=import-linter git commit -S -m "feat(web): interactive swipe-back with parallax in standalone on iOS and Android" -- $FILES
 ```
 
 ---
 
 ### Task 13: Shell pull-to-refresh on every root (D6) and Android-only haptics
+
+Before starting, check the open question "Pull-to-refresh indicator". This task as written keeps the existing `PullIndicator` and takes only the preview's 64px threshold; if the user chose to port the preview's per-platform indicators, that port is added here first.
 
 **Files:**
 - Create: `web/src/components/shell/ShellPullToRefresh.tsx`, `web/tests/unit/shellPullToRefresh.test.ts`
@@ -2863,6 +3545,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it, vi } from "vitest"
+import { PULL_THRESHOLD_PX } from "@/components/shell/ShellPullToRefresh"
 import { nativeHaptic } from "@/lib/haptics"
 
 const SRC = join(fileURLToPath(new URL("../../", import.meta.url)), "src")
@@ -2887,6 +3570,11 @@ describe("one pull-to-refresh, owned by the shell (D6)", () => {
   })
   it("the scroller contains overscroll", () => {
     expect(read("components/shell/ShellPullToRefresh.tsx")).toContain("overscroll-y-contain")
+  })
+  it("arms at the preview's 64px on both platforms, one number shared with the token block", () => {
+    const token = read("index.css").match(/--native-ptr-threshold:\s*(\d+)px/)?.[1]
+    expect(PULL_THRESHOLD_PX).toBe(Number(token))
+    expect(read("components/shell/ShellPullToRefresh.tsx")).toContain("threshold: PULL_THRESHOLD_PX")
   })
   it("screens no longer wire their own", () => {
     for (const f of ["portals/student/screens/Overview.tsx", "portals/student/screens/Notifications.tsx", "portals/student/screens/Announcements.tsx"]) {
@@ -2928,6 +3616,10 @@ import { PullIndicator } from "@/components/ui/pull-indicator"
 import { usePullToRefresh } from "@/lib/gestures/usePullToRefresh"
 import { nativeHaptic } from "@/lib/haptics"
 
+/** The preview's arm distance on both platforms (`--pf-ptr-threshold`); the
+ * same number as `--native-ptr-threshold`, pinned by shellPullToRefresh.test.ts. */
+export const PULL_THRESHOLD_PX = 64
+
 /** Native frame D6: one pull-to-refresh on every root page of both portals.
  * It refetches whatever the page is showing (active queries), so no screen
  * has to wire its own. */
@@ -2936,6 +3628,7 @@ export function ShellPullToRefresh({ enabled, children }: { enabled: boolean; ch
   const queryClient = useQueryClient()
   const { pulling, refreshing } = usePullToRefresh(surface, {
     enabled,
+    threshold: PULL_THRESHOLD_PX,
     onRefresh: async () => {
       nativeHaptic("tap")
       await queryClient.refetchQueries({ type: "active" })
@@ -2965,7 +3658,7 @@ NATIVE_CHECKS.push({
   app: NATIVE_HOME,
   async run(page) {
     let calls = 0
-    await page.route("**/api/student/overview**", (route) => { calls++; return route.fallback() })
+    await page.route("**/api/student/overview", (route) => { calls++; return route.fallback() })
     const main = page.locator("main")
     const box = await main.boundingBox()
     await page.mouse.move(box.x + 100, box.y + 40)
@@ -2978,7 +3671,7 @@ NATIVE_CHECKS.push({
 })
 ```
 
-The route glob must be the overview API path that `studentShellMocks` serves; check `mocks.mjs` and name it exactly. Add the same check for a teacher root (`app: NATIVE_TEACHER_HOME`, counting the teacher dashboard's API path). Show it can go red: pass `enabled={false}` and expect FAIL.
+The glob is the one `studentShellMocks` registers (`**/api/student/overview`, `mocks.mjs`); a later `page.route` runs first and `route.fallback()` hands the request on to the mock. Add the same check for a teacher root (`app: NATIVE_TEACHER_HOME`, counting the teacher dashboard's API path). Show it can go red: pass `enabled={false}` and expect FAIL.
 
 - [ ] **Step 5: Verify and commit**
 
@@ -3102,7 +3795,7 @@ Empty, loading and error states stay as the screen renders them today. Loading u
 
 - [ ] **Step 4: Behaviour check, verify, commit**
 
-Add a check `native-android-review-list-and-table` on `/teacher/review` with the teacher mocks. Expect a `ListRow` link per queued item, click "View table", and expect `getByRole("region", { name: "Review queue" })` to contain a `table`. Reload and expect the table view to persist (`sessionStorage`).
+Add a check `native-android-review-list-and-table` on `/teacher/review`. `teacherShellMocks` serves the queue as `{ items: [], total: 3 }`, which has no rows to assert on, so the check's `app.mocks` runs `teacherShellMocks(page)` and then registers its own `**/api/teacher/review?**` route returning two items in the shape `Review.tsx` reads (take the item type from the screen's query). Expect one `ListRow` link per item (two), click "View table", and expect `getByRole("region", { name: "Review queue" })` to contain a `table` with two body rows. Reload and expect the table view to persist (`sessionStorage`).
 
 ```bash
 cd web && npx vitest run tests/unit/tableOrList.test.ts tests/unit/a11yRules.test.ts tests/unit/reviewBadge.test.ts && npm run build && node scripts/shell-behaviour.mjs --check native- && node scripts/home-drift.mjs --scene teacher-
@@ -3175,7 +3868,7 @@ git status --short --branch
 git log --oneline -25
 ```
 
-Expected: branch `design/student-home-variants`, with the Task 0 to 15 commits present. Untracked `.impeccable/` folders and designer preview edits are left alone and listed in the report.
+Expected: branch `design/student-home-variants`, with the Task 0 to 15 commits present (5b included). Untracked `.impeccable/` folders and designer preview edits are left alone and listed in the report.
 
 - [ ] **Step 2: CI web gates that need no backend**
 
@@ -3247,12 +3940,13 @@ Add under §5:
 ```markdown
 ### Native phone frame
 "The page is the app's own list; the chrome is glass." Applies at 720px and narrower when `html[data-platform]` is `ios` or `android` (Tailwind `native:`, `ios:`, `android:`). Desktop, tablet and `other` keep design A.
-- **Header:** tab roots show a large title (Bricolage 800, `--native-large-title-size`) under an actions-only bar; it collapses into a 17px Schibsted 600 inline title (centred on iOS, start-aligned on Android) when the large title's bottom crosses the bar. iOS: transparent to glass (`--blur-nav`, 86%) with a 0.5px `outline-variant` hairline once content is under it. Android: `surface` to `surface-container`, no shadow, no hairline. Detail pages use the compact bar with a back chevron from the start.
-- **Tab bar:** iOS 49px plus the home indicator, glass, 11px labels, outline icons at rest and filled when selected, tinted `primary`. Android 80dp with a 64x32 `secondary-container` pill. The raised Correct button stays. Tapping the active tab scrolls to the top, then pops to the tab root. Camera, the correction run, paper review and review-a-mark hide it.
-- **Sheets, not dialogs or popovers:** `Modal`, `ConfirmModal`, settings, bell, account and popovers open as bottom sheets with a grabber (36x5 iOS, 32x4 Android), `--radius-card` top corners, a scrim, drag to dismiss, and medium/large detents for long content. iOS scales the page back at the large detent. Destructive confirms are an action sheet on iOS (Cancel separate) and an M3 dialog-style sheet on Android. Selects stay native: the OS picker is the platform sheet.
-- **Grouped content:** cards drop their outline. iOS: inset-grouped, 12px radius, 16px margins, 44px rows, separators inset from the leading edge. Android: full-width items (56/72/88), no separators. Page ground `surface-container-low`, rows `surface-container-lowest`. Dense teacher tables read as list rows with "View table".
-- **Touch:** every tappable element has a press state (iOS 8% dim and 0.97 scale; Android 10% state layer and ripple). No hover-only affordances. 44px targets. Android-only haptics on commit gestures.
-- **Gestures:** pull-to-refresh on every root (shell-owned). Swipe-back only in an iOS home-screen app (iOS Safari tabs and Android use the system back), with 30% parallax, committing at 35% width or a fast fling. Pushes slide with M3 emphasized easing on Android and a spring on iOS. Reduced motion turns it all off.
+- **Header:** tab roots show a large title (Bricolage 800, 34/41) under an actions-only bar (44px iOS, 64px Android). As the large title scrolls away it fades, and a 17px Schibsted 600 inline title (centred on iOS, start-aligned on Android) and the bar's surface fade in over the last 30% of its exit. iOS: transparent to glass (86% `surface-container-lowest`, dark `surface-container-low`, `--blur-nav`, saturate 1.6) with a 0.5px `outline-variant` hairline. Android: transparent to `surface-container`, no shadow, no hairline. Detail pages use the compact bar from the start: back (iOS chevron plus the parent's title, Android arrow), title, one action.
+- **Page heading:** on phones the large title replaces a screen's own heading when it repeats the title. Screens render their top heading with `PageHeading`, which is visually hidden on the native frame and stays the page's one `h1` for screen readers; the large title is `aria-hidden`.
+- **Tab bar:** iOS 49px plus the home indicator, glass, 10px labels, 24px outline icons at rest and filled when selected, tinted `primary`. Android 80dp, 12px labels, 24px icons, with a 64x32 `secondary-container` pill. The raised Correct button stays. Tapping the active tab scrolls to the top, then pops to the tab root. Camera, the correction run, paper review and review-a-mark hide it.
+- **Sheets, not dialogs or popovers:** `Modal`, `ConfirmModal`, settings, bell, account and popovers open as bottom sheets on `surface-container-low` with a grabber (36x5 iOS, 32x4 Android), `--radius-card` top corners, a scrim and drag to dismiss. The bell and account panels fit their content; settings and long modals open at medium (50dvh) and drag up to large. iOS: 320ms spring, and the page scales back to 0.94 at the large detent. Android: 300ms M3 emphasized decelerate, no scale-back. Destructive confirms are an action sheet on iOS (Cancel separate) and an M3 dialog-style sheet on Android. Selects stay native: the OS picker is the platform sheet.
+- **Grouped content:** cards drop their outline and become groups on the group surface (`surface-container-lowest`, dark `surface-container-high`). iOS: inset-grouped, 12px radius, 16px page margins, 44px rows, hairline separators inset 16px from the leading edge, on a `surface-container` ground (dark `surface-container-lowest`). Android: full-bleed and square, keeping the 14px page gutter inside each card, 56/72/88 rows with 16px padding, no separators, on a `surface-container-low` ground (dark `surface`). Dense teacher tables read as list rows with "View table".
+- **Touch:** every tappable element has a press state. iOS: an 8% dim toward black (white in dark), and buttons scale to 0.97; tabs dim to 55% instead. Android: a 10% `currentColor` state layer that ripples from the touch point over 450ms. No hover-only affordances. 44px targets (48px icon buttons on Android). Android-only haptics on commit gestures.
+- **Gestures:** pull-to-refresh on every root (shell-owned), arming at 64px. Swipe-back in a home-screen app on iOS and Android (browser tabs use the browser's own back), with 30% parallax, committing at 35% width or a fast fling. Pushes slide with M3 emphasized easing on Android and a spring on iOS. Reduced motion turns it all off.
 - **Brand stays:** Bricolage, Schibsted, JetBrains Mono everywhere, never SF Pro or an iOS-blue accent.
 ```
 
@@ -3269,9 +3963,9 @@ Insert directly under P2's title block (above "## Revised 2026-11-06 for design 
 - **Task 9 (drift scenes):** add native scenes for the home (`platform: "ios"|"android"`, 390x844, preview `?platform=…&page=root`) next to the existing `other` scenes, using `NATIVE_PREVIEW`/`previewNativeQuery` (`web/scripts/drift/native-preview.mjs`). The existing 390 scenes keep running without a UA (design A).
 - **Task 10 (home primitives):** home sections on the native frame use `ListGroup`/`ListRow` (`web/src/components/ui/list-group.tsx`) and the `native:` card rules; do not add a second card look.
 - **Task 14 (Your grades):** the "one card per subject at 560px and narrower" rule is design A (`other`). On the native frame the list is one `ListGroup` (iOS inset-grouped, Android full-width), per the preview's native page.
-- **Task 18 (StudentHome):** drop its own `usePullToRefresh` and `PullIndicator`; the shell's `ShellPullToRefresh` already covers root pages (native frame D6). Its page title comes from the shell's large title; any in-page `<h1>` that repeats it gets `native:sr-only`.
+- **Task 18 (StudentHome):** drop its own `usePullToRefresh` and `PullIndicator`; the shell's `ShellPullToRefresh` already covers root pages (native frame D6). On phones the page title is the shell's large title ("Overview"). The home's top heading must be a `PageHeading` (`web/src/components/ui/page-heading.tsx`, native frame D11): `repeatsTitle` when it names the page (visually hidden on phones), `repeatsTitle={false}` for a greeting such as "Hi, Mariam" (stays visible). A raw `<h1>` fails `pageHeading.test.ts`, and the native frame's `native-*-one-heading-/student` checks fail on a visible duplicate or on anything but one `h1`. The hero height is unchanged by the native frame.
 - **Task 19:** the old `Overview.tsx` no longer has a pull-to-refresh to remove (native frame Task 13 did it).
-- **Task 20 (sweep):** include `--scene native-` and the behaviour runner's `native-` checks.
+- **Task 20 (sweep):** include `--scene native-`, the behaviour runner's `native-` checks, and `tests/unit/pageHeading.test.ts`.
 ```
 
 - [ ] **Step 3: Commit**
@@ -3291,18 +3985,19 @@ Add `.impeccable/design.json` to `FILES` only if Step 1 changed it.
 
 1. **iOS earlier than 26 has no scroll-driven animations.** The collapse falls back to `data-collapsed`, set by a passive scroll listener batched to one rAF (Task 4). The fallback is a fade at the threshold rather than a scrubbed one. The behaviour check asserts the attribute path, so it covers older iOS, and drift (reduced motion) always uses it. Watch for jank: the listener does one `setState` per frame at most, and only on root pages on native.
 2. **The iOS keyboard and sheets.** iOS ignores `interactive-widget=resizes-content`, so a focused input inside a sheet can sit under the keyboard. `useKeyboardInset` positions the sheet by `visualViewport` (`--lm-keyboard-inset`) and shrinks its max height (Task 6). Risks: `visualViewport` `scroll` events fire late on some iOS versions, and `position: fixed` with the keyboard open can jump. Test on a real iPhone before Task 16 sign-off. No emulator reproduces this, and the Playwright checks cannot.
-3. **Gestures vs text selection.** Sheet drags start only on `[data-sheet-drag-region]` (grabber and header, `select-none`). Swipe-back starts only in the 24px leading edge zone and skips interactive targets. Pull-to-refresh starts only at scroll top on a vertical drag. Content keeps `user-select: auto`, which Task 12's check asserts. Remaining risk: a long-press text selection that starts within 24px of the edge. iOS standalone gives the gesture priority there, which matches native apps.
+3. **Gestures vs text selection.** Sheet drags start only on `[data-sheet-drag-region]` (grabber and header, `select-none`). Swipe-back starts only in the 24px leading edge zone and skips interactive targets. Pull-to-refresh starts only at scroll top on a vertical drag. Content keeps `user-select: auto`, which Task 12's check asserts. Remaining risk: a long-press text selection that starts within 24px of the edge. Standalone gives the gesture priority there, which matches native apps.
 4. **View transitions on iOS earlier than 18.** `document.startViewTransition` does not exist there. react-router's `viewTransition` falls back to an instant swap, so the push slide and the swipe-in parallax do not run. That is acceptable, because navigation still works, and the swipe gesture's own finger-following transform still runs. Do not polyfill.
 5. **`transform`/`scale` on `#root` for the iOS scale-back** re-anchors `position: fixed` descendants (the tab bar, banners) to `#root` while a large sheet is open. They scale with the page, which is the intended look. Sticky elements in the scaled tree also stop sticking for the duration. That is invisible, because the scroll is locked.
 6. **The status bar flip (D7)** affects every standalone route at once, including screens this plan does not otherwise touch. Task 3 Step 4 is a grep-driven audit; a route it misses will draw under the clock. Check: launch standalone on a real iPhone and walk auth, onboarding and the camera.
 7. **Platform emulation in drift.** Playwright's UA override does not change `navigator.userAgentData.platform` on a Linux host. The resolver therefore trusts UA-CH only for "Android" and parses the UA string otherwise. `openApp` asserts `data-platform` after load, so a resolver regression fails loudly instead of silently capturing design A.
 8. **Bundle budget.** `BottomSheetSurface`, `PanelSheet` and the list primitives join shared chunks. `check:bundle` may fail at Task 16; the remedy is lazy `PanelSheet`, the same pattern as the panels.
-9. **A screen's own `<h1>` repeating the large title** (open question). Hiding them is per screen and is left to a follow-up and to P2.
+9. **A screen's own `<h1>` repeating the large title** (D11, Task 5b). The risk is a wrong `repeatsTitle` call: a heading marked as repeating that actually says more (hidden on phones, content lost visually), or the reverse (a visible duplicate). The behaviour check catches the duplicate on every tab root and the sampled detail pages; the inventory table in Task 5b's commit body is the review point for the rest. A screen added later cannot skip the decision: the source scan rejects a raw `<h1>`.
 10. **The preview gap.** The native scenes depend on the designer's preview supporting `platform` and `page`. If the preview lacks a state (for example the settings sheet on Android), mark that scene log-only with a justification. Do not invent a reference.
+11. **Android gesture navigation and the edge swipe (D5).** On Android with gesture navigation, the OS claims edge swipes for its own back before the page sees them, so the in-app swipe-back mostly serves three-button navigation and devices that pass the pointer through. Both paths go back, so a lost race costs nothing. If testing on a real Android phone shows the two fighting (a double back), report it to the user rather than changing D5.
 
 ## Self-review against the brief
 
-- §3.1 header: Task 4. §3.2 tab bar: Task 5. §3.3 sheets: Tasks 6 to 9 (selects per D4). §3.4 grouped content: Tasks 10, 14 and 15. §3.5 touch feedback: Tasks 3, 11 and 13. §3.6 gestures and motion: Tasks 12 and 13. Sheet easing is in Task 6. Per-platform push easing on the existing `data-direction` slides, and the swipe-in parallax, are in Task 12's CSS. Tab crossfade is unchanged (existing view transition). §3.7 platform switch: Task 1.
+- §3.1 header: Task 4, plus the one-heading rule (D11, Task 5b). §3.2 tab bar: Task 5. §3.3 sheets: Tasks 6 to 9 (selects per D4). §3.4 grouped content: Tasks 10, 14 and 15. §3.5 touch feedback: Tasks 3, 11 and 13. §3.6 gestures and motion: Tasks 12 and 13. Sheet easing is in Task 6. Per-platform push easing on the existing `data-direction` slides, and the swipe-in parallax, are in Task 12's CSS. Tab crossfade is unchanged (existing view transition). §3.7 platform switch: Task 1.
 - §5 states: long titles (Task 4 line clamp and truncate), badges (unchanged `BottomNav` badge), keyboard (Task 6), list states (Task 10 skeleton, Task 14 states), banners between the bar and content (the large title sits directly under the bar, and banners stay in `<main>` under it), standalone vs tab (Tasks 3 and 12).
 - §7 decisions 1 to 5: preview first (Task 0), before P2 (sequencing, Task 17 note), brand fonts (Global Constraints), teachers (Tasks 4, 14 and 15, teacher scenes), DESIGN.md (Task 17).
 - §2 proof: Task 16 Step 6.
