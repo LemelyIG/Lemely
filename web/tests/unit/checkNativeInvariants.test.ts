@@ -27,7 +27,7 @@ function run(input: unknown): { checks: Check[]; passed: boolean } {
 
 const GOOD_HTML =
   '<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />' +
-  '<meta name="apple-mobile-web-app-status-bar-style" content="default" />'
+  '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />'
 
 const GOOD_CSS = `
 html,
@@ -414,11 +414,11 @@ describe("runChecks — lm-nav-chrome coverage", () => {
 })
 
 describe("runChecks — apple-mobile-web-app-status-bar-style", () => {
-  it("fails when it's black-translucent instead of default", () => {
+  it("fails when it's default instead of black-translucent", () => {
     const input = goodInput()
     input.indexHtml = input.indexHtml.replace(
-      '<meta name="apple-mobile-web-app-status-bar-style" content="default" />',
       '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />',
+      '<meta name="apple-mobile-web-app-status-bar-style" content="default" />',
     )
     const result = run(input)
     expect(result.checks.find((c) => c.name.includes("status-bar-style"))?.pass).toBe(false)

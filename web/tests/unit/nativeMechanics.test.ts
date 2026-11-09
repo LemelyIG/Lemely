@@ -268,10 +268,22 @@ describe("no literal sidebar breakpoint/width on any <aside> in portals", () => 
 })
 
 describe("apple-mobile-web-app-status-bar-style", () => {
-  it("is declared as default, not black-translucent", () => {
-    expect(html).toContain(
-      '<meta name="apple-mobile-web-app-status-bar-style" content="default" />',
-    )
+  it("is black-translucent: the native frame's glass runs under the clock in standalone (native frame D7)", () => {
+    expect(html).toContain('<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />')
+  })
+})
+
+describe("text-size-adjust", () => {
+  it("html, body keep author font sizes on rotation", () => {
+    const body = css.match(/html,\s*body\s*\{([\s\S]*?)\}/)?.[1] ?? ""
+    expect(body).toContain("-webkit-text-size-adjust: 100%")
+    expect(body).toMatch(/(?<!-webkit-)text-size-adjust: 100%/)
+  })
+})
+
+describe("standalone top inset utility", () => {
+  it("lm-standalone-top pads the safe area only in standalone", () => {
+    expect(css).toMatch(/@media \(display-mode: standalone\)\s*\{\s*\.lm-standalone-top\s*\{\s*padding-top: env\(safe-area-inset-top\);/)
   })
 })
 

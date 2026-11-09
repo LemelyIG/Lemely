@@ -564,6 +564,10 @@ body {
      tapped element responds — real focus/active states already carry the
      feedback. */
   -webkit-tap-highlight-color: transparent;
+  /* iOS and Android may inflate text after rotation; the type scale is set
+     by the design system, not by the browser (native frame Task 3). */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
   /* Stops a swipe-to-scroll gesture at the page top/bottom from bleeding into
      the browser's pull-to-refresh/back-navigation chrome; each scrollable
      region below still rubber-bands to its own edges. */
@@ -682,6 +686,14 @@ body {
    links are laid out as flex or inline-flex by the kit and are handled at their
    own components, where the centring is known. */
 @media (pointer: coarse) {
+  /* Every tap target drops the double-tap-to-zoom delay. Links and summaries
+     live here only: they stay out of the min-block-size rule below, so inline
+     prose links keep their line-height. */
+  a[href],
+  summary {
+    touch-action: manipulation;
+  }
+
   button,
   [role="button"],
   [role="tab"],
@@ -1125,8 +1137,9 @@ html[data-direction="back"]::view-transition-new(root) {
    browser reflex with nothing useful to act on here, and on a home-screen
    app it reads as a bug rather than a browser feature. */
 .lm-nav-chrome {
-  -webkit-touch-callout: none;
+  -webkit-user-select: none;
   user-select: none;
+  -webkit-touch-callout: none;
 }
 
 /* `padding-top` here is unlayered CSS, and unlayered always beats a layered
@@ -1177,6 +1190,15 @@ html[data-direction="back"]::view-transition-new(root) {
   .lm-shell-bar-inset {
     top: auto;
     margin-top: env(safe-area-inset-top);
+  }
+}
+
+/* With black-translucent (index.html), an iOS home-screen app draws under the
+   status bar. The shell bar already adds the inset (.lm-shell-bar-inset,
+   .lm-native-bar); full-screen roots outside the shell opt in with this. */
+@media (display-mode: standalone) {
+  .lm-standalone-top {
+    padding-top: env(safe-area-inset-top);
   }
 }
 

@@ -511,8 +511,8 @@ export function runChecks({ indexHtml, indexCss, inputTsx, textareaTsx, swSource
   })
 
   checks.push({
-    name: 'index.html: apple-mobile-web-app-status-bar-style="default"',
-    pass: indexHtml.includes('<meta name="apple-mobile-web-app-status-bar-style" content="default" />'),
+    name: 'index.html: apple-mobile-web-app-status-bar-style="black-translucent"',
+    pass: indexHtml.includes('<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />'),
   })
 
   checks.push({
