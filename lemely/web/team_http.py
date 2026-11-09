@@ -71,7 +71,9 @@ def team_error_to_http(exc: TeamError) -> HTTPException:
     if isinstance(exc, InvalidScope):
         return _error(422, "invalid_scope", "Use known subjects and seat actions only.")
     if isinstance(exc, InvalidCap):
-        return _error(422, "invalid_cap", "A cap must be zero or more.")
+        return _error(
+            422, "invalid_cap", "Use a whole number of credits, from zero up to the limit."
+        )
     if isinstance(exc, InvalidPermissions):
         return _error(422, "invalid_permissions", "Use known team permissions only.")
     if isinstance(exc, AssistantInviteRedeemed):

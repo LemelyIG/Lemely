@@ -6,11 +6,12 @@ from datetime import UTC, datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy import select
 
 from lemely.db.models.enums import Role
-from lemely.db.models.team import CapPeriod
+from lemely.db.models.team import CapPeriod, TeacherMember
 from lemely.db.models.usage import GrantKind, UsageEntryKind
-from lemely.db.teacher_team_repo import TeacherTeamService, month_start
+from lemely.db.teacher_team_repo import MAX_CAP_UNITS, InvalidCap, TeacherTeamService, month_start
 from tests.team_db import (
     NOW,
     add_assistant,
@@ -220,3 +221,126 @@ def test_seat_meter_ignores_another_seats_allowance(sm: sessionmaker[Session]) -
     set_remaining(sm, other_grant, 0)
     assert _meter(sm, teacher, seat) is None
     assert _meter(sm, teacher, other_seat) == pytest.approx(1.0)
+
+
+# ── bulk reads equal the per-member reads ────────────────────────────────────
+
+
+def test_cap_used_many_equals_cap_used_for_every_member(sm: sessionmaker[Session]) -> None:
+    lead, other_lead = add_user(sm, Role.teacher), add_user(sm, Role.teacher)
+    students = [add_user(sm) for _ in range(4)]
+    helper, other_helper = add_user(sm, Role.teacher), add_user(sm, Role.teacher)
+    month_seat = add_seat(sm, teacher_id=lead, student_id=students[0])
+    total_seat = add_seat(sm, teacher_id=lead, student_id=students[1])
+    idle_seat = add_seat(sm, teacher_id=lead, student_id=students[2])
+    foreign_seat = add_seat(sm, teacher_id=other_lead, student_id=students[3])
+    assistant = add_assistant(sm, teacher_id=lead, assistant_id=helper)
+    foreign_assistant = add_assistant(sm, teacher_id=other_lead, assistant_id=other_helper)
+    with sm.begin() as session:
+        service = TeacherTeamService(session)
+        service.set_cap(total_seat, cap_units=900, cap_period=CapPeriod.total)
+        service.set_cap(foreign_assistant, cap_units=900, cap_period=CapPeriod.total)
+    credits = add_grant(sm, owner_id=lead, kind=GrantKind.credit_pack, units=5000, at=NOW)
+    foreign = add_grant(sm, owner_id=other_lead, kind=GrantKind.credit_pack, units=5000, at=NOW)
+    allowance = add_grant(
+        sm,
+        owner_id=students[0],
+        kind=GrantKind.seat_allowance,
+        units=100,
+        at=NOW,
+        teacher_member_id=month_seat,
+    )
+    start = month_start(NOW)
+    old = start - timedelta(microseconds=1)
+    lines = (
+        (credits, month_seat, UsageEntryKind.settle, -40, NOW),
+        (credits, month_seat, UsageEntryKind.settle, -25, old),  # last month: out of a month cap
+        (credits, month_seat, UsageEntryKind.settle, -3, start),  # first instant: in
+        (credits, month_seat, UsageEntryKind.hold, 10, NOW),
+        (credits, month_seat, UsageEntryKind.release, -10, NOW),
+        (credits, month_seat, UsageEntryKind.hold, 7, old),  # open hold, unwindowed
+        (allowance, month_seat, UsageEntryKind.settle, -50, NOW),  # the student's own grant
+        (credits, total_seat, UsageEntryKind.settle, -25, old),  # in a total cap
+        (credits, total_seat, UsageEntryKind.settle, -60, NOW - timedelta(days=200)),
+        (credits, total_seat, UsageEntryKind.hold, 5, NOW),
+        (credits, assistant, UsageEntryKind.settle, -30, NOW),
+        (credits, assistant, UsageEntryKind.settle, -99, old),
+        (foreign, foreign_seat, UsageEntryKind.settle, -11, NOW),
+        (foreign, foreign_assistant, UsageEntryKind.settle, -13, old),
+        (foreign, month_seat, UsageEntryKind.settle, -500, NOW),  # another teacher's grant
+    )
+    for grant, member, kind, units, at in lines:
+        add_entry(sm, grant_id=grant, member_id=member, kind=kind, units=units, at=at)
+    ids = [month_seat, total_seat, idle_seat, foreign_seat, assistant, foreign_assistant]
+    with sm() as session:
+        team = TeacherTeamService(session)
+        # Members of two different teachers in one call, as a mixed list would be.
+        members = list(session.scalars(select(TeacherMember).where(TeacherMember.id.in_(ids))))
+        bulk = team.cap_used_many(members, now=NOW)
+        single = {m.id: team.cap_used(m, now=NOW) for m in members}
+        assert bulk == single
+        assert single[month_seat] == 43 + 7  # settled in the month, plus the one open hold
+        assert single[total_seat] == 85 + 5  # a total cap has no window
+        assert single[idle_seat] == 0
+        assert single[assistant] == 30
+        assert single[foreign_seat] == 11
+        assert single[foreign_assistant] == 13
+        assert team.cap_used_many([], now=NOW) == {}
+        with pytest.raises(ValueError, match="timezone-aware"):
+            team.cap_used_many(members, now=datetime(2026, 11, 14, 12, 0))
+
+
+def test_seat_meter_fractions_equal_seat_meter_fraction_for_every_member(
+    sm: sessionmaker[Session],
+) -> None:
+    teacher, helper = add_user(sm, Role.teacher), add_user(sm, Role.teacher)
+    kids = [add_user(sm) for _ in range(5)]
+    seats = [add_seat(sm, teacher_id=teacher, student_id=kid) for kid in kids]
+    assistant = add_assistant(sm, teacher_id=teacher, assistant_id=helper)
+    used, split, expired, future, none = seats
+
+    def allowance(owner: uuid.UUID, seat: uuid.UUID, units: int, at: datetime) -> uuid.UUID:
+        return add_grant(
+            sm,
+            owner_id=owner,
+            kind=GrantKind.seat_allowance,
+            units=units,
+            at=at,
+            teacher_member_id=seat,
+        )
+
+    set_remaining(sm, allowance(kids[0], used, 100, NOW), 70)
+    # Two current grants for one seat are summed (an upgrade adds a second one).
+    set_remaining(sm, allowance(kids[1], split, 100, NOW), 50)
+    set_remaining(sm, allowance(kids[1], split, 300, NOW), 300)
+    # Expired and not-yet-usable grants do not count.
+    set_remaining(sm, allowance(kids[2], expired, 100, NOW - timedelta(days=400)), 0)
+    set_remaining(sm, allowance(kids[3], future, 100, NOW + timedelta(days=100)), 0)
+    # Another seat's grant, and a credit pack, are never read for ``none``.
+    add_grant(sm, owner_id=teacher, kind=GrantKind.credit_pack, units=100, at=NOW)
+    ids = [*seats, assistant]
+    with sm() as session:
+        team = TeacherTeamService(session)
+        members = list(session.scalars(select(TeacherMember).where(TeacherMember.id.in_(ids))))
+        bulk = team.seat_meter_fractions(members, now=NOW)
+        single = {m.id: team.seat_meter_fraction(m, now=NOW) for m in members}
+        assert bulk == single
+        assert single[used] == pytest.approx(0.3)
+        assert single[split] == pytest.approx((400 - 350) / 400)
+        assert single[expired] is None
+        assert single[future] is None
+        assert single[none] is None
+        assert single[assistant] is None
+        assert team.seat_meter_fractions([], now=NOW) == {}
+
+
+def test_the_service_refuses_a_cap_outside_zero_to_the_ceiling(sm: sessionmaker[Session]) -> None:
+    teacher, student = add_user(sm, Role.teacher), add_user(sm)
+    seat = add_seat(sm, teacher_id=teacher, student_id=student)
+    with sm.begin() as session:
+        service = TeacherTeamService(session)
+        service.set_cap(seat, cap_units=MAX_CAP_UNITS, cap_period=CapPeriod.total)
+        service.set_cap(seat, cap_units=0, cap_period=CapPeriod.total)
+        for bad in (-1, MAX_CAP_UNITS + 1, 2**63):
+            with pytest.raises(InvalidCap):
+                service.set_cap(seat, cap_units=bad, cap_period=CapPeriod.total)

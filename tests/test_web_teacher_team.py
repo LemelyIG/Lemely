@@ -7,14 +7,17 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
 import pytest
+import sqlalchemy as sa
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
+from sqlalchemy.dialects.postgresql import JSONB
 
 from lemely.db.models import Invite
 from lemely.db.models.enums import Role
 from lemely.db.models.team import AssistantRole, TeacherMember, TeacherMemberStatus
 from lemely.db.models.usage import GrantKind, UsageEntryKind
 from lemely.db.teacher_team_repo import (
+    MAX_CAP_UNITS,
     MAX_LIVE_ASSISTANT_INVITES,
     AssistantInviteLimitError,
     AssistantInviteNotFound,
@@ -57,6 +60,7 @@ from tests.team_db import (
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from sqlalchemy.engine import Engine
     from sqlalchemy.orm import Session, sessionmaker
 
 BASE = "/api/teacher/team"
@@ -243,7 +247,10 @@ def test_set_cap_on_a_seat_and_an_assistant(sm: sessionmaker[Session]) -> None:
         body = resp.json()
         assert (body["kind"], body["memberId"]) == (kind, str(member))
         assert (body["capUnits"], body["capPeriod"], body["capUsedUnits"]) == (250, "total", 0)
-    assert c.put(f"{BASE}/members/{seat}/cap", json={"capUnits": -1}).status_code == 422
+    assert (
+        c.put(f"{BASE}/members/{seat}/cap", json={"capUnits": -1, "capPeriod": "month"}).status_code
+        == 422
+    )
 
 
 def test_set_cap_accepts_zero_and_clears_with_null(sm: sessionmaker[Session]) -> None:
@@ -283,8 +290,8 @@ def test_set_cap_reports_use_in_the_new_window(sm: sessionmaker[Session]) -> Non
     "body",
     [
         {"capUnits": 1, "capPeriod": "weekly"},
-        {"capUnits": "many"},
-        {"capUnits": 1, "unexpected": True},
+        {"capUnits": "many", "capPeriod": "month"},
+        {"capUnits": 1, "capPeriod": "month", "unexpected": True},
     ],
 )
 def test_set_cap_rejects_malformed_bodies(
@@ -308,8 +315,16 @@ def test_another_teachers_members_are_404(sm: sessionmaker[Session]) -> None:
     scope = {"subjects": ["0580"], "actions": ["mark_paper"]}
     assert c.put(f"{BASE}/seats/{seat}/scope", json=scope).status_code == 404
     assert c.delete(f"{BASE}/seats/{seat}").status_code == 404
-    assert c.put(f"{BASE}/members/{seat}/cap", json={"capUnits": 1}).status_code == 404
-    assert c.put(f"{BASE}/members/{assistant}/cap", json={"capUnits": 1}).status_code == 404
+    assert (
+        c.put(f"{BASE}/members/{seat}/cap", json={"capUnits": 1, "capPeriod": "month"}).status_code
+        == 404
+    )
+    assert (
+        c.put(
+            f"{BASE}/members/{assistant}/cap", json={"capUnits": 1, "capPeriod": "month"}
+        ).status_code
+        == 404
+    )
     assert c.patch(f"{BASE}/assistants/{assistant}", json={"role": "viewer"}).status_code == 404
     assert c.delete(f"{BASE}/assistants/{assistant}").status_code == 404
     assert c.get(f"{BASE}/seats").json() == {"seats": []}
@@ -359,8 +374,16 @@ def test_a_removed_member_is_gone_to_every_route(sm: sessionmaker[Session]) -> N
         sm, teacher_id=teacher, assistant_id=helper, status=TeacherMemberStatus.removed
     )
     c = client(sm, teacher)
-    assert c.put(f"{BASE}/members/{seat}/cap", json={"capUnits": 1}).status_code == 404
-    assert c.put(f"{BASE}/members/{assistant}/cap", json={"capUnits": 1}).status_code == 404
+    assert (
+        c.put(f"{BASE}/members/{seat}/cap", json={"capUnits": 1, "capPeriod": "month"}).status_code
+        == 404
+    )
+    assert (
+        c.put(
+            f"{BASE}/members/{assistant}/cap", json={"capUnits": 1, "capPeriod": "month"}
+        ).status_code
+        == 404
+    )
     assert c.delete(f"{BASE}/seats/{seat}").status_code == 404
     assert c.delete(f"{BASE}/assistants/{assistant}").status_code == 404
 
@@ -377,7 +400,7 @@ def _every_team_request(
         ("GET", f"{BASE}/capacity", None),
         ("PUT", f"{BASE}/seats/{seat}/scope", {"subjects": [], "actions": ["mark_paper"]}),
         ("DELETE", f"{BASE}/seats/{seat}", None),
-        ("PUT", f"{BASE}/members/{seat}/cap", {"capUnits": 1}),
+        ("PUT", f"{BASE}/members/{seat}/cap", {"capUnits": 1, "capPeriod": "month"}),
         ("GET", f"{BASE}/assistants", None),
         ("POST", f"{BASE}/assistants/invites", {"role": "viewer"}),
         ("GET", f"{BASE}/invites", None),
@@ -833,3 +856,201 @@ def test_not_a_teacher_is_checked_before_its_team_state_error_parent() -> None:
     assert issubclass(NotATeacher, TeamStateError)
     assert team_error_to_http(NotATeacher("x")).status_code == 403
     assert team_error_to_http(TeamStateError("x")).status_code == 409
+
+
+# ── cap bodies: both fields explicit, whole numbers, bounded ─────────────────
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"capPeriod": "month"},
+        {"capUnits": 5},
+        {"capUnits": True, "capPeriod": "month"},
+        {"capUnits": "12", "capPeriod": "month"},
+        {"capUnits": 1.5, "capPeriod": "month"},
+        {"capUnits": -1, "capPeriod": "month"},
+        {"capUnits": MAX_CAP_UNITS + 1, "capPeriod": "month"},
+        {"capUnits": 2**63, "capPeriod": "month"},
+        {"capUnits": 10**30, "capPeriod": "total"},
+    ],
+    ids=[
+        "empty",
+        "no-units",
+        "no-period",
+        "bool",
+        "numeric-string",
+        "float",
+        "negative",
+        "just-over-max",
+        "bigint-overflow",
+        "huge",
+    ],
+)
+def test_a_bad_cap_body_is_422_and_changes_nothing(
+    sm: sessionmaker[Session], body: dict[str, object]
+) -> None:
+    teacher, student, helper = add_user(sm, Role.teacher), add_user(sm), add_user(sm, Role.teacher)
+    seat = add_seat(sm, teacher_id=teacher, student_id=student, cap_units=77)
+    assistant = add_assistant(sm, teacher_id=teacher, assistant_id=helper)
+    c = client(sm, teacher)
+    for member in (seat, assistant):
+        assert c.put(f"{BASE}/members/{member}/cap", json=body).status_code == 422
+    [row] = c.get(f"{BASE}/seats").json()["seats"]
+    assert row["capUnits"] == 77  # an empty body did not quietly mean "unlimited"
+    [helper_row] = c.get(f"{BASE}/assistants").json()["assistants"]
+    assert helper_row["capUnits"] is None
+
+
+def test_the_cap_ceiling_is_accepted_and_null_must_be_explicit(sm: sessionmaker[Session]) -> None:
+    teacher, student = add_user(sm, Role.teacher), add_user(sm)
+    seat = add_seat(sm, teacher_id=teacher, student_id=student)
+    c = client(sm, teacher)
+    top = c.put(
+        f"{BASE}/members/{seat}/cap", json={"capUnits": MAX_CAP_UNITS, "capPeriod": "total"}
+    )
+    assert (top.status_code, top.json()["capUnits"]) == (200, MAX_CAP_UNITS)
+    off = c.put(f"{BASE}/members/{seat}/cap", json={"capUnits": None, "capPeriod": "total"})
+    assert (off.status_code, off.json()["capUnits"]) == (200, None)
+
+
+# ── read paths fail closed on unreadable stored toggles ──────────────────────
+
+_UNREADABLE_TOGGLES = [
+    "[]",
+    '"x"',
+    "5",
+    "true",
+    "null",
+    "[1, 2]",
+    '{"mark": "yes"}',
+    '{"billing": true}',
+]
+
+
+def _store_raw_permissions(sm: sessionmaker[Session], member_id: uuid.UUID, raw_json: str) -> None:
+    with sm.begin() as session:
+        session.execute(
+            sa.update(TeacherMember)
+            .where(TeacherMember.id == member_id)
+            .values(permissions=sa.cast(sa.literal(raw_json), JSONB))
+        )
+
+
+@pytest.mark.parametrize("raw_json", _UNREADABLE_TOGGLES)
+def test_unreadable_toggles_show_nothing_and_never_500(
+    sm: sessionmaker[Session], raw_json: str
+) -> None:
+    lead, helper = add_user(sm, Role.teacher), add_user(sm, Role.teacher)
+    member = add_assistant(sm, teacher_id=lead, assistant_id=helper, role=AssistantRole.co_teacher)
+    _store_raw_permissions(sm, member, raw_json)
+    [row] = client(sm, lead).get(f"{BASE}/assistants").json()["assistants"]
+    assert (row["effectivePermissions"], row["permissions"]) == ([], {})
+    [team] = client(sm, helper).get(f"{BASE}/memberships").json()["memberships"]
+    assert team["effectivePermissions"] == []
+    assert team["role"] == "co_teacher"  # the preset is still reported; only the grant is withheld
+
+
+def test_a_membership_is_dropped_when_its_lead_is_no_longer_a_teacher(
+    sm: sessionmaker[Session],
+) -> None:
+    stale_lead, real_lead = add_user(sm, Role.student), add_user(sm, Role.teacher)
+    helper = add_user(sm, Role.teacher)
+    add_assistant(sm, teacher_id=stale_lead, assistant_id=helper)
+    live = add_assistant(sm, teacher_id=real_lead, assistant_id=helper)
+    rows = client(sm, helper).get(f"{BASE}/memberships").json()["memberships"]
+    assert [r["memberId"] for r in rows] == [str(live)]
+
+
+# ── list routes cost a fixed number of queries ───────────────────────────────
+
+
+def _queries_for(sm: sessionmaker[Session], user: uuid.UUID, path: str) -> int:
+    """Count the SQL statements one GET issues (the auth context is overridden)."""
+    engine = cast("Engine", sm.kw["bind"])
+    seen: list[str] = []
+
+    def record(*args: object) -> None:
+        seen.append(str(args[2]))
+
+    c = client(sm, user)
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        assert c.get(path).status_code == 200
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    return len(seen)
+
+
+def _seed_seats(sm: sessionmaker[Session], teacher: uuid.UUID, count: int) -> None:
+    credits = add_grant(sm, owner_id=teacher, kind=GrantKind.credit_pack, units=10_000, at=NOW_REAL)
+    for _ in range(count):
+        student = add_user(sm, display_name="Kid")
+        seat = add_seat(sm, teacher_id=teacher, student_id=student)
+        add_entry(
+            sm, grant_id=credits, member_id=seat, kind=UsageEntryKind.settle, units=-3, at=NOW_REAL
+        )
+        add_entry(
+            sm, grant_id=credits, member_id=seat, kind=UsageEntryKind.hold, units=2, at=NOW_REAL
+        )
+        add_grant(
+            sm,
+            owner_id=student,
+            kind=GrantKind.seat_allowance,
+            units=100,
+            at=NOW_REAL,
+            teacher_member_id=seat,
+        )
+
+
+def test_listing_seats_costs_the_same_for_one_seat_and_twenty(sm: sessionmaker[Session]) -> None:
+    small, large = add_user(sm, Role.teacher), add_user(sm, Role.teacher)
+    _seed_seats(sm, small, 1)
+    _seed_seats(sm, large, 20)
+    one = _queries_for(sm, small, f"{BASE}/seats")
+    many = _queries_for(sm, large, f"{BASE}/seats")
+    assert one == many
+    assert many <= 6
+    rows = client(sm, large).get(f"{BASE}/seats").json()["seats"]
+    assert len(rows) == 20
+    assert {(r["capUsedUnits"], r["meterFraction"]) for r in rows} == {(5, 0.0)}
+
+
+def test_listing_assistants_costs_the_same_for_one_and_twenty(sm: sessionmaker[Session]) -> None:
+    small, large = add_user(sm, Role.teacher), add_user(sm, Role.teacher)
+    for lead, count in ((small, 1), (large, 20)):
+        credits = add_grant(sm, owner_id=lead, kind=GrantKind.credit_pack, units=9999, at=NOW_REAL)
+        for _ in range(count):
+            member = add_assistant(sm, teacher_id=lead, assistant_id=add_user(sm, Role.teacher))
+            add_entry(
+                sm,
+                grant_id=credits,
+                member_id=member,
+                kind=UsageEntryKind.settle,
+                units=-4,
+                at=NOW_REAL,
+            )
+    one = _queries_for(sm, small, f"{BASE}/assistants")
+    many = _queries_for(sm, large, f"{BASE}/assistants")
+    assert one == many
+    assert many <= 6
+    rows = client(sm, large).get(f"{BASE}/assistants").json()["assistants"]
+    assert len(rows) == 20
+    assert {r["capUsedUnits"] for r in rows} == {4}
+
+
+def test_listing_memberships_costs_the_same_for_one_team_and_twenty(
+    sm: sessionmaker[Session],
+) -> None:
+    solo, busy = add_user(sm, Role.teacher), add_user(sm, Role.teacher)
+    add_assistant(sm, teacher_id=add_user(sm, Role.teacher, display_name="L0"), assistant_id=solo)
+    for index in range(20):
+        lead = add_user(sm, Role.teacher, display_name=f"Lead {index}")
+        add_assistant(sm, teacher_id=lead, assistant_id=busy)
+    one = _queries_for(sm, solo, f"{BASE}/memberships")
+    many = _queries_for(sm, busy, f"{BASE}/memberships")
+    assert one == many
+    assert many <= 4
+    rows = client(sm, busy).get(f"{BASE}/memberships").json()["memberships"]
+    assert sorted(r["teacherName"] for r in rows) == sorted(f"Lead {i}" for i in range(20))

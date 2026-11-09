@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 
-from lemely.core.team_permissions import effective_permissions
 from lemely.db.models.enums import Role
 from lemely.db.models.team import AssistantRole, CapPeriod, TeacherMemberKind
 from lemely.db.teacher_team_repo import (
@@ -29,6 +28,8 @@ from lemely.db.teacher_team_repo import (
     TeacherTeamStore,
     TeamError,
     TeamMemberNotFound,
+    member_effective_permissions,
+    member_toggles,
 )
 from lemely.web.deps import (
     ACTING_TEACHER_HEADER,
@@ -113,16 +114,17 @@ def _invite_uuid(raw: str) -> uuid.UUID:
 
 
 def _sorted_permissions(member: TeacherMember) -> list[str]:
-    if member.role_preset is None:
-        return []
-    granted = effective_permissions(member.role_preset, member.permissions or {})
-    return sorted(permission.value for permission in granted)
+    """The member's effective permissions; ``[]`` for a row whose toggles are unreadable."""
+    return sorted(permission.value for permission in member_effective_permissions(member))
 
 
 def _seat_dtos(
     team: TeacherTeamService, seats: Sequence[TeacherMember], *, now: datetime
 ) -> list[SeatDTO]:
     names = team.display_names([s.member_user_id for s in seats])
+    # Two grouped queries for the whole list, not two per seat.
+    used = team.cap_used_many(seats, now=now)
+    meters = team.seat_meter_fractions(seats, now=now)
     return [
         SeatDTO(
             kind="student_seat",
@@ -135,8 +137,8 @@ def _seat_dtos(
             scopeActions=list(seat.scope_actions or []),
             capUnits=seat.cap_units,
             capPeriod=seat.cap_period.value,
-            capUsedUnits=team.cap_used(seat, now=now),
-            meterFraction=team.seat_meter_fraction(seat, now=now),
+            capUsedUnits=used[seat.id],
+            meterFraction=meters[seat.id],
             joinedAt=seat.created_at,
         )
         for seat in seats
@@ -147,6 +149,7 @@ def _assistant_dtos(
     team: TeacherTeamService, members: Sequence[TeacherMember], *, now: datetime
 ) -> list[AssistantDTO]:
     names = team.display_names([m.member_user_id for m in members])
+    used = team.cap_used_many(members, now=now)
     return [
         AssistantDTO(
             kind="assistant",
@@ -154,25 +157,30 @@ def _assistant_dtos(
             assistantId=str(member.member_user_id),
             assistantName=names.get(member.member_user_id) or "Assistant",
             role=member.role_preset.value if member.role_preset is not None else "viewer",
-            permissions=dict(member.permissions or {}),
+            permissions=member_toggles(member) or {},
             effectivePermissions=_sorted_permissions(member),
             capUnits=member.cap_units,
             capPeriod=member.cap_period.value,
-            capUsedUnits=team.cap_used(member, now=now),
+            capUsedUnits=used[member.id],
         )
         for member in members
     ]
 
 
-def _membership_dto(team: TeacherTeamService, member: TeacherMember) -> MembershipDTO:
-    names = team.display_names([member.teacher_user_id])
-    return MembershipDTO(
-        memberId=str(member.id),
-        teacherId=str(member.teacher_user_id),
-        teacherName=names.get(member.teacher_user_id) or "Teacher",
-        role=member.role_preset.value if member.role_preset is not None else "viewer",
-        effectivePermissions=_sorted_permissions(member),
-    )
+def _membership_dtos(
+    team: TeacherTeamService, members: Sequence[TeacherMember]
+) -> list[MembershipDTO]:
+    names = team.display_names([m.teacher_user_id for m in members])
+    return [
+        MembershipDTO(
+            memberId=str(member.id),
+            teacherId=str(member.teacher_user_id),
+            teacherName=names.get(member.teacher_user_id) or "Teacher",
+            role=member.role_preset.value if member.role_preset is not None else "viewer",
+            effectivePermissions=_sorted_permissions(member),
+        )
+        for member in members
+    ]
 
 
 def _invite_dto(invite: Invite) -> AssistantInviteDTO:
@@ -339,7 +347,7 @@ def redeem_assistant_invite(
             member = team.redeem_assistant_invite(
                 code=body.code, user_id=uuid.UUID(auth.user_id), now=datetime.now(UTC)
             )
-            return _membership_dto(team, member)
+            return _membership_dtos(team, [member])[0]
     except TeamError as exc:
         raise team_error_to_http(exc) from exc
 
@@ -386,7 +394,7 @@ def list_memberships(auth: LeadTeacher, store: Store) -> MembershipListDTO:
     """The teams the caller assists, with their effective permissions (for the UI's switcher)."""
     with store.transaction() as team:
         members = team.memberships_for_assistant(uuid.UUID(auth.user_id))
-        return MembershipListDTO(memberships=[_membership_dto(team, m) for m in members])
+        return MembershipListDTO(memberships=_membership_dtos(team, members))
 
 
 __all__ = ["router"]

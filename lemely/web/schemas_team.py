@@ -11,9 +11,11 @@ shown to a teacher are ``users.display_name`` with a neutral fallback, never an 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
+
+from lemely.db.teacher_team_repo import MAX_CAP_UNITS
 
 AssistantRoleLiteral = Literal["co_teacher", "marker", "viewer"]
 CapPeriodLiteral = Literal["month", "total"]
@@ -58,8 +60,14 @@ class SetSeatScopeRequestDTO(ApiModel):
 
 
 class SetCapRequestDTO(ApiModel):
-    capUnits: int | None = None
-    capPeriod: CapPeriodLiteral = "month"
+    """Both fields are required: an empty body must not silently mean "unlimited".
+
+    ``capUnits`` is ``null`` for no cap, or a whole number from 0 to :data:`MAX_CAP_UNITS`
+    (strict: ``true`` and ``"12"`` are refused, not coerced).
+    """
+
+    capUnits: Annotated[StrictInt, Field(ge=0, le=MAX_CAP_UNITS)] | None
+    capPeriod: CapPeriodLiteral
 
 
 class AssistantDTO(ApiModel):

@@ -45,7 +45,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Final
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, case, func, or_, select, true, update
 from sqlalchemy.exc import IntegrityError
 
 from lemely.core.metered_actions import SEAT_ACTIONS, MeteredAction
@@ -74,8 +74,14 @@ from lemely.db.models.team import (
     TeacherMemberKind,
     TeacherMemberStatus,
 )
-from lemely.db.models.usage import UsageEntry, UsageEntryKind, UsageGrant
-from lemely.db.usage_ledger_repo import HELD_KINDS, UsageLedger
+from lemely.db.models.usage import (
+    GrantKind,
+    UsageEntry,
+    UsageEntryKind,
+    UsageGrant,
+    UsageGrantBalance,
+)
+from lemely.db.usage_ledger_repo import HELD_KINDS, UsageLedger, _usable_at
 
 if TYPE_CHECKING:
     import uuid
@@ -97,6 +103,11 @@ MAX_LIVE_ASSISTANT_INVITES: Final = 20
 MAX_ASSISTANT_INVITE_TTL: Final = timedelta(days=30)
 """Longest an assistant invite may live. Spec §4.4 says only "expire"; the frontend
 contract (index A24, ``expiresInDays`` 1-30) sets the bound."""
+
+MAX_CAP_UNITS: Final = 1_000_000_000
+"""Largest cap a teacher may set, in usage units. Far above any real cap (the team screens
+stop at one million) and far below the ``BIGINT`` the column and the ledger sums use, so a
+cap can never overflow them."""
 
 _INVITE_CODE_ATTEMPTS: Final = 8
 
@@ -130,7 +141,7 @@ class InvalidScope(TeamError):
 
 
 class InvalidCap(TeamError):
-    """A cap is negative (→ 422)."""
+    """A cap is negative or above :data:`MAX_CAP_UNITS` (→ 422)."""
 
 
 class NotATeacher(TeamStateError):
@@ -168,6 +179,38 @@ def _require_aware(value: datetime, name: str) -> None:
 
 _INVITE_CODE_CONSTRAINT: Final = "ix_invites_code"
 _PAIR_CONSTRAINT: Final = "uq_teacher_members_teacher_member"
+
+
+def member_toggles(member: TeacherMember) -> dict[str, bool] | None:
+    """Return the assistant's stored toggles, checked, or ``None`` if they are unreadable.
+
+    ``permissions`` is JSONB, so a row can hold any JSON value (``[]``, ``"x"``, ``5``,
+    ``null``) however it got there. Only an object of known permission names mapped to
+    bools is a toggle set; anything else is ``None``. Never raises.
+    """
+    raw: object = member.permissions
+    if not isinstance(raw, Mapping):
+        return None
+    try:
+        return validate_overrides(raw)
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def member_effective_permissions(member: TeacherMember) -> frozenset[TeamPermission]:
+    """Return the permissions the assistant's role and toggles grant; empty if unreadable.
+
+    The one reading of a row's permissions, shared by the guard
+    (:meth:`TeacherTeamService.assistant_has_permission`) and every read path that
+    reports them, so a malformed row grants nothing and shows nothing, and never raises.
+    """
+    toggles = member_toggles(member)
+    if toggles is None or member.role_preset is None:
+        return frozenset()
+    try:
+        return effective_permissions(member.role_preset, toggles)
+    except (ValueError, TypeError, AttributeError):
+        return frozenset()
 
 
 def month_end(now: datetime) -> datetime:
@@ -400,13 +443,13 @@ class TeacherTeamService:
         Raises:
             TeamMemberNotFound: No such member.
             TeamStateError: The member is removed.
-            InvalidCap: ``cap_units`` is negative.
+            InvalidCap: ``cap_units`` is negative or above :data:`MAX_CAP_UNITS`.
         """
         member = self._locked_member(member_id)
         if member.status is TeacherMemberStatus.removed:
             raise TeamStateError("A removed member has no cap")
-        if cap_units is not None and cap_units < 0:
-            raise InvalidCap("A cap cannot be negative")
+        if cap_units is not None and not 0 <= cap_units <= MAX_CAP_UNITS:
+            raise InvalidCap(f"A cap must be between 0 and {MAX_CAP_UNITS}")
         member.cap_units = cap_units
         member.cap_period = CapPeriod(cap_period)
         self._session.flush()
@@ -675,25 +718,23 @@ class TeacherTeamService:
         ).first()
         if member is None or member.role_preset is None:
             return None
-        toggles: object = member.permissions
-        if not isinstance(toggles, Mapping):
-            # JSONB can hold any value ([], "x", 5, null); only an object is a toggle set.
-            return None
-        try:
-            granted = effective_permissions(member.role_preset, toggles)
-        except (ValueError, TypeError, AttributeError):
-            # A row whose toggles or preset cannot be read grants nothing (fail closed).
-            return None
+        granted = member_effective_permissions(member)
         return member if perm in granted else None
 
     def memberships_for_assistant(self, assistant_user_id: uuid.UUID) -> list[TeacherMember]:
-        """Return every team the account actively assists, oldest first."""
+        """Return every team the account actively assists, oldest first.
+
+        Teams whose lead is no longer a teacher account are left out: such a row confers
+        nothing (:meth:`assistant_has_permission`), so it is not offered either.
+        """
         stmt = (
             select(TeacherMember)
+            .join(User, User.id == TeacherMember.teacher_user_id)
             .where(
                 TeacherMember.member_user_id == assistant_user_id,
                 TeacherMember.kind == TeacherMemberKind.assistant,
                 TeacherMember.status == TeacherMemberStatus.active,
+                User.role == Role.teacher,
             )
             .order_by(TeacherMember.created_at, TeacherMember.id)
         )
@@ -804,6 +845,85 @@ class TeacherTeamService:
         return UsageLedger(self._session).meter_fraction(
             member.member_user_id, teacher_member_id=member.id, now=now
         )
+
+    def cap_used_many(
+        self, members: Sequence[TeacherMember], *, now: datetime
+    ) -> dict[uuid.UUID, int]:
+        """:meth:`cap_used` for many members in one grouped query, keyed by member id.
+
+        The same sums as the single-member read: settled draws on the member's teacher's
+        grants (windowed to this UTC month for a ``month`` cap, unwindowed for ``total``),
+        negated, plus the hold and release lines still netting to an open hold (never
+        windowed). Members with no lines are ``0``.
+
+        Raises:
+            ValueError: ``now`` is naive.
+        """
+        _require_aware(now, "now")
+        if not members:
+            return {}
+        ids = [member.id for member in members]
+        month_ids = [m.id for m in members if m.cap_period is CapPeriod.month]
+        in_window = UsageEntry.event_at >= month_start(now)
+        if month_ids:
+            in_window = or_(UsageEntry.teacher_member_id.not_in(month_ids), in_window)
+        else:
+            in_window = true()
+        settled = func.sum(
+            case(
+                (and_(UsageEntry.kind == UsageEntryKind.settle, in_window), UsageEntry.units),
+                else_=0,
+            )
+        )
+        held = func.sum(case((UsageEntry.kind.in_(HELD_KINDS), UsageEntry.units), else_=0))
+        rows = self._session.execute(
+            select(UsageEntry.teacher_member_id, settled, held)
+            .join(UsageGrant, UsageGrant.id == UsageEntry.grant_id)
+            .join(TeacherMember, TeacherMember.id == UsageEntry.teacher_member_id)
+            .where(
+                UsageEntry.teacher_member_id.in_(ids),
+                UsageGrant.owner_user_id == TeacherMember.teacher_user_id,
+            )
+            .group_by(UsageEntry.teacher_member_id)
+        ).all()
+        used = dict.fromkeys(ids, 0)
+        for member_id, settled_units, held_units in rows:
+            used[member_id] = -int(settled_units or 0) + int(held_units or 0)
+        return used
+
+    def seat_meter_fractions(
+        self, members: Sequence[TeacherMember], *, now: datetime
+    ) -> dict[uuid.UUID, float | None]:
+        """:meth:`seat_meter_fraction` for many members in one grouped query, keyed by id.
+
+        Reads each seat's current ``seat_allowance`` grants (owned by the student, usable
+        at ``now``) exactly as ``UsageLedger.meter_fraction`` does. Assistants and seats
+        with no current grant are ``None``.
+        """
+        fractions: dict[uuid.UUID, float | None] = {member.id: None for member in members}
+        seat_ids = [m.id for m in members if m.kind is TeacherMemberKind.student_seat]
+        if not seat_ids:
+            return fractions
+        rows = self._session.execute(
+            select(
+                UsageGrant.teacher_member_id,
+                func.coalesce(func.sum(UsageGrant.units), 0),
+                func.coalesce(func.sum(UsageGrantBalance.remaining), 0),
+            )
+            .join(UsageGrantBalance, UsageGrantBalance.grant_id == UsageGrant.id)
+            .join(TeacherMember, TeacherMember.id == UsageGrant.teacher_member_id)
+            .where(
+                UsageGrant.kind == GrantKind.seat_allowance,
+                UsageGrant.teacher_member_id.in_(seat_ids),
+                UsageGrant.owner_user_id == TeacherMember.member_user_id,
+                _usable_at(now),
+            )
+            .group_by(UsageGrant.teacher_member_id)
+        ).all()
+        for member_id, total, remaining in rows:
+            if total:
+                fractions[member_id] = (int(total) - int(remaining)) / int(total)
+        return fractions
 
     # -- Internals ---------------------------------------------------------------
 
@@ -927,6 +1047,7 @@ class TeacherTeamStore:
 __all__ = [
     "LIVE_PLAN_STATUSES",
     "MAX_ASSISTANT_INVITE_TTL",
+    "MAX_CAP_UNITS",
     "MAX_LIVE_ASSISTANT_INVITES",
     "SEAT_ACTIONS_OFF_BY_DEFAULT",
     "TEACHER_AUDIENCE",
@@ -946,6 +1067,8 @@ __all__ = [
     "TeamStateError",
     "assistant_has_permission",
     "default_seat_actions",
+    "member_effective_permissions",
+    "member_toggles",
     "month_end",
     "month_start",
 ]
