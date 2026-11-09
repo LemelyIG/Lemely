@@ -57,3 +57,16 @@ describe("native frame tokens (Task 0)", () => {
     expect(Number(size?.[1])).toBeGreaterThanOrEqual(28)
   })
 })
+
+describe("platform variants (Task 1)", () => {
+  it("declares ios:, android: and native: on html[data-platform]", () => {
+    expect(css).toContain('@custom-variant ios (&:where([data-platform="ios"], [data-platform="ios"] *));')
+    expect(css).toContain('@custom-variant android (&:where([data-platform="android"], [data-platform="android"] *));')
+    expect(css).toMatch(
+      /@custom-variant native \{\s*@media \(max-width: 720px\) \{\s*&:where\(\[data-platform="ios"\], \[data-platform="ios"\] \*, \[data-platform="android"\], \[data-platform="android"\] \*\) \{\s*@slot;/,
+    )
+  })
+  it("720 stays one below --breakpoint-shell-sm", () => {
+    expect(css).toContain("--breakpoint-shell-sm: 721px;")
+  })
+})

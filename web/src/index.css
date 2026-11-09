@@ -5,6 +5,20 @@
    user who picks dark on a light OS gets the dark variant too. */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
+/* Native phone frame (docs/superpowers/plans/2026-11-08-native-mobile-frame.md):
+   `html[data-platform]` is set by public/shell-init.js before paint. `native:` is
+   the phone range (the shell-sm edge) on iOS or Android only; desktop, tablet and
+   `other` keep design A. */
+@custom-variant ios (&:where([data-platform="ios"], [data-platform="ios"] *));
+@custom-variant android (&:where([data-platform="android"], [data-platform="android"] *));
+@custom-variant native {
+  @media (max-width: 720px) {
+    &:where([data-platform="ios"], [data-platform="ios"] *, [data-platform="android"], [data-platform="android"] *) {
+      @slot;
+    }
+  }
+}
+
 /* v5 Abyss faces (DESIGN.md §3). Each has one job. */
 @import "@fontsource-variable/bricolage-grotesque"; /* T1 display, 28px and above */
 @import "@fontsource-variable/schibsted-grotesk"; /* T2 UI and text */
