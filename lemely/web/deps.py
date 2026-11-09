@@ -81,6 +81,7 @@ from lemely.runtime.errors import AuthError
 from lemely.web.push import NotificationTransport, VapidPushTransport
 from lemely.web.ratelimit import SlidingWindowLimiter
 from lemely.web.scheduled_notifications import Sweeper
+from lemely.web.turnstile import CloudflareTurnstile, TurnstileVerifier
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1205,6 +1206,52 @@ def get_contact_limiters() -> ContactLimiters:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class WaitlistLimiters:
+    """The two :class:`SlidingWindowLimiter` instances guarding the public waitlist routes.
+
+    Shared by ``POST`` and ``PATCH /api/waitlist``: one applicant makes two calls. Nothing is
+    mailed, so the caps guard the table and enumeration probing rather than a mail quota.
+    ``per_client`` only binds callers that arrived through the Cloudflare Worker (see
+    :class:`ClientErrorLimiters`).
+    """
+
+    per_client: SlidingWindowLimiter
+    global_: SlidingWindowLimiter
+
+
+# 10 calls per caller per 10 minutes (two per applicant, and a family or classroom may share
+# one address); 3000 across every caller per day.
+_WAITLIST_PER_CLIENT_LIMIT = 10
+_WAITLIST_PER_CLIENT_WINDOW_SECONDS = 600.0
+_WAITLIST_GLOBAL_LIMIT = 3000
+_WAITLIST_GLOBAL_WINDOW_SECONDS = 86400.0
+
+
+@lru_cache(maxsize=1)
+def get_waitlist_limiters() -> WaitlistLimiters:
+    """Return the process-wide rate limiters guarding the public waitlist routes."""
+    return WaitlistLimiters(
+        per_client=SlidingWindowLimiter(
+            limit=_WAITLIST_PER_CLIENT_LIMIT,
+            window_seconds=_WAITLIST_PER_CLIENT_WINDOW_SECONDS,
+            clock=time.monotonic,
+        ),
+        global_=SlidingWindowLimiter(
+            limit=_WAITLIST_GLOBAL_LIMIT,
+            window_seconds=_WAITLIST_GLOBAL_WINDOW_SECONDS,
+            clock=time.monotonic,
+        ),
+    )
+
+
+@lru_cache(maxsize=1)
+def get_turnstile_verifier() -> TurnstileVerifier | None:
+    """The Turnstile verifier, or ``None`` when no secret key is configured (check skipped)."""
+    secret = get_settings().waitlist.turnstile_secret_key
+    return CloudflareTurnstile(secret) if secret is not None else None
+
+
 def reset_singletons() -> None:
     """Clear all cached singletons. Intended for tests that swap settings."""
     get_settings.cache_clear()
@@ -1263,6 +1310,8 @@ def reset_singletons() -> None:
     get_client_error_limiters.cache_clear()
     get_email_provider.cache_clear()
     get_contact_limiters.cache_clear()
+    get_waitlist_limiters.cache_clear()
+    get_turnstile_verifier.cache_clear()
     # Tutoring marketplace providers live in their own module (T06 onward); the
     # promise above is *all* cached singletons.
     from lemely.web.deps_tutoring import reset_tutoring_singletons

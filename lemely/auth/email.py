@@ -101,6 +101,14 @@ class EmailProvider(Protocol):
         """
         ...
 
+    def send_team_digest(self, subject: str, text_body: str) -> None:
+        """Mail an internal plain-text digest to the team address. Raises on failure.
+
+        The body is composed by the caller from aggregates only: it must never carry an
+        applicant's email or phone number.
+        """
+        ...
+
 
 class MockEmailProvider:
     """Offline :class:`EmailProvider` that logs the link instead of sending it.
@@ -129,6 +137,10 @@ class MockEmailProvider:
     def send_contact_message(self, from_email: str, message: str) -> None:
         """Log that a landing-page question arrived (sender and length only)."""
         logger.info("Mock contact message from %s (%d characters)", from_email, len(message))
+
+    def send_team_digest(self, subject: str, text_body: str) -> None:
+        """Log that a team digest would have been sent (subject and length only)."""
+        logger.info("Mock team digest %r (%d characters)", subject, len(text_body))
 
 
 #: Body copy per purpose: (subject, lead paragraph, button label, ignore-notice).
@@ -380,6 +392,18 @@ class ResendEmailProvider:
             text_body,
             reply_to=from_email,
         )
+
+    def send_team_digest(self, subject: str, text_body: str) -> None:
+        """Send an internal plain-text digest to ``[email] contact_address``."""
+        clean_subject = " ".join(subject.split())
+        html_body = (
+            '<!doctype html><html lang="en"><body style="margin:0;padding:24px;'
+            "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,"
+            'Arial,sans-serif;color:#1f2933;">'
+            '<pre style="margin:0;font:inherit;white-space:pre-wrap;">'
+            f"{html.escape(text_body)}</pre></body></html>"
+        )
+        self._send(self._settings.contact_address, clean_subject, html_body, text_body)
 
     def _send(
         self,

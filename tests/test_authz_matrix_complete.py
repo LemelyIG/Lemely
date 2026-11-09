@@ -138,7 +138,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/school/teachers"): SCHOOL_ADMIN,
     ("POST", "/api/school/teachers/invite"): SCHOOL_ADMIN,
     ("POST", "/api/school/teachers/{teacher_id}/remove"): SCHOOL_ADMIN,
-    # ── PLATFORM_ADMIN (21) ────────────────────
+    # ── PLATFORM_ADMIN (25) ────────────────────
     # P4.7 (UI spec X-01/X-02/X-03), and the first routes in the product gated
     # to this role. Note what the 403 sweep below therefore proves here: a
     # `school_admin` is denied every one of them. There is no super-role, and
@@ -169,6 +169,12 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/admin/tutors/{tutor_id}/close"): PLATFORM_ADMIN,
     # Tutoring A9-A11 (SPEC §c.1): the report queue, detail and resolution. A10 is the
     # only admin path to notes, each view logged (O15, SC-23).
+    # Landing-page waitlist queue: list, CSV export, one applicant, status/note edit.
+    # Phone numbers are readable here and nowhere else.
+    ("GET", "/api/admin/waitlist"): PLATFORM_ADMIN,
+    ("GET", "/api/admin/waitlist/export.csv"): PLATFORM_ADMIN,
+    ("GET", "/api/admin/waitlist/{applicant_id}"): PLATFORM_ADMIN,
+    ("PATCH", "/api/admin/waitlist/{applicant_id}"): PLATFORM_ADMIN,
     ("GET", "/api/admin/tutoring/reports"): PLATFORM_ADMIN,
     ("GET", "/api/admin/tutoring/reports/{report_id}"): PLATFORM_ADMIN,
     ("POST", "/api/admin/tutoring/reports/{report_id}/resolve"): PLATFORM_ADMIN,
@@ -213,7 +219,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # tests/test_web_tutoring_authz_parent_sharing.py).
     ("GET", "/api/parent/children/{child_id}/tutor-grants"): PARENT,
     ("GET", "/api/parent/children/{child_id}/tutor-access-log"): PARENT,
-    # ── PUBLIC (16) ────────────────────
+    # ── PUBLIC (20) ────────────────────
     ("POST", "/api/auth/login"): PUBLIC,
     # spec §4: the child-issued parent signup, replacing the retired
     # `/api/auth/otp/*` pair. Public by the same necessity as `/auth/signup`
@@ -247,6 +253,14 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # Landing-page FAQ composer: anonymous visitor, rate-limited + size-capped
     # (see lemely/web/routers/contact.py).
     ("POST", "/api/contact"): PUBLIC,
+    # Landing-page waitlist: anonymous, rate-limited, size-capped, honeypotted. Step 1
+    # (POST) mints a one-time token; step 2 (PATCH) redeems it. The digest trigger is
+    # not a user route: it is guarded by the X-Cron-Secret header (404 when no secret
+    # is configured), see lemely/web/routers/waitlist.py.
+    ("GET", "/api/waitlist/config"): PUBLIC,
+    ("POST", "/api/waitlist"): PUBLIC,
+    ("PATCH", "/api/waitlist"): PUBLIC,
+    ("POST", "/api/internal/waitlist/digest"): PUBLIC,
     # D7.3/spec §1.2: G-08's pre-account preview. Public and unauthenticated
     # by design - a visitor sees what a code joins *before* creating an
     # account, and `InviteService.preview` is written to be paranoid about
@@ -701,8 +715,9 @@ def test_the_sweeps_actually_cover_the_surface() -> None:
     # routes, plus issue #10's verify-email, password-reset/request,
     # password-reset/confirm) + /api/health + invite preview + PR 1 chunk C's
     # client-error sink + the three public tutoring routes (P1 directory, P2
-    # card, P3 areas) + the landing page contact form.
-    assert len(_NON_PUBLIC) == len(ROUTES) - 16
+    # card, P3 areas) + the landing page contact form + the four waitlist routes
+    # (config, step 1, step 2, secret-guarded digest trigger).
+    assert len(_NON_PUBLIC) == len(ROUTES) - 20
     assert len(_ROLE_GATED) > 300
     assert len(_REPRESENTATIVE) == 9
     assert len(_REAL_TOKEN_CASES) >= 20

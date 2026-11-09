@@ -22,12 +22,14 @@ from lemely.io.model_table import configured_models
 from lemely.runtime.config import anthropic_key_missing_tags, log_marking_flags
 from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 from lemely.web.deps import get_settings, get_sweeper
+from lemely.web.edge import BodyLimitMiddleware
 from lemely.web.routers import (
     admin,
     admin_tutor_sanctions,
     admin_tutoring_moderation,
     admin_tutoring_reports,
     admin_tutors,
+    admin_waitlist,
     announcements,
     auth,
     classes,
@@ -74,6 +76,7 @@ from lemely.web.routers import (
     tutoring_public,
     tutoring_reports,
     tutoring_reviews,
+    waitlist,
     widget,
     xp,
 )
@@ -172,10 +175,19 @@ def create_app() -> FastAPI:
         version=__version__,
         lifespan=_lifespan,
     )
+    # Body-size cap for the public waitlist writes, enforced while the body is read.
+    app.add_middleware(
+        BodyLimitMiddleware,
+        limit=waitlist.MAX_BODY_BYTES,
+        paths=waitlist.BODY_LIMITED_PATHS,
+        methods=frozenset({"POST", "PATCH"}),
+    )
     app.include_router(meta.router)
     app.include_router(reference.router)
     app.include_router(client_errors.router)
     app.include_router(contact.router)
+    app.include_router(waitlist.router)
+    app.include_router(admin_waitlist.router)
     app.include_router(auth.router)
     app.include_router(teacher.router)
     app.include_router(classes.router)

@@ -345,6 +345,7 @@ class FakeEmailProvider:
     sent_resets: list[tuple[str, str]] = field(default_factory=list)
     sent_signup_codes: list[tuple[str, str]] = field(default_factory=list)
     sent_contact_messages: list[tuple[str, str]] = field(default_factory=list)
+    sent_team_digests: list[tuple[str, str]] = field(default_factory=list)
 
     def send_verification(self, email: str, link: str, code: str) -> None:
         if self.raise_on_send:
@@ -365,3 +366,8 @@ class FakeEmailProvider:
         if self.raise_on_send:
             raise RuntimeError("simulated contact-message delivery failure")
         self.sent_contact_messages.append((from_email, message))
+
+    def send_team_digest(self, subject: str, text_body: str) -> None:
+        if self.raise_on_send:
+            raise RuntimeError("simulated team-digest delivery failure")
+        self.sent_team_digests.append((subject, text_body))

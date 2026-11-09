@@ -451,3 +451,26 @@ study_plan_reminder_hour = 8
 # tutoring mails went out in the last 24 hours, further ones are skipped, not
 # sent. 60 sits below Resend's 100/day free quota, which account mail shares.
 email_daily_cap = 60
+
+[waitlist]
+# Shared secret for POST /api/internal/waitlist/digest, the daily applicant
+# digest Cloud Scheduler triggers (sent in an X-Cron-Secret header). Unset, the
+# endpoint answers 404. NEVER put it in this file: deployed it is the
+# LEMELY_WAITLIST__DIGEST_SECRET environment variable.
+# digest_secret = "..."
+# Cloudflare Turnstile for the waitlist's first step. Unset, verification is
+# skipped (local dev). The secret key is LEMELY_WAITLIST__TURNSTILE_SECRET_KEY;
+# the site key is public and is served to the page by GET /api/waitlist/config.
+# turnstile_secret_key = "..."
+# turnstile_site_key = "0x4AAAA..."
+
+[edge]
+# Shared secret the Cloudflare Worker sends as X-Lemely-Edge-Secret. Where a route
+# uses the edge guard (the waitlist routes), a request without it is refused and
+# only then is CF-Connecting-IP trusted for rate limiting. Unset (local dev) the
+# guard is off. NEVER put it in this file: deployed it is the
+# LEMELY_EDGE__ORIGIN_SECRET environment variable, and the Worker's ORIGIN_SECRET.
+# origin_secret = "..."
+# The value being rotated out: still accepted, never sent by the Worker. Blank is
+# unset (LEMELY_EDGE__ORIGIN_SECRET_PREVIOUS). See docs/ci-cd.md for the rotation.
+# origin_secret_previous = "..."
