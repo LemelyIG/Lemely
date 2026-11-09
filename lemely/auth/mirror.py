@@ -14,16 +14,20 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Protocol
 
+import structlog
 from sqlalchemy import select, update
 
 from lemely.db.models import User
 from lemely.db.models.enums import Role
 from lemely.db.session import session_scope
+from lemely.db.usage_catalogue_repo import grant_signup_allowance
 
 if TYPE_CHECKING:
     from datetime import datetime
 
     from lemely.runtime.config import Settings
+
+log = structlog.get_logger(__name__)
 
 
 class UserMirror(Protocol):
@@ -196,13 +200,26 @@ class DbUserMirror:
 
         One conditional ``UPDATE … WHERE email_verified_at IS NULL``: two
         verifications racing cannot both write, and the first instant is kept.
+
+        Billing spec §2.1 (free start): the call that wins the stamp also issues the
+        role's signup grant, in the same transaction. The grant is idempotent per
+        account, and it runs in a savepoint so a ledger failure is logged and the
+        verification still commits.
         """
         with session_scope(self._settings) as session:
-            session.execute(
+            role = session.execute(
                 update(User)
                 .where(User.id == user_id, User.email_verified_at.is_(None))
                 .values(email_verified_at=verified_at)
-            )
+                .returning(User.role)
+            ).scalar_one_or_none()
+            if role is None:
+                return
+            try:
+                with session.begin_nested():
+                    grant_signup_allowance(session, user_id=user_id, role=role, now=verified_at)
+            except Exception:
+                log.exception("signup_grant_failed", user_id=str(user_id))
 
     def set_avatar_path(self, user_id: uuid.UUID, path: str | None) -> None:
         """Set or clear ``users.avatar_path`` for ``user_id``, if the row exists."""
