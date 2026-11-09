@@ -95,6 +95,9 @@ class UserMirror(Protocol):
         :meth:`~lemely.auth.service.AuthService.signup` itself just mirrored),
         and this is not the place to invent a new failure mode for the token
         store and the mirror having disagreed about who exists.
+
+        The first call also issues the role's billing signup grant (spec §2.1);
+        a grant failure is logged and never fails the verification.
         """
         ...
 
@@ -215,6 +218,11 @@ class DbUserMirror:
             ).scalar_one_or_none()
             if role is None:
                 return
+            # Lock order: the UPDATE above holds the ``users`` row lock, then the
+            # ledger takes its advisory lock inside ``issue_grant``. Keep that order
+            # everywhere: users row first, ledger advisory lock second.
+            # The teacher's 30-day expiry counts from this verification instant
+            # (``verified_at``), not from signup.
             try:
                 with session.begin_nested():
                     grant_signup_allowance(session, user_id=user_id, role=role, now=verified_at)
