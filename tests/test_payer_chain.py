@@ -211,6 +211,18 @@ def test_a_subject_no_seat_covers_uses_own_balance_without_a_scope_miss() -> Non
     assert seat_scope_miss(ctx) is False
 
 
+def test_a_scope_miss_only_looks_at_seats_on_the_actions_subject() -> None:
+    # A physics seat says nothing about a maths self-review: no seat covers maths at all.
+    other_subject = _ctx(seats=(PHYS,), subject_code="0580", action=MeteredAction.SELF_REVIEW)
+    assert seat_scope_miss(other_subject) is False
+    # Maths has study_plan in scope, physics does not: only the physics subject misses.
+    seats = (MATHS, PHYS)
+    physics_plan = _ctx(seats=seats, subject_code="0625", action=MeteredAction.STUDY_PLAN)
+    maths_plan = _ctx(seats=seats, subject_code="0580", action=MeteredAction.STUDY_PLAN)
+    assert seat_scope_miss(physics_plan) is True
+    assert seat_scope_miss(maths_plan) is False
+
+
 def test_two_seats_on_one_subject_all_allowances_then_all_teacher_credits() -> None:
     older = _seat(5, MATHS_T, {"0580"}, {MeteredAction.MARK_PAPER}, age_days=30)
     newer = _seat(6, PHYS_T, {"0580"}, {MeteredAction.MARK_PAPER}, age_days=5)
@@ -319,6 +331,15 @@ def test_an_assistant_is_never_charged_to_its_own_balance_or_seats() -> None:
     )
     assert {p.owner_user_id for p in chain} == {LEAD}
     assert all(p.scope is not GrantScope.SEAT for p in chain)
+
+
+def test_an_assistant_with_a_zero_cap_carries_the_zero_on_both_lead_payers() -> None:
+    view = AssistantView(uuid.UUID(int=208), LEAD, cap_units=0, cap_period="month")
+    chain = build_payer_chain(_assistant_ctx(view))
+    assert [p.scope for p in chain] == [GrantScope.ALLOWANCE, GrantScope.CREDITS]
+    assert [p.cap_units for p in chain] == [0, 0]
+    assert [p.cap_window_start for p in chain] == [month_start(NOW)] * 2
+    _assert_ledger_invariants(chain)
 
 
 def test_an_assistant_never_hits_a_seat_scope_miss() -> None:
@@ -440,6 +461,14 @@ def test_job_teacher_member_id_is_the_first_seat_or_none() -> None:
     assert job_teacher_member_id([]) is None
 
 
+def test_job_teacher_member_id_is_the_oldest_seat_not_the_last_member() -> None:
+    older = _seat(18, MATHS_T, {"0580"}, {MeteredAction.MARK_PAPER}, age_days=30)
+    newer = _seat(19, PHYS_T, {"0580"}, {MeteredAction.MARK_PAPER}, age_days=5)
+    chain = build_payer_chain(_ctx(seats=(newer, older)))
+    assert chain[-3].teacher_member_id == newer.member_id  # the last member id in the chain
+    assert job_teacher_member_id(chain) == older.member_id
+
+
 def test_month_start_is_the_first_utc_instant_of_the_month() -> None:
     assert month_start(NOW) == datetime(2026, 11, 1, tzinfo=UTC)
 
@@ -453,6 +482,34 @@ def test_month_start_converts_other_zones_to_utc_first() -> None:
 def test_month_start_rejects_a_naive_datetime() -> None:
     with pytest.raises(ValueError, match="timezone-aware"):
         month_start(datetime(2026, 11, 4, 10, 0))
+
+
+def test_a_naive_now_fails_at_context_construction_for_every_chain_shape() -> None:
+    """Not only on capped chains: an uncapped context must fail just as loudly."""
+    naive = datetime(2026, 11, 4, 10, 0)
+    with pytest.raises(ValueError, match="timezone-aware"):
+        ChainContext(
+            actor_user_id=STUDENT, action=MeteredAction.MARK_PAPER, subject_code="0580", now=naive
+        )
+    uncapped = AssistantView(uuid.UUID(int=205), LEAD, cap_units=None, cap_period="month")
+    with pytest.raises(ValueError, match="timezone-aware"):
+        ChainContext(
+            actor_user_id=ASSIST,
+            action=MeteredAction.REGRADE,
+            subject_code=None,
+            now=naive,
+            assistant=uncapped,
+        )
+
+
+def test_an_unknown_cap_period_is_rejected_not_read_as_lifetime() -> None:
+    with pytest.raises(ValueError, match="cap_period"):
+        AssistantView(uuid.UUID(int=206), LEAD, cap_units=10, cap_period="week")
+    with pytest.raises(ValueError, match="cap_period"):
+        _seat(23, MATHS_T, {"0580"}, {MeteredAction.MARK_PAPER}, period="weekly")
+    for period in ("month", "total"):
+        AssistantView(uuid.UUID(int=207), LEAD, cap_units=10, cap_period=period)
+        _seat(24, MATHS_T, {"0580"}, {MeteredAction.MARK_PAPER}, period=period)
 
 
 # --- block reasons -------------------------------------------------------------------

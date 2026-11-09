@@ -40,6 +40,17 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
+CAP_PERIODS: frozenset[str] = frozenset({"month", "total"})
+"""The ``teacher_members.cap_period`` values: a calendar-month window or lifetime."""
+
+
+def _check_cap_period(cap_period: str) -> None:
+    if cap_period not in CAP_PERIODS:
+        raise ValueError(
+            f"unknown cap_period {cap_period!r}; expected one of {sorted(CAP_PERIODS)}"
+        )
+
+
 @dataclass(frozen=True)
 class SeatView:
     """One active or leaving ``student_seat`` row, as the chain needs it."""
@@ -52,6 +63,10 @@ class SeatView:
     cap_period: str
     created_at: datetime
 
+    def __post_init__(self) -> None:
+        """Reject a cap period the chain could misread as lifetime."""
+        _check_cap_period(self.cap_period)
+
 
 @dataclass(frozen=True)
 class AssistantView:
@@ -61,6 +76,10 @@ class AssistantView:
     lead_teacher_user_id: uuid.UUID
     cap_units: int | None
     cap_period: str
+
+    def __post_init__(self) -> None:
+        """Reject a cap period the chain could misread as lifetime."""
+        _check_cap_period(self.cap_period)
 
 
 @dataclass(frozen=True)
@@ -75,6 +94,10 @@ class ChainContext:
     assistant: AssistantView | None = None
     debtors: frozenset[uuid.UUID] = frozenset()
     study_plan_generated_this_week: bool = False
+
+    def __post_init__(self) -> None:
+        """Reject a naive ``now`` for every chain, not only those with a monthly cap."""
+        _require_aware(self.now)
 
 
 class UsageBlockReason(StrEnum):
@@ -100,14 +123,18 @@ class BlockFacts:
     has_credit_grant: bool
 
 
+def _require_aware(moment: datetime) -> None:
+    if moment.tzinfo is None:
+        raise ValueError("a timezone-aware datetime is required")
+
+
 def month_start(now: datetime) -> datetime:
     """The first instant (UTC) of ``now``'s calendar month: a monthly cap's window.
 
     ``now`` must be timezone-aware: a naive value would be read in the server's local
     zone and silently shift every cap window.
     """
-    if now.tzinfo is None:
-        raise ValueError("month_start needs a timezone-aware datetime")
+    _require_aware(now)
     moment = now.astimezone(UTC)
     return moment.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
