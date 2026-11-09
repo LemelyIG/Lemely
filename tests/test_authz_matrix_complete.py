@@ -314,7 +314,11 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/billing/receipts"): TUTORING_PARTY,
     # Index R3: the caller's own saved cards, masked only.
     ("GET", "/api/billing/cards"): TUTORING_PARTY,
-    # ── AUTH_ANY (19) ────────────────────
+    # ── AUTH_ANY (22) ────────────────────
+    # Billing phase 04: usage estimate, meter and history answer only about the caller.
+    ("POST", "/api/usage/estimate"): AUTH_ANY,
+    ("GET", "/api/usage/meter"): AUTH_ANY,
+    ("GET", "/api/usage/history"): AUTH_ANY,
     ("GET", "/api/me/devices"): AUTH_ANY,
     ("DELETE", "/api/me/devices/{device_id}"): AUTH_ANY,
     ("GET", "/api/me/notification-preferences"): AUTH_ANY,

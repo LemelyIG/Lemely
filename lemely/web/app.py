@@ -77,6 +77,7 @@ from lemely.web.routers import (
     tutoring_public,
     tutoring_reports,
     tutoring_reviews,
+    usage,
     widget,
     xp,
 )
@@ -233,6 +234,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_tutoring_reports.router)
     app.include_router(billing.router)
     app.include_router(paymob_webhooks.router)
+    app.include_router(usage.router)
     # Billing spec §5.7: a blocked metered action is a top-level 402 body, not `detail`.
     app.add_exception_handler(UsageBlocked, usage_blocked_handler)
 
