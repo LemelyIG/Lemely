@@ -78,11 +78,31 @@ def test_every_action_has_a_metering_spec() -> None:
     for action, spec in ACTION_SPECS.items():
         est = spec.default_estimator
         assert est.version == 1, action
-        assert est.input_kind in {"pages", "marks", "questions", "none"}, action
-        assert 0 <= est.base_low <= est.base_high, action
-        assert 0 <= est.per_input_low <= est.per_input_high, action
         assert spec.default_units_per_usd == DEFAULT_UNITS_PER_USD, action
         assert spec.job_timeout > timedelta(0), action
+
+
+# (action, input_kind, base_low, base_high, per_input_low, per_input_high, timeout minutes)
+_PINNED_SPECS = [
+    (MeteredAction.MARK_PAPER, "none", 40, 120, 0, 0, 45),
+    (MeteredAction.REGRADE, "none", 40, 120, 0, 0, 45),
+    (MeteredAction.GENERATE_QUIZ, "questions", 2, 4, 2, 5, 10),
+    (MeteredAction.PREVIEW_QUIZ, "questions", 2, 4, 2, 5, 10),
+    (MeteredAction.SELF_REVIEW, "marks", 1, 2, 0, 1, 5),
+    (MeteredAction.STUDY_PLAN, "none", 0, 0, 0, 0, 2),
+    (MeteredAction.MARK_QUIZ, "questions", 1, 2, 1, 3, 15),
+    (MeteredAction.GENERATE_FLASHCARDS, "questions", 2, 4, 1, 2, 5),
+]
+
+
+def test_the_seeded_estimator_numbers_are_pinned_per_action() -> None:
+    assert {row[0] for row in _PINNED_SPECS} == set(MeteredAction)
+    for action, kind, b_lo, b_hi, p_lo, p_hi, minutes in _PINNED_SPECS:
+        spec = ACTION_SPECS[action]
+        est = spec.default_estimator
+        assert (est.input_kind, est.base_low, est.base_high) == (kind, b_lo, b_hi), action
+        assert (est.per_input_low, est.per_input_high) == (p_lo, p_hi), action
+        assert spec.job_timeout == timedelta(minutes=minutes), action
 
 
 def test_marking_uses_a_flat_estimate_because_page_counts_are_not_stored() -> None:
@@ -99,7 +119,10 @@ def test_study_plans_are_metered_at_zero_today() -> None:
 
 def test_clamp_inputs_bounds_the_hold_not_the_charge() -> None:
     assert clamp_inputs(-3) == 0
+    assert clamp_inputs(0) == 0
     assert clamp_inputs(7) == 7
+    assert clamp_inputs(MAX_ESTIMATE_INPUTS) == 50
+    assert clamp_inputs(MAX_ESTIMATE_INPUTS + 1) == 50
     assert clamp_inputs(10_000) == MAX_ESTIMATE_INPUTS
 
 

@@ -2,9 +2,9 @@
 
 Phase 03 creates this module with the six base actions so seat scopes
 (``teacher_members.scope_actions``) can be validated against :data:`SEAT_ACTIONS`.
-Phase 04 adds ``mark_quiz`` and ``generate_flashcards`` and the ``ACTION_SPECS``
-metering catalogue below; ``MeteredAction`` and ``SEAT_ACTIONS`` are unchanged. Pure:
-no DB, no IO.
+Phase 04 adds the ``mark_quiz`` and ``generate_flashcards`` members (both seat-eligible,
+so ``SEAT_ACTIONS`` grows to five values) and the ``ACTION_SPECS`` metering catalogue
+below. Pure: no DB, no IO.
 
 ``has_subject``: the action works on a record that carries a subject (a paper, a quiz,
 a plan), so per-subject seat routing can apply. ``seat_eligible``: a student runs the
@@ -48,7 +48,7 @@ class MeteredAction(StrEnum):
 
 
 _SUBJECTLESS: frozenset[str] = frozenset()
-"""Values of actions with no subject. Empty: every base action has one."""
+"""Values of actions with no subject. Empty: every action has one."""
 
 _SEAT_ELIGIBLE: frozenset[str] = frozenset(
     {"mark_paper", "self_review", "study_plan", "mark_quiz", "generate_flashcards"}
