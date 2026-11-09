@@ -30,6 +30,7 @@ from tenacity import (
 )
 
 from lemely.io.cost_ledger import CostLedger
+from lemely.io.llm.cost_meter import record_llm_cost, usd_decimal
 from lemely.io.llm.errors import CapTruncatedError as _CapTruncatedError
 from lemely.io.llm.errors import TransientCallError as _TransientError
 from lemely.io.llm.gemini_provider import GeminiProvider
@@ -2161,6 +2162,10 @@ class GeminiClient:
             usd_now += extra_usd_now
             usd_2027 += extra_usd_2027
         usd_rounded = round(usd, 6)
+        # Billing spec §5.7 step 4: the open usage job (if any) is charged this call.
+        # `usd` is today's price, including an explicit cache's storage, and the
+        # warn-and-fall-back price for an unpriced model, never the NaN record value.
+        record_llm_cost(usd_decimal(usd))
         attempt, question_id = _call_labels.get()
         thinking = (
             self.resolved_thinking(task_tag, model, _call_leaf_kind.get())
