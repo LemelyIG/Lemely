@@ -77,7 +77,7 @@ export const SITE_NAME = "Lemely"
  */
 export const DEFAULT_TITLE = "Lemely, marking for CAIE past papers"
 export const DEFAULT_DESCRIPTION =
-  "Lemely marks a photographed or uploaded CAIE past-paper attempt against the official marking scheme, with method marks, and returns per-question marks, a grade, and the topics to work on."
+  "Lemely marks Cambridge IGCSE, O Level and A Level past papers against the official mark scheme, with method marks, a grade and topics to work on."
 
 /**
  * Type guard for a route handle carrying page metadata.

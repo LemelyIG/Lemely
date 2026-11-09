@@ -42,7 +42,7 @@
     <title>Lemely, marking for CAIE past papers</title>
     <meta
       name="description"
-      content="Lemely marks a photographed or uploaded CAIE past-paper attempt against the official marking scheme, with method marks, and returns per-question marks, a grade, and the topics to work on."
+      content="Lemely marks Cambridge IGCSE, O Level and A Level past papers against the official mark scheme, with method marks, a grade and topics to work on."
     />
 
     <meta property="og:type" content="website" />
@@ -50,7 +50,7 @@
     <meta property="og:title" content="Lemely, marking for CAIE past papers" />
     <meta
       property="og:description"
-      content="Lemely marks a photographed or uploaded CAIE past-paper attempt against the official marking scheme, with method marks, and returns per-question marks, a grade, and the topics to work on."
+      content="Lemely marks Cambridge IGCSE, O Level and A Level past papers against the official mark scheme, with method marks, a grade and topics to work on."
     />
     <!--
       Absolute: scrapers resolve a relative og:image inconsistently, and several
@@ -103,7 +103,14 @@
     </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!--
+        The one `<h1>` a crawler that reads the static HTML sees. React replaces
+        `#root` on mount and the landing hero supplies its own `<h1>`, so there
+        is never more than one in the live DOM.
+      -->
+      <h1 class="sr-only">Lemely: marking for Cambridge IGCSE, O Level and A Level past papers</h1>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
