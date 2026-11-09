@@ -8,6 +8,7 @@ import { isLiveSubscription } from "@/lib/billingFormat"
 import type { Audience } from "@/lib/billingTypes"
 import { useBillingSummary } from "@/lib/hooks/useBillingApi"
 import { PlansView } from "./PlansView"
+import { OwnAccountNote } from "@/components/acting/own-account-note"
 
 /*
  * Route wrappers around `PlansView`: which audience, whose account, and where "back to
@@ -53,7 +54,12 @@ export function StudentPlans() {
 }
 
 export function TeacherPlans() {
-  return <SignedInPlans scope={{ role: "teacher" }} audience="teacher" beneficiaryId={null} />
+  return (
+    <>
+      <OwnAccountNote />
+      <SignedInPlans scope={{ role: "teacher" }} audience="teacher" beneficiaryId={null} />
+    </>
+  )
 }
 
 export function ParentChildPlans() {

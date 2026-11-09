@@ -10,7 +10,6 @@ import { request } from "@/lib/api"
 import { toTeamView } from "@/lib/billingAdapters"
 import type {
   AssistantInviteCreate,
-  AssistantRole,
   AssistantRoleUpdate,
   CapUpdate,
   SeatScopeUpdate,
@@ -24,6 +23,7 @@ import type {
   WireSeatCapacity,
 } from "@/lib/billingTypes"
 import { billingApi } from "@/lib/hooks/useBillingApi"
+import { fetchMemberships } from "@/lib/hooks/useMemberships"
 import type { ClassList } from "@/lib/teacherTypes"
 import { teamRetry } from "@/lib/teamModel"
 
@@ -42,7 +42,7 @@ export const teamApi = {
   capacity: () => request<WireSeatCapacity>(`${T}/capacity`),
   assistants: () => request<{ assistants: WireAssistant[] }>(`${T}/assistants`),
   invites: () => request<{ invites: WireAssistantInvite[] }>(`${T}/invites`),
-  memberships: () => request<{ memberships: WireMembership[] }>(`${T}/memberships`),
+  memberships: fetchMemberships,
   setScope: (memberId: string, body: SeatScopeUpdate) => request<WireSeat>(`${T}/seats/${enc(memberId)}/scope`, json("PUT", body)),
   /** Returns the member's DTO, discriminated by `kind`. */
   setCap: (memberId: string, body: CapUpdate) => request<WireSeat | WireAssistant>(`${T}/members/${enc(memberId)}/cap`, json("PUT", body)),
@@ -78,34 +78,18 @@ export function useTeam(): UseQueryResult<TeamView, Error> {
         teamApi.assistants(),
         teamApi.invites(),
         billingApi.summary(null),
-        request<ClassList>("/teacher/classes"),
+        // The team page is the caller's own account: its subject list comes from their classes,
+        // never the lead's, even while they are acting for one.
+        request<ClassList>("/teacher/classes", { asSelf: true }),
       ])
       return toTeamView({ seats, capacity, assistants, invites, summary, classes })
     },
   })
 }
 
-/** A team the signed-in teacher assists. Names only. */
-export interface JoinedTeam {
-  memberId: string
-  teacherName: string
-  role: AssistantRole
-}
-
-/**
- * Teams the signed-in teacher assists (`GET /memberships`). Keyed under `["team"]`, so joining a
- * team (which invalidates it) refreshes this list too. Any teacher may read their own memberships.
- */
-export function useMemberships(): UseQueryResult<JoinedTeam[], Error> {
-  return useQuery({
-    queryKey: [...teamKeys.team, "memberships"],
-    retry: teamRetry,
-    queryFn: async () => {
-      const { memberships } = await teamApi.memberships()
-      return memberships.map((m) => ({ memberId: m.memberId, teacherName: m.teacherName, role: m.role }))
-    },
-  })
-}
+// The membership list lives in its own module so the portal shell can read it without pulling in
+// this file's team-screen adapters (entry-chunk budget). Re-exported: callers are unchanged.
+export { useMemberships, type JoinedTeam } from "@/lib/hooks/useMemberships"
 
 function useTeamWrite<TVars, TData>(fn: (vars: TVars) => Promise<TData>): UseMutationResult<TData, Error, TVars> {
   const qc = useQueryClient()

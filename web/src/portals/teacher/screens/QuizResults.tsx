@@ -1,4 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+import { PermissionGate } from "@/components/acting/permission-gate"
 import { useState } from "react"
 import { Link, useNavigate, useParams } from "react-router-dom"
 import { DownloadSimple, Warning } from "@phosphor-icons/react"
@@ -514,6 +515,7 @@ export function QuizResults() {
 
               {/* Close/archive lives on this screen, not in the builder: this is where
                   a teacher can actually see everyone has finished. */}
+              <PermissionGate permission="generate_quiz" mode="hide">
               <section className="border-t border-outline-variant pt-4">
                 <h2 className="text-eyebrow text-on-surface-variant m-0 mb-2">
                   Quiz status
@@ -555,6 +557,7 @@ export function QuizResults() {
                   </div>
                 ) : null}
               </section>
+              </PermissionGate>
             </>
           )
         }}

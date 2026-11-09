@@ -216,9 +216,14 @@ export interface PasswordResetConfirmResponse {
  * fallback to "your child" when the child has no display name means this is
  * rarely actually `null` in practice, but the type stays nullable rather than
  * asserting a guarantee the DTO does not document.
+ *
+ * `role: "assistant"` is a lead teacher's assistant invite: only `teacherName`
+ * (the lead) is set. It is redeemed by a signed-in teacher account through
+ * `POST /api/teacher/team/assistants/redeem`, not the invites route that
+ * `RedeemInviteResult` describes.
  */
 export interface InvitePreview {
-  role: "student" | "teacher" | "parent"
+  role: "student" | "teacher" | "parent" | "assistant"
   schoolName: string | null
   className: string | null
   teacherName: string | null

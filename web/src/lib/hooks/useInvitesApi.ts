@@ -98,6 +98,14 @@ export function isInviteCodeFormat(code: string): boolean {
  * looking for more.
  */
 export function describeInvitePreview(preview: InvitePreview): string[] {
+  if (preview.role === "assistant") {
+    // A team invite names the lead teacher and nothing else (`InvitePreviewDTO`: no school,
+    // class or child). What the role may do is the lead's choice and is not in the preview, so
+    // it is not claimed here; that billing and seats stay with the lead is true of every role.
+    const lead = preview.teacherName ?? "A teacher"
+    return [`${lead} invited you to assist on their team`, "Billing and seats stay with them."]
+  }
+
   if (preview.role === "parent") {
     // A parent invite is child-issued, never school/class-issued —
     // `schoolName`/`className`/`teacherName` are always `null` on this
@@ -140,7 +148,14 @@ export function describeInvitePreview(preview: InvitePreview): string[] {
  * the handoff is the same mechanism, not a new one. `role` comes from the
  * *preview* (what the code provisions), never from a caller's own session —
  * there is no session yet on this branch. */
-export function signupPathForInvite(code: string, role: "student" | "teacher" | "parent"): string {
+export function signupPathForInvite(
+  code: string,
+  role: "student" | "teacher" | "parent" | "assistant",
+): string {
+  // An assistant is an ordinary teacher account that redeems the code afterwards, through the
+  // team route. Signup's own redeem call goes to the invites route, which would only refuse it,
+  // so this sends them back here (`/join/<code>`) once the account exists.
+  if (role === "assistant") return `/signup/teacher?next=${encodeURIComponent(`/join/${code}`)}`
   return `/signup/${role}?code=${encodeURIComponent(code)}`
 }
 
@@ -161,6 +176,9 @@ export function signupPathForInvite(code: string, role: "student" | "teacher" | 
  */
 export function canRedeemInviteAs(previewRole: InvitePreview["role"], signedInRole: string): boolean {
   if (previewRole === "parent") return signedInRole === "parent"
+  // Only a teacher account can join a team as an assistant (`POST /teacher/team/assistants/redeem`
+  // is teacher-only), and the other roles' invites stay open to everyone but a parent.
+  if (previewRole === "assistant") return signedInRole === "teacher"
   return signedInRole !== "parent"
 }
 
@@ -170,6 +188,10 @@ export function canRedeemInviteAs(previewRole: InvitePreview["role"], signedInRo
  * screen expects to be rare. */
 export const INVITE_ROLE_MISMATCH_MESSAGE =
   "This invite doesn't match the kind of account you're signed in with. Sign out to use a different account."
+
+/** An assistant invite shown to a signed-in account that is not a teacher. */
+export const ASSISTANT_INVITE_NEEDS_TEACHER_MESSAGE =
+  "Only teacher accounts can join a team. Sign out to use a teacher account."
 
 /**
  * Narrows an `ApiError.detail` onto a structured seat-quota-exceeded marker,
@@ -285,7 +307,7 @@ export function previewErrorCopy(err: unknown): {
  * linked to — `JoinWithCodeScreen`'s signed-in-parent branch reads it to land
  * on `/parent/children/<childId>` instead of the parent portal's own root. */
 export interface RedeemInviteResult {
-  role: "student" | "teacher" | "parent"
+  role: "student" | "teacher" | "parent" | "assistant"
   schoolId: string | null
   classId: string | null
   childId: string | null

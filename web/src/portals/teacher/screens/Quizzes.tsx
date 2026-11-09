@@ -1,4 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V3 */
+import { PermissionGate } from "@/components/acting/permission-gate"
+import { useCan } from "@/components/acting/acting-state"
 import { useState, type FormEvent } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
@@ -143,6 +145,7 @@ export function Quizzes() {
   const navigate = useNavigate()
   const quizzesQuery = useTeacherQuizzes()
   const createQuiz = useCreateQuiz()
+  const canCreate = useCan("generate_quiz")
   const referenceQuery = useReference()
   const vocabularies = referenceQuery.data?.targetGradeVocabularies ?? []
 
@@ -252,12 +255,14 @@ export function Quizzes() {
                   placeholder="Search quizzes or subjects…"
                   wrapperClassName="w-[240px]"
                 />
-                <Button variant="ink" onClick={toggleCreate}>
-                  {showCreate ? "Cancel" : "+ New quiz"}
-                </Button>
+                <PermissionGate permission="generate_quiz" mode="hide">
+                  <Button variant="ink" onClick={toggleCreate}>
+                    {showCreate ? "Cancel" : "+ New quiz"}
+                  </Button>
+                </PermissionGate>
               </div>
 
-              {showCreate ? (
+              {showCreate && canCreate ? (
                 <form
                   onSubmit={handleCreate}
                   className="bg-surface-container-lowest border border-outline-variant rounded-lg p-6 flex flex-wrap items-end gap-3"
@@ -301,7 +306,7 @@ export function Quizzes() {
                 <EmptyState
                   heading="No quizzes yet"
                   body="A quiz is a set of past-paper or AI-generated questions targeted at a grade, assigned to a class, and auto-marked when students submit it. Start one below. You can save it as a draft at any step and come back later."
-                  action={{ label: "Create a quiz", onClick: () => setShowCreate(true) }}
+                  action={canCreate ? { label: "Create a quiz", onClick: () => setShowCreate(true) } : undefined}
                 />
               ) : (
                 <Table density="operate"

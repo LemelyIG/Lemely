@@ -2,6 +2,13 @@ import type { ActivityEvent } from "./types"
 import { endSession, getSession, markSessionExpired, setSession } from "./auth/storage"
 import { isTokenExpired } from "./auth/jwt"
 import { parseRetryAfter } from "./routeError"
+import {
+  actingHeaders,
+  actingLeadFor,
+  looksLikeTeamPermissionDenied,
+  teamPermissionDeniedMessage,
+  type ActingLead,
+} from "./actingTeacher"
 
 /*
  * Typed API client. Frontend-first this run: request() hits the FastAPI backend
@@ -51,6 +58,13 @@ export class ApiError extends Error {
    * test in this codebase that builds one by hand).
    */
   retryAfter?: number
+  /**
+   * A sentence this client wrote for the reader, as opposed to `message`, which is whatever the
+   * server (or the status line) said. Set only where the client knows more than the server told it:
+   * today, an assistant's refusal, where the lead's name is only known here. Outcome modules read
+   * this rather than `message`, which they must never render.
+   */
+  readerMessage?: string
   constructor(
     status: number,
     message: string,
@@ -64,6 +78,61 @@ export class ApiError extends Error {
     this.retryAfter = retryAfter
     this.body = body
   }
+}
+
+/**
+ * `RequestInit` plus the one switch the acting-teacher header needs.
+ *
+ * `asSelf` keeps a request out of the lead's data even while the caller is acting for one. It
+ * exists for own-account screens (the team page) that read an adopted route such as
+ * `/teacher/classes` for their own purposes: the header goes on by route, and a route cannot know
+ * which screen asked.
+ */
+export interface ApiRequestInit extends RequestInit {
+  asSelf?: boolean
+}
+
+/**
+ * True for the server's refusal of an assistant's action: 403 `team_permission_denied`
+ * (`lemely/web/deps.py`). `request()` has already put the plain sentence on `message`; an outcome
+ * module that maps a 403 to its own words checks this first so it does not replace that sentence.
+ */
+export function isTeamPermissionDenied(err: unknown): boolean {
+  return err instanceof ApiError && looksLikeTeamPermissionDenied(err)
+}
+
+/**
+ * The refusal as a reader sees it. The server's own message ("You do not have permission to do
+ * this for that teacher.") names no team; the lead's name is only known here.
+ */
+function refusalFor(status: number, detail: unknown, lead: ActingLead | null): string | null {
+  if (status !== 403) return null
+  if (typeof detail !== "object" || detail === null) return null
+  if ((detail as { code?: unknown }).code !== "team_permission_denied") return null
+  // Only an acting request can earn this refusal; if one ever arrives without a lead in hand it
+  // still gets a sentence rather than "403 ", just without a name in it.
+  return teamPermissionDeniedMessage(lead?.leadName ?? null)
+}
+
+/** The ApiError for a failed response, with the client's own sentence attached where it has one. */
+function failure(
+  status: number,
+  parsed: { message: string; detail?: unknown; body?: unknown },
+  retryAfter: number | undefined,
+  lead: ActingLead | null,
+): ApiError {
+  const sentence = refusalFor(status, parsed.detail, lead)
+  const err = new ApiError(status, sentence ?? parsed.message, parsed.detail, retryAfter, parsed.body)
+  if (sentence !== null) err.readerMessage = sentence
+  return err
+}
+
+/**
+ * The sentence for an assistant's refused action, or `null` when `err` is not that refusal. What
+ * an outcome module returns instead of its own 403 wording.
+ */
+export function teamDeniedText(err: unknown): string | null {
+  return isTeamPermissionDenied(err) ? ((err as ApiError).readerMessage ?? teamPermissionDeniedMessage(null)) : null
 }
 
 /** Build the base headers for a request: JSON content-type + bearer token
@@ -257,9 +326,13 @@ export function parseErrorBody(
 
 export async function request<T>(
   path: string,
-  init?: RequestInit,
+  apiInit?: ApiRequestInit,
   fallback?: T,
 ): Promise<T> {
+  const { asSelf, ...init } = apiInit ?? {}
+  // Decided once, up front: a request replayed after a silent refresh must go out as the same
+  // person, and a switch made while it is in flight must not change who it was sent for.
+  const lead = actingLeadFor(path, asSelf)
   try {
     const isAuthCall = path.startsWith(AUTH_PATH)
     // `...init` FIRST, then headers. The other order — which this had — meant a
@@ -272,6 +345,7 @@ export async function request<T>(
         ...init,
         headers: {
           ...authHeaders(init?.body instanceof FormData, token),
+          ...actingHeaders(lead),
           ...init?.headers,
         },
       })
@@ -301,12 +375,12 @@ export async function request<T>(
       // real backend detail thrown away, not just here. Falls back to the
       // status text when the body isn't JSON or carries no `detail` string
       // (e.g. a 204, or a non-FastAPI failure upstream).
-      const { message, detail, body } = parseErrorBody(res.status, res.statusText, await res.clone().text().catch(() => ""))
+      const parsed = parseErrorBody(res.status, res.statusText, await res.clone().text().catch(() => ""))
       // `Retry-After` matters here specifically because this is the one path
       // a 429 or a 503 from every ordinary API call comes through — see the
       // field's own doc on `ApiError` above.
       const retryAfter = parseRetryAfter(res.headers.get("Retry-After"), new Date())
-      throw new ApiError(res.status, message, detail, retryAfter ?? undefined, body)
+      throw failure(res.status, parsed, retryAfter ?? undefined, lead)
     }
     // A 204 (e.g. `DELETE /classes/{id}`) has no body — `res.json()` would
     // throw on the empty string. `T` is `void` at every such call site.
@@ -335,11 +409,15 @@ export async function request<T>(
  * the screen still showing a stale-session failure after every other panel had
  * quietly recovered.
  */
-export async function fetchBlobUrl(path: string, init?: RequestInit): Promise<string> {
+export async function fetchBlobUrl(path: string, apiInit?: ApiRequestInit): Promise<string> {
+  const { asSelf, ...init } = apiInit ?? {}
+  // A paper's scan and a review crop are adopted routes: for an assistant they must come from
+  // the lead's papers, like every other read on the screen they sit in.
+  const lead = actingLeadFor(path, asSelf)
   const send = (token: string | undefined): Promise<Response> =>
     fetch(`${BASE}${path}`, {
       ...init,
-      headers: { ...authHeaders(false, token), ...init?.headers },
+      headers: { ...authHeaders(false, token), ...actingHeaders(lead), ...init?.headers },
     })
 
   let res = await send(await tokenForRequest())
@@ -348,7 +426,8 @@ export async function fetchBlobUrl(path: string, init?: RequestInit): Promise<st
     if (renewed) res = await send(renewed)
   }
   if (!res.ok) {
-    throw new ApiError(res.status, `${res.status} ${res.statusText}`)
+    const parsed = parseErrorBody(res.status, res.statusText, await res.clone().text().catch(() => ""))
+    throw failure(res.status, parsed, undefined, lead)
   }
   return URL.createObjectURL(await res.blob())
 }
@@ -359,15 +438,17 @@ export async function fetchBlobUrl(path: string, init?: RequestInit): Promise<st
  */
 export async function* streamActivity(
   path: string,
-  init?: RequestInit,
+  apiInit?: ApiRequestInit,
 ): AsyncGenerator<ActivityEvent> {
+  const { asSelf, ...init } = apiInit ?? {}
+  const lead = actingLeadFor(path, asSelf)
   // Same ordering fix as `request()`: `...init` first so a caller's headers
   // merge with the auth header instead of replacing it.
   const open = (token: string | undefined): Promise<Response> =>
     fetch(`${BASE}${path}`, {
       method: "POST",
       ...init,
-      headers: { ...authHeaders(false, token), ...init?.headers },
+      headers: { ...authHeaders(false, token), ...actingHeaders(lead), ...init?.headers },
     })
 
   // Job streams are the longest-running thing the app does, so they are the
@@ -396,9 +477,9 @@ export async function* streamActivity(
    * `ApiError.detail` must get the same shape from all three.
    */
   if (!res.ok) {
-    const { message, detail, body } = parseErrorBody(res.status, res.statusText, await res.clone().text().catch(() => ""))
+    const parsed = parseErrorBody(res.status, res.statusText, await res.clone().text().catch(() => ""))
     const retryAfter = parseRetryAfter(res.headers.get("Retry-After"), new Date())
-    throw new ApiError(res.status, message, detail, retryAfter ?? undefined, body)
+    throw failure(res.status, parsed, retryAfter ?? undefined, lead)
   }
   if (!res.body) return
   const reader = res.body.getReader()
@@ -579,12 +660,16 @@ export async function uploadWithProgress<T>(
     onProgress?: (progress: UploadProgress) => void
     signal?: AbortSignal
     headers?: Record<string, string>
+    /** See `ApiRequestInit.asSelf`. */
+    asSelf?: boolean
   },
 ): Promise<T> {
-  const { onProgress, signal, headers } = options ?? {}
+  const { onProgress, signal, headers: callerHeaders, asSelf } = options ?? {}
+  const lead = actingLeadFor(path, asSelf)
+  const headers = { ...actingHeaders(lead), ...callerHeaders }
 
   try {
-    return await uploadOnce<T>(path, form, onProgress, signal, headers)
+    return await uploadOnce<T>(path, form, onProgress, signal, headers, lead)
   } catch (err) {
     // The same normalisation `request()` does at its own catch, and for the
     // same reason: without it a 2xx whose body is not JSON — a captive portal
@@ -613,6 +698,7 @@ async function uploadOnce<T>(
   onProgress: ((progress: UploadProgress) => void) | undefined,
   signal: AbortSignal | undefined,
   headers: Record<string, string> | undefined,
+  lead: ActingLead | null,
 ): Promise<T> {
   let result = await sendXhr(path, form, await tokenForRequest(), onProgress, signal, headers)
   if (result.status === 401) {
@@ -625,9 +711,9 @@ async function uploadOnce<T>(
     if (renewed) result = await sendXhr(path, form, renewed, onProgress, signal, headers)
   }
   if (result.status < 200 || result.status >= 300) {
-    const { message, detail, body } = parseErrorBody(result.status, result.statusText, result.text)
+    const parsed = parseErrorBody(result.status, result.statusText, result.text)
     const retryAfter = parseRetryAfter(result.getHeader("Retry-After"), new Date())
-    throw new ApiError(result.status, message, detail, retryAfter ?? undefined, body)
+    throw failure(result.status, parsed, retryAfter ?? undefined, lead)
   }
   // Same 204 special-case as `request()` — `JSON.parse("")` would throw.
   if (result.status === 204) return undefined as T

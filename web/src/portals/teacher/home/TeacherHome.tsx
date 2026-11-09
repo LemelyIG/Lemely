@@ -3,12 +3,15 @@ import { useNavigate } from "react-router-dom"
 import { useTeacherClasses, useTeacherOverview } from "@/lib/hooks/useTeacherApi"
 import { teacherLoadFailureMessage } from "@/lib/teacherOutcome"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
+import { EmptyState } from "@/components/ui/state-views"
+import { useActingTeacher } from "@/components/acting/acting-state"
 import { deriveSetup, teacherHomeView } from "./setup"
 import { TeacherSetup } from "./TeacherSetup"
 import { Overview as OverviewScreen } from "../screens/Overview"
 
 export function TeacherHome() {
   const navigate = useNavigate()
+  const { lead, can } = useActingTeacher()
   const classes = useTeacherClasses()
   const overview = useTeacherOverview()
   const view = teacherHomeView(classes.status, classes.data?.classes.length ?? 0, overview.status, overview.data)
@@ -21,6 +24,21 @@ export function TeacherHome() {
         <p className="mt-1 text-body-sm">{teacherLoadFailureMessage(classes.error ?? overview.error)}</p>
         <button type="button" disabled={classes.isFetching || overview.isFetching} className="mt-3 font-bold underline disabled:opacity-50 disabled:no-underline" onClick={() => { void classes.refetch(); void overview.refetch() }}>Try again</button>
       </div>
+    )
+  }
+  if (view === "setup" && lead) {
+    // The "mark your first papers" tour is for the account holder starting out. An assistant on a
+    // lead's team who finds no classes yet is looking at someone else's empty account.
+    return (
+      <EmptyState
+        heading={`${lead.teacherName} has no classes yet`}
+        body={
+          can("manage_classes")
+            ? "Create the first class to start. Papers and results appear here once it has students."
+            : "Classes appear here once they've added one."
+        }
+        action={can("manage_classes") ? { label: "Create a class", onClick: () => navigate("/teacher/first-class") } : undefined}
+      />
     )
   }
   if (view === "setup") {

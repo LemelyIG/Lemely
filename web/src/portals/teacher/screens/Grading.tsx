@@ -1,4 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V4 */
+import { useCan } from "@/components/acting/acting-state"
+import { PermissionGate } from "@/components/acting/permission-gate"
 import { useEffect, useRef, useState, type ChangeEvent } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
@@ -170,6 +172,10 @@ function DeletePaperControl({ paper }: { paper: PaperSummary }) {
   const deletePaper = useDeleteTeacherPaper()
   const [open, setOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Deleting a paper is managing the lead's classes (`DELETE /papers/{id}`), which a marker or
+  // viewer does not do. A row-level control: hidden, not a dead icon on every card.
+  const canDelete = useCan("manage_classes")
+  if (!canDelete) return null
 
   async function handleConfirm() {
     setError(null)
@@ -668,16 +674,18 @@ export function Grading() {
                           <div className="mt-3 pt-3 border-t border-outline-variant flex flex-col gap-2.5 items-start">
                             <div className="text-body-md text-error">{detail.error}</div>
                             <EstimateRange gate={regradeGate} audience="teacher" paths={teacherPaths} managedByName={null} headingLevel={2} />
-                            <Button
-                              variant="ink"
-                              size="sm"
-                              disabled={regrade.isPending || regradeGate.block !== null}
-                              onClick={() => regrade.mutate(detail.id, { onSuccess: () => invalidateUsage(queryClient), onError: (err) => void regradeGate.captureError(err) })}
-                            >
-                              {/* The notice above carries its own "Try again" (re-check the balance), so while
-                                blocked this one reads differently instead of repeating the label. */}
-                              {regrade.isPending ? "Queueing…" : regradeGate.block !== null ? "Regrade unavailable" : "Try again"}
-                            </Button>
+                            <PermissionGate permission="regrade">
+                              <Button
+                                variant="ink"
+                                size="sm"
+                                disabled={regrade.isPending || regradeGate.block !== null}
+                                onClick={() => regrade.mutate(detail.id, { onSuccess: () => invalidateUsage(queryClient), onError: (err) => void regradeGate.captureError(err) })}
+                              >
+                                {/* The notice above carries its own "Try again" (re-check the balance), so while
+                                  blocked this one reads differently instead of repeating the label. */}
+                                {regrade.isPending ? "Queueing…" : regradeGate.block !== null ? "Regrade unavailable" : "Try again"}
+                              </Button>
+                            </PermissionGate>
                             {regrade.isError && !parseUsageBlock(regrade.error) ? (
                               <div className="text-body-md text-error">
                                 Couldn't re-queue: {teacherMutationFailureMessage(regrade.error)}
@@ -689,6 +697,9 @@ export function Grading() {
                     ) : null}
                   </div>
 
+                  {/* Uploading a paper is marking it: an assistant whose role lacks `mark` sees the
+                      form with the reason above it, not a form that fails on submit. */}
+                  <PermissionGate permission="mark">
                   <div className="border border-outline-variant rounded-lg p-5 bg-surface-container-low flex flex-col gap-3">
                     <div className="text-body-md font-medium">Upload a scan</div>
                     <div>
@@ -815,6 +826,7 @@ export function Grading() {
                       </>
                     ) : null}
                   </div>
+                  </PermissionGate>
                 </div>
 
                 {/* Right column: tabs + papers */}

@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
-import { lazy, Suspense, useState } from "react"
+import { lazy, Suspense, useState, type ReactNode } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
@@ -30,6 +30,9 @@ import {
   type Icon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
+import { ActingTeacherProvider } from "@/components/acting/acting-context"
+import { isLeadUnavailable } from "@/lib/actingTeacher"
+import { useActingTeacher, useCan } from "@/components/acting/acting-state"
 import { gradeChipClass } from "@/lib/grade"
 import { Avatar } from "@/components/ui/avatar"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
@@ -179,6 +182,32 @@ const MyStudents = lazy(() =>
 const TutorStudentDetail = lazy(() =>
   import("./screens/tutoring/TutorStudentDetail").then((m) => ({ default: m.TutorStudentDetail })),
 )
+
+// "Working as" is for the teacher who assists a team, which is almost nobody, so the switcher and
+// the banner (and the menu and labels they need) are fetched only when there is something to show.
+// Named exports, hence the `.then` shape, like every screen above.
+const ActingSwitcher = lazy(() =>
+  import("@/components/acting/acting-switcher").then((m) => ({ default: m.ActingSwitcher })),
+)
+const ActingUnavailable = lazy(() =>
+  import("@/components/acting/acting-unavailable").then((m) => ({ default: m.ActingUnavailableView })),
+)
+const ActingBanner = lazy(() =>
+  import("@/components/acting/acting-banner").then((m) => ({ default: m.ActingBanner })),
+)
+
+/**
+ * Loads one of the acting pieces without letting a failed fetch take the shell down: they sit
+ * outside the content boundary (in the sidebar, above the page), where a throw would reach the
+ * router's error screen. Missing, they cost the cue and the switcher; the 403s still read right.
+ */
+function ActingPiece({ children, resetKey }: { children: ReactNode; resetKey?: unknown }) {
+  return (
+    <ErrorBoundary label="Working as" resetKey={resetKey} fallback={() => null}>
+      <Suspense fallback={null}>{children}</Suspense>
+    </ErrorBoundary>
+  )
+}
 
 const SIDEBAR_PRIMARY: NavItem["icon"][] = ["overview", "grading", "review", "classes", "atRisk"]
 const SIDEBAR_TOOLS: NavItem["icon"][] = ["schemes", "quizzes", "tutoring", "announcements", "team", "deleted"]
@@ -402,15 +431,28 @@ function TeacherNav() {
  * build-era conveniences from before the guard existed.
  */
 function SidebarFooter() {
+  // Uploading a paper is marking it. An assistant whose role lacks `mark` has no use for the
+  // shortcut, and `Grading` itself explains why (its upload form is gated with the reason).
+  const canMark = useCan("mark")
+  const { memberships } = useActingTeacher()
   return (
     <div className="flex flex-col gap-3">
-      <Link
-        to="/teacher/grading"
-        className="inline-flex h-9 w-full items-center justify-center gap-[7px] rounded-chip bg-primary px-3.5 btn-text text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-      >
-        <UploadSimple size={16} aria-hidden="true" />
-        Upload papers
-      </Link>
+      {/* Who the teacher is working as sits with who they are signed in as, and renders nothing
+          unless they assist at least one team. */}
+      {memberships.length > 0 ? (
+        <ActingPiece>
+          <ActingSwitcher />
+        </ActingPiece>
+      ) : null}
+      {canMark ? (
+        <Link
+          to="/teacher/grading"
+          className="inline-flex h-9 w-full items-center justify-center gap-[7px] rounded-chip bg-primary px-3.5 btn-text text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+        >
+          <UploadSimple size={16} aria-hidden="true" />
+          Upload papers
+        </Link>
+      ) : null}
       <UserBlock />
     </div>
   )
@@ -466,6 +508,8 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
   const title = trail[trail.length - 1]?.label ?? "Overview"
   const { data: counts } = useNotificationCounts()
   const unread = unreadBadgeLabel(counts)
+  const { lead } = useActingTeacher()
+  const canMark = useCan("mark")
 
   return (
     <>
@@ -473,7 +517,15 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
           `sidebar` breakpoint, so it belongs on the nav layer with the
           sidebar (DESIGN.md §7). Side margins are 16px on mobile, 28px from
           `md`; the page well below carries its own 72px at `lg`. */}
-      <div className="lm-app-header lm-app-header-pt-2.5 lm-nav-chrome sticky top-2 z-nav mx-4 mb-6 mt-2 flex min-h-14 items-center pb-2.5 gap-0.5 rounded-inner sm:gap-2 bg-surface-container-lowest pe-1 ps-2 ring-1 ring-outline-variant shadow-[var(--shadow-float)] md:mx-7 sm:pe-3 sm:ps-3 md:ps-[18px]">
+      <div
+        data-acting={lead ? "true" : undefined}
+        className={cn(
+          "lm-app-header lm-app-header-pt-2.5 lm-nav-chrome sticky top-2 z-nav mx-4 mb-6 mt-2 flex min-h-14 items-center pb-2.5 gap-0.5 rounded-inner sm:gap-2 bg-surface-container-lowest pe-1 ps-2 ring-1 shadow-[var(--shadow-float)] md:mx-7 sm:pe-3 sm:ps-3 md:ps-[18px]",
+          // While acting, the bar that scrolls with the page carries the cue too: the amber ring
+          // at every width, and the name from `lg` up (below that it would crowd out the page title).
+          lead ? "ring-2 ring-tertiary" : "ring-outline-variant",
+        )}
+      >
         <NavDrawerTrigger
           onClick={onOpenNav}
           label="Open teacher navigation"
@@ -482,16 +534,26 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
         <p className="min-w-0 truncate text-display-sm text-on-surface">
           {title}
         </p>
+        {lead ? (
+          <span
+            data-testid="acting-chip"
+            className="hidden min-w-0 flex-none items-center gap-1.5 truncate rounded-chip bg-tertiary-container px-2.5 py-1 text-label text-on-tertiary-container lg:inline-flex lg:max-w-60"
+          >
+            <span className="truncate">Working as {lead.teacherName}</span>
+          </span>
+        ) : null}
         <div className="flex-1" />
         <CreateSheet triggerClassName="inline-flex h-9 flex-none cursor-pointer items-center gap-[7px] rounded-chip bg-secondary-container px-3 btn-text text-on-secondary-container transition-colors hover:bg-secondary-container/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:px-3.5 pointer-coarse:h-11" />
-        <Link
-          to="/teacher/grading"
-          className="me-0 sm:me-2.5 inline-flex h-9 flex-none items-center gap-[7px] rounded-chip bg-primary px-3 btn-text text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary max-sm:justify-center sm:px-3.5 pointer-coarse:h-11 max-sm:pointer-coarse:w-11 max-sm:pointer-coarse:px-0"
-        >
-          <UploadSimple size={16} aria-hidden="true" />
-          <span className="hidden sm:inline">Upload papers</span>
-          <span className="sr-only sm:hidden">Upload papers</span>
-        </Link>
+        {canMark ? (
+          <Link
+            to="/teacher/grading"
+            className="me-0 sm:me-2.5 inline-flex h-9 flex-none items-center gap-[7px] rounded-chip bg-primary px-3 btn-text text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary max-sm:justify-center sm:px-3.5 pointer-coarse:h-11 max-sm:pointer-coarse:w-11 max-sm:pointer-coarse:px-0"
+          >
+            <UploadSimple size={16} aria-hidden="true" />
+            <span className="hidden sm:inline">Upload papers</span>
+            <span className="sr-only sm:hidden">Upload papers</span>
+          </Link>
+        ) : null}
         <Link
           to="/teacher/notifications"
           aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"}
@@ -545,6 +607,7 @@ export const TEACHER_BOTTOM_TABS: readonly {
 
 function TeacherLayout() {
   const [navOpen, setNavOpen] = useState(false)
+  const { lead, notice: actingNotice, choose } = useActingTeacher()
   const location = useLocation()
   const queryClient = useQueryClient()
 
@@ -563,6 +626,11 @@ function TeacherLayout() {
    * the home route shows the setup screen instead.
    */
   const classesQuery = useTeacherClasses()
+  // The server refused the lead's class list itself (a role with nothing, a removed assistant, a
+  // lead whose plan does not allow it: it answers all of them the same way). Every screen below
+  // would only repeat the refusal, so say it once. Not retried (`queryClient`), and the pages that
+  // are about the caller's own account stay reachable.
+  const leadUnavailable = isLeadUnavailable(lead, classesQuery.error, location.pathname)
   // Task 9 (C3d): shares its cache/request with `TeacherNav`'s own
   // `useReviewQueueCount()` subscriber (same query key) — mounting both the
   // desktop sidebar and this bottom bar costs one network request, not two.
@@ -603,6 +671,14 @@ function TeacherLayout() {
           tabIndex={-1}
           className="flex-1 min-w-0 overflow-x-hidden w-full max-w-[1600px] px-page-mobile pt-2 pb-bottom-nav sidebar:pb-8 md:px-page-tablet lg:px-[72px] focus:outline-none"
         >
+          {/* Who the teacher is working as, first and standing: it is the one fact that changes
+              what every control below does. Renders nothing, and no margin, unless acting for a
+              lead (or a choice was just dropped, and then it says why). */}
+          {(lead && !leadUnavailable) || actingNotice ? (
+            <ActingPiece>
+              <ActingBanner />
+            </ActingPiece>
+          ) : null}
           {/* PR 2 part C: offline recovery banner, above the Suspense/
               ErrorBoundary content it sits over — it renders nothing while
               online, so its own `mb-6` is the only spacing this adds. */}
@@ -630,6 +706,10 @@ function TeacherLayout() {
               gate on here rather than bailing out of the whole layout. */}
           {classesQuery.isPending ? (
             <RouteSkeleton />
+          ) : leadUnavailable && lead ? (
+            <ActingPiece>
+              <ActingUnavailable leadName={lead.teacherName} onSwitchBack={() => choose(null)} />
+            </ActingPiece>
           ) : (
             <Suspense fallback={<RouteSkeleton />}>
               {/* PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it
@@ -692,7 +772,11 @@ function TeacherLayout() {
 
 export const teacherRoute: RouteObject = {
   path: "teacher",
-  element: <TeacherLayout />,
+  element: (
+    <ActingTeacherProvider>
+      <TeacherLayout />
+    </ActingTeacherProvider>
+  ),
   children: [
     // P6.5 · `handle.title` on every child. See `lib/meta/documentMeta.ts`.
     {

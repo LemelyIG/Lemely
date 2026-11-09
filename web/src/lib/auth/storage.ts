@@ -5,6 +5,7 @@
  * logins (D1.11's 3-device-limit semantics rely on a stable device id).
  */
 
+import { clearActingLead } from "@/lib/actingTeacher"
 import { randomUuid } from "@/lib/uuid"
 import { queryClient } from "@/lib/queryClient"
 import { persister } from "@/lib/offline/queryPersister"
@@ -98,6 +99,8 @@ export function setSession(session: Session): void {
 export const SIGNUP_NEXT_KEY = "lemely.signup.next"
 
 export function clearSession(): void {
+  // Whoever signs in next on this tab must not inherit the last person's "working as".
+  clearActingLead()
   localStorage.removeItem(SESSION_KEY)
   localStorage.removeItem(SIGNUP_NEXT_KEY)
   notify(null)

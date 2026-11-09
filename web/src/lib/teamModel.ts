@@ -186,7 +186,9 @@ export function teamFailureMessage(err: unknown, action: string): string {
   if (status === 429) return "Too many attempts. Wait a minute and try again."
   if (status === 422) {
     const code = billingErrorCode(err)
-    if (code === "invalid_scope") return "Choose only the subjects and actions listed, then save again."
+    // The server also refuses actions that arrive in a later phase (`mark_quiz`,
+    // `generate_flashcards`), which stay on the list so a seat's scope can be set once they ship.
+    if (code === "invalid_scope") return "One of these actions isn't available yet. Untick it and save again."
     if (code === "invalid_cap") return "The credit limit must be a whole number, zero or more."
     return `Couldn't ${action}. Check the details and try again.`
   }

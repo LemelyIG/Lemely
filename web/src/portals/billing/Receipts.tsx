@@ -9,6 +9,7 @@ import { formatBillingDate, formatMoney } from "@/lib/billingFormat"
 import { billingPaths } from "@/lib/billingPaths"
 import { useReceipts } from "@/lib/hooks/useBillingApi"
 import { purposeLabel, receiptStatusText } from "@/lib/usageHistoryModel"
+import { OwnAccountNote } from "@/components/acting/own-account-note"
 
 /*
  * Receipts exist only for real money (spec §2.5). A `paid` payment is the receipt; the payer
@@ -66,7 +67,12 @@ export function StudentReceipts() {
 }
 
 export function TeacherReceipts() {
-  return <ReceiptsView backHref={billingPaths({ role: "teacher" }).overview} />
+  return (
+    <>
+      <OwnAccountNote />
+      <ReceiptsView backHref={billingPaths({ role: "teacher" }).overview} />
+    </>
+  )
 }
 
 /** All of a parent's receipts, across children: receipts belong to the payer. */

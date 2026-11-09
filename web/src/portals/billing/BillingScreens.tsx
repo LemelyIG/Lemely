@@ -3,6 +3,7 @@
 import { billingPaths } from "@/lib/billingPaths"
 import { AutoTopupCard } from "./AutoTopupCard"
 import { BillingOverview } from "./BillingOverview"
+import { OwnAccountNote } from "@/components/acting/own-account-note"
 
 /* Route elements for `/student/billing` and `/teacher/billing`. */
 
@@ -20,12 +21,16 @@ export function StudentBilling() {
 
 export function TeacherBilling() {
   return (
-    <BillingOverview
-      scope={{ role: "teacher" }}
-      audience="teacher"
-      beneficiaryId={null}
-      heading="Plan and billing"
-      extra={<AutoTopupCard beneficiaryId={null} audience="teacher" packsHref={billingPaths({ role: "teacher" }).packs} />}
-    />
+    <>
+      {/* Billing is the caller's own account whoever they are working as. */}
+      <OwnAccountNote />
+      <BillingOverview
+        scope={{ role: "teacher" }}
+        audience="teacher"
+        beneficiaryId={null}
+        heading="Plan and billing"
+        extra={<AutoTopupCard beneficiaryId={null} audience="teacher" packsHref={billingPaths({ role: "teacher" }).packs} />}
+      />
+    </>
   )
 }

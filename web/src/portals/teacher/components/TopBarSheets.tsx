@@ -17,6 +17,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet"
+import { useActingTeacher } from "@/components/acting/acting-state"
 import { cn } from "@/lib/utils"
 import {
   CREATE_ACTIONS,
@@ -70,6 +71,9 @@ export function IconTile({ children }: { children: ReactNode }) {
  * focus back on this button on close.
  */
 export function CreateSheet({ triggerClassName }: { triggerClassName: string }) {
+  // While acting for a lead, only what the role may do is offered.
+  const { can } = useActingTeacher()
+  const actions = CREATE_ACTIONS.filter((action) => !action.permission || can(action.permission))
   return (
     <Sheet>
       <SheetTrigger className={triggerClassName}>
@@ -82,7 +86,7 @@ export function CreateSheet({ triggerClassName }: { triggerClassName: string }) 
         <p className="text-eyebrow text-on-surface-variant">Create</p>
         <SheetTitle className="mb-2 text-display-md">Start something</SheetTitle>
         <ul className="flex flex-col gap-1">
-          {CREATE_ACTIONS.map((action) => {
+          {actions.map((action) => {
             const Glyph = ACTION_ICON[action.icon]
             return (
               <li key={action.id}>

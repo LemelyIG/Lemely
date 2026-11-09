@@ -1,4 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
+import { PermissionGate } from "@/components/acting/permission-gate"
 import { useEffect, useRef, useState } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
@@ -460,6 +461,8 @@ export function Review() {
                 />
               ) : (
                 <>
+                  {/* Approving is marking: without `mark` the selection and the action go, with the reason above. */}
+                  <PermissionGate permission="mark">
                   <div className="flex items-center gap-3 flex-wrap">
                     <Checkbox
                       checked={allSelected}
@@ -483,6 +486,7 @@ export function Review() {
                       selectable here. Open one to look at it properly.
                     </span>
                   </div>
+                  </PermissionGate>
 
                   {bulkApprove.isError ? (
                     <div role="alert" className="text-body-sm text-error">

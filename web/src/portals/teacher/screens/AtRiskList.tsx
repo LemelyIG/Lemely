@@ -1,4 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
+import { useCan } from "@/components/acting/acting-state"
+import { PermissionGate } from "@/components/acting/permission-gate"
 import { useState } from "react"
 import { Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
@@ -150,6 +152,8 @@ function AcknowledgeControl({
   const [note, setNote] = useState("")
   const acknowledge = useAcknowledgeAtRisk(studentId)
   const unacknowledge = useUnacknowledgeAtRisk(studentId)
+  // Acknowledging a flag is managing students. Row actions: hidden for a role without it.
+  const canManageStudents = useCan("manage_students")
 
   if (flag.acknowledged) {
     return (
@@ -158,16 +162,18 @@ function AcknowledgeControl({
           <Chip tone="neutral">
             Acknowledged {relativeTime(flag.acknowledged.acknowledgedAt)}
           </Chip>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            onClick={() => unacknowledge.mutate(flag.reason)}
-            disabled={unacknowledge.isPending}
-            title="Not a re-flag. It just removes your acknowledgement so this reads as unseen again"
-          >
-            {unacknowledge.isPending ? "Undoing…" : "Undo"}
-          </Button>
+          <PermissionGate permission="manage_students" mode="hide">
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => unacknowledge.mutate(flag.reason)}
+              disabled={unacknowledge.isPending}
+              title="Not a re-flag. It just removes your acknowledgement so this reads as unseen again"
+            >
+              {unacknowledge.isPending ? "Undoing…" : "Undo"}
+            </Button>
+          </PermissionGate>
         </div>
         {flag.acknowledged.note ? (
           <div className="text-body-sm text-on-surface-variant italic text-pretty">“{flag.acknowledged.note}”</div>
@@ -178,6 +184,8 @@ function AcknowledgeControl({
       </div>
     )
   }
+
+  if (!canManageStudents) return null
 
   if (!open) {
     return (

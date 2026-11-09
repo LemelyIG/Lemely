@@ -208,7 +208,11 @@ describe("SeatEditorDialog", () => {
     s.m.scope = fakeMutation({ isError: true, error: new ApiError(422, "x", { code: "invalid_scope", message: "x" }) })
     const html = render()
     expect(html).toContain('role="alert"')
-    expect(html).toContain("Choose only the subjects and actions listed")
+    // The server also refuses actions from a later phase (mark_quiz, generate_flashcards), so the
+    // message says an action is unavailable, not that the person picked something unlisted.
+    expect(html).toContain("One of these actions isn")
+    expect(html).toContain("Untick it and save again")
+    expect(html).not.toContain("Choose only the subjects")
     expect(html).not.toContain("charged")
   })
 

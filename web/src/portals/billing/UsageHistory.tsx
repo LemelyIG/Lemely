@@ -3,6 +3,7 @@
 import type { InfiniteData, UseInfiniteQueryResult } from "@tanstack/react-query"
 import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
+import { OwnAccountNote } from "@/components/acting/own-account-note"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { ListSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
@@ -186,5 +187,10 @@ export function StudentUsageHistory() {
 }
 
 export function TeacherUsageHistory() {
-  return <UsageHistoryView backHref={billingPaths({ role: "teacher" }).overview} />
+  return (
+    <>
+      <OwnAccountNote />
+      <UsageHistoryView backHref={billingPaths({ role: "teacher" }).overview} />
+    </>
+  )
 }

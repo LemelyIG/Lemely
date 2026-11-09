@@ -1,4 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
+import { PermissionGate } from "@/components/acting/permission-gate"
 import { useState, type FormEvent } from "react"
 import { Link } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
@@ -206,9 +207,11 @@ export function Classes() {
                 placeholder="Search classes or subjects…"
                 wrapperClassName="w-[240px]"
               />
-              <Button variant="ink" onClick={() => setShowCreate((v) => !v)}>
-                {showCreate ? "Cancel" : "+ New class"}
-              </Button>
+              <PermissionGate permission="manage_classes" mode="hide">
+                <Button variant="ink" onClick={() => setShowCreate((v) => !v)}>
+                  {showCreate ? "Cancel" : "+ New class"}
+                </Button>
+              </PermissionGate>
             </div>
 
             {showCreate ? (
@@ -370,7 +373,7 @@ export function Classes() {
                         </TD>
                         <TD className="text-end whitespace-nowrap">
                           {editingId === c.id ? null : (
-                            <>
+                            <PermissionGate permission="manage_classes" mode="hide">
                               <Button size="sm" variant="ghost" onClick={() => startRename(c)}>
                                 Rename
                               </Button>
@@ -383,7 +386,7 @@ export function Classes() {
                               >
                                 Delete
                               </Button>
-                            </>
+                            </PermissionGate>
                           )}
                         </TD>
                       </TR>

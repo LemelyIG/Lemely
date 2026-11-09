@@ -8,6 +8,7 @@ import { useTeam } from "@/lib/hooks/useTeamApi"
 import { AssistantsPanel } from "./AssistantsPanel"
 import { JoinTeamCard } from "./JoinTeamCard"
 import { SeatsPanel } from "./SeatsPanel"
+import { OwnAccountNote } from "@/components/acting/own-account-note"
 
 /*
  * `/teacher/team`: the lead teacher's seats and assistants, and joining someone else's team. Billing, seats,
@@ -21,6 +22,8 @@ export function Team() {
   return (
     <div className="flex flex-col gap-6">
       <h1 className="m-0 text-display-md text-on-surface">Seats and assistants</h1>
+      {/* The team is the caller's own whoever they are working as; say so while they act for a lead. */}
+      <OwnAccountNote />
       {team.status === "error" && isForbidden(team.error) ? (
         // Retrying cannot change who the teacher is, so this one carries no "Try again".
         <ErrorState heading="You can't manage seats" body="Seats and assistants are managed by the lead teacher." />

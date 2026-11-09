@@ -235,7 +235,9 @@ describe("teamFailureMessage", () => {
   })
 
   it("maps the backend's 422 codes", () => {
-    expect(teamFailureMessage(err(422, "invalid_scope"), "x")).toContain("subjects and actions listed")
+    // Accurate for what the server really rejects: an action that arrives in a later phase
+    // (mark_quiz, generate_flashcards), not "something you picked that isn't listed".
+    expect(teamFailureMessage(err(422, "invalid_scope"), "x")).toBe("One of these actions isn't available yet. Untick it and save again.")
     expect(teamFailureMessage(err(422, "invalid_cap"), "x")).toContain("zero or more")
     expect(teamFailureMessage(err(422), "save the seat")).toBe("Couldn't save the seat. Check the details and try again.")
   })
