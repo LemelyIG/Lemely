@@ -3,15 +3,16 @@
 Process-wide, lazily built singletons, the ``lru_cache`` pattern of
 ``lemely.web.deps_billing``; tests override them through ``app.dependency_overrides``.
 
-**Wiring pending.** :func:`reset_invite_singletons` is not yet called from
-``deps.reset_singletons``: ``deps.py`` is being edited by a concurrent change, so the
-one-line call is left for its owner to add. Until then a test that wants clean limiters
-calls :func:`reset_invite_singletons` itself.
-
 **Every limit here is per Cloud Run instance** (``SlidingWindowLimiter`` is
 in-process), and the service runs with ``max-instances=3``. The effective ceilings are
 therefore up to three times the constants below, and a flood spread over instances
 fills each budget separately. They are deterrents, not a security boundary.
+
+**Check-then-record can overshoot.** Each route checks a miss budget (``retry_after``),
+looks the code up, then records the miss (``allow``) only on a 404. Those are separate
+calls, so concurrent requests that all pass the check before any records can overshoot a
+budget by up to the threadpool size per instance. Bounded and accepted: the budgets are
+deterrents, and making the pair atomic would hold a lock across a database lookup.
 """
 
 from __future__ import annotations
@@ -37,6 +38,14 @@ from lemely.web.ratelimit import SlidingWindowLimiter
 _INVITE_PREVIEW_PER_CLIENT_LIMIT = 240
 _INVITE_PREVIEW_PER_CLIENT_WINDOW_SECONDS = 60.0
 
+#: Per client IP, *misses* only: 20 unknown codes per minute. Without it two IPs at 8
+#: requests a second (inside the 240 above) would drain the global miss budget below and
+#: block every preview. A client that spends it is refused, valid codes included, until its
+#: window rolls; one address cannot take the shared budget past 20 a minute. A real user
+#: mistypes a code a few times at most.
+_INVITE_PREVIEW_PER_CLIENT_MISS_LIMIT = 20
+_INVITE_PREVIEW_PER_CLIENT_MISS_WINDOW_SECONDS = 60.0
+
 #: Global budget of *misses* only: 300 unknown codes per minute across every caller. A
 #: request that resolves a real code never consumes it, so a flood of valid previews
 #: cannot lock students out; only guessing (unknown codes) spends it. Once spent, the
@@ -53,14 +62,16 @@ INVITE_PREVIEW_GLOBAL_KEY = "__global__"
 
 @dataclass(frozen=True, slots=True)
 class InvitePreviewLimiters:
-    """The two :class:`SlidingWindowLimiter` instances guarding the public preview.
+    """The three :class:`SlidingWindowLimiter` instances guarding the public preview.
 
-    ``per_client`` throttles one caller (keyed by IP) on every call. ``global_misses``
-    caps unknown-code lookups across all callers: the route checks it before the lookup
-    (``retry_after`` > 0 means spent) and records a miss with ``allow`` only on a 404.
+    ``per_client`` throttles one caller (keyed by IP) on every call. ``per_client_misses``
+    (keyed by IP) and ``global_misses`` cap unknown-code lookups per caller and across all
+    callers: the route checks each before the lookup (``retry_after`` > 0 means spent) and
+    records a miss with ``allow`` only on a 404.
     """
 
     per_client: SlidingWindowLimiter
+    per_client_misses: SlidingWindowLimiter
     global_misses: SlidingWindowLimiter
 
 
@@ -75,6 +86,11 @@ def get_invite_preview_limiters() -> InvitePreviewLimiters:
         per_client=SlidingWindowLimiter(
             limit=_INVITE_PREVIEW_PER_CLIENT_LIMIT,
             window_seconds=_INVITE_PREVIEW_PER_CLIENT_WINDOW_SECONDS,
+            clock=time.monotonic,
+        ),
+        per_client_misses=SlidingWindowLimiter(
+            limit=_INVITE_PREVIEW_PER_CLIENT_MISS_LIMIT,
+            window_seconds=_INVITE_PREVIEW_PER_CLIENT_MISS_WINDOW_SECONDS,
             clock=time.monotonic,
         ),
         global_misses=SlidingWindowLimiter(
@@ -131,7 +147,7 @@ def get_invite_redeem_limiters() -> InviteRedeemLimiters:
 
 
 def reset_invite_singletons() -> None:
-    """Clear this module's cached providers (``deps.reset_singletons`` does not know them yet)."""
+    """Clear this module's cached providers; ``deps.reset_singletons`` calls this."""
     get_invite_preview_limiters.cache_clear()
     get_invite_redeem_limiters.cache_clear()
 

@@ -213,22 +213,28 @@ def preview_invite(
     teacher is named by display name only, never by email.
 
     Rate-limited, **429** with ``Retry-After`` and a generic body: per client IP on
-    every call (consulted first, so one address cannot spend the shared budget), and a
-    global budget of *misses* only. The global budget is checked before the lookup and
-    spent only when the code is unknown (404), so a flood of valid previews can never
-    lock real students out; only guessing spends it. A class join code is unlimited-use
+    every call (consulted first, so one address cannot spend the shared budget), plus
+    two budgets of *misses* only: per client IP and global. Both are checked before the
+    lookup and spent only when the code is unknown (404), so a flood of valid previews
+    can never lock real students out; only guessing spends them, and the per-IP one stops
+    a couple of addresses draining the global one. A class join code is unlimited-use
     and the route is anonymous, so without this it is a free code-guessing oracle.
     """
     client_ip = _client_ip(request)
     if not limiters.per_client.allow(client_ip):
         raise _rate_limited(limiters.per_client.retry_after(client_ip))
-    spent = limiters.global_misses.retry_after(INVITE_PREVIEW_GLOBAL_KEY)
-    if spent:
-        raise _rate_limited(spent)
+    for misses, key in (
+        (limiters.per_client_misses, client_ip),
+        (limiters.global_misses, INVITE_PREVIEW_GLOBAL_KEY),
+    ):
+        spent = misses.retry_after(key)
+        if spent:
+            raise _rate_limited(spent)
     try:
         preview = service.preview(code)
     except InviteNotFoundError as exc:
-        limiters.global_misses.allow(INVITE_PREVIEW_GLOBAL_KEY)  # record the miss
+        limiters.per_client_misses.allow(client_ip)  # record the miss
+        limiters.global_misses.allow(INVITE_PREVIEW_GLOBAL_KEY)
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return InvitePreviewDTO(
         role=preview.role.value,

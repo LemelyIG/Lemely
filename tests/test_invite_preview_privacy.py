@@ -51,6 +51,7 @@ if TYPE_CHECKING:
 _BLANK_NAMES = [None, "", "   "]
 _PER_CLIENT_LIMIT = 3
 _GLOBAL_MISS_LIMIT = 5
+_PER_CLIENT_MISS_LIMIT = 4
 _REDEEM_PER_USER_LIMIT = 5
 _REDEEM_MISS_LIMIT = 3
 
@@ -112,6 +113,9 @@ def clock() -> FakeClock:
 def _limiters(clock: FakeClock) -> InvitePreviewLimiters:
     return InvitePreviewLimiters(
         per_client=SlidingWindowLimiter(limit=_PER_CLIENT_LIMIT, window_seconds=60.0, clock=clock),
+        # Above the per-client call limit, so it never binds in the tests that are not
+        # about it; test_one_ip_cannot_drain... builds its own.
+        per_client_misses=SlidingWindowLimiter(limit=1000, window_seconds=60.0, clock=clock),
         global_misses=SlidingWindowLimiter(
             limit=_GLOBAL_MISS_LIMIT, window_seconds=60.0, clock=clock
         ),
@@ -157,6 +161,9 @@ def open_client(pg_sessionmaker: sessionmaker[Session]) -> Iterator[TestClient]:
         pg_sessionmaker,
         InvitePreviewLimiters(
             per_client=SlidingWindowLimiter(limit=1000, window_seconds=60.0, clock=FakeClock()),
+            per_client_misses=SlidingWindowLimiter(
+                limit=1000, window_seconds=60.0, clock=FakeClock()
+            ),
             global_misses=SlidingWindowLimiter(limit=1000, window_seconds=60.0, clock=FakeClock()),
         ),
     )
@@ -435,13 +442,52 @@ def test_one_ip_past_its_limit_does_not_spend_the_shared_miss_budget(
     assert _get(limited_client, code, "198.51.100.9") == 200
 
 
+def test_one_ip_cannot_drain_the_global_miss_budget(
+    pg_sessionmaker: sessionmaker[Session], clock: FakeClock
+) -> None:
+    """Two addresses at a few requests a second sit well inside the per-IP call limit, so
+    without a per-IP miss budget they would spend the whole shared miss budget."""
+    limiters = InvitePreviewLimiters(
+        per_client=SlidingWindowLimiter(limit=100, window_seconds=60.0, clock=clock),
+        per_client_misses=SlidingWindowLimiter(
+            limit=_PER_CLIENT_MISS_LIMIT, window_seconds=60.0, clock=clock
+        ),
+        global_misses=SlidingWindowLimiter(
+            limit=_GLOBAL_MISS_LIMIT, window_seconds=60.0, clock=clock
+        ),
+    )
+    client = TestClient(_app(pg_sessionmaker, limiters))
+    code = _seed_join_code(pg_sessionmaker)
+    try:
+        for _ in range(_PER_CLIENT_MISS_LIMIT):
+            assert _get(client, "NOSUCHCODE", "203.0.113.7") == 404
+
+        refused = client.get("/api/invites/NOSUCHCODE", headers={"X-Forwarded-For": "203.0.113.7"})
+        assert refused.status_code == 429
+        assert int(refused.headers["Retry-After"]) >= 1
+        # A's refused requests did not record misses: the shared budget is nearly intact,
+        # and a valid code from another IP is served.
+        assert _get(client, code, "198.51.100.9") == 200
+        assert _get(client, "NOSUCHCODE", "198.51.100.9") == 404
+        # A itself is shut out, valid codes included, until its window rolls.
+        assert _get(client, code, "203.0.113.7") == 429
+        clock.advance(61.0)
+        assert _get(client, code, "203.0.113.7") == 200
+    finally:
+        reset_invite_singletons()
+
+
 def test_default_preview_limiters_enforce_the_named_constants() -> None:
     reset_invite_singletons()
     try:
         limiters = get_invite_preview_limiters()
         assert get_invite_preview_limiters() is limiters
         per_client = sum(limiters.per_client.allow("203.0.113.7") for _ in range(10_000))
+        per_client_misses = sum(
+            limiters.per_client_misses.allow("203.0.113.7") for _ in range(10_000)
+        )
         misses = sum(limiters.global_misses.allow(INVITE_PREVIEW_GLOBAL_KEY) for _ in range(10_000))
+        assert per_client_misses == deps_invites._INVITE_PREVIEW_PER_CLIENT_MISS_LIMIT == 20
         assert per_client == deps_invites._INVITE_PREVIEW_PER_CLIENT_LIMIT == 240
         assert misses == deps_invites._INVITE_PREVIEW_GLOBAL_MISS_LIMIT
     finally:
@@ -566,6 +612,18 @@ def test_default_redeem_limiters_enforce_the_named_constants() -> None:
         assert misses == deps_invites._INVITE_REDEEM_MISS_LIMIT == 10
     finally:
         reset_invite_singletons()
+
+
+def test_deps_reset_singletons_clears_the_invite_limiters() -> None:
+    from lemely.web.deps import reset_singletons
+
+    get_invite_preview_limiters()
+    get_invite_redeem_limiters()
+
+    reset_singletons()
+
+    assert get_invite_preview_limiters.cache_info().currsize == 0
+    assert get_invite_redeem_limiters.cache_info().currsize == 0
 
 
 def test_reset_invite_singletons_evicts_a_populated_cache() -> None:
