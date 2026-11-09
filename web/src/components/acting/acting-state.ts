@@ -52,4 +52,3 @@ export function useDeniedReason(permission: TeamPermission): string | null {
   const { can, lead } = useContext(ActingTeacherContext)
   return can(permission) ? null : teamPermissionDeniedMessage(lead?.teacherName ?? null)
 }
-

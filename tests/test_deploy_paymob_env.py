@@ -40,13 +40,13 @@ def _env_vars() -> dict[str, str]:
 def test_server_only_credentials_come_from_secrets() -> None:
     env = _env_vars()
     for field, secret in _SECRETS.items():
-        assert env[_PREFIX + field] == "${{ secrets.%s }}" % secret, field
+        assert env[_PREFIX + field] == f"${{{{ secrets.{secret} }}}}", field
 
 
 def test_public_values_come_from_variables_never_secrets() -> None:
     env = _env_vars()
     for field, variable in _VARIABLES.items():
-        assert env[_PREFIX + field] == "${{ vars.%s }}" % variable, field
+        assert env[_PREFIX + field] == f"${{{{ vars.{variable} }}}}", field
 
 
 def test_every_paymob_field_is_deployed_or_deliberately_defaulted() -> None:

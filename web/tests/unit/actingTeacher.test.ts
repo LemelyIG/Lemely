@@ -669,4 +669,3 @@ describe("the two refusals an assistant can get", () => {
     expect(retry(0, unavailable403())).toBe(false)
   })
 })
-
