@@ -12,16 +12,19 @@ from datetime import UTC, date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 import pytest
+import sqlalchemy as sa
 from sqlalchemy import event
 
 from lemely.core.metered_actions import MeteredAction, UsageTarget
-from lemely.core.payer_chain import build_payer_chain
+from lemely.core.payer_chain import ChainContext, build_payer_chain
 from lemely.core.usage_types import GrantScope, Payer
+from lemely.db.models import School, SchoolMembership
 from lemely.db.models.attempts import Attempt, QuestionResult, QuestionResultPoint
 from lemely.db.models.enums import (
     AttemptOrigin,
     ConfidenceBand,
     MarkerSource,
+    MembershipRole,
     QuestionDifficulty,
     QuizQuestionStatus,
     Role,
@@ -32,7 +35,9 @@ from lemely.db.models.quizzes import Quiz, QuizAssignment, QuizQuestion
 from lemely.db.models.study_plan import StudyPlan
 from lemely.db.models.team import CapPeriod, TeacherMember, TeacherMemberStatus
 from lemely.db.models.usage import GrantKind, UsageDebt
+from lemely.db.models.users import User
 from lemely.db.usage_context_repo import (
+    AssistantUnavailable,
     allowance_units,
     candidate_subjects,
     has_live_credit_grant,
@@ -43,7 +48,7 @@ from lemely.db.usage_context_repo import (
     self_review_target,
     study_plan_generated_this_week,
 )
-from tests.team_db import add_teacher_plan
+from tests.team_db import add_class, add_teacher_plan, enrol
 from tests.usage_helpers import (
     NOW,
     assistant,
@@ -275,25 +280,32 @@ def test_assistant_row_loads_and_seats_are_ignored(
     assert ctx.debtors == frozenset({lead})
 
 
-def test_a_foreign_assistant_member_id_is_ignored(
+def _load_for_assistant(
+    sm: sessionmaker[Session], actor: uuid.UUID, member: uuid.UUID, action: MeteredAction
+) -> object:
+    with sm() as session:
+        return load_chain_context(
+            session,
+            actor_user_id=actor,
+            action=action,
+            subject_code=None,
+            assistant_member_id=member,
+            now=NOW,
+        )
+
+
+def test_a_foreign_assistant_member_id_is_refused(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:
     sm = migrated_sessionmaker
     lead, helper, intruder = (seed_user(sm, Role.teacher) for _ in range(3))
     member = assistant(sm, teacher=lead, member=helper)
-    with sm() as session:
-        ctx = load_chain_context(
-            session,
-            actor_user_id=intruder,
-            action=MeteredAction.REGRADE,
-            subject_code=None,
-            assistant_member_id=member,
-            now=NOW,
-        )
-    assert ctx.assistant is None
+    with pytest.raises(AssistantUnavailable) as caught:
+        _load_for_assistant(sm, intruder, member, MeteredAction.REGRADE)
+    assert caught.value.code == "team_permission_denied"
 
 
-def test_a_removed_assistant_row_is_ignored(migrated_sessionmaker: sessionmaker[Session]) -> None:
+def test_a_removed_assistant_row_is_refused(migrated_sessionmaker: sessionmaker[Session]) -> None:
     sm = migrated_sessionmaker
     lead, helper = seed_user(sm, Role.teacher), seed_user(sm, Role.teacher)
     member = assistant(sm, teacher=lead, member=helper)
@@ -301,52 +313,123 @@ def test_a_removed_assistant_row_is_ignored(migrated_sessionmaker: sessionmaker[
         row = session.get(TeacherMember, member)
         assert row is not None
         row.status = TeacherMemberStatus.removed
-    with sm() as session:
-        ctx = load_chain_context(
-            session,
-            actor_user_id=helper,
-            action=MeteredAction.REGRADE,
-            subject_code=None,
-            assistant_member_id=member,
-            now=NOW,
-        )
-    assert ctx.assistant is None
+    with pytest.raises(AssistantUnavailable) as caught:
+        _load_for_assistant(sm, helper, member, MeteredAction.REGRADE)
+    assert caught.value.code == "team_permission_denied"
 
 
-def test_a_seat_row_id_is_not_an_assistant(migrated_sessionmaker: sessionmaker[Session]) -> None:
+def test_a_seat_row_id_is_refused_as_an_assistant(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
     sm = migrated_sessionmaker
     student, teacher = seed_user(sm), seed_user(sm, Role.teacher)
     member = seat(
         sm, teacher=teacher, student=student, subjects=["0580"], actions=[MeteredAction.MARK_PAPER]
     )
-    with sm() as session:
-        ctx = load_chain_context(
-            session,
-            actor_user_id=student,
-            action=MeteredAction.MARK_PAPER,
-            subject_code="0580",
-            assistant_member_id=member,
-            now=NOW,
-        )
-    assert ctx.assistant is None
-    assert [s.member_id for s in ctx.seats] == [member]
+    with pytest.raises(AssistantUnavailable) as caught:
+        _load_for_assistant(sm, student, member, MeteredAction.MARK_PAPER)
+    assert caught.value.code == "team_permission_denied"
 
 
-def test_an_unknown_assistant_member_id_is_ignored(
+def test_an_unknown_assistant_member_id_is_refused(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:
     sm = migrated_sessionmaker
     helper = seed_user(sm, Role.teacher)
-    with sm() as session:
-        ctx = load_chain_context(
+    with pytest.raises(AssistantUnavailable) as caught:
+        _load_for_assistant(sm, helper, uuid.uuid4(), MeteredAction.REGRADE)
+    assert caught.value.code == "team_permission_denied"
+
+
+def test_a_lead_who_is_no_longer_a_teacher_is_refused(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    lead, helper = seed_user(sm, Role.teacher), seed_user(sm, Role.teacher)
+    member = assistant(sm, teacher=lead, member=helper)
+    with sm.begin() as session:
+        user = session.get(User, lead)
+        assert user is not None
+        user.role = Role.student
+    with pytest.raises(AssistantUnavailable) as caught:
+        _load_for_assistant(sm, helper, member, MeteredAction.REGRADE)
+    assert caught.value.code == "team_permission_denied"
+
+
+def _put_in_school(sm: sessionmaker[Session], user: uuid.UUID) -> None:
+    school_id = uuid.uuid4()
+    with sm.begin() as session:
+        session.add(School(id=school_id, name="Guard School", seat_quota=5))
+        session.flush()
+        session.add(
+            SchoolMembership(
+                school_id=school_id, user_id=user, membership_role=MembershipRole.teacher
+            )
+        )
+
+
+def test_a_lead_with_school_data_is_unavailable_not_denied(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    lead, helper = seed_user(sm, Role.teacher), seed_user(sm, Role.teacher)
+    member = assistant(sm, teacher=lead, member=helper)
+    _put_in_school(sm, lead)
+    with pytest.raises(AssistantUnavailable) as caught:
+        _load_for_assistant(sm, helper, member, MeteredAction.REGRADE)
+    assert caught.value.code == "team_lead_unavailable"
+
+
+def test_a_school_lead_is_not_revealed_to_a_stranger(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Only the assistant who holds the row learns the lead is unavailable."""
+    sm = migrated_sessionmaker
+    lead, helper, stranger = (seed_user(sm, Role.teacher) for _ in range(3))
+    member = assistant(sm, teacher=lead, member=helper)
+    _put_in_school(sm, lead)
+    with pytest.raises(AssistantUnavailable) as caught:
+        _load_for_assistant(sm, stranger, member, MeteredAction.REGRADE)
+    assert caught.value.code == "team_permission_denied"
+
+
+def test_the_assistants_own_balance_never_appears_in_the_chain(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    lead, helper = seed_user(sm, Role.teacher), seed_user(sm, Role.teacher)
+    member = assistant(sm, teacher=lead, member=helper, cap_units=40)
+    give(sm, helper, units=500)
+    ctx = _load_for_assistant(sm, helper, member, MeteredAction.REGRADE)
+    assert isinstance(ctx, ChainContext)
+    chain = build_payer_chain(ctx)
+    assert {p.owner_user_id for p in chain} == {lead}
+    assert [p.scope for p in chain] == [GrantScope.ALLOWANCE, GrantScope.CREDITS]
+    assert {p.teacher_member_id for p in chain} == {member}
+
+
+def test_a_refused_assistant_never_falls_back_to_the_actors_own_chain(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The lead removes the assistant after the route guard: nothing is built, so the
+    assistant's own allowance and credits cannot pay for the lead's work (R4)."""
+    sm = migrated_sessionmaker
+    lead, helper = seed_user(sm, Role.teacher), seed_user(sm, Role.teacher)
+    member = assistant(sm, teacher=lead, member=helper)
+    give(sm, helper, units=500)
+    with sm.begin() as session:
+        row = session.get(TeacherMember, member)
+        assert row is not None
+        row.status = TeacherMemberStatus.removed
+    with sm() as session, pytest.raises(AssistantUnavailable):
+        load_chain_context(
             session,
             actor_user_id=helper,
-            action=MeteredAction.REGRADE,
+            action=MeteredAction.MARK_PAPER,
             subject_code=None,
-            assistant_member_id=uuid.uuid4(),
+            assistant_member_id=member,
             now=NOW,
         )
-    assert ctx.assistant is None
 
 
 def test_study_plan_flag_is_read_only_for_the_study_plan_action(
@@ -462,7 +545,7 @@ def test_assistant_context_query_count_is_small(
             now=NOW,
         )
 
-    assert _count_statements(sm, run) <= 3  # row, membership check, debtors
+    assert _count_statements(sm, run) <= 2  # confirmation (one statement), debtors
 
 
 def test_a_naive_now_is_refused(migrated_sessionmaker: sessionmaker[Session]) -> None:
@@ -905,12 +988,57 @@ def test_self_review_target_refuses_other_peoples_attempts_and_mismatched_ids(
         assert target(owner, attempt_id, "nope") is None
 
 
+def test_self_review_target_ignores_a_soft_deleted_attempt(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    student = seed_user(sm)
+    attempt_id, qr_id = _attempt_with_points(sm, student, subject="0625", points=2)
+    with sm() as session:
+        found = self_review_target(
+            session,
+            student_id=str(student),
+            attempt_id=str(attempt_id),
+            question_result_id=str(qr_id),
+        )
+    assert found is not None
+    with sm.begin() as session:
+        session.execute(sa.update(Attempt).where(Attempt.id == attempt_id).values(deleted_at=NOW))
+    with sm() as session:
+        assert (
+            self_review_target(
+                session,
+                student_id=str(student),
+                attempt_id=str(attempt_id),
+                question_result_id=str(qr_id),
+            )
+            is None
+        )
+
+
+class _Assigned:
+    """An assigned quiz and who may see it: ``owner`` directly, or ``class_id``'s roster."""
+
+    def __init__(self, assignment_id: uuid.UUID, owner: uuid.UUID, class_id: uuid.UUID | None):
+        self.assignment_id = str(assignment_id)
+        self.owner = owner
+        self.class_id = class_id
+
+
 def _quiz_with_assignment(
-    sm: sessionmaker[Session], *, subject: str, included: int, removed: int = 0
-) -> uuid.UUID:
+    sm: sessionmaker[Session],
+    *,
+    subject: str,
+    included: int,
+    removed: int = 0,
+    via_class: bool = False,
+) -> _Assigned:
     teacher = seed_user(sm, Role.teacher)
     student = seed_user(sm)
     quiz_id, assignment_id = uuid.uuid4(), uuid.uuid4()
+    class_id = add_class(sm, teacher_id=teacher, subject_code=subject)[0] if via_class else None
+    if class_id is not None:
+        enrol(sm, class_id, student)
     with sm.begin() as session:
         session.add(Quiz(id=quiz_id, teacher_id=teacher, subject_code=subject, title="Recap"))
         session.flush()
@@ -931,38 +1059,84 @@ def _quiz_with_assignment(
             )
         session.add(
             QuizAssignment(
-                id=assignment_id, quiz_id=quiz_id, student_id=student, assigned_by=teacher
+                id=assignment_id,
+                quiz_id=quiz_id,
+                student_id=None if via_class else student,
+                class_id=class_id,
+                assigned_by=teacher,
             )
         )
-    return assignment_id
+    return _Assigned(assignment_id, student, class_id)
+
+
+def _target(
+    sm: sessionmaker[Session], student: uuid.UUID | str, assignment_id: str
+) -> UsageTarget | None:
+    with sm() as session:
+        return quiz_assignment_target(session, student_id=str(student), assignment_id=assignment_id)
 
 
 def test_quiz_assignment_target_counts_included_questions_only(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:
     sm = migrated_sessionmaker
-    assignment_id = _quiz_with_assignment(sm, subject="0580", included=4, removed=2)
-    with sm() as session:
-        assert quiz_assignment_target(session, assignment_id=str(assignment_id)) == UsageTarget(
-            subject_code="0580", input_count=4
-        )
+    assigned = _quiz_with_assignment(sm, subject="0580", included=4, removed=2)
+    assert _target(sm, assigned.owner, assigned.assignment_id) == UsageTarget(
+        subject_code="0580", input_count=4
+    )
 
 
-def test_quiz_assignment_target_refuses_unknown_and_malformed_ids(
+def test_quiz_assignment_target_reads_a_class_assignment_of_an_enrolled_student(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:
     sm = migrated_sessionmaker
-    with sm() as session:
-        assert quiz_assignment_target(session, assignment_id=str(uuid.uuid4())) is None
-        assert quiz_assignment_target(session, assignment_id="nope") is None
+    assigned = _quiz_with_assignment(sm, subject="0625", included=3, via_class=True)
+    assert _target(sm, assigned.owner, assigned.assignment_id) == UsageTarget(
+        subject_code="0625", input_count=3
+    )
+
+
+def test_quiz_assignment_target_refuses_a_direct_assignment_of_someone_else(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    assigned = _quiz_with_assignment(sm, subject="0580", included=4)
+    stranger = seed_user(sm)
+    assert _target(sm, stranger, assigned.assignment_id) is None
+
+
+def test_quiz_assignment_target_refuses_a_class_the_caller_is_not_enrolled_in(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    assigned = _quiz_with_assignment(sm, subject="0580", included=4, via_class=True)
+    stranger = seed_user(sm)
+    assert _target(sm, stranger, assigned.assignment_id) is None
+
+
+def test_a_foreign_and_an_unknown_assignment_are_indistinguishable(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    assigned = _quiz_with_assignment(sm, subject="0580", included=4)
+    stranger = seed_user(sm)
+    assert _target(sm, stranger, assigned.assignment_id) == _target(sm, stranger, str(uuid.uuid4()))
+
+
+def test_quiz_assignment_target_refuses_malformed_ids(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    assigned = _quiz_with_assignment(sm, subject="0580", included=4)
+    assert _target(sm, assigned.owner, "nope") is None
+    assert _target(sm, "nope", assigned.assignment_id) is None
 
 
 def test_quiz_assignment_target_of_an_empty_quiz_counts_zero(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:
     sm = migrated_sessionmaker
-    assignment_id = _quiz_with_assignment(sm, subject="0625", included=0, removed=1)
-    with sm() as session:
-        assert quiz_assignment_target(session, assignment_id=str(assignment_id)) == UsageTarget(
-            subject_code="0625", input_count=0
-        )
+    assigned = _quiz_with_assignment(sm, subject="0625", included=0, removed=1)
+    assert _target(sm, assigned.owner, assigned.assignment_id) == UsageTarget(
+        subject_code="0625", input_count=0
+    )

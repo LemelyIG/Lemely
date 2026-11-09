@@ -5,11 +5,13 @@ action works on, never from client input: seats and their scope, the assistant r
 owners have debt, whether a study plan was already generated this ISO week, and the
 subject and countable inputs of a question or a quiz.
 
-Seats and the assistant row come through ``TeacherTeamService`` (phase 03), so the rules
-for which rows are held stay in one place. The assistant's permission and the school-data
-guard are enforced by ``require_team_permission`` (and ``assistant_access`` for the
-estimate route) before an ``assistant_member_id`` ever reaches this module; here the id is
-only re-checked against the actor, so a stray id never bills a lead.
+Seats come through ``TeacherTeamService`` (phase 03), so "held seat" stays defined in one
+place. An ``assistant_member_id`` is confirmed again here, in the transaction that bills:
+the row must still be an active assistant row of the actor under a teacher lead with no
+school data (``lead_has_school_data``). Otherwise ``AssistantUnavailable`` is raised with
+the 403 code the team routes use, and nothing falls back to the actor's own chain, so an
+assistant's balance never pays for the lead's work. The permission itself was checked by
+``require_team_permission`` (and ``assistant_has_permission`` for the estimate route).
 
 Every ``now`` must be timezone-aware: a naive value would be read in the server's local
 zone and silently shift the study-plan week and the cap windows.
@@ -34,12 +36,18 @@ from lemely.core.payer_chain import (
 from lemely.core.usage_types import GrantScope
 from lemely.db.models.attempts import Attempt, QuestionResult, QuestionResultPoint
 from lemely.db.models.billing import Subscription
-from lemely.db.models.enums import QuizQuestionStatus, SubscriptionStatus
+from lemely.db.models.enums import QuizQuestionStatus, Role
+from lemely.db.models.orgs import ClassEnrollment
 from lemely.db.models.quizzes import Quiz, QuizAssignment, QuizQuestion
 from lemely.db.models.study_plan import StudyPlan
-from lemely.db.models.team import TeacherMember
+from lemely.db.models.team import TeacherMember, TeacherMemberKind, TeacherMemberStatus
 from lemely.db.models.usage import GrantKind, UsageDebt, UsageGrant
-from lemely.db.teacher_team_repo import TeacherTeamService
+from lemely.db.models.users import User
+from lemely.db.teacher_team_repo import (
+    LIVE_PLAN_STATUSES,
+    TeacherTeamService,
+    lead_has_school_data,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -48,8 +56,6 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from lemely.core.usage_types import Payer
-
-_PLAN_LIVE = (SubscriptionStatus.active, SubscriptionStatus.past_due)
 
 
 def _require_aware(now: datetime) -> None:
@@ -69,21 +75,53 @@ def _seat_view(row: TeacherMember) -> SeatView:
     )
 
 
+class AssistantUnavailable(Exception):
+    """An ``assistant_member_id`` that cannot be confirmed for this actor right now.
+
+    ``code`` is the 403 body code the team routes use: ``team_lead_unavailable`` when the
+    actor holds the row but the lead holds school data (the same signal as
+    ``TeacherTeamService.assistant_access``), otherwise ``team_permission_denied``. A caller
+    that is not the row's assistant never learns more than the generic denial.
+
+    Raised instead of falling back to "no assistant": the actor's own chain would bill the
+    assistant's balance for the lead's work (R4).
+    """
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+DENIED = "team_permission_denied"
+UNAVAILABLE = "team_lead_unavailable"
+
+
 def _assistant_view(
     session: Session, *, actor_user_id: uuid.UUID, member_id: uuid.UUID
-) -> AssistantView | None:
-    """The actor's active assistant row ``member_id``, else ``None``.
+) -> AssistantView:
+    """The actor's active assistant row ``member_id``, confirmed in one statement.
 
-    The row is found by id (the guard already resolved it) and then re-confirmed through
-    ``assistant_membership`` for the actor and its lead, which owns what "active
-    assistant row" means. A foreign, removed or non-assistant id yields ``None``.
+    The row must be an active ``assistant`` row of this actor whose lead is still a teacher
+    (the conditions ``assistant_access`` applies), and the lead must hold no school data
+    (``lead_has_school_data``, phase 03's shared predicate). The permission itself was
+    checked by the route guard; this is the second line, run in the transaction that bills.
     """
-    row = session.get(TeacherMember, member_id)
-    if row is None:
-        return None
-    member = TeacherTeamService(session).assistant_membership(actor_user_id, row.teacher_user_id)
-    if member is None or member.id != member_id:
-        return None
+    found = session.execute(
+        select(TeacherMember, lead_has_school_data(TeacherMember.teacher_user_id))
+        .join(User, User.id == TeacherMember.teacher_user_id)
+        .where(
+            TeacherMember.id == member_id,
+            TeacherMember.member_user_id == actor_user_id,
+            TeacherMember.kind == TeacherMemberKind.assistant,
+            TeacherMember.status == TeacherMemberStatus.active,
+            User.role == Role.teacher,
+        )
+    ).first()
+    if found is None:
+        raise AssistantUnavailable(DENIED)
+    member, school_data = found
+    if school_data:
+        raise AssistantUnavailable(UNAVAILABLE)
     return AssistantView(
         member_id=member.id,
         lead_teacher_user_id=member.teacher_user_id,
@@ -127,9 +165,12 @@ def load_chain_context(
 ) -> ChainContext:
     """Read every fact ``build_payer_chain`` needs for one action.
 
-    At most three queries however many seats the actor holds: seats (or the assistant row
-    and its confirmation), the debtors among every owner the chain may touch, and the
-    study-plan week.
+    At most three queries however many seats the actor holds: seats (or the assistant
+    confirmation), the debtors among every owner the chain may touch, and the study-plan
+    week.
+
+    Raises ``AssistantUnavailable`` when ``assistant_member_id`` is given and cannot be
+    confirmed; the caller maps it to a 403 with ``.code``.
     """
     _require_aware(now)
     assistant = (
@@ -200,7 +241,8 @@ def has_live_plan(session: Session, owner_user_id: uuid.UUID) -> bool:
         session.scalar(
             select(
                 exists().where(
-                    Subscription.user_id == owner_user_id, Subscription.status.in_(_PLAN_LIVE)
+                    Subscription.user_id == owner_user_id,
+                    Subscription.status.in_(LIVE_PLAN_STATUSES),
                 )
             )
         )
@@ -271,15 +313,31 @@ def self_review_target(
     return UsageTarget(subject_code=found[0], input_count=int(marks or 0))
 
 
-def quiz_assignment_target(session: Session, *, assignment_id: str) -> UsageTarget | None:
-    """An assignment's quiz: its subject and its included question count."""
-    aid = _uuid(assignment_id)
-    if aid is None:
+def quiz_assignment_target(
+    session: Session, *, student_id: str, assignment_id: str
+) -> UsageTarget | None:
+    """The caller's own assignment: its quiz's subject and included question count.
+
+    Ownership is ``QuizTakingService._load_permitted``'s rule: the assignment targets the
+    caller directly, or a class the caller is enrolled in. (That service reads enrolment
+    through its own session; this one stays in the metering transaction.) A foreign,
+    unknown or malformed id all return ``None``, so an id cannot be probed.
+    """
+    sid, aid = _uuid(student_id), _uuid(assignment_id)
+    if sid is None or aid is None:
         return None
     quiz = session.execute(
         select(Quiz.id, Quiz.subject_code)
         .join(QuizAssignment, QuizAssignment.quiz_id == Quiz.id)
-        .where(QuizAssignment.id == aid)
+        .where(
+            QuizAssignment.id == aid,
+            or_(
+                QuizAssignment.student_id == sid,
+                QuizAssignment.class_id.in_(
+                    select(ClassEnrollment.class_id).where(ClassEnrollment.student_id == sid)
+                ),
+            ),
+        )
     ).first()
     if quiz is None:
         return None
