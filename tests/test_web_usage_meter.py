@@ -516,6 +516,42 @@ def test_release_during_run_is_ignored_and_a_released_job_never_runs(
     assert (second.status, second.charged) == (UsageJobStatus.released, 0)
 
 
+def test_a_second_concurrent_run_of_one_job_is_refused(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Two threads in one job's run() would leave the second one's cost unbilled."""
+    sm = migrated_sessionmaker
+    student = _funded_student(sm)
+    meter = enforcing_meter(sm)
+    job = meter.reserve(meter.authorize(_req(student)))
+    entered, leave = threading.Event(), threading.Event()
+
+    def first() -> None:
+        with job.run():
+            record_llm_cost(Decimal("0.020"))
+            entered.set()
+            leave.wait(timeout=30)
+
+    worker = threading.Thread(target=first)
+    worker.start()
+    assert entered.wait(timeout=30)
+    ran: list[bool] = []
+    try:
+        with (
+            capture_logs() as logs,
+            pytest.raises(RuntimeError, match="already running"),
+            job.run(),
+        ):
+            ran.append(True)
+    finally:
+        leave.set()
+        worker.join()
+    assert ran == []
+    assert [e["log_level"] for e in logs if e["event"] == "usage_run_already_running"] == ["error"]
+    (row,) = jobs_for(sm, student)
+    assert (row.status, row.charged) == (UsageJobStatus.settled, 20)
+
+
 def test_run_exited_in_another_context_or_thread_releases_and_raises(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:
@@ -530,6 +566,9 @@ def test_run_exited_in_another_context_or_thread_releases_and_raises(
     with capture_logs() as logs, pytest.raises(RuntimeError, match="different thread or context"):
         contextvars.Context().run(block.__exit__, None, None, None)
     assert [e["log_level"] for e in logs if e["event"] == "usage_run_crossed_context"] == ["error"]
+    with capture_logs() as logs:
+        other_context.release()  # already finished: a no-op, and no false "running" warning
+    assert [e["event"] for e in logs if e["event"].startswith("usage_")] == []
 
     other_thread = meter.reserve(meter.authorize(_req(student)))
     block = other_thread.run()
@@ -790,6 +829,26 @@ def test_platform_admins_and_a_non_enforcing_meter_are_exempt(
     with off.job(off.authorize(_req(student))):
         record_llm_cost(Decimal("0.5"))
     assert jobs_for(sm, admin) == jobs_for(sm, student) == []
+
+
+def test_an_exempt_deferred_job_never_warns_unbound() -> None:
+    """Enforcement off (every dev and route-test run) and platform_admin: no false alert."""
+
+    def _no_db() -> Session:
+        raise AssertionError("an exempt job opened a session")
+
+    student = uuid.uuid4()
+    off = UsageMeter(_no_db, enforce=False)  # type: ignore[arg-type]
+    admin_meter = UsageMeter(_no_db, enforce=True)  # type: ignore[arg-type]
+    for meter, request in (
+        (off, _req(student, subject_pending=True)),
+        (admin_meter, _req(student, role=Role.platform_admin, subject_pending=True)),
+    ):
+        with capture_logs() as logs, meter.job(meter.authorize(request)):
+            record_llm_cost(Decimal("0.010"))
+        assert [e["event"] for e in logs if e["event"].startswith("usage_")] == [
+            "usage_unmetered_cost"
+        ]
 
 
 def test_unmetered_jobs_need_no_database() -> None:

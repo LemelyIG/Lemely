@@ -361,7 +361,9 @@ class MeteredJob:
         the body of a generator the framework iterates (Starlette runs each ``next()`` of
         a sync stream in a fresh context, so costs after the first yield would be lost).
         An exit in another thread or context releases the job, logs
-        ``usage_run_crossed_context`` and raises :class:`RuntimeError`. Join every worker
+        ``usage_run_crossed_context`` and raises :class:`RuntimeError`. One job runs once:
+        a second ``run()`` while the first is active (another thread) logs
+        ``usage_run_already_running`` and raises :class:`RuntimeError`. Join every worker
         thread before the block exits; the total is read at exit.
         """
         if _RUNNING_JOB.get() is not None:
@@ -370,6 +372,14 @@ class MeteredJob:
         with self._lock:
             if self._finished:
                 raise RuntimeError("this metered job was already released or finished")
+            if self._running:
+                # A second thread in the same job: its cost would never be billed.
+                log.error(
+                    "usage_run_already_running",
+                    job_id=str(self.job_id),
+                    action=self.ctx.request.action.value,
+                )
+                raise RuntimeError("this metered job is already running in another thread")
             self._running = True
         entry_thread = threading.get_ident()
         token = _RUNNING_JOB.set(self)
@@ -400,6 +410,8 @@ class MeteredJob:
                 cost_usd=str(cost_usd),
             )
             self._end(cost_usd, settle=False)
+            with self._lock:
+                self._running = False
             # Both context variables were set in the context run() entered; resetting
             # them from another one raises ValueError, which would hide the real error.
             with contextlib.suppress(ValueError):
