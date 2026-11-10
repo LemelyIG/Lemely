@@ -21,6 +21,20 @@
 export const CORRECTION_PATH = "/student/correct"
 
 /**
+ * The placement invite, `/student/placement/<subjectCode>`: exactly one
+ * segment after `placement`, so the in-progress test and its result screen
+ * (`placement/test/...`, `placement/result/...`) are not matched. Starting a
+ * placement is gated the same way marking is (it spends usage), so this is
+ * the second place the banner is the explanation for a blocked action.
+ */
+const PLACEMENT_INVITE_PATH = /^\/student\/placement\/(?!test\/|result\/)[^/]+\/?$/
+
+/** Screens where the gate blocks the main action, so the banner cannot be dismissed. */
+export function isGatedPath(pathname: string): boolean {
+  return pathname === CORRECTION_PATH || PLACEMENT_INVITE_PATH.test(pathname)
+}
+
+/**
  * - `hidden` — render nothing at all, including no margin.
  * - `dismissible` — the ordinary strip, with a dismiss control.
  * - `pinned` — the same strip with no dismiss control, and any dismissal
@@ -48,7 +62,7 @@ export function verifyEmailBannerState({
   // Checked before `dismissed` on purpose: this is the screen the gate
   // actually blocks, and the banner is the explanation for the disabled
   // marking button sitting under it.
-  if (pathname === CORRECTION_PATH) return "pinned"
+  if (isGatedPath(pathname)) return "pinned"
   if (dismissed) return "hidden"
   return "dismissible"
 }
