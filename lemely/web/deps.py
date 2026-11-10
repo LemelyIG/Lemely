@@ -868,6 +868,7 @@ def get_sweeper() -> Sweeper:
         email_provider=build_transactional_provider(settings),
         email_daily_cap=settings.tutoring.email_daily_cap,
         billing_reconcile=get_billing_reconcile_job(),
+        usage_metering=settings.usage.enforce,
     )
 
 

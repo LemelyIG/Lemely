@@ -51,6 +51,7 @@ from lemely.db.xp_repo import DEFAULT_ZONE, resolve_zone
 from lemely.web.notify import notify_safely
 from lemely.web.purge import purge_expired_papers, purge_expired_teacher_papers
 from lemely.web.tutoring_email import deliver_tutoring_email
+from lemely.web.usage_sweeps import ReconcileMemo, RepairCursor, usage_jobs
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
@@ -482,9 +483,15 @@ class Sweeper:
     #: ``billing.reconcile_pending`` (billing spec §5.10), given only when Paymob is
     #: configured, the same optional-collaborator pattern as ``email_provider``.
     billing_reconcile: Callable[[datetime], int] | None = None
+    #: Billing spec §5.7: the usage ledger's sweeps run only where metering is enforced
+    #: (``deps.get_sweeper``); a sweeper built for notifications alone, as most tests
+    #: build one, keeps exactly the jobs it had.
+    usage_metering: bool = False
+    usage_reconcile: ReconcileMemo = field(default_factory=ReconcileMemo)
+    usage_repair: RepairCursor = field(default_factory=RepairCursor)
 
     def sweep_once(self) -> dict[str, int | None]:
-        """Run every job the sweeper was given (notifications, purge, email, billing), once each."""
+        """Run every job the sweeper was given (notifications, purge, email, billing, usage)."""
         moment = self.now()
         jobs: list[tuple[str, Callable[[], int]]] = [
             (
@@ -548,6 +555,15 @@ class Sweeper:
         billing_reconcile = self.billing_reconcile
         if billing_reconcile is not None:
             jobs.append(("billing.reconcile_pending", lambda: billing_reconcile(moment)))
+        if self.usage_metering:
+            jobs.extend(
+                usage_jobs(
+                    self.sessionmaker,
+                    now=moment,
+                    memo=self.usage_reconcile,
+                    repair=self.usage_repair,
+                )
+            )
         return run_jobs(jobs)
 
 
