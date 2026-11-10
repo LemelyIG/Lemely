@@ -33,7 +33,7 @@ from lemely.io.llm.cost_meter import record_llm_cost
 from lemely.runtime.events import EventType, bus
 from lemely.web import sse
 from lemely.web.routers import student
-from lemely.web.usage import USAGE_BLOCKED_MESSAGE, get_usage_meter
+from lemely.web.usage import USAGE_BLOCKED_MESSAGE, MeteredJob, UsageBlocked, get_usage_meter
 from tests import test_student_correct as _student_correct
 from tests.usage_helpers import (
     NOW,
@@ -62,9 +62,11 @@ if TYPE_CHECKING:
 
 #: The ``mark_paper`` estimate seeded by the catalogue (flat, ``input_kind = "none"``).
 ESTIMATE = [40, 120]
-#: The scan-metadata call's stub cost, and the extraction call's: 10 + 40 units.
+#: The scan-metadata call's stub cost, the extraction call's and the paid mark-scheme
+#: resolve's: 10, 40 and 20 units.
 DETECT_USD = Decimal("0.010")
 EXTRACT_USD = Decimal("0.040")
+RESOLVE_USD = Decimal("0.020")
 _WAIT = 15.0
 
 
@@ -517,3 +519,249 @@ def test_a_disconnect_never_leaves_the_hold_open_and_a_finished_paper_is_charged
     assert job.status is UsageJobStatus.settled
     assert job.charged == 50
     assert _attempts(pg_sessionmaker, student_id) == 1
+
+
+# --- No detected subject: the student's own balance pays, and the hold still happens ----
+#
+# `job.bind_subject(None)` is what reserves when detection is switched off or fails. If the
+# route skipped the bind there (``if metadata is not None: job.bind_subject(...)``), the job
+# would stay pending, nothing would be held, and the paper would be marked for free.
+
+
+class _FailingDetector:
+    """A scan-metadata extractor whose model call raises before it records any cost."""
+
+    def __init__(self, _client: object) -> None: ...
+
+    def __call__(self, _scan_path: object) -> SimpleNamespace:
+        raise RuntimeError("the metadata read fell over")
+
+
+def test_a_failed_detection_is_paid_from_the_students_own_balance(
+    api: TestClient,
+    student_id: uuid.UUID,
+    calls: _Calls,
+    pg_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(student, "ScanMetadataExtractor", _FailingDetector)
+    give(pg_sessionmaker, student_id, units=1000)
+    resp = api.post("/api/student/correct", json={"paperId": _upload(api)})
+    assert resp.status_code == 200
+    assert "Could not detect scan metadata" in resp.text
+    assert '"phase": "complete"' in resp.text
+    (job,) = jobs_for(pg_sessionmaker, student_id)
+    assert job.status is UsageJobStatus.settled
+    assert job.teacher_member_id is None
+    assert job.charged == 40  # the extraction only: the failed read cost nothing
+    assert calls.extracted == 1
+    assert _available(pg_sessionmaker, _own(student_id, GrantScope.CREDITS)) == 960
+
+
+def test_detection_switched_off_is_paid_from_the_students_own_balance(
+    api: TestClient,
+    student_id: uuid.UUID,
+    calls: _Calls,
+    pg_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        student,
+        "llm_key_configured",
+        lambda _settings, purpose, *_a, **_k: purpose != "scan_metadata",
+    )
+    give(pg_sessionmaker, student_id, units=1000)
+    resp = api.post("/api/student/correct", json={"paperId": _upload(api)})
+    assert resp.status_code == 200
+    assert '"phase": "complete"' in resp.text
+    (job,) = jobs_for(pg_sessionmaker, student_id)
+    assert job.status is UsageJobStatus.settled
+    assert job.teacher_member_id is None
+    assert job.charged == 40
+    assert (calls.detected, calls.extracted) == (0, 1)
+    assert _available(pg_sessionmaker, _own(student_id, GrantScope.CREDITS)) == 960
+
+
+def test_a_seat_only_student_whose_detection_fails_is_blocked_in_stream_and_charged_nothing(
+    api: TestClient,
+    student_id: uuid.UUID,
+    calls: _Calls,
+    pg_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The physics seat could pay, so the stream starts; without a subject only the
+    student's own (empty) balance can, so the stream ends with ``usage_blocked``."""
+    sm = pg_sessionmaker
+    monkeypatch.setattr(student, "ScanMetadataExtractor", _FailingDetector)
+    physics = seed_user(sm, Role.teacher)
+    physics_seat = seat(
+        sm,
+        teacher=physics,
+        student=student_id,
+        subjects=["0625"],
+        actions=[MeteredAction.MARK_PAPER],
+    )
+    seat_grant(sm, student=student_id, member_id=physics_seat, units=500)
+    paper_id = _upload(api)
+    resp = api.post("/api/student/correct", json={"paperId": paper_id})
+    assert resp.status_code == 200
+    (error,) = _errors(resp.text)
+    assert (error["code"], error["reason"]) == ("usage_blocked", "no_active_plan")
+    assert error["message"] == USAGE_BLOCKED_MESSAGE
+    assert '"phase": "complete"' not in resp.text
+    assert jobs_for(sm, student_id) == []
+    assert calls.extracted == 0
+    seat_payer = Payer(
+        owner_user_id=student_id, scope=GrantScope.SEAT, teacher_member_id=physics_seat
+    )
+    assert _available(sm, seat_payer) == 500
+    assert _upload_status(sm, paper_id) is UploadStatus.failed
+    assert _attempts(sm, student_id) == 0
+
+
+# --- The hold comes before any paid mark-scheme resolve ---------------------------------
+
+
+def test_the_hold_is_placed_before_the_paid_mark_scheme_resolve(
+    api: TestClient,
+    student_id: uuid.UUID,
+    calls: _Calls,
+    pg_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A scheme parse that falls back to Gemini is a paid call. A stream the subject's
+    chain cannot pay for must end at the bind, before that call, so the platform only
+    absorbs the scan read; bound after the resolve it would absorb the parse too."""
+    sm = pg_sessionmaker
+    resolved: list[object] = []
+    real = student.resolve_mark_scheme
+
+    def _paid_resolve(*args: object, **kwargs: object) -> object:
+        resolved.append(args)
+        record_llm_cost(RESOLVE_USD)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(student, "resolve_mark_scheme", _paid_resolve)
+    physics = seed_user(sm, Role.teacher)
+    physics_seat = seat(
+        sm,
+        teacher=physics,
+        student=student_id,
+        subjects=["0625"],
+        actions=[MeteredAction.MARK_PAPER],
+    )
+    seat_grant(sm, student=student_id, member_id=physics_seat, units=500)
+    with capture_logs() as logs:
+        resp = api.post("/api/student/correct", json={"paperId": _upload(api)})
+    (error,) = _errors(resp.text)
+    assert error["code"] == "usage_blocked"
+    assert resolved == []
+    assert (calls.detected, calls.extracted) == (1, 0)
+    unmetered = [e for e in logs if e["event"] == "usage_unmetered_cost"]
+    assert [e["cost_usd"] for e in unmetered] == ["0.010"]
+
+
+def test_a_paid_mark_scheme_resolve_runs_inside_the_job_and_is_charged(
+    api: TestClient,
+    student_id: uuid.UUID,
+    pg_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real = student.resolve_mark_scheme
+
+    def _paid_resolve(*args: object, **kwargs: object) -> object:
+        record_llm_cost(RESOLVE_USD)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(student, "resolve_mark_scheme", _paid_resolve)
+    give(pg_sessionmaker, student_id, units=1000)
+    resp = api.post("/api/student/correct", json={"paperId": _upload(api)})
+    assert '"phase": "complete"' in resp.text
+    (job,) = jobs_for(pg_sessionmaker, student_id)
+    assert job.status is UsageJobStatus.settled
+    assert job.charged == 70  # scan read 10 + scheme parse 20 + extraction 40
+
+
+# --- Two concurrent streams cannot overdraw one balance ---------------------------------
+
+
+def test_two_concurrent_streams_on_150_credits_settle_one_and_block_one(
+    api: TestClient,
+    student_id: uuid.UUID,
+    pg_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both requests pass the up-front check (150 covers the top, 120, once), then race
+    to hold. The locked reserve lets one through (30 left) and refuses the other.
+
+    Deterministic: the detector holds both workers until both are past the up-front
+    check, and the winner's extraction waits until the loser has been refused, so
+    the winner cannot settle (and free its hold) before the loser tries to bind.
+    """
+    sm = pg_sessionmaker
+    both_authorized = threading.Barrier(2, timeout=_WAIT)
+    refused = threading.Event()
+
+    class _Detector:
+        def __init__(self, _client: object) -> None: ...
+
+        def __call__(self, _scan_path: object) -> SimpleNamespace:
+            both_authorized.wait()
+            record_llm_cost(DETECT_USD)
+            return SimpleNamespace(subject_code="0580")
+
+    real_bind = MeteredJob.bind_subject
+
+    def _bind(self: MeteredJob, subject: str | None) -> None:
+        try:
+            real_bind(self, subject)
+        except UsageBlocked:
+            refused.set()
+            raise
+
+    extracted = _student_correct._extracted()
+
+    def _extract(*_a: object, **_k: object) -> object:
+        assert refused.wait(_WAIT), "the second stream was never refused"
+        record_llm_cost(EXTRACT_USD)
+        return extracted
+
+    monkeypatch.setattr(student, "ScanMetadataExtractor", _Detector)
+    monkeypatch.setattr(MeteredJob, "bind_subject", _bind)
+    monkeypatch.setattr(student, "extract_answers", _extract)
+    give(sm, student_id, units=150)
+    papers = [_upload(api), _upload(api)]
+    bodies: list[str] = []
+
+    def _stream(paper_id: str) -> None:
+        resp = api.post("/api/student/correct", json={"paperId": paper_id})
+        assert resp.status_code == 200
+        bodies.append(resp.text)
+
+    with capture_logs() as logs:
+        threads = [threading.Thread(target=_stream, args=(p,)) for p in papers]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(_WAIT * 2)
+    assert not any(t.is_alive() for t in threads)
+    assert len(bodies) == 2
+    completed = [b for b in bodies if '"phase": "complete"' in b]
+    blocked = [b for b in bodies if "usage_blocked" in b]
+    assert (len(completed), len(blocked)) == (1, 1)
+    assert completed[0] is not blocked[0]
+    (error,) = _errors(blocked[0])
+    assert (error["code"], error["reason"]) == ("usage_blocked", "insufficient_credits")
+    # One job, settled at its actual cost; no overdraw, no debt.
+    (job,) = jobs_for(sm, student_id)
+    assert job.status is UsageJobStatus.settled
+    assert job.charged == 50
+    assert _available(sm, _own(student_id, GrantScope.CREDITS)) == 100
+    with sm() as session:
+        assert (
+            session.scalars(select(UsageDebt).where(UsageDebt.owner_user_id == student_id)).all()
+            == []
+        )
+    # The loser's scan read was paid by the platform and says so in the log.
+    unmetered = [e for e in logs if e["event"] == "usage_unmetered_cost"]
+    assert [(e["cost_usd"], e["exempt"]) for e in unmetered] == [("0.010", False)]

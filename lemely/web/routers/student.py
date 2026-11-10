@@ -989,13 +989,13 @@ def student_correct(
 ) -> StreamingResponse:
     """Stream the real self-mark pipeline for an uploaded paper over SSE.
 
-    **Gated on a verified email (D7.5).** This is the Gemini spend, and it is
-    the *only* student route that carries ``require_verified_email`` — an
-    unverified caller is refused with a **403**
-    (``detail={"code": "email_unverified"}``) before any of the work below
-    runs. ``POST /student/uploads`` is deliberately never gated the same way:
-    a student who has already photographed a paper must not lose the capture
-    to a verification wall.
+    **Gated on a verified email (D7.5).** This is the Gemini spend, so it
+    carries ``require_verified_email`` (other student routes, such as tutor
+    reviews and placement creation, carry it too) — an unverified caller is
+    refused with a **403** (``detail={"code": "email_unverified"}``) before any
+    of the work below runs. ``POST /student/uploads`` is deliberately never
+    gated the same way: a student who has already photographed a paper must not
+    lose the capture to a verification wall.
 
     Resolves the caller-owned upload (a 404 for an unknown or foreign paper is
     raised *before* streaming starts, so the client never has to parse a
