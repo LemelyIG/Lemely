@@ -219,7 +219,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # tests/test_web_tutoring_authz_parent_sharing.py).
     ("GET", "/api/parent/children/{child_id}/tutor-grants"): PARENT,
     ("GET", "/api/parent/children/{child_id}/tutor-access-log"): PARENT,
-    # ── PUBLIC (21) ────────────────────
+    # ── PUBLIC (22) ────────────────────
     ("POST", "/api/auth/login"): PUBLIC,
     # Whether sign-in is restricted (a boolean, never the domains): read before any account exists.
     ("GET", "/api/access/config"): PUBLIC,
@@ -262,6 +262,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/waitlist/config"): PUBLIC,
     ("POST", "/api/waitlist"): PUBLIC,
     ("PATCH", "/api/waitlist"): PUBLIC,
+    ("POST", "/api/waitlist/confirm"): PUBLIC,
     ("POST", "/api/internal/waitlist/digest"): PUBLIC,
     # D7.3/spec §1.2: G-08's pre-account preview. Public and unauthenticated
     # by design - a visitor sees what a code joins *before* creating an
@@ -717,9 +718,9 @@ def test_the_sweeps_actually_cover_the_surface() -> None:
     # routes, plus issue #10's verify-email, password-reset/request,
     # password-reset/confirm) + /api/health + invite preview + PR 1 chunk C's
     # client-error sink + the three public tutoring routes (P1 directory, P2
-    # card, P3 areas) + the landing page contact form + the four waitlist routes
-    # (config, step 1, step 2, secret-guarded digest trigger).
-    assert len(_NON_PUBLIC) == len(ROUTES) - 21
+    # card, P3 areas) + the landing page contact form + the five waitlist routes
+    # (config, step 1, step 2, email confirmation, secret-guarded digest trigger).
+    assert len(_NON_PUBLIC) == len(ROUTES) - 22
     assert len(_ROLE_GATED) > 300
     assert len(_REPRESENTATIVE) == 9
     assert len(_REAL_TOKEN_CASES) >= 20

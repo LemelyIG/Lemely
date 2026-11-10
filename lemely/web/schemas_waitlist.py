@@ -182,6 +182,18 @@ class WaitlistCreatedDTO(ApiModel):
     token: str | None = None
 
 
+class WaitlistConfirmDTO(ApiModel):
+    """Email confirmation: the opaque token from the emailed link."""
+
+    token: Annotated[str, Field(min_length=1, max_length=200)]
+
+
+class WaitlistConfirmedDTO(ApiModel):
+    """Email confirmation answer."""
+
+    status: Literal["confirmed", "already_confirmed"]
+
+
 class WaitlistCompleteDTO(ApiModel):
     """Step 2: the optional detail, redeemed with the step-1 token."""
 
@@ -241,6 +253,7 @@ class WaitlistApplicantDTO(ApiModel):
     phone: str | None
     phoneHasWhatsapp: bool
     emailConfirmed: bool
+    emailConfirmedAt: datetime | None
     consentVersion: str
     consentText: str
     consentAt: datetime
@@ -320,6 +333,8 @@ __all__ = [
     "WaitlistCompleteDTO",
     "WaitlistCompletedDTO",
     "WaitlistConfigDTO",
+    "WaitlistConfirmDTO",
+    "WaitlistConfirmedDTO",
     "WaitlistCountsDTO",
     "WaitlistCreateDTO",
     "WaitlistCreatedDTO",

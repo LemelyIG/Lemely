@@ -95,6 +95,9 @@
   --brand-core-art: var(--brand-art-22);
   --brand-closing-text: var(--md-inverse-on-surface);
   --brand-closing-ring: var(--md-outline);
+  /* Secondary (outline) action: a ring and label that clear 3:1 and 4.5:1 on the page in both themes. */
+  --brand-secondary-ring: var(--md-primary);
+  --brand-secondary-fg: var(--brand-abyss);
   --brand-gold-pulse: color-mix(in oklch, var(--md-tertiary) 50%, transparent);
   --brand-gold-pulse-off: color-mix(in oklch, var(--md-tertiary) 0%, transparent);
   --brand-chart-shadow: 0 40px 80px -40px color-mix(in oklch, var(--md-shadow) 45%, transparent), 0 0 0 1px var(--md-outline-variant);
@@ -151,6 +154,10 @@
   --brand-tide: var(--md-primary);
 }
 /* Closing band: the Abyss container (deep navy), with Tide as its accent. */
+:root[data-theme="dark"] .marketing-brand {
+  --brand-secondary-ring: var(--md-primary);
+  --brand-secondary-fg: var(--md-on-primary-container);
+}
 :root[data-theme="dark"] .marketing-brand .brand-closing {
   background: var(--md-primary-container);
   --brand-white: var(--md-on-surface);

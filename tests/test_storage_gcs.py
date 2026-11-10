@@ -903,3 +903,25 @@ def test_list_objects_checks_the_evidence_bucket_is_private_before_listing() -> 
     with pytest.raises(Exception, match=r"(?i)public|private|prevent"):
         _evidence_backend(client).list_objects(_EVIDENCE, "tutor-evidence/t/")
     client.list_blobs.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# probe_bucket: reachability with object permissions only
+# ---------------------------------------------------------------------------
+
+
+def test_probe_bucket_needs_only_object_list_permission() -> None:
+    """The runtime account has ``objectAdmin`` (objects.list) but not ``buckets.get``."""
+    client = MagicMock()
+    client.get_bucket.side_effect = Forbidden("caller lacks storage.buckets.get")
+    client.list_blobs.return_value = iter([])
+    GcsStorageBackend(_client=client).probe_bucket("proj-uploads-staging")
+    client.list_blobs.assert_called_once_with("proj-uploads-staging", max_results=1)
+    client.get_bucket.assert_not_called()
+
+
+def test_probe_bucket_reports_a_list_failure() -> None:
+    client = MagicMock()
+    client.list_blobs.side_effect = Forbidden("caller lacks storage.objects.list")
+    with pytest.raises(ExternalServiceError, match=r"objects\.list"):
+        GcsStorageBackend(_client=client).probe_bucket("proj-uploads-staging")

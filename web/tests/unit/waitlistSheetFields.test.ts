@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest"
  */
 const FIELDS = [
   "id", "email", "name", "role", "centreName", "levels", "subjects", "otherSubjects", "examBoards",
-  "examSession", "phone", "phoneHasWhatsapp", "emailConfirmed", "consentVersion", "consentText",
+  "examSession", "phone", "phoneHasWhatsapp", "emailConfirmed", "emailConfirmedAt", "consentVersion", "consentText",
   "consentAt", "status", "adminNote", "utmSource", "utmMedium", "utmCampaign", "utmContent", "utmTerm",
   "completedAt", "partial", "createdAt", "updatedAt",
 ] as const

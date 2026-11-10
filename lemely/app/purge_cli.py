@@ -47,7 +47,6 @@ from lemely.db.user_purge import (
     purge_objects,
     storage_config_problems,
 )
-from lemely.io.storage import check_storage, check_tutor_evidence_storage
 
 if TYPE_CHECKING:
     import uuid
@@ -151,18 +150,23 @@ def _storage_backend(settings: Settings) -> ObjectDeleter:
     return LocalFileStorageBackend(settings.paths.output_dir / "storage")
 
 
-def _check_buckets_reachable(settings: Settings) -> None:
-    """Fail before any deletion unless the real buckets answer with the configured credentials."""
-    if settings.storage.backend != "gcs":
-        return
-    for ok, detail in (
-        check_storage(settings, no_network=False),
-        check_tutor_evidence_storage(settings, no_network=False),
-    ):
-        if not ok:
-            raise click.ClickException(
-                f"Storage is not reachable, so nothing was changed: {detail}"
-            )
+def _unreachable_buckets(settings: Settings, backend: ObjectDeleter) -> list[str]:
+    """Why a bucket does not answer, using only object permissions (no ``buckets.get``).
+
+    Each of the three buckets is asked for at most one object, which is what deleting and listing
+    need and all the runtime account's ``roles/storage.objectAdmin`` is guaranteed to grant. A
+    backend with no probe (an injected test double) has nothing to prove.
+    """
+    probe = getattr(backend, "probe_bucket", None)
+    if probe is None or settings.storage.backend != "gcs":
+        return []
+    problems: list[str] = []
+    for kind, bucket in _bucket_names(settings).items():
+        try:
+            probe(bucket)
+        except Exception as exc:
+            problems.append(f"{kind} bucket {bucket!r} not reachable: {type(exc).__name__}: {exc}")
+    return problems
 
 
 def purge_users_command(
@@ -223,10 +227,16 @@ def purge_users_command(
                 "No Supabase service-role key (LEMELY_SUPABASE__SERVICE_ROLE_KEY): the Auth "
                 "users could not be deleted, so nothing was changed."
             )
-        if storage is None:
-            _check_buckets_reachable(settings)
     object_backend: ObjectDeleter = storage if storage is not None else _storage_backend(settings)
     buckets = _bucket_names(settings)
+    if storage is None and not storage_problems:
+        # Dry run included, so a dry run proves what --execute needs.
+        storage_problems = _unreachable_buckets(settings, object_backend)
+        if execute and storage_problems:
+            raise click.ClickException(
+                "Storage is not reachable, so nothing was changed:\n  - "
+                + "\n  - ".join(storage_problems)
+            )
 
     engine = get_engine(settings)
     object_report: ObjectPurgeReport | None = None

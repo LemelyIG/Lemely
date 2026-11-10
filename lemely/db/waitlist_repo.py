@@ -18,7 +18,15 @@ from typing import TYPE_CHECKING, Final, Literal
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from lemely.core.waitlist import TOKEN_TTL_HOURS, hash_token, new_completion_token
+from lemely.core.waitlist import (
+    CONFIRMATION_MAX_MAILS,
+    CONFIRMATION_RESEND_INTERVAL,
+    CONFIRMATION_TTL,
+    TOKEN_TTL_HOURS,
+    hash_token,
+    new_completion_token,
+    new_confirmation_token,
+)
 from lemely.db.models.waitlist import (
     WaitlistApplicant,
     WaitlistDigestLog,
@@ -39,10 +47,19 @@ _TOP_SUBJECTS: Final = 5
 #: A claim with no ``window_end`` older than this is taken as abandoned and may be taken over.
 PENDING_CLAIM_LEASE: Final = timedelta(minutes=5)
 DigestClaim = Literal["claimed", "sent", "pending"]
+ConfirmOutcome = Literal["confirmed", "already_confirmed", "invalid", "expired"]
 
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+@dataclass(frozen=True, slots=True)
+class WaitlistCreated:
+    """A new applicant's two one-time secrets: step 2's token and the emailed confirmation token."""
+
+    completion_token: str
+    confirmation_token: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,14 +169,15 @@ class WaitlistRepository:
         consent_version: str,
         consent_text: str,
         utm: Mapping[str, str | None],
-    ) -> str | None:
-        """Insert a partial applicant; return its completion token, or ``None`` if listed.
+    ) -> WaitlistCreated | None:
+        """Insert a partial applicant; return its tokens, or ``None`` if already listed.
 
         One ``INSERT .. ON CONFLICT DO NOTHING``: race-safe, and a duplicate takes the same
         single statement as a new row, so the two outcomes cost the same. A duplicate leaves
         the existing row untouched.
         """
         token, digest = new_completion_token()
+        confirm_token, confirm_digest = new_confirmation_token()
         moment = self._now()
         values: dict[str, object] = {
             "email": email,
@@ -170,6 +188,10 @@ class WaitlistRepository:
             "consent_at": moment,
             "completion_token_hash": digest,
             "completion_token_expires_at": moment + timedelta(hours=TOKEN_TTL_HOURS),
+            "confirm_token_hash": confirm_digest,
+            "confirm_token_expires_at": moment + CONFIRMATION_TTL,
+            "confirm_sent_at": moment,
+            "confirm_send_count": 1,
             **{name: utm.get(name) for name in UTM_FIELDS},
         }
         stmt = (
@@ -180,7 +202,87 @@ class WaitlistRepository:
         )
         with self._sessionmaker.begin() as session:
             inserted = session.execute(stmt).scalar_one_or_none()
-        return token if inserted is not None else None
+        if inserted is None:
+            return None
+        return WaitlistCreated(completion_token=token, confirmation_token=confirm_token)
+
+    def reissue_confirmation(self, email: str) -> str | None:
+        """Mint another confirmation token for an unconfirmed address; ``None`` when not due.
+
+        ``None`` means: no such address, it is already confirmed, a mail went out less than
+        :data:`CONFIRMATION_RESEND_INTERVAL` ago, or the window already holds
+        :data:`CONFIRMATION_MAX_MAILS` mails (a new window opens once the latest link has
+        expired). The checks and the write are one ``UPDATE``, so concurrent repeat sign-ups
+        cannot both win. Earlier links of the window keep working: their digests move to
+        ``confirm_prev_hashes`` and all share the new expiry; a lapsed window starts clean.
+        """
+        model = WaitlistApplicant
+        token, digest = new_confirmation_token()
+        moment = self._now()
+        lapsed = sa.or_(
+            model.confirm_token_expires_at.is_(None), model.confirm_token_expires_at <= moment
+        )
+        stmt = (
+            sa.update(model)
+            .where(
+                model.email == email,
+                model.email_confirmed.is_(False),
+                sa.or_(
+                    model.confirm_sent_at.is_(None),
+                    model.confirm_sent_at <= moment - CONFIRMATION_RESEND_INTERVAL,
+                ),
+                sa.or_(model.confirm_send_count < CONFIRMATION_MAX_MAILS, lapsed),
+            )
+            .values(
+                confirm_prev_hashes=sa.case(
+                    (lapsed, sa.text("'{}'::varchar[]")),
+                    else_=sa.func.array_remove(
+                        sa.func.array_append(model.confirm_prev_hashes, model.confirm_token_hash),
+                        sa.null(),
+                    ),
+                ),
+                confirm_send_count=sa.case((lapsed, 1), else_=model.confirm_send_count + 1),
+                confirm_token_hash=digest,
+                confirm_token_expires_at=moment + CONFIRMATION_TTL,
+                confirm_sent_at=moment,
+            )
+            .returning(model.id)
+        )
+        with self._sessionmaker.begin() as session:
+            updated = session.execute(stmt).scalar_one_or_none()
+        return token if updated is not None else None
+
+    def confirm_email(self, token: str) -> ConfirmOutcome:
+        """Redeem an emailed confirmation token.
+
+        ``confirmed`` the first time; ``already_confirmed`` for any later use of a token whose
+        address is confirmed (a double click or a mail scanner's retry changes nothing);
+        ``expired`` for a known token past its 7 days on an unconfirmed address; ``invalid``
+        for an unknown token (a re-sent link does not replace the earlier ones). The row is locked,
+        so two concurrent redemptions cannot both report ``confirmed``.
+        """
+        moment = self._now()
+        digest = hash_token(token)
+        with self._sessionmaker.begin() as session:
+            row = session.execute(
+                sa.select(WaitlistApplicant)
+                .where(
+                    sa.or_(
+                        WaitlistApplicant.confirm_token_hash == digest,
+                        sa.literal(digest) == sa.any_(WaitlistApplicant.confirm_prev_hashes),
+                    )
+                )
+                .with_for_update()
+            ).scalar_one_or_none()
+            if row is None:
+                return "invalid"
+            if row.email_confirmed:
+                return "already_confirmed"
+            if row.confirm_token_expires_at is None or row.confirm_token_expires_at <= moment:
+                return "expired"
+            row.email_confirmed = True
+            row.email_confirmed_at = moment
+        return "confirmed"
 
     def complete(self, token: str, details: CompletionDetails) -> bool:
         """Redeem ``token`` and fill in step 2; ``False`` when it is unknown, expired or used.

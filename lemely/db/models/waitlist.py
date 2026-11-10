@@ -51,6 +51,12 @@ class WaitlistApplicant(TimestampMixin, Base):
             unique=True,
             postgresql_where=sa.text("completion_token_hash IS NOT NULL"),
         ),
+        sa.Index(
+            "uq_waitlist_applicants_confirm_token_hash",
+            "confirm_token_hash",
+            unique=True,
+            postgresql_where=sa.text("confirm_token_hash IS NOT NULL"),
+        ),
         sa.Index("ix_waitlist_applicants_created_at", "created_at"),
         sa.Index("ix_waitlist_applicants_status", "status"),
     )
@@ -84,6 +90,24 @@ class WaitlistApplicant(TimestampMixin, Base):
     )
     email_confirmed: Mapped[bool] = mapped_column(
         sa.Boolean, nullable=False, server_default=sa.false()
+    )
+    #: When the address was confirmed through the emailed link (NULL until then).
+    email_confirmed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    #: SHA-256 of the newest emailed confirmation token and the expiry shared by every link of the
+    #: current window (7 days after the latest mail). The digest is kept after use so a repeat
+    #: click still reads "already confirmed".
+    confirm_token_hash: Mapped[str | None] = mapped_column(sa.String(64))
+    confirm_token_expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    #: Digests of the earlier links of the window: a re-send never kills a link already in the
+    #: owner's inbox (a stranger re-submitting the address cannot invalidate it).
+    confirm_prev_hashes: Mapped[list[str]] = mapped_column(
+        ARRAY(sa.String(64)), nullable=False, server_default=sa.text("'{}'")
+    )
+    #: When a confirmation mail was last issued (the per-address resend throttle) and how many
+    #: went out in the current window (the cap).
+    confirm_sent_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    confirm_send_count: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, server_default=sa.text("0")
     )
     consent_version: Mapped[str] = mapped_column(sa.String(40), nullable=False)
     consent_text: Mapped[str] = mapped_column(sa.String(500), nullable=False)

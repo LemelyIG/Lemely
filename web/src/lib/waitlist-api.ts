@@ -318,6 +318,13 @@ export interface WaitlistStep2 {
   website?: string
 }
 
+/** A string `detail` (`turnstile_failed`) or the `code` inside an object `detail` (`{code: 'expired_token'}`). */
+function detailCode(detail: unknown): string | undefined {
+  if (typeof detail === 'string') return detail
+  const code = (detail as { code?: unknown } | null)?.code
+  return typeof code === 'string' ? code : undefined
+}
+
 async function publicCall<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown): Promise<T> {
   let res: Response
   try {
@@ -342,7 +349,7 @@ async function publicCall<T>(method: 'GET' | 'POST' | 'PATCH', path: string, bod
       res.status,
       Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined,
       res.status === 422 ? parseFieldErrors(parsed) : {},
-      typeof detail === 'string' ? detail : undefined,
+      detailCode(detail),
     )
   }
   return (await res.json()) as T
@@ -368,6 +375,26 @@ export function joinWaitlist(input: WaitlistStep1): Promise<WaitlistStep1Result>
 /** Step 2: completes the applicant. A 400 means the token expired or was already used. */
 export async function completeWaitlist(input: WaitlistStep2): Promise<void> {
   await publicCall<{ status: 'completed' }>('PATCH', '/api/waitlist', input)
+}
+
+/** `POST /api/waitlist/confirm`: the link in the confirmation email carries the token. */
+export type WaitlistConfirmResult = { status: 'confirmed' | 'already_confirmed' }
+
+/** Confirms the applicant's email. A 400 carries `invalid_token` or `expired_token`. */
+export function confirmWaitlist(token: string): Promise<WaitlistConfirmResult> {
+  return publicCall<WaitlistConfirmResult>('POST', '/api/waitlist/confirm', { token })
+}
+
+/** What went wrong confirming, in the terms the page speaks. A missing token is `invalid` before any call. */
+export type WaitlistConfirmFailure = 'invalid' | 'expired' | 'rate' | 'network' | 'other'
+
+export function classifyConfirmFailure(error: unknown): WaitlistConfirmFailure {
+  if (!(error instanceof WaitlistError)) return 'network'
+  if (error.status === 0) return 'network'
+  if (error.status === 429) return 'rate'
+  if (error.status === 400 && error.code === 'expired_token') return 'expired'
+  if (error.status === 400) return 'invalid'
+  return 'other'
 }
 
 /** What the visitor reads after a failed call. */
@@ -397,8 +424,10 @@ export interface WaitlistApplicant {
   /** E.164. Platform admins only; never in the digest. */
   phone: string | null
   phoneHasWhatsapp: boolean
-  /** Always false until a confirmation flow exists. */
+  /** True once the applicant opened the confirmation link. */
   emailConfirmed: boolean
+  /** When they did, or `null`. */
+  emailConfirmedAt?: string | null
   consentVersion: string
   consentText: string
   consentAt: string

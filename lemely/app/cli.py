@@ -1807,16 +1807,26 @@ def main(argv: list[str] | None = None) -> int:
 
     register_budget_ntfy()
 
-    log = structlog.get_logger().bind(component="cli")
+    # structlog's unconfigured default renders tracebacks with every local variable (rich,
+    # ``show_locals``), and ``get_logger().bind(...)`` would freeze onto that default before the
+    # ``cli`` group has applied the user's logging options. So configure the safe renderer first,
+    # and bind only at the point of use, after the group has reconfigured it.
+    configure_logging()
     try:
         cli.main(args=argv, standalone_mode=False, prog_name="lemely")
         return 0
     except click.UsageError as exc:
         click.echo(f"Error: {exc.format_message()}", err=True)
         return 2
+    except click.ClickException as exc:
+        # A deliberate refusal (the purge's safety rails, bad input): the message only, no
+        # traceback, so nothing held in a local (settings, keys) can reach a log.
+        click.echo(f"Error: {exc.format_message()}", err=True)
+        return exc.exit_code
     except click.exceptions.Exit as exc:
         return int(exc.exit_code)
     except LemelyError as exc:
+        log = structlog.get_logger().bind(component="cli")
         log.error(
             "lemely_error",
             error_type=type(exc).__name__,
@@ -1824,10 +1834,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return exc.exit_code
     except KeyboardInterrupt:
-        log.warning("interrupted")
+        structlog.get_logger().bind(component="cli").warning("interrupted")
         return 130
     except Exception as exc:
-        log.exception("unexpected_error", error_type=type(exc).__name__)
+        structlog.get_logger().bind(component="cli").exception(
+            "unexpected_error", error_type=type(exc).__name__
+        )
         return 1
 
 

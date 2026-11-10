@@ -775,9 +775,10 @@ is given.
 The job runs the backend image as the service's own runtime service account with the service's
 own environment, so the database URL, Supabase service-role key, `gcs` backend and the three
 bucket names are exactly what production uses, and nothing is saved on a laptop. The runtime
-service account already holds `roles/storage.objectAdmin` (delete and list objects) and
-`roles/storage.legacyBucketReader` (bucket metadata) on all three buckets
-(`scripts/gcp-bootstrap.sh`), which is everything the purge needs. The person running the
+service account holds `roles/storage.objectAdmin` (delete and list objects) on the uploads and
+avatars buckets, and on the evidence bucket also `roles/storage.legacyBucketReader`
+(`scripts/gcp-bootstrap.sh`). The purge needs nothing more: it never reads bucket metadata
+except on the evidence bucket, where the app's own privacy check does. The person running the
 commands needs `roles/run.developer`, `roles/iam.serviceAccountUser` on the runtime service
 account, and `roles/logging.viewer`.
 
@@ -825,8 +826,9 @@ workflow sets all of them as plain values today. If that ever changes, map those
 
 Only if the job route is unavailable. Export every one of these (use the target environment's
 values; never reuse staging's for production) and authenticate with
-`gcloud auth application-default login` as a principal that holds `roles/storage.objectAdmin` and
-`roles/storage.legacyBucketReader` on the three buckets:
+`gcloud auth application-default login` as a principal that holds
+`roles/storage.objectAdmin` on the three buckets (and `roles/storage.legacyBucketReader` on the
+evidence one):
 
 ```bash
 export LEMELY_DATABASE__URL='postgresql+psycopg://...'   # session pooler URL of the target
@@ -869,8 +871,10 @@ lemely admin purge-users --keep-domain lemelyig.com [--i-know-this-is-production
   wrong URL.
 - **Storage check:** outside a local database `--execute` refuses unless the backend is `gcs`, all
   three bucket names are set explicitly and each names the detected environment (`staging` or
-  `production`), and every bucket answers with the configured credentials. A dry run prints the
-  same problems as a warning. A default `local` backend would delete nothing and still report
+  `production`), and every bucket answers with the configured credentials. "Answers" means a
+  one-object listing (`storage.objects.list`), never a bucket-metadata read, so no extra IAM is
+  needed. The dry run runs the same probe and prints any failure as a warning, so it proves what
+  `--execute` needs. A default `local` backend would delete nothing and still report
   success, which is why this is enforced.
 - **uuid columns with no foreign key** are listed in `NON_FK_UUID_COLUMNS` with their disposition
   (`lemely/db/user_purge.py`), and a test fails if a migration adds one that is not. Today:

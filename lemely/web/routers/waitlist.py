@@ -7,6 +7,10 @@ Two unauthenticated writes, like :mod:`lemely.web.routers.contact` (and listed `
   the consent version, and returns a one-time completion token. An address already on the list
   gets ``{"status": "already_listed"}`` with **no token and no change**, so nobody can
   overwrite another applicant's details. The two outcomes run the same single statement.
+* ``POST /api/waitlist/confirm`` redeems the emailed confirmation token (7 days) and sets
+  ``email_confirmed``. Step 1 queues the mail (and a repeat sign-up for an unconfirmed address
+  re-sends it, at most every 10 minutes and four mails per window); a mailer failure is logged
+  and never fails step 1.
 * ``PATCH /api/waitlist`` (step 2) redeems the token (24 hours, single use) with the optional
   detail. An unknown, expired or used token is 400.
 
@@ -37,10 +41,10 @@ import secrets
 from typing import TYPE_CHECKING, Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 
 from lemely.auth.email import EmailProvider  # noqa: TC001 - FastAPI resolves it at runtime
-from lemely.core.waitlist import CONSENT_VERSIONS, CURRENT_CONSENT_VERSION
+from lemely.core.waitlist import CONSENT_VERSIONS, CURRENT_CONSENT_VERSION, confirmation_link
 from lemely.db.session import get_sessionmaker
 from lemely.db.waitlist_repo import CompletionDetails, WaitlistRepository
 from lemely.runtime.config import Settings  # noqa: TC001 - FastAPI resolves it at runtime
@@ -56,6 +60,8 @@ from lemely.web.schemas_waitlist import (
     WaitlistCompletedDTO,
     WaitlistCompleteDTO,
     WaitlistConfigDTO,
+    WaitlistConfirmDTO,
+    WaitlistConfirmedDTO,
     WaitlistCreatedDTO,
     WaitlistCreateDTO,
     WaitlistDigestResultDTO,
@@ -72,12 +78,13 @@ router = APIRouter(prefix="/api")
 
 MAX_BODY_BYTES = 8 * 1024
 #: Paths the body-size middleware guards (installed in ``create_app``).
-BODY_LIMITED_PATHS = frozenset({"/api/waitlist"})
+BODY_LIMITED_PATHS = frozenset({"/api/waitlist", "/api/waitlist/confirm"})
 _GLOBAL_LIMITER_KEY = "__global__"
 _TURNSTILE_DETAIL = "turnstile_failed"
 _REFUSED_DETAIL = "This link has expired or was already used."
 _DIGEST_FAILED_DETAIL = "Could not send the digest."
 _DIGEST_PENDING_DETAIL = "digest_pending"
+_CONFIRM_FAILURE_CODES = {"invalid": "invalid_token", "expired": "expired_token"}
 
 
 def get_waitlist_repo() -> WaitlistRepository:
@@ -105,6 +112,30 @@ def _charge_global(limiters: WaitlistLimiters) -> None:
     """Charge the shared daily budget. Only requests that passed the cheap checks reach it."""
     if not limiters.global_.allow(_GLOBAL_LIMITER_KEY):
         raise _too_many(limiters.global_, _GLOBAL_LIMITER_KEY)
+
+
+def _resend_confirmation(repo: WaitlistRepository, provider: EmailProvider, email: str) -> None:
+    """Re-issue and mail a link for a repeat sign-up. Runs after the response, never raises.
+
+    The throttle, the cap and the write all happen here, off the request path, so a repeat
+    sign-up does exactly the same work before answering as a new one (no timing difference).
+    """
+    try:
+        fresh = repo.reissue_confirmation(email)
+    except Exception as exc:
+        log.warning("waitlist_confirmation_reissue_failed", error_type=type(exc).__name__)
+        return
+    if fresh is not None:
+        _send_confirmation(provider, email, fresh)
+
+
+def _send_confirmation(provider: EmailProvider, email: str, token: str) -> None:
+    """Mail the confirmation link. Runs after the response; a failure is logged, never raised."""
+    try:
+        provider.send_waitlist_confirmation(email, confirmation_link(token))
+    except Exception as exc:
+        # Type name only: the address and link are personal data and a live credential.
+        log.warning("waitlist_confirmation_send_failed", error_type=type(exc).__name__)
 
 
 @router.get("/waitlist/config", response_model=WaitlistConfigDTO)
@@ -135,6 +166,8 @@ def join_waitlist(
     limiters: Annotated[WaitlistLimiters, Depends(get_waitlist_limiters)],
     repo: Annotated[WaitlistRepository, Depends(get_waitlist_repo)],
     turnstile: Annotated[TurnstileVerifier | None, Depends(get_turnstile_verifier)],
+    provider: Annotated[EmailProvider, Depends(get_email_provider)],
+    background: BackgroundTasks,
 ) -> WaitlistCreatedDTO:
     """Step 1: create a partial applicant and hand back its completion token.
 
@@ -142,6 +175,13 @@ def join_waitlist(
     the shared budget nothing: a honeypot hit (a silent fake success), a missing Turnstile token,
     and Turnstile's verdict. Only a request that passed them all is charged to the global daily
     budget, so a flood of token-less or bad-token posts cannot use it up for real applicants.
+
+    A confirmation mail goes out after the response, so a slow or failing mailer never delays or
+    fails the sign-up. A repeat sign-up for an address that is still unconfirmed gets another
+    link (earlier links keep working), at most once per 10 minutes and four mails per window per
+    address. That decision runs after the response too, so a repeat answers ``already_listed``
+    after the same single statement a new sign-up needs: neither the body nor the timing
+    reveals whether a mail was sent.
     """
     _charge_client(caller, limiters)
     if body.website:
@@ -153,7 +193,7 @@ def join_waitlist(
         # Fail closed: a missing token, a rejected one and an unreachable Cloudflare all land here.
         raise HTTPException(status_code=403, detail=_TURNSTILE_DETAIL)
     _charge_global(limiters)
-    token = repo.create(
+    created = repo.create(
         email=body.email,
         name=body.name,
         role=body.role,
@@ -167,9 +207,34 @@ def join_waitlist(
             "utm_term": body.utmTerm,
         },
     )
-    if token is None:
+    if created is None:
+        background.add_task(_resend_confirmation, repo, provider, body.email)
         return WaitlistCreatedDTO(status="already_listed")
-    return WaitlistCreatedDTO(status="created", token=token)
+    background.add_task(_send_confirmation, provider, body.email, created.confirmation_token)
+    return WaitlistCreatedDTO(status="created", token=created.completion_token)
+
+
+@router.post("/waitlist/confirm", response_model=WaitlistConfirmedDTO)
+def confirm_waitlist_email(
+    body: WaitlistConfirmDTO,
+    caller: Annotated[EdgeCaller, Depends(edge_caller)],
+    limiters: Annotated[WaitlistLimiters, Depends(get_waitlist_limiters)],
+    repo: Annotated[WaitlistRepository, Depends(get_waitlist_repo)],
+) -> WaitlistConfirmedDTO:
+    """Confirm an applicant's email with the token from the emailed link.
+
+    ``POST`` rather than ``GET`` so a mail scanner that prefetches the link cannot confirm for
+    the recipient: the page the link opens makes this call. Only the caller's own limit is
+    charged (no mail, no shared budget). 400 ``{"detail": {"code": "invalid_token" |
+    "expired_token"}}`` for a token that is unknown or past its 7 days.
+    """
+    _charge_client(caller, limiters)
+    outcome = repo.confirm_email(body.token)
+    if outcome in _CONFIRM_FAILURE_CODES:
+        raise HTTPException(status_code=400, detail={"code": _CONFIRM_FAILURE_CODES[outcome]})
+    return WaitlistConfirmedDTO(
+        status="confirmed" if outcome == "confirmed" else "already_confirmed"
+    )
 
 
 @router.patch(
@@ -217,9 +282,10 @@ def send_digest(
     x_cron_secret: Annotated[str | None, Header()] = None,
 ) -> WaitlistDigestResultDTO:
     """Email the team the applicants since the last digest (nothing is sent when there are none)."""
-    expected = settings.waitlist.digest_secret
-    if expected is None:
+    digest_secret = settings.waitlist.digest_secret
+    if digest_secret is None:
         raise HTTPException(status_code=404, detail="Not found")
+    expected = digest_secret.get_secret_value()
     if x_cron_secret is None or not hmac.compare_digest(x_cron_secret.encode(), expected.encode()):
         raise HTTPException(status_code=403, detail="Forbidden")
     try:

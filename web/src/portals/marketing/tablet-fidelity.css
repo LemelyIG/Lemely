@@ -43,7 +43,7 @@
   .brand-hero-copy>p:not(.brand-fine) { color: var(--brand-lead); }
   .brand-hero-copy>.brand-fine { font-size: 12px; line-height: normal; letter-spacing: .04em; color: var(--brand-hint); }
   .marketing-brand .brand-actions :is(a, button) { line-height: normal; min-height: 0; height: auto; }
-  .marketing-brand .brand-actions a:last-child { border: 0; box-shadow: inset 0 0 0 1.5px var(--brand-ring); }
+  .marketing-brand .brand-actions a:last-child { border: 0; box-shadow: inset 0 0 0 1.5px var(--brand-secondary-ring); }
   .brand-chart { display: flex; flex-direction: column; gap: 6px; border: 0; box-shadow: var(--brand-chart-shadow); }
   .brand-chart-head { gap: 12px; }
   .brand-avatar { font-size: 14px; }

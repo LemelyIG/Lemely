@@ -657,7 +657,11 @@ class DatabaseSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # Full SQLAlchemy URL. psycopg (v3) sync driver by default.
-    url: str = "postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres"
+    # repr=False: the URL carries the database password, and a settings object ends up in
+    # tracebacks and logs. Type and readers are unchanged.
+    url: str = Field(
+        default="postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres", repr=False
+    )
     # Echo SQL to the logger (debugging only).
     echo: bool = False
     # QueuePool sizing.
@@ -1271,10 +1275,10 @@ class EdgeSettings(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    origin_secret: OptionalCredential = None
+    origin_secret: OptionalSecret = None
     # The value being rotated out: still accepted (never sent by the Worker) so a rotation can
     # roll out without refusing requests that carry the old one. Blank means unset.
-    origin_secret_previous: OptionalCredential = None
+    origin_secret_previous: OptionalSecret = None
 
 
 class WaitlistSettings(BaseModel):
@@ -1288,11 +1292,11 @@ class WaitlistSettings(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    digest_secret: OptionalCredential = None
+    digest_secret: OptionalSecret = None
     # Cloudflare Turnstile for step 1 (``POST /api/waitlist``). With no secret the check is
     # skipped (dev, tests); with one, a missing or invalid token is refused. The site key is
     # public and reaches the SPA through ``GET /api/waitlist/config``.
-    turnstile_secret_key: OptionalCredential = None
+    turnstile_secret_key: OptionalSecret = None
     turnstile_site_key: OptionalCredential = None
 
 

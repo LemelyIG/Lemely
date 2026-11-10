@@ -226,7 +226,7 @@ export function WaitlistPanel({
   const topValues: readonly string[] = TOP_SUBJECTS.map((x) => x.value)
   const extraSubjects = subjects.filter((v) => !topValues.includes(v))
   const title = dup ? "You're already on the list" : HEADLINE[r]
-  const lead = expired ? EXPIRED_COPY : dup ? `${email} is saved. We'll email you when access opens.` : LEAD[r]
+  const lead = expired ? EXPIRED_COPY : dup ? `${email} is already on the list. We've sent a fresh link: check your inbox to confirm your email.` : LEAD[r]
 
   useEffect(() => {
     let live = true
@@ -524,7 +524,7 @@ export function WaitlistPanel({
               label="Full name"
               className="min-h-11"
               autoComplete="name"
-              placeholder="Your full name"
+              placeholder="Your Name"
               maxLength={WAITLIST_LIMITS.name * 2}
               value={name}
               onChange={(e) => {
@@ -732,8 +732,8 @@ export function WaitlistPanel({
                 {firstName ? `You're on the list, ${firstName}` : "You're on the list"}
               </p>
               <p className="m-0 max-w-[44ch] text-body-md text-on-surface-variant">
-                We saved <span className="font-semibold text-on-surface">{email}</span>. We'll email
-                you when access opens.
+                We sent a link to <span className="font-semibold text-on-surface">{email}</span>. Check
+                your inbox and open it to confirm your email. We'll email you when access opens.
               </p>
             </div>
           </div>

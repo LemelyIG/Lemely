@@ -100,6 +100,9 @@ class LocalFileStorageBackend:
             media_type = mimetypes.guess_type(object_path)[0] or "application/octet-stream"
         return f"data:{media_type};base64,{base64.b64encode(data).decode('ascii')}"
 
+    def probe_bucket(self, bucket: str) -> None:
+        """A local bucket is a directory that may not exist yet; there is nothing to prove."""
+
     def list_objects(self, bucket: str, prefix: str) -> list[str]:
         """Every object key in ``bucket`` that starts with ``prefix`` (the account purge)."""
         base = self._root / bucket

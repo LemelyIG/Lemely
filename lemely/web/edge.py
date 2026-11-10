@@ -44,7 +44,7 @@ class EdgeCaller:
 def _accepted_secrets(settings: Settings) -> list[str]:
     """The non-empty secrets a request may carry: the current one and the one being rotated out."""
     candidates = (settings.edge.origin_secret, settings.edge.origin_secret_previous)
-    return [c for c in candidates if c]
+    return [value for c in candidates if c is not None and (value := c.get_secret_value())]
 
 
 def rate_limit_key(ip: str) -> str:

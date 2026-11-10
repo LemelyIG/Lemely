@@ -15,7 +15,11 @@ import re
 import httpx
 import pytest
 
-from lemely.auth.email import MockEmailProvider, ResendEmailProvider
+from lemely.auth.email import (
+    MockEmailProvider,
+    ResendEmailProvider,
+    _render_waitlist_confirmation,
+)
 from lemely.runtime.config import EmailSettings, Settings
 from lemely.runtime.errors import ExternalServiceError
 from lemely.web.deps import _build_email_provider
@@ -308,3 +312,45 @@ def test_deps_wires_resend_when_a_key_is_configured() -> None:
     assert isinstance(provider, ResendEmailProvider)
     assert provider.delivers_out_of_band is True
     provider.close()
+
+
+def test_waitlist_confirmation_goes_to_the_applicant_with_an_absolute_link() -> None:
+    provider, seen = _provider(_ok, _settings(app_base_url="https://staging.lemelyig.com"))
+    provider.send_waitlist_confirmation("sara@example.com", "/waitlist/confirm?token=abc_-1&x=2")
+
+    body = json.loads(seen[0].content)
+    link = "https://staging.lemelyig.com/waitlist/confirm?token=abc_-1&x=2"
+    assert body["to"] == ["sara@example.com"]
+    assert body["subject"] == "Confirm your spot on the Lemely waitlist"
+    assert link in body["text"]
+    assert (
+        'href="https://staging.lemelyig.com/waitlist/confirm?token=abc_-1&amp;x=2"' in body["html"]
+    )
+    assert "http:///" not in body["html"] + body["text"]
+
+
+def test_mock_provider_logs_the_waitlist_confirmation_link(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.INFO, logger="lemely.auth.email"):
+        MockEmailProvider().send_waitlist_confirmation("a@example.com", "/waitlist/confirm?token=t")
+    assert "/waitlist/confirm?token=t" in caplog.text
+
+
+def test_waitlist_confirmation_renderer_contract() -> None:
+    link = "https://lemelyig.com/waitlist/confirm?token=a-b_c&x=<1>"
+    subject, html_body, text_body = _render_waitlist_confirmation(
+        link, app_base_url="https://lemelyig.com"
+    )
+
+    escaped = "https://lemelyig.com/waitlist/confirm?token=a-b_c&amp;x=&lt;1&gt;"
+    assert subject == "Confirm your spot on the Lemely waitlist"
+    assert f'href="{escaped}"' in html_body
+    assert html_body.count(escaped) >= 2  # the button and the visible fallback text
+    assert "<1>" not in html_body  # never the raw link
+    assert link in text_body
+    assert subject in text_body
+    # The link-only call stays valid, and the output carries no other applicant data.
+    assert _render_waitlist_confirmation(link)[0] == subject
+    for forbidden in ("@example.com", "phone", "token=a-b_c&x"):
+        assert forbidden not in html_body.replace(escaped, "")

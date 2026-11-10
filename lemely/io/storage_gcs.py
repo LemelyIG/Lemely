@@ -262,6 +262,20 @@ class GcsStorageBackend:
         except GoogleAPICallError as exc:
             raise ExternalServiceError(f"Storage delete failed: {exc}") from exc
 
+    def probe_bucket(self, bucket: str) -> None:
+        """Prove ``bucket`` answers with these credentials, using object permissions only.
+
+        Lists at most one object (``storage.objects.list``, which ``roles/storage.objectAdmin``
+        grants). It does **not** read the bucket's metadata (``storage.buckets.get``), which the
+        runtime account holds only on the evidence bucket. The evidence bucket still gets its
+        privacy and ownership check first, exactly as a delete or a listing would.
+        """
+        self._require_private_evidence_bucket(bucket)
+        try:
+            next(iter(self._client().list_blobs(bucket, max_results=1)), None)
+        except GoogleAPICallError as exc:
+            raise ExternalServiceError(f"Storage probe failed on {bucket}: {exc}") from exc
+
     def list_objects(self, bucket: str, prefix: str) -> list[str]:
         """Every object key in ``bucket`` that starts with ``prefix`` (the account purge)."""
         self._require_private_evidence_bucket(bucket)

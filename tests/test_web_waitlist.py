@@ -15,12 +15,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 import sqlalchemy as sa
+from fastapi import BackgroundTasks
 from fastapi.testclient import TestClient
 
 from lemely.core.waitlist import (
     CONSENT_VERSIONS,
     CURRENT_CONSENT_VERSION,
     exam_session_options,
+    hash_token,
 )
 from lemely.db.models.enums import Role
 from lemely.db.models.waitlist import WaitlistApplicant
@@ -35,8 +37,10 @@ from lemely.web.deps import (
     get_waitlist_limiters,
     reset_singletons,
 )
+from lemely.web.edge import EdgeCaller
 from lemely.web.ratelimit import SlidingWindowLimiter
-from lemely.web.routers.waitlist import get_waitlist_repo
+from lemely.web.routers.waitlist import _resend_confirmation, get_waitlist_repo, join_waitlist
+from lemely.web.schemas_waitlist import WaitlistCreateDTO
 from tests.auth_fakes import FakeEmailProvider
 from tests.tutoring_db import act_as, anonymous, tutoring_database
 
@@ -796,6 +800,7 @@ def test_csv_has_every_column_and_respects_filters(admin: TestClient) -> None:
         "phone",
         "phone_has_whatsapp",
         "email_confirmed",
+        "email_confirmed_at",
         "consent_version",
         "consent_text",
         "consent_at",
@@ -880,7 +885,16 @@ def test_detail_dto_exposes_every_model_column_except_the_token_fields() -> None
     from lemely.db.models.waitlist import WaitlistApplicant as Model
     from lemely.web.schemas_waitlist import WaitlistApplicantDTO
 
-    token_fields = {"completion_token_hash", "completion_token_expires_at"}
+    # Secrets and mail bookkeeping that never leave the server.
+    token_fields = {
+        "completion_token_hash",
+        "completion_token_expires_at",
+        "confirm_token_hash",
+        "confirm_token_expires_at",
+        "confirm_sent_at",
+        "confirm_prev_hashes",
+        "confirm_send_count",
+    }
     columns = {c.key for c in sa.inspect(Model).column_attrs} - token_fields
     camel = {
         "".join(part if i == 0 else part.title() for i, part in enumerate(c.split("_")))
@@ -2000,3 +2014,392 @@ def test_patch_is_still_limited_per_caller(
     with build_client(sm, clock, provider, limiter_clock, per_client_limit=2) as tc:
         codes = [step2(tc, f"junk-{i}".ljust(30, "x")).status_code for i in range(3)]
     assert codes == [400, 400, 429]
+
+
+# ---------------------------------------------------------------------------
+# Email confirmation (double opt-in)
+# ---------------------------------------------------------------------------
+
+CONFIRM_PATH = "/api/waitlist/confirm"
+LINK_PREFIX = "/waitlist/confirm?token="
+
+
+def confirm(client: TestClient, token: str) -> Response:
+    return client.post(CONFIRM_PATH, json={"token": token})
+
+
+def mailed_token(provider: FakeEmailProvider, index: int = -1) -> str:
+    link = provider.sent_waitlist_confirmations[index][1]
+    assert link.startswith(LINK_PREFIX)
+    return link.removeprefix(LINK_PREFIX)
+
+
+def test_step1_mails_one_confirmation_link_to_the_applicant(
+    client: TestClient, provider: FakeEmailProvider, sm: sessionmaker[Session]
+) -> None:
+    created = step1(client, "conf@example.com", name="Sara Hassan").json()
+
+    assert len(provider.sent_waitlist_confirmations) == 1
+    email, link = provider.sent_waitlist_confirmations[0]
+    assert email == "conf@example.com"
+    token = mailed_token(provider)
+    assert token != created["token"]  # not the step-2 token
+    row = row_for(sm, "conf@example.com")
+    assert row.email_confirmed is False
+    assert row.confirm_token_hash == hash_token(token)
+    assert row.confirm_token_hash != token
+    assert row.confirm_token_expires_at is not None
+    # Only the address travels with the mail: no name, phone or step-2 token.
+    assert "Sara" not in link
+    assert created["token"] not in link
+
+
+def test_a_mailer_failure_never_fails_step1(
+    client: TestClient, provider: FakeEmailProvider, sm: sessionmaker[Session]
+) -> None:
+    provider.raise_on_send = True
+
+    response = step1(client, "down@example.com")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "created"
+    assert row_for(sm, "down@example.com").completed_at is None
+    assert provider.sent_waitlist_confirmations == []
+
+
+def test_a_honeypot_hit_sends_no_mail(
+    client: TestClient, provider: FakeEmailProvider, sm: sessionmaker[Session]
+) -> None:
+    step1(client, "bot@example.com", website="http://spam")
+
+    assert provider.sent_waitlist_confirmations == []
+    assert count_rows(sm) == 0
+
+
+def test_confirming_sets_the_flag_and_a_repeat_is_already_confirmed(
+    client: TestClient, provider: FakeEmailProvider, sm: sessionmaker[Session], clock: Clock
+) -> None:
+    step1(client, "ok@example.com")
+    token = mailed_token(provider)
+
+    first = confirm(client, token)
+    again = confirm(client, token)
+
+    assert first.status_code == 200
+    assert first.json() == {"status": "confirmed"}
+    assert again.status_code == 200
+    assert again.json() == {"status": "already_confirmed"}
+    row = row_for(sm, "ok@example.com")
+    assert row.email_confirmed is True
+    assert row.email_confirmed_at == clock.now
+
+
+def test_an_unknown_token_is_invalid_token(client: TestClient, sm: sessionmaker[Session]) -> None:
+    step1(client, "x@example.com")
+
+    response = confirm(client, "not-a-real-token")
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": {"code": "invalid_token"}}
+    assert row_for(sm, "x@example.com").email_confirmed is False
+
+
+def test_the_step2_token_does_not_confirm_the_email(
+    client: TestClient, sm: sessionmaker[Session]
+) -> None:
+    token = step1(client, "cross@example.com").json()["token"]
+
+    assert confirm(client, token).status_code == 400
+    assert row_for(sm, "cross@example.com").email_confirmed is False
+
+
+def test_the_link_expires_after_seven_days(
+    client: TestClient, provider: FakeEmailProvider, sm: sessionmaker[Session], clock: Clock
+) -> None:
+    step1(client, "late@example.com")
+    token = mailed_token(provider)
+
+    clock.now += timedelta(days=7) - timedelta(seconds=1)
+    inside = confirm(client, token)
+    assert inside.json() == {"status": "confirmed"}
+
+    step1(client, "later@example.com")
+    token2 = mailed_token(provider)
+    clock.now += timedelta(days=7, seconds=1)
+    outside = confirm(client, token2)
+
+    assert outside.status_code == 400
+    assert outside.json() == {"detail": {"code": "expired_token"}}
+    assert row_for(sm, "later@example.com").email_confirmed is False
+
+
+def test_confirming_is_post_only_and_validates_the_body(client: TestClient) -> None:
+    assert client.get(CONFIRM_PATH, params={"token": "t"}).status_code == 405
+    assert client.post(CONFIRM_PATH, json={}).status_code == 422
+    assert client.post(CONFIRM_PATH, json={"token": ""}).status_code == 422
+    assert client.post(CONFIRM_PATH, json={"token": "x" * 201}).status_code == 422
+
+
+def test_confirming_is_rate_limited_per_caller(
+    sm: sessionmaker[Session],
+    clock: Clock,
+    provider: FakeEmailProvider,
+    limiter_clock: LimiterClock,
+) -> None:
+    with build_client(sm, clock, provider, limiter_clock, per_client_limit=2) as tc:
+        assert tc.post(CONFIRM_PATH, json={"token": "a"}).status_code == 400
+        assert tc.post(CONFIRM_PATH, json={"token": "b"}).status_code == 400
+        limited = tc.post(CONFIRM_PATH, json={"token": "c"})
+    assert limited.status_code == 429
+    assert "Retry-After" in limited.headers
+
+
+def test_a_repeat_signup_for_an_unconfirmed_address_resends_a_link_and_keeps_the_old_one(
+    client: TestClient, provider: FakeEmailProvider, sm: sessionmaker[Session], clock: Clock
+) -> None:
+    first = step1(client, "again@example.com").json()
+    old = mailed_token(provider)
+
+    clock.now += timedelta(minutes=10, seconds=1)
+    repeat = step1(client, "AGAIN@example.com")
+
+    assert repeat.json() == {"status": "already_listed"}  # same answer: nothing to enumerate
+    assert len(provider.sent_waitlist_confirmations) == 2
+    fresh = mailed_token(provider)
+    assert fresh != old
+    assert row_for(sm, "again@example.com").confirm_token_hash == hash_token(fresh)
+    # A stranger re-submitting the address cannot kill the link already in the owner's inbox.
+    assert confirm(client, old).json() == {"status": "confirmed"}
+    assert confirm(client, fresh).json() == {"status": "already_confirmed"}
+    # The step-2 token the first answer carried is untouched.
+    assert step2(client, first["token"]).status_code == 200
+
+
+def test_resends_are_throttled_to_one_per_ten_minutes_per_address(
+    client: TestClient, provider: FakeEmailProvider, clock: Clock
+) -> None:
+    step1(client, "slow@example.com")
+    answers = []
+
+    clock.now += timedelta(minutes=9, seconds=59)
+    answers.append(step1(client, "slow@example.com").json())
+    assert len(provider.sent_waitlist_confirmations) == 1  # still inside the window
+
+    clock.now += timedelta(seconds=2)
+    answers.append(step1(client, "slow@example.com").json())
+    assert len(provider.sent_waitlist_confirmations) == 2
+    answers.append(step1(client, "slow@example.com").json())  # same instant: throttled again
+    assert len(provider.sent_waitlist_confirmations) == 2
+    # A different address is throttled on its own.
+    step1(client, "other@example.com")
+    assert len(provider.sent_waitlist_confirmations) == 3
+    assert answers == [{"status": "already_listed"}] * 3
+
+
+def test_a_repeat_signup_for_a_confirmed_address_sends_nothing(
+    client: TestClient, provider: FakeEmailProvider, clock: Clock
+) -> None:
+    step1(client, "done@example.com")
+    assert confirm(client, mailed_token(provider)).status_code == 200
+
+    clock.now += timedelta(hours=1)
+    repeat = step1(client, "done@example.com")
+
+    assert repeat.json() == {"status": "already_listed"}
+    assert len(provider.sent_waitlist_confirmations) == 1
+
+
+def test_a_repeat_signup_mailer_failure_is_swallowed(
+    client: TestClient, provider: FakeEmailProvider, clock: Clock
+) -> None:
+    step1(client, "flaky@example.com")
+    clock.now += timedelta(minutes=11)
+    provider.raise_on_send = True
+
+    assert step1(client, "flaky@example.com").json() == {"status": "already_listed"}
+
+
+def test_admin_sees_when_the_email_was_confirmed_and_never_the_token(
+    admin: TestClient, provider: FakeEmailProvider, sm: sessionmaker[Session], clock: Clock
+) -> None:
+    step1(admin, "adm1@example.com")
+    step1(admin, "adm2@example.com")
+    token = mailed_token(provider, 0)
+    assert confirm(admin, token).status_code == 200
+
+    items = {i["email"]: i for i in admin.get("/api/admin/waitlist").json()["items"]}
+
+    assert items["adm1@example.com"]["emailConfirmed"] is True
+    assert items["adm1@example.com"]["emailConfirmedAt"] is not None
+    assert items["adm2@example.com"]["emailConfirmed"] is False
+    assert items["adm2@example.com"]["emailConfirmedAt"] is None
+    assert token not in admin.get("/api/admin/waitlist").text
+    rows = {r["email"]: r for r in parse_csv(admin.get("/api/admin/waitlist/export.csv"))}
+    assert rows["adm1@example.com"]["email_confirmed"] == "yes"
+    assert rows["adm1@example.com"]["email_confirmed_at"] != ""
+    assert rows["adm2@example.com"]["email_confirmed_at"] == ""
+    filtered = admin.get("/api/admin/waitlist", params={"emailConfirmed": "true"}).json()
+    assert [i["email"] for i in filtered["items"]] == ["adm1@example.com"]
+
+
+def test_confirming_works_while_the_access_gate_is_on(
+    sm: sessionmaker[Session],
+    clock: Clock,
+    provider: FakeEmailProvider,
+    limiter_clock: LimiterClock,
+) -> None:
+    from lemely.runtime.config import AccessSettings
+
+    with build_client(sm, clock, provider, limiter_clock) as tc:
+        settings = tc.app.dependency_overrides[get_settings]()  # type: ignore[attr-defined]
+        gated = settings.model_copy(
+            update={"access": AccessSettings(allowed_email_domains=["lemelyig.com"])}
+        )
+        tc.app.dependency_overrides[get_settings] = lambda: gated  # type: ignore[attr-defined]
+        anonymous(tc)
+
+        # The applicant is not an account holder and not on the allow-list.
+        assert step1(tc, "outsider@gmail.com").status_code == 200
+        response = confirm(tc, mailed_token(provider))
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "confirmed"}
+    assert row_for(sm, "outsider@gmail.com").email_confirmed is True
+
+
+def test_every_link_of_a_window_still_works(
+    client: TestClient, provider: FakeEmailProvider, sm: sessionmaker[Session], clock: Clock
+) -> None:
+    step1(client, "multi@example.com")
+    for _ in range(2):
+        clock.now += timedelta(minutes=11)
+        step1(client, "multi@example.com")
+    tokens = [mailed_token(provider, i) for i in range(3)]
+    assert len(set(tokens)) == 3
+    row = row_for(sm, "multi@example.com")
+    assert row.confirm_token_hash == hash_token(tokens[-1])
+    assert set(row.confirm_prev_hashes) == {hash_token(t) for t in tokens[:-1]}
+
+    # The oldest link of the window still confirms, and every link then reads already_confirmed.
+    assert confirm(client, tokens[0]).json() == {"status": "confirmed"}
+    assert confirm(client, tokens[1]).json() == {"status": "already_confirmed"}
+    assert confirm(client, tokens[2]).json() == {"status": "already_confirmed"}
+
+
+def test_resends_are_capped_per_window_and_a_new_window_opens_after_expiry(
+    client: TestClient, provider: FakeEmailProvider, sm: sessionmaker[Session], clock: Clock
+) -> None:
+    step1(client, "bomb@example.com")  # mail 1
+    answers = []
+    for _ in range(10):  # a stranger hammering the address every 11 minutes
+        clock.now += timedelta(minutes=11)
+        answers.append(step1(client, "bomb@example.com").json())
+
+    assert len(provider.sent_waitlist_confirmations) == 4  # the first plus three re-sends
+    assert answers == [{"status": "already_listed"}] * 10
+    assert row_for(sm, "bomb@example.com").confirm_send_count == 4
+
+    # Once the latest link has expired, a new window opens, with a clean slate of links.
+    clock.now += timedelta(days=7)
+    step1(client, "bomb@example.com")
+    assert len(provider.sent_waitlist_confirmations) == 5
+    row = row_for(sm, "bomb@example.com")
+    assert row.confirm_send_count == 1
+    assert row.confirm_prev_hashes == []
+    assert confirm(client, mailed_token(provider)).json() == {"status": "confirmed"}
+
+
+def test_the_confirmation_token_is_refused_by_the_step2_patch(
+    client: TestClient, provider: FakeEmailProvider, sm: sessionmaker[Session]
+) -> None:
+    step1(client, "swap@example.com")
+
+    refused = step2(client, mailed_token(provider))
+
+    assert refused.status_code == 400
+    assert row_for(sm, "swap@example.com").completed_at is None
+
+
+def test_two_concurrent_repeat_signups_send_one_mail(
+    sm: sessionmaker[Session], clock: Clock
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    repo = WaitlistRepository(sm, now=clock)
+    repo.create(
+        email="race@example.com",
+        name="Race",
+        role="student",
+        consent_version=CONSENT_VERSION,
+        consent_text=CONSENT,
+        utm={},
+    )
+    clock.now += timedelta(minutes=11)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _: repo.reissue_confirmation("race@example.com"), range(8)))
+
+    assert sum(r is not None for r in results) == 1
+    assert row_for(sm, "race@example.com").confirm_send_count == 2
+
+
+def _call_step1(
+    sm: sessionmaker[Session], provider: FakeEmailProvider, clock: Clock, email: str
+) -> tuple[list[str], BackgroundTasks]:
+    """Run the step 1 handler directly, returning the SQL it issued before it returned."""
+    statements: list[str] = []
+
+    def record(_c: object, _cur: object, statement: str, *_a: object) -> None:
+        statements.append(statement)
+
+    engine = sm.kw["bind"]
+    sa.event.listen(engine, "before_cursor_execute", record)
+    background = BackgroundTasks()
+    try:
+        join_waitlist(
+            WaitlistCreateDTO(
+                email=email, name="Timing", role="student", consentVersion=CONSENT_VERSION
+            ),
+            EdgeCaller(ip="203.0.113.9", via_edge=False),
+            WaitlistLimiters(
+                per_client=SlidingWindowLimiter(limit=99, window_seconds=600.0, clock=lambda: 0.0),
+                global_=SlidingWindowLimiter(limit=99, window_seconds=600.0, clock=lambda: 0.0),
+            ),
+            WaitlistRepository(sm, now=clock),
+            None,
+            provider,
+            background,
+        )
+    finally:
+        sa.event.remove(engine, "before_cursor_execute", record)
+    return statements, background
+
+
+def test_a_repeat_signup_does_the_same_work_before_answering_as_a_new_one(
+    sm: sessionmaker[Session], provider: FakeEmailProvider, clock: Clock
+) -> None:
+    new_sql, _ = _call_step1(sm, provider, clock, "t1@example.com")
+    clock.now += timedelta(minutes=11)  # due for a re-send, so any inline reissue would show
+    repeat_sql, background = _call_step1(sm, provider, clock, "t1@example.com")
+
+    assert len(new_sql) == len(repeat_sql) == 1
+    assert [s.split()[0] for s in new_sql] == [s.split()[0] for s in repeat_sql] == ["INSERT"]
+    # The reissue is a queued background task that has not run yet.
+    assert len(background.tasks) == 1
+    assert provider.sent_waitlist_confirmations == []
+    import asyncio
+
+    asyncio.run(background())
+    assert len(provider.sent_waitlist_confirmations) == 1
+
+
+def test_a_failing_reissue_in_the_background_is_swallowed(
+    sm: sessionmaker[Session], provider: FakeEmailProvider, clock: Clock
+) -> None:
+    class Broken(WaitlistRepository):
+        def reissue_confirmation(self, email: str) -> str | None:
+            raise RuntimeError("db down")
+
+    _resend_confirmation(Broken(sm, now=clock), provider, "x@example.com")
+
+    assert provider.sent_waitlist_confirmations == []

@@ -63,6 +63,7 @@ CSV_COLUMNS: Final = (
     "phone",
     "phone_has_whatsapp",
     "email_confirmed",
+    "email_confirmed_at",
     "consent_version",
     "consent_text",
     "consent_at",
@@ -119,6 +120,7 @@ def _dto(row: WaitlistApplicant) -> WaitlistApplicantDTO:
         phone=row.phone,
         phoneHasWhatsapp=row.phone_has_whatsapp,
         emailConfirmed=row.email_confirmed,
+        emailConfirmedAt=row.email_confirmed_at,
         consentVersion=row.consent_version,
         consentText=row.consent_text,
         consentAt=row.consent_at,
@@ -181,6 +183,9 @@ def _csv(rows: Sequence[WaitlistApplicant]) -> str:
             "phone": phone_for_export(row.phone),
             "phone_has_whatsapp": "yes" if row.phone_has_whatsapp else "no",
             "email_confirmed": "yes" if row.email_confirmed else "no",
+            "email_confirmed_at": (
+                row.email_confirmed_at.isoformat() if row.email_confirmed_at else None
+            ),
             "consent_version": row.consent_version,
             "consent_text": row.consent_text,
             "consent_at": row.consent_at.isoformat(),

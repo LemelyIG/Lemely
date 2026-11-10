@@ -7,7 +7,7 @@ import { Navigate, Outlet, useSearchParams } from "react-router-dom"
 import { teacherRoute } from "@/portals/teacher"
 import { studentRoute } from "@/portals/student"
 import { parentRoute } from "@/portals/parent"
-import { marketingRoute, dataHandlingRoute, MarketingLanding } from "@/portals/marketing"
+import { marketingRoute, dataHandlingRoute, waitlistConfirmRoute, MarketingLanding } from "@/portals/marketing"
 import { platformAdminRoute, schoolAdminRoute } from "@/portals/admin"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { RequireAuth, portalPathForRole } from "@/lib/auth/RequireAuth"
@@ -364,6 +364,8 @@ export const appRoutes: RouteObject[] = [
    * not have an account yet.
    */
   { ...dataHandlingRoute, path: "/data", errorElement },
+  /* The waitlist confirmation link: public like the landing, deliberately outside `AccessGate`. */
+  { ...waitlistConfirmRoute, path: "/waitlist/confirm", errorElement },
   /*
    * G-16 and G-17 (tutor marketplace, T22). Public, no `RequireAuth`. Both carry a
    * description, as every signed-out route does (`documentMeta.test.ts` pins which).

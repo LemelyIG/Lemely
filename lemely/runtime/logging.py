@@ -36,7 +36,11 @@ def configure_logging(
     use_console = fmt == "console" or (fmt == "auto" and out.isatty())
 
     renderer: structlog.types.Processor = (
-        structlog.dev.ConsoleRenderer(colors=use_console)
+        # plain_traceback: the default formatter is rich, whose tracebacks print every local
+        # variable (the whole Settings object, secrets included).
+        structlog.dev.ConsoleRenderer(
+            colors=use_console, exception_formatter=structlog.dev.plain_traceback
+        )
         if use_console
         else structlog.processors.JSONRenderer()
     )
@@ -47,6 +51,13 @@ def configure_logging(
         structlog.processors.TimeStamper(fmt="iso"),
         _redact,  # type: ignore[list-item]
     ]
+    if not use_console:
+        # JSON: exceptions as data, never with locals (``show_locals`` defaults to True).
+        shared_processors.append(
+            structlog.processors.ExceptionRenderer(
+                structlog.tracebacks.ExceptionDictTransformer(show_locals=False)
+            )
+        )
 
     structlog.configure(
         processors=[*shared_processors, renderer],

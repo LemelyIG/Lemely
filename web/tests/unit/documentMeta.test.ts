@@ -222,6 +222,8 @@ describe("the signup/verify/reset/join routes carry honest metadata — Task 19"
       "/login",
       // Pre-launch coming-soon screen: public, signed-out reachable.
       "/coming-soon",
+      // Waitlist email confirmation: public, signed-out reachable.
+      "/waitlist/confirm",
       // G-16 and G-17 (tutor marketplace): public, signed-out reachable.
       "/tutors",
       "/tutors/:tutorId",

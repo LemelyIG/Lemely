@@ -1127,6 +1127,20 @@ def test_a_staging_target_on_the_default_local_backend_is_flagged_and_refused(
     assert _ids(engine) == before
 
 
+class ProbingStorage(FakeStorage):
+    """Storage whose ``probe_bucket`` fails for the buckets in ``unreachable``."""
+
+    def __init__(self, unreachable: set[str] | None = None) -> None:
+        super().__init__()
+        self.unreachable = unreachable or set()
+        self.probed: list[str] = []
+
+    def probe_bucket(self, bucket: str) -> None:
+        self.probed.append(bucket)
+        if bucket in self.unreachable:
+            raise PermissionError("403 storage.objects.list denied")
+
+
 def test_unreachable_buckets_stop_the_purge_before_any_row_is_deleted(
     engine: Engine,
     world: World,
@@ -1134,19 +1148,41 @@ def test_unreachable_buckets_stop_the_purge_before_any_row_is_deleted(
     local_settings: Settings,
 ) -> None:
     _as(monkeypatch, "staging")
-    fake = FakeStorage()
+    fake = ProbingStorage(unreachable={GOOD_STORAGE["avatar_bucket"]})  # type: ignore[arg-type]
     monkeypatch.setattr(purge_cli, "_storage_backend", lambda _s: fake)
-    monkeypatch.setattr(purge_cli, "check_storage", lambda *_a, **_k: (False, "403 on bucket"))
-    monkeypatch.setattr(purge_cli, "check_tutor_evidence_storage", lambda *_a, **_k: (True, "ok"))
     settings = Settings.model_validate({"storage": GOOD_STORAGE})
     before = _ids(engine)
-    with pytest.raises(click.ClickException, match="not reachable"):
+    with pytest.raises(click.ClickException, match="not reachable") as caught:
         _run(settings, FakeAdmin(_gotrue_users(engine)), execute=True)
+    assert "avatars bucket" in caught.value.message
     assert _ids(engine) == before and fake.deleted == []
 
-    monkeypatch.setattr(purge_cli, "check_storage", lambda *_a, **_k: (True, "ok"))
+    fake.unreachable.clear()
     assert _run(settings, FakeAdmin(_gotrue_users(engine)), execute=True) == 0
     assert _ids(engine) == world.kept | {world.unverified}
+    assert set(fake.probed) >= {
+        GOOD_STORAGE["bucket"],
+        GOOD_STORAGE["avatar_bucket"],
+        GOOD_STORAGE["tutor_evidence_bucket"],
+    }
+
+
+def test_a_dry_run_also_proves_reachability(
+    engine: Engine,
+    world: World,
+    monkeypatch: pytest.MonkeyPatch,
+    local_settings: Settings,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _as(monkeypatch, "staging")
+    fake = ProbingStorage(unreachable={GOOD_STORAGE["bucket"]})  # type: ignore[arg-type]
+    monkeypatch.setattr(purge_cli, "_storage_backend", lambda _s: fake)
+    settings = Settings.model_validate({"storage": GOOD_STORAGE})
+    assert _run(settings, FakeAdmin(_gotrue_users(engine)), execute=False) == 0
+    out = capsys.readouterr().out
+    assert "uploads bucket" in out and "not reachable" in out
+    assert "--execute would refuse to run" in out
+    assert fake.probed, "the dry run never probed a bucket"
 
 
 # ── Path-like columns (S3) ───────────────────────────────────────────────────

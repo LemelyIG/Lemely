@@ -150,7 +150,8 @@ const applicant = (i: number, over: Record<string, unknown> = {}) => ({
   examSession: '2027-mj',
   phone: '+201000000001',
   phoneHasWhatsapp: true,
-  emailConfirmed: false,
+  emailConfirmed: true,
+  emailConfirmedAt: '2026-11-09T10:00:00Z',
   consentVersion: '2026-11-v1',
   consentText: 'Applying opts you in to Lemely emails.',
   consentAt: '2026-11-08T07:41:00Z',
@@ -216,7 +217,7 @@ test.describe('admin queue', () => {
     for (const group of ['Applicant', 'Study', 'Contact', 'Consent', 'Source', 'Record']) {
       await expect(sheet.getByRole('heading', { name: group, level: 3 })).toBeVisible()
     }
-    for (const label of ['Other subjects', 'Exam boards', 'Exam session', 'WhatsApp', 'Email confirmed', 'Wording', 'utm_medium', 'utm_campaign', 'Updated', 'Completed', 'ID']) {
+    for (const label of ['Other subjects', 'Exam boards', 'Exam session', 'WhatsApp', 'Email confirmed', 'Confirmed at', 'Wording', 'utm_medium', 'utm_campaign', 'Updated', 'Completed', 'ID']) {
       await expect(sheet.getByText(label, { exact: true })).toBeVisible()
     }
     await expect(sheet.getByRole('button', { name: 'Copy email' })).toBeVisible()

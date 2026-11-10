@@ -1314,7 +1314,7 @@ def get_waitlist_limiters() -> WaitlistLimiters:
 def get_turnstile_verifier() -> TurnstileVerifier | None:
     """The Turnstile verifier, or ``None`` when no secret key is configured (check skipped)."""
     secret = get_settings().waitlist.turnstile_secret_key
-    return CloudflareTurnstile(secret) if secret is not None else None
+    return CloudflareTurnstile(secret.get_secret_value()) if secret is not None else None
 
 
 def reset_singletons() -> None:

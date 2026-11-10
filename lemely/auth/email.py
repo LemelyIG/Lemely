@@ -101,6 +101,14 @@ class EmailProvider(Protocol):
         """
         ...
 
+    def send_waitlist_confirmation(self, email: str, link: str) -> None:
+        """Mail a waitlist applicant the link that confirms their address. Raises on failure.
+
+        ``link`` is a frontend route (``/waitlist/confirm?token=...``); a real provider joins
+        it onto the configured app origin. The mail carries the address and nothing else.
+        """
+        ...
+
     def send_team_digest(self, subject: str, text_body: str) -> None:
         """Mail an internal plain-text digest to the team address. Raises on failure.
 
@@ -137,6 +145,10 @@ class MockEmailProvider:
     def send_contact_message(self, from_email: str, message: str) -> None:
         """Log that a landing-page question arrived (sender and length only)."""
         logger.info("Mock contact message from %s (%d characters)", from_email, len(message))
+
+    def send_waitlist_confirmation(self, email: str, link: str) -> None:
+        """Log the waitlist confirmation link for ``email`` at INFO level."""
+        logger.info("Mock email to %s: confirm your waitlist spot at %s", email, link)
 
     def send_team_digest(self, subject: str, text_body: str) -> None:
         """Log that a team digest would have been sent (subject and length only)."""
@@ -259,6 +271,187 @@ def _render_signup_code(code: str) -> tuple[str, str, str]:
     )
     text_body = f"{subject}\n\n{lead}\n\n{code}\n\n{notice}\n"
     return subject, html_body, text_body
+
+
+# Waitlist confirmation: brand colours resolved to hex (Abyss, Tide and their neutral steps). Mail
+# clients have no CSS variables, so the web app's role tokens cannot be referenced from here.
+_WL_ABYSS = "#042f4f"
+_WL_WASH = "#cfe9f9"
+_WL_PAGE = "#eef3f7"
+_WL_INK = "#130e10"
+_WL_MUTED = "#515d65"
+_WL_RULE = "#cdd5db"
+_WL_FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+_WL_DISPLAY = "'Bricolage Grotesque','Avenir Next','Trebuchet MS','Arial Black',Arial,sans-serif"
+
+_WL_SUBJECT = "Confirm your spot on the Lemely waitlist"
+_WL_PREHEADER = "One tap to confirm your email."
+_WL_HEADLINE = "One quick tap, then you're set."
+_WL_LEAD = (
+    "Thanks for joining the Lemely waitlist. Confirm your email and we'll write when access opens."
+)
+_WL_BUTTON = "Confirm my email"
+_WL_FALLBACK = "Button not working? Paste this link into your browser:"
+_WL_WHY = (
+    "You're getting this because you asked to join the Lemely waitlist. "
+    "If that wasn't you, ignore this email and nothing happens."
+)
+_WL_CONTACT = "contact@lemelyig.com"
+
+# Dark-mode overrides for clients that honour ``prefers-color-scheme`` (Apple Mail, iOS, the
+# Outlook apps). Gmail and others ignore this block and recolour on their own; every colour is
+# also inline, so losing the block loses only the dark restyle.
+_WL_DARK_CSS = (
+    ":root{color-scheme:light dark;supported-color-schemes:light dark;}"
+    "@media (prefers-color-scheme: dark){"
+    ".bg-page{background-color:#080e13 !important;}"
+    ".bg-card{background-color:#0f151a !important;border-color:#1a232b !important;}"
+    ".bg-wash{background-color:#0b3a5b !important;}"
+    ".tx{color:#ebeff2 !important;}"
+    ".tx-muted{color:#acb6bd !important;}"
+    ".rule{border-color:#1a232b !important;}"
+    ".btn-cell{background-color:#7fb8e0 !important;}"
+    ".btn-a{color:#042f4f !important;}"
+    ".lnk{color:#7fb8e0 !important;}"
+    "}"
+    "[data-ogsc] .tx{color:#ebeff2 !important;}"
+    "[data-ogsc] .tx-muted{color:#acb6bd !important;}"
+    "[data-ogsb] .bg-page{background-color:#080e13 !important;}"
+    "[data-ogsb] .bg-card{background-color:#0f151a !important;}"
+    "[data-ogsb] .bg-wash{background-color:#0b3a5b !important;}"
+)
+
+
+def _waitlist_image(
+    base: str, name: str, width: int, height: int, alt: str, style: str = ""
+) -> str:
+    """One hosted PNG as an ``<img>``. Absolute URL, because an inbox has no origin."""
+    src = html.escape(f"{base}/email/{name}")
+    return (
+        f'<img src="{src}" width="{width}" height="{height}" alt="{html.escape(alt)}" '
+        'style="display:block;border:0;outline:none;text-decoration:none;'
+        f'-ms-interpolation-mode:bicubic;{style}">'
+    )
+
+
+def _waitlist_button(safe_link: str) -> str:
+    """A bulletproof button: a VML round-rect for Outlook's Word engine, a padded link elsewhere."""
+    label = html.escape(_WL_BUTTON)
+    return (
+        f'<!--[if mso]><v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" href="{safe_link}" '
+        'style="height:52px;v-text-anchor:middle;width:240px;" arcsize="27%" stroke="f" '
+        f'fillcolor="{_WL_ABYSS}"><w:anchorlock xmlns:w="urn:schemas-microsoft-com:office:word"/>'
+        '<center style="color:#ffffff;font-family:Arial,sans-serif;font-size:17px;'
+        f'font-weight:bold;">{label}</center></v:roundrect><![endif]-->'
+        "<!--[if !mso]><!-->"
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+        'style="border-collapse:separate;"><tr>'
+        f'<td class="btn-cell" align="center" bgcolor="{_WL_ABYSS}" '
+        f'style="border-radius:14px;background-color:{_WL_ABYSS};">'
+        f'<a class="btn-a" href="{safe_link}" target="_blank" '
+        f'style="display:inline-block;padding:16px 32px;font-family:{_WL_FONT};font-size:17px;'
+        'line-height:20px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:14px;">'
+        f"{label}</a></td></tr></table><!--<![endif]-->"
+    )
+
+
+def _render_waitlist_confirmation(link: str, *, app_base_url: str = "") -> tuple[str, str, str]:
+    """Return ``(subject, html_body, text_body)`` for the waitlist confirmation mail.
+
+    Branded and short: the Lemely wordmark on an Abyss band, Binny on a Tide wash, one headline,
+    one sentence, one button, the link again in the open, and one line on why they got it. No
+    dates, counts or promises, and no expiry duration (the token's lifetime is a setting, so a
+    number here would drift from it, as :data:`_TEMPLATES` notes).
+
+    Contract (pinned by ``tests/test_auth_email.py``): ``link`` is absolute and appears
+    HTML-escaped in the button ``href`` and in the visible fallback text, never raw, and verbatim
+    in the text body. Nothing else about the applicant is an input, so nothing else can appear.
+    ``app_base_url`` (no trailing-slash guarantee) builds the absolute URLs of the images in
+    ``web/public/email/``; with it empty the images are left out rather than emitting a broken
+    ``src``, and the header falls back to the word "Lemely".
+    """
+    safe_link = html.escape(link)
+    base = app_base_url.rstrip("/")
+
+    if base:
+        wordmark = _waitlist_image(base, "lemely-wordmark.png", 104, 39, "Lemely")
+        binny = _waitlist_image(
+            base, "binny.png", 126, 171, "Binny, the Lemely mascot", "margin:0 auto;"
+        )
+        hero = (
+            f'<tr><td class="bg-wash" align="center" bgcolor="{_WL_WASH}" valign="bottom" '
+            f'style="padding:32px 32px 0;background-color:{_WL_WASH};line-height:0;'
+            f'font-size:0;">{binny}</td></tr>'
+        )
+    else:
+        wordmark = (
+            f'<span style="font-family:{_WL_DISPLAY};font-size:26px;font-weight:800;'
+            'color:#ffffff;">Lemely</span>'
+        )
+        hero = ""
+
+    head = (
+        '<!doctype html><html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" '
+        'xmlns:o="urn:schemas-microsoft-com:office:office"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<meta name="color-scheme" content="light dark">'
+        '<meta name="supported-color-schemes" content="light dark">'
+        f"<title>{html.escape(_WL_SUBJECT)}</title>"
+        "<!--[if mso]><noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96"
+        "</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript><![endif]-->"
+        f"<style>{_WL_DARK_CSS}</style></head>"
+    )
+    preheader = (
+        '<div style="display:none;max-height:0;overflow:hidden;opacity:0;font-size:1px;'
+        f'line-height:1px;color:{_WL_PAGE};">{html.escape(_WL_PREHEADER)}'
+        "&#8199;&#847;&#8199;&#847;&#8199;&#847;</div>"
+    )
+    card_open = (
+        f'<body class="bg-page" style="margin:0;padding:0;background-color:{_WL_PAGE};">'
+        f"{preheader}"
+        '<table role="presentation" class="bg-page" width="100%" cellpadding="0" cellspacing="0" '
+        f'border="0" bgcolor="{_WL_PAGE}" style="background-color:{_WL_PAGE};"><tr>'
+        '<td align="center" style="padding:24px 12px;">'
+        '<table role="presentation" class="bg-card" width="560" cellpadding="0" cellspacing="0" '
+        'border="0" bgcolor="#ffffff" style="width:100%;max-width:560px;'
+        f"background-color:#ffffff;border:1px solid {_WL_RULE};border-radius:20px;"
+        'border-collapse:separate;overflow:hidden;">'
+        f'<tr><td bgcolor="{_WL_ABYSS}" style="padding:22px 32px;'
+        f'background-color:{_WL_ABYSS};">{wordmark}</td></tr>'
+        f"{hero}"
+    )
+    copy = (
+        f'<tr><td class="tx" style="padding:32px 32px 8px;font-family:{_WL_FONT};'
+        f'color:{_WL_INK};"><h1 class="tx" style="margin:0 0 14px;font-family:{_WL_DISPLAY};'
+        "font-size:32px;line-height:34px;font-weight:800;letter-spacing:-0.5px;"
+        f'color:{_WL_ABYSS};">{html.escape(_WL_HEADLINE)}</h1>'
+        f'<p class="tx" style="margin:0 0 28px;font-size:17px;line-height:26px;'
+        f'color:{_WL_INK};">{html.escape(_WL_LEAD)}</p>'
+        f"{_waitlist_button(safe_link)}"
+        f'<p class="tx-muted" style="margin:28px 0 6px;font-size:14px;line-height:21px;'
+        f'color:{_WL_MUTED};">{html.escape(_WL_FALLBACK)}</p>'
+        '<p style="margin:0 0 8px;font-size:14px;line-height:21px;word-break:break-all;">'
+        f'<a class="lnk" href="{safe_link}" target="_blank" '
+        f'style="color:{_WL_ABYSS};text-decoration:underline;">{safe_link}</a></p></td></tr>'
+    )
+    footer = (
+        f'<tr><td style="padding:24px 32px 32px;font-family:{_WL_FONT};">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">'
+        f'<tr><td class="rule" style="border-top:1px solid {_WL_RULE};padding-top:20px;">'
+        f'<p class="tx-muted" style="margin:0 0 10px;font-size:13px;line-height:20px;'
+        f'color:{_WL_MUTED};">{html.escape(_WL_WHY)}</p>'
+        f'<p class="tx-muted" style="margin:0;font-size:13px;line-height:20px;'
+        f'color:{_WL_MUTED};">Questions? <a class="lnk" href="mailto:{_WL_CONTACT}" '
+        f'style="color:{_WL_ABYSS};">{_WL_CONTACT}</a></p></td></tr></table></td></tr>'
+        "</table></td></tr></table></body></html>"
+    )
+    html_body = head + card_open + copy + footer
+
+    text_body = (
+        f"{_WL_SUBJECT}\n\n{_WL_LEAD}\n\n{_WL_BUTTON}: {link}\n\n{_WL_WHY}\n\n"
+        f"Questions? {_WL_CONTACT}\n"
+    )
+    return _WL_SUBJECT, html_body, text_body
 
 
 def _render_contact_message(from_email: str, message: str) -> tuple[str, str, str]:
@@ -391,6 +584,15 @@ class ResendEmailProvider:
             html_body,
             text_body,
             reply_to=from_email,
+        )
+
+    def send_waitlist_confirmation(self, email: str, link: str) -> None:
+        """Send the waitlist confirmation ``link`` (a frontend route) to ``email``."""
+        self._send(
+            email,
+            *_render_waitlist_confirmation(
+                self._absolute(link), app_base_url=self._settings.app_base_url
+            ),
         )
 
     def send_team_digest(self, subject: str, text_body: str) -> None:

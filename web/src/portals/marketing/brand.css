@@ -52,7 +52,7 @@ body[data-scroll-locked] .brand-mobile-upload { display:none; }
 .brand-actions { display:flex; flex-wrap:wrap; gap:12px; }
 .marketing-brand .brand-actions :is(a, button) { font:700 17px/1.4 var(--brand-body); padding:16px 24px; border-radius:14px; min-height:56px; }
 .marketing-brand .brand-actions :is(a, button):first-child { background:var(--brand-abyss); color:var(--brand-white); }
-.marketing-brand .brand-actions a:last-child { background:transparent; border:1.5px solid var(--brand-border); color:var(--brand-abyss); }
+.marketing-brand .brand-actions a:last-child { background:transparent; border:1.5px solid var(--brand-secondary-ring); color:var(--brand-secondary-fg); }
 .brand-hero-art { position:relative; min-width:0; }
 .brand-hero-art::before { content:''; position:absolute; inset:-28px -20px -28px 24px; background:var(--brand-wash); border-radius:44px; transform:rotate(-2.5deg); }
 .brand-chart { position:relative; background:var(--brand-white); border:1px solid var(--brand-border); box-shadow:var(--brand-shadow); border-radius:28px; padding:22px 22px 14px; }

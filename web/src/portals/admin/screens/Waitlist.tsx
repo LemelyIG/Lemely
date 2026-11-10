@@ -547,6 +547,7 @@ function ApplicantSheet({
                 { label: "Phone", value: current.phone ?? "", mono: true, copy: current.phone ?? undefined },
                 { label: "WhatsApp", value: current.phone ? yesNo(current.phoneHasWhatsapp) : "" },
                 { label: "Email confirmed", value: yesNo(current.emailConfirmed) },
+                { label: "Confirmed at", value: current.emailConfirmedAt ? fullDate(current.emailConfirmedAt) : "", mono: true },
               ]}
             />
             <DetailGroup

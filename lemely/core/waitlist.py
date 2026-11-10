@@ -108,6 +108,17 @@ CURRENT_CONSENT_VERSION: Final = "2026-11-v1"
 
 TOKEN_TTL_HOURS: Final = 24
 
+#: How long an emailed confirmation link works, and the least time between two mails to one
+#: address (a repeat sign-up for an unconfirmed address re-sends the link, at most this often).
+CONFIRMATION_TTL: Final = timedelta(days=7)
+CONFIRMATION_RESEND_INTERVAL: Final = timedelta(minutes=10)
+#: Most confirmation mails one address gets in a window (the first plus three re-sends). A new
+#: window opens once the latest link has expired, so a stranger re-submitting someone's address
+#: can send them at most this many mails a week.
+CONFIRMATION_MAX_MAILS: Final = 4
+#: Where the emailed link points, as a frontend route the mail provider joins onto the app origin.
+CONFIRMATION_LINK_PATH: Final = "/waitlist/confirm"
+
 _CSV_FORMULA_PREFIXES: Final = ("=", "+", "-", "@", "\t", "\r")
 #: ``+`` then only digits and spaces (an exported phone) cannot form a formula, so it stays usable.
 _PLAIN_PHONE_RE: Final = re.compile(r"^\+\d[\d ]{6,24}$")
@@ -241,3 +252,13 @@ def new_completion_token() -> tuple[str, str]:
 def hash_token(token: str) -> str:
     """The stored form of a completion token."""
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def new_confirmation_token() -> tuple[str, str]:
+    """A fresh ``(token, sha256 hex digest)`` for the email confirmation link."""
+    return new_completion_token()
+
+
+def confirmation_link(token: str) -> str:
+    """The frontend route the confirmation mail links to (the provider makes it absolute)."""
+    return f"{CONFIRMATION_LINK_PATH}?token={token}"

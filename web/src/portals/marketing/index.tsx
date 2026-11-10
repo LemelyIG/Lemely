@@ -14,6 +14,7 @@ import "./brand-tokens.css"
 import "./brand.css"
 
 const Landing = lazy(() => import("./Landing").then(m => ({ default: m.Landing })))
+const ConfirmEmail = lazy(() => import("./waitlist/ConfirmEmail").then(m => ({ default: m.ConfirmEmail })))
 const DataHandling = lazy(() => import("./DataHandling").then(m => ({ default: m.DataHandling })))
 
 /**
@@ -151,6 +152,27 @@ export const dataHandlingRoute: RouteObject = {
     description:
       "What Lemely stores about an account, what happens to a paper you upload, where a scan is sent to be read, and who else can see your work.",
     skeleton: "page-header",
+  } satisfies PageMeta,
+}
+
+/** The page the waitlist confirmation email links to. Public, in the marketing frame, never gated. */
+export function MarketingWaitlistConfirm() {
+  return (
+    <MarketingFrame>
+      <Suspense fallback={<RouteSkeleton />}>
+        <ConfirmEmail />
+      </Suspense>
+    </MarketingFrame>
+  )
+}
+
+export const waitlistConfirmRoute: RouteObject = {
+  path: "waitlist/confirm",
+  element: <MarketingWaitlistConfirm />,
+  handle: {
+    title: "Confirm your email",
+    description: "Confirm your email address for the Lemely waitlist.",
+    skeleton: "standalone",
   } satisfies PageMeta,
 }
 
