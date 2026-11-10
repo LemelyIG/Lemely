@@ -563,6 +563,21 @@ _VERIFY_ROUTES = {
 }
 
 
+def _declared_scopes(dependant: object) -> list[str]:
+    """Scopes in effect on this dependant: its own ``Security(...)`` scopes plus its parents'.
+
+    Older FastAPI exposed the union as ``Dependant.oauth_scopes``; newer releases (CI
+    installs the newest) keep only ``own_oauth_scopes`` and ``parent_oauth_scopes``.
+    """
+    own = getattr(dependant, "own_oauth_scopes", None)
+    if own is not None:
+        return [*(getattr(dependant, "parent_oauth_scopes", None) or []), *own]
+    legacy = getattr(dependant, "oauth_scopes", None)
+    if legacy is not None:
+        return list(legacy)
+    raise AssertionError("FastAPI Dependant exposes no scope attribute")
+
+
 def _gate_dependants(route: object) -> list[object]:
     return [d for d in _walk(route.dependant) if d.call is get_auth_context]  # type: ignore[attr-defined]
 
@@ -588,7 +603,7 @@ def test_only_the_two_verification_routes_waive_the_verified_check() -> None:
         (method, route.path)
         for route in _flatten(create_app().router)
         for method in route.methods - {"HEAD", "OPTIONS"}
-        if any(ALLOW_UNVERIFIED_SCOPE in d.oauth_scopes for d in _gate_dependants(route))  # type: ignore[attr-defined]
+        if any(ALLOW_UNVERIFIED_SCOPE in _declared_scopes(d) for d in _gate_dependants(route))
     }
     assert waived == _VERIFY_ROUTES
 
