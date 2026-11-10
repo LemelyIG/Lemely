@@ -991,8 +991,9 @@ def submit_student_quiz(
             submission_id=str(result.submission_id),
         )
         # Built from the student's own request (not `MeteredJob.unmetered`'s anonymous
-        # one), so the `usage_unmetered_cost` line names the student; the submission id
-        # doubles as the job id, which joins the two log lines.
+        # one), so the `usage_unmetered_cost` line names the student. That line does not
+        # log a job id: it joins to `quiz_submit_unmetered` by actor and action, and the
+        # submission id is carried on the warning above.
         job = MeteredJob(
             None,
             UsageGrantContext.exempt_for(
