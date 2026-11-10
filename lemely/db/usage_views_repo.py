@@ -5,16 +5,35 @@ debt. The history lists the caller's own jobs, plus jobs run by someone else tha
 grant the caller owns or funds through a seat or assistant row they lead. For those it counts
 only that part: a seat's teacher never sees what the student paid from the student's own
 balance, and never sees a job the seat did not pay for at all.
+
+What is "the plan" and what is "credits", the same on the meter, the estimate and the history:
+
+* The plan is a ``period_allowance`` (a subscription's hidden monthly allowance) or a
+  ``seat_allowance`` (a teacher's hidden grant to one student). It is shown only as a
+  percentage, never as units. Its size, the denominator of every percentage, is the sum of that
+  owner's grants of that kind (for a seat, of that seat) that are live at the moment in
+  question: ``allowance_units`` for the estimate, the job's creation time for the history.
+* Everything else the caller can spend is credits, shown as units: purchased packs, top-ups,
+  refunds, adjustments and the hidden one-time ``signup`` grant. So a student who only has the
+  free start has no plan: the meter lists it as a credit lot, the estimate quotes credits with
+  no percentage, and the history charges credits with no percentage.
+* A history row reports one plan percentage, for the plan its chain drew on first (the plan the
+  estimate quotes), capped at 100. A job that drew on several plans, or on a plan and credits,
+  is ``mixed``; percentages of different plans are never added together.
+* A caller who acts for a lead (an assistant) sees the lead's plan as percentages only, in the
+  estimate and here, so the plan's size cannot be derived from what the API returns.
 """
 
 from __future__ import annotations
 
+import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from sqlalchemy import and_, func, or_, select
 
+from lemely.core.usage_types import GrantScope, Payer, payer_from_json
 from lemely.db.models.team import TeacherMember, TeacherMemberKind, TeacherMemberStatus
 from lemely.db.models.usage import (
     GrantKind,
@@ -28,10 +47,10 @@ from lemely.db.models.usage import (
 from lemely.db.usage_ledger_repo import UsageLedger
 
 if TYPE_CHECKING:
-    import uuid
     from collections.abc import Sequence
     from datetime import datetime
 
+    from sqlalchemy import Select
     from sqlalchemy.orm import Session
     from sqlalchemy.sql import ColumnElement
 
@@ -88,6 +107,12 @@ class HistoryRow:
     estimate_credits: tuple[int, int] | None
 
 
+_PLAN_KINDS = (GrantKind.period_allowance, GrantKind.seat_allowance)
+
+#: The plan a draw belongs to: ``(owner, seat row)``; the seat row is ``None`` for a period plan.
+PlanScope = tuple[uuid.UUID, uuid.UUID | None]
+
+
 class _Draw(NamedTuple):
     """One hold or settle entry with the grant it landed on."""
 
@@ -98,16 +123,41 @@ class _Draw(NamedTuple):
     visible: bool
     grant_owner: uuid.UUID
     grant_member_id: uuid.UUID | None
-    grant_units: int
 
 
 def _bucket(draw: _Draw, viewer: uuid.UUID) -> Bucket:
     """Which display bucket a draw belongs to, from the viewer's point of view."""
     if draw.grant_kind is GrantKind.seat_allowance:
         return "seat"
-    if not draw.visible:
+    if draw.grant_kind is GrantKind.period_allowance:
         return "allowance"
     return "credits" if draw.grant_owner == viewer else "teacher_credits"
+
+
+def _plan_scope(draw: _Draw) -> PlanScope | None:
+    """The plan a draw belongs to, or ``None`` for credits."""
+    if draw.grant_kind in _PLAN_KINDS:
+        return (draw.grant_owner, draw.grant_member_id)
+    return None
+
+
+def _chain_index(draw: _Draw, chain: Sequence[Payer]) -> int:
+    """Position of the first payer of the job's chain that can spend this draw's grant."""
+    for index, payer in enumerate(chain):
+        if payer.owner_user_id != draw.grant_owner:
+            continue
+        if payer.scope is GrantScope.SEAT:
+            fits = (
+                draw.grant_kind is GrantKind.seat_allowance
+                and draw.grant_member_id == payer.teacher_member_id
+            )
+        elif payer.scope is GrantScope.ALLOWANCE:
+            fits = not draw.visible and draw.grant_member_id is None
+        else:
+            fits = draw.visible
+        if fits:
+            return index
+    return len(chain)
 
 
 def _percent(units: int, of: int) -> float:
@@ -136,7 +186,7 @@ def meter_view(session: Session, *, user_id: uuid.UUID, now: datetime) -> MeterV
             .join(UsageGrant, UsageGrant.id == UsageGrantBalance.grant_id)
             .where(
                 UsageGrant.owner_user_id == user_id,
-                UsageGrant.visible.is_(True),
+                UsageGrant.kind.not_in(_PLAN_KINDS),
                 _live(now),
                 spendable > 0,
             )
@@ -198,7 +248,6 @@ def _draws(session: Session, job_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, li
             UsageGrant.visible,
             UsageGrant.owner_user_id,
             UsageGrant.teacher_member_id,
-            UsageGrant.units,
         )
         .join(UsageGrant, UsageGrant.id == UsageEntry.grant_id)
         .where(
@@ -220,6 +269,44 @@ def _draws(session: Session, job_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, li
     return grouped
 
 
+class _PlanGrant(NamedTuple):
+    units: int
+    effective_at: datetime
+    expires_at: datetime | None
+
+
+def _plan_grants(session: Session, owners: set[uuid.UUID]) -> dict[PlanScope, list[_PlanGrant]]:
+    """Every plan grant of these owners, by plan, to size a plan at a moment."""
+    grouped: dict[PlanScope, list[_PlanGrant]] = defaultdict(list)
+    if not owners:
+        return grouped
+    for owner, member, units, effective_at, expires_at in session.execute(
+        select(
+            UsageGrant.owner_user_id,
+            UsageGrant.teacher_member_id,
+            UsageGrant.units,
+            UsageGrant.effective_at,
+            UsageGrant.expires_at,
+        ).where(UsageGrant.owner_user_id.in_(owners), UsageGrant.kind.in_(_PLAN_KINDS))
+    ):
+        grouped[(owner, member)].append(_PlanGrant(int(units), effective_at, expires_at))
+    return grouped
+
+
+def _plan_size(grants: Sequence[_PlanGrant], at: datetime) -> int:
+    """Units of the plan live at ``at``: the estimate's denominator (``allowance_units``).
+
+    A job can settle after its grants lapsed (a settle may draw an expired grant), so a plan
+    with nothing live at ``at`` is sized by all its grants rather than divided by zero.
+    """
+    live = sum(
+        g.units
+        for g in grants
+        if g.effective_at <= at and (g.expires_at is None or g.expires_at > at)
+    )
+    return live or sum(g.units for g in grants) or 1
+
+
 def _debts(
     session: Session, job_ids: Sequence[uuid.UUID], owner: uuid.UUID
 ) -> dict[uuid.UUID, int]:
@@ -237,6 +324,54 @@ def _debts(
     }
 
 
+def history_jobs_statement(
+    user_id: uuid.UUID,
+    *,
+    led_members: Sequence[uuid.UUID],
+    after: tuple[datetime, uuid.UUID] | None,
+    limit: int,
+) -> Select[tuple[UsageJob]]:
+    """The jobs on one history page, newest first.
+
+    A caller always sees the jobs they ran (``ix_usage_jobs_actor_created``). Nobody else can
+    draw on a user's grants except through a seat or assistant row that user leads, so only a
+    caller who leads a row can also be a funder, and only for a job that names such a row. A
+    job someone else ran is theirs to see only if it charged a grant they own or fund through
+    a row they lead; one that charged nothing there (a seat in the chain with nothing left in
+    it, the student's own balance paying) is the runner's private usage.
+
+    The funder branch is added only for a caller who leads a row: a correlated ``EXISTS`` in an
+    ``OR`` defeats the index and would scan the whole ledger for every plain student.
+    ``usage_jobs.teacher_member_id`` has no index of its own, so a lead still scans (a later
+    migration should add one, or drive the funder half from ``usage_entries``).
+    """
+    visible = UsageJob.actor_user_id == user_id
+    if led_members:
+        charged_to_caller = (
+            select(UsageEntry.id)
+            .join(UsageGrant, UsageGrant.id == UsageEntry.grant_id)
+            .where(
+                UsageEntry.job_id == UsageJob.job_id,
+                UsageEntry.kind == UsageEntryKind.settle,
+                or_(
+                    UsageGrant.owner_user_id == user_id,
+                    UsageGrant.teacher_member_id.in_(led_members),
+                ),
+            )
+            .exists()
+        )
+        visible = or_(visible, and_(UsageJob.teacher_member_id.is_not(None), charged_to_caller))
+    stmt = select(UsageJob).where(visible)
+    if after is not None:
+        stmt = stmt.where(
+            or_(
+                UsageJob.created_at < after[0],
+                and_(UsageJob.created_at == after[0], UsageJob.id < after[1]),
+            )
+        )
+    return stmt.order_by(UsageJob.created_at.desc(), UsageJob.id.desc()).limit(limit)
+
+
 def history_page(
     session: Session,
     *,
@@ -248,68 +383,50 @@ def history_page(
     led_members = list(
         session.scalars(select(TeacherMember.id).where(TeacherMember.teacher_user_id == user_id))
     )
-    # A job the caller did not run is theirs to see only if it charged a grant they own or
-    # fund through a row they lead. One that charged nothing there (a seat in the chain with
-    # nothing left in it, the student's own balance paying) is the runner's private usage.
-    charged_to_caller = (
-        select(UsageEntry.id)
-        .join(UsageGrant, UsageGrant.id == UsageEntry.grant_id)
-        .where(
-            UsageEntry.job_id == UsageJob.job_id,
-            UsageEntry.kind == UsageEntryKind.settle,
-            or_(
-                UsageGrant.owner_user_id == user_id,
-                UsageGrant.teacher_member_id.in_(led_members),
-            ),
-        )
-        .exists()
-    )
-    stmt = select(UsageJob).where(or_(UsageJob.actor_user_id == user_id, charged_to_caller))
-    if after is not None:
-        stmt = stmt.where(
-            or_(
-                UsageJob.created_at < after[0],
-                and_(UsageJob.created_at == after[0], UsageJob.id < after[1]),
-            )
-        )
     jobs = list(
-        session.scalars(stmt.order_by(UsageJob.created_at.desc(), UsageJob.id.desc()).limit(limit))
+        session.scalars(
+            history_jobs_statement(user_id, led_members=led_members, after=after, limit=limit)
+        )
     )
     draws = _draws(session, [job.job_id for job in jobs])
+    plans = _plan_grants(
+        session, {d.grant_owner for ds in draws.values() for d in ds if d.grant_kind in _PLAN_KINDS}
+    )
     # Debt is shown only where it landed on the caller's own account: a job's debt goes to
     # its payer of last resort, who may be a student or a lead, never the other viewer.
     debts = _debts(session, [job.job_id for job in jobs], user_id)
     funded = set(led_members)
     rows = []
     for job in jobs:
-        mine = draws[job.job_id]
+        chain = [payer_from_json(p) for p in job.payer_chain]
+        # In the order the job's chain drew on them, so "first" is the plan the estimate quoted.
+        mine = sorted(draws[job.job_id], key=lambda d: _chain_index(d, chain))
         if job.actor_user_id != user_id:
             # Someone else ran this job under the caller's seat or assistant row: only the
             # grants the caller owns, or funds through that row, are the caller's to see.
             mine = [d for d in mine if d.grant_owner == user_id or d.grant_member_id in funded]
-        percent = 0.0
-        credits = 0
-        buckets: set[Bucket] = set()
-        for draw in mine:
-            if draw.kind is not UsageEntryKind.settle:
-                continue
-            bucket = _bucket(draw, user_id)
-            buckets.add(bucket)
-            if bucket in ("allowance", "seat"):
-                percent += 100 * abs(draw.units) / draw.grant_units
-            else:
-                credits += abs(draw.units)
-        paid_by: PaidBy = (
-            next(iter(buckets)) if len(buckets) == 1 else "mixed" if buckets else "none"
-        )
-        # The estimate is shown in the terms of the grant that took the first hold.
+        settles = [d for d in mine if d.kind is UsageEntryKind.settle]
+        parts: set[tuple[Bucket, PlanScope | None]] = {
+            (_bucket(d, user_id), _plan_scope(d)) for d in settles
+        }
+        paid_by: PaidBy = next(iter(parts))[0] if len(parts) == 1 else "mixed" if parts else "none"
+        credits = sum(abs(d.units) for d in settles if _plan_scope(d) is None)
+        percent: float | None = None
+        first_scope = next((sc for d in settles if (sc := _plan_scope(d)) is not None), None)
+        if first_scope is not None:
+            drawn = sum(abs(d.units) for d in settles if _plan_scope(d) == first_scope)
+            size = _plan_size(plans[first_scope], job.created_at)
+            percent = min(100.0, _percent(drawn, size))
+        # The estimate is shown in the terms of the first thing the chain held on.
         first_hold = next((d for d in mine if d.kind is UsageEntryKind.hold), None)
         estimate_percent: tuple[float, float] | None = None
         estimate_credits: tuple[int, int] | None = None
-        if first_hold is not None and _bucket(first_hold, user_id) in ("allowance", "seat"):
+        hold_scope = _plan_scope(first_hold) if first_hold is not None else None
+        if hold_scope is not None:
+            size = _plan_size(plans[hold_scope], job.created_at)
             estimate_percent = (
-                _percent(job.estimate_low, first_hold.grant_units),
-                _percent(job.estimate_high, first_hold.grant_units),
+                min(100.0, _percent(job.estimate_low, size)),
+                min(100.0, _percent(job.estimate_high, size)),
             )
         else:
             estimate_credits = (job.estimate_low, job.estimate_high)
@@ -323,7 +440,7 @@ def history_page(
                 created_at=job.created_at,
                 settled_at=job.settled_at,
                 paid_by=paid_by,
-                percent_of_plan=round(percent, 1) if percent > 0 else None,
+                percent_of_plan=percent if percent else None,
                 credits=credits if credits > 0 else None,
                 debt_credits=debts.get(job.job_id) or None,
                 estimate_percent_of_plan=estimate_percent,

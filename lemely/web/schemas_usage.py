@@ -33,8 +33,14 @@ class EstimateRequestDTO(ApiModel):
 
 
 class EstimateDTO(ApiModel):
-    low: int
-    high: int
+    """The quoted range.
+
+    ``low`` and ``high`` are units; they are null when an assistant's request is paid by the
+    lead's plan, which is then quoted as ``percentLow``/``percentHigh`` only.
+    """
+
+    low: int | None
+    high: int | None
     payer: EstimatePayer
     percentLow: int | None
     percentHigh: int | None

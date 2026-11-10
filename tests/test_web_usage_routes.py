@@ -5,13 +5,14 @@ from __future__ import annotations
 import base64
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text, update
+from sqlalchemy.dialects import postgresql
 
 from lemely.core.keyset import encode_cursor
 from lemely.core.metered_actions import MeteredAction
@@ -26,6 +27,7 @@ from lemely.db.models.usage import (
     UsageGrantBalance,
     UsageJob,
 )
+from lemely.db.usage_views_repo import history_jobs_statement
 from lemely.io.llm.cost_meter import record_llm_cost
 from lemely.web import create_app
 from lemely.web.deps import (
@@ -566,7 +568,8 @@ def test_history_never_shows_allowance_units(
     _as(api, both)
     (row,) = api.get("/api/usage/history").json()["jobs"]
     assert (row["paidBy"], row["percentOfPlan"], row["credits"]) == ("mixed", 100.0, 50)
-    assert row["estimatePercentOfPlan"] == [40.0, 120.0]
+    # 40-120 units against a 100-unit allowance: a percentage is capped at the whole plan.
+    assert row["estimatePercentOfPlan"] == [40.0, 100.0]
 
 
 def test_history_pages_newest_first_and_includes_seat_jobs_for_the_teacher(
@@ -762,3 +765,234 @@ def test_a_tampered_history_cursor_is_a_400(
         assert resp.status_code == 400, (label, resp.status_code, resp.text)
     assert api.get("/api/usage/history", params={"limit": 0}).status_code == 422
     assert api.get("/api/usage/history", params={"limit": 101}).status_code == 422
+
+
+# -- review follow-ups (I1 to I3, M1, M2, M8) ----------------------------------------
+
+
+def _explain(sm: sessionmaker[Session], statement: object) -> str:
+    """The plan Postgres picks for ``statement`` with sequential scans disabled, so a plan
+    that still scans can only be doing so because no index can serve the query."""
+    sql = str(
+        statement.compile(  # type: ignore[attr-defined]
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    with sm() as session:
+        session.execute(text("SET LOCAL enable_seqscan = off"))
+        rows = session.execute(text("EXPLAIN " + sql.replace(":", "\\:")))
+        return "\n".join(row[0] for row in rows)
+
+
+def test_a_plain_students_history_query_is_served_by_the_actor_index(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Nobody can draw on a user's grants except through a seat or assistant row that user
+    leads, so a caller who leads nothing must not pay for the funder branch: it would turn
+    every history request into a scan of the whole ledger."""
+    sm = migrated_sessionmaker
+    student, teacher = seed_user(sm), seed_user(sm, Role.teacher)
+    seat(
+        sm, teacher=teacher, student=student, subjects=["0580"], actions=[MeteredAction.MARK_PAPER]
+    )
+    plain = history_jobs_statement(student, led_members=[], after=None, limit=26)
+    plan = _explain(sm, plain)
+    assert "Seq Scan" not in plan, plan
+    assert "ix_usage_jobs_actor_created" in plan, plan
+    # A caller who leads a member does take the funder branch, and only for jobs that name
+    # a seat or assistant row.
+    led = history_jobs_statement(teacher, led_members=[uuid.uuid4()], after=None, limit=26)
+    sql = str(led.compile(dialect=postgresql.dialect()))
+    assert "usage_entries" in sql
+    assert "teacher_member_id IS NOT NULL" in sql
+    assert "usage_entries" not in str(plain.compile(dialect=postgresql.dialect()))
+
+
+def test_a_signup_only_student_sees_one_story_in_all_three_views(
+    api: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    """The free start is a hidden one-time grant, not a plan. Everywhere it is credits:
+    the meter counts it, the estimate quotes credits with no percent, history charges credits
+    with no percent of a plan the student does not have."""
+    sm = migrated_sessionmaker
+    student = seed_user(sm)
+    give(sm, student, units=500, kind=GrantKind.signup, visible=False)
+    _as(api, student)
+    meter = api.get("/api/usage/meter").json()
+    assert meter["allowanceFraction"] is None
+    assert meter["creditsBalance"] == 500
+    assert meter["creditLots"] == [{"remaining": 500, "expiresAt": None}]
+    quote = api.post("/api/usage/estimate", json={"action": "mark_paper"}).json()
+    assert quote == {
+        "low": 40,
+        "high": 120,
+        "payer": "credits",
+        "percentLow": None,
+        "percentHigh": None,
+        "blockedReason": None,
+    }
+    _run_job(sm, student, "0.050")
+    (row,) = api.get("/api/usage/history").json()["jobs"]
+    assert (row["paidBy"], row["percentOfPlan"], row["credits"]) == ("credits", None, 50)
+    assert (row["estimatePercentOfPlan"], row["estimateCredits"]) == (None, [40, 120])
+    assert api.get("/api/usage/meter").json()["creditsBalance"] == 450
+
+
+def test_history_percents_share_the_estimates_denominator(
+    api: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    """After an upgrade adds a second period grant the plan is both grants together, for the
+    estimate and for history alike."""
+    sm = migrated_sessionmaker
+    student = seed_user(sm)
+    for units in (1000, 3000):
+        give(
+            sm,
+            student,
+            units=units,
+            kind=GrantKind.period_allowance,
+            visible=False,
+            expires_at=_ALLOWANCE_END,
+        )
+    _as(api, student)
+    quote = api.post("/api/usage/estimate", json={"action": "mark_paper"}).json()
+    assert (quote["payer"], quote["percentLow"], quote["percentHigh"]) == ("allowance", 1, 3)
+    _run_job(sm, student, "0.040")
+    (row,) = api.get("/api/usage/history").json()["jobs"]
+    assert row["percentOfPlan"] == 1.0
+    assert row["estimatePercentOfPlan"] == [1.0, 3.0]
+
+
+def test_history_does_not_add_percents_of_different_plans(
+    api: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    """Two seats cover one job. The row says mixed and reports the plan drawn on first, in
+    its own terms and capped at the whole of it; each teacher sees only their own seat."""
+    sm = migrated_sessionmaker
+    student = seed_user(sm)
+    first_teacher, second_teacher = seed_user(sm, Role.teacher), seed_user(sm, Role.teacher)
+    give(sm, student, units=1000)
+    first = seat(
+        sm,
+        teacher=first_teacher,
+        student=student,
+        subjects=["0580"],
+        actions=[MeteredAction.MARK_PAPER],
+        created_at=NOW - timedelta(days=20),
+    )
+    second = seat(
+        sm,
+        teacher=second_teacher,
+        student=student,
+        subjects=["0580"],
+        actions=[MeteredAction.MARK_PAPER],
+        created_at=NOW - timedelta(days=1),
+    )
+    seat_grant(sm, student=student, member_id=first, units=20)
+    seat_grant(sm, student=student, member_id=second, units=100)
+    _run_job(sm, student, "0.024", subject_code="0580")  # 20 from the first seat, 4 from the second
+    _as(api, student)
+    (row,) = api.get("/api/usage/history").json()["jobs"]
+    assert (row["paidBy"], row["percentOfPlan"], row["credits"]) == ("mixed", 100.0, None)
+    assert row["estimatePercentOfPlan"] == [100.0, 100.0]  # 40-120 units against a 20-unit seat
+    _as(api, first_teacher, Role.teacher)
+    (row,) = api.get("/api/usage/history").json()["jobs"]
+    assert (row["paidBy"], row["percentOfPlan"]) == ("seat", 100.0)
+    _as(api, second_teacher, Role.teacher)
+    (row,) = api.get("/api/usage/history").json()["jobs"]
+    assert (row["paidBy"], row["percentOfPlan"]) == ("seat", 4.0)
+
+
+def test_an_assistant_never_sees_the_leads_plan_size(
+    api: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    """Acting for a lead, plan-paid work is quoted and listed as percents only: no unit
+    count of the lead's allowance reaches the assistant, so its size cannot be derived."""
+    sm = migrated_sessionmaker
+    lead, helper = seed_user(sm, Role.teacher), seed_user(sm, Role.teacher)
+    give(
+        sm,
+        lead,
+        units=4000,
+        kind=GrantKind.period_allowance,
+        visible=False,
+        expires_at=_ALLOWANCE_END,
+    )
+    member = assistant(sm, teacher=lead, member=helper)
+    headers = {ACTING_TEACHER_HEADER: str(lead)}
+    _as(api, helper, Role.teacher)
+    quote = api.post("/api/usage/estimate", json={"action": "regrade"}, headers=headers).json()
+    assert quote == {
+        "low": None,
+        "high": None,
+        "payer": "allowance",
+        "percentLow": 1,
+        "percentHigh": 3,
+        "blockedReason": None,
+    }
+    # The lead asking for themselves still sees the range.
+    _as(api, lead, Role.teacher)
+    own = api.post("/api/usage/estimate", json={"action": "regrade"}).json()
+    assert (own["low"], own["high"]) == (40, 120)
+    _run_job(
+        sm,
+        helper,
+        "0.040",
+        action=MeteredAction.REGRADE,
+        role="teacher",
+        assistant_member_id=member,
+    )
+    _as(api, helper, Role.teacher)
+    raw = api.get("/api/usage/history").text
+    (row,) = api.get("/api/usage/history").json()["jobs"]
+    assert (row["paidBy"], row["percentOfPlan"], row["credits"]) == ("allowance", 1.0, None)
+    assert row["estimatePercentOfPlan"] == [1.0, 3.0]
+    assert [v for v in row.values() if isinstance(v, int) and not isinstance(v, bool)] == []
+    assert '"units"' not in raw
+    # Where the lead's visible credits pay, the quote keeps its units: they reveal no plan.
+    credit_lead, credit_helper = seed_user(sm, Role.teacher), seed_user(sm, Role.teacher)
+    give(sm, credit_lead, units=1000)
+    assistant(sm, teacher=credit_lead, member=credit_helper)
+    _as(api, credit_helper, Role.teacher)
+    paid = api.post(
+        "/api/usage/estimate",
+        json={"action": "regrade"},
+        headers={ACTING_TEACHER_HEADER: str(credit_lead)},
+    ).json()
+    assert (paid["payer"], paid["low"], paid["high"]) == ("credits", 40, 120)
+
+
+def test_history_pages_through_jobs_with_identical_timestamps(
+    api: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    """The id tie-break pins the order: no row skipped or repeated when created_at ties,
+    whether the caller ran the jobs or funds them."""
+    sm = migrated_sessionmaker
+    student, teacher = seed_user(sm), seed_user(sm, Role.teacher)
+    member = seat(
+        sm,
+        teacher=teacher,
+        student=student,
+        subjects=["0580"],
+        actions=[MeteredAction.MARK_PAPER],
+    )
+    seat_grant(sm, student=student, member_id=member, units=1000)
+    for _ in range(5):
+        _run_job(sm, student, "0.010", subject_code="0580")
+    with sm.begin() as session:
+        session.execute(update(UsageJob).values(created_at=NOW))
+    for who, role in ((student, Role.student), (teacher, Role.teacher)):
+        _as(api, who, role)
+        seen: list[str] = []
+        cursor: str | None = None
+        for _ in range(5):
+            params: dict[str, object] = {"limit": 2}
+            if cursor is not None:
+                params["cursor"] = cursor
+            page = api.get("/api/usage/history", params=params).json()
+            seen += [job["jobId"] for job in page["jobs"]]
+            cursor = page["nextCursor"]
+            if cursor is None:
+                break
+        assert len(seen) == 5
+        assert len(set(seen)) == 5

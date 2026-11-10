@@ -14,7 +14,7 @@ import time
 import uuid
 from datetime import datetime
 from functools import lru_cache
-from typing import Annotated, NoReturn, cast
+from typing import TYPE_CHECKING, Annotated, NoReturn, cast
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -45,6 +45,11 @@ from lemely.web.schemas_usage import (
     UsageMeterDTO,
 )
 from lemely.web.usage import UsageMeter, UsageRequest, get_usage_meter, request_from_auth
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from sqlalchemy.orm import Session
 
 log = structlog.get_logger(__name__)
 
@@ -89,6 +94,18 @@ _TEAM_PERMISSION: dict[MeteredAction, TeamPermission] = {
 }
 
 
+def _assistant_row(
+    actor_id: uuid.UUID, lead_id: uuid.UUID, perm: TeamPermission
+) -> Callable[[Session], tuple[uuid.UUID | None, bool]]:
+    """``assistant_access`` as a read: the granting row's id (or ``None``) and the school flag."""
+
+    def read(session: Session) -> tuple[uuid.UUID | None, bool]:
+        access = TeacherTeamService(session).assistant_access(actor_id, lead_id, perm)
+        return (access.member.id if access.member is not None else None, access.lead_unavailable)
+
+    return read
+
+
 def _acting_member(
     meter: UsageMeter,
     auth: AuthContext,
@@ -118,21 +135,20 @@ def _acting_member(
     perm = _TEAM_PERMISSION.get(action)
     if perm is None or auth.role != Role.teacher.value:
         raise _team_permission_denied()
-    access = meter.read(
-        lambda session: TeacherTeamService(session).assistant_access(actor_id, lead_id, perm)
-    )
-    if access.lead_unavailable:
+    # Read the row's id inside the session, as the team guard does.
+    member_id, lead_unavailable = meter.read(_assistant_row(actor_id, lead_id, perm))
+    if lead_unavailable:
         raise _team_lead_unavailable()
-    if access.member is None:
+    if member_id is None:
         raise _team_permission_denied()
     log.info(
         "team_acting",
         actor_user_id=str(actor_id),
         lead_teacher_user_id=str(lead_id),
-        member_id=str(access.member.id),
+        member_id=str(member_id),
         permission=str(perm),
     )
-    return access.member.id
+    return member_id
 
 
 def _estimate_request(
@@ -217,11 +233,19 @@ def estimate_usage(
             detail=f"Too many estimates; retry in {retry}s.",
             headers={"Retry-After": str(retry)},
         )
-    view = meter.estimate(_estimate_request(meter, auth, actor_id, body, acting_teacher))
+    request = _estimate_request(meter, auth, actor_id, body, acting_teacher)
+    view = meter.estimate(request)
+    # Only a live plan gives a percentage. A grant of the hidden allowance scope with no plan
+    # behind it (the one-time signup grant) is credits, as it is on the meter and in history.
+    on_plan = view.percent_low is not None
+    payer = "credits" if view.payer == "allowance" and not on_plan else view.payer
+    # An assistant acting for a lead is told how much of the lead's plan a job takes, never
+    # in units: low/high over the percentage would give away the plan's size.
+    show_units = not (on_plan and request.assistant_member_id is not None)
     return EstimateDTO(
-        low=view.low,
-        high=view.high,
-        payer=cast("EstimatePayer", view.payer),
+        low=view.low if show_units else None,
+        high=view.high if show_units else None,
+        payer=cast("EstimatePayer", payer),
         percentLow=view.percent_low,
         percentHigh=view.percent_high,
         blockedReason=view.blocked_reason.value if view.blocked_reason is not None else None,
