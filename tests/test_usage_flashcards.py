@@ -139,6 +139,34 @@ def test_an_empty_generation_charges_nothing(
     assert (job.status, job.charged) == (UsageJobStatus.released, 0)
 
 
+def test_a_partial_deck_settles_at_the_actual_cost(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """Fewer cards than requested is not a failure: the job settles at what was spent."""
+    student = _wire(client, pg_sessionmaker, cards=_CARDS[:1])
+    give(pg_sessionmaker, student, units=100)
+    resp = client.post(_URL, json={**_BODY, "count": 5})
+    assert resp.status_code == 201
+    assert (resp.json()["requestedCount"], resp.json()["generatedCount"]) == (5, 1)
+    (job,) = jobs_for(pg_sessionmaker, student)
+    # Estimate for 5 cards is 7-14; the recorded spend ($0.004) is 4 units either way.
+    assert (job.status, job.charged) == (UsageJobStatus.settled, 4)
+
+
+def test_a_weakness_request_carrying_a_topic_is_refused_and_released(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """A weakness deck resolves its own topic; a client-supplied one is a 422 that charges 0."""
+    sm = pg_sessionmaker
+    student = _wire(client, sm)
+    _seated(sm, student)
+    _flash._seed_weakness(sm, student, topic="4.3 Circuits")
+    body = {**_WEAKNESS_BODY, "topic": "Anything the client picked"}
+    assert client.post(_URL, json=body).status_code == 422
+    (job,) = jobs_for(sm, student)
+    assert (job.status, job.charged) == (UsageJobStatus.released, 0)
+
+
 def _seated(sm: sessionmaker[Session], student: uuid.UUID, *, seat_units: int = 100) -> uuid.UUID:
     """A 0625 seat with flashcards in scope and its granted allowance."""
     member = seat(
