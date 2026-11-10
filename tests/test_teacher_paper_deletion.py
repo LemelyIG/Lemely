@@ -24,6 +24,7 @@ import structlog.testing
 from sqlalchemy import select
 
 from lemely.core.deletion import RETENTION_DAYS, purge_cutoff, restore_deadline
+from lemely.core.metered_actions import MeteredAction
 from lemely.db.class_repo import ClassService
 from lemely.db.deletion_repo import (
     DeletedTeacherPaper,
@@ -47,6 +48,7 @@ from lemely.db.teacher_paper_repo import TeacherPaperDeletedError, TeacherPaperR
 from lemely.web import purge as purge_module
 from lemely.web.purge import purge_expired_teacher_papers
 from lemely.web.routers.teacher import _paper_summary
+from lemely.web.usage import MeteredJob
 from tests._concurrency import _Paused, _wait_until_a_backend_waits_on_a_lock
 from tests.test_purge_job import FailingStorage, RecordingStorage
 from tests.test_teacher_paper_repo import _mark_scheme, _metadata, _report
@@ -824,6 +826,7 @@ def test_a_paper_deleted_mid_grading_ends_the_run_quietly(
             None,  # type: ignore[arg-type]
             None,  # type: ignore[arg-type]
             None,  # type: ignore[arg-type]
+            job=MeteredJob.unmetered(MeteredAction.MARK_PAPER),
         )
 
     after = _paper_row(sessionmaker_, pid)

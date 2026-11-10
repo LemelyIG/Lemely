@@ -61,6 +61,7 @@ from lemely.core.history import (
     is_paper,
     latest_grade_bearing,
 )
+from lemely.core.metered_actions import MeteredAction
 from lemely.core.schemas import (
     REVIEW_CONFIDENCE_THRESHOLD,
     AccuracyReport,
@@ -182,6 +183,7 @@ from lemely.web.upload_utils import (
     safe_upload_name,
     sandbox_failure_to_http,
 )
+from lemely.web.usage import MeteredJob, UsageMeter, get_usage_meter, request_from_team
 
 log = structlog.get_logger(__name__)
 
@@ -526,6 +528,8 @@ def _run_grading_job(
     history_store: HistoryStoreProtocol,
     gemini_client: GeminiClient,
     corpus: SchemeCorpusRepository,
+    *,
+    job: MeteredJob,
 ) -> None:
     """Detect, resolve, extract and mark one paper on this instance's pool. Never raises.
 
@@ -550,6 +554,15 @@ def _run_grading_job(
     to the same id, so a second run on this instance (or, once
     :data:`_grading_pool` grows past one worker, a concurrent one on another)
     cannot mix progress counters with this one.
+
+    ``job`` was reserved by the request that claimed the run (billing spec §5.7).
+    Its cost scope opens here, on the pool thread, because a pool task does not
+    inherit the request's context; ``with job.run():`` encloses every paid call
+    (and ``script_cost_scope``), and the work joins nothing it started before the
+    block exits, so the total it reads is complete. A run that fails, finds no
+    paper, finds the paper deleted mid-run, or resolves no scheme is released,
+    never charged (billing spec §2.4). The progress tracker thread makes no paid
+    call, so it stays outside the scope.
     """
     from lemely.web.routers.student import resolve_mark_scheme
     from lemely.web.services.grading import (
@@ -570,77 +583,82 @@ def _run_grading_job(
     )
     tracker.start()
     try:
-        row = repo.get(paper_id)
-        if row is None:
-            return
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_dir = Path(tmp)
-            scan_dest = tmp_dir / Path(row.storage_path).name
-            scan_path = _download_to(storage, settings.storage.bucket, row.storage_path, scan_dest)
-            sibling: Path | None = None
-            if row.scheme_storage_path is not None:
-                # A scheme attached alongside the scan on upload — always
-                # preferred by `resolve_mark_scheme` over a corpus lookup.
-                sibling = _download_to(
-                    storage,
-                    settings.storage.bucket,
-                    row.scheme_storage_path,
-                    tmp_dir / "mark_scheme.pdf",
+        with job.run():
+            row = repo.get(paper_id)
+            if row is None:
+                job.abandon()
+                return
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp_dir = Path(tmp)
+                scan_dest = tmp_dir / Path(row.storage_path).name
+                scan_path = _download_to(
+                    storage, settings.storage.bucket, row.storage_path, scan_dest
                 )
-            metadata = row.metadata
-
-            with script_cost_scope(settings, script_key=f"teacher_paper:{paper_id}"):
-                # Detection is advisory: it names the card and helps the resolver
-                # match the parsed-scheme corpus, but a paper with an attached
-                # scheme marks fine without it. A failure here must not cost the
-                # teacher their marks, so it is warned about and stepped over.
-                if metadata is None and _detection_available(settings):
-                    try:
-                        metadata = ScanMetadataExtractor(gemini_client)(scan_path)
-                        repo.set_metadata(paper_id, metadata)
-                    except Exception as exc:
-                        log.exception("teacher_detection_failed", paper_id=str(paper_id))
-                        bus.publish(
-                            EventType.WARNING,
-                            paper_id=str(paper_id),
-                            message=f"Could not read this scan's exam details: {exc}",
-                        )
-
-                repo.set_stage(paper_id, "scheme")
-                scheme = row.mark_scheme or resolve_mark_scheme(
-                    sibling, corpus, settings, gemini_client, metadata=metadata
-                )
-                if scheme is None:
-                    repo.fail(
-                        paper_id,
-                        "No mark scheme could be resolved for this paper — nothing was marked. "
-                        "Attach one on upload, or add it under Mark schemes and re-run.",
+                sibling: Path | None = None
+                if row.scheme_storage_path is not None:
+                    # A scheme attached alongside the scan on upload — always
+                    # preferred by `resolve_mark_scheme` over a corpus lookup.
+                    sibling = _download_to(
+                        storage,
+                        settings.storage.bucket,
+                        row.scheme_storage_path,
+                        tmp_dir / "mark_scheme.pdf",
                     )
-                    return
-                repo.set_mark_scheme(paper_id, scheme)
+                metadata = row.metadata
 
-                repo.set_stage(paper_id, "extract")
-                extracted = extract_answers(scan_path, scheme, gemini_client=gemini_client)
-                ensure_binding_allows_marking(extracted)
+                with script_cost_scope(settings, script_key=f"teacher_paper:{paper_id}"):
+                    # Detection is advisory: it names the card and helps the resolver
+                    # match the parsed-scheme corpus, but a paper with an attached
+                    # scheme marks fine without it. A failure here must not cost the
+                    # teacher their marks, so it is warned about and stepped over.
+                    if metadata is None and _detection_available(settings):
+                        try:
+                            metadata = ScanMetadataExtractor(gemini_client)(scan_path)
+                            repo.set_metadata(paper_id, metadata)
+                        except Exception as exc:
+                            log.exception("teacher_detection_failed", paper_id=str(paper_id))
+                            bus.publish(
+                                EventType.WARNING,
+                                paper_id=str(paper_id),
+                                message=f"Could not read this scan's exam details: {exc}",
+                            )
 
-                repo.set_stage(paper_id, "mark")
-                # `student_id=None`/`history_store=None`: a console upload is never
-                # attributed to a student account (D1.12 — `TeacherPaper.student_id`
-                # is always null today), so there is nobody to record a history
-                # entry for. The marks live on this row and are served from it.
-                # integrity_settings: the operator's [integrity], as the student
-                # upload already passes (#259).
-                report = grade_paper(
-                    scheme,
-                    extracted,
-                    gemini_client=gemini_client,
-                    student_id=None,
-                    history_store=None,
-                    integrity_settings=settings.integrity,
-                    options=settings.grading.marking_options(),
-                    scan_path=scan_path,
-                )
-            repo.finish(paper_id, report)
+                    repo.set_stage(paper_id, "scheme")
+                    scheme = row.mark_scheme or resolve_mark_scheme(
+                        sibling, corpus, settings, gemini_client, metadata=metadata
+                    )
+                    if scheme is None:
+                        repo.fail(
+                            paper_id,
+                            "No mark scheme could be resolved for this paper — nothing was marked. "
+                            "Attach one on upload, or add it under Mark schemes and re-run.",
+                        )
+                        job.abandon()
+                        return
+                    repo.set_mark_scheme(paper_id, scheme)
+
+                    repo.set_stage(paper_id, "extract")
+                    extracted = extract_answers(scan_path, scheme, gemini_client=gemini_client)
+                    ensure_binding_allows_marking(extracted)
+
+                    repo.set_stage(paper_id, "mark")
+                    # `student_id=None`/`history_store=None`: a console upload is never
+                    # attributed to a student account (D1.12 — `TeacherPaper.student_id`
+                    # is always null today), so there is nobody to record a history
+                    # entry for. The marks live on this row and are served from it.
+                    # integrity_settings: the operator's [integrity], as the student
+                    # upload already passes (#259).
+                    report = grade_paper(
+                        scheme,
+                        extracted,
+                        gemini_client=gemini_client,
+                        student_id=None,
+                        history_store=None,
+                        integrity_settings=settings.integrity,
+                        options=settings.grading.marking_options(),
+                        scan_path=scan_path,
+                    )
+                repo.finish(paper_id, report)
     except TeacherPaperDeletedError:
         # The teacher deleted the paper mid-run. Delete already ended the run
         # on the row, and `fail` would be a no-op on it anyway: this is an
@@ -681,6 +699,8 @@ def _start_run_if_claimed(
     history_store: HistoryStoreProtocol,
     gemini_client: GeminiClient,
     corpus: SchemeCorpusRepository,
+    *,
+    job: MeteredJob,
 ) -> bool:
     """Claim the run on the row; if this instance won, submit it to the local pool.
 
@@ -689,11 +709,26 @@ def _start_run_if_claimed(
     instance or another — ever wins the race for a given paper, so a regrade
     fired from two browser tabs, or two Cloud Run instances answering the same
     request, cannot double-mark the same scan.
+
+    A lost claim releases ``job``'s hold: the request that won holds its own. A
+    won claim hands ``job`` to the pool, whose run settles or releases it. A job
+    queued behind the pool's one worker that never runs (the instance stops
+    first) keeps its hold until the usage sweeper expires it at the job's
+    ``expires_at`` (the action's timeout plus slack), which releases it uncharged.
     """
     if not repo.claim_run(paper_id):
+        job.release()
         return False
     _grading_pool.submit(
-        _run_grading_job, paper_id, settings, repo, storage, history_store, gemini_client, corpus
+        _run_grading_job,
+        paper_id,
+        settings,
+        repo,
+        storage,
+        history_store,
+        gemini_client,
+        corpus,
+        job=job,
     )
     return True
 
@@ -896,6 +931,7 @@ async def upload_paper(
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
     corpus: Annotated[SchemeCorpusRepository, Depends(get_scheme_corpus_repo)],
+    meter: Annotated[UsageMeter, Depends(get_usage_meter)],
     scan: Annotated[UploadFile, File()],
     mark_scheme: Annotated[UploadFile | None, File()] = None,
 ) -> UploadResponseDTO:
@@ -913,6 +949,12 @@ async def upload_paper(
     blocking network call made inline here would freeze every other request
     in the process — health checks included — for as long as it took, exactly
     the shape decision D6.13 removed from this route once already.
+
+    Metered as ``mark_paper`` (billing spec §5.7): the estimate is held after the
+    scan is validated (a rejected scan costs nothing) and before anything is
+    stored, so a 402 leaves no object, no row and no pool job. Any failure
+    between the hold and the pool submit releases it. Under the acting-teacher
+    header the lead pays, within the assistant's cap (R4).
     """
     auth = actor.auth
     uploaded_by, _ = _viewer(auth)
@@ -922,42 +964,54 @@ async def upload_paper(
     scan_bytes = await scan.read()
     check_upload_cap(scan_bytes, max_bytes=_MAX_UPLOAD_BYTES, content_type=scan.content_type)
     await anyio.to_thread.run_sync(check_scan_geometry, scan_bytes, scan.content_type)
-    scan_key = f"{prefix}/{_safe_upload_name(scan.filename, 'scan.pdf')}"
-    await anyio.to_thread.run_sync(
-        storage.upload, settings.storage.bucket, scan_key, scan_bytes, scan.content_type
+    # Billing spec §5.7: validated inputs first (rejects cost nothing), then hold the
+    # estimate before storing anything. Off the event loop: both calls hit Postgres.
+    usage = await anyio.to_thread.run_sync(
+        meter.authorize, request_from_team(actor, MeteredAction.MARK_PAPER)
     )
-
-    scheme_key: str | None = None
-    if mark_scheme is not None:
-        # Fixed server-side name, deliberately NOT the sanitised client
-        # basename: today's `resolve_mark_scheme` locates an attached scheme
-        # by looking for a sibling called exactly `mark_scheme.pdf` next to
-        # the scan — the same contract `routers/student.py` writes to.
-        scheme_bytes = await mark_scheme.read()
-        check_upload_cap(
-            scheme_bytes, max_bytes=_MAX_UPLOAD_BYTES, content_type=mark_scheme.content_type
-        )
-        scheme_key = f"{prefix}/mark_scheme.pdf"
+    job = await anyio.to_thread.run_sync(meter.reserve, usage)
+    try:
+        scan_key = f"{prefix}/{_safe_upload_name(scan.filename, 'scan.pdf')}"
         await anyio.to_thread.run_sync(
-            storage.upload,
-            settings.storage.bucket,
-            scheme_key,
-            scheme_bytes,
-            mark_scheme.content_type,
+            storage.upload, settings.storage.bucket, scan_key, scan_bytes, scan.content_type
         )
 
-    repo.create(
-        paper_id=paper_id,
-        uploaded_by=uploaded_by,
-        storage_path=scan_key,
-        scheme_storage_path=scheme_key,
-        original_filename=_safe_upload_name(scan.filename, "scan.pdf"),
-        content_type=scan.content_type,
-        byte_size=len(scan_bytes),
-    )
-    # Marking starts here, not when a browser asks for it. A teacher who
-    # uploads and immediately closes the tab still gets a graded paper.
-    _start_run_if_claimed(paper_id, settings, repo, storage, history_store, gemini_client, corpus)
+        scheme_key: str | None = None
+        if mark_scheme is not None:
+            # Fixed server-side name, deliberately NOT the sanitised client
+            # basename: today's `resolve_mark_scheme` locates an attached scheme
+            # by looking for a sibling called exactly `mark_scheme.pdf` next to
+            # the scan — the same contract `routers/student.py` writes to.
+            scheme_bytes = await mark_scheme.read()
+            check_upload_cap(
+                scheme_bytes, max_bytes=_MAX_UPLOAD_BYTES, content_type=mark_scheme.content_type
+            )
+            scheme_key = f"{prefix}/mark_scheme.pdf"
+            await anyio.to_thread.run_sync(
+                storage.upload,
+                settings.storage.bucket,
+                scheme_key,
+                scheme_bytes,
+                mark_scheme.content_type,
+            )
+
+        repo.create(
+            paper_id=paper_id,
+            uploaded_by=uploaded_by,
+            storage_path=scan_key,
+            scheme_storage_path=scheme_key,
+            original_filename=_safe_upload_name(scan.filename, "scan.pdf"),
+            content_type=scan.content_type,
+            byte_size=len(scan_bytes),
+        )
+        # Marking starts here, not when a browser asks for it. A teacher who
+        # uploads and immediately closes the tab still gets a graded paper.
+        _start_run_if_claimed(
+            paper_id, settings, repo, storage, history_store, gemini_client, corpus, job=job
+        )
+    except BaseException:
+        job.release()
+        raise
     return UploadResponseDTO(jobId=str(paper_id), paperId=str(paper_id), detected=[])
 
 
@@ -1048,6 +1102,7 @@ def regrade_paper(
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
     corpus: Annotated[SchemeCorpusRepository, Depends(get_scheme_corpus_repo)],
+    meter: Annotated[UsageMeter, Depends(get_usage_meter)],
 ) -> dict[str, str]:
     """Queue a paper for (re-)grading and return immediately.
 
@@ -1059,10 +1114,21 @@ def regrade_paper(
     double-charge the Gemini budget for it. ``202`` regardless of whether this
     call won the claim: either way the row is (or already was) in flight, and
     the console keeps polling for the outcome.
+
+    Metered as ``regrade`` (billing spec §5.7): the hold is taken before the
+    claim, so a 402 never claims the run, and a lost claim releases it. An
+    assistant regrading for the lead draws on the lead's chain (R4).
     """
     auth = actor.auth
     row = _require_paper(repo, auth, paper_id)
-    _start_run_if_claimed(row.id, settings, repo, storage, history_store, gemini_client, corpus)
+    job = meter.reserve(meter.authorize(request_from_team(actor, MeteredAction.REGRADE)))
+    try:
+        _start_run_if_claimed(
+            row.id, settings, repo, storage, history_store, gemini_client, corpus, job=job
+        )
+    except BaseException:
+        job.release()
+        raise
     return {"paperId": paper_id, "status": "processing"}
 
 

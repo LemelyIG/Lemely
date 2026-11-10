@@ -621,7 +621,9 @@ def test_a_marker_regrades_the_leads_paper_and_a_viewer_cannot(
 ) -> None:
     started: list[uuid.UUID] = []
     monkeypatch.setattr(
-        teacher_router, "_start_run_if_claimed", lambda paper_id, *_args: started.append(paper_id)
+        teacher_router,
+        "_start_run_if_claimed",
+        lambda paper_id, *_args, **_kwargs: started.append(paper_id),
     )
     lead, marker, viewer = (add_user(sm, Role.teacher) for _ in range(3))
     add_assistant(sm, teacher_id=lead, assistant_id=marker, role=AssistantRole.marker)
@@ -647,7 +649,9 @@ def test_a_marker_cannot_regrade_another_leads_paper(
 ) -> None:
     started: list[uuid.UUID] = []
     monkeypatch.setattr(
-        teacher_router, "_start_run_if_claimed", lambda paper_id, *_args: started.append(paper_id)
+        teacher_router,
+        "_start_run_if_claimed",
+        lambda paper_id, *_args, **_kwargs: started.append(paper_id),
     )
     lead, marker = add_user(sm, Role.teacher), add_user(sm, Role.teacher)
     add_assistant(sm, teacher_id=lead, assistant_id=marker, role=AssistantRole.marker)
@@ -664,7 +668,9 @@ def test_a_marker_uploads_a_paper_recorded_against_the_lead_a_viewer_cannot(
 ) -> None:
     started: list[uuid.UUID] = []
     monkeypatch.setattr(
-        teacher_router, "_start_run_if_claimed", lambda paper_id, *_args: started.append(paper_id)
+        teacher_router,
+        "_start_run_if_claimed",
+        lambda paper_id, *_args, **_kwargs: started.append(paper_id),
     )
     lead, marker, viewer = (add_user(sm, Role.teacher) for _ in range(3))
     add_assistant(sm, teacher_id=lead, assistant_id=marker, role=AssistantRole.marker)
