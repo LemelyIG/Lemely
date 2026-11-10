@@ -48,7 +48,15 @@ from lemely.web.deps import (
 from lemely.web.routers import student as student_router
 from lemely.web.routers import teacher as teacher_router
 from lemely.web.services import grading as grading_service
-from lemely.web.usage import UsageGrantContext, UsageMeter, UsageRequest, get_usage_meter
+from lemely.web.usage import (
+    USAGE_UNAVAILABLE_MESSAGE,
+    MeteredJob,
+    UsageGrantContext,
+    UsageMeter,
+    UsageRequest,
+    UsageUnavailable,
+    get_usage_meter,
+)
 from tests.pdf_fakes import born_digital_text_pdf
 from tests.storage_fakes import FakeStorageBackend
 from tests.test_grading_binding import _report as _binding_report
@@ -724,3 +732,74 @@ def test_a_blocked_run_that_was_superseded_leaves_the_newer_runs_paper_alone(
         ("regrade", UsageJobStatus.settled, 50),
     ]
     assert _remaining(sm, grant) == (70, 0)
+
+
+def _ledger_cannot_restart_the_hold(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _unavailable(_self: MeteredJob) -> None:
+        raise UsageUnavailable
+
+    monkeypatch.setattr(MeteredJob, "_restart_clock", _unavailable)
+
+
+def test_a_ledger_that_cannot_restart_the_hold_fails_the_paper_plainly_and_free(
+    console: _Console,
+    migrated_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``UsageUnavailable`` on entry: the plain sentence (no "Grading failed:"), no model call."""
+    sm = migrated_sessionmaker
+    teacher = seed_user(sm, Role.teacher)
+    grant = give(sm, teacher, units=1000)
+    _as(console, teacher)
+    _ledger_cannot_restart_the_hold(monkeypatch)
+    calls: list[str] = []
+
+    def _extract(*_a: object, **_k: object) -> list[object]:
+        calls.append("extract")
+        return []
+
+    monkeypatch.setattr(grading_service, "extract_answers", _extract)
+    paper_id = _upload(console).json()["paperId"]
+    assert console.pool.errors == []
+    assert calls == []
+    row = _paper(sm, paper_id)
+    assert (row.status, row.error) == (UploadStatus.failed, USAGE_UNAVAILABLE_MESSAGE)
+    assert not row.error.startswith("Grading failed")
+    assert all(j.charged == 0 for j in jobs_for(sm, teacher))
+    assert _remaining(sm, grant)[0] == 1000
+
+
+def test_an_unavailable_run_that_was_superseded_leaves_the_newer_runs_paper_alone(
+    console: _Console,
+    migrated_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same superseded-run guard as the credits block: a stale run never fails a re-run's row."""
+    sm = migrated_sessionmaker
+    teacher = seed_user(sm, Role.teacher)
+    give(sm, teacher, units=1000)
+    _as(console, teacher)
+    console.pool.hold = True
+    paper_id = _upload(console).json()["paperId"]  # job 1 queued
+    with sm.begin() as session:
+        row = session.get(TeacherPaper, uuid.UUID(paper_id))
+        assert row is not None
+        row.updated_at = datetime.now(UTC) - timedelta(minutes=20)  # reads as a lost run
+    assert _regrade(console, paper_id).status_code == 202  # job 2 reclaims the row
+    real_restart = MeteredJob._restart_clock
+    state = {"first": True}
+
+    def _first_run_only(self: MeteredJob) -> None:
+        if state["first"]:
+            state["first"] = False
+            raise UsageUnavailable
+        real_restart(self)
+
+    monkeypatch.setattr(MeteredJob, "_restart_clock", _first_run_only)
+    console.pool.drain_one()  # job 1: unavailable on entry, superseded
+    between = _paper(sm, paper_id)
+    assert (between.status, between.error) == (UploadStatus.processing, None)
+    console.pool.drain_one()  # job 2 owns the row and completes
+    assert console.pool.errors == []
+    row_after = _paper(sm, paper_id)
+    assert (row_after.status, row_after.error) == (UploadStatus.complete, None)

@@ -30,7 +30,13 @@ from lemely.db.usage_ledger_repo import UsageLedger
 from lemely.io.llm.cost_meter import record_llm_cost
 from lemely.web.deps import get_quiz_marking_service
 from lemely.web.routers import quiz as quiz_router
-from lemely.web.usage import UsageRequest, get_usage_meter
+from lemely.web.usage import (
+    USAGE_UNAVAILABLE_MESSAGE,
+    MeteredJob,
+    UsageRequest,
+    UsageUnavailable,
+    get_usage_meter,
+)
 from tests import test_web_student_quiz as _quiz
 from tests.team_db import add_teacher_plan
 from tests.usage_helpers import (
@@ -589,3 +595,33 @@ def test_record_marking_failure_sets_the_error_and_keeps_the_submission_submitte
         row = session.get(QuizSubmission, submission_id)
         assert row is not None
         assert row.marking_error is None
+
+
+def test_a_ledger_that_cannot_restart_the_hold_marks_nothing_and_records_why(
+    ready: Ready, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`job.run()` raises UsageUnavailable on entry: no model call, nothing charged, and a
+    plain marking_error instead of a silent stall."""
+    client, student, _, assignment_id, sm = ready
+    own = give(sm, student, units=50)
+    marking = _CostlyMarking()
+    _use_marking(client, marking)
+    _QueuedThread.pending = []
+    monkeypatch.setattr(quiz_router, "threading", SimpleNamespace(Thread=_QueuedThread))
+    assert _submit(client, assignment_id).status_code == 200
+    (queued,) = _QueuedThread.pending
+
+    def _unavailable(_self: MeteredJob) -> None:
+        raise UsageUnavailable
+
+    monkeypatch.setattr(MeteredJob, "_restart_clock", _unavailable)
+    with capture_logs() as logs:
+        queued()
+    assert marking.calls == []
+    assert [text for _sid, text in marking.failures] == [USAGE_UNAVAILABLE_MESSAGE]
+    assert [e["event"] for e in logs if e["event"].startswith("quiz_marking_unavailable")] == [
+        "quiz_marking_unavailable_before_start"
+    ]
+    assert not any(e["event"] == "quiz_marking_trigger_unexpected_error" for e in logs)
+    assert sum(j.charged for j in jobs_for(sm, student)) == 0
+    assert _remaining(sm, own) == 50

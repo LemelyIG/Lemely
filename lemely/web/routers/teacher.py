@@ -184,10 +184,12 @@ from lemely.web.upload_utils import (
     sandbox_failure_to_http,
 )
 from lemely.web.usage import (
+    USAGE_UNAVAILABLE_MESSAGE,
     MeteredJob,
     UsageBlocked,
     UsageGrantContext,
     UsageMeter,
+    UsageUnavailable,
     get_usage_meter,
     request_from_team,
     require_usage,
@@ -592,7 +594,9 @@ def _run_grading_job(
     ``job.run()`` raises :class:`UsageBlocked` on entry when the hold expired
     while the job was queued and the chain can no longer cover it. Nothing is
     held then and no model call has been made; the paper fails with
-    :data:`CREDITS_RAN_OUT_MESSAGE`, unless a newer run owns the row.
+    :data:`CREDITS_RAN_OUT_MESSAGE`, unless a newer run owns the row. A ledger that
+    cannot restart the hold raises :class:`UsageUnavailable` instead: the same guard,
+    and the paper fails with :data:`USAGE_UNAVAILABLE_MESSAGE` (charged 0, no model call).
     """
     from lemely.web.routers.student import resolve_mark_scheme
     from lemely.web.services.grading import (
@@ -710,6 +714,14 @@ def _run_grading_job(
         current = repo.get(paper_id)
         if current is not None and current.run_started_at == claim_token:
             repo.fail(paper_id, CREDITS_RAN_OUT_MESSAGE)
+    except UsageUnavailable:
+        # From `job.run()` entry too: the ledger could not restart the queued hold, so the
+        # run failed closed before any model call and charged nothing. A plain sentence, not
+        # "Grading failed: ...", and the same superseded-run guard as the block above.
+        log.warning("teacher_grade_usage_unavailable", paper_id=str(paper_id))
+        current = repo.get(paper_id)
+        if current is not None and current.run_started_at == claim_token:
+            repo.fail(paper_id, USAGE_UNAVAILABLE_MESSAGE)
     except TeacherPaperDeletedError:
         # The teacher deleted the paper mid-run. Delete already ended the run
         # on the row, and `fail` would be a no-op on it anyway: this is an

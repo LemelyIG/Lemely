@@ -101,10 +101,12 @@ from lemely.web.schemas_quiz import (
     UpdateQuizDraftRequestDTO,
 )
 from lemely.web.usage import (
+    USAGE_UNAVAILABLE_MESSAGE,
     MeteredJob,
     UsageBlocked,
     UsageGrantContext,
     UsageMeter,
+    UsageUnavailable,
     get_usage_meter,
     request_from_auth,
 )
@@ -511,7 +513,9 @@ def _trigger_marking_in_background(
     is a thread that dies mid-run (``MeteredJob.run`` releases on any exit by
     exception). If the queued hold expired and the balance has since run out,
     ``job.run()`` raises :class:`UsageBlocked` before any model call: the submission is
-    left ``submitted`` with a ``marking_error`` saying so, and nothing is charged.
+    left ``submitted`` with a ``marking_error`` saying so, and nothing is charged. A ledger
+    that cannot restart the hold (:class:`UsageUnavailable`) is the same, with its own plain
+    ``marking_error``.
     """
 
     def run() -> None:
@@ -543,6 +547,16 @@ def _trigger_marking_in_background(
             except Exception:
                 log.exception(
                     "quiz_marking_blocked_record_failed", submission_id=str(submission_id)
+                )
+        except UsageUnavailable:
+            # The ledger could not restart the queued hold: fail closed before any model
+            # call, nothing charged, and record a plain reason instead of a silent stall.
+            log.warning("quiz_marking_unavailable_before_start", submission_id=str(submission_id))
+            try:
+                marking_service.record_marking_failure(submission_id, USAGE_UNAVAILABLE_MESSAGE)
+            except Exception:
+                log.exception(
+                    "quiz_marking_unavailable_record_failed", submission_id=str(submission_id)
                 )
         except QuizMarkingError as exc:
             log.warning(
