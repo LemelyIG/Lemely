@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Annotated, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
+from lemely.core.metered_actions import MeteredAction
 from lemely.db.flashcard_repo import (
     FlashcardError,
     FlashcardGenerationUnavailableError,
@@ -54,6 +55,7 @@ from lemely.web.schemas_flashcards import (
     ReviewCardRequestDTO,
     ReviewResultDTO,
 )
+from lemely.web.usage import UsageMeter, get_usage_meter, request_from_auth
 from lemely.web.xp_awards import award_xp_safely
 
 if TYPE_CHECKING:
@@ -220,6 +222,7 @@ def generate_deck(
     body: GenerateDeckRequestDTO,
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
     service: Annotated[FlashcardService, Depends(get_flashcard_service)],
+    meter: Annotated[UsageMeter, Depends(get_usage_meter)],
 ) -> GenerateDeckResponseDTO:
     """Generate an AI deck for a topic, or for the caller's weakest topic.
 
@@ -227,17 +230,35 @@ def generate_deck(
     reports the true ``generatedCount`` beside ``requestedCount``; a short
     response is not padded and must not be rendered as if it were complete.
 
+    Metered as ``generate_flashcards`` (402 when the payer chain cannot cover it). The
+    subject is the deck being created (``body.subjectCode``, which the deck stores), so a
+    seat covering flashcards for it pays; the input is ``count``, bounded 1..50 by the
+    schema and clamped again by the estimator. A refused request, or a generation that
+    produced no card, is released and charges nothing.
+
     Declared before ``/decks/{deck_id}`` so the literal path wins the match.
     """
-    try:
-        result = service.generate_deck(
-            auth.user_id,
+    usage = meter.authorize(
+        request_from_auth(
+            auth,
+            MeteredAction.GENERATE_FLASHCARDS,
             subject_code=body.subjectCode,
-            origin=_parse_origin(body.origin),
-            count=body.count,
-            topic=body.topic,
-            title=body.title,
+            input_count=body.count,
         )
+    )
+    try:
+        with meter.job(usage) as job:
+            result = service.generate_deck(
+                auth.user_id,
+                subject_code=body.subjectCode,
+                origin=_parse_origin(body.origin),
+                count=body.count,
+                topic=body.topic,
+                title=body.title,
+            )
+            if result.generated_count == 0:
+                # The model returned nothing usable: a failed job costs nothing (spec §2.4).
+                job.abandon()
     except FlashcardError as exc:
         _raise_for(exc)
     return _generated_to_dto(result)
