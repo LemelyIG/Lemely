@@ -183,7 +183,13 @@ from lemely.web.upload_utils import (
     safe_upload_name,
     sandbox_failure_to_http,
 )
-from lemely.web.usage import MeteredJob, UsageMeter, get_usage_meter, request_from_team
+from lemely.web.usage import (
+    MeteredJob,
+    UsageBlocked,
+    UsageMeter,
+    get_usage_meter,
+    request_from_team,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -365,6 +371,12 @@ _TRACKER_POLL_SECONDS = 0.2
 #: deploy) without a chance to call :meth:`~TeacherPaperRepository.fail`.
 _LOST_RUN_ERROR = "This run was lost when its server instance stopped. Re-run marking to try again."
 
+#: Shown when a paper's usage hold expired while it waited in the queue and the
+#: balance no longer covers it (``job.run()`` raises :class:`UsageBlocked` on entry).
+CREDITS_RAN_OUT_MESSAGE = (
+    "Credits ran out while this paper was waiting. Top up, then re-run marking."
+)
+
 
 def _viewer(auth: AuthContext) -> tuple[uuid.UUID, Role]:
     """The caller's id and platform role, parsed off the validated token."""
@@ -530,6 +542,7 @@ def _run_grading_job(
     corpus: SchemeCorpusRepository,
     *,
     job: MeteredJob,
+    claim_token: datetime | None,
 ) -> None:
     """Detect, resolve, extract and mark one paper on this instance's pool. Never raises.
 
@@ -562,7 +575,22 @@ def _run_grading_job(
     block exits, so the total it reads is complete. A run that fails, finds no
     paper, finds the paper deleted mid-run, or resolves no scheme is released,
     never charged (billing spec §2.4). The progress tracker thread makes no paid
-    call, so it stays outside the scope.
+    call, so it stays outside the scope. A failure in the setup before the scope
+    opens releases the hold too.
+
+    ``claim_token`` is the ``run_started_at`` the winning ``claim_run`` stamped.
+    Nothing writes to a row while its job waits in the pool's queue, so after
+    the stale window the console offers a re-run, and that re-run reclaims the
+    row with a new token and queues its own job. A run whose token no longer
+    matches, when it starts or before it saves its report, has been superseded:
+    it abandons (released, charged 0) and leaves the row to the run that owns it,
+    so one paper is never marked or charged twice. The token is the row's, not
+    the job's: ``job.run()`` may replace the job id when it re-reserves.
+
+    ``job.run()`` raises :class:`UsageBlocked` on entry when the hold expired
+    while the job was queued and the chain can no longer cover it. Nothing is
+    held then and no model call has been made; the paper fails with
+    :data:`CREDITS_RAN_OUT_MESSAGE`, unless a newer run owns the row.
     """
     from lemely.web.routers.student import resolve_mark_scheme
     from lemely.web.services.grading import (
@@ -573,19 +601,28 @@ def _run_grading_job(
         grade_paper,
     )
 
-    run_id_token = current_run_id.set(f"teacher:{paper_id}")
-    progress_queue = bus.subscribe_queue(f"teacher:{paper_id}")
-    stop = threading.Event()
-    tracker = threading.Thread(
-        target=_track_progress,
-        args=(repo, paper_id, progress_queue, stop),
-        daemon=True,
-    )
-    tracker.start()
+    try:
+        run_id_token = current_run_id.set(f"teacher:{paper_id}")
+        progress_queue = bus.subscribe_queue(f"teacher:{paper_id}")
+        stop = threading.Event()
+        tracker = threading.Thread(
+            target=_track_progress,
+            args=(repo, paper_id, progress_queue, stop),
+            daemon=True,
+        )
+        tracker.start()
+    except BaseException:
+        # `job.run()` has not opened yet, so nothing else would release the hold.
+        job.release()
+        raise
     try:
         with job.run():
             row = repo.get(paper_id)
             if row is None:
+                job.abandon()
+                return
+            if row.run_started_at != claim_token:
+                log.info("teacher_grade_superseded", paper_id=str(paper_id), at="start")
                 job.abandon()
                 return
             with tempfile.TemporaryDirectory() as tmp:
@@ -658,7 +695,19 @@ def _run_grading_job(
                         options=settings.grading.marking_options(),
                         scan_path=scan_path,
                     )
+                # A missing row falls through: `finish` raises TeacherPaperDeletedError.
+                current = repo.get(paper_id)
+                if current is not None and current.run_started_at != claim_token:
+                    log.info("teacher_grade_superseded", paper_id=str(paper_id), at="finish")
+                    job.abandon()
+                    return
                 repo.finish(paper_id, report)
+    except UsageBlocked as exc:
+        # From `job.run()` entry, before any work: see the docstring.
+        log.warning("teacher_grade_usage_blocked", paper_id=str(paper_id), reason=exc.reason.value)
+        current = repo.get(paper_id)
+        if current is not None and current.run_started_at == claim_token:
+            repo.fail(paper_id, CREDITS_RAN_OUT_MESSAGE)
     except TeacherPaperDeletedError:
         # The teacher deleted the paper mid-run. Delete already ended the run
         # on the row, and `fail` would be a no-op on it anyway: this is an
@@ -711,7 +760,8 @@ def _start_run_if_claimed(
     request, cannot double-mark the same scan.
 
     A lost claim releases ``job``'s hold: the request that won holds its own. A
-    won claim hands ``job`` to the pool, whose run settles or releases it. A job
+    won claim hands ``job`` and the claim's ``run_started_at`` token to the pool,
+    whose run settles or releases it (a superseded run releases). A job
     queued behind the pool's one worker that never runs (the instance stops
     first) keeps its hold until the usage sweeper expires it at the job's
     ``expires_at`` (the action's timeout plus slack), which releases it uncharged.
@@ -719,6 +769,10 @@ def _start_run_if_claimed(
     if not repo.claim_run(paper_id):
         job.release()
         return False
+    # The token the claim just stamped. Read straight after winning: another claim
+    # can only take the row once its `updated_at` is a stale window old.
+    claimed = repo.get(paper_id)
+    claim_token = claimed.run_started_at if claimed is not None else None
     _grading_pool.submit(
         _run_grading_job,
         paper_id,
@@ -729,6 +783,7 @@ def _start_run_if_claimed(
         gemini_client,
         corpus,
         job=job,
+        claim_token=claim_token,
     )
     return True
 
@@ -1010,7 +1065,10 @@ async def upload_paper(
             paper_id, settings, repo, storage, history_store, gemini_client, corpus, job=job
         )
     except BaseException:
-        job.release()
+        # A ledger transaction: off the event loop (D6.13), and shielded so a
+        # cancelled request still releases its hold.
+        with anyio.CancelScope(shield=True):
+            await anyio.to_thread.run_sync(job.release)
         raise
     return UploadResponseDTO(jobId=str(paper_id), paperId=str(paper_id), detected=[])
 

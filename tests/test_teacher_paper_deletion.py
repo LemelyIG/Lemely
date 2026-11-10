@@ -827,6 +827,7 @@ def test_a_paper_deleted_mid_grading_ends_the_run_quietly(
             None,  # type: ignore[arg-type]
             None,  # type: ignore[arg-type]
             job=MeteredJob.unmetered(MeteredAction.MARK_PAPER),
+            claim_token=row.run_started_at,
         )
 
     after = _paper_row(sessionmaker_, pid)

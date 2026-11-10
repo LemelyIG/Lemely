@@ -10,22 +10,27 @@ finds the paper deleted, or resolves no scheme (billing spec §2.4: failed work 
 
 from __future__ import annotations
 
+import functools
+import threading
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
+import sqlalchemy as sa
 from fastapi.testclient import TestClient
 
 from lemely.core.metered_actions import MeteredAction
-from lemely.db.models.enums import Role
+from lemely.db.models import TeacherPaper
+from lemely.db.models.enums import Role, UploadStatus
 from lemely.db.models.team import TeacherMember, TeacherMemberStatus
 from lemely.db.models.usage import UsageGrantBalance, UsageJobStatus
 from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
 from lemely.db.teacher_paper_repo import TeacherPaperDeletedError, TeacherPaperRepository
 from lemely.db.teacher_team_repo import TeacherTeamStore
+from lemely.db.usage_ledger_repo import UsageLedger
 from lemely.io.gemini import GeminiClient
 from lemely.io.llm.cost_meter import record_llm_cost
 from lemely.web import create_app
@@ -46,8 +51,10 @@ from lemely.web.services import grading as grading_service
 from lemely.web.usage import UsageGrantContext, UsageMeter, UsageRequest, get_usage_meter
 from tests.pdf_fakes import born_digital_text_pdf
 from tests.storage_fakes import FakeStorageBackend
+from tests.test_grading_binding import _report as _binding_report
 from tests.test_teacher_paper_repo import _mark_scheme, _report
 from tests.usage_helpers import (
+    NOW,
     assistant,
     enforcing_meter,
     give,
@@ -65,15 +72,49 @@ if TYPE_CHECKING:
 _SCAN = born_digital_text_pdf(pages=1)
 
 
-class _InlinePool:
-    """Runs a submitted job at once, so the settle is visible when the request returns."""
+class _ThreadPool:
+    """Runs each submitted job on a fresh thread, the way ``ThreadPoolExecutor`` does.
+
+    A new ``threading.Thread`` does not inherit the request's context, so a cost scope
+    opened in the request (around the submit) would not see the job's costs: the job must
+    meter itself on its own thread. ``submit`` joins the thread before returning, so the
+    settle is visible when the request returns. With ``hold`` set, submits are queued
+    instead, and ``drain`` runs them later, each on its own thread (a job waiting in the
+    executor's queue). A job's exception is kept, as a ``Future`` would keep it.
+    """
 
     def __init__(self) -> None:
         self.submitted = 0
+        self.hold = False
+        self.queued: list[Callable[[], object]] = []
+        self.errors: list[BaseException] = []
+
+    def _run_on_a_thread(self, call: Callable[[], object]) -> None:
+        def _target() -> None:
+            try:
+                call()
+            except BaseException as exc:
+                self.errors.append(exc)
+
+        worker = threading.Thread(target=_target)
+        worker.start()
+        worker.join()
 
     def submit(self, fn: Callable[..., object], *args: object, **kwargs: object) -> None:
         self.submitted += 1
-        fn(*args, **kwargs)
+        call = functools.partial(fn, *args, **kwargs)
+        if self.hold:
+            self.queued.append(call)
+        else:
+            self._run_on_a_thread(call)
+
+    def drain(self) -> None:
+        queued, self.queued = self.queued, []
+        for call in queued:
+            self._run_on_a_thread(call)
+
+    def drain_one(self) -> None:
+        self._run_on_a_thread(self.queued.pop(0))
 
 
 class _CountingStorage(FakeStorageBackend):
@@ -94,7 +135,7 @@ class _Console:
         api: TestClient,
         repo: TeacherPaperRepository,
         storage: _CountingStorage,
-        pool: _InlinePool,
+        pool: _ThreadPool,
     ) -> None:
         self.api = api
         self.repo = repo
@@ -110,7 +151,7 @@ def console(
     seed_catalogue(sm)
     repo = TeacherPaperRepository(sm, stale_after=timedelta(minutes=15))
     storage = _CountingStorage()
-    pool = _InlinePool()
+    pool = _ThreadPool()
 
     def _extract(*_a: object, **_k: object) -> list[object]:
         record_llm_cost(Decimal("0.030"))
@@ -164,6 +205,14 @@ def _remaining(sm: sessionmaker[Session], grant_id: uuid.UUID) -> tuple[int, int
         balance = session.get(UsageGrantBalance, grant_id)
         assert balance is not None
         return balance.remaining, balance.held
+
+
+def _paper(sm: sessionmaker[Session], paper_id: str) -> TeacherPaper:
+    with sm() as session:
+        row = session.get(TeacherPaper, uuid.UUID(paper_id))
+        assert row is not None
+        session.expunge(row)
+        return row
 
 
 def _nothing_stored(c: _Console, owner: uuid.UUID) -> None:
@@ -350,12 +399,17 @@ def test_regrade_without_balance_is_402_before_the_run_is_claimed(
     give(sm, teacher, units=120)
     _as(console, teacher)
     paper_id = _upload(console).json()["paperId"]  # spends 50 of 120; 70 < 120 is left
+    before = _paper(sm, paper_id)
+    assert before.status is UploadStatus.complete
     submitted = console.pool.submitted
     resp = _regrade(console, paper_id)
     assert resp.status_code == 402
     assert resp.json()["reason"] == "insufficient_credits"
     assert console.pool.submitted == submitted
     assert [j.action for j in jobs_for(sm, teacher)] == ["mark_paper"]
+    # The claim never happened: the row is not stuck in `processing` for the stale window.
+    after = _paper(sm, paper_id)
+    assert (after.status, after.run_started_at) == (UploadStatus.complete, before.run_started_at)
 
 
 def test_a_lost_claim_releases_the_hold(
@@ -476,3 +530,197 @@ def test_a_pool_that_refuses_the_submit_releases_the_regrade_hold(
     last = jobs_for(sm, teacher)[-1]
     assert (last.action, last.status, last.charged) == ("regrade", UsageJobStatus.released, 0)
     assert _remaining(sm, grant) == (950, 0)
+
+
+def test_a_binding_gate_hold_fails_the_paper_and_charges_nothing(
+    console: _Console,
+    migrated_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sm = migrated_sessionmaker
+    teacher = seed_user(sm, Role.teacher)
+    grant = give(sm, teacher, units=1000)
+
+    def _held(_extracted: object) -> None:
+        raise grading_service.BindingHeldError(_binding_report("hold"), "before_marking")
+
+    monkeypatch.setattr(grading_service, "ensure_binding_allows_marking", _held)
+    _as(console, teacher)
+    paper_id = _upload(console).json()["paperId"]
+    (job,) = jobs_for(sm, teacher)
+    assert (job.status, job.charged, job.debt_created) == (UsageJobStatus.released, 0, 0)
+    assert _remaining(sm, grant) == (1000, 0)
+    row = _paper(sm, paper_id)
+    assert (row.status, row.error) == (
+        UploadStatus.failed,
+        grading_service.TEACHER_BINDING_HELD_MESSAGE,
+    )
+
+
+def test_a_run_reclaimed_while_queued_is_abandoned_and_the_paper_is_charged_once(
+    console: _Console,
+    migrated_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """I1: a stale claim reclaimed by a re-run must not mark, or charge, the paper twice."""
+    sm = migrated_sessionmaker
+    teacher = seed_user(sm, Role.teacher)
+    grant = give(sm, teacher, units=1000)
+    _as(console, teacher)
+    console.pool.hold = True
+    paper_id = _upload(console).json()["paperId"]  # job 1 waits in the pool's queue
+    # Nothing writes to a queued row, so after the stale window it reads as a lost run
+    # and the console invites a re-run, which reclaims it.
+    with sm.begin() as session:
+        row = session.get(TeacherPaper, uuid.UUID(paper_id))
+        assert row is not None
+        row.updated_at = datetime.now(UTC) - timedelta(minutes=20)
+    assert _regrade(console, paper_id).status_code == 202  # job 2 queues behind job 1
+    graded: list[str] = []
+
+    def _grade(*_a: object, **_k: object) -> object:
+        graded.append("grade")
+        record_llm_cost(Decimal("0.020"))
+        return _report()
+
+    monkeypatch.setattr(grading_service, "grade_paper", _grade)
+    console.pool.drain()
+    assert console.pool.errors == []
+    jobs = jobs_for(sm, teacher)
+    assert [(j.action, j.status, j.charged) for j in jobs] == [
+        ("mark_paper", UsageJobStatus.released, 0),
+        ("regrade", UsageJobStatus.settled, 50),
+    ]
+    assert graded == ["grade"]
+    assert _remaining(sm, grant) == (950, 0)
+    assert _paper(sm, paper_id).status is UploadStatus.complete
+
+
+def test_a_run_reclaimed_mid_run_does_not_save_or_charge(
+    console: _Console,
+    migrated_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The second token check, before ``finish``: a run superseded while grading discards."""
+    sm = migrated_sessionmaker
+    teacher = seed_user(sm, Role.teacher)
+    grant = give(sm, teacher, units=1000)
+    finished: list[uuid.UUID] = []
+    real_finish = TeacherPaperRepository.finish
+
+    def _recording_finish(self: TeacherPaperRepository, pid: uuid.UUID, report: object) -> None:
+        finished.append(pid)
+        real_finish(self, pid, report)  # type: ignore[arg-type]
+
+    def _grade_then_reclaimed(*_a: object, **_k: object) -> object:
+        record_llm_cost(Decimal("0.020"))
+        with sm.begin() as session:
+            # Another request reclaimed the row while this run was grading.
+            session.execute(
+                sa.update(TeacherPaper)
+                .where(TeacherPaper.uploaded_by == teacher)
+                .values(run_started_at=datetime.now(UTC) + timedelta(hours=1))
+            )
+        return _report()
+
+    monkeypatch.setattr(TeacherPaperRepository, "finish", _recording_finish)
+    monkeypatch.setattr(grading_service, "grade_paper", _grade_then_reclaimed)
+    _as(console, teacher)
+    assert _upload(console).status_code == 200
+    (job,) = jobs_for(sm, teacher)
+    assert (job.status, job.charged) == (UsageJobStatus.released, 0)
+    assert finished == []
+    assert _remaining(sm, grant) == (1000, 0)
+
+
+def test_a_setup_failure_before_the_run_opens_releases_the_hold(
+    console: _Console,
+    migrated_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sm = migrated_sessionmaker
+    teacher = seed_user(sm, Role.teacher)
+    grant = give(sm, teacher, units=1000)
+
+    def _no_thread(*_a: object, **_k: object) -> object:
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(teacher_router.bus, "subscribe_queue", _no_thread)
+    _as(console, teacher)
+    assert _upload(console).status_code == 200
+    assert [str(e) for e in console.pool.errors] == ["can't start new thread"]
+    (job,) = jobs_for(sm, teacher)
+    assert (job.status, job.charged) == (UsageJobStatus.released, 0)
+    assert _remaining(sm, grant) == (1000, 0)
+
+
+def test_a_hold_that_expired_while_queued_with_no_balance_left_fails_the_paper_free(
+    console: _Console,
+    migrated_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``job.run()`` re-reserves an expired hold on entry; with no balance left it is blocked."""
+    sm = migrated_sessionmaker
+    teacher = seed_user(sm, Role.teacher)
+    grant = give(sm, teacher, units=120)  # exactly one hold's worth
+    _as(console, teacher)
+    console.pool.hold = True
+    first = _upload(console).json()["paperId"]  # queued, holding all 120
+    with sm.begin() as session:
+        # The sweeper closes the queued job's hold: its deadline passed in the queue.
+        assert UsageLedger(session).expire_stale_jobs(now=NOW + timedelta(hours=2)) == 1
+    second = _upload(console).json()["paperId"]  # the freed 120 now holds paper 2
+    calls: list[str] = []
+
+    def _extract(*_a: object, **_k: object) -> list[object]:
+        calls.append("extract")
+        record_llm_cost(Decimal("0.030"))
+        return []
+
+    monkeypatch.setattr(grading_service, "extract_answers", _extract)
+    console.pool.drain()
+    assert console.pool.errors == []
+    assert calls == ["extract"]  # paper 2 only: paper 1 made no model call
+    blocked = _paper(sm, first)
+    assert (blocked.status, blocked.error) == (
+        UploadStatus.failed,
+        teacher_router.CREDITS_RAN_OUT_MESSAGE,
+    )
+    assert _paper(sm, second).status is UploadStatus.complete
+    jobs = jobs_for(sm, teacher)
+    assert [(j.status, j.charged) for j in jobs] == [
+        (UsageJobStatus.expired, 0),
+        (UsageJobStatus.settled, 50),
+    ]
+    assert _remaining(sm, grant) == (70, 0)
+
+
+def test_a_blocked_run_that_was_superseded_leaves_the_newer_runs_paper_alone(
+    console: _Console, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    """A queued run blocked on entry must not fail a row a re-run has since reclaimed."""
+    sm = migrated_sessionmaker
+    teacher = seed_user(sm, Role.teacher)
+    grant = give(sm, teacher, units=120)
+    _as(console, teacher)
+    console.pool.hold = True
+    paper_id = _upload(console).json()["paperId"]  # job 1 queued, holding all 120
+    with sm.begin() as session:
+        assert UsageLedger(session).expire_stale_jobs(now=NOW + timedelta(hours=2)) == 1
+        row = session.get(TeacherPaper, uuid.UUID(paper_id))
+        assert row is not None
+        row.updated_at = datetime.now(UTC) - timedelta(minutes=20)  # reads as a lost run
+    assert _regrade(console, paper_id).status_code == 202  # job 2 reclaims and holds 120
+    console.pool.drain_one()  # job 1: blocked on entry, superseded
+    between = _paper(sm, paper_id)
+    assert (between.status, between.error) == (UploadStatus.processing, None)
+    console.pool.drain_one()  # job 2: the run that owns the row
+    assert console.pool.errors == []
+    row_after = _paper(sm, paper_id)
+    assert (row_after.status, row_after.error) == (UploadStatus.complete, None)
+    jobs = jobs_for(sm, teacher)
+    assert [(j.action, j.status, j.charged) for j in jobs] == [
+        ("mark_paper", UsageJobStatus.expired, 0),
+        ("regrade", UsageJobStatus.settled, 50),
+    ]
+    assert _remaining(sm, grant) == (70, 0)
