@@ -15,11 +15,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import select
+from structlog.testing import capture_logs
 
 from lemely.core.metered_actions import MeteredAction
 from lemely.db.models.billing import PlanAudience
 from lemely.db.models.enums import Role
-from lemely.db.models.quizzes import QuizSubmission
+from lemely.db.models.quizzes import QuizAssignment, QuizSubmission
 from lemely.db.models.usage import GrantKind, UsageGrantBalance, UsageJobStatus
 from lemely.db.quiz_marking_repo import QuizMarkingError
 from lemely.db.usage_context_repo import quiz_assignment_target
@@ -410,3 +411,86 @@ def test_a_malformed_assignment_id_keeps_todays_422_with_no_hold(ready: Ready) -
     give(sm, student, units=100)
     assert _submit(client, "not-a-uuid").status_code == 422
     assert jobs_for(sm, student) == []
+
+
+# -- a student-targeted (placement / practice) assignment ----------------------
+
+
+def test_a_self_assigned_quiz_is_billed_to_the_student(ready: Ready) -> None:
+    """Placement and practice assignments target the student directly (no class)."""
+    client, student, teacher, class_assignment_id, sm = ready
+    with sm() as session:
+        quiz_id = session.scalars(
+            select(QuizAssignment.quiz_id).where(
+                QuizAssignment.id == uuid.UUID(class_assignment_id)
+            )
+        ).one()
+    with sm.begin() as session:
+        direct = QuizAssignment(quiz_id=quiz_id, student_id=student, assigned_by=teacher)
+        session.add(direct)
+        session.flush()
+        direct_id = str(direct.id)
+    own = give(sm, student, units=100)
+    client.get(f"/api/student/quizzes/{direct_id}")
+    marking = _CostlyMarking()
+    _use_marking(client, marking)
+    with sm() as session:
+        target = quiz_assignment_target(session, student_id=str(student), assignment_id=direct_id)
+    assert target is not None
+    assert (target.subject_code, target.input_count) == ("0625", 1)
+    assert _submit(client, direct_id).status_code == 200
+    (job,) = jobs_for(sm, student)
+    assert (job.action, job.status, job.charged) == ("mark_quiz", UsageJobStatus.settled, 4)
+    assert len(marking.calls) == 1
+    assert _remaining(sm, own) == 96
+
+
+# -- a re-submit at (nearly) zero balance --------------------------------------
+
+
+def test_a_resubmit_without_balance_is_402_not_422_and_adds_no_job(ready: Ready) -> None:
+    """The hold is checked before ``submit``, so an unfunded re-submit gets the 402.
+
+    Pinned as the accepted trade-off: the ledger is untouched (no new job, nothing charged
+    twice), and the quiz was already submitted and marked once.
+    """
+    client, student, _, assignment_id, sm = ready
+    own = give(sm, student, units=5)  # the estimate's high end is 5; the first mark costs 4
+    _use_marking(client, _CostlyMarking())
+    assert _submit(client, assignment_id).status_code == 200
+    assert _remaining(sm, own) == 1
+    resp = _submit(client, assignment_id)
+    assert resp.status_code == 402
+    assert resp.json()["reason"] == "insufficient_credits"
+    assert [j.status for j in jobs_for(sm, student)] == [UsageJobStatus.settled]
+    assert _remaining(sm, own) == 1
+    assert _submission_status(sm, student) == "submitted"
+
+
+# -- the accepted ownership race: target unreadable, submit accepted ------------
+
+
+def test_an_accepted_submit_with_no_readable_target_still_marks_unmetered(
+    ready: Ready, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the target read misses an assignment ``submit`` then accepts (enrolment landed in
+    between), the submission is already recorded: a late 402 would strand it unmarked.
+    Marking runs without a hold, the balance is untouched, and the cost is logged against
+    the student."""
+    client, student, _, assignment_id, sm = ready
+    own = give(sm, student, units=100)
+    marking = _CostlyMarking()
+    _use_marking(client, marking)
+    monkeypatch.setattr(quiz_router, "quiz_assignment_target", lambda *args, **kwargs: None)
+    with capture_logs() as logs:
+        resp = _submit(client, assignment_id)
+    assert resp.status_code == 200
+    assert _submission_status(sm, student) == "submitted"
+    assert len(marking.calls) == 1
+    assert jobs_for(sm, student) == []
+    assert _remaining(sm, own) == 100
+    events = {entry["event"]: entry for entry in logs}
+    assert events["quiz_submit_unmetered"]["user_id"] == str(student)
+    assert events["quiz_submit_unmetered"]["submission_id"] == str(marking.calls[0])
+    assert events["usage_unmetered_cost"]["actor_user_id"] == str(student)
+    assert events["usage_unmetered_cost"]["cost_usd"] == "0.004"

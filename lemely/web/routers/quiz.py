@@ -100,7 +100,13 @@ from lemely.web.schemas_quiz import (
     SubmitQuizResponseDTO,
     UpdateQuizDraftRequestDTO,
 )
-from lemely.web.usage import MeteredJob, UsageMeter, get_usage_meter, request_from_auth
+from lemely.web.usage import (
+    MeteredJob,
+    UsageGrantContext,
+    UsageMeter,
+    get_usage_meter,
+    request_from_auth,
+)
 from lemely.web.xp_awards import award_xp_safely
 
 if TYPE_CHECKING:
@@ -978,8 +984,22 @@ def submit_student_quiz(
         # `submit` accepted an assignment the target read could not see: the student was
         # enrolled in between. The window is one request wide, and the submission is
         # already recorded, so a late 402 would strand it unmarked; the cost is logged.
-        log.warning("quiz_submit_unmetered", assignment_id=assignment_id, user_id=auth.user_id)
-        job = MeteredJob.unmetered(MeteredAction.MARK_QUIZ)
+        log.warning(
+            "quiz_submit_unmetered",
+            assignment_id=assignment_id,
+            user_id=auth.user_id,
+            submission_id=str(result.submission_id),
+        )
+        # Built from the student's own request (not `MeteredJob.unmetered`'s anonymous
+        # one), so the `usage_unmetered_cost` line names the student; the submission id
+        # doubles as the job id, which joins the two log lines.
+        job = MeteredJob(
+            None,
+            UsageGrantContext.exempt_for(
+                request_from_auth(auth, MeteredAction.MARK_QUIZ, subject_code=result.subject_code)
+            ),
+            result.submission_id,
+        )
     try:
         award_xp_safely(
             xp_service,
