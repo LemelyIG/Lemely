@@ -38,16 +38,14 @@ from lemely.web.deps import (
 from lemely.web.ratelimit import SlidingWindowLimiter
 from lemely.web.routers.usage import get_usage_estimate_limiter
 from lemely.web.usage import get_usage_meter, request_from_auth
-from tests.test_usage_context_repo import (
-    _attempt_with_points,
-    _put_in_school,
-    _quiz_with_assignment,
-)
 from tests.usage_helpers import (
     NOW,
     assistant,
+    attempt_with_points,
     enforcing_meter,
     give,
+    put_in_school,
+    quiz_with_assignment,
     seat,
     seat_grant,
     seed_catalogue,
@@ -179,8 +177,8 @@ def test_estimate_writes_nothing_to_the_ledger_even_on_an_unseeded_catalogue(
     sm = migrated_sessionmaker
     student = seed_user(sm)
     give(sm, student, units=1000)
-    attempt_id, question_id = _attempt_with_points(sm, student, subject="0580", points=2)
-    assigned = _quiz_with_assignment(sm, subject="0580", included=2)
+    attempt_id, question_id = attempt_with_points(sm, student, subject="0580", points=2)
+    assigned = quiz_with_assignment(sm, subject="0580", included=2)
     before = _ledger_counts(sm)
     _as(api_without_catalogue, student)
     for payload in (
@@ -222,8 +220,8 @@ def test_estimate_reads_the_subject_and_inputs_on_the_server(
         actions=[MeteredAction.MARK_QUIZ],
     )
     seat_grant(sm, student=student, member_id=member, units=1000)
-    in_scope = _quiz_with_assignment(sm, subject="0580", included=3)
-    out_of_scope = _quiz_with_assignment(sm, subject="0625", included=3)
+    in_scope = quiz_with_assignment(sm, subject="0580", included=3)
+    out_of_scope = quiz_with_assignment(sm, subject="0625", included=3)
     # Both assignments must target this student: re-point them.
     with sm.begin() as session:
         for assigned in (in_scope, out_of_scope):
@@ -297,7 +295,7 @@ def test_a_school_leads_assistant_gets_team_lead_unavailable(
     lead, helper, stranger = (seed_user(sm, Role.teacher) for _ in range(3))
     give(sm, lead, units=1000)
     assistant(sm, teacher=lead, member=helper)
-    _put_in_school(sm, lead)
+    put_in_school(sm, lead)
     headers = {ACTING_TEACHER_HEADER: str(lead)}
     _as(api, helper, Role.teacher)
     resp = api.post("/api/usage/estimate", json={"action": "regrade"}, headers=headers)
@@ -365,9 +363,9 @@ def test_estimate_gives_another_users_record_the_same_not_found_as_a_missing_one
     owner, intruder = seed_user(sm), seed_user(sm)
     give(sm, owner, units=1000)
     give(sm, intruder, units=1000)
-    attempt_id, question_id = _attempt_with_points(sm, owner, subject="0580", points=4)
-    other_attempt, other_question = _attempt_with_points(sm, intruder, subject="0580", points=1)
-    assigned = _quiz_with_assignment(sm, subject="0580", included=3)
+    attempt_id, question_id = attempt_with_points(sm, owner, subject="0580", points=4)
+    other_attempt, other_question = attempt_with_points(sm, intruder, subject="0580", points=1)
+    assigned = quiz_with_assignment(sm, subject="0580", included=3)
 
     def self_review(attempt: uuid.UUID, question: uuid.UUID) -> tuple[int, object]:
         resp = api.post(
@@ -625,6 +623,60 @@ def test_history_shows_a_teacher_only_the_part_their_seat_paid(
     _as(api, teacher, Role.teacher)
     (row,) = api.get("/api/usage/history").json()["jobs"]
     assert (row["paidBy"], row["percentOfPlan"], row["credits"]) == ("seat", 100.0, None)
+
+
+def test_history_hides_a_job_the_teacher_neither_ran_nor_funded(
+    api: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    """A seat with nothing left in it puts the seat in the job's chain, but the student's
+    own credits pay. That job is the student's private usage: the teacher never sees it,
+    not even as a row that charged nothing."""
+    sm = migrated_sessionmaker
+    student, teacher = seed_user(sm), seed_user(sm, Role.teacher)
+    give(sm, student, units=1000)
+    seat(
+        sm,
+        teacher=teacher,
+        student=student,
+        subjects=["0580"],
+        actions=[MeteredAction.MARK_PAPER],
+    )  # no seat grant: nothing for the seat to pay with
+    _run_job(sm, student, "0.050", subject_code="0580")
+    _as(api, student)
+    (row,) = api.get("/api/usage/history").json()["jobs"]
+    assert (row["paidBy"], row["credits"]) == ("credits", 50)
+    _as(api, teacher, Role.teacher)
+    assert api.get("/api/usage/history").json() == {"jobs": [], "nextCursor": None}
+
+
+def test_hidden_jobs_do_not_break_the_teachers_paging(
+    api: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    """Hidden jobs are left out of the query, not filtered after the page is cut, so a page
+    is never short or empty while a next cursor is offered."""
+    sm = migrated_sessionmaker
+    funded, private = seed_user(sm), seed_user(sm)
+    teacher = seed_user(sm, Role.teacher)
+    give(sm, private, units=1000)
+    for student in (funded, private):
+        member = seat(
+            sm,
+            teacher=teacher,
+            student=student,
+            subjects=["0580"],
+            actions=[MeteredAction.MARK_PAPER],
+        )
+        if student == funded:
+            seat_grant(sm, student=student, member_id=member, units=1000)
+    for student in (funded, private, private, private, funded, private, private, funded):
+        _run_job(sm, student, "0.010", subject_code="0580")
+    _as(api, teacher, Role.teacher)
+    first = api.get("/api/usage/history", params={"limit": 2}).json()
+    assert [j["actorUserId"] for j in first["jobs"]] == [str(funded)] * 2
+    assert first["nextCursor"] is not None
+    last = api.get("/api/usage/history", params={"limit": 2, "cursor": first["nextCursor"]}).json()
+    assert [j["actorUserId"] for j in last["jobs"]] == [str(funded)]
+    assert last["nextCursor"] is None
 
 
 def test_history_lets_the_lead_and_the_assistant_each_see_their_own_view(

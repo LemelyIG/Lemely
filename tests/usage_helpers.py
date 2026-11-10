@@ -9,7 +9,19 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from lemely.core.metered_actions import MeteredAction
-from lemely.db.models.enums import Role
+from lemely.db.models import School, SchoolMembership
+from lemely.db.models.attempts import Attempt, QuestionResult, QuestionResultPoint
+from lemely.db.models.enums import (
+    AttemptOrigin,
+    ConfidenceBand,
+    MarkerSource,
+    MembershipRole,
+    QuestionDifficulty,
+    QuizQuestionStatus,
+    Role,
+    SessionMonth,
+)
+from lemely.db.models.quizzes import Quiz, QuizAssignment, QuizQuestion
 from lemely.db.models.team import (
     AssistantRole,
     CapPeriod,
@@ -21,6 +33,7 @@ from lemely.db.models.usage import GrantKind, UsageJob
 from lemely.db.models.users import User
 from lemely.db.usage_catalogue_repo import ensure_usage_catalogue
 from lemely.db.usage_ledger_repo import UsageLedger
+from tests.team_db import add_class, enrol
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -156,3 +169,117 @@ def enforcing_meter(sm: sessionmaker[Session], now: datetime = NOW) -> UsageMete
     from lemely.web.usage import UsageMeter
 
     return UsageMeter(sm, enforce=True, now=lambda: now)
+
+
+def put_in_school(sm: sessionmaker[Session], user: uuid.UUID) -> None:
+    school_id = uuid.uuid4()
+    with sm.begin() as session:
+        session.add(School(id=school_id, name="Guard School", seat_quota=5))
+        session.flush()
+        session.add(
+            SchoolMembership(
+                school_id=school_id, user_id=user, membership_role=MembershipRole.teacher
+            )
+        )
+
+
+def attempt_with_points(
+    sm: sessionmaker[Session], owner: uuid.UUID, *, subject: str | None, points: int
+) -> tuple[uuid.UUID, uuid.UUID]:
+    attempt_id, qr_id = uuid.uuid4(), uuid.uuid4()
+    with sm.begin() as session:
+        session.add(
+            Attempt(
+                id=attempt_id,
+                user_id=owner,
+                subject_code=subject,
+                session_month=SessionMonth.may_june,
+                session_year=2024,
+                paper_number=4,
+                paper_variant=2,
+                awarded_marks=3,
+                maximum_marks=4,
+                percentage=75.0,
+                recorded_at=NOW,
+                origin=AttemptOrigin.past_paper,
+            )
+        )
+        session.flush()
+        session.add(
+            QuestionResult(
+                id=qr_id,
+                attempt_id=attempt_id,
+                question_id="1",
+                awarded_marks=1,
+                maximum_marks=4,
+                confidence_band=ConfidenceBand.low,
+                confidence_score=0.4,
+                marker_source=MarkerSource.ai,
+            )
+        )
+        session.flush()
+        for i in range(points):
+            session.add(
+                QuestionResultPoint(
+                    question_result_id=qr_id,
+                    mark_point_id=f"M{i}",
+                    ordinal=i,
+                    tariff=1,
+                    point_text="p",
+                    awarded=False,
+                )
+            )
+    return attempt_id, qr_id
+
+
+class Assigned:
+    """An assigned quiz and who may see it: ``owner`` directly, or ``class_id``'s roster."""
+
+    def __init__(self, assignment_id: uuid.UUID, owner: uuid.UUID, class_id: uuid.UUID | None):
+        self.assignment_id = str(assignment_id)
+        self.owner = owner
+        self.class_id = class_id
+
+
+def quiz_with_assignment(
+    sm: sessionmaker[Session],
+    *,
+    subject: str,
+    included: int,
+    removed: int = 0,
+    via_class: bool = False,
+) -> Assigned:
+    teacher = seed_user(sm, Role.teacher)
+    student = seed_user(sm)
+    quiz_id, assignment_id = uuid.uuid4(), uuid.uuid4()
+    class_id = add_class(sm, teacher_id=teacher, subject_code=subject)[0] if via_class else None
+    if class_id is not None:
+        enrol(sm, class_id, student)
+    with sm.begin() as session:
+        session.add(Quiz(id=quiz_id, teacher_id=teacher, subject_code=subject, title="Recap"))
+        session.flush()
+        for i in range(included + removed):
+            session.add(
+                QuizQuestion(
+                    quiz_id=quiz_id,
+                    question_ref=f"q{i}",
+                    position=i,
+                    status=(
+                        QuizQuestionStatus.included if i < included else QuizQuestionStatus.removed
+                    ),
+                    difficulty=QuestionDifficulty.standard,
+                    question_type="explanation",
+                    prompt="Explain.",
+                    total_marks=2,
+                )
+            )
+        session.add(
+            QuizAssignment(
+                id=assignment_id,
+                quiz_id=quiz_id,
+                student_id=None if via_class else student,
+                class_id=class_id,
+                assigned_by=teacher,
+            )
+        )
+    return Assigned(assignment_id, student, class_id)

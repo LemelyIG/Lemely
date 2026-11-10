@@ -1,9 +1,10 @@
 """Read models for the usage meter and usage history (billing spec §2.1, §2.4).
 
 Both views answer only about the caller. The meter reads the caller's own grants, seats and
-debt. The history lists the caller's own jobs, plus the jobs run under a seat or assistant row
-the caller leads, and for those it counts only the grants the caller owns or funds through that
-row: a seat's teacher never sees what the student paid from the student's own balance.
+debt. The history lists the caller's own jobs, plus jobs run by someone else that charged a
+grant the caller owns or funds through a seat or assistant row they lead. For those it counts
+only that part: a seat's teacher never sees what the student paid from the student's own
+balance, and never sees a job the seat did not pay for at all.
 """
 
 from __future__ import annotations
@@ -247,9 +248,23 @@ def history_page(
     led_members = list(
         session.scalars(select(TeacherMember.id).where(TeacherMember.teacher_user_id == user_id))
     )
-    stmt = select(UsageJob).where(
-        or_(UsageJob.actor_user_id == user_id, UsageJob.teacher_member_id.in_(led_members))
+    # A job the caller did not run is theirs to see only if it charged a grant they own or
+    # fund through a row they lead. One that charged nothing there (a seat in the chain with
+    # nothing left in it, the student's own balance paying) is the runner's private usage.
+    charged_to_caller = (
+        select(UsageEntry.id)
+        .join(UsageGrant, UsageGrant.id == UsageEntry.grant_id)
+        .where(
+            UsageEntry.job_id == UsageJob.job_id,
+            UsageEntry.kind == UsageEntryKind.settle,
+            or_(
+                UsageGrant.owner_user_id == user_id,
+                UsageGrant.teacher_member_id.in_(led_members),
+            ),
+        )
+        .exists()
     )
+    stmt = select(UsageJob).where(or_(UsageJob.actor_user_id == user_id, charged_to_caller))
     if after is not None:
         stmt = stmt.where(
             or_(
