@@ -94,6 +94,18 @@ def test_evidence_without_balance_is_402(
     assert jobs_for(pg_sessionmaker, uuid.UUID(student_id)) == []
 
 
+def test_the_input_count_is_the_servers_not_the_payloads(
+    wired: tuple[TestClient, str, str, str],
+) -> None:
+    """One submitted point, three on the question: the estimate prices the server's three."""
+    api, _, attempt_id, qr_id = wired
+    one_point = {"points": [{"markPointId": "p1", "earned": True, "evidence": "I wrote 12 N"}]}
+    resp = api.post(_web._path(attempt_id, qr_id), json=one_point)
+    assert resp.status_code == 402
+    # base 1-2 + 3 marks x 0-1 = 1-5 (a client-supplied count of 1 would give 1-3)
+    assert resp.json()["estimate"] == [1, 5]
+
+
 def test_evidence_with_balance_settles(
     wired: tuple[TestClient, str, str, str], pg_sessionmaker: sessionmaker[Session]
 ) -> None:

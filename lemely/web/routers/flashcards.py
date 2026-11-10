@@ -148,6 +148,18 @@ def _detail_to_dto(deck: DeckDetail) -> DeckDetailDTO:
     )
 
 
+def _seat_subject(body: GenerateDeckRequestDTO, origin: DeckOrigin) -> str | None:
+    """The subject a seat may be billed for, or ``None`` when no seat may pay.
+
+    ``subjectCode`` and a free-text ``topic`` come from the client, and the spec (§2.2)
+    never trusts client input for the billing subject. Only a ``weakness`` deck has a
+    topic the server picks (the caller's own weakest topic for that subject), so only it
+    is seat-eligible; every ``topic`` deck is billed to the student's own allowance and
+    credits, whatever subject it names.
+    """
+    return body.subjectCode if origin is DeckOrigin.weakness else None
+
+
 def _generated_to_dto(result: GeneratedDeckResult) -> GenerateDeckResponseDTO:
     return GenerateDeckResponseDTO(
         deck=_summary_to_dto(result.deck),
@@ -230,19 +242,29 @@ def generate_deck(
     reports the true ``generatedCount`` beside ``requestedCount``; a short
     response is not padded and must not be rendered as if it were complete.
 
-    Metered as ``generate_flashcards`` (402 when the payer chain cannot cover it). The
-    subject is the deck being created (``body.subjectCode``, which the deck stores), so a
-    seat covering flashcards for it pays; the input is ``count``, bounded 1..50 by the
-    schema and clamped again by the estimator. A refused request, or a generation that
-    produced no card, is released and charges nothing.
+    Metered as ``generate_flashcards`` (402 when the payer chain cannot cover it); the input
+    is ``count``, bounded 1..50 by the schema and clamped again by the estimator. Who pays
+    is decided server-side, because ``subjectCode`` and a free-text ``topic`` come from the
+    client:
+
+    * ``origin="weakness"``: the topic is picked from the caller's own weakness data, so a
+      seat covering flashcards for ``subjectCode`` pays (allowance first, then the
+      teacher's credits within the seat cap).
+    * ``origin="topic"``: never seat-paid, even for a subject a seat covers and a topic on
+      the syllabus. It is billed to the student's own allowance and credits, and is a 402
+      when those cannot cover it. The deck is still created and stores ``subjectCode``.
+
+    A refused request, or a generation that produced no card, is released and charges
+    nothing.
 
     Declared before ``/decks/{deck_id}`` so the literal path wins the match.
     """
+    origin = _parse_origin(body.origin)
     usage = meter.authorize(
         request_from_auth(
             auth,
             MeteredAction.GENERATE_FLASHCARDS,
-            subject_code=body.subjectCode,
+            subject_code=_seat_subject(body, origin),
             input_count=body.count,
         )
     )
@@ -251,7 +273,7 @@ def generate_deck(
             result = service.generate_deck(
                 auth.user_id,
                 subject_code=body.subjectCode,
-                origin=_parse_origin(body.origin),
+                origin=origin,
                 count=body.count,
                 topic=body.topic,
                 title=body.title,
