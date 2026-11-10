@@ -129,7 +129,12 @@ def test_estimate_quotes_credits_and_the_range(
     _as(api, student)
     resp = api.post(
         "/api/usage/estimate",
-        json={"action": "generate_flashcards", "subjectCode": "0625", "count": 4},
+        json={
+            "action": "generate_flashcards",
+            "subjectCode": "0625",
+            "origin": "topic",
+            "count": 4,
+        },
     )
     assert resp.status_code == 200, resp.text
     # base 2-4 + 4 cards x 1-2 = 6-12
@@ -186,7 +191,7 @@ def test_estimate_writes_nothing_to_the_ledger_even_on_an_unseeded_catalogue(
     for payload in (
         {"action": "mark_paper"},
         {"action": "study_plan", "subjectCode": "0580"},
-        {"action": "generate_flashcards", "subjectCode": "0580", "count": 3},
+        {"action": "generate_flashcards", "subjectCode": "0580", "origin": "topic", "count": 3},
         {
             "action": "self_review",
             "attemptId": str(attempt_id),
@@ -950,7 +955,9 @@ def test_an_assistant_gets_no_plan_percentages_for_the_lead(
     assert row["percentOfPlan"] is None
     assert row["estimatePercentOfPlan"] is None
     assert row["credits"] is None
-    assert row["estimateCredits"] == [40, 120]
+    # No estimate at all: ``estimateCredits`` on an allowance-paid row would read as credits
+    # the lead spent, and the percentage is withheld. The quote was given before the job.
+    assert row["estimateCredits"] is None
     _as(api, lead, Role.teacher)
     (row,) = api.get("/api/usage/history").json()["jobs"]
     assert (row["percentOfPlan"], row["estimatePercentOfPlan"]) == (1.0, [1.0, 3.0])
@@ -1103,3 +1110,61 @@ def test_history_pages_through_jobs_with_identical_timestamps(
                 break
         assert len(seen) == 5
         assert len(set(seen)) == 5
+
+
+def test_a_flashcard_estimate_quotes_a_seat_only_for_a_weakness_deck(
+    api: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    """Seats pay flashcards only for a weakness deck (the route's rule): the estimate takes
+    the deck ``origin`` and quotes the same payer the route will charge."""
+    sm = migrated_sessionmaker
+    student, teacher = seed_user(sm), seed_user(sm, Role.teacher)
+    give(sm, student, units=1000)
+    member = seat(
+        sm,
+        teacher=teacher,
+        student=student,
+        subjects=["0625"],
+        actions=[MeteredAction.GENERATE_FLASHCARDS],
+    )
+    seat_grant(sm, student=student, member_id=member, units=1000)
+    _as(api, student)
+
+    def quote(origin: str | None, subject: str = "0625") -> dict[str, object]:
+        body: dict[str, object] = {"action": "generate_flashcards", "subjectCode": subject}
+        body["count"] = 4
+        if origin is not None:
+            body["origin"] = origin
+        resp = api.post("/api/usage/estimate", json=body)
+        assert resp.status_code in (200, 422), resp.text
+        return {"status": resp.status_code, **resp.json()}
+
+    assert quote("weakness")["payer"] == "seat"
+    assert quote("topic")["payer"] == "credits"  # a topic is the client's, never seat-paid
+    assert quote("weakness", subject="0580")["payer"] == "credits"  # out of the seat's subject
+    assert quote(None)["status"] == 422  # the route needs an origin, so the quote does
+    assert quote("manual")["status"] == 422  # a manual deck has nothing to generate
+
+
+def test_history_percentages_round_to_one_decimal_and_the_estimate_up(
+    api: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    """A 300-unit plan makes the percentages non-integers: 40 units is 13.3% to one
+    decimal, and the estimate rounds up to whole percents (40 and 120 units: 14 and 40)."""
+    sm = migrated_sessionmaker
+    student = seed_user(sm)
+    give(
+        sm,
+        student,
+        units=300,
+        kind=GrantKind.period_allowance,
+        visible=False,
+        expires_at=_ALLOWANCE_END,
+    )
+    _as(api, student)
+    quote = api.post("/api/usage/estimate", json={"action": "mark_paper"}).json()
+    assert (quote["percentLow"], quote["percentHigh"]) == (14, 40)
+    _run_job(sm, student, "0.040")
+    (row,) = api.get("/api/usage/history").json()["jobs"]
+    assert row["percentOfPlan"] == 13.3
+    assert row["estimatePercentOfPlan"] == [14.0, 40.0]

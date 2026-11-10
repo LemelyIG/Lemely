@@ -225,11 +225,13 @@ def _estimate_request(
             auth, action, subject_code=quiz.subject_code, input_count=quiz.input_count
         )
     if action is MeteredAction.GENERATE_FLASHCARDS:
-        if body.subjectCode is None or body.count is None:
-            _missing("subjectCode and count")
-        return request_from_auth(
-            auth, action, subject_code=body.subjectCode, input_count=body.count
-        )
+        if body.subjectCode is None or body.origin is None or body.count is None:
+            _missing("subjectCode, origin and count")
+        # The route's rule (``_seat_subject``): only a weakness deck has a topic the server
+        # picks, so only it can be seat-paid; a topic deck is billed to the student's own
+        # allowance and credits whatever subject it names.
+        seat_subject = body.subjectCode if body.origin == "weakness" else None
+        return request_from_auth(auth, action, subject_code=seat_subject, input_count=body.count)
     if body.subjectCode is None:  # MeteredAction.STUDY_PLAN
         _missing("subjectCode")
     return request_from_auth(auth, action, subject_code=body.subjectCode)

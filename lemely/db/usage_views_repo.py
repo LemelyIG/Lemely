@@ -470,8 +470,10 @@ def history_page(
                 _estimate_percent(job.estimate_low, size),
                 _estimate_percent(job.estimate_high, size),
             )
-        else:
+        elif hold_scope is None:
             estimate_credits = (job.estimate_low, job.estimate_high)
+        # else: a plan's hold the viewer may not size. Nothing is quoted: units under
+        # ``estimateCredits`` would read as credits the plan's owner spent.
         rows.append(
             HistoryRow(
                 row_id=job.id,

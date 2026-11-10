@@ -20,8 +20,9 @@ class EstimateRequestDTO(ApiModel):
 
     ``attemptId``, ``questionResultId`` and ``assignmentId`` name a record the caller owns;
     its subject and countable inputs are read from it on the server, and ``subjectCode`` and
-    ``count`` are ignored for those actions. ``subjectCode`` and ``count`` are read only for
-    the actions whose subject and size the route itself takes from its own request.
+    ``count`` are ignored for those actions. ``subjectCode``, ``origin`` and ``count`` are read only
+    for the actions whose subject, deck origin and size the route itself takes from its own
+    request (``origin`` is the flashcard deck's: a seat pays only for a ``weakness`` deck).
     """
 
     action: MeteredAction
@@ -29,6 +30,7 @@ class EstimateRequestDTO(ApiModel):
     questionResultId: uuid.UUID | None = None
     assignmentId: uuid.UUID | None = None
     subjectCode: str | None = Field(default=None, min_length=1, max_length=16)
+    origin: Literal["topic", "weakness"] | None = None
     count: int | None = Field(default=None, ge=1, le=50)
 
 
@@ -83,6 +85,8 @@ class UsageJobDTO(ApiModel):
     credits: int | None
     debtCredits: int | None
     estimatePercentOfPlan: list[float] | None
+    #: Credits only: set when credits pay first. Null when a plan pays, whoever asks: the plan
+    #: is quoted as ``estimatePercentOfPlan``, or not at all for an assistant acting for a lead.
     estimateCredits: list[int] | None
     actorUserId: str
     createdAt: datetime
