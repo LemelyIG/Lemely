@@ -18,8 +18,11 @@ Every metered route takes three steps, in this order:
    call cost nothing. The web layer's thread hops (the SSE worker, the grading pool, the
    quiz marking thread) do not copy context, which is why the scope opens inside the
    worker. The block must join every thread it starts before it exits: the total is read
-   once, at exit. ``run()`` must enter and exit in one thread and one context, so it wraps
-   the worker's callable, never the body of a generator the framework iterates. Metered
+   once, at exit. On entry, ``run()`` restarts the hold's deadline (queued work can start
+   long after its reserve) and reserves again if the sweeper already expired the hold, so
+   a 402 reason comes before any model call. ``run()`` must enter and exit in one thread
+   and one context, so it wraps the worker's callable, never the body of a generator the
+   framework iterates. Metered
    jobs never nest (an inner cost scope would shadow the outer one and the outer job would
    under-charge), so :meth:`MeteredJob.run` refuses to. :meth:`MeteredJob.release` is only
    for a reserved job whose ``run()`` will never start.
@@ -381,6 +384,15 @@ class MeteredJob:
                 )
                 raise RuntimeError("this metered job is already running in another thread")
             self._running = True
+        if self._reserved:
+            try:
+                self._restart_clock()
+            except BaseException:
+                # Blocked (or failed) before any work: nothing is held any more.
+                with self._lock:
+                    self._running = False
+                    self._finished = True
+                raise
         entry_thread = threading.get_ident()
         token = _RUNNING_JOB.set(self)
         scope = cost_scope()
@@ -391,6 +403,47 @@ class MeteredJob:
             self._exit(scope, token, entry_thread, accumulator.total_usd, settle=False)
             raise
         self._exit(scope, token, entry_thread, accumulator.total_usd, settle=not self._abandoned)
+
+    def _restart_clock(self) -> None:
+        """Start the hold's deadline when the work starts, not when it was reserved.
+
+        Queued work (a class set behind one grading worker) can start long after its
+        reserve. An open hold gets ``now + job_timeout + JOB_SLACK``. A hold the sweeper
+        already expired is reserved again, same chain and estimate, under a new job id,
+        and a chain that can no longer cover it raises :class:`UsageBlocked` before any
+        model call. A ledger failure here is logged (``usage_extend_failed``) and the work
+        goes ahead on the old deadline: metering fails open. A job whose instance stops
+        while it is still queued keeps the old behaviour: its hold clears at the deadline
+        set at reserve.
+        """
+        meter = self._live_meter()
+        now = meter.now()
+        spec = ACTION_SPECS[self.ctx.request.action]
+        try:
+            with meter.sessionmaker.begin() as session:
+                status = (
+                    UsageLedger(session)
+                    .extend(self.job_id, expires_at=now + spec.job_timeout + JOB_SLACK, now=now)
+                    .status
+                )
+        except Exception:
+            log.exception(
+                "usage_extend_failed",
+                job_id=str(self.job_id),
+                action=self.ctx.request.action.value,
+            )
+            return
+        if status is UsageJobStatus.open:
+            return
+        log.warning(
+            "usage_hold_expired_before_start",
+            job_id=str(self.job_id),
+            action=self.ctx.request.action.value,
+            status=status.value,
+        )
+        self.job_id = uuid.uuid4()
+        self._reserved = False
+        self._reserve()
 
     def _exit(
         self,
@@ -469,6 +522,17 @@ class MeteredJob:
                     settled_job = ledger.settle(self.job_id, actual_cost_usd=cost_usd, now=now)
                     if settled_job.status is UsageJobStatus.settled:
                         run_post_settle_hooks(session, settled_job, list(self.ctx.chain), now)
+                    else:
+                        # The sweeper closed the job while the work ran past its whole
+                        # deadline: the hold is back and the balance may be spent, so a late
+                        # charge would make unplanned debt. Refused; the cost is in this line.
+                        log.warning(
+                            "usage_settle_on_closed_job",
+                            job_id=str(self.job_id),
+                            action=request.action.value,
+                            status=settled_job.status.value,
+                            cost_usd=str(cost_usd),
+                        )
                 else:
                     ledger.release(self.job_id, now=now)
         except Exception:

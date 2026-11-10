@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextvars
 import threading
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Annotated
 
@@ -656,6 +656,132 @@ def test_a_release_failure_is_logged_and_the_work_error_still_raises(
     ):
         raise ValueError("the work's own error")
     assert [e["settle"] for e in logs if e["event"] == "usage_finish_failed"] == [False]
+
+
+# --- the hold clock starts when the work starts (queued jobs) --------------------------
+
+
+def _clocked_meter(sm: sessionmaker[Session], clock: list[datetime]) -> UsageMeter:
+    return UsageMeter(sm, enforce=True, now=lambda: clock[0])
+
+
+def _sweep(sm: sessionmaker[Session], now: datetime) -> int:
+    with sm.begin() as session:
+        return UsageLedger(session).expire_stale_jobs(now=now)
+
+
+def test_a_job_started_after_its_original_deadline_still_settles_once(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Queued two hours behind a class set: run() restarts the clock, the sweeper skips it."""
+    sm = migrated_sessionmaker
+    student = _funded_student(sm)
+    clock = [NOW]
+    meter = _clocked_meter(sm, clock)
+    job = meter.reserve(meter.authorize(_req(student)))
+    clock[0] = NOW + timedelta(hours=2)  # mark_paper: 45 min timeout + 10 min slack long gone
+    with job.run():
+        assert _sweep(sm, clock[0] + timedelta(minutes=1)) == 0
+        record_llm_cost(Decimal("0.020"))
+    (row,) = jobs_for(sm, student)
+    assert (row.status, row.charged) == (UsageJobStatus.settled, 20)
+    assert row.expires_at == NOW + timedelta(hours=2, minutes=55)
+
+
+def test_a_hold_the_sweeper_expired_is_reserved_again_at_start(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    student = _funded_student(sm)
+    clock = [NOW]
+    meter = _clocked_meter(sm, clock)
+    job = meter.reserve(meter.authorize(_req(student)))
+    first_id = job.job_id
+    clock[0] = NOW + timedelta(hours=2)
+    assert _sweep(sm, clock[0]) == 1
+    with capture_logs() as logs, job.run():
+        record_llm_cost(Decimal("0.020"))
+    expired, settled = jobs_for(sm, student)
+    assert (expired.job_id, expired.status, expired.charged) == (
+        first_id,
+        UsageJobStatus.expired,
+        0,
+    )
+    assert (settled.job_id, settled.status, settled.charged) == (
+        job.job_id,
+        UsageJobStatus.settled,
+        20,
+    )
+    assert settled.job_id != first_id
+    assert [e["event"] for e in logs if e["event"] == "usage_hold_expired_before_start"] == [
+        "usage_hold_expired_before_start"
+    ]
+
+
+def test_an_expired_hold_without_balance_left_is_blocked_before_the_work(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The sweeper returned the hold and another job spent it: a 402 reason, no model call."""
+    sm = migrated_sessionmaker
+    student = _funded_student(sm, units=150)
+    clock = [NOW]
+    meter = _clocked_meter(sm, clock)
+    queued = meter.reserve(meter.authorize(_req(student)))
+    clock[0] = NOW + timedelta(hours=2)
+    assert _sweep(sm, clock[0]) == 1
+    meter.reserve(meter.authorize(_req(student)))  # takes 120 of the 150
+    ran: list[bool] = []
+    with pytest.raises(UsageBlocked) as info, queued.run():
+        ran.append(True)
+    assert ran == []
+    assert info.value.reason is UsageBlockReason.INSUFFICIENT_CREDITS
+    assert sorted(j.status.value for j in jobs_for(sm, student)) == ["expired", "open"]
+    # The blocked job is finished: it can never run (free) later, and release is a no-op.
+    with pytest.raises(RuntimeError, match="already released"), queued.run():
+        ran.append(True)
+    assert ran == []
+    with capture_logs() as logs:
+        queued.release()
+    assert [e["event"] for e in logs if e["event"].startswith("usage_")] == []
+    assert [j.status for j in jobs_for(sm, student)].count(UsageJobStatus.open) == 1
+
+
+def test_a_failed_extend_never_blocks_the_work(
+    migrated_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Metering fails open: the hold keeps its old deadline and the work runs and settles."""
+    sm = migrated_sessionmaker
+    student = _funded_student(sm)
+    meter = enforcing_meter(sm)
+    job = meter.reserve(meter.authorize(_req(student)))
+
+    def broken(*_a: object, **_k: object) -> None:
+        raise RuntimeError("ledger down")
+
+    monkeypatch.setattr(UsageLedger, "extend", broken)
+    with capture_logs() as logs, job.run():
+        record_llm_cost(Decimal("0.020"))
+    assert [e["event"] for e in logs if e["event"] == "usage_extend_failed"] == [
+        "usage_extend_failed"
+    ]
+    (row,) = jobs_for(sm, student)
+    assert (row.status, row.charged) == (UsageJobStatus.settled, 20)
+
+
+def test_a_settle_on_a_job_the_sweeper_closed_is_refused_with_a_warning(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The hold is gone and the balance may be spent: no late charge, no silent success."""
+    sm = migrated_sessionmaker
+    student = _funded_student(sm)
+    meter = enforcing_meter(sm)
+    with capture_logs() as logs, meter.job(meter.authorize(_req(student))):
+        record_llm_cost(Decimal("0.020"))
+        assert _sweep(sm, NOW + timedelta(days=1)) == 1  # the work overran its whole deadline
+    (row,) = jobs_for(sm, student)
+    assert (row.status, row.charged) == (UsageJobStatus.expired, 0)
+    (line,) = [e for e in logs if e["event"] == "usage_settle_on_closed_job"]
+    assert (line["log_level"], line["status"], line["cost_usd"]) == ("warning", "expired", "0.020")
 
 
 # --- deferred subjects -----------------------------------------------------------------

@@ -529,8 +529,30 @@ class UsageLedger:
         """Free every hold of a failed job at no charge (§5.7 step 6)."""
         return self._close(job_id, UsageJobStatus.released, now)[0]
 
+    def extend(self, job_id: uuid.UUID, *, expires_at: datetime, now: datetime) -> UsageJob:
+        """Restart an open job's hold clock when its work starts (queued work, §5.7 step 7).
+
+        Moves ``expires_at`` later on an open job and touches nothing else: no amount,
+        hold, entry or balance changes, and a deadline never moves earlier. A job that is
+        no longer open (the sweeper expired it, or it was released or settled) is returned
+        unchanged, so the caller can see the hold is gone and reserve again. Takes the same
+        owner and job locks as :meth:`expire_stale_jobs`, which re-checks the deadline
+        under them, so an extend and a sweep never both win.
+        """
+        if expires_at <= now:
+            raise ValueError("expires_at must be after now")
+        job, _payers = self._locked_job(job_id)
+        if job.status is UsageJobStatus.open and expires_at > job.expires_at:
+            job.expires_at = expires_at
+            self._session.flush()
+        return job
+
     def expire_stale_jobs(self, *, now: datetime) -> int:
-        """Release open jobs past ``expires_at`` and mark them expired (§5.7 step 7)."""
+        """Release open jobs past ``expires_at`` and mark them expired (§5.7 step 7).
+
+        The candidates are read without locks; each one's deadline is checked again under
+        its locks, so a job whose clock :meth:`extend` restarted meanwhile is skipped.
+        """
         rows = self._session.execute(
             sa.select(UsageJob.job_id, UsageJob.payer_chain)
             .where(UsageJob.status == UsageJobStatus.open, UsageJob.expires_at <= now)
@@ -544,7 +566,7 @@ class UsageLedger:
         for job_id, _chain in rows:
             # Count only the jobs this sweep closed: another transaction may have
             # released, settled or expired one between the candidate read and the lock.
-            if self._close(job_id, UsageJobStatus.expired, now)[1]:
+            if self._close(job_id, UsageJobStatus.expired, now, due_by=now)[1]:
                 expired += 1
         return expired
 
@@ -573,16 +595,24 @@ class UsageLedger:
         return {gid: int(total) for gid, total in rows if gid is not None and total}
 
     def _close(
-        self, job_id: uuid.UUID, status: UsageJobStatus, now: datetime
+        self,
+        job_id: uuid.UUID,
+        status: UsageJobStatus,
+        now: datetime,
+        *,
+        due_by: datetime | None = None,
     ) -> tuple[UsageJob, bool]:
         """Release every hold and move an open job to ``status``.
 
         Returns the job and whether this call changed it: a job that is no longer
         open (closed by a concurrent transaction) is left alone and reported as
-        unchanged.
+        unchanged. With ``due_by`` (the sweeper), so is a job whose deadline, read
+        under the lock, is later than ``due_by``.
         """
         job, payers = self._locked_job(job_id)
         if job.status is not UsageJobStatus.open:
+            return job, False
+        if due_by is not None and job.expires_at > due_by:
             return job, False
         holds = self._job_holds(job_id)
         slots = self._slots(payers, now=now, lock=True, include=set(holds))
