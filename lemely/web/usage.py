@@ -18,8 +18,11 @@ Every metered route takes three steps, in this order:
    call cost nothing. The web layer's thread hops (the SSE worker, the grading pool, the
    quiz marking thread) do not copy context, which is why the scope opens inside the
    worker. The block must join every thread it starts before it exits: the total is read
-   once, at exit. Metered jobs never nest (an inner cost scope would shadow the outer one
-   and the outer job would under-charge), so :meth:`MeteredJob.run` refuses to.
+   once, at exit. ``run()`` must enter and exit in one thread and one context, so it wraps
+   the worker's callable, never the body of a generator the framework iterates. Metered
+   jobs never nest (an inner cost scope would shadow the outer one and the outer job would
+   under-charge), so :meth:`MeteredJob.run` refuses to. :meth:`MeteredJob.release` is only
+   for a reserved job whose ``run()`` will never start.
 
 :meth:`UsageMeter.job` is steps 2 and 3 together, for a synchronous route. A settle or
 release that fails after the work finished is logged (``usage_finish_failed``) and never
@@ -31,6 +34,7 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import inspect
+import threading
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
@@ -74,10 +78,10 @@ from lemely.runtime.config import Settings  # noqa: TC001 - FastAPI resolves it 
 from lemely.web.deps import (
     AuthContext,
     TeamActor,
-    _team_lead_unavailable,
-    _team_permission_denied,
-    get_auth_context,
     get_settings,
+    require_role,
+    team_lead_unavailable_error,
+    team_permission_denied_error,
 )
 
 if TYPE_CHECKING:
@@ -95,7 +99,9 @@ log = structlog.get_logger(__name__)
 T = TypeVar("T")
 
 #: Called after a job settles, in the settle's transaction (paymob billing phase 06
-#: registers the auto top-up hook in ``create_app``).
+#: registers the auto top-up hook in ``create_app``). It runs while the chain owners'
+#: advisory locks are held, so a hook must be quick and do no network I/O (spec §6:
+#: metering never calls Paymob); phase 06's hook only enqueues.
 PostSettleHook = Callable[["Session", "UsageJob", Sequence["Payer"], datetime], None]
 _POST_SETTLE_HOOKS: list[PostSettleHook] = []
 
@@ -114,7 +120,11 @@ def clear_post_settle_hooks() -> None:
 def run_post_settle_hooks(
     session: Session, job: UsageJob, payers: Sequence[Payer], now: datetime
 ) -> None:
-    """Run each hook in its own savepoint. A failing hook is logged and never undoes the settle."""
+    """Run each hook in its own savepoint. A failing hook is logged and never undoes the settle.
+
+    Only ``Exception`` is caught: a ``BaseException`` from a hook (``KeyboardInterrupt``,
+    interpreter exit) rolls the settle back with it, and the sweeper expires the open job.
+    """
     for hook in tuple(_POST_SETTLE_HOOKS):
         try:
             with session.begin_nested():
@@ -135,6 +145,11 @@ EXEMPT_ROLES: frozenset[Role] = frozenset({Role.platform_admin})
 #: The metered job running in this context, so a second one inside it is refused.
 _RUNNING_JOB: contextvars.ContextVar[MeteredJob | None] = contextvars.ContextVar(
     "lemely_running_metered_job", default=None
+)
+_NESTED_JOB = "nested metered job: an inner cost scope would hide its cost from the outer job"
+_CROSSED_CONTEXT = (
+    "MeteredJob.run() exited in a different thread or context than it entered: wrap the "
+    "worker's callable, never the body of a generator the framework iterates"
 )
 
 
@@ -173,8 +188,8 @@ def _assistant_refusal(exc: AssistantUnavailable) -> HTTPException:
     assistant's balance pay for team work (R4).
     """
     if exc.code == "team_lead_unavailable":
-        return _team_lead_unavailable()
-    return _team_permission_denied()
+        return team_lead_unavailable_error()
+    return team_permission_denied_error()
 
 
 @dataclass(frozen=True)
@@ -252,6 +267,10 @@ class MeteredJob:
         self._reserved = False
         self._abandoned = False
         self._finished = False
+        self._running = False
+        # Guards _finished and _running: release() may come from the request thread
+        # while run() starts in a worker.
+        self._lock = threading.Lock()
 
     @classmethod
     def unmetered(cls, action: MeteredAction) -> MeteredJob:
@@ -314,41 +333,115 @@ class MeteredJob:
         self._abandoned = True
 
     def release(self) -> None:
-        """Release a reserved job that will never run (claim lost, submit refused)."""
+        """Release a reserved job whose :meth:`run` will never start (claim lost, submit refused).
+
+        Never call it while :meth:`run` is active, in this thread or another: the work
+        would finish free. Such a call is logged (``usage_release_while_running``) and
+        ignored; use :meth:`abandon` to fail running work. Once released, :meth:`run`
+        refuses to start.
+        """
+        with self._lock:
+            if self._running:
+                log.warning(
+                    "usage_release_while_running",
+                    job_id=str(self.job_id),
+                    action=self.ctx.request.action.value,
+                )
+                return
+            if self._finished:
+                return
+            self._finished = True
         self._finish(Decimal(0), settle=False)
 
     @contextlib.contextmanager
     def run(self) -> Iterator[MeteredJob]:
         """Meter the enclosed work: settle on a normal exit, release on failure.
 
-        Join every worker thread before the block exits; the total is read at exit.
+        Enter and exit in one thread and one context: wrap the worker's callable, never
+        the body of a generator the framework iterates (Starlette runs each ``next()`` of
+        a sync stream in a fresh context, so costs after the first yield would be lost).
+        An exit in another thread or context releases the job, logs
+        ``usage_run_crossed_context`` and raises :class:`RuntimeError`. Join every worker
+        thread before the block exits; the total is read at exit.
         """
         if _RUNNING_JOB.get() is not None:
-            self._finish(Decimal(0), settle=False)
-            raise RuntimeError(
-                "nested metered job: an inner cost scope would hide its cost from the outer job"
-            )
+            self._end(Decimal(0), settle=False)
+            raise RuntimeError(_NESTED_JOB)
+        with self._lock:
+            if self._finished:
+                raise RuntimeError("this metered job was already released or finished")
+            self._running = True
+        entry_thread = threading.get_ident()
         token = _RUNNING_JOB.set(self)
+        scope = cost_scope()
+        accumulator = scope.__enter__()
         try:
-            with cost_scope() as accumulator:
-                try:
-                    yield self
-                except BaseException:
-                    self._finish(accumulator.total_usd, settle=False)
-                    raise
-                self._finish(accumulator.total_usd, settle=not self._abandoned)
+            yield self
+        except BaseException:
+            self._exit(scope, token, entry_thread, accumulator.total_usd, settle=False)
+            raise
+        self._exit(scope, token, entry_thread, accumulator.total_usd, settle=not self._abandoned)
+
+    def _exit(
+        self,
+        scope: contextlib.AbstractContextManager[object],
+        token: contextvars.Token[MeteredJob | None],
+        entry_thread: int,
+        cost_usd: Decimal,
+        *,
+        settle: bool,
+    ) -> None:
+        crossed = _RUNNING_JOB.get() is not self or threading.get_ident() != entry_thread
+        if crossed:
+            log.error(
+                "usage_run_crossed_context",
+                job_id=str(self.job_id),
+                action=self.ctx.request.action.value,
+                cost_usd=str(cost_usd),
+            )
+            self._end(cost_usd, settle=False)
+            # Both context variables were set in the context run() entered; resetting
+            # them from another one raises ValueError, which would hide the real error.
+            with contextlib.suppress(ValueError):
+                scope.__exit__(None, None, None)
+            with contextlib.suppress(ValueError):
+                _RUNNING_JOB.reset(token)
+            raise RuntimeError(_CROSSED_CONTEXT)
+        try:
+            self._end(cost_usd, settle=settle)
         finally:
+            with self._lock:
+                self._running = False
+            scope.__exit__(None, None, None)
             _RUNNING_JOB.reset(token)
 
+    def _end(self, cost_usd: Decimal, *, settle: bool) -> None:
+        """Finish once: the first caller settles or releases, any later call does nothing."""
+        with self._lock:
+            if self._finished:
+                return
+            self._finished = True
+        self._finish(cost_usd, settle=settle)
+
     def _finish(self, cost_usd: Decimal, *, settle: bool) -> None:
-        if self._finished:
-            return
-        self._finished = True
+        """Settle or release in the ledger. Callers claim the job first (:meth:`_end`)."""
+        request = self.ctx.request
         if not self._reserved:
+            if settle and request.subject_pending and not self.ctx.exempt:
+                # A deferred job finished its work without bind_subject: nothing was held,
+                # so the work ran free. Never raised (spec §2.4); monitoring alerts on it.
+                log.warning(
+                    "usage_deferred_unbound",
+                    job_id=str(self.job_id),
+                    action=request.action.value,
+                    actor_user_id=str(request.actor_user_id),
+                    cost_usd=str(cost_usd),
+                )
+                return
             log.info(
                 "usage_unmetered_cost",
-                action=self.ctx.request.action.value,
-                actor_user_id=str(self.ctx.request.actor_user_id),
+                action=request.action.value,
+                actor_user_id=str(request.actor_user_id),
                 cost_usd=str(cost_usd),
                 exempt=self.ctx.exempt,
             )
@@ -372,7 +465,7 @@ class MeteredJob:
             log.exception(
                 "usage_finish_failed",
                 job_id=str(self.job_id),
-                action=self.ctx.request.action.value,
+                action=request.action.value,
                 settle=settle,
                 cost_usd=str(cost_usd),
             )
@@ -517,7 +610,12 @@ class UsageMeter:
 
     @contextlib.contextmanager
     def job(self, ctx: UsageGrantContext) -> Iterator[MeteredJob]:
-        """Reserve and run in one block, for a synchronous route."""
+        """Reserve and run in one block, for a synchronous route.
+
+        Refuses a nested job before it reserves, so the refusal costs no ledger writes.
+        """
+        if _RUNNING_JOB.get() is not None:
+            raise RuntimeError(_NESTED_JOB)
         metered = self.reserve(ctx)
         with metered.run():
             yield metered
@@ -604,17 +702,29 @@ UsageDependency = Callable[..., UsageGrantContext]  # type: ignore[explicit-any]
 def require_usage(
     action: MeteredAction,
     *,
+    roles: Sequence[Role] = (),
     target: TargetDependency | None = None,
     team: TeamDependency | None = None,
 ) -> UsageDependency:
     """A dependency that authorizes ``action`` for the caller (402 when blocked).
 
-    ``target`` is a dependency returning the server-side :class:`UsageTarget` (subject and
-    countable inputs). ``team`` is the route's own ``require_team_permission(...)`` guard
-    (the same object, so FastAPI resolves it once per request): with it, an assistant's
-    usage is charged to the lead teacher (R4). The caller dependency is resolved before the
-    meter, so a wrong role is still a 401/403 before any ledger read.
+    It carries the route's guard, so a wrong role or a team refusal is its 401/403 before
+    the meter reads the ledger, wherever the route declares this dependency. Pass exactly
+    one guard:
+
+    * ``roles``: the platform roles the route allows, checked by :func:`require_role`;
+    * ``team``: the route's own ``require_team_permission(...)`` guard (the same object,
+      so FastAPI resolves it once per request). An assistant's usage is then charged to
+      the lead teacher (R4).
+
+    Building it with neither or both raises :class:`TypeError`. ``target`` is a dependency
+    returning the server-side :class:`UsageTarget` (subject and countable inputs). It must
+    read through :meth:`UsageMeter.resolve_target`, so a non-enforcing meter reads nothing.
     """
+    if team is None and not roles:
+        raise TypeError("require_usage needs the route's guard: pass roles=... or team=...")
+    if team is not None and roles:
+        raise TypeError("require_usage takes roles= or team=, not both (team checks roles)")
     resolver = target or _no_target
 
     def _usage(
@@ -637,7 +747,7 @@ def require_usage(
     caller = (
         Annotated[TeamActor, Depends(team)]
         if team is not None
-        else Annotated[AuthContext, Depends(get_auth_context)]
+        else Annotated[AuthContext, Depends(require_role(*roles))]
     )
     _usage.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
         parameters=[

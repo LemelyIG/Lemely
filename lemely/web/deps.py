@@ -1132,6 +1132,19 @@ def _team_lead_unavailable() -> HTTPException:
     )
 
 
+def team_permission_denied_error() -> HTTPException:
+    """Public name for the team guard's uniform 403 (:func:`_team_permission_denied`).
+
+    Other layers (usage metering) raise it so their refusal is byte-identical to the guard's.
+    """
+    return _team_permission_denied()
+
+
+def team_lead_unavailable_error() -> HTTPException:
+    """Public name for the team guard's lead-unavailable 403 (:func:`_team_lead_unavailable`)."""
+    return _team_lead_unavailable()
+
+
 def require_team_permission(
     perm: TeamPermission, *roles: Role
 ) -> Callable[[AuthContext, TeacherTeamStore, list[str] | None], TeamActor]:

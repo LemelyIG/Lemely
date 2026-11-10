@@ -5,11 +5,14 @@ from __future__ import annotations
 import contextvars
 import threading
 import uuid
+from datetime import timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Annotated
 
 import pytest
+import sqlalchemy as sa
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from structlog.testing import capture_logs
@@ -30,9 +33,9 @@ from lemely.web import usage
 from lemely.web.deps import (
     AuthContext,
     TeamActor,
-    _team_lead_unavailable,
-    _team_permission_denied,
     get_auth_context,
+    team_lead_unavailable_error,
+    team_permission_denied_error,
 )
 from lemely.web.usage import (
     MeteredJob,
@@ -58,6 +61,8 @@ from tests.usage_helpers import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from sqlalchemy.orm import Session, sessionmaker
 
 
@@ -230,7 +235,80 @@ def test_a_failing_hook_never_undoes_the_settle(
     ]
 
 
+def test_a_hook_whose_sql_fails_never_undoes_the_settle(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """``SELECT 1/0`` aborts the PG transaction; only the hook's savepoint rolls back."""
+    sm = migrated_sessionmaker
+    student = _funded_student(sm)
+
+    def sql_boom(session: Session, *_rest: object) -> None:
+        session.execute(sa.text("SELECT 1/0"))
+
+    saved = list(usage._POST_SETTLE_HOOKS)
+    usage.clear_post_settle_hooks()
+    usage.register_post_settle_hook(sql_boom)
+    try:
+        meter = enforcing_meter(sm)
+        with capture_logs() as logs, meter.job(meter.authorize(_req(student))):
+            record_llm_cost(Decimal("0.020"))
+    finally:
+        usage.clear_post_settle_hooks()
+        usage._POST_SETTLE_HOOKS.extend(saved)
+    (job,) = jobs_for(sm, student)
+    assert (job.status, job.charged) == (UsageJobStatus.settled, 20)
+    assert [e["event"] for e in logs if e["event"].startswith(("post_settle", "usage_finish"))] == [
+        "post_settle_hook_failed"
+    ]
+
+
+def test_hooks_never_run_for_a_job_the_sweeper_already_expired(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """settle() returns a job that is no longer open unchanged; no top-up hook for it."""
+    sm = migrated_sessionmaker
+    student = _funded_student(sm)
+    seen: list[object] = []
+    saved = list(usage._POST_SETTLE_HOOKS)
+    usage.clear_post_settle_hooks()
+    usage.register_post_settle_hook(lambda _s, job, _p, _n: seen.append(job.status))
+    try:
+        meter = enforcing_meter(sm)
+        with meter.job(meter.authorize(_req(student))):
+            record_llm_cost(Decimal("0.020"))
+            with sm.begin() as session:
+                assert UsageLedger(session).expire_stale_jobs(now=NOW + timedelta(days=1)) == 1
+    finally:
+        usage.clear_post_settle_hooks()
+        usage._POST_SETTLE_HOOKS.extend(saved)
+    (job,) = jobs_for(sm, student)
+    assert (job.status, job.charged) == (UsageJobStatus.expired, 0)
+    assert seen == []
+
+
 # --- 402 reasons -----------------------------------------------------------------------
+
+
+def test_authorize_needs_the_top_of_the_range_not_the_low_end(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Spec §2.4: 100 units cover the low end (40) but not the top (120), so it is blocked."""
+    sm = migrated_sessionmaker
+    student = _funded_student(sm, units=100)
+    meter = enforcing_meter(sm)
+    with pytest.raises(UsageBlocked) as info:
+        meter.authorize(_req(student))
+    assert (info.value.reason, info.value.estimate) == (
+        UsageBlockReason.INSUFFICIENT_CREDITS,
+        (40, 120),
+    )
+    view = meter.estimate(_req(student))
+    assert (view.low, view.high, view.blocked_reason) == (
+        40,
+        120,
+        UsageBlockReason.INSUFFICIENT_CREDITS,
+    )
+    assert jobs_for(sm, student) == []
 
 
 def test_blocked_without_any_balance_is_no_active_plan(
@@ -321,6 +399,18 @@ def test_an_exception_releases_and_charges_nothing(
     assert not job.charged
 
 
+def test_a_base_exception_releases_the_hold(migrated_sessionmaker: sessionmaker[Session]) -> None:
+    """A cancellation must not leave the hold open until the sweeper (up to 55 min)."""
+    sm = migrated_sessionmaker
+    student = _funded_student(sm)
+    meter = enforcing_meter(sm)
+    with pytest.raises(KeyboardInterrupt), meter.job(meter.authorize(_req(student))):
+        record_llm_cost(Decimal("0.020"))
+        raise KeyboardInterrupt
+    (job,) = jobs_for(sm, student)
+    assert (job.status, job.charged) == (UsageJobStatus.released, 0)
+
+
 def test_input_rejected_before_any_model_call_costs_nothing(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:
@@ -387,12 +477,107 @@ def test_a_nested_metered_job_is_refused_and_releases_its_hold(
     meter = enforcing_meter(sm)
     with meter.job(meter.authorize(_req(student))):
         record_llm_cost(Decimal("0.010"))
+        # meter.job refuses before it reserves: no ledger writes for the refusal.
         with pytest.raises(RuntimeError, match="nested"), meter.job(meter.authorize(_req(student))):
+            record_llm_cost(Decimal("0.500"))
+        assert len(jobs_for(sm, student)) == 1
+        # A job reserved earlier and run inside another is refused and releases its hold.
+        inner_job = meter.reserve(meter.authorize(_req(student)))
+        with pytest.raises(RuntimeError, match="nested"), inner_job.run():
             record_llm_cost(Decimal("0.500"))
         record_llm_cost(Decimal("0.010"))
     outer, inner = jobs_for(sm, student)
     assert (outer.status, outer.charged) == (UsageJobStatus.settled, 20)
     assert (inner.status, inner.charged) == (UsageJobStatus.released, 0)
+
+
+def test_release_during_run_is_ignored_and_a_released_job_never_runs(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """release() while run() is active would make the work free, so it is refused."""
+    sm = migrated_sessionmaker
+    student = _funded_student(sm)
+    meter = enforcing_meter(sm)
+    job = meter.reserve(meter.authorize(_req(student)))
+    with capture_logs() as logs, job.run():
+        job.release()
+        record_llm_cost(Decimal("0.020"))
+    assert [e["log_level"] for e in logs if e["event"] == "usage_release_while_running"] == [
+        "warning"
+    ]
+    released = meter.reserve(meter.authorize(_req(student)))
+    released.release()
+    ran: list[bool] = []
+    with pytest.raises(RuntimeError, match="already released"), released.run():
+        ran.append(True)
+    assert ran == []
+    first, second = jobs_for(sm, student)
+    assert (first.status, first.charged) == (UsageJobStatus.settled, 20)
+    assert (second.status, second.charged) == (UsageJobStatus.released, 0)
+
+
+def test_run_exited_in_another_context_or_thread_releases_and_raises(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The cost scope lives in the entering context; an exit elsewhere would lose costs."""
+    sm = migrated_sessionmaker
+    student = _funded_student(sm)
+    meter = enforcing_meter(sm)
+
+    other_context = meter.reserve(meter.authorize(_req(student)))
+    block = other_context.run()
+    contextvars.copy_context().run(block.__enter__)
+    with capture_logs() as logs, pytest.raises(RuntimeError, match="different thread or context"):
+        contextvars.Context().run(block.__exit__, None, None, None)
+    assert [e["log_level"] for e in logs if e["event"] == "usage_run_crossed_context"] == ["error"]
+
+    other_thread = meter.reserve(meter.authorize(_req(student)))
+    block = other_thread.run()
+    entered = contextvars.copy_context()
+    entered.run(block.__enter__)
+    errors: list[BaseException] = []
+
+    def exit_elsewhere() -> None:
+        try:
+            entered.run(block.__exit__, None, None, None)
+        except RuntimeError as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=exit_elsewhere)
+    worker.start()
+    worker.join()
+    assert len(errors) == 1
+    assert "different thread or context" in str(errors[0])
+    assert [j.status for j in jobs_for(sm, student)] == [UsageJobStatus.released] * 2
+    assert usage._RUNNING_JOB.get() is None
+
+
+def test_run_around_a_sync_stream_generator_fails_loudly_and_releases(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Starlette runs each next() of a sync stream in a new context: refused, not under-charged."""
+    sm = migrated_sessionmaker
+    student = _funded_student(sm)
+    meter = enforcing_meter(sm)
+    job = meter.reserve(meter.authorize(_req(student)))
+    app = FastAPI()
+
+    @app.get("/stream")
+    def _stream() -> StreamingResponse:
+        def body() -> Iterator[str]:
+            with job.run():
+                record_llm_cost(Decimal("0.010"))
+                yield "a"
+                record_llm_cost(Decimal("0.020"))
+                yield "b"
+
+        return StreamingResponse(body())
+
+    with capture_logs() as logs, pytest.raises(RuntimeError, match="different thread or context"):
+        TestClient(app).get("/stream")
+    (crossed,) = [e for e in logs if e["event"] == "usage_run_crossed_context"]
+    assert crossed["cost_usd"] == "0.010"
+    assert jobs_for(sm, student)[0].status is UsageJobStatus.released
 
 
 def test_a_settle_failure_is_logged_never_raised(
@@ -488,6 +673,36 @@ def test_bind_subject_refuses_a_job_that_is_not_pending(
     job.release()
 
 
+def test_a_deferred_job_that_never_binds_its_subject_is_a_warning(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Nothing was held, so the work ran free: a distinct warning, never an exception."""
+    sm = migrated_sessionmaker
+    seed_catalogue(sm)
+    student, maths = seed_user(sm), seed_user(sm, Role.teacher)
+    member = seat(
+        sm, teacher=maths, student=student, subjects=["0580"], actions=[MeteredAction.MARK_PAPER]
+    )
+    seat_grant(sm, student=student, member_id=member, units=500)
+    meter = enforcing_meter(sm)
+    job = meter.reserve(meter.authorize(_req(student, subject_pending=True)))
+    with capture_logs() as logs, job.run():
+        record_llm_cost(Decimal("0.030"))
+    (line,) = [e for e in logs if e["event"] == "usage_deferred_unbound"]
+    assert (line["log_level"], line["cost_usd"], line["action"]) == (
+        "warning",
+        "0.030",
+        "mark_paper",
+    )
+    assert not [e for e in logs if e["event"] == "usage_unmetered_cost"]
+    # A deferred job that fails, or is abandoned, before binding is not the leak.
+    abandoned = meter.reserve(meter.authorize(_req(student, subject_pending=True)))
+    with capture_logs() as logs, abandoned.run():
+        abandoned.abandon()
+    assert [e["event"] for e in logs if e["event"].startswith("usage_")] == ["usage_unmetered_cost"]
+    assert jobs_for(sm, student) == []
+
+
 # --- races -----------------------------------------------------------------------------
 
 
@@ -501,6 +716,25 @@ def test_a_lost_race_is_a_402_not_a_500(migrated_sessionmaker: sessionmaker[Sess
     with pytest.raises(UsageBlocked) as info:
         meter.reserve(second)
     assert info.value.reason is UsageBlockReason.INSUFFICIENT_CREDITS
+
+
+def test_a_lost_race_reports_the_reason_on_fresh_facts(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Debt landed between authorize and reserve: the 402 says so, not 'insufficient'."""
+    sm = migrated_sessionmaker
+    student = _funded_student(sm)
+    meter = enforcing_meter(sm)
+    ctx = meter.authorize(_req(student))
+    with sm.begin() as session:
+        session.add(UsageDebt(owner_user_id=student, job_id=None, units=10, outstanding=10))
+    with pytest.raises(UsageBlocked) as info:
+        meter.reserve(ctx)
+    assert (info.value.reason, info.value.estimate) == (
+        UsageBlockReason.OUTSTANDING_DEBT,
+        (40, 120),
+    )
+    assert jobs_for(sm, student) == []
 
 
 def test_concurrent_reserves_never_overdraw(migrated_sessionmaker: sessionmaker[Session]) -> None:
@@ -604,7 +838,9 @@ def _team_guard() -> TeamActor:
     raise AssertionError("tests override the team guard")
 
 
-_SELF_REVIEW_USAGE = require_usage(MeteredAction.SELF_REVIEW, target=_self_review_target)
+_SELF_REVIEW_USAGE = require_usage(
+    MeteredAction.SELF_REVIEW, roles=(Role.student,), target=_self_review_target
+)
 _TEAM_REGRADE_USAGE = require_usage(MeteredAction.REGRADE, team=_team_guard)
 
 
@@ -649,6 +885,29 @@ def test_require_usage_answers_402_before_the_handler_runs(
     assert ctx.request.input_count == 4
     assert ctx.request.actor_user_id == broke
     assert jobs_for(sm, broke) == []  # authorize holds nothing
+
+
+def test_require_usage_checks_the_role_before_the_meter_reads_anything() -> None:
+    """A teacher on a student route is the guard's 403, never a ledger read or a 402."""
+
+    def _no_db() -> Session:
+        raise AssertionError("the meter read the ledger before the role guard ran")
+
+    ran: list[UsageGrantContext] = []
+    app = _usage_app(UsageMeter(_no_db, enforce=True), ran)  # type: ignore[arg-type]
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(uuid.uuid4()), role="teacher"
+    )
+    resp = TestClient(app).post("/review")
+    assert resp.status_code == 403
+    assert ran == []
+
+
+def test_require_usage_needs_exactly_one_guard() -> None:
+    with pytest.raises(TypeError, match=r"roles=\.\.\. or team="):
+        require_usage(MeteredAction.SELF_REVIEW)
+    with pytest.raises(TypeError, match="not both"):
+        require_usage(MeteredAction.REGRADE, roles=(Role.teacher,), team=_team_guard)
 
 
 def test_require_usage_with_a_team_guard_bills_the_lead(
@@ -701,7 +960,7 @@ def test_a_removed_assistant_is_a_403_and_never_falls_back_to_its_own_balance(
         with pytest.raises(HTTPException) as info:
             call(request)
         assert info.value.status_code == 403
-        assert info.value.detail == _team_permission_denied().detail
+        assert info.value.detail == team_permission_denied_error().detail
         assert "team_permission_denied" in str(info.value.detail)
     assert jobs_for(sm, helper) == []
     with sm() as session:
@@ -736,7 +995,7 @@ def test_a_lead_with_school_data_is_phase_03s_team_lead_unavailable(
     )
     resp = TestClient(app).post("/regrade")
     assert resp.status_code == 403
-    assert resp.json() == {"detail": _team_lead_unavailable().detail}
+    assert resp.json() == {"detail": team_lead_unavailable_error().detail}
     assert resp.json()["detail"]["code"] == "team_lead_unavailable"
     assert ran == []
     assert jobs_for(sm, helper) == []
