@@ -6,6 +6,7 @@ import contextvars
 import queue
 import threading
 import uuid
+from types import SimpleNamespace
 
 from lemely.runtime.events import EventBus, EventType, current_run_id
 
@@ -166,18 +167,25 @@ def test_quiz_marking_thread_sets_its_run_id() -> None:
 
     Reverting the `current_run_id.set(...)` in that function fails this.
     """
+    from lemely.core.metered_actions import MeteredAction
     from lemely.web.routers.quiz import _trigger_marking_in_background
+    from lemely.web.usage import MeteredJob
 
     submission_id = uuid.uuid4()
     seen: list[str | None] = []
     done = threading.Event()
 
     class _RecordingMarkingService:
-        def mark_submission(self, sid: uuid.UUID) -> None:
+        def mark_submission(self, sid: uuid.UUID) -> SimpleNamespace:
             seen.append(current_run_id.get())
             done.set()
+            return SimpleNamespace(submission_id=sid, marking_error=None)
 
-    _trigger_marking_in_background(_RecordingMarkingService(), submission_id)  # type: ignore[arg-type]
+    _trigger_marking_in_background(
+        _RecordingMarkingService(),  # type: ignore[arg-type]
+        submission_id,
+        MeteredJob.unmetered(MeteredAction.MARK_QUIZ),
+    )
     assert done.wait(timeout=5.0), "the marking thread never ran"
     assert seen == [f"quiz:{submission_id}"], (
         "the marking thread published under no run id, so `EventBus.publish`'s "

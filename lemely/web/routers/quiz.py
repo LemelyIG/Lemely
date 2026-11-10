@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Annotated, NoReturn
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
 
+from lemely.core.metered_actions import MeteredAction
 from lemely.core.team_permissions import TeamPermission
 from lemely.db.class_repo import ClassNotFoundError, ClassOwnershipError
 from lemely.db.models.enums import QuestionSource, QuizStatus, Role, XpSource
@@ -57,6 +58,7 @@ from lemely.db.quiz_taking_repo import (
     QuizTakingValidationError,
     SubmitResultRow,
 )
+from lemely.db.usage_context_repo import quiz_assignment_target
 from lemely.db.xp_repo import XpService
 from lemely.runtime.events import current_run_id
 from lemely.web.deps import (
@@ -98,6 +100,7 @@ from lemely.web.schemas_quiz import (
     SubmitQuizResponseDTO,
     UpdateQuizDraftRequestDTO,
 )
+from lemely.web.usage import MeteredJob, UsageMeter, get_usage_meter, request_from_auth
 from lemely.web.xp_awards import award_xp_safely
 
 if TYPE_CHECKING:
@@ -467,7 +470,7 @@ def _submit_to_dto(row: SubmitResultRow) -> SubmitQuizResponseDTO:
 
 
 def _trigger_marking_in_background(
-    marking_service: QuizMarkingService, submission_id: uuid.UUID
+    marking_service: QuizMarkingService, submission_id: uuid.UUID, job: MeteredJob
 ) -> None:
     """Kick off ``QuizMarkingService.mark_submission`` on a background thread.
 
@@ -485,6 +488,13 @@ def _trigger_marking_in_background(
     module docstring); the ``except`` clauses here are a last-resort net for
     state races (``QuizMarkingError``) or a genuine bug, so a daemon thread
     never fails silently with only a bare stderr traceback.
+
+    ``job`` was reserved by the submit request. Its cost scope opens on this
+    thread, which inherits no context from the request. A marking failure that
+    ``mark_submission`` records instead of raising (``marking_error``) is
+    released, never charged (billing spec §2.4); so is one that raises, and so
+    is a thread that dies mid-run (``MeteredJob.run`` releases on any exit by
+    exception).
     """
 
     def run() -> None:
@@ -499,7 +509,10 @@ def _trigger_marking_in_background(
         # exists so these events reach nobody else's queue.
         token = current_run_id.set(f"quiz:{submission_id}")
         try:
-            marking_service.mark_submission(submission_id)
+            with job.run():
+                outcome = marking_service.mark_submission(submission_id)
+                if outcome.marking_error is not None:
+                    job.abandon()
         except QuizMarkingError as exc:
             log.warning(
                 "quiz_marking_trigger_rejected",
@@ -899,6 +912,7 @@ def submit_student_quiz(
     service: Annotated[QuizTakingService, Depends(get_quiz_taking_service)],
     marking_service: Annotated[QuizMarkingService, Depends(get_quiz_marking_service)],
     xp_service: Annotated[XpService, Depends(get_xp_service)],
+    meter: Annotated[UsageMeter, Depends(get_usage_meter)],
 ) -> SubmitQuizResponseDTO:
     """Submit: ``status=submitted``, then trigger marking in the background.
 
@@ -915,22 +929,72 @@ def submit_student_quiz(
     Deduped on the assignment id, so a second submit attempt (already
     rejected above as 422) can never double-award even if this route were
     ever retried.
+
+    Billing spec §5.7: the ``mark_quiz`` hold is placed here, *before* the
+    submission is recorded, so a blocked student gets the 402 with the
+    submission still open and can keep answering. The subject and question
+    count are read server-side from the caller's own assignment
+    (:func:`~lemely.db.usage_context_repo.quiz_assignment_target`), which also
+    covers placement, practice and teacher-assigned quizzes. An assignment the
+    caller cannot see has no target, so no hold is placed and ``submit`` below
+    gives today's 404/403/422. A refused submit (a re-submit, an unopened or
+    closed quiz) releases its hold, so a quiz is charged at most once, on the
+    thread that marks it.
     """
+    target = meter.resolve_target(
+        lambda session: quiz_assignment_target(
+            session, student_id=auth.user_id, assignment_id=assignment_id
+        )
+    )
+    job = (
+        None
+        if target is None
+        else meter.reserve(
+            meter.authorize(
+                request_from_auth(
+                    auth,
+                    MeteredAction.MARK_QUIZ,
+                    subject_code=target.subject_code,
+                    input_count=target.input_count,
+                )
+            )
+        )
+    )
     try:
         result = service.submit(auth.user_id, assignment_id)
     except (QuizTakingNotFoundError, QuizTakingOwnershipError, QuizTakingValidationError) as exc:
+        if job is not None:
+            job.release()
         _raise_for_taking(exc)
     except ValueError as exc:
+        if job is not None:
+            job.release()
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    award_xp_safely(
-        xp_service,
-        user_id=auth.user_id,
-        source=XpSource.quiz_completed,
-        dedupe_key=str(assignment_id),
-        subject_code=result.subject_code,
-        seam="quiz_completed",
-    )
-    _trigger_marking_in_background(marking_service, result.submission_id)
+    except BaseException:
+        if job is not None:
+            job.release()
+        raise
+    if job is None:
+        # `submit` accepted an assignment the target read could not see: the student was
+        # enrolled in between. The window is one request wide, and the submission is
+        # already recorded, so a late 402 would strand it unmarked; the cost is logged.
+        log.warning("quiz_submit_unmetered", assignment_id=assignment_id, user_id=auth.user_id)
+        job = MeteredJob.unmetered(MeteredAction.MARK_QUIZ)
+    try:
+        award_xp_safely(
+            xp_service,
+            user_id=auth.user_id,
+            source=XpSource.quiz_completed,
+            dedupe_key=str(assignment_id),
+            subject_code=result.subject_code,
+            seam="quiz_completed",
+        )
+        _trigger_marking_in_background(marking_service, result.submission_id, job)
+    except BaseException:
+        # The marking thread never started (or never will), so nothing else settles or
+        # releases this hold.
+        job.release()
+        raise
     return _submit_to_dto(result)
 
 
