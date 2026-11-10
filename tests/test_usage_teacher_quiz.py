@@ -22,9 +22,12 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from lemely.core.generation import GeneratedQuestion, GeneratedQuiz
-from lemely.db.models.enums import Role
+from lemely.db.class_repo import ClassService
+from lemely.db.models.enums import QuestionSource, Role
 from lemely.db.models.team import TeacherMember, TeacherMemberStatus
 from lemely.db.models.usage import UsageGrantBalance, UsageJobStatus
+from lemely.db.question_bank_repo import QuestionBankService
+from lemely.db.quiz_repo import QuizNotFoundError, QuizService
 from lemely.db.teacher_team_repo import TeacherTeamStore
 from lemely.db.usage_ledger_repo import UsageLedger
 from lemely.io.llm.cost_meter import record_llm_cost
@@ -37,6 +40,7 @@ from lemely.web.deps import (
     get_gemini_client,
     get_history_store,
     get_question_bank_service,
+    get_quiz_service,
     get_teacher_team_store,
 )
 from lemely.web.routers import teacher as teacher_router
@@ -199,9 +203,9 @@ def test_out_of_credits_is_402_with_the_reason_and_holds_nothing(api: _Api, path
         # Each route keeps its own default count (4 and 5): base 2-4 + n x 2-5.
         ("/api/quizzes/preview", {}, [10, 24]),
         ("/api/quizzes/generate", {}, [12, 29]),
-        # The meter clamps the count to 0..50, so a huge count cannot inflate the hold.
-        ("/api/quizzes/preview", {"count": 1000}, [102, 254]),
-        ("/api/quizzes/generate", {"count": -5}, [2, 4]),
+        # 50 is the largest accepted count, and the estimate's own clamp.
+        ("/api/quizzes/preview", {"count": 50}, [102, 254]),
+        ("/api/quizzes/generate", {"count": 1}, [4, 9]),
     ],
 )
 def test_the_estimate_counts_the_requested_questions(
@@ -451,3 +455,91 @@ def test_an_assistant_removed_after_the_guard_is_the_meters_403(api: _Api, path:
     assert api.builds == []
     assert jobs_for(sm, helper) == []
     assert _remaining(sm, own) == (500, 0)
+
+
+# --- the count is bounded on the wire ---------------------------------------------------------
+
+
+@pytest.mark.parametrize("path", _PATHS)
+@pytest.mark.parametrize("count", [51, 1000, 0, -5])
+def test_a_count_outside_one_to_fifty_is_422_before_the_meter_or_the_model(
+    api: _Api, path: str, count: int
+) -> None:
+    spy = _SpyMeter(api.sm)
+    api.meter = spy
+    teacher = seed_user(api.sm, Role.teacher)
+    give(api.sm, teacher, units=5000)
+    api.as_teacher(teacher)
+    assert api.post(path, count=count).status_code == 422
+    assert spy.requests == []
+    assert api.builds == []
+    assert jobs_for(api.sm, teacher) == []
+
+
+def test_the_largest_accepted_count_is_held_in_full(api: _Api) -> None:
+    teacher = seed_user(api.sm, Role.teacher)
+    grant = give(api.sm, teacher, units=5000)
+    api.as_teacher(teacher)
+    assert api.post("/api/quizzes/generate", count=50).status_code == 200
+    (job,) = jobs_for(api.sm, teacher)
+    assert (job.estimate_low, job.estimate_high, job.charged) == (102, 254, 8)
+    assert _remaining(api.sm, grant) == (4992, 0)
+
+
+def test_the_draft_quiz_count_is_bounded_at_fifty() -> None:
+    from pydantic import ValidationError
+
+    from lemely.web.schemas_quiz import UpdateQuizDraftRequestDTO
+
+    assert UpdateQuizDraftRequestDTO(requestedCount=50).requestedCount == 50
+    assert UpdateQuizDraftRequestDTO(requestedCount=0).requestedCount == 0
+    assert UpdateQuizDraftRequestDTO().requestedCount is None
+    for bad in (51, 1000, -1):
+        with pytest.raises(ValidationError):
+            UpdateQuizDraftRequestDTO(requestedCount=bad)
+
+
+def test_patching_a_draft_over_fifty_questions_is_422_and_never_reaches_the_service(
+    api: _Api,
+) -> None:
+    service = MagicMock()
+    service.patch_draft.side_effect = QuizNotFoundError("no such quiz")
+    api.client.app.dependency_overrides[get_quiz_service] = lambda: service  # type: ignore[attr-defined]
+    api.as_teacher(seed_user(api.sm, Role.teacher))
+    url = "/api/teacher/quizzes/00000000-0000-0000-0000-000000000001"
+    assert api.client.patch(url, json={"requestedCount": 51}).status_code == 422
+    service.patch_draft.assert_not_called()
+    # 50 passes validation and reaches the service (which refuses the made-up id).
+    assert api.client.patch(url, json={"requestedCount": 50}).status_code == 404
+    service.patch_draft.assert_called_once()
+
+
+# --- materializing a draft's questions is not model work --------------------------------------
+
+
+def test_materializing_a_quiz_from_the_bank_is_not_metered(api: _Api) -> None:
+    """``POST /teacher/quizzes/{id}/questions/generate`` selects stored bank rows.
+
+    ``QuizService.generate_questions`` is a deterministic bank query: ``lemely.db`` holds no
+    model client, so the route costs nothing. Metering it would only block a teacher with no
+    credits from a free action, so it takes no ``require_usage``. A teacher with no balance
+    succeeds, and nothing is reserved. Another teacher's quiz keeps its existing 403.
+    """
+    sm = api.sm
+    service = QuizService(sm, ClassService(sm), QuestionBankService(sm))
+    api.client.app.dependency_overrides[get_quiz_service] = lambda: service  # type: ignore[attr-defined]
+    spy = _SpyMeter(sm)
+    api.meter = spy
+    owner, intruder = seed_user(sm, Role.teacher), seed_user(sm, Role.teacher)
+    quiz = service.create_quiz(owner, "0625", "Recap")
+    service.patch_draft(
+        owner, quiz.quiz_id, pool_source=QuestionSource.generated, requested_count=3
+    )
+    url = f"/api/teacher/quizzes/{quiz.quiz_id}/questions/generate"
+    api.as_teacher(owner)  # no grant at all
+    assert api.client.post(url).status_code == 200
+    api.as_teacher(intruder)
+    assert api.client.post(url).status_code == 403
+    assert spy.requests == []
+    assert jobs_for(sm, owner) == []
+    assert jobs_for(sm, intruder) == []

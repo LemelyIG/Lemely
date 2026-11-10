@@ -7,6 +7,9 @@ other ``schemas_*.py`` modules. Converters live in
 
 from __future__ import annotations
 
+from pydantic import Field
+
+from lemely.core.metered_actions import MAX_ESTIMATE_INPUTS
 from lemely.web.schemas import ApiModel
 from lemely.web.schemas_analytics import TopicWeaknessDTO
 
@@ -77,13 +80,15 @@ class UpdateQuizDraftRequestDTO(ApiModel):
     Every field omitted (``None``) leaves the stored value untouched — see
     ``QuizService.patch_draft``'s docstring. ``poolSource`` must be one of
     ``"past_paper"`` / ``"generated"`` / ``"teacher_upload"`` when supplied.
+    ``requestedCount`` is bounded at 50, the same ceiling as the quiz preview and generate
+    routes' ``count``, so one quiz never asks for more than the meter's hold clamp covers.
     """
 
     title: str | None = None
     targetGrade: str | None = None
     includedTopics: list[str] | None = None
     poolSource: str | None = None
-    requestedCount: int | None = None
+    requestedCount: int | None = Field(default=None, ge=0, le=MAX_ESTIMATE_INPUTS)
     timeLimitMinutes: int | None = None
     builderStep: int | None = None
 

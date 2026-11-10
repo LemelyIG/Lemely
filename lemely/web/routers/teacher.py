@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, NoReturn
 
 import anyio
 import structlog
-from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 
 from lemely.core.analytics import (
     aggregate_weaknesses_from_history,
@@ -61,7 +61,7 @@ from lemely.core.history import (
     is_paper,
     latest_grade_bearing,
 )
-from lemely.core.metered_actions import MeteredAction, UsageTarget
+from lemely.core.metered_actions import MAX_ESTIMATE_INPUTS, MeteredAction, UsageTarget
 from lemely.core.schemas import (
     REVIEW_CONFIDENCE_THRESHOLD,
     AccuracyReport,
@@ -1874,7 +1874,13 @@ def _quiz_to_preview(quiz: GeneratedQuiz) -> QuizPreviewDTO:
     )
 
 
-def _preview_quiz_target(count: int = 4) -> UsageTarget:
+#: ``count`` on the preview and generate routes: the size of a billed generation request.
+#: Bounded on the wire at the meter's own estimate clamp, so the hold always covers the work
+#: and an out-of-range count is a 422 from schema validation, before any ledger read.
+_QuizCount = Annotated[int, Query(ge=1, le=MAX_ESTIMATE_INPUTS)]
+
+
+def _preview_quiz_target(count: _QuizCount = 4) -> UsageTarget:
     """``POST /quizzes/preview``'s estimate input: the questions requested (same default).
 
     Reads no record, so it needs no meter read. ``subject_code`` is deliberately ``None``:
@@ -1884,7 +1890,7 @@ def _preview_quiz_target(count: int = 4) -> UsageTarget:
     return UsageTarget(subject_code=None, input_count=count)
 
 
-def _generate_quiz_target(count: int = 5) -> UsageTarget:
+def _generate_quiz_target(count: _QuizCount = 5) -> UsageTarget:
     """``POST /quizzes/generate``'s estimate input: the questions requested (same default)."""
     return UsageTarget(subject_code=None, input_count=count)
 
@@ -1945,7 +1951,7 @@ def quiz_preview(
     class_service: Annotated[ClassService, Depends(get_class_service)],
     bank_service: Annotated[QuestionBankService, Depends(get_question_bank_service)],
     subject_code: str = "",
-    count: int = 4,
+    count: _QuizCount = 4,
     topics: list[str] | None = None,
 ) -> QuizPreviewDTO:
     """Preview a quiz assembled from existing questions, topping up via generation.
@@ -1991,7 +1997,7 @@ def quiz_generate(
     class_service: Annotated[ClassService, Depends(get_class_service)],
     bank_service: Annotated[QuestionBankService, Depends(get_question_bank_service)],
     subject_code: str = "",
-    count: int = 5,
+    count: _QuizCount = 5,
     topics: list[str] | None = None,
 ) -> QuizPreviewDTO:
     """Generate a full quiz and persist it to the question bank.
