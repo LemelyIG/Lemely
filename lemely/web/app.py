@@ -83,7 +83,12 @@ from lemely.web.routers import (
 )
 from lemely.web.scheduled_notifications import run_sweeper
 from lemely.web.tutoring_email import MOCK_WARNING, email_delivery_mode
-from lemely.web.usage import UsageBlocked, usage_blocked_handler
+from lemely.web.usage import (
+    UsageBlocked,
+    UsageUnavailable,
+    usage_blocked_handler,
+    usage_unavailable_handler,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator, Sequence
@@ -237,6 +242,8 @@ def create_app() -> FastAPI:
     app.include_router(usage.router)
     # Billing spec §5.7: a blocked metered action is a top-level 402 body, not `detail`.
     app.add_exception_handler(UsageBlocked, usage_blocked_handler)
+    # A ledger outage that stopped metered work before it started: 503 + Retry-After.
+    app.add_exception_handler(UsageUnavailable, usage_unavailable_handler)
 
     @app.exception_handler(EmptyGradeBoundaryStoreError)
     async def _thresholds_not_ingested(

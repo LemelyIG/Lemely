@@ -367,6 +367,26 @@ def test_create_app_registers_the_402_handler() -> None:
 
     app = create_app()
     assert app.exception_handlers[UsageBlocked] is usage_blocked_handler
+    assert app.exception_handlers[usage.UsageUnavailable] is usage.usage_unavailable_handler
+
+
+def test_usage_unavailable_is_a_plain_503_with_retry_after() -> None:
+    """A ledger outage is not a block: 503, try again later, nothing was charged."""
+    app = FastAPI()
+    app.add_exception_handler(usage.UsageUnavailable, usage.usage_unavailable_handler)
+
+    @app.post("/work")
+    def _work() -> None:
+        raise usage.UsageUnavailable
+
+    resp = TestClient(app).post("/work")
+    assert resp.status_code == 503
+    assert resp.headers["retry-after"] == "30"
+    assert resp.json() == {
+        "error": "usage_unavailable",
+        "message": usage.USAGE_UNAVAILABLE_MESSAGE,
+    }
+    assert "nothing was charged" in usage.USAGE_UNAVAILABLE_MESSAGE
 
 
 # --- settle and release ----------------------------------------------------------------

@@ -32,7 +32,13 @@ from lemely.db.models.team import TeacherMember, TeacherMemberStatus
 from lemely.db.models.usage import UsageJobStatus
 from lemely.db.usage_ledger_repo import UsageLedger
 from lemely.io.llm.cost_meter import record_llm_cost
-from lemely.web.usage import UsageBlocked, UsageMeter, UsageRequest, UsageUnavailable
+from lemely.web.usage import (
+    USAGE_UNAVAILABLE_MESSAGE,
+    UsageBlocked,
+    UsageMeter,
+    UsageRequest,
+    UsageUnavailable,
+)
 from tests._concurrency import _Paused, _wait_until_a_backend_waits_on_a_lock
 from tests.usage_helpers import NOW, assistant, give, jobs_for, seed_catalogue, seed_user
 
@@ -196,9 +202,10 @@ def test_a_failed_extend_near_the_old_deadline_refuses_before_the_work(
     job = meter.reserve(meter.authorize(_req(student)))
     clock[0] = NOW + timedelta(minutes=20)  # 35 min left: the sweeper could close it mid-run
     ran: list[bool] = []
-    with pytest.raises(UsageUnavailable), job.run():
+    with pytest.raises(UsageUnavailable) as info, job.run():
         ran.append(True)
     assert ran == []
+    assert str(info.value) == USAGE_UNAVAILABLE_MESSAGE  # a worker's generic handler shows it
     assert len(calls) == 2
     (row,) = jobs_for(sm, student)
     assert (row.status, row.charged) == (UsageJobStatus.released, 0)

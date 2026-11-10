@@ -262,13 +262,26 @@ class UsageBlocked(Exception):
         }
 
 
+#: What a user sees when :class:`UsageUnavailable` stops work before it starts.
+USAGE_UNAVAILABLE_MESSAGE = (
+    "We couldn't start this right now, so nothing was charged. Please try again in a few minutes."
+)
+#: Seconds a client should wait before retrying after a 503 ``usage_unavailable``.
+USAGE_UNAVAILABLE_RETRY_AFTER = 30
+
+
 class UsageUnavailable(Exception):
     """The ledger could not restart a queued job's hold, and the old one may lapse mid-run.
 
     Raised by :meth:`MeteredJob.run` before any work, after the hold was released, so
-    nothing is charged and the job can be run again later. Workers report it like
-    :class:`UsageBlocked`; it is not a 402 (no block reason fits a ledger outage).
+    nothing is charged and the job can be run again later. Its message is
+    :data:`USAGE_UNAVAILABLE_MESSAGE`, safe to show as is. In a request it is a 503 with
+    ``Retry-After`` (:func:`usage_unavailable_handler`), not a 402: no block reason fits a
+    ledger outage, and topping up would not help. Workers fail the work closed with it.
     """
+
+    def __init__(self, message: str = USAGE_UNAVAILABLE_MESSAGE) -> None:
+        super().__init__(message)
 
 
 async def usage_blocked_handler(_request: Request, exc: Exception) -> JSONResponse:
@@ -276,6 +289,17 @@ async def usage_blocked_handler(_request: Request, exc: Exception) -> JSONRespon
     if not isinstance(exc, UsageBlocked):
         raise exc
     return JSONResponse(status_code=402, content=exc.body())
+
+
+async def usage_unavailable_handler(_request: Request, exc: Exception) -> JSONResponse:
+    """Render :class:`UsageUnavailable` as a plain 503 the client may retry."""
+    if not isinstance(exc, UsageUnavailable):
+        raise exc
+    return JSONResponse(
+        status_code=503,
+        content={"error": "usage_unavailable", "message": USAGE_UNAVAILABLE_MESSAGE},
+        headers={"Retry-After": str(USAGE_UNAVAILABLE_RETRY_AFTER)},
+    )
 
 
 def _assistant_refusal(exc: AssistantUnavailable) -> HTTPException:
@@ -564,7 +588,7 @@ class MeteredJob:
                 action=self.ctx.request.action.value,
                 deadline=None if deadline is None else deadline.isoformat(),
             )
-            raise UsageUnavailable("the usage ledger could not restart this job's hold")
+            raise UsageUnavailable
         if status is UsageJobStatus.open:
             return
         if status is not UsageJobStatus.expired:
@@ -1040,6 +1064,8 @@ def require_usage(
 __all__ = [
     "EXEMPT_ROLES",
     "USAGE_BLOCKED_MESSAGE",
+    "USAGE_UNAVAILABLE_MESSAGE",
+    "USAGE_UNAVAILABLE_RETRY_AFTER",
     "EstimateView",
     "MeteredJob",
     "PostSettleHook",
@@ -1056,4 +1082,5 @@ __all__ = [
     "require_usage",
     "run_post_settle_hooks",
     "usage_blocked_handler",
+    "usage_unavailable_handler",
 ]
