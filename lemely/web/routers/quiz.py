@@ -102,6 +102,7 @@ from lemely.web.schemas_quiz import (
 )
 from lemely.web.usage import (
     MeteredJob,
+    UsageBlocked,
     UsageGrantContext,
     UsageMeter,
     get_usage_meter,
@@ -475,6 +476,14 @@ def _submit_to_dto(row: SubmitResultRow) -> SubmitQuizResponseDTO:
     )
 
 
+#: ``quiz_submissions.marking_error`` text when credits ran out between submit and the
+#: queued thread starting. The teacher's results screen shows it after "Marking failed: ".
+_MARKING_BLOCKED_MESSAGE = (
+    "The student's usage ran out before marking could start, so the quiz was not marked "
+    "and nothing was charged."
+)
+
+
 def _trigger_marking_in_background(
     marking_service: QuizMarkingService, submission_id: uuid.UUID, job: MeteredJob
 ) -> None:
@@ -500,7 +509,9 @@ def _trigger_marking_in_background(
     ``mark_submission`` records instead of raising (``marking_error``) is
     released, never charged (billing spec §2.4); so is one that raises, and so
     is a thread that dies mid-run (``MeteredJob.run`` releases on any exit by
-    exception).
+    exception). If the queued hold expired and the balance has since run out,
+    ``job.run()`` raises :class:`UsageBlocked` before any model call: the submission is
+    left ``submitted`` with a ``marking_error`` saying so, and nothing is charged.
     """
 
     def run() -> None:
@@ -519,6 +530,20 @@ def _trigger_marking_in_background(
                 outcome = marking_service.mark_submission(submission_id)
                 if outcome.marking_error is not None:
                     job.abandon()
+        except UsageBlocked as exc:
+            # `job.run()` restores the hold when the queued thread starts; the balance has
+            # since run out. Nothing was charged and no model call was made.
+            log.warning(
+                "quiz_marking_blocked_before_start",
+                submission_id=str(submission_id),
+                reason=exc.reason.value,
+            )
+            try:
+                marking_service.record_marking_failure(submission_id, _MARKING_BLOCKED_MESSAGE)
+            except Exception:
+                log.exception(
+                    "quiz_marking_blocked_record_failed", submission_id=str(submission_id)
+                )
         except QuizMarkingError as exc:
             log.warning(
                 "quiz_marking_trigger_rejected",

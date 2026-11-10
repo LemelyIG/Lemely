@@ -9,9 +9,11 @@ accepted), and the thread settles on success and releases on every failure.
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import select
@@ -19,18 +21,20 @@ from structlog.testing import capture_logs
 
 from lemely.core.metered_actions import MeteredAction
 from lemely.db.models.billing import PlanAudience
-from lemely.db.models.enums import Role
+from lemely.db.models.enums import QuizSubmissionStatus, Role
 from lemely.db.models.quizzes import QuizAssignment, QuizSubmission
 from lemely.db.models.usage import GrantKind, UsageGrantBalance, UsageJobStatus
-from lemely.db.quiz_marking_repo import QuizMarkingError
+from lemely.db.quiz_marking_repo import QuizMarkingError, QuizMarkingService
 from lemely.db.usage_context_repo import quiz_assignment_target
+from lemely.db.usage_ledger_repo import UsageLedger
 from lemely.io.llm.cost_meter import record_llm_cost
 from lemely.web.deps import get_quiz_marking_service
 from lemely.web.routers import quiz as quiz_router
-from lemely.web.usage import get_usage_meter
+from lemely.web.usage import UsageRequest, get_usage_meter
 from tests import test_web_student_quiz as _quiz
 from tests.team_db import add_teacher_plan
 from tests.usage_helpers import (
+    NOW,
     enforcing_meter,
     give,
     jobs_for,
@@ -80,6 +84,11 @@ class _CostlyMarking:
         self.error = error
         self.raises = raises
         self.calls: list[uuid.UUID] = []
+        self.failures: list[tuple[uuid.UUID, str]] = []
+
+    def record_marking_failure(self, submission_id: uuid.UUID, error_text: str) -> bool:
+        self.failures.append((submission_id, error_text))
+        return True
 
     def mark_submission(self, submission_id: uuid.UUID) -> SimpleNamespace:
         self.calls.append(submission_id)
@@ -494,3 +503,89 @@ def test_an_accepted_submit_with_no_readable_target_still_marks_unmetered(
     assert events["quiz_submit_unmetered"]["submission_id"] == str(marking.calls[0])
     assert events["usage_unmetered_cost"]["actor_user_id"] == str(student)
     assert events["usage_unmetered_cost"]["cost_usd"] == "0.004"
+
+
+# -- the queued hold expired and the balance ran out before the thread started ---
+
+
+class _QueuedThread:
+    """Holds the marking thread's target until the test starts it (a queued job)."""
+
+    pending: ClassVar[list[Callable[[], None]]] = []
+
+    def __init__(self, target: Callable[[], None], daemon: bool) -> None:
+        self._target = target
+
+    def start(self) -> None:
+        _QueuedThread.pending.append(self._target)
+
+
+def test_a_hold_that_cannot_be_restored_marks_nothing_and_records_why(
+    ready: Ready, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`job.run()` raises UsageBlocked on entry: no model call, nothing charged, and the
+    submission carries a marking_error instead of silently staying unmarked."""
+    client, student, _, assignment_id, sm = ready
+    own = give(sm, student, units=5)  # exactly the estimate's high end
+    marking = _CostlyMarking()
+    _use_marking(client, marking)
+    _QueuedThread.pending = []
+    monkeypatch.setattr(quiz_router, "threading", SimpleNamespace(Thread=_QueuedThread))
+    assert _submit(client, assignment_id).status_code == 200
+    (queued,) = _QueuedThread.pending
+    # The sweeper returns the queued hold, and another job spends the balance.
+    with sm.begin() as session:
+        assert UsageLedger(session).expire_stale_jobs(now=NOW + timedelta(days=1)) == 1
+    meter = enforcing_meter(sm)
+    meter.reserve(
+        meter.authorize(
+            UsageRequest(
+                actor_user_id=student,
+                actor_role=Role.student,
+                action=MeteredAction.MARK_QUIZ,
+                subject_code="0625",
+                input_count=1,
+            )
+        )
+    )
+    with capture_logs() as logs:
+        queued()
+    assert marking.calls == []
+    assert len(marking.failures) == 1
+    assert marking.failures[0][1] == quiz_router._MARKING_BLOCKED_MESSAGE
+    assert [e["reason"] for e in logs if e["event"] == "quiz_marking_blocked_before_start"] == [
+        "insufficient_credits"
+    ]
+    assert not any(e["event"] == "quiz_marking_trigger_unexpected_error" for e in logs)
+    assert sorted(j.status.value for j in jobs_for(sm, student)) == ["expired", "open"]
+    assert sum(j.charged for j in jobs_for(sm, student)) == 0
+    assert _remaining(sm, own) == 5
+
+
+def test_record_marking_failure_sets_the_error_and_keeps_the_submission_submitted(
+    ready: Ready,
+) -> None:
+    client, student, _, assignment_id, sm = ready
+    give(sm, student, units=100)
+    _use_marking(client, _CostlyMarking())
+    assert _submit(client, assignment_id).status_code == 200
+    service = QuizMarkingService(sm, MagicMock(), MagicMock())
+    with sm() as session:
+        submission_id = session.scalars(
+            select(QuizSubmission.id).where(QuizSubmission.student_id == student)
+        ).one()
+    assert service.record_marking_failure(submission_id, "usage ran out") is True
+    with sm() as session:
+        row = session.get(QuizSubmission, submission_id)
+        assert row is not None
+        assert (row.status.value, row.marking_error) == ("submitted", "usage ran out")
+        row.status = QuizSubmissionStatus.marked
+        row.marking_error = None
+        session.commit()
+    # A marked submission is never given an error; an unknown id writes nothing.
+    assert service.record_marking_failure(submission_id, "late") is False
+    assert service.record_marking_failure(uuid.uuid4(), "unknown") is False
+    with sm() as session:
+        row = session.get(QuizSubmission, submission_id)
+        assert row is not None
+        assert row.marking_error is None
