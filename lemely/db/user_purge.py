@@ -244,6 +244,21 @@ def collect_objects(
     return objects, shared, dict(protected)
 
 
+def user_prefixes(user_id: uuid.UUID) -> list[tuple[str, str]]:
+    """The ``(kind, key prefix)`` folders the upload routes write one user's files under.
+
+    Production keys are built in ``routers/student.py`` (``uploads/{user}/{paper}/...``),
+    ``routers/teacher.py`` (``teacher/{user}/{paper}/...``) and ``routers/me.py`` (avatars:
+    ``{user}/{uuid}.{ext}``). Tutor evidence is keyed by the tutor profile instead, see
+    :func:`_prefixes`.
+    """
+    return [
+        ("uploads", f"uploads/{user_id}/"),
+        ("uploads", f"teacher/{user_id}/"),
+        ("avatars", f"{user_id}/"),
+    ]
+
+
 def _prefixes(
     conn: Connection, user_ids: Iterable[uuid.UUID], doomed: Mapping[str, set[str]]
 ) -> dict[str, list[str]]:
@@ -254,14 +269,28 @@ def _prefixes(
     """
     prefixes: dict[str, list[str]] = {"uploads": [], "avatars": [], "tutor_evidence": []}
     for user_id in user_ids:
-        prefixes["uploads"] += [f"uploads/{user_id}/", f"teacher/{user_id}/"]
-        prefixes["avatars"].append(f"{user_id}/")
+        for kind, prefix in user_prefixes(user_id):
+            prefixes[kind].append(prefix)
     profile_ctids = sorted(doomed.get("tutor_profiles", set()))
     if profile_ctids:
         profiles = _tbl("tutor_profiles", ["id"])
         for (profile_id,) in conn.execute(sa.select(profiles.c.id).where(_CTID.in_(profile_ctids))):
             prefixes["tutor_evidence"].append(f"tutor-evidence/{profile_id}/")
     return {kind: sorted(p) for kind, p in prefixes.items() if p}
+
+
+def add_orphan_prefixes(plan: PurgePlan, orphan_ids: Iterable[uuid.UUID]) -> None:
+    """Add the key prefixes of accounts whose rows are already gone (Auth orphans) to the sweep.
+
+    A run that committed the rows but could not finish the files leaves the Auth users in place,
+    so a re-run has no rows to read keys from; the orphans' prefixes are how it finds them.
+    Tutor-evidence keys live under the (deleted) tutor profile id, so only the first run's report
+    names them.
+    """
+    for user_id in orphan_ids:
+        for kind, prefix in user_prefixes(user_id):
+            plan.prefixes.setdefault(kind, []).append(prefix)
+    plan.prefixes = {k: sorted(set(v)) for k, v in plan.prefixes.items()}
 
 
 class ObjectLister(Protocol):
@@ -314,6 +343,8 @@ class ObjectPurgeReport:
 
     deleted: dict[str, int] = field(default_factory=dict)
     failed: list[tuple[str, str]] = field(default_factory=list)
+    #: The same failures as ``(bucket, key)`` pairs, for :func:`keys_a_rerun_will_miss`.
+    failed_keys: list[tuple[str, str]] = field(default_factory=list)
 
 
 def purge_objects(
@@ -331,9 +362,32 @@ def purge_objects(
                 storage.delete(bucket, key)
             except Exception as exc:
                 report.failed.append((f"{bucket}/{key}", f"{type(exc).__name__}: {exc}"))
+                report.failed_keys.append((bucket, key))
                 continue
             report.deleted[kind] = report.deleted.get(kind, 0) + 1
     return report
+
+
+def keys_a_rerun_will_miss(
+    report: ObjectPurgeReport, buckets: Mapping[str, str], rerun_user_ids: Iterable[uuid.UUID]
+) -> list[tuple[str, str]]:
+    """Failed ``(bucket, key)`` pairs a re-run's prefix sweep cannot find: delete them by hand.
+
+    The rows that named them are committed away, so a re-run finds an object only under a folder
+    of an Auth orphan (``rerun_user_ids``): ``uploads/{id}/`` and ``teacher/{id}/`` in the uploads
+    bucket, ``{id}/`` in the avatars bucket. Tutor evidence is keyed by the deleted tutor profile,
+    and any key a hand-written or legacy row put outside the per-user layout is out of reach too.
+    """
+    sweepable = {
+        (buckets[kind], prefix)
+        for user_id in rerun_user_ids
+        for kind, prefix in user_prefixes(user_id)
+    }
+    return [
+        (bucket, key)
+        for bucket, key in report.failed_keys
+        if not any(bucket == b and key.startswith(p) for b, p in sweepable)
+    ]
 
 
 def storage_config_problems(settings: Settings, verdict: EnvironmentVerdict) -> list[str]:
@@ -543,6 +597,15 @@ class _Walker:
         tbl = _tbl(table, needed)
         found = self._rows(sa.select(_CTID).select_from(tbl).where(_match(tbl, columns, values)))
         new = [str(row[0]) for row in found if str(row[0]) not in self._doomed[table]]
+        if found and not new and explicit:
+            # Every matching row was already doomed through a CASCADE path, but this path is a
+            # NO ACTION foreign key. Relying on the cascade is not enough: PostgreSQL checks a
+            # NO ACTION key per deleted row, possibly before the cascade has removed the child
+            # (an invite whose ``child_id`` cascades and whose ``created_by`` does not). The row
+            # needs its own delete step, ahead of the parent's. Its children were handled when
+            # it was first reached, so there is nothing to recurse into.
+            self.steps.append(_Step("delete", table, columns, tuple(values)))
+            return
         if not new:
             return
         self._doomed[table].update(new)
@@ -705,6 +768,10 @@ def plan_purge(
             conn, walker.doomed_ctids()
         )
         plan.prefixes = _prefixes(conn, plan.delete_ids, walker.doomed_ctids())
+    else:
+        # Nothing to delete, but a re-run may still sweep an earlier run's orphans: every key a
+        # surviving row references must be known so that sweep can never touch it.
+        _, _, plan.protected_keys = collect_objects(conn, {})
     return plan
 
 
@@ -805,14 +872,17 @@ __all__ = [
     "PurgeError",
     "PurgePlan",
     "StorageColumn",
+    "add_orphan_prefixes",
     "auth_targets",
     "check_schema_at_head",
     "classify_environment",
     "collect_objects",
     "discover_unreferenced",
     "execute_purge",
+    "keys_a_rerun_will_miss",
     "plan_purge",
     "purge_auth_users",
     "purge_objects",
     "storage_config_problems",
+    "user_prefixes",
 ]

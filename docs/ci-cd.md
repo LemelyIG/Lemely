@@ -845,20 +845,39 @@ lemely admin purge-users --keep-domain lemelyig.com [--i-know-this-is-production
 
 #### What the tool does and refuses
 
-- **Execute order: objects, then database, then Auth.** It collects the object keys the doomed
-  rows name (uploaded scans and an upload's sibling `mark_scheme.pdf`, teacher papers and their
-  schemes, avatars, tutor evidence) and also lists each purged user's key prefix
+- **Execute order: database, then objects, then Auth.** It first collects the object keys the
+  doomed rows name (uploaded scans and an upload's sibling `mark_scheme.pdf`, teacher papers and
+  their schemes, avatars, tutor evidence) and lists each purged user's key prefix
   (`uploads/{id}/`, `teacher/{id}/`, `{id}/` in the avatar bucket, `tutor-evidence/{profile}/`)
-  for objects no row references. It deletes the objects first; a missing object counts as done.
-  **If any object fails, no database row is touched** and the failures are listed, so fixing the
-  cause and re-running the same command retries. A key that a surviving row also references is
-  kept.
-- Then it deletes the rows in one transaction (children first, composite foreign keys
-  included; the keys are read from the database, so a new table is covered), then the matching
-  Supabase Auth users. The Auth step treats an already-deleted user as done and lists every
-  failure; the exit code is 1 if any step failed, and re-running finishes the job (it also removes
-  Auth users that have no `users` row and are not on the allow-list; with
-  `--include-unverified-allowlisted` also keep-domain ones without a row).
+  for objects no row references; a key that a surviving row also references is kept. Bucket
+  reachability is proven before anything changes.
+- It then deletes the rows in **one transaction** (children first, composite foreign keys
+  included; the keys are read from the database, so a new table is covered). A foreign key that
+  is `NO ACTION` is deleted or cleared explicitly even when a `CASCADE` path also reaches the
+  row, because PostgreSQL checks it per deleted row. **If the database step fails it rolls back,
+  and no storage object and no Auth user has been touched**: a failure can never leave rows
+  pointing at deleted files. If the failure comes from the commit itself the server may still
+  have committed; the message then says so and asks for a dry run to see what remains.
+- Only after the commit it deletes the objects (a missing object counts as done), then the
+  matching Supabase Auth users (an already-deleted user counts as done). Every failure is
+  listed and the exit code is 1 if any step failed. **If an object fails, the Auth step is
+  skipped** (the output says `Supabase Auth users deleted: skipped (...)`, and the JSON has
+  `authSkipped` and `authSkippedReason`), which keeps the purged accounts listed as Auth orphans:
+  a re-run has no rows left, so it sweeps `uploads/{id}/`, `teacher/{id}/` and `{id}/` of those
+  orphans and finishes the job. Re-running also removes Auth users that have no `users` row and
+  are not on the allow-list (with `--include-unverified-allowlisted` also keep-domain ones
+  without a row).
+- **A failed key outside those folders is never retried.** Every production writer follows the
+  per-user layout (`uploads/{user}/{paper}/...` in `student.py`, `teacher/{user}/{paper}/...` in
+  `teacher.py`, `{user}/{uuid}.{ext}` avatars in `me.py`), so those keys are found again. Tutor
+  evidence (`tutor-evidence/{profile}/...`, keyed by the deleted profile) and any hand-seeded or
+  legacy key are not. On any storage failure the command prints a `Delete these by hand` list of
+  exactly those failed keys (JSON: `objectsFailedByHand`); delete them in the bucket yourself.
+- **Orphans are listed.** Auth users with no `users` row (left by an earlier run, or mid-signup)
+  are printed with their id, email and the folders that will be swept, in a dry run and with
+  `--execute`, in text and in the JSON (`orphans`). Read that list before executing.
+- **If the Supabase Auth listing fails, `--execute` stops before any change** (rows and files
+  gone but Auth sessions live is the worse state). A dry run warns and continues.
 - A verified allow-listed account is never deleted. `--include-unverified-allowlisted` also
   deletes the unverified ones. Run the purge in a quiet window: with that flag, a colleague signing
   up mid-run (their Auth user exists a moment before their row) would be deleted too.

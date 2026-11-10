@@ -8,6 +8,7 @@ production-refusal tests assert the purge never even asks for an engine.
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -464,7 +465,7 @@ def _run(
         execute=execute,
         include_unverified_allowlisted=flags.get("include_unverified_allowlisted", False),
         allow_production=flags.get("allow_production", False),
-        json_output=False,
+        json_output=flags.get("json_output", False),
         admin=admin,
         storage=storage,
     )
@@ -886,16 +887,17 @@ def test_dry_run_reports_object_counts_and_deletes_nothing(
     assert "kept (shared with a surviving account): 3" in out
 
 
-def test_execute_deletes_only_the_purged_users_objects_before_their_rows(
+def test_execute_deletes_only_the_purged_users_objects_after_their_rows_commit(
     engine: Engine, objects_world: World, local_settings: Settings
 ) -> None:
     storage = FakeStorage()
 
-    def _rows_still_there() -> None:
-        # Objects go first: the rows are only deleted once every object is gone.
-        assert objects_world.stranger in _ids(engine), "a row was deleted before its objects"
+    def _rows_already_gone() -> None:
+        # The database goes first: no object is deleted until the rows are committed away, so a
+        # database failure can never leave a row pointing at a deleted file.
+        assert objects_world.stranger not in _ids(engine), "an object went before its rows"
 
-    storage.on_delete.append(_rows_still_there)
+    storage.on_delete.append(_rows_already_gone)
     assert (
         _run(local_settings, FakeAdmin(_gotrue_users(engine)), execute=True, storage=storage) == 0
     )
@@ -909,27 +911,32 @@ def test_execute_deletes_only_the_purged_users_objects_before_their_rows(
     assert survivors.isdisjoint({key for _, key in storage.deleted})
 
 
-def test_a_storage_failure_leaves_every_row_and_a_rerun_completes(
+def test_a_storage_failure_keeps_the_auth_users_and_a_rerun_completes(
     engine: Engine,
     objects_world: World,
     local_settings: Settings,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    everyone = _ids(engine)
     admin = FakeAdmin(_gotrue_users(engine))
     storage = FakeStorage(fail={"av/stranger.png"})
     assert _run(local_settings, admin, execute=True, storage=storage) == 1
     err = capsys.readouterr().err
     assert "FAILED lemely-avatars/av/stranger.png" in err
-    assert "NO database row was touched" in err
-    assert _ids(engine) == everyone, "rows were deleted although an object could not be"
-    assert admin.delete_calls == [], "Auth users were deleted although the purge stopped"
+    assert "database rows are already gone" in err
+    assert _ids(engine) == objects_world.kept | {objects_world.unverified}
+    assert admin.delete_calls == [], "Auth users went although an object could not be deleted"
+    # This key is outside the per-user folders a re-run sweeps, so the CLI must name it for
+    # deletion by hand rather than promise a retry.
+    assert "delete these by hand" in err.lower()
+    assert "lemely-avatars/av/stranger.png" in err.lower().split("by hand", 1)[1]
 
-    # The cause is fixed: the same command now finishes (objects already gone count as done).
+    # The cause is fixed: the rerun deletes the Auth users, which are still listed as orphans.
     healthy = FakeStorage()
     assert _run(local_settings, admin, execute=True, storage=healthy) == 0
-    assert _ids(engine) == objects_world.kept | {objects_world.unverified}
-    assert ("lemely-avatars", "av/stranger.png") in healthy.deleted
+    assert set(admin.delete_calls) >= objects_world.disallowed
+    # The failed key's row is gone and its key sits under no orphan folder: the rerun never sees
+    # it (the assertion this replaces expected a retry, which only held with the old order).
+    assert ("lemely-avatars", "av/stranger.png") not in healthy.deleted
 
 
 def test_every_path_like_column_in_the_schema_is_a_registered_storage_column(
@@ -1470,3 +1477,555 @@ def test_a_friendship_with_a_purged_user_goes_even_though_its_pair_columns_have_
         execute_purge(conn, plan_purge(conn, KEEP))
     assert _count(engine, "friendships") == 0
     assert world.keep_student in _ids(engine)
+
+
+# ── Regressions from the first staging run (execution lemely-purge-staging-ftlsl) ────────────
+
+
+def test_an_invite_created_by_a_purged_user_does_not_block_execute(
+    engine: Engine, world: World
+) -> None:
+    """``invites.created_by`` is NO ACTION; the same row is also reachable by CASCADE.
+
+    A parent invite names the child (``child_id``, CASCADE) and its creator (``created_by``,
+    NO ACTION). When both are purged the row is first doomed through the cascade, and the walker
+    used to skip the explicit delete the NO ACTION foreign key needs, so ``DELETE FROM users``
+    failed with ``fk_invites_created_by_users``.
+    """
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "INSERT INTO invites (code, role, child_id, created_by) "
+                "VALUES ('PARENT01', 'parent', :child, :creator)"
+            ),
+            {"child": world.stranger, "creator": world.stranger_teacher},
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO invites (code, role, child_id, created_by) "
+                "VALUES ('PARENT02', 'parent', :child, :creator)"
+            ),
+            {"child": world.stranger_teacher, "creator": world.stranger},
+        )
+    with engine.begin() as conn:
+        execute_purge(conn, plan_purge(conn, KEEP))
+    assert _ids(engine) == world.kept | {world.unverified}
+    with engine.connect() as conn:
+        left = conn.execute(sa.text("SELECT count(*) FROM invites WHERE code='PARENT01'"))
+        assert left.scalar_one() == 0
+
+
+class ListingStorage(FakeStorage):
+    """A bucket that really holds keys: deleting a missing key is a no-op, listing is by prefix."""
+
+    def __init__(self, keys: dict[str, set[str]], *, fail: set[str] | None = None) -> None:
+        super().__init__(fail=fail)
+        self.keys = keys
+
+    def delete(self, bucket: str, object_path: str) -> None:
+        super().delete(bucket, object_path)
+        self.keys.get(bucket, set()).discard(object_path)
+
+    def list_objects(self, bucket: str, prefix: str) -> list[str]:
+        return sorted(k for k in self.keys.get(bucket, set()) if k.startswith(prefix))
+
+
+def test_a_database_failure_deletes_no_storage_object_and_no_auth_user(
+    engine: Engine,
+    objects_world: World,
+    local_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The DB step raising (as on staging) must leave every file and Auth user in place."""
+
+    def _boom(_conn: sa.Connection, _plan: object) -> dict[str, int]:
+        raise sa.exc.IntegrityError("DELETE FROM users", {}, Exception("fk_invites_created_by"))
+
+    monkeypatch.setattr(purge_cli, "execute_purge", _boom)
+    everyone = _ids(engine)
+    storage = FakeStorage()
+    admin = FakeAdmin(_gotrue_users(engine))
+    with pytest.raises(click.ClickException, match="rolled back"):
+        _run(local_settings, admin, execute=True, storage=storage)
+    assert storage.deleted == [], "storage objects were deleted although the database step failed"
+    assert admin.delete_calls == [], "Auth users were deleted although the database step failed"
+    assert _ids(engine) == everyone
+
+
+def test_a_rerun_after_a_partial_storage_failure_finishes_cleanly(
+    engine: Engine, world: World, local_settings: Settings
+) -> None:
+    """Rows are gone, one object failed: a rerun sweeps the rest; missing objects are fine."""
+    stranger = world.stranger
+    avatars = {f"{stranger}/a.png", f"{stranger}/b.png"}
+    uploads = {f"uploads/{stranger}/x.pdf"}
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text("UPDATE users SET avatar_path=:p WHERE id=:u"),
+            {"p": f"{stranger}/a.png", "u": stranger},
+        )
+    bucket_keys = {AV: set(avatars), UP: set(uploads), EV: set()}
+    admin = FakeAdmin(_gotrue_users(engine))
+    first = ListingStorage(bucket_keys, fail={f"{stranger}/a.png"})
+    assert _run(local_settings, admin, execute=True, storage=first) == 1
+    assert _ids(engine) == world.kept | {world.unverified}, "the database step did not commit"
+    assert admin.delete_calls == [], "Auth users went although storage is incomplete"
+    assert bucket_keys[AV] == {f"{stranger}/a.png"}, "only the failing object should remain"
+
+    # The cause is fixed; the other objects are already missing, which must not matter.
+    healthy = ListingStorage(bucket_keys)
+    assert _run(local_settings, admin, execute=True, storage=healthy) == 0
+    assert bucket_keys == {AV: set(), UP: set(), EV: set()}
+    assert stranger in admin.delete_calls
+    assert {u.id for u in admin.list_users()} >= world.kept
+
+
+def test_a_failed_key_inside_a_swept_folder_is_not_listed_for_hand_deletion(
+    engine: Engine,
+    world: World,
+    local_settings: Settings,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Keys under ``{user}/`` are found again by the rerun, so no by-hand list is printed."""
+    stranger = world.stranger
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text("UPDATE users SET avatar_path=:p WHERE id=:u"),
+            {"p": f"{stranger}/a.png", "u": stranger},
+        )
+    keys = {AV: {f"{stranger}/a.png"}, UP: set(), EV: set()}
+    storage = ListingStorage(keys, fail={f"{stranger}/a.png"})
+    admin = FakeAdmin(_gotrue_users(engine))
+    assert _run(local_settings, admin, execute=True, storage=storage) == 1
+    assert "by hand" not in capsys.readouterr().err.lower()
+
+
+def test_failed_keys_outside_the_swept_folders_are_in_the_json_report(
+    engine: Engine,
+    objects_world: World,
+    local_settings: Settings,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    storage = FakeStorage(fail={"av/stranger.png"})
+    admin = FakeAdmin(_gotrue_users(engine))
+    code = _run(local_settings, admin, execute=True, storage=storage, json_output=True)
+    assert code == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["objectsFailedByHand"] == [["lemely-avatars", "av/stranger.png"]]
+
+
+def test_the_auth_count_says_skipped_when_a_storage_failure_stopped_the_auth_step(
+    engine: Engine,
+    objects_world: World,
+    local_settings: Settings,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    admin = FakeAdmin(_gotrue_users(engine))
+    storage = FakeStorage(fail={"av/stranger.png"})
+    assert _run(local_settings, admin, execute=True, storage=storage) == 1
+    out = capsys.readouterr().out
+    line = next(ln for ln in out.splitlines() if ln.startswith("Supabase Auth users"))
+    assert "skipped" in line and "object" in line, line
+    assert admin.delete_calls == []
+
+
+def test_the_auth_json_says_skipped_when_a_storage_failure_stopped_the_auth_step(
+    engine: Engine,
+    objects_world: World,
+    local_settings: Settings,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    admin = FakeAdmin(_gotrue_users(engine))
+    storage = FakeStorage(fail={"av/stranger.png"})
+    assert _run(local_settings, admin, execute=True, storage=storage, json_output=True) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["authSkipped"] is True
+    assert "object" in report["authSkippedReason"]
+    assert report["authDeleted"] == 0
+
+
+def test_the_auth_count_is_the_number_actually_deleted(
+    engine: Engine,
+    world: World,
+    local_settings: Settings,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    admin = FakeAdmin(_gotrue_users(engine), fail={world.stranger})
+    assert _run(local_settings, admin, execute=True) == 1
+    out = capsys.readouterr().out
+    expected = len(world.disallowed) - 1  # one deletion failed
+    assert f"Supabase Auth users deleted: {expected}" in out
+
+
+def test_orphans_are_listed_with_their_email_and_swept_folders_in_a_dry_run(
+    engine: Engine,
+    world: World,
+    local_settings: Settings,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    orphan = GoTrueUser(id=uuid.uuid4(), email="gone@example.com")
+    admin = FakeAdmin([*_gotrue_users(engine), orphan])
+    assert _run(local_settings, admin, execute=False) == 0
+    out = capsys.readouterr().out
+    assert str(orphan.id) in out and "gone@example.com" in out
+    assert f"uploads/{orphan.id}/" in out and f"teacher/{orphan.id}/" in out
+    assert f"{orphan.id}/" in out
+
+    assert _run(local_settings, admin, execute=False, json_output=True) == 0
+    report = json.loads(capsys.readouterr().out)
+    [entry] = report["orphans"]
+    assert entry["id"] == str(orphan.id) and entry["email"] == "gone@example.com"
+    assert f"lemely-uploads/uploads/{orphan.id}/" in entry["folders"]
+    assert f"lemely-avatars/{orphan.id}/" in entry["folders"]
+
+
+def test_orphans_are_listed_when_executing_too(
+    engine: Engine,
+    world: World,
+    local_settings: Settings,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    orphan = GoTrueUser(id=uuid.uuid4(), email="gone@example.com")
+    admin = FakeAdmin([*_gotrue_users(engine), orphan])
+    assert _run(local_settings, admin, execute=True) == 0
+    out = capsys.readouterr().out
+    assert str(orphan.id) in out and "gone@example.com" in out
+
+
+class _ListingFails(FakeAdmin):
+    def list_users(self) -> list[GoTrueUser]:
+        raise RuntimeError("503 from GoTrue")
+
+
+def test_execute_changes_nothing_when_the_auth_listing_fails(
+    engine: Engine, objects_world: World, local_settings: Settings
+) -> None:
+    everyone = _ids(engine)
+    storage = FakeStorage()
+    admin = _ListingFails(_gotrue_users(engine))
+    with pytest.raises(click.ClickException, match="nothing was changed"):
+        _run(local_settings, admin, execute=True, storage=storage)
+    assert _ids(engine) == everyone
+    assert storage.deleted == [] and admin.delete_calls == []
+
+
+def test_a_dry_run_warns_and_continues_when_the_auth_listing_fails(
+    engine: Engine,
+    world: World,
+    local_settings: Settings,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    admin = _ListingFails(_gotrue_users(engine))
+    assert _run(local_settings, admin, execute=False) == 0
+    assert "Supabase Auth step failed" in capsys.readouterr().err
+
+
+def test_a_database_error_with_an_empty_message_is_still_reported(
+    engine: Engine,
+    world: World,
+    local_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _boom(_conn: sa.Connection, _plan: object) -> dict[str, int]:
+        raise sa.exc.OperationalError("DELETE", {}, Exception(""))
+
+    monkeypatch.setattr(purge_cli, "execute_purge", _boom)
+    with pytest.raises(click.ClickException, match="rolled back"):
+        _run(local_settings, FakeAdmin(_gotrue_users(engine)), execute=True)
+
+
+def test_a_failure_while_committing_does_not_claim_a_rollback(
+    engine: Engine,
+    world: World,
+    local_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the commit itself raises, the server may have committed: say so, point at a dry run."""
+
+    def _commit_fails(_self: object) -> None:
+        raise sa.exc.OperationalError("COMMIT", {}, Exception("connection lost"))
+
+    monkeypatch.setattr(sa.engine.Connection, "_commit_impl", _commit_fails)
+    storage = FakeStorage()
+    admin = FakeAdmin(_gotrue_users(engine))
+    with pytest.raises(click.ClickException) as raised:
+        _run(local_settings, admin, execute=True, storage=storage)
+    message = raised.value.message
+    assert "dry run" in message and "was rolled back" not in message
+    assert storage.deleted == [] and admin.delete_calls == []
+
+
+# ── Every foreign key into users is covered ──────────────────────────────────
+
+_FK_INTO_USERS_SQL = sa.text(
+    """
+    SELECT cl.relname AS child, a.attname AS col, con.confdeltype::text AS on_delete
+    FROM pg_constraint con
+    JOIN pg_class cl ON cl.oid = con.conrelid
+    JOIN pg_class p ON p.oid = con.confrelid
+    JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = ANY (con.conkey)
+    WHERE con.contype = 'f' AND p.relname = 'users'
+      AND p.relnamespace = 'public'::regnamespace AND cl.relname <> 'users'
+    ORDER BY 1, 2
+    """
+)
+
+_COLUMNS_SQL = sa.text(
+    """
+    SELECT column_name, data_type, udt_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = :t AND is_nullable = 'NO'
+      AND column_default IS NULL AND is_identity = 'NO' AND is_generated = 'NEVER'
+      AND generation_expression IS NULL
+    """
+)
+
+
+_PARENT_FKS_SQL = sa.text(
+    """
+    SELECT a.attname, pcl.relname, pa.attname
+    FROM pg_constraint con
+    JOIN pg_class cl ON cl.oid = con.conrelid
+    JOIN pg_class pcl ON pcl.oid = con.confrelid
+    JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = con.conkey[1]
+    JOIN pg_attribute pa ON pa.attrelid = con.confrelid AND pa.attnum = con.confkey[1]
+    WHERE con.contype = 'f' AND array_length(con.conkey, 1) = 1
+      AND cl.relname = :t AND cl.relnamespace = 'public'::regnamespace
+      AND pcl.relname <> 'users'
+    """
+)
+
+
+def _unique_word() -> str:
+    """Letters only (a tutor's first name rejects digits), different on every call."""
+    return "x" + uuid.uuid4().hex[:12].translate(str.maketrans("0123456789", "ghijklmnop"))
+
+
+def _value_for(conn: sa.Connection, data_type: str, udt_name: str) -> object:
+    """A throwaway value for a NOT NULL column with no default, enough to satisfy CHECKs."""
+    if data_type == "USER-DEFINED":
+        label = conn.execute(
+            sa.text(
+                "SELECT enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid "
+                "WHERE t.typname = :n ORDER BY e.enumsortorder LIMIT 1"
+            ),
+            {"n": udt_name},
+        ).scalar_one()
+        return sa.literal_column(f"'{label}'::{udt_name}")
+    return {
+        "uuid": sa.literal_column("gen_random_uuid()"),
+        # Unique, because parent rows (a subject's code, say) must not collide with each other.
+        "text": _unique_word(),
+        "character varying": _unique_word(),
+        "integer": 1,
+        "smallint": 1,
+        "bigint": 1,
+        "numeric": 1,
+        "double precision": 1.0,
+        "boolean": False,
+        "jsonb": sa.literal_column("'{}'::jsonb"),
+        "json": sa.literal_column("'{}'::json"),
+        "ARRAY": sa.literal_column("'{}'"),
+        "date": sa.literal_column("current_date"),
+        "timestamp with time zone": sa.literal_column("now()"),
+        "timestamp without time zone": sa.literal_column("now()"),
+        "time without time zone": sa.literal_column("current_time"),
+        "bytea": b"x",
+    }[data_type]
+
+
+#: Foreign keys into ``users`` that cannot be seeded together. Every single column is seeded, with
+#: the values its table's CHECK constraints need in :func:`_overrides`; an entry here is a
+#: combined row (columns joined by ``+``) the schema itself forbids. The test below fails if a
+#: foreign key can be neither seeded nor listed here.
+NOT_GENERICALLY_SEEDABLE: dict[tuple[str, str], str] = {
+    ("quizzes", "student_id+teacher_id"): "ck_quizzes_owner_xor: a quiz has one owner, so both "
+    "columns can never be set on one row; each is seeded alone in phase one",
+}
+
+
+def _overrides(table: str, column: str, user_id: uuid.UUID) -> dict[str, object]:
+    """Column values a table's CHECK constraints need, beyond the generic NOT NULL fill."""
+    lit = sa.literal_column
+    nobody = "'00000000-0000-0000-0000-000000000000'::uuid"
+    this = f"'{user_id}'::uuid"
+    start = "now() - interval '2 days'"
+    by_table: dict[str, dict[str, object]] = {
+        # requester <> addressee and pair_low < pair_high, whichever side is the purged user.
+        "friendships": {
+            "requester_id": lit(nobody),
+            "addressee_id": lit(nobody),
+            "pair_low": lit(nobody),
+            "pair_high": lit(this),
+        },
+        "invites": {
+            "child_id": lit("gen_random_uuid()"),
+            "code": f"fk-{user_id.hex[:20]}",
+        },
+        # exactly one of class_id / student_id, and kind must match which owner is set.
+        "quiz_assignments": {"class_id": lit("gen_random_uuid()")},
+        "quizzes": {
+            "kind": lit("'teacher'::quizkind" if column == "teacher_id" else "'practice'::quizkind")
+        },
+        "review_queue": {"attempt_id": lit("gen_random_uuid()")},
+        "tutor_profiles": {"offers_virtual": True},
+        "tutor_bookings": {
+            "starts_at": lit(start),
+            "ends_at": lit(f"{start} + interval '1 hour'"),
+        },
+        "tutoring_reports": {
+            "tutor_profile_id": lit("gen_random_uuid()"),
+            "target_type": lit("'tutor_profile'::reporttargettype"),
+        },
+    }
+    values = dict(by_table.get(table, {}))
+    if table == "quiz_assignments" and column == "student_id":
+        values = {}  # the check wants class_id NULL when student_id is set
+    return values
+
+
+def _combined_overrides(table: str, users: dict[str, uuid.UUID]) -> dict[str, object]:
+    """:func:`_overrides` for one row that sets *every* users-FK column of ``table`` at once."""
+    lit = sa.literal_column
+    values: dict[str, object] = {}
+    for column, user_id in users.items():
+        values.update(_overrides(table, column, user_id))
+    if table == "friendships":
+        low, high = sorted((users["requester_id"], users["addressee_id"]))
+        values.update(pair_low=low, pair_high=high)
+    if table == "quiz_assignments" and "student_id" in users:
+        values.pop("class_id", None)  # the check wants class_id NULL when student_id is set
+    if table == "quizzes":
+        kind = "teacher" if "teacher_id" in users else "practice"
+        values["kind"] = lit(f"'{kind}'::quizkind")
+    return values
+
+
+def test_every_foreign_key_into_users_is_deleted_or_cleared_before_users(engine: Engine) -> None:
+    """Doomed users referenced through *each* foreign key, and through all of a table's at once.
+
+    The foreign keys come from ``pg_constraint`` of the migrated schema, so a migration that adds
+    one is exercised here automatically. Each referencing row is seeded with foreign-key
+    enforcement off (``session_replication_role = replica``) so other columns need no parents;
+    the purge itself then runs with enforcement on, exactly as in production, and ``DELETE FROM
+    users`` raises if any row still points at a purged user.
+
+    Phase one seeds one row per (table, column) and purges. Phase two seeds, for every table with
+    more than one foreign key into ``users``, rows whose every such column names a *different*
+    doomed user, and purges again. That is the staging failure: ``invites`` is reached by CASCADE
+    (``child_id``) and by NO ACTION (``created_by``) from two purged users, and a walker that
+    treats a row it already reached as finished skips the NO ACTION delete and fails ``DELETE FROM
+    users``. Phase one alone cannot see that: no row there has two foreign keys at doomed users,
+    and a single row left on the NO ACTION edge keeps the walker's delete step alive. With that
+    walker restored (hunk reverted, 3 of 3 runs) this test fails on
+    ``fk_invites_created_by_users``.
+    """
+    seeded: list[tuple[str, str]] = []
+    seeded_multi: list[str] = []
+    skipped: list[tuple[str, str, str]] = []
+    counter = 0
+
+    def doomed_user(conn: sa.Connection, user_id: uuid.UUID | None = None) -> uuid.UUID:
+        nonlocal counter
+        counter += 1
+        user_id = user_id or uuid.uuid4()
+        conn.execute(
+            sa.text("INSERT INTO users (id, email, role) VALUES (:i, :e, 'student')"),
+            {"i": user_id, "e": f"doomed-{counter}@fk.example"},
+        )
+        return user_id
+
+    def seed(
+        conn: sa.Connection,
+        table: str,
+        values: dict[str, object],
+        keep: set[str],
+        depth: int = 0,
+    ) -> str:
+        """Insert one row and the parent rows it names; return the database error, or "" if ok.
+
+        Parents are real rows, not dangling ids: the purge updates a row it already updated once
+        (``review_queue.assigned_to`` then ``resolved_by``), and PostgreSQL re-checks every
+        foreign key of a row version the same transaction wrote, so a dangling parent would fail
+        that second update for a reason that has nothing to do with users.
+        """
+        for name, data_type, udt in conn.execute(_COLUMNS_SQL, {"t": table}).all():
+            if name not in values and name not in keep:
+                values[name] = _value_for(conn, data_type, udt)
+        if depth < 6:
+            for column, parent, parent_column in conn.execute(_PARENT_FKS_SQL, {"t": table}):
+                value = values.get(column)
+                if value is None or parent == table:
+                    continue
+                if isinstance(value, sa.sql.elements.ColumnClause):  # gen_random_uuid()
+                    value = values[column] = uuid.uuid4()
+                parent_values = _overrides(parent, "", uuid.UUID(int=0))
+                parent_values[parent_column] = value
+                if parent == "quizzes":  # ck_quizzes_owner_xor wants exactly one owner
+                    parent_values["student_id"] = doomed_user(conn)
+                error = seed(conn, parent, parent_values, {parent_column}, depth + 1)
+                if error:
+                    return f"parent {parent}: {error}"
+        tbl = sa.table(table, *[sa.column(c) for c in values])
+        try:
+            with conn.begin_nested():
+                conn.execute(sa.insert(tbl).values(values))
+        except sa.exc.DBAPIError as exc:
+            return str(exc.orig).splitlines()[0]
+        return ""
+
+    with engine.begin() as conn:
+        refs = [(r.child, r.col) for r in conn.execute(_FK_INTO_USERS_SQL)]
+        by_table: dict[str, list[str]] = {}
+        for table, column in refs:
+            by_table.setdefault(table, []).append(column)
+        conn.execute(sa.text("SET LOCAL session_replication_role = replica"))
+        for table, column in refs:
+            user_id = doomed_user(conn)
+            values: dict[str, object] = _overrides(table, column, user_id)
+            values[column] = user_id
+            error = seed(conn, table, values, {column})
+            if error:
+                skipped.append((table, column, error))
+                conn.execute(sa.text("DELETE FROM users WHERE id = :i"), {"i": user_id})
+            else:
+                seeded.append((table, column))
+    unexplained = [s for s in skipped if (s[0], s[1]) not in NOT_GENERICALLY_SEEDABLE]
+    assert not unexplained, f"could not seed a row for these foreign keys: {unexplained}"
+    assert len(seeded) + len(skipped) == len(refs) and seeded
+
+    with engine.begin() as conn:
+        execute_purge(conn, plan_purge(conn, KEEP))
+    assert _ids(engine) == set(), "a doomed user survived the purge (one foreign key per row)"
+
+    # Phase two is a purge of its own: if phase one's rows were still there, one of them would
+    # keep the walker's NO ACTION step alive and hide the bug. Here every row on a table's edges
+    # is a combined row, so a walker that skips a row it already reached has nothing to fall
+    # back on.
+    with engine.begin() as conn:
+        conn.execute(sa.text("SET LOCAL session_replication_role = replica"))
+        for table, columns in by_table.items():
+            if len(columns) < 2:
+                continue
+            # Two rows with fresh users, the columns taking them in opposite id order. ``DELETE
+            # FROM users WHERE id IN (...)`` removes users in id order, and whether a NO ACTION
+            # key is checked before or after its row's cascade depends on which column names the
+            # user deleted first. One order passes even with the staging bug; both must pass.
+            for ordering in (columns, columns[::-1]):
+                ids = sorted(uuid.uuid4() for _ in columns)
+                owners = zip(ordering, ids, strict=True)
+                users = {column: doomed_user(conn, uid) for column, uid in owners}
+                values = _combined_overrides(table, users)
+                values.update(users)
+                error = seed(conn, table, values, set(columns))
+                if error:
+                    skipped.append((table, "+".join(sorted(columns)), error))
+                else:
+                    seeded_multi.append(table)
+    unexplained = [s for s in skipped if (s[0], s[1]) not in NOT_GENERICALLY_SEEDABLE]
+    assert not unexplained, f"could not seed a row for these foreign keys: {unexplained}"
+    assert "invites" in seeded_multi, seeded_multi
+
+    with engine.begin() as conn:
+        execute_purge(conn, plan_purge(conn, KEEP))
+    assert _ids(engine) == set(), "a doomed user survived the purge (every foreign key at once)"

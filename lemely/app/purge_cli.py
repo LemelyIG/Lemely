@@ -1,10 +1,10 @@
 """``lemely admin purge-users``: clear a database of non-allow-listed accounts and their files.
 
 Dry-run by default: a count summary first, then rows per table, the kept accounts whose data is
-affected, and the full list of accounts that would be deleted. ``--execute`` deletes the storage
-objects first, then the database rows in one transaction (children first), then the matching
-Supabase Auth users. The logic is in :mod:`lemely.db.user_purge`; this module is the command's
-printing, flags and safety rails.
+affected, and the full list of accounts that would be deleted. ``--execute`` deletes the database
+rows in one transaction (children first) and, only once that has committed, the storage objects
+and then the matching Supabase Auth users. The logic is in :mod:`lemely.db.user_purge`; this
+module is the command's printing, flags and safety rails.
 
 **Safety rails.**
 
@@ -17,10 +17,16 @@ printing, flags and safety rails.
   is deleted. A dry run prints the same problems as a warning.
 * It never deletes an account on a keep-domain with a verified email. An unverified one is kept
   too unless ``--include-unverified-allowlisted``.
-* Objects go **first**: if any object fails to delete, no database row is touched, so a plain
-  re-run retries. A missing object counts as done.
-* The Auth step is idempotent (a user already gone is success) and lists every failure; the exit
-  code is 1 if any step failed, and a re-run finishes the job.
+* The database goes **first**. If it fails (a foreign key, a lost connection) the transaction
+  rolls back and no storage object and no Auth user has been touched, so no row is left pointing
+  at a deleted file. Reachability of every bucket is proven before that step.
+* Objects go second, then Auth. Both are idempotent (an object or user already gone is success)
+  and list every failure; the exit code is 1 if any step failed. If an object fails, Auth is
+  skipped (reported as such), so the purged accounts stay listed as Auth orphans and a re-run
+  finds their key prefixes again (``uploads/{id}/``, ``teacher/{id}/``, ``{id}/``) and finishes
+  the job. A failed key outside those folders is never retried: it is printed for deletion by
+  hand.
+* If the Supabase Auth listing fails, ``--execute`` stops before any change; a dry run warns.
 """
 
 from __future__ import annotations
@@ -30,6 +36,7 @@ import os
 from typing import TYPE_CHECKING
 
 import click
+import sqlalchemy as sa
 
 from lemely.auth.gotrue import GoTrueAdmin, HttpGoTrueAdmin
 from lemely.db.session import get_engine
@@ -37,15 +44,18 @@ from lemely.db.user_purge import (
     ObjectPurgeReport,
     PurgeError,
     PurgePlan,
+    add_orphan_prefixes,
     auth_targets,
     check_schema_at_head,
     classify_environment,
     discover_unreferenced,
     execute_purge,
+    keys_a_rerun_will_miss,
     plan_purge,
     purge_auth_users,
     purge_objects,
     storage_config_problems,
+    user_prefixes,
 )
 
 if TYPE_CHECKING:
@@ -241,13 +251,45 @@ def purge_users_command(
     engine = get_engine(settings)
     object_report: ObjectPurgeReport | None = None
     sweep_note = ""
+    auth_note = ""
+    auth_report = None
+    targets: list[tuple[uuid.UUID, str]] = []
+    orphans: list[tuple[uuid.UUID, str]] = []
+    stage = "plan"
     try:
         with engine.begin() as conn:
             check_schema_at_head(conn)
             plan = plan_purge(
                 conn, domains, include_unverified_allowlisted=include_unverified_allowlisted
             )
-            if plan.to_delete and (execute or not storage_problems):
+            remaining = {a.id for a in plan.kept_verified + plan.unverified_allowlisted}
+            if include_unverified_allowlisted:
+                remaining -= set(plan.delete_ids)
+            # Auth users to remove: the purged ids plus orphans left by an earlier run. Listed
+            # before the rows go because an orphan's key prefixes are how a re-run finds the
+            # objects whose rows an earlier run already deleted.
+            try:
+                targets = auth_targets(
+                    auth_admin,
+                    delete_ids=plan.delete_ids,
+                    remaining_ids=remaining,
+                    keep_domains=domains,
+                    include_unverified_allowlisted=include_unverified_allowlisted,
+                )
+            except Exception as exc:
+                if execute:
+                    # Without the listing the Auth users cannot be removed, and deleting only the
+                    # rows and files would leave their sessions live.
+                    raise click.ClickException(
+                        "Could not list the Supabase Auth users, so nothing was changed: "
+                        f"{type(exc).__name__}: {exc}"
+                    ) from exc
+                auth_note = f"Supabase Auth step failed: {type(exc).__name__}: {exc}"
+                targets = [(i, "") for i in plan.delete_ids]
+            delete_set = set(plan.delete_ids)
+            orphans = [(uid, email) for uid, email in targets if uid not in delete_set]
+            add_orphan_prefixes(plan, [uid for uid, _ in orphans])
+            if plan.prefixes and (execute or not storage_problems):
                 try:
                     discover_unreferenced(object_backend, buckets, plan)
                 except Exception as exc:
@@ -257,41 +299,50 @@ def purge_users_command(
                             f"was changed: {type(exc).__name__}: {exc}"
                         ) from exc
                     sweep_note = f"Prefix sweep skipped: {type(exc).__name__}: {exc}"
-            remaining = {a.id for a in plan.kept_verified + plan.unverified_allowlisted}
-            if include_unverified_allowlisted:
-                remaining -= set(plan.delete_ids)
-            if execute and plan.objects:
-                # Objects first: a failure leaves every row in place, so a re-run retries.
-                object_report = purge_objects(object_backend, buckets, plan.objects)
-            if execute and plan.to_delete and not (object_report and object_report.failed):
+            if execute and plan.to_delete:
                 execute_purge(conn, plan)
-            db_done = execute and plan.to_delete and not (object_report and object_report.failed)
+                stage = "commit"
     except PurgeError as exc:
         raise click.ClickException(str(exc)) from exc
+    except sa.exc.SQLAlchemyError as exc:
+        detail = (str(getattr(exc, "orig", exc)).splitlines() or [""])[0]
+        if stage == "commit":
+            # Every statement ran; the failure came while committing, and the server may have
+            # committed anyway. Storage and Auth were never reached either way.
+            raise click.ClickException(
+                "The database commit did not report success, so it is unknown whether the rows "
+                "are gone (no storage object or Auth user was touched). Run a dry run to see "
+                f"what remains before re-running: {type(exc).__name__}: {detail}"
+            ) from exc
+        raise click.ClickException(
+            "The database step failed and was rolled back, so no row, storage object or Auth "
+            f"user was deleted: {type(exc).__name__}: {detail}"
+        ) from exc
+    db_done = execute and bool(plan.to_delete)
 
+    # The rows are committed. Storage next (idempotent), then Auth only if every object went, so
+    # a failed object leaves its owner listed as an Auth orphan for the re-run to sweep.
+    if execute and plan.objects:
+        object_report = purge_objects(object_backend, buckets, plan.objects)
     objects_blocked = bool(object_report and object_report.failed)
-    auth_note = ""
-    auth_report = None
-    targets: list[tuple[uuid.UUID, str]] = []
-    if not objects_blocked:
-        try:
-            targets = auth_targets(
-                auth_admin,
-                delete_ids=plan.delete_ids,
-                remaining_ids=remaining,
-                keep_domains=domains,
-                include_unverified_allowlisted=include_unverified_allowlisted,
-            )
-            if execute:
-                auth_report = purge_auth_users(auth_admin, targets)
-        except Exception as exc:
-            auth_note = f"Supabase Auth step failed: {type(exc).__name__}: {exc}"
-
-    exit_code = (
-        1
-        if objects_blocked or (auth_note and execute) or (auth_report and auth_report.failed)
-        else 0
+    if execute and not objects_blocked:
+        auth_report = purge_auth_users(auth_admin, targets)
+    auth_skipped_reason = (
+        "an object failed to delete; the re-run deletes the Auth users"
+        if execute and auth_report is None
+        else None
     )
+    by_hand = (
+        keys_a_rerun_will_miss(object_report, buckets, [uid for uid, _ in targets])
+        if object_report
+        else []
+    )
+    orphan_folders = {
+        uid: [f"{buckets[kind]}/{prefix}" for kind, prefix in user_prefixes(uid)]
+        for uid, _ in orphans
+    }
+
+    exit_code = 1 if objects_blocked or (auth_report and auth_report.failed) else 0
     if json_output:
         click.echo(
             json.dumps(
@@ -324,6 +375,13 @@ def purge_users_command(
                         for i in plan.kept_impacts
                     ],
                     "authTargets": len(targets),
+                    "authDeleted": len(auth_report.deleted) if auth_report else 0,
+                    "authSkipped": auth_skipped_reason is not None,
+                    "authSkippedReason": auth_skipped_reason,
+                    "orphans": [
+                        {"id": str(uid), "email": email, "folders": orphan_folders[uid]}
+                        for uid, email in orphans
+                    ],
                     "authFailed": [list(f) for f in auth_report.failed] if auth_report else [],
                     "authError": auth_note or None,
                     "objects": {k: len(v) for k, v in plan.objects.items()},
@@ -331,6 +389,7 @@ def purge_users_command(
                     "objectsFailed": [list(f) for f in object_report.failed]
                     if object_report
                     else [],
+                    "objectsFailedByHand": [list(k) for k in by_hand],
                     "storageProblems": storage_problems,
                 },
                 indent=2,
@@ -341,9 +400,20 @@ def purge_users_command(
     _print_plan(plan, execute=execute, storage_problems=storage_problems)
     if sweep_note:
         click.echo(sweep_note, err=True)
-    click.echo(
-        f"Supabase Auth users {'deleted' if execute else 'that would be deleted'}: {len(targets)}"
-    )
+    if orphans:
+        click.echo(
+            f"Auth users with no account row (orphans), whose folders are swept: {len(orphans)}"
+        )
+        for uid, email in orphans:
+            click.echo(f"  {uid} {email}".rstrip())
+            for folder in orphan_folders[uid]:
+                click.echo(f"      {folder}")
+    if not execute:
+        click.echo(f"Supabase Auth users that would be deleted: {len(targets)}")
+    elif auth_report is not None:
+        click.echo(f"Supabase Auth users deleted: {len(auth_report.deleted)}")
+    else:
+        click.echo(f"Supabase Auth users deleted: skipped ({auth_skipped_reason})")
     if auth_note:
         click.echo(auth_note, err=True)
     if object_report is not None:
@@ -355,10 +425,19 @@ def purge_users_command(
             click.echo(f"  FAILED {label}: {error}", err=True)
         if object_report.failed:
             click.echo(
-                "Some objects could not be deleted, so NO database row was touched. "
-                "Fix the cause and re-run the same command.",
+                "Some objects could not be deleted. The database rows are already gone and the "
+                "Auth users were kept so the re-run can sweep the per-user folders again. Fix "
+                "the cause and re-run the same command.",
                 err=True,
             )
+        if by_hand:
+            click.echo(
+                "Delete these by hand: they sit outside the per-user folders a re-run sweeps, so "
+                "it will not retry them:",
+                err=True,
+            )
+            for bucket, key in by_hand:
+                click.echo(f"  {bucket}/{key}", err=True)
     if auth_report is not None:
         click.echo(
             f"  deleted={len(auth_report.deleted)} already_gone={len(auth_report.already_gone)} "
