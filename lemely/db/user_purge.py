@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from urllib.parse import urlsplit
 
 import sqlalchemy as sa
+from sqlalchemy.exc import ProgrammingError
 
 from lemely.core.access import is_allowed_email
 from lemely.core.object_keys import sibling_scheme_key
@@ -695,7 +696,7 @@ def check_schema_at_head(conn: Connection) -> str:
     heads = set(ScriptDirectory.from_config(config).get_heads())
     try:
         rows = {r[0] for r in conn.execute(sa.text("SELECT version_num FROM alembic_version"))}
-    except sa.exc.ProgrammingError as exc:
+    except ProgrammingError as exc:
         raise PurgeError(
             "This database has no alembic_version table: it was never migrated. Refusing."
         ) from exc

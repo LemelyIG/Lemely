@@ -36,7 +36,7 @@ import os
 from typing import TYPE_CHECKING
 
 import click
-import sqlalchemy as sa
+from sqlalchemy.exc import SQLAlchemyError
 
 from lemely.auth.gotrue import GoTrueAdmin, HttpGoTrueAdmin
 from lemely.db.session import get_engine
@@ -304,7 +304,7 @@ def purge_users_command(
                 stage = "commit"
     except PurgeError as exc:
         raise click.ClickException(str(exc)) from exc
-    except sa.exc.SQLAlchemyError as exc:
+    except SQLAlchemyError as exc:
         detail = (str(getattr(exc, "orig", exc)).splitlines() or [""])[0]
         if stage == "commit":
             # Every statement ran; the failure came while committing, and the server may have
