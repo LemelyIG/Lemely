@@ -61,7 +61,7 @@ from lemely.core.history import (
     is_paper,
     latest_grade_bearing,
 )
-from lemely.core.metered_actions import MeteredAction
+from lemely.core.metered_actions import MeteredAction, UsageTarget
 from lemely.core.schemas import (
     REVIEW_CONFIDENCE_THRESHOLD,
     AccuracyReport,
@@ -186,9 +186,11 @@ from lemely.web.upload_utils import (
 from lemely.web.usage import (
     MeteredJob,
     UsageBlocked,
+    UsageGrantContext,
     UsageMeter,
     get_usage_meter,
     request_from_team,
+    require_usage,
 )
 
 log = structlog.get_logger(__name__)
@@ -1872,9 +1874,71 @@ def _quiz_to_preview(quiz: GeneratedQuiz) -> QuizPreviewDTO:
     )
 
 
+def _preview_quiz_target(count: int = 4) -> UsageTarget:
+    """``POST /quizzes/preview``'s estimate input: the questions requested (same default).
+
+    Reads no record, so it needs no meter read. ``subject_code`` is deliberately ``None``:
+    the route's ``subject_code`` query is client input, and a teacher chain has no seat to
+    route by subject.
+    """
+    return UsageTarget(subject_code=None, input_count=count)
+
+
+def _generate_quiz_target(count: int = 5) -> UsageTarget:
+    """``POST /quizzes/generate``'s estimate input: the questions requested (same default)."""
+    return UsageTarget(subject_code=None, input_count=count)
+
+
+def _build_quiz_metered(
+    meter: UsageMeter,
+    usage: UsageGrantContext,
+    settings: Settings,
+    history_store: HistoryStoreProtocol,
+    gemini_client: GeminiClient,
+    bank_service: QuestionBankService,
+    caller_id: uuid.UUID,
+    school_ids: Sequence[uuid.UUID],
+    *,
+    subject_code: str,
+    count: int,
+    topics: list[str] | None,
+) -> tuple[GeneratedQuiz, set[str]]:
+    """Run :func:`_build_quiz` as the metered job the route reserved the hold for.
+
+    The route is a synchronous ``def``, so FastAPI runs it in one worker thread and
+    ``meter.job`` reserves, runs and settles in that thread (never nested). The 402 for a
+    balance that is gone, or a hold that cannot be renewed (:class:`UsageBlocked`), is
+    raised before any model call. An exception (the clean 503 included) releases the hold.
+    A quiz with no question is work that failed without raising: it is abandoned, so a
+    paid-for nothing charges 0 (billing spec §2.4).
+    """
+    with meter.job(usage) as job:
+        quiz, reused_prompts = _build_quiz(
+            settings,
+            history_store,
+            gemini_client,
+            bank_service,
+            caller_id,
+            school_ids,
+            subject_code=subject_code,
+            count=count,
+            topics=topics,
+        )
+        if not quiz.questions:
+            job.abandon()
+    return quiz, reused_prompts
+
+
 @router.post("/quizzes/preview", response_model=QuizPreviewDTO)
 def quiz_preview(
     actor: Annotated[TeamActor, Depends(_TEAM_QUIZ)],
+    usage: Annotated[
+        UsageGrantContext,
+        Depends(
+            require_usage(MeteredAction.PREVIEW_QUIZ, target=_preview_quiz_target, team=_TEAM_QUIZ)
+        ),
+    ],
+    meter: Annotated[UsageMeter, Depends(get_usage_meter)],
     settings: Annotated[Settings, Depends(get_settings)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
@@ -1893,7 +1957,9 @@ def quiz_preview(
     # The guard has already parsed the token subject (401 otherwise), so this is the
     # acting teacher's id as a UUID: the caller's own, or the lead's for an assistant.
     caller_uuid = actor.lead_teacher_user_id
-    quiz, _reused = _build_quiz(
+    quiz, _reused = _build_quiz_metered(
+        meter,
+        usage,
         settings,
         history_store,
         gemini_client,
@@ -1910,6 +1976,15 @@ def quiz_preview(
 @router.post("/quizzes/generate", response_model=QuizPreviewDTO)
 def quiz_generate(
     actor: Annotated[TeamActor, Depends(_TEAM_QUIZ)],
+    usage: Annotated[
+        UsageGrantContext,
+        Depends(
+            require_usage(
+                MeteredAction.GENERATE_QUIZ, target=_generate_quiz_target, team=_TEAM_QUIZ
+            )
+        ),
+    ],
+    meter: Annotated[UsageMeter, Depends(get_usage_meter)],
     settings: Annotated[Settings, Depends(get_settings)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
@@ -1933,7 +2008,9 @@ def quiz_generate(
     # The guard has already parsed the token subject (401 otherwise), so this is the
     # acting teacher's id as a UUID: the caller's own, or the lead's for an assistant.
     caller_uuid = actor.lead_teacher_user_id
-    quiz, reused_prompts = _build_quiz(
+    quiz, reused_prompts = _build_quiz_metered(
+        meter,
+        usage,
         settings,
         history_store,
         gemini_client,
