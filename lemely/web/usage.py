@@ -18,11 +18,13 @@ Every metered route takes three steps, in this order:
    call cost nothing. The web layer's thread hops (the SSE worker, the grading pool, the
    quiz marking thread) do not copy context, which is why the scope opens inside the
    worker. The block must join every thread it starts before it exits: the total is read
-   once, at exit. On entry, ``run()`` restarts the hold's deadline (queued work can start
-   long after its reserve) and reserves again if the sweeper already expired the hold, so
-   a 402 reason comes before any model call. ``run()`` must enter and exit in one thread
-   and one context, so it wraps the worker's callable, never the body of a generator the
-   framework iterates. Metered
+   once, at exit. The hold is a lease: on entry ``run()`` restarts it (queued work can
+   start long after its reserve), reserving again if the sweeper already expired it, and
+   one shared daemon thread renews it while the work runs. A job that can no longer be
+   covered fails with a block reason before any model call; only a request still open can
+   send that as a 402 (a pool or SSE worker reports it its own way). ``run()`` must enter
+   and exit in one thread and one context, so it wraps the worker's callable, never the
+   body of a generator the framework iterates. Metered
    jobs never nest (an inner cost scope would shadow the outer one and the outer job would
    under-charge), so :meth:`MeteredJob.run` refuses to. :meth:`MeteredJob.release` is only
    for a reserved job whose ``run()`` will never start.
@@ -38,10 +40,11 @@ import contextlib
 import contextvars
 import inspect
 import threading
+import time
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Annotated, TypeVar
 
@@ -149,6 +152,88 @@ EXEMPT_ROLES: frozenset[Role] = frozenset({Role.platform_admin})
 _RUNNING_JOB: contextvars.ContextVar[MeteredJob | None] = contextvars.ContextVar(
     "lemely_running_metered_job", default=None
 )
+#: The shortest gap between two renewals of one running job's hold.
+_MIN_RENEW_EVERY = timedelta(seconds=30)
+
+
+class _HoldRenewer:
+    """One daemon thread that keeps every running metered job's hold alive.
+
+    A job joins when its run holds units (at :meth:`MeteredJob.run` entry, or in
+    :meth:`MeteredJob.bind_subject` inside the run) and leaves before it settles or
+    releases. Each due job's hold is extended to ``now + job_timeout + JOB_SLACK`` from
+    this thread, so a run that outlasts its timeout keeps its hold. A stopped process
+    stops renewing, so its holds still clear one lease after the last renewal. One
+    thread serves every job; renewals of different jobs run one after another.
+    """
+
+    def __init__(self) -> None:
+        self._cond = threading.Condition()
+        self._due: dict[MeteredJob, float] = {}
+        self._every: dict[MeteredJob, float] = {}
+        self._renewing: MeteredJob | None = None
+        self._thread: threading.Thread | None = None
+
+    def add(self, job: MeteredJob, every: float) -> None:
+        """Renew ``job``'s hold every ``every`` seconds until :meth:`remove`."""
+        with self._cond:
+            self._every[job] = every
+            self._due[job] = time.monotonic() + every
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(
+                    target=self._loop, name="lemely-hold-renewer", daemon=True
+                )
+                self._thread.start()
+            self._cond.notify_all()
+
+    def remove(self, job: MeteredJob) -> None:
+        """Stop renewing ``job``. Returns only once no renewal of it is in flight."""
+        with self._cond:
+            self._due.pop(job, None)
+            self._every.pop(job, None)
+            while self._renewing is job:
+                self._cond.wait()
+
+    def _next_due(self) -> MeteredJob:
+        """Wait (holding the condition) until a job is due, then mark it in flight."""
+        while True:
+            if not self._due:
+                self._cond.wait()
+                continue
+            job, due = min(self._due.items(), key=lambda item: item[1])
+            delay = due - time.monotonic()
+            if delay <= 0:
+                self._renewing = job
+                self._due[job] = time.monotonic() + self._every[job]
+                return job
+            self._cond.wait(delay)
+
+    def _loop(self) -> None:
+        while True:
+            with self._cond:
+                job = self._next_due()
+            keep = True
+            try:
+                keep = job._renew()
+            except Exception:
+                # The next tick retries; the hold keeps its last deadline meanwhile.
+                log.warning(
+                    "usage_renew_failed",
+                    job_id=str(job.job_id),
+                    action=job.ctx.request.action.value,
+                    exc_info=True,
+                )
+            finally:
+                with self._cond:
+                    self._renewing = None
+                    if not keep:
+                        self._due.pop(job, None)
+                        self._every.pop(job, None)
+                    self._cond.notify_all()
+
+
+_RENEWER = _HoldRenewer()
+
 _NESTED_JOB = "nested metered job: an inner cost scope would hide its cost from the outer job"
 _CROSSED_CONTEXT = (
     "MeteredJob.run() exited in a different thread or context than it entered: wrap the "
@@ -175,6 +260,15 @@ class UsageBlocked(Exception):
             "reason": self.reason.value,
             "estimate": [self.estimate[0], self.estimate[1]],
         }
+
+
+class UsageUnavailable(Exception):
+    """The ledger could not restart a queued job's hold, and the old one may lapse mid-run.
+
+    Raised by :meth:`MeteredJob.run` before any work, after the hold was released, so
+    nothing is charged and the job can be run again later. Workers report it like
+    :class:`UsageBlocked`; it is not a 402 (no block reason fits a ledger outage).
+    """
 
 
 async def usage_blocked_handler(_request: Request, exc: Exception) -> JSONResponse:
@@ -271,6 +365,8 @@ class MeteredJob:
         self._abandoned = False
         self._finished = False
         self._running = False
+        # The hold's current deadline as this job last set or saw it.
+        self._deadline: datetime | None = None
         # Guards _finished and _running: release() may come from the request thread
         # while run() starts in a worker.
         self._lock = threading.Lock()
@@ -288,11 +384,12 @@ class MeteredJob:
             raise RuntimeError("an unmetered job has no meter")
         return self._meter
 
-    def _reserve(self) -> None:
+    def _reserve(self, *, in_worker: bool = False) -> None:
         meter = self._live_meter()
         ctx = self.ctx
         now = meter.now()
         spec = ACTION_SPECS[ctx.request.action]
+        expires_at = now + spec.job_timeout + JOB_SLACK
         try:
             with meter.sessionmaker.begin() as session:
                 # The ledger takes a transaction-scoped advisory lock per payer owner before
@@ -307,13 +404,28 @@ class MeteredJob:
                     estimator_version=ctx.estimator_version,
                     rate_version=ctx.rate_version,
                     teacher_member_id=ctx.teacher_member_id,
-                    expires_at=now + spec.job_timeout + JOB_SLACK,
+                    expires_at=expires_at,
                     now=now,
                 )
         except InsufficientBalance as exc:
             # Another job took the balance between authorize and reserve.
-            raise UsageBlocked(meter.reason_for(ctx.request), ctx.estimate) from exc
+            raise UsageBlocked(self._block_reason(in_worker=in_worker), ctx.estimate) from exc
         self._reserved = True
+        self._deadline = expires_at
+
+    def _block_reason(self, *, in_worker: bool) -> UsageBlockReason:
+        """The block reason, read on fresh facts.
+
+        In a worker, a chain that no longer loads (an assistant removed while the job was
+        queued is phase 03's 403) is reported as a block: no request is left to send a 403.
+        """
+        meter = self._live_meter()
+        if not in_worker:
+            return meter.reason_for(self.ctx.request)
+        try:
+            return meter.reason_for(self.ctx.request)
+        except HTTPException:
+            return UsageBlockReason.INSUFFICIENT_CREDITS
 
     def bind_subject(self, subject_code: str | None) -> None:
         """Fix a deferred job's subject (read inside the job), re-check and reserve.
@@ -330,6 +442,8 @@ class MeteredJob:
             replace(self.ctx.request, subject_code=subject_code, subject_pending=False)
         )
         self._reserve()
+        if self._running:
+            _RENEWER.add(self, meter.renew_interval(self.ctx.request.action))
 
     def abandon(self) -> None:
         """Mark the work failed without raising: :meth:`run` releases instead of settling."""
@@ -365,34 +479,35 @@ class MeteredJob:
         a sync stream in a fresh context, so costs after the first yield would be lost).
         An exit in another thread or context releases the job, logs
         ``usage_run_crossed_context`` and raises :class:`RuntimeError`. One job runs once:
-        a second ``run()`` while the first is active (another thread) logs
-        ``usage_run_already_running`` and raises :class:`RuntimeError`. Join every worker
+        a second ``run()`` while the first is active (re-entered, or another thread) logs
+        ``usage_run_already_running`` and raises :class:`RuntimeError` without touching the
+        running hold. On entry the hold's lease restarts (:meth:`_restart_clock`, which may
+        raise :class:`UsageBlocked` or :class:`UsageUnavailable` before any work), and it is
+        renewed every third of the action's timeout until exit. Join every worker
         thread before the block exits; the total is read at exit.
         """
+        # This job already running (re-entered here, or in another thread) is refused
+        # without touching its hold; only a different job running here is a nested one.
+        with self._lock:
+            self._refuse_if_unrunnable()
         if _RUNNING_JOB.get() is not None:
             self._end(Decimal(0), settle=False)
             raise RuntimeError(_NESTED_JOB)
         with self._lock:
-            if self._finished:
-                raise RuntimeError("this metered job was already released or finished")
-            if self._running:
-                # A second thread in the same job: its cost would never be billed.
-                log.error(
-                    "usage_run_already_running",
-                    job_id=str(self.job_id),
-                    action=self.ctx.request.action.value,
-                )
-                raise RuntimeError("this metered job is already running in another thread")
+            self._refuse_if_unrunnable()
             self._running = True
         if self._reserved:
             try:
                 self._restart_clock()
             except BaseException:
-                # Blocked (or failed) before any work: nothing is held any more.
+                # Refused before any work. A hold still open is released (best effort).
+                if self._reserved:
+                    self._end(Decimal(0), settle=False)
                 with self._lock:
                     self._running = False
                     self._finished = True
                 raise
+            _RENEWER.add(self, self._live_meter().renew_interval(self.ctx.request.action))
         entry_thread = threading.get_ident()
         token = _RUNNING_JOB.set(self)
         scope = cost_scope()
@@ -404,46 +519,115 @@ class MeteredJob:
             raise
         self._exit(scope, token, entry_thread, accumulator.total_usd, settle=not self._abandoned)
 
+    def _refuse_if_unrunnable(self) -> None:
+        """Raise if this job finished or is running. The caller holds ``self._lock``."""
+        if self._finished:
+            raise RuntimeError("this metered job was already released or finished")
+        if self._running:
+            # Its cost would never be billed, and releasing would free the running hold.
+            log.error(
+                "usage_run_already_running",
+                job_id=str(self.job_id),
+                action=self.ctx.request.action.value,
+            )
+            raise RuntimeError("this metered job is already running")
+
     def _restart_clock(self) -> None:
-        """Start the hold's deadline when the work starts, not when it was reserved.
+        """Start the hold's lease when the work starts, not when it was reserved.
 
         Queued work (a class set behind one grading worker) can start long after its
-        reserve. An open hold gets ``now + job_timeout + JOB_SLACK``. A hold the sweeper
-        already expired is reserved again, same chain and estimate, under a new job id,
-        and a chain that can no longer cover it raises :class:`UsageBlocked` before any
-        model call. A ledger failure here is logged (``usage_extend_failed``) and the work
-        goes ahead on the old deadline: metering fails open. A job whose instance stops
-        while it is still queued keeps the old behaviour: its hold clears at the deadline
-        set at reserve.
+        reserve. The open hold is extended to ``now + job_timeout + JOB_SLACK``; while the
+        work runs, :class:`_HoldRenewer` keeps extending it. A synchronous route pays this
+        one transaction too: the in-memory deadline cannot tell whether a sweeper (or an
+        admin) closed the job since the reserve.
+
+        * Expired (the sweeper returned it): reserved again, same chain and estimate,
+          under a new job id. A chain that cannot cover it raises :class:`UsageBlocked`;
+          a database failure propagates. Either way no work starts unmetered.
+        * Settled or released by someone else: raises; re-reserving would bill the work
+          twice or bill work that was cancelled.
+        * The extend fails twice: the work starts only if the old deadline is still a
+          whole ``job_timeout`` away; otherwise :class:`UsageUnavailable` (fail closed).
         """
         meter = self._live_meter()
         now = meter.now()
         spec = ACTION_SPECS[self.ctx.request.action]
-        try:
-            with meter.sessionmaker.begin() as session:
-                status = (
-                    UsageLedger(session)
-                    .extend(self.job_id, expires_at=now + spec.job_timeout + JOB_SLACK, now=now)
-                    .status
-                )
-        except Exception:
-            log.exception(
-                "usage_extend_failed",
+        lease = spec.job_timeout + JOB_SLACK
+        deadline = self._deadline
+        status = self._extend_with_retry(now + lease, now)
+        if status is None:
+            if deadline is not None and deadline - now >= spec.job_timeout:
+                return
+            log.error(
+                "usage_extend_refused_start",
                 job_id=str(self.job_id),
                 action=self.ctx.request.action.value,
+                deadline=None if deadline is None else deadline.isoformat(),
             )
-            return
+            raise UsageUnavailable("the usage ledger could not restart this job's hold")
         if status is UsageJobStatus.open:
             return
+        if status is not UsageJobStatus.expired:
+            log.error(
+                "usage_job_closed_before_start",
+                job_id=str(self.job_id),
+                action=self.ctx.request.action.value,
+                status=status.value,
+            )
+            raise RuntimeError(
+                f"usage job {self.job_id} was {status.value} before its work started"
+            )
+        old_job_id, new_job_id = self.job_id, uuid.uuid4()
         log.warning(
             "usage_hold_expired_before_start",
+            old_job_id=str(old_job_id),
+            new_job_id=str(new_job_id),
+            action=self.ctx.request.action.value,
+        )
+        self.job_id = new_job_id
+        self._reserved = False
+        self._reserve(in_worker=True)
+
+    def _extend_with_retry(self, expires_at: datetime, now: datetime) -> UsageJobStatus | None:
+        """Extend the hold, retrying once. ``None`` when both attempts failed."""
+        for attempt in (1, 2):
+            try:
+                return self._extend(expires_at, now)
+            except Exception:
+                log.warning(
+                    "usage_extend_failed",
+                    job_id=str(self.job_id),
+                    action=self.ctx.request.action.value,
+                    attempt=attempt,
+                    exc_info=True,
+                )
+        return None
+
+    def _extend(self, expires_at: datetime, now: datetime) -> UsageJobStatus:
+        meter = self._live_meter()
+        with meter.sessionmaker.begin() as session:
+            job = UsageLedger(session).extend(self.job_id, expires_at=expires_at, now=now)
+            status, deadline = job.status, job.expires_at
+        if status is UsageJobStatus.open:
+            self._deadline = deadline
+        return status
+
+    def _renew(self) -> bool:
+        """Extend the running job's hold (the renewer's thread). False once it is gone."""
+        meter = self._live_meter()
+        now = meter.now()
+        spec = ACTION_SPECS[self.ctx.request.action]
+        status = self._extend(now + spec.job_timeout + JOB_SLACK, now)
+        if status is UsageJobStatus.open:
+            return True
+        # The settle at exit is refused (usage_settle_on_closed_job), so this run is unbilled.
+        log.warning(
+            "usage_hold_lost_mid_run",
             job_id=str(self.job_id),
             action=self.ctx.request.action.value,
             status=status.value,
         )
-        self.job_id = uuid.uuid4()
-        self._reserved = False
-        self._reserve()
+        return False
 
     def _exit(
         self,
@@ -454,6 +638,7 @@ class MeteredJob:
         *,
         settle: bool,
     ) -> None:
+        _RENEWER.remove(self)
         crossed = _RUNNING_JOB.get() is not self or threading.get_ident() != entry_thread
         if crossed:
             log.error(
@@ -526,12 +711,16 @@ class MeteredJob:
                         # The sweeper closed the job while the work ran past its whole
                         # deadline: the hold is back and the balance may be spent, so a late
                         # charge would make unplanned debt. Refused; the cost is in this line.
-                        log.warning(
+                        # ``alert=True``: unbilled work, the event a log-based alert keys on.
+                        log.error(
                             "usage_settle_on_closed_job",
+                            alert=True,
                             job_id=str(self.job_id),
                             action=request.action.value,
+                            actor_user_id=str(request.actor_user_id),
                             status=settled_job.status.value,
                             cost_usd=str(cost_usd),
+                            rate_version=settled_job.rate_version,
                         )
                 else:
                     ledger.release(self.job_id, now=now)
@@ -556,10 +745,18 @@ class UsageMeter:
         *,
         enforce: bool = True,
         now: Callable[[], datetime] = _utcnow,
+        renew_every: timedelta | None = None,
     ) -> None:
         self.sessionmaker = sessionmaker
         self._enforce = enforce
         self._now = now
+        self._renew_every = renew_every
+
+    def renew_interval(self, action: MeteredAction) -> float:
+        """Seconds between renewals of a running job's hold: a third of its timeout."""
+        if self._renew_every is not None:
+            return self._renew_every.total_seconds()
+        return max(ACTION_SPECS[action].job_timeout / 3, _MIN_RENEW_EVERY).total_seconds()
 
     def now(self) -> datetime:
         """The meter's clock (timezone-aware)."""
@@ -850,6 +1047,7 @@ __all__ = [
     "UsageGrantContext",
     "UsageMeter",
     "UsageRequest",
+    "UsageUnavailable",
     "clear_post_settle_hooks",
     "get_usage_meter",
     "register_post_settle_hook",

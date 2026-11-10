@@ -491,6 +491,22 @@ def test_a_nested_metered_job_is_refused_and_releases_its_hold(
     assert (inner.status, inner.charged) == (UsageJobStatus.released, 0)
 
 
+def test_re_entering_a_running_job_refuses_without_releasing_its_hold(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Same job, same context: refused as 'already running', the outer run still settles."""
+    sm = migrated_sessionmaker
+    student = _funded_student(sm)
+    meter = enforcing_meter(sm)
+    job = meter.reserve(meter.authorize(_req(student)))
+    with job.run():
+        with pytest.raises(RuntimeError, match="already running"), job.run():
+            record_llm_cost(Decimal("0.500"))
+        record_llm_cost(Decimal("0.020"))
+    (row,) = jobs_for(sm, student)
+    assert (row.status, row.charged) == (UsageJobStatus.settled, 20)
+
+
 def test_release_during_run_is_ignored_and_a_released_job_never_runs(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:
@@ -713,9 +729,8 @@ def test_a_hold_the_sweeper_expired_is_reserved_again_at_start(
         20,
     )
     assert settled.job_id != first_id
-    assert [e["event"] for e in logs if e["event"] == "usage_hold_expired_before_start"] == [
-        "usage_hold_expired_before_start"
-    ]
+    (line,) = [e for e in logs if e["event"] == "usage_hold_expired_before_start"]
+    assert (line["old_job_id"], line["new_job_id"]) == (str(first_id), str(job.job_id))
 
 
 def test_an_expired_hold_without_balance_left_is_blocked_before_the_work(
@@ -746,29 +761,7 @@ def test_an_expired_hold_without_balance_left_is_blocked_before_the_work(
     assert [j.status for j in jobs_for(sm, student)].count(UsageJobStatus.open) == 1
 
 
-def test_a_failed_extend_never_blocks_the_work(
-    migrated_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Metering fails open: the hold keeps its old deadline and the work runs and settles."""
-    sm = migrated_sessionmaker
-    student = _funded_student(sm)
-    meter = enforcing_meter(sm)
-    job = meter.reserve(meter.authorize(_req(student)))
-
-    def broken(*_a: object, **_k: object) -> None:
-        raise RuntimeError("ledger down")
-
-    monkeypatch.setattr(UsageLedger, "extend", broken)
-    with capture_logs() as logs, job.run():
-        record_llm_cost(Decimal("0.020"))
-    assert [e["event"] for e in logs if e["event"] == "usage_extend_failed"] == [
-        "usage_extend_failed"
-    ]
-    (row,) = jobs_for(sm, student)
-    assert (row.status, row.charged) == (UsageJobStatus.settled, 20)
-
-
-def test_a_settle_on_a_job_the_sweeper_closed_is_refused_with_a_warning(
+def test_a_settle_on_a_job_the_sweeper_closed_is_refused_with_an_alert(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:
     """The hold is gone and the balance may be spent: no late charge, no silent success."""
@@ -781,7 +774,14 @@ def test_a_settle_on_a_job_the_sweeper_closed_is_refused_with_a_warning(
     (row,) = jobs_for(sm, student)
     assert (row.status, row.charged) == (UsageJobStatus.expired, 0)
     (line,) = [e for e in logs if e["event"] == "usage_settle_on_closed_job"]
-    assert (line["log_level"], line["status"], line["cost_usd"]) == ("warning", "expired", "0.020")
+    assert (line["log_level"], line["alert"], line["status"]) == ("error", True, "expired")
+    # Enough to bill it by hand: who, what, how much, at which rate.
+    assert (line["cost_usd"], line["actor_user_id"], line["action"]) == (
+        "0.020",
+        str(student),
+        "mark_paper",
+    )
+    assert line["rate_version"] == row.rate_version
 
 
 # --- deferred subjects -----------------------------------------------------------------

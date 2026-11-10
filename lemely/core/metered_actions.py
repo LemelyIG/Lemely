@@ -114,8 +114,10 @@ def _spec(minutes: int, estimator: EstimatorParams) -> ActionSpec:
 ACTION_SPECS: Mapping[MeteredAction, ActionSpec] = MappingProxyType(
     {
         # Flat per paper: page counts are not stored (plan deviation 5, R16). 40-120 units
-        # brackets the USD 0.10/paper target at 1000 units per USD. 45 minutes covers the
-        # grading pool's queue wait.
+        # brackets the USD 0.10/paper target at 1000 units per USD. A job's timeout is its
+        # hold's lease: the clock starts when the work starts and renews every third of it
+        # while the work runs, so 45 minutes bounds how long a stopped instance's hold
+        # lingers, not how long a queued or slow paper may take.
         MeteredAction.MARK_PAPER: _spec(45, _estimator("none", 40, 120)),
         MeteredAction.REGRADE: _spec(45, _estimator("none", 40, 120)),
         MeteredAction.GENERATE_QUIZ: _spec(10, _estimator("questions", 2, 4, 2, 5)),
