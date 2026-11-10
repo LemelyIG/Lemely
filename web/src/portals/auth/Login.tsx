@@ -1,6 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useState, type FormEvent } from "react"
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom"
+import { ArrowLeft } from "@phosphor-icons/react"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { postLoginTarget } from "@/lib/auth/postLoginTarget"
 import { BrandLockup } from "@/components/ui/brand-lockup"
@@ -91,9 +92,29 @@ export function AuthFrame({
   return (
     <main
       data-portal={dataPortal}
-      className="flex min-h-dvh flex-col items-center justify-start gap-6 bg-surface px-4 pt-20 pb-12 sm:pt-28"
+      className="relative flex min-h-dvh flex-col items-center justify-start gap-6 bg-surface px-4 pt-20 pb-12 sm:pt-28"
     >
-      <BrandLockup size="md" />
+      {/* The way out. A signed-out visitor who lands here from the landing page
+          (or a shared link) must be able to go back without the browser's
+          button. "/" is the landing page, or the coming-soon screen while
+          signups are closed: the access gate decides, this link never does.
+          Direction-dependent arrow, same as the identical control in PasswordReset. */}
+      <Link
+        to="/"
+        data-testid="auth-back-home"
+        className="absolute start-4 top-4 inline-flex min-h-11 items-center gap-1.5 rounded-sm px-1 text-body-sm text-on-surface-variant underline-offset-2 transition-colors hover:text-primary hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:start-6 sm:top-6"
+      >
+        <ArrowLeft size={14} aria-hidden="true" className="rtl:-scale-x-100" />
+        Back to home
+      </Link>
+      <Link
+        to="/"
+        aria-label="Lemely, go to the home page"
+        data-testid="auth-wordmark-link"
+        className="rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary"
+      >
+        <BrandLockup size="md" />
+      </Link>
       {children}
       {footer}
     </main>

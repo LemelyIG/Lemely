@@ -1,3 +1,5 @@
+@import '@fontsource-variable/caveat'; /* handwriting, marketing paper artifacts only */
+
 /*
  * Marketing tokens. Every colour here is a reference to a Material 3 role (or a
  * grade / Binny token) from index.css, the one source of colour. The marketing
@@ -108,7 +110,8 @@
   --brand-display: 'Bricolage Grotesque Variable', sans-serif;
   --brand-body: 'Schibsted Grotesk Variable', sans-serif;
   --brand-mono: 'JetBrains Mono Variable', monospace;
-  --brand-hand: var(--brand-body);
+  /* Student working only: the pen on the paper artifact. Examiner marks stay in --brand-body. */
+  --brand-hand: 'Caveat Variable', cursive;
   --background: var(--md-surface);
   --foreground: var(--md-on-surface);
   --primary: var(--md-primary);

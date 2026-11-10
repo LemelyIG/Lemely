@@ -399,7 +399,7 @@ A binder-clip bunny. The steel wire handles are its ears, the body is Abyss with
 - **Don't** use gold anywhere nothing was earned.
 - **Don't** show Binny on teacher, parent or school surfaces, show more than one Binny on a screen, or place Binny next to the logo.
 - **Don't** set Bricolage Grotesque below 28px.
-- **Don't** bring back the retired Study Notebook kit: warm paper, Caveat handwriting, pastel stickers, paper texture, brown or warm neutrals.
+- **Don't** bring back the retired Study Notebook kit: warm paper, Caveat marginalia, pastel stickers, paper texture, brown or warm neutrals. One exception: Caveat (`--brand-hand`) sets the student's written answers on the marketing mock exam paper, so they read as handwriting. Examiner marks on that paper stay in the sans face, and Caveat appears nowhere else.
 - **Don't** build generic SaaS dashboards: metric cards with gradient shadows, the HubSpot/Salesforce template.
 - **Don't** use consumer edtech gamification: Duolingo-style emoji as UI, confetti, bright primary colours, cheerleader copy.
 - **Don't** use the "AI product" look: purple-blue gradients, dark glassmorphic panels, neon accents on near-black.

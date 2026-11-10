@@ -1,6 +1,8 @@
 /* Original workshop illustration timings; final markup remains visible without motion. */
 [data-hc="binny"] { cursor: pointer; }
-[data-hc="binny"]:focus-visible > g:last-child { filter: drop-shadow(0 0 4px var(--brand-art-12)); }
+/* No UA focus box: on click Chromium outlines the whole bounding box (Binny, the level-up pill and the badge). Keyboard focus keeps a glow on Binny himself. */
+[data-hc="binny"]:focus { outline: none; }
+[data-hc="binny"]:focus-visible > g:last-child { filter: drop-shadow(0 0 2px var(--brand-art-12)) drop-shadow(0 0 5px var(--brand-art-12)); }
 [data-hc="binny"] { pointer-events: bounding-box; }
 [data-hc="spark"] { pointer-events: none; }
 .brand-hero-description-short { display: none; }

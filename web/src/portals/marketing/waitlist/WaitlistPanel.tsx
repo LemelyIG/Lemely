@@ -706,7 +706,7 @@ export function WaitlistPanel({
                   onChange={(e) => setPhone(e.target.value)}
                   error={errors.phone}
                 />
-                <Switch label="This number has WhatsApp" wrapperClassName="min-h-11 justify-center" checked={wa} onCheckedChange={setWa} />
+                <Switch label="This number has WhatsApp" wrapperClassName="min-h-11 justify-center" className="aria-[checked=false]:border-on-surface-variant aria-[checked=false]:bg-surface-container-high" checked={wa} onCheckedChange={setWa} />
               </div>
             </div>
             {banner}

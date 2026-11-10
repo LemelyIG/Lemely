@@ -508,6 +508,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   fontFamily: 'var(--brand-hand)',
+                  whiteSpace: 'nowrap',
                   fontSize: '28px',
                   color: 'var(--brand-art-22)',
                   flex: '1',
@@ -531,7 +532,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               </svg>
               <span
                 style={{
-                  fontFamily: 'var(--brand-hand)',
+                  fontFamily: 'var(--brand-body)',
                   fontSize: '24px',
                   color: 'var(--brand-art-23)',
                   width: '36px',
@@ -545,6 +546,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   fontFamily: 'var(--brand-hand)',
+                  whiteSpace: 'nowrap',
                   fontSize: '28px',
                   color: 'var(--brand-art-22)',
                   flex: '1',
@@ -568,7 +570,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               </svg>
               <span
                 style={{
-                  fontFamily: 'var(--brand-hand)',
+                  fontFamily: 'var(--brand-body)',
                   fontSize: '24px',
                   color: 'var(--brand-art-23)',
                   width: '36px',
@@ -582,6 +584,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               <span
                 style={{
                   fontFamily: 'var(--brand-hand)',
+                  whiteSpace: 'nowrap',
                   fontSize: '28px',
                   color: 'var(--brand-art-22)',
                   flex: '1',
@@ -604,7 +607,7 @@ export function FeatureArt({ name }: { name: FeatureArtKey }) {
               </svg>
               <span
                 style={{
-                  fontFamily: 'var(--brand-hand)',
+                  fontFamily: 'var(--brand-body)',
                   fontSize: '24px',
                   color: 'var(--brand-art-23)',
                   width: '36px',

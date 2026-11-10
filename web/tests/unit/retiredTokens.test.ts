@@ -46,6 +46,16 @@ export function retiredCssHits(source: string): string[] {
 /** Directories excluded from the scan. dev-previews is dev scratch. */
 const EXCLUDED_DIRS = ["src/dev-previews/"]
 
+/**
+ * The one sanctioned use of Caveat: the marketing paper artifact's student
+ * handwriting (`--brand-hand`, scoped to the landing page, never the app).
+ * Examiner marks and every UI string stay in the Abyss faces. Any other file
+ * naming Caveat still fails.
+ */
+const CAVEAT_ALLOWED = ["src/portals/marketing/brand-tokens.css"]
+const allowedHits = (file: string, hits: string[]) =>
+  CAVEAT_ALLOWED.includes(file) ? hits.filter((h) => h !== "Caveat") : hits
+
 describe("retired token guard", () => {
   it("catches a planted retired name (proves the guard can go red)", () => {
     expect(retiredHits(`<div className="hover:text-ink-muted bg-paper-raised" />`)).toEqual(["hover:text-ink-muted", "bg-paper-raised"])
@@ -74,6 +84,11 @@ describe("retired token guard: CSS, the pre-mount shell and Vite plugins", () =>
     expect(retiredCssHits(`<style>.m { font: 400 1rem Caveat }</style>`)).toEqual(["Caveat"])
   })
 
+  it("lets only the marketing token file name Caveat", () => {
+    expect(allowedHits("src/portals/marketing/brand-tokens.css", ["Caveat", "--paper"])).toEqual(["--paper"])
+    expect(allowedHits("src/portals/marketing/brand.css", ["Caveat"])).toEqual(["Caveat"])
+  })
+
   it("ignores comments and look-alike names", () => {
     expect(retiredCssHits(`/* the old --paper and Geist faces */\n<!-- Caveat -->\n// --ink was retired`)).toEqual([])
     expect(retiredCssHits(`.w { animation-delay: calc(var(--mark-index) * 1ms); color: var(--md-on-surface); }`)).toEqual([])
@@ -88,7 +103,7 @@ describe("retired token guard: CSS, the pre-mount shell and Vite plugins", () =>
     ]
     expect(files.length).toBeGreaterThan(3)
     const offenders = files
-      .map((file) => ({ file: relativeTo(root, file), hits: retiredCssHits(readFileSync(file, "utf8")) }))
+      .map((file) => ({ file: relativeTo(root, file), hits: allowedHits(relativeTo(root, file), retiredCssHits(readFileSync(file, "utf8"))) }))
       .filter((r) => r.hits.length && !EXCLUDED_DIRS.some((dir) => r.file.startsWith(dir)))
     expect(offenders).toEqual([])
   })
