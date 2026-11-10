@@ -903,11 +903,13 @@ def test_history_does_not_add_percents_of_different_plans(
     assert (row["paidBy"], row["percentOfPlan"]) == ("seat", 4.0)
 
 
-def test_an_assistant_never_sees_the_leads_plan_size(
+def test_an_assistant_gets_no_plan_percentages_for_the_lead(
     api: TestClient, migrated_sessionmaker: sessionmaker[Session]
 ) -> None:
-    """Acting for a lead, plan-paid work is quoted and listed as percents only: no unit
-    count of the lead's allowance reaches the assistant, so its size cannot be derived."""
+    """The estimate's units are public (the same for every caller), so units next to a
+    percentage would give away the lead's plan size. An assistant acting for a lead is
+    therefore shown units and ``paidBy`` only: no percent field carries a value, in the
+    estimate or on the assistant's own history rows. The lead still sees their own plan."""
     sm = migrated_sessionmaker
     lead, helper = seed_user(sm, Role.teacher), seed_user(sm, Role.teacher)
     give(
@@ -923,17 +925,17 @@ def test_an_assistant_never_sees_the_leads_plan_size(
     _as(api, helper, Role.teacher)
     quote = api.post("/api/usage/estimate", json={"action": "regrade"}, headers=headers).json()
     assert quote == {
-        "low": None,
-        "high": None,
+        "low": 40,
+        "high": 120,
         "payer": "allowance",
-        "percentLow": 1,
-        "percentHigh": 3,
+        "percentLow": None,
+        "percentHigh": None,
         "blockedReason": None,
     }
-    # The lead asking for themselves still sees the range.
+    # The lead asking for themselves sees the same units and their own percentages.
     _as(api, lead, Role.teacher)
     own = api.post("/api/usage/estimate", json={"action": "regrade"}).json()
-    assert (own["low"], own["high"]) == (40, 120)
+    assert (own["low"], own["high"], own["percentLow"], own["percentHigh"]) == (40, 120, 1, 3)
     _run_job(
         sm,
         helper,
@@ -943,13 +945,16 @@ def test_an_assistant_never_sees_the_leads_plan_size(
         assistant_member_id=member,
     )
     _as(api, helper, Role.teacher)
-    raw = api.get("/api/usage/history").text
     (row,) = api.get("/api/usage/history").json()["jobs"]
-    assert (row["paidBy"], row["percentOfPlan"], row["credits"]) == ("allowance", 1.0, None)
-    assert row["estimatePercentOfPlan"] == [1.0, 3.0]
-    assert [v for v in row.values() if isinstance(v, int) and not isinstance(v, bool)] == []
-    assert '"units"' not in raw
-    # Where the lead's visible credits pay, the quote keeps its units: they reveal no plan.
+    assert row["paidBy"] == "allowance"
+    assert row["percentOfPlan"] is None
+    assert row["estimatePercentOfPlan"] is None
+    assert row["credits"] is None
+    assert row["estimateCredits"] == [40, 120]
+    _as(api, lead, Role.teacher)
+    (row,) = api.get("/api/usage/history").json()["jobs"]
+    assert (row["percentOfPlan"], row["estimatePercentOfPlan"]) == (1.0, [1.0, 3.0])
+    # Where the lead's visible credits pay, the quote is units, as for anyone.
     credit_lead, credit_helper = seed_user(sm, Role.teacher), seed_user(sm, Role.teacher)
     give(sm, credit_lead, units=1000)
     assistant(sm, teacher=credit_lead, member=credit_helper)
@@ -960,6 +965,108 @@ def test_an_assistant_never_sees_the_leads_plan_size(
         headers={ACTING_TEACHER_HEADER: str(credit_lead)},
     ).json()
     assert (paid["payer"], paid["low"], paid["high"]) == ("credits", 40, 120)
+    assert (paid["percentLow"], paid["percentHigh"]) == (None, None)
+
+
+def test_estimate_percentages_are_capped_like_history(
+    api: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    sm = migrated_sessionmaker
+    student = seed_user(sm)
+    give(
+        sm,
+        student,
+        units=100,
+        kind=GrantKind.period_allowance,
+        visible=False,
+        expires_at=_ALLOWANCE_END,
+    )
+    give(sm, student, units=1000)
+    _as(api, student)
+    quote = api.post("/api/usage/estimate", json={"action": "mark_paper"}).json()
+    # 40-120 units against a 100-unit plan: the top of the range is the whole plan, not 120%.
+    assert (quote["payer"], quote["percentLow"], quote["percentHigh"]) == ("allowance", 40, 100)
+    _run_job(sm, student, "0.060")
+    (row,) = api.get("/api/usage/history").json()["jobs"]
+    assert row["estimatePercentOfPlan"] == [40.0, 100.0]
+
+
+def test_a_spent_plan_over_a_signup_grant_is_credits_in_all_three_views(
+    api: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    """A student who subscribes before using up the free start spends the plan first. Once
+    it is spent the signup grant pays, so the estimate quotes credits, not the empty plan."""
+    sm = migrated_sessionmaker
+    student = seed_user(sm)
+    give(
+        sm,
+        student,
+        units=100,
+        kind=GrantKind.period_allowance,
+        visible=False,
+        expires_at=_ALLOWANCE_END,
+    )
+    give(sm, student, units=500, kind=GrantKind.signup, visible=False)
+    _as(api, student)
+    live = api.post("/api/usage/estimate", json={"action": "mark_paper"}).json()
+    assert (live["payer"], live["percentLow"]) == ("allowance", 40)
+    _run_job(sm, student, "0.100")  # the whole plan
+    meter = api.get("/api/usage/meter").json()
+    assert (meter["allowanceFraction"], meter["creditsBalance"]) == (1.0, 500)
+    quote = api.post("/api/usage/estimate", json={"action": "mark_paper"}).json()
+    assert (quote["payer"], quote["percentLow"], quote["percentHigh"]) == ("credits", None, None)
+    assert (quote["low"], quote["high"], quote["blockedReason"]) == (40, 120, None)
+    _run_job(sm, student, "0.050")
+    newest, oldest = api.get("/api/usage/history").json()["jobs"]
+    assert (newest["paidBy"], newest["credits"], newest["percentOfPlan"]) == ("credits", 50, None)
+    assert (oldest["paidBy"], oldest["percentOfPlan"]) == ("allowance", 100.0)
+
+
+def test_a_tiny_plan_draw_still_shows_a_percentage(
+    api: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    """One unit of a 4000-unit plan rounds to 0.0%. The row shows 0.1, not nothing, so an
+    allowance-paid row never reads as free."""
+    sm = migrated_sessionmaker
+    student = seed_user(sm)
+    give(
+        sm,
+        student,
+        units=4000,
+        kind=GrantKind.period_allowance,
+        visible=False,
+        expires_at=_ALLOWANCE_END,
+    )
+    _run_job(sm, student, "0.001")
+    _as(api, student)
+    (row,) = api.get("/api/usage/history").json()["jobs"]
+    assert (row["paidBy"], row["percentOfPlan"], row["credits"]) == ("allowance", 0.1, None)
+
+
+def test_the_history_route_takes_the_funder_branch_only_for_a_caller_who_leads(
+    migrated_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The statement builder is tested above; this pins how ``history_page`` calls it."""
+    from lemely.db import usage_views_repo
+
+    sm = migrated_sessionmaker
+    student, teacher = seed_user(sm), seed_user(sm, Role.teacher)
+    seat(
+        sm, teacher=teacher, student=student, subjects=["0580"], actions=[MeteredAction.MARK_PAPER]
+    )
+    seen: dict[uuid.UUID, list[uuid.UUID]] = {}
+    real = usage_views_repo.history_jobs_statement
+
+    def spy(user_id: uuid.UUID, *, led_members: list[uuid.UUID], **kwargs: object) -> object:
+        seen[user_id] = list(led_members)
+        return real(user_id, led_members=led_members, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(usage_views_repo, "history_jobs_statement", spy)
+    with sm() as session:
+        usage_views_repo.history_page(session, user_id=student, limit=5, after=None)
+        usage_views_repo.history_page(session, user_id=teacher, limit=5, after=None)
+    assert seen[student] == []
+    assert len(seen[teacher]) == 1
 
 
 def test_history_pages_through_jobs_with_identical_timestamps(

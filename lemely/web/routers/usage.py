@@ -18,20 +18,22 @@ from typing import TYPE_CHECKING, Annotated, NoReturn, cast
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from sqlalchemy import select
 
 from lemely.core.keyset import CursorError, decode_cursor, encode_cursor
 from lemely.core.metered_actions import MeteredAction
 from lemely.core.team_permissions import TeamPermission
 from lemely.db.models.enums import Role
+from lemely.db.models.team import TeacherMember
 from lemely.db.teacher_team_repo import TeacherTeamService
 from lemely.db.usage_context_repo import quiz_assignment_target, self_review_target
-from lemely.db.usage_views_repo import history_page, meter_view
+from lemely.db.usage_views_repo import history_page, meter_view, plan_remaining
 from lemely.web.deps import (
     ACTING_TEACHER_HEADER,
     AuthContext,
-    _team_lead_unavailable,
-    _team_permission_denied,
     get_auth_context,
+    team_lead_unavailable_error,
+    team_permission_denied_error,
 )
 from lemely.web.ratelimit import SlidingWindowLimiter
 from lemely.web.schemas_usage import (
@@ -125,22 +127,22 @@ def _acting_member(
     if acting_teacher is None:
         return None
     if len(acting_teacher) != 1:
-        raise _team_permission_denied()
+        raise team_permission_denied_error()
     try:
         lead_id = uuid.UUID(acting_teacher[0].strip())
     except ValueError:
-        raise _team_permission_denied() from None
+        raise team_permission_denied_error() from None
     if lead_id == actor_id:
         return None
     perm = _TEAM_PERMISSION.get(action)
     if perm is None or auth.role != Role.teacher.value:
-        raise _team_permission_denied()
+        raise team_permission_denied_error()
     # Read the row's id inside the session, as the team guard does.
     member_id, lead_unavailable = meter.read(_assistant_row(actor_id, lead_id, perm))
     if lead_unavailable:
-        raise _team_lead_unavailable()
+        raise team_lead_unavailable_error()
     if member_id is None:
-        raise _team_permission_denied()
+        raise team_permission_denied_error()
     log.info(
         "team_acting",
         actor_user_id=str(actor_id),
@@ -149,6 +151,23 @@ def _acting_member(
         permission=str(perm),
     )
     return member_id
+
+
+def _lead_of(meter: UsageMeter, member_id: uuid.UUID) -> uuid.UUID:
+    """The lead teacher an assistant row works for."""
+    lead = meter.read(
+        lambda session: session.scalar(
+            select(TeacherMember.teacher_user_id).where(TeacherMember.id == member_id)
+        )
+    )
+    if lead is None:
+        raise team_permission_denied_error()
+    return lead
+
+
+def _capped(percent: int | None) -> int | None:
+    """An estimate percentage never reads above the whole plan (history caps the same way)."""
+    return None if percent is None else min(100, percent)
 
 
 def _estimate_request(
@@ -235,19 +254,29 @@ def estimate_usage(
         )
     request = _estimate_request(meter, auth, actor_id, body, acting_teacher)
     view = meter.estimate(request)
-    # Only a live plan gives a percentage. A grant of the hidden allowance scope with no plan
-    # behind it (the one-time signup grant) is credits, as it is on the meter and in history.
-    on_plan = view.percent_low is not None
-    payer = "credits" if view.payer == "allowance" and not on_plan else view.payer
-    # An assistant acting for a lead is told how much of the lead's plan a job takes, never
-    # in units: low/high over the percentage would give away the plan's size.
-    show_units = not (on_plan and request.assistant_member_id is not None)
+    member = request.assistant_member_id
+    payer = view.payer
+    percent_low, percent_high = view.percent_low, view.percent_high
+    if payer == "allowance":
+        # The hidden allowance scope also holds the one-time signup grant. A percentage is
+        # only true while a live plan has something left to spend; otherwise credits pay, as
+        # the meter and the history say.
+        plan_owner = actor_id if member is None else _lead_of(meter, member)
+        left = meter.read(
+            lambda session: plan_remaining(session, owner_user_id=plan_owner, now=meter.now())
+        )
+        if percent_low is None or left <= 0:
+            payer, percent_low, percent_high = "credits", None, None
+    if member is not None:
+        # Units are the same for every caller, so units beside a percentage of the lead's
+        # plan would give its size away: an assistant is told the units and who pays only.
+        percent_low = percent_high = None
     return EstimateDTO(
-        low=view.low if show_units else None,
-        high=view.high if show_units else None,
+        low=view.low,
+        high=view.high,
         payer=cast("EstimatePayer", payer),
-        percentLow=view.percent_low,
-        percentHigh=view.percent_high,
+        percentLow=_capped(percent_low),
+        percentHigh=_capped(percent_high),
         blockedReason=view.blocked_reason.value if view.blocked_reason is not None else None,
     )
 

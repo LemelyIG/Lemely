@@ -18,10 +18,15 @@ What is "the plan" and what is "credits", the same on the meter, the estimate an
   free start has no plan: the meter lists it as a credit lot, the estimate quotes credits with
   no percentage, and the history charges credits with no percentage.
 * A history row reports one plan percentage, for the plan its chain drew on first (the plan the
-  estimate quotes), capped at 100. A job that drew on several plans, or on a plan and credits,
-  is ``mixed``; percentages of different plans are never added together.
-* A caller who acts for a lead (an assistant) sees the lead's plan as percentages only, in the
-  estimate and here, so the plan's size cannot be derived from what the API returns.
+  estimate quotes), capped at 100; a draw too small to round to 0.1 shows 0.1, so an
+  allowance-paid row never reads as free. The estimate's percentage is the same number as the
+  estimate endpoint's: ``ceil`` to a whole percent, capped at 100. A job that drew on several
+  plans, or on a plan and credits, is ``mixed``; percentages of different plans are never added.
+* The estimator's units are public (the same for every caller), so units next to a percentage
+  would give away a plan's size. A caller who acts for a lead (an assistant) therefore gets no
+  percentage of the lead's plan anywhere: the estimate and these history rows carry ``paidBy``
+  and units only. A plan's percentages are shown to the plan's owner, and to the teacher who
+  funds the seat.
 """
 
 from __future__ import annotations
@@ -141,6 +146,13 @@ def _plan_scope(draw: _Draw) -> PlanScope | None:
     return None
 
 
+def _plan_shown(draw: _Draw, viewer: uuid.UUID, funded: set[uuid.UUID]) -> bool:
+    """Whether the viewer may be told a draw's plan as a percentage."""
+    return _plan_scope(draw) is not None and (
+        draw.grant_owner == viewer or draw.grant_member_id in funded
+    )
+
+
 def _chain_index(draw: _Draw, chain: Sequence[Payer]) -> int:
     """Position of the first payer of the job's chain that can spend this draw's grant."""
     for index, payer in enumerate(chain):
@@ -161,7 +173,13 @@ def _chain_index(draw: _Draw, chain: Sequence[Payer]) -> int:
 
 
 def _percent(units: int, of: int) -> float:
-    return round(100 * units / of, 1)
+    """Units drawn as a percentage of the plan, to one decimal; never 0.0 for a real draw."""
+    return min(100.0, max(0.1, round(100 * units / of, 1)))
+
+
+def _estimate_percent(units: int, of: int) -> float:
+    """The estimate endpoint's rounding: ``ceil`` to a whole percent, capped at 100."""
+    return float(min(100, -(-100 * units // of)))
 
 
 def _live(now: datetime) -> ColumnElement[bool]:
@@ -232,6 +250,23 @@ def meter_view(session: Session, *, user_id: uuid.UUID, now: datetime) -> MeterV
         seats=seats,
         debt_units=int(debt or 0),
     )
+
+
+def plan_remaining(session: Session, *, owner_user_id: uuid.UUID, now: datetime) -> int:
+    """Units the owner's live period plan can still spend (not held, not drawn)."""
+    spendable = UsageGrantBalance.remaining - UsageGrantBalance.held
+    total = session.scalar(
+        select(func.coalesce(func.sum(spendable), 0))
+        .join(UsageGrant, UsageGrant.id == UsageGrantBalance.grant_id)
+        .where(
+            UsageGrant.owner_user_id == owner_user_id,
+            UsageGrant.kind == GrantKind.period_allowance,
+            UsageGrant.effective_at <= now,
+            _live(now),
+            spendable > 0,
+        )
+    )
+    return int(total or 0)
 
 
 def _draws(session: Session, job_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, list[_Draw]]:
@@ -406,27 +441,34 @@ def history_page(
             # grants the caller owns, or funds through that row, are the caller's to see.
             mine = [d for d in mine if d.grant_owner == user_id or d.grant_member_id in funded]
         settles = [d for d in mine if d.kind is UsageEntryKind.settle]
+        # A plan's percentages belong to its owner, and to the teacher who funds a seat on it.
+        # A caller who only acts for the plan's owner (an assistant) is shown none.
+        shown = [d for d in settles if _plan_shown(d, user_id, funded)]
         parts: set[tuple[Bucket, PlanScope | None]] = {
             (_bucket(d, user_id), _plan_scope(d)) for d in settles
         }
         paid_by: PaidBy = next(iter(parts))[0] if len(parts) == 1 else "mixed" if parts else "none"
         credits = sum(abs(d.units) for d in settles if _plan_scope(d) is None)
         percent: float | None = None
-        first_scope = next((sc for d in settles if (sc := _plan_scope(d)) is not None), None)
+        first_scope = next((sc for d in shown if (sc := _plan_scope(d)) is not None), None)
         if first_scope is not None:
-            drawn = sum(abs(d.units) for d in settles if _plan_scope(d) == first_scope)
+            drawn = sum(abs(d.units) for d in shown if _plan_scope(d) == first_scope)
             size = _plan_size(plans[first_scope], job.created_at)
-            percent = min(100.0, _percent(drawn, size))
+            percent = _percent(drawn, size)
         # The estimate is shown in the terms of the first thing the chain held on.
         first_hold = next((d for d in mine if d.kind is UsageEntryKind.hold), None)
         estimate_percent: tuple[float, float] | None = None
         estimate_credits: tuple[int, int] | None = None
         hold_scope = _plan_scope(first_hold) if first_hold is not None else None
-        if hold_scope is not None:
+        if (
+            hold_scope is not None
+            and first_hold is not None
+            and _plan_shown(first_hold, user_id, funded)
+        ):
             size = _plan_size(plans[hold_scope], job.created_at)
             estimate_percent = (
-                min(100.0, _percent(job.estimate_low, size)),
-                min(100.0, _percent(job.estimate_high, size)),
+                _estimate_percent(job.estimate_low, size),
+                _estimate_percent(job.estimate_high, size),
             )
         else:
             estimate_credits = (job.estimate_low, job.estimate_high)
@@ -440,7 +482,7 @@ def history_page(
                 created_at=job.created_at,
                 settled_at=job.settled_at,
                 paid_by=paid_by,
-                percent_of_plan=percent if percent else None,
+                percent_of_plan=percent,
                 credits=credits if credits > 0 else None,
                 debt_credits=debts.get(job.job_id) or None,
                 estimate_percent_of_plan=estimate_percent,
