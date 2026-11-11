@@ -98,7 +98,7 @@ from lemely.db.teacher_paper_repo import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 from lemely.db.review_queue_rules import review_reasons_for
 from lemely.db.review_repo import ReviewService
 from lemely.db.student_profile_repo import StudentProfileService
@@ -1920,6 +1920,7 @@ def _build_quiz_metered(
     subject_code: str,
     count: int,
     topics: list[str] | None,
+    persist: Callable[[GeneratedQuiz, set[str]], None] | None = None,
 ) -> tuple[GeneratedQuiz, set[str]]:
     """Run :func:`_build_quiz` as the metered job the route reserved the hold for.
 
@@ -1929,6 +1930,9 @@ def _build_quiz_metered(
     raised before any model call. An exception (the clean 503 included) releases the hold.
     A quiz with no question is work that failed without raising: it is abandoned, so a
     paid-for nothing charges 0 (billing spec §2.4).
+
+    ``persist`` (the generate route's bank write) runs inside the job, on a non-empty quiz,
+    before the settle: a write that fails releases the hold, so a 500 never bills.
     """
     with meter.job(usage) as job:
         quiz, reused_prompts = _build_quiz(
@@ -1944,6 +1948,8 @@ def _build_quiz_metered(
         )
         if not quiz.questions:
             job.abandon()
+        elif persist is not None:
+            persist(quiz, reused_prompts)
     return quiz, reused_prompts
 
 
@@ -2026,7 +2032,18 @@ def quiz_generate(
     # The guard has already parsed the token subject (401 otherwise), so this is the
     # acting teacher's id as a UUID: the caller's own, or the lead's for an assistant.
     caller_uuid = actor.lead_teacher_user_id
-    quiz, reused_prompts = _build_quiz_metered(
+
+    def _persist(quiz: GeneratedQuiz, reused_prompts: set[str]) -> None:
+        # Only genuinely new questions are written back: a question the builder
+        # reused *from* the bank is already a row there, and re-inserting it
+        # would inflate the pool count on every generate (see :func:`_build_quiz`).
+        fresh = GeneratedQuiz(
+            subject_code=quiz.subject_code,
+            questions=[q for q in quiz.questions if q.prompt not in reused_prompts],
+        )
+        bank_service.add_questions(generated_questions_to_bank_rows(fresh, owner_id=caller_uuid))
+
+    quiz, _reused = _build_quiz_metered(
         meter,
         usage,
         settings,
@@ -2038,15 +2055,8 @@ def quiz_generate(
         subject_code=subject_code,
         count=count,
         topics=topics,
+        persist=_persist,
     )
-    # Only genuinely new questions are written back: a question the builder
-    # reused *from* the bank is already a row there, and re-inserting it
-    # would inflate the pool count on every generate (see :func:`_build_quiz`).
-    fresh = GeneratedQuiz(
-        subject_code=quiz.subject_code,
-        questions=[q for q in quiz.questions if q.prompt not in reused_prompts],
-    )
-    bank_service.add_questions(generated_questions_to_bank_rows(fresh, owner_id=caller_uuid))
     return _quiz_to_preview(quiz)
 
 

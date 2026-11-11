@@ -17,9 +17,10 @@ from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from structlog.testing import capture_logs
 
-from lemely.core.metered_actions import MeteredAction
+from lemely.core.metered_actions import JOB_SLACK, MeteredAction
 from lemely.db.models.billing import PlanAudience
 from lemely.db.models.enums import QuizSubmissionStatus, Role
 from lemely.db.models.quizzes import QuizAssignment, QuizSubmission
@@ -33,6 +34,7 @@ from lemely.web.routers import quiz as quiz_router
 from lemely.web.usage import (
     USAGE_UNAVAILABLE_MESSAGE,
     MeteredJob,
+    UsageMeter,
     UsageRequest,
     UsageUnavailable,
     get_usage_meter,
@@ -624,4 +626,42 @@ def test_a_ledger_that_cannot_restart_the_hold_marks_nothing_and_records_why(
     ]
     assert not any(e["event"] == "quiz_marking_trigger_unexpected_error" for e in logs)
     assert sum(j.charged for j in jobs_for(sm, student)) == 0
+    assert _remaining(sm, own) == 50
+
+
+def test_a_real_extend_failure_marks_nothing_releases_the_job_and_records_why(
+    ready: Ready, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ledger itself fails (nothing forced on ``MeteredJob``): the hold's renewal.
+
+    The marking thread starts after less than a whole ``job_timeout`` of lease is left, and
+    ``UsageLedger.extend`` fails both attempts, so ``_restart_clock`` raises
+    ``UsageUnavailable`` itself. No model call is made, the job ends ``released``, the
+    balance is whole and the submission records the plain sentence.
+    """
+    client, student, _, assignment_id, sm = ready
+    own = give(sm, student, units=50)
+    clock = [NOW]
+    meter = UsageMeter(sm, enforce=True, now=lambda: clock[0])
+    client.app.dependency_overrides[get_usage_meter] = lambda: meter  # type: ignore[attr-defined]
+    marking = _CostlyMarking()
+    _use_marking(client, marking)
+    _QueuedThread.pending = []
+    monkeypatch.setattr(quiz_router, "threading", SimpleNamespace(Thread=_QueuedThread))
+    assert _submit(client, assignment_id).status_code == 200
+    (queued,) = _QueuedThread.pending
+    clock[0] = NOW + JOB_SLACK + timedelta(minutes=1)  # under one job_timeout of lease left
+    extends: list[int] = []
+
+    def _ledger_down(*_a: object, **_k: object) -> object:
+        extends.append(1)
+        raise OperationalError("UPDATE", {}, Exception("ledger down"))
+
+    monkeypatch.setattr(UsageLedger, "extend", _ledger_down)
+    queued()
+    assert len(extends) == 2  # the run's own extend and its one retry
+    assert marking.calls == []
+    assert [text for _sid, text in marking.failures] == [USAGE_UNAVAILABLE_MESSAGE]
+    (job,) = jobs_for(sm, student)
+    assert (job.status, job.charged) == (UsageJobStatus.released, 0)
     assert _remaining(sm, own) == 50

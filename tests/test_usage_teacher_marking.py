@@ -21,8 +21,9 @@ from unittest.mock import MagicMock
 import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
+from sqlalchemy import exc as sa_exc
 
-from lemely.core.metered_actions import MeteredAction
+from lemely.core.metered_actions import JOB_SLACK, MeteredAction
 from lemely.db.models import TeacherPaper
 from lemely.db.models.enums import Role, UploadStatus
 from lemely.db.models.team import TeacherMember, TeacherMemberStatus
@@ -767,6 +768,54 @@ def test_a_ledger_that_cannot_restart_the_hold_fails_the_paper_plainly_and_free(
     assert not row.error.startswith("Grading failed")
     assert all(j.charged == 0 for j in jobs_for(sm, teacher))
     assert _remaining(sm, grant)[0] == 1000
+
+
+def test_a_real_extend_failure_fails_the_paper_plainly_and_releases_the_job(
+    console: _Console,
+    migrated_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ledger itself fails (nothing forced on ``MeteredJob``): the hold's renewal.
+
+    The paper queues behind the pool, and by the time it runs less than a whole
+    ``job_timeout`` is left of the reserved lease. ``UsageLedger.extend`` fails both
+    attempts, so ``_restart_clock`` raises ``UsageUnavailable`` itself. The paper fails with
+    the plain sentence, no model call is made, and the job ends ``released`` with the
+    balance whole.
+    """
+    sm = migrated_sessionmaker
+    teacher = seed_user(sm, Role.teacher)
+    grant = give(sm, teacher, units=1000)
+    clock = [NOW]
+    meter = UsageMeter(sm, enforce=True, now=lambda: clock[0])
+    console.api.app.dependency_overrides[get_usage_meter] = lambda: meter  # type: ignore[attr-defined]
+    _as(console, teacher)
+    calls: list[str] = []
+
+    def _extract(*_a: object, **_k: object) -> list[object]:
+        calls.append("extract")
+        return []
+
+    monkeypatch.setattr(grading_service, "extract_answers", _extract)
+    console.pool.hold = True
+    paper_id = _upload(console).json()["paperId"]  # reserved at NOW, queued
+    clock[0] = NOW + JOB_SLACK + timedelta(minutes=1)  # under one job_timeout of lease left
+    extends: list[object] = []
+
+    def _ledger_down(*_a: object, **_k: object) -> object:
+        extends.append(1)
+        raise sa_exc.OperationalError("UPDATE", {}, Exception("ledger down"))
+
+    monkeypatch.setattr(UsageLedger, "extend", _ledger_down)
+    console.pool.drain_one()
+    assert console.pool.errors == []
+    assert len(extends) == 2  # the run's own extend and its one retry
+    assert calls == []
+    row = _paper(sm, paper_id)
+    assert (row.status, row.error) == (UploadStatus.failed, USAGE_UNAVAILABLE_MESSAGE)
+    (job,) = jobs_for(sm, teacher)
+    assert (job.action, job.status, job.charged) == ("mark_paper", UsageJobStatus.released, 0)
+    assert _remaining(sm, grant) == (1000, 0)
 
 
 def test_an_unavailable_run_that_was_superseded_leaves_the_newer_runs_paper_alone(

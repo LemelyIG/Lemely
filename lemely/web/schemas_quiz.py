@@ -81,7 +81,9 @@ class UpdateQuizDraftRequestDTO(ApiModel):
     ``QuizService.patch_draft``'s docstring. ``poolSource`` must be one of
     ``"past_paper"`` / ``"generated"`` / ``"teacher_upload"`` when supplied.
     ``requestedCount`` is bounded at 50, the same ceiling as the quiz preview and generate
-    routes' ``count``, so one quiz never asks for more than the meter's hold clamp covers.
+    routes' ``count``. ``QuizService.generate_questions`` also holds a quiz to that many
+    included questions in total, however often it is called, so marking's hold (clamped at
+    the same 50) covers every question the quiz can ever carry.
     """
 
     title: str | None = None

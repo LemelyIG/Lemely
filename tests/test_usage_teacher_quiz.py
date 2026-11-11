@@ -11,6 +11,7 @@ lead is charged to the lead within its cap (R4).
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from datetime import timedelta
 from decimal import Decimal
@@ -20,10 +21,19 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
 
 from lemely.core.generation import GeneratedQuestion, GeneratedQuiz
+from lemely.core.metered_actions import JOB_SLACK, MAX_ESTIMATE_INPUTS
 from lemely.db.class_repo import ClassService
-from lemely.db.models.enums import QuestionSource, Role
+from lemely.db.models.enums import (
+    DifficultySource,
+    ExamBoard,
+    QuestionDifficulty,
+    QuestionSource,
+    Role,
+)
+from lemely.db.models.quizzes import QuestionBank
 from lemely.db.models.team import TeacherMember, TeacherMemberStatus
 from lemely.db.models.usage import UsageGrantBalance, UsageJobStatus
 from lemely.db.question_bank_repo import QuestionBankService
@@ -45,6 +55,8 @@ from lemely.web.deps import (
 )
 from lemely.web.routers import teacher as teacher_router
 from lemely.web.usage import (
+    USAGE_UNAVAILABLE_MESSAGE,
+    USAGE_UNAVAILABLE_RETRY_AFTER,
     MeteredJob,
     UsageGrantContext,
     UsageMeter,
@@ -62,7 +74,6 @@ from tests.usage_helpers import (
 )
 
 if TYPE_CHECKING:
-    import uuid
     from collections.abc import Callable, Iterator
 
     from httpx import Response
@@ -343,6 +354,76 @@ def test_a_hold_that_cannot_be_renewed_is_the_same_402_before_the_model(
     assert sorted(statuses, key=lambda s: s.value) == [UsageJobStatus.expired, UsageJobStatus.open]
 
 
+class _ClockJumpsAfterTheReserve(UsageMeter):
+    """Lets the reserved lease run down before ``run()``, as a queued job's would."""
+
+    def __init__(self, sm: sessionmaker[Session]) -> None:
+        self.clock = [NOW]
+        super().__init__(sm, enforce=True, now=lambda: self.clock[0])
+
+    def reserve(self, ctx: UsageGrantContext) -> MeteredJob:
+        job = super().reserve(ctx)
+        self.clock[0] = NOW + JOB_SLACK + timedelta(minutes=1)  # under one job_timeout left
+        return job
+
+
+@pytest.mark.parametrize(("path", "action"), _ROUTES)
+def test_a_ledger_that_cannot_extend_the_hold_is_a_plain_503_before_the_model(
+    api: _Api, monkeypatch: pytest.MonkeyPatch, path: str, action: str
+) -> None:
+    """The real failure, not a forced one: ``UsageLedger.extend`` fails both attempts."""
+    api.meter = _ClockJumpsAfterTheReserve(api.sm)
+    extends: list[int] = []
+
+    def _ledger_down(*_a: object, **_k: object) -> object:
+        extends.append(1)
+        raise OperationalError("UPDATE", {}, Exception("ledger down"))
+
+    monkeypatch.setattr(UsageLedger, "extend", _ledger_down)
+    teacher = seed_user(api.sm, Role.teacher)
+    grant = give(api.sm, teacher, units=500)
+    api.as_teacher(teacher)
+    resp = api.post(path, count=3)
+    assert resp.status_code == 503
+    assert resp.headers["Retry-After"] == str(USAGE_UNAVAILABLE_RETRY_AFTER)
+    assert resp.json() == {"error": "usage_unavailable", "message": USAGE_UNAVAILABLE_MESSAGE}
+    assert len(extends) == 2
+    assert api.builds == []
+    api.bank.add_questions.assert_not_called()
+    (job,) = jobs_for(api.sm, teacher)
+    assert (job.action, job.status, job.charged) == (action, UsageJobStatus.released, 0)
+    assert _remaining(api.sm, grant) == (500, 0)
+
+
+def test_a_failed_bank_write_releases_the_hold_and_charges_nothing(api: _Api) -> None:
+    """The persist is part of the metered work: a write that fails must not be billed."""
+    api.bank.add_questions.side_effect = RuntimeError("bank write failed")
+    teacher = seed_user(api.sm, Role.teacher)
+    grant = give(api.sm, teacher, units=500)
+    api.as_teacher(teacher)
+    resp = TestClient(api.client.app, raise_server_exceptions=False).post(
+        "/api/quizzes/generate", params={"count": 3}
+    )
+    assert resp.status_code == 500
+    api.bank.add_questions.assert_called_once()
+    (job,) = jobs_for(api.sm, teacher)
+    assert (job.action, job.status, job.charged) == (
+        "generate_quiz",
+        UsageJobStatus.released,
+        0,
+    )
+    assert _remaining(api.sm, grant) == (500, 0)
+
+
+def test_an_empty_generation_writes_nothing_to_the_bank(api: _Api) -> None:
+    api.produce = lambda: _quiz(questions=0)
+    teacher = seed_user(api.sm, Role.teacher)
+    give(api.sm, teacher, units=500)
+    api.as_teacher(teacher)
+    assert api.post("/api/quizzes/generate", count=3).status_code == 200
+    api.bank.add_questions.assert_not_called()
+
+
 # --- roles and the team ----------------------------------------------------------------------
 
 
@@ -543,3 +624,43 @@ def test_materializing_a_quiz_from_the_bank_is_not_metered(api: _Api) -> None:
     assert spy.requests == []
     assert jobs_for(sm, owner) == []
     assert jobs_for(sm, intruder) == []
+
+
+def test_a_full_quiz_cannot_materialize_more_questions(api: _Api) -> None:
+    """At the 50-question ceiling the route answers 422 and adds nothing, unmetered."""
+    sm = api.sm
+    service = QuizService(sm, ClassService(sm), QuestionBankService(sm))
+    api.client.app.dependency_overrides[get_quiz_service] = lambda: service  # type: ignore[attr-defined]
+    spy = _SpyMeter(sm)
+    api.meter = spy
+    owner = seed_user(sm, Role.teacher)
+    quiz = service.create_quiz(owner, "0625", "Full")
+    service.patch_draft(
+        owner, quiz.quiz_id, pool_source=QuestionSource.generated, requested_count=50
+    )
+    with sm.begin() as session:
+        session.add_all(
+            QuestionBank(
+                id=uuid.uuid4(),
+                board=ExamBoard.caie,
+                subject_code="0625",
+                source=QuestionSource.generated,
+                owner_id=owner,
+                difficulty=list(QuestionDifficulty)[i % 3],
+                difficulty_source=DifficultySource.declared_by_generator,
+                question_type="explanation",
+                prompt=f"Bank question {i}",
+                total_marks=2,
+            )
+            for i in range(120)
+        )
+    api.as_teacher(owner)
+    url = f"/api/teacher/quizzes/{quiz.quiz_id}/questions/generate"
+    first = api.client.post(url)
+    assert first.status_code == 200
+    assert len(service.get_quiz(owner, quiz.quiz_id).questions) == MAX_ESTIMATE_INPUTS
+    again = api.client.post(url)
+    assert again.status_code == 422
+    assert "50" in again.json()["detail"]
+    assert len(service.get_quiz(owner, quiz.quiz_id).questions) == MAX_ESTIMATE_INPUTS
+    assert spy.requests == []
