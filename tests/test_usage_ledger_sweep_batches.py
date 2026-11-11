@@ -291,6 +291,103 @@ def test_a_batch_full_of_failures_is_still_reported_full(
     assert (full["sweep"], full["limit"], full["failed"]) == ("expire_stale_jobs", 2, 2)
 
 
+# --- one bad row never stalls a sweep --------------------------------------------------
+
+
+def test_a_job_whose_chain_cannot_be_read_is_skipped_and_the_rest_expire(
+    sm: sessionmaker[Session],
+) -> None:
+    """The chain parse used to run before the per-job guard and abort every pass."""
+    add_rate(sm)
+    owner = add_user(sm)
+    gid = grant(sm, owner, 50)
+    poison, good = _stale(sm, owner, 10, minutes=1), _stale(sm, owner, 10, minutes=2)
+    with sm.begin() as session:
+        session.execute(
+            sa.update(UsageJob).where(UsageJob.job_id == poison).values(payer_chain=[{"bad": 1}])
+        )
+    with capture_logs() as logs, sm.begin() as session:
+        result = UsageLedger(session).sweep_stale_jobs(now=LATER)
+    assert (result.candidates, result.expired, result.failed) == (2, 1, (poison,))
+    assert job(sm, good).status is UsageJobStatus.expired
+    stepped = job(sm, poison)
+    assert (stepped.status, stepped.expires_at) == (
+        UsageJobStatus.open,
+        LATER + FAILED_EXPIRY_BACKOFF,
+    )
+    assert balance(sm, gid) == (50, 10)  # the unreadable job keeps its hold, untouched
+    (alert,) = [e for e in logs if e["event"] == "usage_expire_job_failed"]
+    assert (alert["log_level"], alert["alert"], alert["job_id"]) == ("error", True, str(poison))
+    assert alert["reason"] == "unreadable payer chain"
+
+
+def test_a_grant_that_fails_to_expire_is_skipped_and_the_rest_expire(
+    sm: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = add_user(sm)
+    expiring = {
+        "first": grant(
+            sm,
+            owner,
+            10,
+            kind=GrantKind.credit_pack,
+            visible=True,
+            expires_at=NOW + timedelta(minutes=1),
+        ),
+        "poison": grant(
+            sm,
+            owner,
+            10,
+            kind=GrantKind.credit_pack,
+            visible=True,
+            expires_at=NOW + timedelta(minutes=2),
+        ),
+        "last": grant(
+            sm,
+            owner,
+            10,
+            kind=GrantKind.credit_pack,
+            visible=True,
+            expires_at=NOW + timedelta(minutes=3),
+        ),
+    }
+    original = UsageLedger._entry
+
+    def entry(self: UsageLedger, **kwargs: object) -> None:
+        original(self, **kwargs)  # type: ignore[arg-type]
+        if kwargs.get("grant_id") == expiring["poison"]:
+            # A second entry under the same (grant, key, kind): the flush violates
+            # uq_usage_entries_grant_key_kind, as a real bad row would, inside the savepoint.
+            original(self, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(UsageLedger, "_entry", entry)
+    with capture_logs() as logs, sm.begin() as session:
+        assert UsageLedger(session).expire_grants(now=LATER) == 2
+    assert {k: balance(sm, g)[0] for k, g in expiring.items()} == {
+        "first": 0,
+        "poison": 10,  # its expire entry was rolled back alone
+        "last": 0,
+    }
+    (alert,) = [e for e in logs if e["event"] == "usage_expire_grant_failed"]
+    assert (alert["log_level"], alert["alert"], alert["grant_id"]) == (
+        "error",
+        True,
+        str(expiring["poison"]),
+    )
+    monkeypatch.undo()
+    _reconciled(sm)
+
+
+def test_step_back_never_shortens_a_deadline(sm: sessionmaker[Session]) -> None:
+    add_rate(sm)
+    owner = add_user(sm)
+    grant(sm, owner, 50)
+    far = _stale(sm, owner, 10, minutes=5 * 60)  # due long after LATER + the back-off
+    with sm.begin() as session:
+        UsageLedger(session)._step_back(far, LATER)
+    assert job(sm, far).expires_at == NOW + timedelta(hours=5)
+
+
 # --- bounded batches --------------------------------------------------------------------
 
 

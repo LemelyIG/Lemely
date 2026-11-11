@@ -637,13 +637,32 @@ class UsageLedger:
             if job_ids
             else []
         )
-        self._lock_owners(
-            [payer_from_json(p).owner_user_id for _, chain in rows for p in chain]
-            + list(held_owners)
-        )
+        # Each chain is parsed under its own guard: one unreadable row must not stop the
+        # sweep. Such a job is never closed (its owners are unknown, so it cannot be locked
+        # safely); it is alerted, counted as failed and stepped back like any other failure.
+        owners: list[uuid.UUID] = list(held_owners)
+        unreadable: set[uuid.UUID] = set()
+        for job_id, chain in rows:
+            try:
+                chain_owners = [payer_from_json(p).owner_user_id for p in chain]
+            except Exception:
+                unreadable.add(job_id)
+                continue
+            owners.extend(chain_owners)
+        self._lock_owners(owners)
         expired = 0
         failed: list[uuid.UUID] = []
         for job_id in job_ids:
+            if job_id in unreadable:
+                alerts.error(
+                    "usage_expire_job_failed",
+                    alert=True,
+                    job_id=str(job_id),
+                    reason="unreadable payer chain",
+                )
+                failed.append(job_id)
+                self._step_back(job_id, now)
+                continue
             try:
                 closed = self._expire_one(job_id, now)
             except Exception:
@@ -661,13 +680,20 @@ class UsageLedger:
         return StaleJobSweep(candidates=len(job_ids), expired=expired, failed=tuple(failed))
 
     def _step_back(self, job_id: uuid.UUID, now: datetime) -> None:
-        """Move a job whose expiry failed behind the batch (owner locks already held)."""
+        """Move a job whose expiry failed behind the batch; never moves a deadline earlier.
+
+        Touches only the job row, so it needs no owner lock (an unreadable chain names none).
+        """
         try:
             with self._session.begin_nested():
                 self._session.execute(
                     sa.update(UsageJob)
                     .where(UsageJob.job_id == job_id, UsageJob.status == UsageJobStatus.open)
-                    .values(expires_at=now + FAILED_EXPIRY_BACKOFF)
+                    .values(
+                        expires_at=sa.func.greatest(
+                            UsageJob.expires_at, now + FAILED_EXPIRY_BACKOFF
+                        )
+                    )
                 )
         except Exception:
             alerts.error(
@@ -912,8 +938,9 @@ class UsageLedger:
 
         Takes at most ``limit`` grants, oldest expiry first; the rest wait for the next
         pass. Units a running job still holds stay on the grant; the sweep after that
-        job lets them go takes them. Returns the number of grants given an
-        ``expire`` entry.
+        job lets them go takes them. Each grant expires in its own savepoint: one that
+        fails is rolled back alone, alerted (``usage_expire_grant_failed``) and skipped.
+        Returns the number of grants given an ``expire`` entry.
         """
         if limit < 1:
             raise ValueError("limit must be at least 1")
@@ -933,24 +960,38 @@ class UsageLedger:
         self._lock_owners([owner_user_id for _, owner_user_id in candidates])
         expired = 0
         for grant_id, _owner in candidates:
-            # Re-read under the lock: another transaction may have spent, held or
-            # clawed back or re-dated the grant between the candidate read and the lock.
-            balance, expires_at = self._locked_balance_and_expiry(grant_id)
-            amount = balance.remaining - balance.held
-            if amount <= 0 or expires_at is None or expires_at > now:
+            try:
+                with self._session.begin_nested():
+                    done = self._expire_grant(grant_id, now)
+            except Exception:
+                alerts.error(
+                    "usage_expire_grant_failed", alert=True, grant_id=str(grant_id), exc_info=True
+                )
                 continue
-            count = self._entry_count(grant_id, UsageEntryKind.expire)
-            self._entry(
-                kind=UsageEntryKind.expire,
-                units=-amount,
-                event_at=now,
-                key=f"expire:{count}",
-                grant_id=grant_id,
-            )
-            balance.remaining -= amount
-            expired += 1
+            if done:
+                expired += 1
         self._session.flush()
         return expired
+
+    def _expire_grant(self, grant_id: uuid.UUID, now: datetime) -> bool:
+        """Expire one grant's unheld rest (owner lock held); True when it wrote an entry."""
+        # Re-read under the lock: another transaction may have spent, held or
+        # clawed back or re-dated the grant between the candidate read and the lock.
+        balance, expires_at = self._locked_balance_and_expiry(grant_id)
+        amount = balance.remaining - balance.held
+        if amount <= 0 or expires_at is None or expires_at > now:
+            return False
+        count = self._entry_count(grant_id, UsageEntryKind.expire)
+        self._entry(
+            kind=UsageEntryKind.expire,
+            units=-amount,
+            event_at=now,
+            key=f"expire:{count}",
+            grant_id=grant_id,
+        )
+        balance.remaining -= amount
+        self._session.flush()
+        return True
 
     def claw_back_grant(self, grant_id: uuid.UUID, *, reason: str, now: datetime) -> int:
         """Remove a refunded grant's unspent, unheld units; spent units stay spent (§6).
