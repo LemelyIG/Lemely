@@ -130,9 +130,12 @@ def test_reconcile_logs_drift_and_records_the_day(
     assert reconcile_balances(sm, now=AT_3AM + timedelta(days=1), memo=memo) == 0
 
 
-def test_a_failed_reconcile_is_not_recorded_so_the_next_pass_retries(
+def test_a_failed_reconcile_is_not_recorded_and_retries_after_a_back_off(
     migrated_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Not every 60 s on every instance: the full scan is retried after RECONCILE_RETRY."""
+    from lemely.web.usage_sweeps import RECONCILE_RETRY
+
     def boom(self: UsageLedger) -> list[tuple[uuid.UUID, int, int]]:
         raise RuntimeError("ledger down")
 
@@ -141,7 +144,13 @@ def test_a_failed_reconcile_is_not_recorded_so_the_next_pass_retries(
     with pytest.raises(RuntimeError):
         reconcile_balances(migrated_sessionmaker, now=AT_3AM, memo=memo)
     assert memo.last_date is None
-    assert "usage.reconcile_balances" in _names(migrated_sessionmaker, AT_3AM, memo)
+    soon = AT_3AM + RECONCILE_RETRY - timedelta(seconds=1)
+    assert "usage.reconcile_balances" not in _names(migrated_sessionmaker, soon, memo)
+    retry = AT_3AM + RECONCILE_RETRY
+    assert "usage.reconcile_balances" in _names(migrated_sessionmaker, retry, memo)
+    monkeypatch.undo()
+    assert reconcile_balances(migrated_sessionmaker, now=retry, memo=memo) == 0
+    assert memo == ReconcileMemo(last_date=retry.date(), retry_after=None)
 
 
 # --- usage.repair_signup_grants -------------------------------------------------------
@@ -388,10 +397,11 @@ def test_the_sweeper_runs_the_usage_jobs_only_when_metering(
 def test_a_failing_usage_job_never_stops_the_pass(
     migrated_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def boom(self: UsageLedger, *, now: datetime) -> int:
+    def boom(self: UsageLedger, **_kwargs: object) -> int:
         raise RuntimeError("ledger down")
 
-    monkeypatch.setattr(UsageLedger, "expire_stale_jobs", boom)
+    # The web sweeper's entry point into the ledger for stale jobs.
+    monkeypatch.setattr(UsageLedger, "sweep_stale_jobs", boom)
     results = _sweeper(migrated_sessionmaker, metering=True).sweep_once()
     assert results["usage.expire_stale_jobs"] is None
     assert results["usage.expire_grants"] == 0

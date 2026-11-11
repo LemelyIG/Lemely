@@ -26,7 +26,7 @@ cannot hold up the rest of its batch.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC
+from datetime import UTC, timedelta
 from typing import TYPE_CHECKING
 
 import structlog
@@ -54,6 +54,8 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 RECONCILE_HOUR_UTC = 2
+#: How long a failed reconcile waits before this process tries the full scan again.
+RECONCILE_RETRY = timedelta(hours=1)
 #: Jobs or grants one ``usage.expire_*`` pass handles, oldest first.
 EXPIRE_BATCH = 500
 #: Users examined per ``usage.repair_signup_grants`` pass: the bound on one sweep's work.
@@ -71,9 +73,15 @@ _SIGNUP_PACKS: dict[Role, str] = {
 
 @dataclass(slots=True)
 class ReconcileMemo:
-    """The UTC date the reconcile last completed in this process."""
+    """The UTC date the reconcile last completed in this process, and its back-off.
+
+    ``retry_after`` is set when a reconcile starts and cleared when it completes, so a
+    reconcile that keeps failing reruns its full scan once per :data:`RECONCILE_RETRY`,
+    not every sweep pass.
+    """
 
     last_date: date | None = None
+    retry_after: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -92,11 +100,12 @@ class RepairCursor:
 def expire_stale_jobs(sm: sessionmaker[Session], *, now: datetime) -> int:
     """Close the open jobs past their deadline; returns how many this pass closed."""
     with sm.begin() as session:
-        expired = UsageLedger(session).expire_stale_jobs(now=now, limit=EXPIRE_BATCH)
-    if expired:
-        log.info("usage_jobs_expired", count=expired)
-    _note_full_batch("expire_stale_jobs", expired)
-    return expired
+        result = UsageLedger(session).sweep_stale_jobs(now=now, limit=EXPIRE_BATCH)
+    if result.expired:
+        log.info("usage_jobs_expired", count=result.expired)
+    # Candidates, not closures: a batch full of failing jobs is still a full batch.
+    _note_full_batch("expire_stale_jobs", result.candidates, failed=len(result.failed))
+    return result.expired
 
 
 def expire_grants(sm: sessionmaker[Session], *, now: datetime) -> int:
@@ -109,18 +118,20 @@ def expire_grants(sm: sessionmaker[Session], *, now: datetime) -> int:
     return expired
 
 
-def _note_full_batch(sweep: str, count: int) -> None:
+def _note_full_batch(sweep: str, count: int, *, failed: int = 0) -> None:
     """A full batch means a backlog: the next pass continues it, and this line shows it."""
     if count >= EXPIRE_BATCH:
-        log.info("usage_sweep_batch_full", sweep=sweep, limit=EXPIRE_BATCH)
+        log.info("usage_sweep_batch_full", sweep=sweep, limit=EXPIRE_BATCH, failed=failed)
 
 
 def reconcile_balances(sm: sessionmaker[Session], *, now: datetime, memo: ReconcileMemo) -> int:
     """Log every cached-balance drift; returns how many values drifted.
 
     The day is recorded only once the ledger finished, so a failed reconcile is retried by
-    the next pass instead of waiting for tomorrow.
+    the next pass instead of waiting for tomorrow, but not before ``memo.retry_after``: a
+    failing full scan backs off for :data:`RECONCILE_RETRY` instead of rerunning every pass.
     """
+    memo.retry_after = now + RECONCILE_RETRY
     with sm.begin() as session:
         drift = UsageLedger(session).reconcile_balances()
     for row_id, cached, actual in drift[:MAX_DRIFT_LINES]:
@@ -130,6 +141,7 @@ def reconcile_balances(sm: sessionmaker[Session], *, now: datetime, memo: Reconc
             "usage_balance_drift_total", count=len(drift), logged=min(len(drift), MAX_DRIFT_LINES)
         )
     memo.last_date = now.astimezone(UTC).date()
+    memo.retry_after = None
     return len(drift)
 
 
@@ -243,7 +255,8 @@ def usage_jobs(
             lambda: repair_signup_grants(sm, now=now, cursor=cursor),
         ),
     ]
-    if memo.last_date != moment.date() and moment.hour >= RECONCILE_HOUR_UTC:
+    backing_off = memo.retry_after is not None and now < memo.retry_after
+    if memo.last_date != moment.date() and moment.hour >= RECONCILE_HOUR_UTC and not backing_off:
         jobs.append(
             ("usage.reconcile_balances", lambda: reconcile_balances(sm, now=now, memo=memo))
         )

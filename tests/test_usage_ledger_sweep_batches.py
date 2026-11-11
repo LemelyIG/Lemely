@@ -26,6 +26,7 @@ from lemely.db.models.usage import GrantKind, UsageEntry, UsageEntryKind, UsageJ
 from lemely.db.usage_ledger_repo import (
     DEFAULT_SWEEP_LIMIT,
     FAILED_EXPIRY_BACKOFF,
+    StaleJobSweep,
     UsageLedger,
 )
 from lemely.web import usage_sweeps
@@ -271,6 +272,25 @@ def test_a_job_that_keeps_failing_steps_back_and_the_next_one_expires(
     _reconciled(sm)
 
 
+def test_a_batch_full_of_failures_is_still_reported_full(
+    sm: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failing(self: UsageLedger, job_id: uuid.UUID, *args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        raise sa.exc.OperationalError("UPDATE", {}, Exception("row went away"))
+
+    monkeypatch.setattr(UsageLedger, "_close", failing)
+    monkeypatch.setattr(usage_sweeps, "EXPIRE_BATCH", 2)
+    add_rate(sm)
+    owner = add_user(sm)
+    grant(sm, owner, 100)
+    for m in (1, 2, 3):
+        _stale(sm, owner, 5, minutes=m)
+    with capture_logs() as logs:
+        assert usage_sweeps.expire_stale_jobs(sm, now=LATER) == 0
+    (full,) = [e for e in logs if e["event"] == "usage_sweep_batch_full"]
+    assert (full["sweep"], full["limit"], full["failed"]) == ("expire_stale_jobs", 2, 2)
+
+
 # --- bounded batches --------------------------------------------------------------------
 
 
@@ -330,17 +350,20 @@ def test_the_default_limit_is_bounded() -> None:
     assert 1 <= DEFAULT_SWEEP_LIMIT <= 1000
 
 
-@pytest.mark.parametrize("sweep", ["expire_stale_jobs", "expire_grants"])
+@pytest.mark.parametrize(
+    ("sweep", "ledger_method"),
+    [("expire_stale_jobs", "sweep_stale_jobs"), ("expire_grants", "expire_grants")],
+)
 def test_the_web_sweeper_passes_a_bounded_limit(
-    sm: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch, sweep: str
+    sm: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch, sweep: str, ledger_method: str
 ) -> None:
     seen: list[object] = []
 
-    def capture(_self: UsageLedger, **kwargs: object) -> int:
+    def capture(_self: UsageLedger, **kwargs: object) -> object:
         seen.append(kwargs.get("limit"))
-        return 0
+        return StaleJobSweep(0, 0, ()) if ledger_method == "sweep_stale_jobs" else 0
 
-    monkeypatch.setattr(UsageLedger, sweep, capture)
+    monkeypatch.setattr(UsageLedger, ledger_method, capture)
     getattr(usage_sweeps, sweep)(sm, now=LATER)
     assert seen == [usage_sweeps.EXPIRE_BATCH]
     assert 1 <= usage_sweeps.EXPIRE_BATCH <= 1000
