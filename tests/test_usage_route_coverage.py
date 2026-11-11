@@ -13,8 +13,11 @@ The dependency scan is only as wide as ``MODEL_FACTORIES``, so a second, source-
 (AST) covers what it cannot see: any call under ``lemely/web`` that constructs or obtains a
 model client (``get_gemini_client()``, ``GeminiClient(...)``, the service and generator
 constructors, the Anthropic builders) must sit inside a ``MODEL_FACTORIES`` factory, a
-``METERED`` route handler, or a documented ``DIRECT_USE_EXEMPT`` helper. A route that
-calls ``get_gemini_client()`` in its body, or a new factory that builds a client, fails
+``METERED`` route handler, or a documented ``DIRECT_USE_EXEMPT`` helper. The scan resolves
+import aliases and also flags ``getattr(obj, "<name>")`` and bare references that are
+stored or passed (annotations, ``Depends(...)`` arguments and ``cache_clear()`` are not).
+A route that calls ``get_gemini_client()`` in its body, aliased or not, or a new factory
+that builds a client, fails
 ``test_every_model_client_call_sits_in_a_factory_or_a_metered_route``.
 
 ``test_the_scan_is_not_vacuous`` fails when the walk stops seeing the routes the audit
@@ -199,7 +202,7 @@ DIRECT_USE_EXEMPT: Mapping[Scope, str] = {
 
 
 class ModelUse(NamedTuple):
-    """One call in the web source that constructs or obtains a model client."""
+    """One mention in the web source of a way to construct or obtain a model client."""
 
     module: str
     line: int
@@ -216,11 +219,67 @@ def _dotted(node: ast.expr) -> str | None:
     return None
 
 
+_DEPENDENCY_MARKERS = frozenset({"Depends", "Security"})
+_CACHE_METHODS = frozenset({"cache_clear", "cache_info"})
+
+
+def _subtree_ids(nodes: Iterable[ast.AST | None]) -> set[int]:
+    return {id(sub) for node in nodes if node is not None for sub in ast.walk(node)}
+
+
+def _legitimate_reference_ids(tree: ast.AST) -> set[int]:
+    """Nodes whose mention of a listed name is not a way to reach a model.
+
+    Type annotations; the argument of ``Depends(...)`` or ``Security(...)`` (the
+    dependency scan owns those); and the factory in ``factory.cache_clear()``.
+    """
+    nodes: list[ast.AST | None] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            args = node.args
+            every_arg = [*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg]
+            nodes.extend(arg.annotation for arg in every_arg if arg is not None)
+            nodes.append(node.returns)
+        elif isinstance(node, ast.AnnAssign):
+            nodes.append(node.annotation)
+        elif isinstance(node, ast.Call):
+            callee = _dotted(node.func)
+            if callee is not None and callee.rsplit(".", 1)[-1] in _DEPENDENCY_MARKERS:
+                nodes.extend(node.args)
+                nodes.extend(keyword.value for keyword in node.keywords)
+        elif isinstance(node, ast.Attribute) and node.attr in _CACHE_METHODS:
+            nodes.append(node.value)
+    return _subtree_ids(nodes)
+
+
+def _import_aliases(tree: ast.AST) -> dict[str, str]:
+    """``from x import name as alias`` and ``import x.y as alias``, alias to real name."""
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom | ast.Import):
+            for imported in node.names:
+                if imported.asname:
+                    aliases[imported.asname] = imported.name.rsplit(".", 1)[-1]
+    return aliases
+
+
 def model_uses(
     module: str, source: str, names: Collection[str] = MODEL_CALL_NAMES
 ) -> list[ModelUse]:
-    """Every call in ``source`` to one of ``names``, with its outermost enclosing function."""
+    """Every mention in ``source`` of one of ``names``, with its outermost enclosing function.
+
+    A mention is a call, an aliased call (``from x import get_gemini_client as g``), a
+    ``getattr(obj, "<name>")``, or a bare reference that is passed or stored (so
+    ``build = deps.get_gemini_client`` is caught where it is made). Annotations,
+    ``Depends(...)`` arguments and ``factory.cache_clear()`` are not mentions.
+    """
+    tree = ast.parse(source)
+    aliases = _import_aliases(tree)
+    legitimate = _legitimate_reference_ids(tree)
     found: list[ModelUse] = []
+
+    def flag(node: ast.AST, name: str, scope: Scope | None) -> None:
+        found.append(ModelUse(module, getattr(node, "lineno", 0), name, scope))
 
     def visit(node: ast.AST, qual: list[str], scope: Scope | None) -> None:
         if isinstance(node, ast.ClassDef):
@@ -228,14 +287,27 @@ def model_uses(
         elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and scope is None:
             qual = [*qual, node.name]
             scope = (module, ".".join(qual))
-        if isinstance(node, ast.Call):
-            dotted = _dotted(node.func)
-            if dotted is not None and (dotted in names or dotted.rsplit(".", 1)[-1] in names):
-                found.append(ModelUse(module, node.lineno, dotted, scope))
+        if id(node) not in legitimate:
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                real = aliases.get(node.id, node.id)
+                if real in names:
+                    flag(node, real, scope)
+            elif isinstance(node, ast.Attribute):
+                dotted = _dotted(node)
+                if dotted is not None and (dotted in names or node.attr in names):
+                    flag(node, dotted, scope)
+            elif (
+                isinstance(node, ast.Call)
+                and _dotted(node.func) == "getattr"
+                and len(node.args) >= 2
+                and isinstance(node.args[1], ast.Constant)
+                and node.args[1].value in names
+            ):
+                flag(node, f"getattr:{node.args[1].value}", scope)
         for child in ast.iter_child_nodes(node):
             visit(child, qual, scope)
 
-    visit(ast.parse(source), [], None)
+    visit(tree, [], None)
     return found
 
 
@@ -493,3 +565,96 @@ def f():
         "genai.Client",
         "helpers.get_gemini_client",
     ]
+
+
+_ALIASED_MUTANT = """
+from fastapi import APIRouter
+from lemely.web.deps import get_gemini_client as _model_client
+
+router = APIRouter()
+
+
+@router.post("/api/student/study-plan/_mutant-aliased")
+def mutant_aliased() -> None:
+    _model_client()
+"""
+
+
+def test_source_scan_goes_red_on_an_aliased_import() -> None:
+    uses = model_uses("lemely.web.routers.study_plan", _ALIASED_MUTANT)
+    assert [(u.name, u.scope) for u in uses] == [
+        ("get_gemini_client", ("lemely.web.routers.study_plan", "mutant_aliased"))
+    ]
+    assert unaccounted_model_uses(uses, allowed_scopes(_app_routes(), METERED)) == uses
+
+
+def test_source_scan_resolves_aliases_for_classes_and_modules_too() -> None:
+    source = """
+from lemely.io.gemini import GeminiClient as Model
+import lemely.web.deps as plumbing
+
+
+def f():
+    Model(None)
+    plumbing.get_gemini_client()
+"""
+    assert [u.name for u in model_uses("m", source)] == [
+        "GeminiClient",
+        "plumbing.get_gemini_client",
+    ]
+
+
+def test_source_scan_goes_red_on_getattr_and_on_stored_or_passed_references() -> None:
+    source = """
+from lemely.web import deps
+
+
+def by_getattr():
+    return getattr(deps, "get_gemini_client")()
+
+
+def stored():
+    build = deps.get_gemini_client
+    return build()
+
+
+def passed():
+    return run(get_flashcard_service)
+
+
+def in_a_table():
+    return {"model": GeminiClient}
+"""
+    uses = model_uses("lemely.web.routers.sneaky", source)
+    assert [(u.scope[1] if u.scope else None, u.name) for u in uses] == [
+        ("by_getattr", "getattr:get_gemini_client"),
+        ("stored", "deps.get_gemini_client"),
+        ("passed", "get_flashcard_service"),
+        ("in_a_table", "GeminiClient"),
+    ]
+    assert unaccounted_model_uses(uses, allowed_scopes(_app_routes(), METERED)) == uses
+
+
+def test_source_scan_ignores_dependencies_annotations_and_cache_clears() -> None:
+    """The legitimate bare references: ``Depends(...)`` (the dependency scan owns those),
+    type annotations, and ``cache_clear()`` on a factory."""
+    source = """
+from typing import Annotated
+from fastapi import Depends
+
+
+def handler(
+    client: Annotated[GeminiClient, Depends(get_gemini_client)],
+    service: "SelfReviewService" = Depends(get_self_review_service),
+) -> FlashcardService:
+    return None
+
+
+def reset() -> None:
+    get_gemini_client.cache_clear()
+    get_flashcard_service.cache_info()
+
+
+count: QuizMarkingService | None = None
+"""
+    assert model_uses("m", source) == []
