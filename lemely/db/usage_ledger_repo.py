@@ -21,6 +21,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
+from enum import Enum
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
@@ -53,6 +54,24 @@ alerts = structlog.get_logger("lemely.db.usage_ledger_repo")
 
 #: Rows one expiry sweep handles, oldest first; the rest wait for the next pass.
 DEFAULT_SWEEP_LIMIT = 500
+#: How far a job whose expiry failed steps back, so it stops pinning the head of the batch.
+FAILED_EXPIRY_BACKOFF = timedelta(hours=1)
+
+
+class _Member(Enum):
+    """``_entry``'s default: tag the entry with the payer's member, else the job's."""
+
+    FROM_PAYER_OR_JOB = "from_payer_or_job"
+
+
+@dataclass(frozen=True)
+class StaleJobSweep:
+    """One :meth:`UsageLedger.sweep_stale_jobs` pass."""
+
+    candidates: int
+    expired: int
+    failed: tuple[uuid.UUID, ...]
+
 
 #: Entry kinds that move a grant's ``remaining``; ``hold``/``release`` move ``held``.
 REMAINING_KINDS: tuple[UsageEntryKind, ...] = (
@@ -464,10 +483,12 @@ class UsageLedger:
         job: UsageJob | None = None,
         payer: Payer | None = None,
         reason: str | None = None,
+        member: uuid.UUID | None | _Member = _Member.FROM_PAYER_OR_JOB,
     ) -> None:
-        member = payer.teacher_member_id if payer is not None else None
-        if member is None and job is not None:
-            member = job.teacher_member_id
+        if isinstance(member, _Member):
+            member = payer.teacher_member_id if payer is not None else None
+            if member is None and job is not None:
+                member = job.teacher_member_id
         self._session.add(
             UsageEntry(
                 grant_id=grant_id,
@@ -566,6 +587,13 @@ class UsageLedger:
         return job
 
     def expire_stale_jobs(self, *, now: datetime, limit: int = DEFAULT_SWEEP_LIMIT) -> int:
+        """Release open jobs past ``expires_at`` and mark them expired; returns how many.
+
+        :meth:`sweep_stale_jobs`, reporting only the jobs this pass closed.
+        """
+        return self.sweep_stale_jobs(now=now, limit=limit).expired
+
+    def sweep_stale_jobs(self, *, now: datetime, limit: int = DEFAULT_SWEEP_LIMIT) -> StaleJobSweep:
         """Release open jobs past ``expires_at`` and mark them expired (§5.7 step 7).
 
         Takes at most ``limit`` jobs, oldest deadline first. The candidates are read
@@ -579,7 +607,12 @@ class UsageLedger:
           (a release needs no chain; only a charge does), is marked expired, and raises an
           error-level ``usage_job_stranded_holds`` alert naming it;
         * any other failure rolls that job back alone, leaves it open, and raises a
-          ``usage_expire_job_failed`` alert.
+          ``usage_expire_job_failed`` alert. Its deadline steps back by
+          :data:`FAILED_EXPIRY_BACKOFF`, so a job that keeps failing is retried hourly
+          instead of pinning the head of every batch.
+
+        The result counts the candidates read (failures included, so a batch full of
+        failures still reads as full), the jobs closed, and the jobs that failed.
         """
         if limit < 1:
             raise ValueError("limit must be at least 1")
@@ -609,6 +642,7 @@ class UsageLedger:
             + list(held_owners)
         )
         expired = 0
+        failed: list[uuid.UUID] = []
         for job_id in job_ids:
             try:
                 closed = self._expire_one(job_id, now)
@@ -616,13 +650,29 @@ class UsageLedger:
                 alerts.error(
                     "usage_expire_job_failed", alert=True, job_id=str(job_id), exc_info=True
                 )
+                failed.append(job_id)
+                self._step_back(job_id, now)
                 continue
             # Count only the jobs this sweep closed: another transaction may have
             # released, settled, extended or expired one between the candidate read
             # and the lock.
             if closed:
                 expired += 1
-        return expired
+        return StaleJobSweep(candidates=len(job_ids), expired=expired, failed=tuple(failed))
+
+    def _step_back(self, job_id: uuid.UUID, now: datetime) -> None:
+        """Move a job whose expiry failed behind the batch (owner locks already held)."""
+        try:
+            with self._session.begin_nested():
+                self._session.execute(
+                    sa.update(UsageJob)
+                    .where(UsageJob.job_id == job_id, UsageJob.status == UsageJobStatus.open)
+                    .values(expires_at=now + FAILED_EXPIRY_BACKOFF)
+                )
+        except Exception:
+            alerts.error(
+                "usage_expire_step_back_failed", alert=True, job_id=str(job_id), exc_info=True
+            )
 
     def _expire_one(self, job_id: uuid.UUID, now: datetime) -> bool:
         """Expire one stale job in its own savepoint; True when this call closed it."""
@@ -636,24 +686,38 @@ class UsageLedger:
         """Release a stranded job's holds on the grants that hold them, and expire it.
 
         The caller holds the owner locks of the job's chain and of every grant it holds.
+        Each release carries the member its hold entry carried: a seat cap counts holds
+        and releases by ``teacher_member_id``, so a release filed under another member
+        would leave that cap used up for good.
         """
         job_id = exc.job_id
         with self._session.begin_nested():
             job, _payers = self._locked_job(job_id)
+            # Defensive: the first savepoint re-checked the deadline under the job lock,
+            # and the sweep's owner locks keep ``extend`` out until it commits.
             if job.status is not UsageJobStatus.open or job.expires_at > now:
                 return False
-            holds = self._job_holds(job_id)
-            for grant_id in sorted(holds):
-                balance = self._locked_balance(grant_id)
+            holds = self._job_holds_by_member(job_id)
+            per_grant: dict[uuid.UUID, int] = defaultdict(int)
+            for grant_id, _member in holds:
+                per_grant[grant_id] += 1
+            balances = {grant_id: self._locked_balance(grant_id) for grant_id in sorted(per_grant)}
+            for (grant_id, member), held in sorted(
+                holds.items(), key=lambda kv: (kv[0][0], str(kv[0][1]))
+            ):
+                # One hold per grant is the normal shape and keeps the usual key; a grant
+                # held under two members needs one key per member (one entry per key).
+                key = f"job:{job_id}" if per_grant[grant_id] == 1 else f"job:{job_id}:{member}"
                 self._entry(
                     kind=UsageEntryKind.release,
-                    units=-holds[grant_id],
+                    units=-held,
                     event_at=now,
-                    key=f"job:{job_id}",
+                    key=key,
                     grant_id=grant_id,
                     job=job,
+                    member=member,
                 )
-                balance.held -= holds[grant_id]
+                balances[grant_id].held -= held
             job.status = UsageJobStatus.expired
             self._session.flush()
         alerts.error(
@@ -664,6 +728,23 @@ class UsageLedger:
             released_units=sum(holds.values()),
         )
         return True
+
+    def _job_holds_by_member(
+        self, job_id: uuid.UUID
+    ) -> dict[tuple[uuid.UUID, uuid.UUID | None], int]:
+        """A job's units still held, by grant and by the member each hold was counted under."""
+        rows = self._session.execute(
+            sa.select(
+                UsageEntry.grant_id, UsageEntry.teacher_member_id, sa.func.sum(UsageEntry.units)
+            )
+            .where(UsageEntry.job_id == job_id, UsageEntry.kind.in_(HELD_KINDS))
+            .group_by(UsageEntry.grant_id, UsageEntry.teacher_member_id)
+        ).all()
+        return {
+            (grant_id, member): int(total)
+            for grant_id, member, total in rows
+            if grant_id is not None and total
+        }
 
     def _locked_job(self, job_id: uuid.UUID) -> tuple[UsageJob, list[Payer]]:
         chain = self._session.scalar(
@@ -1276,9 +1357,11 @@ class UsageLedger:
 
 __all__ = [
     "DEFAULT_SWEEP_LIMIT",
+    "FAILED_EXPIRY_BACKOFF",
     "HELD_KINDS",
     "REMAINING_KINDS",
     "InsufficientBalance",
+    "StaleJobSweep",
     "StrandedHolds",
     "UsageLedger",
 ]

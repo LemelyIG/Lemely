@@ -13,20 +13,27 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import pytest
 import sqlalchemy as sa
 from structlog.testing import capture_logs
 
-from lemely.core.usage_types import payer_to_json
-from lemely.db.models.usage import GrantKind, UsageJob, UsageJobStatus
-from lemely.db.usage_ledger_repo import DEFAULT_SWEEP_LIMIT, UsageLedger
+from lemely.core.usage_types import GrantScope, Payer, payer_to_json
+from lemely.db.models.enums import Role
+from lemely.db.models.usage import GrantKind, UsageEntry, UsageEntryKind, UsageJob, UsageJobStatus
+from lemely.db.usage_ledger_repo import (
+    DEFAULT_SWEEP_LIMIT,
+    FAILED_EXPIRY_BACKOFF,
+    UsageLedger,
+)
 from lemely.web import usage_sweeps
 from tests._concurrency import _Paused, _wait_until_a_backend_waits_on_a_lock
 from tests.usage_db import (
     NOW,
     add_rate,
+    add_seat_member,
     add_user,
     balance,
     emptied_after,
@@ -157,6 +164,110 @@ def test_a_job_that_fails_for_another_reason_is_left_open_and_the_rest_expire(
     assert balance(sm, gid) == (50, 10)  # the failed job's writes were rolled back alone
     (alert,) = [e for e in logs if e["event"] == "usage_expire_job_failed"]
     assert (alert["log_level"], alert["alert"], alert["job_id"]) == ("error", True, str(broken))
+    _reconciled(sm)
+
+
+# --- every release goes back under the member its hold was counted against -------------
+
+
+def _two_seats(sm: sessionmaker[Session]) -> tuple[uuid.UUID, list[Payer], uuid.UUID]:
+    """A student seated by two teachers; only the second teacher has credits.
+
+    The job's ``teacher_member_id`` is the first seat's member (as production stores it),
+    but the hold sits on the second teacher's capped credits, counted against ``m2``.
+    """
+    add_rate(sm)
+    student = add_user(sm)
+    t1, t2 = add_user(sm, Role.teacher), add_user(sm, Role.teacher)
+    m1, m2 = add_seat_member(sm, student, t1), add_seat_member(sm, student, t2)
+    grant(sm, t2, 50, kind=GrantKind.credit_pack, visible=True)
+    chain = [
+        Payer(owner_user_id=student, scope=GrantScope.SEAT, teacher_member_id=m1, debt_exempt=True),
+        Payer(owner_user_id=student, scope=GrantScope.SEAT, teacher_member_id=m2, debt_exempt=True),
+        Payer(owner_user_id=t1, scope=GrantScope.CREDITS, teacher_member_id=m1, cap_units=100),
+        Payer(owner_user_id=t2, scope=GrantScope.CREDITS, teacher_member_id=m2, cap_units=100),
+        *own_chain(student),
+    ]
+    job_id = reserve(sm, chain, 10, teacher_member_id=m1, expires_at=NOW + timedelta(minutes=1))
+    with sm.begin() as session:
+        assert UsageLedger(session)._cap_used(chain[3]) == 10
+    return job_id, chain, m2
+
+
+def _members(sm: sessionmaker[Session], job_id: uuid.UUID, kind: UsageEntryKind) -> list[str]:
+    with sm() as session:
+        return sorted(
+            str(e.teacher_member_id)
+            for e in session.scalars(
+                sa.select(UsageEntry).where(UsageEntry.job_id == job_id, UsageEntry.kind == kind)
+            )
+        )
+
+
+def _cap_used(sm: sessionmaker[Session], payer: Payer) -> int:
+    with sm.begin() as session:
+        return UsageLedger(session)._cap_used(payer)
+
+
+def test_a_stranded_release_frees_the_second_seats_cap(sm: sessionmaker[Session]) -> None:
+    """Reviewer probe (I1): the release was filed under m1 and m2's cap stayed used."""
+    job_id, chain, m2 = _two_seats(sm)
+    _strand(sm, job_id, onto=add_user(sm))
+    assert _sweep(sm) == 1
+    assert _members(sm, job_id, UsageEntryKind.release) == [str(m2)]
+    assert _members(sm, job_id, UsageEntryKind.release) == _members(sm, job_id, UsageEntryKind.hold)
+    assert _cap_used(sm, chain[3]) == 0
+    _reconciled(sm)
+
+
+@pytest.mark.parametrize("close", ["expire", "release", "settle"])
+def test_the_normal_close_paths_release_under_the_holds_member(
+    sm: sessionmaker[Session], close: str
+) -> None:
+    """The slot mapping is rebuilt from the same chain the hold used, so the member matches."""
+    job_id, chain, m2 = _two_seats(sm)
+    with sm.begin() as session:
+        ledger = UsageLedger(session)
+        if close == "expire":
+            assert ledger.expire_stale_jobs(now=LATER) == 1
+        elif close == "release":
+            ledger.release(job_id, now=NOW)
+        else:
+            ledger.settle(job_id, actual_cost_usd=Decimal("0"), now=NOW)
+    assert _members(sm, job_id, UsageEntryKind.release) == [str(m2)]
+    assert _cap_used(sm, chain[3]) == 0
+    _reconciled(sm)
+
+
+# --- a job that keeps failing does not pin the head of the batch ------------------------
+
+
+def test_a_job_that_keeps_failing_steps_back_and_the_next_one_expires(
+    sm: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    add_rate(sm)
+    owner = add_user(sm)
+    gid = grant(sm, owner, 50)
+    broken, behind = _stale(sm, owner, 10, minutes=1), _stale(sm, owner, 10, minutes=2)
+    original = UsageLedger._close
+
+    def close(self: UsageLedger, job_id: uuid.UUID, *args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        if job_id == broken:
+            raise sa.exc.OperationalError("UPDATE", {}, Exception("row went away"))
+        return original(self, job_id, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(UsageLedger, "_close", close)
+    with sm.begin() as session:
+        first = UsageLedger(session).sweep_stale_jobs(now=LATER, limit=1)
+    assert (first.candidates, first.expired, first.failed) == (1, 0, (broken,))
+    stepped = job(sm, broken)
+    assert (stepped.status, stepped.expires_at) == (
+        UsageJobStatus.open,
+        LATER + FAILED_EXPIRY_BACKOFF,
+    )
+    assert _sweep(sm, limit=1) == 1  # the job behind it is no longer starved
+    assert job(sm, behind).status is UsageJobStatus.expired
+    assert balance(sm, gid) == (50, 10)  # the failing job still holds; nothing was charged
     _reconciled(sm)
 
 
