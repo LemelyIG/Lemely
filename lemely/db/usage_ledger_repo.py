@@ -24,6 +24,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
+import structlog
 from sqlalchemy.exc import IntegrityError
 
 from lemely.core.usage_pricing import GRANT_PRIORITY, usd_to_units
@@ -47,6 +48,11 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session, SessionTransaction
 
 logger = logging.getLogger("lemely.db.usage_ledger_repo")
+#: Structured events the sweeps raise alerts on (``alert=True`` survives only in structlog).
+alerts = structlog.get_logger("lemely.db.usage_ledger_repo")
+
+#: Rows one expiry sweep handles, oldest first; the rest wait for the next pass.
+DEFAULT_SWEEP_LIMIT = 500
 
 #: Entry kinds that move a grant's ``remaining``; ``hold``/``release`` move ``held``.
 REMAINING_KINDS: tuple[UsageEntryKind, ...] = (
@@ -66,6 +72,18 @@ _SPEND_ORDER = (
     UsageGrant.effective_at.asc(),
     UsageGrant.id.asc(),
 )
+
+
+class StrandedHolds(RuntimeError):
+    """A job holds units on grants its stored payer chain no longer reaches."""
+
+    def __init__(self, job_id: uuid.UUID, grant_ids: set[uuid.UUID]) -> None:
+        super().__init__(
+            f"usage job {job_id} holds units on grants {sorted(grant_ids)} "
+            "that its payer chain no longer reaches"
+        )
+        self.job_id = job_id
+        self.grant_ids = grant_ids
 
 
 class InsufficientBalance(Exception):
@@ -547,28 +565,105 @@ class UsageLedger:
             self._session.flush()
         return job
 
-    def expire_stale_jobs(self, *, now: datetime) -> int:
+    def expire_stale_jobs(self, *, now: datetime, limit: int = DEFAULT_SWEEP_LIMIT) -> int:
         """Release open jobs past ``expires_at`` and mark them expired (§5.7 step 7).
 
-        The candidates are read without locks; each one's deadline is checked again under
-        its locks, so a job whose clock :meth:`extend` restarted meanwhile is skipped.
+        Takes at most ``limit`` jobs, oldest deadline first. The candidates are read
+        without locks; each one's deadline is checked again under its locks, so a job
+        whose clock :meth:`extend` restarted meanwhile is skipped.
+
+        Each job closes in its own savepoint, so one bad row never stops the sweep:
+
+        * a job whose stored chain no longer reaches a grant it holds units on
+          (:class:`StrandedHolds`) has every hold released on the grant that holds it
+          (a release needs no chain; only a charge does), is marked expired, and raises an
+          error-level ``usage_job_stranded_holds`` alert naming it;
+        * any other failure rolls that job back alone, leaves it open, and raises a
+          ``usage_expire_job_failed`` alert.
         """
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
         rows = self._session.execute(
             sa.select(UsageJob.job_id, UsageJob.payer_chain)
             .where(UsageJob.status == UsageJobStatus.open, UsageJob.expires_at <= now)
             .order_by(UsageJob.expires_at, UsageJob.job_id)
+            .limit(limit)
         ).all()
-        # One sorted pass over every owner involved: closing the jobs one by one
-        # would otherwise take owner locks in expiry order and deadlock with a
-        # reserve that takes them in ascending UUID order.
-        self._lock_owners([payer_from_json(p).owner_user_id for _, chain in rows for p in chain])
+        job_ids = [job_id for job_id, _chain in rows]
+        # One sorted pass over every owner involved, before any row is locked: closing the
+        # jobs one by one would otherwise take owner locks in expiry order and deadlock
+        # with a reserve that takes them in ascending UUID order. The owners of the grants
+        # the jobs hold are included, so a stranded job's holds can be released in place.
+        held_owners = (
+            self._session.scalars(
+                sa.select(UsageGrant.owner_user_id)
+                .join(UsageEntry, UsageEntry.grant_id == UsageGrant.id)
+                .where(UsageEntry.job_id.in_(job_ids), UsageEntry.kind.in_(HELD_KINDS))
+                .distinct()
+            ).all()
+            if job_ids
+            else []
+        )
+        self._lock_owners(
+            [payer_from_json(p).owner_user_id for _, chain in rows for p in chain]
+            + list(held_owners)
+        )
         expired = 0
-        for job_id, _chain in rows:
+        for job_id in job_ids:
+            try:
+                closed = self._expire_one(job_id, now)
+            except Exception:
+                alerts.error(
+                    "usage_expire_job_failed", alert=True, job_id=str(job_id), exc_info=True
+                )
+                continue
             # Count only the jobs this sweep closed: another transaction may have
-            # released, settled or expired one between the candidate read and the lock.
-            if self._close(job_id, UsageJobStatus.expired, now, due_by=now)[1]:
+            # released, settled, extended or expired one between the candidate read
+            # and the lock.
+            if closed:
                 expired += 1
         return expired
+
+    def _expire_one(self, job_id: uuid.UUID, now: datetime) -> bool:
+        """Expire one stale job in its own savepoint; True when this call closed it."""
+        try:
+            with self._session.begin_nested():
+                return self._close(job_id, UsageJobStatus.expired, now, due_by=now)[1]
+        except StrandedHolds as exc:
+            return self._expire_stranded(exc, now)
+
+    def _expire_stranded(self, exc: StrandedHolds, now: datetime) -> bool:
+        """Release a stranded job's holds on the grants that hold them, and expire it.
+
+        The caller holds the owner locks of the job's chain and of every grant it holds.
+        """
+        job_id = exc.job_id
+        with self._session.begin_nested():
+            job, _payers = self._locked_job(job_id)
+            if job.status is not UsageJobStatus.open or job.expires_at > now:
+                return False
+            holds = self._job_holds(job_id)
+            for grant_id in sorted(holds):
+                balance = self._locked_balance(grant_id)
+                self._entry(
+                    kind=UsageEntryKind.release,
+                    units=-holds[grant_id],
+                    event_at=now,
+                    key=f"job:{job_id}",
+                    grant_id=grant_id,
+                    job=job,
+                )
+                balance.held -= holds[grant_id]
+            job.status = UsageJobStatus.expired
+            self._session.flush()
+        alerts.error(
+            "usage_job_stranded_holds",
+            alert=True,
+            job_id=str(job_id),
+            grant_ids=[str(g) for g in sorted(exc.grant_ids)],
+            released_units=sum(holds.values()),
+        )
+        return True
 
     def _locked_job(self, job_id: uuid.UUID) -> tuple[UsageJob, list[Payer]]:
         chain = self._session.scalar(
@@ -631,10 +726,7 @@ class UsageLedger:
         """Raise before any write when the chain cannot reach a grant the job holds."""
         reached = {slot.grant.id for slot in slots}
         if stranded := set(holds) - reached:
-            raise RuntimeError(
-                f"usage job {job_id} holds units on grants {sorted(stranded)} "
-                "that its payer chain no longer reaches"
-            )
+            raise StrandedHolds(job_id, stranded)
 
     def settle(self, job_id: uuid.UUID, *, actual_cost_usd: Decimal, now: datetime) -> UsageJob:
         """Charge the actual cost (§5.7 step 5). A job no longer open is returned unchanged.
@@ -734,13 +826,16 @@ class UsageLedger:
         )
         slot.balance.held -= held
 
-    def expire_grants(self, *, now: datetime) -> int:
+    def expire_grants(self, *, now: datetime, limit: int = DEFAULT_SWEEP_LIMIT) -> int:
         """Expire the unheld rest of every grant past ``expires_at`` (§5.7 step 8).
 
-        Units a running job still holds stay on the grant; the sweep after that
+        Takes at most ``limit`` grants, oldest expiry first; the rest wait for the next
+        pass. Units a running job still holds stay on the grant; the sweep after that
         job lets them go takes them. Returns the number of grants given an
         ``expire`` entry.
         """
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
         candidates = self._session.execute(
             sa.select(UsageGrant.id, UsageGrant.owner_user_id)
             .join(UsageGrantBalance, UsageGrantBalance.grant_id == UsageGrant.id)
@@ -749,6 +844,7 @@ class UsageLedger:
                 UsageGrantBalance.remaining > UsageGrantBalance.held,
             )
             .order_by(UsageGrant.expires_at, UsageGrant.id)
+            .limit(limit)
         ).all()
         # One sorted pass over every owner involved, before any grant row is
         # locked: taking owner locks grant by grant, in expiry order, would
@@ -1178,4 +1274,11 @@ class UsageLedger:
         return [(d, int(c), int(a)) for d, c, a in self._session.execute(stmt)]
 
 
-__all__ = ["HELD_KINDS", "REMAINING_KINDS", "InsufficientBalance", "UsageLedger"]
+__all__ = [
+    "DEFAULT_SWEEP_LIMIT",
+    "HELD_KINDS",
+    "REMAINING_KINDS",
+    "InsufficientBalance",
+    "StrandedHolds",
+    "UsageLedger",
+]

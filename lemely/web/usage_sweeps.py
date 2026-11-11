@@ -2,10 +2,13 @@
 
 * ``usage.expire_stale_jobs``: open jobs past ``expires_at`` (a crashed worker, a pool
   job that never ran) are released and marked ``expired``; no charge. A running job
-  keeps its hold alive with the heartbeat (:meth:`MeteredJob.heartbeat`), and the ledger
-  re-checks each deadline under the owners' locks, so the sweep never closes a job whose
-  clock was just restarted.
+  keeps its hold alive (``MeteredJob.run``'s hold renewer), and the ledger re-checks each
+  deadline under the owners' locks, so the sweep never closes a job whose clock was just
+  restarted. Each job closes in its own savepoint: a job whose chain no longer reaches its
+  holds is released and alerted on, never a poison pill for the rest.
 * ``usage.expire_grants``: grants past ``expires_at`` expire their unheld remainder.
+* Both take at most :data:`EXPIRE_BATCH` rows per pass, oldest first; a full batch is
+  logged (``usage_sweep_batch_full``) and the next pass continues the backlog.
 * ``usage.repair_signup_grants``: every verified student or teacher without a signup grant
   gets one. It backfills accounts verified before metering shipped and heals a grant that
   failed after the verification committed (``signup_grant_failed``).
@@ -51,6 +54,8 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 RECONCILE_HOUR_UTC = 2
+#: Jobs or grants one ``usage.expire_*`` pass handles, oldest first.
+EXPIRE_BATCH = 500
 #: Users examined per ``usage.repair_signup_grants`` pass: the bound on one sweep's work.
 SIGNUP_REPAIR_BATCH = 200
 #: Drift lines logged per reconcile; the total is always logged, so a runaway bug cannot
@@ -87,19 +92,27 @@ class RepairCursor:
 def expire_stale_jobs(sm: sessionmaker[Session], *, now: datetime) -> int:
     """Close the open jobs past their deadline; returns how many this pass closed."""
     with sm.begin() as session:
-        expired = UsageLedger(session).expire_stale_jobs(now=now)
+        expired = UsageLedger(session).expire_stale_jobs(now=now, limit=EXPIRE_BATCH)
     if expired:
         log.info("usage_jobs_expired", count=expired)
+    _note_full_batch("expire_stale_jobs", expired)
     return expired
 
 
 def expire_grants(sm: sessionmaker[Session], *, now: datetime) -> int:
     """Expire the unheld remainder of grants past expiry; returns how many were expired."""
     with sm.begin() as session:
-        expired = UsageLedger(session).expire_grants(now=now)
+        expired = UsageLedger(session).expire_grants(now=now, limit=EXPIRE_BATCH)
     if expired:
         log.info("usage_grants_expired", count=expired)
+    _note_full_batch("expire_grants", expired)
     return expired
+
+
+def _note_full_batch(sweep: str, count: int) -> None:
+    """A full batch means a backlog: the next pass continues it, and this line shows it."""
+    if count >= EXPIRE_BATCH:
+        log.info("usage_sweep_batch_full", sweep=sweep, limit=EXPIRE_BATCH)
 
 
 def reconcile_balances(sm: sessionmaker[Session], *, now: datetime, memo: ReconcileMemo) -> int:
