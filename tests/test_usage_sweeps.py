@@ -320,6 +320,34 @@ def test_a_user_who_cannot_be_granted_does_not_starve_the_rest(
     assert failed[0]["log_level"] == "error"
 
 
+def test_a_grant_another_replica_issued_first_is_not_counted(
+    migrated_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ledger answers a replay with the stored grant; only a new grant is counted."""
+    import lemely.web.usage_sweeps as sweeps
+
+    sm = migrated_sessionmaker
+    seed_catalogue(sm)
+    raced = _verified(sm, Role.student)
+    fresh = _verified(sm, Role.student)
+    real = sweeps.grant_signup_allowance
+
+    def racing(
+        session: Session, *, user_id: uuid.UUID, role: Role, now: datetime
+    ) -> UsageGrant | None:
+        if user_id == raced:  # the other replica commits its grant before ours takes the lock
+            with sm.begin() as other:
+                real(other, user_id=user_id, role=role, now=now - timedelta(minutes=1))
+        return real(session, user_id=user_id, role=role, now=now)
+
+    monkeypatch.setattr(sweeps, "grant_signup_allowance", racing)
+    with capture_logs() as logs:
+        assert repair_signup_grants(sm, now=AT_3AM, cursor=RepairCursor()) == 1
+    assert len(_signup_grants(sm, raced)) == len(_signup_grants(sm, fresh)) == 1
+    [event] = [e for e in logs if e["event"] == "signup_grants_repaired"]
+    assert event["count"] == 1
+
+
 def test_the_repair_logs_how_many_it_granted(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:

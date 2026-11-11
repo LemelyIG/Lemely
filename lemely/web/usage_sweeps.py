@@ -30,7 +30,7 @@ from datetime import UTC
 from typing import TYPE_CHECKING
 
 import structlog
-from sqlalchemy import exists, select
+from sqlalchemy import event, exists, select
 
 from lemely.db.models.billing import CreditPack
 from lemely.db.models.enums import Role
@@ -152,6 +152,22 @@ def _roles_to_repair(sm: sessionmaker[Session]) -> list[Role]:
     return [role for role, code in _SIGNUP_PACKS.items() if units.get(code, 1) > 0]
 
 
+def _watch_new_grants(session: Session) -> list[UsageGrant]:
+    """A list that fills with every ``UsageGrant`` this session's flushes insert.
+
+    ``grant_signup_allowance`` returns the stored grant on a replay, so its return value
+    cannot tell a new grant from an old one; a row in this transaction's ``session.new``
+    at flush time can. The listener dies with the session.
+    """
+    inserted: list[UsageGrant] = []
+    event.listen(
+        session,
+        "after_flush",
+        lambda sess, _ctx: inserted.extend(o for o in sess.new if isinstance(o, UsageGrant)),
+    )
+    return inserted
+
+
 def repair_signup_grants(
     sm: sessionmaker[Session],
     *,
@@ -167,7 +183,9 @@ def repair_signup_grants(
     (``usage_signup_repair_failed``) and skipped, and the next pass past the cursor wrap
     tries it again. The teacher's 30 days count from ``now``, the grant time.
 
-    Returns the number of grants issued, and logs it when it is not zero.
+    Returns the number of grants this call issued, and logs it when it is not zero. A user
+    whose grant another replica committed first is answered with that stored grant and is
+    not counted.
     """
     roles = _roles_to_repair(sm)
     if not roles:
@@ -191,7 +209,9 @@ def repair_signup_grants(
     for user_id, role in batch:
         try:
             with sm.begin() as session:
-                if grant_signup_allowance(session, user_id=user_id, role=role, now=now) is not None:
+                issued = _watch_new_grants(session)
+                grant_signup_allowance(session, user_id=user_id, role=role, now=now)
+                if issued:
                     granted += 1
         except Exception:
             log.exception("usage_signup_repair_failed", user_id=str(user_id))

@@ -49,7 +49,7 @@ from lemely.db.models.enums import (
     QuizSubmissionStatus,
     Role,
 )
-from lemely.db.models.quizzes import QuestionBank, QuizSubmission
+from lemely.db.models.quizzes import QuestionBank, QuizQuestion, QuizSubmission
 from lemely.db.question_bank_repo import QuestionBankService
 from lemely.db.quiz_repo import (
     QuizNotFoundError,
@@ -527,6 +527,46 @@ def test_raising_the_count_tops_up_with_only_new_bank_rows(
     assert len(topped_up.created) == 7
     assert len(questions) == 12
     assert len(set(bank_ids)) == 12  # no bank row twice
+
+
+def test_the_top_up_over_fetches_so_taken_rows_cannot_starve_it(
+    quiz_service: QuizService,
+    bank_service: QuestionBankService,
+    pg_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pin the over-fetch deterministically: the bank answers with the taken rows first.
+
+    The real selection is ``ORDER BY random()``, so without the over-fetch a top-up only
+    sometimes draws a row already on the quiz. This selector is adversarial instead: it
+    returns every already-taken row ahead of the fresh ones, so a top-up that asks for
+    just ``needed`` rows gets them filtered away and under-fills, every time.
+    """
+    teacher = _seed_teacher(pg_sessionmaker)
+    _seed_band_rows(pg_sessionmaker, 10)
+    quiz_id = _draft(quiz_service, teacher, 5)
+    quiz_service.generate_questions(teacher, quiz_id)
+    with pg_sessionmaker() as session:
+        taken = set(
+            session.scalars(
+                sa.select(QuizQuestion.question_bank_id).where(QuizQuestion.quiz_id == quiz_id)
+            )
+        )
+    assert len(taken) == 5
+    real = bank_service.select_questions
+
+    def taken_first(*args: object, count: int, **kwargs: object) -> list[object]:
+        rows = real(*args, count=1000, **kwargs)  # type: ignore[arg-type]
+        rows.sort(key=lambda row: row.id not in taken)  # stable: taken rows lead
+        return list(rows[:count])
+
+    monkeypatch.setattr(bank_service, "select_questions", taken_first)
+    quiz_service.patch_draft(teacher, quiz_id, requested_count=12)
+
+    topped_up = quiz_service.generate_questions(teacher, quiz_id)
+
+    assert len(topped_up.created) == 7
+    assert len(quiz_service.get_quiz(teacher, quiz_id).questions) == 12
 
 
 def test_a_removed_question_is_not_selected_again(

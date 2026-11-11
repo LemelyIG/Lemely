@@ -9,19 +9,29 @@ database:
 * a ``METERED`` route that stops resolving the usage meter fails
   ``test_every_metered_route_resolves_the_meter``.
 
-The scan is only as wide as ``MODEL_FACTORIES``: a new factory that builds a model client
-into a service must be added there. ``test_the_scan_is_not_vacuous`` fails when the walk
-stops seeing the routes the audit knows about. The ``test_scan_*`` tests prove the two
-checks go red on a synthetic app, so they cannot rot into always-green.
+The dependency scan is only as wide as ``MODEL_FACTORIES``, so a second, source-level scan
+(AST) covers what it cannot see: any call under ``lemely/web`` that constructs or obtains a
+model client (``get_gemini_client()``, ``GeminiClient(...)``, the service and generator
+constructors, the Anthropic builders) must sit inside a ``MODEL_FACTORIES`` factory, a
+``METERED`` route handler, or a documented ``DIRECT_USE_EXEMPT`` helper. A route that
+calls ``get_gemini_client()`` in its body, or a new factory that builds a client, fails
+``test_every_model_client_call_sits_in_a_factory_or_a_metered_route``.
+
+``test_the_scan_is_not_vacuous`` fails when the walk stops seeing the routes the audit
+knows about. The ``test_scan_*`` tests prove each check goes red on a synthetic app or
+source, so they cannot rot into always-green.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated
+import ast
+from pathlib import Path
+from typing import TYPE_CHECKING, Annotated, NamedTuple
 
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.routing import APIRoute
 
+import lemely.web
 from lemely.web import create_app
 from lemely.web.deps import (
     get_flashcard_service,
@@ -38,6 +48,8 @@ if TYPE_CHECKING:
     from fastapi.dependencies.models import Dependant
 
 Key = tuple[str, str]
+#: A function in the source scan: ``(dotted module, outermost enclosing function's qualname)``.
+Scope = tuple[str, str]
 
 #: Dependencies that put a paid model behind a route: the Gemini client itself, and every
 #: service factory that builds one in (quiz marker, self-review judge, flashcard generator).
@@ -143,6 +155,118 @@ def _app_routes() -> dict[Key, APIRoute]:
     return _keyed(flatten_routes(create_app()))
 
 
+#: Names whose call constructs or obtains a paid model client, or builds a service or
+#: generator around one. Anthropic and Google SDK clients are built only inside
+#: ``GeminiClient`` (``lemely/io/gemini.py``), so web code reaches them through these.
+MODEL_CALL_NAMES: frozenset[str] = frozenset(
+    {
+        "get_gemini_client",
+        "GeminiClient",
+        "ClaudeProvider",
+        "GeminiProvider",
+        "AnthropicAdapter",
+        "Anthropic",
+        "AsyncAnthropic",
+        "genai.Client",
+        "get_quiz_marking_service",
+        "get_self_review_service",
+        "get_flashcard_service",
+        "QuizMarkingService",
+        "SelfReviewService",
+        "FlashcardService",
+        "QuestionGenerator",
+        "FlashcardGenerator",
+        "GeminiEvidenceJudge",
+        "build_self_review_judge",
+    }
+)
+
+#: Helpers that build model-backed objects for a listed scope. Each is a documented
+#: exemption: its own body may name a client builder, and its callers are checked too.
+DIRECT_USE_EXEMPT: Mapping[Scope, str] = {
+    ("lemely.web.deps", "build_self_review_judge"): (
+        "wraps the shared Gemini client in the lenient judge; called only by "
+        "get_self_review_service"
+    ),
+    ("lemely.web.routers.teacher", "_build_quiz"): (
+        "builds the question generator; called only by _build_quiz_metered"
+    ),
+    ("lemely.web.routers.teacher", "_build_quiz_metered"): (
+        "runs _build_quiz inside the metered job; called only by the metered quiz preview "
+        "and generate handlers"
+    ),
+}
+
+
+class ModelUse(NamedTuple):
+    """One call in the web source that constructs or obtains a model client."""
+
+    module: str
+    line: int
+    name: str
+    scope: Scope | None  # None: outside any function
+
+
+def _dotted(node: ast.expr) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        head = _dotted(node.value)
+        return f"{head}.{node.attr}" if head else node.attr
+    return None
+
+
+def model_uses(
+    module: str, source: str, names: Collection[str] = MODEL_CALL_NAMES
+) -> list[ModelUse]:
+    """Every call in ``source`` to one of ``names``, with its outermost enclosing function."""
+    found: list[ModelUse] = []
+
+    def visit(node: ast.AST, qual: list[str], scope: Scope | None) -> None:
+        if isinstance(node, ast.ClassDef):
+            qual = [*qual, node.name]
+        elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and scope is None:
+            qual = [*qual, node.name]
+            scope = (module, ".".join(qual))
+        if isinstance(node, ast.Call):
+            dotted = _dotted(node.func)
+            if dotted is not None and (dotted in names or dotted.rsplit(".", 1)[-1] in names):
+                found.append(ModelUse(module, node.lineno, dotted, scope))
+        for child in ast.iter_child_nodes(node):
+            visit(child, qual, scope)
+
+    visit(ast.parse(source), [], None)
+    return found
+
+
+def web_model_uses() -> list[ModelUse]:
+    """``model_uses`` over every module under ``lemely/web``, helper names included."""
+    root = Path(lemely.web.__file__).parent
+    names = MODEL_CALL_NAMES | {qual.rsplit(".", 1)[-1] for _, qual in DIRECT_USE_EXEMPT}
+    uses: list[ModelUse] = []
+    for path in sorted(root.rglob("*.py")):
+        parts = ["lemely", "web", *path.relative_to(root).with_suffix("").parts]
+        if parts[-1] == "__init__":
+            parts.pop()
+        uses.extend(model_uses(".".join(parts), path.read_text(), names))
+    return uses
+
+
+def _scope_of(function: Callable[..., object]) -> Scope:
+    return (function.__module__, function.__qualname__)
+
+
+def allowed_scopes(routes: Mapping[Key, APIRoute], metered: Collection[Key]) -> set[Scope]:
+    """The functions allowed to name a model client: factories, metered handlers, helpers."""
+    handlers = {_scope_of(routes[key].endpoint) for key in metered if key in routes}
+    return {_scope_of(f) for f in MODEL_FACTORIES} | handlers | set(DIRECT_USE_EXEMPT)
+
+
+def unaccounted_model_uses(uses: Iterable[ModelUse], allowed: Collection[Scope]) -> list[ModelUse]:
+    """The uses that sit outside every allowed function (or outside any function)."""
+    return [use for use in uses if use.scope not in allowed]
+
+
 # ---------------------------------------------------------------------------
 # The real application
 # ---------------------------------------------------------------------------
@@ -186,6 +310,28 @@ def test_the_question_bank_route_stays_a_deterministic_query() -> None:
     """
     route = _app_routes()[QUESTION_BANK_ROUTE]
     assert not _calls(route) & set(MODEL_FACTORIES)
+
+
+def test_every_model_client_call_sits_in_a_factory_or_a_metered_route() -> None:
+    stray = unaccounted_model_uses(web_model_uses(), allowed_scopes(_app_routes(), METERED))
+    assert not stray, (
+        "code under lemely/web constructs or obtains a model client outside a listed "
+        f"factory, a metered route or a documented helper: {stray}. Meter the route "
+        "(and add it to METERED), register the factory in MODEL_FACTORIES, or document "
+        "the helper in DIRECT_USE_EXEMPT."
+    )
+
+
+def test_the_source_scan_is_not_vacuous() -> None:
+    uses = web_model_uses()
+    scopes = {use.scope for use in uses}
+    assert {_scope_of(f) for f in MODEL_FACTORIES} <= scopes
+    assert set(DIRECT_USE_EXEMPT) <= scopes
+    # Every listed helper is called from somewhere that is allowed (checked above), and
+    # a stale entry fails here rather than lingering.
+    called = {use.name.rsplit(".", 1)[-1] for use in uses}
+    assert {qual.rsplit(".", 1)[-1] for _, qual in DIRECT_USE_EXEMPT} <= called
+    assert all(reason.strip() for reason in DIRECT_USE_EXEMPT.values())
 
 
 # ---------------------------------------------------------------------------
@@ -271,3 +417,79 @@ def test_scan_sees_the_meter_through_a_nested_dependency() -> None:
     key: Key = ("POST", "/api/nested/paid")
     assert metered_routes_without_meter(routes, {key}) == set()
     assert unaccounted_model_routes(routes, {key}, set()) == set()
+
+
+_MUTANT_ROUTE = """
+from fastapi import APIRouter
+from lemely.web.deps import get_gemini_client
+
+router = APIRouter()
+
+
+@router.post("/api/student/study-plan/_mutant-paid")
+def mutant_paid() -> None:
+    client = get_gemini_client()
+    client.generate_structured()
+"""
+
+
+def test_source_scan_goes_red_on_a_route_that_calls_the_client_in_its_body() -> None:
+    uses = model_uses("lemely.web.routers.study_plan", _MUTANT_ROUTE)
+    assert [(u.name, u.scope) for u in uses] == [
+        ("get_gemini_client", ("lemely.web.routers.study_plan", "mutant_paid"))
+    ]
+    allowed = allowed_scopes(_app_routes(), METERED)
+    assert unaccounted_model_uses(uses, allowed) == uses
+    # The same call inside a metered handler is fine.
+    metered_scope = _scope_of(_app_routes()[("POST", "/api/student/study-plan")].endpoint)
+    assert (
+        unaccounted_model_uses(uses, allowed | {("lemely.web.routers.study_plan", "mutant_paid")})
+        == []
+    )
+    assert metered_scope in allowed
+
+
+def test_source_scan_goes_red_on_a_new_factory_and_on_nested_and_module_level_calls() -> None:
+    source = """
+from lemely.io.gemini import GeminiClient
+
+_AT_IMPORT = GeminiClient(None)
+
+
+def get_new_service():
+    return Service(GeminiClient(settings))
+
+
+class Holder:
+    def build(self):
+        def worker():
+            return QuestionGenerator(client)
+        return worker
+"""
+    uses = model_uses("lemely.web.deps", source)
+    assert [(u.name, u.scope) for u in uses] == [
+        ("GeminiClient", None),
+        ("GeminiClient", ("lemely.web.deps", "get_new_service")),
+        ("QuestionGenerator", ("lemely.web.deps", "Holder.build")),
+    ]
+    assert unaccounted_model_uses(uses, allowed_scopes(_app_routes(), METERED)) == uses
+
+
+def test_source_scan_matches_attribute_calls_and_ignores_other_names() -> None:
+    source = """
+import anthropic
+from google import genai
+
+
+def f():
+    anthropic.Anthropic()
+    genai.Client(api_key="x")
+    helpers.get_gemini_client()
+    unrelated()
+    GeminiClientSettings()
+"""
+    assert [u.name for u in model_uses("m", source)] == [
+        "anthropic.Anthropic",
+        "genai.Client",
+        "helpers.get_gemini_client",
+    ]
