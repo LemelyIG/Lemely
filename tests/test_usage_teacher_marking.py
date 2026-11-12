@@ -995,6 +995,7 @@ def test_an_unavailable_run_that_was_superseded_leaves_the_newer_runs_paper_alon
     assert _remaining(sm, grant)[1] == 0
 
 
+@pytest.mark.parametrize("assistant", [False, True])
 @pytest.mark.parametrize(
     ("reason", "fragment"),
     [
@@ -1006,22 +1007,32 @@ def test_an_unavailable_run_that_was_superseded_leaves_the_newer_runs_paper_alon
     ],
 )
 def test_each_block_reason_has_its_own_plain_message(
-    reason: UsageBlockReason, fragment: str
+    reason: UsageBlockReason, fragment: str, assistant: bool
 ) -> None:
-    message = teacher_router.usage_blocked_message(reason)
+    message = teacher_router.usage_blocked_message(reason, assistant=assistant)
     assert fragment in message
     assert ("Credits ran out" in message) is (reason is UsageBlockReason.INSUFFICIENT_CREDITS)
     assert not message.startswith("Grading failed")
+    # The limit is a person's, never the paper's.
+    assert "This paper reached" not in message
+    # An assistant is billed to the lead (R4): it is pointed at the lead, and only then.
+    assert ("lead teacher" in message) is assistant
 
 
+@pytest.mark.parametrize("as_assistant", [False, True])
 def test_a_run_blocked_by_a_cap_fails_the_paper_with_the_cap_message(
     console: _Console,
     migrated_sessionmaker: sessionmaker[Session],
     monkeypatch: pytest.MonkeyPatch,
+    as_assistant: bool,
 ) -> None:
     sm = migrated_sessionmaker
-    teacher = seed_user(sm, Role.teacher)
-    give(sm, teacher, units=1000)
+    lead = seed_user(sm, Role.teacher)
+    give(sm, lead, units=1000)
+    caller = lead
+    if as_assistant:
+        caller = seed_user(sm, Role.teacher)
+        assistant(sm, teacher=lead, member=caller)
 
     @contextlib.contextmanager
     def _capped(self: MeteredJob) -> Iterator[MeteredJob]:
@@ -1031,15 +1042,38 @@ def test_a_run_blocked_by_a_cap_fails_the_paper_with_the_cap_message(
         yield self
 
     monkeypatch.setattr(MeteredJob, "run", _capped)
-    _as(console, teacher)
-    paper_id = _upload(console).json()["paperId"]
+    _as(console, caller)
+    paper_id = _upload(console, acting_for=lead if as_assistant else None).json()["paperId"]
     row = _paper(sm, paper_id)
     assert (row.status, row.error) == (
         UploadStatus.failed,
-        teacher_router.usage_blocked_message(UsageBlockReason.USAGE_LIMIT_REACHED),
+        teacher_router.usage_blocked_message(
+            UsageBlockReason.USAGE_LIMIT_REACHED, assistant=as_assistant
+        ),
     )
+    (job,) = jobs_for(sm, caller)
+    assert (job.status, job.charged) == (UsageJobStatus.released, 0)
+
+
+def test_a_confirm_run_error_releases_the_hold(
+    console: _Console,
+    migrated_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A database error in ``confirm_run`` comes before ``job.run()``: the hold is released."""
+    sm = migrated_sessionmaker
+    teacher = seed_user(sm, Role.teacher)
+    grant = give(sm, teacher, units=1000)
+
+    def _db_down(_self: TeacherPaperRepository, _pid: uuid.UUID, _token: object) -> bool:
+        raise sa_exc.OperationalError("UPDATE teacher_papers", {}, Exception("db down"))
+
+    monkeypatch.setattr(TeacherPaperRepository, "confirm_run", _db_down)
+    _as(console, teacher)
+    assert _upload(console).status_code == 200
     (job,) = jobs_for(sm, teacher)
     assert (job.status, job.charged) == (UsageJobStatus.released, 0)
+    assert _remaining(sm, grant) == (1000, 0)
 
 
 def test_a_cancelled_upload_still_releases_its_hold(

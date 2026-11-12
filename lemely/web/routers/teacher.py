@@ -383,30 +383,55 @@ CREDITS_RAN_OUT_MESSAGE = (
     "Credits ran out while this paper was waiting. Top up, then re-run marking."
 )
 
-#: The sentence for each other reason a queued paper can be blocked on entry.
-_USAGE_BLOCKED_MESSAGES: dict[UsageBlockReason, str] = {
-    UsageBlockReason.INSUFFICIENT_CREDITS: CREDITS_RAN_OUT_MESSAGE,
-    UsageBlockReason.USAGE_LIMIT_REACHED: (
-        "This paper reached a usage limit while it was waiting, so it was not marked. "
+#: The sentence a queued paper fails with when it is blocked on entry, by reason and by
+#: whether the run is an assistant's. An assistant's work is billed to the lead (R4), so
+#: where only the lead can act (credits, plan, debt) the assistant is pointed at them.
+_USAGE_BLOCKED_MESSAGES: dict[tuple[UsageBlockReason, bool], str] = {
+    (UsageBlockReason.INSUFFICIENT_CREDITS, False): CREDITS_RAN_OUT_MESSAGE,
+    (UsageBlockReason.INSUFFICIENT_CREDITS, True): (
+        "Credits ran out while this paper was waiting. Ask the lead teacher to top up "
+        "or raise your limit, then re-run marking."
+    ),
+    (UsageBlockReason.USAGE_LIMIT_REACHED, False): (
+        "A usage limit was reached while this paper was waiting, so it was not marked. "
         "Re-run marking once the limit allows."
     ),
-    UsageBlockReason.NO_ACTIVE_PLAN: (
+    (UsageBlockReason.USAGE_LIMIT_REACHED, True): (
+        "Your usage limit was reached while this paper was waiting, so it was not marked. "
+        "Ask the lead teacher to raise it, then re-run marking."
+    ),
+    (UsageBlockReason.NO_ACTIVE_PLAN, False): (
         "There is no active plan or credit to mark this paper, so it was not marked. "
         "Add credits, then re-run marking."
     ),
-    UsageBlockReason.OUTSTANDING_DEBT: (
+    (UsageBlockReason.NO_ACTIVE_PLAN, True): (
+        "The lead teacher has no active plan or credit to mark this paper, so it was not "
+        "marked. Ask them to add credits, then re-run marking."
+    ),
+    (UsageBlockReason.OUTSTANDING_DEBT, False): (
         "An unpaid balance is blocking marking, so this paper was not marked. "
         "Settle it, then re-run marking."
     ),
-    UsageBlockReason.OUT_OF_SEAT_SCOPE: (
+    (UsageBlockReason.OUTSTANDING_DEBT, True): (
+        "An unpaid balance on the lead teacher's account is blocking marking, so this "
+        "paper was not marked. Ask them to settle it, then re-run marking."
+    ),
+    (UsageBlockReason.OUT_OF_SEAT_SCOPE, False): (
         "This paper is not covered by your plan, so it was not marked."
+    ),
+    (UsageBlockReason.OUT_OF_SEAT_SCOPE, True): (
+        "This paper is not covered by the lead teacher's plan, so it was not marked."
     ),
 }
 
 
-def usage_blocked_message(reason: UsageBlockReason) -> str:
-    """The sentence a paper blocked on entry fails with ("credits ran out" only for credits)."""
-    return _USAGE_BLOCKED_MESSAGES[reason]
+def usage_blocked_message(reason: UsageBlockReason, *, assistant: bool) -> str:
+    """The sentence a paper blocked on entry fails with ("credits ran out" only for credits).
+
+    ``assistant`` is whether the run bills a lead teacher on an assistant's behalf: the
+    sentence then names the lead wherever only the lead can act.
+    """
+    return _USAGE_BLOCKED_MESSAGES[(reason, assistant)]
 
 
 def _viewer(auth: AuthContext) -> tuple[uuid.UUID, Role]:
@@ -660,7 +685,13 @@ def _run_grading_job(
     try:
         # Before `job.run()`: a superseded job is released without a ledger extend
         # or re-reserve, and a confirmed one has just refreshed its row's liveness.
-        if claim_token is None or not repo.confirm_run(paper_id, claim_token):
+        try:
+            confirmed = claim_token is not None and repo.confirm_run(paper_id, claim_token)
+        except BaseException:
+            # `job.run()` has not opened, so nothing else would release the hold.
+            job.release()
+            raise
+        if not confirmed:
             log.info("teacher_grade_superseded", paper_id=str(paper_id), at="start")
             job.release()
             return
@@ -746,7 +777,10 @@ def _run_grading_job(
     except UsageBlocked as exc:
         # From `job.run()` entry, before any work: see the docstring.
         log.warning("teacher_grade_usage_blocked", paper_id=str(paper_id), reason=exc.reason.value)
-        repo.fail(paper_id, usage_blocked_message(exc.reason), run_token=claim_token)
+        message = usage_blocked_message(
+            exc.reason, assistant=job.ctx.request.assistant_member_id is not None
+        )
+        repo.fail(paper_id, message, run_token=claim_token)
     except UsageUnavailable:
         # From `job.run()` entry too: the ledger could not restart the queued hold, so the
         # run failed closed before any model call and charged nothing. A plain sentence, not
