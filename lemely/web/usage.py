@@ -154,6 +154,9 @@ _RUNNING_JOB: contextvars.ContextVar[MeteredJob | None] = contextvars.ContextVar
 )
 #: The shortest gap between two renewals of one running job's hold.
 _MIN_RENEW_EVERY = timedelta(seconds=30)
+#: Leases (``job_timeout + JOB_SLACK`` each) a run may hold from its start. A run still going
+#: after that has hung: renewal stops, an alert is logged, and the sweeper expires the hold.
+LEASE_CAP = 3
 
 
 class _HoldRenewer:
@@ -391,6 +394,8 @@ class MeteredJob:
         self._running = False
         # The hold's current deadline as this job last set or saw it.
         self._deadline: datetime | None = None
+        # When run() started holding; the lease cap counts from here.
+        self._run_started: datetime | None = None
         # Guards _finished and _running: release() may come from the request thread
         # while run() starts in a worker.
         self._lock = threading.Lock()
@@ -520,6 +525,8 @@ class MeteredJob:
         with self._lock:
             self._refuse_if_unrunnable()
             self._running = True
+        if self._meter is not None:
+            self._run_started = self._meter.now()
         if self._reserved:
             try:
                 self._restart_clock()
@@ -637,12 +644,30 @@ class MeteredJob:
         return status
 
     def _renew(self) -> bool:
-        """Extend the running job's hold (the renewer's thread). False once it is gone."""
+        """Extend the running job's hold (the renewer's thread). False once it stops.
+
+        Renewal stops when the hold is gone, or at the lease cap: never past
+        ``LEASE_CAP`` leases from the run's start. The last renewal sets the deadline to the
+        cap exactly and logs ``usage_lease_cap_reached``; the sweeper expires the hold there.
+        """
         meter = self._live_meter()
         now = meter.now()
         spec = ACTION_SPECS[self.ctx.request.action]
-        status = self._extend(now + spec.job_timeout + JOB_SLACK, now)
+        lease = spec.job_timeout + JOB_SLACK
+        target = now + lease
+        cap = None if self._run_started is None else self._run_started + LEASE_CAP * lease
+        capped = cap is not None and target >= cap
+        if cap is not None and capped:
+            if cap <= now:
+                # Already at or past the cap (a renewal was missed): nothing to extend.
+                self._log_lease_cap(cap)
+                return False
+            target = cap
+        status = self._extend(target, now)
         if status is UsageJobStatus.open:
+            if capped and cap is not None:
+                self._log_lease_cap(cap)
+                return False
             return True
         # The settle at exit is refused (usage_settle_on_closed_job), so this run is unbilled.
         log.warning(
@@ -652,6 +677,16 @@ class MeteredJob:
             status=status.value,
         )
         return False
+
+    def _log_lease_cap(self, cap: datetime) -> None:
+        log.error(
+            "usage_lease_cap_reached",
+            alert=True,
+            job_id=str(self.job_id),
+            action=self.ctx.request.action.value,
+            run_started=None if self._run_started is None else self._run_started.isoformat(),
+            hold_until=cap.isoformat(),
+        )
 
     def _exit(
         self,
@@ -1063,6 +1098,7 @@ def require_usage(
 
 __all__ = [
     "EXEMPT_ROLES",
+    "LEASE_CAP",
     "USAGE_BLOCKED_MESSAGE",
     "USAGE_UNAVAILABLE_MESSAGE",
     "USAGE_UNAVAILABLE_RETRY_AFTER",

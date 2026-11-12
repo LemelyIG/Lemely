@@ -33,6 +33,7 @@ from lemely.db.models.usage import UsageJobStatus
 from lemely.db.usage_ledger_repo import UsageLedger
 from lemely.io.llm.cost_meter import record_llm_cost
 from lemely.web.usage import (
+    LEASE_CAP,
     USAGE_UNAVAILABLE_MESSAGE,
     UsageBlocked,
     UsageMeter,
@@ -168,6 +169,96 @@ def test_a_failed_renewal_is_logged_and_the_next_tick_retries(
     assert "usage_renew_failed" in [e["event"] for e in logs]
     (row,) = jobs_for(sm, student)
     assert (row.status, row.charged) == (UsageJobStatus.settled, 20)
+
+
+def test_a_hung_run_stops_renewing_at_the_lease_cap(
+    migrated_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run stuck for hours keeps its hold at most LEASE_CAP leases past its start."""
+    sm = migrated_sessionmaker
+    student = _student(sm)
+    clock = [NOW]
+    meter = _meter(sm, clock, renew_every=timedelta(milliseconds=50))
+    calls = _count_extends(monkeypatch)
+    cap = NOW + LEASE_CAP * LEASE
+    job = meter.reserve(meter.authorize(_req(student)))
+    with capture_logs() as logs, job.run():
+        clock[0] = NOW + timedelta(minutes=100)
+        _eventually(lambda: _deadline(sm, student) == clock[0] + LEASE, "a renewal under the cap")
+        clock[0] = NOW + timedelta(minutes=150)  # a full lease from here would pass the cap
+        _eventually(
+            lambda: "usage_lease_cap_reached" in [e["event"] for e in logs], "the cap alert"
+        )
+        assert _deadline(sm, student) == cap  # clamped to the cap, not now + a lease
+        at_cap = len(calls)
+        clock[0] = NOW + timedelta(minutes=200)
+        time.sleep(0.3)  # six renewal intervals
+        assert len(calls) == at_cap, "renewed past the cap"
+        assert _sweep(sm, cap) == 1  # the sweeper can now expire the hung run's hold
+    (alert,) = [e for e in logs if e["event"] == "usage_lease_cap_reached"]
+    assert (alert["log_level"], alert["alert"]) == ("error", True)
+    assert alert["job_id"] == str(job.job_id)
+    (row,) = jobs_for(sm, student)
+    assert (row.status, row.charged) == (UsageJobStatus.expired, 0)
+
+
+def test_exit_waits_for_a_renewal_already_in_flight(
+    migrated_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """remove() blocks until the renewer's current extend returns: none lands after exit."""
+    sm = migrated_sessionmaker
+    student = _student(sm)
+    clock = [NOW]
+    meter = _meter(sm, clock, renew_every=timedelta(milliseconds=50))
+    started, proceed, exited = threading.Event(), threading.Event(), threading.Event()
+    original = UsageLedger.extend
+    calls: list[int] = []
+
+    def blocking(self: UsageLedger, job_id: uuid.UUID, *, expires_at: datetime, now: datetime):  # type: ignore[no-untyped-def]
+        calls.append(1)
+        if len(calls) == 2:  # #1 is run()'s own extend; #2 is the first renewal
+            started.set()
+            assert proceed.wait(timeout=30)
+        return original(self, job_id, expires_at=expires_at, now=now)
+
+    monkeypatch.setattr(UsageLedger, "extend", blocking)
+    job = meter.reserve(meter.authorize(_req(student)))
+
+    def work() -> None:
+        with job.run():
+            record_llm_cost(Decimal("0.020"))
+            assert started.wait(timeout=30)
+        exited.set()
+
+    worker = _Paused(work)
+    assert started.wait(timeout=30)
+    assert not exited.wait(timeout=0.3), "exit returned while a renewal was in flight"
+    proceed.set()
+    worker.join()
+    assert worker.error is None
+    assert exited.is_set()
+    (row,) = jobs_for(sm, student)
+    assert (row.status, row.charged) == (UsageJobStatus.settled, 20)
+
+
+def test_the_renewer_stops_once_the_hold_is_gone(
+    migrated_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sm = migrated_sessionmaker
+    student = _student(sm)
+    clock = [NOW]
+    meter = _meter(sm, clock, renew_every=timedelta(milliseconds=50))
+    calls = _count_extends(monkeypatch)
+    job = meter.reserve(meter.authorize(_req(student)))
+    with capture_logs() as logs, job.run():
+        assert _sweep(sm, NOW + timedelta(days=1)) == 1  # the hold is gone mid-run
+        _eventually(
+            lambda: "usage_hold_lost_mid_run" in [e["event"] for e in logs], "the lost-hold line"
+        )
+        after = len(calls)
+        time.sleep(0.3)  # six renewal intervals
+        assert len(calls) == after, "kept renewing a hold that is gone"
+    assert [e["event"] for e in logs].count("usage_hold_lost_mid_run") == 1
 
 
 # --- fail closed at start ---------------------------------------------------------------
