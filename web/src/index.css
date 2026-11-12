@@ -601,6 +601,50 @@
   }
 }
 
+/* ── Native frame: grouped lists (native frame Task 10; preview variant-a.css section 4). */
+/* Opt-in marker for press feedback; Task 11 adds the native rules. */
+.lm-press { --lm-press: 1; }
+.lm-list-row + .lm-list-row { border-top: 1px solid var(--md-outline-variant); }
+@media (max-width: 720px) {
+  /* Cards and list groups lose the floating outline. */
+  :root:is([data-platform="ios"], [data-platform="android"]) :is(.lm-native-card, .lm-native-group) {
+    border: 0;
+    box-shadow: none;
+  }
+  /* iOS: inset-grouped inside a 16px page margin. */
+  :root[data-platform="ios"] .lm-native-main { padding-inline: var(--native-group-inset-ios); }
+  :root[data-platform="ios"] :is(.lm-native-card, .lm-native-group) { border-radius: var(--native-group-radius-ios); }
+  :root[data-platform="ios"] .lm-native-group-label { padding-inline: var(--space-4); }
+  /* Rows that carry their own desktop dividers (settings, skeletons) drop them for the group separators. */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-group > .lm-native-row { border-top: 0; border-bottom: 0; }
+  :root[data-platform="ios"] .lm-native-row { position: relative; min-height: var(--native-row-min-ios); }
+  :root[data-platform="ios"] .lm-list-row + .lm-list-row { border-top: 0; }
+  :root[data-platform="ios"] .lm-native-row + .lm-native-row::before {
+    content: "";
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline: var(--native-sep-inset-ios) 0;
+    block-size: var(--native-hairline);
+    background: var(--md-outline);
+    pointer-events: none;
+  }
+  /* Android: full-bleed and square; the 14px page gutter stays (container query). */
+  :root[data-platform="android"] .lm-native-card {
+    border-radius: 0;
+    margin-inline: calc(-1 * var(--native-gutter-android));
+    border-inline: var(--native-gutter-android) solid transparent;
+  }
+  :root[data-platform="android"] .lm-native-group {
+    border-radius: 0;
+    margin-inline: calc(-1 * var(--native-gutter-android));
+  }
+  :root[data-platform="android"] .lm-native-group-label { padding-inline: calc(var(--space-4) - var(--native-gutter-android)); }
+  :root[data-platform="android"] .lm-native-row[data-lines="1"] { min-height: var(--native-row-1-android); }
+  :root[data-platform="android"] .lm-native-row[data-lines="2"] { min-height: var(--native-row-2-android); }
+  :root[data-platform="android"] .lm-native-row[data-lines="3"] { min-height: var(--native-row-3-android); }
+  :root[data-platform="android"] .lm-list-row + .lm-list-row { border-top: 0; }
+}
+
 
 /* The student Overview's subject ledger (P4.1). A named utility rather than an
    arbitrary `grid-cols-[...]` so the template is stated once and reviewable.

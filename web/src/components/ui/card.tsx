@@ -18,7 +18,7 @@ export function Card({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "bg-surface-container-lowest border border-outline-variant rounded-lg",
+        "bg-surface-container-lowest border border-outline-variant rounded-lg lm-native-card",
         className,
       )}
       {...props}
