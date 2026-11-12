@@ -11,7 +11,19 @@ describe("BottomSheetSurface (Task 6)", () => {
   const src = read("components/ui/bottom-sheet.tsx")
   it("drags only from the grabber and header region, never from content text", () => {
     expect(src).toContain("data-sheet-drag-region")
-    expect(src).not.toMatch(/onPointerDown=\{[^}]*\}[^>]*data-sheet-body/)
+    expect(src).toContain('closest("[data-sheet-drag-region]")')
+  })
+  it("leaves header buttons, links and fields their own click", () => {
+    expect(src).toContain('const INTERACTIVE = "button, a, input, select, textarea, [role=button]"')
+    expect(src).toMatch(/target\.closest\(INTERACTIVE\)/)
+    expect(src).toContain("e.button > 0")
+  })
+  it("the sheet follows the finger with no transition while dragging", () => {
+    expect(src).toContain('setAttribute("data-dragging", "")')
+    expect(src).toContain('removeAttribute("data-dragging")')
+  })
+  it("the scale-back hook is guarded on the phone media query", () => {
+    expect(src).toMatch(/useSheetScaleBack[\s\S]*window\.matchMedia\(PHONE_MEDIA\)\.matches/)
   })
   it("Android-only haptic on snap", () => {
     expect(src).toMatch(/readPlatform\(\) === "android"[^\n]*haptic\("tap"\)/)
@@ -40,6 +52,16 @@ describe("sheet CSS", () => {
     expect(block).toMatch(/\.lm-sheet \{[^}]*background: var\(--md-surface-container-low\)/)
     expect(block).toMatch(/\[data-platform="ios"\] \.lm-sheet-grabber \{[^}]*margin-block: var\(--native-grabber-gap-ios\)/)
   })
+  it("no transition while dragging; the drag region is a finger tall and owns touch-action", () => {
+    expect(block).toMatch(/\.lm-sheet\[data-dragging\] \{[^}]*transition: none/)
+    expect(block).toMatch(/\[data-sheet-drag-region\] \{[^}]*min-block-size: var\(--native-sheet-drag-min\);[^}]*touch-action: none/)
+    expect(block).toMatch(/:root\[data-platform="ios"\] \{[^}]*--native-sheet-drag-min: var\(--native-iconbtn-ios\)/)
+    expect(block).not.toMatch(/\.lm-sheet-grabber \{[^}]*touch-action/)
+    expect(block).toMatch(/\.lm-sheet-grabber \{[^}]*border-radius: var\(--radius-pill\)/)
+  })
+  it("the iOS scale-back rules are phone-only", () => {
+    expect(block).toMatch(/@media \(max-width: 720px\) \{\s*:root\[data-platform="ios"\] #root \{[\s\S]*?\[data-sheet-depth\] body \{[^}]*\}\s*\}/)
+  })
   it("the sheet sits above the keyboard", () => {
     expect(block).toContain("bottom: var(--lm-keyboard-inset, 0px)")
   })
@@ -51,5 +73,11 @@ describe("ui/sheet.tsx (Task 6)", () => {
     expect(src).toContain("useNativeFrame()")
     expect(src).toMatch(/native && \(side === "bottom" \|\| side === "adaptive"\)/)
     expect(src).toContain("<BottomSheetSurface")
+  })
+  it("does not forward the desktop panel class to the native surface; the body carries the inset", () => {
+    const native = src.slice(src.indexOf("<BottomSheetSurface"), src.indexOf("</BottomSheetSurface>"))
+    expect(native).not.toContain("className={className}")
+    expect(native).toContain('bodyClassName="p-6"')
+    expect(native).toContain("tabIndex={-1}")
   })
 })

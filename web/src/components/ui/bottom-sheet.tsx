@@ -1,7 +1,7 @@
 import {
   forwardRef,
+  useCallback,
   useEffect,
-  useImperativeHandle,
   useRef,
   useState,
   type HTMLAttributes,
@@ -10,7 +10,8 @@ import {
 } from "react"
 import { haptic } from "@/lib/haptics"
 import { readPlatform } from "@/lib/platform"
-import { sheetRelease, type Detent } from "@/lib/gestures/sheetMath"
+import { releaseVelocity, sheetRelease, trimSamples, type Detent, type PointerSample } from "@/lib/gestures/sheetMath"
+import { PHONE_MEDIA } from "@/lib/useNativeFrame"
 import { cn } from "@/lib/utils"
 
 /*
@@ -27,6 +28,8 @@ export interface BottomSheetSurfaceProps extends HTMLAttributes<HTMLDivElement> 
   onDismiss: () => void
   closing?: boolean
   header?: ReactNode
+  /** Classes for the scrolling body, where content gets its inset (the surface itself has none). */
+  bodyClassName?: string
   children: ReactNode
 }
 
@@ -39,7 +42,7 @@ export function SheetGrabber() {
  * `top: -scrollY`, so the scroll offset is read from there when it is locked. */
 export function useSheetScaleBack(active: boolean): void {
   useEffect(() => {
-    if (!active || readPlatform() !== "ios") return
+    if (!active || readPlatform() !== "ios" || !window.matchMedia(PHONE_MEDIA).matches) return
     const root = document.documentElement
     const body = document.body.style
     const scrollY = body.position === "fixed" ? -parseFloat(body.top || "0") : window.scrollY
@@ -78,70 +81,111 @@ export function useKeyboardInset(): number {
 interface DragState {
   id: number
   y: number
-  t: number
-  lastY: number
-  lastT: number
+  samples: PointerSample[]
 }
 
+/** Elements inside the drag region that keep their own click: header buttons, links, fields. */
+const INTERACTIVE = "button, a, input, select, textarea, [role=button]"
+
 export const BottomSheetSurface = forwardRef<HTMLDivElement, BottomSheetSurfaceProps>(function BottomSheetSurface(
-  { detents = ["content"], initialDetent, dismissible = true, onDismiss, closing = false, header, children, className, style, ...panel },
+  {
+    detents = ["content"],
+    initialDetent,
+    dismissible = true,
+    onDismiss,
+    closing = false,
+    header,
+    bodyClassName,
+    children,
+    className,
+    style,
+    onPointerDown: callerDown,
+    onPointerMove: callerMove,
+    onPointerUp: callerUp,
+    onPointerCancel: callerCancel,
+    ...panel
+  },
   ref,
 ) {
-  const panelRef = useRef<HTMLDivElement>(null)
-  useImperativeHandle(ref, () => panelRef.current as HTMLDivElement)
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  const setRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      panelRef.current = node
+      if (typeof ref === "function") ref(node)
+      else if (ref) ref.current = node
+    },
+    [ref],
+  )
   const [detent, setDetent] = useState<Detent>(initialDetent ?? detents[detents.length - 1])
   const keyboard = useKeyboardInset()
   useSheetScaleBack(!closing && detent === "large")
   const drag = useRef<DragState | null>(null)
 
   function onPointerDown(e: ReactPointerEvent<HTMLDivElement>): void {
-    if (!(e.target as Element).closest("[data-sheet-drag-region]")) return
+    callerDown?.(e)
+    const target = e.target as Element
+    if (e.button > 0 || !target.closest("[data-sheet-drag-region]") || target.closest(INTERACTIVE)) return
     if (!dismissible && detents.length < 2) return
-    drag.current = { id: e.pointerId, y: e.clientY, t: e.timeStamp, lastY: e.clientY, lastT: e.timeStamp }
+    drag.current = { id: e.pointerId, y: e.clientY, samples: [[e.timeStamp, e.clientY]] }
+    // While the finger is down the sheet follows it with no transition (preview drops is-sheet-snapping).
+    panelRef.current?.setAttribute("data-dragging", "")
     e.currentTarget.setPointerCapture(e.pointerId)
   }
   function onPointerMove(e: ReactPointerEvent<HTMLDivElement>): void {
+    callerMove?.(e)
     const d = drag.current
     if (!d || d.id !== e.pointerId || !panelRef.current) return
-    const dy = e.clientY - d.y
-    panelRef.current.style.translate = `0 ${Math.max(dy, -24)}px`
-    d.lastY = e.clientY
-    d.lastT = e.timeStamp
+    d.samples = [...trimSamples(d.samples, e.timeStamp), [e.timeStamp, e.clientY]]
+    panelRef.current.style.translate = `0 ${Math.max(e.clientY - d.y, -24)}px`
   }
-  function onPointerUp(e: ReactPointerEvent<HTMLDivElement>): void {
+  function endDrag(e: ReactPointerEvent<HTMLDivElement>): void {
     const d = drag.current
+    if (!d || d.id !== e.pointerId) return
     drag.current = null
     const el = panelRef.current
-    if (!d || !el) return
-    el.style.translate = ""
+    if (!el) return
+    el.removeAttribute("data-dragging")
     const dy = e.clientY - d.y
-    const velocity = (e.clientY - d.lastY) / Math.max(1, e.timeStamp - d.lastT) || dy / Math.max(1, e.timeStamp - d.t)
+    const velocity = releaseVelocity(d.samples, e.timeStamp, e.clientY)
     const decision = sheetRelease({ dy, velocity, height: el.offsetHeight, detent, detents, dismissible })
-    if (decision.kind === "dismiss") onDismiss()
-    else if (decision.detent !== detent) {
+    if (decision.kind === "dismiss") {
+      // The exit slides out from where the finger left the sheet: the translate stays.
+      onDismiss()
+      return
+    }
+    el.style.translate = ""
+    if (decision.detent !== detent) {
       setDetent(decision.detent)
       if (readPlatform() === "android") haptic("tap")
     }
   }
+  function onPointerUp(e: ReactPointerEvent<HTMLDivElement>): void {
+    callerUp?.(e)
+    endDrag(e)
+  }
+  function onPointerCancel(e: ReactPointerEvent<HTMLDivElement>): void {
+    callerCancel?.(e)
+    endDrag(e)
+  }
 
   return (
     <div
-      ref={panelRef}
+      {...panel}
+      ref={setRef}
       data-detent={detent}
       data-closing={closing || undefined}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
+      onPointerCancel={onPointerCancel}
       style={{ ...style, ["--lm-keyboard-inset" as string]: `${keyboard}px` }}
       className={cn("lm-sheet", className)}
-      {...panel}
     >
       <div data-sheet-drag-region className="flex flex-col items-center select-none">
         {dismissible || detents.length > 1 ? <SheetGrabber /> : null}
         {header}
       </div>
-      <div data-sheet-body className="min-h-0 flex-1 overflow-y-auto overscroll-contain lm-scroll">
+      <div data-sheet-body className={cn("min-h-0 flex-1 overflow-y-auto overscroll-contain lm-scroll", bodyClassName)}>
         {children}
       </div>
     </div>

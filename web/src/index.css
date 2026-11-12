@@ -507,11 +507,13 @@
   --native-sheet-large: var(--native-sheet-large-ios);
   --native-sheet-dur: var(--dur-sheet-ios);
   --native-sheet-ease: var(--ease-ios-spring);
+  --native-sheet-drag-min: var(--native-iconbtn-ios);
 }
 :root[data-platform="android"] {
   --native-sheet-large: var(--native-sheet-large-android);
   --native-sheet-dur: var(--dur-sheet-android);
   --native-sheet-ease: var(--ease-m3-emphasized-decelerate);
+  --native-sheet-drag-min: var(--native-iconbtn-android);
 }
 .lm-sheet {
   position: fixed;
@@ -526,6 +528,15 @@
   border-start-start-radius: var(--radius-card);
   border-start-end-radius: var(--radius-card);
   transition: translate var(--native-sheet-dur) var(--native-sheet-ease);
+}
+.lm-sheet[data-dragging] {
+  transition: none;
+}
+/* The drag target is the grabber plus header: at least a finger tall (44px iOS, 48px Android),
+   while the visible grabber keeps the preview's geometry. */
+[data-sheet-drag-region] {
+  min-block-size: var(--native-sheet-drag-min);
+  touch-action: none;
 }
 .lm-sheet[data-detent="medium"] {
   block-size: var(--native-sheet-medium);
@@ -553,8 +564,7 @@
 .lm-sheet-grabber {
   display: block;
   flex: none;
-  border-radius: 9999px;
-  touch-action: none;
+  border-radius: var(--radius-pill);
 }
 :root[data-platform="ios"] .lm-sheet-grabber {
   inline-size: var(--native-grabber-w-ios);
@@ -570,21 +580,23 @@
 }
 /* iOS large detent: the page behind scales back, pivoting on the top of the visible area
    (--native-sheet-sy, written by useSheetScaleBack), over a near-black backdrop. */
-:root[data-platform="ios"] #root {
-  transition:
-    scale var(--native-sheet-dur) var(--native-sheet-ease),
-    translate var(--native-sheet-dur) var(--native-sheet-ease),
-    border-radius var(--native-sheet-dur) var(--native-sheet-ease);
-  transform-origin: 50% calc(var(--native-sheet-sy, 0px) + env(safe-area-inset-top));
-}
-:root[data-platform="ios"][data-sheet-depth] #root {
-  scale: var(--native-sheet-scale-back);
-  translate: 0 calc(env(safe-area-inset-top) + 10px);
-  border-radius: var(--native-group-radius-ios);
-  overflow: clip;
-}
-:root[data-platform="ios"][data-sheet-depth] body {
-  background: var(--native-sheet-backdrop);
+@media (max-width: 720px) {
+  :root[data-platform="ios"] #root {
+    transition:
+      scale var(--native-sheet-dur) var(--native-sheet-ease),
+      translate var(--native-sheet-dur) var(--native-sheet-ease),
+      border-radius var(--native-sheet-dur) var(--native-sheet-ease);
+    transform-origin: 50% calc(var(--native-sheet-sy, 0px) + env(safe-area-inset-top));
+  }
+  :root[data-platform="ios"][data-sheet-depth] #root {
+    scale: var(--native-sheet-scale-back);
+    translate: 0 calc(env(safe-area-inset-top) + 10px);
+    border-radius: var(--native-group-radius-ios);
+    overflow: clip;
+  }
+  :root[data-platform="ios"][data-sheet-depth] body {
+    background: var(--native-sheet-backdrop);
+  }
 }
 
 

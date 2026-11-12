@@ -8,6 +8,23 @@ export type Detent = "content" | "medium" | "large"
 export const DISMISS_FRACTION = 0.25
 export const FLING_PX_PER_MS = 0.5
 export const SWIPE_COMMIT_FRACTION = 0.35
+/** Release velocity is measured over the last 100ms of movement (preview variant-a.js:698). */
+export const VELOCITY_WINDOW_MS = 100
+
+/** A pointer sample: timestamp (ms) and clientY (px). */
+export type PointerSample = readonly [t: number, y: number]
+
+/** Drop samples older than the velocity window, keeping the newest. */
+export function trimSamples(samples: readonly PointerSample[], now: number): PointerSample[] {
+  return samples.filter(([t]) => now - t <= VELOCITY_WINDOW_MS)
+}
+
+/** px/ms from the oldest windowed sample to the release point; 0 when no time has passed. */
+export function releaseVelocity(samples: readonly PointerSample[], t: number, y: number): number {
+  const first = trimSamples(samples, t)[0]
+  if (!first || t - first[0] <= 0) return 0
+  return (y - first[1]) / (t - first[0])
+}
 
 const ORDER: Detent[] = ["content", "medium", "large"]
 

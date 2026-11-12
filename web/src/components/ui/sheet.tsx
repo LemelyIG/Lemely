@@ -69,10 +69,10 @@ function SheetContent({
             detents={["content"]}
             onDismiss={() => closeRef.current?.click()}
             header={null}
-            className={className}
+            bodyClassName="p-6"
           >
             {children}
-            <SheetPrimitive.Close ref={closeRef} className="sr-only">
+            <SheetPrimitive.Close ref={closeRef} tabIndex={-1} className="sr-only">
               Close
             </SheetPrimitive.Close>
           </BottomSheetSurface>

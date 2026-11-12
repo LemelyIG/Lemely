@@ -270,6 +270,13 @@ NATIVE_CHECKS.push({
     const box = await grab.boundingBox()
     await page.mouse.move(box.x + box.width / 2, box.y + 2)
     await page.mouse.down()
+    const startY = box.y + 2
+    const delta = 58
+    await page.mouse.move(box.x + box.width / 2, startY + delta, { steps: 4 })
+    // Mid-drag the sheet sits exactly one finger delta below rest, with no transition lagging it.
+    const mid = await dialog.evaluate((el) => ({ translate: el.style.translate, dragging: el.hasAttribute("data-dragging"), transition: getComputedStyle(el).transitionProperty }))
+    if (mid.translate !== `0px ${delta}px`) throw new Error(`sheet translate ${mid.translate} != finger delta ${delta}px mid-drag`)
+    if (!mid.dragging || mid.transition !== "none") throw new Error(`sheet still transitions mid-drag (${JSON.stringify(mid)})`)
     await page.mouse.move(box.x + box.width / 2, box.y + 400, { steps: 8 })
     await page.mouse.up()
     await dialog.waitFor({ state: "detached" })

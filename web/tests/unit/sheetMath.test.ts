@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { DISMISS_FRACTION, FLING_PX_PER_MS, sheetRelease, swipeBackRelease } from "@/lib/gestures/sheetMath"
+import { DISMISS_FRACTION, FLING_PX_PER_MS, releaseVelocity, sheetRelease, swipeBackRelease, trimSamples, type PointerSample } from "@/lib/gestures/sheetMath"
 
 const base = { height: 400, detent: "large" as const, detents: ["medium", "large"] as const, dismissible: true }
 
@@ -35,5 +35,28 @@ describe("swipeBackRelease (brief §6: 35% or a fast fling)", () => {
     [-50, -0.9, 390, "cancel"],
   ] as const)("dx %i v %f w %i -> %s", (dx, velocity, width, want) => {
     expect(swipeBackRelease({ dx, velocity, width })).toBe(want)
+  })
+})
+
+describe("releaseVelocity (last 100ms window)", () => {
+  it("a slow drag that ends in a flick reads the flick, not the average", () => {
+    // 300ms of slow drift (0.05 px/ms), then 40px in the last 50ms.
+    const samples: PointerSample[] = [[0, 0], [100, 5], [200, 10], [300, 15], [350, 55]]
+    const v = releaseVelocity(samples, 400, 95)
+    const average = 95 / 400
+    expect(average).toBeLessThan(FLING_PX_PER_MS)
+    expect(v).toBeGreaterThan(FLING_PX_PER_MS)
+    expect(sheetRelease({ ...base, detent: "medium", dy: 95, velocity: v })).toEqual({ kind: "dismiss" })
+  })
+  it("a flick that stalls before release reads as slow", () => {
+    const samples: PointerSample[] = [[0, 0], [20, 60], [40, 100], [400, 101]]
+    expect(Math.abs(releaseVelocity(samples, 500, 101))).toBeLessThan(0.1)
+  })
+  it("no elapsed time reads as zero", () => {
+    expect(releaseVelocity([[10, 5]], 10, 50)).toBe(0)
+    expect(releaseVelocity([], 10, 50)).toBe(0)
+  })
+  it("trimSamples drops samples older than 100ms", () => {
+    expect(trimSamples([[0, 0], [150, 1], [200, 2]], 220)).toEqual([[150, 1], [200, 2]])
   })
 })
