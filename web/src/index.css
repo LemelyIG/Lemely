@@ -501,6 +501,92 @@
   --native-page-android: var(--md-surface);
 }
 
+/* ── Native frame: sheets (native frame Task 6; preview .as-pop-panel / .as-modal).
+   Only rendered on the native frame; desktop dialogs never use .lm-sheet. */
+:root[data-platform="ios"] {
+  --native-sheet-large: var(--native-sheet-large-ios);
+  --native-sheet-dur: var(--dur-sheet-ios);
+  --native-sheet-ease: var(--ease-ios-spring);
+}
+:root[data-platform="android"] {
+  --native-sheet-large: var(--native-sheet-large-android);
+  --native-sheet-dur: var(--dur-sheet-android);
+  --native-sheet-ease: var(--ease-m3-emphasized-decelerate);
+}
+.lm-sheet {
+  position: fixed;
+  inset-inline: 0;
+  bottom: var(--lm-keyboard-inset, 0px);
+  z-index: var(--z-index-modal);
+  display: flex;
+  flex-direction: column;
+  max-block-size: calc(var(--native-sheet-large) - var(--lm-keyboard-inset, 0px));
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--md-surface-container-low);
+  border-start-start-radius: var(--radius-card);
+  border-start-end-radius: var(--radius-card);
+  transition: translate var(--native-sheet-dur) var(--native-sheet-ease);
+}
+.lm-sheet[data-detent="medium"] {
+  block-size: var(--native-sheet-medium);
+}
+.lm-sheet[data-detent="large"] {
+  block-size: calc(var(--native-sheet-large) - var(--lm-keyboard-inset, 0px));
+}
+.lm-sheet:not([data-closing], [data-state="closed"]) {
+  animation: lm-sheet-in var(--native-sheet-dur) var(--native-sheet-ease) both;
+}
+.lm-sheet[data-closing],
+.lm-sheet[data-state="closed"] {
+  animation: lm-sheet-out var(--dur-fast) var(--ease-in-soft) both;
+}
+@keyframes lm-sheet-in {
+  from {
+    translate: 0 100%;
+  }
+}
+@keyframes lm-sheet-out {
+  to {
+    translate: 0 100%;
+  }
+}
+.lm-sheet-grabber {
+  display: block;
+  flex: none;
+  border-radius: 9999px;
+  touch-action: none;
+}
+:root[data-platform="ios"] .lm-sheet-grabber {
+  inline-size: var(--native-grabber-w-ios);
+  block-size: var(--native-grabber-h-ios);
+  margin-block: var(--native-grabber-gap-ios);
+  background: var(--md-outline);
+}
+:root[data-platform="android"] .lm-sheet-grabber {
+  inline-size: var(--native-grabber-w-android);
+  block-size: var(--native-grabber-h-android);
+  margin-block: var(--native-grabber-gap-android);
+  background: color-mix(in oklch, var(--md-on-surface-variant) 40%, transparent);
+}
+/* iOS large detent: the page behind scales back, pivoting on the top of the visible area
+   (--native-sheet-sy, written by useSheetScaleBack), over a near-black backdrop. */
+:root[data-platform="ios"] #root {
+  transition:
+    scale var(--native-sheet-dur) var(--native-sheet-ease),
+    translate var(--native-sheet-dur) var(--native-sheet-ease),
+    border-radius var(--native-sheet-dur) var(--native-sheet-ease);
+  transform-origin: 50% calc(var(--native-sheet-sy, 0px) + env(safe-area-inset-top));
+}
+:root[data-platform="ios"][data-sheet-depth] #root {
+  scale: var(--native-sheet-scale-back);
+  translate: 0 calc(env(safe-area-inset-top) + 10px);
+  border-radius: var(--native-group-radius-ios);
+  overflow: clip;
+}
+:root[data-platform="ios"][data-sheet-depth] body {
+  background: var(--native-sheet-backdrop);
+}
+
 
 /* The student Overview's subject ledger (P4.1). A named utility rather than an
    arbitrary `grid-cols-[...]` so the template is stated once and reviewable.
@@ -1600,6 +1686,15 @@ html[data-direction="back"]::view-transition-new(root) {
   ::view-transition-old(*),
   ::view-transition-new(*) {
     animation: none !important;
+  }
+
+  /* Native sheets: the slide and the iOS scale-back stop moving (Task 6). */
+  .lm-sheet,
+  .lm-sheet[data-closing],
+  .lm-sheet[data-state="closed"],
+  :root[data-platform="ios"] #root {
+    animation: none;
+    transition: none;
   }
 
   /* The two exceptions, and the reason the blanket rule above needs one.

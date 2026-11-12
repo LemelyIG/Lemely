@@ -255,3 +255,28 @@ NATIVE_CHECKS.push(
     },
   },
 );
+
+NATIVE_CHECKS.push({
+  id: "native-ios-sheet-drag-dismiss-and-escape",
+  platform: "ios",
+  width: 390,
+  app: NATIVE_TEACHER_HOME,
+  async run(page) {
+    const trigger = page.getByRole("button", { name: /^Create/ }).first()
+    await trigger.click()
+    const dialog = page.getByRole("dialog")
+    await dialog.waitFor()
+    const grab = dialog.locator(".lm-sheet-grabber")
+    const box = await grab.boundingBox()
+    await page.mouse.move(box.x + box.width / 2, box.y + 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width / 2, box.y + 400, { steps: 8 })
+    await page.mouse.up()
+    await dialog.waitFor({ state: "detached" })
+    if (!(await trigger.evaluate((el) => el === document.activeElement))) throw new Error("focus did not return to the trigger after drag-dismiss")
+    await trigger.click()
+    await dialog.waitFor()
+    await page.keyboard.press("Escape")
+    await dialog.waitFor({ state: "detached" })
+  },
+})

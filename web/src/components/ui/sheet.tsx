@@ -1,6 +1,8 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 */
 import * as React from "react"
 import { cn } from "@/lib/utils"
+import { BottomSheetSurface } from "@/components/ui/bottom-sheet"
+import { useNativeFrame } from "@/lib/useNativeFrame"
 import { X as XIcon } from "@phosphor-icons/react"
 import { Dialog as SheetPrimitive } from "radix-ui"
 
@@ -53,6 +55,31 @@ function SheetContent({
   side?: "top" | "right" | "bottom" | "left" | "adaptive"
   showCloseButton?: boolean
 }) {
+  const { native } = useNativeFrame()
+  const closeRef = React.useRef<HTMLButtonElement>(null)
+  if (native && (side === "bottom" || side === "adaptive")) {
+    // Native frame: the grabber sheet. Radix keeps the focus trap, Escape and the label;
+    // a drag past the threshold clicks the hidden Close so focus returns to the trigger.
+    return (
+      <SheetPortal>
+        <SheetOverlay />
+        <SheetPrimitive.Content asChild {...props}>
+          <BottomSheetSurface
+            data-slot="sheet-content"
+            detents={["content"]}
+            onDismiss={() => closeRef.current?.click()}
+            header={null}
+            className={className}
+          >
+            {children}
+            <SheetPrimitive.Close ref={closeRef} className="sr-only">
+              Close
+            </SheetPrimitive.Close>
+          </BottomSheetSurface>
+        </SheetPrimitive.Content>
+      </SheetPortal>
+    )
+  }
   return (
     <SheetPortal>
       <SheetOverlay />
