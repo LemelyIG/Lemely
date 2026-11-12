@@ -63,7 +63,7 @@ from lemely.db.announcement_repo import AnnouncementService
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.base import Base
 from lemely.db.class_repo import ClassService
-from lemely.db.models import School, SchoolMembership, User
+from lemely.db.models import Announcement, School, SchoolMembership, User
 from lemely.db.models.attempts import Attempt
 from lemely.db.models.enums import MembershipRole, NotificationType, Role, SeatStatus
 from lemely.db.models.orgs import ClassEnrollment, Seat
@@ -73,6 +73,7 @@ from lemely.db.notification_repo import NotificationService
 from lemely.db.parent_repo import ParentLinkService
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.db.upload_repo import StudentUploadRepository
+from lemely.db.xp_repo import UserZoneReader
 from lemely.io.gemini import GeminiClient
 from lemely.runtime.config import DatabaseSettings, Settings, load_settings
 from lemely.web import create_app
@@ -92,6 +93,7 @@ from lemely.web.deps import (
     get_student_profile_service,
     get_student_upload_repo,
     get_user_mirror,
+    get_user_zone_reader,
     get_xp_service,
 )
 from lemely.web.push import RecordingPushTransport
@@ -337,6 +339,7 @@ def correct_client(
     )
     # Issue #10 / D7.5: see `_PgUserMirror`'s own docstring above.
     app.dependency_overrides[get_user_mirror] = lambda: _PgUserMirror(pg_sessionmaker)
+    app.dependency_overrides[get_user_zone_reader] = lambda: UserZoneReader(pg_sessionmaker)
     yield TestClient(app), student_id
     app.dependency_overrides.clear()
 
@@ -677,10 +680,13 @@ def test_a_scheduled_announcement_notifies_nobody_yet(
     """A future ``publishAt`` is invisible to students, so it must be silent.
 
     Notifying now would push a student at a post ``list_for_student`` still
-    hides — a pointer to nothing. The honest cost, recorded rather than
-    hidden: with no scheduler in this build (D5.9 §5), a scheduled
-    announcement is never notified about at all; it simply appears in the
-    student's list when its time comes.
+    hides — a pointer to nothing. What used to be the honest cost of that
+    trade (with no scheduler, a scheduled announcement was never notified
+    about *at all*) is no longer paid: the sweeper in
+    :mod:`lemely.web.scheduled_notifications` claims the row at its
+    ``publish_at`` and fans out then. This test still pins the create-time
+    half — silence now — and ``tests/test_scheduled_announcements.py`` pins
+    the delivery that follows.
     """
     teacher = _seed_user(pg_sessionmaker, Role.teacher)
     cls = class_service.create_class(teacher, "Physics 10A")
@@ -698,6 +704,64 @@ def test_a_scheduled_announcement_notifies_nobody_yet(
     )
 
     assert _inbox(notifications, student, NotificationType.announcement) == []
+
+
+def test_a_future_dated_announcement_notifies_nobody_at_create_time(
+    compose_client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    notifications: NotificationService,
+    transport: RecordingPushTransport,
+) -> None:
+    """A push at create time would send a student to a post ``_is_visible``
+    still hides. The row stays unstamped for the sweeper (spec §1)."""
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher, "Physics 10A")
+    student = _seed_user(pg_sessionmaker)
+    _enroll(pg_sessionmaker, cls.class_id, student)
+    _auth_as(compose_client, teacher, Role.teacher)
+
+    payload = _post(
+        compose_client,
+        title="Next term",
+        body="Timetable attached later.",
+        classIds=[str(cls.class_id)],
+        publishAt="2099-01-01T09:00:00+00:00",
+    )
+    announcement_id = uuid.UUID(payload["announcements"][0]["announcementId"])  # type: ignore[index]
+
+    assert notifications.list_for_user(student) == []
+    assert transport.endpoints == []
+    with pg_sessionmaker() as session:
+        assert session.get(Announcement, announcement_id).notified_at is None  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize("publish_at", [None, "2020-01-01T09:00:00+00:00"])
+def test_a_null_or_past_publish_at_notifies_at_create_time_and_stamps(
+    compose_client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    notifications: NotificationService,
+    publish_at: str | None,
+) -> None:
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher, "Physics 10A")
+    student = _seed_user(pg_sessionmaker)
+    _enroll(pg_sessionmaker, cls.class_id, student)
+    _auth_as(compose_client, teacher, Role.teacher)
+
+    payload = _post(
+        compose_client,
+        title="Today",
+        body="Now.",
+        classIds=[str(cls.class_id)],
+        publishAt=publish_at,
+    )
+    announcement_id = uuid.UUID(payload["announcements"][0]["announcementId"])  # type: ignore[index]
+
+    assert len(notifications.list_for_user(student)) == 1
+    with pg_sessionmaker() as session:
+        assert session.get(Announcement, announcement_id).notified_at is not None  # type: ignore[union-attr]
 
 
 def test_a_notification_failure_does_not_fail_the_compose(

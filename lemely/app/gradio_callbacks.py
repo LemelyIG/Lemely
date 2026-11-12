@@ -7,9 +7,11 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from lemely.core.binding_review import binding_blocks_publication
 from lemely.core.schemas import (
     AccuracyReport,
     CorrectionResult,
+    ExtractedAnswer,
     ExtractedAnswers,
 )
 from lemely.io.mark_schemes import index_source_library
@@ -67,6 +69,64 @@ def rows_to_reviewed_answers_json(rows: list[list[str]]) -> str:
     return json.dumps(out)
 
 
+def overlay_edited_answers(
+    extracted_json: str, rows: list[list[str]]
+) -> ExtractedAnswers | dict[str, str]:
+    """The answers to mark: the extraction with the edited table text laid over it.
+
+    Marking from the table alone loses everything the table cannot show: the
+    unbound question ids, each answer's binding status and the binding report,
+    so an unbound leaf came out as a blank, unflagged zero. With the extraction
+    to hand its edited answers keep their place and the rest survives. A row the
+    user deleted removes that answer; a row the user added is a new answer.
+    With no usable extraction (never extracted, or not JSON) the table is the
+    plain ``{question_id: answer}`` mapping it always was.
+    """
+    try:
+        extracted = ExtractedAnswers.model_validate_json(extracted_json)
+    except ValueError:
+        plain: dict[str, str] = json.loads(rows_to_reviewed_answers_json(rows))
+        return plain
+    edited: dict[str, str] = json.loads(rows_to_reviewed_answers_json(rows))
+    kept = [
+        a.model_copy(update={"answer": edited[a.question_id]})
+        for a in extracted.answers
+        if a.question_id in edited
+    ]
+    seen = {a.question_id for a in kept}
+    added = [
+        ExtractedAnswer(question_id=qid, answer=text, confidence=1.0)
+        for qid, text in edited.items()
+        if qid not in seen and qid not in extracted.unbound_question_ids
+    ]
+    return extracted.model_copy(update={"answers": [*kept, *added]})
+
+
+def binding_summary(extracted: ExtractedAnswers) -> str:
+    """One line for the Extract tab: the binding verdict and the questions left unbound."""
+    if extracted.binding is None:
+        verdict = "no binding verdict (the gate did not run)"
+    else:
+        verdict = f"binding verdict: {extracted.binding.verdict}"
+    if extracted.unbound_question_ids:
+        unbound = f"; no answer could be tied to: {', '.join(extracted.unbound_question_ids)}"
+    else:
+        unbound = ""
+    return f"{verdict}{unbound}"
+
+
+def held_reason(report_dict: dict[str, Any]) -> str | None:
+    """Why this result must not be saved, or ``None`` when it may be."""
+    report = AccuracyReport.model_validate(report_dict)
+    binding = report.correction.binding
+    if binding_blocks_publication(binding):
+        return (
+            f"Not saved: the binding check ended at {binding.verdict if binding else '?'}, "
+            "so some answers may sit on the wrong questions. Check the scan and extract again."
+        )
+    return None
+
+
 def save_correction_artifacts(
     output_dir: Path,
     mark_scheme_label: str,
@@ -84,6 +144,9 @@ def save_correction_artifacts(
     from lemely.io.history_store import HistoryStore
 
     report = AccuracyReport.model_validate(accuracy_report_dict)
+    reason = held_reason(accuracy_report_dict)
+    if reason is not None:
+        raise ValueError(reason)
     meta = report.correction.metadata
     session = meta.session_month.replace("/", "")
     year = str(meta.session_year) if meta.session_year else "specimen"

@@ -15,6 +15,10 @@ export interface SwitchProps
   state?: FieldState
   error?: string
   wrapperClassName?: string
+  /** `inline` (default): switch, then its label. `row`: label and
+   * description on the start side, switch on the end side, for settings
+   * rows where every control lines up on one edge. */
+  layout?: "inline" | "row"
 }
 
 /**
@@ -43,6 +47,7 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
     disabled,
     className,
     wrapperClassName,
+    layout = "inline",
     id,
     ...props
   },
@@ -70,7 +75,12 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
 
   return (
     <div className={cn("flex flex-col gap-1.5", wrapperClassName)}>
-      <div className="flex items-start gap-3">
+      <div
+        className={cn(
+          "flex items-start gap-3",
+          layout === "row" && "flex-row-reverse justify-between gap-6",
+        )}
+      >
         <button
           ref={ref}
           type="button"
@@ -86,9 +96,9 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
             "relative inline-flex h-6 w-10 flex-none cursor-pointer items-center rounded-full border",
             "transition-colors duration-[var(--dur-instant)] ease-out-soft active:scale-[0.98]",
             "disabled:cursor-not-allowed disabled:opacity-50",
-            isChecked ? "border-accent bg-accent" : "border-rule bg-paper-sunk",
-            resolvedState === "error" && "border-err",
-            resolvedState === "success" && "border-ok",
+            isChecked ? "border-primary bg-primary" : "border-outline-variant bg-surface-container-low",
+            resolvedState === "error" && "border-error",
+            resolvedState === "success" && "border-success",
             className,
           )}
           {...props}
@@ -96,13 +106,13 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
           <span
             aria-hidden
             className={cn(
-              "inline-flex h-4 w-4 flex-none items-center justify-center rounded-full bg-paper-raised",
+              "inline-flex h-4 w-4 flex-none items-center justify-center rounded-full bg-surface-container-lowest",
               "transition-transform duration-[var(--dur-instant)] ease-out-soft",
               isChecked ? "translate-x-[18px] rtl:-translate-x-[18px]" : "translate-x-1 rtl:-translate-x-1",
             )}
           >
             {isLoading ? (
-              <CircleNotch aria-hidden className="h-3 w-3 animate-spin text-ink-faint" />
+              <CircleNotch aria-hidden className="h-3 w-3 animate-spin text-on-surface-variant" />
             ) : null}
           </span>
         </button>
@@ -115,16 +125,16 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
             isDisabled ? "cursor-not-allowed opacity-50" : "cursor-pointer",
           )}
         >
-          <span className="text-body-md text-ink">{label}</span>
+          <span className="text-body-md text-on-surface">{label}</span>
           {description ? (
-            <span id={descId} className="text-body-sm text-ink-muted">
+            <span id={descId} className="text-body-sm text-on-surface-variant">
               {description}
             </span>
           ) : null}
         </label>
       </div>
       {error ? (
-        <p id={errorId} className="text-body-sm text-err">
+        <p id={errorId} className="text-body-sm text-error">
           {error}
         </p>
       ) : null}

@@ -25,7 +25,7 @@ Five confirmed roles. Every surface is designed for the role it actually serves 
 
 - **Students (IGCSE / O-Level / AS / A-Level, launching in Egypt).** Photograph or upload an attempted past paper, get it marked, find out what to study next. Personal context — phone or laptop, often at home, often anxious about the result. A student may hold a school seat, a personal subscription, or both.
 - **Teachers / tutors** marking CAIE papers at their desk. Independent, employed by a school, or both. They need speed and defensible accuracy: parse a mark scheme, correct a paper, see where a class struggled, override a marking the system got wrong. Desktop, focus mode, task-oriented.
-- **Parents** checking on a linked child. Phone-OTP login, read-only performance and weakness views, notification preferences. Lowest tolerance for jargon, least frequent visits, mobile-first.
+- **Parents** checking on a linked child, linked when the child shares an invite code or link. Email + password account, read-only performance and weakness views, notification preferences. Lowest tolerance for jargon, least frequent visits, mobile-first.
 - **School admins** managing a school's seats, invited student accounts, and school-wide announcements.
 - **Platform admins** activating accounts (activation is a manual toggle while payments are out of scope) and holding cross-tenant visibility.
 
@@ -67,7 +67,8 @@ Three things a neighboring product could not truthfully copy:
 
 **Hard product rules:**
 - Leaderboards rank XP (effort), never grades. Grades are private to the student, their parents, and their teachers.
-- Plagiarism and AI-detection results are advisory teacher-review signals only. They never auto-penalize, and copy must present them as signals, not verdicts.
+- Plagiarism results are advisory teacher-review signals only, and never auto-penalize. AI-detection was removed outright (migration 0037): the product no longer makes that claim about a student at all. The standing advisory notice that carried the "signals, not verdicts" framing on the teacher review screen was also removed (2026-09-21); what enforces the rule now is behaviour, not copy — `apply_integrity_checks` never touches marks, and flagged items are excluded from bulk-approve.
+- Copy must not promise a teacher will check a mark "before it counts". It already counts: `QuestionResult.effective_marks` returns the AI's award whenever no teacher override exists, and `needs_teacher_review` is a routing boolean that withholds nothing.
 - Maximum 3 concurrent devices per account; a 4th login silently invalidates the oldest session.
 - 25MB upload cap.
 
@@ -77,22 +78,43 @@ Three things a neighboring product could not truthfully copy:
 
 ## Brand Commitments
 
-**Name:** Lemely.
+**Name:** Lemely, pronounced LEM-e-lee.
 
-**Personality:** Warm · Encouraging · Supportive. The voice of a knowledgeable teaching companion — precise about marks but never cold about a student's performance. Accuracy is non-negotiable, but how results are presented matters. "You scored 14/20 — strong on kinematics, let's work on waves" is better than a naked percentage.
+**Markets:** Egypt first, then the Gulf and wider MENA. The name is an insider nod to Egyptian
+student slang for cramming. The nod stays implicit: the identity is purely Latin, and the word
+"cram" is never used.
+
+**Taglines:** "Every mark, explained." is the master line and the teacher line. "From paper to
+A*." is the student line. "Turn past papers into progress." is the parent and school line.
+
+**Personality:** Playful and gamified · premium and trustworthy · data-driven and precise. On
+the playful-to-premium scale Lemely sits at 5 out of 10. Playfulness lives in Binny and the XP
+moments. Everything else is precise and calm. Accuracy is non-negotiable, and Lemely is never
+cold about a student's result. "You scored 14/20: strong on kinematics, let's work on waves" is
+better than a naked percentage.
+
+**Voice per audience:**
+- Students: hype and cheeky. "+4 marks on Paper 2. Your examiner would be proud. Probably."
+- Parents: clear and reassuring. "Omar is on track for an A in Chemistry. Two topics need
+  attention this month."
+- Teachers: precise and efficient. "14 answers below 70% confidence are waiting for your review."
+
+**Never say:** cram · hack · easy A · guaranteed grade.
 
 **Anti-references (binding):**
 - Academic/institutional aesthetics: Times New Roman, university portal grays, government-form layouts.
-- Generic SaaS dashboards: navy blue hero, metric cards with gradient shadows, the HubSpot/Salesforce template.
+- Generic SaaS dashboards: stock blue-gradient hero, metric cards with gradient shadows, the HubSpot/Salesforce template. (Abyss `#042f4f` is the brand primary; the anti-reference is the template, not the hue.)
 - Consumer edtech gamification: Duolingo-style emojis-as-UI, confetti, bright primary colours, cheerleader copy. (Governs expression only — see the engagement note above.)
 - The "AI product" look: purple-blue gradients, dark glassmorphic panels, neon accents on near-black. Named as a firing offense in the redesign mission.
 - Cookie-cutter card grids and dense bootstrap-coloured dashboards — equal-height rows of identical boxes, colour used as decoration rather than meaning.
 
-**Protected quality (the one thing the redesign may not replace):** the warmth and
-notebook-like, sketchbook feel of the site. Everything else is disposable. The identity is
-"The Study Notebook" — warm paper, ink, hairlines, marginalia, sticker-like pastel tags,
-quiet motion. Notion is the north star reference. The full direction lives in
-`BUILD/REDESIGN-MISSION.md` §4 and its tokens in `DESIGN.md`.
+**Protected quality (the one thing the redesign may not replace):** precision you can
+trust, with warmth in the voice. Every mark is explained, and the student is never mocked.
+The identity is Brand Guidelines v5 "Abyss" from the Claude Design project "Lemely Brand
+Identity Workshop": Abyss and Tide on cool tonal surfaces, the Clip Letters wordmark, Material 3
+colour roles, and Binny on student surfaces only. Audience lines: "From paper to A*." for
+students, "Every mark, explained." for teachers. The earlier "Study Notebook" identity (warm
+paper, marginalia, pastel stickers) is retired. Tokens and rules live in `DESIGN.md`.
 
 ## Evidence on Hand
 

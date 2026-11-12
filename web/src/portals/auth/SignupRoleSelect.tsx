@@ -1,5 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E5 S4 R3 V4 */
 import { Link } from "react-router-dom"
+import { useTeamSuffix } from "@/portals/access/team"
 import {
   CaretRight,
   ChalkboardTeacher,
@@ -35,17 +36,22 @@ import { AuthFrame } from "./Login"
  * `<Card>` nested inside one, which would draw two borders around the same
  * tap target.
  *
- * ── Parent routes to /login/parent, not a fourth /signup/* (spec, D7.2) ────
+ * ── Parent routes to /join, not straight to a form (parent-invites design) ─
  *
- * This is the spec's own exit, stated twice. G-02's "Interactions" line reads
+ * D7.2's original exit here was a now-retired top-level phone sign-in route:
  * "Parent → G-05 (parents authenticate by phone, so they skip the email
- * form)", and the design spec's §3.1 lists "Parent sign-up" as explicitly out
- * of scope: "Nothing changes for them beyond G-02 routing them to
- * /login/parent." There is no parent signup form to route to in the first
- * place — `AuthService` creates the `role=parent` row on first verified OTP
- * (D3.11), so the phone screen this links to (`ParentLogin.tsx`, G-05) *is*
- * the parent's account creation. Sending them anywhere else would be a detour
- * to a form that cannot exist without duplicating that auto-creation here.
+ * form)", because
+ * `AuthService` created the `role=parent` row on first verified OTP (D3.11)
+ * and that phone screen *was* the parent's account creation. The
+ * parent-invites design superseded that: a parent account now only ever
+ * comes from a child-issued invite (`docs/superpowers/specs/2026-09-08-
+ * parent-invites-design.md` §2), so there is still no parent signup form to
+ * route to from *this* screen — a visitor who lands here with no code in
+ * hand cannot create a parent account regardless of which link is offered.
+ * `/join` is the honest destination: it is the screen built for "I have a
+ * code" (`JoinWithCode.tsx`), and it hands a parent invite on to
+ * `/signup/parent?code=` itself once a live code is entered
+ * (`signupPathForInvite`, `useInvitesApi.ts`).
  *
  * ── Why the teacher line never mentions a school ────────────────────────────
  *
@@ -62,9 +68,9 @@ import { AuthFrame } from "./Login"
  * coined for this screen: the student line is the core loop (§1.1 and
  * Positioning #1); the teacher line is the "corrects 30 papers in the time it
  * used to take 5" success framing plus the override-authority principle; the
- * parent line reuses the exact idea `ParentLogin.tsx`'s own phone step
- * already states ("No password to remember"), so a parent reading this
- * screen and then G-05 is not told the same fact twice in different words.
+ * parent line states plainly what `/join` actually is for this role — a code
+ * or link handed over by the child, not a form this screen or `/join` could
+ * ever ask a parent to fill in without one.
  *
  * ── Ordering ─────────────────────────────────────────────────────────────
  *
@@ -106,36 +112,36 @@ const ROLE_CHOICES: RoleChoice[] = [
     description: "Mark papers fast, and keep the final say on every grade.",
   },
   {
-    // Not a typo: parents never sign up here. See the docstring above — G-05
-    // (phone + OTP) both authenticates and creates the account on first
-    // verified code, so it is this role's only destination.
-    to: "/login/parent",
+    // Not a typo: parents never sign up here. See the docstring above — a
+    // parent account only ever comes from a child-issued invite, so `/join`
+    // (enter the code) is this role's only destination from this screen.
+    to: "/join",
     icon: UsersFour,
     title: "I'm a parent",
-    description: "Check on your child's progress. No password, just your phone number.",
+    description: "Use the invite code or link your child sent you to see how they're doing.",
   },
 ]
 
 /** One large tappable choice. Title and description both sit inside the
  * `<Link>` so a screen reader announces them as one thing — the same
  * composition `ChildCard` uses for "name, then status, then arrow". */
-function RoleChoiceLink({ to, icon: Glyph, title, description }: RoleChoice) {
+function RoleChoiceLink({ to, icon: Glyph, title, description, teamSuffix }: RoleChoice & { teamSuffix: string }) {
   return (
     <Link
-      to={to}
-      className="group flex items-start gap-4 rounded-lg border border-rule bg-paper-raised p-6 transition-colors hover:border-rule-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+      to={to.startsWith("/signup") ? `${to}${teamSuffix}` : to}
+      className="group flex items-start gap-4 rounded-lg border border-outline-variant bg-surface-container-lowest p-6 transition-colors hover:border-outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
     >
-      <Glyph size={24} className="mt-1 flex-none text-ink-muted" aria-hidden="true" />
+      <Glyph size={24} className="mt-1 flex-none text-on-surface-variant" aria-hidden="true" />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <div className="text-display-sm text-ink">{title}</div>
-        <p className="text-body-md text-ink-muted">{description}</p>
+        <div className="text-display-sm text-on-surface">{title}</div>
+        <p className="text-body-md text-on-surface-variant">{description}</p>
       </div>
       {/* The arrow is what moves on hover, not the whole card (§9.2) — a 1px
           inline shift, transform-only, matching ChildCard's own trailing
           caret rather than inventing a second hover idiom for the same job. */}
       <CaretRight
         size={18}
-        className="mt-1 flex-none text-ink-faint transition-transform ease-out-soft group-hover:translate-x-px"
+        className="mt-1 flex-none text-on-surface-variant transition-transform ease-out-soft group-hover:translate-x-px"
         aria-hidden="true"
       />
     </Link>
@@ -143,14 +149,15 @@ function RoleChoiceLink({ to, icon: Glyph, title, description }: RoleChoice) {
 }
 
 export function SignupRoleSelect() {
+  const teamSuffix = useTeamSuffix()
   return (
     <AuthFrame
       footer={
-        <p className="text-body-sm text-ink-muted">
+        <p className="text-body-sm text-on-surface-variant">
           Already have an account?{" "}
           <Link
-            to="/login"
-            className="rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            to={`/login${teamSuffix}`}
+            className="rounded-sm text-on-primary-container underline underline-offset-2 transition-colors hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             Sign in
           </Link>
@@ -159,23 +166,25 @@ export function SignupRoleSelect() {
     >
       <div className="flex w-full max-w-100 flex-col gap-6">
         <div className="flex flex-col gap-1.5">
-          <h1 className="text-display-lg text-ink">Tell us who you are</h1>
-          <p className="text-body-md text-ink-muted">We'll take it from there.</p>
+          <h1 className="text-display-lg text-on-surface">Tell us who you are</h1>
+          <p className="text-body-md text-on-surface-variant">We'll take it from there.</p>
         </div>
 
         <div className="flex flex-col gap-3">
           {ROLE_CHOICES.map((choice) => (
-            <RoleChoiceLink key={choice.to} {...choice} />
+            <RoleChoiceLink key={choice.to} {...choice} teamSuffix={teamSuffix} />
           ))}
         </div>
 
         {/* Secondary, not a fourth peer of the three choices above: the spec
             calls this a "Secondary link", so it reads smaller and quieter,
-            styled after the equivalent utility link in ParentLogin.tsx rather
-            than as a fourth role card. */}
+            styled after the equivalent utility link `PasswordReset.tsx`'s
+            `BackToSignIn` uses rather than as a fourth role card. Leads to
+            the same `/join` screen the parent card above does — this is for
+            a student or teacher with a code, that is for a parent with one. */}
         <Link
           to="/join"
-          className="flex items-center gap-1.5 self-start rounded-sm pointer-coarse:min-h-11 text-body-sm text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          className="flex items-center gap-1.5 self-start rounded-sm pointer-coarse:min-h-11 text-body-sm text-on-surface-variant transition-colors hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         >
           <Ticket size={16} aria-hidden="true" />
           I have an invite code from my school

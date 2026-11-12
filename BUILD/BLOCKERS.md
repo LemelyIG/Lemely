@@ -2351,6 +2351,22 @@ inside a task about sign-up flows, risks a worse rubric replacing a merely-broke
    justification per axis rather than a bare digit, or a check that flags a stamp identical to
    another file's as suspect rather than passing it silently.
 
+### Hit again: 2026-09-04, verify-email banner
+
+`web/src/components/ui/verify-email-banner.tsx` is the first new kit component since this was
+raised, so it is the first file to fail the gate rather than inherit a copied pass. The symlink is
+still broken (`.agents/skills/hallmark` still does not exist), so the glossary was still missing.
+
+Remedy 2 was applied locally rather than repo-wide: that file carries its six digits **plus a
+written line per axis saying what was assessed and why a point was withheld**, and it states in
+the file that its axis names are a reconstruction, not a restored glossary. Two axes lost a point
+to things a copied stamp would have hidden — the two banners now duplicate ten container classes,
+and the responsive claim is reasoned from an identical sibling rather than screenshot-verified
+across Phase 6's four mobile widths.
+
+This does not close B6. One file justifying its scores does not give `P/H/E/S/R/V` a canonical
+meaning, and the other 100-odd stamps are unchanged. Remedy 1 is still the real fix.
+
 ---
 
 ## B7 — `api.ts` treats every `/auth/*` call as unauthenticated, and G-07's resend is the first one that isn't

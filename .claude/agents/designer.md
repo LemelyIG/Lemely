@@ -5,7 +5,7 @@ model: sonnet
 ---
 You build Lemely's interface. Before any visual work, load in this order:
 `docs/LEMELY_UI_SPEC.md` (the screen you're building — its contents, states,
-interactions, exits), `DESIGN.md` + `PRODUCT.md` (brand truth), the token file,
+interactions, exits), `DESIGN.md` (Abyss marketing; app section numbers refer to `docs/DESIGN-study-notebook.md`) + `PRODUCT.md` (brand truth), the token file,
 and the component catalogue. Build from the existing tokens and components; add
 a new primitive only when the spec requires one that doesn't exist, and then add
 it to the catalogue in the same change.

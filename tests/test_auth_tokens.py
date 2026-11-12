@@ -9,9 +9,12 @@ import jwt
 import pytest
 
 from lemely.auth.tokens import (
+    TokenError,
+    decode_email_proof_token,
     decode_refresh_token,
     decode_token,
     mint_access_token,
+    mint_email_proof_token,
     mint_otp_token,
     mint_refresh_token,
     refresh_audience,
@@ -215,3 +218,112 @@ def test_refresh_token_signed_with_wrong_secret_rejected() -> None:
     forged = jwt.encode(payload, "not-the-real-secret", algorithm="HS256")
     with pytest.raises(AuthError):
         decode_refresh_token(forged, settings)
+
+
+# -- Email proof tokens (spec §4) --------------------------------------------
+
+
+def test_email_proof_mint_decode_round_trip() -> None:
+    settings = _settings()
+    token = mint_email_proof_token(
+        email="parent@example.com", invite_code="ABC123", settings=settings
+    )
+    claims = decode_email_proof_token(token, settings)
+    assert claims.email == "parent@example.com"
+    assert claims.invite_code == "ABC123"
+
+
+def test_email_proof_token_tampered_rejected() -> None:
+    settings = _settings()
+    token = mint_email_proof_token(
+        email="parent@example.com", invite_code="ABC123", settings=settings
+    )
+    tampered = token[:-4] + ("aaaa" if not token.endswith("aaaa") else "bbbb")
+    with pytest.raises(TokenError):
+        decode_email_proof_token(tampered, settings)
+
+
+def test_access_token_is_not_accepted_as_an_email_proof_token() -> None:
+    """The security hinge, applied to the third token kind: an access token
+    must never be redeemable as an email-proof receipt no matter what claims
+    it happens to carry.
+    """
+    settings = _settings()
+    token = mint_access_token(
+        user_id=uuid.uuid4(),
+        settings=settings,
+        app_role="parent",
+        provider="email",
+        email="parent@example.com",
+    )
+    with pytest.raises(TokenError):
+        decode_email_proof_token(token, settings)
+
+
+def test_email_proof_token_is_not_accepted_as_an_access_token() -> None:
+    """And the converse: an email-proof token authenticates nothing."""
+    settings = _settings()
+    token = mint_email_proof_token(
+        email="parent@example.com", invite_code="ABC123", settings=settings
+    )
+    with pytest.raises(AuthError):
+        decode_token(token, settings)
+
+
+def test_email_proof_token_is_not_accepted_as_a_refresh_token() -> None:
+    settings = _settings()
+    token = mint_email_proof_token(
+        email="parent@example.com", invite_code="ABC123", settings=settings
+    )
+    with pytest.raises(AuthError):
+        decode_refresh_token(token, settings)
+
+
+def test_email_proof_token_expires() -> None:
+    settings = _settings()
+    past = datetime.now(UTC) - timedelta(hours=2)
+    token = mint_email_proof_token(
+        email="parent@example.com",
+        invite_code="ABC123",
+        settings=settings,
+        ttl_seconds=60,
+        now=past,
+    )
+    with pytest.raises(TokenError):
+        decode_email_proof_token(token, settings)
+
+
+def test_email_proof_token_without_exp_is_rejected() -> None:
+    """Final review I-7: PyJWT only enforces ``exp`` when the claim is
+    present, so an exp-less token would otherwise decode successfully
+    forever. Hand-mints a token identical to :func:`mint_email_proof_token`'s
+    own shape except for the missing ``exp``, under the real signing secret
+    and the correct audience/``typ`` — the only thing wrong with it is the
+    missing claim `options={"require": [...]}` now catches.
+    """
+    settings = _settings()
+    secret = settings.supabase.jwt_secret.get_secret_value()
+    issued = datetime.now(UTC)
+    payload = {
+        "email": "parent@example.com",
+        "invite_code": "ABC123",
+        "aud": "lemely-email-proof",
+        "typ": "email_proof",
+        "iat": int(issued.timestamp()),
+        # No "exp" claim at all.
+    }
+    token = jwt.encode(payload, secret, algorithm="HS256")
+
+    with pytest.raises(TokenError):
+        decode_email_proof_token(token, settings)
+
+
+def test_email_proof_token_ttl_defaults_to_900_seconds() -> None:
+    settings = _settings()
+    issued = datetime.now(UTC)
+    token = mint_email_proof_token(
+        email="parent@example.com", invite_code="ABC123", settings=settings, now=issued
+    )
+    secret = settings.supabase.jwt_secret.get_secret_value()
+    payload = jwt.decode(token, secret, algorithms=["HS256"], audience="lemely-email-proof")
+    assert payload["exp"] == int((issued + timedelta(seconds=900)).timestamp())

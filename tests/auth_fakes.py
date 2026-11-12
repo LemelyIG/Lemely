@@ -77,6 +77,7 @@ class _MirroredUser:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     terms_accepted_at: datetime | None = None
     email_verified_at: datetime | None = None
+    avatar_path: str | None = None
 
 
 class FakeUserMirror:
@@ -105,6 +106,8 @@ class FakeUserMirror:
                 terms_accepted_at=terms_accepted_at,
             )
         else:
+            if existing.email.lower() != email.lower():
+                existing.email_verified_at = None
             existing.email = email
             existing.role = role
             if phone is not None:
@@ -127,9 +130,15 @@ class FakeUserMirror:
         return next((u for u in self.rows.values() if u.email == email), None)
 
     def mark_email_verified(self, user_id: uuid.UUID, *, verified_at: datetime) -> None:
+        """Record the first verification instant only, as ``DbUserMirror`` does."""
+        existing = self.rows.get(user_id)
+        if existing is not None and existing.email_verified_at is None:
+            existing.email_verified_at = verified_at
+
+    def set_avatar_path(self, user_id: uuid.UUID, path: str | None) -> None:
         existing = self.rows.get(user_id)
         if existing is not None:
-            existing.email_verified_at = verified_at
+            existing.avatar_path = path
 
 
 class FakeDeviceRegistry:
@@ -155,9 +164,10 @@ class FakeDeviceRegistry:
         user_agent: str | None = None,
         device_label: str | None = None,
         allow_eviction: bool = True,
+        evict_device_id: uuid.UUID | str | None = None,
         now: datetime | None = None,
     ) -> DeviceRegistration:
-        del user_agent, device_label, allow_eviction, now
+        del user_agent, device_label, allow_eviction, evict_device_id, now
         existing = next(
             (
                 sid
@@ -325,7 +335,7 @@ class FakeEmailProvider:
     ``tests/test_auth_service.py``, which does the same for the analogous OTP
     rule).
 
-    ``raise_on_send``, if set, makes both send methods raise instead of
+    ``raise_on_send``, if set, makes all three send methods raise instead of
     recording — for the tests proving a delivery failure never fails the
     operation that triggered it (D7's binding rule, stated on
     :meth:`~lemely.auth.service.AuthService.signup`).
@@ -333,15 +343,39 @@ class FakeEmailProvider:
 
     delivers_out_of_band: bool = False
     raise_on_send: bool = False
-    sent_verifications: list[tuple[str, str]] = field(default_factory=list)
+    sent_verifications: list[tuple[str, str, str]] = field(default_factory=list)
     sent_resets: list[tuple[str, str]] = field(default_factory=list)
+    sent_signup_codes: list[tuple[str, str]] = field(default_factory=list)
+    sent_contact_messages: list[tuple[str, str]] = field(default_factory=list)
+    sent_team_digests: list[tuple[str, str]] = field(default_factory=list)
+    sent_waitlist_confirmations: list[tuple[str, str]] = field(default_factory=list)
 
-    def send_verification(self, email: str, link: str) -> None:
+    def send_verification(self, email: str, link: str, code: str) -> None:
         if self.raise_on_send:
             raise RuntimeError("simulated verification-email delivery failure")
-        self.sent_verifications.append((email, link))
+        self.sent_verifications.append((email, link, code))
 
     def send_password_reset(self, email: str, link: str) -> None:
         if self.raise_on_send:
             raise RuntimeError("simulated password-reset-email delivery failure")
         self.sent_resets.append((email, link))
+
+    def send_signup_code(self, email: str, code: str) -> None:
+        if self.raise_on_send:
+            raise RuntimeError("simulated signup-code-email delivery failure")
+        self.sent_signup_codes.append((email, code))
+
+    def send_contact_message(self, from_email: str, message: str) -> None:
+        if self.raise_on_send:
+            raise RuntimeError("simulated contact-message delivery failure")
+        self.sent_contact_messages.append((from_email, message))
+
+    def send_waitlist_confirmation(self, email: str, link: str) -> None:
+        if self.raise_on_send:
+            raise RuntimeError("simulated waitlist-confirmation delivery failure")
+        self.sent_waitlist_confirmations.append((email, link))
+
+    def send_team_digest(self, subject: str, text_body: str) -> None:
+        if self.raise_on_send:
+            raise RuntimeError("simulated team-digest delivery failure")
+        self.sent_team_digests.append((subject, text_body))

@@ -90,7 +90,7 @@ describe("runPhase", () => {
 describe("canStartRun", () => {
   it("refuses to start a second run over a paper already being marked", () => {
     expect(
-      canStartRun({ phase: "waiting", hasScan: true, hasUploadedPaper: true }),
+      canStartRun({ phase: "waiting", hasScan: true, hasUploadedPaper: true, emailVerified: true }),
     ).toBe(false)
   })
 
@@ -102,19 +102,53 @@ describe("canStartRun", () => {
    */
   it("can restart from a scan the server holds, with no local file", () => {
     expect(
-      canStartRun({ phase: "stopped", hasScan: false, hasUploadedPaper: true }),
+      canStartRun({ phase: "stopped", hasScan: false, hasUploadedPaper: true, emailVerified: true }),
     ).toBe(true)
   })
 
   it("can start from a local file with nothing uploaded yet", () => {
     expect(
-      canStartRun({ phase: "none", hasScan: true, hasUploadedPaper: false }),
+      canStartRun({ phase: "none", hasScan: true, hasUploadedPaper: false, emailVerified: true }),
     ).toBe(true)
   })
 
   it("has nothing to mark with neither", () => {
     expect(
-      canStartRun({ phase: "none", hasScan: false, hasUploadedPaper: false }),
+      canStartRun({ phase: "none", hasScan: false, hasUploadedPaper: false, emailVerified: true }),
+    ).toBe(false)
+  })
+  it("refuses to start while the reader's email is unverified", () => {
+    // D7.5's gate would answer 403 `{"code": "email_unverified"}`, so the
+    // button would spend a click, an upload's worth of waiting and a stage
+    // animation to arrive at a refusal the app already knew about. The pinned
+    // banner directly above the button is the explanation.
+    expect(
+      canStartRun({
+        phase: "none",
+        hasScan: true,
+        hasUploadedPaper: false,
+        emailVerified: false,
+      }),
+    ).toBe(false)
+  })
+
+  it("refuses even when the scan is already on the server", () => {
+    expect(
+      canStartRun({
+        phase: "stopped",
+        hasScan: false,
+        hasUploadedPaper: true,
+        emailVerified: false,
+      }),
+    ).toBe(false)
+  })
+
+  it("changes nothing for a verified reader", () => {
+    expect(
+      canStartRun({ phase: "none", hasScan: true, hasUploadedPaper: false, emailVerified: true }),
+    ).toBe(true)
+    expect(
+      canStartRun({ phase: "waiting", hasScan: true, hasUploadedPaper: true, emailVerified: true }),
     ).toBe(false)
   })
 })

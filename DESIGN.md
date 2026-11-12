@@ -1,590 +1,410 @@
-# DESIGN.md — The Study Notebook
-
-> **Read this file before emitting any UI.** It is the single source of truth for
-> Lemely's visual system. `BUILD/BRAND.md` owns *meaning*; this file owns *values*.
-> Where they disagree on a value, this file wins; on meaning, BRAND.md wins.
->
-> Supersedes the build-era "Academic Warmth" system (a Material-3 palette
-> generated before the Study Notebook direction existed). Nothing from that
-> palette survives except the semantic *names*, which are deliberately reused so
-> the ~20 components already consuming them keep working while surfaces are
-> migrated one at a time in Phase 4.
->
-> Authority: `BUILD/REDESIGN-MISSION.md` §3 (skill conflicts, pre-resolved) and
-> §4 (the direction, not re-openable). `design-system/lemely/MASTER.md` is
-> research input that was mined and mostly rejected; it is never a second source
-> of truth.
-
+---
+name: Lemely
+description: "Every mark, explained. CAIE past-paper marking for students, teachers, parents and schools."
+colors:
+  # Key colours (brand names)
+  abyss: "#042f4f"
+  abyss-hover: "#0a3d62"
+  abyss-lip: "#021f36"
+  tide: "#7fb8e0"
+  tide-hover: "#9ccaea"
+  mist-blue: "oklch(0.92 0.035 235)"
+  night: "#130e10"
+  night-surface: "oklch(0.16 0.014 245)"
+  white: "#ffffff"
+  gold: "oklch(0.80 0.13 80)"
+  success: "oklch(0.60 0.12 150)"
+  crimson: "oklch(0.53 0.20 25)"
+  crimson-on-dark: "oklch(0.72 0.15 25)"
+  # Material 3 roles, light scheme
+  primary: "#042f4f"
+  primary-hover: "#0a3d62"
+  on-primary: "#ffffff"
+  primary-container: "oklch(0.92 0.035 235)"
+  on-primary-container: "#042f4f"
+  secondary: "oklch(0.40 0.010 235)"
+  on-secondary: "#ffffff"
+  secondary-container: "oklch(0.90 0.037 235)"
+  on-secondary-container: "oklch(0.10 0.006 235)"
+  tertiary: "oklch(0.80 0.13 80)"
+  on-tertiary: "oklch(0.20 0.019 80)"
+  tertiary-container: "oklch(0.95 0.098 80)"
+  on-tertiary-container: "oklch(0.30 0.022 80)"
+  error: "oklch(0.53 0.20 25)"
+  on-error: "#ffffff"
+  error-container: "oklch(0.95 0.067 25)"
+  on-error-container: "oklch(0.30 0.117 25)"
+  success-text: "oklch(0.49 0.12 150)"
+  success-container: "oklch(0.95 0.04 150)"
+  on-success-container: "oklch(0.32 0.08 150)"
+  surface: "oklch(0.985 0.004 240)"
+  surface-container-lowest: "#ffffff"
+  surface-container-low: "oklch(0.97 0.006 240)"
+  surface-container: "oklch(0.955 0.008 240)"
+  surface-container-high: "oklch(0.94 0.01 240)"
+  surface-container-highest: "oklch(0.92 0.012 240)"
+  on-surface: "#130e10"
+  on-surface-variant: "oklch(0.47 0.02 240)"
+  outline: "oklch(0.87 0.012 240)"
+  outline-variant: "oklch(0.92 0.01 240)"
+  inverse-surface: "oklch(0.16 0.014 245)"
+  inverse-on-surface: "oklch(0.95 0.006 240)"
+  inverse-primary: "#7fb8e0"
+  scrim: "oklch(0.20 0.03 242 / 0.55)"
+  shadow: "oklch(0.30 0.06 242)"
+  # Material 3 roles, dark scheme
+  dark-primary: "#7fb8e0"
+  dark-primary-hover: "#9ccaea"
+  dark-on-primary: "#042f4f"
+  dark-primary-container: "oklch(0.34 0.07 242)"
+  dark-on-primary-container: "oklch(0.92 0.035 235)"
+  dark-secondary: "oklch(0.80 0.037 235)"
+  dark-on-secondary: "oklch(0.20 0.006 235)"
+  dark-secondary-container: "oklch(0.30 0.006 235)"
+  dark-on-secondary-container: "oklch(0.90 0.037 235)"
+  dark-tertiary: "oklch(0.80 0.13 80)"
+  dark-on-tertiary: "oklch(0.20 0.019 80)"
+  dark-tertiary-container: "oklch(0.30 0.022 80)"
+  dark-on-tertiary-container: "oklch(0.90 0.108 80)"
+  dark-error: "oklch(0.72 0.15 25)"
+  dark-on-error: "oklch(0.20 0.083 25)"
+  dark-error-container: "oklch(0.30 0.117 25)"
+  dark-on-error-container: "oklch(0.90 0.083 25)"
+  dark-success: "oklch(0.72 0.12 150)"
+  dark-success-text: "oklch(0.72 0.12 150)"
+  dark-success-container: "oklch(0.30 0.06 150)"
+  dark-on-success-container: "oklch(0.90 0.06 150)"
+  dark-surface: "oklch(0.16 0.014 245)"
+  dark-surface-container-lowest: "oklch(0.12 0.010 245)"
+  dark-surface-container-low: "oklch(0.19 0.014 245)"
+  dark-surface-container: "oklch(0.215 0.016 245)"
+  dark-surface-container-high: "oklch(0.25 0.020 245)"
+  dark-surface-container-highest: "oklch(0.29 0.024 245)"
+  dark-on-surface: "oklch(0.95 0.006 240)"
+  dark-on-surface-variant: "oklch(0.77 0.015 240)"
+  dark-outline: "oklch(0.38 0.02 240)"
+  dark-outline-variant: "oklch(0.30 0.018 240)"
+  dark-inverse-surface: "oklch(0.95 0.006 240)"
+  dark-inverse-on-surface: "#130e10"
+  dark-inverse-primary: "#042f4f"
+  # Grade scale "Jewel" (white text on every chip)
+  grade-a-star: "oklch(0.46 0.12 155)"
+  grade-a: "oklch(0.52 0.12 132)"
+  grade-b: "oklch(0.58 0.12 110)"
+  grade-c: "oklch(0.63 0.12 88)"
+  grade-d: "oklch(0.59 0.125 62)"
+  grade-e: "oklch(0.54 0.13 38)"
+  grade-f: "oklch(0.53 0.135 30)"
+  grade-g: "oklch(0.52 0.138 22)"
+  grade-u: "oklch(0.50 0.14 15)"
+  # Mascot only (student surfaces)
+  binny-steel: "oklch(0.80 0.01 240)"
+  binny-cheek: "oklch(0.72 0.10 15)"
+typography:
+  display:
+    fontFamily: "Bricolage Grotesque Variable, Bricolage Grotesque, Schibsted Grotesk Variable, sans-serif"
+    fontSize: "64px"
+    fontWeight: 800
+    lineHeight: 1
+    letterSpacing: "-0.03em"
+  display-sm:
+    fontFamily: "Bricolage Grotesque Variable, Bricolage Grotesque, Schibsted Grotesk Variable, sans-serif"
+    fontSize: "40px"
+    fontWeight: 800
+    lineHeight: 1.05
+    letterSpacing: "-0.03em"
+  headline:
+    fontFamily: "Schibsted Grotesk Variable, Schibsted Grotesk, system-ui, sans-serif"
+    fontSize: "32px"
+    fontWeight: 800
+    lineHeight: 1.15
+    letterSpacing: "-0.02em"
+  title:
+    fontFamily: "Schibsted Grotesk Variable, Schibsted Grotesk, system-ui, sans-serif"
+    fontSize: "21px"
+    fontWeight: 700
+    lineHeight: 1.25
+    letterSpacing: "-0.01em"
+  body:
+    fontFamily: "Schibsted Grotesk Variable, Schibsted Grotesk, system-ui, sans-serif"
+    fontSize: "16px"
+    fontWeight: 400
+    lineHeight: 1.5
+  body-sm:
+    fontFamily: "Schibsted Grotesk Variable, Schibsted Grotesk, system-ui, sans-serif"
+    fontSize: "14px"
+    fontWeight: 400
+    lineHeight: 1.45
+  data:
+    fontFamily: "JetBrains Mono Variable, JetBrains Mono, ui-monospace, monospace"
+    fontSize: "14px"
+    fontWeight: 600
+    lineHeight: 1.3
+    fontFeature: "\"tnum\""
+  label:
+    fontFamily: "JetBrains Mono Variable, JetBrains Mono, ui-monospace, monospace"
+    fontSize: "11px"
+    fontWeight: 600
+    lineHeight: 1.2
+    letterSpacing: "0.08em"
+rounded:
+  bar: "4px"
+  row: "10px"
+  chip: "12px"
+  button: "14px"
+  inner: "18px"
+  tile: "20px"
+  card: "24px"
+  board: "32px"
+  pill: "999px"
+spacing:
+  "1": "4px"
+  "2": "8px"
+  "3": "12px"
+  "4": "16px"
+  "5": "20px"
+  "6": "24px"
+  "7": "28px"
+  "8": "32px"
+  "12": "48px"
+components:
+  button-primary:
+    backgroundColor: "{colors.primary}"
+    textColor: "{colors.on-primary}"
+    typography: "{typography.body}"
+    rounded: "{rounded.button}"
+    padding: "14px 20px"
+  button-primary-hover:
+    backgroundColor: "{colors.abyss-hover}"
+  button-tonal:
+    backgroundColor: "{colors.primary-container}"
+    textColor: "{colors.on-primary-container}"
+    rounded: "{rounded.button}"
+    padding: "14px 20px"
+  button-outlined:
+    backgroundColor: "{colors.surface-container-lowest}"
+    textColor: "{colors.on-surface}"
+    rounded: "{rounded.button}"
+    padding: "14px 20px"
+  streak-pill:
+    backgroundColor: "{colors.primary-container}"
+    textColor: "{colors.on-primary-container}"
+    rounded: "{rounded.pill}"
+    padding: "6px 12px"
+  grade-chip:
+    backgroundColor: "{colors.grade-a}"
+    textColor: "{colors.white}"
+    typography: "{typography.title}"
+    rounded: "{rounded.row}"
+    padding: "4px 12px"
+  card:
+    backgroundColor: "{colors.surface}"
+    rounded: "{rounded.card}"
+    padding: "28px"
+  card-inner:
+    backgroundColor: "{colors.surface-container-lowest}"
+    rounded: "{rounded.inner}"
+    padding: "22px"
+  mark-row:
+    backgroundColor: "{colors.surface-container-low}"
+    textColor: "{colors.on-surface}"
+    rounded: "{rounded.row}"
+    padding: "8px 10px"
+  progress-track:
+    backgroundColor: "{colors.surface-container-high}"
+    rounded: "{rounded.bar}"
+    height: "8px"
+  nav-item:
+    textColor: "{colors.on-surface-variant}"
+    rounded: "{rounded.chip}"
+    padding: "9px 10px"
+  nav-item-active:
+    backgroundColor: "{colors.primary-container}"
+    textColor: "{colors.primary}"
+  input:
+    backgroundColor: "{colors.surface-container-lowest}"
+    textColor: "{colors.on-surface}"
+    rounded: "{rounded.chip}"
+    height: "44px"
+    padding: "0 14px"
 ---
 
-## 1. Genre and the one protected quality
-
-**Genre:** warm editorial product UI. Notion's calm information density crossed
-with the physical artefact the product is actually about, a student's exam
-paper and the teacher's marks on it.
-
-**The one protected quality** (REDESIGN-MISSION §1): the warmth and
-notebook/sketchbook feel. Every other visual decision is replaceable. This is
-what the texture layer (§8) exists to protect, and it is the thing to check
-first when a surface feels wrong.
-
-**Hard anti-references.** Generic SaaS: dense bootstrap-coloured dashboards,
-purple-blue gradients, cookie-cutter card grids, dark glass "AI product"
-aesthetic. If an emitted screen would look at home in a Y-Combinator batch
-screenshot, it is wrong.
-
-**The tone in one sentence.** A beautifully kept notebook that happens to be
-alive: warm paper, ink, hairlines, marginalia, sticker-like pastel tags, and
-quiet motion, with expressive celebration reserved for genuine wins.
-
----
-
-## 2. Macrostructure per lane
-
-Three lanes, from `PRODUCT.md`. Each gets its own page skeleton; all three share
-the token system, and per-surface variation happens only through §13's knobs.
-
-### Persuade — marketing, landing, public pages
-Full-bleed warm paper, generous macro-whitespace (96–128px between sections),
-asymmetric and deliberately broken symmetry, one idea per section. Section
-rhythm: hero → proof → the loop → who it serves → plans → close. Wide container
-(1200–1440px). Display type does the work; imagery is real screenshots in a
-`<figure>` with a hairline border, never hand-drawn browser chrome.
-
-### Operate — dashboards, marking, teacher and parent and admin tools
-Sidebar plus content well. Content max-width 1200px, sidebar 240–280px fixed.
-Scanability and task speed outrank expression: tabular numbers, consistent row
-rhythm, a single obvious primary action per screen. Brand lives in the details
-here (subject colours, marginalia in empty states, the celebration register on
-wins), never in decoration that costs a teacher a second.
-
-### Read — study content, flashcards, worksheets, explanations
-Single centred column, body max 65ch, line-height 1.6, ruled-paper background
-option on. This lane is the closest to literal paper and may use the texture
-layer most heavily. No sidebar; navigation collapses to a back path and progress.
-
----
-
-## 3. Colour tokens (OKLCH)
-
-OKLCH throughout, so lightness is perceptually uniform and a future dark theme
-is a lightness inversion rather than a re-pick. **Light mode only ships now**
-(§3.2 item 8); the scale is built so dark is a token swap, but dark is not
-implemented and not tested.
-
-Every value below is a token. Raw hex, `rgb()`, or `oklch()` written inline in a
-component is a gate failure (§3.2 item 13); lift the value here first.
-
-### 3.1 Paper (canvas and surfaces)
-
-| Token | OKLCH | ≈ hex | Use |
-|---|---|---|---|
-| `--paper` | `oklch(0.976 0.004 85)` | `#F8F7F4` | The page. The default background of everything. |
-| `--paper-raised` | `oklch(0.992 0.003 85)` | `#FDFCFA` | Cards and panels sitting on the page. Slightly *lighter* than the canvas, the way a sheet laid on a desk catches more light. |
-| `--paper-sunk` | `oklch(0.952 0.006 85)` | `#F1EFEB` | Wells: sidebars, table headers, code blocks, inset areas. |
-| `--paper-inverse` | `oklch(0.28 0.008 250)` | `#26292D` | The one dark surface permitted, for a single proof/close band on marketing only. Never a dark section inside an app screen. |
-
-Never pure `#FFF` and never pure `#000`. Both read as sterile and break the
-paper illusion instantly.
-
-### 3.2 Ink (text)
-
-| Token | OKLCH | ≈ hex | Use | Measured on `--paper` |
-|---|---|---|---|---|
-| `--ink` | `oklch(0.321 0.009 234)` | `#2F3437` | Primary text, headings, the logo mark. | 11.6:1 |
-| `--ink-muted` | `oklch(0.48 0.006 240)` | `#5B5E61` | Secondary text, descriptions, inactive nav. | 6.09:1 |
-| `--ink-faint` | `oklch(0.52 0.006 240)` | `#66696C` | Captions, metadata, timestamps. The floor. | 5.13:1 |
-| `--ink-inverse` | `oklch(0.97 0.004 85)` | `#F6F5F2` | Text on `--paper-inverse` or on a filled accent. | 13.37:1 on inverse |
-
-Every ratio in that table is **measured**, not estimated, by converting the
-OKLCH value to sRGB and applying the WCAG relative-luminance formula. `--ink` is
-exactly the logo's ink, derived by converting `#2F3437` to OKLCH rather than
-eyeballed, so the mark and the interface are literally the same colour.
-
-`--ink-faint` is the lightest text token that exists, and it is the one token in
-this file whose value is decided by something other than paper. An earlier draft
-had it at L 0.575, which measured 4.08:1 and 3.80:1 on the paper rungs and would
-have shipped a system-wide AA failure on every caption in the product. It moved
-to L 0.529, which cleared all three.
-
-**That was still not the constraint.** Captions do not only sit on paper — they
-sit on the eleven tinted fills of §3.5 and §3.6 too, and until P6.4 nothing in
-this system had ever measured that pairing. At L 0.529 the token was below AA on
-**eight of those eleven** (worst `--err-wash` at 4.36:1) and cleared the other
-three by 0.01–0.06. It was not a bad pairing on one screen; it was a token
-floored by the wrong surface.
-
-It is now **L 0.52** (D6.7), which clears 4.5:1 on all fourteen surfaces it can
-land on: **5.13:1 on `--paper`, 5.38:1 on `--paper-raised`, 4.78:1 on
-`--paper-sunk`**, and worst-case **4.53:1 on `--err-wash`**. The binding
-constraint on this token is `--err-wash`, not `--paper-sunk`, and
-`tests/test_design_tokens.py` pins that fact by name so a later change to either
-colour reports which pair moved.
-
-There is deliberately no fifth, lighter step. The build-era system had one and
-spent three separate rounds failing and re-nudging AA on it, each round fixing
-one surface and leaving another broken. If text needs to recede further than
-`--ink-faint`, make it smaller or move it. Do not make it lighter.
-
-### 3.3 Rules (hairlines)
-
-| Token | OKLCH | ≈ hex | Use |
-|---|---|---|---|
-| `--rule` | `oklch(0.905 0.004 85)` | `#E1DFDD` | The default 1px border. Cards, inputs, dividers, table rows. |
-| `--rule-strong` | `oklch(0.845 0.005 85)` | `#CDCCC8` | Emphasis borders, focused input rest state, header underlines. |
-| `--rule-faint` | `oklch(0.945 0.003 85)` | `#EEEDEA` | Ruled-paper lines, dotted grids, the texture layer. |
-
-Borders are the primary containment strategy. Shadows are not (§7).
-
-### 3.4 Accent
-
-One accent, warm and slightly desaturated, taken directly from the logo mark so
-the brand and the UI are literally the same red.
-
-| Token | OKLCH | ≈ hex | Use |
-|---|---|---|---|
-| `--accent` | `oklch(0.576 0.146 33)` | `#C0523D` | Primary buttons, active nav, links, the logo tick, the teacher's mark. |
-| `--accent-hover` | `oklch(0.505 0.132 34)` | `#A2422D` | Hover and pressed states of accent fills. |
-| `--accent-wash` | `oklch(0.945 0.028 34)` | `#FFE7E1` | Tinted backgrounds: selected rows, highlight bands, tag fills. |
-| `--accent-ink` | `oklch(0.38 0.10 34)` | `#6E2A1B` | Accent-coloured *text* on paper or on `--accent-wash`. |
-| `--accent-on` | `#FFFFFF` | `#FFFFFF` | Text and icons **on** an `--accent` fill. Nothing else. |
-
-`--accent` is derived by converting the logo's `#C0523D` to OKLCH, so the mark's
-tick and the product's primary button are the same red by construction rather
-than by eye.
-
-Three accent values, because three different jobs have three different contrast
-requirements, all measured:
-
-- **`--accent` measures 4.34:1 on `--paper`.** That clears AA for large text (≥18.66px, or ≥14px bold) and for graphics and UI components, so it is correct for a filled button, an icon, or the logo tick. It is **not** correct for body copy or small labels.
-- **`--accent-ink` measures 9.75:1 on `--paper` and 8.84:1 on `--accent-wash`.** Use it for any accent-coloured text below the large-text threshold. `--accent-hover` is also safe as text at 5.85:1 if a darker fill is wanted.
-- **`--accent-on` is the one place pure white is permitted in this system.** It measures **4.65:1** on an `--accent` fill and clears AA for normal text, which matters because button labels are `label` (13px/500), i.e. normal text, not large. `--ink-inverse` was tried here first and measures only **4.27:1**, which fails. Do not substitute it back.
-
-The §3.1 ban on pure white governs *surfaces* (a white canvas reads sterile and
-kills the paper illusion). It does not govern a label sitting on a saturated
-fill, where the only question is legibility.
-
-### 3.5 Pastels
-
-The sticker set. Washed fills with a dark text pair each, for tags, subject
-coding, and inline highlights. Every pair is AA on its own fill.
-
-| Name | Fill | Text on fill | hex fill / text | Measured |
-|---|---|---|---|---|
-| `--pastel-rose` | `oklch(0.94 0.032 20)` | `oklch(0.42 0.11 20)` | `#FFE3E2` / `#7E2F33` | 7.41:1 |
-| `--pastel-amber` | `oklch(0.945 0.045 85)` | `oklch(0.42 0.08 70)` | `#FBEBCB` / `#694413` | 7.32:1 |
-| `--pastel-sage` | `oklch(0.94 0.032 155)` | `oklch(0.40 0.07 160)` | `#DBF2E2` / `#1F533A` | 7.54:1 |
-| `--pastel-sky` | `oklch(0.94 0.030 235)` | `oklch(0.42 0.08 240)` | `#D9EFFD` / `#1B5274` | 7.05:1 |
-| `--pastel-lilac` | `oklch(0.94 0.030 300)` | `oklch(0.42 0.08 300)` | `#EEE7FD` / `#544272` | 7.27:1 |
-| `--pastel-clay` | `oklch(0.94 0.022 55)` | `oklch(0.42 0.06 50)` | `#F8E8DE` / `#68432F` | 7.22:1 |
-
-Last column is the measured ratio of each pair's text on its own fill. Every
-pastel text colour is also AA on `--paper` (7.80:1 to 8.36:1), so a tag's label
-stays legible if the fill is ever dropped.
-
-Lilac is the one hue that must never be used for a primary action, a chart's
-first series, or anything AI-adjacent. It exists for subject coding only. The
-purple-blue AI gradient is a firing offence (§3.2 item 7) and lilac is the
-nearest legal neighbour to it.
-
-### 3.6 Semantic states
-
-Deliberately **not** green/amber/red. Teal replaces green so the
-success/error pair stays distinguishable under deuteranopia and protanopia,
-which pure green against red does not. This was a real decision in the build-era
-system and it is carried forward on purpose.
-
-| Token | Text | Fill | Measured on fill | Use |
-|---|---|---|---|---|
-| `--ok` / `--ok-wash` | `oklch(0.48 0.075 175)` `#256B5B` | `oklch(0.945 0.030 175)` `#D9F4EC` | 5.41:1 | Correct, complete, saved, on track. |
-| `--warn` / `--warn-wash` | `oklch(0.45 0.085 70)` `#734C17` | `oklch(0.945 0.045 85)` `#FBEBCB` | 6.45:1 | Partial credit, uncertain, borderline, needs attention. |
-| `--err` / `--err-wash` | `oklch(0.38 0.145 27)` `#7E0D10` | `oklch(0.94 0.035 27)` `#FFE3DF` | 8.86:1 | Wrong, failed, destructive, blocked. |
-| `--info` / `--info-wash` | `oklch(0.44 0.080 240)` `#22587A` | `oklch(0.94 0.030 235)` `#D9EFFD` | 6.47:1 | Neutral notices, tips, "how this works". |
-
-Every semantic text colour is also AA on `--paper` (5.38:1 to 10.04:1) and on
-`--paper-sunk`.
-
-**The lightness ladder is deliberate and load-bearing.** `--ok`, `--warn` and
-`--err` descend in relative luminance (0.117 → 0.089 → 0.048), so the three
-states remain distinguishable when hue is removed entirely: in greyscale, for a
-colour-blind reader, or on a bad projector. An earlier draft of this file set
-all three at roughly L 0.45, which read as three identical greys and made the
-teal-not-green decision above pointless. If one of these values is ever
-adjusted, the ordering must be preserved; a test enforces it
-(`tests/test_design_tokens.py`).
-
-**Colour never carries meaning alone.** Every state pairs its colour with an
-icon or a text label. A student who cannot distinguish the teal from the red
-must still be able to read their paper.
-
-### 3.7 Product scales
-
-These three scales are load-bearing product semantics, not decoration. They
-carry over from the build-era system with their meaning intact and their values
-re-pointed at the new palette.
-
-**Confidence** (how sure the marker is). Three tiers, separated by hue *and* a
-monotonic lightness step so the ladder survives greyscale:
-
-| Tier | Text | Wash | Meaning |
-|---|---|---|---|
-| `--confidence-high` | `--ok` | `--ok-wash` | Confident. |
-| `--confidence-medium` | `--warn` | `--warn-wash` | Uncertain, re-marked or flagged. |
-| `--confidence-low` | `--err` | `--err-wash` | Below the review floor, a teacher is asked. |
-
-**Marking** (what happened to this mark): `--mark-correct` = `--ok`,
-`--mark-partial` = `--warn`, `--mark-wrong` = `--err`. Always paired with a
-distinct glyph (check, half-circle, cross), never colour alone.
-
-**Grade bands**, grouped across A*–G/U so a badge never reads as a button
-(hence: never `--accent`):
-
-| Band | Grades | Text / wash |
-|---|---|---|
-| `--grade-top` | A*, A, B | `--ok` / `--ok-wash` |
-| `--grade-mid` | C, D | `--pastel-clay` text / fill |
-| `--grade-borderline` | E | `--warn` / `--warn-wash` |
-| `--grade-fail` | F, G, U | `--err` / `--err-wash` |
-
-### 3.8 Subject colours
-
-Semantic, not decorative: a student scanning a dashboard should find Physics by
-colour before reading. Assign from the pastel set, fixed:
-
-| Subject | Pastel |
-|---|---|
-| Mathematics | `--pastel-sky` |
-| Physics | `--pastel-lilac` |
-| Chemistry | `--pastel-sage` |
-| Biology | `--pastel-clay` |
-| English | `--pastel-amber` |
-| Unassigned / other | `--pastel-rose` |
-
-New subjects extend this table here first. Never pick a subject colour at a call
-site.
-
-### 3.9 Focus
-
-| Token | Value |
-|---|---|
-| `--focus-ring` | `oklch(0.50 0.14 240)` `#006AAA` (5.37:1 on `--paper`) |
-| `--focus-ring-offset` | `--paper` |
-
-Focus is a 2px solid ring at 2px offset, **deliberately blue** rather than the
-accent: it must be distinguishable from the accent's own hover and selected
-states, and it must read as "the browser is talking to you" rather than as
-brand. `:focus-visible` only, never `:focus` (no rings on mouse click). It is
-never removed, on any element, for any reason.
-
----
-
-## 4. Typography
-
-Four faces, each with exactly one job. Weights 400/500/600 are all in play;
-400/700 alone is a build-era habit and reads generic.
-
-| Role | Face | Package | Weights | Job |
-|---|---|---|---|---|
-| Display | **Newsreader Variable** | `@fontsource-variable/newsreader` | 400, 500, 600 (+ italic) | Headings, hero, section titles, big numbers on marketing. |
-| UI / body | **Geist Variable** | `@fontsource-variable/geist` | 400, 500, 600 | Everything interface: body, buttons, nav, labels, forms. |
-| Data | **JetBrains Mono Variable** | `@fontsource-variable/jetbrains-mono` | 400, 500 | All scores, grades, marks, XP, timers, paper codes, IDs. Always `font-variant-numeric: tabular-nums`. |
-| Marginalia | **Caveat Variable** | `@fontsource-variable/caveat` | 400, 600 | Annotation moments only. See the hard rule below. |
-
-**Banned faces, everywhere, no exceptions:** Inter, Roboto, Arial, Open Sans,
-Helvetica. All nine skills agree and §3.2 item 2 makes it law.
-
-**Why Newsreader and not Instrument Serif** (which the build-era system used and
-which is already installed): Instrument Serif ships a single 400 weight with no
-bold. That forces every heading hierarchy to be built from size alone, which is
-exactly why the build-era teacher portal invented six ad-hoc sizes across
-eighteen screens. Newsreader is a variable serif drawn for screen reading, it is
-warmer and more bookish than Instrument Serif's high-fashion contrast, and it
-gives the 500 and 600 the scale below actually needs.
-
-### 4.1 The Caveat rule (hard)
-
-Caveat is a decorative layer, never an information layer.
-
-- **Permitted:** empty-state marginalia, a "nice work" note beside a result, decorative annotations pointing at a chart, sticker captions.
-- **Forbidden:** headings, buttons, labels, form fields, table content, error messages, navigation, and anything a screen reader must announce as meaningful.
-- If the text would be a problem to lose, it is not Caveat.
-
-Caveat has poor legibility at small sizes and near-zero legibility for dyslexic
-readers. It decorates; it never carries.
-
-### 4.2 Type scale
-
-Sizes in px for precision. Every rung names its face, so a rung cannot be used
-with the wrong family.
-
-| Token | Face | Size | Line-height | Tracking | Weight | Use |
-|---|---|---|---|---|---|---|
-| `display-hero` | Newsreader | 60 | 1.05 | -0.015em | 400 | Marketing hero only. One per page. |
-| `display-xl` | Newsreader | 44 | 1.08 | -0.01em | 400 | Marketing section openers. |
-| `display-lg` | Newsreader | 32 | 1.12 | -0.005em | 400 | Page titles in-app. |
-| `display-md` | Newsreader | 24 | 1.18 | 0 | 500 | Section headings, card titles. |
-| `display-sm` | Newsreader | 19 | 1.25 | 0 | 500 | Sub-section headings. |
-| `body-lg` | Geist | 15 | 1.6 | 0 | 400 | Default body. Max 65ch. |
-| `body-md` | Geist | 14 | 1.55 | 0 | 400 | Dense body, table cells, descriptions. |
-| `body-sm` | Geist | 13 | 1.5 | 0 | 400 | Captions, helper text, secondary rows. |
-| `label` | Geist | 13 | 1 | 0 | 500 | Buttons, form labels, nav items. |
-| `eyebrow` | Geist | 11 | 1 | 0.1em | 600 | Uppercase kickers above headings. |
-| `data-lg` | JetBrains Mono | 32 | 1 | -0.01em | 500 | The big number: a score, a predicted grade. |
-| `data-md` | JetBrains Mono | 15 | 1.2 | 0 | 500 | Inline figures, marks, XP. |
-| `data-sm` | JetBrains Mono | 11 | 1 | 0.05em | 500 | Paper codes, IDs, timestamps, metadata. |
-| `hand` | Caveat | 19 | 1.35 | 0 | 400 | Marginalia. See §4.1. |
-
-**Mobile.** `display-hero` → 38px, `display-xl` → 30px, `display-lg` → 26px
-below 768px. Everything else holds; the body scale is already comfortable on a
-phone and shrinking it is how learning platforms become unreadable on the device
-students actually use.
-
-**Rules.** Sentence case for all headings. Body copy never below 13px. No italic
-display headings and no italic emphasis inside a heading (§3.2 item 12);
-emphasis is weight, accent colour, or a drawn underline. Italic is body-copy
-only, plus Caveat, which is its own thing.
-
----
-
-## 5. Spacing
-
-Base unit **4px**. The scale is the set of values allowed; a value outside it
-gets added here or is wrong.
-
-| Token | px | Typical |
-|---|---|---|
-| `space-1` | 4 | Icon-to-label gap. |
-| `space-2` | 8 | Tight stacks, chip padding. |
-| `space-3` | 12 | Related elements. |
-| `space-4` | 16 | Default gap between components. |
-| `space-5` | 20 | Card internal padding, compact. |
-| `space-6` | 24 | Card internal padding, default. Grid gutter. |
-| `space-8` | 32 | Between cards, between form groups. |
-| `space-10` | 40 | Card padding, generous (marketing). |
-| `space-12` | 48 | Sub-section separation. |
-| `space-16` | 64 | Section separation, in-app. |
-| `space-24` | 96 | Section separation, marketing. |
-| `space-32` | 128 | Hero breathing room, marketing only. |
-
-Card internal padding is **24–40px** (§4). Cramped padding is the single
-fastest way to lose the notebook feel; when in doubt go up one rung.
-
-**Containers.** Marketing 1280px max. App content 1200px max. Read lane 680px
-max (65ch at `body-lg`). Page gutter 32px desktop, 20px tablet, 16px mobile.
-
----
-
-## 6. Radius
-
-| Token | px | Use |
-|---|---|---|
-| `radius-sm` | 4 | Chips, tags, small inline elements. |
-| `radius-md` | 8 | Buttons, inputs, selects. |
-| `radius-lg` | 12 | Cards, panels, table containers. |
-| `radius-xl` | 16 | Modals, large feature containers. |
-| `radius-full` | 9999 | Pills and circles. **Tags and status badges only.** |
-
-**Buttons are never pills** (§3.2 item 4). `radius-full` on an interactive
-element is a gate failure, with these exceptions:
-
-1. **True icon-only circular controls**, such as a close button.
-2. **Native control affordances that are circular by platform convention**: the
-   radio dot, and a switch's thumb. A radio is round because a hundred years of
-   forms made it round, and squaring it off to satisfy a rule about *pills*
-   would make the control harder to tell apart from a checkbox. The pill ban
-   exists to stop rectangular things (buttons, inputs, cards) being rounded into
-   lozenges; it was never about the radio.
-3. **Status and live dots**, which is why avatars are squircles (below): a
-   circle has to keep meaning "status", not "person".
-
-This exception list was written after the component kit raised the radio case as
-a genuine ambiguity in the original wording. It is recorded here so it is not
-re-litigated at every new form.
-
-**Avatars are squircles**, `radius-lg` on a square, not circles. Circles are
-reserved for live/status dots so a dot never reads as a person.
-
----
-
-## 7. Elevation
-
-Flat. Depth comes from tonal layering (`--paper-sunk` < `--paper` <
-`--paper-raised`) and 1px `--rule` borders.
-
-- **Resting cards have no shadow.** Ever.
-- Floating layers only — popovers, dropdowns, modals, toasts — may use `shadow-float`: `0 4px 16px oklch(0.30 0.006 240 / 0.05), 0 1px 3px oklch(0.30 0.006 240 / 0.04)`. Ultra-diffuse, ≤0.05 opacity.
-- Modal scrim: `oklch(0.30 0.006 240 / 0.28)`.
-- **Glassmorphism is banned** except a `backdrop-blur(10px)` on the fixed navbar. Never on scrolling content: it is a real performance cost on the mid-range Android phones students use.
-- **Gradients are banned** as visible elements. Permitted only as ambient warmth: a radial light spot at ≤0.04 opacity behind a hero or section.
-
-### Z-index scale
-Only these values. A raw `z-index` outside the scale is a gate failure.
-
-| Token | Value | Layer |
-|---|---|---|
-| `z-base` | 0 | Page content. |
-| `z-sticky` | 10 | Sticky table headers, section headers. |
-| `z-nav` | 20 | Fixed navbar, sidebar. |
-| `z-dropdown` | 30 | Popovers, selects, tooltips. |
-| `z-scrim` | 40 | Modal backdrop. |
-| `z-modal` | 50 | Dialogs, sheets. |
-| `z-toast` | 60 | Toasts. Above everything, always. |
-
----
-
-## 8. The notebook texture layer
-
-This is how the protected quality (§1) survives contact with a dashboard. It is
-also the easiest thing in this system to overdo.
-
-**The restraint rule: marginalia decorates, never carries meaning alone.**
-Remove every texture element and the product must still be fully usable and
-fully understandable. If removing a doodle loses information, it was not a
-doodle.
-
-1. **Paper grain.** One fixed, `pointer-events: none`, full-viewport SVG noise overlay at **≤0.04 opacity**. Fixed, so it never repaints on scroll.
-2. **Ruled and dotted backgrounds.** `--rule-faint` horizontal lines at 32px, or a 24px dot grid. For section backgrounds and the Read lane. Never behind body text at more than 0.5 opacity.
-3. **Hand-drawn accents.** SVG underlines, circles, and arrows in `--accent` or `--ink`, slightly irregular. Budget: **at most two per viewport.** They punctuate; they are not a pattern.
-4. **Sticker badges.** Achievements and streak milestones as pastel-filled, slightly rotated (±2°) badges with `radius-sm`. Rotation only on genuinely decorative badges, never on a status chip that must be scanned.
-5. **Margin rule.** A single `--rule` vertical hairline at the content's inline start, echoing the logo. The cheapest and most on-brand texture available. Prefer it over a doodle.
-
-**Reduced motion and print:** the grain and doodles are decorative, so they are
-hidden under `prefers-reduced-motion` only if animated (they should not be), and
-always hidden in print styles.
-
----
-
-## 9. Motion
-
-Baseline is **invisible**. The user should feel the interface is responsive, not
-watch it perform. Expressive motion is rationed to genuine wins (§9.2).
-
-### 9.1 Easings and durations
-
-| Token | Value | Use |
-|---|---|---|
-| `ease-out-soft` | `cubic-bezier(0.22, 0.61, 0.36, 1)` | Entrances, reveals, most things. |
-| `ease-in-soft` | `cubic-bezier(0.55, 0.06, 0.68, 0.19)` | Exits, dismissals. |
-| `ease-spring` | `cubic-bezier(0.34, 1.36, 0.64, 1)` | Panels, modals, anything that should feel physical. |
-| `ease-celebrate` | `cubic-bezier(0.18, 1.5, 0.5, 1)` | Celebration register only. |
-
-| Token | ms | Use |
-|---|---|---|
-| `dur-instant` | 120 | Hover colour, focus ring. |
-| `dur-fast` | 200 | Button press, chip toggle, tooltip. |
-| `dur-base` | 320 | Panel open, tab switch, card entrance. |
-| `dur-slow` | 600 | Scroll-triggered section reveal. |
-| `dur-celebrate` | 900 | XP count-up, streak flourish. |
-
-**Never `linear` or `ease-in-out` on a designed transition** (§3.2 item 14).
-
-### 9.2 Rules
-
-- **Animate only `transform` and `opacity`.** Anything else is a gate failure. No animating `height`, `top`, `width`, or `box-shadow`.
-- **`IntersectionObserver` for scroll entries, never a scroll listener.**
-- Scroll entries: fade up 8px over `dur-slow` with `ease-out-soft`, staggered 60ms per item, capped at 6 items of stagger (beyond that it reads as slow, not choreographed).
-- Press: `scale(0.98)` over `dur-fast`. Hover: a colour or 1px translate shift over `dur-instant`.
-- **Nothing blocks input.** No animation gates a click.
-
-### 9.3 The celebration register
-
-Reserved for: XP gained, a streak milestone, a leaderboard climb, a correct
-answer, and the marked-paper result reveal. Nothing else.
-
-- Count-up on tabular numbers over `dur-celebrate`, `ease-celebrate`.
-- A brief confetti-class flourish on milestones, paper-coloured and pastel, never neon.
-- Spring scale on the badge or number, 1 → 1.08 → 1.
-- **Always interruptible.** A user who taps through mid-celebration is never blocked or made to wait.
-- **Never on a failure.** A dropped mark gets calm, specific, useful feedback. Celebrating engagement rather than achievement is how learning products become slot machines, and it is banned here.
-
-### 9.4 Reduced motion
-
-`prefers-reduced-motion: reduce` is respected everywhere, and it means *reduced*,
-not *broken*: transforms and celebration flourishes drop to a simple opacity
-change or nothing, but every state change stays legible and every element still
-arrives. Count-ups jump to their final value immediately. Confetti does not run.
-
----
-
-## 10. Icons
-
-**Phosphor** (`@phosphor-icons/react`), already installed. One library, product-wide.
-Lucide, Feather, FontAwesome, Material: banned (§3.2 item 3).
-
-**Weight: `regular`.** Chosen over duotone because duotone's second tone
-competes with the pastel tag system for the same visual register, and against
-`bold` because the hairline aesthetic wants icons that sit at roughly the weight
-of a `--rule` border. `fill` is permitted for a single active-state nav icon.
-
-Default size 20px inline with `body-lg`, 16px with `body-sm`/`label`, 24px
-standalone. Icon-only buttons **must** carry an `aria-label`, and icon plus
-label is preferred wherever space allows.
-
-**No emoji anywhere in the UI** (§3.2 item 9): not in markup, headings, buttons,
-empty states, or alt text.
-
----
-
-## 11. Chart theme (Nivo)
-
-Charts use **Nivo** (`@nivo/*`), decided in §4. One shared `nivoTheme.ts` built
-from these tokens; no chart sets its own colours.
-
-- **Background** `--paper-raised`. **Text** `--ink-muted` at `data-sm`, tabular-nums.
-- **Grid lines** `--rule-faint`, horizontal only. **Axis** `--rule`.
-- **Series order** (categorical): sky, sage, amber, clay, lilac, rose. Accent red is *not* a series colour: it means "the teacher's mark" everywhere else and must not come to mean "series 1".
-- **Sequential** scales: lightness ramp on a single hue, never a rainbow.
-- **A single-series line** uses `--accent` deliberately, since there is no ambiguity with one line.
-- **Legends and tooltips are required.** Tooltips give exact values. Meaning is never encoded by colour alone: pair with direct labels, shape, or pattern.
-- **Empty-data state is mandatory** on every chart, in the Read/Operate voice, with marginalia rather than a blank box.
-- A scoped D3 component is permitted if a viz genuinely exceeds Nivo, matching this theme; log the exception in the Phase 7 report.
-
----
-
-## 12. Component rules
-
-Full component kit and its 8-state preview live at `web/dev-previews/`. Rules
-that bind every component:
-
-- **Every interactive component implements all 8 states:** default, hover, focus-visible, active, disabled, loading, error, success. A component missing one does not merge (§9 gate 4).
-- **Buttons.** Solid ink or accent fill, `radius-md`, `scale(0.98)` press, subtle hover shift. Primary (accent fill), secondary (paper-raised + rule border), ghost (no fill or border). No pills. No button-in-button.
-- **Inputs.** Visible label always, never placeholder-as-label. `radius-md`, `--rule` border going `--rule-strong` on hover and `--focus-ring` on focus. Errors inline and adjacent to the field, never only at the top of the form.
-- **Cards.** `--paper-raised`, 1px `--rule`, `radius-lg`, 24px padding, no shadow. No forced equal-height rows; align titles and CTAs across siblings and pin CTAs to the bottom.
-- **Tags and badges.** Pastel fill with its paired text colour, `radius-full`, `eyebrow` type, tight padding. This is the *only* place pills are legal.
-- **Tables.** `--paper-sunk` header, `--rule` row dividers, tabular-nums on every numeric column, right-aligned numbers, sticky header at `z-sticky`.
-- **Skeletons, not spinners.** Loading states match the layout they replace so nothing shifts (CLS < 0.1). A spinner is permitted only for an indeterminate action under ~1s inside a button.
-- **Empty states** are composed, never blank: a line of Caveat marginalia, a one-sentence explanation, and the action that fills it.
-- **Error states** name what happened and what to do, in active voice ("We couldn't save your changes"), and offer a retry.
-
----
-
-## 13. Variation knobs
-
-The system is shared product-wide; hallmark's per-page diversification rule is
-**inverted** for this project (§3.2 item 1). Surfaces differ only by turning
-these knobs. Anything else is drift.
-
-| Knob | Range | Notes |
-|---|---|---|
-| Section spacing | `space-12` … `space-32` | Marketing turns it up, Operate turns it down. |
-| Card padding | `space-5` … `space-10` | Density. |
-| Display rung | `display-md` … `display-hero` | Which rung a page's title uses. |
-| Texture intensity | 0 … 3 elements/viewport | Read lane high, Operate low, per §8's budget. |
-| Motion | per §3.3 dials | Marketing 7, auth 5, student 7, teacher/parent 6. |
-| Accent density | sparse … prominent | How much accent appears; Operate stays sparse. |
-| Container | 680 / 1200 / 1280px | Read / Operate / Persuade. |
-
-Per-surface dial rows are in REDESIGN-MISSION §3.3 and are authoritative.
-
----
-
-## 14. Adding a new page without breaking the system
-
-1. Read this file and `PRODUCT.md`. Identify the lane (§2).
-2. Take the container, spacing, and display rung from §13 for that lane.
-3. Use only tokens. If a value is missing, add it *here* first, then use it.
-4. Use only the four faces (§4), Phosphor regular (§10), and the 8 states (§12).
-5. Every state exists before ship: loading, empty, error, and the long-content case.
-6. Check the four mobile widths (320/375/414/768) and desktop.
-7. Check `prefers-reduced-motion`, keyboard traversal, and focus-visible on every control.
-8. Ask the §1 question last: does this still feel like a well-kept notebook? If not, the texture layer (§8) is the first thing to reach for, and restraint is the second.
+# Design System: Lemely
+
+Source of truth: the Claude Design project "Lemely Brand Identity Workshop", file `Lemely Brand Guidelines.dc.html` (v5 · Abyss). The archived crimson v3, royal blue v4 and brand board rounds 1 to 5 are superseded and must not be used as reference. This file replaces the earlier "Study Notebook" system completely: warm paper, Caveat marginalia, pastel stickers and the notebook texture layer are retired.
+
+## 1. Overview
+
+**Creative North Star: "Every mark, explained."**
+
+Lemely is a paperclip. It is small, precise and cool to the touch, and its job is to hold things together: a student's papers, a teacher's class set, a term of progress. The brand line says it directly: *paperclips hold your papers together, and Lemely holds your progress together.* The system is one colour at two depths. Abyss (`#042f4f`) carries light mode and Tide (`#7fb8e0`) carries dark mode. Both come from the same Material 3 tonal palette, so the brand reads as one colour in either theme.
+
+The line changes with the audience, and so does the volume. **Teachers, parents and schools** get "Every mark, explained.": calm tonal surfaces, monospace data, and no mascot. **Students** get "From paper to A*.": the same surfaces with Binny, XP, streaks and Bricolage Grotesque at full size for the moments that earned it. Playfulness lives in the mascot and the reward moments. Everything else is precise and quiet. On the playful-to-premium scale the brand sits at 5 out of 10.
+
+The system rejects generic SaaS dashboards (metric cards with gradient shadows, the HubSpot template), consumer edtech gamification (emoji as UI, confetti, cheerleader copy), the "AI product" look (purple-blue gradients, dark glass, neon on near-black), and institutional grey portals. Depth comes from tonal surface steps, not shadows. Colour carries meaning (grade, confidence, lost marks, reward) and is never decoration.
+
+**Key Characteristics:**
+- Material 3 colour roles only. UI code never uses a raw value when a role exists.
+- Cool neutrals at hue 240. No browns, no warm paper, no very dark reds.
+- Three typefaces with fixed jobs: Bricolage Grotesque for display, Schibsted Grotesk for everything readable, JetBrains Mono for data.
+- Flat tonal layering. A 1 to 1.5px outline appears only where white sits on white.
+- Generous, rounded geometry: cards 24, tiles 20, buttons 14, chips 12.
+- Binny the binder-clip bunny appears on student surfaces only.
+
+## 2. Colors
+
+One brand hue (Abyss/Tide) on cool neutral surfaces, plus four meaning colours: success green, gold, crimson, and the Jewel grade scale.
+
+All values come from the five tonal palettes in the brand guidelines (tone = OKLCH lightness 0 to 100). Primary uses Abyss at T29 in light mode and Tide at T75 in dark mode. Primary container is drawn from the secondary palette at T92 (Mist Blue).
+
+### Primary
+- **Abyss** (`#042f4f`): primary in light mode. Filled buttons, the active nav item's text, progress fills, the clip in the wordmark on light backgrounds, the app icon tile, and Binny's body. Hover is `#0a3d62`.
+- **Tide** (`#7fb8e0`): primary in dark mode and `inverse-primary` in light mode. The clip in the wordmark on dark backgrounds. Use it as the accent on any Abyss or Night-surface fill. Hover is `#9ccaea`.
+- **Mist Blue** (`oklch(0.92 0.035 235)`): `primary-container` in light mode. Tonal secondary actions, tags, streak pills, the active nav item, and the Binny avatar background. In dark mode the container becomes `oklch(0.34 0.07 242)`.
+
+### Secondary
+- **Mist palette** (hue 235, chroma at most 0.037): a desaturated blue grey. `secondary` is `oklch(0.40 0.010 235)` in light mode and `oklch(0.80 0.037 235)` in dark mode. Use it for low-emphasis icons and controls that should not compete with primary.
+
+### Tertiary
+- **Gold** (`oklch(0.80 0.13 80)`): XP, streaks, reward moments, and medium marking confidence. Same value in both schemes. Text on gold is `oklch(0.20 0.019 80)`. Gold never appears on teacher, parent or school surfaces except as a medium-confidence indicator.
+
+### Custom colours (marking confidence)
+- **Success** (`oklch(0.60 0.12 150)`): correct answers, high confidence, positive deltas such as "+4 vs last". Success fills, dots and bars use `success`; success text uses `success-text` (`oklch(0.49 0.12 150)` light, `oklch(0.72 0.12 150)` dark), because `success` measures only 2.96:1 as text on light surfaces.
+- **Crimson** (`oklch(0.53 0.20 25)` light, `oklch(0.72 0.15 25)` dark): the `error` role. Lost marks, low confidence and genuine errors only.
+
+### Grade scale: "Jewel"
+Green through yellow to red in even hue and lightness steps. Every chip uses white text and always shows the letter. Colour is never the only signal. F and G are the Cambridge IGCSE Core-tier grades (Core papers run C to G); they step between E and U.
+
+| A* | A | B | C | D | E | F | G | U |
+|---|---|---|---|---|---|---|---|---|
+| `oklch(0.46 0.12 155)` | `oklch(0.52 0.12 132)` | `oklch(0.58 0.12 110)` | `oklch(0.63 0.12 88)` | `oklch(0.59 0.125 62)` | `oklch(0.54 0.13 38)` | `oklch(0.53 0.135 30)` | `oklch(0.52 0.138 22)` | `oklch(0.50 0.14 15)` |
+
+### Neutral
+- **Night** (`#130e10`): the text ink. `on-surface` in light mode and `inverse-on-surface` in dark mode, and the letters of the wordmark on light backgrounds. Night is never a fill: its warm undertone clashes with the blues as a background.
+- **Night surface** (`oklch(0.16 0.014 245)`): the cool near-black that replaces Night as a background. `surface` in dark mode and `inverse-surface` in light mode.
+- **Surface ladder, light** (hue 240): surface `oklch(0.985 0.004 240)` · lowest `#ffffff` · low `oklch(0.97 0.006 240)` · container `oklch(0.955 0.008 240)` · high `oklch(0.94 0.01 240)` · highest `oklch(0.92 0.012 240)`.
+- **Surface ladder, dark** (hue 245): surface `oklch(0.16 0.014 245)` (Night surface) · lowest `oklch(0.12 0.010 245)` · low `oklch(0.19 0.014 245)` · container `oklch(0.215 0.016 245)` · high `oklch(0.25 0.020 245)` · highest `oklch(0.29 0.024 245)`.
+- **On-surface-variant** (`oklch(0.47 0.02 240)` light, `oklch(0.77 0.015 240)` dark): secondary text, metadata, captions.
+- **Outline** (`oklch(0.87 0.012 240)` light, `oklch(0.38 0.02 240)` dark): input borders and white-on-white card edges. **Outline-variant** (`oklch(0.92 0.01 240)` light, `oklch(0.30 0.018 240)` dark): dividers between rows.
+
+### Scheme mapping
+Light: page on `surface`, cards on `surface-container-lowest` (white) with an outline, rows inside cards on `surface-container-low`. Dark: page on `surface` (Night surface, the cool near-black), raised cards on `surface-container-high`, rows inside them on `surface-container`. Dark cards need no outline. The inverse panel in light mode is the same Night surface. Night itself stays the text ink in both schemes, never a background.
+
+### Named Rules
+**The Roles Only Rule.** UI code uses Material 3 roles (`--md-primary`, `--md-surface-container-low`, ...), never raw values. Theme switching swaps role values, not component code.
+
+**The Never Abyss On Dark Rule.** On the Night surface or any dark surface, the brand accent is Tide. Abyss on dark reads as a hole.
+
+**The Red Means Lost Rule.** Crimson appears only on lost marks, low confidence and genuine errors. Never as decoration, a background wash, or a heading colour.
+
+**The Gold Is Earned Rule.** Gold appears only on XP, streaks and reward moments (plus the medium-confidence dot). If nothing was earned, there is no gold.
+
+**The Letter Always Rule.** A grade chip always shows its letter. A* is always green.
+
+## 3. Typography
+
+**Display Font:** Bricolage Grotesque 800 (T1), with Schibsted Grotesk as fallback
+**Body Font:** Schibsted Grotesk 400 to 800 (T2), with system-ui as fallback
+**Label/Mono Font:** JetBrains Mono 400/600
+
+**Character:** Bricolage is loud, condensed-feeling and a little cheeky. It is the voice of the score. Schibsted is a sturdy newspaper grotesk that keeps feedback clear for a 15-year-old and a head of department alike. JetBrains Mono makes every mark, code and confidence value look like a measurement, because it is one.
+
+### Hierarchy
+- **Display** (Bricolage 800, 64px, line-height 1, tracking −0.03 to −0.05em): hero headlines, big scores ("61/80"), XP moments, the wordmark. Never below 28px. Use 40px (`display-sm`) for in-card scores.
+- **Headline** (Schibsted 800, 32px, line-height 1.15, −0.02em): page and section headings ("Weak topics").
+- **Title** (Schibsted 700, 21px, line-height 1.25): card titles and dialog headings.
+- **Body** (Schibsted 400, 16px, line-height 1.5): feedback, explanations, parent and teacher copy. Cap lines at 65 to 75ch. Use 14px (`body-sm`) for dense rows and metadata.
+- **Data** (JetBrains Mono 600, 14 to 16px, tabular figures): marks ("2/5", "−3"), confidence ("64%"), paper and question codes ("0620", "Q4(b)").
+- **Label** (JetBrains Mono 600, 11px, uppercase, +0.08em): eyebrow labels, table headers, axis labels.
+
+### Named Rules
+**The T1 Over 28 Rule.** Bricolage Grotesque appears at 28px and above only. Below that, use Schibsted.
+
+**The Numbers Are Measured Rule.** Every mark, score delta, code and confidence value is set in JetBrains Mono or with tabular figures. Confidence is a percentage ("64%"), never a 0 to 1 decimal.
+
+## 4. Elevation
+
+Lemely is flat by default. Depth comes from the tonal surface ladder: page on `surface`, card on `surface-container-lowest` (light) or `surface-container-high` (dark), rows on `surface-container-low` or `surface-container`. In light mode, white cards on a near-white page take a 1 to 1.5px `outline` instead of a shadow. Shadows exist only as a response to interaction or to lift a floating panel, and they are tinted with Abyss, never neutral black.
+
+### Shadow Vocabulary
+- **Hover lift** (`box-shadow: 0 22px 40px -26px oklch(0.3 0.06 242 / 0.4)`): a clickable card under the pointer.
+- **Floating panel** (`box-shadow: 0 30px 60px -40px oklch(0.3 0.06 242 / 0.45), 0 0 0 1px oklch(0.92 0.01 240)`): menus, popovers, toasts.
+
+### Motion
+Motion is quick and exponential. Standard easing is `cubic-bezier(0.2, 0.8, 0.2, 1)`, with an expressive `cubic-bezier(0.16, 1, 0.3, 1)` for reveals and reward moments. Durations are 150ms (fast), 200ms (base) and 350ms (slow). Entrances rise 8px and fade in. Animate transform and opacity only, with one documented exception: the slow-load tier's self-drawing stroke animates `stroke-dashoffset`. Binny alone gets squash-and-stretch with overshoot (idle bob about 7px, jump about 28px, ear wiggle about 12°, blink every 3.6s, badges pop to 1.25× before settling). `prefers-reduced-motion` turns all of it off.
+
+### Named Rules
+**The Flat At Rest Rule.** Surfaces are flat at rest. A shadow appears only on hover or on a floating panel.
+
+**The Tonal Step Rule.** To raise something, step it one rung up the surface ladder before reaching for a shadow or an outline.
+
+## 5. Components
+
+Components are confident and rounded: big radii, heavy weights on buttons, generous padding, with no gloss.
+
+### Buttons
+- **Shape:** 14px radius (`rounded.button`). Weight 700.
+- **Primary:** `primary` fill with `on-primary` text (Abyss and white in light mode, Tide and Abyss in dark mode). Padding 14px 20px. Compact toolbar size: 36px high, 12px radius.
+- **Hover / Focus:** hover moves to `#0a3d62` (light) or `#9ccaea` (dark). Press scales to 0.97. Focus shows a 2px `primary` outline at a 2px offset.
+- **Tonal:** `primary-container` fill with `on-primary-container` text, for the second action in a pair ("See all marks").
+- **Outlined:** `surface-container-lowest` fill with a 1.5px `outline` border, for quiet utilities.
+- **Idle (cannot act yet):** a primary button that is waiting on input (the landing page FAQ Send until both fields are valid) fills with `outline` and keeps its `on-primary` label, rather than fading out.
+
+### Chips
+- **Streak / tag pill:** `primary-container` with `on-primary-container` text, a 999px radius, 6px 12px padding and Schibsted 600 at 13px.
+- **Grade chip:** the Jewel colour for the grade with white Bricolage 800 text and a 10px radius. Always shows the letter. The marketing hero chart and walkthrough darken the C and B chips (`--brand-art-7`, `--brand-art-8`) so their white letters hold 4.5:1.
+- **Confidence chip:** low confidence uses `error-container` with `on-error-container` text and the value as a percentage. High confidence uses success text. Medium confidence uses a gold dot.
+
+### Cards / Containers
+- **Corner Style:** board sections 32px, cards 24px, tiles 20px, inner cards 18px.
+- **Background:** light: outer card on `surface` with a 1.5px `outline`, inner card on `surface-container-lowest` with a 1px `outline`. Dark: outer card on the Night surface, inner card on `surface-container-high`, no outline.
+- **Shadow Strategy:** flat at rest. Hover lift only on cards that are links (see Elevation).
+- **Internal Padding:** 28px for outer cards, 22px for inner cards, 16 to 20px for tiles.
+
+### Mark rows
+The signature list: one row per lost mark. Each row has a `surface-container-low` (dark: `surface-container`) background, a 10px radius and 8px 10px padding. Schibsted 15px question label on the left and the JetBrains Mono mark delta in `error` on the right ("−3"). Rows sit 8px apart. Inside a white card, use flat rows divided by 1px `outline-variant` lines with square corners.
+
+### Progress bar
+An 8px track on `surface-container-high` (dark: `surface-container-highest`) with a 4px radius. Primary fill.
+
+### Inputs / Fields
+- **Style:** `surface-container-lowest` background, a 1px `outline` border, a 12px radius, 44px high (36px in compact toolbars), Schibsted 600 at 14px.
+- **Focus:** the border becomes `primary`, plus a 3px Mist Blue ring.
+- **Error / Disabled:** error moves the border to `error`, with helper text below in `error`. Disabled drops to `on-surface-variant` text on `surface-container`.
+
+### Navigation
+Sidebar items are Schibsted 600 at 13.5px in `on-surface-variant`, with a 12px radius and 9px 10px padding. Hover tints the background toward `surface-container`. The active item uses `primary-container` with `primary` text. Count badges are JetBrains Mono 11px on `surface-container-high` and turn `primary` when active or urgent. Section labels use the `label` style. On mobile the sidebar collapses to a bottom bar for students and a drawer for teachers.
+
+### Logo: "Clip Letters"
+Lowercase `lemely`, with both `l`s replaced by paperclips. The path is `M58 34 V72 A8 8 0 0 1 42 72 V20 A14 14 0 0 1 70 20 V78 A18 18 0 0 1 34 78 V36` (viewBox `28 4 46 94`), stroke 5, round caps, no fill, always upright. Letters are Bricolage 800 with −0.04em tracking and line-height 0.82. On light backgrounds the letters are Night and the clip is Abyss. On dark backgrounds the letters are white and the clip is Tide. The minimum height is 20px; below that, use the "lm" icon (rounded square with rx 24/100, Abyss tile, Tide clip, white `m`).
+
+### Binny (student surfaces only)
+A binder-clip bunny. The steel wire handles are its ears, the body is Abyss with a `#021f36` lip, and a white sheet of paper is always clipped underneath. It has one expression per XP moment: Paper marked, Grade improved, Streak kept, Topic mastered, Level up, Marking…, Lost marks, Idle. The avatar is a circular crop on Mist Blue; below 40px, drop the paper and cheeks. Show one per screen, never next to the logo, and never on teacher, parent or school surfaces.
+
+## 6. Do's and Don'ts
+
+### Do:
+- **Do** use Material 3 roles in code. Abyss `#042f4f` is primary in light mode and Tide `#7fb8e0` is primary in dark mode.
+- **Do** use the audience line: "From paper to A*." for students, "Every mark, explained." for teachers, and "Turn past papers into progress." for parents and schools.
+- **Do** set every mark, delta, code and confidence value in JetBrains Mono. Show confidence as a percentage.
+- **Do** raise surfaces by stepping up the tonal ladder. Use a 1 to 1.5px outline only for white on white.
+- **Do** show the letter on every grade chip, and keep A* green.
+- **Do** connect every number to a next step ("Two topics need attention this month").
+- **Do** respect `prefers-reduced-motion`: all motion off, Binny included.
+- **Do** keep teacher copy precise and efficient: "14 answers below 70% confidence are waiting for your review."
+
+### Don't:
+- **Don't** put Abyss on a dark surface. On dark, the accent is Tide.
+- **Don't** use crimson for anything except lost marks, low confidence and genuine errors.
+- **Don't** use gold anywhere nothing was earned.
+- **Don't** show Binny on teacher, parent or school surfaces, show more than one Binny on a screen, or place Binny next to the logo.
+- **Don't** set Bricolage Grotesque below 28px.
+- **Don't** bring back the retired Study Notebook kit: warm paper, Caveat marginalia, pastel stickers, paper texture, brown or warm neutrals. One exception: Caveat (`--brand-hand`) sets the student's written answers on the marketing mock exam paper, so they read as handwriting. Examiner marks on that paper stay in the sans face, and Caveat appears nowhere else.
+- **Don't** build generic SaaS dashboards: metric cards with gradient shadows, the HubSpot/Salesforce template.
+- **Don't** use consumer edtech gamification: Duolingo-style emoji as UI, confetti, bright primary colours, cheerleader copy.
+- **Don't** use the "AI product" look: purple-blue gradients, dark glassmorphic panels, neon accents on near-black.
+- **Don't** use academic or institutional aesthetics: Times New Roman, university portal greys, government-form layouts.
+- **Don't** build cookie-cutter card grids of equal-height identical boxes with colour used as decoration.
+- **Don't** use `border-left` or `border-right` over 1px as a coloured stripe, or gradient text.
+- **Don't** tilt the paperclips, or change the clip stroke from 5.
+- **Don't** say "cram", "hack", "easy A" or "guaranteed grade".

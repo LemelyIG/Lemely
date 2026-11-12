@@ -1,0 +1,42 @@
+{
+  "type": "AdaptiveCard",
+  "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+  "version": "1.6",
+  "body": [
+    {
+      "type": "TextBlock",
+      "text": "${streak}-day streak",
+      "size": "Large",
+      "weight": "Bolder"
+    },
+    {
+      "type": "TextBlock",
+      "text": "Next: ${nextSession.title}",
+      "wrap": true,
+      "spacing": "Small",
+      "$when": "${nextSession != null}"
+    },
+    {
+      "type": "TextBlock",
+      "text": "{{DATE(${nextSession.startsAt}, SHORT)}}",
+      "isSubtle": true,
+      "spacing": "None",
+      "$when": "${nextSession != null}"
+    },
+    {
+      "type": "TextBlock",
+      "text": "No session scheduled yet",
+      "isSubtle": true,
+      "wrap": true,
+      "spacing": "Small",
+      "$when": "${nextSession == null}"
+    }
+  ],
+  "actions": [
+    {
+      "type": "Action.OpenUrl",
+      "title": "Open Lemely",
+      "url": "https://lemelyig.com/student"
+    }
+  ]
+}

@@ -41,9 +41,8 @@ from lemely.db.school_provisioning_repo import (
     SchoolProvisioningService,
     SchoolSummary,
 )
-from lemely.io.cost_ledger import CostLedger
 from lemely.io.grade_boundaries import GradeBoundaryStore
-from lemely.runtime.config import Settings
+from lemely.runtime.config import Settings, llm_key_configured
 from lemely.web.deps import (
     AuthContext,
     get_boundary_store,
@@ -67,7 +66,6 @@ from lemely.web.schemas_admin import (
     SchoolListDTO,
     SchoolSummaryDTO,
     SignupDTO,
-    SpendDTO,
     SubjectCoverageDTO,
     SystemHealthDTO,
     UpdateSchoolRequestDTO,
@@ -108,16 +106,17 @@ def platform_overview(
     service: Annotated[PlatformAdminService, Depends(get_platform_admin_service)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> PlatformOverviewDTO:
-    """Return X-01: global counts, spend against the ceiling, health, signups.
+    """Return X-01: global counts, health, signups.
 
     ``databaseReachable`` is reported as ``True`` only because the counts above
     it were produced by a query in the same request. It is an observation, not a
     separate ping that could pass while the real query fails.
+
+    Carries no spend figure (DS3): the web process keeps no cost ledger, and the
+    guard on Gemini spend is a Google Cloud billing budget on the deployed
+    service, not this endpoint.
     """
     counts = service.counts()
-    ledger = CostLedger(settings.paths.output_dir / "gemini_spend.json")
-    cumulative = ledger.total()
-    ceiling = settings.gemini.total_usd_ceiling
     return PlatformOverviewDTO(
         counts=PlatformCountsDTO(
             students=counts.students,
@@ -133,15 +132,9 @@ def platform_overview(
             openReviewItems=counts.open_review_items,
             uploadsByStatus=counts.uploads_by_status,
         ),
-        spend=SpendDTO(
-            cumulativeUsd=round(cumulative, 4),
-            ceilingUsd=ceiling,
-            remainingUsd=None if ceiling is None else round(max(0.0, ceiling - cumulative), 4),
-            thresholdsUsd=list(settings.gemini.usd_warning_thresholds),
-        ),
         health=SystemHealthDTO(
             databaseReachable=True,
-            geminiKeyConfigured=settings.gemini_api_key is not None,
+            geminiKeyConfigured=llm_key_configured(settings, "extraction"),
             version=__version__,
         ),
         recentSignups=[
@@ -252,6 +245,7 @@ def pipeline_health(
         uploadsByStatus=health.uploads_by_status,
         recentFailedUploadIds=[str(upload_id) for upload_id in health.recent_failed_uploads],
         markingAccuracyNote=_MARKING_ACCURACY_NOTE,
+        purgeBacklog=health.purge_backlog,
     )
 
 

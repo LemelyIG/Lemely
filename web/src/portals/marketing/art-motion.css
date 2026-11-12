@@ -1,0 +1,15 @@
+/* Original workshop illustration timings; final markup remains visible without motion. */
+[data-hc="binny"] { cursor: pointer; }
+/* No UA focus box: on click Chromium outlines the whole bounding box (Binny, the level-up pill and the badge). Keyboard focus keeps a glow on Binny himself. */
+[data-hc="binny"]:focus { outline: none; }
+[data-hc="binny"]:focus-visible > g:last-child { filter: drop-shadow(0 0 2px var(--brand-art-12)) drop-shadow(0 0 5px var(--brand-art-12)); }
+[data-hc="binny"] { pointer-events: bounding-box; }
+[data-hc="spark"] { pointer-events: none; }
+.brand-hero-description-short { display: none; }
+@media (min-width: 760px) { .brand-feature-grid [data-slot="carousel-item"]:last-child { grid-column: span 2; } }
+@media (max-width: 700px) {
+  .brand-hero-description-full { display: none; }
+  .brand-hero-description-short { display: inline; }
+  .brand-hero-copy .brand-actions > a:last-child { display: none; }
+}
+.brand-feature-art > [data-art-scene] { width: 100%; }

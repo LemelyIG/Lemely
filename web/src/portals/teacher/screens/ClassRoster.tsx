@@ -5,15 +5,19 @@ import { Minus, TrendDown, TrendUp } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { GradeBadge } from "@/components/ui/grade-badge"
+import { Input } from "@/components/ui/input"
 import { EmptyState } from "@/components/ui/state-views"
 import { cn, relativeTime } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
+import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
 import { useEnrollStudent, useRemoveStudent } from "@/lib/hooks/useTeacherApi"
 import { ConfirmModal } from "@/components/ui/confirm-modal"
 import { teacherMutationFailureMessage } from "@/lib/teacherOutcome"
 import type { StudentRow } from "@/lib/teacherTypes"
 import { useClassDetailContext } from "./ClassDetail"
 import { SortArrow } from "@/components/ui/inline-arrow"
+import { useReference } from "@/lib/hooks/useReferenceApi"
+import { gradeRank, widestVocabularyFor } from "@/lib/grades"
 
 /*
  * Class detail — roster (T-03). Reads `classDetail.students` from
@@ -57,15 +61,16 @@ import { SortArrow } from "@/components/ui/inline-arrow"
  * `TrendSparkline` (which needs a real multi-point series; two points
  * conjured from one delta would draw a shape this data doesn't support).
  *
- * Bulk actions ("assign a quiz", "post an announcement") are visibly
- * disabled with a "Coming soon" tag — T-09/T-10 quiz builder and T-12
- * announcement composer don't exist until P3.8 — following `Overview.tsx`'s
- * precedent, never a button that silently does nothing.
+ * Bulk actions ("assign a quiz", "post an announcement") are gone from this
+ * toolbar rather than kept as disabled placeholders: T-09's quiz builder and
+ * T-12's announcement composer both shipped as their own screens, reachable
+ * from the sidebar, and neither one is scoped to a single class the way this
+ * roster is — a "Coming soon" pair here would only ever have been telling a
+ * teacher a shipped feature does not exist. "+ Add students" is the one
+ * action this table's own row-level data (enrolment) actually owns.
  */
 
 type SortColumn = "name" | "paperCount" | "mark" | "grade" | "delta" | "atRisk" | "lastActiveAt"
-
-const GRADE_ORDER = ["A*", "A", "B", "C", "D", "E", "U"]
 
 function markPercent(mark: string): number | null {
   const [awarded, max] = mark.split("/").map(Number)
@@ -73,7 +78,11 @@ function markPercent(mark: string): number | null {
   return (awarded / max) * 100
 }
 
-function valueFor(s: StudentRow, column: SortColumn): string | number | null {
+/** `vocabulary` is the class's own subject's grades — every row in one
+ * roster shares the one class, so unlike `Quizzes.tsx` there is no
+ * cross-subject ambiguity here. `[]` while `/api/reference` is loading, so
+ * `gradeRank` ranks every student equally rather than scrambling the table. */
+function valueFor(s: StudentRow, column: SortColumn, vocabulary: readonly string[]): string | number | null {
   switch (column) {
     case "name":
       return s.name
@@ -81,10 +90,8 @@ function valueFor(s: StudentRow, column: SortColumn): string | number | null {
       return s.paperCount
     case "mark":
       return markPercent(s.mark)
-    case "grade": {
-      const idx = GRADE_ORDER.indexOf(s.grade)
-      return idx === -1 ? null : idx
-    }
+    case "grade":
+      return s.grade ? gradeRank(s.grade, vocabulary) : null
     case "delta":
       return s.delta
     case "atRisk":
@@ -94,9 +101,15 @@ function valueFor(s: StudentRow, column: SortColumn): string | number | null {
   }
 }
 
-function compareStudents(a: StudentRow, b: StudentRow, column: SortColumn, dir: 1 | -1): number {
-  const av = valueFor(a, column)
-  const bv = valueFor(b, column)
+function compareStudents(
+  a: StudentRow,
+  b: StudentRow,
+  column: SortColumn,
+  dir: 1 | -1,
+  vocabulary: readonly string[],
+): number {
+  const av = valueFor(a, column, vocabulary)
+  const bv = valueFor(b, column, vocabulary)
   if (av == null && bv == null) return 0
   if (av == null) return 1
   if (bv == null) return -1
@@ -109,10 +122,10 @@ function compareStudents(a: StudentRow, b: StudentRow, column: SortColumn, dir: 
   return ((av as number) - (bv as number)) * dir
 }
 
-const COLUMNS: { key: SortColumn; label: string }[] = [
+const COLUMNS: { key: SortColumn; label: string; numeric?: boolean }[] = [
   { key: "name", label: "Name" },
-  { key: "paperCount", label: "Papers" },
-  { key: "mark", label: "Latest mark" },
+  { key: "paperCount", label: "Papers", numeric: true },
+  { key: "mark", label: "Latest mark", numeric: true },
   { key: "grade", label: "Predicted grade" },
   { key: "delta", label: "Trend" },
   { key: "atRisk", label: "At risk" },
@@ -121,10 +134,10 @@ const COLUMNS: { key: SortColumn; label: string }[] = [
 
 function TrendCell({ delta }: { delta: number | null }) {
   if (delta == null) {
-    return <span className="text-body-sm text-ink-faint">No prior paper</span>
+    return <span className="text-body-sm text-on-surface-variant">No prior paper</span>
   }
   const Icon = delta > 0 ? TrendUp : delta < 0 ? TrendDown : Minus
-  const tone = delta > 0 ? "text-ok" : delta < 0 ? "text-err" : "text-ink-muted"
+  const tone = delta > 0 ? "text-success-text" : delta < 0 ? "text-error" : "text-on-surface-variant"
   return (
     <span className={cn("inline-flex items-center gap-1 text-data-sm", tone)}>
       <Icon weight="bold" className="w-3 h-3" aria-hidden />
@@ -136,15 +149,15 @@ function TrendCell({ delta }: { delta: number | null }) {
 
 function AtRiskCell({ flags }: { flags: StudentRow["flags"] }) {
   if (flags.length === 0) {
-    return <span className="text-body-sm text-ink-faint">—</span>
+    return <span className="text-body-sm text-on-surface-variant">—</span>
   }
   return (
     <div className="flex flex-col gap-[7px] max-w-[280px]">
       {flags.map((f) => (
-        <div key={f.reason} className="flex items-start gap-1.5 text-body-sm text-ink-muted leading-[1.4]">
+        <div key={f.reason} className="flex items-start gap-1.5 text-body-sm text-on-surface-variant leading-[1.4]">
           <span
             aria-hidden="true"
-            className="text-err mt-[5px] w-[5px] h-[5px] rounded-full bg-err flex-none"
+            className="text-error mt-[5px] w-[5px] h-[5px] rounded-full bg-error flex-none"
           />
           <span className="flex-1 text-pretty">{f.summary}</span>
           {f.acknowledged ? (
@@ -170,36 +183,34 @@ function AddStudentsPanel({ classId, hasSchool }: { classId: string; hasSchool: 
   }
 
   return (
-    <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-3">
-      <div className="text-display-sm text-ink">Add students</div>
-      <p className="text-body-md text-ink-muted text-pretty m-0">
+    <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px] flex flex-col gap-3">
+      <div className="text-display-sm text-on-surface">Add students</div>
+      <p className="text-body-md text-on-surface-variant text-pretty m-0">
         Share the invite code above, and students join themselves from the student portal. That
         works for every class, with or without a linked school.
       </p>
       {hasSchool ? (
-        <form onSubmit={handleEnroll} className="flex flex-wrap items-end gap-3 pt-2 border-t border-rule">
-          <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted flex-1 min-w-[220px]">
-            Or add a student already seated in this school, by id
-            <input
-              required
-              value={studentId}
-              onChange={(e) => setStudentId(e.target.value)}
-              placeholder="Student id (uuid)"
-              className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-data-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-            />
-          </label>
+        <form onSubmit={handleEnroll} className="flex flex-wrap items-end gap-3 pt-2 border-t border-outline-variant">
+          <Input
+            label="Or add a student already seated in this school, by id"
+            required
+            value={studentId}
+            onChange={(e) => setStudentId(e.target.value)}
+            placeholder="Student id (uuid)"
+            wrapperClassName="flex-1 min-w-[220px]"
+          />
           <Button type="submit" variant="secondary" disabled={enroll.isPending}>
             {enroll.isPending ? "Adding…" : "Add"}
           </Button>
         </form>
       ) : (
-        <p className="text-body-sm text-ink-faint pt-2 border-t border-rule m-0">
+        <p className="text-body-sm text-on-surface-variant pt-2 border-t border-outline-variant m-0">
           This class has no linked school, so there's no seat pool to add a student by id
           from. The invite code above is the only way in.
         </p>
       )}
       {enroll.isError ? (
-        <div className="text-body-sm text-err">Couldn't add that student: {teacherMutationFailureMessage(enroll.error)}</div>
+        <div className="text-body-sm text-error">Couldn't add that student: {teacherMutationFailureMessage(enroll.error)}</div>
       ) : null}
     </div>
   )
@@ -208,13 +219,20 @@ function AddStudentsPanel({ classId, hasSchool }: { classId: string; hasSchool: 
 export function ClassRoster() {
   const { classDetail, classId } = useClassDetailContext()
   const removeStudent = useRemoveStudent(classId)
+  const referenceQuery = useReference()
+  const vocabulary = classDetail.subjectCode
+    ? widestVocabularyFor(
+        referenceQuery.data?.targetGradeVocabularies ?? [],
+        classDetail.subjectCode,
+      )
+    : []
 
   const [sortColumn, setSortColumn] = useState<SortColumn>("name")
   const [sortDir, setSortDir] = useState<1 | -1>(1)
   const [showAdd, setShowAdd] = useState(false)
 
   const sorted = [...classDetail.students].sort((a, b) =>
-    compareStudents(a, b, sortColumn, sortDir),
+    compareStudents(a, b, sortColumn, sortDir, vocabulary),
   )
 
   function toggleSort(column: SortColumn) {
@@ -237,18 +255,6 @@ export function ClassRoster() {
         <Button variant="secondary" size="sm" onClick={() => setShowAdd((v) => !v)}>
           {showAdd ? "Hide add students" : "+ Add students"}
         </Button>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" disabled aria-disabled="true" title="Coming in a later release">
-            Assign a quiz
-          </Button>
-          <Chip tone="neutral">Coming soon</Chip>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" disabled aria-disabled="true" title="Coming in a later release">
-            Post an announcement
-          </Button>
-          <Chip tone="neutral">Coming soon</Chip>
-        </div>
       </div>
 
       {showAdd ? <AddStudentsPanel classId={classId} hasSchool={classDetail.schoolId != null} /> : null}
@@ -264,96 +270,93 @@ export function ClassRoster() {
           action={{ label: "Add students", onClick: () => setShowAdd(true) }}
         />
       ) : (
-        <div
-          className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
+        <Table density="operate"
           tabIndex={0}
           role="region"
           aria-label="Class roster, scrollable horizontally"
         >
-          <table className="w-full text-body-md border-collapse">
-            <caption className="sr-only">Class roster, sortable by every column</caption>
-            <thead>
-              <tr className="bg-paper-sunk border-b border-rule">
-                {COLUMNS.map((col) => {
-                  const active = col.key === sortColumn
-                  return (
-                    <th
-                      key={col.key}
-                      scope="col"
-                      aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
-                      className="text-start px-[16px] py-[10px] align-bottom"
+          <caption className="sr-only">Class roster, sortable by every column</caption>
+          <THead>
+            <TR>
+              {COLUMNS.map((col) => {
+                const active = col.key === sortColumn
+                return (
+                  <TH
+                    key={col.key}
+                    numeric={col.numeric}
+                    aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
+                    className="align-bottom"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => toggleSort(col.key)}
+                      className="inline-flex items-center gap-1 text-eyebrow text-on-surface-variant transition-colors hover:text-on-surface cursor-pointer bg-transparent border-0 p-0"
                     >
-                      <button
-                        type="button"
-                        onClick={() => toggleSort(col.key)}
-                        className="inline-flex items-center gap-1 text-eyebrow text-ink-faint transition-colors hover:text-ink cursor-pointer bg-transparent border-0 p-0"
-                      >
-                        {col.label}
-                        {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
-                      </button>
-                    </th>
-                  )
-                })}
-                <th scope="col" className="px-[16px] py-[10px]">
-                  <span className="sr-only">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((s) => (
-                <tr key={s.studentId} className="border-b border-rule last:border-b-0 align-top">
-                  <td className="px-[16px] py-[13px]">
-                    <div className="flex items-center gap-2.5">
-                      <Avatar name={s.name} size="sm" />
-                      <Link
-                        to={`/teacher/students/${s.studentId}`}
-                        className="text-ink hover:underline"
-                      >
-                        {s.name}
-                      </Link>
-                    </div>
-                  </td>
-                  <td className="px-[16px] py-[13px] text-data-sm">
-                    {s.paperCount ?? 0}
-                  </td>
-                  <td className="px-[16px] py-[13px] text-data-sm">
-                    {s.mark || "—"}
-                  </td>
-                  <td className="px-[16px] py-[13px]">
-                    <div className="flex items-center gap-1.5">
-                      {s.grade ? (
-                        <GradeBadge grade={s.grade} size="inline" basis="predicted" />
-                      ) : (
-                        <span className="text-body-sm text-ink-faint">No grade yet</span>
-                      )}
-                      {s.gradeAtRisk ? <Chip tone="warn">Low</Chip> : null}
-                    </div>
-                  </td>
-                  <td className="px-[16px] py-[13px]">
-                    <TrendCell delta={s.delta} />
-                  </td>
-                  <td className="px-[16px] py-[13px]">
-                    <AtRiskCell flags={s.flags} />
-                  </td>
-                  <td className="px-[16px] py-[13px] text-body-sm text-ink-muted whitespace-nowrap">
-                    {s.lastActiveAt ? relativeTime(s.lastActiveAt) : "Never"}
-                  </td>
-                  <td className="px-[16px] py-[13px] text-end whitespace-nowrap">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className={cn("text-err", removeStudent.isPending && "opacity-50")}
-                      disabled={removeStudent.isPending}
-                      onClick={() => setPendingRemove(s)}
+                      {col.label}
+                      {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
+                    </button>
+                  </TH>
+                )
+              })}
+              <TH>
+                <span className="sr-only">Actions</span>
+              </TH>
+            </TR>
+          </THead>
+          <TBody>
+            {sorted.map((s) => (
+              <TR key={s.studentId} className="align-top">
+                <TD>
+                  <div className="flex items-center gap-2.5">
+                    <Avatar name={s.name} size="sm" />
+                    <Link
+                      to={`/teacher/students/${s.studentId}`}
+                      className="text-on-surface hover:underline"
                     >
-                      Remove
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                      {s.name}
+                    </Link>
+                  </div>
+                </TD>
+                <TD numeric className="text-data-sm">
+                  {s.paperCount ?? 0}
+                </TD>
+                <TD numeric className="text-data-sm">
+                  {s.mark || "—"}
+                </TD>
+                <TD>
+                  <div className="flex items-center gap-1.5">
+                    {s.grade ? (
+                      <GradeBadge grade={s.grade} size="inline" basis="predicted" />
+                    ) : (
+                      <span className="text-body-sm text-on-surface-variant">No grade yet</span>
+                    )}
+                    {s.gradeAtRisk ? <Chip tone="warn">Low</Chip> : null}
+                  </div>
+                </TD>
+                <TD>
+                  <TrendCell delta={s.delta} />
+                </TD>
+                <TD>
+                  <AtRiskCell flags={s.flags} />
+                </TD>
+                <TD className="text-body-sm text-on-surface-variant whitespace-nowrap">
+                  {s.lastActiveAt ? relativeTime(s.lastActiveAt) : "Never"}
+                </TD>
+                <TD className="text-end whitespace-nowrap">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className={cn("text-error", removeStudent.isPending && "opacity-50")}
+                    disabled={removeStudent.isPending}
+                    onClick={() => setPendingRemove(s)}
+                  >
+                    Remove
+                  </Button>
+                </TD>
+              </TR>
+            ))}
+          </TBody>
+        </Table>
       )}
 
       {/* Reversible: the student can be enrolled again from the form above,
@@ -378,7 +381,7 @@ export function ClassRoster() {
         }}
       />
       {removeStudent.isError ? (
-        <div className="text-body-sm text-err">
+        <div className="text-body-sm text-error">
           Couldn't remove that student: {teacherMutationFailureMessage(removeStudent.error)}
         </div>
       ) : null}

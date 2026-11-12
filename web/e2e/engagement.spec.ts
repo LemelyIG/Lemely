@@ -101,7 +101,7 @@ test("a teacher's announcement reaches the class as a notice and an inbox row", 
   const seed = readSeed()
   const { class: seedClass, teacher, students } = seed
 
-  // A title unique to this run: `Read it` and `Mark as read` are otherwise
+  // A title unique to this run: `Show more` and `Mark as read` are otherwise
   // per-card generic names, and the whole flow is scoped through this string.
   const title = `P5.11 announcement ${Date.now()}`
   const body = "Bring a calculator to Thursday's session."
@@ -142,7 +142,17 @@ test("a teacher's announcement reaches the class as a notice and an inbox row", 
   // The success signal is server-derived — the count comes from the rows the
   // server says it created, not an optimistic local value — and the screen
   // does not navigate, so asserting on a URL change would wait forever.
-  await expect(page.getByRole("status")).toContainText("Saved to 1 class", {
+  //
+  // Scoped by text rather than a bare role: `role="status"` is used
+  // deliberately across many components (offline/queued/install banners,
+  // pull-indicator, state-views, loading-shapes), and this screen's seeded
+  // teacher has an unverified email, so the unverified-email banner is a
+  // second, legitimate `role="status"` region on screen at the same time
+  // (issue #240 — a bare `getByRole("status")` is a strict-mode violation
+  // here, not a passing-by-luck locator).
+  await expect(
+    page.getByRole("status").filter({ hasText: "Saved to" }),
+  ).toContainText("Saved to 1 class", {
     timeout: 15_000,
   })
 
@@ -164,16 +174,19 @@ test("a teacher's announcement reaches the class as a notice and an inbox row", 
    * — so this single click is the whole `POST /{id}/read` round trip asserted
    * end to end through the UI.
    *
-   * Scoped by title rather than by the bare "Read it" name. Every card renders
-   * an identically-named button, so the bare locator resolves today only
-   * because the seed seeds zero announcements and this flow posts exactly one.
-   * That is a precondition of the fixture, not a property of the screen: the
+   * Scoped by title rather than by the bare "Mark as read" name. Playwright's
+   * getByRole name match is substring-based by default, and every card's
+   * aria-label already embeds its own title ("Mark as read: {title}"), so a
+   * bare `{ name: "Mark as read" }` would substring-match every card on the
+   * screen the moment more than one exists. That only looks safe today
+   * because the seed seeds zero announcements and this flow posts exactly
+   * one — a precondition of the fixture, not a property of the screen: the
    * day any session seeds an announcement, a bare locator becomes a
    * strict-mode violation in a spec that never changed. (P5.11 also gave the
    * button a title-bearing accessible name, which is what makes this scoping
    * possible — and fixes the same ambiguity for screen-reader users.)
    */
-  await page.getByRole("button", { name: `Read it: ${title}` }).click()
+  await page.getByRole("button", { name: `Mark as read: ${title}` }).click()
   await expect(page.getByText("Unread")).toHaveCount(0, { timeout: 15_000 })
   await expect(page.getByText(body)).toBeVisible()
 
@@ -189,4 +202,47 @@ test("a teacher's announcement reaches the class as a notice and an inbox row", 
   // Unlike `grade_ready`, an announcement DOES have a resolvable destination,
   // so this row carries a working Open button.
   await expect(page.getByRole("button", { name: "Open" }).first()).toBeVisible()
+
+  /*
+   * Issue #246/#247: a visibility assertion on "Open" would have passed
+   * throughout the whole pull-to-refresh click-swallowing bug — the button
+   * was visible the entire time, it just did nothing when tapped. This
+   * screen sits inside the same pull-to-refresh surface Announcements does
+   * (`usePullToRefresh`), so it needs its own click-level proof rather than
+   * inheriting Announcements' — a fix scoped to one screen's own DOM
+   * structure could pass Announcements and still leave this one broken.
+   */
+  await expect(page.getByText("Unread")).toBeVisible()
+  await page.getByRole("button", { name: "Mark as read" }).first().click()
+  await expect(page.getByText("Unread")).toHaveCount(0, { timeout: 15_000 })
+})
+
+test("Overview's subject row navigates on click, inside the same pull-to-refresh surface", async ({
+  page,
+}) => {
+  /*
+   * Issue #246/#247's other confirmed-broken screen, and the one whose first
+   * repro attempt gave a false negative: `/student/overview` is not a real
+   * route (it is `/student`, `end: true`), and a wrong route landed a click
+   * on the sidebar's own subject shortcut — outside the pull surface
+   * entirely — reading as a working link when the screen's own
+   * `SubjectLedgerRow` `<Link>` had never actually been exercised.
+   * `getByRole("main")` scopes past that trap: the sidebar is not landmark
+   * `main`, so a locator that resolves at all here is inside the actual
+   * screen content, under `pullSurfaceRef`, not beside it.
+   */
+  const seed = readSeed()
+  const student = seed.students.correctedPaper
+  await injectSession(page, {
+    accessToken: student.accessToken,
+    userId: student.userId,
+    role: "student",
+  })
+  await page.goto("/student")
+
+  const subjectLink = page.getByRole("main").locator("a[href^='/student/subject/']").first()
+  await expect(subjectLink).toBeVisible({ timeout: 15_000 })
+  const href = await subjectLink.getAttribute("href")
+  await subjectLink.click()
+  await expect(page).toHaveURL(new RegExp(`${href}$`))
 })

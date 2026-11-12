@@ -5,24 +5,50 @@ over a ``sessionmaker``, domain errors mapped to HTTP status codes by a thin
 router layer (:mod:`lemely.web.routers.review`), testable against Postgres
 with no GoTrue dependency.
 
-**Tenancy** is the union of every roster the caller may see — the identical
-rule :func:`lemely.web.routers.teacher._visible_students` already enforces
-for every other student-scoped teacher route (D3.1). :class:`ReviewService`
-does not import that function (it lives in the web layer); instead it composes
-the same two :class:`~lemely.db.class_repo.ClassService` calls
-(``list_classes`` + ``roster``) that function does, so the two call sites can
-never define "visible student" differently. A review-queue item whose attempt
-belongs to a student outside that union is a :class:`ReviewOwnershipError`
-(403) carrying no data, exactly like :class:`~lemely.db.class_repo.ClassOwnershipError`.
+**The queue has two sources, and one tenancy rule each** (migration ``0034``).
+
+*Student attempts* — written by ``AttemptRepository.persist_correction`` — are
+scoped by the union of every roster the caller may see, the identical rule
+:func:`lemely.web.routers.teacher._visible_students` already enforces for every
+other student-scoped teacher route (D3.1). :class:`ReviewService` does not
+import that function (it lives in the web layer); instead it composes the same
+two :class:`~lemely.db.class_repo.ClassService` calls (``list_classes`` +
+``roster``) that function does, so the two call sites can never define "visible
+student" differently.
+
+*Console papers* — written by ``TeacherPaperRepository.finish`` — are scoped by
+:func:`~lemely.db.teacher_paper_repo.teacher_paper_visible`, the same predicate
+the grading console itself applies (DS11), for the same
+one-definition reason: the review queue must never list a paper the console
+would not show. They exist because a grading-console upload is never
+attributed to a student (``teacher_papers.student_id`` is always NULL, D1.12)
+and so has no ``Attempt`` for the roster rule above to reach — which is exactly
+how a console paper could once show "Review" on its card while this queue
+stayed empty.
+
+**Neither source has a super-role bypass.** ``platform_admin`` sees no classes
+via ``ClassService`` and is therefore empty-scoped on the attempt half
+(D1.6/D1.10); the console half excludes it explicitly, because
+``teacher_paper_visible`` *does* grant it every paper and inheriting that here
+would widen this endpoint rather than fix it. Every out-of-scope access on
+either source raises the same :class:`ReviewOwnershipError` (403) carrying no
+data, exactly like :class:`~lemely.db.class_repo.ClassOwnershipError`, so
+neither half is an existence oracle for the other's rows.
 
 **No new table.** ``review_queue`` (0002) already carries reason / status /
-assignment / resolution; the only new persistent state P3.4 needed is *what
-the teacher changed the mark to*, which belongs on the
+assignment / resolution; ``0034`` only added the second source discriminator
+(``teacher_paper_id`` + ``question_id``, with a CHECK that exactly one source
+is set). The one piece of new persistent state P3.4 needed is *what the
+teacher changed the mark to*, which belongs on the
 :class:`~lemely.db.models.attempts.QuestionResult` it corrects (migration
 ``0005_review_overrides``) — a question can accumulate more than one
 review-queue row (e.g. a ``low_confidence`` row and a ``plagiarism_flag`` row
 for the same question, see ``AttemptRepository.persist_correction``), but it
-has exactly one AI mark and at most one teacher correction.
+has exactly one AI mark and at most one teacher correction. A console-sourced
+item has **no** ``QuestionResult`` at all — its marks live inside
+``teacher_papers.report_json`` — so it can be accepted as-is or dismissed but
+never re-marked, and :meth:`ReviewService.resolve` refuses ``override_marks``
+on one outright rather than accepting a correction it would have to drop.
 
 **Overrides recompute the attempt total eagerly**, at the point of mutation,
 rather than requiring every reader to know overrides exist. This is the one
@@ -77,8 +103,9 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, get_args
 
+import sqlalchemy as sa
 import structlog
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -89,16 +116,25 @@ from lemely.core.analytics import (
     grade_for_percentage,
     group_weak_areas,
 )
-from lemely.core.schemas import ExamMetadata
-from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
+from lemely.core.schemas import (
+    AccuracyReport,
+    CorrectedQuestion,
+    ExamMetadata,
+    SourceBox,
+)
+from lemely.db.models.attempts import Attempt, QuestionResult, Upload, WeaknessRecord
+from lemely.db.models.deletion import ClassPaperExclusion
 from lemely.db.models.enums import (
     SESSION_MONTH_LABELS,
     AttemptOrigin,
     BoundarySource,
     ReviewReason,
     ReviewStatus,
+    Role,
 )
 from lemely.db.models.ops import ReviewQueueItem
+from lemely.db.models.teacher_papers import TeacherPaper
+from lemely.db.teacher_paper_repo import teacher_paper_visible
 from lemely.io.grade_boundaries import GradeBoundaryStore
 
 if TYPE_CHECKING:
@@ -107,9 +143,19 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
     from lemely.db.class_repo import ClassService
-    from lemely.db.models.enums import Role
 
 log = structlog.get_logger(__name__)
+
+CROP_ABSENT_DETAIL = "No scan crop for review item {item_id}"
+"""The one wording every "there is no crop here" answer uses.
+
+Shared with :mod:`lemely.web.routers.review` rather than spelled twice, because
+the whole point is that the caller cannot tell *which* absence it hit — no such
+item, a console item, no upload, no box, or a stored object that has since
+expired. Two copies of this string would drift, and the drift would be an
+existence oracle for a student's scan. The interpolated id is the caller's own
+input and so carries nothing back it did not already supply.
+"""
 
 
 class ReviewError(Exception):
@@ -134,15 +180,30 @@ class ReviewValidationError(ReviewError):
 
 @dataclass(frozen=True, slots=True)
 class ReviewQueueRow:
-    """One review-queue entry, enriched with the display context T-07 needs."""
+    """One review-queue entry, enriched with the display context T-07 needs.
+
+    Carries **either** source (migration ``0034``), and says which in
+    :attr:`source` so a caller never has to infer it from which ids happen to
+    be set:
+
+    * ``"student_attempt"`` — ``attempt_id`` and the student/class fields are
+      set; ``paper_id`` is ``None``.
+    * ``"console_paper"`` — ``paper_id`` is set and ``attempt_id`` is ``None``.
+      A grading-console upload is never attributed to a student (D1.12), so
+      ``student_id``/``class_id``/``class_name`` are ``None`` rather than
+      filled with a plausible-looking guess, and
+      :attr:`student_display_name` carries the paper's own label instead.
+    """
 
     item_id: uuid.UUID
-    attempt_id: uuid.UUID
+    source: str  # "student_attempt" | "console_paper"
+    attempt_id: uuid.UUID | None
+    paper_id: uuid.UUID | None
     question_result_id: uuid.UUID | None
-    student_id: uuid.UUID
+    student_id: uuid.UUID | None
     student_display_name: str
-    class_id: uuid.UUID
-    class_name: str
+    class_id: uuid.UUID | None
+    class_name: str | None
     subject_code: str | None
     paper_number: int | None
     paper_variant: int | None
@@ -156,6 +217,95 @@ class ReviewQueueRow:
     ai_awarded_marks: int | None
     maximum_marks: int | None
     confidence_score: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewQueuePage:
+    """A :meth:`ReviewService.list_queue` result: one page plus the true total.
+
+    ``rows`` is the requested page — padded to ``limit + 1`` when ``limit``
+    was given, exactly as :meth:`ReviewService.list_queue` has always done, so
+    the caller can still tell ``has_more`` without a second query. ``total``
+    is the count of every row matching ``class_id``/``reason``/
+    ``min_age_hours`` *ignoring* ``cursor`` and ``limit`` — computed from the
+    same single query that produced ``rows``, so it can never drift from (or
+    be scoped differently than) the page itself.
+    """
+
+    rows: list[ReviewQueueRow]
+    total: int
+
+
+#: The narrowed wire type for :attr:`ReviewItemPoint.verdict`. Re-exported
+#: from :data:`lemely.core.schemas.PointVerdictWire`, the same ``Literal``
+#: :attr:`~lemely.core.schemas.PointVerdict.verdict` is annotated with.
+#: ``QuestionResultPoint.verdict`` is stored as loose ``str | None`` (its
+#: docstring: a fourth verdict must not require a migration), so this alias
+#: is where the DB string gets narrowed back to the three known members on
+#: the way out. See ``EvidenceVerdictWire`` at
+#: ``lemely/web/schemas_student_self_review.py:27`` for the same pattern at
+#: the wire boundary.
+from lemely.core.schemas import PointVerdictWire as PointVerdictWire  # noqa: E402
+
+_KNOWN_POINT_VERDICTS: frozenset[str] = frozenset(get_args(PointVerdictWire))
+
+
+def _narrow_point_verdict(raw: str | None, *, mark_point_id: str) -> PointVerdictWire | None:
+    """Narrow the DB's loose ``str | None`` to the three known members.
+
+    ``QuestionResultPoint.verdict`` is narrowed once, here, at the point the
+    DB row is read.
+
+    A value outside the three members is a data defect, not a fourth verdict
+    to render (the only producer, ``derive_point_rows``, writes
+    ``PointVerdict.verdict``, itself already this ``Literal``; anything else
+    means manual SQL or a future migration nobody taught this function
+    about). It is logged and carried as ``None`` — rendered as "no verdict
+    recorded" — rather than crashing a teacher's screen or being silently
+    shown as one of the three real verdicts, either of which would be worse
+    than an honest gap.
+    """
+    if raw is None:
+        return None
+    if raw in _KNOWN_POINT_VERDICTS:
+        return raw  # type: ignore[return-value]  # narrowed by the membership check above
+    log.warning("review_point_verdict_unknown", mark_point_id=mark_point_id, verdict=raw)
+    return None
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewItemPoint:
+    """One mark point's self-review state.
+
+    For a teacher deciding a ``student_evidence_unjudged`` item (S2 part2+3
+    final review, I-2). Without this, a teacher opening such an item sees only
+    the aggregate fields ``ReviewItemDetail`` already carried (``feedback``,
+    ``matched_point_ids``) — never the student's own claim or evidence, the
+    exact sentence the queue row exists to have them adjudicate.
+
+    ``verdict``/``evidence_span``/``ecf_applied`` are I6/I7 (US-013)'s marker
+    verdict, read off ``QuestionResultPoint`` regardless of whether the
+    student ever self-marked this point — unlike ``student_selfmark`` et al.
+    below, which answer a different question (what the student claimed).
+
+    ``rationale`` is the marker's own per-point reasoning. It is populated on
+    BOTH paths -- ``PointVerdict.note`` on the verdict path, ``point_notes``
+    on the legacy one, with the precedence rule in
+    :func:`lemely.db.question_points.derive_point_rows` -- so unlike
+    ``verdict`` it is present today with ``equivalence_gate`` off.
+    """
+
+    mark_point_id: str
+    point_text: str
+    awarded: bool  # the marker's own verdict; unrelated to the student's claim
+    student_selfmark: bool | None  # the student's claim, None if not self-marked
+    student_evidence: str | None
+    evidence_verdict: str | None  # EvidenceVerdict.value, or None if never judged
+    verdict: PointVerdictWire | None  # I6: None for a legacy-path point or an unknown DB value
+    evidence_span: str  # I6: '' for a legacy-path point; a row whose verdict
+    # failed to narrow can still carry one
+    ecf_applied: bool  # I7: True only when verdict was reached after an ECF re-mark
+    rationale: str | None  # the marker's own reasoning for this point, either path
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,6 +329,29 @@ class ReviewItemDetail:
     resolution_note: str | None
     resolved_by: uuid.UUID | None
     resolved_at: datetime | None
+    points: list[ReviewItemPoint]
+    """Empty for a console-sourced item: a console paper has no
+
+    ``question_result_points`` rows, the same reason its override fields are
+    always empty (see :func:`_console_item_detail`).
+    """
+    has_source_box: bool = False
+    """True when all five `source_box_*` columns are set AND the attempt has an
+    upload, so a crop may exist. The crop route can still fail (404 when the
+    stored object has expired, 422 when the scan cannot be rendered), so a
+    client must render any failure as absence, never as an error. Always
+    False for a console paper's item, even when its question has a box: the
+    crop route serves only attempt-backed items (see :func:`_console_item_detail`).
+
+    Storage expiry is deliberately not checked: it is a *timing* condition, so
+    nothing checked when this DTO is built can promise anything about the
+    object at crop time, and a check here would add a query and a race without
+    changing what the flag can honestly claim.
+
+    A flag rather than the coordinates: the client asks the route for an
+    image and never does the arithmetic, and coordinates on the wire would be
+    student-derived data with no consumer. False is the common case.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,7 +405,9 @@ class ReviewService:
         class_id: uuid.UUID | str | None = None,
         reason: str | None = None,
         min_age_hours: float | None = None,
-    ) -> list[ReviewQueueRow]:
+        limit: int | None = None,
+        cursor: tuple[datetime, uuid.UUID] | None = None,
+    ) -> ReviewQueuePage:
         """Return every **open** review item across the caller's own students.
 
         ``class_id`` restricts to one of the caller's classes (a class the
@@ -242,39 +417,122 @@ class ReviewService:
         value yields no matches, never a 500 (mirrors ``teacher_at_risk_list``).
         ``min_age_hours`` keeps only items that have been waiting at least that
         long.
+
+        ``cursor`` is a ``(created_at, item_id)`` keyset boundary: only rows
+        strictly after it (in the same ``(created_at, item_id)`` order the
+        results are sorted in) are returned — this is what makes the
+        ordering stable across pages even when two rows share a
+        ``created_at`` down to the microsecond. When ``limit`` is given,
+        :attr:`ReviewQueuePage.rows` is padded to ``limit + 1`` rows (never
+        truncated to exactly ``limit``) so the caller can tell whether another
+        page follows without a second query; ``limit=None`` (the default,
+        e.g. ``teacher_at_risk_list``'s queue-depth count) returns every row,
+        as before.
+
+        :attr:`ReviewQueuePage.total` is always the count of every row
+        matching ``class_id``/``reason``/``min_age_hours`` *before* ``cursor``
+        and ``limit`` are applied — cursor/limit are pagination over one
+        query's result set, not a narrower query, so ``total`` and ``rows``
+        can never fall out of sync with each other or with the tenant scope.
         """
-        visible = self._visible_class_map(caller_id, caller_role, class_id_filter=class_id)
-        if not visible:
-            return []
+        visible, student_classes = self._visible_rosters(
+            caller_id, caller_role, class_id_filter=class_id
+        )
         reason_enum: ReviewReason | None = None
         if reason is not None:
             try:
                 reason_enum = ReviewReason(reason)
             except ValueError:
-                return []
-        with self._sessionmaker() as session:
-            stmt = (
-                select(ReviewQueueItem, Attempt, QuestionResult)
-                .join(Attempt, ReviewQueueItem.attempt_id == Attempt.id)
-                .outerjoin(QuestionResult, ReviewQueueItem.question_result_id == QuestionResult.id)
-                .where(
-                    ReviewQueueItem.status == ReviewStatus.open,
-                    Attempt.user_id.in_(visible.keys()),
-                )
-                .order_by(ReviewQueueItem.created_at)
-            )
-            if reason_enum is not None:
-                stmt = stmt.where(ReviewQueueItem.reason == reason_enum)
-            rows = session.execute(stmt).all()
+                return ReviewQueuePage(rows=[], total=0)
         now = datetime.now(UTC)
         results: list[ReviewQueueRow] = []
-        for item, attempt, qr in rows:
-            class_id_, class_name, display_name = visible[attempt.user_id]
-            out = _to_row(item, attempt, qr, class_id_, class_name, display_name, now=now)
-            if min_age_hours is not None and out.waiting_hours < min_age_hours:
-                continue
-            results.append(out)
-        return results
+        with self._sessionmaker() as session:
+            if visible:
+                stmt = (
+                    select(ReviewQueueItem, Attempt, QuestionResult)
+                    .join(Attempt, ReviewQueueItem.attempt_id == Attempt.id)
+                    .outerjoin(
+                        QuestionResult, ReviewQueueItem.question_result_id == QuestionResult.id
+                    )
+                    .where(
+                        ReviewQueueItem.status == ReviewStatus.open,
+                        Attempt.user_id.in_(visible.keys()),
+                    )
+                    .order_by(ReviewQueueItem.created_at, ReviewQueueItem.id)
+                )
+                if reason_enum is not None:
+                    stmt = stmt.where(ReviewQueueItem.reason == reason_enum)
+                unshared_from = _unshared_from(session, student_classes)
+                for item, attempt, qr in session.execute(stmt).all():
+                    # R3/R8: a read filter, never a status write — `withdrawn`
+                    # means only "the student deleted it". The item leaves
+                    # this caller's queue once its paper is unshared from
+                    # *every* one of their classes that rosters the student
+                    # (the one class, when `class_id` narrows the listing);
+                    # still shared via any of them, it stays. Resharing
+                    # restores it with its original `created_at`.
+                    if student_classes[attempt.user_id] <= unshared_from.get(attempt.id, set()):
+                        continue
+                    class_id_, class_name, display_name = visible[attempt.user_id]
+                    results.append(
+                        _to_row(item, attempt, qr, class_id_, class_name, display_name, now=now)
+                    )
+            # Console-sourced items (migration 0034). Scoped by paper
+            # visibility, not by class roster: a grading-console upload has no
+            # student and therefore no class, so the roster rule that scopes
+            # the attempt half above can never match one. Skipped entirely
+            # when `class_id` narrows the query — a console paper belongs to
+            # no class, so "this class only" excludes it by definition rather
+            # than by omission.
+            #
+            # `platform_admin` is excluded explicitly. `teacher_paper_visible`
+            # grants it every paper (DS11, which is the grading console's own
+            # rule), but this queue's tenancy has no super-role bypass at all
+            # (D1.6/D1.10, module docstring): a platform admin sees no classes
+            # via `ClassService` and so sees no attempt-backed items either.
+            # Letting the console half through would hand the one role that is
+            # deliberately empty-scoped here a view of every teacher's marking
+            # — a widening of this endpoint, not a fix to it.
+            if class_id is None and _as_role(caller_role) is not Role.platform_admin:
+                paper_stmt = (
+                    select(ReviewQueueItem, TeacherPaper)
+                    .join(TeacherPaper, ReviewQueueItem.teacher_paper_id == TeacherPaper.id)
+                    .where(
+                        ReviewQueueItem.status == ReviewStatus.open,
+                        teacher_paper_visible(_as_uuid(caller_id), _as_role(caller_role)),
+                    )
+                    .order_by(ReviewQueueItem.created_at, ReviewQueueItem.id)
+                )
+                if reason_enum is not None:
+                    paper_stmt = paper_stmt.where(ReviewQueueItem.reason == reason_enum)
+                # One parse per paper, not per row: a single paper commonly
+                # contributes several flagged questions, and validating its
+                # whole `AccuracyReport` again for each one is pure waste.
+                reports: dict[uuid.UUID, AccuracyReport | None] = {}
+                for item, paper in session.execute(paper_stmt).all():
+                    if paper.id not in reports:
+                        reports[paper.id] = _console_report(paper)
+                    results.append(_to_console_row(item, paper, now=now, report=reports[paper.id]))
+        # Oldest first across both sources — longest-waiting is highest
+        # priority, and that ordering must hold over the merged list, not
+        # within each half (T-07's "prioritised list"). The `item_id`
+        # tiebreak makes this order (and therefore cursor pagination over it)
+        # stable when two rows from different sources share a `created_at`.
+        results.sort(key=lambda row: (row.created_at, row.item_id))
+        if min_age_hours is not None:
+            results = [row for row in results if row.waiting_hours >= min_age_hours]
+        # `total` is captured here — after every filter except `cursor`/
+        # `limit` — so it reflects exactly what `rows` is a page of, from
+        # this one query, not a second and possibly differently-scoped one.
+        total = len(results)
+        page = results
+        if cursor is not None:
+            page = [row for row in page if (row.created_at, row.item_id) > cursor]
+        if limit is not None:
+            # `limit + 1`, not `limit`: the extra row is how the caller
+            # (the router) learns a next page exists without a second query.
+            page = page[: limit + 1]
+        return ReviewQueuePage(rows=page, total=total)
 
     def get_item(
         self, caller_id: uuid.UUID | str, caller_role: Role | str, item_id: uuid.UUID | str
@@ -288,10 +546,55 @@ class ReviewService:
         """
         visible = self._visible_class_map(caller_id, caller_role)
         with self._sessionmaker() as session:
-            item, attempt, qr = self._find_item(session, item_id, visible)
-            class_id_, class_name, display_name = visible[attempt.user_id]
+            item, attempt, qr, paper = self._find_any_item(
+                session, item_id, visible, caller_id=caller_id, caller_role=caller_role
+            )
             now = datetime.now(UTC)
+            if paper is not None:
+                return _console_item_detail(item, paper, now=now)
+            attempt = _require_attempt(item, attempt)
+            class_id_, class_name, display_name = visible[attempt.user_id]
             row = _to_row(item, attempt, qr, class_id_, class_name, display_name, now=now)
+            # `qr.points` is a lazy relationship: it must be read here, while
+            # the session is still open, not below — `qr` is detached once
+            # the `with` block exits, and a not-yet-loaded relationship on a
+            # detached instance raises `DetachedInstanceError` (unlike the
+            # scalar columns below, already populated by the query above).
+            points = (
+                [
+                    ReviewItemPoint(
+                        mark_point_id=p.mark_point_id,
+                        point_text=p.point_text,
+                        awarded=p.awarded,
+                        student_selfmark=p.student_selfmark,
+                        student_evidence=p.student_evidence,
+                        evidence_verdict=p.evidence_verdict.value if p.evidence_verdict else None,
+                        verdict=_narrow_point_verdict(p.verdict, mark_point_id=p.mark_point_id),
+                        evidence_span=p.evidence_span,
+                        ecf_applied=p.ecf_applied,
+                        rationale=p.rationale,
+                    )
+                    for p in qr.points
+                ]
+                if qr is not None
+                else []
+            )
+            # One column suffices as the box test: `source_box_all_or_none`
+            # makes the five all-or-nothing, so `source_box_page` alone is never
+            # `NULL` while the other four are set (or vice versa). Read here,
+            # not below, for the same reason as `points` above -- it is a
+            # scalar column so it would work either way, but it belongs next
+            # to the other reads made while the session is still open.
+            #
+            # `upload_id` is in the test because a box with no scan behind it is
+            # a real combination (a quiz, an imported attempt) for which the
+            # crop route is *certain* to 404 -- so reporting `true` for it would
+            # be the flag lying rather than the flag being approximate. Free:
+            # `attempt` is already in hand from the line above, no second query.
+            # Storage expiry stays out on purpose; see `has_source_box`.
+            has_source_box = (
+                qr is not None and qr.source_box_page is not None and attempt.upload_id is not None
+            )
         return ReviewItemDetail(
             row=row,
             student_answer=qr.student_answer if qr is not None else None,
@@ -310,7 +613,106 @@ class ReviewService:
             resolution_note=item.resolution_note,
             resolved_by=item.resolved_by,
             resolved_at=item.resolved_at,
+            points=points,
+            has_source_box=has_source_box,
         )
+
+    def get_item_crop_source(
+        self, caller_id: uuid.UUID | str, caller_role: Role | str, item_id: uuid.UUID | str
+    ) -> tuple[str, SourceBox]:
+        """Return the stored object path and box for one review item's scan crop.
+
+        Applies the SAME visibility rule as :meth:`get_item` —
+        :meth:`_visible_class_map` then :meth:`_find_any_item` — rather than
+        letting the crop route implement its own. An image endpoint that
+        resolves its own authorization is where IDOR gets written, because it
+        reads as "just serve bytes".
+
+        The returned :class:`~lemely.core.schemas.SourceBox` is reconstructed
+        from the five columns rather than handed out as a live ORM read, so its
+        validator runs once more on the way out and every caller gets its own
+        object to scale into pixels.
+
+        Raises:
+            ReviewNotFoundError: no such item; or the item is console-sourced;
+                or the item has no upload; or the item has no persisted box.
+                All of these are "there is no image here" for an item the
+                caller may see, and are deliberately indistinguishable to the
+                caller — same type, same message: a 404 that varied by reason
+                would let a caller learn which of their students have scans
+                on file. It does not hide that an id names a real item: an
+                existing item outside the caller's scope is the 403 below,
+                as on :meth:`get_item` (triage F9; see #248). The
+                distinguishable reason is logged server-side.
+            ReviewOwnershipError: the item exists but its attempt's owner is not
+                one of the caller's visible students (403).
+            ReviewValidationError: the five columns do not form a usable box
+                (422). Unreachable while
+                ``ck_question_results_source_box_positive_area`` and its
+                siblings hold; kept because the consequence of trusting a bad
+                box is a blank crop rendered beside a real student's answer,
+                which ``CorrectedQuestion.source_box`` forbids outright.
+        """
+        item_uuid = _as_uuid(item_id)
+        absent = CROP_ABSENT_DETAIL.format(item_id=item_uuid)
+        visible = self._visible_class_map(caller_id, caller_role)
+        with self._sessionmaker() as session:
+            try:
+                item, attempt, qr, paper = self._find_any_item(
+                    session, item_uuid, visible, caller_id=caller_id, caller_role=caller_role
+                )
+            except ReviewNotFoundError:
+                log.info("review_crop_absent", item_id=str(item_uuid), reason="no_such_item")
+                raise ReviewNotFoundError(absent) from None
+            if paper is not None:
+                # Console papers are out of scope (issue #245) — not for want of
+                # a scan, which a `TeacherPaper` upload holds, but because
+                # reaching it needs a second lookup against
+                # `teacher_paper_visible`, whose `platform_admin` grant this
+                # queue refuses on purpose (see `_find_any_item`). Declining
+                # here rather than widening keeps that refusal intact.
+                log.info("review_crop_absent", item_id=str(item_uuid), reason="console_item")
+                raise ReviewNotFoundError(absent)
+            attempt = _require_attempt(item, attempt)
+            if attempt.upload_id is None:
+                # A quiz, or a seeded/imported attempt: no scan was ever stored.
+                log.info("review_crop_absent", item_id=str(item_uuid), reason="no_upload")
+                raise ReviewNotFoundError(absent)
+            # All five columns, not just `source_box_page`: the all-or-none
+            # CHECK makes the other four redundant as a test, but reading them
+            # explicitly is what narrows them from `int | None` for the
+            # constructor below, and leaves the box usable if that CHECK is ever
+            # relaxed rather than trusting it from one column.
+            if (
+                qr is None
+                or qr.source_box_page is None
+                or qr.source_box_ymin is None
+                or qr.source_box_xmin is None
+                or qr.source_box_ymax is None
+                or qr.source_box_xmax is None
+            ):
+                log.info("review_crop_absent", item_id=str(item_uuid), reason="no_box")
+                raise ReviewNotFoundError(absent)
+            coords = [
+                qr.source_box_ymin,
+                qr.source_box_xmin,
+                qr.source_box_ymax,
+                qr.source_box_xmax,
+            ]
+            page = qr.source_box_page
+            upload = session.get(Upload, attempt.upload_id)
+            if upload is None:
+                log.info("review_crop_absent", item_id=str(item_uuid), reason="upload_row_missing")
+                raise ReviewNotFoundError(absent)
+            storage_path = upload.storage_path
+        try:
+            box = SourceBox(page=page, box=coords)
+        except ValidationError as exc:
+            log.warning("review_crop_box_invalid", item_id=str(item_uuid), page=page, box=coords)
+            raise ReviewValidationError(
+                f"Stored crop region for review item {item_uuid} is not usable"
+            ) from exc
+        return storage_path, box
 
     # -- Mutations --------------------------------------------------------------
 
@@ -339,18 +741,49 @@ class ReviewService:
             ReviewOwnershipError: The caller may not access this item (403).
             ReviewAlreadyClosedError: The item is not ``open`` (409).
             ReviewValidationError: ``override_marks`` was supplied but the item
-                has no underlying question result, or the value is out of
-                range (422).
+                has no underlying question result — including every
+                console-sourced item, which by construction has none — or the
+                value is out of range (422).
         """
         caller_uuid = _as_uuid(caller_id)
         visible = self._visible_class_map(caller_id, caller_role)
         with self._sessionmaker() as session, session.begin():
-            item, attempt, qr = self._find_item(session, item_id, visible)
+            # Locked: this is the one path that writes marks and recomputes the
+            # attempt's totals, and a student self-mark on another question of
+            # the same attempt does the same thing concurrently.
+            item, attempt, qr, paper = self._find_any_item(
+                session,
+                item_id,
+                visible,
+                caller_id=caller_id,
+                caller_role=caller_role,
+                for_update=True,
+            )
             if item.status != ReviewStatus.open:
                 raise ReviewAlreadyClosedError(
                     f"Review item {item.id} is already {item.status.value}"
                 )
             now = datetime.now(UTC)
+            if paper is not None:
+                # Accept-as-is only. A console paper's marks live inside
+                # `teacher_papers.report_json` and there is no
+                # `QuestionResult` for `0005_review_overrides` to record a
+                # correction on — so an override is refused outright rather
+                # than accepted and silently dropped, which would tell the
+                # teacher their re-mark landed when nothing changed.
+                if override_marks is not None:
+                    raise ReviewValidationError(
+                        f"Review item {item.id} comes from a grading-console paper, which "
+                        f"stores no per-question result to record a mark override on; it can "
+                        f"be accepted as-is or dismissed, not re-marked"
+                    )
+                item.status = ReviewStatus.resolved
+                item.resolved_by = caller_uuid
+                item.resolved_at = now
+                item.resolution_note = note
+                session.flush()
+                return _to_console_row(item, paper, now=now, report=_console_report(paper))
+            attempt = _require_attempt(item, attempt)
             if override_marks is not None:
                 if qr is None:
                     raise ReviewValidationError(
@@ -390,10 +823,12 @@ class ReviewService:
     ) -> ReviewQueueRow:
         """Dismiss an integrity flag. Leaves no student-visible record (see module docstring).
 
-        Restricted to ``plagiarism_flag`` / ``ai_detection_flag`` items —
-        UI-spec T-08 ties "dismiss without a record reaching the student"
-        specifically to integrity flags; a ``low_confidence``/``manual`` item
-        is resolved (accept-as-is), never dismissed.
+        Restricted to ``plagiarism_flag`` items — UI-spec T-08 ties "dismiss
+        without a record reaching the student" specifically to integrity
+        flags; a ``low_confidence``/``manual``/``random_audit`` item is
+        resolved (accept-as-is), never dismissed. (F4 removed the other
+        integrity reason this restriction used to also name, the
+        AI-generated-answer detector's flag.)
 
         Raises:
             ReviewNotFoundError: No item exists with ``item_id`` (404).
@@ -404,8 +839,17 @@ class ReviewService:
         caller_uuid = _as_uuid(caller_id)
         visible = self._visible_class_map(caller_id, caller_role)
         with self._sessionmaker() as session, session.begin():
-            item, attempt, qr = self._find_item(session, item_id, visible)
-            if item.reason not in (ReviewReason.plagiarism_flag, ReviewReason.ai_detection_flag):
+            # Locked, as in `resolve`: a close must serialize with a deletion
+            # withdrawing the same item.
+            item, attempt, qr, paper = self._find_any_item(
+                session,
+                item_id,
+                visible,
+                caller_id=caller_id,
+                caller_role=caller_role,
+                for_update=True,
+            )
+            if item.reason is not ReviewReason.plagiarism_flag:
                 raise ReviewValidationError(
                     f"Only integrity flags may be dismissed; item {item.id} has "
                     f"reason {item.reason.value}"
@@ -420,6 +864,9 @@ class ReviewService:
             item.resolved_at = now
             item.resolution_note = note
             session.flush()
+            if paper is not None:
+                return _to_console_row(item, paper, now=now, report=_console_report(paper))
+            attempt = _require_attempt(item, attempt)
             class_id_, class_name, display_name = visible[attempt.user_id]
             return _to_row(item, attempt, qr, class_id_, class_name, display_name, now=now)
 
@@ -442,22 +889,48 @@ class ReviewService:
         approved: list[uuid.UUID] = []
         skipped: list[BulkApproveSkip] = []
         now = datetime.now(UTC)
-        with self._sessionmaker() as session, session.begin():
-            for item_uuid in item_ids:
-                item = session.get(ReviewQueueItem, item_uuid)
-                if item is None:
+        for item_uuid in item_ids:
+            # One transaction per item, so a batch holds at most one item row
+            # lock at a time. A paper deletion withdraws its items in one
+            # multi-row UPDATE; a batch holding item X while waiting on Y,
+            # against a deletion holding Y and waiting on X, would deadlock.
+            with self._sessionmaker() as session, session.begin():
+                # Reuse the single-item loader so both sources are checked by
+                # exactly the rule their own tenancy defines, then translate
+                # its exceptions into this call's skip reasons — a batch must
+                # never authorise anything a single resolve would refuse.
+                try:
+                    item, _attempt, _qr, _paper = self._find_any_item(
+                        session, item_uuid, visible, caller_id=caller_id, caller_role=caller_role
+                    )
+                except ReviewNotFoundError:
                     skipped.append(BulkApproveSkip(item_id=item_uuid, reason="not_found"))
                     continue
-                attempt = session.get(Attempt, item.attempt_id)
-                if attempt is None or attempt.user_id not in visible:
+                except ReviewOwnershipError:
                     skipped.append(BulkApproveSkip(item_id=item_uuid, reason="forbidden"))
                     continue
                 if item.status != ReviewStatus.open:
                     skipped.append(BulkApproveSkip(item_id=item_uuid, reason="already_closed"))
                     continue
-                item.status = ReviewStatus.resolved
-                item.resolved_by = caller_uuid
-                item.resolved_at = now
+                # Conditional, never a write-back of the status read above: a
+                # deletion may withdraw the item after that read. Postgres
+                # re-checks `status` once the row lock is ours, so a withdrawn
+                # item is skipped rather than turned into a teacher closure —
+                # which for an integrity item would lift the student's own
+                # D8 hold (R4a).
+                closed = session.scalars(
+                    sa.update(ReviewQueueItem)
+                    .where(
+                        ReviewQueueItem.id == item_uuid,
+                        ReviewQueueItem.status == ReviewStatus.open,
+                    )
+                    .values(status=ReviewStatus.resolved, resolved_by=caller_uuid, resolved_at=now)
+                    .returning(ReviewQueueItem.id),
+                    execution_options={"synchronize_session": False},
+                ).one_or_none()
+                if closed is None:
+                    skipped.append(BulkApproveSkip(item_id=item_uuid, reason="already_closed"))
+                    continue
                 approved.append(item_uuid)
         return BulkApproveResult(approved=approved, skipped=skipped)
 
@@ -477,165 +950,341 @@ class ReviewService:
         roster-union tenancy rule as
         ``lemely.web.routers.teacher._visible_students`` (see module docstring).
         """
-        mapping: dict[uuid.UUID, tuple[uuid.UUID, str, str]] = {}
-        rows = self._class_service.list_classes(caller_id, caller_role)
-        if class_id_filter is not None:
-            class_uuid = _as_uuid(class_id_filter)
-            rows = [row for row in rows if row.class_id == class_uuid]
-        for row in rows:
-            for entry in self._class_service.roster(caller_id, caller_role, row.class_id):
-                mapping[entry.student_id] = (row.class_id, row.name, entry.display_name)
+        mapping, _ = self._visible_rosters(caller_id, caller_role, class_id_filter=class_id_filter)
         return mapping
 
-    def _find_item(
+    def _visible_rosters(
+        self,
+        caller_id: uuid.UUID | str,
+        caller_role: Role | str,
+        *,
+        class_id_filter: uuid.UUID | str | None = None,
+    ) -> tuple[dict[uuid.UUID, tuple[uuid.UUID, str, str]], dict[uuid.UUID, set[uuid.UUID]]]:
+        """:meth:`_visible_class_map`, plus every visible class each student is in.
+
+        The first map keeps one display class per student (the last one
+        listed, exactly as before). The second holds the whole set — what
+        :meth:`list_queue`'s R8 unshare filter needs, since a student in two
+        of the caller's classes can be unshared from one and not the other.
+        One roster pass builds both.
+        """
+        return visible_rosters(
+            self._class_service, caller_id, caller_role, class_id_filter=class_id_filter
+        )
+
+    def _find_any_item(
         self,
         session: Session,
         item_id: uuid.UUID | str,
         visible: dict[uuid.UUID, tuple[uuid.UUID, str, str]],
-    ) -> tuple[ReviewQueueItem, Attempt, QuestionResult | None]:
+        *,
+        caller_id: uuid.UUID | str | None = None,
+        caller_role: Role | str | None = None,
+        for_update: bool = False,
+    ) -> tuple[ReviewQueueItem, Attempt | None, QuestionResult | None, TeacherPaper | None]:
+        """Load one item of **either** source, enforcing that source's tenancy.
+
+        Exactly one of ``attempt`` / ``paper`` comes back non-``None``, matching
+        ``ck_review_queue_one_source``. An attempt-backed item is checked
+        against the caller's roster union; a console-sourced one against the
+        same paper-visibility rule the grading console applies
+        (:func:`~lemely.db.teacher_paper_repo.teacher_paper_visible`), minus
+        the ``platform_admin`` grant this queue does not honour — see
+        :meth:`list_queue`. Both failures raise the same
+        :class:`ReviewOwnershipError` carrying no data, so neither is an
+        existence oracle for the other's rows.
+
+        Raises:
+            ReviewNotFoundError: No item exists with ``item_id`` (404).
+            ReviewOwnershipError: The caller may not access it (403).
+        """
         item_uuid = _as_uuid(item_id)
         item = session.get(ReviewQueueItem, item_uuid)
         if item is None:
             raise ReviewNotFoundError(f"Unknown review item: {item_uuid}")
-        attempt = session.get(Attempt, item.attempt_id)
+        if item.teacher_paper_id is not None:
+            if caller_id is None or caller_role is None:
+                raise ReviewOwnershipError(f"Caller may not access review item {item_uuid}")
+            role = _as_role(caller_role)
+            if role is Role.platform_admin:
+                raise ReviewOwnershipError(f"Caller may not access review item {item_uuid}")
+            # ``for_update`` locks the paper row: the lock a teacher's delete
+            # takes before it withdraws this paper's items. If the delete
+            # commits first, this re-read sees the paper gone and the close is
+            # refused; otherwise the delete waits and skips a closed item.
+            stmt = select(TeacherPaper).where(
+                TeacherPaper.id == item.teacher_paper_id,
+                teacher_paper_visible(_as_uuid(caller_id), role),
+            )
+            if for_update:
+                stmt = stmt.with_for_update(of=TeacherPaper).execution_options(
+                    populate_existing=True
+                )
+            paper = session.scalars(stmt).one_or_none()
+            if paper is None:
+                raise ReviewOwnershipError(f"Caller may not access review item {item_uuid}")
+            if for_update:
+                # The item was read before the lock; its status must be the
+                # one committed by whoever held the paper before us. A
+                # regrade's `finish` deletes a paper's open items under that
+                # same lock, so the item may be gone.
+                fresh = session.scalars(
+                    select(ReviewQueueItem)
+                    .where(ReviewQueueItem.id == item_uuid)
+                    .execution_options(populate_existing=True)
+                ).one_or_none()
+                if fresh is None:
+                    raise ReviewNotFoundError(f"Unknown review item: {item_uuid}")
+                item = fresh
+            return item, None, None, paper
+        # ``for_update`` takes the same attempt-then-question lock, in the same
+        # order, that ``SelfReviewService._owned_question`` takes. Mutual
+        # exclusion needs both sides: a student self-marking question 2 while a
+        # teacher overrides question 1 of the same attempt otherwise recomputes
+        # ``attempts.awarded_marks`` from two independent reads, and the second
+        # write drops the first. The paper total then disagrees with the sum of
+        # its own questions permanently, since nothing recomputes again.
+        attempt = session.get(Attempt, item.attempt_id, with_for_update=for_update)
         if attempt is None or attempt.user_id not in visible:
             raise ReviewOwnershipError(f"Caller may not access review item {item_uuid}")
         qr = (
-            session.get(QuestionResult, item.question_result_id)
+            session.get(QuestionResult, item.question_result_id, with_for_update=for_update)
             if item.question_result_id
             else None
         )
-        return item, attempt, qr
+        return item, attempt, qr, None
 
     def _recompute_attempt_totals(
         self, session: Session, attempt: Attempt, results: Sequence[QuestionResult]
     ) -> None:
-        """Recompute the attempt's stored total after an override.
-
-        Sums every question's ``effective_marks`` (AI mark, or the teacher's
-        override when one is recorded) and re-grades it with the same
-        deterministic boundary lookup the original grade used — see module
-        docstring. ``results`` is every :class:`QuestionResult` on this
-        attempt, passed in (not re-queried) so the caller can share one fetch
-        with :meth:`_recompute_weakness_records`.
-
-        **The quiz guard (``docs/quiz-model.md`` §4.5, mandatory).** For
-        ``attempt.origin == AttemptOrigin.quiz``, ``grade``/``predicted_grade``/
-        ``boundary_source`` are left exactly as the marking path wrote them
-        (NULL — a quiz has no grade boundaries, ``AttemptRepository._persist``
-        never sets them) and :meth:`_boundaries_for` is never even called.
-        Without this guard, the *first* teacher override on any quiz would
-        invent a grade the marking path deliberately never wrote — precisely
-        the "never invent precision" violation this design spent a column
-        avoiding, arriving through the review-override side door.
-        ``awarded_marks``/``percentage`` are still recomputed from
-        ``effective_marks`` regardless of origin: a quiz mark correction must
-        still show up in the student's/teacher's percentage view.
-        """
-        awarded = sum(qr.effective_marks for qr in results)
-        maximum = attempt.maximum_marks
-        percentage = round((awarded / maximum) * 100.0, 2) if maximum else 0.0
-        attempt.awarded_marks = awarded
-        attempt.percentage = percentage
-        if attempt.origin != AttemptOrigin.quiz:
-            boundaries, boundary_source = self._boundaries_for(attempt)
-            grade = grade_for_percentage(percentage, boundaries)
-            attempt.grade = grade
-            attempt.predicted_grade = grade
-            attempt.boundary_source = boundary_source
-        session.flush()
+        """Delegates to :func:`recompute_attempt_totals` (see it for the contract)."""
+        recompute_attempt_totals(session, attempt, results, boundary_store=self._boundaries)
 
     def _recompute_weakness_records(
         self, session: Session, attempt: Attempt, results: Sequence[QuestionResult]
     ) -> None:
-        """Recompute this attempt's :class:`WeaknessRecord` rows after an override.
-
-        Re-groups every question's ``effective_marks`` with
-        :func:`~lemely.core.analytics.group_weak_areas` — the identical
-        topic-bucketing algorithm ``summarize_weaknesses`` used when this
-        attempt was first persisted — and diffs the fresh set against what is
-        currently stored, keyed by topic (``AttemptRepository.persist_correction``
-        never creates two rows for the same topic on one attempt, so a
-        topic-keyed diff cannot collide): an existing topic's numbers are
-        updated in place, a newly-created loss gets a fresh row, and a topic
-        whose lost marks dropped to zero is deleted outright — a restored
-        question must not leave behind a stale, zero-loss weakness row (see
-        module docstring).
-        """
-        items = [
-            WeakAreaInput(
-                question_id=qr.question_id,
-                topic=qr.topic,
-                awarded_marks=qr.effective_marks,
-                maximum_marks=qr.maximum_marks,
-            )
-            for qr in results
-        ]
-        fresh_by_topic = {area.topic: area for area in group_weak_areas(items)}
-
-        existing = session.scalars(
-            select(WeaknessRecord).where(WeaknessRecord.attempt_id == attempt.id)
-        ).all()
-        existing_by_topic = {record.topic: record for record in existing}
-
-        for topic, area in fresh_by_topic.items():
-            record = existing_by_topic.pop(topic, None)
-            if record is None:
-                session.add(
-                    WeaknessRecord(
-                        user_id=attempt.user_id,
-                        attempt_id=attempt.id,
-                        topic=area.topic,
-                        lost_marks=area.lost_marks,
-                        maximum_marks=area.maximum_marks,
-                        accuracy=area.accuracy,
-                        question_ids=list(area.question_ids),
-                    )
-                )
-            else:
-                record.lost_marks = area.lost_marks
-                record.maximum_marks = area.maximum_marks
-                record.accuracy = area.accuracy
-                record.question_ids = list(area.question_ids)
-
-        # Any topic no longer net-losing marks (e.g. the override restored it
-        # to full marks) is not a weakness at all — same rule
-        # summarize_weaknesses/aggregate_weaknesses_from_history apply.
-        for stale in existing_by_topic.values():
-            session.delete(stale)
-        session.flush()
+        """Delegates to :func:`recompute_weakness_records`."""
+        recompute_weakness_records(session, attempt, results)
 
     def _boundaries_for(self, attempt: Attempt) -> tuple[dict[str, float], BoundarySource]:
-        """Re-derive the exact boundary map the original grade used.
+        """Delegates to :func:`boundaries_for`."""
+        return boundaries_for(attempt, self._boundaries)
 
-        Pure function of the exam metadata already on ``attempt`` (subject,
-        session, paper) — deterministic, so this returns the identical
-        boundaries the marking pipeline resolved at persist time, never a
-        second, possibly-different set. Falls back to the global default
-        (logged, never raised) if the attempt's metadata cannot round-trip
-        through :class:`~lemely.core.schemas.ExamMetadata` — e.g. a
-        totals-only attempt written before full metadata was required.
-        """
-        try:
-            metadata = ExamMetadata(
-                subject_code=attempt.subject_code or "",
-                paper_number=attempt.paper_number or 1,
-                paper_variant=attempt.paper_variant or 1,
-                session_month=SESSION_MONTH_LABELS.get(attempt.session_month, "Specimen")
-                if attempt.session_month is not None
-                else "Specimen",
-                session_year=attempt.session_year,
+
+def visible_rosters(
+    class_service: ClassService,
+    caller_id: uuid.UUID | str,
+    caller_role: Role | str,
+    *,
+    class_id_filter: uuid.UUID | str | None = None,
+) -> tuple[dict[uuid.UUID, tuple[uuid.UUID, str, str]], dict[uuid.UUID, set[uuid.UUID]]]:
+    """The review queue's visibility rule: which students a caller is shown, and in which classes.
+
+    The one definition; :meth:`ReviewService._visible_rosters` and
+    :func:`attempt_has_reviewer` both call it.
+    """
+    mapping: dict[uuid.UUID, tuple[uuid.UUID, str, str]] = {}
+    student_classes: dict[uuid.UUID, set[uuid.UUID]] = {}
+    rows = class_service.list_classes(caller_id, caller_role)
+    if class_id_filter is not None:
+        class_uuid = _as_uuid(class_id_filter)
+        rows = [row for row in rows if row.class_id == class_uuid]
+    for row in rows:
+        for entry in class_service.roster(caller_id, caller_role, row.class_id):
+            mapping[entry.student_id] = (row.class_id, row.name, entry.display_name)
+            student_classes.setdefault(entry.student_id, set()).add(row.class_id)
+    return mapping, student_classes
+
+
+def attempt_has_reviewer(session: Session, attempt: Attempt) -> bool:
+    """Whether at least one teacher or school admin is shown this attempt's review rows.
+
+    Candidates are the teachers of the student's classes and the school admins
+    of those classes' schools; each is then put through the queue's own rule
+    (:func:`visible_rosters`, and the R8 unshare filter) rather than a copy of
+    it. A student in no class has no candidate, so no one can resolve the row.
+    """
+    # Local imports: these models are only needed here.
+    from sqlalchemy.orm import sessionmaker as _sessionmaker
+
+    from lemely.db.class_repo import ClassService
+    from lemely.db.models import ClassEnrollment, SchoolClass, SchoolMembership
+    from lemely.db.models.enums import MembershipRole
+
+    student = attempt.user_id
+    class_rows = session.execute(
+        select(SchoolClass.teacher_id, SchoolClass.school_id)
+        .join(ClassEnrollment, ClassEnrollment.class_id == SchoolClass.id)
+        .where(ClassEnrollment.student_id == student)
+    ).all()
+    if not class_rows:
+        return False
+    candidates: list[tuple[uuid.UUID, Role]] = [(t, Role.teacher) for t, _ in class_rows]
+    school_ids = {sid for _, sid in class_rows if sid is not None}
+    if school_ids:
+        admins = session.scalars(
+            select(SchoolMembership.user_id).where(
+                SchoolMembership.school_id.in_(school_ids),
+                SchoolMembership.membership_role == MembershipRole.school_admin,
             )
-            boundaries, source = self._boundaries.resolve(metadata)
-            return boundaries, BoundarySource(source)
-        except (ValidationError, ValueError) as exc:
-            log.warning(
-                "review_boundary_resolution_failed", attempt_id=str(attempt.id), error=str(exc)
+        ).all()
+        candidates.extend((a, Role.school_admin) for a in admins)
+    classes = ClassService(_sessionmaker(bind=session.get_bind()))
+    for caller_id, role in dict.fromkeys(candidates):
+        mapping, student_classes = visible_rosters(classes, caller_id, role)
+        if student not in mapping:
+            continue
+        unshared = _unshared_from(session, {student: student_classes[student]})
+        if not student_classes[student] <= unshared.get(attempt.id, set()):
+            return True
+    return False
+
+
+def _unshared_from(
+    session: Session, student_classes: dict[uuid.UUID, set[uuid.UUID]]
+) -> dict[uuid.UUID, set[uuid.UUID]]:
+    """Map each attempt to the caller's classes it is unshared from (D9, R8).
+
+    One query over every class in ``student_classes``, not one per student
+    or per item.
+    """
+    class_ids = set().union(*student_classes.values())
+    if not class_ids:
+        return {}
+    stmt = select(ClassPaperExclusion.attempt_id, ClassPaperExclusion.class_id).where(
+        ClassPaperExclusion.class_id.in_(class_ids)
+    )
+    unshared: dict[uuid.UUID, set[uuid.UUID]] = {}
+    for attempt_id, class_id in session.execute(stmt).all():
+        unshared.setdefault(attempt_id, set()).add(class_id)
+    return unshared
+
+
+def recompute_attempt_totals(
+    session: Session,
+    attempt: Attempt,
+    results: Sequence[QuestionResult],
+    *,
+    boundary_store: GradeBoundaryStore,
+) -> None:
+    """Recompute the attempt's stored total after a mark changed.
+
+    Sums every question's ``effective_marks`` (teacher override, else student
+    self-mark, else the AI mark) and re-grades it with the same deterministic
+    boundary lookup the original grade used — see the module docstring.
+    ``results`` is every :class:`QuestionResult` on this attempt, passed in
+    (not re-queried) so the caller can share one fetch with
+    :func:`recompute_weakness_records`.
+
+    Module-level, not a method, because it has two callers with different
+    tenancy — :meth:`ReviewService.resolve` (a teacher) and
+    :meth:`lemely.db.self_review_repo.SelfReviewService.submit` (a student) —
+    and the self-review spec's totals invariant is exactly that the two cannot
+    round differently for the same marks. One implementation, not two.
+
+    **The quiz guard (``docs/quiz-model.md`` §4.5, mandatory).** For
+    ``attempt.origin == AttemptOrigin.quiz``, ``grade``/``predicted_grade``/
+    ``boundary_source`` are left exactly as the marking path wrote them
+    (NULL) and :func:`boundaries_for` is never even called.
+    ``awarded_marks``/``percentage`` are still recomputed regardless of origin.
+    """
+    awarded = sum(qr.effective_marks for qr in results)
+    maximum = attempt.maximum_marks
+    percentage = round((awarded / maximum) * 100.0, 2) if maximum else 0.0
+    attempt.awarded_marks = awarded
+    attempt.percentage = percentage
+    if attempt.origin != AttemptOrigin.quiz:
+        boundaries, boundary_source = boundaries_for(attempt, boundary_store)
+        grade = grade_for_percentage(percentage, boundaries)
+        attempt.grade = grade
+        attempt.predicted_grade = grade
+        attempt.boundary_source = boundary_source
+    session.flush()
+
+
+def recompute_weakness_records(
+    session: Session, attempt: Attempt, results: Sequence[QuestionResult]
+) -> None:
+    """Recompute this attempt's :class:`WeaknessRecord` rows after a mark changed.
+
+    Re-groups every question's ``effective_marks`` with
+    :func:`~lemely.core.analytics.group_weak_areas` — the identical
+    topic-bucketing algorithm ``summarize_weaknesses`` used when this attempt
+    was first persisted — and diffs the fresh set against what is currently
+    stored, keyed by topic: an existing topic's numbers are updated in place,
+    a newly-created loss gets a fresh row, and a topic whose lost marks
+    dropped to zero is deleted outright (see module docstring).
+    """
+    items = [
+        WeakAreaInput(
+            question_id=qr.question_id,
+            topic=qr.topic,
+            awarded_marks=qr.effective_marks,
+            maximum_marks=qr.maximum_marks,
+        )
+        for qr in results
+    ]
+    fresh_by_topic = {area.topic: area for area in group_weak_areas(items)}
+
+    existing = session.scalars(
+        select(WeaknessRecord).where(WeaknessRecord.attempt_id == attempt.id)
+    ).all()
+    existing_by_topic = {record.topic: record for record in existing}
+
+    for topic, area in fresh_by_topic.items():
+        record = existing_by_topic.pop(topic, None)
+        if record is None:
+            session.add(
+                WeaknessRecord(
+                    user_id=attempt.user_id,
+                    attempt_id=attempt.id,
+                    topic=area.topic,
+                    lost_marks=area.lost_marks,
+                    maximum_marks=area.maximum_marks,
+                    accuracy=area.accuracy,
+                    question_ids=list(area.question_ids),
+                )
             )
-            return (
-                DEFAULT_GRADE_BOUNDARIES,
-                attempt.boundary_source or BoundarySource.global_default,
-            )
+        else:
+            record.lost_marks = area.lost_marks
+            record.maximum_marks = area.maximum_marks
+            record.accuracy = area.accuracy
+            record.question_ids = list(area.question_ids)
+
+    for stale in existing_by_topic.values():
+        session.delete(stale)
+    session.flush()
+
+
+def boundaries_for(
+    attempt: Attempt, boundary_store: GradeBoundaryStore
+) -> tuple[dict[str, float], BoundarySource]:
+    """Re-derive the exact boundary map the original grade used.
+
+    Pure function of the exam metadata already on ``attempt`` — deterministic,
+    so this returns the identical boundaries the marking pipeline resolved at
+    persist time. Falls back to the global default (logged, never raised) if
+    the attempt's metadata cannot round-trip through
+    :class:`~lemely.core.schemas.ExamMetadata`.
+    """
+    try:
+        metadata = ExamMetadata(
+            subject_code=attempt.subject_code or "",
+            paper_number=attempt.paper_number or 1,
+            paper_variant=attempt.paper_variant or 1,
+            session_month=SESSION_MONTH_LABELS.get(attempt.session_month, "Specimen")
+            if attempt.session_month is not None
+            else "Specimen",
+            session_year=attempt.session_year,
+        )
+        boundaries, source = boundary_store.resolve(metadata)
+        return boundaries, BoundarySource(source)
+    except (ValidationError, ValueError) as exc:
+        log.warning("review_boundary_resolution_failed", attempt_id=str(attempt.id), error=str(exc))
+        return (
+            DEFAULT_GRADE_BOUNDARIES,
+            attempt.boundary_source or BoundarySource.global_default,
+        )
 
 
 def _to_row(
@@ -650,7 +1299,9 @@ def _to_row(
 ) -> ReviewQueueRow:
     return ReviewQueueRow(
         item_id=item.id,
+        source="student_attempt",
         attempt_id=attempt.id,
+        paper_id=None,
         question_result_id=qr.id if qr is not None else None,
         student_id=attempt.user_id,
         student_display_name=display_name,
@@ -674,6 +1325,204 @@ def _to_row(
     )
 
 
+def _console_report(paper: TeacherPaper) -> AccuracyReport | None:
+    """Parse a console paper's stored report, or ``None`` if it has none/unreadable.
+
+    Validating an ``AccuracyReport`` is not free and a single paper commonly
+    contributes several queue rows, so :meth:`ReviewService.list_queue` parses
+    each paper once and threads the result through rather than letting every
+    row re-validate the same JSON.
+    """
+    if paper.report_json is None:
+        return None
+    try:
+        return AccuracyReport.model_validate(paper.report_json)
+    except ValidationError:
+        log.warning("console_review_report_unreadable", paper_id=str(paper.id))
+        return None
+
+
+def _console_question(
+    report: AccuracyReport | None, question_id: str | None
+) -> CorrectedQuestion | None:
+    """The flagged question inside a console paper's report, or ``None``.
+
+    ``None`` when the paper has no readable report, when ``question_id`` is
+    unset, or when a re-grade produced a report that no longer contains that
+    question (the scheme was re-resolved, the scan re-extracted). The queue row
+    is still real and still resolvable in that case — it just cannot show marks
+    or a confidence it no longer has, and every derived field goes ``None``
+    rather than being carried over from a report that has since been replaced.
+    """
+    if report is None or question_id is None:
+        return None
+    return next((q for q in report.correction.questions if q.question_id == question_id), None)
+
+
+def console_paper_label(paper: TeacherPaper) -> str:
+    """The console's name for ``paper``, parsing its stored report for the metadata.
+
+    For a caller holding one paper rather than a queue page, such as the
+    teacher's recently-deleted list, so it reads the same as the card and the
+    queue row.
+    """
+    return _console_paper_label(paper, _console_report(paper))
+
+
+def _console_paper_label(paper: TeacherPaper, report: AccuracyReport | None) -> str:
+    """The console's own name for a paper — its identity line in the queue.
+
+    Mirrors ``lemely.web.routers.teacher._paper_label`` so a review item and
+    the grading-console card for the same scan read identically. Duplicated
+    rather than imported because that helper lives in the web layer and takes a
+    ``TeacherPaperRow`` snapshot, while this reads the ORM row directly; both
+    fall back to the teacher's own filename, never a raw uuid.
+    """
+    meta = _console_metadata(paper, report)
+    if meta is None:
+        return paper.original_filename or str(paper.id)
+    # `str(...)`, not the field itself: `session_month` is a `Literal`, so
+    # appending the year to it in place is an assignment mypy rightly rejects.
+    session = str(meta.session_month)
+    if meta.session_year is not None:
+        session = f"{session} {meta.session_year}"
+    return (
+        f"Paper {meta.paper_number} V{meta.paper_variant} "
+        f"{session} - {paper.created_at.date().isoformat()}"
+    )
+
+
+def _console_metadata(paper: TeacherPaper, report: AccuracyReport | None) -> ExamMetadata | None:
+    """The paper's exam identity: its detected metadata, else its report's.
+
+    Detection runs before marking and is cached on the row, so ``metadata_json``
+    is the more current of the two; the report's copy is the fallback for a
+    paper marked with an attached scheme and no detection pass.
+    """
+    if paper.metadata_json:
+        try:
+            return ExamMetadata.model_validate(paper.metadata_json)
+        except ValidationError:
+            pass
+    return report.correction.metadata if report is not None else None
+
+
+def _to_console_row(
+    item: ReviewQueueItem,
+    paper: TeacherPaper,
+    *,
+    now: datetime,
+    report: AccuracyReport | None,
+) -> ReviewQueueRow:
+    """Build a queue row for a console-sourced item (migration ``0034``).
+
+    Every student/class field is ``None``: a console upload has no student
+    behind it (D1.12). The paper's label goes in ``student_display_name``,
+    which is what T-07 renders as the row's identity — the honest answer to
+    "whose work is this" for a scan the teacher marked in bulk.
+    """
+    question = _console_question(report, item.question_id)
+    meta = _console_metadata(paper, report)
+    return ReviewQueueRow(
+        item_id=item.id,
+        source="console_paper",
+        attempt_id=None,
+        paper_id=paper.id,
+        question_result_id=None,
+        student_id=None,
+        student_display_name=_console_paper_label(paper, report),
+        class_id=None,
+        class_name=None,
+        subject_code=meta.subject_code if meta is not None else None,
+        paper_number=meta.paper_number if meta is not None else None,
+        paper_variant=meta.paper_variant if meta is not None else None,
+        session_month=meta.session_month if meta is not None else None,
+        session_year=meta.session_year if meta is not None else None,
+        question_id=item.question_id,
+        reason=item.reason,
+        status=item.status,
+        created_at=item.created_at,
+        waiting_hours=max((now - item.created_at).total_seconds() / 3600.0, 0.0),
+        ai_awarded_marks=question.awarded_marks if question is not None else None,
+        maximum_marks=question.maximum_marks if question is not None else None,
+        confidence_score=question.confidence_score if question is not None else None,
+    )
+
+
+def _require_attempt(item: ReviewQueueItem, attempt: Attempt | None) -> Attempt:
+    """Narrow a non-console item's attempt, or fail loudly.
+
+    ``ck_review_queue_one_source`` (migration ``0034``) guarantees a row with
+    no ``teacher_paper_id`` has an ``attempt_id``, and ``_find_any_item``
+    already raised for an attempt the caller may not see — so ``None`` here
+    means the constraint has been violated in the database. A ``raise``, not
+    an ``assert``: ``python -O`` strips asserts, and this is a real invariant
+    violation rather than a defensive no-op.
+    """
+    if attempt is None:
+        raise ValueError(f"Review item {item.id} has neither an attempt nor a teacher paper")
+    return attempt
+
+
+def _console_item_detail(
+    item: ReviewQueueItem, paper: TeacherPaper, *, now: datetime
+) -> ReviewItemDetail:
+    """Build T-08's detail for one console item (parses the paper's report once)."""
+    """T-08 detail for a console-sourced item.
+
+    The marking evidence — answer, expected answer, topic, feedback, matched
+    mark-scheme point ids — all exists on the ``CorrectedQuestion`` inside
+    ``teacher_papers.report_json`` and is read straight from it, so a console
+    item is as reviewable as an attempt-backed one.
+
+    The **override** fields are the exception, and are always empty: a console
+    paper has no ``question_results`` row, which is the only place migration
+    ``0005_review_overrides`` gave a teacher's corrected mark to live. That is
+    why :meth:`ReviewService.resolve` refuses ``override_marks`` on these items
+    rather than accepting a mark it would have to drop.
+    """
+    report = _console_report(paper)
+    question = _console_question(report, item.question_id)
+    return ReviewItemDetail(
+        row=_to_console_row(item, paper, now=now, report=report),
+        student_answer=question.student_answer if question is not None else None,
+        expected_answer=question.expected_answer if question is not None else None,
+        topic=question.topic if question is not None else None,
+        matched_point_ids=list(question.matched_point_ids) if question is not None else [],
+        feedback=question.feedback if question is not None else None,
+        marker_source=question.marker_source if question is not None else None,
+        review_reason=question.review_reason if question is not None else None,
+        is_overridden=False,
+        teacher_awarded_marks=None,
+        teacher_note=None,
+        teacher_breakdown=None,
+        overridden_by=None,
+        overridden_at=None,
+        resolution_note=item.resolution_note,
+        resolved_by=item.resolved_by,
+        resolved_at=item.resolved_at,
+        points=[],  # no question_result_points row exists for a console item
+        # A source_box frequently *does* exist here: `correct_paper`
+        # (`correction_ai.py`) attaches one to `CorrectedQuestion` whenever the
+        # extractor found one, console papers included, exactly as it does for
+        # an attempt. This stays `False` anyway, because the crop route
+        # (`GET /api/teacher/review/{item_id}/crop`) serves only
+        # attempt-backed items -- a console item's `upload_id` is NULL, so the
+        # route 404s there. Reporting `True` would promise a crop affordance
+        # that 404s.
+        has_source_box=False,
+    )
+
+
+def _as_role(value: Role | str) -> Role:
+    """Coerce a str/Role to :class:`~lemely.db.models.enums.Role`.
+
+    ``ValueError`` for an unrecognised value, matching :func:`_as_uuid` — a
+    role that does not exist must never fall through to a permissive default.
+    """
+    return value if isinstance(value, Role) else Role(value)
+
+
 def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
     """Coerce a str/UUID to :class:`uuid.UUID`, raising ``ValueError`` if invalid."""
     if isinstance(value, uuid.UUID):
@@ -690,9 +1539,15 @@ __all__ = [
     "ReviewAlreadyClosedError",
     "ReviewError",
     "ReviewItemDetail",
+    "ReviewItemPoint",
     "ReviewNotFoundError",
     "ReviewOwnershipError",
+    "ReviewQueuePage",
     "ReviewQueueRow",
     "ReviewService",
     "ReviewValidationError",
+    "boundaries_for",
+    "console_paper_label",
+    "recompute_attempt_totals",
+    "recompute_weakness_records",
 ]

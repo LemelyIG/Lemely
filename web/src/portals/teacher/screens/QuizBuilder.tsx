@@ -1,22 +1,32 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useEffect, useMemo, useState, type FormEvent } from "react"
-import { Link, useParams, useSearchParams } from "react-router-dom"
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import type { UseQueryResult } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
 import { Meter } from "@/components/ui/primitives"
+import { SectionHead } from "@/components/ui/section-head"
+import { Slider } from "@/components/ui/slider"
 import { Stepper, type StepperStep } from "@/components/ui/stepper"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { ConfirmModal } from "@/components/ui/confirm-modal"
 import { Select } from "@/components/ui/select"
+import { QueryState } from "@/components/ui/query-state"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import {
   teacherLoadFailureMessage,
   teacherMutationFailureMessage,
 } from "@/lib/teacherOutcome"
-import type { Grade } from "@/lib/types"
+import { useReference } from "@/lib/hooks/useReferenceApi"
+import { widestVocabularyFor } from "@/lib/grades"
+import {
+  POOL_SOURCE_OPTIONS,
+  estimateQuizMinutes,
+  quizLengthUpperBound,
+  settingsSoFar,
+} from "@/lib/quizBuilderSummary"
 import {
   useCreateQuizAssignment,
   useDeleteQuizAssignment,
@@ -112,6 +122,25 @@ import { BackArrow, ForwardArrow } from "@/components/ui/inline-arrow"
  * So the divergence is retired here and on `Quizzes.tsx`: muted labels use
  * `--ink-faint` like every other screen in the portal, and they are AA by
  * construction rather than by avoidance.
+ *
+ * Loading/error primitives PR, part D (per-screen sweep, PR 3): `quizQuery`
+ * — the screen's primary fetch, gating everything below the header — now
+ * goes through `<QueryState>`. Four other queries on this screen stay
+ * hand-rolled on purpose, per the conversion brief's own multi-query
+ * guidance ("convert the screen's primary query and leave the secondary
+ * panels as they are if they are genuinely independent"): `StepDifficulty`'s
+ * and `StepPool`'s own `useQuizPoolCount` calls each drive one small "how
+ * many questions match" readout a few lines tall, and `StepAssign`'s
+ * `classesQuery`/`assignmentsQuery` branches each gate one form control or
+ * list inside an already-loaded panel. `<QueryState>`'s error branch is
+ * always a full centred `ErrorState` (icon, heading, body, `px-6 py-12`) —
+ * right for a screen or a chart panel, too heavy for a single inline line
+ * inside a multi-step form, and `QueryStateErrorProps` has no `compact` slot
+ * to ask for the lighter treatment `state-views.tsx` documents for exactly
+ * this case. Each of the four keeps its own one-line pending/error text,
+ * already routed through `teacherLoadFailureMessage` rather than a raw
+ * `error.message` — the specific defect this sweep exists to close — with a
+ * comment at each site saying so.
  */
 
 const STEPS: StepperStep[] = [
@@ -123,10 +152,6 @@ const STEPS: StepperStep[] = [
   { id: 6, label: "Assign" },
 ]
 
-const GRADES: Grade[] = ["A*", "A", "B", "C", "D", "E", "U"]
-
-const BAND_ORDER = ["foundation", "standard", "challenge"] as const
-
 /** A stand-in count used only to preview the difficulty mix at step 3,
  * before step 4 has ever set a real `requestedCount` — `allocate_difficulty`
  * returns an all-zero mix for `count <= 0`, which would otherwise look like
@@ -134,24 +159,6 @@ const BAND_ORDER = ["foundation", "standard", "challenge"] as const
 const STEP3_PREVIEW_COUNT = 12
 
 const DEFAULT_REQUESTED_COUNT = 10
-
-const POOL_SOURCE_OPTIONS: { value: string; label: string; detail: string }[] = [
-  {
-    value: "past_paper",
-    label: "Past papers",
-    detail: "Real CAIE exam questions, indexed by topic and mark allocation.",
-  },
-  {
-    value: "generated",
-    label: "AI-generated",
-    detail: "New questions written to match CAIE style for this subject.",
-  },
-  {
-    value: "teacher_upload",
-    label: "My uploads",
-    detail: "Questions taken from papers you've uploaded and had parsed yourself.",
-  },
-]
 
 /** Turns a `QuizPoolCountDTO.shortfall` into the concrete "which constraint
  * to loosen" options the brief asks for — never just the raw deficit
@@ -171,20 +178,20 @@ function PoolCountPanel({ data, suggestions }: { data: QuizPoolCount; suggestion
     <div
       className={cn(
         "border rounded-md p-4 flex flex-col gap-2.5",
-        attention ? "border-warn bg-warn-wash" : "border-rule bg-paper-raised",
+        attention ? "border-tertiary bg-tertiary-container" : "border-outline-variant bg-surface-container-lowest",
       )}
     >
       <div className="flex items-baseline gap-2 flex-wrap">
         <span className="text-display-sm">{data.matching}</span>
-        <span className="text-body-sm text-ink-faint">
+        <span className="text-body-sm text-on-surface-variant">
           matching question{data.matching === 1 ? "" : "s"} available · {data.requested} requested
         </span>
       </div>
-      {data.message ? <p className="text-body-sm text-ink m-0 text-pretty">{data.message}</p> : null}
+      {data.message ? <p className="text-body-sm text-on-surface m-0 text-pretty">{data.message}</p> : null}
       {data.shortfall ? (
         <div className="flex flex-col gap-1.5">
-          <div className="text-body-sm text-ink">Short by band:</div>
-          <ul className="m-0 ps-4 text-body-sm text-ink-faint list-disc">
+          <div className="text-body-sm text-on-surface">Short by band:</div>
+          <ul className="m-0 ps-4 text-body-sm text-on-surface-variant list-disc">
             {Object.entries(data.shortfall).map(([band, deficit]) => (
               <li key={band}>
                 {band}: {deficit} short
@@ -193,8 +200,8 @@ function PoolCountPanel({ data, suggestions }: { data: QuizPoolCount; suggestion
           </ul>
           {suggestions.length > 0 ? (
             <>
-              <div className="text-body-sm text-ink mt-1">To fix this, try one of:</div>
-              <ul className="m-0 ps-4 text-body-sm text-ink-faint list-disc">
+              <div className="text-body-sm text-on-surface mt-1">To fix this, try one of:</div>
+              <ul className="m-0 ps-4 text-body-sm text-on-surface-variant list-disc">
                 {suggestions.map((s) => (
                   <li key={s}>{s}</li>
                 ))}
@@ -203,10 +210,10 @@ function PoolCountPanel({ data, suggestions }: { data: QuizPoolCount; suggestion
           ) : null}
         </div>
       ) : !data.message ? (
-        <div className="text-body-sm text-ok">Enough questions available for this quiz.</div>
+        <div className="text-body-sm text-success-text">Enough questions available for this quiz.</div>
       ) : null}
       {data.difficultyEstimated ? (
-        <div className="text-body-sm text-ink-faint">
+        <div className="text-body-sm text-on-surface-variant">
           Difficulty for some of these questions is estimated from mark allocation, not measured.
         </div>
       ) : null}
@@ -226,16 +233,16 @@ function QuestionCard({
   removedLabel?: boolean
 }) {
   return (
-    <div className="bg-paper-raised border border-rule rounded-md px-[18px] py-4 flex flex-col gap-2">
+    <div className="bg-surface-container-lowest border border-outline-variant rounded-md px-[18px] py-4 flex flex-col gap-2">
       <div className="flex items-center gap-2.5 flex-wrap">
-        <span className="text-data-sm text-ink-faint">Q{question.position}</span>
+        <span className="text-data-sm text-on-surface-variant">Q{question.position}</span>
         <Chip tone="neutral">{question.difficulty}</Chip>
         {question.topic ? <Chip tone="accent">{question.topic}</Chip> : null}
         {removedLabel ? <Chip tone="err">Removed</Chip> : null}
         <span className="flex-1" />
-        <span className="text-data-sm text-ink-faint">[{question.totalMarks}]</span>
+        <span className="text-data-sm text-on-surface-variant">[{question.totalMarks}]</span>
         {onRemove ? (
-          <Button size="sm" variant="ghost" className="text-err" disabled={removing} onClick={onRemove}>
+          <Button size="sm" variant="ghost" className="text-error" disabled={removing} onClick={onRemove}>
             Remove
           </Button>
         ) : null}
@@ -246,9 +253,9 @@ function QuestionCard({
           italic. §4.2 makes italic body-copy-only and this is body copy a
           teacher reads closely, so it is now plain `body-lg` in the UI face at
           the measure §4.2 gives it. */}
-      <div className="text-body-lg text-ink text-pretty">{question.prompt}</div>
+      <div className="text-body-lg text-on-surface text-pretty">{question.prompt}</div>
       {question.mcqOptions && question.mcqOptions.length > 0 ? (
-        <ul className="m-0 ps-4 text-body-md text-ink-faint list-disc">
+        <ul className="m-0 ps-4 text-body-md text-on-surface-variant list-disc">
           {question.mcqOptions.map((opt, i) => (
             <li key={i}>{opt}</li>
           ))}
@@ -282,9 +289,9 @@ function StepBasics({
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-5 max-w-[520px]">
       <div>
-        <div className="text-eyebrow text-ink-faint mb-2">Subject</div>
-        <div className="text-data-md text-ink-faint">
-          {quiz.subjectCode} <span className="text-ink-faint">(fixed when the quiz was created)</span>
+        <div className="text-eyebrow text-on-surface-variant mb-2">Subject</div>
+        <div className="text-data-md text-on-surface-variant">
+          {quiz.subjectCode} <span className="text-on-surface-variant">(fixed when the quiz was created)</span>
         </div>
       </div>
       <Input
@@ -358,7 +365,7 @@ function StepContent({
 
   return (
     <div className="flex flex-col gap-5 max-w-[620px]">
-      <p className="text-body-md text-ink-faint text-pretty m-0">
+      <p className="text-body-md text-on-surface-variant text-pretty m-0">
         Topics narrow the question pool the next two steps draw from. Leave this empty to draw
         from the whole subject.
       </p>
@@ -378,7 +385,7 @@ function StepContent({
       ) : null}
       <div className="flex flex-wrap gap-2">
         {topics.length === 0 ? (
-          <span className="text-body-sm text-ink-faint">
+          <span className="text-body-sm text-on-surface-variant">
             No topics added, so every topic in the subject is eligible.
           </span>
         ) : null}
@@ -400,7 +407,7 @@ function StepContent({
       </div>
       {isDraft && suggestions.length > 0 ? (
         <div>
-          <div className="text-eyebrow text-ink-faint mb-1.5">
+          <div className="text-eyebrow text-on-surface-variant mb-1.5">
             Suggested from your classes' weak topics
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -409,7 +416,7 @@ function StepContent({
                 key={s}
                 type="button"
                 onClick={() => addTopic(s)}
-                className="border border-dashed border-rule rounded-md px-3 py-1 text-body-sm text-ink-faint transition-colors hover:bg-paper-sunk cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                className="border border-dashed border-outline-variant rounded-md px-3 py-1 text-body-sm text-on-surface-variant transition-colors hover:bg-surface-container-low cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
               >
                 + {s}
               </button>
@@ -450,24 +457,35 @@ function StepDifficulty({
     requestedCount: previewCount,
     targetGrade: grade,
   })
+  const referenceQuery = useReference()
+  // The quiz carries no tier, so the target-grade radios offer the union of
+  // every grade this subject's tiers serve — a Core 0580 quiz still needs F
+  // and G offered even though 0580 Extended's own vocabulary omits them. See
+  // `lib/grades.ts`'s `widestVocabularyFor` doc for why a union, not the
+  // single longest served tier.
+  const grades = widestVocabularyFor(
+    referenceQuery.data?.targetGradeVocabularies ?? [],
+    quiz.subjectCode,
+  )
+  const bands = referenceQuery.data?.difficultyBands ?? []
 
   return (
     <div className="flex flex-col gap-5 max-w-[620px]">
-      <p className="text-body-md text-ink-faint text-pretty m-0">
+      <p className="text-body-md text-on-surface-variant text-pretty m-0">
         Lemely mixes question difficulty to suit the grade you're targeting. A quiz aimed at a C
         student made entirely of "standard" questions can't tell who's nearly a B from who's
         slipping to a D, so every target keeps at least two difficulty bands in play.
       </p>
       <div>
-        <div className="text-eyebrow text-ink-faint mb-2">
+        <div className="text-eyebrow text-on-surface-variant mb-2">
           Target grade
         </div>
         <div
           role="radiogroup"
           aria-label="Target grade"
-          className="flex flex-wrap gap-1 bg-paper-sunk p-[5px] rounded-md w-fit"
+          className="flex flex-wrap gap-1 bg-surface-container-low p-[5px] rounded-md w-fit"
         >
-          {GRADES.map((g) => {
+          {grades.map((g) => {
             const on = grade === g
             return (
               <button
@@ -484,8 +502,8 @@ function StepDifficulty({
                   // removed on any element, and a bare `<button role="radio">`
                   // had only the browser default.
                   "border cursor-pointer text-data-md w-11 py-2 rounded disabled:cursor-not-allowed",
-                  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
-                  on ? "border-rule bg-paper-raised text-ink" : "border-transparent bg-transparent text-ink-faint",
+                  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+                  on ? "border-outline-variant bg-surface-container-lowest text-on-surface" : "border-transparent bg-transparent text-on-surface-variant",
                 )}
               >
                 {g}
@@ -500,7 +518,7 @@ function StepDifficulty({
             onClick={() => setGrade(null)}
             className={cn(
               "border cursor-pointer text-body-sm px-3 py-2 rounded disabled:cursor-not-allowed",
-              grade === null ? "border-rule bg-paper-raised text-ink" : "border-transparent text-ink-faint",
+              grade === null ? "border-outline-variant bg-surface-container-lowest text-on-surface" : "border-transparent text-on-surface-variant",
             )}
           >
             No target
@@ -508,34 +526,39 @@ function StepDifficulty({
         </div>
       </div>
       <div>
-        <div className="text-eyebrow text-ink-faint mb-2">
+        <div className="text-eyebrow text-on-surface-variant mb-2">
           Example mix for a {previewCount}-question quiz at this target
         </div>
+        {/* Stays hand-rolled rather than a nested `<QueryState>` — see the
+            module header's "Loading/error primitives PR" note: this readout
+            is a few lines tall and `<QueryState>`'s error branch is always
+            the full centred `ErrorState`, too heavy for it. Already routed
+            through `teacherLoadFailureMessage`, never a raw `error.message`. */}
         {poolCountQuery.isPending ? (
-          <div className="text-body-sm text-ink-faint">Loading…</div>
+          <div className="text-body-sm text-on-surface-variant">Loading…</div>
         ) : poolCountQuery.isError ? (
-          <div className="text-body-sm text-err">
+          <div className="text-body-sm text-error">
             Couldn't load the difficulty mix: {teacherLoadFailureMessage(poolCountQuery.error)}
           </div>
         ) : (
           <div className="flex flex-col gap-2.5">
-            {BAND_ORDER.map((band) => {
+            {bands.map((band) => {
               const value = poolCountQuery.data.byBand[band] ?? 0
               const total = poolCountQuery.data.requested
               return (
                 <div key={band} className="flex items-center gap-3">
-                  <span className="w-[76px] flex-none text-body-sm text-ink-faint capitalize">{band}</span>
+                  <span className="w-[76px] flex-none text-body-sm text-on-surface-variant capitalize">{band}</span>
                   <Meter
                     value={total > 0 ? (value / total) * 100 : 0}
                     label={`${band}: ${value} of ${total} questions`}
                     className="flex-1"
                   />
-                  <span className="w-8 flex-none text-end text-data-sm text-ink-faint">{value}</span>
+                  <span className="w-8 flex-none text-end text-data-sm text-on-surface-variant">{value}</span>
                 </div>
               )
             })}
             {quiz.requestedCount == null || quiz.requestedCount <= 0 ? (
-              <p className="text-body-sm text-ink-faint m-0">
+              <p className="text-body-sm text-on-surface-variant m-0">
                 This is an example. You'll choose the real question count in the next step.
               </p>
             ) : null}
@@ -585,11 +608,16 @@ function StepPool({
   })
 
   const suggestions = poolCountQuery.data ? shortfallSuggestions(poolCountQuery.data, quiz) : []
+  // `matching` is the real, uncapped count the current source/topics/grade
+  // filters serve (`PoolCountPanel`'s own headline figure) — the slider's
+  // ceiling once a source has been chosen and the count has resolved; a
+  // conservative 50 before that (`quizLengthUpperBound`'s own doc).
+  const lengthUpperBound = quizLengthUpperBound(poolCountQuery.data?.matching ?? null)
 
   return (
     <div className="flex flex-col gap-5 max-w-[640px]">
       <div>
-        <div className="text-eyebrow text-ink-faint mb-2">
+        <div className="text-eyebrow text-on-surface-variant mb-2">
           Question source
         </div>
         <div role="radiogroup" aria-label="Question source" className="flex flex-col gap-2.5">
@@ -604,35 +632,47 @@ function StepPool({
                 disabled={!isDraft}
                 onClick={() => setPoolSource(opt.value)}
                 className={cn(
-                  "flex flex-col items-start gap-0.5 text-start border bg-paper-raised rounded-md px-4 py-3 cursor-pointer disabled:cursor-not-allowed",
-                  on ? "border-accent" : "border-rule transition-colors hover:bg-paper-sunk",
+                  "flex flex-col items-start gap-0.5 text-start border bg-surface-container-lowest rounded-md px-4 py-3 cursor-pointer disabled:cursor-not-allowed",
+                  on ? "border-primary" : "border-outline-variant transition-colors hover:bg-surface-container-low",
                 )}
               >
-                <span className="text-body-md text-ink">{opt.label}</span>
-                <span className="text-body-sm text-ink-faint">{opt.detail}</span>
+                <span className="text-body-md text-on-surface">{opt.label}</span>
+                <span className="text-body-sm text-on-surface-variant">{opt.detail}</span>
               </button>
             )
           })}
         </div>
       </div>
-      <Input
-        type="number"
-        min={1}
-        label="Number of questions"
-        disabled={!isDraft}
-        value={requestedCount}
-        onChange={(e) => setRequestedCount(Math.max(0, Number(e.target.value) || 0))}
-        wrapperClassName="w-[200px]"
-      />
+      <div className="flex flex-col gap-1.5 w-[280px]">
+        <label className="text-label text-on-surface" htmlFor="quiz-length-slider">
+          Number of questions:{" "}
+          <span className="text-data-md text-on-surface">{requestedCount}</span>
+        </label>
+        <Slider
+          id="quiz-length-slider"
+          value={Math.min(requestedCount, lengthUpperBound)}
+          onValueChange={setRequestedCount}
+          min={1}
+          max={lengthUpperBound}
+          disabled={!isDraft}
+          aria-label="Number of questions"
+        />
+        <span className="text-body-sm text-on-surface-variant">
+          ~{estimateQuizMinutes(requestedCount)} min
+        </span>
+      </div>
 
+      {/* Same "genuinely independent panel, too small for a full ErrorState"
+          call as `StepDifficulty`'s own `poolCountQuery` block — see the
+          module header. */}
       {poolSource == null ? (
-        <p className="text-body-sm text-ink-faint m-0">
+        <p className="text-body-sm text-on-surface-variant m-0">
           Choose a source above to see how many matching questions are available.
         </p>
       ) : poolCountQuery.isPending ? (
-        <div className="text-body-sm text-ink-faint">Checking the question pool…</div>
+        <div className="text-body-sm text-on-surface-variant">Checking the question pool…</div>
       ) : poolCountQuery.isError ? (
-        <div className="text-body-sm text-err">
+        <div className="text-body-sm text-error">
           Couldn't check the pool: {teacherLoadFailureMessage(poolCountQuery.error)}
         </div>
       ) : (
@@ -706,7 +746,7 @@ function StepPreview({
                 ? "Generate more questions"
                 : "Generate questions"}
           </Button>
-          <span className="text-body-sm text-ink-faint">
+          <span className="text-body-sm text-on-surface-variant">
             {quiz.requestedCount != null
               ? `${included.length} of ${quiz.requestedCount} requested`
               : `${included.length} question${included.length === 1 ? "" : "s"} so far`}
@@ -714,15 +754,15 @@ function StepPreview({
         </div>
       ) : null}
       {!canGenerate && isDraft ? (
-        <p className="text-body-sm text-ink-faint m-0">Choose a question source in step 4 before generating.</p>
+        <p className="text-body-sm text-on-surface-variant m-0">Choose a question source in step 4 before generating.</p>
       ) : null}
       {generate.isError ? (
-        <div role="alert" className="text-body-sm text-err">
+        <div role="alert" className="text-body-sm text-error">
           Couldn't generate questions: {teacherMutationFailureMessage(generate.error)}
         </div>
       ) : null}
       {lastGenerated ? (
-        <div className="text-body-sm text-ink-faint bg-paper-sunk border border-rule rounded-md px-3.5 py-3">
+        <div className="text-body-sm text-on-surface-variant bg-surface-container-low border border-outline-variant rounded-md px-3.5 py-3">
           Added {lastGenerated.created.length} question{lastGenerated.created.length === 1 ? "" : "s"}.
           {lastGenerated.shortfall ? (
             <ul className="m-0 mt-1.5 ps-4 list-disc">
@@ -755,7 +795,7 @@ function StepPreview({
         </div>
       )}
       {removeQuestion.isError ? (
-        <div role="alert" className="text-body-sm text-err">
+        <div role="alert" className="text-body-sm text-error">
           Couldn't remove that question: {teacherMutationFailureMessage(removeQuestion.error)}
         </div>
       ) : null}
@@ -765,7 +805,7 @@ function StepPreview({
           <button
             type="button"
             onClick={() => setShowRemoved((v) => !v)}
-            className="text-body-sm text-ink-faint transition-colors hover:text-ink bg-transparent border-0 p-0 cursor-pointer"
+            className="text-body-sm text-on-surface-variant transition-colors hover:text-on-surface bg-transparent border-0 p-0 cursor-pointer"
           >
             {showRemoved ? "Hide" : "Show"} {removed.length} removed question
             {removed.length === 1 ? "" : "s"} (kept for audit, not part of the quiz)
@@ -851,28 +891,30 @@ function StepAssign({
   return (
     <div className="flex flex-col gap-5 max-w-[640px]">
       {quiz.questionCount === 0 ? (
-        <p className="text-body-sm text-warn m-0">
+        <p className="text-body-sm text-on-tertiary-container m-0">
           Add at least one question in step 5 before assigning this quiz.
         </p>
       ) : quiz.status === "closed" || quiz.status === "archived" ? (
-        <p className="text-body-sm text-ink-faint m-0">
+        <p className="text-body-sm text-on-surface-variant m-0">
           This quiz is {statusLabel(quiz.status).toLowerCase()}, so it can no longer be assigned
           to any class.
         </p>
       ) : canAssign ? (
         <form
           onSubmit={handleAssign}
-          className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-3"
+          className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px] flex flex-col gap-3"
         >
           {/* The label used to wrap all three branches, so while the classes
               were loading or had failed there was a `<label>` pointing at no
               control at all. The kit's `<Select>` owns its own label, and the
               two non-ready states are now plain lines beside it rather than
-              inside it. */}
+              inside it. Stays hand-rolled rather than a nested `<QueryState>`
+              for the same "too small for a full ErrorState" reason as the
+              two `poolCountQuery` panels — see the module header. */}
           {classesQuery.isPending ? (
-            <div className="text-body-sm text-ink-faint">Loading your classes…</div>
+            <div className="text-body-sm text-on-surface-variant">Loading your classes…</div>
           ) : classesQuery.isError ? (
-            <div className="text-body-sm text-err">
+            <div className="text-body-sm text-error">
               Couldn't load your classes: {teacherLoadFailureMessage(classesQuery.error)}
             </div>
           ) : (
@@ -912,7 +954,7 @@ function StepAssign({
             </Button>
           </div>
           {createAssignment.isError ? (
-            <div role="alert" className="text-body-sm text-err">
+            <div role="alert" className="text-body-sm text-error">
               Couldn't assign: {teacherMutationFailureMessage(createAssignment.error)}
             </div>
           ) : null}
@@ -920,46 +962,48 @@ function StepAssign({
       ) : null}
 
       <div>
-        <div className="text-eyebrow text-ink-faint mb-2">
+        <div className="text-eyebrow text-on-surface-variant mb-2">
           Assigned to
         </div>
+        {/* Same "too small for a full ErrorState" call as the other three
+            panel-level queries on this screen — see the module header. */}
         {assignmentsQuery.isPending ? (
-          <div className="text-body-sm text-ink-faint">Loading assignments…</div>
+          <div className="text-body-sm text-on-surface-variant">Loading assignments…</div>
         ) : assignmentsQuery.isError ? (
-          <div className="text-body-sm text-err">
+          <div className="text-body-sm text-error">
             Couldn't load assignments: {teacherLoadFailureMessage(assignmentsQuery.error)}
           </div>
         ) : assignmentsQuery.data.assignments.length === 0 ? (
-          <div className="text-body-sm text-ink-faint">Not assigned to any class yet.</div>
+          <div className="text-body-sm text-on-surface-variant">Not assigned to any class yet.</div>
         ) : (
           <ul className="flex flex-col gap-2 m-0 p-0 list-none">
             {assignmentsQuery.data.assignments.map((a) => (
               <li
                 key={a.id}
-                className="bg-paper-raised border border-rule rounded-md px-4 py-3 flex items-center gap-3 flex-wrap"
+                className="bg-surface-container-lowest border border-outline-variant rounded-md px-4 py-3 flex items-center gap-3 flex-wrap"
               >
-                <Link to={`/teacher/classes/${a.classId}`} className="text-ink hover:underline text-body-lg">
+                <Link to={`/teacher/classes/${a.classId}`} className="text-on-surface hover:underline text-body-lg">
                   {a.className}
                 </Link>
-                <span className="text-body-sm text-ink-faint">
+                <span className="text-body-sm text-on-surface-variant">
                   {a.rosterSize} student{a.rosterSize === 1 ? "" : "s"}
                 </span>
                 {a.dueAt ? (
-                  <span className="text-body-sm text-ink-faint">Due {new Date(a.dueAt).toLocaleString()}</span>
+                  <span className="text-body-sm text-on-surface-variant">Due {new Date(a.dueAt).toLocaleString()}</span>
                 ) : null}
                 <span className="flex-1" />
                 {/* T-09's exit to T-10. Results are per assignment, so the
                     link carries this assignment's id, not just the quiz's. */}
                 <Link
                   to={`/teacher/quizzes/${quizId}/assignments/${a.id}/results`}
-                  className="text-body-sm text-ink hover:underline"
+                  className="text-body-sm text-on-surface hover:underline"
                 >
                   View results <ForwardArrow />
                 </Link>
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="text-err"
+                  className="text-error"
                   disabled={deleteAssignment.isPending}
                   onClick={() => setUnassigning({ id: a.id, className: a.className })}
                 >
@@ -1004,6 +1048,7 @@ function StepAssign({
 }
 
 export function QuizBuilder() {
+  const navigate = useNavigate()
   const { quizId } = useParams<{ quizId: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -1022,137 +1067,196 @@ export function QuizBuilder() {
     }
   }, [quiz, searchParams, setSearchParams])
 
-  if (quizQuery.isPending) {
-    return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
-        <h1 className="sr-only">Quiz builder</h1>
-        {/* The stepper plus a step panel are what arrive, so two panel
-            shapes hold that space. §12: the loading state matches the layout
-            it replaces. */}
-        <PanelSkeleton />
-        <PanelSkeleton />
-      </div>
-    )
-  }
-
-  if (quizQuery.isError) {
-    return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
-        <h1 className="sr-only">Quiz builder</h1>
-        <ErrorState
-          heading="Couldn't load this quiz"
-          body={teacherLoadFailureMessage(quizQuery.error)}
-          action={{ label: "Retry", onClick: () => quizQuery.refetch() }}
-          secondaryAction={{ label: "Back to quizzes", onClick: () => history.back() }}
-        />
-      </div>
-    )
-  }
-
-  const { quiz: loadedQuiz, questions } = quizQuery.data
-  const isDraft = loadedQuiz.status === "draft"
-  const stepFromUrl = Number(searchParams.get("step"))
-  const step =
-    Number.isInteger(stepFromUrl) && stepFromUrl >= 1 && stepFromUrl <= 6
-      ? stepFromUrl
-      : loadedQuiz.builderStep
-
-  function goToStep(next: number, extra?: UpdateQuizDraftRequest) {
-    setSearchParams({ step: String(next) })
-    if (isDraft) {
-      patchDraft.mutate({ ...extra, builderStep: next })
-    }
-  }
-
-  const completed = new Set<number>()
-  if (loadedQuiz.title.trim()) completed.add(1)
-  if (loadedQuiz.includedTopics.length > 0) completed.add(2)
-  if (loadedQuiz.targetGrade) completed.add(3)
-  if (loadedQuiz.poolSource) completed.add(4)
-  if (loadedQuiz.questionCount > 0) completed.add(5)
-  if (!isDraft) completed.add(6)
-
   return (
-    <div className="lm-screen flex flex-col gap-6 min-w-0">
-      <div className="flex flex-col gap-1">
-        <Link to="/teacher/quizzes" className="text-body-sm text-ink-faint transition-colors hover:text-ink w-fit">
-          <BackArrow /> All quizzes
-        </Link>
-        <div className="flex items-start gap-3 flex-wrap gap-y-2 mt-1">
-          <div className="min-w-0">
-            <div className="text-eyebrow text-ink-faint">
-              {loadedQuiz.subjectCode}
-            </div>
-            <h1 className="text-display-md mt-1 text-pretty">
-              {loadedQuiz.title}
-            </h1>
-          </div>
-          <div className="flex-1" />
-          <Chip tone={statusTone(loadedQuiz.status)}>{statusLabel(loadedQuiz.status)}</Chip>
-        </div>
-      </div>
+    <div className="flex flex-col gap-6 min-w-0">
+      <QueryState
+        query={quizQuery}
+        srHeading="Quiz builder"
+        // The stepper plus a step panel are what arrive, so two panel shapes
+        // hold that space. §12: the loading state matches the layout it
+        // replaces. Reused verbatim from the pre-conversion pending branch.
+        skeleton={
+          <>
+            <PanelSkeleton />
+            <PanelSkeleton />
+          </>
+        }
+        // `useQuizDetail` disables its query when `quizId` is falsy (`enabled:
+        // !!quizId`). The route this screen mounts under always supplies
+        // `:quizId`, so this is a defensive branch for a URL reached some
+        // other way, not a state normal navigation ever produces — same
+        // reasoning `ClassDetail.tsx` documents for its own `idle`.
+        idle={
+          <EmptyState
+            heading="No quiz selected"
+            body="Choose a quiz from your quiz list to open its builder."
+            action={{ label: "Back to quizzes", onClick: () => navigate("/teacher/quizzes") }}
+          />
+        }
+        // A builder opened on a quiz that will not load is a dead end with
+        // only a retry: the id in the URL is not going to start resolving on
+        // the fourth press. `secondaryAction` (added to
+        // `QueryStateErrorProps` by this sweep) keeps the way back out.
+        error={{
+          heading: "Couldn't load this quiz",
+          body: teacherLoadFailureMessage,
+          secondaryAction: { label: "Back to quizzes", onClick: () => navigate("/teacher/quizzes") },
+        }}
+      >
+        {({ quiz: loadedQuiz, questions }) => {
+          const isDraft = loadedQuiz.status === "draft"
+          const stepFromUrl = Number(searchParams.get("step"))
+          const step =
+            Number.isInteger(stepFromUrl) && stepFromUrl >= 1 && stepFromUrl <= 6
+              ? stepFromUrl
+              : loadedQuiz.builderStep
 
-      {!isDraft ? (
-        <div className="text-body-sm text-ink-faint bg-paper-sunk border border-rule rounded-md px-3.5 py-3 text-pretty">
-          This quiz is {statusLabel(loadedQuiz.status).toLowerCase()}, so its title, topics,
-          difficulty, source and questions can no longer be changed. What follows is read-only,
-          showing exactly what was configured and (below) who it's assigned to.
-        </div>
-      ) : null}
+          function goToStep(next: number, extra?: UpdateQuizDraftRequest) {
+            setSearchParams({ step: String(next) })
+            if (isDraft) {
+              patchDraft.mutate({ ...extra, builderStep: next })
+            }
+          }
 
-      {/* Navigation itself is never disabled, even for a non-draft quiz —
-          "read-only" means every step's own form controls can't be edited
-          (each step component gates its inputs on `isDraft` individually),
-          not that a teacher can no longer browse what was configured. */}
-      <Stepper steps={STEPS} current={step} onSelect={(id) => goToStep(id)} completed={completed} />
+          const completed = new Set<number>()
+          if (loadedQuiz.title.trim()) completed.add(1)
+          if (loadedQuiz.includedTopics.length > 0) completed.add(2)
+          if (loadedQuiz.targetGrade) completed.add(3)
+          if (loadedQuiz.poolSource) completed.add(4)
+          if (loadedQuiz.questionCount > 0) completed.add(5)
+          if (!isDraft) completed.add(6)
 
-      {isDraft && patchDraft.isError ? (
-        <div role="alert" className="text-body-sm text-err">
-          Couldn't save your progress: {teacherMutationFailureMessage(patchDraft.error)}
-        </div>
-      ) : null}
+          // Task 8 (C3c) · `teacher-tools-quizbuilder-structure-divergence`.
+          // Only what's already decided — a step the teacher is still on
+          // renders through its own step component, not duplicated here.
+          const soFar = settingsSoFar({ quiz: loadedQuiz, questions }, step)
 
-      {step === 1 ? (
-        <StepBasics quiz={loadedQuiz} isDraft={isDraft} onNext={(extra) => goToStep(2, extra)} />
-      ) : null}
-      {step === 2 ? (
-        <StepContent
-          quiz={loadedQuiz}
-          classes={classesQuery.data?.classes ?? []}
-          isDraft={isDraft}
-          onNext={(extra) => goToStep(3, extra)}
-          onBack={(extra) => goToStep(1, extra)}
-        />
-      ) : null}
-      {step === 3 ? (
-        <StepDifficulty
-          quiz={loadedQuiz}
-          isDraft={isDraft}
-          onNext={(extra) => goToStep(4, extra)}
-          onBack={(extra) => goToStep(2, extra)}
-        />
-      ) : null}
-      {step === 4 ? (
-        <StepPool
-          quiz={loadedQuiz}
-          isDraft={isDraft}
-          onNext={(extra) => goToStep(5, extra)}
-          onBack={(extra) => goToStep(3, extra)}
-        />
-      ) : null}
-      {step === 5 ? (
-        <StepPreview
-          quizId={quizId}
-          quiz={loadedQuiz}
-          questions={questions}
-          isDraft={isDraft}
-          onNext={() => goToStep(6)}
-          onBack={() => goToStep(4)}
-        />
-      ) : null}
-      {step === 6 ? (
-        <StepAssign quizId={quizId} quiz={loadedQuiz} classesQuery={classesQuery} onBack={() => goToStep(5)} />
-      ) : null}
+          return (
+            <>
+              <div className="flex flex-col gap-1">
+                <Link
+                  to="/teacher/quizzes"
+                  className="text-body-sm text-on-surface-variant transition-colors hover:text-on-surface w-fit"
+                >
+                  <BackArrow /> All quizzes
+                </Link>
+                <div className="flex items-start gap-3 flex-wrap gap-y-2 mt-1">
+                  <div className="min-w-0">
+                    <div className="text-eyebrow text-on-surface-variant">
+                      {loadedQuiz.subjectCode}
+                    </div>
+                    <h1 className="text-display-md mt-1 text-pretty">
+                      {loadedQuiz.title}
+                    </h1>
+                  </div>
+                  <div className="flex-1" />
+                  <Chip tone={statusTone(loadedQuiz.status)}>{statusLabel(loadedQuiz.status)}</Chip>
+                </div>
+              </div>
+
+              {!isDraft ? (
+                <div className="text-body-sm text-on-surface-variant bg-surface-container-low border border-outline-variant rounded-md px-3.5 py-3 text-pretty">
+                  This quiz is {statusLabel(loadedQuiz.status).toLowerCase()}, so its title, topics,
+                  difficulty, source and questions can no longer be changed. What follows is
+                  read-only, showing exactly what was configured and (below) who it's assigned to.
+                </div>
+              ) : null}
+
+              {/* Navigation itself is never disabled, even for a non-draft quiz —
+                  "read-only" means every step's own form controls can't be edited
+                  (each step component gates its inputs on `isDraft` individually),
+                  not that a teacher can no longer browse what was configured.
+
+                  The "so far" rail sits beside the stepper from `sidebar:` up
+                  (`soFar` is short — five labels at most — so a sidebar never
+                  outgrows the stepper beside it); below `sidebar:` there's no
+                  room for a second column, so it collapses to one quiet line
+                  under the stepper instead of disappearing outright. The
+                  wrapper's own row/column switch has to share that same
+                  breakpoint — a `md:` wrapper with a `sidebar:` aside left a
+                  768-819px band where the wrapper was already a row but the
+                  aside was still hidden, rendering the one-line fallback as
+                  a second column beside the stepper. */}
+              <div className="flex items-start gap-8 max-sidebar:flex-col max-sidebar:gap-3">
+                <div className="flex-1 min-w-0">
+                  <Stepper steps={STEPS} current={step} onSelect={(id) => goToStep(id)} completed={completed} />
+                </div>
+                {soFar.length > 0 ? (
+                  <>
+                    <aside className="hidden sidebar:flex sidebar:flex-col gap-2.5 w-56 shrink-0">
+                      <SectionHead title="So far" rung="display-sm" level={3} />
+                      <dl className="m-0 flex flex-col gap-2">
+                        {soFar.map((item) => (
+                          <div key={item.label} className="flex items-baseline justify-between gap-3">
+                            <dt className="text-body-sm text-on-surface-variant">{item.label}</dt>
+                            <dd className="m-0 text-body-sm text-on-surface text-end truncate">{item.value}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </aside>
+                    <div className="sidebar:hidden text-body-sm text-on-surface-variant text-pretty">
+                      So far: {soFar.map((item) => `${item.label} ${item.value}`).join(" · ")}
+                    </div>
+                  </>
+                ) : null}
+              </div>
+
+              {isDraft && patchDraft.isError ? (
+                <div role="alert" className="text-body-sm text-error">
+                  Couldn't save your progress: {teacherMutationFailureMessage(patchDraft.error)}
+                </div>
+              ) : null}
+
+              {step === 1 ? (
+                <StepBasics quiz={loadedQuiz} isDraft={isDraft} onNext={(extra) => goToStep(2, extra)} />
+              ) : null}
+              {step === 2 ? (
+                <StepContent
+                  quiz={loadedQuiz}
+                  classes={classesQuery.data?.classes ?? []}
+                  isDraft={isDraft}
+                  onNext={(extra) => goToStep(3, extra)}
+                  onBack={(extra) => goToStep(1, extra)}
+                />
+              ) : null}
+              {step === 3 ? (
+                <StepDifficulty
+                  quiz={loadedQuiz}
+                  isDraft={isDraft}
+                  onNext={(extra) => goToStep(4, extra)}
+                  onBack={(extra) => goToStep(2, extra)}
+                />
+              ) : null}
+              {step === 4 ? (
+                <StepPool
+                  quiz={loadedQuiz}
+                  isDraft={isDraft}
+                  onNext={(extra) => goToStep(5, extra)}
+                  onBack={(extra) => goToStep(3, extra)}
+                />
+              ) : null}
+              {step === 5 ? (
+                <StepPreview
+                  quizId={quizId}
+                  quiz={loadedQuiz}
+                  questions={questions}
+                  isDraft={isDraft}
+                  onNext={() => goToStep(6)}
+                  onBack={() => goToStep(4)}
+                />
+              ) : null}
+              {step === 6 ? (
+                <StepAssign
+                  quizId={quizId}
+                  quiz={loadedQuiz}
+                  classesQuery={classesQuery}
+                  onBack={() => goToStep(5)}
+                />
+              ) : null}
+            </>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }

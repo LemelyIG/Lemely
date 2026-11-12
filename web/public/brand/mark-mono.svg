@@ -1,23 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  Lemely mark, single-colour cut.
-
-  For anywhere the accent cannot be relied on: one-colour print, an embossed or
-  engraved application, a foreground-colour context, or a surface where the warm
-  red would clash. Uses `currentColor` throughout, so in HTML it inherits the
-  surrounding text colour and needs no variant per background.
-
-  The hairline/heavy weight contrast does all the work here, since the colour
-  contrast between printed rule and handwritten mark is gone. That is why the
-  ratio matters more than either absolute width.
--->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"
      role="img" aria-label="Lemely">
   <title>Lemely</title>
-  <g fill="none" stroke="currentColor" stroke-linecap="butt">
-    <path d="M20 10 V46" stroke-width="2" />
-    <path d="M20 46 H44" stroke-width="2" />
-  </g>
-  <path d="M27 37 L33 46 L47 19" fill="none" stroke="currentColor" stroke-width="6"
-        stroke-linecap="round" stroke-linejoin="round" />
+  <!--
+    Lemely "lm" icon, single-colour cut: the clip and the m in currentColor, no tile.
+
+    GENERATED FILE. Do not edit by hand: `npm run mark` overwrites it.
+    The geometry lives in `web/scripts/generate_mark_svg.mjs`; the colours are
+    resolved from the Material 3 role tokens in `src/index.css` by `vite/brandTokens.ts`.
+  -->
+  <path d="M58 34 V72 A8 8 0 0 1 42 72 V20 A14 14 0 0 1 70 20 V78 A18 18 0 0 1 34 78 V36" transform="translate(22 27.5) scale(0.5) translate(-34 -6)"
+        fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M49 72 V51 M49 58 A7 7 0 0 1 63 58 V72 M63 58 A7 7 0 0 1 77 58 V72"
+        fill="none" stroke="currentColor" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round" />
 </svg>

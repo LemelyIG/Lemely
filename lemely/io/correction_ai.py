@@ -2,14 +2,34 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
 import math
+import os
 import re
-from collections.abc import Mapping
+import statistics
+import uuid
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Literal, NamedTuple, TypedDict, cast
 
 import structlog
 
+from lemely.core.binding import BindingVerdict
+from lemely.core.binding_gate import GateThresholds, check_off_topic, verdict
+from lemely.core.cited_marks import flag_uncited, uncited
 from lemely.core.correction import _exam_metadata, _load_mark_scheme
-from lemely.core.loose_schemas import CalculatedAnswer, MarkScheme, Question, QuestionType
+from lemely.core.equivalence import Verdict, VerdictKind, equivalent
+from lemely.core.leaf_kind import leaf_kind
+from lemely.core.loose_schemas import (
+    AnswerPoint,
+    CalculatedAnswer,
+    MarkScheme,
+    MathMarkType,
+    MCQAnswer,
+    Question,
+    QuestionType,
+)
+from lemely.core.point_groups import group_capped_points_total, group_points
 from lemely.core.schemas import (
     REVIEW_CONFIDENCE_THRESHOLD,
     AIMarkResponse,
@@ -17,17 +37,147 @@ from lemely.core.schemas import (
     CorrectedQuestion,
     CorrectionResult,
     ExtractedAnswers,
+    PointVerdict,
+    SourceBox,
     confidence_band_for_score,
+    dedupe_point_verdicts,
+    marker_response_schema,
 )
-from lemely.io.gemini import GeminiClient
+from lemely.io.gemini import (
+    CallRecord,
+    GeminiClient,
+    SharedPrefix,
+    process_call_records,
+    record_calls,
+    thinking_rank,
+)
 from lemely.io.prompts.correction_ai import (
-    MARKER_SYSTEM_PROMPT,
     VERSION,
     build_marker_user_prompt,
+    build_shared_prefix,
+    default_marking_rules,
+    marker_system_prompt,
+    printed_principles,
+    render_paper_mark_scheme,
+    shared_prefix_instructions,
+    syllabus_conventions,
 )
+from lemely.io.reread import REREAD_REVIEW_AGREEMENT_THRESHOLD
 from lemely.io.validation import validate_mark_scheme
-from lemely.runtime.errors import ConfigError
+from lemely.runtime.config import GeminiSettings, MarkingOptions
+from lemely.runtime.errors import ConfigError, CostCeilingError, LemelyError
 from lemely.runtime.events import EventType, bus
+
+if TYPE_CHECKING:
+    from lemely.io.adjudication import PageSource
+    from lemely.io.rasterise import RasterisedPage
+
+
+def _keep_higher(first: AIMarkResponse, retry: AIMarkResponse) -> AIMarkResponse:
+    """Lever H2a: the higher-marked of two samples of one leaf (two only: the over-marking cap)."""
+    if first.awarded_marks != retry.awarded_marks:
+        chosen = first if first.awarded_marks > retry.awarded_marks else retry
+        confidence = min(first.confidence, retry.confidence)
+    else:
+        chosen = first if first.confidence > retry.confidence else retry
+        confidence = chosen.confidence
+    return chosen.model_copy(update={"confidence": confidence})
+
+
+def _median_of(samples: Sequence[AIMarkResponse]) -> AIMarkResponse:
+    """Lever H4c: the median-marked of two agreeing or three samples of one leaf."""
+    m = statistics.median_low([s.awarded_marks for s in samples])
+    chosen = samples[0]
+    for s in samples:
+        if s.awarded_marks == m and (
+            chosen.awarded_marks != m or s.confidence >= chosen.confidence
+        ):
+            chosen = s
+    if all(s.awarded_marks == m for s in samples):
+        confidence = chosen.confidence
+    else:
+        confidence = min(s.confidence for s in samples)
+    return chosen.model_copy(update={"confidence": confidence})
+
+
+def _verdict_checked(question: Question, reply: AIMarkResponse) -> AIMarkResponse:
+    """H2b: a reason-first reply's mark, made to agree with its own verdicts.
+
+    The verdicts are written before the mark, so when the stated integer disagrees with
+    their sum the sum wins (logged, not flagged for review). Only a reply that judged every
+    one of the question's points, and no other, is checked; otherwise the stated mark stays.
+    """
+    if not reply.point_verdicts or not question.answer_points:
+        return reply
+    log = structlog.get_logger().bind(component="correction")
+    judged = {pv.point_id for pv in reply.point_verdicts}
+    scheme = {p.id for p in question.answer_points}
+    if judged != scheme:
+        log.info(
+            "reason_first_verdicts_incomplete",
+            question_id=question.id,
+            missing=sorted(scheme - judged),
+            unknown=sorted(judged - scheme),
+        )
+        return reply
+    totals = _awarded_from_verdicts(question, reply.point_verdicts)
+    if totals.capped == reply.awarded_marks:
+        if set(reply.matched_point_ids) == set(totals.matched_point_ids):
+            return reply
+        return reply.model_copy(update={"matched_point_ids": totals.matched_point_ids})
+    log.info(
+        "reason_first_sum_corrected",
+        question_id=question.id,
+        stated=reply.awarded_marks,
+        summed=totals.capped,
+    )
+    return reply.model_copy(
+        update={"awarded_marks": totals.capped, "matched_point_ids": totals.matched_point_ids}
+    )
+
+
+def _log_noop_levers(g: object) -> None:
+    """Log once per corrector each lever combination that is on but cannot take effect.
+
+    Reads defensively (``getattr``, ``is True``, ``isinstance``) and never raises: a
+    settings double or an odd value logs nothing.
+    """
+
+    def on(name: str) -> bool:
+        return getattr(g, name, None) is True
+
+    def number(name: str) -> float | None:
+        value = getattr(g, name, None)
+        return None if isinstance(value, bool) or not isinstance(value, int | float) else value
+
+    notes: list[str] = []
+    retry = [n for n in ("correction_retry_keep_higher", "correction_retry_median") if on(n)]
+    if retry and getattr(g, "correction_borderline_enabled", None) is False:
+        notes.append(f"{retry[0]} needs correction_borderline_enabled")
+    if retry and on("cascade_enabled"):
+        notes.append(f"{retry[0]} does not apply while cascade_enabled")
+    adjudication_model = getattr(g, "adjudication_model", None)
+    if not (isinstance(adjudication_model, str) and adjudication_model):
+        notes.extend(
+            f"{n} needs adjudication_model"
+            for n in ("adjudication_drawing_leaves", "adjudication_reread_disagreed")
+            if on(n)
+        )
+    escalation = number("escalation_confidence_threshold")
+    for flag, below in (
+        ("correction_retry_keep_higher", "correction_retry_keep_higher_below"),
+        ("correction_retry_median", "correction_retry_median_below"),
+    ):
+        lever_below = number(below)
+        if (
+            on(flag)
+            and escalation is not None
+            and lever_below is not None
+            and lever_below < escalation
+        ):
+            notes.append(f"{below} is under escalation_confidence_threshold")
+    if notes:
+        structlog.get_logger().warning("lever_no_op", notes=notes)
 
 
 def _is_leaf_marked(q: Question) -> bool:
@@ -35,21 +185,427 @@ def _is_leaf_marked(q: Question) -> bool:
     return q.marks > 0 and not q.parts
 
 
+class _FlatAnswer(NamedTuple):
+    """One extracted answer as ``correct_paper`` consumes it, keyed by leaf id."""
+
+    answer: str
+    working_out: str | None
+    confidence: float
+    source_box: SourceBox | None
+    answer_reread: str | None
+    reread_agreement: float | None
+
+
 def _flatten_answers(
     extracted: ExtractedAnswers | Mapping[str, str],
-) -> dict[str, tuple[str, str | None, float]]:
-    """Return {question_id: (answer, working_out, confidence)} for every extracted answer."""
+) -> dict[str, _FlatAnswer]:
+    """Map question_id to its :class:`_FlatAnswer` per extracted answer.
+
+    NIT-B: two ``ExtractedAnswer``s can share one ``question_id`` -- each is
+    individually well-formed, so nothing upstream (extraction validation,
+    ``_dropped_question_ids``) catches it. A plain dict comprehension keyed
+    on ``question_id`` would silently keep only the last one with no trace
+    of the discarded answer anywhere. Policy: **last-wins**, matching the
+    dict-comprehension behaviour this function had before duplicates were
+    detected, and consistent with ``answers`` ordering elsewhere being
+    treated as "most recent take wins" (e.g. a later entry plausibly being
+    the model correcting itself within one response). The point of this
+    change is not to pick a different survivor -- it's to publish the loss
+    instead of leaving it an artifact of dict construction. This mirrors the
+    same-file ``MARKING_PROGRESS`` precedent of surfacing internal state as a
+    bus event rather than the ``ANSWER_DROPPED`` event, which is published
+    from ``lemely/io/answer_extraction.py`` and never from this file.
+
+    The published ``duplicate_counts`` payload counts *extra* occurrences
+    beyond the first for each question_id, not the total occurrence count --
+    e.g. a question_id seen 3 times contributes 2 to its count, not 3.
+    """
     if isinstance(extracted, ExtractedAnswers):
-        return {a.question_id: (a.answer, a.working_out, a.confidence) for a in extracted.answers}
-    # Plain mapping fallback (Mapping[str, str]): no working_out or confidence available.
-    return {str(k): (str(v), None, 1.0) for k, v in extracted.items()}
+        flattened: dict[str, _FlatAnswer] = {}
+        duplicate_counts: dict[str, int] = {}
+        for a in extracted.answers:
+            if a.question_id in flattened:
+                duplicate_counts[a.question_id] = duplicate_counts.get(a.question_id, 0) + 1
+            flattened[a.question_id] = _FlatAnswer(
+                a.answer,
+                a.working_out,
+                a.confidence,
+                a.source_box,
+                a.answer_reread,
+                a.reread_agreement,
+            )
+        if duplicate_counts:
+            bus.publish(
+                EventType.DUPLICATE_QUESTION_ID,
+                duplicate_counts=duplicate_counts,
+                total_answers=len(extracted.answers),
+            )
+        return flattened
+    # Plain mapping fallback (Mapping[str, str]): no working_out, confidence,
+    # box or re-read available, and no duplicate keys to detect.
+    return {str(k): _FlatAnswer(str(v), None, 1.0, None, None, None) for k, v in extracted.items()}
+
+
+#: Fix round 1 (spec 2026-09-26 §4): the letters ``_build_mcq_corrected``
+#: accepts, defined once and shared with it rather than hardcoded twice.
+#: Fix round 2: derived from :class:`MCQAnswer` instead of a bare literal
+#: set. ``typing.get_args`` only resolves a ``Literal``/``Union`` alias, and
+#: ``MCQAnswer`` is a plain ``StrEnum``, so this iterates its members
+#: instead -- the goal (one definition, not two) is the same either way.
+_MCQ_LETTERS = frozenset(letter.value for letter in MCQAnswer)
+
+#: Surrounding characters a re-read may be wrapped in ("(A)", "A.", "[A]")
+#: that carry no signal about which letter was read. Straight quotes only
+#: (ruff RUF001): curly quotes are not stripped, so a re-read genuinely
+#: wrapped in them is left to the embedded-punctuation "nothing usable"
+#: path rather than silently treated the same as straight ones.
+_MCQ_STRIP_CHARS = "()[]{}<>.,;:!?\"'"
+
+
+def _normalise_mcq_reread(text: str) -> str | None:
+    """Strip surrounding whitespace, punctuation and brackets, upper-case.
+
+    Fix round 1: substitution used to hand ``_build_mcq_corrected`` the raw
+    re-read text verbatim, so a re-read of "A." or "(A)" on a correctly-read
+    "A" was marked ``0`` ("invalid MCQ answer") instead of left alone or
+    correctly substituted. Returns ``None`` unless what remains after
+    stripping is a single letter :func:`_build_mcq_corrected` itself
+    accepts -- embedded punctuation (e.g. "A/B") is not "surrounding" and is
+    deliberately NOT stripped, so it still returns ``None`` for that case.
+
+    Fix round 2 re-review: ``str.strip(chars)`` strips only the given chars
+    and stops at the first character outside that set -- so " (A) " (a
+    leading SPACE, not in :data:`_MCQ_STRIP_CHARS`) was left completely
+    unstripped. A plain ``.strip()`` (whitespace) now runs first.
+    """
+    stripped = text.strip().strip(_MCQ_STRIP_CHARS).upper()
+    return stripped if stripped in _MCQ_LETTERS else None
+
+
+def _mcq_agrees(first_read: str, reread: str | None) -> bool:
+    """Fix round 2: a re-read normalising to the same letter is agreement.
+
+    "A." or "(A)" against a first read of "A" must never be treated as a
+    disagreement -- both readings say the same thing once surrounding
+    punctuation is stripped, so there is nothing here for the flag or
+    substitution to act on.
+
+    Fix round 2 re-review: this must hold ONLY when the first read is
+    ALREADY a bare letter :func:`_build_mcq_corrected` accepts as-is --
+    ``first_read.upper() in _MCQ_LETTERS``, no stripping. If the first read
+    itself needs normalising too ("(A)", "a."), treating it as agreement
+    would skip substitution entirely and leave the UN-normalised first read
+    to reach ``_build_mcq_corrected``, which does not strip -- scoring 0
+    ("invalid MCQ answer") instead of being substituted to the letter both
+    readings actually agree on.
+    """
+    if reread is None or first_read.upper() not in _MCQ_LETTERS:
+        return False
+    return first_read.upper() == _normalise_mcq_reread(reread)
+
+
+def _disagreeing_agreement(flat: _FlatAnswer, *, is_mcq: bool = False) -> float | None:
+    """The re-read's agreement score when it disagrees, else ``None``.
+
+    Spec 2026-09-26 §4: "disagrees" means ``reread_agreement`` is not
+    ``None`` and is below :data:`REREAD_REVIEW_AGREEMENT_THRESHOLD`. Fix
+    round 1: gives callers the narrowed ``float`` in one step instead
+    of a boolean plus a defensive ``flat.reread_agreement or 0.0`` that was
+    both dead (this function's own check already guarantees non-``None``)
+    and wrong in spirit (``0.0`` is a legitimate agreement score, not a
+    fallback value). Fix round 2: on an MCQ leaf (``is_mcq``), a re-read
+    that :func:`_mcq_agrees` with the first read overrides a low raw score
+    back to agreement -- ``flat.answer``/``flat.answer_reread`` must be the
+    PRE-substitution pair for this to mean anything (callers pass
+    ``original[qid]``, never the post-substitution ``answers[qid]``).
+    """
+    agreement = flat.reread_agreement
+    if agreement is None or agreement >= REREAD_REVIEW_AGREEMENT_THRESHOLD:
+        return None
+    if is_mcq and _mcq_agrees(flat.answer, flat.answer_reread):
+        return None
+    return agreement
+
+
+def _substituted_answer(flat: _FlatAnswer, *, is_mcq: bool) -> str | None:
+    """The text substitution would mark instead of the first read.
+
+    ``None`` when the re-read is not usable for substitution: it agrees
+    with the first read (including, on an MCQ leaf, agreeing once
+    normalised -- fix round 2), it is blank, or -- on an MCQ leaf, fix
+    round 1 -- it does not normalise to a single option letter. Non-MCQ
+    leaves substitute the stripped re-read text verbatim (fix round 1:
+    previously unstripped, so a re-read with incidental leading/trailing
+    whitespace would have been quoted and marked with it).
+
+    Final review I2: ``None`` too when the FIRST read is blank. The re-read
+    of a blank crop is the model's text, never the student's, and marking
+    it would pay a call, may award marks, and flag the row -- the US-039
+    self-review exploit the flag-off path closes (see
+    :func:`_attach_extraction_context`). A blank row stays exactly as
+    ``_build_blank_corrected`` leaves it.
+    """
+    if _is_blank(flat.answer):
+        return None
+    if _disagreeing_agreement(flat, is_mcq=is_mcq) is None:
+        return None
+    reread = (flat.answer_reread or "").strip()
+    if not reread:
+        return None
+    return _normalise_mcq_reread(reread) if is_mcq else reread
+
+
+def _quote(text: str | None) -> str:
+    cleaned = (text or "").strip().replace("\n", " ")
+    return repr(cleaned if len(cleaned) <= 60 else cleaned[:60] + "…")
+
+
+def _reread_reason(
+    *, first_read: str | None, reread: str | None, agreement: float, substitution: bool
+) -> str:
+    """The three shapes of the review reason (spec 2026-09-26 §4)."""
+    head = (
+        "extraction re-read disagreed with the first read "
+        f"(agreement {agreement:.2f} < {REREAD_REVIEW_AGREEMENT_THRESHOLD:.2f})"
+    )
+    if substitution and (reread or "").strip():
+        return (
+            f"{head}; marked the re-read {_quote(reread)}, the first read was {_quote(first_read)}"
+        )
+    if substitution:
+        return (
+            f"{head}; the re-read returned nothing usable, "
+            f"marked the first read {_quote(first_read)}"
+        )
+    return f"{head}; marked the first read {_quote(first_read)}, the re-read gave {_quote(reread)}"
+
+
+def _join_reason(existing: str | None, added: str) -> str:
+    return f"{existing} | {added}" if existing else added
+
+
+def _reader_answer_ids(extracted: ExtractedAnswers | Mapping[str, str]) -> frozenset[str]:
+    """Question ids whose answer text the label binder's reader wrote from a scan.
+
+    That reader opens its description of a drawing with ``Drawing:``, and the marker
+    is told so for these answers alone. ``binding_source == "label"`` is the fact,
+    carried beside the text: a typed quiz answer and a legacy extraction never have
+    it, and a plain mapping has no such field. The word in the text is no evidence,
+    since the student can write or type it. Where two answers share an id the last
+    one decides, as in :func:`_flatten_answers`.
+    """
+    if not isinstance(extracted, ExtractedAnswers):
+        return frozenset()
+    from_reader = {a.question_id: a.binding_source == "label" for a in extracted.answers}
+    return frozenset(qid for qid, is_reader in from_reader.items() if is_reader)
+
+
+def _dropped_question_ids(extracted: ExtractedAnswers | Mapping[str, str]) -> frozenset[str]:
+    """Question ids whose answer was extracted but discarded as malformed.
+
+    US-031 review MUST-FIX 7 (stronger fix): ``ExtractedAnswers`` is the only
+    shape that can carry this -- a plain ``Mapping[str, str]`` (the
+    correction-only/oracle-answer bypass) never went through extraction at
+    all, so there is nothing to have dropped.
+    """
+    if isinstance(extracted, ExtractedAnswers):
+        return frozenset(extracted.dropped_question_ids)
+    return frozenset()
+
+
+#: Environment variable naming a JSONL file. When set and the cascade is on,
+#: every marked leaf appends one line (see :func:`_append_leaf_log`) for
+#: ``scripts/cascade_sweep.py``. Unset, nothing is written.
+CASCADE_LEAF_LOG_ENV = "LEMELY_CASCADE_LEAF_LOG"
+
+#: Generated once per process and stamped on every leaf-log line, so
+#: ``scripts/cascade_sweep.py`` can refuse a file that mixes two runs.
+CASCADE_RUN_TOKEN = uuid.uuid4().hex
+
+
+def _unaddressed_point_ids(question: Question, response: AIMarkResponse) -> list[str] | None:
+    """Mark-scheme point ids ``response.point_verdicts`` gives no verdict for.
+
+    ``None`` when the response carries no point verdicts at all: the marker was
+    not asked for them, so their absence says nothing about coverage.
+    """
+    if not response.point_verdicts:
+        return None
+    addressed = {pv.point_id for pv in response.point_verdicts}
+    return [ap.id for ap in question.answer_points if ap.id not in addressed]
+
+
+def _append_leaf_log(
+    path: str,
+    entry: Mapping[str, object],
+    records: Sequence[CallRecord],
+    question_id: str,
+) -> None:
+    """Append one cascade leaf, with its calls' 2027 USD and latency, to *path*.
+
+    *records* are the call records appended while this leaf was marked; the
+    ones labelled with this ``question_id`` are summed per attempt (``first``,
+    ``borderline`` as ``pass2``, ``escalation`` as ``strong``). An attempt with
+    no record (not made, or a cache hit) is ``None``.
+
+    The file is opened for append on every leaf; an ``OSError`` from *path*
+    (missing directory, no permission) propagates and fails that leaf's marking.
+    """
+    mine = [r for r in records if r.question_id == question_id]
+    by_attempt = {"first": "first", "borderline": "pass2", "escalation": "strong"}
+    usd: dict[str, float | None] = dict.fromkeys(by_attempt.values())
+    latency: dict[str, int | None] = dict.fromkeys(by_attempt.values())
+    for r in mine:
+        slot = by_attempt.get(r.attempt or "")
+        if slot is None:
+            continue
+        usd[slot] = (usd[slot] or 0.0) + r.usd_2027
+        latency[slot] = (latency[slot] or 0) + r.latency_ms
+    line = {
+        "run_token": CASCADE_RUN_TOKEN,
+        "case_key": next((r.case_key for r in mine if r.case_key is not None), None),
+        **entry,
+        "usd_2027": usd,
+        "latency_ms": latency,
+    }
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(line, sort_keys=True) + "\n")
+
+
+class _PrefixKwargs(TypedDict, total=False):
+    """``generate_structured``'s ``shared_prefix`` and ``leaf_kind`` arguments.
+
+    Each is present only when set.
+    """
+
+    shared_prefix: SharedPrefix
+    leaf_kind: str
+
+
+def review_threshold_for(gemini: GeminiSettings, model: str | None) -> float:
+    """The human-review confidence threshold for a final AI mark ``model`` gave.
+
+    ``GeminiSettings.review_confidence_threshold_for`` overrides
+    :data:`REVIEW_CONFIDENCE_THRESHOLD` per model; an unlisted or unknown model
+    (``None``) keeps the global value. A stand-in settings object without a real
+    dict also keeps it.
+    """
+    table = getattr(gemini, "review_confidence_threshold_for", None)
+    if model is None or not isinstance(table, dict):
+        return REVIEW_CONFIDENCE_THRESHOLD
+    value = table.get(model)
+    return float(value) if isinstance(value, int | float) else REVIEW_CONFIDENCE_THRESHOLD
 
 
 class AICorrector:
-    """Marks individual non-MCQ questions via the shared GeminiClient."""
+    """Marks individual non-MCQ questions via the shared GeminiClient.
 
-    def __init__(self, gemini_client: GeminiClient) -> None:
+    ``mark_scheme`` is the whole paper's scheme, given by :func:`correct_paper`.
+    It is read only with ``GeminiSettings.correction_shared_prefix`` on (cost-ladder
+    lever A3): every correction call on the paper is then sent the same system
+    prompt, :func:`build_shared_prefix`, so a provider can cache it. Without a
+    scheme, or with the flag off, prompts are what they always were.
+    """
+
+    def citations_on(self) -> bool:
+        """B2: whether marks carry evidence quotes (``correction_citations``)."""
+        return self._client._settings.gemini.correction_citations is True
+
+    def _mark_schema(self) -> type[AIMarkResponse]:
+        """The reply schema for the flags in force; ``AIMarkResponse`` with them off."""
+        g = self._client._settings.gemini
+        return marker_response_schema(
+            cited=self.citations_on(),
+            terse=g.correction_terse_rationale is True,
+            reason_first=self._reason_first(),
+        )
+
+    def _reason_first(self) -> bool:
+        """H2b: whether the reply puts its verdicts before the mark (``correction_reason_first``).
+
+        Refused with citations: ``model_copy`` skips the settings validator that forbids it.
+        """
+        if self._client._settings.gemini.correction_reason_first is not True:
+            return False
+        if self.citations_on():
+            raise ConfigError("correction_reason_first cannot combine with correction_citations")
+        return True
+
+    def _checked(self, question: Question, reply: AIMarkResponse) -> AIMarkResponse:
+        """``reply`` made to agree with its verdicts under lever H2b; unchanged without it."""
+        return _verdict_checked(question, reply) if self._reason_first() else reply
+
+    def __init__(
+        self, gemini_client: GeminiClient, *, mark_scheme: MarkScheme | None = None
+    ) -> None:
         self._client = gemini_client
+        self._mark_scheme = mark_scheme
+        # Fails the run here: raised per leaf, ``correct_paper`` would turn it into zeros.
+        # A client without settings (a spec'd test double) has every lever off: nothing to refuse.
+        settings = getattr(gemini_client, "_settings", None)
+        if settings is not None:
+            self._reason_first()
+            g = settings.gemini
+            if g.correction_retry_median is True and g.correction_retry_keep_higher is True:
+                # ``model_copy`` skips the settings validator that forbids it.
+                raise ConfigError(
+                    "correction_retry_median cannot combine with correction_retry_keep_higher"
+                )
+            _log_noop_levers(g)
+        #: Built once per value of ``reader_describes_drawings``, not once per leaf.
+        self._prefixes: dict[bool, SharedPrefix] = {}
+        #: The model whose response the last :meth:`mark_question` returned (the
+        #: escalation model when it escalated); ``None`` before the first call.
+        self.last_mark_model: str | None = None
+        #: Leaves whose escalation the per-script cap postponed: id -> (question, system
+        #: prompt, user prompt, prefix kwargs, confidence). See :meth:`escalate_deferred`.
+        self.deferred: dict[str, tuple[Question, str, str, _PrefixKwargs, float]] = {}
+        #: Deferred leaves whose escalation call failed; ``correct_paper`` sends them to review.
+        self.failed_deferred: set[str] = set()
+        #: Cleared by ``correct_paper`` when ECF substitution is on: its re-mark calls
+        #: ``mark_question`` again for the same leaf and merges into the first mark, which a
+        #: deferred escalation would overwrite. Such a run keeps the inline escalation.
+        self.defer_escalation = True
+
+    def review_threshold(self) -> float:
+        """The review threshold for the last mark: :func:`review_threshold_for` its model."""
+        if self.last_mark_model is None:
+            return REVIEW_CONFIDENCE_THRESHOLD
+        return review_threshold_for(self._client._settings.gemini, self.last_mark_model)
+
+    def _conventions(self) -> str | None:
+        """H2c: the printed marking conventions of the paper's syllabus, when the lever is on."""
+        if (
+            self._client._settings.gemini.correction_syllabus_conventions is not True
+            or self._mark_scheme is None
+        ):
+            return None
+        return syllabus_conventions(self._mark_scheme.metadata)
+
+    def _shared_prefix(self, *, reader_describes_drawings: bool) -> SharedPrefix | None:
+        """The paper's shared prefix when lever A3 is on and the scheme is known."""
+        g = self._client._settings.gemini
+        # `is True`, not truthiness: the setting is a validated bool, and a stand-in
+        # settings object whose attributes are all truthy must not switch the lever on.
+        if g.correction_shared_prefix is not True or self._mark_scheme is None:
+            return None
+        prefix = self._prefixes.get(reader_describes_drawings)
+        if prefix is None:
+            prefix = SharedPrefix(
+                instructions=shared_prefix_instructions(
+                    reader_describes_drawings=reader_describes_drawings
+                ),
+                paper=render_paper_mark_scheme(self._mark_scheme, conventions=self._conventions()),
+                text=build_shared_prefix(
+                    self._mark_scheme,
+                    reader_describes_drawings=reader_describes_drawings,
+                    conventions=self._conventions(),
+                ),
+                cache=g.correction_prefix_cache,
+                version=VERSION,
+            )
+            self._prefixes[reader_describes_drawings] = prefix
+        return prefix
 
     def mark_question(
         self,
@@ -58,74 +614,547 @@ class AICorrector:
         student_working: str | None = None,
         prior_results: dict[str, int] | None = None,
         principles: list[str] | None = None,
+        *,
+        equivalence_gate: bool = False,
+        prior_values: dict[str, str] | None = None,
+        default_rules: str | None = None,
+        reader_describes_drawings: bool = False,
     ) -> AIMarkResponse:
         """Mark one question.
 
-        ``principles`` is the paper's own ``metadata.generic_marking_principles``
-        (#41 / ruling A13). They are the authority on the M/A dependency; the
+        ``principles`` is the paper's own printed principles
+        (``prompts.correction_ai.printed_principles``; #41 / ruling A13). They are
+        the authority on the M/A dependency; the
         system prompt's strict rule is the fallback for papers that do not print
         them or whose GMP pages could not be parsed.
+
+        ``default_rules`` (``prompts.correction_ai.default_marking_rules``,
+        defaults None) is the published rules of the paper's syllabus family, for
+        a scheme stored without principles of its own. Forwarded to
+        :func:`build_marker_user_prompt`, which sends it only when ``principles``
+        is empty.
+
+        ``reader_describes_drawings`` (defaults False) is True only for an answer
+        whose text the label binder's reader wrote from a scan
+        (:func:`_reader_answer_ids`). It chooses the system prompt
+        (``prompts.correction_ai.marker_system_prompt``) and is forwarded to
+        :func:`build_marker_user_prompt`: only for such an answer is ``Drawing:``
+        the opening of a description of a drawing. In a typed or legacy answer
+        the word is the student's own, and with False both prompts are what they
+        were before the reader described drawings.
+
+        ``equivalence_gate`` (US-013, defaults False): forwarded to
+        :func:`build_marker_user_prompt`, which appends the I6 point-verdict
+        instructions to the USER prompt only when True. ``AIMarkResponse``
+        (the ``response_schema`` below) is the SAME class either way --
+        ``point_verdicts`` is an additive field the model simply never
+        populates when not asked (see that model's docstring) -- and
+        ``VERSION`` is not bumped: the flag defaulting off means the prompt
+        actually sent for every call today is byte-identical to before this
+        story. See ``correction_ai`` module notes / the commit message for
+        the ``_params_fingerprint`` schema-hash consequence of the additive
+        field regardless of this flag.
+
+        ``prior_values`` (I7, US-013, defaults None): forwarded to
+        :func:`build_marker_user_prompt` -- see its docstring and
+        :func:`_maybe_apply_ecf_substitution`, the only caller that ever
+        passes this non-empty. Not tied to ``equivalence_gate``: this
+        parameter exists on every call regardless of that flag's value.
+
+        With ``correction_shared_prefix`` on and the paper's scheme given to the
+        constructor, the system prompt of this call and of every retry,
+        cascade pass and escalation it makes is the paper's shared prefix
+        (:meth:`_shared_prefix`). The prefix carries the paper's marking rules,
+        so the user prompt leaves out ``principles`` and ``default_rules`` when they
+        are the ones the prefix derived from the scheme; rules that differ from
+        those stay in the user prompt. Everything else in the user prompt is
+        leaf-specific and unchanged.
         """
         g = self._client._settings.gemini
+        shared_prefix = self._shared_prefix(reader_describes_drawings=reader_describes_drawings)
+        if shared_prefix is not None and self._mark_scheme is not None:
+            meta = self._mark_scheme.metadata
+            if principles == printed_principles(meta) and default_rules == default_marking_rules(
+                meta
+            ):
+                principles, default_rules = None, None
         user_prompt = build_marker_user_prompt(
-            question, student_answer, student_working, prior_results, principles
+            question,
+            student_answer,
+            student_working,
+            prior_results,
+            principles,
+            equivalence_gate=equivalence_gate,
+            prior_values=prior_values,
+            default_rules=default_rules,
+            reader_describes_drawings=reader_describes_drawings,
+            reason_first=self._reason_first(),
+            # The shared prefix already carries them.
+            conventions=self._conventions() if shared_prefix is None else None,
         )
-
-        result = self._client.generate_structured(
-            system_prompt=MARKER_SYSTEM_PROMPT,
-            user_prompt=user_prompt,
-            response_schema=AIMarkResponse,
-            prompt_version=VERSION,
-            extra_cache_key=f"q={question.id}",
-            task_tag="correction",
+        system_prompt = (
+            shared_prefix.text
+            if shared_prefix is not None
+            else marker_system_prompt(reader_describes_drawings=reader_describes_drawings)
         )
+        # Sent only when set, so a flag-off call passes exactly the arguments it did.
+        prefix_kwargs: _PrefixKwargs = (
+            {"shared_prefix": shared_prefix} if shared_prefix is not None else {}
+        )
+        # B3: the leaf's kind picks a claude_effort_for["tag:kind"] effort. Sent only
+        # when that table is set, so a call without it passes exactly what it did.
+        table = getattr(g, "claude_effort_for", None)
+        # ``isinstance(..., dict)`` is the MagicMock-safe check (a stand-in settings
+        # object returns a truthy mock here), the same reason other flags use ``is True``.
+        if isinstance(table, dict) and table:
+            prefix_kwargs["leaf_kind"] = leaf_kind(question)
 
+        leaf_log = os.environ.get(CASCADE_LEAF_LOG_ENV) if g.cascade_enabled is True else None
+        # The leaf log reads this leaf's call records, which are kept only while
+        # a recorder is open; the cost-ladder runner already holds one (blocks nest).
+        recorder: contextlib.AbstractContextManager[None] = (
+            record_calls() if leaf_log else contextlib.nullcontext()
+        )
+        with recorder:
+            records_before = len(process_call_records()) if leaf_log else 0
+            result = self._client.generate_structured(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_schema=self._mark_schema(),
+                prompt_version=VERSION,
+                extra_cache_key=f"q={question.id}",
+                task_tag="correction",
+                attempt="first",
+                question_id=question.id,
+                **prefix_kwargs,
+            )
+            result = self._checked(question, result)
+
+            if g.cascade_enabled is True:
+                result, final_model = self._cascade(
+                    question,
+                    system_prompt,
+                    user_prompt,
+                    result,
+                    leaf_log=leaf_log,
+                    records_before=records_before,
+                    prefix_kwargs=prefix_kwargs,
+                )
+            else:
+                result, final_model = self._retry_low_confidence(
+                    question, system_prompt, user_prompt, result, prefix_kwargs=prefix_kwargs
+                )
+        self.last_mark_model = final_model
+
+        # Post-I6-review Item A: ``PointVerdict.ecf_applied`` must be
+        # CODE-set only -- I7's whole contract is that it records a re-mark
+        # the CODE performed (:func:`_maybe_apply_ecf_substitution`), never
+        # something the model claims about its own single-pass answer. But
+        # the field is on the wire response schema with no description
+        # telling the model that, so nothing stops it setting
+        # ``ecf_applied=True`` unprompted -- which would persist onto
+        # ``CorrectedQuestion.point_verdicts`` as an ECF claim the code never
+        # made, on a call where no substitution happened at all (including
+        # every call today, since ``ecf_substitution`` defaults off).
+        # Unconditionally forced False here, regardless of
+        # ``equivalence_gate``/``ecf_substitution`` or what the model
+        # returned, so ``_maybe_apply_ecf_substitution``'s explicit
+        # ``ecf_applied=True`` merge is the ONLY place this field can ever
+        # become True.
+        if result.point_verdicts:
+            result = result.model_copy(
+                update={
+                    "point_verdicts": [
+                        pv.model_copy(update={"ecf_applied": False}) for pv in result.point_verdicts
+                    ]
+                }
+            )
+        return result
+
+    def _retry_low_confidence(
+        self,
+        question: Question,
+        system_prompt: str,
+        user_prompt: str,
+        result: AIMarkResponse,
+        *,
+        prefix_kwargs: _PrefixKwargs,
+    ) -> tuple[AIMarkResponse, str]:
+        """The non-cascade path: a borderline thinking retry, then escalation.
+
+        Both steps fire on ``escalation_confidence_threshold``; prompts and cache
+        keys are what ``mark_question`` sent before the cascade existed.
+        ``prefix_kwargs`` is the first pass's ``shared_prefix`` argument, if any.
+        Returns the final response and the model that gave it.
+        """
+        g = self._client._settings.gemini
         # Step 1: thinking retry for borderline confidence (cheaper than Pro escalation).
-        borderline_budget = g.thinking_budget_for.get("correction_borderline", 0)
-        if result.confidence < g.escalation_confidence_threshold and borderline_budget > 0:
+        # F1 review MUST-FIX 2 (2026-09-17): the gate now reads
+        # GeminiClient.resolved_thinking() — the single source of truth also
+        # used to build the actual API call — instead of re-deriving the
+        # thinking_level_for/thinking_budget_for defaults here. The two used
+        # to disagree: a partial TOML override
+        # (``thinking_level_for = {"correction": "low"}``, which REPLACES the
+        # whole dict rather than merging into it) left this file defaulting
+        # the missing "correction_borderline" tag to "high" while gemini.py
+        # defaulted it to "low" — the gate fired believing it would retry at
+        # HIGH, but the actual call ran at LOW. The gate fires whenever the
+        # borderline call would think strictly harder than the original
+        # correction call did, on whichever substrate (level or budget) the
+        # resolved model actually reads — this also generalises the old 2.5
+        # "budget > 0" rule (a correction tag with no configured budget
+        # defaults to 0, so "borderline > correction" reduces to the same
+        # "budget > 0" check in the common case).
+        correction_model = g.model_for("correction")
+        gate_kind = prefix_kwargs.get("leaf_kind")
+        correction_thinking = self._resolved_thinking("correction", correction_model, gate_kind)
+        borderline_thinking = self._resolved_thinking(
+            "correction_borderline", correction_model, gate_kind
+        )
+        # ``is not False``: a MagicMock settings object keeps today's behaviour.
+        borderline_gate = g.correction_borderline_enabled is not False and thinking_rank(
+            borderline_thinking
+        ) > thinking_rank(correction_thinking)
+        # Spec 2026-09-26 §3 (#10): the Step-2 guard compares against the
+        # call that ACTUALLY RAN LAST, not the original correction call.
+        # Step 1 moves the baseline: after a borderline retry the last call
+        # ran at (correction_model, borderline_thinking), and under the
+        # shipped defaults (low / high / high on one model) the escalation
+        # tuple equals that -- Step 2 would bill the identical call again.
+        last_call = (correction_model, correction_thinking)
+        retry_below = g.escalation_confidence_threshold
+        # ``is True`` / isinstance: a MagicMock settings object keeps today's behaviour.
+        keep_higher = g.correction_retry_keep_higher is True
+        median = g.correction_retry_median is True
+        if keep_higher or median:
+            lever_below = (
+                g.correction_retry_median_below if median else g.correction_retry_keep_higher_below
+            )
+            if isinstance(lever_below, int | float) and not isinstance(lever_below, bool):
+                retry_below = lever_below
+        if result.confidence < retry_below and borderline_gate:
             bus.publish(
                 EventType.GEMINI_ESCALATE,
                 question_id=question.id,
                 confidence=result.confidence,
-                escalation_model=f"{g.model_for('correction')} (thinking)",
+                escalation_model=f"{correction_model} (thinking)",
             )
+            first = result
             result = self._client.generate_structured(
-                system_prompt=MARKER_SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 user_prompt=(
                     user_prompt + "\n\nNOTE: First-pass confidence was low. Re-evaluate carefully."
                 ),
-                response_schema=AIMarkResponse,
+                response_schema=self._mark_schema(),
                 prompt_version=VERSION,
                 extra_cache_key=f"q={question.id}:thinking",
                 task_tag="correction_borderline",
+                attempt="borderline",
+                question_id=question.id,
+                **prefix_kwargs,
             )
+            last_call = (correction_model, borderline_thinking)
+            result = self._checked(question, result)
+            if median:
+                samples = [first, result]
+                if result.awarded_marks != first.awarded_marks:
+                    # The median of {a, a, x} is a, so a third draw is needed only on a split.
+                    # A failed third draw (not a cost-ceiling stop) falls back to the two
+                    # samples: median_low of two is the lower mark, confidence the min.
+                    try:
+                        third = self._checked(
+                            question,
+                            self._client.generate_structured(
+                                system_prompt=system_prompt,
+                                user_prompt=(
+                                    user_prompt + "\n\nNOTE: First-pass confidence was low. "
+                                    "Re-evaluate carefully."
+                                ),
+                                response_schema=self._mark_schema(),
+                                prompt_version=VERSION,
+                                extra_cache_key=f"q={question.id}:thinking:2",
+                                task_tag="correction_borderline",
+                                attempt="borderline",
+                                question_id=question.id,
+                                **prefix_kwargs,
+                            ),
+                        )
+                    except CostCeilingError:
+                        raise
+                    except Exception as exc:
+                        structlog.get_logger().warning(
+                            "borderline_median_third_failed",
+                            question_id=question.id,
+                            error=str(exc),
+                        )
+                    else:
+                        samples.append(third)
+                result = _median_of(samples)
+                structlog.get_logger().bind(component="correction").info(
+                    "borderline_median",
+                    question_id=question.id,
+                    marks=[x.awarded_marks for x in samples],
+                    kept=result.awarded_marks,
+                    confidence=result.confidence,
+                )
+            elif keep_higher:
+                retry = result
+                result = _keep_higher(first, retry)
+                structlog.get_logger().bind(component="correction").info(
+                    "borderline_kept_higher",
+                    question_id=question.id,
+                    first=first.awarded_marks,
+                    retry=retry.awarded_marks,
+                    kept=result.awarded_marks,
+                    confidence=result.confidence,
+                )
 
         # Step 2: Pro escalation if confidence still below threshold.
+        # F1 fix (4): under F1 defaults correction_model == escalation_model
+        # (both "gemini-3.8-flash"), so a bare model-name comparison would make
+        # this branch permanently unreachable — the whole point of the
+        # escalation step. The guard compares the (model, thinking) tuple the
+        # escalation call would run with against the tuple of the call that
+        # ran last (``last_call``), which Step 1 updates: same model but a
+        # higher thinking_level_for["escalation"] still counts as a genuinely
+        # different, worth-trying call. Both tuples are read via
+        # ``resolved_thinking`` (F1 review MUST-FIX 2) rather than re-derived,
+        # so an unresolved value (e.g. a stray "minimal" on a model that
+        # demotes it to "low") can never make this comparison disagree with
+        # what the call underneath actually runs at.
+        escalation_model = g.escalation_model
         if (
-            g.escalation_model
-            and g.escalation_model != g.model_for("correction")
+            escalation_model
+            and (
+                escalation_model,
+                self._resolved_thinking("escalation", escalation_model, gate_kind),
+            )
+            != last_call
             and result.confidence < g.escalation_confidence_threshold
         ):
+            cap = g.escalation_cap_per_script
+            if self.defer_escalation and isinstance(cap, int) and not isinstance(cap, bool):
+                # Sub-project C: decided after every leaf is marked (escalate_deferred).
+                self.deferred[question.id] = (
+                    question,
+                    system_prompt,
+                    user_prompt,
+                    prefix_kwargs,
+                    result.confidence,
+                )
+                return result, last_call[0]
+            return (
+                self._escalate(
+                    question, system_prompt, user_prompt, prefix_kwargs, result.confidence
+                ),
+                escalation_model,
+            )
+        return result, correction_model
+
+    def _escalate(
+        self,
+        question: Question,
+        system_prompt: str,
+        user_prompt: str,
+        prefix_kwargs: _PrefixKwargs,
+        confidence: float,
+    ) -> AIMarkResponse:
+        """Step 2: the escalation call (today's prompt, cache key and tag)."""
+        g = self._client._settings.gemini
+        escalation_model = cast("str", g.escalation_model)
+        bus.publish(
+            EventType.GEMINI_ESCALATE,
+            question_id=question.id,
+            confidence=confidence,
+            escalation_model=escalation_model,
+        )
+        reply = self._client.generate_structured(
+            system_prompt=system_prompt,
+            user_prompt=(
+                user_prompt + "\n\nNOTE: A previous marking attempt returned low confidence. "
+                "Please re-evaluate carefully before responding."
+            ),
+            response_schema=self._mark_schema(),
+            prompt_version=VERSION,
+            extra_cache_key=f"q={question.id}:escalated",
+            task_tag="escalation",
+            model=escalation_model,
+            attempt="escalation",
+            question_id=question.id,
+            **prefix_kwargs,
+        )
+        return self._checked(question, reply)
+
+    def escalate_deferred(self) -> dict[str, AIMarkResponse]:
+        """Escalate the most uncertain deferred leaves, up to the cap; their new responses."""
+        if not self.deferred:
+            return {}
+        cap = self._client._settings.gemini.escalation_cap_per_script
+        if not isinstance(cap, int) or isinstance(cap, bool):
+            return {}
+        order = sorted(self.deferred, key=lambda qid: (self.deferred[qid][4], qid))[:cap]
+        out: dict[str, AIMarkResponse] = {}
+        for qid in order:
+            question, system_prompt, user_prompt, prefix_kwargs, confidence = self.deferred[qid]
+            try:
+                result = self._escalate(
+                    question, system_prompt, user_prompt, prefix_kwargs, confidence
+                )
+            except CostCeilingError:
+                raise
+            except Exception as exc:
+                # Unlike the inline path (which fails the leaf), the paper completes with
+                # the first-pass mark; ``correct_paper`` flags the leaf for review.
+                structlog.get_logger().warning(
+                    "deferred_escalation_failed", question_id=qid, error_type=type(exc).__name__
+                )
+                self.failed_deferred.add(qid)
+                continue
+            # CODE-set only, as in mark_question: the model never claims an ECF re-mark.
+            if result.point_verdicts:
+                result = result.model_copy(
+                    update={
+                        "point_verdicts": [
+                            pv.model_copy(update={"ecf_applied": False})
+                            for pv in result.point_verdicts
+                        ]
+                    }
+                )
+            out[qid] = result
+        return out
+
+    def _resolved_thinking(self, tag: str, model: str, kind: str | None) -> int | str:
+        """``resolved_thinking`` at the leaf kind the call runs at (tag-only when none)."""
+        if kind is None:
+            return self._client.resolved_thinking(tag, model)
+        return self._client.resolved_thinking(tag, model, kind)
+
+    def _cascade(
+        self,
+        question: Question,
+        system_prompt: str,
+        user_prompt: str,
+        first: AIMarkResponse,
+        *,
+        leaf_log: str | None,
+        records_before: int,
+        prefix_kwargs: _PrefixKwargs,
+    ) -> tuple[AIMarkResponse, str]:
+        """Cost-ladder lever A2: keep the cheap first pass unless a trigger fires.
+
+        ``first`` came from ``correction_model``. The triggers, cheapest first,
+        so a later one is never paid for once an earlier one has fired:
+
+        - confidence below ``cascade_threshold_for`` for that model, else below
+          ``escalation_confidence_threshold``;
+        - with ``cascade_unaddressed_points``, ``first.point_verdicts`` leaves a
+          mark-scheme point unaddressed (inert when the list is empty);
+        - with ``cascade_two_pass_disagreement``, a second cheap pass
+          (``:pass2``) awards different marks.
+
+        On a trigger the strong model (``cascade_strong_model or
+        escalation_model``) re-marks the original prompt, and its response is
+        the answer. The first pass stands when no strong model is configured,
+        or when the strong call would repeat the first pass exactly (same model
+        and resolved thinking; the non-cascade ``last_call`` guard). The
+        borderline thinking retry never runs here. The leaf log's
+        ``strong_skipped_identical`` is True whenever the strong call would repeat
+        the first pass, whether or not a trigger fired: the first pass IS the
+        strong result for such a leaf.
+
+        With ``LEMELY_CASCADE_LEAF_LOG`` set, an ``OSError`` writing that file
+        fails the leaf (see :func:`_append_leaf_log`). ``prefix_kwargs`` is the
+        first pass's ``shared_prefix`` argument, sent with every pass here.
+        Returns the kept response and the model that gave it.
+        """
+        g = self._client._settings.gemini
+        cheap_model = g.model_for("correction")
+        strong_model = g.cascade_strong_model or g.escalation_model
+        threshold = g.cascade_threshold_for.get(cheap_model, g.escalation_confidence_threshold)
+
+        unaddressed_ids = _unaddressed_point_ids(question, first)
+        low_confidence = first.confidence < threshold
+        unaddressed: bool | None = None
+        if g.cascade_unaddressed_points is True and unaddressed_ids is not None:
+            unaddressed = bool(unaddressed_ids)
+        disagreement: bool | None = None
+        second: AIMarkResponse | None = None
+        if g.cascade_two_pass_disagreement is True and not low_confidence and not unaddressed:
+            second = self._client.generate_structured(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_schema=self._mark_schema(),
+                prompt_version=VERSION,
+                extra_cache_key=f"q={question.id}:pass2",
+                task_tag="correction",
+                attempt="borderline",
+                question_id=question.id,
+                **prefix_kwargs,
+            )
+            second = self._checked(question, second)
+            disagreement = second.awarded_marks != first.awarded_marks
+
+        strong: AIMarkResponse | None = None
+        repeats_first = False
+        if strong_model:
+            kind = prefix_kwargs.get("leaf_kind")
+            repeats_first = (
+                strong_model,
+                self._resolved_thinking("escalation", strong_model, kind),
+            ) == (cheap_model, self._resolved_thinking("correction", cheap_model, kind))
+        if strong_model and not repeats_first and (low_confidence or unaddressed or disagreement):
             bus.publish(
                 EventType.GEMINI_ESCALATE,
                 question_id=question.id,
-                confidence=result.confidence,
-                escalation_model=g.escalation_model,
+                confidence=first.confidence,
+                escalation_model=strong_model,
             )
-            result = self._client.generate_structured(
-                system_prompt=MARKER_SYSTEM_PROMPT,
-                user_prompt=(
-                    user_prompt + "\n\nNOTE: A previous marking attempt returned low confidence. "
-                    "Please re-evaluate carefully before responding."
-                ),
-                response_schema=AIMarkResponse,
+            strong = self._client.generate_structured(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_schema=self._mark_schema(),
                 prompt_version=VERSION,
-                extra_cache_key=f"q={question.id}:escalated",
-                task_tag="correction",
-                model=g.escalation_model,
+                extra_cache_key=f"q={question.id}:cascade",
+                task_tag="escalation",
+                model=strong_model,
+                attempt="escalation",
+                question_id=question.id,
+                **prefix_kwargs,
             )
+            strong = self._checked(question, strong)
 
-        return result
+        entry: dict[str, object] = {
+            "config": {
+                "model": cheap_model,
+                "strong_model": strong_model,
+                "threshold": threshold,
+                "two_pass_disagreement": g.cascade_two_pass_disagreement,
+                "unaddressed_points": g.cascade_unaddressed_points,
+            },
+            "question_id": question.id,
+            "model": cheap_model,
+            "strong_model": strong_model,
+            "threshold": threshold,
+            "confidence": first.confidence,
+            "awarded_marks": first.awarded_marks,
+            "pass2_awarded_marks": second.awarded_marks if second is not None else None,
+            "unaddressed_point_ids": unaddressed_ids,
+            "triggers": {
+                "low_confidence": low_confidence,
+                "disagreement": disagreement,
+                "unaddressed": unaddressed,
+            },
+            "escalated": strong is not None,
+            "strong_skipped_identical": repeats_first,
+            "strong_awarded_marks": strong.awarded_marks if strong is not None else None,
+            "strong_confidence": strong.confidence if strong is not None else None,
+        }
+        structlog.get_logger().bind(component="correction_cascade").info("cascade_leaf", **entry)
+        if leaf_log:
+            _append_leaf_log(leaf_log, entry, process_call_records()[records_before:], question.id)
+        if strong is not None and strong_model:
+            return strong, strong_model
+        return first, cheap_model
 
 
 def _build_mcq_corrected(
@@ -172,7 +1201,7 @@ def _build_mcq_corrected(
             marker_source="deterministic",
             extraction_confidence=extraction_confidence,
         )
-    if answer.upper() not in {"A", "B", "C", "D"}:
+    if answer.upper() not in _MCQ_LETTERS:
         return CorrectedQuestion(
             question_id=question.id,
             awarded_marks=0,
@@ -301,12 +1330,66 @@ def _calculated_value_present(calc: CalculatedAnswer, candidates: list[float]) -
     return False
 
 
+def _equivalence_fallback_verdict(
+    calc: CalculatedAnswer, student_answer: str, student_working: str | None
+) -> tuple[Verdict, Literal["answer", "working"]]:
+    """Consult ``lemely.core.equivalence`` for a rejected point (I8, US-005b).
+
+    A fallback for a point ``_calculated_value_present`` already rejected —
+    see the module docstring's point 3.
+
+    Tries ``student_answer`` first, then ``student_working`` -- mirroring
+    ``_verify_calculated_answers``' own literal-candidate handling, since
+    extraction commonly splits a question's final requested value into
+    ``answer`` while an intermediate checkpoint value lands in ``working``.
+    An ``EQUAL_PROVEN`` match on either side is returned immediately, since
+    nothing stronger exists; otherwise surfaces a genuine equality finding
+    if either side has one, preferring proof over sampling. Verdicts are
+    ranked ``EQUAL_SAMPLED`` > ``NOT_EQUAL`` > ``UNPARSEABLE``: a
+    ``NOT_EQUAL`` or ``UNPARSEABLE`` verdict on either side is never itself
+    reported, since it repeats what the already-triggered literal-match
+    rejection already says. ``EQUAL_SAMPLED`` wins between the two sides:
+    a wrong final answer with a working expression that samples equal to
+    the checkpoint value is exactly the case this mechanism exists to
+    surface for a human reviewer, since that is where method marks live.
+    ``EQUAL_SAMPLED`` is still never promoted to ``auto_awardable`` -- it
+    is evidence, not proof (see ``Verdict.auto_awardable``) -- this only
+    decides which finding a reviewer gets to see.
+
+    Returns the verdict alongside which side it came from (NIT H,
+    final-branch-review): a reviewer weighing an A-mark needs to know
+    whether the *answer* or the *working* sampled equal, not just that
+    something did.
+    """
+    target = str(calc.value)
+    answer_verdict = equivalent(
+        student_answer, target, sig_figs=calc.sig_figs, dp=calc.dp, tolerance=calc.tolerance
+    )
+    if answer_verdict.kind is VerdictKind.EQUAL_PROVEN or not student_working:
+        return answer_verdict, "answer"
+    working_verdict = equivalent(
+        student_working, target, sig_figs=calc.sig_figs, dp=calc.dp, tolerance=calc.tolerance
+    )
+    if working_verdict.kind is VerdictKind.EQUAL_PROVEN:
+        return working_verdict, "working"
+    rank = {
+        VerdictKind.EQUAL_SAMPLED: 2,
+        VerdictKind.NOT_EQUAL: 1,
+        VerdictKind.UNPARSEABLE: 0,
+    }
+    if rank[working_verdict.kind] > rank[answer_verdict.kind]:
+        return working_verdict, "working"
+    return answer_verdict, "answer"
+
+
 def _verify_calculated_answers(
     question: Question,
     student_answer: str,
     student_working: str | None,
     matched_point_ids: list[str],
     starting_awarded: int,
+    *,
+    equivalence_gate: bool = False,
 ) -> tuple[int, list[str], list[str]]:
     """Deterministic backstop for the AI marker (D2.3).
 
@@ -331,6 +1414,16 @@ def _verify_calculated_answers(
     ("3/8") are only evaluated from ``student_answer`` — see
     ``_extract_fraction_values`` for why working is excluded from that part.
 
+    ``equivalence_gate`` (US-005b, defaults False): when a point would
+    otherwise be rejected here, also consult
+    ``lemely.core.equivalence.equivalent`` (:func:`_equivalence_fallback_verdict`)
+    as a fallback. An ``equal`` verdict (of either kind — ``EQUAL_PROVEN`` or
+    ``EQUAL_SAMPLED``) never changes ``awarded``: even a proven match is only
+    "could justify" (D12's ``auto_awardable``), not "does" — this function
+    stops short of acting on it and only adds the conflict to the point's
+    rejection reason, for a human reviewer to weigh. With the flag off, or
+    on a ``NOT_EQUAL``/``UNPARSEABLE`` verdict, behaviour is unchanged.
+
     Returns (adjusted_awarded_marks, adjusted_matched_point_ids, rejection_reasons).
     """
     points_by_id = {p.id: p for p in question.answer_points}
@@ -350,11 +1443,21 @@ def _verify_calculated_answers(
             and point.calculated_answer.value is not None
             and not _calculated_value_present(point.calculated_answer, candidates)
         ):
-            awarded = max(0, awarded - point.marks)
-            rejections.append(
+            reason = (
                 f"{point_id}: expected value {point.calculated_answer.value!r} not found "
                 "in student answer/working"
             )
+            if equivalence_gate:
+                verdict, side = _equivalence_fallback_verdict(
+                    point.calculated_answer, student_answer, student_working
+                )
+                if verdict.equal_by_any_method:
+                    reason += (
+                        f"; lemely.core.equivalence found this {verdict.kind.value} on "
+                        f"{side} to the scheme value -- routed to review, not auto-awarded"
+                    )
+            awarded = max(0, awarded - point.marks)
+            rejections.append(reason)
             continue
         matched.append(point_id)
     return awarded, matched, rejections
@@ -382,18 +1485,39 @@ _COHERENCE_EXEMPT_TYPES = frozenset(
 
 
 def _check_coherence(
-    question: Question, matched_point_ids: list[str], awarded_marks: int
+    question: Question,
+    matched_point_ids: list[str],
+    awarded_marks: int,
+    *,
+    point_verdicts: list[PointVerdict] | None = None,
+    groups: Sequence[tuple[str | None, int | None]],
 ) -> str | None:
     """Coherence check (M1.5, #40).
 
     The marker's claimed ``matched_point_ids`` must exist in the mark scheme
     and must reconcile with ``awarded_marks``.
 
-    Two independent failure modes, either one is a coherence violation. Every
-    message this returns contains :data:`COHERENCE_TRIGGER_MARKER` so
-    downstream (``harness.py``) can attribute the trigger without a second,
-    parallel signal:
+    Three independent failure modes, any one of which is a coherence
+    violation. Every message this returns contains
+    :data:`COHERENCE_TRIGGER_MARKER` so downstream (``harness.py``) can
+    attribute the trigger without a second, parallel signal:
 
+    0. ``point_verdicts`` (I6's verdict path only -- ``None`` on the legacy
+       path, see below) repeats a ``point_id``. Numbered 0, ahead of 1 and 2
+       below, rather than renumbering them: it inspects the marker's raw
+       ``point_verdicts`` output, upstream of what modes 1 and 2 inspect
+       (the already-derived ``matched_point_ids``/``awarded_marks``).
+       ``matched_point_ids`` and
+       ``awarded_marks`` have both already been through
+       :func:`_awarded_from_verdicts`'s ``dedupe_point_verdicts`` call by the
+       time they reach here, so a repeat is invisible in THEM; this check
+       looks at the marker's own RAW output instead, the same way the other
+       two modes below look at the marker's raw claim rather than a
+       downstream derivation. Scoped to the verdict path deliberately: the
+       legacy path's caller passes ``point_verdicts=None``, so a duplicate in
+       ``mark.matched_point_ids`` (whose ``awarded_marks`` comes from the
+       model, not a Python sum, and therefore has no inflation bug) cannot
+       newly trigger review here.
     1. A dangling point id: ``matched_point_ids`` references an id that does
        not exist in ``question.answer_points``. Previously silently accepted
        (``_verify_calculated_answers`` still tolerates it for its own,
@@ -406,17 +1530,24 @@ def _check_coherence(
        resolve against), so this falls out of the same code path rather than
        needing a separate branch.
     2. ``awarded_marks`` falls outside the RANGE of marks the matched points
-       can imply. ``is_alternative``/``is_optional`` points are non-additive:
-       a matched OR-group contributes at least its single highest-value
-       member and at most the sum of all matched members of that group.
-       ``AnswerPoint`` carries no group identifier, so the number of distinct
-       OR-groups among the matched non-additive points is unknowable from the
-       data alone — a global point estimate (e.g. "the max of all of them")
-       would wrongly cap a legitimate "any 3 from 5" award or two independent
-       OR-groups down to one point's marks. Instead:
-
-       ``implied_min = sum(primary marks) + max(non-additive marks, default 0)``
-       ``implied_max = sum(primary marks) + sum(non-additive marks)``
+       can imply. ``is_alternative``/``is_optional`` points are non-additive.
+       Both paths pass ``groups`` -- the ``(group_key, cap)`` per scheme
+       point from :func:`lemely.core.point_groups.group_points` -- and each
+       matched group contributes at least ``min(cap, its largest matched tariff)``
+       and at most ``min(cap, sum of matched tariffs)`` -- the floor is
+       capped too, so a group whose cap binds below its largest matched
+       tariff (a pool whose room is smaller than one member's own tariff:
+       an unstated pool's room is the whole leftover after the fixed points,
+       never shared; a ``select_count`` pool's room is what earlier
+       ``select_count`` pools left of it -- only stated-N pools consume a
+       shared room) narrows rather than inverts the interval. Both ends are
+       then clamped at ``question.marks`` (triage F6), because the awarded
+       figure compared against them already is. There is one rule: the
+       legacy path passes ``groups`` too (#272), reversing the 2026-09-26
+       spec's §1 statement that it keeps the global ``primary +
+       non-additive`` rule. That rule flagged an either/or pair matched both
+       ways and a det-shaped scheme whose independent tariffs exceed the
+       question, and missed an over-award on a stated ``select_count`` pool.
 
        Only ``awarded_marks`` OUTSIDE ``[implied_min, implied_max]`` is
        flagged; the message names the interval, not a single number.
@@ -428,14 +1559,27 @@ def _check_coherence(
     backstop revises the awarded marks.
 
     See BUILD/DECISIONS.md DA10 for the empty/absent ``matched_point_ids``
-    rule, the type-scoped exemption, and the ``is_alternative``/
-    ``is_optional`` range-reconciliation rule.
+    rule and the type-scoped exemption. DA10's Decision 3 (the global
+    ``primary + non-additive`` range) is superseded by #272 and DA10a: the
+    range is the grouped interval described in mode 2 above, on both paths.
     """
     if not question.answer_points and question.type in _COHERENCE_EXEMPT_TYPES:
         # Nothing to reconcile against — this type's mark scheme is not
         # decomposed into discrete points by design (levels-based/
         # indicative-content marking, or the deterministic MCQ marker).
         return None
+
+    if point_verdicts is not None:
+        seen_ids: set[str] = set()
+        repeated: set[str] = set()
+        for pv in point_verdicts:
+            if pv.point_id in seen_ids:
+                repeated.add(pv.point_id)
+            seen_ids.add(pv.point_id)
+        if repeated:
+            return f"{COHERENCE_TRIGGER_MARKER}: point_verdicts repeats point id(s): " + ", ".join(
+                sorted(repeated)
+            )
 
     points_by_id = {p.id: p for p in question.answer_points}
     dangling = [pid for pid in matched_point_ids if pid not in points_by_id]
@@ -450,11 +1594,33 @@ def _check_coherence(
         return None
 
     matched_points = [points_by_id[pid] for pid in matched_point_ids]
-    primary = [p for p in matched_points if not p.is_alternative and not p.is_optional]
-    non_additive = [p for p in matched_points if p.is_alternative or p.is_optional]
-    primary_sum = sum(p.marks for p in primary)
-    implied_min = primary_sum + max((p.marks for p in non_additive), default=0)
-    implied_max = primary_sum + sum(p.marks for p in non_additive)
+    scheme_points, _ = _scheme_groups(question)
+    group_of = {
+        point.id: (key, cap) for point, (key, cap) in zip(scheme_points, groups, strict=True)
+    }
+    implied_min = 0
+    implied_max = 0
+    by_group: dict[str, tuple[int, list[int]]] = {}
+    for p in matched_points:
+        key, cap = group_of.get(p.id, (None, None))
+        if key is None:
+            implied_min += p.marks
+            implied_max += p.marks
+        else:
+            by_group.setdefault(key, (cap or 0, []))[1].append(p.marks)
+    for cap, tariffs in by_group.values():
+        implied_min += min(cap, max(tariffs))
+        implied_max += min(cap, sum(tariffs))
+    # Triage F6: `awarded_marks` reaches here already clamped at
+    # `question.marks` (`_group_capped_total`), so the interval must be
+    # too, or a fully-correct answer is routed to review. Three shapes
+    # overfill the question: a det-parsed scheme whose independent
+    # tariffs exceed it (reconcile.py bypasses validate_mark_point_sum; 4
+    # of 479 corpus schemes), a valid scheme whose alternative outweighs
+    # its sibling, and unstated pools, each bounded by the full leftover
+    # (triage F5) so their caps can sum past the question.
+    implied_min = min(implied_min, question.marks)
+    implied_max = min(implied_max, question.marks)
     if not (implied_min <= awarded_marks <= implied_max):
         return (
             f"awarded {awarded_marks} mark(s) but {COHERENCE_TRIGGER_MARKER} implies "
@@ -463,18 +1629,559 @@ def _check_coherence(
     return None
 
 
+def _normalise_span(text: str) -> str:
+    """Whitespace-collapse + casefold, for :func:`_span_found`."""
+    return re.sub(r"\s+", " ", text).strip().casefold()
+
+
+def _span_found(evidence_span: str, *texts: str | None) -> bool:
+    """I6 (US-013) span-evidence check -- EXACT/SUBSTRING CONTAINMENT, no fuzzy threshold.
+
+    The plan's ``_check_coherence`` extension calls for
+    ``rapidfuzz.fuzz.partial_ratio(...) >= 0.8``. `rapidfuzz` is absent from
+    this project: confirmed absent from ``pyproject.toml`` and ``uv.lock``,
+    same finding US-010 hit first (filed as ``US-041`` for the dependency
+    itself, which is not in this story's file ownership -- ``pyproject.toml``
+    is explicitly out of scope here). US-010 substituted
+    ``difflib.SequenceMatcher`` under the plan's ``0.8`` threshold verbatim,
+    and an independent review of that commit found the substitution
+    dangerous even though it was disclosed: Ratcliff/Obershelp gestalt
+    pattern matching is NOT normalised Levenshtein distance, so the same
+    numeric threshold means a different thing under each metric, and ``0.8``
+    was never validated against the substitute.
+
+    Decision for I6 (route (b) from the brief, not route (a) --
+    disclosed-but-still-a-substitute -- or (c) -- block the whole gate):
+    implement the span check as containment with NO threshold at all. A
+    containment check that is too strict fails LOUDLY -- a genuine paraphrase
+    or OCR near-miss queues for review instead of matching -- which is the
+    safe failure direction for a check that gates whether a mark can be
+    auto-trusted. A fuzzy check against an unvalidated threshold fails
+    SILENTLY, in the direction of awarding marks nobody can point to
+    evidence for -- exactly the defect this story exists to catch. The
+    `rapidfuzz.fuzz.partial_ratio(...) >= 0.8` form the plan specifies is
+    tracked as US-041 and lands once, deliberately, with the dependency and
+    the lock refresh -- not smuggled in here against the wrong metric.
+    """
+    span = _normalise_span(evidence_span)
+    if not span:
+        return False
+    return any(span in _normalise_span(t) for t in texts if t)
+
+
+#: I6 (US-013): marker for the point-evidence extension of the coherence
+#: gate. Deliberately does NOT contain :data:`COHERENCE_TRIGGER_MARKER`
+#: ("matched_point_ids") -- the brief is explicit that a `no_span` finding
+#: is queued under the EXISTING `low_confidence` review bucket with a
+#: structural reason string, not a new `coherence_mismatch`-shaped trigger
+#: and not a new review-reason enum member (this branch already spent a
+#: whole story, US-038, on the cost of an inexpressible marker-source enum
+#: value; a fifth review-reason value would repeat it).
+#: ``lemely.accuracy.harness._review_triggers`` therefore reports a
+#: `no_span` finding exactly like any other generic `needs_teacher_review`
+#: reason, never as `coherence_mismatch`.
+POINT_EVIDENCE_TRIGGER_MARKER = "no_span"
+
+
+def _check_point_evidence(
+    question: Question,
+    point_verdicts: list[PointVerdict],
+    student_answer: str,
+    student_working: str | None,
+) -> str | None:
+    """I6 coherence-gate extension (#40 continuation, D11, US-013).
+
+    Two independent rules, checked per verdict in list order; the first
+    violation found is returned (one reason, like :func:`_check_coherence`,
+    not an exhaustive list):
+
+    1. Every ``awarded`` verdict must carry a non-empty ``evidence_span``
+       found (:func:`_span_found`) in the student's transcribed answer or
+       working -- otherwise a :data:`POINT_EVIDENCE_TRIGGER_MARKER`
+       (``no_span``) review trigger.
+    2. An awarded M-point (``AnswerPoint.math_mark_type is MathMarkType.M``)
+       requires its span to be found specifically INSIDE ``working_out``
+       when working was supplied (D11, working-vs-answer): a method mark
+       whose only "evidence" is the final answer line is not evidence of
+       method, even if that same text also happens to appear verbatim in
+       the answer box.
+
+    Only reached from :func:`_build_ai_corrected_from_verdicts`, itself
+    only reached when ``equivalence_gate`` is on and the marker returned at
+    least one verdict.
+    """
+    points_by_id = {p.id: p for p in question.answer_points}
+    for pv in point_verdicts:
+        if pv.verdict != "awarded":
+            continue
+        point = points_by_id.get(pv.point_id)
+        if point is not None and point.math_mark_type is MathMarkType.M and student_working:
+            if not _span_found(pv.evidence_span, student_working):
+                return (
+                    f"{POINT_EVIDENCE_TRIGGER_MARKER}: M-point {pv.point_id} evidence span "
+                    "not found in working_out"
+                )
+            continue
+        if not _span_found(pv.evidence_span, student_answer, student_working):
+            return (
+                f"{POINT_EVIDENCE_TRIGGER_MARKER}: point {pv.point_id} awarded with no "
+                "matching evidence span"
+            )
+    return None
+
+
+class _VerdictTotals(NamedTuple):
+    """What the verdict path derived from a marker's ``point_verdicts``.
+
+    ``capped`` is the mark the student gets: independent points add their
+    tariff, each scheme group adds ``min(group cap, awarded tariffs in the
+    group)``, and the whole is capped at ``question.marks``. ``additive`` is
+    the plain sum the coverage check compares the marker's own claim against
+    (spec 2026-09-26 §1: a marker that awarded both halves of an either/or
+    and claimed 2 must not be reported as under-described answer_points).
+    """
+
+    capped: int
+    additive: int
+    matched_point_ids: list[str]
+
+
+def _dedupe_scheme_points(points: list[AnswerPoint]) -> list[AnswerPoint]:
+    """First occurrence of a repeated scheme point id wins.
+
+    ``derive_point_rows`` applies the same rule to the same list, so both
+    sides read the same group structure.
+    """
+    kept: list[AnswerPoint] = []
+    seen: set[str] = set()
+    for point in points:
+        if point.id in seen:
+            continue
+        seen.add(point.id)
+        kept.append(point)
+    return kept
+
+
+def _scheme_groups(
+    question: Question,
+) -> tuple[list[AnswerPoint], list[tuple[str | None, int | None]]]:
+    """The deduplicated scheme points and their ``(group_key, cap)`` pairs."""
+    points = _dedupe_scheme_points(list(question.answer_points))
+    groups = group_points(points, total=question.marks, select_count=question.select_count)
+    return points, groups
+
+
+def _group_capped_total(question: Question, awarded_ids: set[str]) -> tuple[int, int]:
+    """``(capped, additive)`` for the scheme points in ``awarded_ids``.
+
+    ``capped``: independent points add their tariff, each scheme group adds
+    ``min(group cap, awarded tariffs in the group)``, and the whole is capped
+    at ``question.marks`` (:func:`lemely.core.point_groups.group_capped_points_total`).
+    ``additive``: the plain sum, likewise capped. One function so that
+    :func:`_awarded_from_verdicts` (the marker's claim), the post-backstop
+    recomputation in :func:`_build_ai_corrected_from_verdicts` and the
+    legacy path's :func:`_awarded_after_backstop` (both triage F4) cannot
+    disagree.
+    """
+    points, groups = _scheme_groups(question)
+    awarded = [
+        (point.marks, key, cap)
+        for point, (key, cap) in zip(points, groups, strict=True)
+        if point.id in awarded_ids
+    ]
+    additive = sum(tariff for tariff, _key, _cap in awarded)
+    capped = group_capped_points_total(awarded, total=question.marks)
+    return capped, min(additive, question.marks)
+
+
+def _awarded_after_backstop(
+    question: Question, claimed: int, claimed_ids: set[str], surviving_ids: set[str]
+) -> int:
+    """The legacy path's total after the backstop rejected points (triage F4).
+
+    Called once :func:`_verify_calculated_answers` has rejected something.
+    ``lost`` is what the rejected points were worth to the marker's ids under
+    the group rule and the ``question.marks`` clamp
+    (:func:`_group_capped_total` before minus after), so a rejected either/or
+    member that its surviving sibling still covers costs nothing. The result
+    is ``min(surviving total, claimed - lost)``, floored at 0:
+
+    * a marker whose claim matches its ids (the well-behaved case) gets the
+      surviving ids' capped total, exactly what the verdict path computes;
+    * it never exceeds ``claimed``, so the backstop can never raise a mark;
+    * a marker that claimed MORE than its ids back keeps only what the
+      survivors earn -- a mark no id backs is not kept after the backstop
+      has already caught one claim out;
+    * a marker that claimed LESS than its ids back still loses ``lost`` off
+      its claim, as the old subtraction did: its own withholding is not
+      assumed to have been on the rejected point. The safe direction, since
+      which point the marker withheld is unknowable and a rejection always
+      routes the question to review.
+
+    With independent points only, the clamp not binding and a claim no
+    higher than its ids back, this is the old arithmetic: ``claimed`` minus
+    each rejected tariff. Runs only when something was rejected; otherwise
+    the legacy path keeps the marker's clamped claim as it always has.
+    """
+    claimed_total, _ = _group_capped_total(question, claimed_ids)
+    surviving_total, _ = _group_capped_total(question, surviving_ids)
+    lost = claimed_total - surviving_total
+    return max(0, min(surviving_total, claimed - lost))
+
+
+def _awarded_from_verdicts(
+    question: Question, point_verdicts: list[PointVerdict]
+) -> _VerdictTotals:
+    """I6 (US-013): ``awarded_marks`` computed in Python from the verdicts.
+
+    Group-capped (spec 2026-09-26 §1): an either/or pair is worth its best
+    member and an "any N from" pool its N largest tariffs, exactly as
+    :func:`lemely.core.point_groups.group_points` records them for the
+    ledger and as the self-review write path enforces them. The groups come
+    from scheme order, so the result cannot depend on the order of the
+    verdicts (I6 acceptance 1's metamorphic property still holds).
+
+    Unresolved (dangling) point ids are excluded from the sum here -- the
+    same dangling id is separately caught as a structural violation by
+    ``_check_coherence`` on the returned ``matched_point_ids``.
+
+    A repeated ``point_id`` is deduplicated first, via
+    ``dedupe_point_verdicts`` (:mod:`lemely.core.schemas`) -- the same rule
+    ``derive_point_rows`` (:mod:`lemely.db.question_points`) applies to the
+    same list.
+
+    Emits ``point_verdict_duplicate_dropped`` for each dropped duplicate.
+    ``lemely.db.attempt_repo._warn_if_point_verdicts_were_deduplicated`` emits
+    a second, differently-shaped record for the SAME duplicate one layer
+    down, under the distinct name
+    ``point_verdict_duplicate_dropped_at_persist`` -- when this function ran
+    first (the normal path), that is a deliberate second record, not a bug;
+    see that function's docstring for why both are kept.
+    """
+    kept, dropped = dedupe_point_verdicts(point_verdicts)
+    if dropped:
+        log = structlog.get_logger()
+        for pv in dropped:
+            log.warning(
+                "point_verdict_duplicate_dropped",
+                question_id=question.id,
+                point_id=pv.point_id,
+                verdict=pv.verdict,
+            )
+    matched_point_ids = [pv.point_id for pv in kept if pv.verdict == "awarded"]
+    capped, additive = _group_capped_total(question, set(matched_point_ids))
+    return _VerdictTotals(capped=capped, additive=additive, matched_point_ids=matched_point_ids)
+
+
+#: I6 (US-013, D11): auto-added to feedback when a question earned full
+#: marks but no awarded M-point carried a method-evidence span.
+_NO_METHOD_SPAN_NOTE = (
+    " [No method shown for full marks -- consider asking the student to show working.]"
+)
+
+
+def _maybe_add_no_method_span_note(
+    question: Question, feedback: str, awarded: int, point_verdicts: list[PointVerdict]
+) -> str:
+    """D11: a feedback note is auto-added when a correct answer has no method span.
+
+    Only fires when the question actually decomposes into at least one
+    M-point (a question with no M-points has nothing to ask for).
+    """
+    if awarded != question.marks or not point_verdicts:
+        return feedback
+    points_by_id = {p.id: p for p in question.answer_points}
+    m_points_exist = any(p.math_mark_type is MathMarkType.M for p in question.answer_points)
+    if not m_points_exist:
+        return feedback
+    has_method_evidence = any(
+        pv.verdict == "awarded"
+        and (point := points_by_id.get(pv.point_id)) is not None
+        and point.math_mark_type is MathMarkType.M
+        and pv.evidence_span
+        for pv in point_verdicts
+    )
+    if has_method_evidence:
+        return feedback
+    return feedback + _NO_METHOD_SPAN_NOTE
+
+
+def _addresses_judgement(mark: AIMarkResponse) -> Literal["yes", "no", "unclear"] | None:
+    """The marker's ``addresses_question``, or ``None`` when the reply left it out.
+
+    ``AIMarkResponse`` defaults the field to ``"unclear"`` so a reply without
+    it still parses, but an omitted field is not a judgement and must not be
+    stored as one. ``model_fields_set`` holds only the fields the reply
+    actually carried; it survives the cache (which stores the raw reply text
+    and re-validates it) and ``model_copy``.
+    """
+    return mark.addresses_question if "addresses_question" in mark.model_fields_set else None
+
+
+def _build_ai_corrected_from_verdicts(
+    question: Question,
+    student_answer: str,
+    mark: AIMarkResponse,
+    student_working: str | None,
+    extraction_confidence: float | None,
+    *,
+    review_threshold: float = REVIEW_CONFIDENCE_THRESHOLD,
+) -> CorrectedQuestion:
+    """I6 (US-013): the point-verdict marking path.
+
+    Reached only from :func:`_build_ai_corrected` when ``equivalence_gate``
+    is on AND the marker returned at least one ``PointVerdict`` -- see that
+    function's docstring. ``awarded_marks`` is always computed from the
+    verdicts (:func:`_awarded_from_verdicts`), never from
+    ``mark.awarded_marks``.
+
+    Six independent review reasons (the legacy path's four, minus the
+    "marker reported an out-of-range number" check -- meaningless once the
+    number is Python-computed and pre-capped -- plus the I6 span check and
+    the post-``2deea2c5``-review coverage check below), with the SAME
+    priority order the legacy path uses (structural reasons before
+    confidence):
+
+    1. ``matched_point_ids``/derived-total coherence (:func:`_check_coherence`,
+       run against the DERIVED ``matched_point_ids`` and capped total).
+    2. COVERAGE mismatch -- ``capped < question.marks`` (the verdicts do not
+       account for the question's full marks) yet ``mark.awarded_marks``
+       (the marker's OWN claimed total) is HIGHER than ``capped``. Critical
+       fix, post-``2deea2c5``-review: that commit's dispatch guard added
+       ``question.answer_points`` truthiness to route empty-``answer_points``
+       questions (LEVELS_BASED, etc.) to the legacy body, but a question
+       whose ``answer_points`` are simply an INCOMPLETE description of its
+       marking (e.g. a ``DIAGRAM`` mixing a 2-mark ``AnswerPoint`` with a
+       2-mark ``DrawingCriterion`` this path cannot resolve ids against) is
+       non-empty and still dispatches here, silently under-capping. The
+       narrower I6 prompt wording that commit also shipped (asking only for
+       AnswerPoint ids, not the LevelDescriptor/DrawingCriteria ids the
+       schema cannot support anyway) removed the ACCIDENTAL safety net: the
+       OLD wording's dangling extra id used to trip
+       :func:`_check_coherence`'s "unknown mark point id(s)" branch on
+       exactly this shape. This check restores an equivalent signal
+       deliberately, by comparing the DERIVED total against the marker's
+       OWN claim -- the same philosophy the legacy path already uses
+       (never trust the model's arithmetic, but DO notice when it disagrees
+       with a structural computation) -- rather than re-litigating which
+       question types can have incomplete ``answer_points``, so it protects
+       any future under-coverage shape, not an enumerated list of types.
+       Demonstrated on a constructed ``DIAGRAM`` fixture; the committed
+       corpus has zero exposure today (11,024 leaves, all ``recall``/``mcq``,
+       none carrying ``drawing_criteria``) -- an input-data limit, not a
+       reason this can wait, per Critical A's own precedent: a latent trap
+       fires first when money is spent.
+    3. The deterministic calculated-answer backstop
+       (:func:`_verify_calculated_answers`), unconditionally run with
+       ``equivalence_gate=True`` here -- I8's equivalence fallback is
+       already gated by the SAME flag this whole branch requires, so there
+       is no independent "I8 without I6" state to preserve. Its subtracted
+       total is discarded on this path; the mark is recomputed from the
+       surviving ids by :func:`_group_capped_total` (triage F4).
+    4. `no_span` / M-point-outside-``working_out`` (:func:`_check_point_evidence`),
+       queued under the `low_confidence` bucket per that function's
+       docstring -- no new enum member, no new trigger.
+    5. ``mark.confidence < review_threshold`` (``REVIEW_CONFIDENCE_THRESHOLD``
+       unless the marking model has its own, :func:`review_threshold_for`).
+    """
+    totals = _awarded_from_verdicts(question, mark.point_verdicts)
+    capped, matched_point_ids = totals.capped, totals.matched_point_ids
+    _, scheme_groups = _scheme_groups(question)
+
+    coherence_reason = _check_coherence(
+        question,
+        matched_point_ids,
+        capped,
+        point_verdicts=mark.point_verdicts,
+        groups=scheme_groups,
+    )
+    coherence_mismatch = coherence_reason is not None
+
+    coverage_reason: str | None = None
+    if totals.additive < question.marks and mark.awarded_marks > totals.additive:
+        coverage_reason = (
+            f"verdict-derived total {totals.additive} is below the {question.marks}-mark "
+            f"maximum but the marker's own claim ({mark.awarded_marks}) was higher -- "
+            "this question's answer_points may not fully describe its marking scheme"
+        )
+    coverage_mismatch = coverage_reason is not None
+
+    pre_verify_point_ids = set(matched_point_ids)
+    _, matched_point_ids, rejections = _verify_calculated_answers(
+        question,
+        student_answer,
+        student_working,
+        matched_point_ids,
+        capped,
+        equivalence_gate=True,
+    )
+    value_mismatch = bool(rejections)
+    # Triage F4: the backstop's own arithmetic subtracts a rejected point's
+    # FULL tariff, which is right for the legacy path's additive total and
+    # wrong here, where `capped` is already group-capped -- rejecting one
+    # member of an either/or pair took the whole pair's mark away (probe:
+    # awarded 0 where the surviving alternative alone earns 1). The total is
+    # therefore recomputed from the SURVIVING ids with the same group rule
+    # the marker's claim was capped with, never adjusted by subtraction. The
+    # recomputation keeps the final `question.marks` clamp too: unstated pools
+    # are each bounded by the full leftover (triage F5), so their caps can
+    # sum past the question and only that clamp bounds the total.
+    awarded, _ = _group_capped_total(question, set(matched_point_ids))
+
+    # Post-I6-review: a point ``_verify_calculated_answers`` rejects above is
+    # dropped from ``matched_point_ids`` (so it contributes no marks), but its
+    # carried ``PointVerdict`` still says ``verdict="awarded"`` -- the
+    # marker's raw, now-overruled claim -- which broke the
+    # ``awarded == (verdict == "awarded")`` invariant and rendered the
+    # review screen's strongest positive chip on a point that earned
+    # nothing. Rejected ids are derived as a set difference against the
+    # ids captured just above, not by parsing ``rejections`` (prose built
+    # for a human, not for coupling this logic to). ``unverifiable`` is the
+    # correct verdict -- the backstop could not confirm the value -- not
+    # ``withheld``, which means the marker itself judged the point absent.
+    # Only ``verdict`` changes: ``point_id``, ``evidence_span``, ``note``,
+    # and (I7's CODE-set-only contract, Item A above) ``ecf_applied`` are
+    # preserved verbatim via ``model_copy``.
+    rejected_point_ids = pre_verify_point_ids - set(matched_point_ids)
+    point_verdicts = (
+        [
+            pv.model_copy(update={"verdict": "unverifiable"})
+            if pv.point_id in rejected_point_ids
+            else pv
+            for pv in mark.point_verdicts
+        ]
+        if rejected_point_ids
+        else mark.point_verdicts
+    )
+
+    evidence_reason = _check_point_evidence(
+        question, mark.point_verdicts, student_answer, student_working
+    )
+    no_span = evidence_reason is not None
+    low_confidence = mark.confidence < review_threshold or no_span
+
+    reasons: list[str] = []
+    if coherence_mismatch:
+        reasons.append(coherence_reason or "")
+    if coverage_mismatch:
+        reasons.append(coverage_reason or "")
+    if value_mismatch:
+        reasons.append("unverified accuracy mark(s): " + "; ".join(rejections))
+    if not reasons and low_confidence:
+        if no_span:
+            reasons.append(evidence_reason or "")
+        else:
+            reasons.append(
+                f"confidence {mark.confidence:.2f} below review threshold {review_threshold:.2f}"
+            )
+    review_reason = " | ".join(reasons) if reasons else None
+
+    feedback = _maybe_add_no_method_span_note(question, mark.feedback, awarded, mark.point_verdicts)
+
+    return CorrectedQuestion(
+        question_id=question.id,
+        awarded_marks=awarded,
+        maximum_marks=question.marks,
+        confidence=confidence_band_for_score(mark.confidence),
+        confidence_score=mark.confidence,
+        needs_teacher_review=(
+            low_confidence or value_mismatch or coherence_mismatch or coverage_mismatch
+        ),
+        review_reason=review_reason,
+        student_answer=student_answer or None,
+        expected_answer=None,
+        topic=question.topic_hint,
+        marker_source="ai",
+        feedback=feedback,
+        matched_point_ids=matched_point_ids,
+        point_verdicts=point_verdicts,
+        extraction_confidence=extraction_confidence,
+        addresses_question=_addresses_judgement(mark),
+    )
+
+
 def _build_ai_corrected(
     question: Question,
     student_answer: str,
     mark: AIMarkResponse,
     student_working: str | None = None,
     extraction_confidence: float | None = None,
+    *,
+    equivalence_gate: bool = False,
+    review_threshold: float = REVIEW_CONFIDENCE_THRESHOLD,
 ) -> CorrectedQuestion:
     """Convert AIMarkResponse + question metadata into a CorrectedQuestion.
 
+    ``equivalence_gate`` (US-005b, defaults False): forwarded to
+    ``_verify_calculated_answers`` -- see its docstring. Never changes
+    ``awarded_marks`` on its own in this story; a conflict only enriches the
+    review reason for reason 3 below.
+
+    I6 (US-013) DISPATCH -- reused ``equivalence_gate`` also decides whether
+    this function runs the legacy body below at all: when the flag is on
+    AND ``mark.point_verdicts`` is non-empty AND ``question.answer_points``
+    is non-empty, this function returns
+    :func:`_build_ai_corrected_from_verdicts`'s result instead, which
+    computes ``awarded_marks`` from the verdicts rather than trusting
+    ``mark.awarded_marks`` (see that function and
+    ``AIMarkResponse.point_verdicts``'s docstrings for the full I6 review-
+    reason set). With the flag off, with the flag on but an empty
+    ``point_verdicts`` -- today's default and every existing point-based
+    test's shape, since ``build_marker_user_prompt`` does not yet ask for
+    them unless ``equivalence_gate`` is also passed through to it -- or with
+    an empty ``question.answer_points``, everything below this dispatch is
+    the legacy path, which trusts ``mark.awarded_marks`` and checks coherence
+    against the same group-aware interval as the verdict path (#272).
+
+    The ``question.answer_points`` guard (post-I6 review, Critical A) exists
+    because :func:`_awarded_from_verdicts` and :func:`_check_point_evidence`
+    resolve every verdict's ``point_id`` ONLY against ``question.answer_points``
+    -- the wire prompt's I6 block used to (wrongly) ask the model for a
+    verdict per ``LevelDescriptor``/``DrawingCriteria`` id too, but
+    ``LevelDescriptor`` has no ``id`` field at all (``loose_schemas.py``) and
+    ``question.answer_points`` is required to be EMPTY for
+    ``QuestionType.LEVELS_BASED`` and typically empty for
+    ``INDICATIVE_CONTENT``/diagram/``graph_draw`` questions judged
+    holistically. Without this guard, every verdict for such a question
+    resolves to nothing, ``_awarded_from_verdicts`` sums to 0, and
+    ``LEVELS_BASED``/``INDICATIVE_CONTENT`` are BOTH in
+    :data:`_COHERENCE_EXEMPT_TYPES` -- so the dangling-id coherence check
+    that would otherwise catch this is switched off for exactly these types,
+    and the zero reaches a student unflagged. Demonstrated on a constructed
+    6-mark ``LEVELS_BASED`` question (6/6 -> 0/6, no review triggered) and a
+    constructed ``INDICATIVE_CONTENT`` question (2/2 -> 0/2, no review
+    triggered); the committed 289-scheme corpus contains zero questions of
+    either type (it is entirely ``recall``/``mcq``, det-parsed), so no
+    corpus regression was ever produced or possible -- this is a latent
+    defect in code reachable only once Gemini-parsed schemes populate these
+    types, not a measured corpus regression. Falling back to the legacy body
+    (which never reads ``point_verdicts`` and is therefore identical whether
+    ``equivalence_gate`` is True or False once ``answer_points`` is empty,
+    since ``_verify_calculated_answers`` has nothing to iterate either) was
+    chosen over resolving ids against ``level_descriptors``/
+    ``drawing_criteria`` as well: ``LevelDescriptor`` has no id to resolve
+    against, so a partial per-type extension would still leave levels-based
+    marking broken while superficially "fixing" diagram/graph_draw -- see
+    :func:`build_marker_user_prompt`'s matching fix to the I6 prompt block,
+    which no longer asks the model for point_verdicts at all when
+    ``question.answer_points`` is empty.
+
+    This guard covers only the EMPTY case. ``INDICATIVE_CONTENT`` is NOT
+    required by its own validator to have empty ``answer_points``
+    (unlike ``LEVELS_BASED``), so a question that carries SOME
+    ``answer_points`` summing to LESS than ``question.marks`` (e.g. a
+    ``DIAGRAM`` mixing an ``AnswerPoint`` with a ``DrawingCriterion`` this
+    path cannot resolve ids against) still dispatches to the verdicts path
+    and would silently under-cap the same way, absent
+    :func:`_build_ai_corrected_from_verdicts`'s own coverage-mismatch check
+    (its docstring, reason 2) -- that check, not this guard, is what closes
+    the adjacent gap.
+
     Four independent reasons flag a question for human review (D2.2, D2.3 for #3, M1.5 for #40):
 
-    1. ``confidence < REVIEW_CONFIDENCE_THRESHOLD`` — the marker itself is unsure.
+    1. ``confidence < review_threshold`` — the marker itself is unsure.
+       ``review_threshold`` is :data:`REVIEW_CONFIDENCE_THRESHOLD` unless the
+       model whose mark this is has its own (:func:`review_threshold_for`).
     2. The marker returned a mark outside ``[0, question.marks]``. The value is
        clamped into range either way, but a marker that asks for 4 marks on a
        3-mark question has misread the mark scheme, so the (silently corrected)
@@ -487,21 +2194,48 @@ def _build_ai_corrected(
        that stated confidence does not separate correct from wrong on this
        failure mode, so it must not depend on confidence at all.
     4. ``matched_point_ids`` is incoherent with ``awarded_marks`` (a dangling
-       id, or a sum mismatch) — see ``_check_coherence``. Also independent of
+       id, or a range mismatch on the grouped interval, #272) — see
+       ``_check_coherence``. Also independent of
        confidence: a marker can be fully confident about an internally
        inconsistent result.
     """
+    if equivalence_gate and mark.point_verdicts and question.answer_points:
+        return _build_ai_corrected_from_verdicts(
+            question,
+            student_answer,
+            mark,
+            student_working,
+            extraction_confidence,
+            review_threshold=review_threshold,
+        )
+
     clamped = max(0, min(mark.awarded_marks, question.marks))
     out_of_range = mark.awarded_marks != clamped
 
-    coherence_reason = _check_coherence(question, list(mark.matched_point_ids), clamped)
+    _, groups = _scheme_groups(question)
+    coherence_reason = _check_coherence(
+        question, list(mark.matched_point_ids), clamped, groups=groups
+    )
     coherence_mismatch = coherence_reason is not None
 
     awarded, matched_point_ids, rejections = _verify_calculated_answers(
-        question, student_answer, student_working, list(mark.matched_point_ids), clamped
+        question,
+        student_answer,
+        student_working,
+        list(mark.matched_point_ids),
+        clamped,
+        equivalence_gate=equivalence_gate,
     )
     value_mismatch = bool(rejections)
-    low_confidence = mark.confidence < REVIEW_CONFIDENCE_THRESHOLD
+    if value_mismatch:
+        # Triage F4, legacy path: the backstop subtracted each rejected
+        # point's FULL tariff from `clamped`, which a well-behaved marker has
+        # already group-capped -- rejecting one member of an either/or pair
+        # took the pair's mark (probe: 0 where the surviving member earns 1).
+        awarded = _awarded_after_backstop(
+            question, clamped, set(mark.matched_point_ids), set(matched_point_ids)
+        )
+    low_confidence = mark.confidence < review_threshold
 
     reasons: list[str] = []
     if out_of_range:
@@ -515,11 +2249,23 @@ def _build_ai_corrected(
         reasons.append("unverified accuracy mark(s): " + "; ".join(rejections))
     if not reasons and low_confidence:
         reasons.append(
-            f"confidence {mark.confidence:.2f} below review threshold "
-            f"{REVIEW_CONFIDENCE_THRESHOLD:.2f}"
+            f"confidence {mark.confidence:.2f} below review threshold {review_threshold:.2f}"
         )
     review_reason = " | ".join(reasons) if reasons else None
 
+    # NIT 7 (post-review, documented not fixed): this legacy return never
+    # sets `point_verdicts`, so it defaults empty (`CorrectedQuestion`'s own
+    # field default) regardless of whether `mark.point_verdicts` is
+    # populated. Benign today -- every call that reaches this branch either
+    # never asked for verdicts (`equivalence_gate` False) or asked but the
+    # question's `answer_points` cannot support them (Critical A's empty-
+    # answer_points fallback) -- but a model that disobeys either
+    # instruction and returns verdicts anyway has them silently discarded
+    # here, with no flag and no log line. Left as a documented limit rather
+    # than plumbed through: this is the legacy body every non-I6 call uses,
+    # and keeping verdicts out of it is what keeps the two dispatch branches
+    # separable (see `_build_ai_corrected`'s own docstring). Both branches
+    # now share the group-aware coherence interval (#272).
     return CorrectedQuestion(
         question_id=question.id,
         awarded_marks=awarded,
@@ -535,6 +2281,7 @@ def _build_ai_corrected(
         feedback=mark.feedback,
         matched_point_ids=matched_point_ids,
         extraction_confidence=extraction_confidence,
+        addresses_question=_addresses_judgement(mark),
     )
 
 
@@ -559,12 +2306,1002 @@ def _build_missing_corrected(
     )
 
 
+def _is_blank(value: str | None) -> bool:
+    """True for ``None``, ``""``, and whitespace-only text.
+
+    US-039: a whitespace-only answer (e.g. a stray newline the OCR box
+    picked up) is treated as blank, not as text worth a paid marking call --
+    there is no student judgement to evaluate in either case.
+    """
+    return value is None or value.strip() == ""
+
+
+#: US-039 product-owner ruling: a blank non-MCQ answer becomes an UNFLAGGED
+#: zero with NO paid call. Human-readable queue text for a teacher, and
+#: deliberately distinct from every other blank-shaped message this module can
+#: produce (``_build_mcq_corrected``'s "missing answer",
+#: ``_build_missing_corrected``'s "--mcq-only or no AI client", and
+#: ``_DROPPED_ANSWER_REVIEW_REASON``) -- but since task #36 nothing DERIVES
+#: state from it: ``marker_source == "blank"`` is the signal. The distinctness
+#: guard (``PairwiseDistinctBlankReasonsTests``) stays because a queue that
+#: shows a teacher the wrong reason is still a defect.
+_BLANK_ANSWER_REVIEW_REASON = "student left this question blank (0 awarded, no AI call made)"
+
+
+def _build_blank_corrected(
+    question: Question,
+    extraction_confidence: float | None = None,
+) -> CorrectedQuestion:
+    """Short-circuit for a non-MCQ leaf the student left BLANK.
+
+    US-039: before this function existed, ``correct_paper`` reached
+    ``ai.mark_question(q, student_answer or "", ...)`` for a blank exactly as
+    it did for real text -- a real, paid API call to mark an empty string,
+    which could return a confident judgement (observed: HIGH confidence,
+    0.97) tripping none of ``_build_ai_corrected``'s review gates. A student
+    was then marked 0 on the strength of a model's opinion about nothing,
+    with full confidence and no human ever told.
+
+    The product owner's ruling (recorded on the story, not re-litigated
+    here): the replacement is an UNFLAGGED zero with NO paid call. A flagged
+    zero was rejected -- it would flag every genuine blank on every paper,
+    turning a paper with 8 unattempted parts into 8 queue items a teacher
+    dismisses on sight, training them to bulk-approve without looking.
+
+    ``marker_source`` is ``"blank"``, its own fifth literal (task #36,
+    migration ``0040_marker_source_blank``). It reused ``"missing"`` until
+    then, with the blank-vs-not-marked distinction carried in
+    ``review_reason`` prose — the same interim shape US-031 used for
+    dropped-vs-missing before ``"dropped"`` had a member, and it failed the
+    same way, only more expensively: a blank shares ``confidence_score=0.0``,
+    ``ConfidenceBand.LOW`` and ``"missing"`` with a question a marker DID
+    look at, so "did a marker score this?" was un-answerable from the columns
+    and nine consumers had to be found by hand. Ask it through
+    ``lemely.core.schemas.marker_scored`` now.
+
+    ``review_reason`` keeps ``_BLANK_ANSWER_REVIEW_REASON``: it is what a
+    teacher reads in the queue. Nothing PARSES it any more — the review-queue
+    exemption is ``marker_source == "blank"``.
+
+    Accepted residual risk, not solved here: a FALSE blank -- the student
+    wrote something and extraction missed it entirely -- is awarded 0
+    silently. That is an extraction defect, not a marking one; the narrower
+    model-returned-then-discarded case is already covered by
+    ``marker_source="dropped"``.
+
+    Position note (why this is a separate function/branch from
+    ``_build_missing_corrected``, not a parameter on it): callers must only
+    reach this from ``correct_paper``'s leaf loop AFTER the MCQ branch and
+    the ``ai is None`` branch, and BEFORE the AI marking call. Before the MCQ
+    branch would change already-correct MCQ behaviour; before ``ai is None``
+    would make ``--mcq-only``'s "we chose not to mark this" indistinguishable
+    from "the student left it blank", which is the same class of conflation
+    US-031's MUST-FIX 7 removed for dropped answers.
+    """
+    return CorrectedQuestion(
+        question_id=question.id,
+        awarded_marks=0,
+        maximum_marks=question.marks,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.0,
+        needs_teacher_review=False,
+        student_answer=None,
+        expected_answer=None,
+        topic=question.topic_hint,
+        review_reason=_BLANK_ANSWER_REVIEW_REASON,
+        marker_source="blank",
+        extraction_confidence=extraction_confidence,
+    )
+
+
+#: US-031 review MUST-FIX 7 (stronger fix): distinct from
+#: "AI marking failed: ..." (a live model/transport failure caught in
+#: ``correct_paper``'s ``except Exception`` branch) and from "non-MCQ
+#: question not marked (--mcq-only or no AI client)"
+#: (:func:`_build_missing_corrected`, nothing was ever attempted). A dropped
+#: answer means the model DID respond for this question and the response
+#: was discarded before marking was ever attempted, because extraction
+#: could not make sense of it -- conflating any of the three into one
+#: message would make the review queue less informative about what
+#: actually happened, which is the same defect class the review flagged in
+#: the "AI marking failed" string this must not reuse.
+_DROPPED_ANSWER_REVIEW_REASON = (
+    "extraction dropped this answer as malformed (see ExtractedAnswers.answer_drops)"
+)
+
+
+#: The reason for a question in ``ExtractedAnswers.unbound_question_ids``: the
+#: label binder could bind no answer to it. Distinct from
+#: ``_DROPPED_ANSWER_REVIEW_REASON``, which would be false here: nothing was
+#: discarded as malformed. It names both ways a scan leaves a leaf unbound: its
+#: label was not seen, or the label was seen and the writing by it could not be
+#: given to it (it may be a neighbour's, or its page or text could not be read).
+#: It is the general sentence; ``UNBOUND_REASON_SENTENCES`` holds the ones for
+#: causes it would be false for.
+UNBOUND_QUESTION_REVIEW_REASON = (
+    "binding unverified: this question's label was not found on the scan, or the writing "
+    "by it could not be tied to it, so its answer could not be read"
+)
+
+
+#: A truer sentence for the causes the general one above is false for, keyed by the
+#: reason the extraction carries in ``ExtractedAnswers.unbound_question_reasons``.
+#: Each starts with ``binding unverified:`` (``lemely.core.binding_review`` keys on
+#: that prefix) and none holds ``" | "``, which joins reasons.
+UNBOUND_REASON_SENTENCES: dict[str, str] = {
+    # The mark scheme's fault, not the scan's.
+    "duplicate_id": (
+        "binding unverified: the mark scheme has more than one question under this "
+        "label, so the answer could not be matched to one"
+    ),
+    "undecomposable_id": (
+        "binding unverified: the mark scheme names this question in a way no label on a "
+        "script can match, so its answer could not be matched to it"
+    ),
+    # Nothing of the script was bound at all.
+    "list_too_long": (
+        "binding unverified: the script could not be read against this mark scheme, so "
+        "no answer could be matched to this question"
+    ),
+    "scheme_too_deep": (
+        "binding unverified: the script could not be read against this mark scheme, so "
+        "no answer could be matched to this question"
+    ),
+    # Sent to review by comparing two reads, or by the order of the list. The label
+    # was found in each of these.
+    "answered_in_one_read_only": (
+        "binding unverified: writing was found for this question in only one of two "
+        "readings of the scan, so its answer was not used"
+    ),
+    "listing_suspect": (
+        "binding unverified: the answers around this question were listed out of order, "
+        "so the writing for it could not be told from the next part's"
+    ),
+    "unaligned_in_other_read": (
+        "binding unverified: one reading of the scan found nothing written for this "
+        "question and the other could not place its label, so it is not known to be blank"
+    ),
+}
+
+
+def _unbound_reason_sentence(why: str | None) -> str:
+    """The review reason for an unbound question whose cause is ``why``.
+
+    The general sentence is true for every reason not listed above: those are a label
+    that was not found, or one that was found with writing that could not be tied to
+    it. It is also what an id with no recorded cause gets.
+    """
+    return UNBOUND_REASON_SENTENCES.get(why or "", UNBOUND_QUESTION_REVIEW_REASON)
+
+
+def _unbound_question_ids(extracted: ExtractedAnswers | Mapping[str, str]) -> frozenset[str]:
+    """Question ids the label binder could bind no answer to.
+
+    Only an ``ExtractedAnswers`` can carry them: a plain mapping of typed answers
+    was never bound from a scan.
+    """
+    if isinstance(extracted, ExtractedAnswers):
+        return frozenset(extracted.unbound_question_ids)
+    return frozenset()
+
+
+def _build_dropped_corrected(
+    question: Question, reason: str = _DROPPED_ANSWER_REVIEW_REASON
+) -> CorrectedQuestion:
+    """Short-circuit for an answer extracted but DROPPED as malformed.
+
+    Also used, with ``reason=UNBOUND_QUESTION_REVIEW_REASON``, for a question the
+    label binder could bind no answer to: the same zero, the same flag, no marking
+    call, and its own true reason.
+
+    US-031 review MUST-FIX 7, stronger fix. No marking call is made --
+    ``correct_paper`` never reaches ``ai.mark_question`` for this question
+    at all. Before this function existed, a dropped answer looked to
+    ``correct_paper`` identically to "no answer for this question"
+    (``student_answer=None``): for an MCQ leaf
+    that already flagged for review (``_build_mcq_corrected``'s "missing
+    answer" branch, safe by accident); for a non-MCQ leaf, the AI marker was
+    asked to mark ``student_answer or ""`` -- a real, paid API call to mark
+    an empty string the extractor itself had already discarded -- and could
+    return a confident judgement (e.g. "blank, 0 marks", high confidence)
+    that tripped none of ``_build_ai_corrected``'s four review gates. A
+    student would then be marked wrong because the model's JSON was
+    malformed, with no human ever told. For every question that reaches this
+    function that path is gone: the mark is 0, it is unconditionally flagged
+    for review with a reason distinct from both a genuine student blank and a
+    real marking failure, and no spend is wasted marking text extraction
+    already knew was unusable.
+
+    COVERAGE LIMIT (review MUST-FIX F1) -- which questions reach it is the
+    limit. Only an id in ``ExtractedAnswers.dropped_question_ids`` with no
+    surviving entry in ``answers`` does (spec 2026-09-26 §2 (#4): a dropped
+    ENTRY is not a verdict on the question when another, well-formed entry
+    for the same id survived), and only two of extraction's five drop
+    reasons put an id there in the first place: ``missing_answer`` and
+    ``malformed_answer``. ``missing_question_id``,
+    ``malformed_question_id`` and ``malformed_answer_shape`` (the MF6 case --
+    one unusable element in the ``answers`` list) leave no id to attribute the
+    flag to, so those three never arrive here and keep the pre-MF7 behaviour
+    of their leaf type: on a non-MCQ leaf with an AI marker configured, the
+    paid call is still made and ``_build_ai_corrected`` can still return a
+    confident, unflagged zero; on an MCQ leaf, or under ``--mcq-only``/no AI
+    client, the question is already flagged at 0.0 with no call, but only
+    because ``student_answer=None`` is indistinguishable from a blank -- so
+    ``review_reason`` carries that path's blank message ("missing answer", or
+    "non-MCQ question not marked (--mcq-only or no AI client)") rather than
+    what actually happened. See
+    ``CorrectedQuestion.marker_source``'s coverage-limit note.
+    """
+    return CorrectedQuestion(
+        question_id=question.id,
+        awarded_marks=0,
+        maximum_marks=question.marks,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.0,
+        needs_teacher_review=True,
+        student_answer=None,
+        expected_answer=None,
+        topic=question.topic_hint,
+        review_reason=reason,
+        marker_source="dropped",
+        extraction_confidence=None,
+    )
+
+
+#: I7 (US-013) GATE. Measured on all 289 committed mark schemes: 26 points
+#: (0.25% of 10,314) in 10 schemes carry this marker, as unstructured prose
+#: on the point itself or its question's notes/marking_guidance -- e.g.
+#: "R = 4.05 / ecf, 3.89, 3.81" and "Strict FT their median reading".
+#: Deliberately NOT widened to "any A point with a resolvable M chain" --
+#: that would apply ECF where CAIE never marked the point ECF-eligible, and
+#: award marks nobody earned. Under-firing (this) is the safe direction;
+#: over-firing is a correctness defect.
+#:
+#: Post-I7-review fix: ``FT`` is matched CASE-SENSITIVELY, unlike ``ecf``/
+#: ``dep`` -- the original case-insensitive `\bft\b` also matched
+#: `0625_s23_ms_42` q2b/p2's `"Ft = ∆mv OR F = ma OR ..."`, where `Ft` is
+#: impulse (force x time), a physics formula with no connection to
+#: follow-through. Every genuine follow-through marker in the corpus is
+#: written uppercase ("Strict FT", "FT their median reading"), so
+#: restricting `FT` to that case drops exactly the one false positive (29
+#: -> 28 points, 11 -> 10 schemes) and no genuine hit -- re-measured against
+#: the full corpus, not assumed. The over-award scenario this closes is
+#: CONDITIONAL, not already live: `0625_s23_ms_42`'s q2 top-level group
+#: carries A/C-typed points (`2a`: p1=A, p2=C, p3=C) but no M point
+#: anywhere in it today, so `_resolve_ecf_chain` returns `None` for every
+#: point in the group and there is nothing to substitute against yet. A
+#: single M point ADDED LATER (e.g. by a Gemini re-parse) would give this
+#: exact group a resolvable chain, and a point CAIE never marked
+#: ECF-eligible would then receive a substituted value and an award --
+#: the mis-gate and a chain must BOTH be present, and only the mis-gate
+#: was, which this fix closes regardless.
+#:
+#: Post-whole-branch-review fix: ``dep`` is EXCLUDED from this pattern.
+#: In CAIE mark-scheme notation ``dep`` means "Dependent" -- the mark can
+#: only be awarded when a stated prerequisite mark is ALSO awarded --
+#: while ``FT``/``ecf`` mean "Follow-through after error" / "Error carried
+#: forward". I7's re-mark fires only when the prerequisite was NOT
+#: awarded, which is exactly the situation in which a dependent mark must
+#: be WITHHELD, not carried forward -- the old pattern gated these marks
+#: into the one behaviour CAIE says they must never get, an over-award
+#: direction. Measured: 2 of the 28 gate hits (both in
+#: `0606_s22_ms_23`, leaf 10/p8 and 11a/p3) were dep-only; dropping the
+#: token narrows the gate population to 26 points / 10 schemes (see
+#: :func:`_maybe_apply_ecf_substitution`'s activation-ceiling docstring
+#: and ``_run_ai_marking``'s ``ecf_substitution`` note, both updated to
+#: match). Inert on the committed det-parsed corpus today (the gate/chain
+#: intersection is still 0 either way), but not inert in general: Gemini
+#: -parsed schemes are unconstrained in marker vocabulary and could
+#: produce a live dep+chain co-occurrence this excludes.
+_ECF_MARKER_RE = re.compile(r"(?i:\becf\b)|\bFT\b")
+
+
+def _ecf_gated(question: Question, point: AnswerPoint) -> bool:
+    """I7 GATE -- may ``point`` ever be re-marked with a substituted prior value?
+
+    True only when an ecf/ft marker appears on the point's own ``point``
+    text or ``condition``, or on its (leaf) question's ``notes`` or
+    ``marking_guidance`` -- deliberately excluding ``dep`` (Dependent),
+    which is the opposite marking behaviour to ECF. See
+    :data:`_ECF_MARKER_RE`'s docstring for the measured activation ceiling
+    and why this is not widened.
+    """
+    texts = (point.point, point.condition, question.notes, question.marking_guidance)
+    return any(_ECF_MARKER_RE.search(t) for t in texts if t)
+
+
+def _resolve_ecf_chain(
+    question: Question, point: AnswerPoint, top_level_leaves: list[Question]
+) -> tuple[str, str] | None:
+    """I7 CHAIN resolver -- which prior point's value gets substituted for ``point``.
+
+    Two tiers, in order (measured on the 289-scheme corpus, walking
+    ``parts`` recursively -- an earlier probe that walked a non-existent
+    ``sub_questions`` key silently visited only top-level questions and
+    understated every denominator by 5.8x): ``required_with`` itself is
+    non-null in 0 of **10,314** corpus points today, a Gemini-path-only
+    field on this det-parsed corpus, so tier 1 is correct-but-dormant and
+    tier 2 is the one that actually fires, resolving 820 SAME-LEAF chains
+    and 438 CROSS-LEAF ones. Both tiers are reported here as STRUCTURAL
+    facts only -- whether a same-leaf result is USABLE for substitution is
+    a separate policy decision :func:`_maybe_apply_ecf_substitution` makes,
+    not this function's job (see its own docstring's Critical 2 note: a
+    same-leaf M-then-A pair is one computation's method and accuracy
+    marks, not an error carried FORWARD between two parts, so that
+    majority of chains this resolver reports is never actually
+    substituted on).
+
+    1. ``point.required_with``, if set, resolved ONLY against ``question``'s
+       OWN ``answer_points`` -- point ids are question-scoped by design
+       (``loose_schemas.py:202``, "Sequential ID within the question"), so a
+       bare id can never name a point in a different question, and this
+       tier can therefore only ever return a SAME-LEAF result. A dangling
+       ``required_with`` (no such sibling) resolves to no prerequisite,
+       never a paper-wide search.
+    2. Otherwise, the nearest preceding ``math_mark_type == M`` point within
+       the SAME top-level question, walking parts in document order --
+       first backwards through ``question``'s own earlier points (SAME-LEAF
+       result), then backwards through ``top_level_leaves`` (every leaf
+       under the same top-level ancestor, in document order, as this
+       story's own ``correct_paper`` grouping presents it -- a CROSS-LEAF
+       result). This is the parsing prompt's own rule 9
+       (``io/prompts/mark_scheme_parsing.py:338``), computed here rather
+       than re-derived from scratch.
+
+    Returns ``(prerequisite_leaf_question_id, prerequisite_point_id)``, or
+    ``None`` when neither tier resolves.
+    """
+    if point.required_with is not None:
+        if any(sibling.id == point.required_with for sibling in question.answer_points):
+            return question.id, point.required_with
+        return None  # dangling required_with -- no paper-wide fallback
+
+    try:
+        point_index = next(i for i, p in enumerate(question.answer_points) if p.id == point.id)
+    except StopIteration:
+        return None
+
+    for sibling in reversed(question.answer_points[:point_index]):
+        if sibling.math_mark_type is MathMarkType.M:
+            return question.id, sibling.id
+
+    try:
+        leaf_index = next(i for i, leaf in enumerate(top_level_leaves) if leaf.id == question.id)
+    except StopIteration:
+        return None
+
+    for leaf in reversed(top_level_leaves[:leaf_index]):
+        for sibling in reversed(leaf.answer_points):
+            if sibling.math_mark_type is MathMarkType.M:
+                return leaf.id, sibling.id
+
+    return None
+
+
+def _top_level_ancestor_id(question_id: str, all_by_id: dict[str, Question]) -> str:
+    """Walk ``parent_id`` up to the root and return that root's id."""
+    q = all_by_id[question_id]
+    seen = {q.id}
+    while q.parent_id is not None and q.parent_id in all_by_id:
+        q = all_by_id[q.parent_id]
+        if q.id in seen:  # defensive only -- a well-formed scheme cannot cycle
+            break
+        seen.add(q.id)
+    return q.id
+
+
+def _group_leaves_by_top_level(
+    leaves: list[Question], all_by_id: dict[str, Question]
+) -> dict[str, list[Question]]:
+    """Group marked leaves by their top-level ancestor id.
+
+    Preserves the document order ``leaves`` already carries --
+    :func:`_resolve_ecf_chain` walks each group backwards to find the
+    nearest preceding M point.
+    """
+    groups: dict[str, list[Question]] = {}
+    for leaf in leaves:
+        tid = _top_level_ancestor_id(leaf.id, all_by_id)
+        groups.setdefault(tid, []).append(leaf)
+    return groups
+
+
+def _point_was_awarded(
+    leaf_id: str,
+    point_id: str,
+    corrected_by_id: dict[str, CorrectedQuestion],
+) -> bool:
+    """Was ``point_id`` (owned by the EARLIER leaf ``leaf_id``) already awarded?
+
+    Post-Critical-2-review NIT fix: this used to also handle
+    ``leaf_id == the CURRENT leaf under test`` (``required_with``, or a
+    preceding M point earlier in the SAME leaf, before Critical 2 excluded
+    the same-leaf case from substitution entirely). That branch was DEAD:
+    its only caller (:func:`_maybe_apply_ecf_substitution`) already filters
+    out ``prereq_leaf_id == question.id`` before ever calling this
+    function, so ``leaf_id`` can never equal the leaf under test here --
+    the removed branch asserted a scenario the caller had already ruled
+    out. Simplified to what actually happens: ``leaf_id`` is always a leaf
+    STRICTLY EARLIER, in document order, than the one being marked, and is
+    therefore already present in ``corrected_by_id`` by construction --
+    ``correct_paper`` processes leaves in the same document order
+    :func:`_resolve_ecf_chain`'s cross-leaf tier walks backwards through.
+    """
+    prior_cq = corrected_by_id.get(leaf_id)
+    return prior_cq is not None and point_id in prior_cq.matched_point_ids
+
+
+def _maybe_apply_ecf_substitution(
+    question: Question,
+    cq: CorrectedQuestion,
+    mark: AIMarkResponse,
+    student_answer: str,
+    student_working: str | None,
+    extraction_confidence: float | None,
+    *,
+    ai: AICorrector,
+    ecf_substitution: bool,
+    equivalence_gate: bool,
+    principles: list[str] | None,
+    default_rules: str | None,
+    reader_describes_drawings: bool,
+    sibling_prior: dict[str, int] | None,
+    answers: dict[str, _FlatAnswer],
+    top_level_leaves: list[Question],
+    corrected_by_id: dict[str, CorrectedQuestion],
+    log: structlog.BoundLogger,
+    review_threshold: float = REVIEW_CONFIDENCE_THRESHOLD,
+) -> CorrectedQuestion:
+    """I7 (US-013) ORDER: try without substitution first.
+
+    ``review_threshold`` is the one ``cq`` was built with (the first pass's
+    model's). The merged mark carries the lower of the two passes' confidences,
+    so it is judged by the stricter of the two passes' thresholds.
+
+    ``cq``/``mark`` were already marked by the caller with no substitution;
+    only re-mark when a part is BELOW MAX *and* GATED *and* has a resolvable
+    CROSS-LEAF CHAIN whose prerequisite was itself NOT already correct
+    (there is no error to carry forward otherwise -- this is what makes a
+    correct prerequisite never trigger a second call).
+
+    Post-I7-review Critical 2 fix (a design error in the original brief, not
+    the implementation): a chain that resolves to a point in the SAME leaf
+    as ``question`` is EXCLUDED here, deliberately, even though
+    :func:`_resolve_ecf_chain` still reports it. A same-leaf M/A pair (or a
+    ``required_with`` reference, which by construction can only ever name a
+    sibling in the SAME leaf -- point ids are question-scoped) is one
+    computation's method and accuracy marks, not two separate parts with an
+    error carried FORWARD between them -- there is nothing to substitute.
+
+    Measured on the full corpus: 820 same-leaf chains exist as a
+    STRUCTURAL matter, against 438 cross-leaf ones. This is NOT the same
+    as saying the unfixed code would have substituted on 820 points --
+    substitution additionally requires the GATE, and on this corpus the
+    gate (26 points) and ANY chain, same-leaf or cross-leaf, never
+    co-occur (measured: gate-and-chain intersection is 0 in both
+    buckets). So the unfixed code would have substituted on ZERO corpus
+    points, not 820 -- the exclusion is correct on PRINCIPLE (nothing is
+    carried forward inside one computation) and is NOT load-bearing on
+    this corpus; a reader sizing a revert of this fix should know it would
+    change nothing here, while a reader deciding whether the rule is
+    necessary should still take it, because Gemini-parsed schemes are
+    where a genuine same-leaf/cross-leaf distinction and a co-occurring
+    gate can both appear. See ``ECFSubstitutionTests::
+    test_same_leaf_chain_never_triggers_substitution`` for the regression
+    test (a constructed fixture, since the corpus itself cannot exercise
+    this path).
+
+    Honest limit, stated here rather than implied: recomputation is BY THE
+    MODEL with the substituted value (plus I8's separate numeric check),
+    never a literal (e.g. Numbas-style) recompute -- mark schemes carry no
+    machine-readable formula to recompute against.
+
+    No-op (returns ``cq`` unchanged, no second Gemini call) whenever:
+    - ``ecf_substitution`` is off (flag-off byte-identical inertness);
+    - ``equivalence_gate`` is off -- post-I7-review fix A: ``point_verdicts``
+      is NOT in the wire schema's ``required`` list, so a model MAY
+      volunteer it even when the I6 prompt block was never appended (i.e.
+      ``equivalence_gate`` False). Gating on ``mark.point_verdicts`` alone
+      let ``ecf_substitution=True, equivalence_gate=False`` spend a second,
+      billed marking call per eligible question -- with its result
+      discarded, since ``_build_ai_corrected`` only ever consumes verdicts
+      when ``equivalence_gate`` is also True -- a silent cost regression
+      against the USD ceiling that contradicted this module's own claim of
+      inertness. This explicit check is the fix, not a cosmetic guard;
+    - ``cq`` is already at ``maximum_marks``;
+    - ``mark.point_verdicts`` is empty;
+    - no answer_point is simultaneously below-max, gated, CROSS-LEAF
+      chain-resolvable, not already awarded, and backed by a non-blank
+      prerequisite answer.
+
+    Measured activation ceiling on the 289-scheme committed corpus, as
+    THREE separate numbers rather than one -- publishing a single figure
+    (this story's own earlier ``29 points, 11 schemes`` was wrong in
+    exactly this way) invites reading a true zero as a regression:
+    GATE population 26 points / 10 schemes (:data:`_ECF_MARKER_RE`);
+    genuine CROSS-LEAF chain population 438; their INTERSECTION -- the
+    actual number of points I7 can activate on -- **0**. The gated
+    population and the M/A/B/C-typed population are disjoint on this
+    det-parsed corpus: not one of the 26 gated points has a preceding
+    typed point in a different leaf. I7 is therefore provably inert on the
+    committed corpus BY CONSTRUCTION, not merely rare -- the feature
+    targets Gemini-parsed schemes, where ``required_with`` is populated and
+    real cross-part chains exist, which this corpus is not. The synthetic
+    tests in ``tests/test_correction_ai.py`` are the ONLY evidence this
+    path behaves as designed; the corpus provides none.
+    """
+    if (
+        not ecf_substitution
+        or not equivalence_gate
+        or cq.awarded_marks >= cq.maximum_marks
+        or not mark.point_verdicts
+    ):
+        return cq
+
+    current_matched = set(cq.matched_point_ids)
+    eligible: list[tuple[AnswerPoint, str, str]] = []
+    for point in question.answer_points:
+        if point.id in current_matched:
+            continue
+        if not _ecf_gated(question, point):
+            continue
+        prereq = _resolve_ecf_chain(question, point, top_level_leaves)
+        if prereq is None:
+            continue
+        prereq_leaf_id, prereq_point_id = prereq
+        if prereq_leaf_id == question.id:
+            continue  # same-leaf: nothing to carry FORWARD within one computation
+        if _point_was_awarded(prereq_leaf_id, prereq_point_id, corrected_by_id):
+            continue  # prerequisite was already correct -- nothing to carry forward
+        prereq_answer = answers.get(prereq_leaf_id)
+        if not prereq_answer or _is_blank(prereq_answer.answer):
+            continue
+        eligible.append((point, prereq_leaf_id, prereq_point_id))
+
+    if not eligible:
+        return cq
+
+    # Post-I7-review fix D, and the SHOULD-FIX that followed Critical 2's
+    # review: include the prerequisite's WORKING alongside its answer (an
+    # ECF-relevant intermediate value can live in working_out rather than
+    # the final answer line, and the old code dropped it entirely), AND
+    # the prerequisite POINT's own scheme text, so the model knows WHICH of
+    # the leaf's numbers is being carried forward -- without it, a leaf
+    # extracting as e.g. "v = 18, a = 150" gives the model two numbers and
+    # no way to tell which one the gated point actually depends on.
+    #
+    # DECLINED (not merely undocumented): true per-POINT VALUE granularity
+    # -- substituting only the specific number the prerequisite point
+    # produced, rather than the prerequisite leaf's whole answer -- is not
+    # achievable with today's extraction. `answers` is `dict[str, _FlatAnswer]`,
+    # keyed by LEAF question id; extraction never resolves a value below one question's
+    # answer/working as a whole, so there is no per-point value to look up
+    # in the first place, regardless of how this function is written. That
+    # is a limit of what extraction records, not a documentation choice.
+    def _prior_value_text(leaf_id: str, point_ids: list[str]) -> str:
+        # Post-review fix: rendered as separate labelled LINES ("answer:",
+        # "working:", "depends on:"), never packed onto one line -- the
+        # prompt-building side used to wrap this in `{value!r}`, which
+        # turned a real line break into a literal `\n` escape sequence the
+        # model could not use as one, and a naive unescaped join would
+        # instead put a continuation line at column 0 with nothing marking
+        # which entry it belongs to. `build_marker_user_prompt` indents
+        # every line of the returned string under its own `qid:` header,
+        # so labelled lines here are what keeps a multi-field value
+        # unambiguous once indented. `answer` is typed ``str`` in
+        # `answers` (never ``None``), so no `or ""` fallback is needed for
+        # it.
+        flat = answers[leaf_id]
+        answer, working = flat.answer, flat.working_out
+        lines = [f"answer: {answer}"]
+        if working and working.strip():
+            lines.append(f"working: {working.strip()}")
+        scheme_texts = [
+            sibling.point
+            for leaf in top_level_leaves
+            if leaf.id == leaf_id
+            for sibling in leaf.answer_points
+            if sibling.id in point_ids
+        ]
+        if scheme_texts:
+            lines.append(f"depends on: {'; '.join(dict.fromkeys(scheme_texts))}")
+        return "\n".join(lines)
+
+    prereq_point_ids_by_leaf: dict[str, list[str]] = {}
+    for _, prereq_leaf_id, prereq_point_id in eligible:
+        prereq_point_ids_by_leaf.setdefault(prereq_leaf_id, []).append(prereq_point_id)
+    prior_values = {
+        leaf_id: _prior_value_text(leaf_id, point_ids)
+        for leaf_id, point_ids in prereq_point_ids_by_leaf.items()
+    }
+    try:
+        mark2 = ai.mark_question(
+            question,
+            student_answer,
+            student_working,
+            prior_results=sibling_prior,
+            principles=principles,
+            default_rules=default_rules,
+            reader_describes_drawings=reader_describes_drawings,
+            equivalence_gate=equivalence_gate,
+            prior_values=prior_values,
+        )
+    except CostCeilingError:
+        raise
+    except LemelyError as exc:
+        # Post-review NIT fix: was `except Exception`, which also caught
+        # (and silently masked as "the API call failed") any PROGRAMMING
+        # bug in the code above -- e.g. a `StopIteration` from a test's own
+        # mock exhausting its `side_effect` list proved nothing under the
+        # old bare catch, since it looked identical to a real transport
+        # failure. `ai.mark_question`'s genuine failure modes are
+        # `LemelyError` subclasses (`ExternalServiceError` for transport,
+        # `ParseError` for a malformed response `GeminiClient` could not
+        # parse into `AIMarkResponse`) -- `CostCeilingError` is also one,
+        # already re-raised above. Anything outside that hierarchy now
+        # propagates instead of being swallowed. Deliberately narrower than
+        # `correct_paper`'s own pre-existing `except Exception` (a separate,
+        # documented decision on a different call site, out of this
+        # story's scope).
+        log.warning("ecf_substitution_remark_failed", question_id=question.id, error=str(exc))
+        return cq
+
+    eligible_ids = {p.id for p, _, _ in eligible}
+    mark2_by_id = {pv.point_id: pv for pv in mark2.point_verdicts}
+    merged_verdicts: list[PointVerdict] = []
+    changed = False
+    for pv in mark.point_verdicts:
+        replacement = mark2_by_id.get(pv.point_id) if pv.point_id in eligible_ids else None
+        if replacement is not None and replacement.verdict == "awarded":
+            merged_verdicts.append(replacement.model_copy(update={"ecf_applied": True}))
+            changed = True
+        else:
+            merged_verdicts.append(pv)
+    if not changed:
+        return cq
+
+    # Post-I7-review Critical 1 fix: the re-mark's OWN confidence/feedback
+    # must replace the first pass's, not the other way round.
+    # `_build_ai_corrected_from_verdicts` evaluates
+    # `mark.confidence < review_threshold` -- if `merged_mark`
+    # kept the first pass's (often HIGH) confidence, an ECF re-mark the
+    # model itself was UNSURE about would ship unflagged, carrying feedback
+    # that describes the first pass's rejection rather than the award that
+    # actually happened. ECF awards are precisely the marks most in need of
+    # a human look; `min()` -- not the re-mark's confidence alone -- so a
+    # confident first pass can never mask genuine uncertainty in the
+    # re-mark, and a confident re-mark can never override genuine
+    # uncertainty already flagged by the first pass.
+    # Post-Critical-1-review Critical fix: `feedback=mark2.feedback` above
+    # is unconditional, but `point_verdicts` is merged SELECTIVELY (only
+    # `eligible_ids` are replaced with pass 2's verdict). Pass 2 is a full
+    # re-mark of the WHOLE question, not just the eligible point(s) -- so
+    # its feedback can describe crediting a point that was NOT eligible
+    # (e.g. an ungated point pass 2 also happened to award), while that
+    # point's verdict is correctly discarded from `merged_verdicts`. Without
+    # `awarded_marks` also carrying pass 2's claim, `merged_mark.awarded_marks`
+    # stayed at pass 1's stale value, which meant
+    # `_build_ai_corrected_from_verdicts`'s coverage-mismatch check (this
+    # function's docstring, reason 2) could never disagree with it either --
+    # not because this fix broke that check (the two landed as a MERGE-ORDER
+    # collision: the coverage check did not exist when this bug was
+    # introduced, and only arrived with a later commit), but because a
+    # stale claim can never disagree with anything by construction.
+    # Propagating `mark2.awarded_marks` here makes `merged_mark` internally
+    # consistent and lets that check do the catching, rather than adding a
+    # second, parallel check.
+    merged_mark = mark.model_copy(
+        update={
+            "point_verdicts": merged_verdicts,
+            "confidence": min(mark.confidence, mark2.confidence),
+            "feedback": mark2.feedback,
+            "awarded_marks": mark2.awarded_marks,
+        }
+    )
+    # G8: the re-mark's feedback and claimed marks are the ones kept above, so
+    # its judgement of whether the answer addresses the question is kept with
+    # them rather than the first pass's. Set on the built row, not through
+    # `merged_mark`: a `model_copy` update would mark the field as set even
+    # when the re-mark left it out, turning "no judgement" into "unclear".
+    rebuilt = _build_ai_corrected(
+        question,
+        student_answer,
+        merged_mark,
+        student_working,
+        extraction_confidence,
+        equivalence_gate=equivalence_gate,
+        review_threshold=max(review_threshold, ai.review_threshold()),
+    ).model_copy(update={"addresses_question": _addresses_judgement(mark2)})
+    # B2: the rebuilt row carries the re-mark's marks, so the citation check runs on the
+    # re-mark itself (its own quotes and point ids), not on the first pass's.
+    if ai.citations_on() and uncited(question, mark2):
+        rebuilt = flag_uncited(rebuilt)
+    return rebuilt
+
+
+def _attach_extraction_context(
+    cq: CorrectedQuestion,
+    answers: dict[str, _FlatAnswer],
+    original: dict[str, _FlatAnswer],
+    options: MarkingOptions,
+    leaf_by_id: dict[str, Question],
+) -> CorrectedQuestion:
+    """The ONE place the finished row learns what extraction knew about it.
+
+    E (2026-09-24): the extraction bounding box, deep-copied because pydantic
+    keeps an already-validated nested model by reference and a shared
+    instance would let one holder's mutation corrupt every other holder's
+    copy. Spec 2026-09-26 §4 (#9): a crop re-read that disagreed with the
+    first read sends an ``ai`` or ``deterministic`` row to teacher review,
+    joined onto any reason the builder already gave -- whether or not
+    ``reread_substitution`` marked the re-read text, because substitution
+    must never hide a disagreement from the teacher. The reason quotes the
+    text substitution actually used (fix round 1: :func:`_substituted_answer`
+    re-run against ``original``, not the raw ``answer_reread``), so
+    ``student_answer`` and the reason always agree. Fix round 2: on an MCQ
+    leaf, a re-read that :func:`_mcq_agrees` with the first read once
+    normalised is never a disagreement, so "A." vs "A" gives no flag and no
+    substitution -- see :func:`_disagreeing_agreement`.
+
+    Fix round 1 ADDED, fix round 2 REVERTED: flagging a ``blank`` row
+    whose re-read found non-blank text. Reviewer-reproduced exploit: a
+    flagged ``blank`` row makes ``low_confidence_review_needed``
+    (``review_queue_rules.py``) return True, which makes
+    ``is_marking_low_confidence`` True, and ``self_review.decide_point``
+    then GRANTS any challenged point on that row with NO evidence. The
+    re-read text comes from the MODEL, not the student -- it is Gemini's
+    own second look at the crop, not anything the student supplied -- so
+    the risk is not a student writing a fake re-read: it is that ANY
+    non-blank re-read on a genuinely blank first read, including one the
+    model simply hallucinated over blank pixels, would grant self-mark
+    authority on a question the student left blank, with the student never
+    having entered anything a human could point to as evidence. Known gap,
+    deliberately left open: the proper fix belongs in the self-review
+    authority gate itself (deciding what counts as evidence for a GRANT),
+    not here in correction, which has no way to tell a genuine recovered
+    answer from a hallucinated one. A blank row is left untouched, like
+    every dropped/missing row: no answer was read for it.
+    """
+    if cq.question_id not in answers:
+        return cq
+    flat = answers[cq.question_id]
+    first = original[cq.question_id]
+    leaf = leaf_by_id.get(cq.question_id)
+    is_mcq = leaf is not None and leaf.type == QuestionType.MCQ
+    update: dict[str, object] = {
+        "source_box": flat.source_box.model_copy(deep=True) if flat.source_box is not None else None
+    }
+    agreement = _disagreeing_agreement(first, is_mcq=is_mcq)
+    if cq.marker_source in ("ai", "deterministic") and agreement is not None:
+        reread_for_reason: str | None
+        # Final review I2: a blank first read is never substituted (see
+        # :func:`_substituted_answer`), so its reason is the flag-off shape
+        # quoting both readings, not "the re-read returned nothing usable".
+        substitution = options.reread_substitution and not _is_blank(first.answer)
+        if substitution:
+            substituted = _substituted_answer(first, is_mcq=is_mcq)
+            reread_for_reason = substituted if substituted is not None else ""
+        else:
+            reread_for_reason = first.answer_reread
+        reason = _reread_reason(
+            first_read=first.answer,
+            reread=reread_for_reason,
+            agreement=agreement,
+            substitution=substitution,
+        )
+        update["needs_teacher_review"] = True
+        update["review_reason"] = _join_reason(cq.review_reason, reason)
+    return cq.model_copy(update=update)
+
+
+#: Appended to ``review_reason`` on each question a question-scope G8 failure
+#: names (see :func:`_with_off_topic_check`).
+OFF_TOPIC_REVIEW_REASON = "binding unverified: answer appears to address a different question"
+
+#: Appended to ``review_reason`` on each question whose answer the binding left
+#: ``binding_status="unverified"``, with or without a binding report on the
+#: extraction (see :func:`_with_off_topic_check`): the binder
+#: bound it but doubts what it holds (writing tied by an arrow, carried over from
+#: the page before, or beside a label that was not seen; or writing beside it that
+#: was set aside, so the answer may be short of it), or a question-scope gate check
+#: named it. One sentence for all of them, true whichever way the doubt points.
+UNVERIFIED_BINDING_REVIEW_REASON = (
+    "binding unverified: this answer may include writing that belongs to another question, "
+    "or may be missing some of its own"
+)
+
+#: The review reason of an answer that was marked from the read that was not returned
+#: (``lemely.io.binding.orchestrate._from_other_read``): the general sentence above
+#: would not be false for it, and this one says what happened. Keyed by the reason the
+#: extraction carries for the answer's id in ``unbound_question_reasons``.
+MARKED_FROM_OTHER_READ_REVIEW_REASON = (
+    "binding unverified: this answer was found in only one of two readings of the scan "
+    "and is marked from that reading"
+)
+_MARKED_FROM_OTHER_READ = "marked_from_other_read"
+
+_VERDICT_SEVERITY: dict[BindingVerdict, int] = {"pass": 0, "retry": 1, "hold": 2}
+
+
+def _sent_to_review(
+    questions: list[CorrectedQuestion], ids: set[str], reason: str
+) -> list[CorrectedQuestion]:
+    """``questions`` with those in ``ids`` flagged for a teacher, ``reason`` joined on."""
+    return [
+        cq.model_copy(
+            update={
+                "needs_teacher_review": True,
+                "review_reason": _join_reason(cq.review_reason, reason),
+            }
+        )
+        if cq.question_id in ids
+        else cq
+        for cq in questions
+    ]
+
+
+def _unverified_sent_to_review(
+    questions: list[CorrectedQuestion], extracted_answers: ExtractedAnswers
+) -> list[CorrectedQuestion]:
+    """``questions`` with each one whose answer is ``unverified`` flagged, under its reason.
+
+    An answer taken from the read that was not returned says so
+    (:data:`MARKED_FROM_OTHER_READ_REVIEW_REASON`); every other unverified answer
+    takes :data:`UNVERIFIED_BINDING_REVIEW_REASON`.
+    """
+    unverified = {
+        a.question_id for a in extracted_answers.answers if a.binding_status == "unverified"
+    }
+    one_read = {
+        qid
+        for qid in unverified
+        if extracted_answers.unbound_question_reasons.get(qid) == _MARKED_FROM_OTHER_READ
+    }
+    questions = _sent_to_review(questions, unverified - one_read, UNVERIFIED_BINDING_REVIEW_REASON)
+    return _sent_to_review(questions, one_read, MARKED_FROM_OTHER_READ_REVIEW_REASON)
+
+
+def _with_off_topic_check(
+    result: CorrectionResult, extracted_answers: ExtractedAnswers | Mapping[str, str]
+) -> CorrectionResult:
+    """Run check G8 over the marked paper and attach the binding report.
+
+    G8 (:func:`lemely.core.binding_gate.check_off_topic`) counts the answers
+    the MARKER judged not to address their question -- the one binding check
+    that can only run after marking, and the main one for prose answers,
+    which the checks run at extraction cannot see. ``result.questions`` is in
+    mark-scheme order (``correct_paper`` builds it by walking ``leaves``),
+    which is the order a run of ``"no"`` verdicts is counted in.
+
+    The extraction's own report is the switch. G8 applies only when
+    ``extracted_answers`` is an ``ExtractedAnswers`` that carries one, which
+    is what the gated extractor attaches to answers it read off a scan.
+    Everything else comes back untouched, ``binding=None``, whatever the
+    marker said: a plain mapping (typed answers, CLI JSON), and an
+    ``ExtractedAnswers`` with no report (quiz marking, the accuracy harness's
+    golden answers, an extraction made with the gate off). Those answers were
+    never bound to a question by reading a page, or the gate was not asked,
+    so there is no binding to doubt and no report is invented for them.
+
+    With a report, the result's ``binding`` is that report with G8 appended.
+    Its verdict is the MORE SEVERE of the one the report arrived with and the
+    one recomputed over every check (``hold`` over ``retry`` over ``pass``):
+    adding G8 can raise a verdict and can never lower it, whether or not the
+    incoming verdict has a failing paper-scope check behind it. The recomputed
+    one is ``pass`` or ``hold``, never ``retry``: nothing retries after
+    marking, so a paper-scope failure found here holds the paper.
+
+    Scope decides what else changes. A PAPER-scope failure changes no
+    question: the verdict stops the whole paper and the report names the
+    answers. A QUESTION-scope failure (too few to doubt the paper's binding)
+    sends just those questions to teacher review, joined onto any reason the
+    builders already gave. ``awarded_marks`` is never touched either way. The
+    result is REBUILT, not ``model_copy``-ed, so ``calculate_totals`` derives
+    the paper-level ``needs_teacher_review`` from the flagged rows.
+
+    The binding's own doubts do not wait for a report. A question whose answer
+    carries ``binding_status="unverified"`` was marked as usual and is then
+    sent to teacher review with :data:`UNVERIFIED_BINDING_REVIEW_REASON` joined
+    onto its reasons (or :data:`MARKED_FROM_OTHER_READ_REVIEW_REASON`, for an answer
+    taken from the read that was not returned), after G8's when both apply; its
+    marks and the verdict are untouched. That is keyed on the answer, as
+    ``unbound_question_ids`` is keyed on its field: an answer that may hold another
+    question's writing is never
+    published unflagged because no gate ran over it. Quiz marking and the
+    harness's golden answers never set a status, so nothing changes for them.
+    """
+    if not isinstance(extracted_answers, ExtractedAnswers):
+        return result
+    unverified = {
+        a.question_id for a in extracted_answers.answers if a.binding_status == "unverified"
+    }
+    prior = extracted_answers.binding
+    if prior is None:
+        if not unverified:
+            return result
+        return CorrectionResult(
+            metadata=result.metadata,
+            questions=_unverified_sent_to_review(result.questions, extracted_answers),
+        )
+    check = check_off_topic(result, GateThresholds())
+    checks = [*prior.checks, check]
+    # After marking nothing retries, so a paper-scope failure here is a hold: asking
+    # with ``retried=True`` is what says so. ("retry" named a step that does not exist,
+    # for a paper whose first read passed and that then failed G8.)
+    recomputed = verdict(checks, retried=True)
+    report = prior.model_copy(
+        update={
+            "checks": checks,
+            "verdict": max(prior.verdict, recomputed, key=_VERDICT_SEVERITY.__getitem__),
+        }
+    )
+    questions = result.questions
+    if not check.passed and check.scope == "question":
+        questions = _sent_to_review(questions, set(check.question_ids), OFF_TOPIC_REVIEW_REASON)
+    questions = _unverified_sent_to_review(questions, extracted_answers)
+    return CorrectionResult(metadata=result.metadata, questions=questions, binding=report)
+
+
+def _forget_reads_of_a_held_paper(
+    result: CorrectionResult,
+    extracted_answers: ExtractedAnswers | Mapping[str, str],
+    gemini_client: GeminiClient | None,
+) -> None:
+    """Take the reads behind a paper this marking holds out of the response cache.
+
+    A paper whose binding verdict is not ``pass`` is not published, and its owner runs
+    it again. The binding step forgets its reads for a paper it holds itself; a paper
+    held here, by the marker's check, passed there, so its reads are still cached,
+    and a re-run that got them back would get the same marking back too (those
+    replies are cached by answer text) and the same hold, for as long as the cache
+    lived. The extraction carries the keys of its reads for this
+    (``ExtractedAnswers.read_cache_keys``). The marker's replies stay: a fresh read
+    that gives a question the same answer text may reuse its marking.
+
+    An extraction that carries no keys (built by hand, loaded from a stored record or
+    a file, made with no gate) has nothing to forget, and nothing is called. A client
+    whose cache mode is ``"bypass"`` removes nothing (``GeminiClient.forget_cached``):
+    it leaves the shared cache as it found it. Under ``"read_write"`` a held scan is
+    therefore read afresh on every run, harness sweeps included; that is intended.
+    """
+    if result.binding is None or result.binding.verdict == "pass":
+        return
+    if gemini_client is None or not isinstance(extracted_answers, ExtractedAnswers):
+        return
+    keys = extracted_answers.read_cache_keys()
+    if not keys:
+        return
+    forgotten = gemini_client.forget_cached(keys)
+    structlog.get_logger().bind(component="correct_paper").info(
+        "held_paper_reads_forgotten", verdict=result.binding.verdict, forgotten=forgotten
+    )
+
+
+_adjudication_without_pages_logged = False
+
+
+def _warn_adjudication_without_pages(client: GeminiClient | None) -> None:
+    """Log once per process that adjudication is configured but a caller had no scan pages."""
+    global _adjudication_without_pages_logged
+    from lemely.io.adjudication import configured_adjudication_model
+
+    model = configured_adjudication_model(client)
+    if model is not None and not _adjudication_without_pages_logged:
+        _adjudication_without_pages_logged = True
+        structlog.get_logger().bind(component="correction").warning(
+            "adjudication_without_pages", adjudication_model=model
+        )
+
+
 def correct_paper(
     mark_scheme: MarkScheme | str | Mapping[str, object],
     extracted_answers: ExtractedAnswers | Mapping[str, str],
     *,
     gemini_client: GeminiClient | None = None,
     mcq_only: bool = False,
+    options: MarkingOptions = MarkingOptions(),  # noqa: B008 -- frozen, immutable dataclass
+    pages: Sequence[RasterisedPage] | PageSource | None = None,
+    expects_pages: bool = True,
 ) -> CorrectionResult:
     """Hybrid paper correction: MCQ deterministic, non-MCQ via AICorrector.
 
@@ -573,12 +3310,78 @@ def correct_paper(
         extracted_answers: per-question student responses.
         gemini_client: required when paper contains non-MCQ questions and mcq_only is False.
         mcq_only: if True, skip AI; non-MCQ questions get marker_source="missing".
+        options: the marking flags, built by
+            ``GradingSettings.marking_options()``. ``options.equivalence_gate``
+            (US-005b) selects the verdicts marking path with the SymPy award
+            gate. ``options.ecf_substitution`` (I7, US-013) applies
+            error-carried-forward by substitution and has no effect unless
+            ``equivalence_gate`` is also on: see
+            :func:`_maybe_apply_ecf_substitution` for the gate/chain rules and
+            the measured activation ceiling (0 on the committed corpus by
+            construction). Defaults to both off.
+        expects_pages: False for a caller with no scan by nature (typed quiz answers): it
+            never logs ``adjudication_without_pages``.
+        pages: the scan's pages, or a lazy ``PageSource`` that renders them only if there is
+            something to adjudicate; with ``gemini.adjudication_model`` set, the least
+            certain leaves are adjudicated from their crops (lever c2), after
+            marking and escalation, and the adjudicated mark is final. A held
+            paper is not adjudicated.
+
+    Returns:
+        The marked paper. When ``extracted_answers`` carries a binding
+        report, the result's ``binding`` is that report with check G8
+        (answers the marker judged off topic) appended; otherwise it is
+        ``None`` -- see :func:`_with_off_topic_check`.
 
     Raises:
         ConfigError: paper has non-MCQ questions, mcq_only=False, and gemini_client is None.
     """
+    equivalence_gate = options.equivalence_gate
+    ecf_substitution = options.ecf_substitution
     scheme = _load_mark_scheme(mark_scheme)
-    answers = _flatten_answers(extracted_answers)
+    leaves = [q for q in scheme.all_questions_flat() if _is_leaf_marked(q)]
+    leaf_by_id: dict[str, Question] = {q.id: q for q in leaves}
+    # Fix round 1 (spec 2026-09-26 §4): substitution needs to know whether a
+    # leaf is MCQ before it can decide the re-read is usable, so `leaf_by_id`
+    # is built before the substitution step now, not after it.
+    original = _flatten_answers(extracted_answers)
+
+    def _is_mcq_leaf(qid: str) -> bool:
+        leaf = leaf_by_id.get(qid)
+        return leaf is not None and leaf.type == QuestionType.MCQ
+
+    def _substitute(qid: str, flat: _FlatAnswer) -> _FlatAnswer:
+        sub = _substituted_answer(flat, is_mcq=_is_mcq_leaf(qid))
+        return flat._replace(answer=sub) if sub is not None else flat
+
+    # Spec 2026-09-26 §4 (#9): under `reread_substitution`, a leaf whose crop
+    # re-read disagreed with the first read (and whose re-read text is
+    # usable -- see :func:`_substituted_answer`) is marked on the re-read
+    # text. Substituted ONCE, here, before the loop, so marking, the blank
+    # check, ECF prerequisite text and the dropped-id subtraction all see
+    # the text that is actually marked; `original` keeps the first read for
+    # the review reason below.
+    answers = (
+        {qid: _substitute(qid, flat) for qid, flat in original.items()}
+        if options.reread_substitution
+        else original
+    )
+    # Spec 2026-09-26 §2 (#4): `dropped_question_ids` records that AN ENTRY
+    # for the id was discarded, not that the question has no usable answer.
+    # Only an id with no surviving answer short-circuits below; both sides are
+    # post-`normalize_extracted_answers`, so canonicalised ids meet here.
+    dropped_ids = _dropped_question_ids(extracted_answers).difference(answers)
+    # A question the label binder could bind no answer to takes the same path as a
+    # dropped answer -- flagged, a zero nobody is asked to believe, no marking call
+    # -- under its own reason. The same rule applies: only an id with no surviving
+    # answer short-circuits. It does not depend on a binding report: the binder
+    # leaves these whether or not a gate ran over it.
+    unbound_ids = _unbound_question_ids(extracted_answers).difference(answers)
+    unbound_reasons = (
+        extracted_answers.unbound_question_reasons
+        if isinstance(extracted_answers, ExtractedAnswers)
+        else {}
+    )
     log = structlog.get_logger().bind(component="correct_paper")
 
     # Validate mark scheme structure; warn but do not abort.
@@ -589,9 +3392,16 @@ def correct_paper(
             message=f"Mark scheme validation [{w.question_id}]: {w.message}",
         )
 
-    leaves = [q for q in scheme.all_questions_flat() if _is_leaf_marked(q)]
-    leaf_by_id: dict[str, Question] = {q.id: q for q in leaves}
     prior_results_accumulated: dict[str, int] = {}  # question_id -> awarded_marks
+    #: Leaves whose escalation the per-script cap deferred: the arguments to rebuild them.
+    pending: dict[str, tuple[Question, str, str | None, float | None]] = {}
+    # I7: for _point_was_awarded. Predates the post-loop `source_box`
+    # assembly rewrite below -- every `CorrectedQuestion` stored here is the
+    # pre-rewrite object, so a future reader of this dict always sees
+    # `source_box=None`, never the extractor's box.
+    corrected_by_id: dict[str, CorrectedQuestion] = {}
+    all_by_id: dict[str, Question] = {qq.id: qq for qq in scheme.all_questions_flat()}
+    top_level_groups = _group_leaves_by_top_level(leaves, all_by_id)
     has_non_mcq = any(q.type != QuestionType.MCQ for q in leaves)
 
     if has_non_mcq and not mcq_only and gemini_client is None:
@@ -599,7 +3409,19 @@ def correct_paper(
             "This paper contains non-MCQ questions. Pass a GeminiClient or set mcq_only=True."
         )
 
-    ai = AICorrector(gemini_client) if (gemini_client and not mcq_only) else None
+    ai = (
+        AICorrector(gemini_client, mark_scheme=scheme) if (gemini_client and not mcq_only) else None
+    )
+    if ai is not None and ecf_substitution is True:
+        # Escalation cap and ECF substitution do not compose (see ``defer_escalation``):
+        # a run with ECF on keeps today's inline escalation.
+        ai.defer_escalation = False
+    # The marking rules every AI marking call on this paper is given: the scheme's own
+    # printed principles, or, for a science scheme stored without any, the published
+    # ones for its syllabus family. Never both.
+    principles = printed_principles(scheme.metadata)
+    default_rules = default_marking_rules(scheme.metadata)
+    reader_ids = _reader_answer_ids(extracted_answers)
 
     corrected: list[CorrectedQuestion] = []
     # `index` comes from enumerate over `leaves` — the true position in the work
@@ -609,15 +3431,46 @@ def correct_paper(
     # the UI would show a question number that no longer matches reality.
     total_leaves = len(leaves)
     for index, q in enumerate(leaves, start=1):
-        answer_tuple = answers.get(q.id)
-        student_answer = answer_tuple[0] if answer_tuple else None
-        student_working = answer_tuple[1] if answer_tuple else None
-        extraction_confidence = answer_tuple[2] if answer_tuple else None
+        flat = answers.get(q.id)
+        student_answer = flat.answer if flat else None
+        student_working = flat.working_out if flat else None
+        extraction_confidence = flat.confidence if flat else None
+
+        # US-031 review MUST-FIX 7 (stronger fix): a dropped answer must be
+        # distinguishable from a genuine student blank BEFORE dispatching to
+        # either the deterministic MCQ path or the AI marker -- both would
+        # otherwise see the exact same `student_answer=None` a real blank
+        # produces. Checked first, ahead of MCQ/AI/missing, so it applies
+        # uniformly regardless of question type and never reaches
+        # ai.mark_question with text extraction already discarded as
+        # unusable (a paid call to mark an empty string, on top of a mark
+        # that would already be wrong).
+        if q.id in unbound_ids or q.id in dropped_ids:
+            cq = (
+                _build_dropped_corrected(q, _unbound_reason_sentence(unbound_reasons.get(q.id)))
+                if q.id in unbound_ids
+                else _build_dropped_corrected(q)
+            )
+            corrected.append(cq)
+            prior_results_accumulated[q.id] = 0
+            corrected_by_id[q.id] = cq
+            bus.publish(
+                EventType.MARKING_PROGRESS,
+                question_id=q.id,
+                marker_source="dropped",
+                confidence=0.0,
+                awarded=0,
+                max_marks=q.marks,
+                index=index,  # enumerate position, not an emitted-frame count
+                total=total_leaves,
+            )
+            continue
 
         if q.type == QuestionType.MCQ:
             cq = _build_mcq_corrected(q, student_answer, extraction_confidence)
             corrected.append(cq)
             prior_results_accumulated[q.id] = cq.awarded_marks
+            corrected_by_id[q.id] = cq
             bus.publish(
                 EventType.MARKING_PROGRESS,
                 question_id=q.id,
@@ -633,6 +3486,7 @@ def correct_paper(
             cq = _build_missing_corrected(q, student_answer, extraction_confidence)
             corrected.append(cq)
             prior_results_accumulated[q.id] = 0
+            corrected_by_id[q.id] = cq
             bus.publish(
                 EventType.MARKING_PROGRESS,
                 question_id=q.id,
@@ -644,6 +3498,41 @@ def correct_paper(
                 total=total_leaves,
             )
             continue
+
+        # US-039: a non-MCQ leaf the student left BLANK earns an unflagged 0
+        # with no paid call. Checked here -- AFTER the MCQ branch (already
+        # correct, left alone) and the `ai is None` branch (whose "missing"
+        # means "we chose not to mark this", a different statement from "the
+        # student left it blank") and BEFORE the AI marking call, so a blank
+        # never reaches `ai.mark_question` at all. `student_working` is
+        # checked too: a blank answer box accompanied by substantial working
+        # is not treated as a true blank -- the student visibly attempted the
+        # question, so awarding an unflagged 0 would be a worse claim than
+        # doing so for a truly empty response, and this still reaches the AI
+        # marker. See `_build_blank_corrected` for the full ruling.
+        if _is_blank(student_answer) and _is_blank(student_working):
+            cq = _build_blank_corrected(q, extraction_confidence)
+            corrected.append(cq)
+            prior_results_accumulated[q.id] = 0
+            corrected_by_id[q.id] = cq
+            bus.publish(
+                EventType.MARKING_PROGRESS,
+                question_id=q.id,
+                # Read off the record rather than repeating the builder's
+                # literal: this frame said "missing" for a blank until task
+                # #36 gave the blank its own `marker_source`, which made it a
+                # tenth hand-written copy of the same fact and the live
+                # progress log's only disagreement with the row that gets
+                # persisted (`lemely/app/live_log.py` renders this).
+                marker_source=cq.marker_source,
+                confidence=0.0,
+                awarded=0,
+                max_marks=q.marks,
+                index=index,  # enumerate position, not an emitted-frame count
+                total=total_leaves,
+            )
+            continue
+
         sibling_prior: dict[str, int] = {}
         if q.parent_id is not None:
             sibling_prior = {
@@ -651,6 +3540,10 @@ def correct_paper(
                 for qid, marks in prior_results_accumulated.items()
                 if leaf_by_id[qid].parent_id == q.parent_id
             }
+        # `Drawing:` opens a description only in text the label binder's reader wrote.
+        # A crop re-read marked in its place is another reader's text, and that reader
+        # is not asked for the word.
+        reader_describes_drawings = q.id in reader_ids and student_answer == original[q.id].answer
         try:
             mark = ai.mark_question(
                 q,
@@ -658,14 +3551,33 @@ def correct_paper(
                 student_working,
                 prior_results=sibling_prior or None,
                 # #41 / A13: the paper's OWN printed principles govern the M/A
-                # dependency. `extract_gmp` has always populated this field and
-                # it was discarded here.
-                principles=scheme.metadata.generic_marking_principles or None,
+                # dependency. `extract_gmp` has always populated
+                # `generic_marking_principles` and it was discarded here.
+                principles=principles,
+                default_rules=default_rules,
+                reader_describes_drawings=reader_describes_drawings,
+                equivalence_gate=equivalence_gate,
             )
+        except CostCeilingError:
+            # US-030: a per-run token/USD ceiling breach is a stop signal for
+            # the whole run, not a per-question marking failure. The broad
+            # `except Exception` below used to absorb it exactly like a model
+            # failure: every remaining leaf was still attempted (re-breaching
+            # each time), each landed in the result as `awarded=0` with
+            # review_reason "AI marking failed: USD ceiling (...)", and
+            # `correct_paper` returned NORMALLY — so a sweep ran to completion
+            # and archived an accuracy report of fabricated zeros that no
+            # caller could tell from real model failures. Must stay the FIRST
+            # clause: `CostCeilingError` is a `LemelyError` and an
+            # `ExternalServiceError`, so any broader handler placed above it
+            # silently reinstates the bug.
+            raise
         except Exception as exc:
             log.warning("ai_marking_failed", question_id=q.id, error=str(exc))
             cq = _build_missing_corrected(q, student_answer, extraction_confidence)
-            corrected.append(cq.model_copy(update={"review_reason": f"AI marking failed: {exc!s}"}))
+            cq = cq.model_copy(update={"review_reason": f"AI marking failed: {exc!s}"})
+            corrected.append(cq)
+            corrected_by_id[q.id] = cq
             # Deliberately no index/total here: the per-question counter belongs to
             # MARKING_PROGRESS, and ERROR is not a progress frame. This `index` is
             # simply skipped — the next question still reports its own enumerate
@@ -675,11 +3587,43 @@ def correct_paper(
                 message=f"AI marking failed for q={q.id}: {exc!s}",
             )
             continue
+        review_threshold = ai.review_threshold()
         cq = _build_ai_corrected(
-            q, student_answer or "", mark, student_working, extraction_confidence
+            q,
+            student_answer or "",
+            mark,
+            student_working,
+            extraction_confidence,
+            equivalence_gate=equivalence_gate,
+            review_threshold=review_threshold,
+        )
+        if ai.citations_on() and uncited(q, mark):
+            cq = flag_uncited(cq)
+        cq = _maybe_apply_ecf_substitution(
+            q,
+            cq,
+            mark,
+            student_answer or "",
+            student_working,
+            extraction_confidence,
+            ai=ai,
+            ecf_substitution=ecf_substitution,
+            equivalence_gate=equivalence_gate,
+            principles=principles,
+            default_rules=default_rules,
+            reader_describes_drawings=reader_describes_drawings,
+            sibling_prior=sibling_prior or None,
+            answers=answers,
+            top_level_leaves=top_level_groups[_top_level_ancestor_id(q.id, all_by_id)],
+            corrected_by_id=corrected_by_id,
+            log=log,
+            review_threshold=review_threshold,
         )
         corrected.append(cq)
         prior_results_accumulated[q.id] = cq.awarded_marks
+        corrected_by_id[q.id] = cq
+        if q.id in ai.deferred:
+            pending[q.id] = (q, student_answer or "", student_working, extraction_confidence)
         bus.publish(
             EventType.MARKING_PROGRESS,
             question_id=q.id,
@@ -691,4 +3635,72 @@ def correct_paper(
             total=total_leaves,
         )
 
-    return CorrectionResult(metadata=_exam_metadata(scheme), questions=corrected)
+    # Sub-project C: the capped escalations, most uncertain first, before adjudication.
+    if gemini_client is not None and ai is not None:
+        for qid, escalated_mark in ai.escalate_deferred().items():
+            g_esc = gemini_client._settings.gemini
+            # Every deferred leaf was marked in the loop above, which recorded it.
+            if qid not in pending:
+                raise LemelyError(f"deferred leaf {qid} has no pending build arguments")
+            dq, d_answer, d_working, d_extraction_confidence = pending[qid]
+            cq = _build_ai_corrected(
+                dq,
+                d_answer,
+                escalated_mark,
+                d_working,
+                d_extraction_confidence,
+                equivalence_gate=equivalence_gate,
+                review_threshold=review_threshold_for(g_esc, g_esc.escalation_model),
+            )
+            if ai.citations_on() and uncited(dq, escalated_mark):
+                cq = flag_uncited(cq)
+            corrected = [cq if c.question_id == qid else c for c in corrected]
+            corrected_by_id[qid] = cq
+        for qid in sorted(ai.failed_deferred):
+            flagged = [
+                c.model_copy(
+                    update={
+                        "needs_teacher_review": True,
+                        "review_reason": _join_reason(c.review_reason, "escalation failed"),
+                    }
+                )
+                if c.question_id == qid
+                else c
+                for c in corrected
+            ]
+            corrected = flagged
+            if qid in corrected_by_id:
+                corrected_by_id[qid] = next(c for c in corrected if c.question_id == qid)
+    corrected = [
+        _attach_extraction_context(cq, answers, original, options, leaf_by_id) for cq in corrected
+    ]
+    # G8 counts only explicit judgements, so a marker that leaves
+    # `addresses_question` out makes the check pass on no evidence. One line
+    # per paper says how many kept replies did (an "ai" row with no judgement
+    # is exactly that), so a check that never fires can be told from a model
+    # that never answers. Logged with or without a binding report.
+    marked = [cq for cq in corrected if cq.marker_source == "ai"]
+    omitted = sum(1 for cq in marked if cq.addresses_question is None)
+    if omitted:
+        log.warning("marker_omitted_addresses_question", omitted=omitted, marked=len(marked))
+    result = _with_off_topic_check(
+        CorrectionResult(metadata=_exam_metadata(scheme), questions=corrected), extracted_answers
+    )
+    if pages is None and expects_pages and not mcq_only:
+        _warn_adjudication_without_pages(gemini_client)
+    if pages is not None and gemini_client is not None:
+        g = gemini_client._settings.gemini
+        held = result.binding is not None and result.binding.verdict == "hold"
+        if isinstance(g.adjudication_model, str) and g.adjudication_model and not held:
+            from lemely.io.adjudication import adjudicate
+
+            result = adjudicate(
+                result,
+                scheme=scheme,
+                extracted=extracted_answers,
+                pages=pages,
+                client=gemini_client,
+                review_threshold=review_threshold_for(g, g.adjudication_model),
+            )
+    _forget_reads_of_a_held_paper(result, extracted_answers, gemini_client)
+    return result

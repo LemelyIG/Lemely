@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING
+
+import structlog
 
 from lemely.core.schemas import ExamMetadata
 from lemely.io.prompts.scan_metadata import (
@@ -10,12 +13,19 @@ from lemely.io.prompts.scan_metadata import (
     VERSION,
     build_scan_meta_user_prompt,
 )
+from lemely.io.providers import is_anthropic_model
+from lemely.io.rasterise import rasterise_scan_to_pages
 from lemely.runtime.events import EventType, bus
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from lemely.io.gemini import GeminiClient
+
+
+#: Pages sent to Claude for metadata: the subject, paper, variant and session sit on the
+#: cover page, so later pages only add image tokens (cost). Gemini still gets the whole PDF.
+_METADATA_PAGES = 2
 
 
 class ScanMetadataExtractor:
@@ -32,15 +42,42 @@ class ScanMetadataExtractor:
     def __call__(self, scan_path: Path) -> ExamMetadata:
         """Extract ExamMetadata from the given scan PDF.
 
+        Gemini is sent the PDF itself. A claude- model takes no PDF scan: the first
+        ``_METADATA_PAGES`` pages are rasterised in the extraction sandbox (a PDF or an
+        image upload) and sent as images (fitted by ``lemely.io.llm.image_fit``).
+
         Args:
             scan_path: Path to the student answer scan PDF.
 
         Returns:
             ExamMetadata extracted from the cover page / header.
         """
+        system_prompt = SCAN_META_SYSTEM_PROMPT
+        user_prompt = build_scan_meta_user_prompt(scan_path)
+        model = self._client.model_for_tag("scan_metadata")
+        if isinstance(model, str) and is_anthropic_model(model):
+            started = time.monotonic()
+            pages = rasterise_scan_to_pages(scan_path, max_pages=_METADATA_PAGES)
+            rasterised = time.monotonic()
+            result = self._client.generate_structured(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                image_parts=[page.png_bytes for page in pages],
+                response_schema=ExamMetadata,
+                prompt_version=VERSION,
+                task_tag="scan_metadata",
+                extra_cache_key=scan_path.name,
+            )
+            structlog.get_logger().bind(component="scan_metadata").info(
+                "scan_metadata_timing",
+                rasterise_seconds=round(rasterised - started, 3),
+                call_seconds=round(time.monotonic() - rasterised, 3),
+                pages=len(pages),
+            )
+            return result
         return self._client.generate_structured(
-            system_prompt=SCAN_META_SYSTEM_PROMPT,
-            user_prompt=build_scan_meta_user_prompt(scan_path),
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
             file_paths=[scan_path],
             response_schema=ExamMetadata,
             prompt_version=VERSION,

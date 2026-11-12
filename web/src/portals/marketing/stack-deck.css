@@ -1,0 +1,94 @@
+/* Mobile (<760px) card stack and the three How it works cards. */
+.brand-stack { display:flex; flex-direction:column; gap:16px; min-width:0; }
+.stack-viewport { display:grid; grid-template-columns:minmax(0,1fr); padding-bottom:22px; touch-action:pan-y; user-select:none; -webkit-user-select:none; border-radius:24px; }
+.stack-viewport:focus-visible { outline-offset:6px; }
+.stack-card { grid-area:1/1; z-index:var(--stack-z); min-width:0; touch-action:pan-y; transform-origin:50% 100%; transition:transform .45s cubic-bezier(.2,.9,.3,1), opacity .3s; }
+.stack-card[data-top=false] { pointer-events:none; }
+.stack-card-body { height:100%; }
+.stack-label-row { display:flex; justify-content:space-between; align-items:center; gap:12px; font:400 12px/normal var(--brand-mono); letter-spacing:.08em; color:var(--brand-hint); }
+.stack-cue { display:inline-flex; align-items:center; gap:8px; white-space:nowrap; color:var(--brand-abyss); transition:opacity .4s, color .4s; }
+.stack-cue svg { flex-shrink:0; }
+.brand-stack[data-touched=true] .stack-cue { color:var(--brand-hint); opacity:.7; }
+.stack-label-meta { display:flex; align-items:center; gap:10px; margin-right:-4px; }
+.stack-dots { display:flex; gap:6px; }
+.stack-dots span { height:6px; width:6px; border-radius:3px; background:var(--brand-art-33); transition:width .3s, background-color .3s; }
+.stack-dots span[data-active=true] { width:22px; background:var(--brand-abyss); }
+.stack-next { display:flex; align-items:center; justify-content:center; flex-shrink:0; width:44px; height:44px; border:0; border-radius:50%; background:transparent; color:var(--brand-abyss); box-shadow:inset 0 0 0 1px var(--brand-line); cursor:pointer; transition:transform .15s; }
+.stack-next:active { transform:scale(.94); }
+.brand-stack[data-tone=dark] .stack-cue { color:var(--brand-tide); }
+.brand-stack[data-tone=dark][data-touched=true] .stack-cue { color:var(--brand-night-body); }
+.brand-stack[data-tone=dark] .stack-label-row { color:var(--brand-night-body); }
+.brand-stack[data-tone=dark] .stack-dots span { background:var(--brand-night-dot); }
+.brand-stack[data-tone=dark] .stack-dots span[data-active=true] { background:var(--brand-tide); }
+.brand-stack[data-tone=dark] .stack-next { color:var(--brand-tide); box-shadow:inset 0 0 0 1px var(--brand-night-dot); }
+
+/* Half-swipe hint: only translate/rotate/scale, so the drag's inline transform is untouched. */
+.brand-stack[data-hint=true] .stack-card[data-top=true] { animation:stack-hint 1.3s linear both; }
+.brand-stack[data-hint=true] .stack-card[data-next=true] { animation:stack-hint-next 1.3s linear both; }
+@keyframes stack-hint {
+  0% { translate:0 0; rotate:0deg; animation-timing-function:cubic-bezier(.16,1,.3,1); }
+  38% { translate:-64px 0; rotate:-4deg; }
+  50% { translate:-64px 0; rotate:-4deg; animation-timing-function:ease-in-out; }
+  100% { translate:0 0; rotate:0deg; }
+}
+@keyframes stack-hint-next {
+  0% { translate:0 0; scale:1; animation-timing-function:cubic-bezier(.16,1,.3,1); }
+  38% { translate:-8px -4px; scale:1.02; }
+  50% { translate:-8px -4px; scale:1.02; animation-timing-function:ease-in-out; }
+  100% { translate:0 0; scale:1; }
+}
+
+/* How it works, mobile */
+.how-mobile { display:flex; flex-direction:column; gap:20px; }
+.how-eyebrow { font:400 12px/normal var(--brand-mono); letter-spacing:.1em; color:var(--brand-hint); }
+.marketing-brand .how-mobile h2 { margin:0; font-size:14vw; line-height:.95; letter-spacing:-.04em; }
+.how-mobile h2 span { color:var(--brand-abyss); }
+.how-card { display:flex; flex-direction:column; gap:16px; min-height:60vh; padding:22px; border-radius:24px; background:var(--brand-white); box-shadow:0 24px 40px -30px var(--brand-art-21), 0 0 0 1px var(--brand-line); }
+.how-art { flex:1; display:flex; flex-direction:column; justify-content:center; gap:12px; padding:18px; border-radius:18px; background:var(--brand-subtle); min-width:0; }
+.how-art>strong { font-size:17px; font-weight:800; }
+.how-bar { height:10px; border-radius:5px; background:var(--brand-art-36); overflow:hidden; }
+.how-bar>span { display:block; height:100%; border-radius:5px; background:var(--brand-abyss); }
+.how-mono { font:400 12px var(--brand-mono); color:var(--brand-hint); }
+.how-caption { display:flex; flex-direction:column; gap:4px; }
+.how-caption>span { font:600 12px var(--brand-mono); color:var(--brand-abyss); }
+.how-caption>h3 { font-size:24px; font-weight:800; letter-spacing:-.02em; line-height:1.2; }
+.how-caption>p { text-wrap:wrap; font-size:15px; line-height:1.45; color:var(--brand-muted); }
+.how-question { display:flex; justify-content:space-between; gap:8px; font-size:14px; line-height:1.4; }
+.how-question strong { font:800 20px var(--brand-display); color:var(--brand-abyss); }
+.how-lines { display:flex; flex-direction:column; gap:2px; }
+.how-line { display:flex; align-items:center; gap:8px; }
+.how-line>.how-hand { flex:1; font:600 24px var(--brand-hand); white-space:nowrap; color:var(--brand-art-22); }
+.how-line svg { flex-shrink:0; }
+.how-line>.how-code { width:26px; font:600 20px var(--brand-body); color:var(--brand-art-23); }
+.how-conf { display:flex; flex-direction:column; gap:6px; }
+.how-conf>div:first-child { display:flex; justify-content:space-between; font-size:14px; font-weight:600; }
+.how-conf>div:first-child span:last-child { font-family:var(--brand-mono); }
+.how-conf-track { height:8px; border-radius:4px; background:var(--brand-art-36); overflow:hidden; }
+.how-conf-track>span { display:block; width:96%; height:100%; border-radius:4px; background:var(--brand-art-27); }
+.how-grade { display:flex; align-items:center; gap:12px; }
+.how-grade>span:first-child { flex:1; font-size:15px; font-weight:700; }
+.how-grade>span:nth-child(3) { color:var(--brand-hint); }
+.how-chip { display:flex; align-items:center; justify-content:center; width:44px; height:44px; border-radius:12px; color:var(--brand-white); font:800 24px var(--brand-display); }
+.how-lost { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:12px 14px; border-radius:14px; background:var(--brand-art-24); color:var(--brand-art-31); }
+.how-lost span:first-child { font:800 20px var(--brand-display); }
+.how-lost span:last-child { font:400 12px var(--brand-mono); }
+.how-report { display:flex; align-items:center; gap:10px; font-size:14px; }
+.how-report>span { display:flex; align-items:center; justify-content:center; flex-shrink:0; width:22px; height:22px; border-radius:50%; background:var(--brand-art-27); color:var(--brand-white); font-size:12px; font-weight:800; }
+
+/* One-shot reveals, played when the card reaches the top of the stack. */
+[data-anim] { animation-play-state:paused; animation-fill-mode:forwards; }
+.brand-stack[data-seen=true] [data-top=true] [data-anim] { animation-play-state:running; }
+.a-grow { transform-origin:left; transform:scaleX(0); animation:stack-grow var(--t,.9s) cubic-bezier(.2,.8,.2,1) var(--d,0s) forwards; }
+.a-up { opacity:0; animation:stack-up .4s ease-out var(--d,0s) forwards; }
+.a-write { clip-path:inset(0 100% 0 0); animation:stack-write .6s ease-out var(--d,0s) forwards; }
+.a-draw { stroke-dasharray:1; stroke-dashoffset:1; animation:stack-draw .3s ease-out var(--d,0s) forwards; }
+.a-pop { transform:scale(0); animation:stack-pop .45s ease-out var(--d,0s) forwards; }
+@keyframes stack-grow { to { transform:scaleX(1); } }
+@keyframes stack-up { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:translateY(0); } }
+@keyframes stack-write { to { clip-path:inset(0 0 0 0); } }
+@keyframes stack-draw { to { stroke-dashoffset:0; } }
+@keyframes stack-pop { 0% { transform:scale(0); } 60% { transform:scale(1.2); } 100% { transform:scale(1); } }
+@media (prefers-reduced-motion:reduce) {
+  .marketing-brand [data-anim] { opacity:1 !important; transform:none !important; clip-path:none !important; stroke-dashoffset:0 !important; }
+  .marketing-brand .stack-card { transition:none !important; animation:none !important; }
+}

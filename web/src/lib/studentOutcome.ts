@@ -90,6 +90,15 @@ export const STUDENT_SAVE_REJECTED =
   "We couldn't save that. Nothing you typed has been lost, so you can try again."
 
 /**
+ * A 410 on a restore (Task 14 review, Minor 1): the paper's restore window
+ * has already closed, or the purge job already took it, before this
+ * request landed — `POST /student/attempts/{attemptId}/restore` per Task 8.
+ * Reason-free like every other student-facing deletion sentence: it says
+ * what happened, never why the window is what it is.
+ */
+export const STUDENT_RESTORE_WINDOW_CLOSED = "This paper can no longer be restored."
+
+/**
  * Turn a failed read into a sentence, for the body of an `ErrorState`.
  *
  * `request()` wraps a `fetch` rejection as `ApiError(0, String(err))`, so
@@ -119,6 +128,7 @@ export function studentSaveFailureMessage(err: unknown): string {
   if (err.status === 0) return STUDENT_NETWORK_FAILURE
   if (err.status === 401) return STUDENT_SIGNED_OUT
   if (err.status === 403) return STUDENT_NOT_YOURS
+  if (err.status === 410) return STUDENT_RESTORE_WINDOW_CLOSED
   if (err.status === 422) return STUDENT_SAVE_REJECTED
   return STUDENT_SERVICE_FAILURE
 }
@@ -141,6 +151,24 @@ export function studentSaveFailureMessage(err: unknown): string {
  * message a student could act on — these routes take an id from the screen's
  * own data, so a rejection means the plan changed underneath them.
  */
+/**
+ * Turn a failed `POST /student/classes/join` into a sentence.
+ *
+ * A 404 here means exactly one thing — the code does not match a class — and
+ * it is the one outcome this screen's reader can fix themselves, so it gets
+ * its own sentence naming the fix rather than `studentSaveFailureMessage`'s
+ * generic "we couldn't save that" (which is written for a form field losing
+ * typed content, the wrong reassurance for an eight-character code). A 422
+ * (malformed code) and everything else fall through to that helper, whose
+ * judgement is already right for them.
+ */
+export function joinClassFailureMessage(err: unknown): string {
+  if (err instanceof ApiError && err.status === 404) {
+    return "That code didn't match a class. Check it with your teacher and try again."
+  }
+  return studentSaveFailureMessage(err)
+}
+
 export function studentActionFailureMessage(err: unknown, action: string): string {
   const lead = `We couldn't ${action}.`
   if (!(err instanceof ApiError)) return `${lead} Something went wrong on our side.`

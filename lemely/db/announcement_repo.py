@@ -81,6 +81,7 @@ rationale.
 from __future__ import annotations
 
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -95,7 +96,7 @@ from lemely.db.models.enums import Role, SeatStatus
 from lemely.db.models.orgs import ClassEnrollment, Seat
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Iterator, Sequence
 
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -110,6 +111,11 @@ def _utcnow() -> datetime:
 #: Default page size for the student announcement list. S-28 does not fix a
 #: number; this is a generous but still-bounded default.
 DEFAULT_STUDENT_LIMIT = 50
+
+#: How many due rows one sweeper pass claims. A pass runs every minute and a
+#: school posts a handful of scheduled announcements a day; this is a ceiling
+#: on one transaction's lock footprint, not a throughput target.
+DEFAULT_CLAIM_LIMIT = 100
 
 
 class AnnouncementError(Exception):
@@ -140,6 +146,9 @@ class AnnouncementRow:
     body: str
     publish_at: datetime | None
     created_at: datetime
+    notified_at: datetime | None = None
+    """When the notification fan-out completed; ``None`` until then (spec §1).
+    Defaulted so the composer's row can be built before it is stamped."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +163,26 @@ class StudentAnnouncementRow:
 
     announcement: AnnouncementRow
     read_at: datetime | None
+
+
+@dataclass(slots=True)
+class DueClaim:
+    """The rows one :meth:`AnnouncementService.claim_due` call locked.
+
+    ``rows`` are detached copies for the caller to fan out over. :meth:`stamp`
+    writes ``notified_at`` on the locked models and must be called **after**
+    the fan-out, inside the ``with`` block — leaving the block without calling
+    it commits nothing, which is the whole point: a crash between send and
+    stamp leaves the row for the next pass.
+    """
+
+    rows: list[AnnouncementRow]
+    _models: list[Announcement]
+
+    def stamp(self, at: datetime) -> None:
+        """Record that every claimed row's fan-out completed at ``at``."""
+        for model in self._models:
+            model.notified_at = at
 
 
 class AnnouncementService:
@@ -401,6 +430,83 @@ class AnnouncementService:
             )
             return int(session.scalar(stmt) or 0)
 
+    def is_due(self, row: AnnouncementRow) -> bool:
+        """Whether ``row`` is published as of this service's clock.
+
+        ``publish_at`` reaches this method from two places: a DB read of a
+        ``timestamptz`` column (always aware) and, on the create path, whatever
+        the router parsed out of the request, where an ISO string with no
+        offset is naive. Comparing the two shapes raises ``TypeError``, and the
+        create path runs *outside* ``notify_safely`` — so an unnormalised naive
+        value would 500 an announcement that was already written. Naive means
+        UTC here, as everywhere else. ``publish_at`` is an absolute instant,
+        never a civil time, so per-user zones (spec §3) do not touch this.
+        """
+        publish_at = row.publish_at
+        if publish_at is None:
+            return True
+        if publish_at.tzinfo is None:
+            publish_at = publish_at.replace(tzinfo=UTC)
+        return publish_at <= self._now()
+
+    def mark_notified(
+        self, announcement_ids: Sequence[uuid.UUID], *, now: datetime | None = None
+    ) -> int:
+        """Stamp ``notified_at`` on rows whose fan-out just completed. Returns how many.
+
+        The composer's half of spec §1: called by the router right after an
+        immediate fan-out. Only unstamped rows are touched, so a repeat is a
+        no-op rather than a moved timestamp.
+        """
+        if not announcement_ids:
+            return 0
+        moment = now if now is not None else self._now()
+        with self._sessionmaker() as session, session.begin():
+            result = session.execute(
+                sa.update(Announcement)
+                .where(
+                    Announcement.id.in_(list(announcement_ids)),
+                    Announcement.notified_at.is_(None),
+                )
+                .values(notified_at=moment)
+            )
+            return int(getattr(result, "rowcount", 0) or 0)
+
+    @contextmanager
+    def claim_due(
+        self, *, now: datetime | None = None, limit: int = DEFAULT_CLAIM_LIMIT
+    ) -> Iterator[DueClaim]:
+        """Lock up to ``limit`` due, unstamped rows for the duration of the block.
+
+        ``WHERE notified_at IS NULL AND publish_at IS NOT NULL AND publish_at
+        <= now``, ``FOR UPDATE SKIP LOCKED``. ``SKIP LOCKED`` is what makes two
+        replicas safe without a lock table: a second sweeper sees the rows the
+        first is holding as simply absent. ``publish_at IS NULL`` rows are the
+        composer's to notify at create time and are never claimed here.
+
+        The transaction stays open across the caller's fan-out on purpose —
+        that is what keeps a concurrent pass off these rows — and commits the
+        stamp :meth:`DueClaim.stamp` wrote when the block exits normally. An
+        exception in the block rolls everything back, leaving the rows
+        unstamped for the next pass (spec §1, "stamping after the send").
+        """
+        moment = now if now is not None else self._now()
+        with self._sessionmaker() as session, session.begin():
+            models = list(
+                session.scalars(
+                    select(Announcement)
+                    .where(
+                        Announcement.notified_at.is_(None),
+                        Announcement.publish_at.is_not(None),
+                        Announcement.publish_at <= moment,
+                    )
+                    .order_by(Announcement.publish_at, Announcement.id)
+                    .limit(limit)
+                    .with_for_update(skip_locked=True)
+                ).all()
+            )
+            yield DueClaim(rows=[_to_row(model) for model in models], _models=models)
+
     def student_recipients(self, row: AnnouncementRow) -> list[uuid.UUID]:
         """Return the students who may see ``row`` — the audience, as ids (P5.6 chunk C2b).
 
@@ -426,29 +532,19 @@ class AnnouncementService:
         **A row that is not yet published has no recipients yet.** Returning
         its future audience here would notify students about something
         :meth:`list_for_student` still hides from them — a push telling you to
-        go and read a post that is not there. The consequence, honestly
-        stated: with no scheduler in this build (D5.9 §5), a scheduled
-        announcement is never notified about *at all*; it simply appears in
-        the student's list at its publish time. That is the correct trade —
-        a missing nudge, never a broken pointer.
+        go and read a post that is not there. A scheduled row is left
+        unstamped at create time and claimed by
+        :func:`lemely.web.scheduled_notifications.publish_due_announcements`
+        once ``publish_at`` has passed (push-delivery spec §1); this module
+        used to say such a row was "never notified about at all", which was
+        true only while there was no sweeper.
 
         The author is not excluded, because the author is staff and can be in
         neither audience: a teacher has no ``class_enrollments`` row and no
         ``Seat``.
         """
-        publish_at = row.publish_at
-        if publish_at is not None:
-            # ``publish_at`` reaches this row from two places: a DB read of a
-            # ``timestamptz`` column (always aware) and, on the create path,
-            # whatever the router parsed out of the request, where an ISO
-            # string with no offset is naive. Comparing the two shapes raises
-            # TypeError, and this runs *outside* ``notify_safely`` — so an
-            # unnormalised naive value would 500 an announcement that was
-            # already written. Naive means UTC here, as everywhere else.
-            if publish_at.tzinfo is None:
-                publish_at = publish_at.replace(tzinfo=UTC)
-            if publish_at > self._now():
-                return []
+        if not self.is_due(row):
+            return []
 
         # The two arms run their own query rather than sharing a ``stmt``
         # variable: ``Seat.assigned_user_id`` is nullable (an unassigned seat
@@ -610,6 +706,7 @@ def _to_row(row: Announcement) -> AnnouncementRow:
         body=row.body,
         publish_at=row.publish_at,
         created_at=row.created_at,
+        notified_at=row.notified_at,
     )
 
 
@@ -634,6 +731,7 @@ def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
 
 
 __all__ = [
+    "DEFAULT_CLAIM_LIMIT",
     "DEFAULT_STUDENT_LIMIT",
     "AnnouncementError",
     "AnnouncementNotFoundError",
@@ -641,5 +739,6 @@ __all__ = [
     "AnnouncementRow",
     "AnnouncementService",
     "AnnouncementValidationError",
+    "DueClaim",
     "StudentAnnouncementRow",
 ]

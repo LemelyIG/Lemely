@@ -43,36 +43,29 @@ const REAL_BUNDLE = [
   "index.html",
   "assets/index-Il2c7Bbq.js",
   "assets/index-DQPG77e_.css",
-  "assets/geist-latin-wght-normal-BgDaEnEv.woff2",
-  "assets/geist-latin-ext-wght-normal-DC-KSUi6.woff2",
-  "assets/geist-cyrillic-wght-normal-BEAKL7Jp.woff2",
-  "assets/newsreader-latin-wght-normal-CCVVNp6i.woff2",
-  "assets/newsreader-latin-ext-wght-normal-C-3rgBeH.woff2",
-  "assets/newsreader-vietnamese-wght-normal-Czsa-EzN.woff2",
+  "assets/schibsted-grotesk-latin-wght-normal-BgDaEnEv.woff2",
+  "assets/schibsted-grotesk-latin-ext-wght-normal-DC-KSUi6.woff2",
+  "assets/schibsted-grotesk-cyrillic-wght-normal-BEAKL7Jp.woff2",
+  "assets/bricolage-grotesque-latin-wght-normal-CCVVNp6i.woff2",
+  "assets/bricolage-grotesque-latin-ext-wght-normal-C-3rgBeH.woff2",
+  "assets/bricolage-grotesque-vietnamese-wght-normal-Czsa-EzN.woff2",
   "assets/jetbrains-mono-latin-wght-normal-B9CIFXIH.woff2",
   "assets/jetbrains-mono-latin-ext-wght-normal-DBQx-q_a.woff2",
-  "assets/caveat-latin-wght-normal-C1hSzPvX.woff2",
-  "assets/caveat-cyrillic-wght-normal-D5lnP6kL.woff2",
 ]
 
 describe("the critical set", () => {
   it("is the three faces that render on first paint, in reading order", () => {
     expect(CRITICAL_FACES.map((f) => f.pattern.source)).toEqual([
-      "^geist-latin-wght-normal-[\\w-]+\\.woff2$",
-      "^newsreader-latin-wght-normal-[\\w-]+\\.woff2$",
+      "^schibsted-grotesk-latin-wght-normal-[\\w-]+\\.woff2$",
+      "^bricolage-grotesque-latin-wght-normal-[\\w-]+\\.woff2$",
       "^jetbrains-mono-latin-wght-normal-[\\w-]+\\.woff2$",
     ])
   })
 
-  it("excludes Caveat on purpose", () => {
-    // §4's marginalia face: the largest latin subset in the product (~73KB
-    // against Geist's ~29KB) and the least-seen, rendering on empty states and
-    // one landing sticker. Its `unicode-range`-gated download is already the
-    // lazy behaviour we want. It *does* contribute to the dashboard's 0.098 —
-    // it is named in the Lighthouse trace — and it is still not worth 73KB on
-    // the critical path of every route to remove part of one shift.
+  it("names no retired Study Notebook face", () => {
+    // Geist, Newsreader and Caveat left the bundle with the v5 Abyss type system.
     const sources = CRITICAL_FACES.map((f) => f.pattern.source).join(" ")
-    expect(sources).not.toContain("caveat")
+    for (const retired of ["caveat", "newsreader", "geist"]) expect(sources).not.toContain(retired)
   })
 
   it("names only latin, only normal, only variable-weight files", () => {
@@ -89,8 +82,8 @@ describe("the critical set", () => {
 describe("selectCriticalFontAssets", () => {
   it("picks exactly the three critical faces out of a real bundle", () => {
     expect(selectCriticalFontAssets(REAL_BUNDLE)).toEqual([
-      "assets/geist-latin-wght-normal-BgDaEnEv.woff2",
-      "assets/newsreader-latin-wght-normal-CCVVNp6i.woff2",
+      "assets/schibsted-grotesk-latin-wght-normal-BgDaEnEv.woff2",
+      "assets/bricolage-grotesque-latin-wght-normal-CCVVNp6i.woff2",
       "assets/jetbrains-mono-latin-wght-normal-B9CIFXIH.woff2",
     ])
   })
@@ -105,16 +98,16 @@ describe("selectCriticalFontAssets", () => {
   it("throws, naming the face and its role, when one goes missing", () => {
     // Verified by inversion: this is the exact scenario the plugin exists to
     // make loud — a font package renamed or dropped, everything else fine.
-    const withoutNewsreader = REAL_BUNDLE.filter((f) => !f.includes("newsreader-latin-wght"))
-    expect(() => selectCriticalFontAssets(withoutNewsreader)).toThrow(
-      /newsreader.*every page title and section heading/s,
+    const withoutDisplay = REAL_BUNDLE.filter((f) => !f.includes("bricolage-grotesque-latin-wght"))
+    expect(() => selectCriticalFontAssets(withoutDisplay)).toThrow(
+      /bricolage.*every page title and section heading/s,
     )
   })
 
   it("throws when a pattern stops identifying a single file", () => {
     // Two matches means the subset naming changed under us. Preloading both
     // would hide that, so it is reported the same way a miss is.
-    const ambiguous = [...REAL_BUNDLE, "assets/geist-latin-wght-normal-ZZZZZZZZ.woff2"]
+    const ambiguous = [...REAL_BUNDLE, "assets/schibsted-grotesk-latin-wght-normal-ZZZZZZZZ.woff2"]
     expect(() => selectCriticalFontAssets(ambiguous)).toThrow(/matched 2 assets/)
   })
 

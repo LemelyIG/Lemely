@@ -53,6 +53,8 @@ DIFFICULTY_MIX: dict[str, tuple[float, float, float]] = {
     "C": (0.30, 0.60, 0.10),
     "D": (0.50, 0.50, 0.00),
     "E": (0.70, 0.30, 0.00),
+    "F": (0.80, 0.20, 0.00),
+    "G": (0.90, 0.10, 0.00),
     "U": (1.00, 0.00, 0.00),
 }
 
@@ -76,6 +78,12 @@ if set(DIFFICULTY_MIX) != set(GRADE_ORDER):  # pragma: no cover - import-time in
 _UNTARGETED_MIX: tuple[float, float, float] = (0.20, 0.60, 0.20)
 
 _BANDS: tuple[Band, Band, Band] = ("foundation", "standard", "challenge")
+
+#: Public name for the band vocabulary, for callers outside this module.
+#: `_BANDS` stays as the internal spelling used throughout the arithmetic
+#: below; this alias exists so `/api/reference` does not have to reach past
+#: the underscore and quietly couple itself to a private symbol.
+DIFFICULTY_BANDS: tuple[Band, Band, Band] = _BANDS
 
 #: Tie-break order for :func:`allocate_difficulty`'s largest-remainder step,
 #: lowest value wins ties. ``standard`` sorts first per the documented rule

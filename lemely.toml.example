@@ -19,26 +19,121 @@ level = "INFO"
 format = "auto"
 
 [gemini]
-model = "gemini-2.5-flash"
+model = "claude-haiku-5-5"
 
 # Per-task model overrides (omit a key to use the global `model` above).
-# mark_scheme_model = "gemini-2.5-pro"   # one-off parse; accuracy matters
-# extraction_model  = "gemini-2.5-flash" # vision-heavy, per paper
-# correction_model  = "gemini-2.5-flash" # per question; highest call volume
+# Sub-project C: every tag but mark_scheme defaults to claude-haiku-5-5 (needs
+# ANTHROPIC_API_KEY); mark_scheme stays on gemini-2.5-flash (Haiku's parse failed
+# parity with the deterministic parser). These are commented out here purely as
+# documentation of what you are overriding if you uncomment one. A gemini- model
+# needs GEMINI_API_KEY. Run `lemely doctor` to see what
+# model_for() actually resolves for every tag.
+# mark_scheme_model    = "gemini-2.5-flash"
+# extraction_model     = "claude-haiku-5-5"
+# correction_model     = "claude-haiku-5-5"
+# generation_model     = "claude-haiku-5-5"
+# scan_metadata_model  = "claude-haiku-5-5"
 
-# Escalation: re-mark with a stronger model when confidence < threshold.
-# escalation_model = "gemini-2.5-pro"
+# Escalation: re-mark with a stronger/thinking-harder model when confidence <
+# threshold. Reachable even when escalation_model == correction_model (F1):
+# the gate compares (model, thinking) tuples, not model names alone. Unset
+# (the default since sub-project C): no escalation.
+# escalation_model = "claude-sonnet-5-5"
 # escalation_confidence_threshold = 0.8
+# At most this many escalations per script, most uncertain first (unset: no cap).
+# escalation_cap_per_script = 2
+# Per-model human-review threshold: a final AI mark from a listed model is
+# flagged for teacher review below its value (unlisted models: 0.90). A table
+# you set REPLACES the shipped one (no merge). Applies to the marking step;
+# the review queue and teacher console still read the 0.90 constant.
+# review_confidence_threshold_for = { "claude-haiku-5-5" = 0.72 }
 
-# Thinking budget per task (tokens; 0 = disabled).
-[gemini.thinking_budget_for]
-mark_scheme = 8000
-# correction_borderline = 2000  # retry borderline marks before Pro escalation
+# LLM cost-ladder levers (all default to the pre-ladder behaviour).
+# Per-task cache mode: read_write | bypass | refresh (unlisted tags read_write).
+# cache_mode_for = {}
+# False makes forget_cached a no-op so measurement runs keep every cached read.
+# cache_forget_enabled = true
+# Cascade: cheap correction pass first, escalate only when it is unsure.
+# cascade_enabled = false
+# Strong model for the cascade (unset = use escalation_model).
+# cascade_strong_model = ""  # unset = use escalation_model
+# Per-model fitted confidence threshold (missing model = escalation threshold).
+# cascade_threshold_for = {}
+# Escalate when two cheap passes disagree.
+# cascade_two_pass_disagreement = false
+# Per-task output-token cap, thinking included (unlisted tags keep the default).
+# A reply cut off at a set cap is billed, recorded unparsed, retried once
+# afresh, then fails. A table you set REPLACES the shipped caps (no merge):
+# list every entry you want kept, both extraction and binding_second_read.
+# Naming binding_second_read here pins Claude's binder cap too: on a claude-
+# model it defaults to 32768 when the tag is not named.
+# max_output_tokens_for = { "extraction" = 32768, "binding_second_read" = 16384 }
+# Escalate when the cheap pass leaves mark-scheme points unaddressed.
+# cascade_unaddressed_points = false
+# Put the question-invariant correction prompt first so it can be cached.
+# correction_shared_prefix = true
+# How the shared prefix is cached: implicit | explicit.
+# correction_prefix_cache = "implicit"
+# Claude page images: greyscaled, enhanced and stepped down from 2576 px until
+# under this many estimated tokens (95,000 keeps Haiku 5.5 under its 100k
+# price tier), never below the floor in pixels.
+# claude_image_token_budget = 95000
+# claude_image_floor_px = 1568
+# Page images for claude- calls go through Claude's Files API (1 h expiry,
+# deleted at job end; not ZDR-eligible: use a dedicated workspace key).
+# claude_files_api = true
+# A script whose model spend passes this logs script_over_cost_target
+# (split by task tag). It never blocks marking.
+# paper_cost_target_usd = 0.1
+# Claude prompt-cache breakpoints per task tag: system | documents | images |
+# prefix. Unlisted tags mark system and prefix (the A1 behaviour). A changed
+# effort or thinking setting invalidates the cached messages (docs, prompt
+# caching): both binder tags must send the same effort for the second read to hit (see binding.claude_cache_ignores_effort).
+# claude_cache_for = { "extraction" = ["system", "images"], "binding_second_read" = ["system", "images"], "correction" = ["system", "prefix"], "correction_borderline" = ["system", "prefix"], "escalation" = ["system", "prefix"] }
+# Claude effort (none | low | medium | high | xhigh | max) per tag or tag:kind;
+# "none" turns thinking off for the call (levers a1/a2).
+# e.g. { "correction:extended" = "medium" }. Unlisted: thinking_level_for.
+# haiku-5-5, sonnet-5-5, opus-5-5 and fable-5-1 all accept low..max (docs: effort);
+# "none" works on haiku-5-5 only: sonnet-5-5, opus-5-5 and fable-5-1 reject it.
+# A model that rejects a level fails the call. Higher effort spends more of
+# max_output_tokens_for (thinking counts toward max_tokens).
+# claude_effort_for = { "correction:mcq" = "low", "correction:numeric" = "low", "correction:short" = "low", "correction:extended" = "medium" }
+# The marker quotes the mark scheme for every awarded mark; an unquoted or
+# misquoted mark goes to review as uncited_mark.
+# correction_citations = false
+# Ask the marker for a rationale of at most 25 words (cut at 300 chars).
+# correction_terse_rationale = false
+# false skips the borderline thinking retry (lever c1).
+# correction_borderline_enabled = true
+# Lever c2: a stronger model re-marks the least certain leaves of a script
+# from their page crops. On by default (claude-haiku-5-5); needs the scan's pages.
+# adjudication_model = "claude-haiku-5-5"
+# adjudication_max_leaves = 6
+# adjudication_confidence_threshold = 0.86
+# Lever H2a: keep the higher of the first and the borderline-retry mark below this confidence.
+# correction_retry_keep_higher = false
+# correction_retry_keep_higher_below = 0.86
+# Lever H2b: per-point verdicts and rationale before the mark (not with correction_citations).
+# correction_reason_first = false
+# Lever H2c: printed 0625 Paper 4 marking conventions in the marking prompt.
+# correction_syllabus_conventions = false
+# Lever H2d: adjudicate the reader's Drawing: leaves from their crops (needs adjudication_model).
+# adjudication_drawing_leaves = true
+# adjudication_drawing_max_leaves = 6
+# Lever H4a: adjudicate leaves whose crop re-read disagreed with the first read (needs adjudication_model).
+# adjudication_reread_disagreed = true
+# adjudication_reread_max_leaves = 3
+# Lever H4c: median of three marks below this confidence (not with keep_higher).
+# correction_retry_median = true
+# correction_retry_median_below = 0.86
+# Greyscale pages are enhanced for readability; false sends plain greyscale (A/B).
+# claude_image_enhance = true
 
 max_retries = 3
 backoff_seconds = 2.0
-# Persistent cumulative-USD hard cap (survives process restarts).
-# total_usd_ceiling = 8.0
+# Persistent cumulative-USD hard cap (survives process restarts). $14 is the
+# shipped default (raised from $8 by the user 2026-09-17, F1/D4).
+# total_usd_ceiling = 14.0
 # usd_warning_thresholds = [4.0, 6.0]
 # Budgets one RUN — every sweep that run drives, not each sweep separately.
 # A golden sweep is ~70 calls / ~115k tokens, so 200000 (the old example value)
@@ -46,8 +141,45 @@ backoff_seconds = 2.0
 # for the whole run; the accuracy programme uses 2000000 (~17 sweeps).
 # per_run_token_ceiling = 2000000
 
+# I1 crop-and-re-read stage (spec 2026-09-26 §4-5): per-paper cap on the
+# zoomed re-read calls (0 disables the stage), worker threads for the stage,
+# and its wall-clock budget in seconds -- no re-read STARTS after the budget.
+max_rereads_per_paper = 15
+reread_concurrency = 4
+reread_budget_seconds = 45.0
+# Parallel Files API uploads of page images before the extraction call
+# (spec 2026-09-26 §7).
+upload_concurrency = 4
+
 # gemini_api_key is a secret — prefer the GEMINI_API_KEY env var instead.
 # gemini_api_key = "sk-..."
+# anthropic_api_key is a secret too — use the ANTHROPIC_API_KEY env var.
+
+# Thinking budget per task (tokens; 0 = disabled) — 2.5-and-earlier models
+# only. 3.x models read [gemini.thinking_level_for] instead (see below). NOTE:
+# TOML table headers stay open until the next one, so every scalar [gemini]
+# key must come before this point in the file — [gemini] cannot be reopened
+# after a subtable like this one starts.
+[gemini.thinking_budget_for]
+mark_scheme = 8000
+# correction_borderline = 2000  # retry borderline marks before Pro escalation
+
+# Thinking level per task ("minimal"/"low"/"medium"/"high") — 3.x models
+# only; a 2.5-and-earlier model ignores this table entirely. Shipped
+# defaults shown; "minimal" is only honoured on gemini-3.6-flash /
+# gemini-3.5-flash-lite and falls back to "low" on any other 3.x model.
+# This table REPLACES the defaults: a key left out here falls back to
+# "low". Leaving out binding_second_read makes the binding step's second
+# read the same call as its first (see [binding]); `lemely doctor` says so.
+# binding_second_read is safe at "low" only because max_output_tokens_for caps
+# it: at "medium" second reads reached 47-65k tokens, so raise that cap first.
+[gemini.thinking_level_for]
+correction = "low"
+correction_borderline = "high"  # Step-1 retry before Step-2 escalation
+escalation = "high"
+extraction = "minimal"
+generation = "low"
+binding_second_read = "low"  # the label binder's second read, see [binding]
 
 [accuracy_eval]
 mark_accuracy_target = 0.95
@@ -70,6 +202,11 @@ echo = false
 pool_size = 5
 max_overflow = 10
 pool_pre_ping = true
+# Bound how long a connect may block. libpq's own connect_timeout default is
+# unlimited, which lets a dropped-packet outage (firewall/security-group
+# change) hang every request instead of failing them.
+connect_timeout_seconds = 5
+pool_timeout_seconds = 5
 
 [supabase]
 # Local Supabase Auth (GoTrue). Defaults are the well-known local-dev
@@ -80,6 +217,60 @@ jwt_audience = "authenticated"
 # jwt_secret = "super-secret-jwt-token-with-at-least-32-characters-long"
 # anon_key = "..."
 # service_role_key = "..."
+
+[storage]
+# Object storage for self-mark uploads (P2.5) and profile pictures.
+# "local" (the default) writes under `paths.output_dir/storage` — right for
+# dev, Compose and CI, and needs no credentials. "gcs" uses Google Cloud
+# Storage via Application Default Credentials; no key belongs in this file
+# for that path. See docs/deployment.md and scripts/gcp-bootstrap.sh.
+#
+# There is no Supabase Storage backend — DS7 removed it.
+#
+# Note that signed URLs (avatar downloads) need a real service-account
+# credential (a JSON key, or an attached/workload-identity service account)
+# — plain user ADC from `gcloud auth application-default login` can
+# upload/download but cannot sign a URL at all. For local signing, add
+# `--impersonate-service-account=<runtime SA>` to that login command. The
+# "local" backend sidesteps this: it returns the bytes inline instead.
+#
+# GCS bucket names are ONE GLOBAL namespace across all of Google Cloud, so
+# these defaults carry a project-ish prefix. The deployed pipeline overrides
+# both per environment (see .github/workflows/deploy.yml), so staging and
+# production never share a bucket; `scripts/gcp-bootstrap.sh` creates them.
+backend = "local"
+bucket = "lemely-uploads"
+# Profile pictures live in their own bucket: different retention and access
+# shape from scans, and no reason to share a namespace.
+avatar_bucket = "lemely-avatars"
+signed_url_ttl_seconds = 3600
+avatar_max_bytes = 5242880  # 5 MiB
+# Tutor evidence documents (qualification scans) are PII: a separate private
+# bucket, opened only by an admin through a short-lived signed URL.
+tutor_evidence_bucket = "lemely-tutor-evidence"
+tutor_evidence_signed_url_ttl_seconds = 300
+# gcs_project = "my-gcp-project"  # only if ADC can't infer one
+# The project NUMBER (not its id) that must own tutor_evidence_bucket. Required
+# for evidence storage on gcs: unset, every evidence operation is refused.
+# gcs_project_number = 123456789012
+
+[push]
+# Web push (VAPID, RFC 8292). All three absent is a SUPPORTED state (D5.9 §4):
+# the transport reports itself unavailable, the notification inbox keeps
+# working, and every developer machine and CI run is in that state.
+#
+# Generate a pair with `lemely push-keygen` (prints, writes nothing). The
+# public key is handed to every browser and is not a secret; the private key
+# is. Deployed, both arrive from GitHub Actions (a repository variable and a
+# repository secret) as LEMELY_PUSH__VAPID_PUBLIC_KEY / __VAPID_PRIVATE_KEY.
+# ROTATING THE PAIR INVALIDATES EVERY STORED SUBSCRIPTION - the public key is
+# baked into each one, so every browser must re-subscribe. See
+# docs/push-notifications.md before changing it.
+# vapid_public_key = "BASE64URL-65-BYTE-POINT"
+# vapid_private_key = "BASE64URL-32-BYTE-SCALAR"
+# vapid_subject = "mailto:support@lemelyig.com"
+ttl_seconds = 86400
+timeout_seconds = 10.0
 
 [auth]
 # How long a minted access token is accepted for. Short on purpose: it is a
@@ -93,8 +284,202 @@ access_token_ttl_seconds = 3600
 # out from the device list, or evicting it past the 3-device cap, kills it
 # immediately.
 refresh_token_ttl_seconds = 2592000  # 30 days
-# Parent phone-OTP challenge lifecycle.
+# OTP challenge lifecycle, shared by channel. The phone channel backs a
+# kept-but-unused seam (BUILD/DECISIONS.md D-2026-09-08) for a possible future
+# paid SMS channel; no route mints a phone code today.
 otp_ttl_seconds = 300
 otp_max_attempts = 5
 otp_length = 6
 otp_min_resend_seconds = 30
+# Email-channel OTP challenge lifecycle (spec §4.4). This is the channel that
+# ships: parent sign-up codes and email verification codes both use it.
+# Longer-lived than the phone lifecycle above; length, attempt cap and resend
+# cooldown are shared.
+email_otp_ttl_seconds = 600
+
+[grading]
+# A teacher_papers row stuck in `processing` past this many seconds is a
+# dead run (its instance died) and may be reclaimed by the next regrade.
+stale_run_after_seconds = 900
+
+# US-005b's marking gate (US-040, closed by `08df9302`): read by every
+# marking path -- the CLI, student paper uploads, the teacher grading job,
+# quiz marking, the accuracy harness and Gradio. Enabling it CHANGES HOW
+# PAPERS ARE MARKED, on every one of those paths at once. This branch ships
+# no accuracy evidence that the verdict path marks better than the legacy
+# path -- that evidence needs a label campaign that has not started. Not a
+# safe default to flip; leave commented out until that evidence exists.
+# Deployed, it is set by LEMELY_GRADING__EQUIVALENCE_GATE; see docs/ci-cd.md.
+# equivalence_gate = true
+# Error-carried-forward by substitution (I7/US-013). Threaded independently
+# of `equivalence_gate` above -- neither flag implies the other -- but it has
+# no observable effect unless `equivalence_gate` is ALSO true. Deployed, it
+# is set by LEMELY_GRADING__ECF_SUBSTITUTION.
+ecf_substitution = false
+# Crop re-read substitution (spec 2026-09-26 §4): when on, an answer whose
+# zoomed re-read disagrees with the first read is marked on the re-read text.
+# It CHANGES HOW PAPERS ARE MARKED on every path and there is no accuracy
+# evidence yet that the re-read is the better reading, so leave it off. The
+# teacher-review flag fires on a disagreement whether or not this is on.
+# Deployed, it is set by LEMELY_GRADING__REREAD_SUBSTITUTION; see docs/ci-cd.md.
+# reread_substitution = true
+
+[binding]
+# How the answers on a scanned script are tied to questions, and how far
+# that is checked before marking (lemely.io.binding.orchestrate).
+#
+# binder: "label" -- the model lists the question labels and the writing it
+# sees, with no question ids, and code binds that list to the mark scheme.
+# "legacy" -- the model hands out the question ids itself, as extraction
+# did before; kept as a way back, not as an equal choice.
+binder = "label"
+# gate: "enforce" -- a paper whose binding cannot be trusted is held.
+# The label binder REQUIRES "enforce": its checks are part of reading a
+# script safely, and config does not load with any other value beside it.
+# "observe" and "off" are for binder = "legacy" only. "observe" -- the
+# legacy answers are checked and the result is published (the
+# binding_gate_result event); the answers go on as they are, no paper is
+# held, and the check made after marking does not run. "off" -- no
+# checks and no report: binder = "legacy" with gate = "off" is extraction
+# exactly as it was before either existed.
+gate = "enforce"
+# The label binder's model, passed on every one of its calls. It is NOT
+# gemini.extraction_model: on Gemini only gemini-3.8-flash returned a usable
+# list when this was measured; since sub-project C it is claude-haiku-5-5.
+# COST: with the label binder every extraction makes its calls on this
+# model in place of one call on extraction_model.
+read_model = "claude-haiku-5-5"
+# Read the script a second time on the same model, at the thinking level
+# [gemini.thinking_level_for] gives binding_second_read, so that the two
+# reads can be compared and a bad first read replaced. Doubles the cost of
+# the binding step. Read by the label binder only.
+second_read = true
+# When the second read is made. "always" -- on every script, at the same
+# time as the first. "on_trigger" -- the first read alone, then the second
+# only when the first gives a reason: a part not bound or left blank, a
+# label missing, out of place or seen twice, or a gate check that fails
+# on it. With no reason the paper goes on with the first read, as with
+# second_read off.
+# Unsafe as shipped: a first read with every label present but writing
+# under the wrong labels fires no trigger, so the G9 cross-read check is
+# lost and those answers go out verified. Not screened; keep `always`.
+# COST: its blank_leaf trigger fires on every script with a genuinely
+# skipped part (5/5 reads of the one real scan on disk), so on real
+# scripts it saves far less than on the golden set (0/20 reads).
+second_read_mode = "always"
+# The second read's model. Unset: read_model reads twice. A claude- model
+# (e.g. claude-haiku-5-5) makes it a cross-model read under the
+# binding_second_read task tag: its thinking level is the Anthropic effort
+# and its max_output_tokens_for cap applies. Claude gets the pages fitted
+# under gemini.claude_image_token_budget, never below
+# gemini.claude_image_floor_px. Needs ANTHROPIC_API_KEY; `lemely doctor`
+# checks for it.
+# second_read_model = "claude-haiku-5-5"
+# A claude- read still over the token budget at the image floor is read as
+# an overview pass plus page chunks under the budget (off until screened).
+# The binding_overview call (the 768 px map pass) uses the effort, output cap and
+# cache defaults of its tag unless set. Chunk calls send their pages inline, not
+# through the Files API: input tokens are unchanged, bandwidth is higher.
+# claude_chunked_read = false
+# Make the two claude- binder reads in turn even when their efforts differ
+# (lever a3; the second read hits the first's cache only if the API allows).
+# claude_cache_ignores_effort = false
+# The model the legacy binder's one retry uses, when the gate is on.
+retry_model = "claude-sonnet-5-5"
+
+[integrity]
+# Plagiarism detection needs no Gemini key (stdlib difflib only). F4 removed
+# the AI-generated-answer detector that used to live here — no evidence base,
+# JCQ guidance says a detector must never be sole evidence.
+plagiarism_enabled = true
+plagiarism_threshold = 0.85
+
+[email]
+# Transactional mail for account verification and password reset (D7.7).
+#
+# Leave `api_key` unset and lemely.web.deps wires MockEmailProvider: the link
+# is logged to the `lemely.auth.email` logger instead of sent, and the auth
+# routes keep returning it so a local signup completes with no mail service at
+# all. That is the supported default for development and CI, not a broken
+# state. Setting a key flips both halves at once — mail is really sent, and the
+# routes stop returning the live link, because a real sender makes the inbox
+# the only place a bearer credential belongs.
+#
+# NEVER put the key in this file. `lemely.toml` is gitignored, but the key still
+# does not belong on disk. Deployed, it is the `RESEND_API_KEY` GitHub Actions
+# environment secret, which `deploy.yml` passes to Cloud Run as
+# LEMELY_EMAIL__API_KEY. Locally, export LEMELY_EMAIL__API_KEY in your shell.
+# api_key = "re_..."
+#
+# The origin emailed links are built on. AuthService mints links as frontend
+# routes (`/verify-email/<token>`), which the SPA can navigate to but an inbox
+# cannot resolve — a mail client with no base turns that into
+# `http:///verify-email/<token>`. A real provider joins this origin on first.
+# deploy.yml sets it per environment; this default is the production site.
+app_base_url = "https://lemelyig.com"
+#
+# Must be on a domain verified with the provider AND carrying that sender's
+# SPF/DKIM records in the Cloudflare DNS zone — see docs/email-delivery.md.
+from_address = "noreply@lemelyig.com"
+from_name = "Lemely"
+# Where replies go. Unset means they return to `from_address`, an unattended
+# mailbox; point it at a real inbox once one exists.
+# reply_to = "support@lemelyig.com"
+# Inbox that receives questions sent from the landing page FAQ composer
+# (POST /api/contact). The visitor's address is the Reply-To on that mail.
+contact_address = "contact@lemelyig.com"
+# Short on purpose: verification mail is a best-effort side effect of an
+# already-created account and must never make a signup hang.
+timeout_seconds = 10.0
+
+[notifications]
+# The in-process sweeper that publishes scheduled announcements and sends the
+# two daily engagement notifications (streak_warning at streak_warning_hour,
+# study_plan_reminder at study_plan_reminder_hour) in each recipient's OWN
+# time zone. It runs inside the API process, started by create_app's lifespan;
+# there is no separate worker to deploy. On Cloud Run, timely delivery needs
+# --min-instances=1: at zero instances nothing is running to sweep, and a
+# 19:00 warning may be missed for that day entirely. See docs/deployment.md.
+# The test suite sets LEMELY_NOTIFICATIONS__SWEEPER_ENABLED=0.
+sweeper_enabled = true
+sweep_poll_seconds = 60
+streak_warning_hour = 19
+study_plan_reminder_hour = 8
+
+[tutoring]
+# Tutoring-marketplace mail is sent by one sweeper job. Once this many
+# tutoring mails went out in the last 24 hours, further ones are skipped, not
+# sent. 60 sits below Resend's 100/day free quota, which account mail shares.
+email_daily_cap = 60
+
+[access]
+# Who may sign up, log in or call an authenticated route while Lemely is not
+# launched. Empty means open (local dev). Non-empty, only accounts with a VERIFIED
+# email on one of these domains get in; everyone else is answered 403
+# access_restricted. Exact match, so a subdomain is not its parent. Deployed it
+# is LEMELY_ACCESS__ALLOWED_EMAIL_DOMAINS (comma-separated); deploy.yml sets it
+# to lemelyig.com for staging and production. Empty it to open access.
+allowed_email_domains = []
+
+[waitlist]
+# Shared secret for POST /api/internal/waitlist/digest, the daily applicant
+# digest Cloud Scheduler triggers (sent in an X-Cron-Secret header). Unset, the
+# endpoint answers 404. NEVER put it in this file: deployed it is the
+# LEMELY_WAITLIST__DIGEST_SECRET environment variable.
+# digest_secret = "..."
+# Cloudflare Turnstile for the waitlist's first step. Unset, verification is
+# skipped (local dev). The secret key is LEMELY_WAITLIST__TURNSTILE_SECRET_KEY;
+# the site key is public and is served to the page by GET /api/waitlist/config.
+# turnstile_secret_key = "..."
+# turnstile_site_key = "0x4AAAA..."
+
+[edge]
+# Shared secret the Cloudflare Worker sends as X-Lemely-Edge-Secret. Where a route
+# uses the edge guard (the waitlist routes), a request without it is refused and
+# only then is CF-Connecting-IP trusted for rate limiting. Unset (local dev) the
+# guard is off. NEVER put it in this file: deployed it is the
+# LEMELY_EDGE__ORIGIN_SECRET environment variable, and the Worker's ORIGIN_SECRET.
+# origin_secret = "..."
+# The value being rotated out: still accepted, never sent by the Worker. Blank is
+# unset (LEMELY_EDGE__ORIGIN_SECRET_PREVIOUS). See docs/ci-cd.md for the rotation.
+# origin_secret_previous = "..."

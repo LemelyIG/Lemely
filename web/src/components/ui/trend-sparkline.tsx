@@ -28,14 +28,14 @@ function directionOf(values: number[]): Direction {
 }
 
 const directionMeta: Record<Direction, { icon: Icon; label: string; color: string }> = {
-  up: { icon: TrendUp, label: "Improving", color: "text-ok" },
-  down: { icon: TrendDown, label: "Declining", color: "text-err" },
-  flat: { icon: Minus, label: "Steady", color: "text-ink-muted" },
+  up: { icon: TrendUp, label: "Improving", color: "text-success-text" },
+  down: { icon: TrendDown, label: "Declining", color: "text-error" },
+  flat: { icon: Minus, label: "Steady", color: "text-on-surface-variant" },
 }
 
 export function TrendSparkline({ values, width = 64, height = 24, className }: TrendSparklineProps) {
   if (values.length === 0) {
-    return <span className={cn("text-body-md text-ink-faint", className)}>No attempts yet</span>
+    return <span className={cn("text-body-md text-on-surface-variant", className)}>No attempts yet</span>
   }
 
   const direction = directionOf(values)

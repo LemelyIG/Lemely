@@ -51,6 +51,11 @@ STUDENT_GET_ROUTES = [
     "/api/student/study-plan/0625",
     # Onboarding profile (P4.3) — per-route guards, so every route is listed.
     "/api/me/student-profile",
+    # Student self-review (spec 2026-09-17) — per-route guards, so both verbs
+    # are listed. Ownership is enforced inside SelfReviewService (a 404, see
+    # tests/test_student_self_review_web.py), not here.
+    "/api/student/attempts/00000000-0000-0000-0000-000000000002/questions/00000000-0000-0000-0000-000000000003/self-review",
+    "/api/student/attempts/00000000-0000-0000-0000-000000000002/questions",
 ]
 STUDENT_POST_ROUTES = [
     # /student/correct takes no body (the SSE self-mark stream); an empty POST
@@ -58,6 +63,10 @@ STUDENT_POST_ROUTES = [
     ("/api/student/correct", None),
     ("/api/student/study-plan", {"subjectCode": "0625"}),
     ("/api/me/student-profile/complete-onboarding", None),
+    (
+        "/api/student/attempts/00000000-0000-0000-0000-000000000002/questions/00000000-0000-0000-0000-000000000003/self-review",
+        {"points": [{"markPointId": "p1", "earned": True}]},
+    ),
 ]
 # PATCH/PUT halves of the /api/me/student-profile surface. Listed separately
 # because this file parametrizes by method, and individually because me.py has
@@ -234,8 +243,14 @@ def test_teacher_route_accepts_school_admin_and_platform_admin(
 ) -> None:
     app, _ = app_and_store
     for role in (Role.school_admin, Role.platform_admin, Role.teacher):
+        # A real UUID, not the bare "staff" placeholder every other role check
+        # in this file uses: ``GET /papers`` now parses ``auth.user_id`` as a
+        # UUID for DS11 visibility (Task 6 — papers moved onto
+        # ``TeacherPaperRepository``), where a real token's ``sub`` always is
+        # one. This caller owns no papers, so the route still answers 200
+        # with an empty list; the point here is only the role gate.
         app.dependency_overrides[get_auth_context] = lambda role=role: AuthContext(  # type: ignore[attr-defined]
-            user_id="staff", role=role.value
+            user_id="00000000-0000-0000-0000-0000000000aa", role=role.value
         )
         resp = _client(app).get("/api/papers")
         assert resp.status_code == 200, role

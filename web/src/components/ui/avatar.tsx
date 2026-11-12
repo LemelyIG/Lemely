@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import type { HTMLAttributes } from "react"
 import { User } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
@@ -42,9 +42,9 @@ const iconSize: Record<AvatarSize, number> = {
 // Circle dots, deliberately the ONE shape on this component allowed to be
 // round — this is the exact distinction DESIGN.md §6 is protecting.
 const statusClasses: Record<AvatarStatus, string> = {
-  online: "bg-ok",
-  offline: "bg-ink-faint",
-  away: "bg-warn",
+  online: "bg-success",
+  offline: "bg-on-surface-variant",
+  away: "bg-tertiary",
 }
 
 const statusLabel: Record<AvatarStatus, string> = {
@@ -70,6 +70,13 @@ export interface AvatarProps extends Omit<HTMLAttributes<HTMLDivElement>, "child
 
 export function Avatar({ name, src, size = "md", status, className, ...props }: AvatarProps) {
   const [imageFailed, setImageFailed] = useState(false)
+  // A new `src` deserves a fresh attempt: without this, a caller that swaps
+  // in a different (working) URL after one image failed to load stays pinned
+  // on the initials fallback forever, since `imageFailed` never had a reason
+  // to go back to false.
+  useEffect(() => {
+    setImageFailed(false)
+  }, [src])
   const showImage = Boolean(src) && !imageFailed
   const initials = name ? initialsOf(name).slice(0, 2).toUpperCase() : null
 
@@ -82,7 +89,7 @@ export function Avatar({ name, src, size = "md", status, className, ...props }: 
         role="img"
         aria-label={name ?? "Unknown user"}
         className={cn(
-          "flex h-full w-full items-center justify-center overflow-hidden rounded-lg border border-rule bg-paper-sunk",
+          "flex h-full w-full items-center justify-center overflow-hidden rounded-lg border border-outline-variant bg-surface-container-low",
         )}
       >
         {showImage ? (
@@ -98,20 +105,20 @@ export function Avatar({ name, src, size = "md", status, className, ...props }: 
         ) : initials ? (
           <span
             className={cn(
-              "select-none font-medium text-ink-muted",
+              "select-none font-medium text-on-surface-variant",
               initialsTextClasses[size],
             )}
           >
             {initials}
           </span>
         ) : (
-          <User size={iconSize[size]} weight="regular" className="text-ink-faint" />
+          <User size={iconSize[size]} weight="regular" className="text-on-surface-variant" />
         )}
       </div>
       {status ? (
         <span
           className={cn(
-            "absolute -bottom-0.5 -end-0.5 h-2.5 w-2.5 rounded-full border-2 border-paper-raised",
+            "absolute -bottom-0.5 -end-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface-container-lowest",
             statusClasses[status],
           )}
           role="img"

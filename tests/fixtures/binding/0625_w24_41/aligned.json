@@ -1,0 +1,300 @@
+{
+  "answers": [
+    {
+      "answer": "1. 43cm 2. 63cm",
+      "confidence": 1.0,
+      "question_id": "1a_i",
+      "source_region": "page 3 q1a_i",
+      "working_out": null
+    },
+    {
+      "answer": "20cm",
+      "confidence": 1.0,
+      "question_id": "1a_ii",
+      "source_region": "page 3 q1a_ii",
+      "working_out": "reading- original length 63-43"
+    },
+    {
+      "answer": "0.28 N/cm",
+      "confidence": 1.0,
+      "question_id": "1b",
+      "source_region": "page 3 q1b",
+      "working_out": "K = f/x k=5.6/20"
+    },
+    {
+      "answer": "4.9 N",
+      "confidence": 1.0,
+      "question_id": "1c_i",
+      "source_region": "page 4 q1c_i",
+      "working_out": "w=mg W = 0.50X9.8"
+    },
+    {
+      "answer": "13m/s²",
+      "confidence": 1.0,
+      "question_id": "1c_ii",
+      "source_region": "page 4 q1c_ii",
+      "working_out": "F=ma 6.5=0.50 a a=6.5/0.50"
+    },
+    {
+      "answer": "180,000kg m/s",
+      "confidence": 1.0,
+      "question_id": "2a_i",
+      "source_region": "page 6 q2a_i",
+      "working_out": "m = mass x velocity m = 1400 x 130 = 182000"
+    },
+    {
+      "answer": "area under the graph line.",
+      "confidence": 0.93,
+      "question_id": "2a_ii",
+      "source_region": "page 6 q2a_ii",
+      "working_out": null
+    },
+    {
+      "answer": "422.5 m",
+      "confidence": 1.0,
+      "question_id": "2a_iii",
+      "source_region": "page 6 q2a_iii",
+      "working_out": "Distance = 1/2bh = 1/2 x 6.5 x 130 = 422.5"
+    },
+    {
+      "answer": "Speed decrease with increasing rate",
+      "confidence": 0.88,
+      "question_id": "2b_i",
+      "source_region": "page 6 q2b_i",
+      "working_out": null
+    },
+    {
+      "answer": "The line is curved not a straight line",
+      "confidence": 0.93,
+      "question_id": "2b_ii",
+      "source_region": "page 6 q2b_ii",
+      "working_out": null
+    },
+    {
+      "answer": "from Kinetic energy to gravitational potential internal energy",
+      "confidence": 0.88,
+      "question_id": "2c",
+      "source_region": "page 6 q2c",
+      "working_out": null
+    },
+    {
+      "answer": "moment is the turning effect of a force around a pivot and is defined by moment = force x perpendicular distance. It has both magnitude and direction",
+      "confidence": 0.93,
+      "question_id": "3a",
+      "source_region": "page 7 q3a",
+      "working_out": null
+    },
+    {
+      "answer": "a body's whole Point where all of its Weight is considered to act",
+      "confidence": 0.88,
+      "question_id": "3b_i",
+      "source_region": "page 7 q3b_i",
+      "working_out": null
+    },
+    {
+      "answer": "44000000 N/m",
+      "confidence": 0.9800000000000001,
+      "question_id": "3b_ii",
+      "source_region": "page 7 q3b_ii",
+      "working_out": "m = fxID m = 1.3x10^7 x 3.4 = 44200000"
+    },
+    {
+      "answer": "1. total upward forces is equal to total downward forces 2. total moment clockwise is equal to total moment anti-clockwise",
+      "confidence": 0.93,
+      "question_id": "3c",
+      "source_region": "page 8 q3c",
+      "working_out": null
+    },
+    {
+      "answer": "using balance find the mass of the aluminium block To find the energy multiply power supplied by heater by time taken in seconds. find initial and final temperature by thermometer",
+      "confidence": 0.93,
+      "question_id": "4a",
+      "source_region": "page 9 q4a",
+      "working_out": "Q = MC Δθ Q = P x time"
+    },
+    {
+      "answer": "as thermal heat in water is transfered to aluminium by conduction, when water has had high temperature, Particles gain kinetic energy so they vibrate hitting neighbouring aluminium particles. SO heat is transfered from hot water to cold aluminium dish.",
+      "confidence": 0.8300000000000001,
+      "question_id": "4b_i",
+      "source_region": "page 10 q4b_i",
+      "working_out": null
+    },
+    {
+      "answer": "Particles gain kinetic energy, so Particles vibrate and intermolecular forces become weaker, so they move further apart",
+      "confidence": 0.88,
+      "question_id": "4b_ii",
+      "source_region": "page 10 q4b_ii",
+      "working_out": null
+    },
+    {
+      "answer": "when most energetic water molecules out the surface escape, leaving least energetic particles behind cooling the water.",
+      "confidence": 0.88,
+      "question_id": "4b_iii",
+      "source_region": "page 10 q4b_iii",
+      "working_out": null
+    },
+    {
+      "answer": "0.2m",
+      "confidence": 1.0,
+      "question_id": "5a",
+      "source_region": "page 11 q5a",
+      "working_out": "0.10+0.10"
+    },
+    {
+      "answer": "330 m/s",
+      "confidence": 1.0,
+      "question_id": "5b",
+      "source_region": "page 11 q5b",
+      "working_out": null
+    },
+    {
+      "answer": "1700 Hz",
+      "confidence": 1.0,
+      "question_id": "5c_i",
+      "source_region": "page 11 q5c_i",
+      "working_out": "s = f.λ 330 = f x 0.2 f = 330/0.2 = 1650"
+    },
+    {
+      "answer": "Yes, because the range of human ear is from 20 Hz to 20,000 Hz",
+      "confidence": 0.93,
+      "question_id": "5c_ii",
+      "source_region": "page 11 q5c_ii",
+      "working_out": null
+    },
+    {
+      "answer": "point J no, because Sound wave won't reach that point. point K yes, because sound wave reached point",
+      "confidence": 0.93,
+      "question_id": "5d",
+      "source_region": "page 12 q5d",
+      "working_out": null
+    },
+    {
+      "answer": "work done by a unit charge passing through a component converted from electrical to any form units (J).",
+      "confidence": 0.88,
+      "question_id": "6a",
+      "source_region": "page 13 q6a",
+      "working_out": null
+    },
+    {
+      "answer": "E - reading on the voltmeter",
+      "confidence": 0.93,
+      "question_id": "6b",
+      "source_region": "page 13 q6b",
+      "working_out": null
+    },
+    {
+      "answer": "intensity of incident light on LDR: increased temperature of thermistor: decrease",
+      "confidence": 1.0,
+      "question_id": "6c_i",
+      "source_region": "page 14 q6c_i",
+      "working_out": null
+    },
+    {
+      "answer": "As resistance decrease, voltage decreases, I = V/R, and as resistance increase the thermistor, voltage increase, I = V/R, so voltmeter reading is the same as voltage is constant",
+      "confidence": 0.7300000000000001,
+      "question_id": "6c_ii",
+      "source_region": "page 14 q6c_ii",
+      "working_out": "V=IR I=V/R"
+    },
+    {
+      "answer": "iron",
+      "confidence": 1.0,
+      "question_id": "7a",
+      "source_region": "page 15 q7a",
+      "working_out": null
+    },
+    {
+      "answer": "curved lines from N to S pole, denser at poles",
+      "confidence": 0.9800000000000001,
+      "question_id": "7b_i",
+      "source_region": "page 15 q7b_i",
+      "working_out": "Diagram shows at least 6 field lines correctly drawn, originating from N and entering S pole, with field lines correctly directed, and lines curved and denser at poles."
+    },
+    {
+      "answer": "magnetic field decreases as current decreases, V=IR",
+      "confidence": 0.8800000000000001,
+      "question_id": "7b_ii",
+      "source_region": "page 16 q7b_ii",
+      "working_out": "V=IRA"
+    },
+    {
+      "answer": "6 protons (black dots), 8 neutrons (white circles), 6 electrons (X's) arranged with 2 electrons in the inner shell and 4 electrons in the outer shell. Protons and neutrons are in the nucleus.",
+      "confidence": 1.0,
+      "question_id": "8a",
+      "source_region": "page 17 q8a",
+      "working_out": "The student has drawn a central nucleus with 6 black dots (protons) and 8 white circles (neutrons). Two 'X's (electrons) are drawn in the inner shell and four 'X's are drawn in the outer shell."
+    },
+    {
+      "answer": "have different number of protons and electrons, but same number of neutrons. nitrogen has one more proton and electron",
+      "confidence": 0.88,
+      "question_id": "8b",
+      "source_region": "page 17 q8b",
+      "working_out": null
+    },
+    {
+      "answer": "electron",
+      "confidence": 1.0,
+      "question_id": "8c_i",
+      "source_region": "page 18 q8c_i",
+      "working_out": null
+    },
+    {
+      "answer": "Beta Decay, one neutron is split into a proton and an electron",
+      "confidence": 0.93,
+      "question_id": "8c_ii",
+      "source_region": "page 18 q8c_ii",
+      "working_out": null
+    },
+    {
+      "answer": "17100 years",
+      "confidence": 1.0,
+      "question_id": "8d",
+      "source_region": "page 18 q8d",
+      "working_out": "9.6x10^11 / 2 = 4.8x10^11 / 2 = 2.4x10^11 / 2 = 1.2x10^11.  3 half-lives. 5700 x 3 = 17100"
+    },
+    {
+      "answer": "group of billions of stars",
+      "confidence": 1.0,
+      "question_id": "9a",
+      "source_region": "page 19 q9a",
+      "working_out": null
+    },
+    {
+      "answer": "9.5 x 10^17 km",
+      "confidence": 1.0,
+      "question_id": "9b",
+      "source_region": "page 19 q9b",
+      "working_out": "9.5x10^12 x 100000 = 9.5x10^17"
+    },
+    {
+      "answer": "red Shift",
+      "confidence": 1.0,
+      "question_id": "9c_i",
+      "source_region": "page 19 q9c_i",
+      "working_out": null
+    },
+    {
+      "answer": "Hubbles Constant",
+      "confidence": 0.93,
+      "question_id": "9c_ii",
+      "source_region": "page 19 q9c_ii",
+      "working_out": null
+    },
+    {
+      "answer": "H0 = v/d",
+      "confidence": 0.93,
+      "question_id": "9c_iii",
+      "source_region": "page 19 q9c_iii",
+      "working_out": null
+    },
+    {
+      "answer": "4.5 x 10^17 s",
+      "confidence": 0.9800000000000001,
+      "question_id": "9c_iv",
+      "source_region": "page 19 q9c_iv",
+      "working_out": "1 / (2.2 x 10^-18)"
+    }
+  ],
+  "paper_id": "0625_OctNov_2024_p41",
+  "source_scan": "0625_w24_41_student_scan.pdf"
+}

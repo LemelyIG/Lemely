@@ -68,6 +68,7 @@ services:
       LEMELY_SUPABASE__ANON_KEY: ${LEMELY_SUPABASE__ANON_KEY:-}
       LEMELY_SUPABASE__SERVICE_ROLE_KEY: ${LEMELY_SUPABASE__SERVICE_ROLE_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     networks:
       - supabase_network_Lemely
     ports:

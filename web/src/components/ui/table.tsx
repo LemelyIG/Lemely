@@ -1,8 +1,10 @@
-import type {
-  HTMLAttributes,
-  KeyboardEvent as ReactKeyboardEvent,
-  TdHTMLAttributes,
-  ThHTMLAttributes,
+import {
+  createContext,
+  useContext,
+  type HTMLAttributes,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type TdHTMLAttributes,
+  type ThHTMLAttributes,
 } from "react"
 import { cn } from "@/lib/utils"
 
@@ -22,6 +24,27 @@ import { cn } from "@/lib/utils"
  */
 
 /**
+ * The two cell rhythms this table primitive knows: `comfortable` (the
+ * original `px-4 py-3`, unchanged — the six admin/marketing tables already
+ * rendering at this density keep doing so untouched) and `operate` (the
+ * tighter `px-4 py-2.5` every hand-rolled teacher table on this branch
+ * already reached for as a literal — `px-[16px] py-[10px]`, an arbitrary
+ * value DESIGN.md §14 rule 3 forbids. Naming it here moves that rhythm onto
+ * the scale instead of deleting it.
+ */
+export type TableDensity = "comfortable" | "operate"
+
+export const CELL_PADDING: Record<TableDensity, string> = {
+  comfortable: "px-4 py-3",
+  operate: "px-4 py-2.5",
+}
+
+/** Not exported: `density` is read through `Table`'s `density` prop, never
+ * set directly, so a screen cannot desync a `TH`/`TD` from the `Table` that
+ * wraps it. */
+const TableDensityContext = createContext<TableDensity>("comfortable")
+
+/**
  * Scroll container + `<table>` root. The wrapper (not the `<table>` itself)
  * owns the border/radius/surface, because `border-collapse` on the table
  * would otherwise clip a rounded corner against the header row's own border.
@@ -29,17 +52,30 @@ import { cn } from "@/lib/utils"
  * the page itself scrolling horizontally (index.css's `overflow-x: clip` on
  * `html body` depends on every scrollable region containing its own scroll).
  */
-export function Table({ className, children, ...props }: HTMLAttributes<HTMLDivElement>) {
+export function Table({
+  className,
+  children,
+  density = "comfortable",
+  ...props
+}: HTMLAttributes<HTMLDivElement> & {
+  /** Defaults to `"comfortable"`, the kit's original rhythm. A teacher table
+   * migrating off a hand-rolled `<table>` passes `"operate"` to keep the
+   * denser rhythm it already had rather than gaining `comfortable`'s extra
+   * vertical space it was never designed around. */
+  density?: TableDensity
+}) {
   return (
-    <div
-      className={cn(
-        "w-full overflow-x-auto rounded-lg border border-rule bg-paper-raised",
-        className,
-      )}
-      {...props}
-    >
-      <table className="w-full border-collapse text-start">{children}</table>
-    </div>
+    <TableDensityContext.Provider value={density}>
+      <div
+        className={cn(
+          "w-full overflow-x-auto overscroll-x-contain rounded-lg border border-outline-variant bg-surface-container-lowest",
+          className,
+        )}
+        {...props}
+      >
+        <table className="w-full border-collapse text-start">{children}</table>
+      </div>
+    </TableDensityContext.Provider>
   )
 }
 
@@ -63,7 +99,7 @@ export function THead({
   return (
     <thead
       className={cn(
-        "bg-paper-sunk",
+        "bg-surface-container-low",
         sticky && "sticky top-0 z-sticky",
         className,
       )}
@@ -113,14 +149,14 @@ export function TR({ className, selected, disabled, onClick, onKeyDown, ...props
   return (
     <tr
       className={cn(
-        "border-b border-rule last:border-b-0",
+        "border-b border-outline-variant last:border-b-0",
         interactive &&
           cn(
             "cursor-pointer transition-colors duration-[var(--dur-instant)] ease-out-soft",
-            "hover:bg-paper-sunk/60 active:bg-paper-sunk",
-            "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-focus-ring",
+            "hover:bg-surface-container-low/60 active:bg-surface-container-low",
+            "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary",
           ),
-        selected && "bg-accent-wash hover:bg-accent-wash",
+        selected && "bg-primary-container hover:bg-primary-container",
         disabled && "pointer-events-none opacity-50",
         className,
       )}
@@ -129,7 +165,8 @@ export function TR({ className, selected, disabled, onClick, onKeyDown, ...props
       tabIndex={interactive ? 0 : undefined}
       role={interactive ? "button" : undefined}
       aria-disabled={disabled || undefined}
-      aria-selected={selected || undefined}
+      // The open row is "current", not "pressed" or "selected": `aria-selected` is not allowed on role=button (axe).
+      aria-current={selected ? "true" : undefined}
       {...props}
     />
   )
@@ -147,11 +184,13 @@ export interface THProps extends ThHTMLAttributes<HTMLTableCellElement> {
 /** Header cell. `text-eyebrow` matches the tracked-uppercase label register
  * used for every other column/section heading in the product. */
 export function TH({ className, numeric, scope = "col", ...props }: THProps) {
+  const density = useContext(TableDensityContext)
   return (
     <th
       scope={scope}
       className={cn(
-        "whitespace-nowrap px-4 py-3 text-eyebrow text-ink-muted",
+        "whitespace-nowrap text-eyebrow text-on-surface-variant",
+        CELL_PADDING[density],
         numeric ? "text-end tabular-nums" : "text-start",
         className,
       )}
@@ -171,10 +210,12 @@ export interface TDProps extends TdHTMLAttributes<HTMLTableCellElement> {
 
 /** Data cell. */
 export function TD({ className, numeric, children, ...props }: TDProps) {
+  const density = useContext(TableDensityContext)
   return (
     <td
       className={cn(
-        "px-4 py-3 text-body-md text-ink",
+        CELL_PADDING[density],
+        "text-body-md text-on-surface",
         numeric ? "text-end text-data-md" : "text-start",
         className,
       )}

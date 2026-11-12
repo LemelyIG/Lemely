@@ -256,6 +256,26 @@ class StudentProfileService:
             ).all()
             return [self._enrolment_row(session, row) for row in rows]
 
+    def list_enrolled_subject_codes(self, user_id: uuid.UUID | str) -> list[str]:
+        """Just the subject codes ``user_id`` is enrolled in — one query, no paper fetch.
+
+        For a caller that only needs to know *which subjects*, not the full
+        enrolment shape :meth:`list_enrolments` returns: that method issues
+        one extra query per enrolment row (paper numbers,
+        :meth:`_enrolment_row`), which is wasted work for e.g.
+        ``lemely.web.routers.widget``'s "which subjects does this student
+        have a study plan for" question.
+        """
+        uid = _as_uuid(user_id)
+        with self._sessionmaker() as session:
+            return list(
+                session.scalars(
+                    select(StudentSubjectEnrolment.subject_code)
+                    .where(StudentSubjectEnrolment.user_id == uid)
+                    .order_by(StudentSubjectEnrolment.subject_code)
+                ).all()
+            )
+
     def upsert_enrolment(
         self,
         user_id: uuid.UUID | str,

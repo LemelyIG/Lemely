@@ -1,54 +1,38 @@
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join, relative as pathRelative } from "node:path"
 import { describe, expect, it } from "vitest"
+import { oklchToSrgb, readTokenBlock } from "../../vite/brandTokens"
 import { stripComments } from "./support/jsxSource"
 
 /**
- * The contrast gate (P6.4): the accent's size rule, and the pastel pairings.
+ * The contrast gate (v5 Abyss): a colour role that fails AA as text is a fill.
  *
- * ── The rule already existed. Nothing read it. ─────────────────────────────
+ * The Study Notebook version of this gate said "`text-accent` (terracotta,
+ * 4.34:1) is for fills and large text only". The terracotta accent is gone, but
+ * the rule is not: v5 still has roles under 4.5:1 on the light surfaces, and
+ * they are derived here from `index.css` rather than listed by hand, so a new
+ * or retuned role is caught the day it lands.
  *
- * `index.css` has carried this directly above the accent tokens since Phase 2:
+ * A text-capable role (a `--color-*` utility that is not a surface, outline,
+ * inverse, `on-*` or `*-container` role) under 4.5:1 on `surface` or
+ * `surface-container-lowest` in either theme is "weak". Weak roles are treated
+ * one of three ways:
  *
- *     --accent      4.34:1 on paper — fills, marks, large text only
- *     --accent-ink  9.75:1 on paper — any accent-coloured small text
+ * - it has a `-text` sibling (`success` has `success-text`): `text-<role>` is
+ *   banned outright, the sibling is the text role;
+ * - it is under 3:1 (gold `tertiary`, about 1.7:1): banned outright too, since
+ *   no size rescues it; DESIGN.md pairs it with `on-tertiary-container`;
+ * - otherwise (the `grade-*` ramp, 3 to 4.5:1): `text-<role>` is allowed only
+ *   when the same class expression carries a type class of at least 24px, the
+ *   WCAG large-text size, read from the ramp in `index.css`.
  *
- * That is a correct and carefully measured rule, and **no gate enforced it**,
- * so `text-accent` had accumulated on 11 small-text elements: both marketing
- * eyebrows (11px, the smallest text in the product), a notification-settings
- * link, four teacher panel headings, three status counts, and two hover states
- * that made contrast *worse* than the resting colour they darkened from.
- *
- * axe found **two** of the eleven, because axe can only see what a route it
- * audits happens to render. That gap is the reason this is a source gate and
- * not a note in the audit report: the same shape as P6.3's z-index scale, where
- * a rule stated in a comment above the tokens went nine phases unenforced.
- *
- * ── Why "large text" is 24px here ─────────────────────────────────────────
- *
- * WCAG's large-text threshold is 18pt (24px), or 14pt (18.66px) when bold. This
- * gate takes the stricter reading and treats **every rung below 24px as small**,
- * including `display-sm` (19px) and `hand` (19px), because those two are only
- * exempt if they are also bold and the weight lives in a different declaration
- * from the size — so a gate that assumed boldness would be asserting something
- * it cannot see. The rungs and their sizes are read out of `index.css` rather
- * than written here, so the scale and the gate cannot drift apart.
- *
- * ── What this gate deliberately does NOT claim ────────────────────────────
- *
- * It checks one class expression at a time. A `text-body-sm` on a parent and a
- * `text-accent` on its child are the same defect and this cannot see it — the
- * measurement that catches that case is axe, on a rendered page, which is why
- * both still run. Stated here rather than left for someone to discover, because
- * a gate whose limits are unwritten gets read as proving more than it does.
+ * It checks one class expression at a time, so a parent's colour and a child's
+ * size are not related by it. axe, on a rendered page, covers that case.
  */
 
 const ROOT = join(import.meta.dirname, "..", "..")
 const SRC = join(ROOT, "src")
 const INDEX_CSS = readFileSync(join(SRC, "index.css"), "utf8")
-
-/** WCAG's large-text floor in px. Below this, text needs the full 4.5:1. */
-const LARGE_TEXT_PX = 24
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = []
@@ -66,39 +50,6 @@ function sourceFiles(dir: string): string[] {
 function relativeTo(absolute: string): string {
   return pathRelative(ROOT, absolute).split("\\").join("/")
 }
-
-/** `--fs-<rung>: <n>px` -> `Map<rung, px>`, read off the stylesheet. */
-function fontSizes(): Map<string, number> {
-  const out = new Map<string, number>()
-  for (const m of INDEX_CSS.matchAll(/^\s*--fs-([a-z0-9-]+)\s*:\s*([\d.]+)px\s*;/gm)) {
-    out.set(m[1], Number(m[2]))
-  }
-  return out
-}
-
-const FONT_SIZES = fontSizes()
-
-/**
- * The `text-*` utilities that set a size below the large-text floor.
- *
- * Derived from the `--fs-*` scale, then mapped back to the utility names the
- * markup actually uses. `label-sm` is spelled out because it reuses
- * `--fs-eyebrow` rather than declaring a rung of its own.
- */
-function smallTextUtilities(): string[] {
-  const out: string[] = []
-  for (const [rung, px] of FONT_SIZES) {
-    if (px >= LARGE_TEXT_PX) continue
-    out.push(`text-${rung}`)
-  }
-  if (FONT_SIZES.has("eyebrow") && (FONT_SIZES.get("eyebrow") ?? 0) < LARGE_TEXT_PX) {
-    out.push("text-label-sm")
-  }
-  return out
-}
-
-const SMALL_TEXT = smallTextUtilities()
-
 
 /** Every balanced class-expression group: `cn(...)`, `cva(...)`, `className="..."`. */
 function classGroups(source: string): { text: string; index: number }[] {
@@ -133,46 +84,189 @@ function hasClass(text: string, name: string): boolean {
 
 const FILES = sourceFiles(SRC)
 
-describe("the accent size rule is a real vocabulary", () => {
-  it("index.css still declares the type scale this gate reads", () => {
-    // A scale that moved or was renamed would make every test below vacuous —
-    // D6.1's "a gate reporting zero and a gate reporting nonsense are both
-    // consistent with a green ledger row".
-    expect(FONT_SIZES.size).toBeGreaterThan(8)
-    expect(SMALL_TEXT.length).toBeGreaterThan(5)
-    expect(SMALL_TEXT).toContain("text-eyebrow")
-    expect(SMALL_TEXT).toContain("text-body-sm")
-    expect(SMALL_TEXT).not.toContain("text-display-lg")
+type Rgb = [number, number, number]
+
+function luminance(rgb: Rgb): number {
+  const [r, g, b] = rgb.map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+function contrast(a: Rgb, b: Rgb): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (hi + 0.05) / (lo + 0.05)
+}
+
+/** `--color-<role>: var(--<token>)` pairs from the `@theme` block. */
+function roleTokens(css: string): Map<string, string> {
+  const roles = new Map<string, string>()
+  for (const m of css.matchAll(/--color-([\w-]+):\s*var\(--([\w-]+)\)/g)) roles.set(m[1], m[2])
+  return roles
+}
+
+const NOT_TEXT_ROLE = /^(?:surface|outline|inverse|on-|scrim)|-container(?:-|$)/
+
+interface WeakRole {
+  role: string
+  worst: number
+  bannedOutright: boolean
+}
+
+/** Text-capable roles under 4.5:1 on the surfaces they sit on, either theme. */
+function weakRoles(css: string): WeakRole[] {
+  const roles = roleTokens(css)
+  const light = readTokenBlock(css, ":root")
+  const dark = readTokenBlock(css, ':root[data-theme="dark"]')
+  // The dark block redeclares only some tokens (the `--grade-*` ramp is declared
+  // once, in :root, and inherited), so a token it omits resolves to its light
+  // value and is still measured on the dark surfaces. Dark cards sit on
+  // surface-container-high (DESIGN.md).
+  const themes = [
+    { resolve: (n: string) => light.get(n), surfaces: ["md-surface", "md-surface-container-lowest"] },
+    {
+      resolve: (n: string) => dark.get(n) ?? light.get(n),
+      surfaces: ["md-surface", "md-surface-container-low", "md-surface-container-high"],
+    },
+  ]
+  const out: WeakRole[] = []
+  for (const [role, token] of roles) {
+    if (NOT_TEXT_ROLE.test(role)) continue
+    let worst = Infinity
+    for (const { resolve, surfaces } of themes) {
+      const fg = resolve(token)
+      if (!fg) continue
+      for (const surface of surfaces) {
+        const bg = resolve(surface)
+        if (!bg) continue
+        worst = Math.min(worst, contrast(oklchToSrgb(...fg), oklchToSrgb(...bg)))
+      }
+    }
+    if (worst >= 4.5 || worst === Infinity) continue
+    out.push({ role, worst, bannedOutright: roles.has(`${role}-text`) || worst < 3 })
+  }
+  return out
+}
+
+/** Type-ramp classes (`.text-display-lg`, ...) rendering at 24px or more. */
+function largeTypeClasses(css: string): string[] {
+  const out: string[] = []
+  for (const m of css.matchAll(/\.(text-[\w-]+)\s*\{\s*font:\s*\d+\s+(\d+(?:\.\d+)?)px/g)) {
+    if (Number(m[2]) >= 24) out.push(m[1])
+  }
+  return out
+}
+
+/** True when a class expression carries a >= 24px size at the BASE breakpoint: a
+ * ramp rung, `text-[Npx]`, or `text-2xl` and up, with no variant prefix. A
+ * `md:`-only large class still renders small on mobile. */
+function hasLargeType(text: string, ramp: readonly string[]): boolean {
+  const bare = (name: string) => new RegExp(`(?:^|[\\s"'\`])${name}(?![\\w:-])`)
+  if (ramp.some((cls) => bare(cls).test(text))) return true
+  for (const m of text.matchAll(/(?:^|[\s"'`])text-\[(\d+(?:\.\d+)?)px\](?![\w:-])/g)) {
+    if (Number(m[1]) >= 24) return true
+  }
+  return bare("text-[2-9]xl").test(text)
+}
+
+/** Offenders in `source`, as `line — reason`, for the given weak roles. */
+function offendersIn(source: string, weak: readonly WeakRole[], ramp: readonly string[]): string[] {
+  const out: string[] = []
+  for (const group of classGroups(stripComments(source))) {
+    for (const { role, worst, bannedOutright } of weak) {
+      const cls = `text-${role}`
+      if (!hasClass(group.text, cls)) continue
+      if (!bannedOutright && hasLargeType(group.text, ramp)) continue
+      out.push(`${lineOf(stripComments(source), group.index)} — ${cls} (${worst.toFixed(2)}:1)`)
+    }
+  }
+  return out
+}
+
+const WEAK = weakRoles(INDEX_CSS)
+const RAMP = largeTypeClasses(INDEX_CSS)
+
+describe("the weak-role list is derived from index.css", () => {
+  const byRole = new Map(WEAK.map((w) => [w.role, w]))
+
+  it("finds the roles v5 is known to ship under 4.5:1", () => {
+    for (const role of ["success", "tertiary", "grade-a-star", "grade-a", "grade-b", "grade-c", "grade-d", "grade-e", "grade-f", "grade-g", "grade-u"]) {
+      expect(byRole.has(role), `${role} should be weak`).toBe(true)
+    }
   })
 
-  it("index.css still defines the accent pair the rule names", () => {
-    expect(/^\s*--accent\s*:/m.test(INDEX_CSS)).toBe(true)
-    expect(/^\s*--accent-ink\s*:/m.test(INDEX_CSS)).toBe(true)
+  it("does not flag the roles that carry text on purpose", () => {
+    for (const role of ["primary", "success-text", "error", "on-surface", "on-surface-variant"]) {
+      expect(byRole.has(role), `${role} should not be weak`).toBe(false)
+    }
+  })
+
+  it("measures inherited tokens on the dark surfaces too", () => {
+    // `--grade-*` is declared only in :root. On dark surfaces grade-a-star is ~2.4:1.
+    expect(byRole.get("grade-a-star")?.worst).toBeLessThan(3)
+  })
+
+  it("bans success, tertiary and the sub-3:1 grades outright and lets the rest through at 24px+", () => {
+    for (const role of ["success", "tertiary", "grade-a-star", "grade-e", "grade-f", "grade-g", "grade-u"]) {
+      expect(byRole.get(role)?.bannedOutright, role).toBe(true)
+    }
+    for (const role of ["grade-a", "grade-b", "grade-c", "grade-d"]) {
+      expect(byRole.get(role)?.bannedOutright).toBe(false)
+    }
+  })
+
+  it("reads a large-type ramp out of index.css", () => {
+    expect(RAMP).toContain("text-display-lg")
+    expect(RAMP).not.toContain("text-body-md")
+    expect(RAMP).not.toContain("text-display-sm") // 21px
   })
 
   it("finds source files to check", () => {
     expect(FILES.length).toBeGreaterThan(100)
   })
+
+  it("the class matcher sees `text-tertiary` and not its relatives", () => {
+    expect(hasClass('cn("text-tertiary font-bold")', "text-tertiary")).toBe(true)
+    expect(hasClass('cn("hover:text-tertiary")', "text-tertiary")).toBe(true)
+    expect(hasClass('cn("text-on-tertiary-container")', "text-tertiary")).toBe(false)
+    expect(hasClass('cn("text-success-text")', "text-success")).toBe(false)
+  })
 })
 
-describe("--accent is not used for small text", () => {
-  it("no class expression pairs `text-accent` with a sub-24px rung", () => {
+describe("the rule goes red on a planted offender", () => {
+  const planted = (cls: string) => `export const X = () => <p className={cn("${cls}")}>x</p>`
+
+  it("flags bare text-success even at a large size", () => {
+    expect(offendersIn(planted("text-success text-display-lg"), WEAK, RAMP)).toHaveLength(1)
+  })
+  it("flags text-tertiary", () => {
+    expect(offendersIn(planted("text-tertiary"), WEAK, RAMP)).toHaveLength(1)
+  })
+  it("flags text-grade-c on small text", () => {
+    expect(offendersIn(planted("text-grade-c text-body-md"), WEAK, RAMP)).toHaveLength(1)
+    expect(offendersIn(planted("hover:text-grade-b"), WEAK, RAMP)).toHaveLength(1)
+  })
+  it("does not accept a breakpoint-prefixed large class as the exemption", () => {
+    expect(offendersIn(planted("text-grade-c md:text-display-lg"), WEAK, RAMP)).toHaveLength(1)
+    expect(offendersIn(planted("text-grade-c md:text-[32px]"), WEAK, RAMP)).toHaveLength(1)
+  })
+  it("flags text-grade-u even at a large size (under 3:1 on dark)", () => {
+    expect(offendersIn(planted("text-grade-u text-display-lg"), WEAK, RAMP)).toHaveLength(1)
+  })
+  it("allows text-grade-c beside a 24px+ type class and text-success-text anywhere", () => {
+    expect(offendersIn(planted("text-grade-c text-display-lg"), WEAK, RAMP)).toEqual([])
+    expect(offendersIn(planted("text-success-text text-body-md"), WEAK, RAMP)).toEqual([])
+  })
+})
+
+describe("no text role under 4.5:1 is used as small text", () => {
+  it("web/src has no offending class expression", () => {
     const offenders: string[] = []
     for (const file of FILES) {
-      const source = stripComments(readFileSync(file, "utf8"))
-      for (const group of classGroups(source)) {
-        if (!hasClass(group.text, "text-accent")) continue
-        const rungs = SMALL_TEXT.filter((rung) => hasClass(group.text, rung))
-        if (rungs.length === 0) continue
-        offenders.push(
-          `${relativeTo(file)}:${lineOf(source, group.index)} — text-accent with ${rungs.join(", ")}`,
-        )
-      }
+      const source = readFileSync(file, "utf8")
+      for (const hit of offendersIn(source, WEAK, RAMP)) offenders.push(`${relativeTo(file)}:${hit}`)
     }
-    // `text-accent` on an icon is untouched by this and should be: an icon is a
-    // non-text element and answers to the 3:1 graphics floor, which the accent
-    // clears. The rule is about *text*, so it only fires when a text rung is in
-    // the same expression.
+    // `bg-*`, `fill-*`, `border-*` and `ring-*` are untouched: a weak role is a
+    // fill and an icon colour. Only a text colour is forbidden, and its text
+    // role is the `-text` sibling (success) or `on-tertiary-container` (gold).
     expect(offenders).toEqual([])
   })
 })

@@ -11209,6 +11209,44 @@ stands uncorrected. But any future authorised sweep over fresh (or newly
 question-identity-linked) data will now compute and print the number, which
 was not true before this correction.
 
+## DA10a — Amendment: #272 superseded DA10 Decision 3's global range (fix/marking-accuracy)
+
+**What changed.** DA10 stays as written above for the historical record. This
+amendment supersedes only its Decision 3. The legacy coherence path
+(`equivalence_gate` off) no longer computes the global
+`implied_min = sum(primary) + max(non-additive)` and
+`implied_max = sum(primary) + sum(non-additive)` range. Since #272 (owner
+decision D3 in `docs/superpowers/specs/2026-10-01-marking-accuracy-design.md`),
+both callers of `_check_coherence` (`lemely/io/correction_ai.py`) pass the
+per-point `(group_key, cap)` list from `lemely.core.point_groups.group_points`,
+and the range is the **grouped interval**:
+
+- a point with no group adds its own tariff to both ends;
+- each matched group adds at least `min(cap, its largest matched tariff)` and
+  at most `min(cap, sum of its matched tariffs)`;
+- both ends are then clamped at `question.marks` (triage F6).
+
+As before, only an `awarded_marks` outside the interval is flagged, and the
+message names the interval. The verdict path already used this rule, so the
+two paths now share one rule.
+
+**Why.** The global rule had no group identity. It flagged an either/or pair
+matched both ways, a det-shaped scheme whose independent tariffs exceed the
+question, and an alternative that outweighs its sibling. It also missed an
+over-award on a stated `select_count` pool.
+
+**What it moves.** Only `needs_teacher_review` and `review_reason`, never
+`awarded_marks`. The flag is computed on the marker's raw claim, before
+`_verify_calculated_answers`, and does not feed the award. The non-regression
+evidence is `BUILD/accuracy-runs/coherence-272-2026-10-01/`: 0 flag flips
+either way, and 78/78 records have identical `predicted_marks` and `outcome`
+between the pre-#272 and #272 trees replaying one cache. Every new flag the
+grouped rule can raise is an award above the group rule's value. The five
+shapes are named in that report's shape split: `stated_pool_over_award`,
+`unequal_tariff_either_or_summed`, `unstated_pool_leftover_cap_binds`,
+`pool_capped_at_0` and `later_stated_pool_no_room`. In the last one, pools
+consume room in scheme order, which is the verdict path's existing rule.
+
 ## DA11 — the ledger file is authoritative for spend, and the header is a programme-wide SUM
 
 **Decided 2026-08-25**, discharging inbox item 7 of the 2026-08-25T17:36:27
@@ -14223,3 +14261,598 @@ security benefit; each route gets its own keyspace by construction (two stores, 
 `deps.py`) so the three abuse shapes cannot bleed into each other. *Real per-IP rate limiting* —
 explicitly out of scope, same reasoning `D1.7` already recorded: it needs infrastructure this
 build does not have and would fake behind a proxy that owns the real client address.
+
+### D7.13 — Uploads on GCS and the instance pin lifted
+
+**What.** Every upload this app keeps now lives in Google Cloud Storage, not the container
+filesystem or a third-party HTTP client, and every piece of state that previously forced the
+backend to a single instance is off process memory except one cache. `lemely/io/storage.py`'s
+`StorageBackend` Protocol gained a second real implementation — `GcsStorageBackend`
+(`lemely/io/storage_gcs.py`), the official `google-cloud-storage` SDK, built lazily — alongside
+`LocalFileStorageBackend` for dev/Compose/CI; `lemely/web/deps.py::get_storage_backend` selects
+between them on `settings.storage.backend`, and the Supabase Storage client is deleted outright.
+The teacher paper (`teacher_papers`, migration `0024`), the parsed scheme corpus (the existing
+`papers`/`mark_schemes` tables), the parent phone-OTP challenge and the new email-code challenge
+(`otp_challenges`, migration `0025`), and the auth cooldown store (`auth_cooldowns`, migration
+`0026`) all moved off process-local state — an in-memory dict for the two auth stores, a directory
+scan for the scheme corpus — onto Postgres rows any instance can read. The event bus
+(`lemely/runtime/events.py`) gained per-run channels carried in a `contextvars.ContextVar`, so
+concurrent streams on one instance stop cross-talking. The web process's Gemini spend cap is
+retired — `GeminiClient` takes a `ledger` keyword and `deps.get_gemini_client` passes
+`ledger=None` — in favour of a Google Cloud billing budget on the shared project; the admin
+overview's spend panel and `SpendDTO` are deleted with it. `scripts/gcp-bootstrap.sh` now
+provisions, per environment, the upload bucket, a runtime service account scoped to that
+bucket only, and — when `BILLING_ACCOUNT_ID`/`BUDGET_USD` are set — that budget.
+
+Fifteen decisions were put to the owner and answered before any of this was built, recorded as
+DS1–DS15 in `docs/superpowers/specs/2026-09-03-gcs-uploads-and-cloud-run-scale-out-design.md` §3.
+Not restated here — that table is the record, and duplicating it into a second prose form is how
+the two drift. This entry exists to give the design its one line in the decision log a reader of
+this file would otherwise never find, and to state the two trades it accepted without pretending
+either one closes cleanly.
+
+**Budget-not-cap (DS3).** The web process enforces no USD ceiling on Gemini spend of its own —
+`_check_cost_ceiling`'s USD branch runs only `if self._ledger is not None`, and `ledger=None` is
+exactly what `deps.get_gemini_client` passes, so neither that check nor a `BUDGET_WARNING`/
+`BUDGET_EXCEEDED` publish ever fires there. The billing budget `gcp-bootstrap.sh` creates is the
+only guard left, and a budget is an alert, not a stop: spend can cross it before anyone reads
+the mail. Accepted because the alternative — a per-instance file ledger — was never a real cap
+either (it reset on every cold start; DS3's own reasoning is that N instances would have made
+it N independent, resettable caps, which is worse than one honest alert). The CLI keeps its
+file ledger and its `$8.00` ceiling unchanged; only the web surface loses the enforcement.
+
+**Queued-per-instance (DS13).** The teacher grading pool stays one worker per instance
+(`routers/teacher.py::_grading_pool`), and Cloud Tasks was declined as the alternative. Run state
+now lives on the `teacher_papers` row rather than the pool, so every instance answers `GET
+/papers/{id}` correctly regardless of which one is running the job — but a paper submitted to a
+busy instance queues there even if another instance is idle. Accepted at three instances
+(`max-instances=3`, DS6): a queue, its IAM, a second request path and local emulation cost more
+than the scheduling gap they would close at this scale.
+
+**What this decision does not claim.** `.github/workflows/deploy.yml` now deploys at
+`--max-instances=3`, the last step of this work. But the branch has never been deployed: the spec
+rolls the unpin out last precisely so every earlier stage can be verified on staging first, and
+that verification has not happened. This entry records what the code allows and what the pipeline
+will ask for on its next run — not behaviour anyone has observed. Spec §8's checklist is the
+list of things still to exercise.
+
+**Tests.** Each piece above shipped with its own hermetic and Postgres-backed coverage on its own
+commit — the storage seam (`tests/test_storage_local.py`, `tests/test_storage_gcs.py`,
+`tests/storage_fakes.py`), the teacher-paper repository's concurrent-claim and visibility tests
+(`test_exactly_one_of_two_concurrent_claims_wins`, `test_visibility_matrix` in
+`tests/test_teacher_paper_repo.py`), the auth-store parity tests run against both the in-memory and
+Postgres implementations of the same Protocol (`tests/test_otp_store_parity.py`,
+`tests/test_cooldown_store_parity.py`), the bus-scoping test
+`test_two_concurrent_streams_are_isolated` (`tests/test_web_app.py`), and
+`test_ledgerless_client_neither_checks_nor_records`, asserting no ceiling check and no budget event
+with `ledger=None` (`tests/test_gemini_client.py`). No single test file covers this entry as a
+whole, by design — it is fifteen decisions, not one.
+
+**Alternatives rejected.** *Migrate the Supabase Storage buckets' existing contents into GCS* — no
+real uploads exist in either Supabase project to migrate (DS8); buckets start empty. *Redis or
+another shared cache for the auth stores* — Postgres was already the durable store every other
+piece of session-relevant state in this app uses; adding a second infrastructure dependency for
+three small, low-write tables would cost more than it returns. *A hand-written GCS HTTP client*,
+matching the existing Supabase Storage precedent — declined for the official SDK's managed retries
+and checksums (DS12); the cold-start cost is paid back by not re-implementing what the SDK already
+gets right. *Raise `max-instances` in the same change that retires the last blocking state* —
+declined; the rollout order (spec §6) merges and verifies each stage on staging before the next,
+and the unpin is deliberately the last step precisely because it is the one that makes every
+earlier gap visible.
+
+## D-2026-09-08 — Parent identity is email + password via child-issued invites; SMS retired, seams kept
+
+**Context.** `D1.4` gave the parent portal its own login path because GoTrue's native phone OTP
+needs a real SMS gateway and the MISSION mandated a mock now with "one config switch to a real
+provider later." `D3.11` then had the *student* invite a parent by phone number, but only into an
+account that had already proven control of that number by completing OTP verification — the
+gate against a bored student mass-creating parent rows for arbitrary numbers. `D3.16` added the
+developer affordance that shows the OTP code on screen, gated on `SmsProvider.delivers_out_of_band`
+rather than an environment string. No real SMS gateway has ever been wired: every deployment of
+this code runs `MockSmsProvider` unconditionally (`lemely/web/deps.py`), and
+`web/src/routes.tsx` has carried a comment recording that fact since it was written. Every SMS
+API is metered and billed per message; retiring the phone-first path costs nothing in
+infrastructure that was ever actually spending money, and removes the last surface where
+shipping a real provider was a standing, unbudgeted line item.
+
+**The decision.** A parent is now an ordinary GoTrue email/password user with `role=parent`, no
+different in kind from a student or teacher account. There is no independent parent sign-up: a
+parent gets an identity only by redeeming a child-issued invite. The student mints either a
+single-use link (7-day expiry, revocable) or holds one reusable short code (rotatable); both live
+in the existing `invites` table (migration `0034_parent_invites` adds `child_id`, `reusable`, and
+extends `ck_invites_target`; `inviterole` gains `parent` by the additive `ALTER TYPE ... ADD
+VALUE` pattern `D1.2`/migration `0019` already established) and both resolve at the existing
+`/join/:code` screen. Redeeming as a new parent is one server call: the parent supplies an email,
+proves it with a six-digit code, sets a password, and the account is created with the email
+already marked verified, linked to the child, and signed in — no separate "prove the phone,
+then get invited" ordering `D3.11` required, because the proof now happens inside the signup
+call itself rather than as a precondition. A parent who already has an account accepts a second
+child's invite while signed in, or signs in first from the invite page and returns to it after.
+`/login/parent`, the two `/api/auth/otp/*` routes, `ParentLogin.tsx`, and `POST
+/api/student/parent-links` (link by phone) are deleted.
+
+**The reusable-code exception.** Every other invite in this table is single-use by construction —
+a seat invite (`D7.3`) and a class invite are both consumed on redemption. The parent invite adds
+a second kind that is never consumed: `reusable=true`, `expires_at NULL`, and redemption only
+inserts a `parent_child_links` row rather than marking `redeemed_by`/`redeemed_at`. This is a
+deliberate, named exception, not an oversight — a parent code behaves like `classes.join_code`
+(D7.3's "a class always has a join code" precedent) precisely because a family shares one code
+across occasions (a second parent, a re-installed phone) the way a class shares one join code
+across a term, and forcing a fresh single-use link for each occasion would just move the
+friction from "ask your child's school" (the outcome `D3.11` explicitly wanted to avoid) to "ask
+your child to mint another link." A student holds at most one reusable row at a time
+(`get_or_create_parent_code` mints lazily, `rotate_parent_code` deletes and re-mints); the
+single-use link kind sits alongside it for the "here, right now" sharing case and still expires
+in 7 days like every other time-boxed invite in the product.
+
+**The honest gap, stated rather than hidden.** `POST /api/auth/parent/signup` creates the GoTrue
+account and then calls `invite_service.redeem` to write the `parent_child_links` row — two writes,
+not one database transaction, the same non-atomic shape every route in this codebase that creates
+an auth account and then writes an application-side row already accepts (there is no two-phase
+commit between GoTrue and Postgres). A failure between the two leaves a parent account that
+exists but is not linked to any child. The route does not fail the request over it: `parent_signup`
+catches `InviteError`, logs a warning, and still returns a working `TokenResponseDTO`, because by
+that point the GoTrue account genuinely exists and no failure status would be true — reporting one
+would tell a parent whose signup in fact succeeded that it had not. The invite code is not marked
+redeemed unless the link write succeeds, so the same code still resolves, and re-presenting it at
+`/join/:code` while signed in tries the link again — but **no UI currently tells the parent this
+happened**; the closest cue today is the child's own P-01 "no parent yet" empty state, which reads
+as signup instructions rather than recovery instructions for a parent who already has an account.
+That gap is recorded, not fixed, here — see `CHANGELOG.md`'s "Known limitations" for the same
+wording. This is why `redeemed_by`/`redeemed_at` are stamped only after `link_in_session` succeeds
+inside the same transaction as the redemption marking, not before it.
+
+**Alternatives rejected.** *Keep phone OTP and wire a real SMS gateway* — rejected on cost alone;
+no gateway was ever budgeted for a channel with a working, free alternative. *Let the invite call
+mint the parent account directly from a student-supplied email, with no code back to that
+address* — rejected for the same reason `D3.11` gated the phone path on proof-of-control: an
+account a stranger's email address could be silently attached to is a worse privacy posture than
+the phone version it would replace, not a better one. *A second table for parent codes, separate
+from `invites`* — rejected; `D1.2`'s additive-only rule and `D7.3`'s "one box for every invite
+kind" already established that a new invite shape is a new nullable target column and a new role
+value, not a new table.
+
+**Supersedes.** `D3.11`'s phone-proof-then-link direction is retired in full — parents are linked
+exclusively through invite redemption now, and no route requires a parent to have completed a
+separate verification before a link can be created. Of `D1.4`, only the parts that wired
+`SmsProvider` into a live login route (`AuthService.request_otp`/`verify_otp` called from
+`/login/parent`) are retired — no route reaches them anymore; `D1.4`'s GoTrue email/password
+split is exactly what parent accounts now use, unchanged. Token issuance is untouched by this
+decision and was never phone-specific to begin with: `D1.5` already revised `D1.4` to make the
+backend self-sign every access token it hands out, for email/password login and phone OTP alike,
+and a parent's email/password login runs on that same universal HS256 path unchanged — there is
+nothing in it for this decision to retire. `D3.16` itself is not retired either: its
+capability-gated-not-environment-gated `devCode` rule is reapplied unchanged to the email
+channel's `devCode`/`devLink` (`lemely/auth/email.py::EmailProvider.send_signup_code`, mirroring
+`D7.6`'s `EmailProvider` seam); only the phone route it originally described is now unreachable.
+
+**Seams kept, nothing deleted from under them.** `SmsProvider`, `MockSmsProvider`,
+`OtpChannel.phone`, `AuthService.request_otp`/`verify_otp` and their unit tests, `users.phone`,
+the JWT `phone` claim, `UserMirror.get_by_phone`, `_phone_placeholder_email`,
+`AuthSettings.otp_*`, the disabled `[auth.sms.twilio]` block in `supabase/config.toml`, and
+`SignupRequestDTO.phone` all remain in the tree, exercised by their existing tests, reachable by
+nothing a user can click. They stay for the same reason `D1.4` built the `SmsProvider` seam in
+the first place: "one config switch to a real provider later" is still true, and a paid SMS
+channel remains a config switch away rather than a rewrite, should the product ever want a phone
+option beside email rather than instead of it.
+
+**Tests.** `tests/test_invite_repo.py` covers both invite kinds (mint, expiry, reusable-never-
+consumed, single-use-consumed, revoke ownership, rotate, role mismatch, and that `preview` never
+leaks the child's email or id); `tests/test_auth_router.py` covers the three new parent routes
+(happy path, wrong code, expired proof token, an email that already has an account, a dead
+invite, and the cooldown); the deleted OTP route tests are removed with the routes. The phone
+seam's own tests (`AuthService.request_otp`/`verify_otp`) are untouched — they still exercise a
+real code path, just not one any router calls.
+
+### D7.14 — The review queue takes a second source rather than a fake student
+
+**What.** `review_queue` now hangs a row off **either** an `attempts.id` or a `teacher_papers.id`
+(migration `0034`: `attempt_id` nullable, `teacher_paper_id` + `question_id` added, with
+`ck_review_queue_one_source` enforcing exactly one). `TeacherPaperRepository.finish` writes the
+flagged questions of a console-graded paper in the same transaction as its report, and
+`ReviewService` lists, resolves, dismisses and bulk-approves them alongside student items.
+
+**Why.** A paper uploaded through the grading console showed `REVIEW` on its card while
+`/teacher/review` said "Nothing waiting for review". The console derives that badge from
+`teacher_papers.report_json` (`_paper_kind`); the queue lists `review_queue` rows, whose only
+writer was `AttemptRepository.persist_correction` — the *student* submission path. A console
+upload is never attributed to a student (D1.12), so it creates no `Attempt` and could therefore
+never create a queue row. This was not a missed call site; the queue could not represent the thing
+at all.
+
+**The rejected fix: mint an `Attempt` for console papers.** It would have needed a `user_id`, and
+the only candidates are a fabricated student or the teacher themselves. Either one puts a paper
+nobody submitted into `attempts` — the table `DbHistoryStore`, every `PaperRecord`, the class
+heatmap and the at-risk assessment all read — so a teacher's own bulk marking would surface as a
+student's performance. D1.12 dropped the caller-supplied `student_id` for a security reason and
+this would have re-introduced the same fiction through the back door. The queue was widened
+instead, because "a review item is not always about a student" is the truth the data already had.
+
+**Two tenancy rules, deliberately.** Student items stay scoped by the caller's roster union
+(D3.1). Console items are scoped by `teacher_paper_visible` — lifted out of
+`TeacherPaperRepository._visible` to a module-level function so the console and the queue cannot
+drift apart on what "visible paper" means. They could not share one rule: a console paper has no
+student and no class for the roster rule to reach.
+
+**`platform_admin` is excluded from the console half explicitly.** `teacher_paper_visible` grants
+it every paper (DS11, the console's rule), but this queue has no super-role bypass at all
+(D1.6/D1.10) — inheriting DS11 here would have handed the one deliberately empty-scoped role a
+view of every teacher's marking as a side effect of a bug fix. Widening an endpoint is not fixing
+it.
+
+**No backfill, and no re-marking.** Papers graded before `0034` get no rows retroactively: marks a
+teacher has already looked at in the console should not reappear as unreviewed work weeks later.
+And a console item can be accepted as-is or dismissed but **never re-marked** — its per-question
+marks live inside `report_json` with no `QuestionResult` for `0005_review_overrides` to record a
+correction on, so `resolve` refuses `override_marks` with a 422 rather than accepting a re-mark it
+would have to drop. Changing a console paper's marks means re-running it from the console. Stated
+as a limit rather than papered over with a control that silently does nothing.
+
+## D-2026-09-21 — Accuracy-programme AUROC reports must name their similarity metric
+
+### D8.1 — `extraction_agreement`'s similarity metric is not fixed yet, so anything measuring it must say which one it used
+
+**What.** US-010 (`lemely/io/second_read.py`) computes `extraction_agreement` with
+`difflib.SequenceMatcher` (Ratcliff/Obershelp) instead of the plan's specified `rapidfuzz`
+normalised-Levenshtein, because `rapidfuzz` is not yet a project dependency (`pyproject.toml`
+ownership sits with another lane; tracked as US-041). `REREAD_AGREEMENT_THRESHOLD = 0.8` was
+copied verbatim from the plan's I3 spec, which calibrated that number against the rapidfuzz
+metric, not the difflib one now producing the values it gates.
+
+**Why this matters for US-008.** Ratcliff/Obershelp and normalised Levenshtein are different
+algorithms that score the same string pair differently -- Ratcliff/Obershelp weights the longest
+common contiguous run more heavily, Levenshtein counts raw edit operations. Any future AUROC
+report under US-008 that selects a `second_reader` variant (or re-derives the 0.8 threshold)
+against Phase-A labels is implicitly a report about *one specific similarity metric's* separating
+power. A report that says "cross_model beat structural, AUROC 0.91" without saying which metric
+produced the `extraction_agreement` values it measured is not reproducible, and a later metric
+swap (difflib -> rapidfuzz, when US-041 lands) silently invalidates that selection without the
+report showing any sign of it.
+
+**The rule.** Any AUROC or threshold-selection report produced under US-008 must name the
+similarity metric (and its normalisation, per I2) that produced the `extraction_agreement` values
+it measured. This is what makes a metric swap detectable rather than a silent invalidation of a
+prior decision. `REREAD_AGREEMENT_THRESHOLD` stays at the plan's `0.8` until then -- see the
+comment on it in `lemely/io/second_read.py` -- it is not re-derived on a guess.
+
+## D-2026-10-25 — tutoring: roles
+
+**What.** A tutor is a `tutor_profiles` row, 1:1 with a `users` row of role `teacher`. No new
+`Role` value. Tutor routes live under `/api/tutor/*`, are guarded by `require_role(Role.teacher)`,
+and resolve the caller's profile from `auth.user_id`; a teacher without a profile gets 404. Teacher
+self-service sign-up already makes a school-less teacher, so a "pure tutor" needs no new sign-up
+route. A co-teacher is a peer with their own profile; there is no delegation.
+
+**Why.** `users.role` is one enum value per account (`lemely/db/models/users.py:36`). A sixth role
+would force a school teacher who tutors to hold two accounts and would touch every
+`require_role`. The profile keeps tutor state in one table and leaves the role model alone.
+
+**Rejected.** A `tutor` role; an `is_tutor` flag on `users`; an assistant-under-lead-tutor model
+(a third adult seeing minors' data). Source: decision-log rows 1a, 1b; `docs/tutoring/adr/ADR-T01-role-model.md`.
+
+## D-2026-10-25 — tutoring: tenancy
+
+**What.** The marketplace has no tenant: `tutor_profiles` has no `school_id`, and listings are
+platform-wide after `platform_admin` approval. Three gates to a student's analytics stay disjoint
+and never union: the class roster (`_visible_students`, unchanged), the parent link (unchanged),
+and the new student-issued grant. `school_admin` sees nothing of tutoring. `platform_admin`
+moderates profiles, reviews and reports but has no path to a student's analytics.
+
+**Why.** A tutor relationship is a private, consented arrangement, not enrolment. Modelling it as a
+hidden class would put tutoring students into every school-scoped view and cannot express
+"revoked" or "audited".
+
+**Rejected.** A `School` tenant with a hidden class per tutor; a per-school marketplace.
+Source: rows 1a, 5a; `docs/tutoring/adr/ADR-T03-tenancy.md`.
+
+## D-2026-10-25 — tutoring: grants and audit
+
+**What.** The student alone grants a listed tutor access, minors included; all subjects, until
+revoked (`tutor_data_grants`, one live row per pair, history kept). Derived analytics only: the
+T-05 `StudentDetailDTO`, never scans, crops, answers or question detail. Validity (revoked,
+expired, tutor suspended, blocked) is computed at read time by `lemely.core.tutor_grants`, so a
+revocation applies on the next read. Every tutor read writes a `tutor_access_audit` row in the
+same transaction as the validity check, before data loads; if the insert fails the read fails. The
+student reads the whole log. `scope` and `expires_at` columns exist so a narrower grant can be
+added later without a table change.
+
+**Accepted risk (user decision, argued against).** A minor can give an adult indefinite,
+all-subject access with no guardian in the loop. Controls in force: listed tutors only, parents
+notified of every grant, audit log visible to the student, one-tap revoke, block auto-revokes,
+admin suspension invalidates grants.
+
+**Rejected.** Parent approval for under-18s (recommended); student and parent always; per-subject
+90-day grants (recommended); grants tied to a booking. Source: rows 2+3a, 3b;
+`docs/tutoring/adr/ADR-T02-consent-and-access.md`.
+
+## D-2026-10-25 — tutoring: safeguarding
+
+**What.** Linked parents are notified of each grant and each booking event (inbox and email) and
+can read every booking and its notes thread; they cannot revoke a grant. Notes are booking-scoped,
+immutable, readable by the student, the tutor and linked parents, and reportable by anyone who can
+read them. Moderation is reactive: an admin reads notes only through a report, and can hide a note,
+cancel a booking or suspend a tutor. Students and tutors can block each other; a block revokes the
+grant and cancels future sessions in the same transaction. Emails never carry note text, meeting
+links or addresses.
+
+**Accepted risk (user decision, argued against).** A guardian cannot stop a minor's grant or an
+in-person booking, and free text passes between an adult and a minor with nothing scanning it.
+
+**Open, not adopted by the LOCK reply (do not build):** read-only grant and audit visibility for
+linked parents; a one-line safety notice on a student's first booking.
+
+**Rejected.** Parent sees, revokes and confirms in-person sessions for under-18s (recommended); no
+messaging in v1 (recommended). Source: rows 4, 4b; ADR-T02.
+
+## D-2026-10-25 — tutoring: listing and public fields
+
+**What.** `platform_admin` approves a profile before it is listed. The directory is public on the
+web with a minimal card only: first name and last initial, headline, subjects, modes, city-level
+area, rating and count. Bio, qualification note, availability, reviews, outcome figures, the
+"documents seen" badge and booking are logged-in only. No photo, evidence or exact location is ever
+public. Editing a moderated text field sends a listed profile back to review. "Verified" means only
+that an admin saw the uploaded documents. Every public tutor page is sent with `noindex`; the
+tutor's opt-in is stored and has no effect until a server-rendered page exists.
+
+**Accepted risk (user decision, argued against).** Tutor PII on the open web. Limited by the
+minimal card and `noindex`.
+
+**Rejected.** Logged-in-only browsing (recommended); auto-listing with delisting; a full public
+profile. Source: rows 5a, 5b; `docs/tutoring/SPEC.md` §a.5.
+
+## D-2026-10-25 — tutoring: discovery and ranking
+
+**What.** Filters: subject, mode, area, minimum rating, and availability (weekday and
+morning/afternoon/evening, logged-in only, matched against weekly rules and labelled "Usually
+available"). Default order is a Bayesian average computed by `lemely.core.tutor_ratings` and stored
+as `tutor_profiles.rank_score` in the same transaction as any rating change; under 3 reviews the
+card shows "New", not stars. Keyset paging on `(rank_score DESC, id)`. Two SQL statements per page
+regardless of page size.
+
+**Why.** The prior stops a single five-star review from topping the list. Storing the score keeps
+the sort indexable and keyset-safe. A fixed prior (proposed 4.0, weight 5) means one tutor's
+reviews never re-rank everyone else.
+
+**Rejected.** Raw average; a prior equal to the global mean (every new review would re-rank every
+tutor). Source: row 6.
+
+## D-2026-10-25 — tutoring: reviews
+
+**What.** One review per completed booking (`UNIQUE (booking_id)`), by that booking's student only;
+stars 1-5 plus optional text. Stars count in the rating at once; text is public only after
+`platform_admin` approval. Text edits within 14 days return it to moderation. The tutor gets one
+reply, also moderated. Reviews show "A student" and a month, never a name. Parents cannot review.
+
+**Rejected.** Per-relationship reviews; stars only. Source: row 7.
+
+## D-2026-10-25 — tutoring: outcomes
+
+**What.** On the logged-in profile, per tutor and subject: an ordered grade-distribution bar and a
+"change in grade while with this tutor" figure (higher / same / lower), each with `n`, a table
+alternative, and a caveat that marking is automatic and students choose their tutors. k ≥ 5 applies
+to each figure separately; below k an insufficient-data state hides the exact count. Students are
+counted by default and opt out with one tap (`student_tutoring_preferences`), effective on the next
+read. Computed per request in two queries; nothing cached. The pie chart is dropped. The bar uses
+the recorded ladder `GRADE_ORDER` (A*-E, U), not A*-G, because F and G are not grade-bearing today.
+
+**Accepted risk (user decision, argued against).** Minors counted without consent; a figure that
+reads as cause; small-group re-identification (the homogeneity case is raised for a user decision).
+
+**Rejected.** Ordered bar only, opt-in, default off (recommended); dumbbell only; pie. Source: rows
+8, 8b; `docs/tutoring/adr/ADR-T04-outcome-stats.md`.
+
+## D-2026-10-25 — tutoring: booking
+
+**What.** A student, or a linked parent for the child, requests a slot; the tutor accepts or
+declines. Weekly availability is stored as Cairo wall-clock rules plus the zone; every concrete
+instant is stored UTC. Postgres `btree_gist` exclusion constraints on `(tutor_profile_id, slot)`
+and `(student_id, slot)` for active (`requested`, `accepted`) bookings, plus one pending request per
+student and tutor, make double booking impossible in the database. Virtual sessions reveal the link
+after accept; in-person sessions show the city area until accept and the meeting place after.
+Cancel up to 24 hours before an accepted session; the tutor marks completed or no-show after the
+start. Expiry and staleness are computed at read time; an expired request is written as expired
+only during a later write. Inbox notifications plus a generic `email_outbox` written in the same
+transaction and sent after commit by a mock-first provider, with no retry.
+
+**Verified.** `btree_gist` is trusted and creatable by the non-superuser `postgres` role on the
+local Supabase image (`postgres:17.6.1.143`); the exact constraints were exercised in rolled-back
+transactions (SPEC §a.4).
+
+**Rejected.** Instant booking; app-level conflict checks; weekly rules stored as UTC offsets (they
+shift by an hour at every DST change). Source: row 9.
+
+## D-2026-10-25 — tutoring: parents
+
+**What.** A parent browses the directory and requests sessions for a linked child, the first parent
+write action. Bookings record the subject (`student_id`) and the actor (`requested_by_user_id`,
+`requested_by_party`); the link is re-checked on every action. A parent may cancel only bookings
+they requested, reads the child's sessions and notes, and cannot post notes, review, grant or
+revoke. All of it is new routes; the four existing parent routes keep their guards.
+
+**Accepted risk (user decision, argued against).** The parent role gains a write path.
+
+**Rejected.** Browse only; no parent access. Source: row 10.
+
+## D-2026-10-25 — tutoring: money
+
+**What.** No payments and no prices anywhere in the marketplace. The UI says fees are agreed between
+the family and the tutor, outside Lemely.
+
+**Why.** MISSION §1 defers payments; an indicative rate would be invented data. Source: row 11.
+
+## D-2026-10-25 — tutoring: MVP slice
+
+**What.** Every decided feature ships, in five dependency waves, each with its own additive
+migration in one chain from `0043_merge_heads` (`0044_tutoring_enums_ext` to `0050_email_outbox`):
+profiles and directory; booking, notes and email; reviews; grants, audit, tutor student view and
+outcomes; reports and blocks. DELIVERY.md marks as limited: no email retry or scheduler, no
+auto-expiry of pending requests, reactive moderation only, outcome figures carry the marking
+caveat, "verified" means documents seen, public pages always `noindex`.
+
+**Rejected.** Core first with the rest in a later release. Source: row 12; `docs/tutoring/SPEC.md` §f, §g.
+
+## D-2026-10-25 — tutoring: outcome suppression and timing
+
+**What.** Outcome figures stay live (computed on every request, no snapshot) with these rules
+added to row 8. A student counts only after their window closes: the window is the 120 days from
+the start of their first counted session, and a counted session is any accepted session whose time
+has passed, so marking a session completed or no-show, or a tutor blocking a student, changes
+nothing in the figures. The published set grows only in steps of 5 students. k applies to students
+with a grade (`nGraded`) and to students with both grades (`nPaired`), never to cohort size. A
+figure is hidden unless the students in it who never granted the tutor access number 0 or at least
+5, and its largest bucket holds at most n − 2. Students who ever blocked the tutor, opted out, have
+no verified email, or whose account was under 30 days old at their first session are left out. Any
+opt-out change or block by a cohort student hides both figures for 90 days. Grades from estimated
+boundaries are left out.
+
+**Accepted risk (user decision, argued against; ADVERSARIAL F1).** A tutor can still compare the
+live figure before and after a step and learn the grade of one student who never shared, when at
+least five students who never shared are already counted and four of the five students who enter
+share with the tutor. No tutor action causes the change; the tutor only has to look on the right
+day. Recorded with the exact scenario in ADR-T04 R5 and DELIVERY §5.7.
+
+**Rejected.** A monthly as-of snapshot (recommended); dropping the change figure. Source: row 13;
+`docs/tutoring/adr/ADR-T04-outcome-stats.md`; `docs/tutoring/SPEC.md` §e.1.
+
+## D-2026-10-25 — tutoring: parent links and the class side door
+
+**What.** Two existing paths change behaviour, with no permission change (guards, object rules and
+response bodies are unchanged). Parent links: removing a link tells the removed parent once (inbox
+and email, fixed text); adding one tells every parent already linked; every link and unlink is
+recorded in a new `parent_link_events` table; a child can have at most 4 linked parents (409
+`parent_limit` from `POST /api/invites/{code}/redeem` and, before any account is created, from
+`POST /api/auth/parent/signup`). Classes: a block deletes the student's enrolments in the tutor's
+school-less classes; a suspension or close deletes, from the tutor's school-less classes, every
+student who has a booking or a grant with them; a new `DELETE /api/student/classes/{class_id}` lets a
+student leave a school-less class; linked parents are told when a student joins a school-less class
+run by someone who tutors; the student sees which class teachers can see their progress.
+
+**Why.** Every "parent notified" control depended on a link the child could delete silently, and a
+school-less class gave any tutor the same analytics as a grant with no audit, no parent notice and
+no way out (THREAT-MODEL CB-1, CB-2, XT-1).
+
+**Rejected.** Doing neither; parent-link changes only. Source: row 14; `docs/tutoring/SPEC.md` §c.4;
+ADR-T02; ADR-T03.
+
+## D-2026-10-25 — tutoring: additions approved beyond the earlier rows
+
+**What.** Approved as narrow readings of rows 4, 7, 8 and 9: (a) blocks, which revoke the grant and
+cancel the pair's future sessions even inside 24 hours; (b) moderation of tutor replies before they
+are public; (c) a second exclusion constraint so one student cannot hold two overlapping sessions;
+(d) a `requested` booking holds the tutor's slot, bounded by 5 live requests per student and a
+28-day booking horizon; (e) the change figure drawn as higher / same / lower counts.
+
+**Source.** Row 15; ADVERSARIAL F30. No longer open items.
+
+## D-2026-10-25 — tutoring: parent view of sharing and the first-booking safety notice
+
+**What.** (i) Linked parents see, read-only, the child's grants and the log of every tutor read
+(`GET /api/parent/children/{child_id}/tutor-grants`, `…/tutor-access-log`, screen P-08). Parents still
+cannot create, approve or revoke a grant. (ii) Before a student's first booking request and first
+note, the student must acknowledge a fixed safety notice (keep contact on Lemely, meet in public,
+tell an adult, report or block, Egypt's 16000 child helpline). The acknowledgement is stored in
+`student_tutoring_preferences.safety_notice_acknowledged_at` and enforced by the server (409
+`safety_notice_required`), so the notice is shown once per student.
+
+**Rejected.** Not adopting either. Source: row 16; `BUILD/tutoring/design-summary.md` risk 1;
+ADR-T02.
+
+## D-2026-10-25 — tutoring: spec revision corrections (supersedes parts of the entries above)
+
+**What.** Facts and mechanisms corrected after the threat model and the adversarial review; the
+earlier entries above stay as written and these statements replace the parts named.
+- *Booking, MVP slice:* a sweeper already runs every 60 s (`lemely/web/scheduled_notifications.py`).
+  Email outbox rows are written in the change's transaction and sent once each by one new sweeper job,
+  not by a post-response task; there is still no retry and no expiry job (row 12). Inbox rows are
+  written after commit through `notify_safely`, as D5.9 §1 requires.
+- *Reviews:* a review can be written only 7 days after the session ends, by an account at least 14
+  days old; the rating counts each student's latest review once; reviews show a quarter, not a month.
+- *Outcomes:* computed in three statements, not two; the window rule above replaces "60 days after
+  the last session".
+- *Listing:* suspension and the new `closed` state revoke grants; reinstatement restores nothing.
+  Whether the tutor's search-engine opt-in takes effect (row 5b) is an open user decision (SPEC §h D-1).
+- *Tests:* tutoring models install `btree_gist` through a table-level DDL listener so the ~88 test
+  files that build schemas with `create_all` keep working.
+
+**Source.** `docs/tutoring/REVISION-LOG.md`; `docs/tutoring/SPEC.md` rev 2.
+
+## D-2026-10-25 — tutoring: search indexing of the public card (row 17; supersedes the "noindex" sentences above)
+
+**What.** A listed tutor's public card is indexable by search engines by default
+(`tutor_profiles.indexable boolean NOT NULL DEFAULT true`). The tutor turns it off with the "Show
+my card in search engines" toggle on T-16 (`PATCH /api/tutor/profile`; not a moderated field), and
+onboarding states plainly that the card is public and can be listed. The edge worker honours the
+choice: `web/wrangler.jsonc` `run_worker_first` gains `/tutors` and `/tutors/*`; for a card path
+with one UUID segment the worker looks up `GET /api/public/tutors/{id}` (fixed path, no client
+headers, 60 s edge cache, 1500 ms timeout) and omits `X-Robots-Tag` only when that returns 200 with
+`indexable: true`. Every other outcome, including any lookup failure, sends `noindex, nofollow`. The
+directory page `/tutors` is always `noindex, follow`, because it lists opted-out tutors too. The
+worker sets every security header itself, because Cloudflare does not apply `_headers` to responses
+generated by Worker code; `_headers` gets no `/tutors` rule. The nginx self-host deploy stays
+`noindex` on every tutor page. No sitemap.
+
+**Why.** User decision, 2026-10-25 (free-text answer "public, opt-in by default", read as indexable
+by default with a per-tutor opt-out). It overrides row 5b's "`noindex` until the tutor opts in" and
+the earlier entries' "every public tutor page is sent with `noindex`" / "public pages always
+`noindex`".
+
+**Accepted risk (user decision, argued against).** Tutor names, cities and subjects appear in
+search results. The lookup is new edge attack surface, bounded by a fixed path template, a
+one-boolean read and fail-closed handling. An opt-out reaches the edge within 60 s, but a search
+engine drops a card only on its next crawl.
+
+**Rejected.** Always `noindex` (recommended); an opt-in with default off (row 5b as written).
+Source: decision-log row 17; `docs/tutoring/SPEC.md` rev 3 §a.2, §b.5, §d T-16, §i.1.
+
+## D-2026-10-25 — tutoring: late cancellation (row 18)
+
+**What.** Inside 24 hours of the start of an accepted session only the tutor may cancel, and only
+with a non-blank reason (422 `reason_required`). The reason is shown to the student and linked
+parents in the booking (S-37, P-06), never in a notice or an email. The student and the requesting
+parent may cancel only up to 24 hours before the start (409 `cancel_window_closed` after that).
+Enforced three times: `core.booking.check_transition`, the compare-and-set `WHERE`, and the CHECK
+`ck_tutor_bookings_late_cancel_reason`. `BookingDTO.cancelledLate` marks it, and the tutor's
+`allowedActions` shows `cancel_with_reason` inside the window. Outcome figures are unaffected: a
+cancelled booking never enters the cohort.
+
+**Why.** Without it a session that cannot go ahead has no honest end state: the tutor would have to
+record a false `completed` or a blaming `no_show` (ADVERSARIAL F26). The student cannot silently
+escape a session at the last minute.
+
+**Rejected.** Mutual cancel inside 24 hours; nobody can cancel inside 24 hours (row 9 as written).
+Source: decision-log row 18; SPEC rev 3 §a.2, §a.3, §b.2 T13, §c.3 O30.
+
+## D-2026-10-25 — tutoring: reading calls confirmed, no subscription gate (row 19; SPEC O-4..O-7, O-11, O-15)
+
+**What.** Confirmed by the user as the SPEC read them: (O-4) the outcome bar uses the recorded ladder
+`GRADE_ORDER` A*–E, U, not A*–G; (O-5) weekly availability is stored as tutor-zone wall clock plus
+the zone, and every concrete instant as UTC; (O-6) a parent cancels or completes only bookings they
+requested and is read-only otherwise; (O-7) parents may file reports; (O-11) UI spec §1.4 principles
+3 and 5 are reworded in the Phase 4 docs, and MISSION §3 "their teachers" includes a tutor the
+student granted, so ADR-T02 is not blocked. Also recorded at rev 3: (O-15) no tutoring route checks a
+subscription or an activation (X-02), for tutors, students or parents; `lemely/web/deps.py` has no
+subscription dependency today, so nothing is added or removed. (D-3) closed with no change: locked
+row 12 stands (no email retry, no persisted expiry), although a 60-second sweeper exists.
+
+**Why.** Each reading avoids a data or DST error (O-4, O-5) or is the narrowest reading of rows 3b, 8
+and 10 (O-6, O-7, O-11). O-15: the marketplace has no prices or payments (row 11), and the spec
+gates nothing.
+
+**Source.** Decision-log row 19; SPEC rev 3 §i.1; `docs/tutoring/REVISION-LOG.md` rev 3.
+
+## D-2026-10-25 — tutoring: execution decisions (plan rev 2)
+
+**Decision.** (1) Notification preferences for the eight new tutoring types are role-gated in the
+preference API (SPEC §a.1 table), so a type a role never receives is not a toggle it can see.
+(2) Every non-public tutoring route is `Cache-Control: private, no-store` on every status, set once
+by the shared route class. (3) `origin/develop` is merged into the feature branch, never rebased
+(117 commits behind at 2026-10-25; signed `--no-ff` merge, branch already pushed). (4) One draft PR
+against `develop` is opened at I1 so every integration push runs CI; it is marked ready at the end
+and never merged by the build. Full-suite evidence is CI on the PR head; local pytest runs named files
+only.
+
+**Why.** (1) and (2) close threat-model and review findings (P4, P12). (3) a rebase would rewrite
+pushed history. (4) `ci.yml` only runs on pull requests and on `main`, so without an open PR there
+is no full-suite evidence, and the saved rule is that the full suite is never run locally.
+
+**Source.** `BUILD/tutoring/PLAN.md` §0.10, §1.4 #10, #13; `docs/tutoring/PLAN-REVISION-LOG.md`.

@@ -32,10 +32,30 @@ const repoRoot = path.resolve(__dirname, "..", "..")
  * right after computing them for the backend `webServer`'s env, so this
  * process inherits them for free; whether Playwright happens to run
  * `globalSetup` before or after booting `webServer` is irrelevant either way.
+ *
+ * Before seeding, this also runs `alembic upgrade head` against that same
+ * stack. Migration 0024 inserts the subject/paper/topic catalogue as part of
+ * the schema upgrade (Task 18) — without it `seed_e2e.py` would be seeding
+ * demo accounts and attempts on top of a database with no subjects at all,
+ * and S-01 would render an empty subject list, failing `phase4-journey` and
+ * `signup` at their first step. `make db-up` already runs this migration for
+ * local dev, but the E2E stack is not guaranteed to have gone through it
+ * (e.g. a stack started directly via `supabase start` and never migrated),
+ * so this can't assume it already happened.
  */
 export default function globalSetup(): void {
   const outDir = reportDir()
   fs.mkdirSync(outDir, { recursive: true })
+
+  const migrate = spawnSync(path.join(repoRoot, ".venv/bin/alembic"), ["upgrade", "head"], {
+    cwd: repoRoot,
+    env: process.env,
+    encoding: "utf-8",
+    maxBuffer: 16 * 1024 * 1024,
+  })
+  if (migrate.status !== 0) {
+    throw new Error(`alembic upgrade head failed (exit ${migrate.status}):\n${migrate.stderr}`)
+  }
 
   const result = spawnSync(
     path.join(repoRoot, ".venv/bin/python"),

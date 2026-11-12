@@ -38,8 +38,9 @@ Physics (0625). Cambridge only. English-language interface only.
 | **Platform admin** (internal) | Activate accounts, watch the marking pipeline | Daily | Laptop |
 
 A student can hold a school-issued seat and a personal subscription at the same
-time. A teacher can be independent, attached to a school, or both. Parents log in
-with a phone number, not an email — many will not have a habitual email address.
+time. A teacher can be independent, attached to a school, or both. A parent gets
+an identity only through a code or link their child shares, then signs in with
+an email address and password like every other role.
 
 ## 1.3 The core loop, in the student's words
 
@@ -60,20 +61,41 @@ These are not stylistic preferences. They constrain the interface.
    ("we're not certain about this one — your teacher will check") and routed to
    a teacher review queue. Never present an uncertain mark as a confident one.
    This is the product's integrity and its main defence against being wrong.
-2. **Flags are signals, not verdicts.** The plagiarism ("this matches the
-   marking scheme text") and AI-detection checks produce advisory flags for a
-   teacher to look at. The UI must never accuse a student, never show a scary
-   red "CHEATING DETECTED" banner, never auto-penalize a mark. Students should
-   not see these flags at all; teachers see them phrased as "worth a look."
+2. **Flags are signals, not verdicts.** The plagiarism check ("this matches
+   the marking scheme text") produces an advisory flag for a teacher to look
+   at. (F4 removed the AI-detection check that used to run alongside it — no
+   measured false-positive rate, and JCQ guidance is that such a detector
+   must never be sole evidence.) The UI must never accuse a student, never
+   show a scary red "CHEATING DETECTED" banner, never auto-penalize a mark.
+   The standing advisory notice that stated this in copy on T-07 was removed
+   on 2026-09-21; the rule is now carried by behaviour rather than by a
+   sentence — `apply_integrity_checks` never touches marks, and integrity
+   flags are excluded from bulk-approve. Do not read the absence of that
+   paragraph as the rule having lapsed.
+   And do not state, anywhere, that a flagged mark is checked before it
+   counts: it already counts (`QuestionResult.effective_marks`), and nothing
+   compels a teacher to open it.
+   Students should not see these flags at all; teachers see them phrased as
+   "worth a look."
 3. **Grades are private; effort is public.** Leaderboards rank XP only — never
    grades, never percentages, never predicted grades. A student's marks are
-   visible to that student, their linked parents, and their teachers. Nobody
-   else, ever.
+   visible to that student, their linked parents, and their teachers. A tutor
+   the student has chosen to share with counts as one of their teachers for as
+   long as the student keeps sharing (decision-log rows 3b and 19, ADR-T02). The
+   student can see each time that tutor looks, can stop sharing at any time, and
+   their linked parents can see who they share with. A tutor's public profile may
+   show an anonymous figure about past students only when at least five have a
+   marked paper, never one student's grade. Nobody else, ever.
 4. **The teacher has final authority.** Any mark Lemely produces can be
    overridden by a teacher, with a note. The override is what the student sees
    afterwards, labelled as a teacher correction.
 5. **Parents observe; they don't drive.** Parent views are read-only. No
-   messaging a child through the app, no assigning work, no marking.
+   messaging a child through the app, no assigning work, no marking. One
+   exception is recorded in decision-log rows 10 and 19: a parent can browse
+   tutors and request a session for a linked child, and can cancel or mark
+   complete a session that parent requested. A parent cannot share the child's
+   progress with a tutor, cannot stop the child's sharing, and reads a child's
+   notes with a tutor without being able to post.
 6. **Never invent precision.** Predicted grade boundaries come from real
    historical data where it exists; where it doesn't, the prediction is labelled
    "estimated" in the interface, visibly and every time.
@@ -203,10 +225,10 @@ who is also a parent).
 | G-02 | Sign up — role selection | Public |
 | G-03 | Sign up — student/teacher details | Public |
 | G-04 | Log in (email) | Public |
-| G-05 | Parent log in (phone + OTP) | Parent |
+| G-05 | Parent join and sign in | Parent |
 | G-06 | Password reset | Public |
 | G-07 | Email verification pending | Public |
-| G-08 | Join with invite code | Student/Teacher |
+| G-08 | Join with invite code | Student/Teacher/Parent |
 | G-09 | Install app prompt (PWA) | All |
 | G-10 | Device limit reached | All |
 | G-11 | Account & devices settings | All |
@@ -214,6 +236,8 @@ who is also a parent).
 | G-13 | Notifications inbox | All |
 | G-14 | Subscription / plan status | Student, Parent, School |
 | G-15 | Offline / connection lost | All |
+| G-16 | Tutor directory (public) | Public |
+| G-17 | Tutor public card | Public |
 | S-01 | Student onboarding — subjects | Student |
 | S-02 | Student onboarding — questionnaire | Student |
 | S-03 | Student onboarding — placement invite | Student |
@@ -245,6 +269,12 @@ who is also a parent).
 | S-29 | Leaderboards | Student |
 | S-30 | Friends | Student |
 | S-31 | Profile / XP / streak | Student |
+| S-33 | Find a tutor | Student |
+| S-34 | Tutor profile | Student |
+| S-35 | Book a session | Student |
+| S-36 | My sessions | Student |
+| S-37 | Session detail | Student |
+| S-38 | Tutors & your data | Student |
 | T-01 | Teacher dashboard | Teacher |
 | T-02 | Classes list | Teacher |
 | T-03 | Class detail — roster | Teacher |
@@ -257,10 +287,21 @@ who is also a parent).
 | T-10 | Quiz results (class) | Teacher |
 | T-11 | Custom paper & mark scheme upload | Teacher |
 | T-12 | Announcement composer | Teacher |
+| T-15 | Tutoring home | Teacher |
+| T-16 | Tutor profile & onboarding | Teacher |
+| T-17 | Weekly availability | Teacher |
+| T-18 | Session detail (tutor) | Teacher |
+| T-19 | My students | Teacher |
+| T-20 | Student detail (tutor view) | Teacher |
+| T-21 | Profile preview & reviews | Teacher |
 | P-01 | Parent home / children | Parent |
 | P-02 | Child overview | Parent |
 | P-03 | Child subject detail | Parent |
 | P-04 | Child weaknesses | Parent |
+| P-05 | Child's tutoring | Parent |
+| P-06 | Session detail (parent, read-only) | Parent |
+| P-07 | Find a tutor (parent) | Parent |
+| P-08 | Who the child shares progress with | Parent |
 | K-01 | School dashboard | School admin |
 | K-02 | Seats & student accounts | School admin |
 | K-03 | Teachers | School admin |
@@ -268,8 +309,17 @@ who is also a parent).
 | X-01 | Platform admin console | Platform admin |
 | X-02 | Account activation queue | Platform admin |
 | X-03 | Pipeline & corpus health | Platform admin |
+| X-04 | Tutor approval queue | Platform admin |
+| X-05 | Tutor application | Platform admin |
+| X-06 | Moderation queue | Platform admin |
+| X-07 | Reports | Platform admin |
 
 ---
+
+Numbering note: S-32, T-13 and T-14 are not used here. `web/scripts/audit.mjs`
+already uses `S-32-provisional`, `T-13-provisional` and `T-14-provisional` for
+screens that have no row in this table, so the tutoring screens continue each
+sequence after them.
 
 # PART 4 — SCREENS IN DETAIL
 
@@ -284,18 +334,19 @@ on one side, the marked breakdown on the other. Supporting sections: how it
 works in three steps; who it's for (student / parent / teacher tabs); subjects
 covered (0580, 0606, 0625, stated plainly with "more coming"); pricing/plans;
 FAQ. Persistent header with "Log in" and "Get started."
-**Interactions.** CTA → G-02. "Log in" → G-04. "I'm a parent" → G-05.
+**Interactions.** CTA → G-02. "Log in" → G-04. "I'm a parent" → G-08 (parents
+have no independent sign-up; they need a code or link from their child).
 **States.** None special.
-**Exits.** G-02, G-04, G-05.
+**Exits.** G-02, G-04, G-08.
 
 ### G-02 · Sign up — role selection
 **Purpose.** Branch by role before asking for anything.
 **Contains.** Three large choices: *I'm a student*, *I'm a parent*, *I'm a
 teacher or tutor*. Each with one line of what they'll get. Secondary link: "I
 have an invite code from my school" → G-08.
-**Interactions.** Student/teacher → G-03. Parent → G-05 (parents authenticate by
-phone, so they skip the email form).
-**Exits.** G-03, G-05, G-08, G-04.
+**Interactions.** Student/teacher → G-03. Parent → G-08 (parents have no
+independent sign-up; they need a code or link from their child).
+**Exits.** G-03, G-08, G-04.
 
 ### G-03 · Sign up — details
 **Contains.** Name, email, password (with strength feedback and a show/hide
@@ -319,25 +370,34 @@ log in; submitting state on the button.
 
 ### G-04 · Log in (email)
 **Contains.** Email, password, "Stay signed in," forgot-password link, "Sign up"
-link, and a distinct "Parent? Sign in with your phone number" link.
+link, and a "Parent without an account? You'll need an invite from your child"
+link.
 **States.** Wrong credentials (do not reveal which field is wrong); locked or
 unverified account with a resend option; device-limit outcome → G-10.
-**Exits.** Role home (S-06 / T-01 / P-01 / K-01 / X-01), G-05, G-06, G-02, G-10.
+**Exits.** Role home (S-06 / T-01 / P-01 / K-01 / X-01), G-08, G-06, G-02, G-10.
 
-### G-05 · Parent log in (phone + OTP)
-**Purpose.** The lowest-friction entry in the product; many parents are not
-confident users.
-**Contains.** Country selector defaulting to Egypt (+20), phone number field,
-"Send code." Second step: six-digit code entry with auto-advance and paste
-support, a resend timer, and "Change number."
-**Interactions.** Code auto-submits when complete. In development the code is
-logged rather than sent by SMS — design a clearly-marked developer affordance
-that shows the code on screen in non-production environments, so this is
-testable without a real SMS provider.
-**States.** Invalid number; wrong code; expired code; resend cooldown; no
-account found for this number (offer: "Ask your child's school to link you," or
-route to a child-linking flow).
-**Exits.** P-01, G-06.
+### G-05 · Parent join and sign in
+**Purpose.** A parent gets an identity only through a child's invite; there is
+no independent parent sign-up. Returning parents with an account already sign
+in at G-04 like everyone else.
+**Contains.** Reached from a code or link a child shares at G-08 (`/join/:code`).
+Three steps: email address and display name; a six-digit code sent to that
+email, entered with a dedicated code-entry control (paste, auto-advance,
+auto-submit); then a password (with strength feedback) and the
+terms-acceptance checkbox.
+**Interactions.** Code auto-submits when complete. A 30-second, display-only
+resend cooldown; "Change email" returns to the first step. A visitor who
+already has an account sees "Already have an account? Sign in," which goes to
+G-04 and returns to the invite afterward. Whether the code is also shown on
+screen, rather than only sent by mail, is gated on the mail provider's own
+`delivers_out_of_band` capability, not on an environment string (the same
+D3.16 rule the G-07 note below applies) — with no configured provider, a
+clearly-marked developer affordance shows it, so the flow is testable without
+a real mail provider.
+**States.** Field errors; wrong or expired code; resend cooldown; email already
+registered (routes to the sign-in link above); invite code missing, expired, or
+already revoked — routes to G-08's plain `/join` entry instead of a bare error.
+**Exits.** P-01, G-04, G-08.
 
 ### G-06 · Password reset
 Standard: request by email → confirmation screen → reset form from link →
@@ -358,19 +418,29 @@ into a limited preview of the app rather than a hard wall.
 > wired unconditionally), so a heading claiming mail was sent or should be
 > checked would be false in every deployment of this code as written. The
 > shipped screen states plainly what verification unlocks and offers the
-> developer-only link affordance instead, mirroring how G-05 already handles
-> the SMS mock's own equivalent gap.
+> developer-only link affordance instead, the same posture G-05's own parent
+> signup code screen takes for its own mail-delivery gap — both gated on
+> `delivers_out_of_band` rather than an environment string (`BUILD/DECISIONS.md`
+> D3.16).
 
 **Exits.** Onboarding (S-01) once verified.
 
 ### G-08 · Join with invite code
-**Purpose.** A school-issued seat or a teacher's class link.
+**Purpose.** A school-issued seat, a teacher's class link, or a child's invite
+for a parent — one box for every invite kind.
 **Contains.** Code field (or arrives pre-filled from a deep link), a preview of
 what they're joining ("Al-Nasr Language School — Mr Hassan's Physics 0625
-class"), and a confirm action. If the person has no account yet, this flows into
-G-03 with the code retained.
-**States.** Invalid code, expired code, seat quota full (explain and tell them
-to contact their school).
+class", or "<child's name> invited you to follow their progress on Lemely" for
+a parent invite), and a confirm action. A signed-out visitor holding a
+student/teacher code flows into G-03 with the code retained; one holding a
+parent invite flows into G-05 instead. Either can sign in first instead
+("Already have an account? Sign in" → G-04) and return here afterward.
+**Interactions.** A signed-in parent redeeming a second child's invite lands
+directly on that child's overview (P-02), no fresh signup. A signed-in student
+or teacher holding a parent invite sees a refusal line instead of a redeem
+button — a parent invite names one specific role and is not transferable.
+**States.** Invalid code, expired code, revoked code (the child rotated or
+deleted it), seat quota full (explain and tell them to contact their school).
 
 > **Shipped divergence (`BUILD/DECISIONS.md` D7.3; see also `BUILD/BLOCKERS.md`
 > B9).** The **"seat quota full" state cannot occur on this screen**, by
@@ -385,7 +455,7 @@ to contact their school).
 > re-check is ever added at redemption — it is inert against the live backend
 > today, and that is expected, not a bug.
 
-**Exits.** G-03, S-01, S-06.
+**Exits.** G-03, G-05, G-04, S-01, S-06, P-02.
 
 ### G-09 · Install app prompt
 **Purpose.** Get the PWA onto the home screen, because camera capture and push
@@ -436,6 +506,31 @@ and roughly when, and keep the app usable in a limited way meanwhile.
 Not a full screen so much as a system: a persistent, unobtrusive banner; queued
 uploads shown with their queued state; cached content readable; uncached
 destinations replaced by an explanatory panel with a retry.
+
+### G-16 · Tutor directory (public)
+**Route.** `/tutors`
+**Contains.** An introduction ("Find a tutor for IGCSE Maths, Additional Maths and
+Physics. Fees are agreed with the tutor, outside Lemely."). Filters: subject,
+mode, area, minimum rating. Tutor cards (C-23). "Load more". "Sign in to see
+full profiles, availability, reviews and results." Lemely shows no prices.
+**States.** No match: "No tutors match these filters yet." with "Clear filters".
+No listed tutors yet: "Tutors are being reviewed. Check back soon."
+**Search engines.** The directory page is never indexed (`noindex, follow`, in
+the response header and the page's meta tag), so crawlers can still reach cards.
+**Exits.** G-17, G-04, G-02.
+
+### G-17 · Tutor public card
+**Route.** `/tutors/:tutorId`
+**Contains.** The public fields only, larger: first name and last initial,
+headline, subjects, modes, area, rating (C-22). "Sign in to book".
+**States.** Unknown, unlisted, paused or suspended: "This tutor isn't listed."
+with a link to G-16.
+**Search engines.** A card is indexable by default and the tutor can opt out on
+T-16. The edge worker asks the API about each card and marks it `noindex,
+nofollow` whenever the answer is not a clear yes, including when the check fails.
+The page's meta tag matches while loading and on failure. See `docs/deployment.md`
+for the staging check.
+**Exits.** G-04 (then S-34 for a student or P-07 for a parent), G-16.
 
 ---
 
@@ -800,6 +895,92 @@ of real work, and make the streak feel worth protecting without being
 manipulative — a streak-freeze that's offered kindly beats a guilt-trip.
 **Exits.** G-11, S-29.
 
+## 4.6a Student: tutoring
+
+Tutoring is optional. Students find a tutor, book a session, and may choose to
+share their progress with a tutor. Fees are agreed between the student and the
+tutor, outside Lemely; no screen shows a price. Times are shown in the tutor's
+zone with its label (for example "Thu 30 Oct · 17:00–18:00 Cairo time").
+Free text is plain text, never linked. A refused contact detail shows "To keep
+everyone safe, keep contact details off Lemely. Use the session notes instead."
+
+### S-33 · Find a tutor
+**Route.** `/student/tutors`
+**Contains.** G-16's filters plus "Usually available" (day chips and
+morning/afternoon/evening). Tutor cards in rank order. A disclosure says tutors
+with few reviews are ranked as if they also had five 4-star reviews, so one great
+review cannot put someone at the top. Ratings read "New" below three students,
+never stars. "Load more".
+**Exits.** S-34.
+
+### S-34 · Tutor profile
+**Route.** `/student/tutors/:tutorId`
+**Contains.** Header with name, headline, rating, subjects, modes, area, "Listed
+since", and "Documents seen by Lemely" when an admin looked at the tutor's
+documents (disclosure: "A Lemely admin looked at documents this tutor uploaded.
+This is not a background check."). Bio, qualification note, weekly availability.
+**Results** per subject, shown only when enough past students have a marked
+paper: an ordered grade bar (C-17) and a grade-change summary (C-18), each with
+its student count and a table alternative. The caption says the grades come from
+Lemely's automatic marking, leave out estimated boundaries, and do not show what
+the tutor caused. Reviews (paged). Actions: Book a session, Share my progress,
+Report, Block.
+**States.** Results hidden: "Results are hidden for now. We show them only when
+at least 5 students have a marked paper from their time with this tutor, and
+only when no one's grade could be worked out from them." No reviews: "No reviews
+yet." Not taking bookings: "This tutor isn't taking bookings right now."
+**Interactions.** Share my progress opens a confirmation that explains S-38, that
+it covers all subjects until the student stops it, that every visit is recorded
+and visible to them, and that their linked parents are told.
+**Exits.** S-35, S-38, G-13.
+
+### S-35 · Book a session
+**Route.** `/student/tutors/:tutorId/book`
+**Contains.** The first-booking safety notice (C-24) if not yet acknowledged.
+Subject, mode, duration, a slot picker (C-19) for the next 14 days with "Show
+later dates" up to 28, an optional first note, a summary, and a counting notice:
+if the student has sessions with this tutor their grades in that subject are
+counted, without their name, in the tutor's results, and they can opt out in S-38.
+**Interactions.** Request goes to S-37. Refusals are named: time just taken,
+student already busy, request already pending, five requests waiting, email not
+confirmed (with the link), too many requests today.
+**Exits.** S-37, S-34.
+
+### S-36 · My sessions
+**Route.** `/student/sessions`
+**Contains.** Upcoming and Past tabs. Each row: tutor, subject, time, mode, status
+(C-20).
+**States.** "No sessions booked." (to S-33). "No past sessions yet."
+**Exits.** S-37.
+
+### S-37 · Session detail
+**Route.** `/student/sessions/:bookingId`
+**Contains.** Status, tutor, subject, time, mode, area; after acceptance the
+meeting link or place. Actions as the server allows: Cancel, Mark as completed
+(when the tutor has recorded nothing 48 hours after the session), Review. The
+notes thread (C-21) with a composer when posting is open, preceded by C-24 if the
+student has not seen it. The review form says review text is checked by Lemely
+before others see it and shows the season, not the date or the name.
+**States.** Inside 24 hours of the start the student cannot cancel and is told to
+message the tutor. A late cancellation by the tutor shows the tutor's reason.
+Expired request: "The tutor didn't reply before the start time."
+**Exits.** S-36, S-34, report sheet.
+
+### S-38 · Tutors & your data
+**Route.** `/student/tutor-access`
+**Contains.** (1) Tutors the student shares with, with Stop sharing. The
+explainer lists what a tutor sees (grades, predicted and target grades, marks,
+weak topics, trend, at-risk warnings, days active, for all subjects) and what
+they never see (answer sheets, the time of day). It says linked parents can see
+who the student shares with and each time a tutor looked. (2) Who looked, a paged
+log. (3) Teachers who can see the student's progress through a class, with Leave
+for classes that have no school and an "ask your school" note otherwise. (4) A
+switch "Count my grades in my tutors' results", on by default, with the 90-day
+hold explained. (5) Blocked tutors with Unblock.
+**States.** "You aren't sharing your progress with any tutor." "No tutor has
+looked at your progress." The class section is hidden when empty.
+**Exits.** S-34.
+
 ---
 
 ## 4.7 Teacher
@@ -866,9 +1047,11 @@ and a route into the student. Dismiss/acknowledge a flag with a note.
 **Purpose.** Where low-confidence marks and integrity flags land. The teacher's
 core recurring task.
 **Contains.** A prioritised list: student, paper identity, question, why it's
-here (low confidence / possible mark-scheme copying / possible AI-written answer
-/ student disputed the transcription), and how long it's been waiting. Filters by
-class, reason, and age. Bulk-approve for the trivially fine ones.
+here (low confidence / possible mark-scheme copying / student disputed the
+transcription), and how long it's been waiting. Filters by class, reason, and
+age. Bulk-approve for the trivially fine ones. (F4 removed "possible
+AI-written answer" as a reason category along with the detector that used to
+produce it.)
 **States.** Empty (celebrate it briefly and get out of the way).
 **Exits.** T-08.
 
@@ -920,6 +1103,84 @@ school admins), title, body with light formatting, optional attachment, optional
 schedule, and a preview of how it appears to a student.
 **Exits.** T-01.
 
+## 4.7a Teacher: tutoring
+
+Tutoring is a separate section of the teacher portal. A teacher with a tutor
+profile keeps a normal teacher account; a profile is not a role.
+
+### T-15 · Tutoring home
+**Route.** `/teacher/tutoring`
+**Contains.** The listing status (draft, under review, listed, paused, rejected
+with the note, suspended, closed). Requests awaiting a reply, oldest first, with
+Accept and Decline. Upcoming sessions. Sessions awaiting an outcome (Completed or
+No-show).
+**States.** No profile: a prompt to start T-16. "No requests yet." Under review:
+"Lemely is reviewing your profile. You'll get a notification."
+**Exits.** T-16, T-17, T-18, T-19, T-21.
+
+### T-16 · Tutor profile & onboarding
+**Route.** `/teacher/tutoring/profile`
+**Contains.** Steps: public card (first name, last initial, headline, subjects,
+modes, area) with a live preview of the open-web card; about (bio, qualification
+note, other-mode note); evidence (up to five files; "Don't upload identity
+documents."); availability (T-17); submit (needs a confirmed email). A fixed
+notice above the "Show my card in search engines" switch (on by default) says the
+card is on the open web, search engines can list it, the tutor can turn that off,
+and that engines can take weeks to drop a card. After listing: edit, pause, and
+the switch. Editing name, initial, headline, bio, qualification or other-mode
+note sends the profile back for review and hides it until approved; the switch
+does not. Changing documents removes the "Documents seen" badge until Lemely
+looks again.
+**States.** Rejected: the note and Resubmit. Suspended or closed: read-only with
+the admin's note.
+**Exits.** T-17, T-21, T-15.
+
+### T-17 · Weekly availability
+**Route.** `/teacher/tutoring/availability`
+**Contains.** Seven day rows of time ranges in 15-minute steps with the zone
+label, Add and Remove. "Cairo time; daylight saving is handled for you. Times in
+the hour when the clocks change can't be booked."
+**States.** "Add at least one time so students can book."
+**Exits.** T-15, T-16.
+
+### T-18 · Session detail (tutor)
+**Route.** `/teacher/tutoring/sessions/:bookingId`
+**Contains.** Student label, who requested, subject, time, mode, area. Accept
+(meeting link from Google Meet, Zoom, Microsoft Teams or Whereby; a place for
+in-person), Decline with a reason, Cancel until the start (inside 24 hours a
+reason is required and the sheet says the student and linked parents will see
+it), Completed or No-show after the end. The notes thread (C-21), with the line
+that the student's parents can read the notes. "Shared progress: yes/no", with a
+link to T-20 when yes.
+**Exits.** T-15, T-20.
+
+### T-19 · My students
+**Route.** `/teacher/tutoring/students`
+**Contains.** Students with an active grant: label, sharing since, upcoming
+sessions. "Students choose to share their progress with you. They can stop at any
+time, and they can see each time you look."
+**States.** "No students are sharing their progress with you yet."
+**Exits.** T-20.
+
+### T-20 · Student detail (tutor view)
+**Route.** `/teacher/tutoring/students/:studentId`
+**Contains.** The T-05 composition fed by the tutor projection: dates without
+times, no question ids. "{Name} shared this with you on {date}. They can stop
+sharing at any time. Each visit is recorded and they can see it." Removed
+relative to T-05: attempt drill-down, remark, assign practice, at-risk
+acknowledge, integrity signals. Dates are cut in the tutor's own zone. An
+unplaced activity date reads "—"; a student who was never active reads "Never".
+**States.** When sharing has ended, one message for every reason: "{Name}'s
+progress is no longer shared with you." The cache for that student is cleared.
+**Exits.** T-19.
+
+### T-21 · Profile preview & reviews
+**Route.** `/teacher/tutoring/preview`
+**Contains.** S-34 as students see it, plus the review list with "Reply" (one
+reply per review; "Replies are checked by Lemely before students see them.") and
+each reply's moderation state.
+**Exits.** T-16.
+
 ---
 
 ## 4.8 Parent
@@ -955,6 +1216,45 @@ from an A"), and topic weaknesses. Read-only throughout.
 **Contains.** Ranked weak topics with what they're costing, phrased for a
 non-specialist, and constructive framing on what the child is doing about it
 (practice generated, sessions planned). Explicitly not a list of failures.
+
+### P-05 · Child's tutoring
+**Route.** `/parent/children/:childId/tutoring`
+**Contains.** The child's tutors and sessions with status (C-20). Links to P-08
+("Who {child} shares progress with") and P-07 ("Find a tutor for {child}").
+**States.** "{Child} has no tutoring sessions."
+**Exits.** P-06, P-07, P-08.
+
+### P-06 · Session detail (parent, read-only)
+**Route.** `/parent/children/:childId/sessions/:bookingId`
+**Contains.** The facts of S-37, including the place after acceptance and a tutor's
+late-cancel reason. The notes thread is read-only: "Notes are between {child} and
+the tutor. You can read them and report anything that worries you." Cancel and
+Mark as completed appear only for a session this parent requested. Report,
+including "The session outcome is wrong".
+**Exits.** P-05.
+
+### P-07 · Find a tutor (parent)
+**Routes.** `/parent/tutors`, `/parent/tutors/:tutorId`,
+`/parent/tutors/:tutorId/book`
+**Contains.** S-33, S-34 and S-35 in the parent shell, with a required "Booking
+for" child selector, the counting notice phrased for the child, and no first-note
+field. Share my progress, Block and the safety notice (C-24) are absent. Report
+stays.
+**States.** With no linked child, P-01's explanation of how to link one replaces
+the booking step.
+**Exits.** P-06.
+
+### P-08 · Who the child shares progress with
+**Route.** `/parent/children/:childId/tutor-access`
+**Contains.** (1) The child's grants: tutor, since, status, with no revoke
+control. "{Child} decides who can see their progress. Only {child} can stop
+sharing. If something worries you, report it." A sharing ended by a tutor-side
+action reads "Sharing ended"; one ended by the child's own block names it. (2)
+Who looked, a paged log: tutor, "viewed {child}'s progress" or "saw {child} in
+their student list", time. A Report link per tutor.
+**States.** "{Child} isn't sharing their progress with any tutor." "No tutor has
+looked at {child}'s progress."
+**Exits.** P-05.
 
 ---
 
@@ -1002,6 +1302,35 @@ Mark scheme corpus coverage by subject/session/variant; grade boundary coverage
 with gaps highlighted (this drives whether predictions are real or estimated);
 ingestion job status and failures; marking accuracy metrics against the golden
 fixture set; error rates by stage.
+
+### X-04 · Tutor approval queue
+**Route.** `/platform/tutors`
+Table of tutor profiles: name, subjects, submitted, with a state filter. A banner
+reads "Email delivery: mock" when no email provider key is configured, so staff
+know booking emails are being recorded as skipped. **Exits.** X-05.
+
+### X-05 · Tutor application
+**Route.** `/platform/tutors/:tutorId`
+Profile fields, account email, evidence files (each opens a 300-second download
+link and each open is logged), approval history, open reports. Approve (with a
+required "I looked at the documents" box that sets "Documents seen"), Reject,
+Suspend or Reinstate, Close. The notes on reject, suspend and resolution are
+required. Close confirms that it cancels future sessions, ends every student's
+sharing, removes students from the tutor's classes that have no school, and
+cannot be undone. Suspend confirms that it also removes students who booked or
+shared with the tutor from those classes.
+
+### X-06 · Moderation queue
+**Route.** `/platform/moderation`
+Review texts and tutor replies waiting for approval, oldest first.
+
+### X-07 · Reports
+**Routes.** `/platform/reports`, `/platform/reports/:reportId`
+Safety concerns first. The detail shows what was reported as it was when reported
+and, for a booking or note, the thread; opening the thread is logged. Resolve with
+dismiss, hide content, suspend tutor, cancel booking (before the start only) or
+mark completed (a disputed outcome), and a note. After the report is resolved the
+thread the admin already read stays visible; reloading it is a second logged view.
 
 ---
 
@@ -1085,7 +1414,8 @@ items without touching the mouse.
 ## 5.5 Parent
 
 ```
-G-05 Phone + OTP → P-01 Children
+Child's invite (code or link) → G-08 Join with code → G-05 Parent join → P-01 Children
+G-04 Login (returning parent) → P-01 Children
 P-01 → P-02 Child overview → P-03 Subject detail → P-04 Weaknesses
 Push notification (results ready / at-risk alert) → deep link → P-02
 P-01 → G-12 Notification preferences

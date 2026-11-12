@@ -14,7 +14,7 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Protocol
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from lemely.db.models import User
 from lemely.db.models.enums import Role
@@ -39,6 +39,9 @@ class UserMirror(Protocol):
         terms_accepted_at: datetime | None = None,
     ) -> None:
         """Insert or update the mirrored row for ``user_id``.
+
+        An update that changes the email address (case aside) clears ``email_verified_at``: the
+        verification proved the old inbox, not the new one.
 
         ``terms_accepted_at`` (D7.11) is written only when the caller supplies
         one; ``None`` leaves an existing row's value untouched rather than
@@ -71,18 +74,52 @@ class UserMirror(Protocol):
         ...
 
     def mark_email_verified(self, user_id: uuid.UUID, *, verified_at: datetime) -> None:
-        """Stamp ``users.email_verified_at`` for ``user_id`` (D7.4).
+        """Stamp ``users.email_verified_at`` for ``user_id`` (D7.4), keeping the first instant.
 
-        Called exactly once per verification, by
-        :meth:`~lemely.auth.service.AuthService.verify_email`, immediately
-        after it has redeemed a single-use verification token for this exact
-        ``user_id`` — this method does no further checking of its own and
-        simply writes the timestamp it is given. A ``user_id`` with no
+        Called by both halves of §4.4's link-and-code pair —
+        :meth:`~lemely.auth.service.AuthService.verify_email` (having redeemed
+        a single-use verification token) and
+        :meth:`~lemely.auth.service.AuthService.verify_email_code` (having
+        verified the email-channel OTP) — each immediately after establishing
+        the fact for this exact ``user_id``. The two credentials are
+        independent, and a resend mints new ones, so an account may
+        legitimately reach here more than once. **Only the first call writes:**
+        the stamp is set while it is ``NULL`` and never moved afterwards,
+        because tutoring outcome statistics count a student only if their email
+        was verified at or before their first session (ADR-T04), and a later
+        re-verification must not change that. Idempotent either way. A
+        ``user_id`` with no
         mirrored row is a silent no-op rather than a raised error: it should
         be unreachable in practice (verification always names a user
         :meth:`~lemely.auth.service.AuthService.signup` itself just mirrored),
         and this is not the place to invent a new failure mode for the token
         store and the mirror having disagreed about who exists.
+        """
+        ...
+
+    def set_avatar_path(self, user_id: uuid.UUID, path: str | None) -> None:
+        """Set or clear ``users.avatar_path`` for ``user_id``.
+
+        ``path`` is ``None`` to clear the avatar (``DELETE /api/me/avatar``) or
+        an object-storage path to set one (``POST /api/me/avatar``) — never a
+        URL (see :attr:`~lemely.db.models.users.User.avatar_path`). A
+        ``user_id`` with no mirrored row is a silent no-op, matching
+        :meth:`mark_email_verified`: both routes authenticate through a token
+        whose ``sub`` was itself mirrored at signup, so a missing row here
+        should be unreachable rather than a new failure mode to invent.
+        """
+        ...
+
+    def set_timezone(self, user_id: uuid.UUID, zone: str | None, *, explicit: bool) -> None:
+        """Set, follow, or clear ``users.timezone`` (push-delivery spec §3).
+
+        ``explicit=True`` stores ``zone`` and marks it chosen. ``explicit=False``
+        with a ``zone`` is the client's device auto-detect and is written only
+        while nothing was chosen — a plane must never undo a deliberate choice.
+        ``explicit=False`` with ``zone=None`` clears the choice so auto-detect
+        resumes. Validation (a resolvable IANA name, at most 64 characters) is
+        the route's job; this writes what it is given. A ``user_id`` with no
+        mirrored row is a silent no-op, matching :meth:`set_avatar_path`.
         """
         ...
 
@@ -118,6 +155,10 @@ class DbUserMirror:
                     )
                 )
             else:
+                if user.email.lower() != email.lower():
+                    # GoTrue now says a different address than the one that was verified: the new
+                    # inbox is unproven, so the access gate must not carry the old proof over.
+                    user.email_verified_at = None
                 user.email = email
                 user.role = role
                 if phone is not None:
@@ -158,11 +199,39 @@ class DbUserMirror:
             return user
 
     def mark_email_verified(self, user_id: uuid.UUID, *, verified_at: datetime) -> None:
-        """Stamp ``users.email_verified_at`` for ``user_id``, if the row exists."""
+        """Stamp ``users.email_verified_at`` for ``user_id`` unless it is already set.
+
+        One conditional ``UPDATE … WHERE email_verified_at IS NULL``: two
+        verifications racing cannot both write, and the first instant is kept.
+        """
+        with session_scope(self._settings) as session:
+            session.execute(
+                update(User)
+                .where(User.id == user_id, User.email_verified_at.is_(None))
+                .values(email_verified_at=verified_at)
+            )
+
+    def set_avatar_path(self, user_id: uuid.UUID, path: str | None) -> None:
+        """Set or clear ``users.avatar_path`` for ``user_id``, if the row exists."""
         with session_scope(self._settings) as session:
             user = session.get(User, user_id)
             if user is not None:
-                user.email_verified_at = verified_at
+                user.avatar_path = path
+
+    def set_timezone(self, user_id: uuid.UUID, zone: str | None, *, explicit: bool) -> None:
+        """Set, follow, or clear ``users.timezone``, if the row exists."""
+        with session_scope(self._settings) as session:
+            user = session.get(User, user_id)
+            if user is None:
+                return
+            if explicit:
+                user.timezone = zone
+                user.timezone_is_explicit = True
+            elif zone is None:
+                user.timezone = None
+                user.timezone_is_explicit = False
+            elif not user.timezone_is_explicit:
+                user.timezone = zone
 
 
 __all__ = ["DbUserMirror", "UserMirror"]

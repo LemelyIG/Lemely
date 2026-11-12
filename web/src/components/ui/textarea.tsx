@@ -96,7 +96,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
 
   return (
     <div className={cn("flex flex-col gap-1.5", wrapperClassName)}>
-      <label htmlFor={inputId} className={cn("text-label text-ink", labelClassName)}>
+      <label htmlFor={inputId} className={cn("text-label text-on-surface", labelClassName)}>
         {label}
       </label>
       <div className="relative">
@@ -109,15 +109,16 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
           aria-describedby={cn(errorId, hintId) || undefined}
           onChange={handleChange}
           rows={props.rows ?? 4}
+          data-kit-field="textarea"
           className={cn(
-            "w-full rounded-md border bg-paper-raised px-3 py-2 text-body-md text-ink placeholder:text-ink-faint",
+            "w-full rounded-md border bg-surface-container-lowest px-3 py-2 text-field text-on-surface placeholder:text-on-surface-variant",
             "transition-colors duration-[var(--dur-instant)] ease-out-soft",
-            "border-rule hover:border-rule-strong focus-visible:border-rule-strong active:border-rule-strong",
-            "disabled:cursor-not-allowed disabled:bg-paper-sunk disabled:text-ink-faint disabled:hover:border-rule",
+            "border-outline-variant hover:border-outline focus-visible:border-outline active:border-outline",
+            "disabled:cursor-not-allowed disabled:bg-surface-container-low disabled:text-on-surface-variant disabled:hover:border-outline-variant",
             autoResize ? "resize-none overflow-hidden" : "resize-y",
             (isLoading || resolvedState === "error") && "pe-9",
-            resolvedState === "error" && "border-err hover:border-err focus-visible:border-err",
-            resolvedState === "success" && "border-ok hover:border-ok focus-visible:border-ok",
+            resolvedState === "error" && "border-error hover:border-error focus-visible:border-error",
+            resolvedState === "success" && "border-success hover:border-success focus-visible:border-success",
             className,
           )}
           {...props}
@@ -125,22 +126,22 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
         {isLoading ? (
           <CircleNotch
             aria-hidden
-            className="pointer-events-none absolute end-3 top-3 h-4 w-4 animate-spin text-ink-faint"
+            className="pointer-events-none absolute end-3 top-3 h-4 w-4 animate-spin text-on-surface-variant"
           />
         ) : resolvedState === "error" ? (
           <WarningCircle
             aria-hidden
             weight="regular"
-            className="pointer-events-none absolute end-3 top-3 h-4 w-4 text-err"
+            className="pointer-events-none absolute end-3 top-3 h-4 w-4 text-error"
           />
         ) : null}
       </div>
       {error ? (
-        <p id={errorId} className="text-body-sm text-err">
+        <p id={errorId} className="text-body-sm text-error">
           {error}
         </p>
       ) : hint ? (
-        <p id={hintId} className="text-body-sm text-ink-muted">
+        <p id={hintId} className="text-body-sm text-on-surface-variant">
           {hint}
         </p>
       ) : null}

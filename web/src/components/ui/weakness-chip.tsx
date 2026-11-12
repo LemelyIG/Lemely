@@ -20,17 +20,17 @@ import { cn } from "@/lib/utils"
  */
 
 const severityConfig = {
-  minor: { bars: 1, textTone: "text-ink-faint", barTone: "bg-ink-faint", label: "Minor" },
+  minor: { bars: 1, textTone: "text-on-surface-variant", barTone: "bg-on-surface-variant", label: "Minor" },
   moderate: {
     bars: 2,
-    textTone: "text-warn",
-    barTone: "bg-warn",
+    textTone: "text-on-tertiary-container",
+    barTone: "bg-tertiary",
     label: "Moderate",
   },
   significant: {
     bars: 3,
-    textTone: "text-err",
-    barTone: "bg-err",
+    textTone: "text-error",
+    barTone: "bg-error",
     label: "Significant",
   },
 } as const
@@ -53,7 +53,7 @@ function SeverityBars({ severity }: { severity: WeaknessSeverity }) {
           className={cn(
             "w-1 rounded-full",
             h,
-            i < cfg.bars ? cfg.barTone : "bg-rule",
+            i < cfg.bars ? cfg.barTone : "bg-outline-variant",
           )}
         />
       ))}
@@ -62,13 +62,13 @@ function SeverityBars({ severity }: { severity: WeaknessSeverity }) {
 }
 
 const weaknessChipVariants = cva(
-  "inline-flex text-left transition-colors border border-rule bg-paper-raised",
+  "inline-flex text-start transition-colors border border-outline-variant bg-surface-container-lowest",
   {
     variants: {
       variant: {
         list: "w-full items-center justify-between gap-3 rounded-md px-3.5 py-3",
         grid: "w-full flex-col items-start gap-2.5 rounded-md px-3.5 py-3.5",
-        inline: "items-center gap-1.5 rounded-full bg-paper-sunk border-transparent px-2.5 py-1",
+        inline: "items-center gap-1.5 rounded-full bg-surface-container-low border-transparent px-2.5 py-1",
       },
     },
     defaultVariants: { variant: "list" },
@@ -99,8 +99,8 @@ export function WeaknessChip({
   const interactive = Boolean(onClick)
   const commonClassName = cn(
     weaknessChipVariants({ variant }),
-    interactive && "cursor-pointer transition-colors hover:bg-paper-sunk active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
-    variant === "inline" && interactive && "hover:bg-paper-raised",
+    interactive && "cursor-pointer transition-colors hover:bg-surface-container-low active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+    variant === "inline" && interactive && "hover:bg-surface-container-lowest",
     className,
   )
 
@@ -108,28 +108,28 @@ export function WeaknessChip({
     variant === "inline" ? (
       <>
         <SeverityBars severity={severity} />
-        <span className="text-body-sm font-medium text-ink">{topic}</span>
+        <span className="text-body-sm font-medium text-on-surface">{topic}</span>
       </>
     ) : variant === "grid" ? (
       <>
         <div className="flex w-full items-center justify-between">
           <SeverityBars severity={severity} />
-          {interactive ? <CaretRight size={12} className="text-ink-faint" /> : null}
+          {interactive ? <CaretRight size={12} className="text-on-surface-variant" /> : null}
         </div>
-        <div className="text-body-md font-medium text-ink">{topic}</div>
-        {meta ? <div className="text-data-sm text-ink-faint">{meta}</div> : null}
+        <div className="text-body-md font-medium text-on-surface">{topic}</div>
+        {meta ? <div className="text-data-sm text-on-surface-variant">{meta}</div> : null}
       </>
     ) : (
       <>
         <div className="flex min-w-0 items-center gap-3">
           <SeverityBars severity={severity} />
           <div className="min-w-0">
-            <div className="truncate text-body-md font-medium text-ink">{topic}</div>
-            {meta ? <div className="mt-0.5 text-data-sm text-ink-faint">{meta}</div> : null}
+            <div className="truncate text-body-md font-medium text-on-surface">{topic}</div>
+            {meta ? <div className="mt-0.5 text-data-sm text-on-surface-variant">{meta}</div> : null}
           </div>
         </div>
         {interactive ? (
-          <CaretRight size={14} className="flex-none text-ink-faint" />
+          <CaretRight size={14} className="flex-none text-on-surface-variant" />
         ) : null}
       </>
     )

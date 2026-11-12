@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import {
   useMutation,
   useQuery,
@@ -6,7 +6,7 @@ import {
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query"
-import { fetchBlobUrl, request, streamActivity } from "@/lib/api"
+import { fetchBlobUrl, request } from "@/lib/api"
 import type {
   AcknowledgeAtRiskRequest,
   AnnouncementCreateRequest,
@@ -19,10 +19,12 @@ import type {
   ClassDetail,
   ClassInviteCode,
   ClassList,
+  ClassPapers,
   ClassSummary,
   CreateClassRequest,
   CreateQuizAssignmentRequest,
   CreateQuizRequest,
+  DeletedTeacherPapers,
   DismissReviewRequest,
   EnrollStudentRequest,
   GenerateQuizQuestionsResponse,
@@ -46,7 +48,6 @@ import type {
   SchemeRow,
   SetQuizStatusRequest,
   StudentDetail,
-  TeacherPipelineFrame,
   UpdateClassRequest,
   UpdateQuizDraftRequest,
   UploadResponse,
@@ -328,28 +329,57 @@ export function useUnacknowledgeAtRisk(
 // ── Review queue (T-07 queue list, T-08 remark) ──────────────────────────────
 
 /**
- * `GET /teacher/review?class_id=&reason=&min_age_hours=` (T-07). All three
- * are real server-side filters (`ReviewService.list_queue`) — never applied
- * client-side against an unfiltered fetch. A malformed `classId` 422s on the
- * backend; the screen renders that as a normal query error rather than
- * hiding it.
+ * `GET /teacher/review?class_id=&reason=&min_age_hours=&limit=&cursor=`
+ * (T-07/T-09). `classId`/`reason`/`minAgeHours` are real server-side filters
+ * (`ReviewService.list_queue`) — never applied client-side against an
+ * unfiltered fetch. A malformed `classId` 422s on the backend; the screen
+ * renders that as a normal query error rather than hiding it.
+ *
+ * `limit` (server default 50, 1..200) bounds the page size; `cursor`, when
+ * given, continues a previous page — both are Task 9's keyset pagination,
+ * consumed by Task 11's "Load more" (`Review.tsx`). Both are part of the
+ * query key so a page fetched under one cursor is cached separately from
+ * every other page, the same as the three filters already are.
+ *
+ * `staleTime` (C3d) defaults to react-query's own default (effectively
+ * "always stale") when omitted, matching every existing caller's behaviour
+ * unchanged; `useReviewQueueCount` passes `60_000` so the sidebar/bottom-nav
+ * badge doesn't refetch on every mount or focus for a number that is a hint,
+ * not a live counter.
  */
 export function useReviewQueue(params?: {
   classId?: string
   reason?: string
   minAgeHours?: number
+  limit?: number
+  cursor?: string
+  staleTime?: number
 }): UseQueryResult<ReviewQueueList, Error> {
   const classId = params?.classId
   const reason = params?.reason
   const minAgeHours = params?.minAgeHours
+  const limit = params?.limit
+  const cursor = params?.cursor
   const query = new URLSearchParams()
   if (classId) query.set("class_id", classId)
   if (reason) query.set("reason", reason)
   if (minAgeHours !== undefined) query.set("min_age_hours", String(minAgeHours))
+  if (limit !== undefined) query.set("limit", String(limit))
+  if (cursor) query.set("cursor", cursor)
   const qs = query.toString()
   return useQuery({
-    queryKey: ["teacher", "review", "queue", classId ?? null, reason ?? null, minAgeHours ?? null],
+    queryKey: [
+      "teacher",
+      "review",
+      "queue",
+      classId ?? null,
+      reason ?? null,
+      minAgeHours ?? null,
+      limit ?? null,
+      cursor ?? null,
+    ],
     queryFn: () => request<ReviewQueueList>(`/teacher/review${qs ? `?${qs}` : ""}`),
+    staleTime: params?.staleTime,
   })
 }
 
@@ -361,6 +391,140 @@ export function useReviewItem(itemId: string | undefined): UseQueryResult<Review
     queryFn: () => request<ReviewItemDetail>(`/teacher/review/${itemId}`),
     enabled: !!itemId,
   })
+}
+
+/** What `useReviewItemCrop` fetched, tagged with the `itemId` it was fetched
+ * for. `null` before anything has resolved, or once cleared. */
+export interface FetchedCrop {
+  itemId: string
+  url: string
+}
+
+/**
+ * Pure identity check backing `useReviewItemCrop`'s return value (C1
+ * review of task #72): a fetched URL is only ever valid for the `itemId` it
+ * was fetched for.
+ *
+ * Broken out of the hook so this one rule — the actual fix for C1, not the
+ * blob lifecycle around it — has its own fast, DOM-free unit test
+ * (`reviewItemMarkerVerdicts.test.ts`), rather than only a Playwright
+ * assertion that needs the real stack to run at all.
+ */
+export function cropUrlFor(itemId: string | undefined, fetched: FetchedCrop | null): string | null {
+  return fetched !== null && fetched.itemId === itemId ? fetched.url : null
+}
+
+/** `useReviewItemCrop`'s return value. `url` is the object URL to render, or
+ * `null` for absence (never rendered, still loading, 404'd, or the decoded
+ * image turned out to be broken). `onDecodeError` must be wired to the
+ * rendered `<img>`'s own `onError` — see the hook's doc for why a 2xx
+ * response is not the end of the failure surface. */
+export interface ReviewItemCrop {
+  url: string | null
+  onDecodeError: () => void
+}
+
+/**
+ * `GET /teacher/review/{itemId}/crop` (task #71/#72) — the boxed region of
+ * the student's scan the question's answer was read from, fetched as a blob
+ * and handed to `<img src>` as an object URL. Same reason and the same
+ * ownership pattern as `useScanPreview` below: the route sits behind
+ * `require_role`, and `<img src>` cannot send an `Authorization` header on
+ * its own.
+ *
+ * `enabled` should be `hasSourceBox`. `false` means the route is certain to
+ * answer nothing (no box, no upload, or a console paper's item), so it must
+ * not cost a request. `true` means a box AND an upload exist, so a crop may
+ * exist, but it does not guarantee one: the route can still fail (404 when
+ * the stored object has expired, 422 when the scan cannot be rendered).
+ * `fetchBlobUrl` rejects on any non-2xx response, and that rejection resolves
+ * `url` to `null` exactly like a network failure would — the caller must
+ * render that as absence, never as a broken-image icon or an error toast.
+ *
+ * A 2xx response is still not the end of the failure surface: the bytes
+ * could fail to DECODE (a truncated stream, a body that claims `image/png`
+ * and isn't) after this hook has already committed a `url`. `onDecodeError`
+ * exists for exactly that — wire it to the rendered `<img>`'s own `onError`,
+ * and this hook clears the stored URL the same way a 404 would, so a decode
+ * failure degrades to the same absence rather than sitting in a bordered
+ * card as a broken-image icon.
+ *
+ * **C1 (review of task #72).** The returned URL is tagged with the `itemId`
+ * it was fetched for (`cropUrlFor`), and the identity check — does the tag
+ * match the CURRENT `itemId` — happens at RENDER time, in `cropUrlFor`, not
+ * only in the effect. An effect runs *after* the render it would need to
+ * guard: `ReviewItem`'s route (`portals/teacher/index.tsx`) carries no `key`,
+ * so navigating from boxed item A to boxed item B and back to A (still
+ * react-query-cached, `queryClient.ts`'s default `gcTime`) keeps the same
+ * fiber, and the first render with `itemId=A` restored still holds this
+ * hook's *state* from B — B's object URL — because state survives a render;
+ * only the *effect* would clear it, and effects commit after paint. Without
+ * the render-time tag, that first render would show B's crop under A's name
+ * and avatar, for at least one paint. Resetting in the effect (still done,
+ * see below) cannot prevent this: it fixes the state for the render AFTER
+ * the one that already leaked. Tagging every stored URL with its own
+ * `itemId` and checking that tag on every render closes it without racing
+ * effect timing at all — a stale tag simply cannot match a new `itemId`,
+ * whichever render observes it first.
+ *
+ * The effect-time reset is kept anyway, harmless and no longer load-bearing:
+ * see its own comment.
+ */
+export function useReviewItemCrop(itemId: string | undefined, enabled: boolean): ReviewItemCrop {
+  const [fetched, setFetched] = useState<FetchedCrop | null>(null)
+
+  useEffect(() => {
+    // Reset before the new fetch even starts, not only in the catch below —
+    // `itemId`/`enabled` changing means a DIFFERENT student's review item is
+    // now on screen, and carrying the previous item's object URL forward
+    // even briefly would show one student's handwriting under another
+    // student's name. A disclosure problem, not just a caching nicety. The
+    // returned `url` no longer depends on this (C1: it depends on
+    // `cropUrlFor`'s `itemId` tag comparison instead), but tidying the state
+    // promptly is still worth doing on its own.
+    setFetched(null)
+    if (!enabled || !itemId) return
+
+    let cancelled = false
+    let objectUrl: string | null = null
+
+    fetchBlobUrl(`/teacher/review/${itemId}/crop`)
+      .then((fetchedUrl) => {
+        if (cancelled) {
+          // Unmounted, or `itemId`/`enabled` changed, while in flight —
+          // nothing will ever render this one, so release it instead of
+          // stranding it.
+          URL.revokeObjectURL(fetchedUrl)
+          return
+        }
+        objectUrl = fetchedUrl
+        setFetched({ itemId, url: fetchedUrl })
+      })
+      .catch(() => {
+        // 404 (no upload, no box, an expired object) or any other failure —
+        // see this hook's own doc for why every one of these renders as
+        // absence, not as an error.
+        if (!cancelled) setFetched(null)
+      })
+
+    return () => {
+      cancelled = true
+      if (objectUrl !== null) URL.revokeObjectURL(objectUrl)
+    }
+  }, [itemId, enabled])
+
+  // A decoded 2xx blob can still fail to render (see this hook's own doc).
+  // The functional updater reads the CURRENT `fetched` without needing it in
+  // a dependency array, so this stays a stable callback across renders while
+  // still revoking whichever URL was actually live at the moment it broke.
+  const onDecodeError = useCallback(() => {
+    setFetched((current) => {
+      if (current !== null) URL.revokeObjectURL(current.url)
+      return null
+    })
+  }, [])
+
+  return { url: cropUrlFor(itemId, fetched), onDecodeError }
 }
 
 /**
@@ -727,16 +891,30 @@ export function useCreateAnnouncement(): UseMutationResult<
   })
 }
 
-/** `DELETE /teacher/announcements/{announcementId}` (T-12) — 204, so
- * `request()` must not try to parse a body (fixed in P3.7 chunk b). */
+/**
+ * `DELETE /teacher/announcements/{announcementId}` (T-12) — 204, so
+ * `request()` must not try to parse a body (fixed in P3.7 chunk b).
+ *
+ * **The invalidation is returned, not fired and forgotten.** react-query keeps
+ * a mutation `isPending` until whatever `onSuccess` returns settles, so
+ * returning the refetch is what makes "deleting" mean *deleted and gone from
+ * the list* rather than *the DELETE came back*. Without the `return`, the
+ * pending state ended at the 204 while the row the teacher had just deleted was
+ * still on screen, waiting for a refetch nothing on the page indicated — the
+ * confirmation closed, the button un-greyed, and the announcement sat there
+ * looking as though the delete had silently failed.
+ *
+ * Deliberately not applied to every mutation in this file: the ones whose
+ * screens do not key any visible state off `isPending` would only be made
+ * slower by it. This one's confirmation dialog is exactly that visible state.
+ */
 export function useDeleteAnnouncement(): UseMutationResult<void, Error, string> {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (announcementId: string) =>
       request<void>(`/teacher/announcements/${announcementId}`, { method: "DELETE" }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["teacher", "announcements"] })
-    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["teacher", "announcements"] }),
   })
 }
 
@@ -796,15 +974,19 @@ export function usePaperDetail(paperId: string | undefined): UseQueryResult<Pape
  * object URL is a resource with an owner, and the only place that can revoke it
  * at exactly the right moment is the component holding it; parking one in a
  * shared cache means either leaking a blob per card or guessing at eviction. The
- * cost of owning it here is a refetch when a card remounts, which the response's
- * own `Cache-Control: private, max-age=3600` already absorbs — the scan behind a
- * paper id never changes.
+ * cost of owning it here is a request when a card remounts. The route answers
+ * with `Cache-Control: private, no-cache` and an `ETag` (#249), so the browser
+ * keeps the thumbnail but revalidates it every time: the request still goes to
+ * the server, which re-runs the authorisation check and, when the tag matches,
+ * answers `304` without rendering anything. The scan behind a paper id never
+ * changes, so after the first render a remount costs a revalidation, not a
+ * render.
  *
  * P6.3: `enabled` is how this hook is made lazy, and it has to live here rather
  * than on the `<img>`. `loading="lazy"` defers a request the *element* makes;
  * this request is made by `fetchBlobUrl` before any element exists, so the
  * attribute would have been a no-op that looked like a fix. The endpoint is a
- * live PyMuPDF render of page 1 of the stored scan, `GET /papers` is
+ * live render of page 1 of the stored scan (a sandboxed worker's), `GET /papers` is
  * unpaginated, and every card mounts one of these — so with `enabled` defaulting
  * to true the console re-rendered every scan the school has ever uploaded on
  * every visit, to fill a 64px strip most readers never scroll to. See
@@ -856,10 +1038,10 @@ export function useSchemes(): UseQueryResult<SchemeList, Error> {
  * `POST /papers/{paperId}/regrade` — queue a paper for another marking run.
  *
  * Returns as soon as the run is queued (202); the outcome arrives through
- * `usePapers`/`usePaperDetail` polling, since marking is server-side. The
- * streaming sibling (`gradePaper`) is not used for this: holding a connection
- * open for the minutes a run takes buys nothing when the grid is already
- * watching for the result.
+ * `usePapers`/`usePaperDetail` polling, since marking is server-side (the
+ * old streaming `POST /papers/{id}/extract` and `/grade` endpoints are
+ * deleted — DS14 — holding a connection open for the minutes a run takes
+ * bought nothing once the grid was already watching for the result).
  */
 export function useRegradePaper(): UseMutationResult<void, Error, string> {
   const queryClient = useQueryClient()
@@ -896,43 +1078,6 @@ export async function uploadPaper(scan: File, markScheme?: File): Promise<Upload
 }
 
 /**
- * Stream the answer-extraction step for an uploaded paper. A thin
- * pass-through over `streamActivity` typed to the frame shapes
- * `POST /papers/{id}/extract` actually emits (see `TeacherPipelineFrame` in
- * `lib/teacherTypes.ts`). No request body — unlike the student `/correct`
- * endpoint, `paperId` here is a path param, not a JSON field.
- */
-export function extractPaper(paperId: string): AsyncGenerator<TeacherPipelineFrame> {
-  return streamActivity(`/papers/${paperId}/extract`, {
-    method: "POST",
-  }) as AsyncGenerator<TeacherPipelineFrame>
-}
-
-/**
- * Stream the grading step for an uploaded paper. A thin pass-through over
- * `streamActivity` typed to the frame shapes `POST /papers/{id}/grade`
- * actually emits (see `TeacherPipelineFrame` in `lib/teacherTypes.ts`). No
- * request body — `paperId` here is a path param, not a JSON field.
- *
- * **No screen calls this today.** The grading console used to, and driving the
- * run from a browser stream is what let one backend stall leave papers at
- * "Queued" forever with a refresh wiping the only progress readout (D6.13).
- * Marking is now a server-side job, so the console polls `GET /papers/{id}` —
- * which reports the same progress, for every paper, and survives a reload.
- *
- * Kept because the endpoint is real, tested, and the right tool for a
- * per-frame live view (warnings and model-call chatter that the polled
- * pipeline summarises away) if a screen ever wants one. Use `useRegradePaper`
- * to merely *start* a run — it returns immediately instead of holding a
- * connection open for the length of the marking.
- */
-export function gradePaper(paperId: string): AsyncGenerator<TeacherPipelineFrame> {
-  return streamActivity(`/papers/${paperId}/grade`, {
-    method: "POST",
-  }) as AsyncGenerator<TeacherPipelineFrame>
-}
-
-/**
  * Upload + deterministically parse a CAIE mark-scheme PDF (`POST /schemes`,
  * no Gemini call). Builds multipart `FormData` with the exact field name
  * FastAPI's `upload_scheme` expects (`scheme_pdf`). A parse failure surfaces
@@ -948,6 +1093,132 @@ export function useUploadScheme(): UseMutationResult<SchemeRow, Error, File> {
         method: "POST",
         body: form,
       })
+    },
+  })
+}
+
+// ── Console paper deletion (spec 2026-09-22, Task 17, R2) ─────────────────
+
+export const deletedTeacherPapersKey = ["teacher", "papers", "deleted"] as const
+
+/** `GET /papers/deleted` — this teacher's own restorable console deletions, newest first. */
+export function useDeletedTeacherPapers(): UseQueryResult<DeletedTeacherPapers, Error> {
+  return useQuery({
+    queryKey: deletedTeacherPapersKey,
+    queryFn: () => request<DeletedTeacherPapers>("/papers/deleted"),
+  })
+}
+
+/**
+ * `DELETE /papers/{paperId}` → 204. Refusals (404 not-yours/not-found, 410
+ * past the restore window) arrive as errors for the caller to render —
+ * never pre-signalled, never swallowed here.
+ *
+ * Invalidates the console list and the deleted list, mirroring
+ * `useDeletePaper` (student side): `usePapers`'s own optimistic removal is
+ * not trusted for anything beyond the one row that disappeared. Also
+ * invalidates the review queue and the overview — a withdrawn console item
+ * would otherwise stay visible in `["teacher", "review"]` (a stale row 403s
+ * on click) and the overview's "Need your eyes" count would stay stale.
+ */
+export function useDeleteTeacherPaper(): UseMutationResult<void, Error, { paperId: string }> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ paperId }: { paperId: string }) =>
+      request<void>(`/papers/${encodeURIComponent(paperId)}`, { method: "DELETE" }),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["teacher", "papers"] }),
+        queryClient.invalidateQueries({ queryKey: deletedTeacherPapersKey }),
+        queryClient.invalidateQueries({ queryKey: ["teacher", "review"] }),
+        queryClient.invalidateQueries({ queryKey: ["teacher", "overview"] }),
+      ]),
+  })
+}
+
+/**
+ * `POST /papers/{paperId}/restore` → 204; 410 once past the window, 404
+ * otherwise. Invalidates the same surfaces a delete does — a restore is a
+ * delete undone.
+ */
+export function useRestoreTeacherPaper(): UseMutationResult<void, Error, { paperId: string }> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ paperId }: { paperId: string }) =>
+      request<void>(`/papers/${encodeURIComponent(paperId)}/restore`, { method: "POST" }),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["teacher", "papers"] }),
+        queryClient.invalidateQueries({ queryKey: deletedTeacherPapersKey }),
+        queryClient.invalidateQueries({ queryKey: ["teacher", "review"] }),
+        queryClient.invalidateQueries({ queryKey: ["teacher", "overview"] }),
+      ]),
+  })
+}
+
+// ── Class-scoped paper visibility (controller addition, Task 13's review) ─
+
+/** `GET /classes/{classId}/papers` — every rostered paper, with unshared state visible. */
+export function useClassPapers(classId: string | undefined): UseQueryResult<ClassPapers, Error> {
+  return useQuery({
+    queryKey: ["teacher", "class", classId, "papers"],
+    queryFn: () => request<ClassPapers>(`/classes/${classId}/papers`),
+    enabled: !!classId,
+  })
+}
+
+/**
+ * `POST /classes/{classId}/papers/{attemptId}/unshare` → 204. Hides one
+ * paper from this class's view and analytics (D9) — the student's own copy
+ * is untouched.
+ */
+export function useUnshareClassPaper(): UseMutationResult<
+  void,
+  Error,
+  { classId: string; attemptId: string }
+> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ classId, attemptId }) =>
+      request<void>(
+        `/classes/${classId}/papers/${encodeURIComponent(attemptId)}/unshare`,
+        { method: "POST" },
+      ),
+    // The `["teacher", "class", classId]` prefix already covers
+    // `["teacher", "class", classId, "papers"]` (react-query's default
+    // `exact: false`), so a third, narrower invalidation of the papers key
+    // alone would be redundant with the second. `["teacher", "review"]` is
+    // its own prefix, not a descendant of either: R3 filters the queue by
+    // this class's exclusion set, so an unshare/reshare changes which items
+    // that filter lets through, and the queue must refetch to reflect it.
+    onSuccess: (_data, { classId }) => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "class", classId] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "classes"] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "review"] })
+    },
+  })
+}
+
+/** The reshare undo of `useUnshareClassPaper` — same route, `DELETE`. Idempotent. */
+export function useReshareClassPaper(): UseMutationResult<
+  void,
+  Error,
+  { classId: string; attemptId: string }
+> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ classId, attemptId }) =>
+      request<void>(
+        `/classes/${classId}/papers/${encodeURIComponent(attemptId)}/unshare`,
+        { method: "DELETE" },
+      ),
+    // Same three invalidations as `useUnshareClassPaper`, for the same
+    // reasons — a reshare moves the class-papers/class-detail/classes-list
+    // surfaces and the review queue exactly as far as an unshare does.
+    onSuccess: (_data, { classId }) => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "class", classId] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "classes"] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "review"] })
     },
   })
 }

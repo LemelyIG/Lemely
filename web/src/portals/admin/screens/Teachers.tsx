@@ -6,8 +6,9 @@ import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
 import { Eyebrow } from "@/components/ui/primitives"
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import { Modal } from "@/components/ui/modal"
 import {
   adminLoadFailureMessage,
@@ -46,37 +47,37 @@ import type { SchoolTeacher, SchoolTeacherGroup } from "@/lib/schoolTypes"
  * inverse of the usual honesty failure and just as wrong.
  */
 export function Teachers() {
-  const { data, isPending, isError, error } = useSchoolTeachers()
+  const query = useSchoolTeachers()
 
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1.5">
         <Eyebrow>School admin</Eyebrow>
-        <h1 className="text-display-lg text-ink">Teachers</h1>
-        <p className="max-w-prose text-body-md text-ink-muted">
+        <h1 className="text-display-lg text-on-surface">Teachers</h1>
+        <p className="max-w-prose text-body-md text-on-surface-variant">
           Who teaches here, how much each of them carries, and how to add or move someone on.
         </p>
       </header>
 
-      {isPending ? (
-        <>
-          <PageHeaderSkeleton />
-          <ListSkeleton rows={4} avatar />
-        </>
-      ) : isError ? (
-        <ErrorState
-          heading="We couldn't load your staff list"
-          body={adminLoadFailureMessage(error)}
-          action={{ label: "Try again", onClick: () => window.location.reload() }}
-        />
-      ) : data.schools.length === 0 ? (
-        <EmptyState
-          heading="No school is assigned to you"
-          body="This account holds no school membership, so there is no staff list to show."
-        />
-      ) : (
-        data.schools.map((group) => <SchoolStaff key={group.schoolId} group={group} />)
-      )}
+      <QueryState
+        query={query}
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={4} avatar />
+          </>
+        }
+        error={{ heading: "We couldn't load your staff list", body: adminLoadFailureMessage }}
+        isEmpty={(data) => data.schools.length === 0}
+        empty={
+          <EmptyState
+            heading="No school is assigned to you"
+            body="This account holds no school membership, so there is no staff list to show."
+          />
+        }
+      >
+        {(data) => data.schools.map((group) => <SchoolStaff key={group.schoolId} group={group} />)}
+      </QueryState>
     </div>
   )
 }
@@ -86,7 +87,7 @@ function SchoolStaff({ group }: { group: SchoolTeacherGroup }) {
 
   return (
     <section className="flex flex-col gap-4" aria-label={group.schoolName}>
-      <h2 className="text-display-sm text-ink">{group.schoolName}</h2>
+      <h2 className="text-display-sm text-on-surface">{group.schoolName}</h2>
 
       <InviteTeacherPanel schoolId={group.schoolId} />
 
@@ -113,11 +114,11 @@ function SchoolStaff({ group }: { group: SchoolTeacherGroup }) {
               <TR key={teacher.userId}>
                 <TD>
                   <div className="flex flex-col">
-                    <span className="text-body-sm text-ink">
+                    <span className="text-body-sm text-on-surface">
                       {teacher.displayName ?? teacher.email}
                     </span>
                     {teacher.displayName ? (
-                      <span className="text-body-sm text-ink-faint">{teacher.email}</span>
+                      <span className="text-body-sm text-on-surface-variant">{teacher.email}</span>
                     ) : null}
                   </div>
                 </TD>
@@ -191,7 +192,7 @@ function InviteTeacherPanel({ schoolId }: { schoolId: string }) {
               autoComplete="off"
             />
           </div>
-          <p className="max-w-prose text-body-sm text-ink-muted">
+          <p className="max-w-prose text-body-sm text-on-surface-variant">
             Adding a teacher uses no seats. Seats are for students.
           </p>
           <div>
@@ -205,15 +206,15 @@ function InviteTeacherPanel({ schoolId }: { schoolId: string }) {
             keeps its hash and nothing else, and there is no email provider in
             v1 to send it. Shown once, said plainly. */}
         {invite.isSuccess ? (
-          <div className="flex flex-col gap-1.5 border-t border-rule pt-4">
-            <p className="text-body-sm text-ink">
+          <div className="flex flex-col gap-1.5 border-t border-outline-variant pt-4">
+            <p className="text-body-sm text-on-surface">
               {invite.data.email} can sign in now.
               {invite.data.temporaryPassword
                 ? " Copy this password and give it to them: it is shown once and cannot be read again."
                 : null}
             </p>
             {invite.data.temporaryPassword ? (
-              <code className="w-fit rounded-sm bg-paper-sunk px-1.5 py-0.5 text-data-sm text-ink">
+              <code className="w-fit rounded-sm bg-surface-container-low px-1.5 py-0.5 text-data-sm text-on-surface">
                 {invite.data.temporaryPassword}
               </code>
             ) : null}
@@ -292,14 +293,14 @@ function RemoveTeacherDialog({
         {/* Said before the decision, not after it. An administrator hesitating
             over this button is asking "what does this destroy?", and the
             answer is: nothing. */}
-        <p className="text-body-sm text-ink-muted">
+        <p className="text-body-sm text-on-surface-variant">
           Their Lemely account stays, and so does everything they have already done here. Their
           name remains on the papers they marked and the announcements they wrote. Only their
           place on this school's staff is removed.
         </p>
 
         {stuck ? (
-          <p className="text-body-sm text-ink">
+          <p className="text-body-sm text-on-surface">
             There is nobody else on this school's staff to take the classes on. Add another
             teacher first, then come back.
           </p>
@@ -326,7 +327,7 @@ function RemoveTeacherDialog({
         ) : null}
 
         {remove.isError ? (
-          <p className="text-body-sm text-err">{teacherRemovalFailureMessage(remove.error)}</p>
+          <p className="text-body-sm text-error">{teacherRemovalFailureMessage(remove.error)}</p>
         ) : null}
       </div>
     </Modal>

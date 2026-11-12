@@ -35,65 +35,59 @@ import type { PartialTheme } from "@nivo/theming"
 /* ── Token names ────────────────────────────────────────────────────────── */
 
 /**
- * The six categorical series colours, in the order §11 fixes:
- * sky, sage, amber, clay, lilac, rose.
+ * The six categorical series colours, ordered so neighbours differ by at least
+ * 60 degrees of hue (or one is the neutral): primary blue 240, grade-e
+ * orange-red 38, grade-a green 132, on-surface-variant neutral, grade-c yellow
+ * 88, grade-a-star teal 155 (wraps to blue, 85 degrees).
  *
- * **The `-ink` half of each pastel pair, not the wash.** §11 names the six by
- * hue, and each hue has two tokens: a wash at L≈0.94 meant for a tag's fill,
- * and its dark text partner at L≈0.42. The wash is a background colour — a
- * 2px line drawn in `--pastel-sky` on `--paper-raised` (L≈0.99) is a 0.05
- * lightness difference and is, for practical purposes, not on the screen. The
- * ink partners are the drawable half, and they are already contrast-pinned by
- * `tests/test_design_tokens.py` because they are what the tag text is set in.
+ * Every one is at least 3:1 against `surface-container-lowest` in both themes
+ * (min 3.04:1, `grade-a-star` in dark). Series colours must be paired with a
+ * non-colour cue (legend labels, line style): DESIGN.md "colour is never the
+ * only signal". `error` and `tertiary` are excluded because they mean lost
+ * marks and XP elsewhere.
  */
 export const SERIES_TOKENS = [
-  "--pastel-sky-ink",
-  "--pastel-sage-ink",
-  "--pastel-amber-ink",
-  "--pastel-clay-ink",
-  "--pastel-lilac-ink",
-  "--pastel-rose-ink",
+  "--md-primary",
+  "--grade-e",
+  "--grade-a",
+  "--md-on-surface-variant",
+  "--grade-c",
+  "--grade-a-star",
 ] as const
 
 /**
- * The single-series colour.
- *
- * §11: "a single-series line uses `--accent` deliberately, since there is no
- * ambiguity with one line" — and, in the same breath, accent is *not* in
- * `SERIES_TOKENS`, because everywhere else in this product terracotta means
- * "the teacher's mark". Letting it become "series 1" in a six-line chart would
- * spend a meaning the rest of the interface is still using.
+ * The single-series colour: the brand primary. There is no ambiguity with one
+ * line, and it is the first entry of `SERIES_TOKENS` on purpose.
  */
-export const SINGLE_SERIES_TOKEN = "--accent"
+export const SINGLE_SERIES_TOKEN = "--md-primary"
 
 /** Every token this theme reads, for the gate to check against `index.css`. */
 export const CHART_TOKENS = [
   ...SERIES_TOKENS,
-  SINGLE_SERIES_TOKEN,
-  "--accent-wash",
-  "--paper-raised",
-  "--paper-sunk",
-  "--ink",
-  "--ink-muted",
-  "--ink-faint",
-  "--rule",
-  "--rule-faint",
+  "--md-primary-container",
+  "--md-surface-container-lowest",
+  "--md-surface-container",
+  "--md-surface-container-high",
+  "--md-on-surface",
+  "--md-outline",
+  "--md-outline-variant",
   "--font-mono",
   "--font-sans",
-  "--fs-data-sm",
   "--radius-sm",
   /*
-   * The grade bands, for the one chart whose colour is not a series palette
-   * at all. A grade-distribution bar is coloured by what the grade *means*
-   * (`--grade-top` through `--grade-fail`, the same four the `GradeBadge`
-   * beside it uses), and re-colouring it from `SERIES_TOKENS` would break the
-   * one colour relationship in this product a teacher actually learns. They
-   * are listed here so the gate checks them like every other chart token.
+   * The Jewel grade scale, for the one chart whose colour is not a series
+   * palette at all. A grade-distribution bar is coloured by the grade it
+   * shows (the same nine tokens `gradeChipClass` uses), and re-colouring it
+   * from `SERIES_TOKENS` would break the one colour relationship in this
+   * product a teacher actually learns. They are listed here so the gate checks
+   * them like every other chart token. The four already in `SERIES_TOKENS`
+   * are not repeated.
    */
-  "--grade-top",
-  "--grade-mid",
-  "--grade-borderline",
-  "--grade-fail",
+  "--grade-b",
+  "--grade-d",
+  "--grade-f",
+  "--grade-g",
+  "--grade-u",
 ] as const
 
 export type ChartToken = (typeof CHART_TOKENS)[number]
@@ -141,7 +135,7 @@ export function buildNivoTheme(t: ResolvedTokens): PartialTheme {
   const text = {
     fontFamily: t["--font-mono"],
     fontSize: 11,
-    fill: t["--ink-muted"],
+    fill: t["--md-on-surface-variant"],
   }
   return {
     background: "transparent",
@@ -153,13 +147,13 @@ export function buildNivoTheme(t: ResolvedTokens): PartialTheme {
     axis: {
       domain: {
         line: {
-          stroke: t["--rule"],
+          stroke: t["--md-outline-variant"],
           strokeWidth: 1,
         },
       },
       ticks: {
         line: {
-          stroke: t["--rule"],
+          stroke: t["--md-outline-variant"],
           strokeWidth: 1,
         },
         text: {
@@ -184,29 +178,29 @@ export function buildNivoTheme(t: ResolvedTokens): PartialTheme {
         text: {
           fontFamily: t["--font-sans"],
           fontSize: 11,
-          fill: t["--ink-faint"],
+          fill: t["--md-outline"],
         },
       },
     },
     grid: {
       line: {
-        stroke: t["--rule-faint"],
+        stroke: t["--md-surface-container-high"],
         strokeWidth: 1,
       },
     },
     legends: {
       text: {
         ...text,
-        fill: t["--ink-muted"],
+        fill: t["--md-on-surface-variant"],
       },
     },
     tooltip: {
       container: {
-        background: t["--paper-raised"],
-        color: t["--ink"],
+        background: t["--md-surface-container-lowest"],
+        color: t["--md-on-surface"],
         fontFamily: t["--font-mono"],
         fontSize: 11,
-        border: `1px solid ${t["--rule"]}`,
+        border: `1px solid ${t["--md-outline-variant"]}`,
         borderRadius: t["--radius-sm"],
         // The one shadow §3.2 item 5 allows on a floating layer: ultra-diffuse,
         // ≤0.05 opacity. Not a resting-card shadow.
@@ -216,7 +210,7 @@ export function buildNivoTheme(t: ResolvedTokens): PartialTheme {
     },
     crosshair: {
       line: {
-        stroke: t["--ink-faint"],
+        stroke: t["--md-outline"],
         strokeWidth: 1,
         strokeOpacity: 0.5,
         strokeDasharray: "3 3",
@@ -251,6 +245,30 @@ export function useNivoTheme(): {
 
   useEffect(() => {
     setTokens(resolveChartTokens())
+
+    // C5c: a chart mounted before the reader ever touches Appearance still has
+    // to repaint if they do — `useTheme()` flips `document.documentElement`'s
+    // `data-theme` attribute with no reload (Task 13), and this file's whole
+    // reason for existing (the block comment above) is that a chart's colours
+    // are read from the document, not passed as `var()` strings that would
+    // update on their own. Resolved once at mount and never again, a chart
+    // left open across a theme toggle would keep drawing the OLD theme's
+    // colours — silently, since nothing here would throw or warn.
+    //
+    // `data-theme` is the one attribute this needs to watch (index.css's own
+    // rule, DESIGN.md §5's intro: "the attribute is the single switch" — no
+    // `prefers-color-scheme` query to also listen for). A `MutationObserver`
+    // is the only primitive that reports an attribute change on an element
+    // already in the document; unlike `useTheme()` itself, this hook has no
+    // access to the preference that drives the attribute, only the attribute.
+    if (typeof document === "undefined" || typeof MutationObserver === "undefined") {
+      return
+    }
+    const observer = new MutationObserver(() => {
+      setTokens(resolveChartTokens())
+    })
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] })
+    return () => observer.disconnect()
   }, [])
 
   return useMemo(() => {
@@ -262,7 +280,7 @@ export function useNivoTheme(): {
     const ready =
       singleSeriesColor !== "" &&
       seriesColors.every((c) => c !== "") &&
-      (tokens["--ink-muted"] ?? "") !== ""
+      (tokens["--md-on-surface-variant"] ?? "") !== ""
     return {
       theme: buildNivoTheme(tokens),
       tokens,

@@ -2,12 +2,12 @@
 import { Link } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Eyebrow, Meter } from "@/components/ui/primitives"
-import { ErrorState } from "@/components/ui/state-views"
+import { Eyebrow } from "@/components/ui/primitives"
 import { CardGridSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import { adminLoadFailureMessage } from "@/lib/adminOutcome"
 import { useAdminOverview } from "@/lib/hooks/useAdminApi"
-import type { PlatformCounts, Signup, Spend, SystemHealth } from "@/lib/adminTypes"
+import type { PlatformCounts, Signup, SystemHealth } from "@/lib/adminTypes"
 import { formatAdminDate } from "../data"
 
 /**
@@ -21,117 +21,49 @@ import { formatAdminDate } from "../data"
  *
  * **A blank console must never read as a calm one.** This is the screen whose
  * whole job is noticing trouble, and every one of its reassuring states —
- * nothing in the review queue, no failed uploads, spend well under the ceiling
- * — looks exactly like a failed fetch rendered as zeroes. So `useAdminApi.ts`
- * passes no `fallback` anywhere, and this screen renders an error state rather
- * than an empty grid when the read fails. There is no partial render: a console
- * showing four real numbers and three invented zeroes is worse than one that
- * admits it is blind.
+ * nothing in the review queue, no failed uploads — looks exactly like a failed
+ * fetch rendered as zeroes. So `useAdminApi.ts` passes no `fallback` anywhere,
+ * and this screen renders an error state rather than an empty grid when the
+ * read fails. There is no partial render: a console showing four real numbers
+ * and three invented zeroes is worse than one that admits it is blind.
  *
- * ── Spend ──────────────────────────────────────────────────────────────────
- *
- * The one panel that changes colour, and it changes into the **warn** register
- * rather than the accent. The accent is this product's link and brand colour
- * and appears on this very screen, so an alarm painted in it is an alarm that
- * looks like a hyperlink. The badge and the meter now agree.
- *
- * The thresholds are printed beside the bar: a spend figure with no alarm points
- * cannot be read as safe or unsafe, and this reader is the one who would have to
- * act on it.
+ * Carries no spend panel (DS3): the web process keeps no cost ledger, and the
+ * guard on Gemini spend is a Google Cloud billing budget on the deployed
+ * service, not this console.
  */
 export function PlatformConsole() {
-  const { data, isPending, isError, error } = useAdminOverview()
+  const query = useAdminOverview()
 
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1.5">
         <Eyebrow>Platform admin</Eyebrow>
-        <h1 className="text-display-lg text-ink">Console</h1>
-        <p className="max-w-prose text-body-md text-ink-muted">
+        <h1 className="text-display-lg text-on-surface">Console</h1>
+        <p className="max-w-prose text-body-md text-on-surface-variant">
           What the platform is carrying right now, counted from the database on every load.
         </p>
       </header>
 
-      {isPending ? (
-        <>
-          <PageHeaderSkeleton />
-          <CardGridSkeleton count={6} />
-        </>
-      ) : isError ? (
-        <ErrorState
-          heading="We couldn't read the platform's figures"
-          body={adminLoadFailureMessage(error)}
-          action={{ label: "Try again", onClick: () => window.location.reload() }}
-        />
-      ) : (
-        <>
-          <SpendPanel spend={data.spend} />
-          <WorkPanel counts={data.counts} />
-          <PeoplePanel counts={data.counts} />
-          <HealthPanel health={data.health} />
-          <SignupsPanel signups={data.recentSignups} />
-        </>
-      )}
-    </div>
-  )
-}
-
-function SpendPanel({ spend }: { spend: Spend }) {
-  const thresholds = [...spend.thresholdsUsd].sort((a, b) => a - b)
-  const firstWarning = thresholds[0] ?? null
-  const warning = firstWarning !== null && spend.cumulativeUsd >= firstWarning
-  const pct =
-    spend.ceilingUsd && spend.ceilingUsd > 0
-      ? Math.min(100, (spend.cumulativeUsd / spend.ceilingUsd) * 100)
-      : 0
-
-  return (
-    <Card>
-      <CardBody className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <Eyebrow>Gemini spend</Eyebrow>
-          {warning ? (
-            // A tone-coloured chip needs a label, every time. "Past a warning
-            // threshold" is what the colour means; the colour alone would be a
-            // riddle (a standing finding from surfaces 4 through 6).
-            <Badge tone="warn">Past a warning threshold</Badge>
-          ) : null}
-        </div>
-
-        <div className="flex items-baseline gap-2">
-          <span className="text-data-lg tabular-nums text-ink">
-            ${spend.cumulativeUsd.toFixed(2)}
-          </span>
-          {spend.ceilingUsd === null ? (
-            <span className="text-body-sm text-ink-muted">spent. No ceiling is configured.</span>
-          ) : (
-            <span className="text-body-sm text-ink-muted">
-              against a hard ceiling of ${spend.ceilingUsd.toFixed(2)}
-            </span>
-          )}
-        </div>
-
-        {spend.ceilingUsd === null ? null : (
-          <Meter
-            value={pct}
-            label={`Gemini spend: $${spend.cumulativeUsd.toFixed(2)} of $${spend.ceilingUsd.toFixed(2)}`}
-            // `warn`, not `accent`: the badge above already carries this
-            // condition in the warn register, and the accent is what every
-            // link on the page uses. One alarm, one colour.
-            fillClassName={warning ? "bg-warn" : "bg-ink-faint"}
-          />
+      <QueryState
+        query={query}
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <CardGridSkeleton count={6} />
+          </>
+        }
+        error={{ heading: "We couldn't read the platform's figures", body: adminLoadFailureMessage }}
+      >
+        {(data) => (
+          <>
+            <WorkPanel counts={data.counts} />
+            <PeoplePanel counts={data.counts} />
+            <HealthPanel health={data.health} />
+            <SignupsPanel signups={data.recentSignups} />
+          </>
         )}
-
-        <p className="max-w-prose text-body-sm text-ink-muted">
-          {spend.remainingUsd === null
-            ? "Spend is recorded but nothing stops it, because no ceiling is set."
-            : `$${spend.remainingUsd.toFixed(2)} left before calls start being refused.`}{" "}
-          {thresholds.length > 0
-            ? `Warnings are sent at ${thresholds.map((t) => `$${t.toFixed(2)}`).join(" and ")}.`
-            : "No warning thresholds are configured."}
-        </p>
-      </CardBody>
-    </Card>
+      </QueryState>
+    </div>
   )
 }
 
@@ -158,7 +90,7 @@ function WorkPanel({ counts }: { counts: PlatformCounts }) {
 
   return (
     <section className="flex flex-col gap-3" aria-label="Marking and queues">
-      <h2 className="text-display-sm text-ink">Marking and queues</h2>
+      <h2 className="text-display-sm text-on-surface">Marking and queues</h2>
       <div className="grid items-stretch gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Figure
           eyebrow="Marked, last 24h"
@@ -203,7 +135,7 @@ function WorkPanel({ counts }: { counts: PlatformCounts }) {
 function PeoplePanel({ counts }: { counts: PlatformCounts }) {
   return (
     <section className="flex flex-col gap-3" aria-label="Accounts">
-      <h2 className="text-display-sm text-ink">Accounts</h2>
+      <h2 className="text-display-sm text-on-surface">Accounts</h2>
       <div className="grid items-stretch gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Figure eyebrow="Students" value={counts.students} note="With an account, on any plan." />
         <Figure eyebrow="Parents" value={counts.parents} note="Linked to at least one account." />
@@ -240,23 +172,23 @@ function HealthPanel({ health }: { health: SystemHealth }) {
         <Eyebrow>System</Eyebrow>
         <dl className="grid gap-3 sm:grid-cols-3">
           <div className="flex flex-col gap-1">
-            <dt className="text-body-sm text-ink-muted">Database</dt>
-            <dd className="text-body-sm text-ink">
+            <dt className="text-body-sm text-on-surface-variant">Database</dt>
+            <dd className="text-body-sm text-on-surface">
               {health.databaseReachable ? "Answered this request" : "Did not answer"}
             </dd>
           </div>
           <div className="flex flex-col gap-1">
-            <dt className="text-body-sm text-ink-muted">Gemini key</dt>
-            <dd className="text-body-sm text-ink">
+            <dt className="text-body-sm text-on-surface-variant">Marking API key</dt>
+            <dd className="text-body-sm text-on-surface">
               {health.geminiKeyConfigured ? "Configured" : "Missing, so marking cannot run"}
             </dd>
           </div>
           <div className="flex flex-col gap-1">
-            <dt className="text-body-sm text-ink-muted">Version</dt>
-            <dd className="text-body-sm tabular-nums text-ink">{health.version}</dd>
+            <dt className="text-body-sm text-on-surface-variant">Version</dt>
+            <dd className="text-body-sm tabular-nums text-on-surface">{health.version}</dd>
           </div>
         </dl>
-        <p className="max-w-prose text-body-sm text-ink-faint">
+        <p className="max-w-prose text-body-sm text-on-surface-variant">
           These are the only checks this page can make from inside a request. There is no uptime
           or worker heartbeat here because nothing records one.
         </p>
@@ -271,21 +203,21 @@ function SignupsPanel({ signups }: { signups: Signup[] }) {
       <CardBody className="flex flex-col gap-3">
         <Eyebrow>Recent signups</Eyebrow>
         {signups.length === 0 ? (
-          <p className="text-body-sm text-ink-muted">Nobody has signed up yet.</p>
+          <p className="text-body-sm text-on-surface-variant">Nobody has signed up yet.</p>
         ) : (
-          <ul className="flex flex-col divide-y divide-rule">
+          <ul className="flex flex-col divide-y divide-outline-variant">
             {signups.map((signup) => (
               <li
                 key={signup.userId}
                 className="flex flex-wrap items-baseline justify-between gap-2 py-2 first:pt-0 last:pb-0"
               >
-                <span className="text-body-sm text-ink">
+                <span className="text-body-sm text-on-surface">
                   {signup.displayName ?? signup.email}{" "}
-                  <span className="text-ink-faint">{signup.role.replace(/_/g, " ")}</span>
+                  <span className="text-on-surface-variant">{signup.role.replace(/_/g, " ")}</span>
                 </span>
                 <time
                   dateTime={signup.createdAt}
-                  className="text-body-sm tabular-nums text-ink-muted"
+                  className="text-body-sm tabular-nums text-on-surface-variant"
                 >
                   {formatAdminDate(signup.createdAt)}
                 </time>
@@ -325,10 +257,10 @@ function Figure({
           <Eyebrow>{eyebrow}</Eyebrow>
           {badge ? <Badge tone="warn">{badge}</Badge> : null}
         </div>
-        <span className="text-data-lg tabular-nums text-ink">{value}</span>
-        <p className="text-body-sm text-ink-muted">{note}</p>
+        <span className="text-data-lg tabular-nums text-on-surface">{value}</span>
+        <p className="text-body-sm text-on-surface-variant">{note}</p>
         {to && linkLabel ? (
-          <Link to={to} className="mt-auto pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-accent-ink hover:underline">
+          <Link to={to} className="mt-auto pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-on-primary-container hover:underline">
             {linkLabel}
           </Link>
         ) : null}

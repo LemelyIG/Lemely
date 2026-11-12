@@ -7,10 +7,39 @@ import { VitePWA } from "vite-plugin-pwa"
 // requires one. `allowImportingTsExtensions` is already set there.
 import { fontPreload } from "./vite/fontPreload.ts"
 import { themeColor } from "./vite/themeColor.ts"
-import { tokenHex } from "./vite/brandTokens.ts"
+import { splashLinks } from "./vite/splashLinks.ts"
+import { preMountShell } from "./vite/preMountShell.ts"
+import { buildManifest } from "./vite/manifest.ts"
 
 // https://vite.dev/config/
-export default defineConfig({
+// Function form (packet A5 review fix), not a plain object: `mode` — plain
+// `vite build` defaults to `"production"`; `.github/workflows/deploy.yml`'s
+// staging job passes `--mode staging` — decides whether the manifest's
+// `scope_extensions` is present at all. See `vite/manifest.ts`'s own
+// docstring for why that one member must never ship in a production build.
+export default defineConfig(({ mode }) => ({
+  // PR 1B (client error reporting): stamps every build with a short id so a
+  // `POST /api/client-errors` report can be traced back to the code that
+  // produced it. `GITHUB_SHA` is set by every GitHub Actions run (`deploy.yml`
+  // builds with `npm run build`); sliced to 12 chars, the same short-SHA length
+  // `git rev-parse --short` and GitHub's own commit UI use. Locally, where no
+  // CI env var exists, this is always `"dev"` — good enough to see in a report
+  // that it came from a developer machine rather than a real deploy, and
+  // exactly the fallback `src/lib/clientErrors.ts` also uses when the define
+  // below hasn't run at all (vitest's separate config never sees it).
+  define: {
+    __LEMELY_BUILD_ID__: JSON.stringify((process.env.GITHUB_SHA ?? "dev").slice(0, 12)),
+  },
+  build: {
+    // CSP HIGH: `font-src 'self'` (public/_headers, web/worker/index.ts) has
+    // no `data:` grant. Vite's default `assetsInlineLimit` (4096 bytes)
+    // base64-inlines any font under that size straight into the built CSS as
+    // a `data:font/woff2;...` URL, which the CSP then blocks at runtime —
+    // the file loads at build time and fails silently at request time. `0`
+    // keeps every font (and every other asset) as its own `/assets/*` file,
+    // served same-origin, which `'self'` already permits.
+    assetsInlineLimit: 0,
+  },
   plugins: [
     react(),
     tailwindcss(),
@@ -20,19 +49,43 @@ export default defineConfig({
     // P6.5: `<meta name="theme-color">` from the --paper token. See
     // web/vite/themeColor.ts.
     themeColor(),
+    // Packet B1: the 32 `apple-touch-startup-image` links from
+    // web/vite/splashScreens.ts's SPLASHES matrix. See web/vite/splashLinks.ts.
+    splashLinks(),
+    // PR 2 part B: the static pre-mount shell's colour/duration placeholders
+    // in index.html, resolved from the same tokens RouteFallback uses. See
+    // web/vite/preMountShell.ts.
+    preMountShell(),
     VitePWA({
-      registerType: "autoUpdate",
-      // P6.3. The default (`injectRegister: "auto"`) emits a bare
-      // `<script src="/registerSW.js">` as the last thing in `<head>` — no
-      // `defer`, no `async`, not a module — so it is parser-blocking, and the
-      // parser has not reached `<body>` yet when it stops. Lighthouse measured
-      // it at **301ms of render blocking on every one of the 41 audited
-      // routes**, for 403 bytes whose entire job is to register a service
-      // worker that has nothing to do until after first paint. Deferring it
-      // changes nothing about when the worker becomes useful and takes the
-      // whole product off the second entry in its own render-blocking list
-      // (the first is the stylesheet, which has to block).
-      injectRegister: "script-defer",
+      // Packet A7 (`silent-update-swap`): "autoUpdate" is vite-plugin-pwa's
+      // own registerSW.ts short-circuiting straight to a silent
+      // `location.reload()` the moment a new worker activates — its
+      // `onNeedRefresh` callback is never even called in that mode, so
+      // `useServiceWorkerUpdate`'s `needRefresh` could never become true no
+      // matter what the app built around it. "prompt" is what makes
+      // vite-plugin-pwa call `onNeedRefresh` (and hold the new worker in
+      // `waiting`) instead, which is the gate `<UpdateToast>` needs to exist
+      // at all.
+      registerType: "prompt",
+      // Packet A7: was `"script-defer"` (P6.3, kept below). Now `false` —
+      // `useServiceWorkerUpdate` registers via `virtual:pwa-register/react`'s
+      // `useRegisterSW`, mounted in `main.tsx`; injecting a second,
+      // independent registration script alongside it would double-register
+      // the worker (two separate Workbox instances, each with its own
+      // `updateServiceWorker`), and only the React-driven one is wired to
+      // `needRefresh`/`<UpdateToast>`. The parser-blocking concern below is
+      // moot with no injected script at all: registration now happens from
+      // React, after hydration, the same general timing `script-defer` gave.
+      //
+      // P6.3, preserved for the history: the default (`injectRegister:
+      // "auto"`) emits a bare `<script src="/registerSW.js">` as the last
+      // thing in `<head>` — no `defer`, no `async`, not a module — so it is
+      // parser-blocking, and the parser has not reached `<body>` yet when it
+      // stops. Lighthouse measured it at **301ms of render blocking on every
+      // one of the 41 audited routes**, for 403 bytes whose entire job is to
+      // register a service worker that has nothing to do until after first
+      // paint.
+      injectRegister: false,
       // `injectManifest`, not the default `generateSW` (D5.15 §1). A generated
       // worker has no `push` listener at all, so D5.10's payload-less push had
       // nowhere to land — the backend could send a notification and nothing on
@@ -50,48 +103,12 @@ export default defineConfig({
       // offline. Never cache /api/* — student/teacher marks, grades, and
       // review-queue data are live and must not be served stale, and the
       // SSE/POST endpoints under it aren't meaningfully cacheable anyway.
-      manifest: {
-        name: "Lemely",
-        short_name: "Lemely",
-        description:
-          "Lemely marks a student's photographed or uploaded past-paper attempt against the official marking scheme with method-mark awareness, returning per-question marks, grade, and weakness topics.",
-        start_url: "/",
-        display: "standalone",
-        // P6.5. These were `#1e1310` / `#faf4f2` under a comment claiming they
-        // were computed from index.css via culori. Every clause of that comment
-        // was false by the time it was read: `--ink` is `oklch(0.321 0.009
-        // 234)` not `oklch(0.2 0.02 35)`, there is no `--bg` token, culori is
-        // not a dependency of this project, and both hexes were build-era
-        // Material-3 values that no token has produced since Phase 2 rewrote
-        // the palette. Nothing failed, because an OS reads these and no test
-        // does. Now computed at build time from the token file itself; see
-        // web/vite/brandTokens.ts.
-        //
-        // Both are `--paper`. `theme_color` tints the app's own title bar and
-        // `background_color` paints the splash screen shown before the first
-        // frame renders, so making them the page colour means the launch reads
-        // as the app appearing rather than as a flash of some other colour.
-        theme_color: tokenHex("paper"),
-        background_color: tokenHex("paper"),
-        icons: [
-          {
-            src: "pwa-192x192.png",
-            sizes: "192x192",
-            type: "image/png",
-          },
-          {
-            src: "pwa-512x512.png",
-            sizes: "512x512",
-            type: "image/png",
-          },
-          {
-            src: "maskable-icon-512x512.png",
-            sizes: "512x512",
-            type: "image/png",
-            purpose: "maskable",
-          },
-        ],
-      },
+      //
+      // Factored out to `web/vite/manifest.ts` (packet A5) so
+      // `tests/unit/manifest.test.ts` can import and assert on the built
+      // manifest directly, without pulling in this whole config file — see
+      // that module's own docstring for the full member-by-member rationale.
+      manifest: buildManifest(mode),
       // Only the manifest is configured here now. `navigateFallback` and its
       // `/^\/api/` denylist are no longer plugin options under injectManifest —
       // they are the `NavigationRoute` in `src/sw.ts`, and the denylist is
@@ -113,7 +130,24 @@ export default defineConfig({
         // needs it, e.g. a student whose name is not in latin. Offline, such a
         // name renders in the fallback face. Precache is the app *shell*, and a
         // subset reachable only through particular user data is not shell.
-        globIgnores: ["**/*-{cyrillic,cyrillic-ext,greek,greek-ext,vietnamese}-*.woff2"],
+        //
+        // `screenshots/**` and `widgets/**` (packet A5): the manifest
+        // install-screenshot JPEGs and the widget Adaptive Card
+        // JSON/data — both read only by an OS's own install/widget surface,
+        // never by the running app, the same "not shell" reasoning as the
+        // font subsets above. `store-icon-1024.png`: the 1024px store
+        // listing icon, likewise never fetched by the app itself.
+        globIgnores: [
+          "**/*-{cyrillic,cyrillic-ext,greek,greek-ext,vietnamese}-*.woff2",
+          "screenshots/**",
+          "widgets/**",
+          "store-icon-1024.png",
+          // Packet B1: 32 iOS splash PNGs (`vite/splashScreens.ts`), read
+          // only by iOS's own boot-time `apple-touch-startup-image` match,
+          // never by the running app — the same "not shell" reasoning as
+          // the screenshot/widget/store-icon entries above.
+          "splash/**",
+        ],
       },
     }),
   ],
@@ -144,5 +178,15 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+    // B7 (Task 12): `scripts/check_installability.mjs` maps `lemelyig.com`
+    // to this preview server via Chromium's `--host-resolver-rules` so
+    // Chromium's installability checks run against the real production
+    // origin family (`vite/manifest.ts`'s `scope_extensions`), not
+    // `127.0.0.1`. Without this, Vite's own Host-header allowlist (added
+    // against DNS-rebinding attacks) answers that request with a bare 403
+    // before the app ever loads — confirmed by hand: `curl -H "Host:
+    // lemelyig.com:4173" http://127.0.0.1:4173/` returns 403 without this
+    // entry, 200 with it.
+    allowedHosts: ["lemelyig.com"],
   },
-})
+}))

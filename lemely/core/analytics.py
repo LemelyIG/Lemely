@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Literal, TypedDict
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -138,8 +138,22 @@ def grade_for_percentage(percentage: float, boundaries: dict[str, float]) -> str
 def predict_grade(
     correction: CorrectionResult,
     boundaries: dict[str, float] | None = None,
-    boundary_source: str = "global_default",
+    boundary_source: Literal["exact", "subject_default", "global_default"] = "global_default",
 ) -> GradePrediction:
+    """Grade a correction against ``boundaries``, tagging the boundary's origin.
+
+    ``boundary_source`` was previously typed ``str`` even though it flows
+    straight into :attr:`GradePrediction.boundary_source`'s
+    ``Literal["exact", "subject_default", "global_default"]`` -- widening it
+    lost nothing at any real call site (every caller passes either this
+    default or the ``BoundarySource`` literal
+    :meth:`~lemely.io.grade_boundaries.GradeBoundaryStore.resolve` already
+    returns) but meant a typo or a future caller's plain string would only be
+    caught by pydantic at construction time, not by mypy at the call site --
+    the pydantic mypy plugin checks a ``BaseModel(...)`` call's keyword
+    arity, not each field's declared type. Narrowing the parameter itself
+    closes that gap without a ``cast``/``# type: ignore`` anywhere.
+    """
     active_boundaries = boundaries or DEFAULT_GRADE_BOUNDARIES
     percentage = (
         (correction.awarded_marks / correction.maximum_marks) * 100.0

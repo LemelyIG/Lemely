@@ -4,8 +4,9 @@ import { Card, CardBody } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Eyebrow } from "@/components/ui/primitives"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import { Modal } from "@/components/ui/modal"
 import { activationDecisionFailureMessage, adminLoadFailureMessage } from "@/lib/adminOutcome"
 import { useActivationQueue, useDecideActivation } from "@/lib/hooks/useAdminApi"
@@ -36,7 +37,7 @@ import { formatAdminDate } from "../data"
  * asks for a reload, rather than inviting a retry that cannot succeed.
  */
 export function Activations() {
-  const { data, isPending, isError, error } = useActivationQueue()
+  const query = useActivationQueue()
   const [deciding, setDeciding] = useState<{ row: PendingActivation; activate: boolean } | null>(
     null,
   )
@@ -45,41 +46,43 @@ export function Activations() {
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1.5">
         <Eyebrow>Platform admin</Eyebrow>
-        <h1 className="text-display-lg text-ink">Activations</h1>
-        <p className="max-w-prose text-body-md text-ink-muted">
+        <h1 className="text-display-lg text-on-surface">Activations</h1>
+        <p className="max-w-prose text-body-md text-on-surface-variant">
           Subscriptions waiting on a person. Payments are handled outside Lemely, so each of these
           is switched on or turned down by hand.
         </p>
       </header>
 
-      {isPending ? (
-        <>
-          <PageHeaderSkeleton />
-          <ListSkeleton rows={3} />
-        </>
-      ) : isError ? (
-        <ErrorState
-          heading="We couldn't load the queue"
-          body={adminLoadFailureMessage(error)}
-          action={{ label: "Try again", onClick: () => window.location.reload() }}
-        />
-      ) : data.pending.length === 0 ? (
-        <EmptyState
-          marginalia="nothing waiting"
-          heading="The queue is empty"
-          body="Every subscription that has been requested has been decided. New requests appear here as they arrive, oldest first."
-        />
-      ) : (
-        <div className="flex flex-col gap-3">
-          {data.pending.map((row) => (
-            <QueueRow
-              key={row.subscriptionId}
-              row={row}
-              onDecide={(activate) => setDeciding({ row, activate })}
-            />
-          ))}
-        </div>
-      )}
+      <QueryState
+        query={query}
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={3} />
+          </>
+        }
+        error={{ heading: "We couldn't load the queue", body: adminLoadFailureMessage }}
+        isEmpty={(data) => data.pending.length === 0}
+        empty={
+          <EmptyState
+            marginalia="nothing waiting"
+            heading="The queue is empty"
+            body="Every subscription that has been requested has been decided. New requests appear here as they arrive, oldest first."
+          />
+        }
+      >
+        {(data) => (
+          <div className="flex flex-col gap-3">
+            {data.pending.map((row) => (
+              <QueueRow
+                key={row.subscriptionId}
+                row={row}
+                onDecide={(activate) => setDeciding({ row, activate })}
+              />
+            ))}
+          </div>
+        )}
+      </QueryState>
 
       {deciding ? (
         <DecisionDialog
@@ -116,12 +119,12 @@ function QueueRow({
     <Card>
       <CardBody className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 flex-col gap-1">
-          <span className="text-body-md text-ink">{row.displayName ?? row.email}</span>
-          <span className="text-body-sm text-ink-muted">
+          <span className="text-body-md text-on-surface">{row.displayName ?? row.email}</span>
+          <span className="text-body-sm text-on-surface-variant">
             {row.displayName ? `${row.email}, ` : ""}
             {row.role.replace(/_/g, " ")}
           </span>
-          <span className="text-body-sm text-ink-muted">
+          <span className="text-body-sm text-on-surface-variant">
             {row.planName} at <span className="tabular-nums">{price}</span>, asked for on{" "}
             <time dateTime={row.requestedAt} className="tabular-nums">
               {formatAdminDate(row.requestedAt)}
@@ -189,7 +192,7 @@ function DecisionDialog({
       }
     >
       <div className="flex flex-col gap-4">
-        <p className="text-body-sm text-ink-muted">
+        <p className="text-body-sm text-on-surface-variant">
           {activate
             ? "They get the plan straight away, and the decision is recorded against their subscription with your note."
             : "They keep their account and their work. Only this request is turned down, and they can ask again."}
@@ -208,13 +211,13 @@ function DecisionDialog({
         />
 
         {!written ? (
-          <p className="text-body-sm text-ink-faint">
+          <p className="text-body-sm text-on-surface-variant">
             A note is needed before this can be recorded.
           </p>
         ) : null}
 
         {decide.isError ? (
-          <p className="text-body-sm text-err">{activationDecisionFailureMessage(decide.error)}</p>
+          <p className="text-body-sm text-error">{activationDecisionFailureMessage(decide.error)}</p>
         ) : null}
       </div>
     </Modal>

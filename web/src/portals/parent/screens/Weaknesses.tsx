@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useParams } from "react-router-dom"
 import { useChildWeaknesses } from "@/lib/hooks/useParentApi"
-import { ErrorState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { parentLoadFailureMessage } from "@/lib/parentOutcome"
 import { accuracyTone, TONE_CLASS } from "@/lib/severity"
@@ -48,21 +48,21 @@ function TopicRow({ topic, rank }: { topic: WeakTopic; rank: number }) {
      * beneath it wrapping to three: a four-row list became a wall. The chip is
      * the least urgent thing in the row and it is the thing that moves.
      */
-    <li className="flex flex-col items-start gap-3 rounded-lg border border-rule bg-paper-raised p-5 sm:flex-row sm:items-start sm:gap-4">
+    <li className="flex flex-col items-start gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest p-5 sm:flex-row sm:items-start sm:gap-4">
       <div className="flex w-full min-w-0 flex-1 items-start gap-4">
         {/* The `<ol>` already carries the order for a screen reader, so the
             printed rank is a scanning aid and nothing else. */}
         <span
           aria-hidden="true"
-          className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-paper-sunk text-data-sm text-ink-muted"
+          className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-surface-container-low text-data-sm text-on-surface-variant"
         >
           {rank}
         </span>
         <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <div className="text-body-lg font-medium text-ink">{topic.topic}</div>
+          <div className="text-body-lg font-medium text-on-surface">{topic.topic}</div>
           {/* Leads with what is there to gain, not with what was lost. Both
               numbers are the real ones; only the order of mention is a choice. */}
-          <div className="text-body-sm text-ink-muted">
+          <div className="text-body-sm text-on-surface-variant">
             {topic.lostMarks} {topic.lostMarks === 1 ? "mark" : "marks"} to gain here. They've
             scored {scored} of {topic.maximumMarks} on this topic so far.
           </div>
@@ -94,56 +94,56 @@ function TopicRow({ topic, rank }: { topic: WeakTopic; rank: number }) {
 
 export function Weaknesses() {
   const { childId = "" } = useParams<{ childId: string }>()
-  const { data, isPending, isError, error } = useChildWeaknesses(childId)
-
-  if (isPending) {
-    return (
-      <div className="flex flex-col gap-6">
-        <PageHeaderSkeleton />
-        <ListSkeleton rows={4} />
-      </div>
-    )
-  }
-
-  if (isError) {
-    return (
-      <ErrorState
-        heading="We couldn't load this"
-        body={parentLoadFailureMessage(error)}
-        action={{ label: "Try again", onClick: () => window.location.reload() }}
-      />
-    )
-  }
-
-  const topics = data.weakTopics
+  const query = useChildWeaknesses(childId)
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="margin-rule flex flex-col gap-2">
-        <h1 className="text-display-lg text-ink">What to work on next</h1>
-        <p className="max-w-prose text-body-md text-ink-muted">
-          Every student has a list like this. It is what marking is for. These are the topics
-          where the most marks are currently going, strongest signal first.
-        </p>
-      </div>
+      <QueryState
+        query={query}
+        srHeading="What to work on next"
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={4} />
+          </>
+        }
+        error={{ heading: "We couldn't load this", body: parentLoadFailureMessage }}
+      >
+        {(data) => {
+          const topics = data.weakTopics
 
-      {topics.length === 0 ? (
-        <p className="rounded-lg border border-rule bg-paper-raised p-5 text-body-md text-ink-muted">
-          Nothing stands out yet. Weak topics appear here once a few papers have been marked.
-        </p>
-      ) : (
-        <ol className="flex flex-col gap-2">
-          {topics.map((topic, index) => (
-            <TopicRow key={topic.topic} topic={topic} rank={index + 1} />
-          ))}
-        </ol>
-      )}
+          return (
+            <>
+              <div className="flex flex-col gap-2">
+                <h1 className="text-display-lg text-on-surface">What to work on next</h1>
+                <p className="max-w-prose text-body-md text-on-surface-variant">
+                  Every student has a list like this. It is what marking is for. These are the
+                  topics where the most marks are currently going, strongest signal first.
+                </p>
+              </div>
 
-      {/* The absent signal, named rather than stubbed (see the module header). */}
-      <p className="rounded-lg border border-dashed border-rule p-5 text-body-sm text-ink-muted">
-        Lemely doesn't yet show parents what practice has been set on these topics. Their
-        teacher can see the same list, and it's a good thing to ask about.
-      </p>
+              {topics.length === 0 ? (
+                <p className="rounded-lg border border-outline-variant bg-surface-container-lowest p-5 text-body-md text-on-surface-variant">
+                  Nothing stands out yet. Weak topics appear here once a few papers have been
+                  marked.
+                </p>
+              ) : (
+                <ol className="flex flex-col gap-2">
+                  {topics.map((topic, index) => (
+                    <TopicRow key={topic.topic} topic={topic} rank={index + 1} />
+                  ))}
+                </ol>
+              )}
+
+              {/* The absent signal, named rather than stubbed (see the module header). */}
+              <p className="rounded-lg border border-dashed border-outline-variant p-5 text-body-sm text-on-surface-variant">
+                Lemely doesn't yet show parents what practice has been set on these topics. Their
+                teacher can see the same list, and it's a good thing to ask about.
+              </p>
+            </>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }

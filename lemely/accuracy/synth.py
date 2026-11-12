@@ -11,6 +11,7 @@ import functools
 import json
 import math
 import random
+import re
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
@@ -122,6 +123,50 @@ class AnswerBlock:
 
     question_id: str  # e.g. "1a_i" — matches mark-scheme question ids
     text: str  # the student's handwritten answer text (can be multi-line)
+
+
+# A scheme leaf id as the parsers spell it: a question number, an optional part
+# letter, then optional ``_``-joined roman sub-parts ("7", "12a", "1a_i", "4b_iii").
+_QUESTION_ID: Final[re.Pattern[str]] = re.compile(
+    r"(?P<number>[0-9]+)(?P<letter>[a-z])?(?P<romans>(?:_[ivx]+)*)"
+)
+
+
+def _label_steps(question_id: str) -> tuple[str, ...]:
+    """The printed steps of *question_id*: ``"1a_i"`` -> ``("1", "(a)", "(i)")``.
+
+    Raises ``ValueError`` for an id no exam paper prints a label for: the scan
+    must carry labels the binder reads, never the scheme's own spelling.
+    """
+    match = _QUESTION_ID.fullmatch(question_id)
+    if match is None:
+        raise ValueError(f"no printed label form for question id {question_id!r}")
+    steps = [match["number"]]
+    if match["letter"]:
+        steps.append(f"({match['letter']})")
+    steps.extend(f"({roman})" for roman in match["romans"].split("_") if roman)
+    return tuple(steps)
+
+
+def printed_labels(answers: list[AnswerBlock]) -> list[str]:
+    """The label printed above each answer, as a CAIE paper prints it.
+
+    A paper prints a question's number once, beside its first part, and each
+    later part by the steps that differ from the label before it: ``1(a)(i)``,
+    ``(ii)``, ``(b)``, then ``2``. The scheme spelling (``1a_i``) is never
+    printed; no paper shows it and the label binder does not read it.
+    """
+    out: list[str] = []
+    previous: tuple[str, ...] = ()
+    for block in answers:
+        steps = _label_steps(block.question_id)
+        shared = 0
+        while shared < min(len(steps), len(previous)) and steps[shared] == previous[shared]:
+            shared += 1
+        # The same id twice still prints a label: the whole one, never an empty one.
+        out.append("".join(steps[shared:] if shared < len(steps) else steps))
+        previous = steps
+    return out
 
 
 def render_handwritten_scan(
@@ -504,8 +549,7 @@ def _lay_out_pages(
     cursor_y = _MARGIN + _Y_JITTER_PX
     last_line_bbox: tuple[int, int] | None = None
 
-    for block in answers:
-        label_text = f"Q{block.question_id}"
+    for block, label_text in zip(answers, printed_labels(answers), strict=True):
         _, label_height = _measure_text(draw, label_text, label_font)
         # Reserve room for the label plus the tallest a handwritten line can
         # render (`max_line_height`), not the fixed `_LINE_SPACING` — a

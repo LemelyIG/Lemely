@@ -41,21 +41,6 @@ class PlatformCountsDTO(ApiModel):
     uploadsByStatus: dict[str, int]
 
 
-class SpendDTO(ApiModel):
-    """Gemini spend against the configured hard ceiling (X-01).
-
-    ``ceilingUsd`` and ``remainingUsd`` are ``None`` together when no ceiling is
-    configured — a real state, distinct from a ceiling of zero.
-    ``thresholdsUsd`` are the marks the runtime sends warnings at; a spend figure
-    without its alarm points cannot be read as safe or unsafe.
-    """
-
-    cumulativeUsd: float
-    ceilingUsd: float | None = None
-    remainingUsd: float | None = None
-    thresholdsUsd: list[float]
-
-
 class SignupDTO(ApiModel):
     """One recently created account, any role (X-01)."""
 
@@ -83,10 +68,14 @@ class SystemHealthDTO(ApiModel):
 
 
 class PlatformOverviewDTO(ApiModel):
-    """X-01 in one response."""
+    """X-01 in one response.
+
+    Carries no spend figure (DS3): the web process keeps no cost ledger to read
+    one from, and the guard on Gemini spend is a Google Cloud billing budget on
+    the deployed service, not this API.
+    """
 
     counts: PlatformCountsDTO
-    spend: SpendDTO
     health: SystemHealthDTO
     recentSignups: list[SignupDTO]
 
@@ -157,6 +146,10 @@ class PipelineHealthDTO(ApiModel):
     produced by the accuracy harness into ``reports/``, not by anything a request
     can reach, and a figure read off a file the screen cannot date would be worse
     than saying where it lives.
+
+    ``purgeBacklog`` is the count of attempts and console papers more than a
+    day past their purge cutoff and still present — a purge sweep that keeps
+    failing, made visible.
     """
 
     subjects: list[SubjectCoverageDTO]
@@ -166,6 +159,7 @@ class PipelineHealthDTO(ApiModel):
     uploadsByStatus: dict[str, int]
     recentFailedUploadIds: list[str]
     markingAccuracyNote: str
+    purgeBacklog: int
 
 
 # ── Schools (D7.8, spec §1.1: the account graph's missing first link) ─────────
@@ -271,7 +265,6 @@ __all__ = [
     "SchoolListDTO",
     "SchoolSummaryDTO",
     "SignupDTO",
-    "SpendDTO",
     "SubjectCoverageDTO",
     "SystemHealthDTO",
     "UpdateSchoolRequestDTO",

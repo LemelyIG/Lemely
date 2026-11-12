@@ -38,6 +38,8 @@ export interface PopoverRenderProps {
 }
 
 export interface PopoverProps {
+  /** The popup's accessible name (it renders `role="dialog"`, which must be named). Required. */
+  label: string
   /** Render prop for the trigger, so any element (button, chip, avatar) can
    * become a popover trigger by spreading `triggerProps` onto it. */
   renderTrigger: (props: PopoverRenderProps) => ReactNode
@@ -54,6 +56,7 @@ export interface PopoverProps {
 }
 
 export function Popover({
+  label,
   renderTrigger,
   children,
   open: openProp,
@@ -125,10 +128,11 @@ export function Popover({
         <div
           id={contentId}
           role="dialog"
+          aria-label={label}
           aria-modal="false"
           onKeyDown={handleKeyDown}
           className={cn(
-            "absolute top-full z-dropdown mt-2 min-w-48 rounded-lg border border-rule bg-paper-raised p-2 shadow-[var(--shadow-float)]",
+            "absolute top-full z-dropdown mt-2 min-w-48 rounded-lg border border-outline-variant bg-surface-container-lowest p-2 shadow-[var(--shadow-float)]",
             "motion-safe:animate-[lm-in_var(--dur-fast)_var(--ease-spring)_both]",
             align === "start" ? "start-0" : "end-0",
             contentClassName,

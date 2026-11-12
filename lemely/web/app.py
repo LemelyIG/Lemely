@@ -8,15 +8,35 @@ endpoints are added.
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+import asyncio
+import logging
+import os
+import re
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from lemely import __version__
-from lemely.runtime.budget_notify import register_budget_ntfy
+from lemely.io.model_table import configured_models
+from lemely.runtime.config import anthropic_key_missing_tags, log_marking_flags
+from lemely.runtime.errors import AccessRestrictedError, EmptyGradeBoundaryStoreError
+from lemely.web.deps import access_restricted_detail, get_settings, get_sweeper
+from lemely.web.edge import BodyLimitMiddleware
 from lemely.web.routers import (
+    access,
     admin,
+    admin_tutor_sanctions,
+    admin_tutoring_moderation,
+    admin_tutoring_reports,
+    admin_tutors,
+    admin_waitlist,
     announcements,
     auth,
     classes,
+    client_errors,
+    contact,
     exam_calendar,
     flashcards,
     friends,
@@ -26,18 +46,130 @@ from lemely.web.routers import (
     meta,
     notifications,
     parent,
+    parent_bookings,
+    parent_tutor_access,
     placement,
     practice,
     quiz,
+    reference,
     review,
     school,
     student,
     student_announcements,
+    student_bookings,
     student_classes,
+    student_deletion,
+    student_reviews,
+    student_self_review,
+    student_tutor_access,
+    student_tutoring_settings,
     study_plan,
     teacher,
+    tutor_bookings,
+    tutor_evidence,
+    tutor_preview,
+    tutor_profile,
+    tutor_reviews,
+    tutor_students,
+    tutoring_blocks,
+    tutoring_booking,
+    tutoring_directory,
+    tutoring_outcomes,
+    tutoring_public,
+    tutoring_reports,
+    tutoring_reviews,
+    waitlist,
+    widget,
     xp,
 )
+from lemely.web.scheduled_notifications import run_sweeper
+from lemely.web.tutoring_email import MOCK_WARNING, email_delivery_mode
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Iterator, Sequence
+
+    from starlette.routing import BaseRoute
+
+log = logging.getLogger(__name__)
+
+_TUTORING_PATH = re.compile(r"/tutor(s|ing)?(/|$)")
+
+
+def _tutoring_routes_mounted(app: FastAPI) -> bool:
+    """True when any route of ``app`` is a tutoring route.
+
+    ``include_router`` wraps a router in an object that exposes it as
+    ``original_router``, so ``app.routes`` alone does not list the tutoring paths.
+    """
+
+    def walk(routes: Sequence[BaseRoute]) -> Iterator[str]:
+        for route in routes:
+            inner = getattr(route, "original_router", None)
+            if inner is not None:
+                yield from walk(inner.routes)
+            else:
+                yield getattr(route, "path", "")
+
+    return any(_TUTORING_PATH.search(path) for path in walk(app.routes))
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Start the notification sweeper on startup and stop it on shutdown (spec §4).
+
+    One asyncio task for the process. It is not started when
+    ``settings.notifications.sweeper_enabled`` is false — the suite sets that
+    so no test races a background task — and the settings are read here, at
+    startup, rather than at import so a test can change the env and rebuild
+    the app. Shutdown sets the stop event and waits for the loop to return:
+    a pass in flight finishes (its rows are locked in its own transaction),
+    the loop sees the event, and the task exits. Starlette runs this only
+    inside ``with TestClient(app)`` / a real server, never for a bare
+    ``TestClient(app)``, which is why every pre-existing test is unaffected.
+    """
+    settings = get_settings()
+    log_marking_flags(settings.grading.marking_options())
+    if (
+        settings.access.restricted
+        and os.environ.get("K_SERVICE")
+        and email_delivery_mode(settings) == "mock"
+    ):
+        # Mock email hands verification links back in API responses; while the gate is the only
+        # thing keeping strangers out, a deployed service must send real mail or not start.
+        raise RuntimeError(
+            "[access] allowed_email_domains is set on a deployed service but no email provider "
+            "is configured (LEMELY_EMAIL__API_KEY): refusing to start."
+        )
+    if email_delivery_mode(settings) == "mock" and _tutoring_routes_mounted(_app):
+        log.warning(MOCK_WARNING)
+    # The same model table `lemely doctor` checks: every configured claude- model.
+    missing_claude = anthropic_key_missing_tags(settings, configured_models(settings))
+    if missing_claude:
+        log.error(
+            "ANTHROPIC_API_KEY is not set but task tag(s) %s use a claude- model; "
+            "those calls will fail until it is configured",
+            ", ".join(missing_claude),
+        )
+    stop = asyncio.Event()
+    task: asyncio.Task[None] | None = None
+    if settings.notifications.sweeper_enabled:
+        task = asyncio.create_task(
+            run_sweeper(
+                get_sweeper(),
+                poll_seconds=settings.notifications.sweep_poll_seconds,
+                stop=stop,
+            ),
+            name="notification-sweeper",
+        )
+        log.info(
+            "notification sweeper started (every %ss)", settings.notifications.sweep_poll_seconds
+        )
+    try:
+        yield
+    finally:
+        if task is not None:
+            stop.set()
+            await task
 
 
 def create_app() -> FastAPI:
@@ -46,7 +178,6 @@ def create_app() -> FastAPI:
     Includes the meta/health router, the auth router, and the (initially empty)
     teacher and student portal routers so portal workers never edit this module.
     """
-    register_budget_ntfy()
     app = FastAPI(
         title="Lemely API",
         description="Backend for the Lemely Teacher and Student portals.",
@@ -55,8 +186,22 @@ def create_app() -> FastAPI:
         # through five phases). An editable install needs `pip install -e .`
         # after a version bump before this reports the new number.
         version=__version__,
+        lifespan=_lifespan,
+    )
+    # Body-size cap for the public waitlist writes, enforced while the body is read.
+    app.add_middleware(
+        BodyLimitMiddleware,
+        limit=waitlist.MAX_BODY_BYTES,
+        paths=waitlist.BODY_LIMITED_PATHS,
+        methods=frozenset({"POST", "PATCH"}),
     )
     app.include_router(meta.router)
+    app.include_router(access.router)
+    app.include_router(reference.router)
+    app.include_router(client_errors.router)
+    app.include_router(contact.router)
+    app.include_router(waitlist.router)
+    app.include_router(admin_waitlist.router)
     app.include_router(auth.router)
     app.include_router(teacher.router)
     app.include_router(classes.router)
@@ -72,6 +217,8 @@ def create_app() -> FastAPI:
     app.include_router(friends.router)
     app.include_router(student_announcements.router)
     app.include_router(student_classes.router)
+    app.include_router(student_self_review.router)
+    app.include_router(student_deletion.router)
     app.include_router(exam_calendar.router)
     app.include_router(notifications.router)
     app.include_router(student.router)
@@ -81,6 +228,77 @@ def create_app() -> FastAPI:
     app.include_router(parent.router)
     app.include_router(me.router)
     app.include_router(announcements.router)
+    app.include_router(widget.router)
+    app.include_router(tutoring_public.router)
+    app.include_router(tutoring_directory.router)
+    app.include_router(tutor_profile.router)
+    app.include_router(tutor_evidence.router)
+    app.include_router(admin_tutors.router)
+    app.include_router(tutoring_reviews.router)
+    app.include_router(student_reviews.router)
+    app.include_router(tutor_reviews.router)
+    app.include_router(admin_tutoring_moderation.router)
+    app.include_router(student_tutor_access.router)
+    app.include_router(tutor_students.router)
+    app.include_router(tutoring_booking.router)
+    app.include_router(student_bookings.router)
+    app.include_router(parent_bookings.router)
+    app.include_router(tutor_bookings.router)
+    app.include_router(tutoring_outcomes.router)
+    app.include_router(tutor_preview.router)
+    app.include_router(student_tutoring_settings.router)
+    app.include_router(parent_tutor_access.router)
+    app.include_router(tutoring_blocks.router)
+    app.include_router(admin_tutor_sanctions.router)
+    app.include_router(tutoring_reports.router)
+    app.include_router(admin_tutoring_reports.router)
+
+    @app.exception_handler(AccessRestrictedError)
+    async def _access_restricted(_request: Request, exc: AccessRestrictedError) -> JSONResponse:
+        """Answer 403 ``access_restricted`` wherever the auth service refuses an address.
+
+        Raised by :class:`~lemely.auth.service.AuthService` on signup, login, refresh and the
+        parent code flows, including when a seat or invite creator reaches it. It is not an
+        ``AuthError``, so no route's own 400/401 mapping can swallow it. Same body shape as
+        the dependency's refusal (``{"detail": {"code": ..., "reason": ...}}``).
+        """
+        return JSONResponse(
+            status_code=403, content={"detail": access_restricted_detail(exc.reason)}
+        )
+
+    @app.exception_handler(EmptyGradeBoundaryStoreError)
+    async def _thresholds_not_ingested(
+        _request: Request, exc: EmptyGradeBoundaryStoreError
+    ) -> JSONResponse:
+        """Answer 503, not 500, when the threshold table has never been ingested.
+
+        Every grading surface builds a ``GradeBoundaryStore`` of its own
+        (``routers/student.py``, ``routers/parent.py``, ``db/review_repo.py``,
+        ``web/services/grading.py``), so this is handled once here rather than
+        at each of those call sites. Refusing is the intended behaviour — a
+        boundary the exam board never published is not a grade — but a bare 500
+        told an operator only that something threw. The cause is a deployed
+        environment where ``alembic upgrade head`` ran and
+        ``scripts/ingest_thresholds.py`` did not, which is unavailability.
+
+        The exception is repr'd into the message rather than left to
+        ``exc_info``: the stdlib-to-structlog bridge in
+        ``lemely.runtime.logging`` forwards only ``record.getMessage()``, so a
+        deployed log would otherwise carry no cause at all (same reason as
+        ``routers/meta.py``'s health record).
+        """
+        logging.getLogger(__name__).error("grade thresholds are not ingested: %r", exc)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": (
+                    "Grade boundaries are not available: this database has no verified "
+                    "component_thresholds rows. Run `python scripts/ingest_thresholds.py` "
+                    "against it."
+                )
+            },
+        )
+
     return app
 
 

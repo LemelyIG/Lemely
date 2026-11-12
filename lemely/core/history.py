@@ -28,7 +28,9 @@ def now_iso() -> str:
 # schema module having to import a rules engine. ``lemely.core.at_risk``
 # re-exports it, so ``from lemely.core.at_risk import GRADE_ORDER`` — the
 # import every existing caller uses — keeps working unchanged.
-GRADE_ORDER = ["A*", "A", "B", "C", "D", "E", "U"]
+# Cambridge IGCSE/O Level letter grades. Core-tier papers run C to G, so ``F``
+# and ``G`` are real grades a paper can carry, not off-ladder data.
+GRADE_ORDER = ["A*", "A", "B", "C", "D", "E", "F", "G", "U"]
 
 PaperOrigin = Literal["past_paper", "quiz", "custom_paper"]
 """The origin vocabulary, named once so the DB layer can convert an
@@ -53,6 +55,13 @@ class PaperRecord(StrictModel):
     §5). Mirrors ``attempts.origin``; defaulted so every pre-existing record and
     every persisted history file loads unchanged. Read it through
     :func:`is_grade_bearing` rather than comparing to a literal at call sites.
+    """
+    attempt_id: str | None = None
+    """``attempts.id`` when the record was loaded from the relational store;
+    ``None`` from the JSON file store, which has no attempts table. The
+    student self-review routes (spec 2026-09-17) are addressed by attempt id,
+    so a result screen needs this to reach them after a refresh. Optional and
+    defaulted so every persisted history file loads unchanged.
     """
 
 

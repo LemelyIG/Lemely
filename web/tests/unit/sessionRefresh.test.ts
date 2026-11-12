@@ -3,6 +3,24 @@ import { ApiError, request } from "@/lib/api"
 import { getSession, setSession, takeSessionExpired } from "@/lib/auth/storage"
 
 /*
+ * H1/H2 (security review) — a refused refresh must end the session the same
+ * complete way a deliberate sign-out does: `endSession()` (`auth/storage.ts`),
+ * not the bare `clearSession()` this path used to call, so it also removes
+ * the persisted react-query cache and the offline upload queue's raw scan
+ * bytes. Both reach `indexedDB`, which this Node-environment suite (D3.20)
+ * does not have, so both modules are mocked here the same way `uploadQueue.ts`'s
+ * own `UploadQueueAdapter` injection exists to let its logic run without one.
+ */
+const removeClientMock = vi.fn().mockResolvedValue(undefined)
+vi.mock("@/lib/offline/queryPersister", () => ({
+  persister: { removeClient: () => removeClientMock() },
+}))
+const clearUploadQueueMock = vi.fn().mockResolvedValue(undefined)
+vi.mock("@/lib/offline/uploadQueue", () => ({
+  clearUploadQueue: () => clearUploadQueueMock(),
+}))
+
+/*
  * Silent token refresh in the API client (P6, the session-expiry fix).
  *
  * The defect: access tokens last an hour, nothing renewed them, and no code
@@ -77,6 +95,8 @@ beforeEach(() => {
   fetchMock = vi.fn()
   vi.stubGlobal("fetch", fetchMock)
   takeSessionExpired() // clear any flag left by a previous test
+  removeClientMock.mockClear()
+  clearUploadQueueMock.mockClear()
 })
 
 afterEach(() => {
@@ -192,6 +212,11 @@ describe("when the session cannot be saved", () => {
 
     expect(getSession()).toBeNull()
     expect(takeSessionExpired()).toBe(true)
+    // H1/H2: a refused refresh ends the session as completely as a
+    // deliberate sign-out — the persisted query cache and the offline
+    // upload queue must not survive for the next reader on this device.
+    expect(removeClientMock).toHaveBeenCalledTimes(1)
+    expect(clearUploadQueueMock).toHaveBeenCalledTimes(1)
   })
 
   it("keeps the session when the refresh could not be delivered at all", async () => {

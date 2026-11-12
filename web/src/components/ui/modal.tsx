@@ -9,6 +9,9 @@ import {
 import { createPortal } from "react-dom"
 import { X } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
+import { lockScroll } from "@/lib/scrollLock"
+import { useDialogHistory } from "@/lib/nav/useDialogHistory"
+import { useOverlayPhase } from "@/lib/overlayPhase"
 
 /*
  * Dialog built on a portal rather than the native `<dialog>` element.
@@ -84,9 +87,23 @@ export function Modal({
   const panelRef = useRef<HTMLDivElement>(null)
   const previouslyFocused = useRef<HTMLElement | null>(null)
 
+  // Packet B2b: `open` going false does not unmount the modal immediately —
+  // `phase` stays "closing" for the exit animation (`lm-out` below), and
+  // only "closed" actually unmounts. `mounted` is what everything below
+  // gates on instead of the raw `open` prop, so the history entry, the
+  // scroll lock and the focus trap all stay live for the exit too.
+  const { phase, onAnimationEnd } = useOverlayPhase(open)
+  const mounted = phase !== "closed"
+
+  // Packet B2a: opening pushes one history entry so browser back closes this
+  // modal instead of navigating the page underneath it away; a non-dismissible
+  // modal (ConfirmModal) re-pushes on back instead of closing. See
+  // `useDialogHistory` for the full contract.
+  useDialogHistory({ open: mounted, dismissible, onClose })
+
   // Focus the panel on open, restore the triggering element's focus on close.
   useEffect(() => {
-    if (!open) return
+    if (!mounted) return
 
     previouslyFocused.current = document.activeElement as HTMLElement | null
 
@@ -101,20 +118,20 @@ export function Modal({
       cancelAnimationFrame(raf)
       previouslyFocused.current?.focus()
     }
-  }, [open])
+  }, [mounted])
 
-  // Lock background scroll while a modal is open, so the page underneath
-  // can't scroll behind the scrim on mobile.
+  // Lock background scroll for as long as the modal is mounted, closing
+  // animation included — otherwise the page behind it would start scrolling
+  // again while the panel is still visibly sliding away. `lockScroll`
+  // (shared with `NavDrawer`) pins the body at its current offset rather
+  // than merely setting `overflow: hidden`, which still lets iOS Safari
+  // scroll the visual viewport behind a fixed overlay.
   useEffect(() => {
-    if (!open) return
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = "hidden"
-    return () => {
-      document.body.style.overflow = previousOverflow
-    }
-  }, [open])
+    if (!mounted) return
+    return lockScroll()
+  }, [mounted])
 
-  if (!open) return null
+  if (!mounted) return null
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     if (event.key === "Escape") {
@@ -159,7 +176,7 @@ export function Modal({
       {/* Scrim: DESIGN.md §7's exact token, one step below the panel on the
           fixed z-scale (§7's z-scrim), click-to-dismiss. */}
       <div
-        className="fixed inset-0 z-scrim bg-[var(--scrim)] motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
+        className="fixed inset-0 z-scrim bg-scrim motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
         aria-hidden="true"
         onClick={dismissible ? onClose : undefined}
       />
@@ -170,20 +187,33 @@ export function Modal({
         aria-labelledby={titleId}
         aria-describedby={description ? descriptionId : undefined}
         tabIndex={-1}
+        // `event.target === event.currentTarget`: React's synthetic
+        // `onAnimationEnd` also hears animations bubbling from descendants, and
+        // a spinner or skeleton finishing inside a closing panel would end the
+        // exit early and yank the panel off mid-slide.
+        onAnimationEnd={
+          phase === "closing"
+            ? (event) => {
+                if (event.target === event.currentTarget) onAnimationEnd()
+              }
+            : undefined
+        }
         className={cn(
-          "relative z-modal flex max-h-[85vh] w-full flex-col gap-4 rounded-xl border border-rule bg-paper-raised p-6 shadow-[var(--shadow-float)]",
-          "motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-spring)_both]",
+          "relative z-modal flex max-h-[85vh] w-full flex-col gap-4 rounded-xl border border-outline-variant bg-surface-container-lowest p-6 shadow-[var(--shadow-float)]",
+          phase === "closing"
+            ? "lm-out"
+            : "motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-spring)_both]",
           sizeClasses[size],
           className,
         )}
       >
         <div className="flex items-start justify-between gap-4">
           <div className="flex min-w-0 flex-col gap-1">
-            <h2 id={titleId} className="text-display-sm text-ink">
+            <h2 id={titleId} className="text-display-sm text-on-surface">
               {title}
             </h2>
             {description ? (
-              <p id={descriptionId} className="text-body-md text-ink-muted">
+              <p id={descriptionId} className="text-body-md text-on-surface-variant">
                 {description}
               </p>
             ) : null}
@@ -194,8 +224,8 @@ export function Modal({
               onClick={onClose}
               aria-label="Close dialog"
               className={cn(
-                "-me-1 -mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink-muted transition-colors",
-                "hover:bg-paper-sunk hover:text-ink",
+                "-me-1 -mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-on-surface-variant transition-colors",
+                "hover:bg-surface-container-low hover:text-on-surface",
                 "active:scale-[0.98]",
               )}
             >
@@ -205,7 +235,7 @@ export function Modal({
         </div>
         <div className="min-h-0 overflow-y-auto lm-scroll">{children}</div>
         {footer ? (
-          <div className="flex items-center justify-end gap-2 border-t border-rule pt-4">
+          <div className="flex items-center justify-end gap-2 border-t border-outline-variant pt-4">
             {footer}
           </div>
         ) : null}

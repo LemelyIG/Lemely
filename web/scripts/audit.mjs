@@ -80,6 +80,13 @@
  *     below — which is why they cannot be collapsed onto one account, and the
  *     fourth is on a different account again because completing `active`'s
  *     sessions would destroy the populated-week capture.
+ *   - the tutoring marketplace (T33): every route on the SPEC §d "Accessibility
+ *     and performance gate routes" list, with its states (default, loading,
+ *     error, empty and the screen-specific ones, plus dark), is registered by
+ *     `audit_tutoring_registry.mjs`, which also adds the `platform_admin`
+ *     session (X-04..X-07) and the signed-out one (G-16, G-17). These entries
+ *     capture at 320/768/1280 and every `ready` is built from the state's own
+ *     content, so a login redirect or an error page can never satisfy it.
  * Deliberately still NOT in this registry: nothing. Every student route is
  * audited as of P5.11.
  *   (This note used to name four routes as "P5 screens still on mock data",
@@ -128,7 +135,7 @@
  * actual UI. `empty` (a genuinely empty seeded account, never a stubbed
  * payload) needs its own session, so it is a *separate* registry entry
  * sharing the primary route's `screenId`, not a `states[]` entry — see the
- * `emptyTeacher`/`emptyParent` entries below. `offline` (CDP) is a `states[]`
+ * `emptyTeacher`/`emptyParent` entries below. `offline` (an aborted request) is a `states[]`
  * entry (same session, same context) on T-01.
  *
  * Usage: `npm run audit` (from web/), or `node scripts/audit.mjs` directly.
@@ -144,6 +151,8 @@
  * axe JSON dump land in context"):
  *   axe/<route-slug>.json, axe/_summary.json
  *   lighthouse/<route-slug>.json, lighthouse/_summary.json
+ *   kit-fields/<route-slug>.json, kit-fields/_summary.json (C2c: hand-rolled
+ *     input/select/textarea fields missing the kit's `data-kit-field` marker)
  *   responsive-summary.json      (horizontal-scroll violations, empty = clean)
  *   screens/<screen-id>/<state>--<bp>.png
  *   console-errors.json
@@ -158,6 +167,8 @@ import { fileURLToPath } from "node:url"
 import puppeteer from "puppeteer"
 import lighthouse from "lighthouse"
 import { assertPortFree } from "./serve_guard.mjs"
+import { gotoWithRetry, withRetry } from "./nav_retry.mjs"
+import { buildTutoringRegistry, offlineStateHooks } from "./audit_tutoring_registry.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const webRoot = path.resolve(__dirname, "..")
@@ -183,6 +194,9 @@ const REPORTS_DIR = path.isAbsolute(REPORT_DIR_SETTING)
 const AXE_DIR = path.join(REPORTS_DIR, "axe")
 const LH_DIR = path.join(REPORTS_DIR, "lighthouse")
 const SCREENS_DIR = path.join(REPORTS_DIR, "screens")
+// C2c (Task 5) · one JSON per state, `_summary.json` for the run, same shape
+// as AXE_DIR. See `runKitFieldsCheck`'s own doc comment for what this checks.
+const KIT_FIELDS_DIR = path.join(REPORTS_DIR, "kit-fields")
 const CONSOLE_ERRORS_PATH = path.join(REPORTS_DIR, "console-errors.json")
 const RESPONSIVE_SUMMARY_PATH = path.join(REPORTS_DIR, "responsive-summary.json")
 /* P6.3. Route failures used to live only in this process's stdout and its exit
@@ -197,6 +211,17 @@ const RESPONSIVE_SUMMARY_PATH = path.join(REPORTS_DIR, "responsive-summary.json"
  * the run could not do, and so `check_ui_gates.py` can read it. */
 const ROUTE_FAILURES_PATH = path.join(REPORTS_DIR, "route-failures.json")
 const CONTACT_SHEET_PATH = path.join(REPORTS_DIR, "contact-sheet.html")
+
+/* T33. `LEMELY_AUDIT_SCOPE=tutoring` audits only the tutoring marketplace's registry entries
+ * (`audit_tutoring_registry.mjs`): no login journey, no student upload, none of the older
+ * routes. It exists so a fix to a tutoring screen can be re-measured in minutes. A gate run
+ * (`live_audit.sh`) leaves it unset and audits everything; the reports a scoped run writes are
+ * partial and are not evidence for the whole product. */
+const AUDIT_SCOPE = process.env.LEMELY_AUDIT_SCOPE ?? "all"
+if (AUDIT_SCOPE !== "all" && AUDIT_SCOPE !== "tutoring") {
+  throw new Error(`LEMELY_AUDIT_SCOPE must be "all" or "tutoring", got ${JSON.stringify(AUDIT_SCOPE)}`)
+}
+const TUTORING_ONLY = AUDIT_SCOPE === "tutoring"
 
 const BREAKPOINTS = [
   { width: 380, height: 844 },
@@ -516,12 +541,42 @@ async function pressCheckboxOnce(page, labelPattern, timeout = 15_000) {
   )
 }
 
-/** Full-page capture at `$LEMELY_REPORT_DIR/screens/<screenId>/<state>--<bp>.png`
- * — same path convention as web/e2e/screenshots.spec.ts's `shoot`. */
-async function shoot(page, screenId, state, bpWidth) {
+/** Full-page capture at `$LEMELY_REPORT_DIR/screens/<screenId>/<state>--<bp>[--dark].png`
+ * — same path convention as web/e2e/screenshots.spec.ts's `shoot`. `suffix` is `--dark` for a
+ * dark-theme capture of a state that also exists in the light theme (T33). */
+async function shoot(page, screenId, state, bpWidth, suffix = "", { hideBottomChrome = false } = {}) {
   const dir = path.join(SCREENS_DIR, screenId)
   fs.mkdirSync(dir, { recursive: true })
-  await page.screenshot({ path: path.join(dir, `${state}--${bpWidth}.png`), fullPage: true })
+  // T33. A full-page capture of a mobile page paints the fixed bottom navigation once, at the
+  // viewport's bottom, which lands in the middle of a tall page and covers its content. That is
+  // an artefact of the capture, not of the screen, so an entry can ask for those bars to be
+  // hidden for the shot. Anything inside or holding a dialog is never touched.
+  if (hideBottomChrome) {
+    await page.evaluate(() => {
+      for (const el of document.querySelectorAll("body *")) {
+        const position = getComputedStyle(el).position
+        if (position !== "fixed" && position !== "sticky") continue
+        if (el.closest('[role="dialog"]') || el.querySelector('[role="dialog"]')) continue
+        const rect = el.getBoundingClientRect()
+        if (rect.height === 0 || rect.top < window.innerHeight / 2) continue
+        if (rect.bottom < window.innerHeight - 1) continue
+        el.setAttribute("data-audit-hidden", "")
+        el.style.visibility = "hidden"
+      }
+    })
+  }
+  try {
+    await page.screenshot({ path: path.join(dir, `${state}--${bpWidth}${suffix}.png`), fullPage: true })
+  } finally {
+    if (hideBottomChrome) {
+      await page.evaluate(() => {
+        for (const el of document.querySelectorAll("[data-audit-hidden]")) {
+          el.removeAttribute("data-audit-hidden")
+          el.style.visibility = ""
+        }
+      })
+    }
+  }
 }
 
 /**
@@ -599,6 +654,64 @@ async function runAxe(page, slug) {
   return { slug, url: results.url, violationCount: results.violations.length, counts }
 }
 
+/**
+ * C2c (Task 5) · the runtime half of the forms migration
+ * (`web/tests/unit/formsMigration.test.ts` is the source-text half). Every
+ * kit field component (`Input`/`Select`/`Textarea`/`Slider`/`Checkbox`/
+ * `Radio`) stamps `data-kit-field` on its own native control
+ * (`kitFieldMarker.test.ts` pins this at the component level) — this walks
+ * the CAPTURED DOM for a route/state and fails anything that renders the same
+ * tag *without* that marker: a hand-rolled `<input>`/`<select>`/`<textarea>`
+ * the source scan didn't see (dynamically generated markup, a future screen
+ * built without importing the kit) or a real regression in the kit itself.
+ *
+ * Selector mirrors the source-text test's own exemption exactly:
+ * checkbox/radio/file/hidden/submit inputs are excluded, not because they
+ * cannot carry the marker (several genuine survivors do — see the test's
+ * `ALLOWLIST`) but because a bare native one is a legitimate, unmarked
+ * shape for those types (the OS picker for file, a `<button type=submit>`
+ * standing in for `input[type=submit]` everywhere in this product).
+ *
+ * Runs immediately after `runAxe`, at the same viewport/state, so a route
+ * with 3 states gets 3 kit-fields passes — same "every state, not just the
+ * canonical one" reasoning `visitRoute`'s own doc comment gives for axe.
+ */
+async function runKitFieldsCheck(page, slug) {
+  const offenders = await page.evaluate(() => {
+    const nodes = document.querySelectorAll(
+      "input:not([type=checkbox]):not([type=radio]):not([type=file])" +
+        ":not([type=hidden]):not([type=submit]), select, textarea",
+    )
+    return Array.from(nodes)
+      .filter((el) => !el.hasAttribute("data-kit-field"))
+      .map((el) => ({ tag: el.tagName.toLowerCase(), outerHTML: el.outerHTML.slice(0, 300) }))
+  })
+  const result = { slug, url: page.url(), offenderCount: offenders.length, offenders }
+  fs.writeFileSync(path.join(KIT_FIELDS_DIR, `${slug}.json`), JSON.stringify(result, null, 2))
+  return result
+}
+
+/** Pushes a `runKitFieldsCheck` result into `kitFieldsSummary`, and — when it
+ * found any unmarked field — also into `routeFailures` with the offending
+ * element(s)' `outerHTML` head, per Task 5's behaviour 4 ("a miss is a route
+ * failure"). `routeFailures` already fails the whole run at the end of
+ * `main()` (`scripts/check.sh`'s `puppeteer-audit` gate), so this reuses that
+ * existing hard-failure path rather than inventing a second one. */
+function recordKitFields(kitFieldsSummary, routeFailures, result, { screenId, path: routePath, state }) {
+  kitFieldsSummary.push(result)
+  if (result.offenderCount > 0) {
+    routeFailures.push({
+      screenId,
+      path: routePath,
+      error:
+        `kit-fields: ${result.offenderCount} unmarked field(s)` +
+        (state ? ` [${state}]` : "") +
+        " — " +
+        result.offenders.map((o) => o.outerHTML).join(" | "),
+    })
+  }
+}
+
 /** Copies the app session out of `page`'s localStorage verbatim, so an
  * isolated Lighthouse browser can authenticate as exactly the same user
  * without re-deriving the session shape. Returns the raw string (or null for
@@ -648,18 +761,29 @@ async function runLighthouseAudit(url, page, slug, { authed }) {
       }, rawSession)
     }
 
-    const result = await lighthouse(
-      url,
-      {
-        onlyCategories: LIGHTHOUSE_CATEGORIES,
-        logLevel: "error",
-        // Preserve the localStorage session across the audit's own internal
-        // navigation for authenticated routes — Lighthouse clears all origin
-        // storage before each run by default (Storage.clearDataForOrigin).
-        disableStorageReset: authed,
-      },
-      undefined,
-      lhPage,
+    // `withRetry` (packet A8, `emp-env-navigation-flakiness`): `lighthouse()`
+    // drives its own internal navigation of `lhPage` — there is no
+    // `page.goto` call site here to wrap with `gotoWithRetry` — so a
+    // transient failure in that internal navigation gets the same 3-attempt
+    // resilience as this file's other page navigations, rather than sending
+    // the route straight to the outer `catch`'s null-scores fallback below
+    // on the first flake.
+    const result = await withRetry(
+      () =>
+        lighthouse(
+          url,
+          {
+            onlyCategories: LIGHTHOUSE_CATEGORIES,
+            logLevel: "error",
+            // Preserve the localStorage session across the audit's own internal
+            // navigation for authenticated routes — Lighthouse clears all origin
+            // storage before each run by default (Storage.clearDataForOrigin).
+            disableStorageReset: authed,
+          },
+          undefined,
+          lhPage,
+        ),
+      { label: `lighthouse ${slug}` },
     )
     const lhr = result.lhr
     fs.writeFileSync(path.join(LH_DIR, `${slug}.json`), JSON.stringify(lhr, null, 2))
@@ -819,35 +943,30 @@ async function injectSession(page, { accessToken, userId, role }) {
   )
 }
 
-/** `goto` + the route's readiness wait, with one retry on a detached-frame
- * error. The very first navigation on a freshly-created page in an origin
- * that already has an active PWA service worker (every route after the
- * first) can race a `controllerchange`-driven reload, which detaches the
- * frame mid-`waitForFunction` — a real Puppeteer/vite-plugin-pwa
- * interaction, not a flaky test to paper over with a longer timeout. One
- * clean re-navigation resolves it; a second failure is a real bug and still
- * throws. */
+/** `goto` + the route's readiness wait, retried up to 3 times
+ * (`nav_retry.mjs`'s `withRetry`, packet A8 — `emp-env-navigation-flakiness`)
+ * on any failure.
+ *
+ * Originally a single hand-rolled retry scoped to one specific error: the
+ * very first navigation on a freshly-created page in an origin that already
+ * has an active PWA service worker (every route after the first) can race a
+ * `controllerchange`-driven reload, which detaches the frame mid-
+ * `waitForFunction` — a real Puppeteer/vite-plugin-pwa interaction, not a
+ * flaky test to paper over with a longer timeout. Generalised to the shared
+ * helper's 3-attempt, any-failure retry: a detached frame is still one clean
+ * re-navigation away from resolving (now attempt 2 of 3 rather than a
+ * bespoke special case), and the same resilience now also covers the
+ * ordinary network/timeout flakiness this finding named — a dropped
+ * connection or a `vite preview` server that hasn't quite finished coming
+ * up — which the detached-frame-only check never retried at all. */
 async function gotoReady(page, url, ready, waitUntil = "networkidle0") {
-  try {
-    await page.goto(url, { waitUntil })
-    if (ready) await ready(page)
-  } catch (err) {
-    if (!/detached/i.test(String(err?.message))) throw err
-    await page.goto(url, { waitUntil })
-    if (ready) await ready(page)
-  }
-}
-
-/** Races `promise` against a plain timer — `page.evaluate()` has no timeout
- * of its own, so a promise that never resolves (e.g. a service worker that
- * never activates) would otherwise hang the whole run rather than surfacing
- * as the diagnostic route failure it actually is. */
-function withTimeout(promise, ms, label) {
-  let timer
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), ms)
-  })
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+  await withRetry(
+    async () => {
+      await page.goto(url, { waitUntil })
+      if (ready) await ready(page)
+    },
+    { label: `goto ${url}` },
+  )
 }
 
 /** `setup`/`teardown` pair for a `loading` state: holds the route's own API
@@ -1021,7 +1140,11 @@ async function resolveReviewItemViaAdjustForm(page, url) {
  * `axe/_summary.json` has one row per state — do not read
  * `lighthouse/_summary.json`'s row count as "how many states were audited";
  * see `main()`'s end-of-run log for the honest per-kind counts. */
-async function visitRoute(page, route, { axeSummary, lighthouseSummary, responsiveViolations }) {
+async function visitRoute(
+  page,
+  route,
+  { axeSummary, lighthouseSummary, responsiveViolations, kitFieldsSummary, routeFailures },
+) {
   const url = `${PREVIEW_URL}${route.path}`
   const states = route.states ?? [
     { state: route.state ?? "default", slug: route.slug, ready: route.ready },
@@ -1031,24 +1154,61 @@ async function visitRoute(page, route, { axeSummary, lighthouseSummary, responsi
     const ready = st.ready ?? route.ready
     const waitUntil = st.waitUntil ?? "networkidle0"
     try {
+      // C4 (Task 11): a state may declare `media: "print"` to capture the
+      // route under `@media print` rather than the default screen media.
+      // Puppeteer's call is `page.emulateMediaType(type)` — NOT Playwright's
+      // `page.emulateMedia({ media })`; this file imports `puppeteer`
+      // (see the file's own imports), a different tool from the Playwright
+      // specs under web/e2e/.
+      if (st.media) {
+        await page.emulateMediaType(st.media)
+      }
+
+      // C5c (Task 14): a state may declare `colorScheme: "dark"` to capture
+      // the route under `prefers-color-scheme: dark` — the signal
+      // `public/shell-init.js` reads when there is no stored `lemely.theme`
+      // preference (Task 13), which is exactly the case here since the
+      // audit's seeded accounts never touch Appearance. Puppeteer's call is
+      // `page.emulateMediaFeatures([{ name, value }])`, a sibling of
+      // `emulateMediaType` above and, again, not Playwright's
+      // `page.emulateMedia({ colorScheme })`.
+      if (st.colorScheme) {
+        await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: st.colorScheme }])
+      }
+
       if (st.setup) {
         log(`${route.screenId} ${route.path} [${st.state}] — setup...`)
         await st.setup(page)
       }
 
-      log(`${route.screenId} ${route.path} [${st.state}] — screenshots + responsive check (3 breakpoints)...`)
-      for (const bp of BREAKPOINTS) {
+      // T33: an entry or a state may name its own widths (the tutoring screens use 320/768/1280).
+      const breakpoints = st.breakpoints ?? route.breakpoints ?? BREAKPOINTS
+      log(
+        `${route.screenId} ${route.path} [${st.state}] — screenshots + responsive check ` +
+          `(${breakpoints.map((bp) => bp.width).join("/")})...`,
+      )
+      for (const bp of breakpoints) {
         await page.setViewport(bp)
         await gotoReady(page, url, ready, waitUntil)
+        // T33: a dialog or a toast is still fading in when `ready` resolves; the first
+        // screenshots showed S-38's confirm sheet half transparent. Axe already waits.
+        await settleAnimations(page)
         const violation = await checkNoHorizontalScroll(page, st.slug, bp.width)
         if (violation) responsiveViolations.push(violation)
-        await shoot(page, route.screenId, st.state, bp.width)
+        await shoot(page, route.screenId, st.state, bp.width, st.shotSuffix, {
+          hideBottomChrome: route.hideBottomChrome === true,
+        })
       }
 
       log(`${route.screenId} ${route.path} [${st.state}] — axe...`)
       await page.setViewport(AUDIT_VIEWPORT)
       await gotoReady(page, url, ready, waitUntil)
       axeSummary.push(await runAxe(page, st.slug))
+      recordKitFields(kitFieldsSummary, routeFailures, await runKitFieldsCheck(page, st.slug), {
+        screenId: route.screenId,
+        path: route.path,
+        state: st.state,
+      })
 
       if (st.lighthouse !== false) {
         log(`${route.screenId} ${route.path} [${st.state}] — Lighthouse...`)
@@ -1063,6 +1223,19 @@ async function visitRoute(page, route, { axeSummary, lighthouseSummary, responsi
         })
       }
     } finally {
+      // Reset media emulation before the next state (or the next route)
+      // runs under whatever media it expects — `null` restores Puppeteer's
+      // default ("screen").
+      if (st.media) {
+        await page.emulateMediaType(null)
+      }
+      // Same reset, for the same reason, for the colour-scheme feature: an
+      // empty array is Puppeteer's documented way to clear feature emulation
+      // (its own `emulateMediaFeatures` doc comment: "Passing an empty array
+      // disables CSS media feature emulation"), the sibling of `null` above.
+      if (st.colorScheme) {
+        await page.emulateMediaFeatures([])
+      }
       if (st.teardown) {
         log(`${route.screenId} ${route.path} [${st.state}] — teardown...`)
         await st.teardown(page)
@@ -1208,16 +1381,16 @@ function buildRouteRegistry(seed) {
   const quizDetailUrl = `/teacher/quizzes/${seed.quiz.quizId}`
   const quizResultsUrl = `/teacher/quizzes/${seed.quiz.quizId}/assignments/${seed.quiz.assignmentId}/results`
 
+  // T33: the tutoring marketplace's screens (SPEC §d) live in their own module, so the
+  // registry for a feature that ships 23 gated routes does not bury this file further.
+  const tutoringEntries = buildTutoringRegistry(seed, { loadingStateHooks, errorStateHooks })
+  if (TUTORING_ONLY) return tutoringEntries
+
   return [
-    // ── G-05 · Parent log in (phone + OTP) — unauthenticated ──────────────
-    {
-      screenId: "G-05",
-      slug: "parent-login",
-      path: "/login/parent",
-      session: null,
-      ready: (page) => waitForText(page, "Check on your child"),
-      authed: false,
-    },
+    // ── G-05 · Parent log in (phone + OTP) — REMOVED (T33) ─────────────────
+    // `/login/parent` was retired with phone login (f7fa3283, "retire phone login"): the route now
+    // answers the 404 page, and this entry could only ever wait 15 s for "Check on your child"
+    // and fail the whole audit. A parent signs in on `/login`, which has its own entry (G-04).
     // ── P6.5 · How your data is handled — unauthenticated ─────────────────
     // The second public content page in the product (D6.8 option A). Its
     // `screenId` is not a UI-spec id, because this page answers no line of the
@@ -1312,21 +1485,13 @@ function buildRouteRegistry(seed) {
           slug: "teacher-overview-offline",
           lighthouse: false,
           ready: (page) => waitForText(page, "Couldn't load the overview"),
-          setup: async (page) => {
-            // Wait for the service worker to be active before flipping
-            // offline — `vite.config.ts`'s `navigateFallback` only serves
-            // the app shell offline once a worker controls navigations for
-            // this origin, and this session's page has already navigated
-            // here once (the `default` state above), giving it time to
-            // install.
-            await withTimeout(
-              page.evaluate(() => navigator.serviceWorker.ready),
-              15_000,
-              "service worker ready (T-01 offline capture)",
-            )
-            await page.setOfflineMode(true)
-          },
-          teardown: (page) => page.setOfflineMode(false),
+          // T33. This used to flip CDP offline mode and reload through the service worker's
+          // navigation fallback. Current Chromium applies that emulation to a service-worker
+          // navigation too (`net::ERR_INTERNET_DISCONNECTED` on the goto itself, 3 times), so the
+          // route could not be reached at all. Aborting the screen's own request is the same
+          // failure the screen sees (`fetch` rejects, `lib/api.ts` reports status 0) and leaves
+          // the navigation alone.
+          ...offlineStateHooks("/api/teacher/overview"),
         },
       ],
     },
@@ -1353,11 +1518,27 @@ function buildRouteRegistry(seed) {
     },
     {
       screenId: "T-04",
-      slug: "teacher-class-analytics",
       path: `/teacher/classes/${classId}/analytics`,
       session: teacherSession,
-      ready: (page) => waitForText(page, "Topic weakness heatmap"),
       authed: true,
+      // C5c (Task 14): the chart-heaviest screen in the registry (grade
+      // distribution bar + cohort-mean line, both Nivo/`useNivoTheme`) is the
+      // one whose dark capture is worth a reviewer's eyes for its own sake —
+      // it's what `theme.spec.ts`'s chart-fill assertion also exercises.
+      states: [
+        {
+          state: "default",
+          slug: "teacher-class-analytics",
+          ready: (page) => waitForText(page, "Topic weakness heatmap"),
+        },
+        {
+          state: "dark",
+          slug: "teacher-class-analytics-dark",
+          lighthouse: false,
+          colorScheme: "dark",
+          ready: (page) => waitForText(page, "Topic weakness heatmap"),
+        },
+      ],
     },
     {
       screenId: "T-05",
@@ -1382,17 +1563,33 @@ function buildRouteRegistry(seed) {
     },
     {
       screenId: "T-07",
-      slug: "teacher-review",
       path: "/teacher/review",
       session: teacherSession,
+      authed: true,
       // Same shape as T-06: "Review queue" duplicates into the pending
       // sr-only h1, so wait on the loaded-only eyebrow line instead. Not
       // empty since P3.10 chunk e1: the seed now deliberately persists one
       // LOW-confidence attempt (`seed.reviewItem`, D3.9's queueing path) so
       // T-08 below has a real item to drill into — this list shows exactly
       // that one row.
-      ready: (page) => waitForText(page, "core recurring task"),
-      authed: true,
+      //
+      // C5c (Task 14): one of the five named dark captures — a reviewer can
+      // open `teacher-review-dark.png` and see the red-pen register, the
+      // filter tabs and the queued item in dark.
+      states: [
+        {
+          state: "default",
+          slug: "teacher-review",
+          ready: (page) => waitForText(page, "core recurring task"),
+        },
+        {
+          state: "dark",
+          slug: "teacher-review-dark",
+          lighthouse: false,
+          colorScheme: "dark",
+          ready: (page) => waitForText(page, "core recurring task"),
+        },
+      ],
     },
     // ── T-08 · Review item detail — zero coverage before e1 seeded a real
     // LOW-confidence item (scripts/seed_e2e.py's `reviewItem`, linked to
@@ -1586,11 +1783,9 @@ function buildRouteRegistry(seed) {
           state: "empty",
           slug: "teacher-overview-empty",
           lighthouse: false,
-          // P3.2: the teacher header greets by the reader's real local time
-          // now, so a fixed "Good morning" gate would fail this audit for
-          // sixteen hours a day. `waitForText` compiles its argument as a
-          // case-insensitive RegExp, so the alternation works as-is.
-          ready: (page) => waitForText(page, "Good (morning|afternoon|evening)"),
+          // A teacher with no class is sent on from /teacher to /teacher/first-class, so the
+          // greeting this used to wait for (the populated overview's) is never on screen (T33).
+          ready: (page) => waitForText(page, "Create your first class"),
         },
       ],
     },
@@ -1656,7 +1851,7 @@ function buildRouteRegistry(seed) {
       slug: "student-parents",
       path: "/student/parents",
       session: decliningStudentSession,
-      ready: (page) => waitForText(page, "Your parents"),
+      ready: (page) => waitForText(page, "Parent access"),
       authed: true,
     },
     // ── Student onboarding + placement (P4.8 chunk C · S-01..S-05) ────────
@@ -2317,7 +2512,9 @@ function buildRouteRegistry(seed) {
       slug: "student-landing",
       path: "/student/landing",
       session: practiceActiveSession,
-      ready: (page) => waitForText(page, "Thirty papers marked"),
+      // `/student/landing` redirects to the public `/landing` (routes.tsx); the page that
+      // answers is the marketing landing page, whose h1 is the one stable thing on it.
+      ready: (page) => waitForText(page, "Marking you can check, line by line"),
       authed: true,
     },
     // ── DEV-01 · Result-header design gallery — REMOVED P4.10 (D4.8) ──────
@@ -2389,7 +2586,7 @@ function buildRouteRegistry(seed) {
         },
       ],
     },
-  ]
+  ].concat(tutoringEntries)
 }
 
 // ── Chromium lifecycle ────────────────────────────────────────────────────
@@ -2471,6 +2668,7 @@ async function main() {
   fs.mkdirSync(AXE_DIR, { recursive: true })
   fs.mkdirSync(LH_DIR, { recursive: true })
   fs.mkdirSync(SCREENS_DIR, { recursive: true })
+  fs.mkdirSync(KIT_FIELDS_DIR, { recursive: true })
 
   log("Resolving local Supabase stack keys...")
   const supabaseEnv = resolveSupabaseEnv()
@@ -2513,6 +2711,7 @@ async function main() {
   const consoleErrors = []
   const responsiveViolations = []
   const routeFailures = []
+  const kitFieldsSummary = []
 
   let browser
   let routes = []
@@ -2523,13 +2722,16 @@ async function main() {
     const page = await browser.newPage()
     watchConsole(page, consoleErrors)
 
+    // T33: with LEMELY_AUDIT_SCOPE=tutoring the older inline journeys below (G-04 through S-06,
+    // the real upload included) are skipped; the block is not re-indented so the diff stays small.
+    if (!TUTORING_ONLY) {
     // ── G-04 · Log in — unaudited/unauthenticated, must run before any
     // login so /login doesn't self-redirect away from an existing session
     // (App.tsx's LoginRoute navigates to the portal home if session is set).
     log("G-04 /login — default state (3 breakpoints)...")
     for (const bp of BREAKPOINTS) {
       await page.setViewport(bp)
-      await page.goto(`${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
+      await gotoWithRetry(page, `${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
       await waitForText(page, "Lemely")
       const violation = await checkNoHorizontalScroll(page, "login", bp.width)
       if (violation) responsiveViolations.push(violation)
@@ -2539,7 +2741,7 @@ async function main() {
     log("G-04 /login — error state (invalid credentials, 3 breakpoints)...")
     for (const bp of BREAKPOINTS) {
       await page.setViewport(bp)
-      await page.goto(`${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
+      await gotoWithRetry(page, `${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
       const emailInput = await page.$("input[type=email]")
       const passwordInput = await page.$("input[type=password]")
       await emailInput.type("nonexistent-audit-user@example.com")
@@ -2554,7 +2756,7 @@ async function main() {
     log("G-04 /login — loading state (delayed submit, 3 breakpoints)...")
     for (const bp of BREAKPOINTS) {
       await page.setViewport(bp)
-      await page.goto(`${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
+      await gotoWithRetry(page, `${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
       await page.setRequestInterception(true)
       const onRequest = (req) => {
         if (req.url().includes("/api/auth/login")) {
@@ -2579,12 +2781,39 @@ async function main() {
 
     log("G-04 /login — axe + Lighthouse (default state)...")
     await page.setViewport(AUDIT_VIEWPORT)
-    await page.goto(`${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
+    await gotoWithRetry(page, `${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
     await waitForText(page, "Lemely")
     axeSummary.push(await runAxe(page, "login"))
+    recordKitFields(kitFieldsSummary, routeFailures, await runKitFieldsCheck(page, "login"), {
+      screenId: "G-04",
+      path: "/login",
+      state: "default",
+    })
     lighthouseSummary.push(
       await runLighthouseAudit(`${PREVIEW_URL}/login`, page, "login", { authed: false }),
     )
+
+    // ── G-04 · Login under prefers-color-scheme: dark — C5c (Task 14) ──────
+    // Not Lighthouse-scored, for the same reason the print-media capture
+    // below isn't: perf/a11y/SEO are properties of the shipped code, not of
+    // which colour scheme happened to be emulated. A screenshot + axe pass,
+    // reusing the same `ready` condition ("Lemely" in the wordmark) as the
+    // light default state above.
+    log("G-04 /login — dark capture...")
+    await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "dark" }])
+    try {
+      await gotoWithRetry(page, `${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
+      await waitForText(page, "Lemely")
+      await shoot(page, "G-04", "dark", AUDIT_VIEWPORT.width)
+      axeSummary.push(await runAxe(page, "login-dark"))
+      recordKitFields(kitFieldsSummary, routeFailures, await runKitFieldsCheck(page, "login-dark"), {
+        screenId: "G-04",
+        path: "/login",
+        state: "dark",
+      })
+    } finally {
+      await page.emulateMediaFeatures([])
+    }
 
     // ── Authenticated flow: sign up (direct API, matches
     // web/e2e/screenshots.spec.ts's apiSignUp), log in through the real UI,
@@ -2594,15 +2823,37 @@ async function main() {
     const signupRes = await fetch(`${BACKEND_URL}/api/auth/signup`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email, password: PASSWORD, role: "student" }),
+      // `acceptedTerms` has been required since D7.11 (consent to /data); without it signup answers
+      // 422 and this journey, which every later audit step depends on, never starts.
+      body: JSON.stringify({ email, password: PASSWORD, role: "student", acceptedTerms: true }),
     })
     if (!signupRes.ok) {
       throw new Error(`signup failed: ${signupRes.status} ${await signupRes.text()}`)
     }
+    // The journey needs a student who can mark a paper, and a fresh signup cannot: its email is
+    // unverified (D7.5 refuses a marking run) and it has not onboarded (D7.9 sends every page to
+    // /student/onboard). `web/e2e/screenshots.spec.ts` clears both through the API the UI itself
+    // calls, which captures no screen this audit does not own; so does this.
+    const { accessToken: journeyToken, devLink } = await signupRes.json()
+    const verifyRes = await fetch(`${BACKEND_URL}/api/auth/verify-email`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: String(devLink).split("/").pop() }),
+    })
+    if (!verifyRes.ok) {
+      throw new Error(`verify-email failed: ${verifyRes.status} ${await verifyRes.text()}`)
+    }
+    const onboardRes = await fetch(`${BACKEND_URL}/api/me/student-profile/complete-onboarding`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${journeyToken}` },
+    })
+    if (!onboardRes.ok) {
+      throw new Error(`complete-onboarding failed: ${onboardRes.status} ${await onboardRes.text()}`)
+    }
 
     log("Logging in through the real UI...")
     await page.setViewport(AUDIT_VIEWPORT)
-    await page.goto(`${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
+    await gotoWithRetry(page, `${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
     const emailInput = await page.$("input[type=email]")
     const passwordInput = await page.$("input[type=password]")
     await emailInput.type(email)
@@ -2614,15 +2865,21 @@ async function main() {
     // ── S-10 · Correct a paper — entry/default state audit, before upload ──
     log("S-10 /student/correct — responsive check (380px) + axe + Lighthouse (entry state)...")
     await page.setViewport({ width: 380, height: 844 })
-    await page.goto(`${PREVIEW_URL}/student/correct`, { waitUntil: "networkidle0" })
+    await gotoWithRetry(page, `${PREVIEW_URL}/student/correct`, { waitUntil: "networkidle0" })
     await waitForText(page, "Correct a paper")
     const correctViolation = await checkNoHorizontalScroll(page, "student-correct", 380)
     if (correctViolation) responsiveViolations.push(correctViolation)
 
     await page.setViewport(AUDIT_VIEWPORT)
-    await page.goto(`${PREVIEW_URL}/student/correct`, { waitUntil: "networkidle0" })
+    await gotoWithRetry(page, `${PREVIEW_URL}/student/correct`, { waitUntil: "networkidle0" })
     await waitForText(page, "Correct a paper")
     axeSummary.push(await runAxe(page, "student-correct"))
+    recordKitFields(
+      kitFieldsSummary,
+      routeFailures,
+      await runKitFieldsCheck(page, "student-correct"),
+      { screenId: "S-10", path: "/student/correct", state: "entry" },
+    )
     lighthouseSummary.push({
       path: "/student/correct",
       ...(await runLighthouseAudit(`${PREVIEW_URL}/student/correct`, page, "student-correct", {
@@ -2631,7 +2888,7 @@ async function main() {
     })
 
     log("Uploading the golden fixture to reach a real corrected-paper state...")
-    await page.goto(`${PREVIEW_URL}/student/correct`, { waitUntil: "networkidle0" })
+    await gotoWithRetry(page, `${PREVIEW_URL}/student/correct`, { waitUntil: "networkidle0" })
     const fileInput = await page.$("#scan-file")
     await fileInput.uploadFile(SCAN_PATH)
     await clickButtonByText(page, "mark this paper")
@@ -2650,15 +2907,20 @@ async function main() {
     // accessible attribute directly instead (mirrors Playwright's
     // getByLabel(/out of .* marks/) in web/e2e/screenshots.spec.ts).
     await page.setViewport({ width: 380, height: 844 })
-    await page.goto(resultUrl, { waitUntil: "networkidle0" })
+    await gotoWithRetry(page, resultUrl, { waitUntil: "networkidle0" })
     await page.waitForSelector('[aria-label*="out of"]', { timeout: 15_000 })
     const resultViolation = await checkNoHorizontalScroll(page, "student-result", 380)
     if (resultViolation) responsiveViolations.push(resultViolation)
 
     await page.setViewport(AUDIT_VIEWPORT)
-    await page.goto(resultUrl, { waitUntil: "networkidle0" })
+    await gotoWithRetry(page, resultUrl, { waitUntil: "networkidle0" })
     await page.waitForSelector('[aria-label*="out of"]', { timeout: 15_000 })
     axeSummary.push(await runAxe(page, "student-result"))
+    recordKitFields(kitFieldsSummary, routeFailures, await runKitFieldsCheck(page, "student-result"), {
+      screenId: "S-15/S-17",
+      path: resultUrl.slice(PREVIEW_URL.length),
+      state: "default",
+    })
     lighthouseSummary.push({
       // Derived from the URL rather than written out, because this one carries a
       // real paper id — a hand-typed "/student/result" would be a path no run
@@ -2666,6 +2928,89 @@ async function main() {
       path: resultUrl.slice(PREVIEW_URL.length),
       ...(await runLighthouseAudit(resultUrl, page, "student-result", { authed: true })),
     })
+
+    // ── S-15/S-17 · Paper result under print media — C4 (Task 11) ──────────
+    // Not Lighthouse-scored (the perf/a11y/SEO categories are properties of
+    // the shipped code, not of which media type happened to be emulated —
+    // see visitRoute()'s own doc comment on the same decision) — a plain
+    // screenshot + axe pass under `page.emulateMediaType("print")`, proving
+    // the `@media print` block (web/src/index.css) actually applies: portal
+    // chrome hidden, the paper surface forced white, question rows not torn
+    // across a page boundary.
+    log("S-15/S-17 /student/result/:paperId — print-media capture...")
+    await page.setViewport(AUDIT_VIEWPORT)
+    await page.emulateMediaType("print")
+    try {
+      await gotoWithRetry(page, resultUrl, { waitUntil: "networkidle0" })
+      await page.waitForSelector('[aria-label*="out of"]', { timeout: 15_000 })
+      await shoot(page, "S-17", "print-media", AUDIT_VIEWPORT.width)
+      axeSummary.push(await runAxe(page, "student-result-print"))
+      recordKitFields(
+        kitFieldsSummary,
+        routeFailures,
+        await runKitFieldsCheck(page, "student-result-print"),
+        { screenId: "S-15/S-17", path: resultUrl.slice(PREVIEW_URL.length), state: "print-media" },
+      )
+    } finally {
+      await page.emulateMediaType(null)
+    }
+
+    // ── S-15/S-17 · Paper result under prefers-color-scheme: dark — C5c
+    // (Task 14) ──────────────────────────────────────────────────────────
+    // Not Lighthouse-scored (same reasoning as print-media above). A
+    // screenshot + axe pass, reusing the light default's `ready` condition
+    // (the "out of ... marks" `aria-label`) — this is the red-pen paper
+    // register a reviewer opens `student-result-dark.png` to check.
+    log("S-15/S-17 /student/result/:paperId — dark capture...")
+    await page.setViewport(AUDIT_VIEWPORT)
+    await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "dark" }])
+    try {
+      await gotoWithRetry(page, resultUrl, { waitUntil: "networkidle0" })
+      await page.waitForSelector('[aria-label*="out of"]', { timeout: 15_000 })
+      await shoot(page, "S-17", "dark", AUDIT_VIEWPORT.width)
+      axeSummary.push(await runAxe(page, "student-result-dark"))
+      recordKitFields(
+        kitFieldsSummary,
+        routeFailures,
+        await runKitFieldsCheck(page, "student-result-dark"),
+        { screenId: "S-15/S-17", path: resultUrl.slice(PREVIEW_URL.length), state: "dark" },
+      )
+    } finally {
+      await page.emulateMediaFeatures([])
+    }
+
+    // ── S-15/S-17 · Paper result under print media AND dark mode — C4/C5
+    // review fix ─────────────────────────────────────────────────────────
+    // Not Lighthouse-scored (same reasoning as the two captures above). The
+    // two features above are independent emulations (Puppeteer's
+    // `emulateMediaType` and `emulateMediaFeatures` are separate calls, not
+    // mutually exclusive), so this combines both in the same pass rather
+    // than adding a third bespoke code path — the exact repro for the C4/C5
+    // review fix: `@media print`'s `:root` selector was losing the cascade
+    // to the dark ladder's `:root[data-theme="dark"]` (higher specificity,
+    // `@media` adds none), so printing while the theme preference was dark
+    // left the print surface on dark `--paper`/`--ink` — near-white ink on
+    // white paper, since browsers don't print backgrounds by default. This
+    // capture is the only place that would have shown that regression.
+    log("S-15/S-17 /student/result/:paperId — print-media + dark capture...")
+    await page.setViewport(AUDIT_VIEWPORT)
+    await page.emulateMediaType("print")
+    await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "dark" }])
+    try {
+      await gotoWithRetry(page, resultUrl, { waitUntil: "networkidle0" })
+      await page.waitForSelector('[aria-label*="out of"]', { timeout: 15_000 })
+      await shoot(page, "S-17", "print-dark", AUDIT_VIEWPORT.width)
+      axeSummary.push(await runAxe(page, "student-result-print-dark"))
+      recordKitFields(
+        kitFieldsSummary,
+        routeFailures,
+        await runKitFieldsCheck(page, "student-result-print-dark"),
+        { screenId: "S-15/S-17", path: resultUrl.slice(PREVIEW_URL.length), state: "print-dark" },
+      )
+    } finally {
+      await page.emulateMediaType(null)
+      await page.emulateMediaFeatures([])
+    }
 
     // ── G-13 · Notification inbox — POPULATED (P5.11) ──────────────────────
     // The registry's G-13 entry audits the EMPTY state, which is the state the
@@ -2682,29 +3027,64 @@ async function main() {
     // rows directly, which is the one thing the notification path does not do.
     log("G-13 /student/notifications — axe (POPULATED, via the grade_ready fan-out above)...")
     await page.setViewport(AUDIT_VIEWPORT)
-    await page.goto(`${PREVIEW_URL}/student/notifications`, { waitUntil: "networkidle0" })
+    await gotoWithRetry(page, `${PREVIEW_URL}/student/notifications`, { waitUntil: "networkidle0" })
     await waitForText(page, "Your paper has been marked")
     axeSummary.push(await runAxe(page, "student-notifications-populated"))
+    recordKitFields(
+      kitFieldsSummary,
+      routeFailures,
+      await runKitFieldsCheck(page, "student-notifications-populated"),
+      { screenId: "G-13", path: "/student/notifications", state: "populated" },
+    )
     await shoot(page, "G-13", "populated", AUDIT_VIEWPORT.width)
 
     // ── S-06 · Student overview — now non-empty (one corrected paper) ──────
     log("S-06 /student — responsive check (380px) + axe + Lighthouse (non-empty, after correction)...")
     await page.setViewport({ width: 380, height: 844 })
-    await page.goto(`${PREVIEW_URL}/student`, { waitUntil: "networkidle0" })
+    await gotoWithRetry(page, `${PREVIEW_URL}/student`, { waitUntil: "networkidle0" })
     await waitForText(page, "Subjects this session")
     const overviewViolation = await checkNoHorizontalScroll(page, "student-overview", 380)
     if (overviewViolation) responsiveViolations.push(overviewViolation)
 
     await page.setViewport(AUDIT_VIEWPORT)
-    await page.goto(`${PREVIEW_URL}/student`, { waitUntil: "networkidle0" })
+    await gotoWithRetry(page, `${PREVIEW_URL}/student`, { waitUntil: "networkidle0" })
     await waitForText(page, "Subjects this session")
     axeSummary.push(await runAxe(page, "student-overview"))
+    recordKitFields(
+      kitFieldsSummary,
+      routeFailures,
+      await runKitFieldsCheck(page, "student-overview"),
+      { screenId: "S-06", path: "/student", state: "non-empty" },
+    )
     lighthouseSummary.push({
       path: "/student",
       ...(await runLighthouseAudit(`${PREVIEW_URL}/student`, page, "student-overview", {
         authed: true,
       })),
     })
+
+    // ── S-06 · Student overview under prefers-color-scheme: dark — C5c
+    // (Task 14) ──────────────────────────────────────────────────────────
+    // Not Lighthouse-scored (same reasoning as the other four dark
+    // captures). A screenshot + axe pass, reusing the light default's
+    // `ready` condition ("Subjects this session").
+    log("S-06 /student — dark capture...")
+    await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "dark" }])
+    try {
+      await gotoWithRetry(page, `${PREVIEW_URL}/student`, { waitUntil: "networkidle0" })
+      await waitForText(page, "Subjects this session")
+      await shoot(page, "S-06", "dark", AUDIT_VIEWPORT.width)
+      axeSummary.push(await runAxe(page, "student-overview-dark"))
+      recordKitFields(
+        kitFieldsSummary,
+        routeFailures,
+        await runKitFieldsCheck(page, "student-overview-dark"),
+        { screenId: "S-06", path: "/student", state: "dark" },
+      )
+    } finally {
+      await page.emulateMediaFeatures([])
+    }
+    } // end of the inline journeys (skipped when TUTORING_ONLY)
     // ── The 15 declaratively-registered routes (teacher/parent/G-05/
     // student-parents) — each role gets its own fresh page with a real
     // session injected (see `injectSession`), rather than re-driving 4
@@ -2721,6 +3101,13 @@ async function main() {
     // actually unauthenticated, and it also removes the registry's implicit
     // dependency on route ordering for the authenticated roles.
     routes = buildRouteRegistry(seed)
+    // T33: `LEMELY_AUDIT_SCREENS=S-33,S-37` narrows a re-run to those screen ids. Like the scope, a
+    // narrowed run writes partial reports and is not evidence for the whole product.
+    const onlyScreens = (process.env.LEMELY_AUDIT_SCREENS ?? "").split(",").map((id) => id.trim()).filter(Boolean)
+    if (onlyScreens.length > 0) {
+      routes = routes.filter((route) => onlyScreens.includes(route.screenId))
+      if (routes.length === 0) throw new Error(`LEMELY_AUDIT_SCREENS=${onlyScreens.join(",")} matches no registry entry`)
+    }
     // The student journey above is finished with this page, and it is the
     // heaviest one in the run (a real upload + a full marking pass). Closing
     // it frees its renderer before the registry walk opens five more
@@ -2780,6 +3167,8 @@ async function main() {
           axeSummary,
           lighthouseSummary,
           responsiveViolations,
+          kitFieldsSummary,
+          routeFailures,
         })
       } catch (err) {
         if (!browser.connected) throw browserDeath(`during ${route.screenId} ${route.path}`)
@@ -2804,6 +3193,10 @@ async function main() {
   fs.writeFileSync(
     path.join(LH_DIR, "_summary.json"),
     JSON.stringify(lighthouseSummary, null, 2),
+  )
+  fs.writeFileSync(
+    path.join(KIT_FIELDS_DIR, "_summary.json"),
+    JSON.stringify(kitFieldsSummary, null, 2),
   )
   fs.writeFileSync(CONSOLE_ERRORS_PATH, JSON.stringify(consoleErrors, null, 2))
   fs.writeFileSync(RESPONSIVE_SUMMARY_PATH, JSON.stringify(responsiveViolations, null, 2))
@@ -2831,6 +3224,10 @@ async function main() {
       `  ${r.slug.padEnd(24)} ${r.counts.critical}/${r.counts.serious}/${r.counts.moderate}/${r.counts.minor}  (total ${r.violationCount})`,
     )
   }
+  log(
+    `kit-fields passes: ${kitFieldsSummary.length}. Unmarked (hand-rolled) fields: ` +
+      `${kitFieldsSummary.reduce((sum, r) => sum + r.offenderCount, 0)}.`,
+  )
   log("Lighthouse scores (performance/accessibility/best-practices/seo):")
   for (const r of lighthouseSummary) {
     log(

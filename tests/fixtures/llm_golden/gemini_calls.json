@@ -1,0 +1,2245 @@
+{
+ "binding_second_read": {
+  "cache_creates": [],
+  "cache_entries": {
+   "dc5cd20786768515": "{\"value\": \"ok\"}"
+  },
+  "cache_keys": [
+   "dc5cd20786768515"
+  ],
+  "deleted": [],
+  "events": [
+   {
+    "event": "gemini_call_start",
+    "model": "gemini-3.8-flash",
+    "task": "binding_second_read"
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 24000,
+    "model": "gemini-3.8-flash",
+    "output_tokens": 7000,
+    "task": "binding_second_read",
+    "usd_cost": 0.04425
+   }
+  ],
+  "logs": [
+   {
+    "component": "gemini_client",
+    "event": "gemini_schema_sent",
+    "log_level": "debug",
+    "model": "gemini-3.8-flash",
+    "schema": "_Reply",
+    "task": "binding_second_read",
+    "top_level_properties": [
+     "value"
+    ]
+   },
+   {
+    "cache_hit": false,
+    "cached_tokens": 0,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 24000,
+    "log_level": "info",
+    "model": "gemini-3.8-flash",
+    "output_tokens": 7000,
+    "params_fingerprint": "de5c8c1243b2",
+    "task": "binding_second_read",
+    "thoughts_tokens": 0,
+    "usd_cost": 0.04425
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_latency_ms",
+    "log_level": "debug",
+    "model": "gemini-3.8-flash",
+    "task": "binding_second_read"
+   }
+  ],
+  "outputs": [
+   {
+    "value": "ok"
+   }
+  ],
+  "records": [
+   {
+    "attempt": null,
+    "cached_tokens": 0,
+    "case_key": null,
+    "input_tokens": 24000,
+    "model": "gemini-3.8-flash",
+    "output_tokens": 7000,
+    "parse_ok": true,
+    "provider": "gemini",
+    "question_id": null,
+    "task_tag": "binding_second_read",
+    "thinking": "low",
+    "thinking_tokens": 0,
+    "usd_2027": 0.0885,
+    "usd_now": 0.04425
+   }
+  ],
+  "requests": [
+   {
+    "config": {
+     "max_output_tokens": 16384,
+     "response_json_schema": {
+      "properties": {
+       "value": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "value"
+      ],
+      "type": "object"
+     },
+     "response_mime_type": "application/json",
+     "system_instruction": "sys",
+     "thinking_config": {
+      "thinking_level": "LOW"
+     }
+    },
+    "contents": [
+     "user",
+     {
+      "inline_data": {
+       "data": "iVBORw0KGgpnb2xkZW4tcGFnZS0x",
+       "mime_type": "image/png"
+      },
+      "media_resolution": {
+       "level": "MEDIA_RESOLUTION_HIGH"
+      }
+     },
+     {
+      "inline_data": {
+       "data": "iVBORw0KGgpnb2xkZW4tcGFnZS0y",
+       "mime_type": "image/png"
+      },
+      "media_resolution": {
+       "level": "MEDIA_RESOLUTION_HIGH"
+      }
+     }
+    ],
+    "model": "gemini-3.8-flash"
+   }
+  ],
+  "uploads": []
+ },
+ "correction": {
+  "cache_creates": [],
+  "cache_entries": {
+   "feb64b5e22026886": "{\"value\": \"ok\"}"
+  },
+  "cache_keys": [
+   "feb64b5e22026886"
+  ],
+  "deleted": [],
+  "events": [
+   {
+    "event": "gemini_call_start",
+    "model": "gemini-3.1-flash-lite",
+    "task": "correction"
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 900,
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 72,
+    "task": "correction",
+    "usd_cost": 0.000333
+   }
+  ],
+  "logs": [
+   {
+    "component": "gemini_client",
+    "event": "gemini_schema_sent",
+    "log_level": "debug",
+    "model": "gemini-3.1-flash-lite",
+    "schema": "_Reply",
+    "task": "correction",
+    "top_level_properties": [
+     "value"
+    ]
+   },
+   {
+    "cache_hit": false,
+    "cached_tokens": 0,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 900,
+    "log_level": "info",
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 72,
+    "params_fingerprint": "d0aed2b4ef80",
+    "task": "correction",
+    "thoughts_tokens": 12,
+    "usd_cost": 0.000333
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_latency_ms",
+    "log_level": "debug",
+    "model": "gemini-3.1-flash-lite",
+    "task": "correction"
+   }
+  ],
+  "outputs": [
+   {
+    "value": "ok"
+   }
+  ],
+  "records": [
+   {
+    "attempt": null,
+    "cached_tokens": 0,
+    "case_key": null,
+    "input_tokens": 900,
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 72,
+    "parse_ok": true,
+    "provider": "gemini",
+    "question_id": null,
+    "task_tag": "correction",
+    "thinking": "low",
+    "thinking_tokens": 12,
+    "usd_2027": 0.000333,
+    "usd_now": 0.000333
+   }
+  ],
+  "requests": [
+   {
+    "config": {
+     "max_output_tokens": 65536,
+     "response_json_schema": {
+      "properties": {
+       "value": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "value"
+      ],
+      "type": "object"
+     },
+     "response_mime_type": "application/json",
+     "system_instruction": "sys",
+     "thinking_config": {
+      "thinking_level": "LOW"
+     }
+    },
+    "contents": [
+     "user"
+    ],
+    "model": "gemini-3.1-flash-lite"
+   }
+  ],
+  "uploads": []
+ },
+ "correction_borderline": {
+  "cache_creates": [],
+  "cache_entries": {
+   "f68fd242bd8507f0": "{\"value\": \"ok\"}"
+  },
+  "cache_keys": [
+   "f68fd242bd8507f0"
+  ],
+  "deleted": [],
+  "events": [
+   {
+    "event": "gemini_call_start",
+    "model": "gemini-3.1-flash-lite",
+    "task": "correction_borderline"
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 800,
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 370,
+    "task": "correction_borderline",
+    "usd_cost": 0.000755
+   }
+  ],
+  "logs": [
+   {
+    "component": "gemini_client",
+    "event": "gemini_schema_sent",
+    "log_level": "debug",
+    "model": "gemini-3.1-flash-lite",
+    "schema": "_Reply",
+    "task": "correction_borderline",
+    "top_level_properties": [
+     "value"
+    ]
+   },
+   {
+    "cache_hit": false,
+    "cached_tokens": 0,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 800,
+    "log_level": "info",
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 370,
+    "params_fingerprint": "58cfae39a199",
+    "task": "correction_borderline",
+    "thoughts_tokens": 300,
+    "usd_cost": 0.000755
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_latency_ms",
+    "log_level": "debug",
+    "model": "gemini-3.1-flash-lite",
+    "task": "correction_borderline"
+   }
+  ],
+  "outputs": [
+   {
+    "value": "ok"
+   }
+  ],
+  "records": [
+   {
+    "attempt": "borderline",
+    "cached_tokens": 0,
+    "case_key": null,
+    "input_tokens": 800,
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 370,
+    "parse_ok": true,
+    "provider": "gemini",
+    "question_id": "3b",
+    "task_tag": "correction_borderline",
+    "thinking": "high",
+    "thinking_tokens": 300,
+    "usd_2027": 0.000755,
+    "usd_now": 0.000755
+   }
+  ],
+  "requests": [
+   {
+    "config": {
+     "max_output_tokens": 65536,
+     "response_json_schema": {
+      "properties": {
+       "value": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "value"
+      ],
+      "type": "object"
+     },
+     "response_mime_type": "application/json",
+     "system_instruction": "sys",
+     "thinking_config": {
+      "thinking_level": "HIGH"
+     }
+    },
+    "contents": [
+     "user"
+    ],
+    "model": "gemini-3.1-flash-lite"
+   }
+  ],
+  "uploads": []
+ },
+ "correction_cache_hit": {
+  "cache_creates": [],
+  "cache_entries": {
+   "feb64b5e22026886": "{\"value\": \"ok\"}"
+  },
+  "cache_keys": [
+   "feb64b5e22026886"
+  ],
+  "deleted": [],
+  "events": [
+   {
+    "event": "gemini_call_start",
+    "model": "gemini-3.1-flash-lite",
+    "task": "correction"
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 10,
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 20,
+    "task": "correction",
+    "usd_cost": 3.3e-05
+   },
+   {
+    "cache_key": "feb64b5e22026886",
+    "event": "gemini_cache_hit",
+    "model": "gemini-3.1-flash-lite",
+    "task": "correction"
+   }
+  ],
+  "logs": [
+   {
+    "component": "gemini_client",
+    "event": "gemini_schema_sent",
+    "log_level": "debug",
+    "model": "gemini-3.1-flash-lite",
+    "schema": "_Reply",
+    "task": "correction",
+    "top_level_properties": [
+     "value"
+    ]
+   },
+   {
+    "cache_hit": false,
+    "cached_tokens": 0,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 10,
+    "log_level": "info",
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 20,
+    "params_fingerprint": "d0aed2b4ef80",
+    "task": "correction",
+    "thoughts_tokens": 0,
+    "usd_cost": 3.3e-05
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_latency_ms",
+    "log_level": "debug",
+    "model": "gemini-3.1-flash-lite",
+    "task": "correction"
+   },
+   {
+    "cache_key": "feb64b5e22026886",
+    "component": "gemini_client",
+    "event": "gemini_cache_hit",
+    "log_level": "info",
+    "model": "gemini-3.1-flash-lite",
+    "task": "correction"
+   }
+  ],
+  "outputs": [
+   {
+    "value": "ok"
+   },
+   {
+    "value": "ok"
+   }
+  ],
+  "records": [
+   {
+    "attempt": null,
+    "cached_tokens": 0,
+    "case_key": null,
+    "input_tokens": 10,
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 20,
+    "parse_ok": true,
+    "provider": "gemini",
+    "question_id": null,
+    "task_tag": "correction",
+    "thinking": "low",
+    "thinking_tokens": 0,
+    "usd_2027": 3.2500000000000004e-05,
+    "usd_now": 3.2500000000000004e-05
+   }
+  ],
+  "requests": [
+   {
+    "config": {
+     "max_output_tokens": 65536,
+     "response_json_schema": {
+      "properties": {
+       "value": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "value"
+      ],
+      "type": "object"
+     },
+     "response_mime_type": "application/json",
+     "system_instruction": "sys",
+     "thinking_config": {
+      "thinking_level": "LOW"
+     }
+    },
+    "contents": [
+     "user"
+    ],
+    "model": "gemini-3.1-flash-lite"
+   }
+  ],
+  "uploads": []
+ },
+ "correction_explicit_prefix_cache": {
+  "cache_creates": [
+   {
+    "config": {
+     "display_name": "lemely-prefix-v1-ada25c4ba840",
+     "system_instruction": "INSTR\nPAPER",
+     "ttl": "600s"
+    },
+    "model": "gemini-3.8-flash"
+   }
+  ],
+  "cache_entries": {
+   "5e6fa911339f5ceb": "{\"value\": \"ok\"}"
+  },
+  "cache_keys": [
+   "5e6fa911339f5ceb"
+  ],
+  "deleted": [],
+  "events": [
+   {
+    "event": "gemini_call_start",
+    "model": "gemini-3.8-flash",
+    "task": "correction"
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 2000,
+    "model": "gemini-3.8-flash",
+    "output_tokens": 0,
+    "task": "correction_prefix_cache",
+    "usd_cost": 0.001667
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 1200,
+    "model": "gemini-3.8-flash",
+    "output_tokens": 40,
+    "task": "correction",
+    "usd_cost": 0.000375
+   }
+  ],
+  "logs": [
+   {
+    "component": "gemini_client",
+    "event": "gemini_schema_sent",
+    "log_level": "debug",
+    "model": "gemini-3.8-flash",
+    "schema": "_Reply",
+    "task": "correction",
+    "top_level_properties": [
+     "value"
+    ]
+   },
+   {
+    "cache_hit": false,
+    "cached_tokens": 0,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 2000,
+    "log_level": "info",
+    "model": "gemini-3.8-flash",
+    "output_tokens": 0,
+    "params_fingerprint": "ada25c4ba840",
+    "prefix_cache": "cachedContents/golden-prefix",
+    "storage_usd": 0.000167,
+    "storage_usd_2027": 0.000333,
+    "task": "correction",
+    "thoughts_tokens": 0,
+    "ttl_seconds": 600,
+    "usd_cost": 0.001667
+   },
+   {
+    "cache_hit": false,
+    "cached_tokens": 1000,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 1200,
+    "log_level": "info",
+    "model": "gemini-3.8-flash",
+    "output_tokens": 40,
+    "params_fingerprint": "aecc57dcd215",
+    "task": "correction",
+    "thoughts_tokens": 0,
+    "usd_cost": 0.000375
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_latency_ms",
+    "log_level": "debug",
+    "model": "gemini-3.8-flash",
+    "task": "correction"
+   }
+  ],
+  "outputs": [
+   {
+    "value": "ok"
+   }
+  ],
+  "records": [
+   {
+    "attempt": null,
+    "cached_tokens": 0,
+    "case_key": null,
+    "input_tokens": 2000,
+    "model": "gemini-3.8-flash",
+    "output_tokens": 0,
+    "parse_ok": true,
+    "provider": "gemini",
+    "question_id": null,
+    "task_tag": "correction_prefix_cache",
+    "thinking": null,
+    "thinking_tokens": 0,
+    "usd_2027": 0.0033333333333333335,
+    "usd_now": 0.0016666666666666668
+   },
+   {
+    "attempt": null,
+    "cached_tokens": 1000,
+    "case_key": null,
+    "input_tokens": 1200,
+    "model": "gemini-3.8-flash",
+    "output_tokens": 40,
+    "parse_ok": true,
+    "provider": "gemini",
+    "question_id": null,
+    "task_tag": "correction",
+    "thinking": "low",
+    "thinking_tokens": 0,
+    "usd_2027": 0.00075,
+    "usd_now": 0.000375
+   }
+  ],
+  "requests": [
+   {
+    "config": {
+     "cached_content": "cachedContents/golden-prefix",
+     "max_output_tokens": 65536,
+     "response_json_schema": {
+      "properties": {
+       "value": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "value"
+      ],
+      "type": "object"
+     },
+     "response_mime_type": "application/json",
+     "thinking_config": {
+      "thinking_level": "LOW"
+     }
+    },
+    "contents": [
+     "user"
+    ],
+    "model": "gemini-3.8-flash"
+   }
+  ],
+  "uploads": []
+ },
+ "correction_schema_retry": {
+  "cache_creates": [],
+  "cache_entries": {
+   "feb64b5e22026886": "{\"value\": \"ok\"}"
+  },
+  "cache_keys": [
+   "feb64b5e22026886"
+  ],
+  "deleted": [],
+  "events": [
+   {
+    "event": "gemini_call_start",
+    "model": "gemini-3.1-flash-lite",
+    "task": "correction"
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 10,
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 20,
+    "task": "correction",
+    "usd_cost": 3.3e-05
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 10,
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 20,
+    "task": "correction",
+    "usd_cost": 3.3e-05
+   }
+  ],
+  "logs": [
+   {
+    "component": "gemini_client",
+    "event": "gemini_schema_sent",
+    "log_level": "debug",
+    "model": "gemini-3.1-flash-lite",
+    "schema": "_Reply",
+    "task": "correction",
+    "top_level_properties": [
+     "value"
+    ]
+   },
+   {
+    "cache_hit": false,
+    "cached_tokens": 0,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 10,
+    "log_level": "info",
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 20,
+    "params_fingerprint": "d0aed2b4ef80",
+    "task": "correction",
+    "thoughts_tokens": 0,
+    "usd_cost": 3.3e-05
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_latency_ms",
+    "log_level": "debug",
+    "model": "gemini-3.1-flash-lite",
+    "task": "correction"
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_validation_failure",
+    "log_level": "debug",
+    "model": "gemini-3.1-flash-lite",
+    "raw_response": "{}",
+    "schema": "_Reply",
+    "task": "correction",
+    "validation_error": "1 validation error for _Reply\nvalue\n  Field required [type=missing, input_value={}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.12/v/missing"
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_schema_sent",
+    "log_level": "debug",
+    "model": "gemini-3.1-flash-lite",
+    "schema": "_Reply",
+    "task": "correction",
+    "top_level_properties": [
+     "value"
+    ]
+   },
+   {
+    "cache_hit": false,
+    "cached_tokens": 0,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 10,
+    "log_level": "info",
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 20,
+    "params_fingerprint": "d0aed2b4ef80",
+    "task": "correction",
+    "thoughts_tokens": 0,
+    "usd_cost": 3.3e-05
+   }
+  ],
+  "outputs": [
+   {
+    "value": "ok"
+   }
+  ],
+  "records": [
+   {
+    "attempt": null,
+    "cached_tokens": 0,
+    "case_key": null,
+    "input_tokens": 10,
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 20,
+    "parse_ok": false,
+    "provider": "gemini",
+    "question_id": null,
+    "task_tag": "correction",
+    "thinking": "low",
+    "thinking_tokens": 0,
+    "usd_2027": 3.2500000000000004e-05,
+    "usd_now": 3.2500000000000004e-05
+   },
+   {
+    "attempt": null,
+    "cached_tokens": 0,
+    "case_key": null,
+    "input_tokens": 10,
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 20,
+    "parse_ok": true,
+    "provider": "gemini",
+    "question_id": null,
+    "task_tag": "correction",
+    "thinking": "low",
+    "thinking_tokens": 0,
+    "usd_2027": 3.2500000000000004e-05,
+    "usd_now": 3.2500000000000004e-05
+   }
+  ],
+  "requests": [
+   {
+    "config": {
+     "max_output_tokens": 65536,
+     "response_json_schema": {
+      "properties": {
+       "value": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "value"
+      ],
+      "type": "object"
+     },
+     "response_mime_type": "application/json",
+     "system_instruction": "sys",
+     "thinking_config": {
+      "thinking_level": "LOW"
+     }
+    },
+    "contents": [
+     "user"
+    ],
+    "model": "gemini-3.1-flash-lite"
+   },
+   {
+    "config": {
+     "max_output_tokens": 65536,
+     "response_json_schema": {
+      "properties": {
+       "value": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "value"
+      ],
+      "type": "object"
+     },
+     "response_mime_type": "application/json",
+     "system_instruction": "sys",
+     "thinking_config": {
+      "thinking_level": "LOW"
+     }
+    },
+    "contents": [
+     "user\n\nYour previous response failed validation for _Reply with the following error:\n1 validation error for _Reply\nvalue\n  Field required [type=missing, input_value={}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.12/v/missing\n\nFix only the fields mentioned in the error above and return valid JSON matching the schema exactly. Do not change any other fields."
+    ],
+    "model": "gemini-3.1-flash-lite"
+   }
+  ],
+  "uploads": []
+ },
+ "correction_shared_prefix": {
+  "cache_creates": [],
+  "cache_entries": {
+   "66528a3a8181c0aa": "{\"value\": \"ok\"}"
+  },
+  "cache_keys": [
+   "66528a3a8181c0aa"
+  ],
+  "deleted": [],
+  "events": [
+   {
+    "event": "gemini_call_start",
+    "model": "gemini-3.1-flash-lite",
+    "task": "correction"
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 1200,
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 40,
+    "task": "correction",
+    "usd_cost": 0.000135
+   }
+  ],
+  "logs": [
+   {
+    "component": "gemini_client",
+    "event": "gemini_schema_sent",
+    "log_level": "debug",
+    "model": "gemini-3.1-flash-lite",
+    "schema": "_Reply",
+    "task": "correction",
+    "top_level_properties": [
+     "value"
+    ]
+   },
+   {
+    "cache_hit": false,
+    "cached_tokens": 1000,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 1200,
+    "log_level": "info",
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 40,
+    "params_fingerprint": "d0aed2b4ef80",
+    "task": "correction",
+    "thoughts_tokens": 0,
+    "usd_cost": 0.000135
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_latency_ms",
+    "log_level": "debug",
+    "model": "gemini-3.1-flash-lite",
+    "task": "correction"
+   }
+  ],
+  "outputs": [
+   {
+    "value": "ok"
+   }
+  ],
+  "records": [
+   {
+    "attempt": null,
+    "cached_tokens": 1000,
+    "case_key": null,
+    "input_tokens": 1200,
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 40,
+    "parse_ok": true,
+    "provider": "gemini",
+    "question_id": null,
+    "task_tag": "correction",
+    "thinking": "low",
+    "thinking_tokens": 0,
+    "usd_2027": 0.000135,
+    "usd_now": 0.000135
+   }
+  ],
+  "requests": [
+   {
+    "config": {
+     "max_output_tokens": 65536,
+     "response_json_schema": {
+      "properties": {
+       "value": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "value"
+      ],
+      "type": "object"
+     },
+     "response_mime_type": "application/json",
+     "system_instruction": "INSTR\nPAPER",
+     "thinking_config": {
+      "thinking_level": "LOW"
+     }
+    },
+    "contents": [
+     "user"
+    ],
+    "model": "gemini-3.1-flash-lite"
+   }
+  ],
+  "uploads": []
+ },
+ "correction_transient_retry": {
+  "cache_creates": [],
+  "cache_entries": {
+   "feb64b5e22026886": "{\"value\": \"ok\"}"
+  },
+  "cache_keys": [
+   "feb64b5e22026886"
+  ],
+  "deleted": [],
+  "events": [
+   {
+    "event": "gemini_call_start",
+    "model": "gemini-3.1-flash-lite",
+    "task": "correction"
+   },
+   {
+    "attempt": 1,
+    "error": "503 Service Unavailable",
+    "event": "gemini_retry",
+    "model": "gemini-3.1-flash-lite",
+    "task": "correction"
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 900,
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 20,
+    "task": "correction",
+    "usd_cost": 0.000255
+   }
+  ],
+  "logs": [
+   {
+    "component": "gemini_client",
+    "event": "gemini_schema_sent",
+    "log_level": "debug",
+    "model": "gemini-3.1-flash-lite",
+    "schema": "_Reply",
+    "task": "correction",
+    "top_level_properties": [
+     "value"
+    ]
+   },
+   {
+    "attempt": 1,
+    "component": "gemini_client",
+    "error": "503 Service Unavailable",
+    "event": "gemini_retry",
+    "log_level": "warning",
+    "model": "gemini-3.1-flash-lite",
+    "task": "correction"
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_schema_sent",
+    "log_level": "debug",
+    "model": "gemini-3.1-flash-lite",
+    "schema": "_Reply",
+    "task": "correction",
+    "top_level_properties": [
+     "value"
+    ]
+   },
+   {
+    "cache_hit": false,
+    "cached_tokens": 0,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 900,
+    "log_level": "info",
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 20,
+    "params_fingerprint": "d0aed2b4ef80",
+    "task": "correction",
+    "thoughts_tokens": 0,
+    "usd_cost": 0.000255
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_latency_ms",
+    "log_level": "debug",
+    "model": "gemini-3.1-flash-lite",
+    "task": "correction"
+   }
+  ],
+  "outputs": [
+   {
+    "value": "ok"
+   }
+  ],
+  "records": [
+   {
+    "attempt": null,
+    "cached_tokens": 0,
+    "case_key": null,
+    "input_tokens": 900,
+    "model": "gemini-3.1-flash-lite",
+    "output_tokens": 20,
+    "parse_ok": true,
+    "provider": "gemini",
+    "question_id": null,
+    "task_tag": "correction",
+    "thinking": "low",
+    "thinking_tokens": 0,
+    "usd_2027": 0.000255,
+    "usd_now": 0.000255
+   }
+  ],
+  "requests": [
+   {
+    "config": {
+     "max_output_tokens": 65536,
+     "response_json_schema": {
+      "properties": {
+       "value": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "value"
+      ],
+      "type": "object"
+     },
+     "response_mime_type": "application/json",
+     "system_instruction": "sys",
+     "thinking_config": {
+      "thinking_level": "LOW"
+     }
+    },
+    "contents": [
+     "user"
+    ],
+    "model": "gemini-3.1-flash-lite"
+   },
+   {
+    "config": {
+     "max_output_tokens": 65536,
+     "response_json_schema": {
+      "properties": {
+       "value": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "value"
+      ],
+      "type": "object"
+     },
+     "response_mime_type": "application/json",
+     "system_instruction": "sys",
+     "thinking_config": {
+      "thinking_level": "LOW"
+     }
+    },
+    "contents": [
+     "user"
+    ],
+    "model": "gemini-3.1-flash-lite"
+   }
+  ],
+  "uploads": []
+ },
+ "escalation": {
+  "cache_creates": [],
+  "cache_entries": {
+   "28ce735d8cccb594": "{\"value\": \"ok\"}"
+  },
+  "cache_keys": [
+   "28ce735d8cccb594"
+  ],
+  "deleted": [],
+  "events": [
+   {
+    "event": "gemini_call_start",
+    "model": "gemini-3.8-flash",
+    "task": "escalation"
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 800,
+    "model": "gemini-3.8-flash",
+    "output_tokens": 570,
+    "task": "escalation",
+    "usd_cost": 0.002737
+   }
+  ],
+  "logs": [
+   {
+    "component": "gemini_client",
+    "event": "gemini_schema_sent",
+    "log_level": "debug",
+    "model": "gemini-3.8-flash",
+    "schema": "_Reply",
+    "task": "escalation",
+    "top_level_properties": [
+     "value"
+    ]
+   },
+   {
+    "cache_hit": false,
+    "cached_tokens": 0,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 800,
+    "log_level": "info",
+    "model": "gemini-3.8-flash",
+    "output_tokens": 570,
+    "params_fingerprint": "1e07dffe95d0",
+    "task": "escalation",
+    "thoughts_tokens": 500,
+    "usd_cost": 0.002737
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_latency_ms",
+    "log_level": "debug",
+    "model": "gemini-3.8-flash",
+    "task": "escalation"
+   }
+  ],
+  "outputs": [
+   {
+    "value": "ok"
+   }
+  ],
+  "records": [
+   {
+    "attempt": "escalation",
+    "cached_tokens": 0,
+    "case_key": null,
+    "input_tokens": 800,
+    "model": "gemini-3.8-flash",
+    "output_tokens": 570,
+    "parse_ok": true,
+    "provider": "gemini",
+    "question_id": "3b",
+    "task_tag": "escalation",
+    "thinking": "high",
+    "thinking_tokens": 500,
+    "usd_2027": 0.005474999999999999,
+    "usd_now": 0.0027374999999999995
+   }
+  ],
+  "requests": [
+   {
+    "config": {
+     "max_output_tokens": 65536,
+     "response_json_schema": {
+      "properties": {
+       "value": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "value"
+      ],
+      "type": "object"
+     },
+     "response_mime_type": "application/json",
+     "system_instruction": "sys",
+     "thinking_config": {
+      "thinking_level": "HIGH"
+     }
+    },
+    "contents": [
+     "user"
+    ],
+    "model": "gemini-3.8-flash"
+   }
+  ],
+  "uploads": []
+ },
+ "extraction_cap_truncated": {
+  "cache_creates": [],
+  "cache_entries": {
+   "957b1e383a4aadb9": "{\"value\": \"ok\"}"
+  },
+  "cache_keys": [
+   "957b1e383a4aadb9"
+  ],
+  "deleted": [],
+  "events": [
+   {
+    "event": "gemini_call_start",
+    "model": "gemini-3.8-flash",
+    "task": "extraction"
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 24000,
+    "model": "gemini-3.8-flash",
+    "output_tokens": 32768,
+    "task": "extraction",
+    "usd_cost": 0.14088
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 24000,
+    "model": "gemini-3.8-flash",
+    "output_tokens": 9000,
+    "task": "extraction",
+    "usd_cost": 0.05175
+   }
+  ],
+  "logs": [
+   {
+    "component": "gemini_client",
+    "event": "gemini_schema_sent",
+    "log_level": "debug",
+    "model": "gemini-3.8-flash",
+    "schema": "_Reply",
+    "task": "extraction",
+    "top_level_properties": [
+     "value"
+    ]
+   },
+   {
+    "cache_hit": false,
+    "cached_tokens": 0,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 24000,
+    "log_level": "info",
+    "model": "gemini-3.8-flash",
+    "output_tokens": 32768,
+    "params_fingerprint": "b3bccca49fe6",
+    "task": "extraction",
+    "thoughts_tokens": 0,
+    "usd_cost": 0.14088
+   },
+   {
+    "component": "gemini_client",
+    "error": "Gemini hit the 32768-token output cap for extraction (gemini-3.8-flash)",
+    "event": "gemini_cap_truncated_retry",
+    "log_level": "warning",
+    "model": "gemini-3.8-flash",
+    "task": "extraction"
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_schema_sent",
+    "log_level": "debug",
+    "model": "gemini-3.8-flash",
+    "schema": "_Reply",
+    "task": "extraction",
+    "top_level_properties": [
+     "value"
+    ]
+   },
+   {
+    "cache_hit": false,
+    "cached_tokens": 0,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 24000,
+    "log_level": "info",
+    "model": "gemini-3.8-flash",
+    "output_tokens": 9000,
+    "params_fingerprint": "b3bccca49fe6",
+    "task": "extraction",
+    "thoughts_tokens": 0,
+    "usd_cost": 0.05175
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_latency_ms",
+    "log_level": "debug",
+    "model": "gemini-3.8-flash",
+    "task": "extraction"
+   }
+  ],
+  "outputs": [
+   {
+    "value": "ok"
+   }
+  ],
+  "records": [
+   {
+    "attempt": null,
+    "cached_tokens": 0,
+    "case_key": null,
+    "input_tokens": 24000,
+    "model": "gemini-3.8-flash",
+    "output_tokens": 32768,
+    "parse_ok": false,
+    "provider": "gemini",
+    "question_id": null,
+    "task_tag": "extraction",
+    "thinking": "low",
+    "thinking_tokens": 0,
+    "usd_2027": 0.28176,
+    "usd_now": 0.14088
+   },
+   {
+    "attempt": null,
+    "cached_tokens": 0,
+    "case_key": null,
+    "input_tokens": 24000,
+    "model": "gemini-3.8-flash",
+    "output_tokens": 9000,
+    "parse_ok": true,
+    "provider": "gemini",
+    "question_id": null,
+    "task_tag": "extraction",
+    "thinking": "low",
+    "thinking_tokens": 0,
+    "usd_2027": 0.10350000000000001,
+    "usd_now": 0.051750000000000004
+   }
+  ],
+  "requests": [
+   {
+    "config": {
+     "max_output_tokens": 32768,
+     "response_json_schema": {
+      "properties": {
+       "value": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "value"
+      ],
+      "type": "object"
+     },
+     "response_mime_type": "application/json",
+     "system_instruction": "sys",
+     "thinking_config": {
+      "thinking_level": "LOW"
+     }
+    },
+    "contents": [
+     "user",
+     {
+      "inline_data": {
+       "data": "iVBORw0KGgpnb2xkZW4tcGFnZS0x",
+       "mime_type": "image/png"
+      }
+     },
+     {
+      "inline_data": {
+       "data": "iVBORw0KGgpnb2xkZW4tcGFnZS0y",
+       "mime_type": "image/png"
+      }
+     }
+    ],
+    "model": "gemini-3.8-flash"
+   },
+   {
+    "config": {
+     "max_output_tokens": 32768,
+     "response_json_schema": {
+      "properties": {
+       "value": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "value"
+      ],
+      "type": "object"
+     },
+     "response_mime_type": "application/json",
+     "system_instruction": "sys",
+     "thinking_config": {
+      "thinking_level": "LOW"
+     }
+    },
+    "contents": [
+     "user",
+     {
+      "inline_data": {
+       "data": "iVBORw0KGgpnb2xkZW4tcGFnZS0x",
+       "mime_type": "image/png"
+      }
+     },
+     {
+      "inline_data": {
+       "data": "iVBORw0KGgpnb2xkZW4tcGFnZS0y",
+       "mime_type": "image/png"
+      }
+     }
+    ],
+    "model": "gemini-3.8-flash"
+   }
+  ],
+  "uploads": []
+ },
+ "extraction_files_api": {
+  "cache_creates": [],
+  "cache_entries": {
+   "816b2bc047aecab2": "{\"value\": \"ok\"}"
+  },
+  "cache_keys": [
+   "816b2bc047aecab2"
+  ],
+  "deleted": [
+   "files/fake-1",
+   "files/fake-2"
+  ],
+  "events": [
+   {
+    "event": "gemini_call_start",
+    "model": "gemini-3.8-flash",
+    "task": "extraction"
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 24000,
+    "model": "gemini-3.8-flash",
+    "output_tokens": 9000,
+    "task": "extraction",
+    "usd_cost": 0.05175
+   }
+  ],
+  "logs": [
+   {
+    "component": "gemini_client",
+    "event": "gemini_schema_sent",
+    "log_level": "debug",
+    "model": "gemini-3.8-flash",
+    "schema": "_Reply",
+    "task": "extraction",
+    "top_level_properties": [
+     "value"
+    ]
+   },
+   {
+    "cache_hit": false,
+    "cached_tokens": 0,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 24000,
+    "log_level": "info",
+    "model": "gemini-3.8-flash",
+    "output_tokens": 9000,
+    "params_fingerprint": "0536a19d3502",
+    "task": "extraction",
+    "thoughts_tokens": 0,
+    "usd_cost": 0.05175
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_latency_ms",
+    "log_level": "debug",
+    "model": "gemini-3.8-flash",
+    "task": "extraction"
+   }
+  ],
+  "outputs": [
+   {
+    "value": "ok"
+   }
+  ],
+  "records": [
+   {
+    "attempt": null,
+    "cached_tokens": 0,
+    "case_key": null,
+    "input_tokens": 24000,
+    "model": "gemini-3.8-flash",
+    "output_tokens": 9000,
+    "parse_ok": true,
+    "provider": "gemini",
+    "question_id": null,
+    "task_tag": "extraction",
+    "thinking": "low",
+    "thinking_tokens": 0,
+    "usd_2027": 0.10350000000000001,
+    "usd_now": 0.051750000000000004
+   }
+  ],
+  "requests": [
+   {
+    "config": {
+     "max_output_tokens": 32768,
+     "response_json_schema": {
+      "properties": {
+       "value": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "value"
+      ],
+      "type": "object"
+     },
+     "response_mime_type": "application/json",
+     "system_instruction": "sys",
+     "thinking_config": {
+      "thinking_level": "LOW"
+     }
+    },
+    "contents": [
+     "user",
+     {
+      "file_data": {
+       "file_uri": "https://generativelanguage.googleapis.com/v1beta/files/fake-1",
+       "mime_type": "image/png"
+      },
+      "media_resolution": {
+       "level": "MEDIA_RESOLUTION_HIGH"
+      }
+     },
+     {
+      "file_data": {
+       "file_uri": "https://generativelanguage.googleapis.com/v1beta/files/fake-2",
+       "mime_type": "image/png"
+      },
+      "media_resolution": {
+       "level": "MEDIA_RESOLUTION_HIGH"
+      }
+     }
+    ],
+    "model": "gemini-3.8-flash"
+   }
+  ],
+  "uploads": [
+   {
+    "config": {
+     "display_name": "page-0",
+     "mime_type": "image/png"
+    },
+    "sha256": "e54cba39c1c88368"
+   },
+   {
+    "config": {
+     "display_name": "page-1",
+     "mime_type": "image/png"
+    },
+    "sha256": "86921e196dfeeab0"
+   }
+  ]
+ },
+ "extraction_inline_images": {
+  "cache_creates": [],
+  "cache_entries": {
+   "816b2bc047aecab2": "{\"value\": \"ok\"}"
+  },
+  "cache_keys": [
+   "816b2bc047aecab2"
+  ],
+  "deleted": [],
+  "events": [
+   {
+    "event": "gemini_call_start",
+    "model": "gemini-3.8-flash",
+    "task": "extraction"
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 24000,
+    "model": "gemini-3.8-flash",
+    "output_tokens": 9000,
+    "task": "extraction",
+    "usd_cost": 0.05175
+   }
+  ],
+  "logs": [
+   {
+    "component": "gemini_client",
+    "event": "gemini_schema_sent",
+    "log_level": "debug",
+    "model": "gemini-3.8-flash",
+    "schema": "_Reply",
+    "task": "extraction",
+    "top_level_properties": [
+     "value"
+    ]
+   },
+   {
+    "cache_hit": false,
+    "cached_tokens": 0,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 24000,
+    "log_level": "info",
+    "model": "gemini-3.8-flash",
+    "output_tokens": 9000,
+    "params_fingerprint": "0536a19d3502",
+    "task": "extraction",
+    "thoughts_tokens": 0,
+    "usd_cost": 0.05175
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_latency_ms",
+    "log_level": "debug",
+    "model": "gemini-3.8-flash",
+    "task": "extraction"
+   }
+  ],
+  "outputs": [
+   {
+    "value": "ok"
+   }
+  ],
+  "records": [
+   {
+    "attempt": null,
+    "cached_tokens": 0,
+    "case_key": null,
+    "input_tokens": 24000,
+    "model": "gemini-3.8-flash",
+    "output_tokens": 9000,
+    "parse_ok": true,
+    "provider": "gemini",
+    "question_id": null,
+    "task_tag": "extraction",
+    "thinking": "low",
+    "thinking_tokens": 0,
+    "usd_2027": 0.10350000000000001,
+    "usd_now": 0.051750000000000004
+   }
+  ],
+  "requests": [
+   {
+    "config": {
+     "max_output_tokens": 32768,
+     "response_json_schema": {
+      "properties": {
+       "value": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "value"
+      ],
+      "type": "object"
+     },
+     "response_mime_type": "application/json",
+     "system_instruction": "sys",
+     "thinking_config": {
+      "thinking_level": "LOW"
+     }
+    },
+    "contents": [
+     "user",
+     {
+      "inline_data": {
+       "data": "iVBORw0KGgpnb2xkZW4tcGFnZS0x",
+       "mime_type": "image/png"
+      },
+      "media_resolution": {
+       "level": "MEDIA_RESOLUTION_HIGH"
+      }
+     },
+     {
+      "inline_data": {
+       "data": "iVBORw0KGgpnb2xkZW4tcGFnZS0y",
+       "mime_type": "image/png"
+      },
+      "media_resolution": {
+       "level": "MEDIA_RESOLUTION_HIGH"
+      }
+     }
+    ],
+    "model": "gemini-3.8-flash"
+   }
+  ],
+  "uploads": []
+ },
+ "generation": {
+  "cache_creates": [],
+  "cache_entries": {
+   "062a72db5c8b840b": "{\"value\": \"ok\"}"
+  },
+  "cache_keys": [
+   "062a72db5c8b840b"
+  ],
+  "deleted": [],
+  "events": [
+   {
+    "event": "gemini_call_start",
+    "model": "gemini-3.5-flash-lite",
+    "task": "generation"
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 10,
+    "model": "gemini-3.5-flash-lite",
+    "output_tokens": 20,
+    "task": "generation",
+    "usd_cost": 5.3e-05
+   }
+  ],
+  "logs": [
+   {
+    "component": "gemini_client",
+    "event": "gemini_schema_sent",
+    "log_level": "debug",
+    "model": "gemini-3.5-flash-lite",
+    "schema": "_Reply",
+    "task": "generation",
+    "top_level_properties": [
+     "value"
+    ]
+   },
+   {
+    "cache_hit": false,
+    "cached_tokens": 0,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 10,
+    "log_level": "info",
+    "model": "gemini-3.5-flash-lite",
+    "output_tokens": 20,
+    "params_fingerprint": "60e30d9c7193",
+    "task": "generation",
+    "thoughts_tokens": 0,
+    "usd_cost": 5.3e-05
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_latency_ms",
+    "log_level": "debug",
+    "model": "gemini-3.5-flash-lite",
+    "task": "generation"
+   }
+  ],
+  "outputs": [
+   {
+    "value": "ok"
+   }
+  ],
+  "records": [
+   {
+    "attempt": null,
+    "cached_tokens": 0,
+    "case_key": null,
+    "input_tokens": 10,
+    "model": "gemini-3.5-flash-lite",
+    "output_tokens": 20,
+    "parse_ok": true,
+    "provider": "gemini",
+    "question_id": null,
+    "task_tag": "generation",
+    "thinking": "low",
+    "thinking_tokens": 0,
+    "usd_2027": 5.3e-05,
+    "usd_now": 5.3e-05
+   }
+  ],
+  "requests": [
+   {
+    "config": {
+     "max_output_tokens": 65536,
+     "response_json_schema": {
+      "properties": {
+       "value": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "value"
+      ],
+      "type": "object"
+     },
+     "response_mime_type": "application/json",
+     "system_instruction": "sys",
+     "thinking_config": {
+      "thinking_level": "LOW"
+     }
+    },
+    "contents": [
+     "user"
+    ],
+    "model": "gemini-3.5-flash-lite"
+   }
+  ],
+  "uploads": []
+ },
+ "mark_scheme_pdf": {
+  "cache_creates": [],
+  "cache_entries": {
+   "ed1d630d57722c07": "{\"value\": \"ok\"}"
+  },
+  "cache_keys": [
+   "ed1d630d57722c07"
+  ],
+  "deleted": [],
+  "events": [
+   {
+    "event": "gemini_call_start",
+    "model": "gemini-2.5-flash",
+    "task": "mark_scheme"
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 30000,
+    "model": "gemini-2.5-flash",
+    "output_tokens": 27000,
+    "task": "mark_scheme",
+    "usd_cost": 0.0765
+   }
+  ],
+  "logs": [
+   {
+    "component": "gemini_client",
+    "event": "gemini_schema_sent",
+    "log_level": "debug",
+    "model": "gemini-2.5-flash",
+    "schema": "_Reply",
+    "task": "mark_scheme",
+    "top_level_properties": [
+     "value"
+    ]
+   },
+   {
+    "cache_hit": false,
+    "cached_tokens": 0,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 30000,
+    "log_level": "info",
+    "model": "gemini-2.5-flash",
+    "output_tokens": 27000,
+    "params_fingerprint": "5a47b98f4c70",
+    "task": "mark_scheme",
+    "thoughts_tokens": 7000,
+    "usd_cost": 0.0765
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_latency_ms",
+    "log_level": "debug",
+    "model": "gemini-2.5-flash",
+    "task": "mark_scheme"
+   }
+  ],
+  "outputs": [
+   {
+    "value": "ok"
+   }
+  ],
+  "records": [
+   {
+    "attempt": null,
+    "cached_tokens": 0,
+    "case_key": null,
+    "input_tokens": 30000,
+    "model": "gemini-2.5-flash",
+    "output_tokens": 27000,
+    "parse_ok": true,
+    "provider": "gemini",
+    "question_id": null,
+    "task_tag": "mark_scheme",
+    "thinking": 8000,
+    "thinking_tokens": 7000,
+    "usd_2027": 0.0765,
+    "usd_now": 0.0765
+   }
+  ],
+  "requests": [
+   {
+    "config": {
+     "max_output_tokens": 65536,
+     "response_mime_type": "application/json",
+     "response_schema": {
+      "properties": {
+       "value": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "value"
+      ],
+      "type": "object"
+     },
+     "system_instruction": "sys",
+     "thinking_config": {
+      "thinking_budget": 8000
+     }
+    },
+    "contents": [
+     "user",
+     {
+      "mime_type": "application/octet-stream",
+      "name": "files/fake-1",
+      "state": "ACTIVE",
+      "uri": "https://generativelanguage.googleapis.com/v1beta/files/fake-1"
+     }
+    ],
+    "model": "gemini-2.5-flash"
+   }
+  ],
+  "uploads": [
+   {
+    "config": {},
+    "sha256": "958fda00d83a399e"
+   }
+  ]
+ },
+ "question_validity_code_execution": {
+  "cache_creates": [],
+  "cache_entries": {
+   "1c883f741041bc8f": "42"
+  },
+  "cache_keys": [
+   "1c883f741041bc8f"
+  ],
+  "deleted": [],
+  "events": [
+   {
+    "event": "gemini_call_start",
+    "model": "gemini-2.5-flash",
+    "task": "question_validity"
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 50,
+    "model": "gemini-2.5-flash",
+    "output_tokens": 5,
+    "task": "question_validity",
+    "usd_cost": 2.7e-05
+   }
+  ],
+  "logs": [
+   {
+    "cache_hit": false,
+    "cached_tokens": 0,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 50,
+    "log_level": "info",
+    "model": "gemini-2.5-flash",
+    "output_tokens": 5,
+    "params_fingerprint": "0197e421d5e4",
+    "task": "question_validity",
+    "thoughts_tokens": 0,
+    "tool": "code_execution",
+    "usd_cost": 2.7e-05
+   }
+  ],
+  "outputs": [
+   "42"
+  ],
+  "records": [
+   {
+    "attempt": null,
+    "cached_tokens": 0,
+    "case_key": null,
+    "input_tokens": 50,
+    "model": "gemini-2.5-flash",
+    "output_tokens": 5,
+    "parse_ok": true,
+    "provider": "gemini",
+    "question_id": null,
+    "task_tag": "question_validity",
+    "thinking": null,
+    "thinking_tokens": 0,
+    "usd_2027": 2.7499999999999998e-05,
+    "usd_now": 2.7499999999999998e-05
+   }
+  ],
+  "requests": [
+   {
+    "config": {
+     "tools": [
+      {
+       "code_execution": {}
+      }
+     ]
+    },
+    "contents": [
+     "compute 6*7"
+    ],
+    "model": "gemini-2.5-flash"
+   }
+  ],
+  "uploads": []
+ },
+ "scan_metadata_pdf": {
+  "cache_creates": [],
+  "cache_entries": {
+   "b5eed42f3e45f32a": "{\"value\": \"ok\"}"
+  },
+  "cache_keys": [
+   "b5eed42f3e45f32a"
+  ],
+  "deleted": [],
+  "events": [
+   {
+    "event": "gemini_call_start",
+    "model": "gemini-3.5-flash-lite",
+    "task": "scan_metadata"
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 5000,
+    "model": "gemini-3.5-flash-lite",
+    "output_tokens": 100,
+    "task": "scan_metadata",
+    "usd_cost": 0.00175
+   }
+  ],
+  "logs": [
+   {
+    "component": "gemini_client",
+    "event": "gemini_schema_sent",
+    "log_level": "debug",
+    "model": "gemini-3.5-flash-lite",
+    "schema": "_Reply",
+    "task": "scan_metadata",
+    "top_level_properties": [
+     "value"
+    ]
+   },
+   {
+    "cache_hit": false,
+    "cached_tokens": 0,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 5000,
+    "log_level": "info",
+    "model": "gemini-3.5-flash-lite",
+    "output_tokens": 100,
+    "params_fingerprint": "60e30d9c7193",
+    "task": "scan_metadata",
+    "thoughts_tokens": 0,
+    "usd_cost": 0.00175
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_latency_ms",
+    "log_level": "debug",
+    "model": "gemini-3.5-flash-lite",
+    "task": "scan_metadata"
+   }
+  ],
+  "outputs": [
+   {
+    "value": "ok"
+   }
+  ],
+  "records": [
+   {
+    "attempt": null,
+    "cached_tokens": 0,
+    "case_key": null,
+    "input_tokens": 5000,
+    "model": "gemini-3.5-flash-lite",
+    "output_tokens": 100,
+    "parse_ok": true,
+    "provider": "gemini",
+    "question_id": null,
+    "task_tag": "scan_metadata",
+    "thinking": "low",
+    "thinking_tokens": 0,
+    "usd_2027": 0.0017499999999999998,
+    "usd_now": 0.0017499999999999998
+   }
+  ],
+  "requests": [
+   {
+    "config": {
+     "max_output_tokens": 65536,
+     "response_json_schema": {
+      "properties": {
+       "value": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "value"
+      ],
+      "type": "object"
+     },
+     "response_mime_type": "application/json",
+     "system_instruction": "sys",
+     "thinking_config": {
+      "thinking_level": "LOW"
+     }
+    },
+    "contents": [
+     "user",
+     {
+      "mime_type": "application/octet-stream",
+      "name": "files/fake-1",
+      "state": "ACTIVE",
+      "uri": "https://generativelanguage.googleapis.com/v1beta/files/fake-1"
+     }
+    ],
+    "model": "gemini-3.5-flash-lite"
+   }
+  ],
+  "uploads": [
+   {
+    "config": {},
+    "sha256": "958fda00d83a399e"
+   }
+  ]
+ },
+ "untagged": {
+  "cache_creates": [],
+  "cache_entries": {
+   "e5ffe82e14e950e3": "{\"value\": \"ok\"}"
+  },
+  "cache_keys": [
+   "e5ffe82e14e950e3"
+  ],
+  "deleted": [],
+  "events": [
+   {
+    "event": "gemini_call_start",
+    "model": "gemini-2.5-flash",
+    "task": "untagged"
+   },
+   {
+    "event": "gemini_call_end",
+    "input_tokens": 10,
+    "model": "gemini-2.5-flash",
+    "output_tokens": 20,
+    "task": "untagged",
+    "usd_cost": 5.3e-05
+   }
+  ],
+  "logs": [
+   {
+    "component": "gemini_client",
+    "event": "gemini_schema_sent",
+    "log_level": "debug",
+    "model": "gemini-2.5-flash",
+    "schema": "_Reply",
+    "task": "untagged",
+    "top_level_properties": [
+     "value"
+    ]
+   },
+   {
+    "cache_hit": false,
+    "cached_tokens": 0,
+    "component": "gemini_client",
+    "event": "gemini_call",
+    "input_tokens": 10,
+    "log_level": "info",
+    "model": "gemini-2.5-flash",
+    "output_tokens": 20,
+    "params_fingerprint": "616a142c3025",
+    "task": "untagged",
+    "thoughts_tokens": 0,
+    "usd_cost": 5.3e-05
+   },
+   {
+    "component": "gemini_client",
+    "event": "gemini_latency_ms",
+    "log_level": "debug",
+    "model": "gemini-2.5-flash",
+    "task": "untagged"
+   }
+  ],
+  "outputs": [
+   {
+    "value": "ok"
+   }
+  ],
+  "records": [
+   {
+    "attempt": null,
+    "cached_tokens": 0,
+    "case_key": null,
+    "input_tokens": 10,
+    "model": "gemini-2.5-flash",
+    "output_tokens": 20,
+    "parse_ok": true,
+    "provider": "gemini",
+    "question_id": null,
+    "task_tag": null,
+    "thinking": null,
+    "thinking_tokens": 0,
+    "usd_2027": 5.3e-05,
+    "usd_now": 5.3e-05
+   }
+  ],
+  "requests": [
+   {
+    "config": {
+     "max_output_tokens": 65536,
+     "response_mime_type": "application/json",
+     "response_schema": {
+      "properties": {
+       "value": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "value"
+      ],
+      "type": "object"
+     },
+     "system_instruction": "sys",
+     "thinking_config": {
+      "thinking_budget": 0
+     }
+    },
+    "contents": [
+     "user"
+    ],
+    "model": "gemini-2.5-flash"
+   }
+  ],
+  "uploads": []
+ }
+}

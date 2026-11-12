@@ -1,8 +1,9 @@
 """API DTOs for the auth endpoints (``/api/auth/*``).
 
-Request/response models for signup, login, and the two-step parent phone-OTP
-flow. Field names are camelCase to match the frontend contract, mirroring the
-other ``schemas_*.py`` modules.
+Request/response models for signup, login, and the three-step child-issued
+parent signup (email code, then password — spec §4). Field names are
+camelCase to match the frontend contract, mirroring the other
+``schemas_*.py`` modules.
 """
 
 from __future__ import annotations
@@ -51,25 +52,85 @@ class LoginRequestDTO(ApiModel):
     that would consume a fourth device slot answers **409** with the account's
     signed-in devices and mints nothing, and the client re-sends the same login
     with this flag set once the user has confirmed the sign-out.
+
+    ``deviceToSignOut`` is the device the user picked from that 409's list
+    (G-10). Optional: an absent or stale value (the list can have moved on
+    between the 409 and the confirm) falls back to oldest-first, same as
+    before this field existed.
     """
 
     email: str
     password: str
     deviceId: str | None = None
     confirmDeviceEviction: bool = False
+    deviceToSignOut: str | None = None
 
 
-class OtpRequestDTO(ApiModel):
-    """Request an OTP challenge for a parent phone number."""
+class ParentCodeRequestDTO(ApiModel):
+    """Request a signup code for the email address opening a parent invite (spec §4).
 
-    phone: str
+    ``inviteCode`` names the parent invite this request is scoped to — the
+    router re-checks it resolves to a live parent invite before issuing
+    anything, so a dead or non-parent code never gets as far as sending mail.
+    """
+
+    email: str
+    inviteCode: str
 
 
-class OtpVerifyDTO(ApiModel):
-    """Verify an OTP code for a parent phone number (``deviceId`` — see signup)."""
+class ParentCodeRequestResponseDTO(ApiModel):
+    """Acknowledgement that a parent-signup code was issued.
 
-    phone: str
+    ``devCode`` is the same developer affordance the retired phone-OTP flow
+    used to carry (D3.16), now populated **only** when the configured
+    :class:`~lemely.auth.email.EmailProvider` reports
+    ``delivers_out_of_band = False`` — a capability gate, not an environment
+    check; the UI must render it in an explicitly-labelled developer panel,
+    never as ordinary product copy.
+    """
+
+    status: Literal["sent"] = "sent"
+    devCode: str | None = None
+
+
+class ParentCodeVerifyDTO(ApiModel):
+    """Verify a parent-signup code and receive a proof token (spec §4).
+
+    ``inviteCode`` is carried through unchanged so the minted
+    :func:`~lemely.auth.tokens.mint_email_proof_token` can bind the proof to
+    the exact same invite the request step named, rather than trusting the
+    final signup call to resend it honestly.
+    """
+
+    email: str
+    inviteCode: str
     code: str
+
+
+class ParentCodeVerifyResponseDTO(ApiModel):
+    """The short-lived receipt that ``email`` completed the signup-code challenge.
+
+    ``proofToken`` (see :func:`~lemely.auth.tokens.mint_email_proof_token`) is
+    presented to ``POST /api/auth/parent/signup`` in place of the (single-use,
+    already-consumed) code, so the final step never re-verifies a code that
+    has already been spent.
+    """
+
+    proofToken: str
+
+
+class ParentSignupDTO(ApiModel):
+    """Complete a parent's account creation with the proof token from step two.
+
+    ``acceptedTerms`` carries the identical D7.11 rule
+    :class:`SignupRequestDTO` documents — deliberately no default, so a
+    missing field is a 422, never a silently assumed ``False``.
+    """
+
+    proofToken: str
+    password: str
+    acceptedTerms: bool
+    displayName: str | None = None
     deviceId: str | None = None
 
 
@@ -93,14 +154,20 @@ class TokenResponseDTO(ApiModel):
 
     ``devLink`` (D7.4/D7.6/D7.7) is the freshly minted email-verification link
     from :meth:`~lemely.auth.service.AuthService.signup`, under the same
-    D3.16-derived rule :attr:`OtpRequestResponseDTO.devCode` carries:
+    D3.16-derived rule :attr:`ParentCodeRequestResponseDTO.devCode` carries:
     populated **only** when the configured
     :class:`~lemely.auth.email.EmailProvider` does not deliver out of band,
     i.e. only when this response is the sole way to obtain the link. It is
     ``None`` on every other flow that returns this DTO (``login``,
-    ``refresh``, ``otp/verify``), none of which mint a verification token at
-    all. The UI must render it in an explicitly-labelled developer panel,
-    never as ordinary product copy.
+    ``refresh``, the parent signup), none of which mint a verification token
+    at all — the parent signup route stamps ``email_verified_at`` directly
+    (see :meth:`~lemely.auth.service.AuthService.signup`'s ``email_verified``
+    argument) and so never mints one of these either. The UI must render it
+    in an explicitly-labelled developer panel, never as ordinary product copy.
+
+    ``devCode`` (spec §4.4/DS15) is the typed code minted alongside the link,
+    under the exact same D3.16 rule — the two are always populated together
+    or both ``None``.
     """
 
     accessToken: str
@@ -108,21 +175,6 @@ class TokenResponseDTO(ApiModel):
     role: Role
     refreshToken: str | None = None
     devLink: str | None = None
-
-
-class OtpRequestResponseDTO(ApiModel):
-    """Acknowledgement that an OTP was issued.
-
-    ``devCode`` is the §G-05 developer affordance (D3.16) and is populated **only**
-    when the configured :class:`~lemely.auth.sms.SmsProvider` reports
-    ``delivers_out_of_band = False`` — i.e. when nothing reached the handset and
-    this response is the only way to obtain the code. With a real SMS gateway
-    configured it is always ``None`` and no live code crosses the wire. It is a
-    capability gate, not an environment check; the UI must render it in an
-    explicitly-labelled developer panel, never as ordinary product copy.
-    """
-
-    status: Literal["sent"] = "sent"
     devCode: str | None = None
 
 
@@ -132,6 +184,18 @@ class VerifyEmailRequestDTO(ApiModel):
     token: str
 
 
+class VerifyEmailCodeRequestDTO(ApiModel):
+    """Redeem the typed code sent alongside the link (spec §4.4/DS15).
+
+    Deliberately no matching address field: the caller's own email comes from
+    :class:`~lemely.web.deps.AuthContext` (the authenticated session), never a
+    body field — the same reason :class:`ResendVerificationResponseDTO`'s
+    request has none. The code alone is the credential.
+    """
+
+    code: str
+
+
 class VerifyEmailResponseDTO(ApiModel):
     """Acknowledgement that ``users.email_verified_at`` was stamped."""
 
@@ -139,7 +203,7 @@ class VerifyEmailResponseDTO(ApiModel):
 
 
 class ResendVerificationResponseDTO(ApiModel):
-    """Acknowledgement that a fresh verification token was minted and (re)sent.
+    """Acknowledgement that a fresh verification token and code were minted and (re)sent.
 
     Deliberately no matching request DTO: the caller is read from
     :class:`~lemely.web.deps.AuthContext`, never a body field (an attacker
@@ -147,10 +211,13 @@ class ResendVerificationResponseDTO(ApiModel):
 
     ``devLink`` — see :attr:`TokenResponseDTO.devLink`; the same D3.16-derived
     rule, applied to :meth:`~lemely.auth.service.AuthService.resend_verification`.
+    ``devCode`` carries the same rule for the code minted alongside it (spec
+    §4.4/DS15).
     """
 
     status: Literal["sent"] = "sent"
     devLink: str | None = None
+    devCode: str | None = None
 
 
 class PasswordResetRequestDTO(ApiModel):
@@ -201,9 +268,11 @@ class PasswordResetConfirmResponseDTO(ApiModel):
 __all__ = [
     "ApiModel",
     "LoginRequestDTO",
-    "OtpRequestDTO",
-    "OtpRequestResponseDTO",
-    "OtpVerifyDTO",
+    "ParentCodeRequestDTO",
+    "ParentCodeRequestResponseDTO",
+    "ParentCodeVerifyDTO",
+    "ParentCodeVerifyResponseDTO",
+    "ParentSignupDTO",
     "PasswordResetConfirmDTO",
     "PasswordResetConfirmResponseDTO",
     "PasswordResetRequestDTO",
@@ -213,6 +282,7 @@ __all__ = [
     "Role",
     "SignupRequestDTO",
     "TokenResponseDTO",
+    "VerifyEmailCodeRequestDTO",
     "VerifyEmailRequestDTO",
     "VerifyEmailResponseDTO",
 ]

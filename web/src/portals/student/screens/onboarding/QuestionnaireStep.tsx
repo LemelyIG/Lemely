@@ -2,14 +2,24 @@
 import type { ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { Chip } from "@/components/ui/chip"
+import { Input } from "@/components/ui/input"
 import { Meter } from "@/components/ui/primitives"
 import { Slider } from "@/components/ui/slider"
+import { confidenceTopicsFor, subjectFor } from "@/lib/reference"
+import type { ReferenceData } from "@/lib/referenceTypes"
+import { usePlacementAvailability } from "@/lib/hooks/usePlacementApi"
+import { useSubjectName } from "@/lib/hooks/useReferenceApi"
+import { QueryState } from "@/components/ui/query-state"
+import { unavailableMessage } from "../placement/placementData"
 import {
   CONFIDENCE_MAX,
   CONFIDENCE_MIN,
-  SUPPORTED_SUBJECTS,
+  SESSION_LENGTH_PRESETS,
   WEEKLY_HOURS_MAX,
   WEEKLY_HOURS_MIN,
+  presetForWeeklyHours,
+  presetToWeeklyHours,
   type QuestionnaireAnswers,
   type QuestionnaireStepDef,
 } from "./onboardingData"
@@ -81,12 +91,12 @@ function SkippableSlider({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-baseline justify-between gap-3">
-        <span className="text-body-sm text-ink-muted">{ariaLabel}</span>
+        <span className="text-body-sm text-on-surface-variant">{ariaLabel}</span>
         {/* The data face, and never the accent: a set value here is neutral or
             good news, and accent is this palette's alert register. Weight and
             the mono face carry "this is your answer" instead. */}
         <span
-          className={touched ? "text-data-sm font-medium text-ink" : "text-body-sm text-ink-faint"}
+          className={touched ? "text-data-sm font-medium text-on-surface" : "text-body-sm text-on-surface-variant"}
         >
           {touched ? formatValue(value) : unsetLabel}
         </span>
@@ -98,6 +108,44 @@ function SkippableSlider({
         max={max}
         aria-label={ariaLabel}
       />
+    </div>
+  )
+}
+
+/**
+ * Three shortcuts onto the weekly-hours slider above it (C3b). The slider is
+ * still the only thing that writes `weeklyStudyHours` — a tap here just sets
+ * it to the preset's mapped value, the same as dragging the thumb there
+ * would. `aria-pressed` lives on the real `<button>`, the actual interactive
+ * element; `Chip`'s own `pressed` prop mirrors it onto the chip's markup so
+ * the visual state and the accessible state never disagree.
+ */
+function SessionLengthPresets({
+  value,
+  onChange,
+}: {
+  value: number | undefined
+  onChange: (value: number) => void
+}) {
+  const selected = presetForWeeklyHours(value ?? null)
+  return (
+    <div className="flex flex-wrap gap-2" role="group" aria-label="Session length shortcuts">
+      {SESSION_LENGTH_PRESETS.map((preset) => {
+        const pressed = selected === preset.id
+        return (
+          <button
+            key={preset.id}
+            type="button"
+            aria-pressed={pressed}
+            onClick={() => onChange(presetToWeeklyHours(preset.id))}
+            className="rounded-full"
+          >
+            <Chip tone={pressed ? "accent" : "neutral"} pressed={pressed}>
+              {preset.label}
+            </Chip>
+          </button>
+        )
+      })}
     </div>
   )
 }
@@ -133,10 +181,6 @@ function SkippableSlider({
  */
 export const QUESTION_HEADING_ID = "onboarding-question-heading"
 
-/** The shared class list for the two free-text questions. See `QuestionShell`. */
-const FREE_TEXT_FIELD =
-  "min-h-11 rounded-lg border border-rule bg-paper-raised px-4 py-3 text-body-lg text-ink transition-colors hover:border-rule-strong focus-visible:border-rule-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-
 function QuestionShell({ question, children }: { question: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-5">
@@ -148,7 +192,7 @@ function QuestionShell({ question, children }: { question: string; children: Rea
        * `display-md` alone, not `font-serif text-display-md`: the rung already
        * names the display face, and pairing it with `font-serif` set
        * `font-family` twice on one element (D4.2). */}
-      <h1 id={QUESTION_HEADING_ID} className="text-display-md text-ink">
+      <h1 id={QUESTION_HEADING_ID} className="text-display-md text-on-surface">
         {question}
       </h1>
       {children}
@@ -156,7 +200,87 @@ function QuestionShell({ question, children }: { question: string; children: Rea
   )
 }
 
+/**
+ * One row of the `placementChoice` question — its own component, not a
+ * `.map()` callback, because it calls `usePlacementAvailability` and
+ * `useSubjectName`, and a hook may never run inside `.map()`, a callback, a
+ * condition, or after an early return (Hooks rule; every row renders
+ * unconditionally, so every row's hooks run unconditionally too).
+ *
+ * A subject whose availability reports `available: false` renders its real
+ * reason (`unavailableMessage`, the same copy S-03 shows) and is not
+ * selectable — the student sees *why* rather than picking a dead end and
+ * hitting a wall on the next screen.
+ */
+function PlacementChoiceRow({
+  subjectCode,
+  selected,
+  onSelect,
+}: {
+  subjectCode: string
+  selected: boolean
+  onSelect: () => void
+}) {
+  const subjectName = useSubjectName(subjectCode)
+  const query = usePlacementAvailability(subjectCode)
+
+  return (
+    <QueryState
+      query={query}
+      skeleton={
+        <div className="flex flex-col gap-1 rounded-lg border border-outline-variant p-4">
+          <span className="text-body-md font-medium text-on-surface">{subjectName}</span>
+          <span className="text-body-sm text-on-surface-variant">Checking availability…</span>
+        </div>
+      }
+      // Inline (`compact`), not the full centred panel: this is one row among
+      // several placement-choice candidates, not a page-sized failure — same
+      // reasoning as the practice generator's preview line.
+      error={{
+        heading: `Couldn't check ${subjectName}'s availability`,
+        compact: true,
+      }}
+    >
+      {(data) => {
+        if (!data.available) {
+          const message = unavailableMessage(data.reason)
+          return (
+            <div
+              className="flex flex-col gap-1 rounded-lg border border-outline-variant bg-surface-container-low p-4 opacity-70"
+              aria-disabled="true"
+            >
+              <span className="text-body-md font-medium text-on-surface">{subjectName}</span>
+              <span className="text-body-sm text-on-surface-variant">{message.heading}</span>
+            </div>
+          )
+        }
+
+        return (
+          <button
+            type="button"
+            aria-pressed={selected}
+            onClick={onSelect}
+            className={`flex flex-col gap-1 rounded-lg border p-4 text-start transition-colors ${
+              selected
+                ? "border-primary bg-surface-container-lowest"
+                : "border-outline-variant bg-surface-container-lowest hover:border-outline"
+            }`}
+          >
+            <span className="text-body-md font-medium text-on-surface">{subjectName}</span>
+            <span className="text-body-sm text-on-surface-variant">
+              {data.questionCount} question{data.questionCount === 1 ? "" : "s"} · about{" "}
+              {Math.round(data.estimatedMinutes)} minute
+              {Math.round(data.estimatedMinutes) === 1 ? "" : "s"}
+            </span>
+          </button>
+        )
+      }}
+    </QueryState>
+  )
+}
+
 export interface QuestionnaireStepProps {
+  reference: ReferenceData | undefined
   steps: QuestionnaireStepDef[]
   stepIndex: number
   onBack: () => void
@@ -174,11 +298,16 @@ export interface QuestionnaireStepProps {
   onGradeLevel: (value: string) => void
   confidenceBySubject: Record<string, Partial<Record<string, number>>>
   onConfidence: (subjectCode: string, topic: string, rating: number) => void
+  /** The chosen subject code for `kind === "placementChoice"`, or
+   * `undefined` when unanswered — same skip semantics as every other step. */
+  placementChoice?: string
+  onPlacementChoice: (subjectCode: string) => void
   saving: boolean
   error: string | null
 }
 
 export function QuestionnaireStep({
+  reference,
   steps,
   stepIndex,
   onBack,
@@ -193,6 +322,8 @@ export function QuestionnaireStep({
   onGradeLevel,
   confidenceBySubject,
   onConfidence,
+  placementChoice,
+  onPlacementChoice,
   saving,
   error,
 }: QuestionnaireStepProps) {
@@ -212,14 +343,14 @@ export function QuestionnaireStep({
     answered = answers.schoolName !== undefined && answers.schoolName !== null
     body = (
       <QuestionShell question="Which school are you at?">
-        <input
+        <Input
+          label="School"
+          labelClassName="sr-only"
           type="text"
           autoFocus
           value={answers.schoolName ?? ""}
           onChange={(event) => onSchoolName(event.target.value)}
-          aria-labelledby={QUESTION_HEADING_ID}
           placeholder="e.g. Greenwood International School"
-          className={FREE_TEXT_FIELD}
         />
       </QuestionShell>
     )
@@ -253,34 +384,41 @@ export function QuestionnaireStep({
     answered = answers.weeklyStudyHours !== undefined && answers.weeklyStudyHours !== null
     body = (
       <QuestionShell question="How many hours can you study each week, outside class?">
-        <SkippableSlider
-          value={answers.weeklyStudyHours ?? undefined}
-          onChange={onWeeklyHours}
-          min={WEEKLY_HOURS_MIN}
-          max={WEEKLY_HOURS_MAX}
-          ariaLabel="Weekly study hours"
-          unsetLabel="Not set"
-          formatValue={(v) => `${v} ${v === 1 ? "hour" : "hours"}/week`}
-        />
+        <div className="flex flex-col gap-4">
+          <SessionLengthPresets
+            value={answers.weeklyStudyHours ?? undefined}
+            onChange={onWeeklyHours}
+          />
+          <SkippableSlider
+            value={answers.weeklyStudyHours ?? undefined}
+            onChange={onWeeklyHours}
+            min={WEEKLY_HOURS_MIN}
+            max={WEEKLY_HOURS_MAX}
+            ariaLabel="Weekly study hours"
+            unsetLabel="Not set"
+            formatValue={(v) => `${v} ${v === 1 ? "hour" : "hours"}/week`}
+          />
+        </div>
       </QuestionShell>
     )
   } else if (step.kind === "gradeLevel") {
     answered = answers.gradeLevel !== undefined && answers.gradeLevel !== null
     body = (
       <QuestionShell question="What year or grade level are you in?">
-        <input
+        <Input
+          label="Grade level"
+          labelClassName="sr-only"
           type="text"
           autoFocus
           value={answers.gradeLevel ?? ""}
           onChange={(event) => onGradeLevel(event.target.value)}
-          aria-labelledby={QUESTION_HEADING_ID}
           placeholder="e.g. Year 11"
-          className={FREE_TEXT_FIELD}
         />
       </QuestionShell>
     )
-  } else {
-    const subject = SUPPORTED_SUBJECTS.find((s) => s.code === step.subjectCode)
+  } else if (step.kind === "confidence") {
+    const subject = subjectFor(reference, step.subjectCode ?? "")
+    const topics = confidenceTopicsFor(subject)
     const ratings = (step.subjectCode ? confidenceBySubject[step.subjectCode] : undefined) ?? {}
     answered = Object.values(ratings).some((v) => v !== undefined)
     body = (
@@ -288,7 +426,7 @@ export function QuestionnaireStep({
         question={`How confident do you feel in ${subject?.name ?? "this subject"} right now?`}
       >
         <Card className="flex flex-col gap-5 p-5">
-          {(subject?.confidenceTopics ?? []).map((topic) => (
+          {topics.map((topic) => (
             <SkippableSlider
               key={topic}
               value={ratings[topic]}
@@ -305,13 +443,36 @@ export function QuestionnaireStep({
         </Card>
       </QuestionShell>
     )
+  } else {
+    // "placementChoice" — one row per subject the student enrolled in
+    // (S-01's selection order, read off the confidence steps that precede
+    // this one). Every row is its own component so its per-subject
+    // availability hook runs unconditionally (see `PlacementChoiceRow`).
+    const enrolledCodes = steps
+      .filter((s) => s.kind === "confidence" && s.subjectCode)
+      .map((s) => s.subjectCode as string)
+    answered = placementChoice !== undefined
+    body = (
+      <QuestionShell question="Which subject would you like to be placed in first?">
+        <div className="flex flex-col gap-3">
+          {enrolledCodes.map((code) => (
+            <PlacementChoiceRow
+              key={code}
+              subjectCode={code}
+              selected={placementChoice === code}
+              onSelect={() => onPlacementChoice(code)}
+            />
+          ))}
+        </div>
+      </QuestionShell>
+    )
   }
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1.5">
         <Meter value={progressPct} label={`Question ${stepIndex + 1} of ${total}`} />
-        <span className="text-data-sm text-ink-faint">
+        <span className="text-data-sm text-on-surface-variant">
           Question {stepIndex + 1} of {total}
         </span>
       </div>
@@ -320,7 +481,7 @@ export function QuestionnaireStep({
 
       {/* Above the buttons, which is where §12 puts a form-level error. */}
       {error ? (
-        <p role="alert" className="text-body-sm text-err">
+        <p role="alert" className="text-body-sm text-error">
           {error}
         </p>
       ) : null}

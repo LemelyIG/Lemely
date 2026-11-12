@@ -17,7 +17,12 @@ import type {
  * is on is worse served than one shown an error they can retry.
  */
 
-const CLASSES_KEY = ["student", "classes"] as const
+/*
+ * Exported (not module-private) so `useJoinClass` in `useStudentApi.ts` can
+ * invalidate the exact same key on a successful join, rather than a second
+ * literal array that could drift from this one.
+ */
+export const CLASSES_KEY = ["student", "classes"] as const
 
 export interface LeaderboardParams {
   scope: LeaderboardScope

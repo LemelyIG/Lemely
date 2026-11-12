@@ -1,8 +1,10 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
+import { useSettledCode } from "../home/useSettledCode"
 import { useState } from "react"
-import { Link, NavLink, Outlet, useOutletContext, useParams } from "react-router-dom"
-import { ErrorState } from "@/components/ui/state-views"
+import { Link, NavLink, Outlet, useNavigate, useOutletContext, useParams } from "react-router-dom"
+import { EmptyState } from "@/components/ui/state-views"
 import { Button } from "@/components/ui/button"
+import { QueryState } from "@/components/ui/query-state"
 import { cn, relativeTime } from "@/lib/utils"
 import { StatCard } from "../components/StatCard"
 import { useClassDetail, useMintClassInviteCode } from "@/lib/hooks/useTeacherApi"
@@ -50,6 +52,22 @@ import { BackArrow } from "@/components/ui/inline-arrow"
  * not just a layout choice.
  */
 
+/**
+ * The section-tab row's shared active/inactive styling (Roster/Analytics/
+ * Papers). Was three copies of the same `NavLink` `className` callback,
+ * kept in sync by hand — the "Papers" tab added by Task 17's review pass
+ * would otherwise have been a fourth to drift the same way `resolveTrail`'s
+ * own module doc warns a hand-maintained duplicate always eventually does.
+ */
+function classTabClassName({ isActive }: { isActive: boolean }): string {
+  return cn(
+    "px-4 py-2.5 text-body-lg border-b-2 -mb-px",
+    isActive
+      ? "border-primary text-on-surface font-medium"
+      : "border-transparent text-on-surface-variant transition-colors hover:text-on-surface",
+  )
+}
+
 export interface ClassDetailContext {
   classDetail: ClassDetailData
   classId: string
@@ -66,8 +84,9 @@ export function useClassDetailContext(): ClassDetailContext {
  * copy-to-clipboard chip — the same artifact, the same affordance, two
  * places it needs to appear.
  */
-export function JoinCodeChip({ code }: { code: string }) {
+export function JoinCodeChip({ code, settle = false }: { code: string; settle?: boolean }) {
   const [copied, setCopied] = useState(false)
+  const shown = useSettledCode(code, settle)
   async function copy() {
     try {
       await navigator.clipboard.writeText(code)
@@ -83,11 +102,13 @@ export function JoinCodeChip({ code }: { code: string }) {
     <button
       type="button"
       onClick={copy}
-      className="inline-flex items-center gap-2 border border-rule bg-paper-raised rounded-lg px-3 py-1.5 text-data-md tracking-[0.06em] transition-colors hover:bg-paper-sunk cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+      className="inline-flex items-center gap-2 border border-outline-variant bg-surface-container-lowest rounded-lg px-3 py-1.5 text-data-md tracking-[0.06em] transition-colors hover:bg-surface-container-low cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
       title="Copy join code"
+      // While the glyphs are still settling, the button's name is the real code.
+      aria-label={shown !== code ? code : undefined}
     >
-      {code}
-      <span className="text-body-sm text-ink-faint">{copied ? "Copied" : "Copy"}</span>
+      {shown}
+      <span className="text-body-sm text-on-surface-variant">{copied ? "Copied" : "Copy"}</span>
     </button>
   )
 }
@@ -112,7 +133,7 @@ function MintClassInvite({ classId }: { classId: string }) {
 
   return (
     <div className="flex flex-col items-end gap-1 max-w-[220px]">
-      <span className="text-eyebrow text-ink-faint">One-time invite</span>
+      <span className="text-eyebrow text-on-surface-variant">One-time invite</span>
       {mint.data ? <JoinCodeChip code={mint.data.code} /> : null}
       <Button
         type="button"
@@ -123,9 +144,9 @@ function MintClassInvite({ classId }: { classId: string }) {
       >
         {mint.data ? "Generate another code" : "Generate an invite code"}
       </Button>
-      <p className="text-body-sm text-ink-faint text-end">Works once, then it's spent.</p>
+      <p className="text-body-sm text-on-surface-variant text-end">Works once, then it's spent.</p>
       {mint.isError ? (
-        <p role="alert" className="text-body-sm text-err text-end">
+        <p role="alert" className="text-body-sm text-error text-end">
           {classInviteCodeFailureMessage(mint.error)}
         </p>
       ) : null}
@@ -134,137 +155,130 @@ function MintClassInvite({ classId }: { classId: string }) {
 }
 
 export function ClassDetailLayout() {
+  const navigate = useNavigate()
   const { classId } = useParams<{ classId: string }>()
   const detailQuery = useClassDetail(classId)
 
-  if (detailQuery.isPending) {
-    return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
-        <h1 className="sr-only">Class detail</h1>
-        <PanelSkeleton />
-      </div>
-    )
-  }
-
-  if (detailQuery.isError) {
-    return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
-        <h1 className="sr-only">Class detail</h1>
-        <ErrorState
-          heading="Couldn't load this class"
-          body={teacherLoadFailureMessage(detailQuery.error)}
-          action={{ label: "Retry", onClick: () => detailQuery.refetch() }}
-          secondaryAction={{ label: "Back to classes", onClick: () => history.back() }}
-        />
-      </div>
-    )
-  }
-
-  const classDetail = detailQuery.data
-
   return (
-    <div className="lm-screen flex flex-col gap-6 min-w-0">
-      <div className="flex flex-col gap-1">
-        {/* §6.1's floor. This measured 77x19.5: it is the only way back out of
-            a class on a phone, and it was half the height a finger needs.
-            `w-fit` keeps the target the width of its own text rather than the
-            full row, so the floor is the whole of what makes it reachable. */}
-        <Link
-          to="/teacher/classes"
-          className="flex w-fit items-center text-body-sm text-ink-faint transition-colors hover:text-ink pointer-coarse:min-h-11"
-        >
-          <BackArrow /> All classes
-        </Link>
-        <div className="flex items-start gap-4 flex-wrap gap-y-2 mt-1">
-          <div className="min-w-0">
-            <div className="text-eyebrow text-ink-faint">
-              {/* No " · code" repeat when the name has already resolved to
-                  the code itself (free-text `subjectCode`, det registry's
-                  default profile — see `subjectIdentifier`'s docstring). */}
-              {classDetail.subjectCode
-                ? (classDetail.subjectName ?? classDetail.subjectCode) !== classDetail.subjectCode
-                  ? `${classDetail.subjectName ?? classDetail.subjectCode} · ${classDetail.subjectCode}`
-                  : classDetail.subjectCode
-                : "No subject set"}
-            </div>
-            <h1 className="text-display-md mt-1.5 text-pretty">
-              {classDetail.label}
-            </h1>
-          </div>
-          <div className="flex-1" />
-          {/* Two ways to invite, deliberately not blurred into one (see the
-              module docstring's "One-time invite" note). Grouped in a shared
-              wrapper so they read as a pair rather than as one code that
-              happens to have a stray second control beside it. */}
-          <div className="flex flex-wrap items-start gap-4">
-            {classDetail.joinCode ? (
-              <div className="flex flex-col items-end gap-1 max-w-[220px]">
-                <span className="text-eyebrow text-ink-faint">Class code</span>
-                <JoinCodeChip code={classDetail.joinCode} />
-                <p className="text-body-sm text-ink-faint text-end">Reusable, by anyone.</p>
-              </div>
-            ) : null}
-            <MintClassInvite classId={classId!} />
-          </div>
-        </div>
-        <div className="flex items-center gap-3 flex-wrap text-body-sm text-ink-muted mt-1">
-          <span>{classDetail.topWeakness ? `Top weakness: ${classDetail.topWeakness}` : "Not enough data for a top weakness yet"}</span>
-          <span aria-hidden="true">·</span>
-          <span>
-            {classDetail.lastActivityAt
-              ? `Active ${relativeTime(classDetail.lastActivityAt)}`
-              : "No activity yet"}
-          </span>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {classDetail.stats.map((s) => (
-          <StatCard
-            key={s.key}
-            stat={{
-              k: s.key,
-              v: s.value,
-              unit: s.unit ?? undefined,
-              foot: s.foot ?? undefined,
-              valueTone: s.valueTone,
-              footTone: s.footTone,
-            }}
+    <div className="flex flex-col gap-6 min-w-0">
+      <QueryState
+        query={detailQuery}
+        srHeading="Class detail"
+        skeleton={<PanelSkeleton />}
+        // `useClassDetail` disables its query when `classId` is falsy
+        // (`enabled: !!classId`), which react-query leaves parked at
+        // `status: "pending", fetchStatus: "idle"` forever rather than
+        // fetching and failing. The route this screen mounts under always
+        // supplies `:classId`, so this is a defensive branch for a URL
+        // reached some other way, not a state a normal click-through ever
+        // produces — but per the QueryState contract a query that will never
+        // resolve must not sit behind an unending skeleton.
+        idle={
+          <EmptyState
+            heading="No class selected"
+            body="Choose a class from your class list to see its detail."
+            action={{ label: "Back to classes", onClick: () => navigate("/teacher/classes") }}
           />
-        ))}
-      </div>
+        }
+        // The second button matters more here than on a list screen: a
+        // detail route reached with a bad or stale class id retries into the
+        // same failure every time, so "Try again" alone is a dead end. The
+        // sweep added `secondaryAction` to `QueryStateErrorProps` for exactly
+        // this pair of screens.
+        error={{
+          heading: "Couldn't load this class",
+          body: teacherLoadFailureMessage,
+          secondaryAction: { label: "Back to classes", onClick: () => navigate("/teacher/classes") },
+        }}
+      >
+        {(classDetail) => (
+          <>
+            <div className="flex flex-col gap-1">
+              {/* §6.1's floor. This measured 77x19.5: it is the only way back out of
+                  a class on a phone, and it was half the height a finger needs.
+                  `w-fit` keeps the target the width of its own text rather than the
+                  full row, so the floor is the whole of what makes it reachable. */}
+              <Link
+                to="/teacher/classes"
+                className="flex w-fit items-center text-body-sm text-on-surface-variant transition-colors hover:text-on-surface pointer-coarse:min-h-11"
+              >
+                <BackArrow /> All classes
+              </Link>
+              <div className="flex items-start gap-4 flex-wrap gap-y-2 mt-1">
+                <div className="min-w-0">
+                  <div className="text-eyebrow text-on-surface-variant">
+                    {/* No " · code" repeat when the name has already resolved to
+                        the code itself (free-text `subjectCode`, det registry's
+                        default profile — see `subjectIdentifier`'s docstring). */}
+                    {classDetail.subjectCode
+                      ? (classDetail.subjectName ?? classDetail.subjectCode) !== classDetail.subjectCode
+                        ? `${classDetail.subjectName ?? classDetail.subjectCode} · ${classDetail.subjectCode}`
+                        : classDetail.subjectCode
+                      : "No subject set"}
+                  </div>
+                  <h1 className="text-display-md mt-1.5 text-pretty">
+                    {classDetail.label}
+                  </h1>
+                </div>
+                <div className="flex-1" />
+                {/* Two ways to invite, deliberately not blurred into one (see the
+                    module docstring's "One-time invite" note). Grouped in a shared
+                    wrapper so they read as a pair rather than as one code that
+                    happens to have a stray second control beside it. */}
+                <div className="flex flex-wrap items-start gap-4">
+                  {classDetail.joinCode ? (
+                    <div className="flex flex-col items-end gap-1 max-w-[220px]">
+                      <span className="text-eyebrow text-on-surface-variant">Class code</span>
+                      <JoinCodeChip code={classDetail.joinCode} />
+                      <p className="text-body-sm text-on-surface-variant text-end">Reusable, by anyone.</p>
+                    </div>
+                  ) : null}
+                  <MintClassInvite classId={classId!} />
+                </div>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap text-body-sm text-on-surface-variant mt-1">
+                <span>{classDetail.topWeakness ? `Top weakness on latest papers: ${classDetail.topWeakness}` : "Not enough data for a top weakness yet"}</span>
+                <span aria-hidden="true">·</span>
+                <span>
+                  {classDetail.lastActivityAt
+                    ? `Active ${relativeTime(classDetail.lastActivityAt)}`
+                    : "No activity yet"}
+                </span>
+              </div>
+            </div>
 
-      <nav aria-label="Class detail sections" className="flex gap-1 border-b border-rule">
-        <NavLink
-          to="."
-          end
-          className={({ isActive }) =>
-            cn(
-              "px-4 py-2.5 text-body-lg border-b-2 -mb-px",
-              isActive
-                ? "border-accent text-ink font-medium"
-                : "border-transparent text-ink-muted transition-colors hover:text-ink",
-            )
-          }
-        >
-          Roster
-        </NavLink>
-        <NavLink
-          to="analytics"
-          className={({ isActive }) =>
-            cn(
-              "px-4 py-2.5 text-body-lg border-b-2 -mb-px",
-              isActive
-                ? "border-accent text-ink font-medium"
-                : "border-transparent text-ink-muted transition-colors hover:text-ink",
-            )
-          }
-        >
-          Analytics
-        </NavLink>
-      </nav>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {classDetail.stats.map((s) => (
+                <StatCard
+                  key={s.key}
+                  stat={{
+                    k: s.key,
+                    v: s.value,
+                    unit: s.unit ?? undefined,
+                    foot: s.foot ?? undefined,
+                    valueTone: s.valueTone,
+                    footTone: s.footTone,
+                  }}
+                />
+              ))}
+            </div>
 
-      <Outlet context={{ classDetail, classId: classId! } satisfies ClassDetailContext} />
+            <nav aria-label="Class detail sections" className="flex gap-1 border-b border-outline-variant">
+              <NavLink to="." end className={classTabClassName}>
+                Roster
+              </NavLink>
+              <NavLink to="analytics" className={classTabClassName}>
+                Analytics
+              </NavLink>
+              <NavLink to="papers" className={classTabClassName}>
+                Papers
+              </NavLink>
+            </nav>
+
+            <Outlet context={{ classDetail, classId: classId! } satisfies ClassDetailContext} />
+          </>
+        )}
+      </QueryState>
     </div>
   )
 }

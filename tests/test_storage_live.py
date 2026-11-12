@@ -1,13 +1,8 @@
-"""Live integration test against the real local Supabase Storage.
+"""Live round trip against a real GCS bucket. Skips unless opted in.
 
-Skips cleanly (never fails) when either of the following is true, matching the
-skip condition ``test_auth_live.py`` uses for GoTrue:
-
-* Storage is unreachable at ``supabase.url``.
-* The service-role key is absent from the environment
-  (``LEMELY_SUPABASE__SERVICE_ROLE_KEY``).
-
-Secrets are never hardcoded — the key comes only from the environment.
+Runs only when ``LEMELY_STORAGE__BACKEND=gcs`` and application-default
+credentials resolve, matching the skip discipline of ``test_auth_live.py``.
+Writes one unique key, reads it back, deletes it — nothing is left behind.
 """
 
 from __future__ import annotations
@@ -15,70 +10,37 @@ from __future__ import annotations
 import os
 import uuid
 
-import httpx
 import pytest
-from pydantic import SecretStr
 
-from lemely.io.storage import HttpStorageBackend, StorageObjectNotFoundError
+from lemely.io.storage import StorageObjectNotFoundError
+from lemely.io.storage_gcs import GcsStorageBackend
 from lemely.runtime.config import Settings
 
 
-def _storage_reachable(url: str) -> bool:
-    try:
-        resp = httpx.get(f"{url.rstrip('/')}/storage/v1/status", timeout=2.0)
-    except httpx.HTTPError:
-        return False
-    return resp.status_code < 500
-
-
 def _live_settings() -> Settings | None:
-    service_key = os.environ.get("LEMELY_SUPABASE__SERVICE_ROLE_KEY")
-    if not service_key:
-        return None
     settings = Settings()
-    return settings.model_copy(
-        update={
-            "supabase": settings.supabase.model_copy(
-                update={"service_role_key": SecretStr(service_key)}
-            )
-        }
-    )
-
-
-@pytest.fixture
-def live_backend() -> HttpStorageBackend:
-    settings = _live_settings()
-    if settings is None:
-        pytest.skip("Supabase service-role key not set in environment")
-    if not _storage_reachable(settings.supabase.url):
-        pytest.skip("local Supabase Storage not reachable")
-    return HttpStorageBackend(settings)
-
-
-def test_live_upload_download_roundtrip(live_backend: HttpStorageBackend) -> None:
-    settings = _live_settings()
-    assert settings is not None
-    object_path = f"live-test/{uuid.uuid4().hex}.pdf"
-    payload = b"%PDF-1.4 live storage roundtrip"
-
-    live_backend.upload(settings.storage.bucket, object_path, payload, "application/pdf")
+    if settings.storage.backend != "gcs":
+        return None
     try:
-        assert live_backend.download(settings.storage.bucket, object_path) == payload
+        import google.auth
 
-        signed_url = live_backend.create_signed_url(
-            settings.storage.bucket, object_path, settings.storage.signed_url_ttl_seconds
-        )
-        assert signed_url.startswith("http")
-    finally:
-        # No delete endpoint wired (not needed by the app); live-test objects
-        # are namespaced under live-test/ so they never collide with real data.
-        pass
+        google.auth.default()
+    except Exception:  # any ADC failure means "not opted in"
+        return None
+    return settings
 
 
-def test_live_download_missing_object_raises_not_found(
-    live_backend: HttpStorageBackend,
-) -> None:
+@pytest.mark.skipif(_live_settings() is None, reason="GCS not configured (backend/ADC)")
+def test_gcs_round_trip() -> None:
     settings = _live_settings()
     assert settings is not None
+    backend = GcsStorageBackend()
+    key = f"_live_tests/{uuid.uuid4().hex}/probe.txt"
+    backend.upload(settings.storage.bucket, key, b"probe", "text/plain")
+    try:
+        assert backend.download(settings.storage.bucket, key) == b"probe"
+    finally:
+        backend.delete(settings.storage.bucket, key)
     with pytest.raises(StorageObjectNotFoundError):
-        live_backend.download(settings.storage.bucket, f"live-test/{uuid.uuid4().hex}-missing.pdf")
+        backend.download(settings.storage.bucket, key)
+    assert os.environ.get("LEMELY_STORAGE__BACKEND") == "gcs"

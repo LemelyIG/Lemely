@@ -1,7 +1,20 @@
 import { describe, expect, it } from "vitest"
 
-// @ts-expect-error — plain .mjs gate script, no type declarations by design.
-import { findEmDashes, isPlaceholder, isRange, stripComments } from "../../scripts/check_copy.mjs"
+import {
+  BANNED_PHRASES,
+  findBannedWords,
+  findEmDashes,
+  TUTORING_COPY_PATHS,
+  findExclamationMarks,
+  findTutoringBannedWords,
+  isClosedCompound,
+  isTutoringCopyPath,
+  isPlaceholder,
+  isRange,
+  proseSpans,
+  stripComments,
+  // @ts-expect-error — plain .mjs gate script, no type declarations by design.
+} from "../../scripts/check_copy.mjs"
 
 /*
  * P3.3 · the copy gate's own classifier.
@@ -114,6 +127,84 @@ describe("en-dashes in ranges are not findings", () => {
 })
 
 /*
+ * M-1 (design import, feat/landing-redesign): `data.ts` restores the design's
+ * verbatim "distance–time graph", an en dash joining two coordinate terms
+ * with no surrounding space — Chicago Manual of Style's closed-compound
+ * construction, and neither a range nor prose. Before this rule existed the
+ * gate reported it, which is what the import's review fix actually ran into:
+ * `isRange` only recognises a NUMERIC neighbour, and a letter is not one.
+ * These tests pin the new rule in both directions, same discipline as every
+ * other classifier here — what it must let through, and what it must not.
+ */
+describe("en-dashes in closed compounds are not findings", () => {
+  it.each([
+    ["Gradient of the distance–time graph"],
+    ["<h3>New York–London flight</h3>"],
+    ['const title = "speed–time graph"'],
+  ])("allows %s", (source) => {
+    expect(find(source)).toHaveLength(0)
+  })
+
+  it("recognises a closed compound by a letter on both sides, no space", () => {
+    const line = "distance–time"
+    expect(isClosedCompound(line, line.indexOf("–"))).toBe(true)
+  })
+
+  it("does not treat a spaced dash between words as a closed compound", () => {
+    // Same boundary `isRange`'s own test above pins: a space on either side
+    // means prose, not a compound. This must stay a finding.
+    const line = "marks — they've"
+    expect(isClosedCompound(line, line.indexOf("—"))).toBe(false)
+    expect(find(line)).toHaveLength(1)
+  })
+
+  it("does not exempt a compound with a space on only one side", () => {
+    expect(isClosedCompound("distance– time", "distance– time".indexOf("–"))).toBe(false)
+    expect(isClosedCompound("distance –time", "distance –time".indexOf("–"))).toBe(false)
+  })
+
+  it("is en-dash only — an em dash glued to letters is still prose", () => {
+    // CMOS reserves the closed-compound construction for the en dash. A
+    // glued em dash is not a known typographic convention in this codebase
+    // and should not silently become a new way to smuggle prose past the
+    // gate.
+    const line = "distance—time"
+    expect(isClosedCompound(line, line.indexOf("—"))).toBe(false)
+    expect(find(line)).toHaveLength(1)
+  })
+
+  it("KNOWN HOLE: an unspaced en dash used as prose is exempt, and cannot be told apart", () => {
+    // Recorded deliberately, not as an aspiration. `isClosedCompound` keys on
+    // "en dash with a letter glued either side", and a prose dash written
+    // without spaces has exactly that shape — it is textually identical to a
+    // closed compound, so no refinement of this rule separates them.
+    //
+    // It matters a little more than it looks, because of who writes en dashes
+    // in this repo: someone told "no em dashes" substitutes an en dash and
+    // often keeps the spacing the em dash had, and American convention sets
+    // an em dash unspaced. So the shape this rule admits sits directly
+    // downstream of the instruction the gate exists to enforce.
+    //
+    // Accepted because the alternative is worse: the em-dash ban itself is
+    // untouched (line 199 short-circuits on U+2014), the spaced prose form
+    // still reports, and the only way to close this would be an allowlist
+    // that has to be maintained the day a second compound appears. Pinned
+    // here so the next reader finds the gap stated rather than assuming the
+    // rule is tight.
+    const line = "That code didn't work–it may be wrong"
+    expect(isClosedCompound(line, line.indexOf("–"))).toBe(true)
+    expect(find(line)).toHaveLength(0)
+  })
+
+  it("does not weaken the range rule's own word-dash boundary", () => {
+    // isRange's existing "not a range" pin stays exactly as strict; the new
+    // rule is additive, not a replacement.
+    const line = "marks — they've"
+    expect(isRange(line, line.indexOf("—"))).toBe(false)
+  })
+})
+
+/*
  * P4.5 widened two placeholder arms. Both widenings are pinned in the
  * permissive AND the strict direction, because the failure mode of a
  * classifier change is silently exempting real copy — which is the one thing
@@ -144,5 +235,248 @@ describe("placeholder arms widened by P4.5", () => {
 
   it("does not exempt a lone dash that has words on the same line", () => {
     expect(find("  Nothing here — try again")).toHaveLength(1)
+  })
+})
+
+/*
+ * P5.x · exclamation marks (REDESIGN-MISSION §3.2 item 10, DESIGN.md §12).
+ *
+ * Same shape of test as the em-dash suite above: pin what the rule must
+ * catch, and — more importantly — what it must leave alone, since `!` is an
+ * ordinary operator character constantly present in real code (`!==`,
+ * `!isValid`, `!!value`, a non-null assertion, a regex class, `!important`).
+ */
+const findBangs = (source: string) => findExclamationMarks(source) as { line: number; text: string }[]
+
+describe("exclamation marks in UI copy are findings", () => {
+  it.each([
+    ['<p>Nice work!</p>'],
+    ['const msg = "Reconnected!"'],
+    ['<Empty body="You are all caught up!" />'],
+    ["<p>Wait!</p>"],
+  ])("flags %s", (source) => {
+    expect(findBangs(source)).toHaveLength(1)
+  })
+
+  it("reports one finding per line, not one per character", () => {
+    expect(findBangs('<p>Wow! Great! Amazing!</p>')).toHaveLength(1)
+  })
+
+  it("finds nothing in copy that already obeys the rule", () => {
+    expect(findBangs("<p>Nice work.</p>")).toHaveLength(0)
+  })
+})
+
+describe("exclamation marks in code are not findings", () => {
+  it.each([
+    ["if (!isValid) return"],
+    ["const ready = !!value"],
+    ["const label = value!"],
+    ['const re = /[!?]/'],
+    ['const css = "font-weight: bold !important;"'],
+    ["// don't forget this!"],
+    ["/* remember! */"],
+  ])("allows %s", (source) => {
+    expect(findBangs(source)).toHaveLength(0)
+  })
+
+  it("does not flag a non-null assertion inside a template interpolation", () => {
+    expect(findBangs('const msg = `Score: ${value!}`')).toHaveLength(0)
+  })
+})
+
+/*
+ * Adversarial review SHOULD-FIX 9: `proseSpans` only ever matched a JSX text
+ * node when `>` and `<` sat on the same line, so prettier-wrapped copy (the
+ * dominant shape in this codebase) was invisible to the gate. These pin the
+ * fix: a wrapped text node is now found via the whole-file `jsxTextSpans`
+ * pass, and the FPs that reproduced alongside it (a bare comparison read as
+ * markup, and two non-prose strings) are excluded.
+ */
+describe("wrapped JSX text nodes (SHOULD-FIX 9)", () => {
+  it("flags a multi-line JSX text node with words before the exclamation mark", () => {
+    const source = ["<p>", "  You're offline! Answers save locally.", "</p>"].join("\n")
+    const findings = findBangs(source)
+    expect(findings).toHaveLength(1)
+    expect(findings[0].line).toBe(2)
+  })
+
+  it("flags a JSX text node that is the exclamation-marked sentence entirely", () => {
+    const source = ["<p>", "  Nice work!", "</p>"].join("\n")
+    const findings = findBangs(source)
+    expect(findings).toHaveLength(1)
+    expect(findings[0].line).toBe(2)
+  })
+
+  it("flags a wrapped-line text node with the open and close tags on other lines", () => {
+    const source = ["<Empty", '  title="Done"', ">", "  Nice work!", "</Empty>"].join("\n")
+    const findings = findBangs(source)
+    expect(findings).toHaveLength(1)
+    expect(findings[0].line).toBe(4)
+  })
+
+  it("does not report a wrapped JSX text node twice", () => {
+    // The per-line pass and the whole-file pass can both see a node that
+    // happens to fit on one line; the merge must not double-count it.
+    expect(findBangs("<p>Nice work!</p>")).toHaveLength(1)
+  })
+})
+
+describe("false positives found alongside SHOULD-FIX 9", () => {
+  it("does not read a bare comparison as a JSX text node", () => {
+    expect(findBangs("if (a > 0 && ! b && c < 3) {}")).toHaveLength(0)
+  })
+
+  it("does not treat a shell-command string as prose", () => {
+    expect(findBangs("const cmd = \"grep -v '! ' file\"")).toHaveLength(0)
+  })
+
+  it("does not treat a className value as prose", () => {
+    expect(findBangs('className="flex ! mt-0"')).toHaveLength(0)
+  })
+})
+
+describe("proseSpans", () => {
+  it("extracts a quoted string literal's contents", () => {
+    expect(proseSpans('const msg = "Reconnected!"')).toContain("Reconnected!")
+  })
+
+  it("extracts a JSX text node's contents", () => {
+    expect(proseSpans("<p>Nice work!</p>")).toContain("Nice work!")
+  })
+
+  it("blanks a simple template interpolation rather than exposing it as prose", () => {
+    const spans = proseSpans('const msg = `Score: ${value!}`')
+    expect(spans.some((s: string) => s.includes("!"))).toBe(false)
+  })
+})
+
+describe("text on either side of an interpolation is still copy (verification residual)", () => {
+  it.each([
+    ["<p>Great news! {confident} of {total}</p>"],
+    ["<p>{count} paper{count === 1 ? \"\" : \"s\"} marked! Nice</p>"],
+    ["<p>\n  You got {score} right!\n</p>"],
+    ["<p>Done {fn({ a: 1 })}! Nested braces</p>"],
+  ])("flags %s", (source) => {
+    expect(findBangs(source)).toHaveLength(1)
+  })
+
+  it("does not read a non-null assertion inside an interpolation as punctuation", () => {
+    expect(findBangs("<p>{value!}</p>")).toHaveLength(0)
+    expect(findBangs("<p>Score {value!} today</p>")).toHaveLength(0)
+  })
+})
+
+describe("aria attributes: spoken ones are copy, referential ones are not", () => {
+  it.each([
+    ['<button aria-label="Close this!" />'],
+    ['<input aria-description="Type your answer!" />'],
+    ['<span aria-roledescription="Slide!" />'],
+  ])("flags %s", (source) => {
+    expect(findBangs(source)).toHaveLength(1)
+  })
+
+  it.each([
+    ['<div aria-labelledby="heading-one!" />'],
+    ['<div aria-controls="panel! one" />'],
+    ['<div aria-describedby="note! x" />'],
+  ])("allows %s", (source) => {
+    expect(findBangs(source)).toHaveLength(0)
+  })
+})
+
+describe("never-say list", () => {
+  const findBanned = (source: string) => findBannedWords(source) as { line: number; text: string }[]
+
+  it("names exactly the four banned phrases", () => {
+    expect([...BANNED_PHRASES]).toEqual(["cram", "hack", "easy A", "guaranteed grade"])
+  })
+
+  it.each([
+    ['const a = "Cram the night before"'],
+    ['const a = "A study hack that works"'],
+    ['const a = "It is an easy A"'],
+    ['const a = "EASY A"'],
+    ['const a = "Easy A guaranteed"'],
+    ["const a = <p>EASY A</p>"],
+    ['const a = "A guaranteed grade for every paper"'],
+    ["const a = <p>Stop cramming</p>"],
+    ['const a = "A crammed timetable"'],
+    ["const a = <p>\n  Guaranteed   grade\n</p>"],
+  ])("flags %s", (source) => {
+    expect(findBanned(source).length).toBeGreaterThan(0)
+  })
+
+  it.each([
+    ['const hackathon = "Hackathon results"'],
+    ["// a cram comment is not UI copy\nconst a = 1"],
+    ["const crammer = 1"],
+    ['const a = "an easy a"'],
+    ['const a = "Every mark, explained."'],
+  ])("allows %s", (source) => {
+    expect(findBanned(source)).toHaveLength(0)
+  })
+})
+
+/*
+ * T16 · tutoring copy lint (PLAN T16, P26). "improvement" and "verified" are
+ * banned in tutoring copy because the product must not imply Lemely vouches
+ * for a tutor or promises a grade gain. The rule is scoped by path, so the
+ * fixtures below are in-memory paths: it is exercised although no tutoring
+ * file exists yet.
+ */
+const scan = (rel: string, source: string) =>
+  findTutoringBannedWords(rel, source) as { line: number; text: string; word: string }[]
+
+const TUTORING_FIXTURE_PATHS = [
+  "src/portals/student/tutoring/TutorProfile.tsx",
+  "src/tutoring/Directory.tsx",
+  "src/portals/marketing/tutors/TutorsLanding.tsx",
+  "src/components/ordinal-distribution.tsx",
+  "src/components/grade-change-summary.tsx",
+  "src/components/slot-picker.tsx",
+  "src/components/booking-status.tsx",
+  "src/components/notes-thread.tsx",
+  "src/components/rating-summary.tsx",
+  "src/components/tutor-card.tsx",
+  "src/components/safety-notice-sheet.tsx",
+]
+
+describe("tutoring copy lint", () => {
+  it("names at least one fixture path per glob (non-vacuity)", () => {
+    for (const re of TUTORING_COPY_PATHS as RegExp[]) {
+      expect(TUTORING_FIXTURE_PATHS.some((p) => re.test(p))).toBe(true)
+    }
+    for (const p of TUTORING_FIXTURE_PATHS) expect(isTutoringCopyPath(p)).toBe(true)
+  })
+
+  it("flags 'improvement' in a tutoring file", () => {
+    const path = "src/portals/student/tutoring/TutorProfile.tsx"
+    expect(scan(path, "<p>See their improvement over time.</p>")).toHaveLength(1)
+    expect(scan(path, 'const msg = "Expect an Improvement of two grades"')).toHaveLength(1)
+    expect(scan(path, ["<p>", "  Proven improvements here", "</p>"].join("\n"))[0].line).toBe(2)
+  })
+
+  it("flags 'verified' in a tutoring file", () => {
+    const path = "src/portals/marketing/tutors/TutorsLanding.tsx"
+    expect(scan(path, "<span>Verified tutor</span>")).toHaveLength(1)
+    expect(scan(path, 'const badge = "verified by Lemely"')).toHaveLength(1)
+  })
+
+  it("allows 'Verify your email'", () => {
+    const path = "src/tutoring/Directory.tsx"
+    expect(scan(path, "<p>Verify your email to book a session.</p>")).toHaveLength(0)
+    expect(scan(path, 'const cta = "Verify your email"')).toHaveLength(0)
+  })
+
+  it("does not flag code identifiers or comments", () => {
+    const path = "src/tutoring/Directory.tsx"
+    expect(scan(path, "const verified = user.emailVerified")).toHaveLength(0)
+    expect(scan(path, "// never say verified or improvement here")).toHaveLength(0)
+  })
+
+  it("ignores non-tutoring files", () => {
+    expect(isTutoringCopyPath("src/portals/student/Dashboard.tsx")).toBe(false)
+    expect(scan("src/portals/student/Dashboard.tsx", "<p>Your improvement is verified</p>")).toHaveLength(0)
   })
 })

@@ -1,9 +1,6 @@
 /* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V4 */
-import { Link, useRouteError, isRouteErrorResponse } from "react-router-dom"
-import { useAuth } from "@/lib/auth/AuthContext"
-import { portalPathForRole } from "@/lib/auth/RequireAuth"
-import { Button, buttonVariants } from "@/components/ui/button"
-import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
+import { useRouteError, isRouteErrorResponse } from "react-router-dom"
+import { FullPageState } from "./FullPageState"
 
 /*
  * P3.1 (DECISION D1.4) · the 404 and the router-level error screen.
@@ -21,13 +18,18 @@ import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
  * reading, anything else gets "something went wrong at our end", because
  * blaming the reader's URL for our thrown exception is a lie.
  *
- * "Somewhere onward" is role-aware. A signed-in student sent to `/` would be
- * bounced through `Root` to `/student` anyway, so the button says where it is
- * actually going. A signed-out reader is offered sign-in, not a portal they
- * cannot enter.
+ * ── PR 2 part A1 · rebuilt on `FullPageState` ───────────────────────────────
  *
- * Copy per §3.2 item 10: sentence case, active voice, no exclamation mark, no
- * em-dash, no invented reassurance about what we are doing to fix it.
+ * This file used to own the frame, the doodle SVG and the copy directly. All
+ * three moved out: the frame split (standalone vs. portal) and the copy/action
+ * grammar are now shared by every full-page state, not just these two, and
+ * live in `FullPageState.tsx`/`fullPageStateCopy.ts`. What stays here is only
+ * the one thing genuinely specific to this screen — reading `useRouteError`
+ * to decide which of the two readings applies — plus this note, since the
+ * reasoning below (why two exports, why the split is about landmarks and not
+ * styling, why a render error is still full-screen) is still the whole
+ * explanation for why `NotFound`/`PortalNotFound` exist as two call sites
+ * rather than one.
  *
  * ── P4.10 · the 404 inside a portal keeps its portal ───────────────────────
  *
@@ -39,10 +41,10 @@ import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
  * of the app they were already inside. Both notes deferred it to "once each
  * portal layout is its final shape", which after surface 9 they all are.
  *
- * So the screen splits in two. `NotFoundBody` is everything the reader
- * actually reads; `NotFound` wraps it in a standalone frame for the top-level
- * routes, and `PortalNotFound` is the same body mounted as a catch-all child
- * inside each portal, where the layout already provides the frame.
+ * So the screen splits in two. `NotFound` renders `FullPageState` in the
+ * `standalone` frame for the top-level routes; `PortalNotFound` renders it in
+ * the `portal` frame as a catch-all child inside each portal, where the layout
+ * already provides the frame.
  *
  * **The split exists because of the landmarks, not the styling.** A portal
  * layout already renders a `<SkipLink>` and a `<main id={MAIN_CONTENT_ID}>`.
@@ -61,7 +63,6 @@ import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 
 export function NotFound() {
   const error = useRouteError()
-  const { session } = useAuth()
 
   // `isRouteErrorResponse` distinguishes a thrown Response (a real 404 from
   // the router) from an Error thrown during render. An unmatched path arrives
@@ -72,18 +73,7 @@ export function NotFound() {
   const isNotFound =
     error === undefined || error === null || (isRouteErrorResponse(error) && error.status === 404)
 
-  return (
-    <div className="flex min-h-screen flex-col bg-paper">
-      <SkipLink />
-      <main
-        id={MAIN_CONTENT_ID}
-        tabIndex={-1}
-        className="mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center gap-6 px-6 py-16 text-center focus:outline-none"
-      >
-        <NotFoundBody isNotFound={isNotFound} session={session} />
-      </main>
-    </div>
-  )
+  return <FullPageState variant={isNotFound ? "not-found" : "crash"} frame="standalone" />
 }
 
 /**
@@ -98,86 +88,5 @@ export function NotFound() {
  * children did not match, which is a fact about the URL and never an error.
  */
 export function PortalNotFound() {
-  const { session } = useAuth()
-  return (
-    <div className="mx-auto flex w-full max-w-md flex-col items-center justify-center gap-6 py-12 text-center">
-      <NotFoundBody isNotFound session={session} />
-    </div>
-  )
-}
-
-/** Everything the reader reads, in either frame. */
-function NotFoundBody({
-  isNotFound,
-  session,
-}: {
-  isNotFound: boolean
-  session: { role: string } | null
-}) {
-  const home = session ? portalPathForRole(session.role) : "/login"
-  const homeLabel = session ? "Go to your dashboard" : "Go to sign in"
-
-  return (
-    <>
-      {/* The notebook register, used where it belongs: a hand-drawn margin
-            mark on the one screen in the product whose entire job is "this is
-            not the page you wanted". Decoration only, `aria-hidden` — the
-            heading below carries the whole meaning on its own (§4: marginalia
-            decorates, never carries meaning alone). */}
-        <svg
-          viewBox="0 0 120 72"
-          className="h-16 w-28 text-rule"
-          aria-hidden="true"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-        >
-          <path d="M6 14h108M6 30h74M6 46h96M6 62h58" />
-          <path
-            d="M78 8c-14 10-30 34-38 52"
-            className="text-accent"
-            stroke="currentColor"
-            strokeWidth="2"
-          />
-          <path
-            d="M40 8c12 14 26 38 34 52"
-            className="text-accent"
-            stroke="currentColor"
-            strokeWidth="2"
-          />
-        </svg>
-
-        <div className="flex flex-col gap-2">
-          {/* P4.10. This was `font-mono text-metadata`, which is two defects
-              at once: `text-metadata` is a build-era compat rung, and its
-              Study Notebook replacement `text-data-sm` already names the data
-              face, so the pair set `font-family` twice on one element and
-              resolved by stylesheet order rather than by intent (D4.2's
-              `MarkDisplay` finding). Neither was visible until this file was
-              added to `MIGRATED_FILES` — it was written in P3.1, before that
-              list existed, and no gate had ever read it. */}
-          <p className="text-data-sm text-ink-faint">{isNotFound ? "404" : "Error"}</p>
-          <h1 className="text-display-md text-ink">
-            {isNotFound ? "We couldn't find that page" : "Something went wrong at our end"}
-          </h1>
-          <p className="text-body-md text-ink-muted">
-            {isNotFound
-              ? "The link may be out of date, or the address may have a typo in it. Nothing has been lost."
-              : "This page failed to load. Your work is not affected, and trying again often resolves it."}
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          <Link to={home} className={buttonVariants({ variant: "primary", size: "md" })}>
-            {homeLabel}
-          </Link>
-          {!isNotFound ? (
-            <Button variant="secondary" size="md" onClick={() => window.location.reload()}>
-              Reload the page
-            </Button>
-          ) : null}
-        </div>
-    </>
-  )
+  return <FullPageState variant="not-found" frame="portal" />
 }

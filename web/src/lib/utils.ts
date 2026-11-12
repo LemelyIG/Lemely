@@ -9,7 +9,7 @@ import { extendTailwindMerge } from "tailwind-merge"
  * the trap `index.css` documents above `.btn-text*`, which was only ever
  * worked around for the button rungs by renaming them out of the `text-`
  * namespace. The composite type-scale classes were left in it, and the bug
- * was live: `twMerge("text-display-md text-t1")` returned `"text-t1"`,
+ * was live: `twMerge("text-display-md text-on-surface")` returned `"text-on-surface"`,
  * silently dropping the font-size/family/line-height, and
  * `twMerge("text-metadata mt-1", <a color>)` dropped the type class the same
  * way. Five shared C-* components hit exactly that shape (trend-sparkline x2,
@@ -27,7 +27,7 @@ import { extendTailwindMerge } from "tailwind-merge"
  * list without removing the class from `index.css` too.
  */
 const CUSTOM_FONT_SIZE_CLASSES = [
-  // ── Study Notebook type scale (DESIGN.md §4.2) ──
+  // ── v5 Abyss type ramp (DESIGN.md, Typography) ──
   "display-hero",
   "display-xl",
   "display-lg",
@@ -41,7 +41,8 @@ const CUSTOM_FONT_SIZE_CLASSES = [
   "data-lg",
   "data-md",
   "data-sm",
-  "hand",
+  // ── Platform floors — not §4.2 type rungs, see the token's own comment ──
+  "field",
   // ── Build-era names, still live until Phase 4 migrates the last call site ──
   "display-xs",
   "label-sm",

@@ -5,8 +5,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Eyebrow, Meter } from "@/components/ui/primitives"
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import { ConfirmModal } from "@/components/ui/confirm-modal"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
@@ -78,37 +79,37 @@ import { formatAdminDate } from "../data"
  * as `useInviteStudent`, so it shares that mutation's `atQuota` gate.
  */
 export function Seats() {
-  const { data, isPending, isError, error } = useSeatUsage()
+  const query = useSeatUsage()
 
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1.5">
         <Eyebrow>School admin</Eyebrow>
-        <h1 className="text-display-lg text-ink">Seats and students</h1>
-        <p className="max-w-prose text-body-md text-ink-muted">
+        <h1 className="text-display-lg text-on-surface">Seats and students</h1>
+        <p className="max-w-prose text-body-md text-on-surface-variant">
           Every seat your school holds, who is on it, and how to invite someone new.
         </p>
       </header>
 
-      {isPending ? (
-        <>
-          <PageHeaderSkeleton />
-          <ListSkeleton rows={5} avatar />
-        </>
-      ) : isError ? (
-        <ErrorState
-          heading="We couldn't load your seats"
-          body={adminLoadFailureMessage(error)}
-          action={{ label: "Try again", onClick: () => window.location.reload() }}
-        />
-      ) : data.schools.length === 0 ? (
-        <EmptyState
-          heading="No school is assigned to you"
-          body="This account holds no school membership, so there are no seats to manage."
-        />
-      ) : (
-        data.schools.map((school) => <SchoolSeats key={school.schoolId} school={school} />)
-      )}
+      <QueryState
+        query={query}
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={5} avatar />
+          </>
+        }
+        error={{ heading: "We couldn't load your seats", body: adminLoadFailureMessage }}
+        isEmpty={(data) => data.schools.length === 0}
+        empty={
+          <EmptyState
+            heading="No school is assigned to you"
+            body="This account holds no school membership, so there are no seats to manage."
+          />
+        }
+      >
+        {(data) => data.schools.map((school) => <SchoolSeats key={school.schoolId} school={school} />)}
+      </QueryState>
     </div>
   )
 }
@@ -119,7 +120,7 @@ function SchoolSeats({ school }: { school: SeatUsage }) {
 
   return (
     <section className="flex flex-col gap-4" aria-label={school.schoolName}>
-      <h2 className="text-display-sm text-ink">{school.schoolName}</h2>
+      <h2 className="text-display-sm text-on-surface">{school.schoolName}</h2>
 
       <Card>
         <CardBody className="flex flex-col gap-3">
@@ -130,7 +131,7 @@ function SchoolSeats({ school }: { school: SeatUsage }) {
                   register. Before the inspection round the bar alone carried
                   it, in the accent this product uses for links. */}
               {atQuota ? <Badge tone="warn">At capacity</Badge> : null}
-              <span className="text-body-sm text-ink-muted">
+              <span className="text-body-sm text-on-surface-variant">
                 <span className="tabular-nums">{school.used}</span> of{" "}
                 <span className="tabular-nums">{school.quota}</span> used
               </span>
@@ -139,7 +140,7 @@ function SchoolSeats({ school }: { school: SeatUsage }) {
           <Meter
             value={seatPct}
             label={`Seats used: ${school.used} of ${school.quota}`}
-            fillClassName={atQuota ? "bg-warn" : "bg-ink-faint"}
+            fillClassName={atQuota ? "bg-tertiary" : "bg-on-surface-variant"}
           />
           {atQuota ? (
             // K-02's stated state: "Quota reached: explain and give a route to
@@ -148,13 +149,13 @@ function SchoolSeats({ school }: { school: SeatUsage }) {
             // increase and no contact address is recorded anywhere in this
             // repo. A button that did nothing would be worse than saying who
             // to ask.
-            <p className="max-w-prose text-body-sm text-ink-muted">
+            <p className="max-w-prose text-body-sm text-on-surface-variant">
               Every seat is taken, so new invites will be refused. Revoking a seat frees it
               straight away and leaves that student's account and work intact. To buy more seats,
               speak to whoever arranged your school's account.
             </p>
           ) : (
-            <p className="text-body-sm text-ink-muted">
+            <p className="text-body-sm text-on-surface-variant">
               <span className="tabular-nums">{school.available}</span>{" "}
               {school.available === 1 ? "seat" : "seats"} free.
             </p>
@@ -257,7 +258,7 @@ function InvitePanel({ school }: { school: SeatUsage }) {
           </div>
         </form>
 
-        <div className="border-t border-rule pt-5">
+        <div className="border-t border-outline-variant pt-5">
           <form
             className="flex flex-col gap-3"
             onSubmit={(event) => {
@@ -307,10 +308,10 @@ function InvitePanel({ school }: { school: SeatUsage }) {
          * direct invite past quota, and offering the button would just trade
          * an early, clear refusal for a 409 after the click.
          */}
-        <div className="border-t border-rule pt-5 flex flex-col items-start gap-3">
+        <div className="border-t border-outline-variant pt-5 flex flex-col items-start gap-3">
           <div className="flex flex-col gap-1">
-            <span className="text-label text-ink">Or generate a code</span>
-            <p className="text-body-sm text-ink-muted max-w-prose">
+            <span className="text-label text-on-surface">Or generate a code</span>
+            <p className="text-body-sm text-on-surface-variant max-w-prose">
               No address needed. Hand the code to a student and they sign themselves up, seeing
               your school's name before they commit. Reserves a seat the moment you generate it,
               same as an invite above.
@@ -319,7 +320,7 @@ function InvitePanel({ school }: { school: SeatUsage }) {
 
           {mintCode.data ? (
             <div className="flex flex-col items-start gap-1.5">
-              <span className="text-eyebrow text-ink-faint">Seat invite code</span>
+              <span className="text-eyebrow text-on-surface-variant">Seat invite code</span>
               <JoinCodeChip code={mintCode.data.code} />
             </div>
           ) : null}
@@ -339,14 +340,14 @@ function InvitePanel({ school }: { school: SeatUsage }) {
           </Button>
 
           {mintCode.isError ? (
-            <p role="alert" className="text-body-sm text-err">
+            <p role="alert" className="text-body-sm text-error">
               {seatInviteCodeFailureMessage(mintCode.error)}
             </p>
           ) : null}
         </div>
 
         {atQuota ? (
-          <p className="text-body-sm text-ink-muted">
+          <p className="text-body-sm text-on-surface-variant">
             Inviting is off while every seat is taken.
           </p>
         ) : null}
@@ -378,11 +379,11 @@ function InviteResults({ results }: { results: InviteOutcome[] }) {
   const created = results.filter((r) => r.ok)
 
   return (
-    <div className="flex flex-col gap-3 border-t border-rule pt-5">
+    <div className="flex flex-col gap-3 border-t border-outline-variant pt-5">
       <Eyebrow>Results</Eyebrow>
       {created.length > 0 ? (
         <div className="flex flex-col gap-2">
-          <p className="text-body-sm text-ink">
+          <p className="text-body-sm text-on-surface">
             <span className="tabular-nums">{created.length}</span>{" "}
             {created.length === 1 ? "account" : "accounts"} created. Copy the passwords now: they
             are shown once and cannot be read again.
@@ -390,13 +391,13 @@ function InviteResults({ results }: { results: InviteOutcome[] }) {
           <ul className="flex flex-col gap-1.5">
             {created.map((result) => (
               <li key={result.email} className="flex flex-wrap items-center gap-2">
-                <span className="text-body-sm text-ink">{result.email}</span>
+                <span className="text-body-sm text-on-surface">{result.email}</span>
                 {result.temporaryPassword ? (
-                  <code className="rounded-sm bg-paper-sunk px-1.5 py-0.5 text-data-sm text-ink">
+                  <code className="rounded-sm bg-surface-container-low px-1.5 py-0.5 text-data-sm text-on-surface">
                     {result.temporaryPassword}
                   </code>
                 ) : (
-                  <span className="text-body-sm text-ink-muted">password you set</span>
+                  <span className="text-body-sm text-on-surface-variant">password you set</span>
                 )}
               </li>
             ))}
@@ -406,7 +407,7 @@ function InviteResults({ results }: { results: InviteOutcome[] }) {
       {failed.length > 0 ? (
         <div className="flex flex-col gap-1.5">
           {failed.map((result) => (
-            <p key={result.email} className="text-body-sm text-err">
+            <p key={result.email} className="text-body-sm text-error">
               {result.email}: {result.message}
             </p>
           ))}
@@ -459,17 +460,17 @@ function SeatTable({ school }: { school: SeatUsage }) {
             <TR key={seat.seatId}>
               <TD>
                 <div className="flex flex-col">
-                  <span className="text-body-sm text-ink">
+                  <span className="text-body-sm text-on-surface">
                     {seat.assignedDisplayName ?? seat.assignedEmail ?? "Unassigned seat"}
                   </span>
                   {seat.assignedDisplayName && seat.assignedEmail ? (
-                    <span className="text-body-sm text-ink-faint">{seat.assignedEmail}</span>
+                    <span className="text-body-sm text-on-surface-variant">{seat.assignedEmail}</span>
                   ) : null}
                 </div>
               </TD>
               <TD>
                 {seat.classes.length === 0 ? (
-                  <span className="text-body-sm text-ink-faint">Not in a class here</span>
+                  <span className="text-body-sm text-on-surface-variant">Not in a class here</span>
                 ) : (
                   // A stacked list, not a wrapped row. Side by side, "10A
                   // Physics (Hana Sabry)" and "10B Maths (Omar Reda)" ran
@@ -477,10 +478,10 @@ function SeatTable({ school }: { school: SeatUsage }) {
                   // which is how two classes read as one.
                   <ul className="flex flex-col gap-0.5">
                     {seat.classes.map((seatClass) => (
-                      <li key={seatClass.classId} className="text-body-sm text-ink-muted">
+                      <li key={seatClass.classId} className="text-body-sm text-on-surface-variant">
                         {seatClass.name}
                         {seatClass.teacherName ? (
-                          <span className="text-ink-faint"> · {seatClass.teacherName}</span>
+                          <span className="text-on-surface-variant"> · {seatClass.teacherName}</span>
                         ) : null}
                       </li>
                     ))}
@@ -498,24 +499,24 @@ function SeatTable({ school }: { school: SeatUsage }) {
                 {seat.assignedAt ? (
                   <time
                     dateTime={seat.assignedAt}
-                    className="text-body-sm tabular-nums text-ink-muted"
+                    className="text-body-sm tabular-nums text-on-surface-variant"
                   >
                     {formatAdminDate(seat.assignedAt)}
                   </time>
                 ) : (
-                  <span className="text-body-sm text-ink-faint">Not assigned</span>
+                  <span className="text-body-sm text-on-surface-variant">Not assigned</span>
                 )}
               </TD>
               <TD>
                 {seat.lastAttemptAt ? (
                   <time
                     dateTime={seat.lastAttemptAt}
-                    className="text-body-sm tabular-nums text-ink-muted"
+                    className="text-body-sm tabular-nums text-on-surface-variant"
                   >
                     {formatAdminDate(seat.lastAttemptAt)}
                   </time>
                 ) : (
-                  <span className="text-body-sm text-ink-faint">Nothing yet</span>
+                  <span className="text-body-sm text-on-surface-variant">Nothing yet</span>
                 )}
               </TD>
               <TD>

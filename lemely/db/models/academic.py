@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from lemely.db.base import Base
-from lemely.db.models.enums import ExamBoard, SessionMonth, TimestampMixin
+from lemely.db.models.enums import ExamBoard, QualificationLevel, SessionMonth, TimestampMixin
 
 
 class Subject(TimestampMixin, Base):
@@ -30,6 +30,16 @@ class Subject(TimestampMixin, Base):
         nullable=False,
         server_default=sa.text("'caie'::examboard"),
     )
+    active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.text("true"))
+    qualification_level: Mapped[QualificationLevel | None] = mapped_column(
+        sa.Enum(QualificationLevel, name="qualificationlevel"), nullable=True
+    )
+    syllabus_version: Mapped[str | None] = mapped_column(sa.String, nullable=True)
+    # The syllabus PDF the topic tree was transcribed from. Nullable because a
+    # subject may exist before its taxonomy does; `get_taxonomy` returns None
+    # for such a subject rather than building a `SyllabusTaxonomy` whose
+    # required `source_url` would have to be faked.
+    source_url: Mapped[str | None] = mapped_column(sa.String, nullable=True)
 
     papers: Mapped[list[Paper]] = relationship(
         "Paper", back_populates="subject", cascade="all, delete-orphan"

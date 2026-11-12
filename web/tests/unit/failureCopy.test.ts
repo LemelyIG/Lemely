@@ -95,12 +95,63 @@ function renderedMessages(source: string): string[] {
     .map((line) => line.trim())
 }
 
+/*
+ * PR 1B (client error reporting) exemption.
+ *
+ * `renderedMessages`'s "`.message` inside a `{...}` on one line" check exists
+ * to catch a JSX expression container (`<p>{err.message}</p>`) — and cannot,
+ * by construction, tell that shape apart from a plain object literal that
+ * happens to also fit on one line, e.g.
+ * `return { message: error.message, stack: error.stack ?? null }`. That is
+ * exactly the line `lib/clientErrors.ts` builds `POST /api/client-errors`'s
+ * request body with: a telemetry payload sent to the backend's structured
+ * logging, never a JSX prop or a `useState` setter, so it can never reach a
+ * render — see that file's own module comment for the fuller argument
+ * (`request()`/`ApiError` are the paths this repo's other error-copy modules
+ * exist to launder; this one is not in that family at all).
+ *
+ * The allowlist below is a line-shape match, not a whole-file exemption.
+ * `lib/clientErrors.ts` is an ordinary `.ts` module like `studentOutcome.ts`
+ * or `queryFailure.ts` — nothing about the `.ts` extension says a file holds
+ * no rendered sentences, and exempting the whole file on that premise would
+ * have hidden a real offender landing in this file later. What actually
+ * cannot fire the gate is the specific payload-object shape
+ * (`message: error.message` / `stack: error.stack` as object-literal
+ * fields), so that is what is matched: a line containing both `message:`
+ * and `.message` (or `stack:` and `.stack`) as an object-literal field,
+ * never a bare `{error.message}` JSX expression container, which this
+ * allowlist does not touch and the gate still catches.
+ *
+ * As written today, `describeThrown()` in `clientErrors.ts` reads
+ * `error.message`/`error.stack` through a helper rather than inlining them
+ * into the report object literal (see that function's own doc comment: the
+ * indirection is there to survive a getter that itself throws, not for this
+ * gate), so this entry currently matches no line in the file at all — see
+ * "clientErrors.ts's current message/stack lines pass the gate on their own"
+ * below. Kept anyway, narrowly, as the documented answer for the shape this
+ * file would go back to producing if that ever changes, rather than making
+ * a future author rediscover this exact reasoning from scratch.
+ */
+const TELEMETRY_PAYLOAD_LINE_SHAPES: [file: string, pattern: RegExp, reason: string][] = [
+  [
+    "lib/clientErrors.ts",
+    /\b(?:message|stack)\s*:\s*[A-Za-z_$][\w$]*\.(?:message|stack)\b/,
+    "buildClientErrorReport() copies Error#message/#stack into object-" +
+      "literal fields of the client-error report body POSTed to the " +
+      "backend's structured logging. Read for telemetry, never assigned " +
+      "to a render.",
+  ],
+]
+
 describe("§6.2 no machine text reaches a reader", () => {
   it("renders no error's own message anywhere under src/", () => {
     const offenders: string[] = []
     for (const file of sourceFiles(SRC)) {
+      const relative = file.slice(SRC.length + 1)
+      const exemptPattern = TELEMETRY_PAYLOAD_LINE_SHAPES.find(([f]) => f === relative)?.[1]
       for (const line of renderedMessages(readFileSync(file, "utf8"))) {
-        offenders.push(`${file.slice(SRC.length + 1)}: ${line}`)
+        if (exemptPattern?.test(line)) continue
+        offenders.push(`${relative}: ${line}`)
       }
     }
     expect(
@@ -110,8 +161,51 @@ describe("§6.2 no machine text reaches a reader", () => {
         "settingsOutcome / friendOutcome / correctionOutcome). If the backend " +
         "genuinely wrote that sentence for this reader, say so at the call " +
         "site the way correctionOutcome.ts does, and widen this gate with the " +
-        "reason attached.",
+        "reason attached. If it never reaches a render at all (a telemetry " +
+        "payload, say), add its line shape to TELEMETRY_PAYLOAD_LINE_SHAPES " +
+        "above instead, with the same kind of reason.",
     ).toEqual([])
+  })
+
+  it("keeps the telemetry allowlist honest: each entry's file still exists and is real .ts", () => {
+    const stale = TELEMETRY_PAYLOAD_LINE_SHAPES.filter(([relative]) => {
+      const absolute = join(SRC, relative)
+      return !statSync(absolute, { throwIfNoEntry: false })?.isFile() || relative.endsWith(".tsx")
+    })
+    expect(stale, "listed but gone, or a .tsx that could legitimately render JSX").toEqual([])
+  })
+
+  it("the clientErrors.ts allowlist entry matches the payload shape it names, on a line built that way", () => {
+    // Pins the pattern itself, independent of whatever describeThrown()
+    // happens to look like today: if a future edit to clientErrors.ts goes
+    // back to building the report as one inline object literal
+    // (`{ message: error.message, stack: error.stack ?? null }`), the
+    // pattern below is what would keep that line from being a false
+    // positive, so this checks it still recognises that exact shape.
+    const [, pattern] = TELEMETRY_PAYLOAD_LINE_SHAPES.find(
+      ([relative]) => relative === "lib/clientErrors.ts",
+    )!
+    expect(pattern.test("return { message: error.message, stack: error.stack ?? null }")).toBe(
+      true,
+    )
+    // And it stays narrow: an ordinary rendered-message line is untouched by
+    // it, so the allowlist cannot be used to hide a real offender under a
+    // filename it happens to share.
+    expect(pattern.test("body={error.message}")).toBe(false)
+  })
+
+  it("clientErrors.ts's current message/stack lines pass the gate on their own, with no allowlist entry needed", () => {
+    // describeThrown() (PR 1 fix for the "reportClientError can throw" review
+    // finding) reads error.message/error.stack through a helper rather than
+    // inlining them into the report object literal, so as written today this
+    // file produces no line the gate would flag in the first place — the
+    // allowlist entry above is a defensive line-shape match for a payload
+    // shape this file no longer happens to contain, not a carve-out this
+    // file is currently relying on. Asserted directly here rather than left
+    // as an inference from the file-level test above, which would pass the
+    // same way whether this file needed the allowlist or not.
+    const source = readFileSync(join(SRC, "lib/clientErrors.ts"), "utf8")
+    expect(renderedMessages(source)).toEqual([])
   })
 
   /*

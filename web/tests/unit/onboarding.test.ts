@@ -1,48 +1,60 @@
 import { describe, expect, it } from "vitest"
+import type { CatalogueSubject } from "@/lib/referenceTypes"
 import {
-  backfillNullQualificationLevels,
   buildConfidenceRatingsPayload,
   buildEnrolmentPayload,
   buildProfilePatchPayload,
   buildQuestionnaireSteps,
   clampStepIndex,
+  firstAvailablePlacementSubject,
   placementInviteSubject,
   toggleInSet,
   type QuestionnaireAnswers,
   type SubjectDraft,
 } from "@/portals/student/screens/onboarding/onboardingData"
 
+function cat(code: string): CatalogueSubject {
+  return { code, name: code, board: "caie", qualificationLevel: "igcse", papers: [], topics: [] }
+}
+
+// Catalogue order is `code` order now (spec D3 drops the display-order
+// column), so the fixture is ordered the way `/api/reference` returns it.
+const CATALOGUE = [cat("0580"), cat("0606"), cat("0625")]
+
 describe("placementInviteSubject — S-02 → S-03 routing", () => {
   it("sends a single-subject student to that subject", () => {
-    expect(placementInviteSubject(["0580"])).toBe("0580")
+    expect(placementInviteSubject(["0580"], CATALOGUE)).toBe("0580")
   })
 
   it("returns null when the student enrolled in nothing (S-06 instead)", () => {
-    expect(placementInviteSubject([])).toBeNull()
+    expect(placementInviteSubject([], CATALOGUE)).toBeNull()
   })
 
-  it("orders by the S-01 catalogue, not by the order the codes arrive in", () => {
-    // 0625 is first in SUPPORTED_SUBJECTS, so it wins regardless of argument
-    // order — the rule is "the first subject as S-01 presented them".
-    expect(placementInviteSubject(["0606", "0625"])).toBe("0625")
-    expect(placementInviteSubject(["0625", "0606"])).toBe("0625")
+  it("orders by the fetched catalogue, not by the order the codes arrive in", () => {
+    expect(placementInviteSubject(["0625", "0580"], CATALOGUE)).toBe("0580")
+    expect(placementInviteSubject(["0580", "0625"], CATALOGUE)).toBe("0580")
   })
 
   it("does not depend on JS object key enumeration order", () => {
     // The regression this function exists for. `Object.keys` hoists
-    // integer-like keys ahead of insertion order, so a future syllabus code
-    // without a leading zero would silently jump the queue and route the
-    // student to a subject they picked second. Today's codes all have a
-    // leading zero, which is exactly why the bug was invisible.
+    // integer-like keys ahead of insertion order, so a syllabus code without a
+    // leading zero silently jumps the queue. Today's codes all have one, which
+    // is exactly why the bug was invisible.
     const drafts: Record<string, boolean> = {}
     drafts["0625"] = true
     drafts["9709"] = true
     expect(Object.keys(drafts)[0]).toBe("9709") // the trap, pinned
-    expect(placementInviteSubject(Object.keys(drafts))).toBe("0625")
+    expect(placementInviteSubject(Object.keys(drafts), CATALOGUE)).toBe("0625")
   })
 
-  it("ignores a code that is not a supported subject", () => {
-    expect(placementInviteSubject(["9999"])).toBeNull()
+  it("ignores a code that is not in the catalogue", () => {
+    expect(placementInviteSubject(["9999"], CATALOGUE)).toBeNull()
+  })
+
+  it("returns null when the catalogue has not loaded", () => {
+    // Guards the same failure `Onboarding.tsx`'s seeding effect guards: acting
+    // on an empty catalogue must not silently mean "no subjects".
+    expect(placementInviteSubject(["0625"], [])).toBeNull()
   })
 })
 
@@ -153,56 +165,6 @@ describe("buildEnrolmentPayload", () => {
   })
 })
 
-describe("backfillNullQualificationLevels — toggle-then-set-global level regression", () => {
-  it("backfills a draft still at null when the profile-wide level is set afterwards", () => {
-    // The bug: a student ticks Physics and Maths (both drafts seed `null`
-    // because no level has been picked yet), then scrolls up and picks
-    // "A-Level". Without the back-fill, both enrolments PUT
-    // `qualificationLevel: null` despite the explicit choice.
-    const drafts: Record<string, SubjectDraft> = {
-      "0625": {
-        subjectCode: "0625",
-        qualificationLevel: null,
-        papers: new Set([1]),
-        targetGrade: null,
-        sessionMonth: null,
-        sessionYear: null,
-      },
-      "9709": {
-        subjectCode: "9709",
-        qualificationLevel: null,
-        papers: new Set([1]),
-        targetGrade: null,
-        sessionMonth: null,
-        sessionYear: null,
-      },
-    }
-
-    const backfilled = backfillNullQualificationLevels(drafts, "a_level")
-    const payload = buildEnrolmentPayload(Object.values(backfilled))
-
-    expect(payload.every((entry) => entry.qualificationLevel !== null)).toBe(true)
-    expect(payload.map((entry) => entry.qualificationLevel)).toEqual(["a_level", "a_level"])
-  })
-
-  it("does not overwrite a draft that already has its own per-subject level", () => {
-    const drafts: Record<string, SubjectDraft> = {
-      "0625": {
-        subjectCode: "0625",
-        qualificationLevel: "igcse", // an explicit per-subject override
-        papers: new Set([1]),
-        targetGrade: null,
-        sessionMonth: null,
-        sessionYear: null,
-      },
-    }
-
-    const backfilled = backfillNullQualificationLevels(drafts, "a_level")
-
-    expect(backfilled["0625"].qualificationLevel).toBe("igcse")
-  })
-})
-
 describe("buildProfilePatchPayload — D4.5 skip rule", () => {
   it("omits a skipped field entirely rather than sending a default", () => {
     const answers: QuestionnaireAnswers = {
@@ -260,8 +222,9 @@ describe("buildQuestionnaireSteps / clampStepIndex — step navigation", () => {
 
   it("adds one confidence step per subject, in S-01 selection order", () => {
     const steps = buildQuestionnaireSteps(["0580", "0606", "0625"])
-    expect(steps).toHaveLength(7)
-    expect(steps.slice(4).map((s) => s.subjectCode)).toEqual(["0580", "0606", "0625"])
+    // 4 fixed + 3 confidence + 1 placementChoice (>1 subject enrolled).
+    expect(steps).toHaveLength(8)
+    expect(steps.slice(4, 7).map((s) => s.subjectCode)).toEqual(["0580", "0606", "0625"])
   })
 
   it("a student who enrolled in nothing still gets the 4 fixed steps", () => {
@@ -282,5 +245,69 @@ describe("buildQuestionnaireSteps / clampStepIndex — step navigation", () => {
 
   it("clamps to 0 for an empty step sequence rather than going negative", () => {
     expect(clampStepIndex(0, 0)).toBe(0)
+  })
+})
+
+describe("buildQuestionnaireSteps — placement choice", () => {
+  it("appends a placement-choice step when the student enrolled in more than one subject", () => {
+    const steps = buildQuestionnaireSteps(["0580", "0625"])
+    expect(steps[steps.length - 1]).toEqual({ id: "placementChoice", kind: "placementChoice" })
+  })
+
+  it("does not ask when there is only one subject to choose from", () => {
+    // A question with one possible answer is not a question.
+    const steps = buildQuestionnaireSteps(["0625"])
+    expect(steps.some((s) => s.kind === "placementChoice")).toBe(false)
+  })
+
+  it("does not ask when the student enrolled in nothing", () => {
+    expect(buildQuestionnaireSteps([]).some((s) => s.kind === "placementChoice")).toBe(false)
+  })
+
+  it("keeps the confidence steps before the choice", () => {
+    const steps = buildQuestionnaireSteps(["0580", "0625"])
+    const lastConfidence = steps.map((s) => s.kind).lastIndexOf("confidence")
+    const choice = steps.map((s) => s.kind).indexOf("placementChoice")
+    expect(choice).toBeGreaterThan(lastConfidence)
+  })
+})
+
+describe("firstAvailablePlacementSubject — the placement-choice SKIP path", () => {
+  it("routes to the first enrolled subject that is actually available, even when an earlier one (catalogue order) is not", () => {
+    // The finding this function exists to fix: 0580 sorts first and has no
+    // placement questions. A skipper must not land there when 0625, also
+    // enrolled, does have a real test.
+    const available = new Map([
+      ["0580", false],
+      ["0625", true],
+    ])
+    expect(firstAvailablePlacementSubject(["0580", "0625"], available)).toBe("0625")
+  })
+
+  it("respects enrolment order among subjects that are all available", () => {
+    const available = new Map([
+      ["0606", true],
+      ["0625", true],
+    ])
+    expect(firstAvailablePlacementSubject(["0606", "0625"], available)).toBe("0606")
+  })
+
+  it("returns null — never a guess — when no enrolled subject is known to be available", () => {
+    const available = new Map([
+      ["0580", false],
+      ["0606", false],
+    ])
+    expect(firstAvailablePlacementSubject(["0580", "0606"], available)).toBeNull()
+  })
+
+  it("treats a subject missing from the availability map as not known to be available, not as available", () => {
+    // The query for it hasn't resolved yet (or failed) — this function
+    // never routes to a subject it cannot affirmatively confirm has
+    // questions.
+    expect(firstAvailablePlacementSubject(["0580"], new Map())).toBeNull()
+  })
+
+  it("returns null for no enrolled subjects", () => {
+    expect(firstAvailablePlacementSubject([], new Map([["0625", true]]))).toBeNull()
   })
 })

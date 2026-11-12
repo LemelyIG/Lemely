@@ -2,6 +2,7 @@
 import type { HTMLAttributes, ReactNode } from "react"
 import { Check, CircleNotch, DotsThree, X } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
+import { ProgressBar } from "@/components/ui/progress-bar"
 
 /*
  * C-10 · Processing state — the marking pipeline's staged progress (S-14).
@@ -28,9 +29,26 @@ export type ProcessingStageStatus = "pending" | "active" | "done" | "error"
 
 export interface ProcessingStageProgress {
   current: number
-  total: number
-  /** e.g. "question" → renders "Question 7 of 21". Defaults to "item". */
+  /**
+   * Undefined exactly when the wire couldn't tell us a total (a request that
+   * isn't length-computable, e.g. an upload over a connection that never
+   * reports `Content-Length` framing) — not a value to fill in on its behalf.
+   * `StageProgressBar` reads this as the indeterminate case: a running label
+   * with no bar and no percentage, since a bar implies a known endpoint this
+   * reading does not have.
+   */
+  total?: number
+  /** e.g. "question" → renders "Question 7 of 21". Defaults to "item".
+   * Ignored when `label` is set. */
   unit?: string
+  /**
+   * A preformatted replacement for the "{Unit} {current} of {total}" text —
+   * e.g. `"3.2 MB of 8.1 MB"` for the upload stage, where the wire unit is
+   * bytes and the default phrasing would read "Byte 3355443 of 8493465". The
+   * bar itself still runs off `current`/`total` unchanged; only the text row
+   * above it is replaced.
+   */
+  label?: string
 }
 
 export interface ProcessingStage {
@@ -41,7 +59,8 @@ export interface ProcessingStage {
   detail?: string
   /** Required by product rule when status === "error" — no generic fallback is rendered if omitted. */
   errorMessage?: string
-  /** Marking stage: per-question counter. */
+  /** A real counter for the stage currently running — the marking stage's
+   * per-question count, or the upload stage's bytes moved. */
   progress?: ProcessingStageProgress
 }
 
@@ -74,14 +93,14 @@ export function StageGlyph({ status }: { status: ProcessingStageStatus }) {
   /* One ring geometry for all four states, so the badges line up on the
    * connector and only their colour/contents change between stages. */
   const ring =
-    "flex h-7 w-7 flex-none items-center justify-center rounded-full border-2 bg-paper-raised"
+    "flex h-7 w-7 flex-none items-center justify-center rounded-full border-2 bg-surface-container-lowest"
 
   if (status === "done") {
     return (
       <span
         className={cn(
           ring,
-          "border-ok text-ok",
+          "border-success text-success-text",
           "transition-transform duration-[var(--dur-fast)] ease-out-soft hover:scale-110",
         )}
       >
@@ -95,7 +114,7 @@ export function StageGlyph({ status }: { status: ProcessingStageStatus }) {
        * and the centre dot are one indicator, and announcing the arc alone
        * would name a decoration rather than the state. */
       <span
-        className="relative flex h-7 w-7 flex-none items-center justify-center text-accent"
+        className="relative flex h-7 w-7 flex-none items-center justify-center text-primary"
         role="img"
         aria-label="In progress"
       >
@@ -106,7 +125,7 @@ export function StageGlyph({ status }: { status: ProcessingStageStatus }) {
          * (a bare `*` selector) without any component-level handling. */}
         <span
           aria-hidden="true"
-          className="absolute inset-0 rounded-full bg-accent-wash animate-ping"
+          className="absolute inset-0 rounded-full bg-primary-container animate-ping"
         />
         <CircleNotch
           size={28}
@@ -114,19 +133,19 @@ export function StageGlyph({ status }: { status: ProcessingStageStatus }) {
           aria-hidden="true"
           className="absolute inset-0 animate-spin"
         />
-        <span aria-hidden="true" className="relative h-1.5 w-1.5 rounded-full bg-accent" />
+        <span aria-hidden="true" className="relative h-1.5 w-1.5 rounded-full bg-primary" />
       </span>
     )
   }
   if (status === "error") {
     return (
-      <span className={cn(ring, "border-err text-err")}>
+      <span className={cn(ring, "border-error text-error")}>
         <X size={15} weight="bold" role="img" aria-label="Failed" />
       </span>
     )
   }
   return (
-    <span className={cn(ring, "border-rule text-ink-faint")}>
+    <span className={cn(ring, "border-outline-variant text-on-surface-variant")}>
       <DotsThree size={16} weight="bold" role="img" aria-label="Not started" />
     </span>
   )
@@ -151,27 +170,45 @@ function phaseKicker(
   return `Phase ${index + 1}`
 }
 
-/* Real per-question counter only, per S-14: this reads `stage.progress` —
- * which `frameProgress` in `pipelineStages.ts` only ever populates from an
- * actual `index`/`total` on the wire — and renders nothing when it is
- * undefined. It never estimates a percentage from stage position, elapsed
- * time, or anything else that isn't the number the backend sent. */
+/* Real progress only, per S-14 — never estimated. Two wire sources feed
+ * `stage.progress`: `frameProgress` in `pipelineStages.ts`, which only ever
+ * populates it from an actual `index`/`total` the backend sent, and the
+ * upload stage's own `xhr.upload.onprogress` bytes (`CorrectPaper.tsx`'s
+ * `uploadStageProgress`). Both are genuine wire signal, not a derived guess,
+ * which is what this component actually enforces — it is agnostic about
+ * *which* real counter it is handed. It never estimates a percentage from
+ * stage position, elapsed time, or anything else that isn't a number the
+ * wire actually reported.
+ *
+ * Two things render nothing rather than a fabricated fact: this whole
+ * component is skipped by its caller when `stage.progress` itself is
+ * undefined (no counter has arrived yet), and below, a `progress.total` of
+ * `undefined` renders the label alone with no bar and no percentage — the
+ * indeterminate case, where the wire has bytes moved but no total to measure
+ * them against. A bar or a percentage would claim a known endpoint that
+ * reading does not have. */
 function StageProgressBar({ progress }: { progress: ProcessingStageProgress }) {
-  const pct = Math.max(0, Math.min(100, Math.round((progress.current / progress.total) * 100)))
-  return (
-    <div className="mt-3 rounded-md border border-rule bg-paper-sunk p-3">
-      <div className="mb-2 flex items-center justify-between gap-2 text-data-sm">
-        <span className="text-ink-muted">
-          {capitalize(progress.unit ?? "item")} {progress.current} of {progress.total}
+  const unit = capitalize(progress.unit ?? "item")
+
+  if (progress.total === undefined) {
+    return (
+      <div className="mt-3 rounded-md border border-outline-variant bg-surface-container-low p-3">
+        <span className="text-data-sm text-on-surface-variant">
+          {progress.label ?? `${unit} ${progress.current}`}
         </span>
-        <span className="flex-none text-accent-ink">{pct}%</span>
       </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-rule">
-        <div
-          className="h-full rounded-full bg-accent transition-[width] duration-[var(--dur-slow)] ease-out-soft"
-          style={{ width: `${pct}%` }}
-        />
+    )
+  }
+
+  const pct = Math.max(0, Math.min(100, Math.round((progress.current / progress.total) * 100)))
+  const label = progress.label ?? `${unit} ${progress.current} of ${progress.total}`
+  return (
+    <div className="mt-3 rounded-md border border-outline-variant bg-surface-container-low p-3">
+      <div className="mb-2 flex items-center justify-between gap-2 text-data-sm">
+        <span className="text-on-surface-variant">{label}</span>
+        <span className="flex-none text-on-primary-container">{pct}%</span>
       </div>
+      <ProgressBar value={pct} tone="accent" ariaLabel={label} />
     </div>
   )
 }
@@ -195,7 +232,7 @@ export function ProcessingState({
                 <span
                   className={cn(
                     "min-h-4 w-px flex-1 transition-colors duration-[var(--dur-slow)] ease-out-soft",
-                    stage.status === "done" ? "bg-ok" : "bg-rule",
+                    stage.status === "done" ? "bg-success" : "bg-outline-variant",
                   )}
                 />
               ) : null}
@@ -205,10 +242,10 @@ export function ProcessingState({
                 <span
                   className={cn(
                     "block text-eyebrow transition-colors duration-[var(--dur-fast)]",
-                    stage.status === "pending" && "text-ink-faint",
-                    stage.status === "active" && "text-accent-ink",
-                    stage.status === "done" && "text-ink-muted",
-                    stage.status === "error" && "text-err",
+                    stage.status === "pending" && "text-on-surface-variant",
+                    stage.status === "active" && "text-on-primary-container",
+                    stage.status === "done" && "text-on-surface-variant",
+                    stage.status === "error" && "text-error",
                   )}
                 >
                   {kicker}
@@ -218,18 +255,18 @@ export function ProcessingState({
                 className={cn(
                   "block text-body-md transition-colors duration-[var(--dur-fast)]",
                   kicker && "mt-1.5",
-                  stage.status === "pending" && "font-medium text-ink-faint",
-                  stage.status === "active" && "font-semibold text-ink",
+                  stage.status === "pending" && "font-medium text-on-surface-variant",
+                  stage.status === "active" && "font-semibold text-on-surface",
                   (stage.status === "done" || stage.status === "error") &&
-                    "font-medium text-ink",
+                    "font-medium text-on-surface",
                 )}
               >
                 {stage.label}
               </span>
               {stage.status === "error" && stage.errorMessage ? (
-                <p className="mt-1 text-body-md text-err">{stage.errorMessage}</p>
+                <p className="mt-1 text-body-md text-error">{stage.errorMessage}</p>
               ) : stage.detail ? (
-                <p className="mt-1 text-body-sm text-ink-faint">{stage.detail}</p>
+                <p className="mt-1 text-body-sm text-on-surface-variant">{stage.detail}</p>
               ) : null}
               {/* The animated bar is scoped to the one stage carrying a real
                * counter (S-14's "no fake progress bar" — see header comment).
@@ -241,7 +278,7 @@ export function ProcessingState({
           </div>
         )
       })}
-      {footer ? <div className="mt-2 border-t border-rule pt-4">{footer}</div> : null}
+      {footer ? <div className="mt-2 border-t border-outline-variant pt-4">{footer}</div> : null}
     </div>
   )
 }

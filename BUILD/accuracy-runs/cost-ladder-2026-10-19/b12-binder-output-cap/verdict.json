@@ -1,0 +1,40 @@
+{
+  "against": "b1-second-read-low",
+  "allowed_extra": 2,
+  "expected_saving": "0.05",
+  "extra_mismarks": 0,
+  "lever": "B12 binder output cap 16384",
+  "live_tags": [
+    "correction",
+    "correction_borderline",
+    "escalation",
+    "correction_prefix_cache",
+    "binding_second_read",
+    "extraction"
+  ],
+  "overrides": {
+    "gemini.max_output_tokens_for": {
+      "binding_second_read": 16384,
+      "extraction": 16384
+    },
+    "gemini.thinking_level_for": {
+      "binding_second_read": "low",
+      "correction": "low",
+      "correction_borderline": "high",
+      "escalation": "high",
+      "extraction": "minimal",
+      "generation": "low"
+    }
+  },
+  "passed": true,
+  "proof": "/home/sico/Code/Lemely/BUILD/accuracy-runs/cost-ladder-2026-10-19/b12-binder-output-cap",
+  "reasons": [],
+  "saving": 0.3937579455565057,
+  "set": {
+    "gemini.max_output_tokens_for": {
+      "binding_second_read": 16384,
+      "extraction": 16384
+    }
+  },
+  "tier": "big"
+}

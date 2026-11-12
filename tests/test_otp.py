@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from lemely.auth.otp import OtpRateLimitError, OtpResult, OtpStore
+from lemely.auth.otp import OtpChannel, OtpRateLimitError, OtpResult, OtpStore
 
 
 class _FrozenClock:
@@ -138,3 +138,45 @@ def test_resend_allowed_once_prior_challenge_expired() -> None:
     clock.advance(61)
     code = store.issue("+800")
     assert store.verify("+800", code) is OtpResult.ok
+
+
+def test_channels_are_independent_and_email_has_its_own_ttl() -> None:
+    clock = _FrozenClock(datetime(2026, 9, 3, tzinfo=UTC))
+    store = OtpStore(
+        clock=clock,
+        rng=random.Random(1),
+        ttl_seconds=300,
+        email_ttl_seconds=600,
+        min_resend_seconds=0,
+    )
+    phone_code = store.issue("+201000000000")
+    email_code = store.issue("a@example.com", channel=OtpChannel.email)
+    wrong_channel = store.verify("a@example.com", phone_code, channel=OtpChannel.email)
+    assert wrong_channel is OtpResult.wrong_code
+    clock.advance(400)
+    assert store.verify("+201000000000", phone_code) is OtpResult.expired
+    assert store.verify("a@example.com", email_code, channel=OtpChannel.email) is OtpResult.ok
+
+
+def test_same_address_is_independent_across_channels() -> None:
+    """The ``(channel, address)`` key holds even when the address string is
+    identical on both channels — the property the composite key exists for.
+    A phone challenge and an email challenge for the same address are two
+    unrelated entries: each verifies only against its own channel and its own
+    code, and the other channel's code is simply wrong, never a match.
+    """
+    clock = _FrozenClock(datetime(2026, 9, 3, tzinfo=UTC))
+    store = OtpStore(clock=clock, rng=random.Random(2), min_resend_seconds=0)
+    address = "same@example.com"
+    phone_code = store.issue(address)
+    email_code = store.issue(address, channel=OtpChannel.email)
+    assert phone_code != email_code  # distinct draws; the cross-checks below rely on this
+
+    # Each channel's code is wrong on the other channel — neither challenge is
+    # consumed by a wrong-code attempt, so both are still live afterward.
+    assert store.verify(address, email_code, channel=OtpChannel.phone) is OtpResult.wrong_code
+    assert store.verify(address, phone_code, channel=OtpChannel.email) is OtpResult.wrong_code
+
+    # Each channel's own code still verifies correctly against its own entry.
+    assert store.verify(address, phone_code, channel=OtpChannel.phone) is OtpResult.ok
+    assert store.verify(address, email_code, channel=OtpChannel.email) is OtpResult.ok

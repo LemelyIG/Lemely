@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
+from typing import Literal
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
@@ -43,6 +44,20 @@ class QualificationLevel(enum.Enum):
     a_level = "a_level"
 
 
+class PaperTier(enum.Enum):
+    """Which tier of a tiered syllabus a paper belongs to.
+
+    IGCSE splits some subjects into Core and Extended. The distinction is
+    load-bearing rather than cosmetic: Cambridge publishes different grade
+    thresholds for each, and a Core candidate cannot be awarded above C. A
+    subject with no tiering (0606 Additional Mathematics) leaves the column
+    NULL rather than inventing a tier for it.
+    """
+
+    core = "core"
+    extended = "extended"
+
+
 class SessionMonth(enum.Enum):
     """CAIE exam session month codes.
 
@@ -55,8 +70,15 @@ class SessionMonth(enum.Enum):
     specimen = "specimen"
 
 
-#: Display labels for :class:`SessionMonth` members.
-SESSION_MONTH_LABELS: dict[SessionMonth, str] = {
+#: Display labels for :class:`SessionMonth` members. Typed onto the exact
+#: ``Literal["May/June", "Oct/Nov", "Feb/Mar", "Specimen"]`` that
+#: ``lemely.core.schemas.ExamMetadata.session_month`` declares (same four
+#: values), rather than the wider ``str`` this dict used to carry -- a
+#: ``dict[SessionMonth, str]`` let ``history_repo.py``/``review_repo.py``
+#: feed a value with no static guarantee of membership into that ``Literal``
+#: field, which mypy's pydantic plugin does not check on construction.
+#: Typing the lookup table itself closes every call site at once.
+SESSION_MONTH_LABELS: dict[SessionMonth, Literal["May/June", "Oct/Nov", "Feb/Mar", "Specimen"]] = {
     SessionMonth.may_june: "May/June",
     SessionMonth.oct_nov: "Oct/Nov",
     SessionMonth.feb_mar: "Feb/Mar",
@@ -85,11 +107,35 @@ class ConfidenceBand(enum.Enum):
 
 
 class MarkerSource(enum.Enum):
-    """Which engine produced a question mark."""
+    """Which engine produced a question mark.
+
+    ``dropped`` (US-038, migration ``0038_marker_source_dropped``): the model
+    DID return an answer for this question, but extraction discarded it as
+    malformed (unrecoverable ``question_id``/``answer`` shape) -- see
+    ``lemely.core.schemas.CorrectedQuestion.marker_source``. Distinct from
+    ``missing``, which covers "nothing was ever attempted". Before this
+    migration the native Postgres enum had no fourth member, so
+    ``AttemptRepository`` mapped ``"dropped"`` onto ``missing`` on write and
+    the two review-detail readers (``review_repo.py``) disagreed on what a
+    teacher saw for the identical situation -- this member removes that
+    mapping and the disagreement it caused.
+
+    ``blank`` (task #36, migration ``0040_marker_source_blank``): the student
+    left the question empty and no marking call was made -- US-039's unflagged
+    zero. It reused ``missing`` until this member existed, carrying the
+    distinction in ``review_reason`` prose instead.
+
+    ``missing``, ``dropped`` and ``blank`` all mean "no marker formed an
+    opinion". ``lemely.core.schemas.UNSCORED_MARKER_SOURCES`` is the one place
+    that set is written down, and ``lemely.core.schemas.marker_scored`` the one
+    way to ask.
+    """
 
     deterministic = "deterministic"
     ai = "ai"
     missing = "missing"
+    dropped = "dropped"
+    blank = "blank"
 
 
 class BoundarySource(enum.Enum):
@@ -156,25 +202,69 @@ class ReviewStatus(enum.Enum):
     open = "open"
     resolved = "resolved"
     dismissed = "dismissed"
+    withdrawn = "withdrawn"
+    """The subject of the review went away — the student deleted the paper.
+
+    Distinct from ``dismissed``, which is a teacher's judgement and stamps
+    ``resolved_by``. Recording a student's deletion as ``dismissed`` would lie
+    in the audit column and make every dismissed-by-teacher metric count
+    deletions (design 2026-09-22 §6).
+    """
 
 
 class ReviewReason(enum.Enum):
-    """Why a question result was flagged for teacher review."""
+    """Why a question result was flagged for teacher review.
+
+    F4 removed the AI-generated-answer detector's review reason (migration
+    ``0037``): the detector it named had no measured false-positive rate and
+    JCQ guidance is that such a detector must never be sole evidence.
+    Existing rows carrying that reason were rewritten to ``manual`` (one-way;
+    see the migration's docstring). ``random_audit`` (N2) is a new member
+    added in the same migration, so the two changes share one Alembic head
+    instead of racing for it.
+
+    ``student_evidence_unjudged`` arrives from the student self-review spec
+    (``0037_question_result_pts``, which reaches this member with
+    ``ALTER TYPE ... ADD VALUE IF NOT EXISTS``). Because that revision and
+    ``0037_remove_ai_detection`` are Alembic *siblings* off
+    ``0036_upload_idempotency_key``, whichever order the merge head resolves
+    them in must leave the same member set — so ``0037_remove_ai_detection``'s
+    enum REBUILD names this member in both its member lists rather than
+    relying on develop's revision having already run. Dropping it is not a
+    cosmetic loss: ``lemely.db.self_review_repo`` writes it into
+    ``review_queue.reason``.
+    """
 
     low_confidence = "low_confidence"
     plagiarism_flag = "plagiarism_flag"
-    ai_detection_flag = "ai_detection_flag"
     manual = "manual"
+    random_audit = "random_audit"
+    student_evidence_unjudged = "student_evidence_unjudged"
 
 
 class NotificationType(enum.Enum):
-    """Category of a user notification."""
+    """Category of a user notification.
+
+    The last eight members are the tutoring marketplace's (migration
+    ``0044_tutoring_enums_ext``, SPEC ``docs/tutoring/SPEC.md`` §a.1). Each has a
+    same-named ``notification_preferences`` column, pinned by
+    ``tests/test_db_schema.py``'s enum/column vocabulary test.
+    """
 
     grade_ready = "grade_ready"
     announcement = "announcement"
     streak_warning = "streak_warning"
     study_plan_reminder = "study_plan_reminder"
     at_risk_alert = "at_risk_alert"
+    review_withdrawn = "review_withdrawn"
+    booking_request = "booking_request"
+    booking_update = "booking_update"
+    booking_note = "booking_note"
+    tutor_access = "tutor_access"
+    tutor_review = "tutor_review"
+    tutor_listing = "tutor_listing"
+    parent_link = "parent_link"
+    tutoring_report = "tutoring_report"
 
 
 class XpSource(enum.Enum):
@@ -320,15 +410,209 @@ class InviteRole(enum.StrEnum):
     """The role an invite code provisions (D7.3).
 
     Deliberately **not** :class:`Role`. An invite may only ever produce a
-    student or a teacher; reusing the five-member ``Role`` here would put
-    ``platform_admin`` in the type system of a code an anonymous caller
-    redeems, and the only thing standing between that and an escalation would
-    be a validation nobody had written yet. A narrower type cannot express the
-    mistake.
+    student, a teacher, or a parent; reusing the five-member ``Role`` here
+    would put ``platform_admin`` in the type system of a code an anonymous
+    caller redeems, and the only thing standing between that and an
+    escalation would be a validation nobody had written yet. A narrower type
+    cannot express the mistake.
     """
 
     student = "student"
     teacher = "teacher"
+    parent = "parent"
+
+
+class RevisionSource(enum.Enum):
+    """What produced a :class:`QuestionResultRevision`.
+
+    ``ai`` is written at correction time (the only writer today —
+    ``AttemptRepository._persist``). ``teacher`` exists for a future writer:
+    the current override path (``ReviewRepository.resolve``) records a
+    teacher's correction on ``QuestionResult.teacher_awarded_marks`` directly
+    and never writes a ``QuestionResultRevision``, so no revision with
+    ``source=teacher`` is produced today. ``student_selfmark`` and ``remark``
+    are likewise written by the student self-review spec; all three exist
+    here so that spec needs no enum migration of its own (spec 2026-09-17 D5).
+    """
+
+    ai = "ai"
+    teacher = "teacher"
+    student_selfmark = "student_selfmark"
+    remark = "remark"
+
+
+class EvidenceVerdict(enum.Enum):
+    """Outcome of judging a student's written claim on a mark point.
+
+    Written by the student self-review spec; created here per D5.
+    """
+
+    accepted = "accepted"
+    rejected = "rejected"
+    not_required = "not_required"
+
+
+# ---------------------------------------------------------------------------
+# Tutoring marketplace (migration 0044_tutoring_enums_ext, SPEC §a.1)
+#
+# Sixteen native Postgres enum types, each named exactly as SPEC §a.1 prints it.
+# Every member's name equals its value, so SQLAlchemy's default name binding is
+# correct (``tests/test_db_schema.py``'s enum-binding test guards that). The
+# pure core modules mirror ``BookingState``/``BookingParty`` as ``Literal``
+# vocabularies; a later test pins the two sides equal (PLAN §1.4 #11).
+# ---------------------------------------------------------------------------
+
+
+class TutorListingState(enum.Enum):
+    """Where a tutor profile is in the listing lifecycle (``tutorlistingstate``, SPEC §a.3)."""
+
+    draft = "draft"
+    pending_review = "pending_review"
+    listed = "listed"
+    rejected = "rejected"
+    suspended = "suspended"
+    closed = "closed"
+
+
+class TutoringMode(enum.Enum):
+    """How a tutor offers sessions, and how one booking takes place (``tutoringmode``)."""
+
+    virtual = "virtual"
+    in_person = "in_person"
+    other = "other"
+
+
+class BookingState(enum.Enum):
+    """The stored state of a tutoring booking (``bookingstate``, SPEC §a.3).
+
+    ``awaiting_outcome`` and the read-time ``expired`` of a stale request are
+    derived, never stored: see ``lemely.db.tutoring_predicates``.
+    """
+
+    requested = "requested"
+    accepted = "accepted"
+    declined = "declined"
+    cancelled = "cancelled"
+    completed = "completed"
+    no_show = "no_show"
+    expired = "expired"
+
+
+class BookingParty(enum.Enum):
+    """Who acted on a booking, a note or a report (``bookingparty``)."""
+
+    student = "student"
+    parent = "parent"
+    tutor = "tutor"
+    platform_admin = "platform_admin"
+    system = "system"
+
+
+class ModerationState(enum.Enum):
+    """Moderation of review and reply text (``moderationstate``).
+
+    ``none`` means a review with stars and no text; a reply is never ``none``.
+    """
+
+    none = "none"
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+
+class TutorGrantScope(enum.Enum):
+    """What a student's data grant to a tutor covers (``tutorgrantscope``, decision row 3b)."""
+
+    all_subjects_derived = "all_subjects_derived"
+
+
+class GrantRevokeReason(enum.Enum):
+    """Why a data grant ended (``grantrevokereason``)."""
+
+    student = "student"
+    block = "block"
+    tutor_suspended = "tutor_suspended"
+    tutor_closed = "tutor_closed"
+
+
+class TutorAccessAction(enum.Enum):
+    """Which granted read a ``tutor_access_audit`` row records (``tutoraccessaction``)."""
+
+    list = "list"
+    detail = "detail"
+
+
+class TutorApprovalDecision(enum.Enum):
+    """A platform admin's decision on a tutor profile (``tutorapprovaldecision``)."""
+
+    approved = "approved"
+    rejected = "rejected"
+    suspended = "suspended"
+    reinstated = "reinstated"
+    closed = "closed"
+
+
+class ReportTargetType(enum.Enum):
+    """What a tutoring report points at (``reporttargettype``)."""
+
+    tutor_profile = "tutor_profile"
+    review = "review"
+    review_reply = "review_reply"
+    booking = "booking"
+    booking_note = "booking_note"
+
+
+class ReportReason(enum.Enum):
+    """Why a tutoring report was filed (``reportreason``)."""
+
+    safety_concern = "safety_concern"
+    inappropriate_content = "inappropriate_content"
+    harassment = "harassment"
+    spam = "spam"
+    fake_profile = "fake_profile"
+    disputed_outcome = "disputed_outcome"
+    other = "other"
+
+
+class ReportState(enum.Enum):
+    """Lifecycle of a tutoring report (``reportstate``)."""
+
+    open = "open"
+    dismissed = "dismissed"
+    actioned = "actioned"
+
+
+class ReportResolution(enum.Enum):
+    """What resolving a tutoring report did (``reportresolution``)."""
+
+    dismissed = "dismissed"
+    content_hidden = "content_hidden"
+    tutor_suspended = "tutor_suspended"
+    booking_cancelled = "booking_cancelled"
+    booking_completed = "booking_completed"
+
+
+class EmailOutboxStatus(enum.Enum):
+    """Delivery state of one transactional email (``emailoutboxstatus``)."""
+
+    pending = "pending"
+    sent = "sent"
+    failed = "failed"
+    skipped = "skipped"
+
+
+class ParentLinkEvent(enum.Enum):
+    """A change to a parent-child link (``parentlinkevent``, SC-1)."""
+
+    linked = "linked"
+    unlinked = "unlinked"
+
+
+class TutoringAdminAction(enum.Enum):
+    """A platform-admin read logged in ``tutoring_admin_access`` (``tutoringadminaction``)."""
+
+    report_thread_view = "report_thread_view"
+    evidence_open = "evidence_open"
 
 
 # ---------------------------------------------------------------------------
@@ -365,15 +649,23 @@ __all__ = [
     "SESSION_MONTH_LABELS",
     "AttemptOrigin",
     "AuthTokenPurpose",
+    "BookingParty",
+    "BookingState",
     "BoundarySource",
     "ConfidenceBand",
     "DifficultySource",
+    "EmailOutboxStatus",
+    "EvidenceVerdict",
     "ExamBoard",
     "FriendshipStatus",
+    "GrantRevokeReason",
     "InviteRole",
     "MarkerSource",
     "MembershipRole",
+    "ModerationState",
     "NotificationType",
+    "PaperTier",
+    "ParentLinkEvent",
     "PlanInterval",
     "QualificationLevel",
     "QuestionDifficulty",
@@ -382,13 +674,24 @@ __all__ = [
     "QuizQuestionStatus",
     "QuizStatus",
     "QuizSubmissionStatus",
+    "ReportReason",
+    "ReportResolution",
+    "ReportState",
+    "ReportTargetType",
     "ReviewReason",
     "ReviewStatus",
+    "RevisionSource",
     "Role",
     "SeatStatus",
     "SessionMonth",
     "SubscriptionStatus",
     "TimestampMixin",
+    "TutorAccessAction",
+    "TutorApprovalDecision",
+    "TutorGrantScope",
+    "TutorListingState",
+    "TutoringAdminAction",
+    "TutoringMode",
     "UploadStatus",
     "XpSource",
 ]

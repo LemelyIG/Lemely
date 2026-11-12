@@ -5,6 +5,7 @@ from pathlib import Path
 
 from lemely.core.loose_schemas import MarkScheme
 from lemely.io.gemini import GeminiClient
+from lemely.io.llm.request import DocumentInput
 from lemely.io.prompts.mark_scheme_parsing import (
     PARSER_SYSTEM_PROMPT,
     PARSER_USER_PROMPT,
@@ -20,10 +21,12 @@ class GeminiMarkSchemeParser:
         self._client = gemini_client
 
     def __call__(self, pdf_path: Path) -> MarkScheme:
+        # A typed PDF: a Claude document block, or (on Gemini) the same Files API
+        # upload `file_paths` made, under the same cache key.
         return self._client.generate_structured(
             system_prompt=PARSER_SYSTEM_PROMPT,
             user_prompt=PARSER_USER_PROMPT,
-            file_paths=[pdf_path],
+            documents=[DocumentInput.from_path(pdf_path)],
             response_schema=MarkScheme,
             prompt_version=VERSION,
             task_tag="mark_scheme",

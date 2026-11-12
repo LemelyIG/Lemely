@@ -74,6 +74,22 @@ describe("decidePushNotification", () => {
     expect(decided.body).toBe(GENERIC_PUSH_BODY)
   })
 
+  it("passes a valid unread count through", () => {
+    const decided = decidePushNotification({ title: "Streak at risk", unread: 3 })
+    expect(decided.unread).toBe(3)
+  })
+
+  it("omits unread when the reply carries none", () => {
+    const decided = decidePushNotification({ title: "Streak at risk" })
+    expect(decided.unread).toBeUndefined()
+  })
+
+  it("omits unread when it isn't a non-negative integer", () => {
+    expect(decidePushNotification({ title: "t", unread: -1 }).unread).toBeUndefined()
+    expect(decidePushNotification({ title: "t", unread: 1.5 }).unread).toBeUndefined()
+    expect(decidePushNotification({ title: "t", unread: "3" }).unread).toBeUndefined()
+  })
+
   it("trims surrounding whitespace rather than rendering it", () => {
     const decided = decidePushNotification({ title: "  Streak at risk  ", body: " tonight " })
     expect(decided.title).toBe("Streak at risk")

@@ -6,21 +6,22 @@ import { portalPathForRole } from "@/lib/auth/RequireAuth"
 import type { Session } from "@/lib/auth/storage"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import { Button, buttonVariants } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { SkeletonLine } from "@/components/ui/skeleton"
-import { verificationFailureMessage } from "@/lib/authOutcome"
+import { verificationCodeFailureMessage, verificationFailureMessage } from "@/lib/authOutcome"
 import { AuthFrame } from "./Login"
-import { postVerifyPath, resendButtonLabel } from "./verifyEmailLogic"
+import { canSubmitCode, postVerifyPath, resendButtonLabel } from "./verifyEmailLogic"
 
 /*
- * G-07 · Email verification, pending and confirm — the Study Notebook.
+ * G-07 · Email verification, pending and confirm (v5 Abyss).
  *
  * One file serves both routes spec §4.4 lists: `/verify-email` (this screen
  * with no `:token`) and `/verify-email/:token` (the same screen, with one).
  * `VerifyEmail` below is the whole surface; which of `PendingScreen` or
  * `ConfirmScreen` renders is decided by `useParams().token` alone, so however
  * Task 19 mounts the two route entries (same element, two `RouteObject`s —
- * the pattern `/login` and `/login/parent` already use), this component
- * answers correctly.
+ * the pattern `PasswordReset.tsx`'s own `/reset` and `/reset/:token` pair
+ * already use), this component answers correctly.
  *
  * ── Binding requirement 1: a soft gate, not a wall (D7.4, D7.5) ─────────────
  *
@@ -103,24 +104,38 @@ const RESEND_COOLDOWN_SECONDS = 30
 /**
  * The §G-07 developer affordance, worded on the same "Developer only" pattern
  * `ParentLogin.tsx` uses for `devCode` (D3.16, applied to `devLink` by D7.6).
- * A real anchor rather than a code display: `devLink` is a redeemable URL, not
- * digits to retype, so the honest control is one that navigates.
+ * A real anchor rather than a code display for the link: `devLink` is a
+ * redeemable URL, not digits to retype, so the honest control for it is one
+ * that navigates. `code` (spec §4.4/DS15) sits beside it as plain text
+ * instead — the code IS digits to retype, into `#verify-code` below — and is
+ * rendered only when the backend actually minted one: `devLink`/`devCode`
+ * are always populated together or both `null` (`TokenResponse.devCode`'s
+ * own comment), but this component takes them as two independent props
+ * rather than assuming that pairing, so a caller cannot pass a link with no
+ * code by mistake and see a silently absent label instead of a type error.
  */
-function DevLinkPanel({ link }: { link: string }) {
+function DevPanel({ link, code }: { link: string; code: string | null }) {
   return (
-    <div className="rounded-md border border-dashed border-rule bg-paper-sunk p-4">
-      <div className="text-eyebrow text-ink-faint">Developer only · no email was sent</div>
-      <a
-        href={link}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="mt-1.5 block truncate rounded-sm text-data-sm text-ink underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-      >
-        {link}
-      </a>
-      <p className="mt-1.5 text-body-sm text-ink-muted">
+    <div className="rounded-md border border-dashed border-outline-variant bg-surface-container-low p-4">
+      <div className="text-eyebrow text-on-surface-variant">Developer only · no email was sent</div>
+      <div className="mt-1.5 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+        <a
+          href={link}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block truncate rounded-sm text-data-sm text-on-surface underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+        >
+          {link}
+        </a>
+        {code !== null ? (
+          <span className="flex items-baseline gap-1.5 text-body-sm text-on-surface-variant">
+            Code <span className="text-data-md text-on-surface">{code}</span>
+          </span>
+        ) : null}
+      </div>
+      <p className="mt-1.5 text-body-sm text-on-surface-variant">
         This appears because Lemely is running with the offline mock email provider. With a
-        real provider configured, this link is never shown here.
+        real provider configured, neither the link nor the code is ever shown here.
       </p>
     </div>
   )
@@ -136,10 +151,10 @@ function DevLinkPanel({ link }: { link: string }) {
  */
 function SignedOutPending() {
   return (
-    <div className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-rule bg-paper-raised p-8">
+    <div className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-outline-variant bg-surface-container-lowest p-8">
       <div className="flex flex-col gap-1.5">
-        <h1 className="text-display-lg text-ink">Sign in to check your verification status</h1>
-        <p className="text-body-md text-ink-muted">
+        <h1 className="text-display-lg text-on-surface">Sign in to check your verification status</h1>
+        <p className="text-body-md text-on-surface-variant">
           We can only show whether your email is verified while you are signed in.
         </p>
       </div>
@@ -167,7 +182,7 @@ function SignedOutPending() {
  */
 type ResendOutcome =
   | { kind: "idle" }
-  | { kind: "devLink"; link: string }
+  | { kind: "devLink"; link: string; code: string | null }
   | { kind: "sentByProvider" }
   | { kind: "error"; message: string }
 
@@ -177,11 +192,12 @@ type ResendOutcome =
  * account).
  */
 function SignedInPending({ session }: { session: Session }) {
-  const { resendVerification, logout } = useAuth()
+  const { resendVerification, verifyEmailCode, logout } = useAuth()
   const navigate = useNavigate()
   const profile = useProfile()
   const [cooldown, setCooldown] = useState(0)
   const [outcome, setOutcome] = useState<ResendOutcome>({ kind: "idle" })
+  const [code, setCode] = useState("")
 
   useEffect(() => {
     if (cooldown <= 0) return
@@ -194,13 +210,32 @@ function SignedInPending({ session }: { session: Session }) {
       onSuccess: (result) => {
         setOutcome(
           result.devLink !== null
-            ? { kind: "devLink", link: result.devLink }
+            ? { kind: "devLink", link: result.devLink, code: result.devCode }
             : { kind: "sentByProvider" },
         )
         setCooldown(RESEND_COOLDOWN_SECONDS)
       },
       onError: (err) => setOutcome({ kind: "error", message: verificationFailureMessage(err) }),
     })
+  }
+
+  /*
+   * DS15's typed-code path (spec §4.4), reusing the same `outcome` slot a
+   * failed resend already renders into rather than adding a second status
+   * region: "exactly one outcome, or none yet" (the type's own docstring
+   * above) holds just as well across the two actions this screen now offers
+   * as it did across repeated resends alone. On success there is nothing to
+   * set `outcome` to — the screen is about to navigate away.
+   */
+  const handleVerifyCode = () => {
+    verifyEmailCode.mutate(
+      { code },
+      {
+        onSuccess: () => navigate(postVerifyPath(session), { replace: true }),
+        onError: (err) =>
+          setOutcome({ kind: "error", message: verificationCodeFailureMessage(err) }),
+      },
+    )
   }
 
   /*
@@ -221,19 +256,37 @@ function SignedInPending({ session }: { session: Session }) {
 
   return (
     <div className="flex w-full max-w-100 flex-col gap-6">
-      <div className="flex flex-col gap-5 rounded-lg border border-rule bg-paper-raised p-8">
+      <div className="flex flex-col gap-5 rounded-lg border border-outline-variant bg-surface-container-lowest p-8">
         <div className="flex flex-col gap-1.5">
-          <h1 className="text-display-lg text-ink">Verify your email</h1>
+          <h1 className="text-display-lg text-on-surface">Verify your email</h1>
+          {/*
+           * Deliberately NOT routed through `<QueryState>`, and the screen
+           * stays on that gate's allowlist saying so.
+           *
+           * This line is the only thing the profile read feeds, and its
+           * failure already had a designed answer: "the email on your
+           * account" is a complete, true sentence that tells the reader
+           * exactly what to do. The sweep converted this and got a ~200px
+           * centred error panel, under the card's own heading, announcing
+           * that we could not load an email address the screen does not
+           * need — in the slot the resend button has to be visible in. That
+           * is a worse screen than the one it replaced. `QueryState` renders
+           * one treatment per state by design, and the right treatment for
+           * this failure is no error at all.
+           *
+           * The pending skeleton stays: it is the half of the conversion
+           * that was an improvement, and it costs nothing here.
+           */}
           {profile.isPending ? (
-            <div className="flex flex-wrap items-center gap-1.5 text-body-md text-ink-muted">
+            <div className="flex flex-wrap items-center gap-1.5 text-body-md text-on-surface-variant">
               <span>Confirm</span>
               <SkeletonLine announce={false} width="9rem" className="h-4" />
               <span>to unlock everything Lemely does.</span>
             </div>
           ) : (
-            <p className="text-body-md text-ink-muted">
+            <p className="text-body-md text-on-surface-variant">
               Confirm{" "}
-              <span className="text-data-md text-ink">
+              <span className="text-data-md text-on-surface">
                 {profile.data?.email ?? "the email on your account"}
               </span>{" "}
               to unlock everything Lemely does.
@@ -247,21 +300,52 @@ function SignedInPending({ session }: { session: Session }) {
          * once, plainly: submitting a paper for marking is the *only* thing
          * behind this gate — uploads, browsing and onboarding are not.
          */}
-        <div className="rounded-md border border-rule bg-paper-sunk p-4">
-          <p className="text-body-sm text-ink-muted">
+        <div className="rounded-md border border-outline-variant bg-surface-container-low p-4">
+          <p className="text-body-sm text-on-surface-variant">
             Browsing Lemely does not need a verified email. Submitting a paper for marking
             does, so verify when you are ready.
           </p>
         </div>
 
+        {/*
+         * DS15's typed-code field (spec §4.4), above the resend control per
+         * that task's own layout instruction — a person who already has a
+         * code from the email (or from the dev panel below, once a resend
+         * reveals one) types it straight in without hunting further down the
+         * card for the action that uses it.
+         */}
+        <div className="flex flex-col gap-3">
+          <Input
+            id="verify-code"
+            label="Verification code"
+            hint="Enter the 6-digit code from the email, or open the link."
+            type="text"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            maxLength={6}
+            value={code}
+            onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+            disabled={verifyEmailCode.isPending}
+          />
+          <Button
+            type="button"
+            variant="secondary"
+            size="md"
+            onClick={handleVerifyCode}
+            disabled={!canSubmitCode(code, verifyEmailCode.isPending)}
+          >
+            {verifyEmailCode.isPending ? "Verifying…" : "Verify code"}
+          </Button>
+        </div>
+
         {outcome.kind === "error" ? (
-          <p role="status" aria-live="polite" className="text-body-sm text-warn">
+          <p role="status" aria-live="polite" className="text-body-sm text-on-tertiary-container">
             {outcome.message}
           </p>
         ) : outcome.kind === "devLink" ? (
-          <DevLinkPanel link={outcome.link} />
+          <DevPanel link={outcome.link} code={outcome.code} />
         ) : outcome.kind === "sentByProvider" ? (
-          <p role="status" aria-live="polite" className="text-body-sm text-ok">
+          <p role="status" aria-live="polite" className="text-body-sm text-success-text">
             A new verification link is on its way to your inbox.
           </p>
         ) : null}
@@ -301,7 +385,7 @@ function SignedInPending({ session }: { session: Session }) {
       <button
         type="button"
         onClick={handleWrongAddress}
-        className="self-start rounded-sm pointer-coarse:min-h-11 text-body-sm text-ink-muted underline underline-offset-2 transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+        className="self-start rounded-sm pointer-coarse:min-h-11 text-body-sm text-on-surface-variant underline underline-offset-2 transition-colors hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
       >
         Wrong address? Change it
       </button>
@@ -336,15 +420,15 @@ function ConfirmScreen({ token }: { token: string }) {
   }, [token, verifyEmail, session, navigate])
 
   return (
-    <div className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-rule bg-paper-raised p-8">
-      <h1 className="text-display-lg text-ink">
+    <div className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-outline-variant bg-surface-container-lowest p-8">
+      <h1 className="text-display-lg text-on-surface">
         {verifyEmail.isError ? "We could not verify that link" : "Verifying your email"}
       </h1>
       <p role="status" aria-live="polite" className="text-body-md">
         {verifyEmail.isError ? (
-          <span className="text-warn">{verificationFailureMessage(verifyEmail.error)}</span>
+          <span className="text-on-tertiary-container">{verificationFailureMessage(verifyEmail.error)}</span>
         ) : (
-          <span className="text-ink-muted">One moment…</span>
+          <span className="text-on-surface-variant">One moment…</span>
         )}
       </p>
       {/*

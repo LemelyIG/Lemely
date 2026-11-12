@@ -96,13 +96,23 @@ export function useMarkAllNotificationsRead(): UseMutationResult<
  * Read by G-12 to choose between three states rather than one grey button.
  * `available: false` is the designed answer on a build with no VAPID keys
  * (D5.9 §4) and must not be rendered as an error.
+ *
+ * `enabled` (packet A7, `silent-401-push-config-every-load`): defaults to
+ * `true` for `NotificationSettings.tsx`'s call, which sits behind
+ * `RequireAuth` and is unreachable pre-session anyway. `PushAutoEnable`
+ * (`components/push-auto-enable.tsx`) is the one caller that passes `false`
+ * — it mounts unconditionally in `main.tsx`, above the router, so without
+ * this gate this request fired on every cold, logged-out load of `/login`
+ * (confirmed live: two 401s before any session exists, one per React
+ * StrictMode double-invoke).
  */
-export function usePushConfig(): UseQueryResult<PushConfig, Error> {
+export function usePushConfig(enabled = true): UseQueryResult<PushConfig, Error> {
   return useQuery({
     queryKey: PUSH_CONFIG_KEY,
     queryFn: () => request<PushConfig>("/notifications/push/config"),
     // Server capability, not user data: it cannot change between renders of a
     // session, and re-asking on every window focus would be noise.
     staleTime: Infinity,
+    enabled,
   })
 }

@@ -1,0 +1,84 @@
+.brand-reading-progress { position:absolute; inset-inline:0; bottom:-1px; height:2px; background:var(--brand-abyss); transform:scaleX(0); transform-origin:0 50%; pointer-events:none; }
+.brand-desktop-nav a[aria-current=location] { color:var(--brand-abyss); }
+.brand-mobile-upload { display:none; }
+.marketing-brand.brand-mobile-upload-host { display:contents; }
+.brand-mobile-copy { display:none; }
+.brand-proof { padding-bottom:48px; }
+.brand-accuracy { background:var(--brand-night-panel); border:0; border-radius:24px; padding:32px; }
+.brand-school { border:0; background:var(--brand-night-panel); border-radius:20px; padding:24px; }
+.brand-metrics [data-slot=carousel-item]:last-child .brand-metric strong { color:var(--brand-tide); }
+.brand-closing { background:var(--brand-abyss); color:var(--brand-white); }
+.brand-closing h2 { color:var(--brand-white); }
+.brand-closing h2 span { color:var(--brand-tide); }
+.brand-closing p { color:var(--brand-night-muted); }
+.marketing-brand .brand-closing .brand-actions :is(a, button):first-child { background:var(--brand-tide); color:var(--brand-abyss); }
+.marketing-brand .brand-closing .brand-actions a:last-child { color:var(--brand-white); border-color:var(--brand-tide); }
+.brand-conversation-log .brand-typing { display:flex; align-items:center; gap:5px; padding:14px 16px; background:var(--brand-subtle); border-radius:18px 18px 18px 6px; width:max-content; }
+.brand-typing i { width:8px; height:8px; border-radius:50%; background:var(--brand-typing-dot); animation:brand-typing 1s ease-in-out infinite; }
+.brand-typing i:nth-child(2) { animation-delay:150ms; }
+.brand-typing i:nth-child(3) { animation-delay:300ms; }
+.brand-conversation>header .brand-faq-binny { width:52px; height:52px; flex-shrink:0; }
+.brand-conversation>header .brand-label[role=status] { font:400 12px/normal var(--brand-mono); letter-spacing:.06em; color:var(--brand-wk-ok); }
+.brand-conversation>header .brand-label[role=status][data-typing] { color:var(--brand-abyss); }
+/* Reference chat: each bubble enters with lpUp (14px rise + fade), user .25s, Binny .3s; the typing bubble just appears. */
+.brand-conversation-log dt { animation:walkthrough-up 250ms ease-out both; }
+.brand-conversation-log dd:not(.brand-typing),.brand-conversation-log>p:not(:first-child) { animation:walkthrough-up 300ms ease-out both; }
+.brand-conversation-log { scroll-behavior:smooth; }
+/* Chips: reference hover nudge and press. */
+.brand-faq-chips button { transition:background-color 200ms,transform 150ms; }
+.brand-faq-chips button:hover { transform:translateX(4px); }
+.brand-faq-chips button:active { transform:scale(.98); }
+@media (prefers-reduced-motion:reduce) {
+  .brand-conversation-log { scroll-behavior:auto; }
+  .brand-conversation-log dt,.brand-conversation-log dd,.brand-conversation-log>p { animation:none; }
+  .brand-contact-sent { animation:none; }
+  .brand-faq-chips button:hover,.brand-faq-chips button:active { transform:none; }
+}
+.brand-conversation-log[data-motion=still] .brand-typing i { animation-play-state:paused; }
+/* Closing cameo (reference): 170px wide, 7% from the edge, flush with the section bottom, rising 105% -> 0 with a springy ease. */
+.brand-closing-cameo { position:absolute; right:7%; bottom:0; width:170px; pointer-events:none; }
+.brand-closing-peek { transform:translateY(0); }
+.brand-closing-binny { display:block; overflow:visible; }
+.brand-closing-bubble { position:absolute; right:150px; bottom:150px; padding:10px 14px; border-radius:14px 14px 4px 14px; background:var(--brand-white); color:var(--brand-abyss); font:700 15px/normal var(--brand-body); white-space:nowrap; box-shadow:0 12px 24px -12px var(--brand-art-21); }
+.brand-closing[data-motion=active] .brand-closing-peek { animation:brand-peek-rise 900ms cubic-bezier(.3,1.5,.5,1) 300ms both; }
+.brand-closing-binny .brand-binny-ear { transform-box:fill-box; transform-origin:50% 100%; }
+.brand-closing[data-motion=active] .brand-closing-binny .brand-binny-ear-left { animation:brand-ear-left 1.4s ease-in-out 1.2s infinite; }
+.brand-closing[data-motion=active] .brand-closing-binny .brand-binny-ear-right { animation:brand-ear-right 1.4s ease-in-out 1.2s infinite; }
+.brand-closing[data-motion=active] .brand-closing-bubble { animation:walkthrough-up 400ms ease-out 1.1s both; }
+/* Tablet to small laptop: the reference bubble lands on the secondary action; reserve room below the actions instead. */
+@media (min-width:760px) and (max-width:1240px) { .marketing-brand .brand-closing.brand-section { padding-bottom:208px; } }
+.brand-contact textarea { caret-color:var(--brand-abyss); }
+.brand-conversation-log { scrollbar-color:var(--brand-border) var(--brand-paper); scrollbar-width:thin; }
+.marketing-brand ::selection { background:var(--brand-tide); color:var(--brand-abyss); }
+@keyframes brand-typing { 0%,60%,100% { transform:translateY(0); opacity:.5; } 30% { transform:translateY(-4px); opacity:1; } }
+@keyframes brand-peek-rise { from { transform:translateY(105%); } to { transform:translateY(0); } }
+@keyframes brand-ear-left { 0%,100% { transform:rotate(0); } 50% { transform:rotate(-12deg); } }
+@keyframes brand-ear-right { 0%,100% { transform:rotate(0); } 50% { transform:rotate(12deg); } }
+@media(max-width:759px) {
+  .brand-desktop-copy { display:none; }
+  .brand-mobile-copy { display:inline; }
+  .brand-teachers h2 { font-size:32px; line-height:1.05; }
+  .brand-teacher-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+  .brand-teacher-grid article { padding:18px; border:0; border-radius:20px; background:var(--brand-night-panel); }
+  .brand-accuracy { padding:32px; }
+  .brand-accuracy .brand-label { line-height:normal; }
+  .brand-accuracy p { font-size:15px; line-height:1.5; color:var(--brand-night-body); }
+  .brand-teachers h2 { position:absolute; width:calc(100% - 40px); margin:0; padding:0; overflow:hidden; clip-path:inset(50%); pointer-events:none; }
+  .brand-school { display:none; }
+  .marketing-brand .brand-closing h2 { font-size:17vw; line-height:.88; letter-spacing:-.05em; }
+  .brand-teacher-grid h3 { font-size:16px; }
+  .brand-teacher-grid p { font-size:13px; }
+  .brand-teacher-icon .brand-label { display:none; }
+  .brand-teachers { padding-top:0; }
+  .brand-teacher-icon svg { width:24px; height:24px; }
+  .marketing-brand .brand-teacher-grid h3 { line-height:1.2; }
+  .brand-coming { position:absolute; top:18px; right:12px; font-size:12px; padding:3px 5px; }
+  .marketing-brand .brand-mobile-upload { display:flex; align-items:center; gap:10px; position:fixed; z-index:var(--z-index-nav); right:16px; bottom:calc(16px + env(safe-area-inset-bottom)); border-radius:999px; padding:14px 20px 14px 16px; background:var(--brand-abyss); color:var(--brand-white); font-size:16px; font-weight:800; line-height:normal; box-shadow:0 18px 32px -14px var(--brand-upload-shadow); transition:transform .35s cubic-bezier(.16,1,.3,1), opacity .2s, visibility 0s; }
+  .brand-mobile-upload svg { color:var(--brand-tide); }
+  .marketing-brand .brand-mobile-upload[data-shown=false] { transform:translateY(140%); opacity:0; visibility:hidden; transition:transform .35s cubic-bezier(.16,1,.3,1), opacity .2s, visibility 0s .35s; }
+}
+@media(prefers-reduced-motion:reduce) {
+  .brand-landing *, .brand-landing *::before, .brand-landing *::after { animation:none!important; transition:none!important; }
+}
+.brand-faq-chips button>span[aria-hidden] { color:var(--brand-hint); }
+.brand-faq-chips button[aria-expanded=true]>span[aria-hidden] { color:var(--brand-abyss); }

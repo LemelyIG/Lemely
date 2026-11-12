@@ -29,6 +29,46 @@ export interface SeedStudent extends SeedAccount {
   expectedAtRiskReasons: string[]
   /** Only present on `students.correctedPaper`. */
   correctedPaperId?: string
+  /** Only present on `students.selfReview`: the point-based paper's `attempts.id`. */
+  selfReviewAttemptId?: string
+}
+
+/** A tutor of the `tutoring` group: a verified teacher account plus its profile. */
+export interface SeedTutor extends SeedAccount {
+  /** `tutor_profiles.id`: what the public card, booking and grant routes take. */
+  tutorProfileId: string
+  /** "Amira K." as the directory shows it. */
+  publicName: string
+  headline: string
+  /** `TutorListingState`: "listed" for two tutors, "draft" for the third. */
+  listingState: string
+  /** Whether search engines may index the public card (decision row 17). */
+  indexable: boolean
+}
+
+/**
+ * What a tutor's outcome figure reads, computed by `core.tutor_outcomes` over
+ * the seeded cohort (counts only). The two `*State` fields are "sufficient" or
+ * "insufficient"; every count is `null` exactly when its figure is
+ * insufficient, and `buckets` is empty then.
+ */
+export interface SeedOutcomeFigure {
+  distributionState: string
+  changeState: string
+  nGraded: number | null
+  /** Every ladder rung, "A*" to "U", with its count; empty when insufficient. */
+  buckets: Record<string, number>
+  nPaired: number | null
+  higher: number | null
+  same: number | null
+  lower: number | null
+}
+
+export interface SeedGrant {
+  grantId: string
+  /** `users.id` of the student who shared. */
+  studentUserId: string
+  tutorProfileId: string
 }
 
 export interface SeedContract {
@@ -50,10 +90,34 @@ export interface SeedContract {
   schoolWithSeats: { schoolId: string; name: string; seatQuota: number; admin: SeedAccount }
   class: { classId: string; name: string; joinCode: string }
   students: {
-    declining: SeedStudent
+    /**
+     * Carries `parentInviteCode`: this student's reusable parent code
+     * (`InviteService.get_or_create_parent_code`), minted but never
+     * redeemed by the seed itself — `parent-journey.spec.ts` drives the real
+     * `/join/:code` three-step signup flow through it. `parent` below is a
+     * SEPARATE account, already linked to this same student through a
+     * direct `ParentLinkService.link_in_session` call (no invite redeemed),
+     * for journeys that need a returning, already-linked parent instead.
+     */
+    declining: SeedStudent & { parentInviteCode: string }
+    /**
+     * A student with a reusable parent code and NO linked parent, for
+     * `parent-journey.spec.ts` (a) to redeem. Redeeming `declining`'s code would
+     * link a second parent to the seeded parent's child and notify the seeded
+     * parent ("A parent was added"), which breaks `staff-inbox.spec.ts`'s
+     * empty-inbox assertion. Not on any roster, no attempts.
+     */
+    inviteOnly: SeedAccount & { parentInviteCode: string }
     inactive: SeedStudent
     control: SeedStudent
     correctedPaper: SeedStudent
+    /**
+     * Self-review (spec 2026-09-17): a standalone student with ONE
+     * point-based paper (5 marks; question "2" is low-confidence at 1/3).
+     * Kept off every roster and every at-risk scenario so the flow can move
+     * this student's marks without disturbing another spec's assertions.
+     */
+    selfReview: SeedStudent & { selfReviewAttemptId: string }
     /**
      * At-risk rule 2 ("predicted >= 2 grades below target", D3.3), seedable
      * for the first time in Phase 4 — `student_subject_enrolments.target_grade`
@@ -76,12 +140,35 @@ export interface SeedContract {
       className: string
     }
   }
-  parent: { userId: string; phone: string; accessToken: string; linkedStudent: string }
+  parent: SeedAccount & { linkedStudent: string }
   reviewItem: {
     itemId: string
     attemptId: string
     /** A key into `students` — the seed currently sends `"inactive"`. */
     studentKey: keyof SeedContract["students"]
+    /**
+     * Task #67: a SECOND review-queue row (its own dedicated student, in its
+     * own third class of the same teacher's) whose one question carries a
+     * mark scheme but neither a verdict nor a rationale on any point — the
+     * legacy shape `MarkerVerdicts`' section-suppression guard exists to
+     * hide (`web/src/portals/teacher/screens/ReviewItem.tsx`), and the only
+     * shape production sees today (`equivalence_gate` defaults off). Not
+     * tied to a `students` entry — the account behind it exists only to own
+     * this attempt; no spec needs to log in as it.
+     */
+    legacyItemId: string
+    legacyAttemptId: string
+    /**
+     * A THIRD review-queue row (final-review coverage gap), whose one
+     * question carries a marker's `rationale` (Python's `point_notes`) but
+     * no `verdict` on any point -- the shape production ships whenever a
+     * marker writes a note without `equivalence_gate` on, and exactly the
+     * shape `MarkerVerdicts`' guard was widened
+     * (`p.verdict !== null || p.rationale`) to keep rendering. Not tied to a
+     * `students` entry, same as `legacyItemId` above.
+     */
+    rationaleOnlyItemId: string
+    rationaleOnlyAttemptId: string
   }
   quiz: {
     quizId: string
@@ -99,7 +186,7 @@ export interface SeedContract {
   /** A teacher with no classes and no students — the empty-state account. */
   emptyTeacher: SeedAccount
   /** Unlike `parent`, this one carries **no** `linkedStudent`. */
-  emptyParent: { userId: string; phone: string; accessToken: string }
+  emptyParent: SeedAccount
   placement: {
     subjectCode: string
     paperNumber: number
@@ -161,6 +248,34 @@ export interface SeedContract {
     activeSessionCount: number
     completedSessionCount: number
   }
+  /**
+   * Paper deletion (Task 18 e2e, spec 2026-09-22). A dedicated class plus
+   * three students backing `paper-deletion.spec.ts`'s eight design scenarios
+   * plus R7 — kept off every other class in this contract so none of their
+   * pinned numbers (teacher-journey.spec.ts's 3/69%/2, at-risk-flags.spec.ts's
+   * exact reason lists) move.
+   */
+  deletion: {
+    classId: string
+    className: string
+    /** Four distinct papers (paper_number 1..4, oldest to newest,
+     * `attemptIds[3]` the latest and the one seeded low-confidence — R3/R9). */
+    student: SeedAccount & { subjectCode: string; attemptIds: string[] }
+    /** One paper, plagiarism-flagged (D8's hold), recorded "now" so the hold
+     * is live. */
+    integrityStudent: SeedAccount & {
+      subjectCode: string
+      attemptId: string
+      reviewItemId: string
+    }
+    /** One scan marked twice: two attempts sharing one `upload_id` (R7). */
+    remarkStudent: SeedAccount & { attemptIds: string[] }
+    /** The `low_confidence` review-queue item on `student.attemptIds[3]`. */
+    reviewItemId: string
+    /** A teacher-console paper (uploaded directly, no student), for the R2
+     * console-deletion scenario. */
+    consolePaperId: string
+  }
   /** Phase-5 engagement preconditions (P5.11). */
   engagement: {
     /**
@@ -197,6 +312,79 @@ export interface SeedContract {
       /** Highest XP first. */
       expectedOrderByStudentKey: string[]
     }
+  }
+  /**
+   * The tutoring marketplace (T29), written by `seed_tutoring_fixture` in
+   * `scripts/seed_e2e.py`. Everything here is time-relative to the seed run:
+   * the past students' windows closed weeks ago, and the bookings sit on the
+   * hour around "now" (upcoming ones days ahead, past ones days back).
+   */
+  tutoring: {
+    subjectCode: string
+    subjectName: string
+    /** The only `platform_admin` account (no signup route exists for one). */
+    platformAdmin: SeedAccount
+    tutors: {
+      /** Listed and indexable; five past students, so its outcome figure shows. */
+      sufficient: SeedTutor
+      /** Listed, opted out of indexing; three past students, so its figure is hidden. */
+      insufficient: SeedTutor
+      /** A complete draft the tutor can submit from their own screens. */
+      draft: SeedTutor
+    }
+    /**
+     * The booking student: verified, safety notice acknowledged. Holds one booking
+     * in every effective state with `tutors.sufficient`, the live grant in
+     * `grants.revocable`, and filed both reports. Consumed by journeys that change
+     * data (revoking the grant), so smoke rows that need a stable grant use
+     * `grants.live` instead.
+     */
+    student: SeedAccount
+    /** Fresh verified students with nothing booked and no safety notice acknowledged. */
+    discover: { student: SeedAccount; rival: SeedAccount }
+    /** Booking ids by effective state; all with `tutors.sufficient`. */
+    bookings: {
+      requested: string
+      accepted: string
+      awaitingOutcome: string
+      completed: string
+      noShow: string
+      declined: string
+      cancelledByStudent: string
+      /** Cancelled by the tutor inside 24 hours of the start, with a reason. */
+      cancelledByTutorLate: string
+      expired: string
+      /** The seeded parent's child (`students.declining`). */
+      child: {
+        /** A request the child made. */
+        childRequested: string
+        /** Booked by the parent (`parent`), accepted. */
+        parentAccepted: string
+        /** Booked by the parent, ended more than 48 hours ago, no outcome recorded. */
+        awaitingOutcome: string
+      }
+    }
+    grants: {
+      /** `students.declining` to `tutors.sufficient`, live, with `accessLogCount` audit rows. */
+      live: SeedGrant & { accessLogCount: number }
+      /** `students.declining` to `tutors.insufficient`, ended by the student. */
+      ended: SeedGrant
+      /** `tutoring.student` to `tutors.sufficient`, live: the one a journey may revoke. */
+      revocable: SeedGrant
+    }
+    reports: {
+      /** The one open `safety_concern`, on `bookings.completed` (notes frozen). */
+      openSafety: { reportId: string; bookingId: string }
+      /** A dismissed report on `tutors.insufficient`'s profile. */
+      resolved: { reportId: string; tutorProfileId: string }
+    }
+    reviews: {
+      /** Of `tutors.sufficient`: stars and approved text. */
+      approvedReviewId: string
+      /** Of `tutors.sufficient`: text still waiting in the moderation queue. */
+      pendingReviewId: string
+    }
+    outcomes: { sufficient: SeedOutcomeFigure; insufficient: SeedOutcomeFigure }
   }
 }
 

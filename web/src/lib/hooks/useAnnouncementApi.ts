@@ -55,10 +55,41 @@ export function useUnreadAnnouncementCount(): UseQueryResult<
   })
 }
 
+/**
+ * Stamps `readAt` on one announcement within a page of the list, without
+ * touching any other entry.
+ *
+ * `??` rather than an unconditional overwrite: the receipt endpoint is
+ * idempotent and stores first-read only (`AnnouncementReadReceipt`'s own
+ * doc comment), so an optimistic re-apply — the mutation firing twice before
+ * the first settles — must not push the *second* click's timestamp over the
+ * first. Exported so the optimistic-update decision is a plain function a
+ * test can call directly, the same reasoning as `readStateFor` in
+ * `Announcements.tsx`.
+ */
+export function applyOptimisticRead(
+  page: StudentAnnouncementsPage,
+  announcementId: string,
+  readAt: string,
+): StudentAnnouncementsPage {
+  return {
+    announcements: page.announcements.map((announcement) =>
+      announcement.announcementId === announcementId
+        ? { ...announcement, readAt: announcement.readAt ?? readAt }
+        : announcement,
+    ),
+  }
+}
+
+interface MarkReadContext {
+  previous: StudentAnnouncementsPage | undefined
+}
+
 export function useMarkAnnouncementRead(): UseMutationResult<
   AnnouncementReadReceipt,
   Error,
-  string
+  string,
+  MarkReadContext
 > {
   const queryClient = useQueryClient()
   return useMutation({
@@ -67,9 +98,36 @@ export function useMarkAnnouncementRead(): UseMutationResult<
         `/student/announcements/${announcementId}/read`,
         { method: "POST" },
       ),
+    // Optimistic, because the whole point of a receipt the student can see is
+    // that it survives a reload — a student who marks a notice read, then
+    // reloads before the request round-trips, must not see "Mark as read"
+    // again on a notice the server already holds a receipt for. Cancel first
+    // so an in-flight refetch cannot land after this write and clobber it;
+    // snapshot so `onError` can put the exact prior page back rather than
+    // guessing at a rollback.
+    onMutate: async (announcementId) => {
+      await queryClient.cancelQueries({ queryKey: ANNOUNCEMENTS_KEY })
+      const previous = queryClient.getQueryData<StudentAnnouncementsPage>(
+        ANNOUNCEMENTS_KEY,
+      )
+      if (previous) {
+        queryClient.setQueryData<StudentAnnouncementsPage>(
+          ANNOUNCEMENTS_KEY,
+          applyOptimisticRead(previous, announcementId, new Date().toISOString()),
+        )
+      }
+      return { previous }
+    },
+    onError: (_error, _announcementId, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(ANNOUNCEMENTS_KEY, context.previous)
+      }
+    },
     // Both keys, because the badge and the list carry the same fact and a
     // stale badge over a list the student has visibly just read is the exact
-    // inconsistency they will notice first.
+    // inconsistency they will notice first. Still invalidated on success (on
+    // top of the optimistic write above) so the receipt's *real* timestamp
+    // replaces the client-clock guess once the server has spoken.
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ANNOUNCEMENTS_KEY })
       void queryClient.invalidateQueries({ queryKey: UNREAD_KEY })

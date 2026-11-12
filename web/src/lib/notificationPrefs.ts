@@ -16,13 +16,27 @@
  * any role other than teacher/parent and 422-ing if such a role sends it at all.
  */
 
-/** The five preference toggles. There is no sixth — see `NOTIFICATION_TOGGLES`. */
+/**
+ * The preference toggles, one per `NotificationType` member. The last eight are
+ * the tutoring marketplace's (SPEC docs/tutoring/SPEC.md section a.1); like
+ * `atRiskAlert` each arrives as `null` for a role that has no such preference.
+ * See `NOTIFICATION_TOGGLES`.
+ */
 export type NotificationPrefKey =
   | "gradeReady"
   | "announcement"
   | "streakWarning"
   | "studyPlanReminder"
   | "atRiskAlert"
+  | "reviewWithdrawn"
+  | "bookingRequest"
+  | "bookingUpdate"
+  | "bookingNote"
+  | "tutorAccess"
+  | "tutorReview"
+  | "tutorListing"
+  | "parentLink"
+  | "tutoringReport"
 
 /**
  * `GET` response and the `PUT` echo.
@@ -42,6 +56,31 @@ export interface NotificationPreferences {
   streakWarning: boolean
   studyPlanReminder: boolean
   atRiskAlert: boolean | null
+  /**
+   * `null` for every role but teacher (R10, `routers/me.py`'s
+   * `_REVIEW_WITHDRAWN_ROLES`) — the same role gate `atRiskAlert` gets,
+   * narrowed to the one role `review_withdrawn` ever fires for (Task 9's
+   * `_notify_withdrawn_reviewers`). `NOTIFICATION_TOGGLES`'s own `role`
+   * field hides the switch from a non-teacher mount as a second, belt-and-
+   * braces gate — this `null` is what makes that redundant rather than
+   * load-bearing on its own.
+   */
+  reviewWithdrawn: boolean | null
+  /**
+   * The eight tutoring toggles. Each is `null` unless the caller's role is one
+   * the backend sends that notice to (`routers/me.py`, SPEC section a.1):
+   * a teacher gets `bookingRequest` and `tutorListing`, a parent gets
+   * `parentLink`, a platform admin gets `tutoringReport`, and so on. The screen
+   * renders a toggle only when its value is non-null (`visibleToggles`).
+   */
+  bookingRequest: boolean | null
+  bookingUpdate: boolean | null
+  bookingNote: boolean | null
+  tutorAccess: boolean | null
+  tutorReview: boolean | null
+  tutorListing: boolean | null
+  parentLink: boolean | null
+  tutoringReport: boolean | null
   quietHoursStart: string | null
   quietHoursEnd: string | null
 }
@@ -59,6 +98,15 @@ export type NotificationPreferencesUpdate = Partial<{
   streakWarning: boolean
   studyPlanReminder: boolean
   atRiskAlert: boolean
+  reviewWithdrawn: boolean
+  bookingRequest: boolean
+  bookingUpdate: boolean
+  bookingNote: boolean
+  tutorAccess: boolean
+  tutorReview: boolean
+  tutorListing: boolean
+  parentLink: boolean
+  tutoringReport: boolean
   quietHoursStart: string | null
   quietHoursEnd: string | null
 }>
@@ -68,16 +116,25 @@ export interface ToggleSpec {
   label: string
   /** What this actually gates, in the reader's terms — never invented scope. */
   description: string
+  /**
+   * Absent for every toggle but `reviewWithdrawn` (R10): that one fires only
+   * for a teacher (Task 9's `_notify_withdrawn_reviewers` — a student's own
+   * deletion withdrew a review item), so it is hidden from every other role
+   * at the screen level (`NotificationSettingsSection`'s `showTeacherOnly`
+   * prop), the same gate `atRiskAlert` gets from the server's own `null`.
+   */
+  role?: "teacher"
 }
 
 /**
  * The toggles this screen ships, in display order.
  *
- * **Exactly five, matching `NotificationType`'s five members.** UI spec §G-12
- * also lists a "weekly summary" toggle: there is no such enum value, no column,
- * no sender and no row, so a sixth switch here would be a control that gates
- * nothing — precisely what UI spec §1.4 forbids. It is reported as an honest
- * gap rather than mocked.
+ * **One per `NotificationType` member, fourteen** (the last eight are the
+ * tutoring marketplace's, in the enum's order; a unit test reads the backend
+ * enum and fails on drift). UI spec §G-12 also lists a "weekly summary" toggle: there is no such
+ * enum value, no column, no sender and no row, so a seventh switch here would
+ * be a control that gates nothing — precisely what UI spec §1.4 forbids. It
+ * is reported as an honest gap rather than mocked.
  *
  * The descriptions say what the toggle *does* and no more. D5.9 §2 makes a type
  * toggle a **content** preference: switching one off suppresses the inbox row
@@ -114,7 +171,71 @@ export const NOTIFICATION_TOGGLES: readonly ToggleSpec[] = [
     label: "At-risk alerts",
     description: "When a student you are responsible for needs attention.",
   },
+  {
+    key: "reviewWithdrawn",
+    label: "Review items withdrawn",
+    description: "When a student deletes a paper that had a question waiting on your review.",
+    role: "teacher",
+  },
+  {
+    key: "bookingRequest",
+    label: "Session requests",
+    description: "When a student asks to book a session with you.",
+  },
+  {
+    key: "bookingUpdate",
+    label: "Session updates",
+    description: "When a session is accepted, declined, cancelled or completed.",
+  },
+  {
+    key: "bookingNote",
+    label: "Session notes",
+    description: "When there is a new note on a session. The note itself is never shown here.",
+  },
+  {
+    key: "tutorAccess",
+    label: "Progress sharing",
+    description: "When sharing progress with a tutor starts or ends.",
+  },
+  {
+    key: "tutorReview",
+    label: "Review decisions",
+    description: "When Lemely has checked a review or a reply you wrote.",
+  },
+  {
+    key: "tutorListing",
+    label: "Tutor profile decisions",
+    description: "When Lemely approves, suspends or closes your tutor profile.",
+  },
+  {
+    key: "parentLink",
+    label: "Parent link changes",
+    description: "When a parent is linked to or unlinked from a child on your account.",
+  },
+  {
+    key: "tutoringReport",
+    label: "Safety reports",
+    description: "When someone files a safety concern about a tutor.",
+  },
 ]
+
+/**
+ * The toggles to render for a loaded `GET`, in display order.
+ *
+ * A toggle is shown only when its value is non-null: `null` means "this role has
+ * no such preference", and rendering it as an unchecked switch would offer a
+ * control the router answers with a 422. `off` is `false`, which is shown.
+ * `showTeacherOnly` keeps its older meaning for the `role: "teacher"` toggle
+ * (`reviewWithdrawn`); it can only hide a toggle, never reveal a null one.
+ */
+export function visibleToggles(
+  prefs: NotificationPreferences,
+  { showTeacherOnly = false }: { showTeacherOnly?: boolean } = {},
+): ToggleSpec[] {
+  return NOTIFICATION_TOGGLES.filter(
+    (toggle) => prefs[toggle.key] !== null && (toggle.role !== "teacher" || showTeacherOnly),
+  )
+}
 
 /**
  * Convert a pydantic `time` to what an `<input type="time">` accepts.

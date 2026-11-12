@@ -14,11 +14,17 @@ import contextlib
 import queue
 import threading
 from collections import defaultdict
+from contextvars import ContextVar
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+current_run_id: ContextVar[str | None] = ContextVar("lemely_current_run_id", default=None)
+"""The run (SSE stream or grading job) the current thread is working for.
+Set once at the top of a worker thread; child threads must run under
+``contextvars.copy_context()`` — threads do not inherit it otherwise."""
 
 
 class EventType(StrEnum):
@@ -30,6 +36,55 @@ class EventType(StrEnum):
     GEMINI_RETRY = "gemini_retry"
     GEMINI_ESCALATE = "gemini_escalate"
     EXTRACTION_PROGRESS = "extraction_progress"
+    # A marking run is waiting for this process's one run slot
+    # (lemely.io.run_cap, #260, #271); it starts by itself when the run ahead
+    # of it ends. Carries a ``message`` the student's progress view shows.
+    EXTRACTION_QUEUED = "extraction_queued"
+    # The run that published EXTRACTION_QUEUED now holds the slot and goes on.
+    # Published only by a run that waited, so a progress view can drop its
+    # "waiting" state at once instead of on the run's next event, which comes
+    # after the scan render. Carries a ``message`` the student's view shows.
+    EXTRACTION_DEQUEUED = "extraction_dequeued"
+    SCAN_QUALITY_WARNING = "scan_quality_warning"
+    SOURCE_BOX_DROPPED = "source_box_dropped"
+    # US-031 review MUST-FIX 7: a whole answer dropped (unrecoverable
+    # question_id/answer/list-element shape), a confidence value repaired
+    # (missing/non-finite/out-of-range/malformed), or a cosmetic field
+    # repaired (NIT A: non-string source_region/working_out), published the
+    # same way SOURCE_BOX_DROPPED already is -- without this, ExtractedAnswers's
+    # answer_drops/confidence_repairs/field_repairs fields had no consumer
+    # and a dropped answer's loss was not actually visible anywhere, despite
+    # an in-code comment claiming it was.
+    ANSWER_DROPPED = "answer_dropped"
+    # NIT-B: two `ExtractedAnswer`s sharing one `question_id` survive
+    # validation (each is individually well-formed), so nothing upstream of
+    # `_flatten_answers` catches this -- the plain dict comprehension it used
+    # to be silently kept only the last one. Published the same way
+    # ANSWER_DROPPED is, so the loss is observable instead of an artifact of
+    # dict construction.
+    DUPLICATE_QUESTION_ID = "duplicate_question_id"
+    REREAD_FAILED = "reread_failed"
+    # Spec 2026-09-26 §8 (#3): the optional I3 second read failed; extraction
+    # continued on the primary answers with extraction_agreement unset. Also
+    # published with a `stage`: `"binding_second_read"` when the label binder's
+    # second read fails, which is then made once more (a second failure fails the
+    # job: nothing is published on one read); `"binding_retry"` when the legacy
+    # binder's retry fails, which holds the paper on its first read.
+    SECOND_READ_FAILED = "second_read_failed"
+    # What the binding gate concluded about one extraction (lemely.io.binding.
+    # orchestrate), published once per extraction unless the gate is off: `binder`,
+    # `gate`, `verdict`, `retried`, `failed_checks` (check ids), `unbound` and
+    # `unaligned` (counts), `inferred_numbers`, `drops`, `model`, `second_read`
+    # (whether a second read came back) and `report` (the whole report an enforcing
+    # gate returns, every check with its sentence). Under `gate="observe"` (the
+    # legacy binder only) the verdict and report here are what would have been
+    # enforced, and this event is the only place they go: the extraction itself
+    # carries no report. Server-side only: lemely.web.sse never forwards it.
+    BINDING_GATE_RESULT = "binding_gate_result"
+    REREAD_CAP_REACHED = "reread_cap_reached"
+    # Spec 2026-09-26 §5: the re-read stage's wall-clock budget ran out;
+    # `started` re-reads were issued, `skipped` answers kept their first read.
+    REREAD_BUDGET_EXHAUSTED = "reread_budget_exhausted"
     MARKING_PROGRESS = "marking_progress"
     MARK_SCHEME_PROGRESS = "mark_scheme_progress"
     BUDGET_WARNING = "budget_warning"
@@ -40,12 +95,13 @@ class EventType(StrEnum):
 
 
 class Event:
-    __slots__ = ("payload", "type")
+    __slots__ = ("payload", "run_id", "type")
 
-    def __init__(self, type: EventType, payload: dict[str, Any]) -> None:
-        """Initialise an event with a type and free-form payload."""
+    def __init__(self, type: EventType, payload: dict[str, Any], run_id: str | None = None) -> None:
+        """Initialise an event with a type, free-form payload, and optional run scope."""
         self.type = type
         self.payload = payload
+        self.run_id = run_id
 
     def __repr__(self) -> str:
         """Return a developer-readable representation."""
@@ -58,12 +114,20 @@ class EventBus:
     Subscribers receive copies of every event published after they subscribe.
     Use ``subscribe_queue`` / ``unsubscribe_queue`` to manage subscriptions; the
     returned ``queue.SimpleQueue`` is safe to drain from any thread.
+
+    Each queue is scoped to a run id (``subscribe_queue(run_id=...)``) or left
+    unscoped (``subscribe_queue()``, the default). ``publish`` stamps every
+    event with :data:`current_run_id`; a scoped queue receives events matching
+    its own run id plus events published with no run id (outside any run — the
+    CLI's ``BUDGET_*`` events, for instance). An unscoped queue receives
+    everything, which is what ``lemely/app/live_log.py`` (Gradio) and process-
+    wide listeners expect.
     """
 
     def __init__(self) -> None:
         """Initialise an empty bus with no subscribers."""
         self._lock = threading.Lock()
-        self._queues: list[queue.SimpleQueue[Event | None]] = []
+        self._queues: list[tuple[queue.SimpleQueue[Event | None], str | None]] = []
         self._callbacks: dict[EventType, list[Callable[..., Any]]] = defaultdict(list)
 
     def subscribe(self, event_type: EventType, callback: Callable[..., Any]) -> None:
@@ -81,35 +145,50 @@ class EventBus:
         with self._lock, contextlib.suppress(ValueError):
             self._callbacks[event_type].remove(callback)
 
-    def subscribe_queue(self) -> queue.SimpleQueue[Event | None]:
-        """Return a new queue that will receive all subsequent published events."""
+    def subscribe_queue(self, run_id: str | None = None) -> queue.SimpleQueue[Event | None]:
+        """Return a new queue scoped to ``run_id`` (or unscoped, receiving everything).
+
+        A scoped queue receives events whose ``run_id`` equals ``run_id``, plus
+        events published with no run id. Pass no ``run_id`` for a queue that
+        receives every event regardless of scope.
+        """
         q: queue.SimpleQueue[Event | None] = queue.SimpleQueue()
         with self._lock:
-            self._queues.append(q)
+            self._queues.append((q, run_id))
         return q
 
     def unsubscribe_queue(self, q: queue.SimpleQueue[Event | None]) -> None:
-        """Remove a queue; silently ignored if already removed."""
-        with self._lock, contextlib.suppress(ValueError):
-            self._queues.remove(q)
+        """Remove a queue by identity; silently ignored if already removed.
+
+        Removes *every* identity-match, where the previous ``list.remove``
+        removed only the first. Unreachable through this class's own API —
+        :meth:`subscribe_queue` mints a fresh ``SimpleQueue`` per call, so no
+        queue can appear twice — but the two are not equivalent if a caller
+        ever inserts one itself.
+        """
+        with self._lock:
+            self._queues[:] = [entry for entry in self._queues if entry[0] is not q]
 
     def publish(self, event_type: EventType, **payload: Any) -> None:  # noqa: ANN401
-        """Publish an event to all current subscribers."""
-        event = Event(event_type, payload)
+        """Publish an event, stamped with :data:`current_run_id`, to matching subscribers."""
+        event = Event(event_type, payload, run_id=current_run_id.get())
         with self._lock:
             queues = list(self._queues)
             callbacks = list(self._callbacks.get(event_type, []))
-        for q in queues:
-            q.put(event)
+        for q, scope in queues:
+            if scope is None or event.run_id is None or scope == event.run_id:
+                q.put(event)
         for cb in callbacks:
             cb(**payload)
 
     def publish_done(self) -> None:
-        """Publish a sentinel ``None`` to signal end-of-stream to all subscribers."""
+        """Publish the sentinel ``None`` to queues scoped to the current run, plus unscoped ones."""
+        run_id = current_run_id.get()
         with self._lock:
             queues = list(self._queues)
-        for q in queues:
-            q.put(None)
+        for q, scope in queues:
+            if scope is None or scope == run_id:
+                q.put(None)
 
 
 # Module-level singleton — import this in all publishers and consumers.

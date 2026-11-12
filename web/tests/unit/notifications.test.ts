@@ -1,6 +1,13 @@
+import { readFileSync } from "node:fs"
+import path from "node:path"
 import { describe, expect, it } from "vitest"
 import { destinationFor, formatAge, typeLabel } from "@/portals/student/screens/Notifications"
-import { answerPushContentRequest, buildPushReply } from "@/lib/push/pushClientBridge"
+import { NOTIFICATION_TYPES, TUTORING_NOTIFICATION_TYPES } from "@/lib/notificationTypes"
+import {
+  answerPushContentRequest,
+  buildPushReply,
+  destinationFor as pushDestinationFor,
+} from "@/lib/push/pushClientBridge"
 import { PUSH_CONTENT_REPLY } from "@/lib/push/pushDecision"
 import type { Notification, NotificationsPage } from "@/lib/notificationTypes"
 
@@ -25,7 +32,7 @@ function notification(overrides: Partial<Notification> = {}): Notification {
   }
 }
 
-describe("destinationFor", () => {
+describe("destinationFor (student inbox)", () => {
   it("links an announcement to the announcements screen", () => {
     expect(destinationFor(notification({ type: "announcement" }))).toBe("/student/announcements")
   })
@@ -42,12 +49,74 @@ describe("destinationFor", () => {
     ).toBeNull()
   })
 
-  it.each(["streak_warning", "study_plan_reminder", "at_risk_alert"])(
-    "gives %s no link, because it has no screen",
-    (type) => {
-      expect(destinationFor(notification({ type }))).toBeNull()
-    },
-  )
+  it("links a streak warning to the profile, where the streak lives", () => {
+    expect(destinationFor(notification({ type: "streak_warning" }))).toBe("/student/profile")
+  })
+
+  it("links a study plan reminder to that session's page", () => {
+    expect(
+      destinationFor(
+        notification({
+          type: "study_plan_reminder",
+          payload: { sessionId: "s1", subjectCode: "0625", topic: "Algebraic fractions" },
+        }),
+      ),
+    ).toBe("/student/plan/0625/session/s1")
+  })
+
+  it("gives a study plan reminder with no ids no link rather than a broken one", () => {
+    expect(destinationFor(notification({ type: "study_plan_reminder", payload: {} }))).toBeNull()
+  })
+
+  it("gives at_risk_alert no link here, because a student never receives one", () => {
+    expect(destinationFor(notification({ type: "at_risk_alert" }))).toBeNull()
+  })
+})
+
+describe("pushDestinationFor (the worker's click target)", () => {
+  it("routes all five types, plus the fallback", () => {
+    expect(pushDestinationFor({ type: "announcement", payload: {} }, "student")).toBe(
+      "/student/announcements",
+    )
+    expect(pushDestinationFor({ type: "streak_warning", payload: {} }, "student")).toBe(
+      "/student/profile",
+    )
+    expect(
+      pushDestinationFor(
+        { type: "study_plan_reminder", payload: { sessionId: "s1", subjectCode: "0625" } },
+        "student",
+      ),
+    ).toBe("/student/plan/0625/session/s1")
+    // grade_ready keeps its deliberate lack of a specific destination.
+    expect(pushDestinationFor({ type: "grade_ready", payload: { uploadId: "u" } }, "student")).toBe(
+      "/",
+    )
+    expect(pushDestinationFor({ type: "at_risk_alert", payload: {} }, "teacher")).toBe(
+      "/teacher/notifications",
+    )
+    expect(pushDestinationFor({ type: "at_risk_alert", payload: {} }, "school_admin")).toBe(
+      "/teacher/notifications",
+    )
+    expect(pushDestinationFor({ type: "at_risk_alert", payload: {} }, "parent")).toBe(
+      "/parent/notifications",
+    )
+  })
+
+  it("falls back to the root when the viewer's role is unknown or the payload is short", () => {
+    // `/` routes by role, so it cannot 404 for whoever received the push.
+    expect(pushDestinationFor({ type: "at_risk_alert", payload: {} }, undefined)).toBe("/")
+    expect(pushDestinationFor({ type: "study_plan_reminder", payload: {} }, "student")).toBe("/")
+    expect(pushDestinationFor({ type: "weekly_summary", payload: {} }, "student")).toBe("/")
+  })
+
+  it("encodes a subject code rather than splicing it raw into a path", () => {
+    expect(
+      pushDestinationFor(
+        { type: "study_plan_reminder", payload: { sessionId: "s1", subjectCode: "a/b" } },
+        "student",
+      ),
+    ).toBe("/student/plan/a%2Fb/session/s1")
+  })
 })
 
 describe("typeLabel", () => {
@@ -133,6 +202,48 @@ describe("buildPushReply", () => {
       page([notification({ type: "grade_ready", payload: { uploadId: "abc" } })]),
     )
     expect(reply?.url).toBe("/")
+  })
+  it("routes an at-risk alert to the viewer's own inbox when a role is given", () => {
+    const page: NotificationsPage = {
+      notifications: [notification({ type: "at_risk_alert", payload: { studentId: "s" } })],
+    }
+    expect(buildPushReply(page, "parent")?.url).toBe("/parent/notifications")
+    expect(buildPushReply(page)?.url).toBe("/")
+  })
+})
+
+/* The wire type list in `notificationTypes.ts` against the backend enum's own source. */
+describe("NOTIFICATION_TYPES", () => {
+  function backendTypes(): string[] {
+    const source = readFileSync(path.resolve(__dirname, "../../../lemely/db/models/enums.py"), "utf-8")
+    const block = /class NotificationType\(enum\.Enum\):([\s\S]*?)\n\n\nclass /.exec(source)
+    if (block === null) throw new Error("NotificationType not found in enums.py")
+    return [...block[1].matchAll(/^ {4}([a-z_]+) = "[a-z_]+"$/gm)].map((m) => m[1])
+  }
+
+  it("lists every backend notification type, in the enum's order", () => {
+    const backend = backendTypes()
+    expect(backend).toHaveLength(14) // non-vacuity: 6 original + 8 tutoring
+    expect([...NOTIFICATION_TYPES]).toEqual(backend)
+  })
+
+  it("names the eight tutoring types as the tail of that list", () => {
+    expect([...TUTORING_NOTIFICATION_TYPES]).toEqual([
+      "booking_request",
+      "booking_update",
+      "booking_note",
+      "tutor_access",
+      "tutor_review",
+      "tutor_listing",
+      "parent_link",
+      "tutoring_report",
+    ])
+    expect(NOTIFICATION_TYPES.slice(-8)).toEqual(TUTORING_NOTIFICATION_TYPES)
+  })
+
+  it("still lets an unknown type from a newer backend through as a plain notification", () => {
+    const row = notification({ type: "something_new" })
+    expect(typeLabel(row.type)).toBe("something_new")
   })
 })
 

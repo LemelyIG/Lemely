@@ -105,13 +105,14 @@ supported subjects (0580, 0606, 0625) and creates one demo account per role:
 | teacher | `teacher@demo.lemely.local` | `Demo-Lemely-1!` |
 | school_admin | `school-admin@demo.lemely.local` | `Demo-Lemely-1!` |
 | platform_admin | `platform-admin@demo.lemely.local` | `Demo-Lemely-1!` |
-| parent | phone `+10000000000` | one-time code, no password |
+| parent | `parent@demo.lemely.local` | `Demo-Lemely-1!` |
 
 These are **local demo credentials on a reserved `.local` domain** (RFC 6762) —
 they are not secrets, and nothing here should ever be seeded into a real
-deployment. The parent signs in by phone OTP; the SMS provider is the mock one,
-so the code is printed to the backend log rather than sent (`Mock SMS to
-+10000000000: your Lemely code is ...`).
+deployment. The parent account is created through the same email signup path
+as the other demo roles and linked directly to the demo student — no invite is
+minted or redeemed for it; sign in with the password above at `/login` like
+every other role.
 
 These accounts are empty. For a database populated with realistic marked
 papers, classes and analytics, use `scripts/seed_e2e.py` — but note its emails

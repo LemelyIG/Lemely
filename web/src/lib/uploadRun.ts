@@ -66,16 +66,33 @@ export function runPhase(run: UploadRun | null | undefined): RunPhase {
  * `hasScan` is a local file; `hasUploadedPaper` is a scan the server already
  * holds. Either is enough, which is the part that makes a reloaded failure
  * recoverable at all: after a reload the `File` is gone and the scan is not.
+ *
+ * `emailVerified` is D7.5's soft gate, brought forward. `POST /student/correct`
+ * is guarded by `require_verified_email` and answers
+ * `403 {"code": "email_unverified"}`, so starting a run for an unverified
+ * account spends a click, an upload's worth of waiting and a stage animation
+ * to reach a refusal the app already knew was coming. It belongs here rather
+ * than in the screen's JSX because the screen calls this once and feeds both
+ * of its start buttons from the result, so one input covers both.
+ *
+ * Note the caller's contract: pass `true` when the answer is not yet known.
+ * A pending profile must not disable the button, for the same reason
+ * `verifyEmailBannerState` keeps the banner hidden while the profile is
+ * pending. The app does not know, and acting on what it does not know is how
+ * a verified student ends up looking at a dead button during a page load.
  */
 export function canStartRun({
   phase,
   hasScan,
   hasUploadedPaper,
+  emailVerified,
 }: {
   phase: RunPhase
   hasScan: boolean
   hasUploadedPaper: boolean
+  emailVerified: boolean
 }): boolean {
+  if (!emailVerified) return false
   if (phase === "waiting") return false
   return hasScan || hasUploadedPaper
 }

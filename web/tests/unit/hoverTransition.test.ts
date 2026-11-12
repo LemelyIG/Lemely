@@ -57,15 +57,14 @@ const MOVING_STATE =
  * Kept deliberately short. An exemption is a claim that an element should snap,
  * and there are very few honest ones.
  */
-const EXEMPT = new Map<string, string>([
-  [
-    "src/components/ui/nav-shells.tsx",
-    // Build-era shell, superseded by `portals/*/index.tsx` and the Phase 3
-    // `NavDrawer`. It is not on any migration list and no screen renders it;
-    // Phase 6's compat-layer closeout is where it goes, not here.
-    "build-era shell with no call site; retired in Phase 6",
-  ],
-])
+/*
+ * Packet B3 (Task 4) removed the one entry this map used to carry
+ * (`nav-shells.tsx`, "build-era shell with no call site") — every portal now
+ * mounts `BottomNav`/`SidebarNav` for real, so the claim is no longer true,
+ * and the file's own hover groups already pair `transition-colors` with
+ * their `hover:*` classes without needing an exemption.
+ */
+const EXEMPT = new Map<string, string>([])
 
 function sourceFiles(): string[] {
   const out: string[] = []
@@ -125,6 +124,46 @@ describe("a hover that changes colour also transitions to it", () => {
         if (/\btransition/.test(group.text)) continue
         offenders.push(`${relative}:${lineOf(src, group.index)}`)
       }
+    }
+
+    expect(offenders).toEqual([])
+  })
+})
+
+/*
+ * Packet A3 (audit-dossier remediation). DESIGN.md §9.2 states the press
+ * affordance in one sentence with no colour alternative: "Press: `scale(0.98)`
+ * over `dur-fast`. Hover: a colour or 1px translate shift over `dur-instant`."
+ * — the colour-or-translate option is HOVER's, not press's. A control that
+ * hovers has visibly opted into a "this reacts to you" contract, and a click
+ * with no visible press reply reads as a dead button for the one frame that
+ * matters most — the one the reader is looking at when they commit to the
+ * tap. `components/ui` is the shared kit every portal composes from, so a
+ * missing press state there reproduces on every screen that renders the
+ * component, not just one.
+ *
+ * File-level, not element-level: unlike the hover/transition gate above,
+ * this does not need to pair a specific `hover:` with a specific `active:` on
+ * the same class group, because DESIGN.md's press affordance is legitimately
+ * applied file-wide (e.g. via a shared `<Button>` import) rather than
+ * per-element. Requiring only "the file has both" catches the real defect
+ * (a whole component with hover feedback and zero press feedback) without
+ * forcing every interactive element to repeat its own `active:` token when a
+ * shared control already supplies one.
+ */
+describe("a file with a hover-reactive click target also has a press state", () => {
+  it("every components/ui file with onClick and hover: also has active:", () => {
+    const dir = join(ROOT, "src", "components", "ui")
+    const offenders: string[] = []
+
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".tsx")) continue
+      const file = join(dir, entry.name)
+      const src = readFileSync(file, "utf8")
+      if (!/\bonClick\s*=/.test(src)) continue
+      if (!/\bhover:/.test(src)) continue
+      if (/\bactive:/.test(src)) continue
+      offenders.push(`src/components/ui/${entry.name}`)
     }
 
     expect(offenders).toEqual([])

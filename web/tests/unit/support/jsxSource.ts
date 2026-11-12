@@ -193,3 +193,57 @@ export function parsedSources(dir: string): { file: string; source: string }[] {
     source: stripComments(readFileSync(file, "utf8")),
   }))
 }
+
+/**
+ * The body of one named function/arrow declaration, brace-matched from its
+ * first `{` to the matching `}` — so a source-text gate can anchor on "what
+ * this function does" rather than "what this whole file contains somewhere",
+ * which passes on a comment or an unrelated call site (`paperDeletion.test.ts`,
+ * `selfReviewWiring.test.ts`'s own header records the same reasoning).
+ *
+ * Matches `export function name(`, `function name(`, and
+ * `export function name<T>(...): T {` (a generic return type between the
+ * params and the brace) — the shapes this codebase's hook files actually use
+ * (`useDeletePaper`, `useSubmitSelfReview`, ...). Quote-aware brace counting
+ * is unnecessary here: run the source through `stripComments` first (as
+ * every call site does) and a brace inside a string is rare enough in this
+ * codebase's hook bodies that a mismatch would show up as an obviously wrong
+ * (too-short or too-long) body in the very assertion that reads it.
+ */
+export function functionBody(source: string, name: string): string {
+  const declaration = new RegExp(`function\\s+${name}\\s*\\(`)
+  const match = declaration.exec(source)
+  if (!match) throw new Error(`functionBody: no "function ${name}(" found`)
+
+  // Skip the parameter list first (brace-and-paren-aware: a destructured
+  // param can carry its own `{ }` type literal, as `DeletePaperControl`'s
+  // does). Then skip the return-type annotation, if any, which can *itself*
+  // carry a `{ }` type literal (`UseMutationResult<void, Error, { attemptId:
+  // string }>` on `useDeletePaper`) nested inside `< >` — so a `{` is only
+  // the function body's own opener once angle-bracket depth is back to 0.
+  let i = match.index + match[0].length
+  let parenDepth = 1
+  while (i < source.length && parenDepth > 0) {
+    if (source[i] === "(") parenDepth += 1
+    else if (source[i] === ")") parenDepth -= 1
+    i += 1
+  }
+  let angleDepth = 0
+  while (i < source.length && !(source[i] === "{" && angleDepth === 0)) {
+    if (source[i] === "<") angleDepth += 1
+    else if (source[i] === ">") angleDepth = Math.max(0, angleDepth - 1)
+    i += 1
+  }
+  if (source[i] !== "{") throw new Error(`functionBody: no body found for "${name}"`)
+
+  const start = i + 1
+  let depth = 1
+  i = start
+  while (i < source.length && depth > 0) {
+    if (source[i] === "{") depth += 1
+    else if (source[i] === "}") depth -= 1
+    i += 1
+  }
+  if (depth !== 0) throw new Error(`functionBody: unbalanced braces for "${name}"`)
+  return source.slice(start, i - 1)
+}

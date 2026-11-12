@@ -6,7 +6,8 @@ import {
   dataHandlingClose,
   dataHandlingIntro,
   dataHandlingSections,
-  notYetBuilt,
+  deletion,
+  tutoringSections,
 } from "./dataHandling"
 
 /*
@@ -36,9 +37,9 @@ export function DataHandling() {
       <div className="lm-read flex flex-col gap-10">
         <Reveal>
           <header className="flex flex-col gap-4">
-            <div className="text-eyebrow text-accent-ink">{dataHandlingIntro.eyebrow}</div>
-            <h1 className="text-display-lg text-ink">{dataHandlingIntro.title}</h1>
-            <p className="lm-prose text-body-lg text-ink-muted">
+            <div className="text-eyebrow text-on-primary-container">{dataHandlingIntro.eyebrow}</div>
+            <h1 className="text-display-lg text-on-surface">{dataHandlingIntro.title}</h1>
+            <p className="lm-prose text-body-lg text-on-surface-variant">
               {dataHandlingIntro.standfirst}
             </p>
           </header>
@@ -55,36 +56,47 @@ export function DataHandling() {
           heading navigation exists for.
         */}
         <div className="flex flex-col">
-          {dataHandlingSections.map((section, i) => (
+          {[...dataHandlingSections, ...tutoringSections].map((section, i) => (
             <Reveal key={section.heading} delay={i * 40}>
-              <section className="border-t border-rule py-7">
-                <h2 className="text-display-sm text-ink">{section.heading}</h2>
-                <p className="lm-prose mt-2.5 text-body-md text-ink-muted">{section.body}</p>
+              <section className="border-t border-outline-variant py-7">
+                <h2 className="text-display-sm text-on-surface">{section.heading}</h2>
+                <p className="lm-prose mt-2.5 text-body-md text-on-surface-variant">{section.body}</p>
               </section>
             </Reveal>
           ))}
         </div>
 
         {/*
-          The one panel on the page, and the one item that is an absence rather
-          than a behaviour. §4's rule for a caveat is a labelled chip rather
-          than a colour carrying the meaning alone, so the `warn` tone comes
-          with the words "Not built yet" inside it and the heading says the same
-          thing again in a full sentence.
+          The one panel on the page. It used to carry the one item that was an
+          absence rather than a behaviour ("Not built yet"); now that paper
+          deletion has shipped, it is the one item worth a chip because it is
+          the fact a reader who found this page is likeliest to be asking
+          about, not because it is a caveat. `info` replaces `warn` for the
+          same reason: nothing here is a shortfall.
 
           It sits at the foot rather than buried between two ordinary sections
-          because a reader who stops early should still have met it.
+          because a reader who stops early should still have met it. The hold
+          runs last and smaller, as a note rather than a fourth paragraph,
+          because it applies to some papers and not most of them.
         */}
         <Reveal>
-          <Card className="p-6">
-            <Badge tone="warn">{notYetBuilt.tag}</Badge>
-            <h2 className="mt-3.5 text-display-sm text-ink">{notYetBuilt.heading}</h2>
-            <p className="lm-prose mt-2.5 text-body-md text-ink-muted">{notYetBuilt.body}</p>
+          {/* `className="p-8"` on `Card` itself is pinned by
+              `marketingCardPadding.test.ts` (C3e); the paragraph rhythm lives
+              on this inner wrapper instead of widening that string. */}
+          <Card className="p-8">
+            <div className="flex flex-col gap-2.5">
+              <Badge tone="info">{deletion.tag}</Badge>
+              <h2 className="mt-1 text-display-sm text-on-surface">{deletion.heading}</h2>
+              <p className="lm-prose text-body-md text-on-surface-variant">{deletion.removes}</p>
+              <p className="lm-prose text-body-md text-on-surface-variant">{deletion.keeps}</p>
+              <p className="lm-prose text-body-md text-on-surface-variant">{deletion.window}</p>
+              <p className="lm-prose mt-1 text-body-sm text-on-surface-variant">{deletion.hold}</p>
+            </div>
           </Card>
         </Reveal>
 
         <Reveal>
-          <p className="lm-prose text-body-sm text-ink-faint">{dataHandlingClose}</p>
+          <p className="lm-prose text-body-sm text-on-surface-variant">{dataHandlingClose}</p>
         </Reveal>
       </div>
     </div>

@@ -9,6 +9,8 @@ case over the same taxonomy so a dead classifier cannot satisfy both.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 from lemely.core.schemas import ConfidenceBand
@@ -19,35 +21,57 @@ from lemely.core.topics import (
     classify,
     is_writable,
 )
-from lemely.io.syllabus_topics import get_taxonomy, load_taxonomies
+from lemely.io.syllabus_topics import get_taxonomy, invalidate_reference_cache, load_taxonomies
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session, sessionmaker
 
 # --------------------------------------------------------------------------
-# The bundled data
+# The catalogue, read from Postgres
 # --------------------------------------------------------------------------
 
 EXPECTED_SUBJECTS = {"0580", "0606", "0625"}
 
 
-def test_all_three_in_scope_subjects_are_bundled() -> None:
+@pytest.fixture(autouse=True)
+def _reset_taxonomy_cache() -> None:
+    """Force every test to load through its own fixture-provided session,
+    rather than a process-cached result left over from another test's
+    throwaway database."""
+    invalidate_reference_cache()
+
+
+def test_all_three_in_scope_subjects_are_bundled(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
     """MISSION §1 scopes this run to 0580, 0606 and 0625 — all three or it is a gap."""
-    assert {code for _board, code in load_taxonomies()} == EXPECTED_SUBJECTS
+    with migrated_sessionmaker() as s:
+        taxonomies = load_taxonomies(session=s)
+    assert {code for _board, code in taxonomies} == EXPECTED_SUBJECTS
 
 
-def test_every_taxonomy_records_its_syllabus_provenance() -> None:
+def test_every_taxonomy_records_its_syllabus_provenance(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
     """CAIE renumbers topics between cycles, so a label without a version is a lie.
 
     "4.3 Electric circuits" only means something against a stated syllabus, and
     the next session must be able to tell which PDF the tree came from without
     re-downloading anything.
     """
-    for taxonomy in load_taxonomies().values():
+    with migrated_sessionmaker() as s:
+        taxonomies = load_taxonomies(session=s)
+    for taxonomy in taxonomies.values():
         assert taxonomy.syllabus_version
         assert taxonomy.source_url.startswith("https://www.cambridgeinternational.org/")
 
 
-def test_0625_topic_structure_matches_the_published_syllabus() -> None:
+def test_0625_topic_structure_matches_the_published_syllabus(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
     """Transcription check against 595430-2023-2025-syllabus.pdf §3."""
-    physics = get_taxonomy("0625")
+    with migrated_sessionmaker() as sess:
+        physics = get_taxonomy("0625", session=sess)
     assert physics is not None
     assert [t.name for t in physics.topics] == [
         "Motion, forces and energy",
@@ -61,30 +85,38 @@ def test_0625_topic_structure_matches_the_published_syllabus() -> None:
     assert [s.code for s in physics.topics[0].subtopics] == [f"1.{n}" for n in range(1, 9)]
 
 
-def test_0606_is_topic_level_only() -> None:
+def test_0606_is_topic_level_only(migrated_sessionmaker: sessionmaker[Session]) -> None:
     """0606 numbers learning objectives, not named subtopics — so no subtopic labels.
 
     Pinned because it is a real asymmetry between subjects, not an omission: a
     future session finding 0606 "missing" its subtopics should see this test
     and the data file's ``section`` note rather than inventing fourteen.
     """
-    add_maths = get_taxonomy("0606")
+    with migrated_sessionmaker() as s:
+        add_maths = get_taxonomy("0606", session=s)
     assert add_maths is not None
     assert len(add_maths.topics) == 14
     assert all(topic.subtopics == [] for topic in add_maths.topics)
 
 
-def test_labels_are_code_prefixed_and_unique_within_a_subject() -> None:
+def test_labels_are_code_prefixed_and_unique_within_a_subject(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
     """Duplicate labels would silently merge two topics in every group-by downstream."""
-    for taxonomy in load_taxonomies().values():
+    with migrated_sessionmaker() as s:
+        taxonomies = load_taxonomies(session=s)
+    for taxonomy in taxonomies.values():
         labels = taxonomy.labels()
         assert len(labels) == len(set(labels)), taxonomy.subject_code
         assert all(label[0].isdigit() for label in labels)
 
 
-def test_unknown_subject_returns_none_rather_than_a_wrong_tree() -> None:
-    assert get_taxonomy("9999") is None
-    assert get_taxonomy("0625", board="edexcel") is None
+def test_unknown_subject_returns_none_rather_than_a_wrong_tree(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    with migrated_sessionmaker() as s:
+        assert get_taxonomy("9999", session=s) is None
+        assert get_taxonomy("0625", board="edexcel", session=s) is None
 
 
 # --------------------------------------------------------------------------
@@ -246,8 +278,11 @@ def test_is_writable_rejects_no_match_and_low_confidence(toy: SyllabusTaxonomy) 
         ),
     ],
 )
-def test_unambiguous_physics_questions_land_on_the_right_subtopic(stem: str, expected: str) -> None:
-    physics = get_taxonomy("0625")
+def test_unambiguous_physics_questions_land_on_the_right_subtopic(
+    stem: str, expected: str, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    with migrated_sessionmaker() as s:
+        physics = get_taxonomy("0625", session=s)
     assert physics is not None
     match = classify(stem, physics)
     assert match is not None, stem
@@ -255,12 +290,15 @@ def test_unambiguous_physics_questions_land_on_the_right_subtopic(stem: str, exp
     assert is_writable(match)
 
 
-def test_a_physics_question_with_no_topic_vocabulary_is_left_unclassified() -> None:
+def test_a_physics_question_with_no_topic_vocabulary_is_left_unclassified(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
     """The honest outcome for a terse stem, and the reason coverage is not 100%.
 
     Roughly a fifth of the real 0625 MCQ bank looks like this. Labelling it
     anyway is the failure mode this whole module is shaped to avoid.
     """
-    physics = get_taxonomy("0625")
+    with migrated_sessionmaker() as s:
+        physics = get_taxonomy("0625", session=s)
     assert physics is not None
     assert classify("Which statement is correct?", physics) is None

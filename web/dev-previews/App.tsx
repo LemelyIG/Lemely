@@ -1,6 +1,8 @@
-import { useState } from "react"
+import { useState, type CSSProperties } from "react"
 import { MagnifyingGlass, Plus } from "@phosphor-icons/react"
-import { ComponentSection, Group, StateCell, slug } from "./harness"
+import { ComponentSection, Group, StateCell, slug, useThemeToggle } from "./harness"
+import { Foundations } from "./Foundations"
+import { TeacherGroup } from "./Teacher"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -17,15 +19,25 @@ import { ProgressBar } from "@/components/ui/progress-bar"
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
 import { Tabs, TabsList, TabsPanel } from "@/components/ui/tabs"
 import { SkeletonLine, SkeletonBlock, SkeletonCircle, SkeletonText } from "@/components/ui/skeleton"
+import { PanelSkeleton } from "@/components/ui/loading-shapes"
+import { ProcessingState, type ProcessingStage } from "@/components/ui/processing-state"
+import { NETWORK_FAILURE } from "@/lib/correctionOutcome"
 import { Modal } from "@/components/ui/modal"
 import { Popover } from "@/components/ui/popover"
-import { ToastProvider, useToast } from "@/components/ui/toast"
-import { ErrorState } from "@/components/ui/error-state"
+import { ToastCard, ToastProvider, useToast } from "@/components/ui/toast"
+import { EmptyState, ErrorState, OfflineState, RouteFallback } from "@/components/ui/state-views"
+import { QueryState, type QueryStateQuery } from "@/components/ui/query-state"
+import { uploadStageProgress } from "@/lib/uploadProgress"
+import { ApiError } from "@/lib/api"
 import { ChartFrame } from "@/components/ui/chart-frame"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SkipLink } from "@/components/ui/skip-link"
 import { GettingStarted } from "@/components/ui/getting-started"
+import { FullPageState } from "@/portals/misc/FullPageState"
+import { OfflineBannerView } from "@/components/ui/offline-banner"
+import { VerifyEmailBannerView } from "@/components/ui/verify-email-banner"
+import { RECONNECTED_TOAST, UPDATED_TOAST } from "@/components/recovery-effects"
 
 /**
  * The component-kit preview page (REDESIGN-MISSION §5 Phase 2.6).
@@ -44,52 +56,6 @@ import { GettingStarted } from "@/components/ui/getting-started"
  * with `npm run preview:kit`.
  */
 
-/*
- * Every Tailwind class below is written out in full, never assembled from a
- * template literal. Tailwind v4 finds classes by scanning source text for
- * literal strings, so `bg-pastel-${name}` generates no CSS at all and the
- * swatch silently renders unstyled. That is easy to miss on a page whose whole
- * job is to show colours, which is exactly why it is spelled out here.
- */
-const PASTELS = [
-  ["rose", "Unassigned or other subjects", "bg-pastel-rose", "text-pastel-rose-ink"],
-  ["amber", "English", "bg-pastel-amber", "text-pastel-amber-ink"],
-  ["sage", "Chemistry", "bg-pastel-sage", "text-pastel-sage-ink"],
-  ["sky", "Mathematics", "bg-pastel-sky", "text-pastel-sky-ink"],
-  ["lilac", "Physics", "bg-pastel-lilac", "text-pastel-lilac-ink"],
-  ["clay", "Biology", "bg-pastel-clay", "text-pastel-clay-ink"],
-] as const
-
-const SEMANTIC = [
-  ["ok", "Correct, complete, saved, on track", "bg-ok-wash", "text-ok"],
-  ["warn", "Partial credit, uncertain, borderline", "bg-warn-wash", "text-warn"],
-  ["err", "Wrong, failed, destructive, blocked", "bg-err-wash", "text-err"],
-  ["info", "Neutral notices and tips", "bg-info-wash", "text-info"],
-] as const
-
-const SURFACES = [
-  ["paper-raised", "bg-paper-raised"],
-  ["paper", "bg-paper"],
-  ["paper-sunk", "bg-paper-sunk"],
-] as const
-
-const TYPE_RUNGS = [
-  ["text-display-hero", "Display hero, marketing only"],
-  ["text-display-xl", "Display xl"],
-  ["text-display-lg", "Display lg, in-app page titles"],
-  ["text-display-md", "Display md, section headings"],
-  ["text-display-sm", "Display sm, sub-sections"],
-  ["text-body-lg", "Body lg, the default"],
-  ["text-body-md", "Body md, dense"],
-  ["text-body-sm", "Body sm, captions"],
-  ["text-label", "Label, buttons and form labels"],
-  ["text-eyebrow", "Eyebrow, uppercase kicker"],
-  ["text-data-lg", "Data lg, the big number"],
-  ["text-data-md", "Data md, inline figures"],
-  ["text-data-sm", "Data sm, codes and metadata"],
-  ["text-hand", "Marginalia, decorative only"],
-] as const
-
 /** What to do to see the states a static render cannot show. */
 const INTERACT_NOTE: Record<string, string> = {
   hover: "Hover this control to see it",
@@ -97,7 +63,19 @@ const INTERACT_NOTE: Record<string, string> = {
   active: "Press and hold this control to see it",
 }
 
-const SECTIONS = ["Colour", "Typography", "Texture", "Forms", "Display", "Overlays"] as const
+const SECTIONS = [
+  "Colour",
+  "Typography",
+  "Shape and motion",
+  "Brand",
+  "Teacher portal",
+  "Forms",
+  "Display",
+  "Overlays",
+  "Navigation and first run",
+  "Full-page states",
+  "Loading and recovery",
+] as const
 
 /**
  * A stand-in for a chosen scan, so `FileDrop`'s success state can be shown
@@ -111,6 +89,35 @@ const PREVIEW_FILE = new File(
   "0625_w24_qp_41.pdf",
   { type: "application/pdf" },
 )
+
+/**
+ * The real helper the screen calls, adapted to the two loose numbers these
+ * cells pass rather than reproduced. A preview that formats bytes by its own
+ * copy of the rule stops previewing anything the moment the rule changes,
+ * which is the drift this whole programme has been closing.
+ */
+function uploadPreviewProgress(loaded: number, total: number | undefined): ProcessingStage["progress"] {
+  return uploadStageProgress({ loaded, total })
+}
+
+/**
+ * `CorrectPaper.tsx`'s real four-stage list (`STAGE_ORDER`/`initialStages`),
+ * with `upload` set to whatever the cell wants to show and the three
+ * SSE-driven stages left pending — accurate for every cell here, since none
+ * of them has a stream to have advanced past upload yet.
+ */
+function uploadPreviewStages(
+  uploadStatus: "active" | "error",
+  progress?: ProcessingStage["progress"],
+  errorMessage?: string,
+): ProcessingStage[] {
+  return [
+    { id: "upload", label: "Uploading your scan", status: uploadStatus, progress, errorMessage },
+    { id: "extract", label: "Reading your answers", status: "pending" },
+    { id: "scheme", label: "Fetching the mark scheme", status: "pending" },
+    { id: "mark", label: "Marking your questions", status: "pending" },
+  ]
+}
 
 /**
  * The eight-state grid for one component.
@@ -150,6 +157,19 @@ function StateGrid({
 }
 
 /** Toast needs to be triggered, so it lives behind a button inside the provider. */
+/**
+ * Pin `RouteFallback` to one loading tier. Its two tiers are staged purely by
+ * the `--loading-tier-*` tokens (the delays on `.lm-tier-skeleton` and
+ * `.lm-tier-slow` in index.css), so a wrapper that overrides those tokens
+ * shows a tier at once (`0s`) or holds it off for the life of the page
+ * (`9999s`) without the component needing a preview-only prop. `HELD` is
+ * not `infinite`: an animation-delay has no such keyword.
+ */
+const HELD = "9999s"
+function tierStyle(skeleton: string, slow: string): CSSProperties {
+  return { "--loading-tier-skeleton": skeleton, "--loading-tier-slow": slow } as CSSProperties
+}
+
 function ToastDemo() {
   const { toast } = useToast()
   return (
@@ -189,10 +209,10 @@ function TabsDemo() {
           ]}
         />
         <TabsPanel value="marks">
-          <p className="text-body-md text-ink-muted">Sixty three out of eighty.</p>
+          <p className="text-body-md text-on-surface-variant">Sixty three out of eighty.</p>
         </TabsPanel>
         <TabsPanel value="notes">
-          <p className="text-body-md text-ink-muted">Two marks on the gradient.</p>
+          <p className="text-body-md text-on-surface-variant">Two marks on the gradient.</p>
         </TabsPanel>
       </Tabs>
     </div>
@@ -233,7 +253,7 @@ function ModalDemo() {
         Open modal
       </Button>
       <Modal open={open} onClose={() => setOpen(false)} title="Delete this paper?">
-        <p className="text-body-md text-ink-muted">
+        <p className="text-body-md text-on-surface-variant">
           The marks and the annotations go with it. This cannot be undone.
         </p>
         <div className="mt-6 flex justify-end gap-2">
@@ -249,6 +269,72 @@ function ModalDemo() {
   )
 }
 
+/**
+ * `QueryState`'s demo payload: one row list, small enough to read in a
+ * 260px-wide cell. `data.rows` is what `isEmpty`/`empty` and the loaded
+ * render below both key off, the same as a real screen's DTO would be.
+ */
+interface QueryStateDemoData {
+  rows: { id: string; label: string }[]
+}
+
+/** The loaded render every `QueryState` demo cell shares, so the cells below
+ * differ only in `query`, which is the thing being demonstrated. */
+function QueryStateDemoPanel({ rows }: { rows: QueryStateDemoData["rows"] }) {
+  return (
+    <ul className="flex w-full flex-col gap-1.5">
+      {rows.map((row) => (
+        <li key={row.id} className="text-body-sm text-on-surface">
+          {row.label}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/**
+ * Five hand-built `QueryStateQuery` objects, one per cell below. Hand-built
+ * rather than a real `useQuery()` call because a live query cannot be forced
+ * into "pending forever", "pending and idle" or "failed with a 503" on
+ * demand for a static preview page, and `QueryState`'s whole point is that a
+ * hand-built object satisfies the same structural type a real query result
+ * does, with no cast.
+ */
+const QUERY_STATE_DEMO: Record<
+  "pending" | "idle" | "error" | "empty" | "success",
+  QueryStateQuery<QueryStateDemoData>
+> = {
+  pending: { status: "pending", data: undefined, error: null, refetch: () => undefined },
+  // `enabled: false`'s own resting state: `fetchStatus: "idle"` alongside
+  // `status: "pending"`, which is what makes `QueryState` render `idle`
+  // instead of `skeleton` — see that prop's doc comment.
+  idle: {
+    status: "pending",
+    fetchStatus: "idle",
+    data: undefined,
+    error: null,
+    refetch: () => undefined,
+  },
+  error: {
+    status: "error",
+    data: undefined,
+    error: new ApiError(503, "503 Service Unavailable"),
+    refetch: () => undefined,
+  },
+  empty: { status: "success", data: { rows: [] }, error: null, refetch: () => undefined },
+  success: {
+    status: "success",
+    data: {
+      rows: [
+        { id: "1", label: "0625_w24_qp_41" },
+        { id: "2", label: "0625_s23_qp_22" },
+      ],
+    },
+    error: null,
+    refetch: () => undefined,
+  },
+}
+
 export function App() {
   return (
     <ToastProvider>
@@ -258,18 +344,38 @@ export function App() {
 }
 
 function AppBody() {
+  const [theme, setTheme] = useThemeToggle()
   return (
-    <div className="paper-grain min-h-screen">
-      <header className="sticky top-0 z-[var(--z-index-nav)] border-b border-rule bg-paper/85 backdrop-blur-[10px]">
-        <div className="mx-auto flex max-w-[var(--container-app)] flex-wrap items-center gap-4 px-6 py-4">
-          <span className="text-display-sm text-ink">Lemely component kit</span>
-          <span className="text-data-sm text-ink-faint">The Study Notebook</span>
-          <nav className="ms-auto flex flex-wrap gap-3">
+    <div className="min-h-screen bg-surface text-on-surface">
+      <header className="sticky top-0 z-[var(--z-index-nav)] border-b border-outline-variant bg-surface/85 backdrop-blur-[10px]">
+        <div className="mx-auto flex max-w-[var(--container-app)] flex-wrap items-center gap-x-4 gap-y-2 px-6 py-4">
+          <span className="text-display-sm text-on-surface">Lemely component kit</span>
+          <span className="text-data-sm text-on-surface-variant">Abyss, v5</span>
+          <div
+            role="group"
+            aria-label="Theme"
+            className="ms-auto flex rounded-chip bg-surface-container-low p-0.5 dark:bg-surface-container"
+          >
+            {(["light", "dark"] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                aria-pressed={theme === t}
+                onClick={() => setTheme(t)}
+                className={`rounded-chip px-3 py-1 text-label capitalize transition-colors duration-[var(--dur-instant)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${
+                  theme === t ? "bg-primary text-on-primary" : "text-on-surface-variant hover:text-on-surface"
+                }`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+          <nav aria-label="Kit sections" className="flex basis-full flex-wrap gap-x-4 gap-y-1">
             {SECTIONS.map((s) => (
               <a
                 key={s}
                 href={`#${slug(s)}`}
-                className="text-label text-ink-muted transition-colors duration-[var(--dur-instant)] hover:text-accent-ink"
+                className="text-label text-on-surface-variant transition-colors duration-[var(--dur-instant)] hover:text-primary"
               >
                 {s}
               </a>
@@ -279,124 +385,16 @@ function AppBody() {
       </header>
 
       <main className="mx-auto flex max-w-[var(--container-app)] flex-col gap-section px-6 py-12">
-        <p className="text-body-lg max-w-[65ch] text-ink-muted">
+        <p className="text-body-lg max-w-[65ch] text-on-surface-variant">
           Every value on this page comes from <code className="text-data-md">DESIGN.md</code> by way
           of <code className="text-data-md">src/index.css</code>. If something here looks wrong, the
-          token is wrong, not the page. Contrast claims are pinned by{" "}
+          token is wrong, not the page. Contrast ratios are measured in your browser from the
+          colours it is painting, so they follow the theme toggle; CI pins them in{" "}
           <code className="text-data-md">tests/test_design_tokens.py</code>.
         </p>
 
-        <Group title="Colour">
-          <ComponentSection
-            name="Paper and ink"
-            summary="Cards sit lighter than the canvas, the way a sheet laid on a desk catches more light. Never pure white and never pure black: both read sterile and break the paper illusion. Ink faint is the floor, and there is deliberately no lighter text step."
-          >
-            <StateCell state="default" provenance="prop" note="Surfaces, lightest to darkest">
-              <div className="flex w-full flex-col gap-2">
-                {SURFACES.map(([name, bg]) => (
-                  <div
-                    key={name}
-                    className={`flex items-center justify-between rounded-md border border-rule px-3 py-2 ${bg}`}
-                  >
-                    <span className="text-body-sm text-ink">{name}</span>
-                  </div>
-                ))}
-              </div>
-            </StateCell>
-            <StateCell state="default" provenance="prop" note="Text tokens, all AA on every surface">
-              <div className="flex w-full flex-col gap-1">
-                <span className="text-body-lg text-ink">ink, 11.6:1</span>
-                <span className="text-body-lg text-ink-muted">ink-muted, 6.09:1</span>
-                <span className="text-body-lg text-ink-faint">ink-faint, 4.94:1</span>
-              </div>
-            </StateCell>
-            <StateCell
-              state="default"
-              provenance="prop"
-              note="Accent has three values because three jobs have three contrast requirements"
-            >
-              <div className="flex w-full flex-col gap-2">
-                <span className="rounded-md bg-accent px-3 py-2 text-label text-accent-on">
-                  accent fill, white label 4.65:1
-                </span>
-                <span className="text-body-md text-accent-ink">accent-ink text, 9.75:1</span>
-                <span className="rounded-md bg-accent-wash px-3 py-2 text-body-sm text-accent-ink">
-                  accent-wash
-                </span>
-              </div>
-            </StateCell>
-          </ComponentSection>
-
-          <ComponentSection
-            name="Pastels and subjects"
-            summary="The sticker set. Subject colours are semantic, not decorative: a student should find Physics by colour before reading. Never pick a subject colour at a call site."
-          >
-            {PASTELS.map(([name, use, bg, fg]) => (
-              <StateCell key={name} state="default" provenance="prop" note={use}>
-                <span className={`rounded-full px-2.5 py-1 text-eyebrow ${bg} ${fg}`}>{name}</span>
-              </StateCell>
-            ))}
-          </ComponentSection>
-
-          <ComponentSection
-            name="Semantic states"
-            summary="Teal rather than green, so the success and error pair survives deuteranopia and protanopia where green against red does not. They also descend in lightness, so the ladder survives greyscale for a reader who gets no hue at all. Colour never carries meaning alone: each pairs with a label."
-          >
-            {SEMANTIC.map(([name, use, bg, fg]) => (
-              <StateCell key={name} state="default" provenance="prop" note={use}>
-                <span className={`rounded-md px-3 py-1.5 text-body-sm ${bg} ${fg}`}>{name}</span>
-              </StateCell>
-            ))}
-          </ComponentSection>
-        </Group>
-
-        <Group title="Typography">
-          <ComponentSection
-            name="The four faces"
-            summary="Newsreader for display, Geist for interface and body, JetBrains Mono for every number (tabular by construction, so a column of marks aligns and a counting score never jitters), and Caveat for marginalia only. If losing the text would be a problem, it is not Caveat."
-          >
-            {TYPE_RUNGS.map(([cls, label]) => (
-              <StateCell key={cls} state="default" provenance="prop" note={cls}>
-                <span className={`${cls} text-ink`}>{label}</span>
-              </StateCell>
-            ))}
-          </ComponentSection>
-        </Group>
-
-        <Group title="Texture">
-          <ComponentSection
-            name="The notebook layer"
-            summary="How the one protected quality survives contact with a dashboard, and the easiest thing in the system to overdo. The restraint rule: marginalia decorates, never carries meaning alone. Remove every element here and the product must still be fully usable."
-          >
-            <StateCell state="default" provenance="prop" note=".ruled-bg, 32px">
-              <div className="ruled-bg h-24 w-full rounded-md border border-rule" />
-            </StateCell>
-            <StateCell state="default" provenance="prop" note=".dotted-bg, 24px">
-              <div className="dotted-bg h-24 w-full rounded-md border border-rule" />
-            </StateCell>
-            <StateCell
-              state="default"
-              provenance="prop"
-              note=".margin-rule, the cheapest and most on-brand texture available"
-            >
-              <div className="margin-rule">
-                <p className="text-body-md text-ink-muted">
-                  A single hairline at the content&rsquo;s inline start, echoing the logo.
-                </p>
-              </div>
-            </StateCell>
-            <StateCell state="default" provenance="prop" note=".sticker, decorative badges only">
-              <span className="sticker rounded-sm bg-pastel-amber px-2.5 py-1 text-eyebrow text-pastel-amber-ink">
-                7 day streak
-              </span>
-            </StateCell>
-            <StateCell state="default" provenance="prop" note="The paper grain is on this page">
-              <p className="text-hand text-ink-muted">
-                Marginalia lives here, and nowhere that matters.
-              </p>
-            </StateCell>
-          </ComponentSection>
-        </Group>
+<Foundations theme={theme} />
+        <TeacherGroup />
 
         <Group title="Forms">
           <ComponentSection
@@ -489,7 +487,7 @@ function AppBody() {
                 // resting target under an "active" label would be the kind of
                 // evidence-shaped non-evidence this build keeps finding.
                 active:
-                  "Drag-over is JavaScript state, not a pseudo-class, so `Force` cannot pin it and this cell shows the target at rest. The accent rule and wash are exercised on the real screen.",
+                  "Drag-over is JavaScript state, not a pseudo-class, so `Force` cannot pin it and this cell shows the target at rest. The primary outline and container wash are exercised on the real screen.",
               }}
             />
           </ComponentSection>
@@ -615,6 +613,45 @@ function AppBody() {
           </ComponentSection>
 
           <ComponentSection
+            name="ProcessingState — upload stage"
+            summary="PR 4: a fourth stage (C-10, S-14) ahead of the three SSE-driven ones, so the slowest and least-observable part of correcting a paper — the file transfer itself, on a phone, on a bad connection — has something moving on screen before the SSE stream even exists. Real xhr.upload.onprogress bytes only, formatted by the same lib/uploadProgress.ts helper the screen itself calls, so these cells cannot drift from it. The indeterminate cell is the deliberate one: no bar, no percentage, when the browser genuinely cannot report a length — see StageProgressBar's header comment in processing-state.tsx."
+          >
+            <StateCell state="loading" provenance="prop" note="Determinate — a known total, mid-transfer">
+              <div className="w-full">
+                <ProcessingState
+                  stages={uploadPreviewStages(
+                    "active",
+                    uploadPreviewProgress(3_200_000, 8_100_000),
+                  )}
+                />
+              </div>
+            </StateCell>
+            <StateCell
+              state="loading"
+              provenance="prop"
+              note="Indeterminate — xhr.upload couldn't report a length. Bytes moved, no bar, no percentage."
+            >
+              <div className="w-full">
+                <ProcessingState
+                  stages={uploadPreviewStages(
+                    "active",
+                    uploadPreviewProgress(1_200_000, undefined),
+                  )}
+                />
+              </div>
+            </StateCell>
+            <StateCell
+              state="error"
+              provenance="prop"
+              note="Upload failed before any SSE frame ever existed — the same failActiveStage path a mid-run failure uses"
+            >
+              <div className="w-full">
+                <ProcessingState stages={uploadPreviewStages("error", undefined, NETWORK_FAILURE)} />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
             name="Table"
             summary="Sunk header, hairline row dividers, tabular numbers right-aligned so a column of marks always lines up."
           >
@@ -667,7 +704,7 @@ function AppBody() {
             <StateCell state="default" provenance="prop">
               <div className="w-full">
                 <ChartFrame title="Predicted grade" subtitle="Last six papers">
-                  <div className="dotted-bg h-28 rounded-md border border-rule" />
+                  <div className="h-28 rounded-chip border border-outline-variant bg-surface-container-low" />
                 </ChartFrame>
               </div>
             </StateCell>
@@ -699,14 +736,14 @@ function AppBody() {
                   that did not open, sitting on the page that exists to prove
                   the kit works. `renderTrigger` yields
                   `{ open, triggerProps }`; only the latter is spread. */}
-              <Popover
+              <Popover label="Kit popover example"
                 renderTrigger={({ triggerProps }) => (
                   <Button size="sm" {...triggerProps}>
                     Open popover
                   </Button>
                 )}
               >
-                <p className="text-body-sm text-ink-muted">
+                <p className="text-body-sm text-on-surface-variant">
                   Confidence is how sure the marker is, not how right it is.
                 </p>
               </Popover>
@@ -720,16 +757,184 @@ function AppBody() {
           </ComponentSection>
 
           <ComponentSection
-            name="ErrorState"
-            summary="Active voice, names what happened and what to do, and offers a retry. The Phase 1 audit found no error boundary existed anywhere; ErrorBoundary now wraps this same presentation."
+            name="ErrorState / EmptyState / OfflineState"
+            summary="StateView's full (non-compact) layout, brought onto the same canvas language FullPageState's nine full-page states already use: a line-drawn Doodle, a mono kicker, a text-display-md heading. Amber by default (PRODUCT.md's accessibility section: avoid red-heavy error states). Every kind gets a sensible default doodle+kicker (kindDoodle/kindKicker in state-views.tsx) so the ~50 existing call sites — including every QueryState error branch — improved without being touched. compact (bottom) is unchanged: a 112x64 doodle has no home in a table-cell-sized failure."
           >
-            <StateCell state="error" provenance="prop">
+            <StateCell state="error" provenance="prop" note="Default doodle+kicker for kind=error: the crash doodle, kicker 'Error'">
               <div className="w-full">
                 <ErrorState
-                  title="We couldn't load your papers"
-                  message="The connection dropped partway through. Your work is safe."
-                  onRetry={() => undefined}
+                  heading="We couldn't load your papers"
+                  body="The connection dropped partway through. Your work is safe."
+                  action={{ label: "Try again", onClick: () => undefined }}
                 />
+              </div>
+            </StateCell>
+            <StateCell
+              state="default"
+              provenance="prop"
+              note="Default doodle+kicker for kind=empty: the new empty doodle (an open, empty tray), kicker 'Empty'"
+            >
+              <div className="w-full">
+                <EmptyState
+                  heading="No papers assigned yet"
+                  body="Your teacher hasn't set any homework for this class."
+                />
+              </div>
+            </StateCell>
+            <StateCell
+              state="default"
+              provenance="prop"
+              note="Default doodle+kicker for kind=offline: the offline doodle, kicker 'Offline'. marginalia renders above the kicker (§12)."
+            >
+              <div className="w-full">
+                <OfflineState
+                  marginalia="back in a moment"
+                  heading="You're offline"
+                  body="This panel needs a connection to load. It will pick up on its own once you're back online."
+                  action={{ label: "Try again", onClick: () => undefined }}
+                />
+              </div>
+            </StateCell>
+            <StateCell
+              state="error"
+              provenance="prop"
+              note="kicker={null} omits it entirely, for a caller that wants the doodle and heading alone"
+            >
+              <div className="w-full">
+                <ErrorState kicker={null} heading="Couldn't send this message" body="Check your connection and try again." />
+              </div>
+            </StateCell>
+            <StateCell
+              state="error"
+              provenance="prop"
+              note="Compact: a small inline slot for a single field or table cell, not a whole panel. Retry renders as an underlined text button."
+            >
+              <div className="w-full">
+                <ErrorState
+                  compact
+                  heading="Couldn't save this answer"
+                  body="Check your connection and try again."
+                  action={{ label: "Retry", onClick: () => undefined }}
+                />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="QueryState"
+            summary="Loading/error primitives PR, part A. Takes a react-query result and renders the matching skeleton, error or empty view without every screen composing that switch by hand; see student Overview.tsx for the reference conversion. The cells below use hand-built query objects rather than a live query, so every state is reachable on demand."
+          >
+            <StateCell state="loading" provenance="prop" note="Skeleton is caller-supplied, from loading-shapes.tsx">
+              <div className="w-full">
+                <QueryState<QueryStateDemoData>
+                  query={QUERY_STATE_DEMO.pending}
+                  skeleton={<PanelSkeleton />}
+                  error={{ heading: "Couldn't load the demo panel" }}
+                >
+                  {(data) => <QueryStateDemoPanel rows={data.rows} />}
+                </QueryState>
+              </div>
+            </StateCell>
+            <StateCell
+              state="error"
+              provenance="prop"
+              note="error.body omitted, so it falls back to describeQueryFailure(query.error) — here a fake 503"
+            >
+              <div className="w-full">
+                <QueryState<QueryStateDemoData>
+                  query={QUERY_STATE_DEMO.error}
+                  skeleton={<PanelSkeleton />}
+                  error={{ heading: "Couldn't load the demo panel" }}
+                >
+                  {(data) => <QueryStateDemoPanel rows={data.rows} />}
+                </QueryState>
+              </div>
+            </StateCell>
+            <StateCell
+              state="error"
+              provenance="prop"
+              note="error.secondaryAction: a second way out, for a failure a retry cannot fix. A detail route opened with a bad id retries into the same failure every time."
+            >
+              <div className="w-full">
+                <QueryState<QueryStateDemoData>
+                  query={QUERY_STATE_DEMO.error}
+                  skeleton={<PanelSkeleton />}
+                  error={{
+                    heading: "Couldn't load the demo panel",
+                    secondaryAction: { label: "Back to the list", onClick: () => {} },
+                  }}
+                >
+                  {(data) => <QueryStateDemoPanel rows={data.rows} />}
+                </QueryState>
+              </div>
+            </StateCell>
+            <StateCell
+              state="error"
+              provenance="prop"
+              note="error.compact: the inline treatment, for a failure that is one line inside a page that still works. Shown beside the full panel above for scale."
+            >
+              <div className="w-full">
+                <QueryState<QueryStateDemoData>
+                  query={QUERY_STATE_DEMO.error}
+                  skeleton={<PanelSkeleton />}
+                  error={{ heading: "Couldn't load the demo panel", compact: true }}
+                >
+                  {(data) => <QueryStateDemoPanel rows={data.rows} />}
+                </QueryState>
+              </div>
+            </StateCell>
+            <StateCell
+              state="loading"
+              provenance="prop"
+              note="An enabled: false query: status pending, fetchStatus idle. Renders the idle prop, not a skeleton that would never resolve on its own."
+            >
+              <div className="w-full">
+                <QueryState<QueryStateDemoData>
+                  query={QUERY_STATE_DEMO.idle}
+                  skeleton={<PanelSkeleton />}
+                  idle={
+                    <EmptyState
+                      heading="Pick a class to see this panel"
+                      body="This loads once a class is selected above."
+                    />
+                  }
+                  error={{ heading: "Couldn't load the demo panel" }}
+                >
+                  {(data) => <QueryStateDemoPanel rows={data.rows} />}
+                </QueryState>
+              </div>
+            </StateCell>
+            <StateCell
+              state="default"
+              provenance="prop"
+              note="isEmpty true and an empty prop supplied, so it wins over children"
+            >
+              <div className="w-full">
+                <QueryState<QueryStateDemoData>
+                  query={QUERY_STATE_DEMO.empty}
+                  skeleton={<PanelSkeleton />}
+                  error={{ heading: "Couldn't load the demo panel" }}
+                  isEmpty={(data) => data.rows.length === 0}
+                  empty={
+                    <EmptyState
+                      heading="Nothing here yet"
+                      body="Rows appear here once the demo panel has something to show."
+                    />
+                  }
+                >
+                  {(data) => <QueryStateDemoPanel rows={data.rows} />}
+                </QueryState>
+              </div>
+            </StateCell>
+            <StateCell state="success" provenance="prop">
+              <div className="w-full">
+                <QueryState<QueryStateDemoData>
+                  query={QUERY_STATE_DEMO.success}
+                  skeleton={<PanelSkeleton />}
+                  error={{ heading: "Couldn't load the demo panel" }}
+                >
+                  {(data) => <QueryStateDemoPanel rows={data.rows} />}
+                </QueryState>
               </div>
             </StateCell>
           </ComponentSection>
@@ -816,7 +1021,7 @@ function AppBody() {
             >
               <div className="relative h-16 w-full">
                 <SkipLink />
-                <span className="text-body-sm text-ink-faint">Tab into this cell</span>
+                <span className="text-body-sm text-on-surface-variant">Tab into this cell</span>
               </div>
             </StateCell>
           </ComponentSection>
@@ -881,6 +1086,220 @@ function AppBody() {
                     },
                   ]}
                 />
+              </div>
+            </StateCell>
+          </ComponentSection>
+        </Group>
+
+        {/* PR 2 part A1. Nine full-page states, one `ComponentSection` each,
+            all shown in the PORTAL frame: the standalone frame is
+            `min-h-screen` and would blow out the grid this page lays cells
+            out in. `NotFound`/`PortalNotFound` (and every future caller) pick
+            `frame="standalone"` at the real top-level routes; the frame prop
+            itself is exercised nowhere here, on purpose, since a screenshot
+            of a full viewport is not a state cell. */}
+        <Group title="Full-page states">
+          <ComponentSection
+            name="Not found"
+            summary="`not-found`. What `NotFound`/`PortalNotFound` render for a genuinely unmatched path. Amber/neutral tone throughout this family, never red (DESIGN.md's accessibility guidance)."
+          >
+            <StateCell state="default" provenance="prop">
+              <div className="w-full">
+                <FullPageState variant="not-found" frame="portal" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Crash"
+            summary="`crash`. What `NotFound` renders when `useRouteError` returns something other than a 404 Response, i.e. a render actually threw. Primary goes home, secondary reloads."
+          >
+            <StateCell state="error" provenance="prop">
+              <div className="w-full">
+                <FullPageState variant="crash" frame="portal" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Offline"
+            summary="No primary action — there is nothing to navigate to while offline — and the waiting line pulses to show the page is still listening, not stalled. `onRetry` is supplied here only so the secondary Try again control has something to render; the real caller wires it to whatever check brought the reader here."
+          >
+            <StateCell state="error" provenance="prop" note="The waiting line is role=status, polite, not alert">
+              <div className="w-full">
+                <FullPageState variant="offline" frame="portal" onRetry={() => undefined} />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="New version"
+            summary="`new-version`. A stale build caught by the chunk-load guard: reload picks up the new one and nothing typed is lost, so this is the one variant that gets straight to a single reload action with no secondary."
+          >
+            <StateCell state="default" provenance="prop">
+              <div className="w-full">
+                <FullPageState variant="new-version" frame="portal" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Session ended"
+            summary="`session-ended`. `returnTo` (omitted here) carries the reader back to where they were once they sign back in, via `/login?next=...`."
+          >
+            <StateCell state="error" provenance="prop">
+              <div className="w-full">
+                <FullPageState variant="session-ended" frame="portal" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="No access"
+            summary="`no-access`. A signed-in reader on the wrong role's route. Home is role-aware (`portalPathForRole`), so this always offers somewhere the reader can actually go, never the page they were just refused."
+          >
+            <StateCell state="error" provenance="prop">
+              <div className="w-full">
+                <FullPageState variant="no-access" frame="portal" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Service trouble"
+            summary="`service-trouble`. `health` is optional and caller-supplied (no polling happens in this component); omitted, the status row simply does not render. Both reachable statuses shown below; `unknown` renders the same row with a neutral outline-coloured dot."
+          >
+            <StateCell state="error" provenance="prop" note="health.status = 'not-responding'">
+              <div className="w-full">
+                <FullPageState
+                  variant="service-trouble"
+                  frame="portal"
+                  onRetry={() => undefined}
+                  health={{ status: "not-responding", checkedSecondsAgo: 12 }}
+                />
+              </div>
+            </StateCell>
+            <StateCell state="error" provenance="prop" note="health.status = 'responding' — the service answered, but this page still failed to load">
+              <div className="w-full">
+                <FullPageState
+                  variant="service-trouble"
+                  frame="portal"
+                  onRetry={() => undefined}
+                  health={{ status: "responding", checkedSecondsAgo: 3 }}
+                />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Too many requests"
+            summary="`too-many-requests`. `retryAfterSeconds` is caller-owned countdown state, re-rendered every second; this component only formats it and disables the retry control while it is still above zero. No timer runs inside it."
+          >
+            <StateCell state="error" provenance="prop" note="retryAfterSeconds=42 — retry disabled">
+              <div className="w-full">
+                <FullPageState
+                  variant="too-many-requests"
+                  frame="portal"
+                  retryAfterSeconds={42}
+                  onRetry={() => undefined}
+                />
+              </div>
+            </StateCell>
+            <StateCell state="error" provenance="prop" note="retryAfterSeconds=0 — retry enabled">
+              <div className="w-full">
+                <FullPageState
+                  variant="too-many-requests"
+                  frame="portal"
+                  retryAfterSeconds={0}
+                  onRetry={() => undefined}
+                />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Slow load"
+            summary="`slow-load`. Copy-only — no `DoodleKind` of its own — for a page that is taking unusually long rather than one that has actually failed. Renders the animated `Mark` (§9.2's one documented stroke-dashoffset exception) instead of a `Doodle`."
+          >
+            <StateCell state="loading" provenance="prop">
+              <div className="w-full">
+                <FullPageState variant="slow-load" frame="portal" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+        </Group>
+
+        {/* PR 2 part D. The loading tiers and the two recovery surfaces. Each
+            tier is pinned with `tierStyle` rather than waited for, since a
+            preview cell that changes on its own after five seconds is not a
+            state cell. The banner and the toasts are their presentational
+            halves: `OfflineBannerView` (no `useOnlineStatus`) and `ToastCard`
+            (no timer, no provider), fed the very copy `RecoveryEffects` fires. */}
+        <Group title="Loading and recovery">
+          <ComponentSection
+            name="Loading tiers"
+            summary="`RouteFallback`, the Suspense fallback around every portal Outlet and lazy screen. Paper only for the first 200 ms, then the layout skeleton, then after 5 s the slow-load state paints over it. Both thresholds are the `--loading-tier-skeleton` and `--loading-tier-slow` tokens; the pre-mount shell in index.html stages on the same two numbers."
+          >
+            <StateCell state="loading" provenance="prop" note="Tier 1, 0 to 200 ms: the bare surface only">
+              <div className="min-h-40 w-full" style={tierStyle(HELD, HELD)}>
+                <RouteFallback frame="content" />
+              </div>
+            </StateCell>
+            <StateCell state="loading" provenance="prop" note="Tier 2, 200 ms to 5 s: layout skeleton">
+              <div className="w-full" style={tierStyle("0s", HELD)}>
+                <RouteFallback frame="content" />
+              </div>
+            </StateCell>
+            <StateCell state="loading" provenance="prop" note="Tier 3, after 5 s: slow load">
+              <div className="w-full" style={tierStyle("0s", "0s")}>
+                <RouteFallback frame="content" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Offline banner"
+            summary="`OfflineBanner`, mounted inside every portal layout's main. A page that already has content keeps it and gets this strip above it while the browser is offline; the page refetches by itself on reconnect. Polite status, amber and neutral, never red."
+          >
+            <StateCell state="error" provenance="prop" note="OfflineBannerView, the hookless half">
+              <div className="w-full">
+                <OfflineBannerView onRetry={() => undefined} />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Verify-email banner"
+            summary="`VerifyEmailBanner`, mounted inside every portal layout's main below the offline strip. Shown only once the profile has resolved and says the address is unverified, so a pending or failed profile shows nothing rather than accusing a reader of something the app has not established. Dismissible for the session everywhere except `/student/correct`, where the dismiss control is absent and the marking button is disabled beneath it."
+          >
+            <StateCell state="error" provenance="prop" note="VerifyEmailBannerView, dismissible">
+              <div className="w-full">
+                <VerifyEmailBannerView onDismiss={() => undefined} />
+              </div>
+            </StateCell>
+            <StateCell
+              state="error"
+              provenance="prop"
+              note="VerifyEmailBannerView, pinned on /student/correct"
+            >
+              <div className="w-full">
+                <VerifyEmailBannerView />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Recovery toasts"
+            summary="The two announcements `RecoveryEffects` fires: on the offline-to-online transition after every errored query refetches, and once on the first render after the stale-chunk guard reloaded the page for a new build. Rendered here as `ToastCard`, the toast's markup without its auto-dismiss clock."
+          >
+            <StateCell state="success" provenance="prop" note="After a reconnect">
+              <div className="flex w-full max-w-sm flex-col gap-2">
+                <ToastCard {...RECONNECTED_TOAST} onDismiss={() => undefined} />
+              </div>
+            </StateCell>
+            <StateCell state="default" provenance="prop" note="After a stale-chunk reload">
+              <div className="flex w-full max-w-sm flex-col gap-2">
+                <ToastCard {...UPDATED_TOAST} onDismiss={() => undefined} />
               </div>
             </StateCell>
           </ComponentSection>

@@ -1,17 +1,20 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
+import type { ReactNode } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { GradeBadge } from "@/components/ui/grade-badge"
-import { ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import { ChartFrame } from "@/components/ui/chart-frame"
 import { LineChart } from "@/components/ui/lazy-chart"
 import { WeaknessChip, type WeaknessSeverity } from "@/components/ui/weakness-chip"
+import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
 import { relativeTime } from "@/lib/utils"
 import { useStudentDetail } from "@/lib/hooks/useTeacherApi"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { teacherLoadFailureMessage } from "@/lib/teacherOutcome"
-import type { StudentWeakness } from "@/lib/teacherTypes"
+import type { Attempt, StudentDetail as StudentDetailData, StudentWeakness } from "@/lib/teacherTypes"
 import { BackArrow } from "@/components/ui/inline-arrow"
 
 /*
@@ -38,6 +41,15 @@ import { BackArrow } from "@/components/ui/inline-arrow"
  *    and never hidden (D3.5). Display only here, same as T-03's roster — the
  *    acknowledge *action* lives on T-06.
  *  - Activity/engagement           -> `engagement`.
+ *
+ * **Shared with T-20.** The composition below `QueryState` is `StudentDetailView`,
+ * a pure extraction (T26): the tutor's student page (`TutorStudentDetail`) draws
+ * the same panels from the tutor projection of the same DTO. Everything that
+ * differs between the two audiences is a prop, never a branch on who is looking:
+ * the two teacher-only controls (`attemptAction`, `footer`) are slots the tutor
+ * page leaves empty, so for a tutor they do not exist rather than being hidden;
+ * the acknowledged tag is `showAcknowledged`; and every date goes through
+ * `dates` (the teacher gets relative times, the tutor gets calendar days).
  *
  * **Integrity signals are deliberately absent from this screen.** The spec
  * asks for them "phrased neutrally... never presented as a conclusion", but
@@ -101,17 +113,16 @@ function WeaknessRow({ weakness }: { weakness: StudentWeakness }) {
  */
 function StudentTrendPanel({
   trend,
+  dates,
 }: {
   trend: readonly { recordedAt: string; percentage: number }[]
+  dates: StudentDetailDates
 }) {
   const series = [
     {
       id: "Percentage",
       data: trend.map((p) => ({
-        x: new Date(p.recordedAt).toLocaleDateString(undefined, {
-          month: "short",
-          day: "numeric",
-        }),
+        x: dates.chartLabel(p.recordedAt),
         y: p.percentage,
       })),
     },
@@ -141,246 +152,254 @@ function StudentTrendPanel({
         ariaLabel="This student's percentage per marked paper, over time"
       />
       <div
-        className="-mx-1 max-h-[180px] overflow-y-auto border-t border-rule pt-2"
+        className="-mx-1 max-h-[180px] overflow-y-auto border-t border-outline-variant pt-2"
         tabIndex={0}
         role="region"
         aria-label="Percentage over time, scrollable"
       >
-        <table className="w-full border-collapse text-body-sm">
+        <Table density="operate">
           <caption className="sr-only">This student's percentage over time</caption>
-          <thead>
-            <tr className="text-ink-faint">
-              <th scope="col" className="px-1 py-1 text-start text-eyebrow">
-                Date
-              </th>
-              <th scope="col" className="px-1 py-1 text-end text-eyebrow">
-                Percentage
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {trend.map((p) => (
-              <tr key={p.recordedAt} className="border-t border-rule">
-                <td className="px-1 py-1 text-ink-muted">
-                  {new Date(p.recordedAt).toLocaleDateString(undefined, {
-                    year: "numeric",
-                    month: "short",
-                    day: "numeric",
-                  })}
-                </td>
-                <td className="px-1 py-1 text-end text-data-sm text-ink">
+          <THead>
+            <TR>
+              <TH>Date</TH>
+              <TH numeric>Percentage</TH>
+            </TR>
+          </THead>
+          <TBody>
+            {trend.map((p, index) => (
+              // The index keeps two papers recorded on one day apart (the tutor's
+              // dates are days, so same-day points share a `recordedAt`).
+              <TR key={`${p.recordedAt}-${index}`}>
+                <TD className="text-on-surface-variant">{dates.tableDate(p.recordedAt)}</TD>
+                <TD numeric className="text-data-sm text-on-surface">
                   {Math.round(p.percentage)}%
-                </td>
-              </tr>
+                </TD>
+              </TR>
             ))}
-          </tbody>
-        </table>
+          </TBody>
+        </Table>
       </div>
     </ChartFrame>
   )
 }
 
-export function StudentDetail() {
-  const { studentId } = useParams<{ studentId: string }>()
-  const navigate = useNavigate()
-  const detailQuery = useStudentDetail(studentId)
+/*
+ * What differs between the audiences, as data. The teacher's relative times are
+ * the original behaviour; the tutor's calendar days live in
+ * `lib/tutoring/tutorStudentView.ts` (`tutorStudentDates`).
+ */
+export interface StudentDetailDates {
+  /** The header line's activity clause: "active 3 hours ago" / "never active". */
+  activeSummary(lastActiveAt: string | null): string
+  /** The Engagement panel's "Last active" value. */
+  lastActive(lastActiveAt: string | null): string
+  /** A trend point's label on the chart axis. */
+  chartLabel(recordedAt: string): string
+  /** A trend point's date in the table under the chart. */
+  tableDate(recordedAt: string): string
+  /** The attempt table's Recorded column. */
+  recorded(recordedAt: string): string
+}
 
-  if (detailQuery.isPending) {
-    return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
-        <h1 className="sr-only">Student detail</h1>
-        <PanelSkeleton />
-        <PanelSkeleton />
-      </div>
-    )
-  }
+const teacherDates: StudentDetailDates = {
+  activeSummary: (lastActiveAt) =>
+    lastActiveAt ? `active ${relativeTime(lastActiveAt)}` : "never active",
+  lastActive: (lastActiveAt) => (lastActiveAt ? relativeTime(lastActiveAt) : "Never"),
+  chartLabel: (recordedAt) =>
+    new Date(recordedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+  tableDate: (recordedAt) =>
+    new Date(recordedAt).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    }),
+  recorded: (recordedAt) => relativeTime(recordedAt),
+}
 
-  if (detailQuery.isError) {
-    return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
-        <h1 className="sr-only">Student detail</h1>
-        <ErrorState
-          heading="Couldn't load this student"
-          body={teacherLoadFailureMessage(detailQuery.error)}
-          action={{ label: "Retry", onClick: () => detailQuery.refetch() }}
-          secondaryAction={{ label: "Go back", onClick: () => navigate(-1) }}
-        />
-      </div>
-    )
-  }
+export interface StudentDetailViewProps {
+  student: StudentDetailData
+  dates: StudentDetailDates
+  /** The way out: the teacher's history-back button, the tutor's link to T-19. */
+  back: ReactNode
+  /** Drawn under the heading, before the panels (the tutor's consent line). */
+  intro?: ReactNode
+  /**
+   * The control at the end of an attempt row. Absent means the table has no
+   * actions column at all: there is no drill-down to offer.
+   */
+  attemptAction?: (attempt: Attempt) => ReactNode
+  /** Controls after the last panel (the teacher's Assign practice). */
+  footer?: ReactNode
+  /** Tag a flag a teacher has acknowledged. Teachers only; default true. */
+  showAcknowledged?: boolean
+}
 
-  const student = detailQuery.data
-
+/**
+ * The T-05 composition for one `StudentDetailDTO`: header, at-risk flags,
+ * subjects, trend, engagement, weaknesses and the attempt history. Returns a
+ * fragment: the caller supplies the column it sits in.
+ */
+export function StudentDetailView({
+  student,
+  dates,
+  back,
+  intro,
+  attemptAction,
+  footer,
+  showAcknowledged = true,
+}: StudentDetailViewProps) {
   return (
-    <div className="lm-screen flex flex-col gap-8 min-w-0">
-      <div className="flex flex-col gap-1">
-        <button
-          type="button"
-          onClick={() => navigate(-1)}
-          className="text-body-sm text-ink-faint transition-colors hover:text-ink w-fit bg-transparent border-0 p-0 cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-        >
-          <BackArrow /> Back
-        </button>
-        <div className="flex items-start gap-4 flex-wrap gap-y-2 mt-1">
-          <div className="min-w-0">
-            <h1 className="text-display-md mt-1.5 text-pretty">
-              {student.displayName}
-            </h1>
-            <div className="text-body-sm text-ink-muted mt-1">
-              {student.engagement.totalPapers} paper
-              {student.engagement.totalPapers === 1 ? "" : "s"} recorded ·{" "}
-              {student.engagement.lastActiveAt
-                ? `active ${relativeTime(student.engagement.lastActiveAt)}`
-                : "never active"}
-            </div>
-          </div>
-          <div className="flex-1" />
-          {student.isAtRisk ? (
-            <Chip tone="err">At risk</Chip>
-          ) : (
-            <Chip tone="ok">Not currently flagged</Chip>
-          )}
-        </div>
-      </div>
-
-      {/* At-risk status and reason */}
-      {student.atRiskFlags.length > 0 ? (
-        <section className="flex flex-col gap-3">
-          <div className="text-display-sm">At-risk flags</div>
-          <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-3">
-            {student.atRiskFlags.map((f) => (
-              <div key={f.reason} className="flex items-start gap-2.5 text-body-md text-ink-muted leading-[1.5]">
-                <span
-                  aria-hidden="true"
-                  className="text-err mt-[6px] w-[6px] h-[6px] rounded-full bg-err flex-none"
-                />
-                <span className="flex-1 text-pretty">{f.summary}</span>
-                {f.acknowledged ? (
-                  <Chip tone="neutral" className="flex-none">
-                    Acknowledged
-                  </Chip>
-                ) : null}
+    <>
+        <div className="flex flex-col gap-1">
+          {back}
+          <div className="flex items-start gap-4 flex-wrap gap-y-2 mt-1">
+            <div className="min-w-0">
+              <h1 className="text-display-md mt-1.5 text-pretty">
+                {student.displayName}
+              </h1>
+              <div className="text-body-sm text-on-surface-variant mt-1">
+                {student.engagement.totalPapers} paper
+                {student.engagement.totalPapers === 1 ? "" : "s"} recorded ·{" "}
+                {dates.activeSummary(student.engagement.lastActiveAt)}
               </div>
-            ))}
+            </div>
+            <div className="flex-1" />
+            {student.isAtRisk ? (
+              <Chip tone="err">At risk</Chip>
+            ) : (
+              <Chip tone="ok">Not currently flagged</Chip>
+            )}
           </div>
-        </section>
-      ) : null}
+        </div>
 
-      {/* Subjects and predicted grades */}
-      <section className="flex flex-col gap-3">
-        <div className="text-display-sm">Subjects</div>
-        {student.subjects.length === 0 ? (
-          <div className="text-body-md text-ink-muted">No subjects recorded yet.</div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-            {student.subjects.map((s) => (
-              <div
-                key={s.subjectCode}
-                className="bg-paper-raised border border-rule rounded-lg p-[18px] flex items-center gap-4"
-              >
-                <GradeBadge grade={s.predictedGrade} size="medium" basis="predicted" />
-                <div className="min-w-0">
-                  <div className="text-eyebrow text-ink-faint">
-                    {s.subjectCode}
-                  </div>
-                  <div className="text-body-md text-ink-muted mt-1">
-                    {subjectPercent(s.latestPercentage)} latest · {s.paperCount} paper
-                    {s.paperCount === 1 ? "" : "s"}
+        {intro}
+
+        {/* At-risk status and reason */}
+        {student.atRiskFlags.length > 0 ? (
+          <section className="flex flex-col gap-3">
+            <div className="text-display-sm">At-risk flags</div>
+            <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px] flex flex-col gap-3">
+              {student.atRiskFlags.map((f) => (
+                <div key={f.reason} className="flex items-start gap-2.5 text-body-md text-on-surface-variant leading-[1.5]">
+                  <span
+                    aria-hidden="true"
+                    className="text-error mt-[6px] w-[6px] h-[6px] rounded-full bg-error flex-none"
+                  />
+                  <span className="flex-1 text-pretty">{f.summary}</span>
+                  {showAcknowledged && f.acknowledged ? (
+                    <Chip tone="neutral" className="flex-none">
+                      Acknowledged
+                    </Chip>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {/* Subjects and predicted grades */}
+        <section className="flex flex-col gap-3">
+          <div className="text-display-sm">Subjects</div>
+          {student.subjects.length === 0 ? (
+            <div className="text-body-md text-on-surface-variant">No subjects recorded yet.</div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+              {student.subjects.map((s) => (
+                <div
+                  key={s.subjectCode}
+                  className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px] flex items-center gap-4"
+                >
+                  <GradeBadge grade={s.predictedGrade} size="medium" basis="predicted" />
+                  <div className="min-w-0">
+                    <div className="text-eyebrow text-on-surface-variant">
+                      {s.subjectCode}
+                    </div>
+                    <div className="text-body-md text-on-surface-variant mt-1">
+                      {subjectPercent(s.latestPercentage)} latest · {s.paperCount} paper
+                      {s.paperCount === 1 ? "" : "s"}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 min-w-0">
-        <StudentTrendPanel trend={student.trend} />
-
-        {/* Activity / engagement */}
-        <section className="flex flex-col gap-3 min-w-0">
-          <div className="text-display-sm">Engagement</div>
-          <div className="bg-paper-raised border border-rule rounded-lg p-[18px] grid grid-cols-2 gap-4">
-            <div>
-              <div className="text-eyebrow text-ink-faint">
-                Total papers
-              </div>
-              <div className="text-display-sm mt-1">{student.engagement.totalPapers}</div>
+              ))}
             </div>
-            <div>
-              <div className="text-eyebrow text-ink-faint">
-                Last active
-              </div>
-              <div className="text-display-sm mt-1">
-                {student.engagement.lastActiveAt
-                  ? relativeTime(student.engagement.lastActiveAt)
-                  : "Never"}
-              </div>
-            </div>
-            <div>
-              <div className="text-eyebrow text-ink-faint">
-                Days since last submission
-              </div>
-              <div className="text-display-sm mt-1">
-                {student.engagement.daysSinceLastSubmission ?? "—"}
-              </div>
-            </div>
-          </div>
+          )}
         </section>
-      </div>
 
-      {/* Weakness list with evidence */}
-      <section className="flex flex-col gap-3">
-        <div className="text-display-sm">Weaknesses</div>
-        {student.weaknesses.length === 0 ? (
-          <div className="text-body-md text-ink-muted">No weakness data yet.</div>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {student.weaknesses.map((w) => (
-              <WeaknessRow key={w.topic} weakness={w} />
-            ))}
-          </div>
-        )}
-      </section>
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 min-w-0">
+          <StudentTrendPanel trend={student.trend} dates={dates} />
 
-      {/* Full attempt history */}
-      <section className="flex flex-col gap-3 min-w-0">
-        <div className="text-display-sm">Attempt history</div>
-        {student.attempts.length === 0 ? (
-          <div className="text-body-md text-ink-muted">No papers recorded yet.</div>
-        ) : (
-          <div
-            className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
-            tabIndex={0}
-            role="region"
-            aria-label="Attempt history, scrollable horizontally"
-          >
-            <table className="w-full text-body-md border-collapse">
+          {/* Activity / engagement */}
+          <section className="flex flex-col gap-3 min-w-0">
+            <div className="text-display-sm">Engagement</div>
+            <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px] grid grid-cols-2 gap-4">
+              <div>
+                <div className="text-eyebrow text-on-surface-variant">
+                  Total papers
+                </div>
+                <div className="text-display-sm mt-1">{student.engagement.totalPapers}</div>
+              </div>
+              <div>
+                <div className="text-eyebrow text-on-surface-variant">
+                  Last active
+                </div>
+                <div className="text-display-sm mt-1">
+                  {dates.lastActive(student.engagement.lastActiveAt)}
+                </div>
+              </div>
+              <div>
+                <div className="text-eyebrow text-on-surface-variant">
+                  Days since last submission
+                </div>
+                <div className="text-display-sm mt-1">
+                  {student.engagement.daysSinceLastSubmission ?? "—"}
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        {/* Weakness list with evidence */}
+        <section className="flex flex-col gap-3">
+          <div className="text-display-sm">Weaknesses</div>
+          {student.weaknesses.length === 0 ? (
+            <div className="text-body-md text-on-surface-variant">No weakness data yet.</div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {student.weaknesses.map((w) => (
+                <WeaknessRow key={w.topic} weakness={w} />
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* Full attempt history */}
+        <section className="flex flex-col gap-3 min-w-0">
+          <div className="text-display-sm">Attempt history</div>
+          {student.attempts.length === 0 ? (
+            <div className="text-body-md text-on-surface-variant">No papers recorded yet.</div>
+          ) : (
+            <Table density="operate"
+              tabIndex={0}
+              role="region"
+              aria-label="Attempt history, scrollable horizontally"
+            >
               <caption className="sr-only">Full attempt history, newest first</caption>
-              <thead>
-                <tr className="bg-paper-sunk border-b border-rule">
-                  <th scope="col" className="text-start px-4 py-2.5 text-eyebrow text-ink-faint">
-                    Paper
-                  </th>
-                  <th scope="col" className="text-end px-4 py-2.5 text-eyebrow text-ink-faint">
-                    Marks
-                  </th>
-                  <th scope="col" className="text-end px-4 py-2.5 text-eyebrow text-ink-faint">
-                    Percentage
-                  </th>
-                  <th scope="col" className="text-start px-4 py-2.5 text-eyebrow text-ink-faint">
-                    Grade
-                  </th>
-                  <th scope="col" className="text-start px-4 py-2.5 text-eyebrow text-ink-faint">
-                    Recorded
-                  </th>
-                  <th scope="col" className="px-4 py-2.5">
-                    <span className="sr-only">Actions</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {student.attempts.map((a) => (
+              <THead>
+                <TR>
+                  <TH>Paper</TH>
+                  <TH numeric>Marks</TH>
+                  <TH numeric>Percentage</TH>
+                  <TH>Grade</TH>
+                  <TH>Recorded</TH>
+                  {attemptAction ? (
+                    <TH>
+                      <span className="sr-only">Actions</span>
+                    </TH>
+                  ) : null}
+                </TR>
+              </THead>
+              <TBody>
+                {student.attempts.map((a, index) => (
                   // `AttemptDTO.paperId` is a "human paper identity"
                   // (`{subjectCode}/{paperNumber}{paperVariant}`, no session/
                   // year, no per-attempt id — see `_paper_id` in
@@ -391,58 +410,138 @@ export function StudentDetail() {
                   // produced a real duplicate-React-key console error when
                   // verified against seeded multi-attempt data. `recordedAt`
                   // (a full ISO timestamp, one per submission) disambiguates.
-                  <tr key={`${a.paperId}-${a.recordedAt}`} className="border-b border-rule last:border-b-0">
-                    <td className="px-4 py-2.5 text-data-sm whitespace-nowrap">
+                  // The index also keeps two attempts of one paper on one day
+                  // apart where `recordedAt` is a calendar day (the tutor's
+                  // projection, T-20).
+                  <TR key={`${a.paperId}-${a.recordedAt}-${index}`}>
+                    <TD className="whitespace-nowrap text-data-sm">
                       {a.subjectCode} · Paper {a.paperNumber} Variant {a.paperVariant}
-                    </td>
-                    <td className="px-4 py-2.5 text-end text-data-sm">
+                    </TD>
+                    <TD numeric className="text-data-sm">
                       {a.awardedMarks}/{a.maximumMarks}
-                    </td>
-                    <td className="px-4 py-2.5 text-end text-data-sm">
+                    </TD>
+                    <TD numeric className="text-data-sm">
                       {Math.round(a.percentage)}%
-                    </td>
-                    <td className="px-4 py-2.5">
+                    </TD>
+                    <TD>
                       <GradeBadge grade={a.grade} size="inline" basis="achieved" />
-                    </td>
-                    <td className="px-4 py-2.5 text-ink-muted whitespace-nowrap">
-                      {relativeTime(a.recordedAt)}
-                    </td>
-                    <td className="px-4 py-2.5 text-end whitespace-nowrap">
-                      <div className="inline-flex items-center gap-2">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled
-                          aria-disabled="true"
-                          title="Remarking a specific attempt lands with the review-queue remark tool (T-08)"
-                        >
-                          View / remark
-                        </Button>
-                        <Chip tone="neutral">Coming soon</Chip>
-                      </div>
-                    </td>
-                  </tr>
+                    </TD>
+                    <TD className="whitespace-nowrap text-on-surface-variant">
+                      {dates.recorded(a.recordedAt)}
+                    </TD>
+                    {attemptAction ? (
+                      <TD className="whitespace-nowrap text-end">
+                        <div className="inline-flex items-center gap-2">{attemptAction(a)}</div>
+                      </TD>
+                    ) : null}
+                  </TR>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+              </TBody>
+            </Table>
+          )}
+        </section>
 
-      {/* Actions the spec names but that have no route yet */}
-      <section className="flex flex-wrap items-center gap-4">
-        <div className="flex items-center gap-2">
-          <Button
-            variant="secondary"
-            disabled
-            aria-disabled="true"
-            title="Practice assignment lands in a later phase (P4)"
-          >
-            Assign practice
-          </Button>
-          <Chip tone="neutral">Coming soon</Chip>
-        </div>
-      </section>
+        {footer}
+    </>
+  )
+}
+
+function BackButton() {
+  const navigate = useNavigate()
+  return (
+    <button
+      type="button"
+      onClick={() => navigate(-1)}
+      className="text-body-sm text-on-surface-variant transition-colors hover:text-on-surface w-fit bg-transparent border-0 p-0 cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+    >
+      <BackArrow /> Back
+    </button>
+  )
+}
+
+/** The attempt row's disabled remark control (T-08 has no route yet). */
+function teacherAttemptAction() {
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled
+        aria-disabled="true"
+        title="Remarking a specific attempt lands with the review-queue remark tool (T-08)"
+      >
+        View / remark
+      </Button>
+      <Chip tone="neutral">Coming soon</Chip>
+    </>
+  )
+}
+
+/** Actions the spec names but that have no route yet. */
+const teacherFooter = (
+  <section className="flex flex-wrap items-center gap-4">
+    <div className="flex items-center gap-2">
+      <Button
+        variant="secondary"
+        disabled
+        aria-disabled="true"
+        title="Practice assignment lands in a later phase (P4)"
+      >
+        Assign practice
+      </Button>
+      <Chip tone="neutral">Coming soon</Chip>
+    </div>
+  </section>
+)
+
+export function StudentDetail() {
+  const { studentId } = useParams<{ studentId: string }>()
+  const navigate = useNavigate()
+  const detailQuery = useStudentDetail(studentId)
+
+  return (
+    <div className="flex flex-col gap-8 min-w-0">
+      <QueryState
+        query={detailQuery}
+        srHeading="Student detail"
+        skeleton={
+          <>
+            <PanelSkeleton />
+            <PanelSkeleton />
+          </>
+        }
+        // `useStudentDetail` disables its query when `studentId` is falsy
+        // (`enabled: !!studentId`) — same shape as `ClassDetail.tsx`'s
+        // `useClassDetail`, see that file's comment on `idle` for why a
+        // defensive branch is still required even though the route this
+        // screen mounts under always supplies `:studentId`.
+        idle={
+          <EmptyState
+            heading="No student selected"
+            body="Choose a student from a class roster or the at-risk list to see their detail."
+            action={{ label: "Go back", onClick: () => navigate(-1) }}
+          />
+        }
+        // Same reasoning as `ClassDetail.tsx`: a detail route reached with a
+        // bad or stale student id retries into the same failure every time,
+        // so "Try again" on its own is a dead end. `secondaryAction` was
+        // added to `QueryStateErrorProps` by this sweep for this pair.
+        error={{
+          heading: "Couldn't load this student",
+          body: teacherLoadFailureMessage,
+          secondaryAction: { label: "Go back", onClick: () => navigate(-1) },
+        }}
+      >
+        {(student) => (
+          <StudentDetailView
+            student={student}
+            dates={teacherDates}
+            back={<BackButton />}
+            attemptAction={teacherAttemptAction}
+            footer={teacherFooter}
+          />
+        )}
+      </QueryState>
     </div>
   )
 }

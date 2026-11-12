@@ -118,3 +118,28 @@ export function classInviteCodeFailureMessage(err: unknown): string {
   }
   return teacherMutationFailureMessage(err)
 }
+
+/**
+ * Unshare/reshare a paper failed (`POST`/`DELETE
+ * /classes/{classId}/papers/{attemptId}/unshare`, Task 17 controller
+ * addition on Task 13's routes).
+ *
+ * Same override as `classInviteCodeFailureMessage`, and for the same
+ * underlying reason: the 403 here comes from `ClassService.get_class`'s own
+ * ownership check, reused as-is by `_unshare_target`
+ * (`lemely/web/routers/classes.py`) — `"Caller does not own/administer
+ * class <uuid>"`, a raw id in machine text, never written for a teacher to
+ * read. A 404 is `"Unknown paper"` (`ExclusionTargetNotFoundError`), which
+ * is not itself unsafe to show, but by the time this screen's button exists
+ * the paper was already loaded from the same `GET /classes/{classId}/papers`
+ * response, so either status means the class or the paper changed under the
+ * teacher between load and click — the same race the invite-code sibling
+ * names for its own two statuses.
+ */
+export function classPaperActionFailureMessage(err: unknown): string {
+  const status = err instanceof ApiError ? err.status : null
+  if (status === 404 || status === 403) {
+    return "This class or paper is no longer available to you. Reload and try again."
+  }
+  return teacherMutationFailureMessage(err)
+}

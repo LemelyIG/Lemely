@@ -1,0 +1,173 @@
+@import '@fontsource-variable/caveat'; /* handwriting, marketing paper artifacts only */
+
+/*
+ * Marketing tokens. Every colour here is a reference to a Material 3 role (or a
+ * grade / Binny token) from index.css, the one source of colour. The marketing
+ * page therefore follows the role set and the light/dark scheme with no values
+ * of its own. Nothing in this file is a Tailwind @theme override: the global
+ * utilities (bg-primary, text-on-surface, ...) are owned by index.css.
+ */
+
+.marketing-brand {
+  --brand-art-1: color-mix(in oklch, var(--md-primary-container) 50%, var(--md-inverse-primary));
+  --brand-art-2: var(--md-primary-container);
+  --brand-art-3: var(--md-on-surface-variant);
+  --brand-art-4: var(--md-surface-container-highest);
+  --brand-art-5: var(--md-primary);
+  --brand-art-6: var(--md-surface-container-lowest);
+  /* Grade chips C and B carry white letters in the hero chart and walkthrough:
+     darkened from the grade role so the letter holds 4.5:1. */
+  --brand-art-7: color-mix(in oklch, var(--grade-c) 89%, black);
+  --brand-art-8: color-mix(in oklch, var(--grade-b) 95%, black);
+  --brand-art-9: var(--grade-a);
+  --brand-art-10: var(--grade-a-star);
+  --brand-art-11: var(--md-tertiary);
+  --brand-art-12: var(--md-inverse-primary);
+  --brand-art-13: color-mix(in oklch, var(--md-tertiary) 70%, var(--grade-d));
+  --brand-art-14: var(--md-outline);
+  --brand-art-15: var(--md-outline);
+  --brand-art-16: var(--binny-steel);
+  --brand-art-17: color-mix(in oklch, var(--md-primary) 65%, black);
+  --brand-art-18: var(--binny-cheek);
+  --brand-art-19: var(--md-on-surface);
+  --brand-art-20: var(--md-surface-container-high);
+  --brand-art-21: var(--md-scrim);
+  --brand-art-22: color-mix(in oklch, var(--md-primary) 75%, var(--md-on-surface));
+  --brand-art-23: var(--md-error);
+  --brand-art-24: var(--md-error-container);
+  --brand-art-25: color-mix(in oklch, var(--md-error) 80%, var(--md-on-error-container));
+  --brand-art-26: var(--md-surface-container-high);
+  --brand-art-27: var(--md-success);
+  --brand-art-28: var(--md-tertiary-container);
+  --brand-art-29: var(--md-on-tertiary-container);
+  --brand-art-30: color-mix(in oklch, var(--md-on-success-container) 50%, transparent);
+  --brand-art-31: color-mix(in oklch, var(--md-error) 75%, var(--md-on-error-container));
+  --brand-art-32: var(--md-primary-container);
+  --brand-art-33: var(--md-outline);
+  --brand-art-34: var(--grade-e);
+  --brand-art-35: var(--grade-d);
+  --brand-art-36: var(--md-surface-container-highest);
+  /* Weak-topic cluster tiles: a cluster is a grouping, not a loss, so it sits on
+     secondary-container; only the lost-mark chips inside carry the error role. */
+  --brand-art-37: var(--md-secondary-container);
+  --brand-art-38: var(--md-on-secondary-container);
+  --brand-art-39: var(--md-error);
+  --brand-abyss: var(--md-primary);
+  --brand-abyss-hover: var(--md-primary-hover);
+  --brand-tide: var(--md-inverse-primary);
+  --brand-ink: var(--md-on-surface);
+  --brand-white: var(--md-on-primary);
+  --brand-paper: var(--md-surface);
+  --brand-subtle: var(--md-surface-container-low);
+  --brand-wash: var(--md-primary-container);
+  --brand-border: var(--md-outline);
+  --brand-muted: var(--md-on-surface-variant);
+  --brand-night: var(--md-inverse-surface);
+  --brand-night-panel: color-mix(in oklch, var(--md-inverse-surface) 88%, var(--md-inverse-on-surface));
+  --brand-night-rule: color-mix(in oklch, var(--md-inverse-surface) 72%, var(--md-inverse-on-surface));
+  --brand-night-muted: var(--md-inverse-on-surface);
+  --brand-gold: var(--md-tertiary);
+  --brand-ok: var(--md-success-text);
+  --brand-error: var(--md-error);
+  --brand-shadow: 0 32px 70px -40px color-mix(in oklch, var(--md-shadow) 40%, transparent);
+  /* Landing page reference fidelity (decks, walkthrough, FAQ composer, closing). */
+  --brand-sent-badge: var(--brand-art-27);
+  --brand-wk-flag-bg: var(--md-tertiary-container);
+  --brand-wk-flag-ink: var(--md-on-tertiary-container);
+  --brand-wk-row-on: var(--md-surface-container-low);
+  --brand-wk-scan-glow: color-mix(in oklch, var(--md-inverse-primary) 60%, transparent);
+  --brand-wk-paper-shadow: 0 30px 50px -30px color-mix(in oklch, var(--md-shadow) 45%, transparent), 0 0 0 1px var(--md-outline-variant);
+  --brand-wk-ok: var(--md-success-text);
+  --brand-wk-bad: var(--md-error);
+  /* Fill of a primary button that cannot act yet (FAQ Send until both fields are valid). */
+  --brand-idle-control: var(--md-outline);
+  --brand-typing-dot: var(--md-outline);
+  --brand-stage: var(--md-surface-container);
+  --brand-lead: var(--md-on-surface-variant);
+  --brand-hint: var(--md-on-surface-variant);
+  --brand-nav-link: var(--md-on-surface);
+  --brand-line: var(--md-outline-variant);
+  --brand-ring: var(--md-outline-variant);
+  --brand-rule-soft: var(--md-outline-variant);
+  --brand-rule-input: color-mix(in oklch, var(--md-outline-variant) 70%, var(--md-outline));
+  --brand-night-body: var(--md-inverse-on-surface);
+  --brand-night-card: var(--brand-night-panel);
+  --brand-night-ring: var(--brand-night-rule);
+  --brand-night-dot: color-mix(in oklch, var(--md-inverse-surface) 60%, var(--md-inverse-on-surface));
+  --brand-core-art: var(--brand-art-22);
+  --brand-closing-text: var(--md-inverse-on-surface);
+  --brand-closing-ring: var(--md-outline);
+  /* Secondary (outline) action: a ring and label that clear 3:1 and 4.5:1 on the page in both themes. */
+  --brand-secondary-ring: var(--md-primary);
+  --brand-secondary-fg: var(--brand-abyss);
+  --brand-gold-pulse: color-mix(in oklch, var(--md-tertiary) 50%, transparent);
+  --brand-gold-pulse-off: color-mix(in oklch, var(--md-tertiary) 0%, transparent);
+  --brand-chart-shadow: 0 40px 80px -40px color-mix(in oklch, var(--md-shadow) 45%, transparent), 0 0 0 1px var(--md-outline-variant);
+  --brand-hover-lift: 0 22px 40px -26px color-mix(in oklch, var(--md-shadow) 40%, transparent);
+  --brand-panel-shadow: 0 30px 60px -40px color-mix(in oklch, var(--md-shadow) 45%, transparent), 0 0 0 1px var(--md-outline-variant);
+  --brand-upload-shadow: color-mix(in oklch, var(--md-shadow) 65%, transparent);
+  --brand-metric-drop: color-mix(in oklch, var(--md-shadow) 60%, transparent);
+  --brand-display: 'Bricolage Grotesque Variable', sans-serif;
+  --brand-body: 'Schibsted Grotesk Variable', sans-serif;
+  --brand-mono: 'JetBrains Mono Variable', monospace;
+  /* Student working only: the pen on the paper artifact. Examiner marks stay in --brand-body. */
+  --brand-hand: 'Caveat Variable', cursive;
+  --background: var(--md-surface);
+  --foreground: var(--md-on-surface);
+  --primary: var(--md-primary);
+  --primary-foreground: var(--md-on-primary);
+  --secondary-foreground: var(--md-on-secondary-container);
+  --muted: var(--md-surface-container-low);
+  --muted-foreground: var(--md-on-surface-variant);
+  --ring: var(--md-primary);
+  --border: var(--md-outline-variant);
+  --font-sans: var(--brand-body);
+  font-family: var(--brand-body);
+  color: var(--md-on-surface);
+  background: var(--md-surface);
+}
+
+/*
+ * Dark theme (a signed-in user's choice; anonymous visitors are always light, see
+ * `lib/theme/theme.ts`). The roles flip on their own: this file only holds what a flip cannot
+ * fix. Light is untouched, so every rule here is scoped to `data-theme="dark"`.
+ */
+/* "Coming soon" tag: the gold fill stays light in dark, so its label must be the dark on-tertiary role. */
+:root[data-theme="dark"] .marketing-brand .brand-coming { color: var(--md-on-tertiary); }
+/* The "+120 XP" label sits on the Abyss tile in dark as well; the grade-D orange is too dim there, so it borrows the gold of the XP bar beside it. Roles only: no colour literals in this file. */
+:root[data-theme="dark"] .marketing-brand [data-art-scene="xp"] { --brand-art-35: var(--brand-art-13); }
+
+/*
+ * The two bands that are dark in light mode ("Marked like an examiner" and the teachers band) and
+ * the closing band must stay dark in dark mode, one surface step apart from the page, not flip to a
+ * light fill. The inverse roles that normally colour them turn light in dark, so the band-local
+ * tokens are re-pointed at the dark surface ladder. Everything inside reads these tokens, so cards,
+ * rules, the accuracy panel, the metric stack and the dot grid follow.
+ */
+:root[data-theme="dark"] .marketing-brand :is(.brand-proof, .brand-teachers) {
+  --brand-night: var(--md-surface-container);
+  --brand-night-panel: var(--md-surface-container-high);
+  --brand-night-card: var(--md-surface-container-high);
+  --brand-night-rule: var(--md-outline-variant);
+  --brand-night-ring: var(--md-outline-variant);
+  --brand-night-dot: var(--md-outline);
+  --brand-night-muted: var(--md-on-surface-variant);
+  --brand-night-body: var(--md-on-surface-variant);
+  --brand-white: var(--md-on-surface);
+  --brand-tide: var(--md-primary);
+}
+/* Closing band: the Abyss container (deep navy), with Tide as its accent. */
+:root[data-theme="dark"] .marketing-brand {
+  --brand-secondary-ring: var(--md-primary);
+  --brand-secondary-fg: var(--md-on-primary-container);
+}
+:root[data-theme="dark"] .marketing-brand .brand-closing {
+  background: var(--md-primary-container);
+  --brand-white: var(--md-on-surface);
+  --brand-tide: var(--md-primary);
+  --brand-night-muted: var(--md-on-primary-container);
+  --brand-closing-text: var(--md-on-primary-container);
+  --brand-closing-ring: var(--md-primary);
+}
+:root[data-theme="dark"] .marketing-brand .brand-closing .brand-actions :is(a, button):first-child { color: var(--md-on-primary); }
+:root[data-theme="dark"] .marketing-brand .brand-closing-bubble { color: var(--md-on-primary); }

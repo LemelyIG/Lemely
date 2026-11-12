@@ -74,7 +74,16 @@ export interface PracticeExport {
 
 /** One marked question's outcome. `confidenceBand`/`confidenceScore` are
  * non-nullable by construction — every displayed mark carries its
- * confidence. No model-answer field exists here either. */
+ * confidence. No model-answer field exists here either.
+ *
+ * `markerSource`/`needsTeacherReview` mirror `QuestionResultDTO`'s fields
+ * (`types.ts`) — a genuine blank (`confidenceBand: "low"`,
+ * `needsTeacherReview: false`, `markerSource: "blank"`) must be told apart
+ * from a real low-confidence mark. Since task #36 the blank has its own
+ * `markerSource` value, so it no longer shares one with a flagged extraction
+ * failure and `needsTeacherReview` is no longer load-bearing for that
+ * distinction; it stays because it is the marker's own flag. See
+ * `practiceData.ts::confidenceBandTier`. */
 export interface PracticeResultQuestion {
   questionRef: string
   position: number
@@ -83,6 +92,8 @@ export interface PracticeResultQuestion {
   awardedMarks: number
   confidenceBand: string
   confidenceScore: number
+  markerSource: string
+  needsTeacherReview: boolean
 }
 
 /**
@@ -107,11 +118,15 @@ export interface PracticeResult {
  * sits under. The bank mixes taxonomy levels — a broad group
  * ("1 Motion, forces and energy") and a narrower one ("1.2 Motion") can come
  * back as peers with disjoint rows, so `syllabusGroup` is what S-20 nests
- * on, never a flat list. */
+ * on, never a flat list. `marksLost` (Task 8 C3c) is the caller's own net
+ * lost marks on this topic across every attempt — 0 when there's no
+ * recorded loss; the screen omits the stat entirely rather than rendering
+ * "0 marks lost" as decoration. */
 export interface PracticeTopicCount {
   topic: string
   availableCount: number
   syllabusGroup: string
+  marksLost: number
 }
 
 /**

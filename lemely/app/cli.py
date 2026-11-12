@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from lemely.runtime.config import Settings
 
 import click
@@ -36,7 +38,7 @@ from lemely.core.schemas import (
     WeaknessReport,
 )
 from lemely.io.mark_schemes import index_source_library, process_mark_scheme_batch
-from lemely.runtime.errors import LemelyError, ParseError
+from lemely.runtime.errors import ExternalServiceError, LemelyError, ParseError
 from lemely.runtime.logging import configure_logging
 
 
@@ -197,6 +199,48 @@ def estimate_cost_cmd(ctx: click.Context, source_root: str) -> None:
     _print_result(ctx, _estimate_cost(source_root))
 
 
+@cli.command("push-keygen")
+@click.option(
+    "--subject",
+    default="mailto:support@lemelyig.com",
+    show_default=True,
+    help="RFC 8292 contact for whoever operates this server (mailto: or https:).",
+)
+@click.pass_context
+def push_keygen_cmd(ctx: click.Context, subject: str) -> None:
+    """Generate a VAPID keypair for web push. Prints; writes nothing.
+
+    A flat command like ``estimate-cost``, not a subgroup. See
+    docs/push-notifications.md for where the two halves go and what rotating
+    them costs.
+    """
+    from lemely.runtime.vapid import generate_vapid_keypair, render_push_toml
+
+    pair = generate_vapid_keypair()
+    block = render_push_toml(pair, subject)
+    payload = {
+        "vapid_public_key": pair.public_key,
+        "vapid_private_key": pair.private_key,
+        "vapid_subject": subject,
+        "toml": block,
+    }
+    if ctx.obj.get("json_output", False):
+        _dump_json(payload)
+        return
+    click.echo("VAPID public key (65-byte uncompressed P-256 point, base64url):")
+    click.echo(f"  {pair.public_key}")
+    click.echo("VAPID private key (32-byte scalar, base64url) - a secret:")
+    click.echo(f"  {pair.private_key}")
+    click.echo("")
+    click.echo("Paste into lemely.toml (gitignored), or export the three LEMELY_PUSH__* vars:")
+    click.echo(block.rstrip("\n"))
+    click.echo("")
+    click.echo(
+        "Rotating this pair invalidates every stored subscription: the public key is "
+        "baked into each one, so every browser must re-subscribe. See docs/push-notifications.md."
+    )
+
+
 @cli.command("parse-mark-schemes")
 @click.argument("source_root", type=click.Path(exists=True, file_okay=False))
 @click.option("--output-root", type=click.Path(file_okay=False), default=None)
@@ -272,6 +316,14 @@ def parse_mark_schemes_cmd(
 @click.option(
     "--record", is_flag=True, help="Append result to student history (requires --student-id)."
 )
+@click.option(
+    "--scan",
+    "scan",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="The scan the answers were read from; its pages go to adjudication when "
+    "gemini.adjudication_model is set.",
+)
 @click.pass_context
 def correct_paper_cmd(
     ctx: click.Context,
@@ -281,12 +333,14 @@ def correct_paper_cmd(
     on_error: str,
     student_id: str | None,
     record: bool,
+    scan: str | None,
 ) -> None:
     import json as _json
 
     from lemely.core.loose_schemas import MarkScheme
     from lemely.io.correction_ai import correct_paper as hybrid_correct_paper
-    from lemely.io.gemini import GeminiClient
+    from lemely.io.gemini import GeminiClient, script_cost_scope
+    from lemely.runtime.config import log_marking_flags
 
     ms = MarkScheme.model_validate(_load_json_file(mark_scheme))
 
@@ -307,14 +361,21 @@ def correct_paper_cmd(
             extracted = parse_answer_input(payload)
 
     settings = _get_settings(ctx)
+    marking_options = settings.grading.marking_options()
+    log_marking_flags(marking_options)
     client = None if mcq_only else GeminiClient(settings)
 
-    correction = hybrid_correct_paper(
-        mark_scheme=ms,
-        extracted_answers=extracted,  # type: ignore[arg-type]
-        gemini_client=client,
-        mcq_only=mcq_only,
-    )
+    from lemely.io.adjudication import adjudication_pages
+
+    with script_cost_scope(settings, script_key=f"cli:{Path(mark_scheme).stem}"):
+        correction = hybrid_correct_paper(
+            mark_scheme=ms,
+            extracted_answers=extracted,  # type: ignore[arg-type]
+            gemini_client=client,
+            mcq_only=mcq_only,
+            options=marking_options,
+            pages=adjudication_pages(client, Path(scan) if scan else None),
+        )
     from lemely.io.grade_boundaries import GradeBoundaryStore
 
     store = GradeBoundaryStore()
@@ -330,6 +391,13 @@ def correct_paper_cmd(
     if record:
         if not student_id:
             raise click.UsageError("--student-id is required when --record is set.")
+        from lemely.core.binding_review import binding_blocks_publication
+
+        if correction.binding is not None and binding_blocks_publication(correction.binding):
+            raise click.ClickException(
+                f"not recorded: the binding check ended at {correction.binding.verdict}, so some "
+                "answers may sit on the wrong questions; run without --record to see the result"
+            )
         import datetime
 
         from lemely.core.history import PaperRecord
@@ -438,7 +506,7 @@ def version_cmd(ctx: click.Context) -> None:
 @click.option("--no-network", is_flag=True, help="Skip the live Gemini ping.")
 @click.pass_context
 def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
-    from lemely.runtime.config import load_settings
+    from lemely.runtime.config import find_removed_config_keys, load_settings
     from lemely.runtime.errors import ConfigError
 
     checks: list[dict[str, object]] = []
@@ -446,19 +514,181 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     def record(name: str, ok: bool, detail: str = "") -> None:
         checks.append({"name": name, "ok": ok, "detail": detail})
 
-    try:
-        settings = load_settings(
-            toml_path=Path(ctx.obj["config_path"]) if ctx.obj.get("config_path") else None
+    config_path = Path(ctx.obj["config_path"]) if ctx.obj.get("config_path") else None
+
+    # F4 removed two now-orphaned config knobs along with the
+    # AI-generated-answer detector they gated (see
+    # lemely.runtime.config._REMOVED_CONFIG_KEYS for the exact names).
+    # `load_settings` below silently drops either one if still set — via
+    # lemely.toml, .env or an env var, the same outcome each way — so a stale
+    # config keeps working. This check is what actually tells a developer
+    # their config still names a removed key, since nothing else would.
+    removed_keys = find_removed_config_keys(toml_path=config_path)
+    if removed_keys:
+        record(
+            "no_removed_config_keys",
+            False,
+            "lemely.toml, .env or the environment sets removed key(s): "
+            + ", ".join(removed_keys)
+            + " — the AI-generated-answer detector was removed (F4); delete these",
         )
+    else:
+        record("no_removed_config_keys", True)
+
+    try:
+        settings = load_settings(toml_path=config_path)
         record("config_loads", True)
     except Exception as exc:
         record("config_loads", False, str(exc))
         _print_result(ctx, {"all_passed": False, "checks": checks})
         raise click.exceptions.Exit(ConfigError.exit_code) from exc
 
-    # Accept GEMINI_API_KEY (standard) or LEMELY_GEMINI_API_KEY (prefixed).
+    # Tutoring booking email: a mock provider is a warning, never a failure, so
+    # dev and CI keep a passing doctor (`ok=True`; the line carries the warning).
+    from lemely.web.tutoring_email import doctor_lines
+
+    for line in doctor_lines(settings):
+        record("tutoring_email", True, line)
+
+    # F1 (Gemini 3.x migration): surface what model_for() actually resolves to
+    # per task tag, so a config mistake (e.g. escalation falling back to the
+    # global 2.5 model) is visible without reading lemely.toml by hand.
+    # The table also lists the cascade's own strong model and the binding step's
+    # models (the label binder's reads, or the gated legacy binder's one retry),
+    # which are named directly rather than through model_for(), so the pricing
+    # and key checks below cover every model a run can call. The web startup
+    # check reads the same table.
+    from lemely.io.binding.orchestrate import binding_status
+    from lemely.io.model_table import configured_models as configured_models_for
+
+    configured_models = configured_models_for(settings)
+    model_table = ", ".join(f"{tag}={model}" for tag, model in configured_models.items())
+    if "escalation" not in configured_models:
+        model_table += ", escalation=(off)"
+    record("gemini_model_table", True, detail=model_table)
+
+    # Sub-project C: the Gemini key is needed only when some task tag resolves to a gemini-
+    # model (every tag defaults to claude- now). Accept GEMINI_API_KEY (standard) or
+    # LEMELY_GEMINI_API_KEY (prefixed).
+    gemini_tags = [t for t, m in configured_models.items() if m.startswith("gemini-")]
     has_key = bool((settings.gemini_api_key is not None) or os.environ.get("GEMINI_API_KEY"))
-    record("gemini_api_key", has_key)
+    record(
+        "gemini_api_key",
+        has_key or not gemini_tags,
+        detail=(
+            ""
+            if has_key or not gemini_tags
+            else "no GEMINI_API_KEY set but task tag(s) "
+            + ", ".join(f"{t}={configured_models[t]}" for t in gemini_tags)
+            + " use a gemini- model"
+        ),
+    )
+
+    # Cost-ladder A1: a claude- model configured for any task tag needs
+    # ANTHROPIC_API_KEY, or every call to it fails at first use, so this is
+    # fatal (not advisory) whenever any tag in the table resolves to one.
+    from lemely.runtime.config import anthropic_key_missing_tags
+
+    claude_tags = anthropic_key_missing_tags(settings, configured_models)
+    record(
+        "anthropic_api_key",
+        not claude_tags,
+        detail=(
+            ""
+            if not claude_tags
+            else "no ANTHROPIC_API_KEY set but task tag(s) "
+            + ", ".join(f"{t}={configured_models[t]}" for t in claude_tags)
+            + " use a claude- model; set ANTHROPIC_API_KEY (or LEMELY_ANTHROPIC_API_KEY)"
+        ),
+    )
+
+    # Spec 2026-10-19 §2a: page images for claude- tags go to the Files API, which a
+    # workspace-scoped key can read back. A standard key cannot report its workspace,
+    # so this stays a static advisory.
+    # Only the calls that carry page images (extraction and the binding reads) upload.
+    if claude_tags_any := [
+        t
+        for t, m in configured_models.items()
+        if m.startswith("claude-") and (t == "extraction" or t.startswith("binding"))
+    ]:
+        record(
+            "claude_files_workspace",
+            True,
+            detail=(
+                "claude_files_api is on: page images for "
+                + ", ".join(claude_tags_any)
+                + " are uploaded (1 h expiry, deleted at job end; not ZDR-eligible). "
+                "A standard key cannot report its workspace: confirm ANTHROPIC_API_KEY "
+                "belongs to the dedicated Lemely workspace."
+                if settings.gemini.claude_files_api
+                else "claude_files_api is off: page images are sent inline"
+            ),
+        )
+
+    # How answers are tied to questions and what that costs per extraction; not
+    # ok when the binding step's second read would be the first read again (same
+    # model, same thinking level), which pays twice for one opinion. Advisory.
+    binding_ok, binding_detail = binding_status(settings)
+    record("binding", binding_ok, detail=binding_detail)
+
+    # US-026: the $14 total_usd_ceiling is only as honest as the pricing table
+    # it's ledgered against — warn (advisory, never fatal) once the 3.8/
+    # 3.6-flash promotional rate is close to lapsing to the real, doubled
+    # rate, so a developer notices before the ceiling starts guarding a stale
+    # price. See FLASH_3X_PROMO_END_DATE / promo_pricing_status in gemini.py.
+    from lemely.io.gemini import fallback_pricing_status, promo_pricing_status
+
+    promo_ok, promo_detail = promo_pricing_status(settings)
+    record("gemini_promo_pricing_window", promo_ok, detail=promo_detail)
+
+    # US-034: names any configured model that would silently resolve through
+    # the unrecognised-model pricing fallback (billed at gemini-2.5-flash's
+    # rate) instead of an exact or promo-dated row. Advisory, never fatal —
+    # see fallback_pricing_status's docstring in gemini.py.
+    fallback_ok, fallback_detail = fallback_pricing_status(settings, configured_models)
+    record("gemini_fallback_pricing", fallback_ok, detail=fallback_detail)
+
+    # Spec 2026-10-19 §3: every tag's provider, model, effort and price row. A claude-
+    # tag with no row is fatal (its calls fail closed); a Gemini tag with no row only
+    # warns (it is priced through the fallback, as gemini_fallback_pricing says).
+    from lemely.io.gemini import _today
+    from lemely.io.model_table import model_rows
+
+    rows = model_rows(settings, on=_today())
+    record(
+        "llm_price_table",
+        all(r.price is not None for r in rows),
+        detail="; ".join(
+            f"{r.tag}={r.provider}:{r.model} effort={r.effort} price={r.price or 'NO ROW'}"
+            for r in rows
+        ),
+    )
+    unpriced_claude = [r.tag for r in rows if r.provider == "anthropic" and r.price is None]
+    record(
+        "claude_price_rows",
+        not unpriced_claude,
+        detail=""
+        if not unpriced_claude
+        else "no price row for the claude- model of: "
+        + ", ".join(unpriced_claude)
+        + "; every call to it fails closed",
+    )
+
+    # US-035: an unreadable gemini_spend.json already logged a warning
+    # (`CostLedger._read`'s `cost_ledger_corrupt` event) but had zero code
+    # consumers, so the $14 USD ceiling read $0.00 forever after one corrupt
+    # write with nothing able to act on it — logged, but not consumed. The
+    # absent/corrupt separation and the warning both already existed; this
+    # check gives a caller (here, `doctor`) an observable it can act on.
+    # Advisory, never fatal — the ledger is
+    # dev-only and fail-closed here was explicitly rejected (it could wedge
+    # a funded sweep on a transient disk error with no production blast
+    # radius to justify that). Same path GeminiClient's default ledger uses
+    # (`lemely/io/gemini.py`'s `_DefaultLedger`).
+    from lemely.io.cost_ledger import ledger_status
+
+    ledger_ok, ledger_detail = ledger_status(settings.paths.output_dir / "gemini_spend.json")
+    record("gemini_cost_ledger", ledger_ok, detail=ledger_detail)
 
     record(
         "sources_dir_readable",
@@ -479,6 +709,46 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     except OSError as exc:
         record("cache_dir_writable", False, str(exc))
 
+    # Advisory, never fatal (see `advisory_checks` at the bottom of this
+    # command): a fresh clone has no Google Application Default Credentials,
+    # and failing `doctor` over that would red every developer machine for a
+    # subsystem only the web upload/avatar routes touch. `check_storage` also
+    # honours `--no-network`, which a bare `google.auth.default()` call here
+    # would not — it would reach for credentials in the one mode that promises
+    # not to.
+    from lemely.io.storage import check_storage, check_tutor_evidence_storage
+
+    storage_ok, storage_detail = check_storage(settings, no_network=no_network)
+    record("storage_backend", storage_ok, detail=storage_detail)
+    # Advisory for the same reasons. The evidence bucket is its own line because
+    # it is judged by the backend's privacy-and-owner check, not by a reachable
+    # bucket: a deploy that skipped the bootstrap otherwise looks healthy here
+    # while every tutor document upload answers 503.
+    evidence_ok, evidence_detail = check_tutor_evidence_storage(settings, no_network=no_network)
+    record("tutor_evidence_storage", evidence_ok, detail=evidence_detail)
+
+    # Advisory, like storage: this build ships without VAPID keys and that is
+    # a supported state (D5.9 §4) — the inbox keeps working and push simply
+    # stays unavailable. Asking the transport rather than counting settings
+    # fields keeps this check and the runtime's own answer from disagreeing.
+    from lemely.web.push import VapidPushTransport
+
+    push_transport = VapidPushTransport(settings.push)
+    try:
+        push_available = push_transport.available
+    finally:
+        push_transport.close()
+    record(
+        "push_transport",
+        push_available,
+        (
+            f"VAPID keys configured; subject {settings.push.vapid_subject}"
+            if push_available
+            else "no VAPID keys configured; push unavailable, inbox still works. "
+            "Run `lemely push-keygen` and see docs/push-notifications.md"
+        ),
+    )
+
     try:
         import gradio  # noqa: F401
 
@@ -491,7 +761,9 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
         )
 
     if not no_network:
-        if not has_key:
+        if not gemini_tags:
+            record("gemini_reachable", True, "no task tag uses a gemini- model; not checked")
+        elif not has_key:
             record(
                 "gemini_reachable",
                 False,
@@ -507,7 +779,26 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
                 # Any failure (auth, network, SDK) is a reachability failure to report.
                 record("gemini_reachable", False, str(exc))
 
-    fatal_checks = [c for c in checks if c["name"] != "gradio_extra_installed"]
+    # Checks that describe an optional subsystem rather than a broken install:
+    # `lemely ui` needs the [ui] extra, object storage is only reached by
+    # the web app's avatar/upload routes, and web push only needs keys once a
+    # deployment wants real pushes. All three are reported honestly and none
+    # decides the exit code. Nor does `binding`: a second read that repeats the
+    # first wastes a call, it does not break extraction.
+    advisory_checks = {
+        "binding",
+        "claude_files_workspace",
+        "gradio_extra_installed",
+        "storage_backend",
+        "tutor_evidence_storage",
+        "push_transport",
+        "no_removed_config_keys",
+        "gemini_promo_pricing_window",
+        "gemini_fallback_pricing",
+        "llm_price_table",
+        "gemini_cost_ledger",
+    }
+    fatal_checks = [c for c in checks if c["name"] not in advisory_checks]
     all_passed = all(c["ok"] for c in fatal_checks)
 
     _print_result(ctx, {"all_passed": all_passed, "checks": checks})
@@ -544,29 +835,30 @@ def extract_answers_cmd(
 ) -> None:
     from lemely.core.loose_schemas import MarkScheme
     from lemely.io.answer_extraction import GeminiAnswerExtractor
-    from lemely.io.gemini import GeminiClient
+    from lemely.io.gemini import GeminiClient, script_cost_scope
 
     settings = _get_settings(ctx)
     client = GeminiClient(settings)
     ms = MarkScheme.model_validate(_load_json_file(mark_scheme))
 
-    if detect_metadata and ms.metadata is not None:
-        from lemely.core.schemas import ExamMetadata
-        from lemely.io.scan_metadata import ScanMetadataExtractor, cross_check_metadata
+    with script_cost_scope(settings, script_key=f"cli:{Path(scan).name}"):
+        if detect_metadata and ms.metadata is not None:
+            from lemely.core.schemas import ExamMetadata
+            from lemely.io.scan_metadata import ScanMetadataExtractor, cross_check_metadata
 
-        scan_meta = ScanMetadataExtractor(client)(Path(scan))
-        raw_month = ms.metadata.session_month
-        ms_exam_meta = ExamMetadata(
-            subject_code=ms.metadata.subject_code or "",
-            paper_number=ms.metadata.paper_number or 0,
-            paper_variant=ms.metadata.paper_variant or 0,
-            session_month=raw_month.value if raw_month is not None else "May/June",
-            session_year=ms.metadata.session_year,
-        )
-        cross_check_metadata(scan_meta, ms_exam_meta)
+            scan_meta = ScanMetadataExtractor(client)(Path(scan))
+            raw_month = ms.metadata.session_month
+            ms_exam_meta = ExamMetadata(
+                subject_code=ms.metadata.subject_code or "",
+                paper_number=ms.metadata.paper_number or 0,
+                paper_variant=ms.metadata.paper_variant or 0,
+                session_month=raw_month.value if raw_month is not None else "May/June",
+                session_year=ms.metadata.session_year,
+            )
+            cross_check_metadata(scan_meta, ms_exam_meta)
 
-    extractor = GeminiAnswerExtractor(client)
-    result = extractor(scan_path=Path(scan), mark_scheme=ms)
+        extractor = GeminiAnswerExtractor(client)
+        result = extractor(scan_path=Path(scan), mark_scheme=ms)
     _print_result(ctx, result)
 
 
@@ -687,6 +979,204 @@ def teacher_quiz_cmd(
     _print_result(ctx, builder.build(subject, weaknesses, count=count, topics=list(topics)))
 
 
+@cli.command("audit-bindings")
+@click.option(
+    "--since",
+    type=click.DateTime(formats=["%Y-%m-%d"]),
+    default=None,
+    help="Only attempts recorded on or after this date (YYYY-MM-DD, UTC).",
+)
+@click.option(
+    "--limit",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Audit at most N attempts, newest first.",
+)
+@click.option(
+    "--origin",
+    type=click.Choice(["upload", "any"]),
+    default="upload",
+    show_default=True,
+    help=(
+        "Which attempts to audit. 'upload' keeps past-paper attempts that came from an "
+        "uploaded scan (quizzes are typed answers and cannot be misbound). That leaves out "
+        "past-paper attempts stored without an upload link. Pass 'any' to audit those too, "
+        "and quizzes."
+    ),
+)
+@click.pass_context
+def audit_bindings_cmd(
+    ctx: click.Context, since: datetime | None, limit: int | None, origin: str
+) -> None:
+    """List stored attempts whose answers look bound to the wrong questions.
+
+    Read-only: reports, never changes a row. Runs two checks on each stored
+    attempt (answers of the wrong kind, and a run of answers holding the value
+    of a neighbouring question) against its mark scheme.
+    """
+    from datetime import UTC
+
+    from sqlalchemy.exc import InterfaceError, OperationalError
+
+    from lemely.db.binding_audit import audit_attempts, load_attempts
+    from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
+    from lemely.db.session import get_sessionmaker
+
+    settings = _get_settings(ctx)
+    session_factory = get_sessionmaker(settings)
+    corpus = SchemeCorpusRepository(session_factory)
+    since_utc = since.replace(tzinfo=UTC) if since is not None else None
+    try:
+        session = session_factory()
+        try:
+            attempts = load_attempts(
+                session, since=since_utc, limit=limit, uploaded_only=origin == "upload"
+            )
+            report = audit_attempts(attempts, corpus.find_for)
+        finally:
+            session.close()
+    except (OperationalError, InterfaceError) as exc:
+        click.echo(
+            f"Cannot read the database: {exc.__class__.__name__}. Check the database settings.",
+            err=True,
+        )
+        raise click.exceptions.Exit(ExternalServiceError.exit_code) from exc
+
+    if ctx.obj.get("json_output", False):
+        _dump_json(report.as_json())
+        return
+
+    scope = (
+        "attempts that came from an uploaded scan"
+        if origin == "upload"
+        else "all stored attempts, quizzes included"
+    )
+    click.echo(f"Audited {scope}.")
+    for s in report.suspects:
+        click.echo(
+            f"attempt {s.attempt_id}  user {s.user_id}  {s.paper}  recorded {s.recorded_at}  "
+            f"{s.awarded_marks}/{s.maximum_marks}  failed {', '.join(s.failed_checks)}"
+        )
+        for detail in s.details:
+            click.echo(f"    {detail}")
+    click.echo("")
+    click.echo(f"Suspect attempts: {len(report.suspects)}")
+    click.echo(
+        f"Attempts with only question-level failures (not listed): {report.question_scope_only}"
+    )
+    click.echo(f"Selected: {report.selected}")
+    click.echo(f"Audited: {report.audited}")
+    click.echo(f"Skipped, mark scheme not found: {report.scheme_not_found}")
+    click.echo(f"Skipped, stored paper identity unreadable: {report.unreadable_identity}")
+    click.echo(f"Skipped, nothing answered: {report.no_answers}")
+    click.echo(f"Skipped, no paper identity stored: {report.no_paper_identity}")
+    click.echo(
+        f"Skipped, stored question ids do not match the mark scheme: {report.scheme_mismatch}"
+    )
+    click.echo(
+        f"Audited with the newest session year assumed (no year stored): {report.year_assumed}"
+    )
+    click.echo(
+        "Audited but not judgeable (too few numeric answers for the shift check): "
+        f"{report.not_judgeable}"
+    )
+    click.echo(
+        "Each attempt is checked against the scheme the corpus holds for that paper today, "
+        "which can differ from the one used at marking time (a scheme the student supplied, "
+        "or one re-parsed since). With no session year stored, the lookup takes the newest "
+        "year's scheme for that paper."
+    )
+    click.echo(
+        "Not listed does not mean correctly bound: the checks only see questions with "
+        "numeric expected answers, so short shifts and papers with few of them pass unseen."
+    )
+
+
+@cli.group("tutoring")
+def tutoring_group() -> None:
+    """Tutoring marketplace maintenance."""
+
+
+@tutoring_group.command("recompute-ratings")
+@click.option(
+    "--tutor",
+    "tutor",
+    default=None,
+    help="Recompute only this tutor profile id (default: every tutor).",
+)
+@click.pass_context
+def tutoring_recompute_ratings_cmd(ctx: click.Context, tutor: str | None) -> None:
+    """Rewrite stored tutor ratings (rating_sum, rating_count, rank_score) from reviews."""
+    from lemely.app.tutoring_cli import recompute_ratings_command
+    from lemely.db.session import get_sessionmaker
+
+    recompute_ratings_command(
+        get_sessionmaker(_get_settings(ctx)),
+        tutor=tutor,
+        json_output=bool(ctx.obj.get("json_output", False)),
+    )
+
+
+@cli.group("admin")
+def admin_group() -> None:
+    """Operator tools for a shared environment."""
+
+
+@admin_group.command("purge-users")
+@click.option(
+    "--keep-domain",
+    "keep_domains",
+    multiple=True,
+    help="Email domain whose verified accounts survive (repeatable). Default: "
+    "[access] allowed_email_domains.",
+)
+@click.option(
+    "--execute",
+    is_flag=True,
+    help="Actually delete. Without it this is a dry run that deletes nothing.",
+)
+@click.option(
+    "--include-unverified-allowlisted",
+    is_flag=True,
+    help="Also delete keep-domain accounts whose email was never verified (kept by default).",
+)
+@click.option(
+    "--i-know-this-is-production",
+    "allow_production",
+    is_flag=True,
+    help="Override the refusal on a target positively detected as production.",
+)
+@click.option(
+    "--target-is-unrecognised",
+    "allow_unrecognised",
+    is_flag=True,
+    help="Override the refusal on a target that is not local, staging or production.",
+)
+@click.pass_context
+def admin_purge_users_cmd(
+    ctx: click.Context,
+    keep_domains: tuple[str, ...],
+    execute: bool,
+    include_unverified_allowlisted: bool,
+    allow_production: bool,
+    allow_unrecognised: bool,
+) -> None:
+    """Delete every account outside the allow-list, with its data (staging only)."""
+    from lemely.app.purge_cli import purge_users_command
+
+    code = purge_users_command(
+        _get_settings(ctx),
+        keep_domains=keep_domains,
+        execute=execute,
+        include_unverified_allowlisted=include_unverified_allowlisted,
+        allow_production=allow_production,
+        allow_unrecognised=allow_unrecognised,
+        json_output=bool(ctx.obj.get("json_output", False)),
+    )
+    if code:
+        ctx.exit(code)
+
+
 @cli.group("question-bank")
 def question_bank_group() -> None:
     """Question-bank survey and generated-question import (P3.5 chunk B)."""
@@ -747,11 +1237,11 @@ def question_bank_survey_cmd(ctx: click.Context) -> None:
 def question_bank_classify_topics_cmd(
     ctx: click.Context, subject: str | None, reclassify: bool, dry_run: bool
 ) -> None:
-    """Backfill ``question_bank.topic`` from the bundled CAIE syllabus taxonomies (P4.2).
+    """Backfill ``question_bank.topic`` from the CAIE syllabus taxonomies (P4.2).
 
-    Deterministic and free: keyword scoring against
-    ``lemely/data/syllabus_topics.json``, no Gemini call. Idempotent unless
-    ``--reclassify`` is passed.
+    Deterministic and free: keyword scoring against the ``subject_topics``
+    table (:mod:`lemely.io.syllabus_topics`), no Gemini call. Idempotent
+    unless ``--reclassify`` is passed.
 
     Only ``high``- and ``medium``-confidence matches are written; ``low`` ones
     are counted and discarded (``lemely.core.topics.WRITABLE_BANDS`` explains
@@ -1024,6 +1514,17 @@ def aggregate_subject_cmd(
         "scan_path and errors otherwise (no silent fallback)."
     ),
 )
+@click.option(
+    "--fail-on-skipped-rereads",
+    "fail_on_skipped_rereads",
+    is_flag=True,
+    default=False,
+    help=(
+        "Exit non-zero when any crop-and-re-read was skipped by the wall-clock "
+        "budget (#263): such a run's marks are timing-dependent, so a sweep meant "
+        "for comparison should refuse to publish them."
+    ),
+)
 @click.pass_context
 def measure_accuracy_cmd(
     ctx: click.Context,
@@ -1031,6 +1532,7 @@ def measure_accuracy_cmd(
     results_dir: str,
     cache_mode: str,
     arm: str | None,
+    fail_on_skipped_rereads: bool,
 ) -> None:
     """Measure correction accuracy against the golden dataset.
 
@@ -1068,6 +1570,24 @@ def measure_accuracy_cmd(
     if not cases:
         raise click.ClickException(f"No golden cases found in {golden_path}")
 
+    # US-037: `load_golden_cases` used to only LOG a dropped case
+    # (`golden_case_load_error`/`golden_case_marker_load_error`) with no
+    # consumer anywhere — this command would print "Loaded N golden
+    # case(s)." and publish an accuracy figure over N as though N were the
+    # whole corpus. This command is specifically the one that turns a
+    # corpus into a published figure, so it refuses outright rather than
+    # recording-and-continuing (the choice a library caller of
+    # `measure_accuracy` still has via its `n_unparseable` argument): an
+    # operator must fix or remove the offending fixture before this figure
+    # means what it claims to mean.
+    if cases.unparseable:
+        bad = ", ".join(str(p) for p in cases.unparseable)
+        raise click.ClickException(
+            f"{len(cases.unparseable)} golden case(s) could not be parsed and were "
+            f"dropped, which would understate the corpus this run measures against: "
+            f"{bad}. Fix or remove them before running measure-accuracy."
+        )
+
     click.echo(f"Loaded {len(cases)} golden case(s). Running accuracy measurement…")
 
     client = GeminiClient(
@@ -1079,6 +1599,7 @@ def measure_accuracy_cmd(
         client,
         settings,
         arm=cast("Literal['extract+mark', 'oracle+mark'] | None", arm),
+        n_unparseable=len(cases.unparseable),
     )
     click.echo(format_report(result, settings.accuracy_eval))
 
@@ -1103,6 +1624,11 @@ def measure_accuracy_cmd(
         )
     if m.flag_recall < t.flag_recall_target:
         failed.append(f"flag_recall {m.flag_recall:.3f} < {t.flag_recall_target}")
+    if fail_on_skipped_rereads and result.reread_skipped_by_budget:
+        failed.append(
+            f"reread_skipped_by_budget {result.reread_skipped_by_budget} > 0 "
+            "(--fail-on-skipped-rereads)"
+        )
 
     # M0.9 (#33): the review-rate two-part ratchet gate. review_rate() must be
     # fed only a dev-split run's records (spec §5). measure_accuracy() always
@@ -1281,16 +1807,26 @@ def main(argv: list[str] | None = None) -> int:
 
     register_budget_ntfy()
 
-    log = structlog.get_logger().bind(component="cli")
+    # structlog's unconfigured default renders tracebacks with every local variable (rich,
+    # ``show_locals``), and ``get_logger().bind(...)`` would freeze onto that default before the
+    # ``cli`` group has applied the user's logging options. So configure the safe renderer first,
+    # and bind only at the point of use, after the group has reconfigured it.
+    configure_logging()
     try:
         cli.main(args=argv, standalone_mode=False, prog_name="lemely")
         return 0
     except click.UsageError as exc:
         click.echo(f"Error: {exc.format_message()}", err=True)
         return 2
+    except click.ClickException as exc:
+        # A deliberate refusal (the purge's safety rails, bad input): the message only, no
+        # traceback, so nothing held in a local (settings, keys) can reach a log.
+        click.echo(f"Error: {exc.format_message()}", err=True)
+        return exc.exit_code
     except click.exceptions.Exit as exc:
         return int(exc.exit_code)
     except LemelyError as exc:
+        log = structlog.get_logger().bind(component="cli")
         log.error(
             "lemely_error",
             error_type=type(exc).__name__,
@@ -1298,10 +1834,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return exc.exit_code
     except KeyboardInterrupt:
-        log.warning("interrupted")
+        structlog.get_logger().bind(component="cli").warning("interrupted")
         return 130
     except Exception as exc:
-        log.exception("unexpected_error", error_type=type(exc).__name__)
+        structlog.get_logger().bind(component="cli").exception(
+            "unexpected_error", error_type=type(exc).__name__
+        )
         return 1
 
 

@@ -301,7 +301,12 @@ class LeaderboardService:
 
     Constructed with a ``sessionmaker``, an injectable clock, and the
     civil-date zone the weekly window is derived in — mirrors
-    :class:`~lemely.db.xp_repo.XpService`'s shape exactly.
+    :class:`~lemely.db.xp_repo.XpService`'s shape, **minus** that service's
+    per-user zone reader. A leaderboard is a shared artifact: summing two
+    students' XP over two different weeks would make the ranking mean
+    nothing, so the week here is one global week for everyone
+    (push-delivery spec §3), and this class takes no ``UserZoneReader`` on
+    purpose.
     """
 
     def __init__(
@@ -363,6 +368,10 @@ class LeaderboardService:
         class_uuid = _as_uuid(class_id) if class_id is not None else None
 
         moment = now if now is not None else self._now()
+        # The global zone, deliberately. Per-user zones (spec §3) move every
+        # *personal* civil date to the student's own calendar; a shared ranking
+        # has to sum every student over the same week, so this stays on
+        # DEFAULT_ZONE. ``tests/test_user_zones.py`` pins it.
         today = civil_date_in_zone(moment, zone=self._zone)
         week_start, week_end = week_bounds(today)
 

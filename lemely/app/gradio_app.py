@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import threading
 from collections.abc import Generator
 from pathlib import Path
@@ -19,7 +18,15 @@ def run_correction_demo(mark_scheme_path: str, answers: str) -> dict[str, object
 def _render_questions_md(report_dict: dict[str, Any], ms: Any = None) -> str:
     """Return a Markdown string summarising per-question correction results."""
     lines = ["### Per-question results\n"]
-    source_badge = {"deterministic": "🔢", "ai": "🤖", "missing": "❓"}
+    source_badge = {"deterministic": "🔢", "ai": "🤖", "missing": "❓", "dropped": "🗑️"}
+    binding = report_dict.get("correction", {}).get("binding")
+    if binding is not None:
+        verdict = binding.get("verdict", "?")
+        lines.append(
+            f"**Binding check: {verdict}**"
+            + ("" if verdict == "pass" else " (this result cannot be saved)")
+            + "\n"
+        )
     for q in report_dict.get("correction", {}).get("questions", []):
         qid = q.get("question_id", "?")
         awarded = q.get("awarded_marks", 0)
@@ -161,13 +168,16 @@ def build_app(settings: Any = None) -> Any:
         raise RuntimeError("gradio is not installed. Run: pip install 'lemely[ui]'") from exc
 
     from lemely.app.gradio_callbacks import (
+        binding_summary,
         build_history_trend_markdown,
         build_library_table_rows,
         build_mark_scheme_dropdown_choices,
         build_subject_session_choices,
         extracted_to_table_rows,
+        held_reason,
         history_to_table_rows,
         load_papers_for_subject_session,
+        overlay_edited_answers,
         parse_mark_scheme_path_from_label,
         rows_to_reviewed_answers_json,
         save_correction_artifacts,
@@ -176,9 +186,10 @@ def build_app(settings: Any = None) -> Any:
     from lemely.core.analytics import predict_grade, summarize_weaknesses
     from lemely.core.loose_schemas import MarkScheme
     from lemely.core.schemas import AccuracyReport
+    from lemely.io.adjudication import adjudication_pages
     from lemely.io.answer_extraction import GeminiAnswerExtractor
     from lemely.io.correction_ai import correct_paper as hybrid_correct_paper
-    from lemely.io.gemini import GeminiClient
+    from lemely.io.gemini import GeminiClient, script_cost_scope
     from lemely.io.subject import aggregate_subject
     from lemely.runtime.config import load_settings as _load_settings
 
@@ -220,9 +231,11 @@ def build_app(settings: Any = None) -> Any:
                 ms_path = parse_mark_scheme_path_from_label(ms_label)
                 ms = MarkScheme.model_validate_json(ms_path.read_text(encoding="utf-8"))
                 extractor = GeminiAnswerExtractor(GeminiClient(settings))
-                result = extractor(scan_path=Path(scan_file), mark_scheme=ms)
+                with script_cost_scope(settings, script_key=f"gradio:{Path(scan_file).name}"):
+                    result = extractor(scan_path=Path(scan_file), mark_scheme=ms)
                 result_holder["rows"] = extracted_to_table_rows(result)
                 result_holder["json"] = result.model_dump_json(indent=2)
+                result_holder["binding"] = binding_summary(result)
             except Exception as exc:
                 error_holder["err"] = exc
             finally:
@@ -243,10 +256,12 @@ def build_app(settings: Any = None) -> Any:
         if "err" in error_holder:
             yield empty, "", f"ERROR: {error_holder['err']}", _token_text()
             return
+        summary = result_holder.get("binding", "")
+        log = f"{summary}\n{buf.current_text()}" if summary else buf.current_text()
         yield (
             result_holder.get("rows", empty),
             result_holder.get("json", ""),
-            buf.current_text(),
+            log,
             _token_text(),
         )
 
@@ -255,6 +270,7 @@ def build_app(settings: Any = None) -> Any:
         table_data: list[list[str]],
         mcq_only: bool,
         extracted_json: str,
+        scan_file: str | None = None,
     ) -> Generator[tuple[dict[str, Any], str, str, str], None, None]:
         """Grade the paper via AI + deterministic marking; streams events live."""
         buf = LiveLogBuffer()
@@ -268,14 +284,17 @@ def build_app(settings: Any = None) -> Any:
 
                 ms_path = parse_mark_scheme_path_from_label(ms_label)
                 ms = MarkScheme.model_validate_json(ms_path.read_text(encoding="utf-8"))
-                reviewed = json.loads(rows_to_reviewed_answers_json(table_data))
+                reviewed = overlay_edited_answers(extracted_json, table_data)
                 client = None if mcq_only else GeminiClient(settings)
-                correction = hybrid_correct_paper(
-                    mark_scheme=ms,
-                    extracted_answers=reviewed,
-                    gemini_client=client,
-                    mcq_only=mcq_only,
-                )
+                with script_cost_scope(settings, script_key=f"gradio:{ms_path.stem}"):
+                    correction = hybrid_correct_paper(
+                        mark_scheme=ms,
+                        extracted_answers=reviewed,
+                        gemini_client=client,
+                        mcq_only=mcq_only,
+                        options=settings.grading.marking_options(),
+                        pages=adjudication_pages(client, Path(scan_file) if scan_file else None),
+                    )
                 store = GradeBoundaryStore()
                 boundaries, boundary_source = store.resolve(correction.metadata)
                 report = AccuracyReport(
@@ -324,6 +343,9 @@ def build_app(settings: Any = None) -> Any:
     ) -> str:
         if not report:
             return "Grade the paper before saving."
+        held = held_reason(report)
+        if held is not None:
+            return held
         reviewed_json = rows_to_reviewed_answers_json(table_data)
         session_dir = save_correction_artifacts(
             output_dir=settings.paths.output_dir,
@@ -589,7 +611,7 @@ def build_app(settings: Any = None) -> Any:
             )
             grade_btn.click(
                 fn=_grade,
-                inputs=[ms_dropdown, answers_table, mcq_only_cb, extracted_json_state],
+                inputs=[ms_dropdown, answers_table, mcq_only_cb, extracted_json_state, scan_upload],
                 outputs=[report_out, questions_detail, live_log_t2, token_counter_t2],
             )
             save_btn.click(

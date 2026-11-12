@@ -20,11 +20,14 @@ and parent only, per G-12). Proves:
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
+from io import BytesIO
 from typing import TYPE_CHECKING
 
 import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
@@ -34,14 +37,18 @@ from lemely.db.base import Base
 from lemely.db.models import User
 from lemely.db.models.enums import Role
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
-from lemely.runtime.config import DatabaseSettings
+from lemely.runtime.config import DatabaseSettings, Settings, load_settings
+from lemely.runtime.errors import AuthError, ExternalServiceError
 from lemely.web import create_app
 from lemely.web.deps import (
     AuthContext,
     get_auth_context,
     get_notification_prefs_service,
+    get_settings,
+    get_storage_backend,
     get_user_mirror,
 )
+from tests.storage_fakes import FakeStorageBackend
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -98,18 +105,33 @@ def prefs_service(pg_sessionmaker: sessionmaker[Session]) -> NotificationPrefere
     return NotificationPreferencesService(pg_sessionmaker)
 
 
-def _seed_user(sm: sessionmaker[Session], role: Role, display_name: str | None = None) -> uuid.UUID:
+def _seed_user(
+    sm: sessionmaker[Session],
+    role: Role,
+    display_name: str | None = None,
+    email_verified_at: datetime | None = None,
+) -> uuid.UUID:
     """Insert a real ``users`` row — ``notification_preferences.user_id`` FKs to it,
     so any test that actually writes a preferences row (not just reads the
     all-defaults value) needs a real user to satisfy the constraint.
 
     ``display_name`` defaults to ``None`` (unset by every pre-existing caller
     of this helper) so the profile tests can seed the nullable-name case
-    without touching any other test in this file.
+    without touching any other test in this file. ``email_verified_at``
+    defaults to ``None`` for the same reason: an unverified account is what
+    every pre-existing caller already meant.
     """
     uid = uuid.uuid4()
     with sm.begin() as session:
-        session.add(User(id=uid, email=f"{uid}@example.com", role=role, display_name=display_name))
+        session.add(
+            User(
+                id=uid,
+                email=f"{uid}@example.com",
+                role=role,
+                display_name=display_name,
+                email_verified_at=email_verified_at,
+            )
+        )
     return uid
 
 
@@ -124,8 +146,8 @@ class _SessionUserMirror:
     but bound to ``pg_sessionmaker`` directly rather than to ``Settings`` —
     the same shape every other test-local repo double in this file's sibling
     tests (``ClassService(sm)`` etc.) uses to avoid touching the process-wide
-    database in tests. Only ``get_by_id`` is implemented — the only method
-    ``get_profile`` calls.
+    database in tests. ``get_by_id``, ``set_avatar_path`` and ``set_timezone``
+    are implemented — the methods the routes under test call.
     """
 
     def __init__(self, sm: sessionmaker[Session]) -> None:
@@ -137,6 +159,26 @@ class _SessionUserMirror:
             if user is not None:
                 session.expunge(user)
             return user
+
+    def set_avatar_path(self, user_id: uuid.UUID, path: str | None) -> None:
+        with self._sm.begin() as session:
+            user = session.get(User, user_id)
+            if user is not None:
+                user.avatar_path = path
+
+    def set_timezone(self, user_id: uuid.UUID, zone: str | None, *, explicit: bool) -> None:
+        with self._sm.begin() as session:
+            user = session.get(User, user_id)
+            if user is None:
+                return
+            if explicit:
+                user.timezone = zone
+                user.timezone_is_explicit = True
+            elif zone is None:
+                user.timezone = None
+                user.timezone_is_explicit = False
+            elif not user.timezone_is_explicit:
+                user.timezone = zone
 
 
 def _use_user_mirror(client: TestClient, sm: sessionmaker[Session]) -> None:
@@ -196,6 +238,36 @@ def test_at_risk_alert_is_present_on_a_teacher_or_parent_get(
 
     assert resp.status_code == 200
     assert resp.json()["atRiskAlert"] is True
+
+
+@pytest.mark.parametrize(
+    "role", [Role.student, Role.parent, Role.school_admin, Role.platform_admin]
+)
+def test_review_withdrawn_is_null_on_a_non_teacher_get(
+    client: TestClient, prefs_service: NotificationPreferencesService, role: Role
+) -> None:
+    """R10: mirrors atRiskAlert's own role gate, narrowed to teacher alone —
+    review_withdrawn fires only for a teacher (Task 9's
+    ``_notify_withdrawn_reviewers``)."""
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, uuid.uuid4(), role)
+
+    resp = client.get("/api/me/notification-preferences")
+
+    assert resp.status_code == 200
+    assert resp.json()["reviewWithdrawn"] is None
+
+
+def test_review_withdrawn_is_present_on_a_teacher_get(
+    client: TestClient, prefs_service: NotificationPreferencesService
+) -> None:
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, uuid.uuid4(), Role.teacher)
+
+    resp = client.get("/api/me/notification-preferences")
+
+    assert resp.status_code == 200
+    assert resp.json()["reviewWithdrawn"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -364,6 +436,57 @@ def test_put_at_risk_alert_disallowed_role_does_not_change_other_fields(
 
 
 # ---------------------------------------------------------------------------
+# reviewWithdrawn: role gating on PUT (R10, mirrors atRiskAlert above).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "role", [Role.student, Role.parent, Role.school_admin, Role.platform_admin]
+)
+def test_put_review_withdrawn_from_a_disallowed_role_is_422(
+    client: TestClient, prefs_service: NotificationPreferencesService, role: Role
+) -> None:
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, uuid.uuid4(), role)
+
+    resp = client.put("/api/me/notification-preferences", json={"reviewWithdrawn": True})
+
+    assert resp.status_code == 422
+
+
+def test_put_review_withdrawn_from_a_teacher_succeeds(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    prefs_service: NotificationPreferencesService,
+) -> None:
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, user, Role.teacher)
+
+    resp = client.put("/api/me/notification-preferences", json={"reviewWithdrawn": False})
+
+    assert resp.status_code == 200
+    assert resp.json()["reviewWithdrawn"] is False
+
+
+def test_put_review_withdrawn_disallowed_role_does_not_change_other_fields(
+    client: TestClient, prefs_service: NotificationPreferencesService
+) -> None:
+    user = uuid.uuid4()
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, user, Role.student)
+
+    rejected = client.put(
+        "/api/me/notification-preferences",
+        json={"gradeReady": False, "reviewWithdrawn": True},
+    )
+    assert rejected.status_code == 422
+
+    get_resp = client.get("/api/me/notification-preferences")
+    assert get_resp.json()["gradeReady"] is True
+
+
+# ---------------------------------------------------------------------------
 # Quiet hours: pair validation on PUT.
 # ---------------------------------------------------------------------------
 
@@ -468,6 +591,48 @@ def test_profile_display_name_is_null_when_unset_not_fabricated(
     assert resp.json()["displayName"] is None
 
 
+def test_profile_reports_an_unverified_email_as_unverified(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """D7.5's gate reads ``email_verified_at``; nothing published it until now.
+
+    Without this field the app cannot tell a reader their address is
+    unverified before ``POST /student/correct`` refuses the run, which is the
+    whole reason the verify-email banner exists.
+    """
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.student)
+
+    resp = client.get("/api/me/profile")
+
+    assert resp.status_code == 200
+    assert resp.json()["emailVerified"] is False
+
+
+def test_profile_reports_a_verified_email_as_verified(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """A boolean, never the timestamp: the client only asks the yes/no question."""
+    user = _seed_user(
+        pg_sessionmaker,
+        Role.student,
+        email_verified_at=datetime(2026, 3, 3, 12, 0, tzinfo=UTC),
+    )
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.student)
+
+    resp = client.get("/api/me/profile")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["emailVerified"] is True
+    # The date itself is deliberately not published. Shipping it would invite a
+    # screen to render "verified on 3 March", which nobody asked for and which
+    # would then have to be maintained as a user-facing fact.
+    assert "emailVerifiedAt" not in body
+
+
 @pytest.mark.parametrize(
     "role", [Role.student, Role.parent, Role.school_admin, Role.platform_admin]
 )
@@ -513,4 +678,485 @@ def test_unauthenticated_get_is_401(client: TestClient) -> None:
 
 def test_unauthenticated_put_is_401(client: TestClient) -> None:
     resp = client.put("/api/me/notification-preferences", json={"gradeReady": False})
+    assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# POST/DELETE /api/me/avatar — profile picture, any authenticated role.
+# ---------------------------------------------------------------------------
+
+
+def _png_bytes(size: tuple[int, int] = (4, 4)) -> bytes:
+    buf = BytesIO()
+    Image.new("RGB", size, color=(10, 20, 30)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _use_storage_backend(client: TestClient, backend: FakeStorageBackend) -> None:
+    client.app.dependency_overrides[get_storage_backend] = lambda: backend  # type: ignore[union-attr]
+
+
+def _settings_with(**storage_overrides: object) -> Settings:
+    """A ``Settings`` copy with ``[storage]`` fields overridden (see ``test_web_classes.py``)."""
+    base = load_settings()
+    data = base.model_dump()
+    data["storage"] = {**data["storage"], **storage_overrides}
+    return Settings.model_validate(data)
+
+
+def _use_settings(client: TestClient, settings: Settings) -> None:
+    client.app.dependency_overrides[get_settings] = lambda: settings  # type: ignore[union-attr]
+
+
+def test_avatar_upload_sets_signed_url_and_stores_object(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.student)
+    backend = FakeStorageBackend()
+    _use_storage_backend(client, backend)
+
+    resp = client.post(
+        "/api/me/avatar",
+        files={"image": ("avatar.png", _png_bytes(), "image/png")},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    # The bucket is read from settings, not written as a literal: the default
+    # moved from Supabase's "avatars" to GCS's "lemely-avatars" when GCS became
+    # the default provider, and this test is about the object path inside the
+    # bucket, not about which name the default happens to carry today.
+    avatar_bucket = load_settings().storage.avatar_bucket
+    assert body["avatarUrl"] is not None
+    assert body["avatarUrl"].startswith(f"fake://{avatar_bucket}/")
+    assert f"{avatar_bucket}/{user}/" in body["avatarUrl"]
+
+    # The object actually landed in storage under the caller's own namespace,
+    # inside the avatars bucket (the object path itself does not repeat the
+    # bucket name — that would double it to "<bucket>/<bucket>/...").
+    stored_paths = [path for (bucket, path) in backend._objects if bucket == avatar_bucket]
+    assert len(stored_paths) == 1
+    assert stored_paths[0].startswith(f"{user}/")
+    assert stored_paths[0].endswith(".png")
+
+    # GET reflects the upload.
+    get_resp = client.get("/api/me/profile")
+    assert get_resp.status_code == 200
+    assert get_resp.json()["avatarUrl"] == body["avatarUrl"]
+
+
+@pytest.mark.parametrize(
+    "role",
+    [Role.student, Role.teacher, Role.parent, Role.school_admin, Role.platform_admin],
+)
+def test_avatar_upload_is_reachable_by_every_role(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], role: Role
+) -> None:
+    user = _seed_user(pg_sessionmaker, role)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, role)
+    _use_storage_backend(client, FakeStorageBackend())
+
+    resp = client.post(
+        "/api/me/avatar",
+        files={"image": ("avatar.png", _png_bytes(), "image/png")},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["role"] == role.value
+
+
+def test_avatar_upload_wrong_content_type_is_415(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.teacher)
+    _use_storage_backend(client, FakeStorageBackend())
+
+    resp = client.post(
+        "/api/me/avatar",
+        files={"image": ("scan.pdf", b"%PDF-1.4 not really an image", "application/pdf")},
+    )
+
+    assert resp.status_code == 415
+
+
+def test_avatar_upload_oversize_is_413(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.teacher)
+    _use_storage_backend(client, FakeStorageBackend())
+    _use_settings(client, _settings_with(avatar_max_bytes=16))
+
+    resp = client.post(
+        "/api/me/avatar",
+        files={"image": ("avatar.png", _png_bytes(), "image/png")},
+    )
+
+    assert resp.status_code == 413
+
+
+def test_avatar_upload_decompression_bomb_is_422_not_500(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """A tiny-on-disk, huge-in-memory PNG must 422, not crash with an unhandled 500.
+
+    ``PIL.Image.DecompressionBombError`` subclasses ``Exception`` directly
+    (neither ``OSError`` nor ``ValueError``), so a route that only catches
+    those two lets this one propagate as an internal server error.
+    """
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.teacher)
+    _use_storage_backend(client, FakeStorageBackend())
+
+    buf = BytesIO()
+    Image.new("L", (20000, 20000)).save(buf, format="PNG")
+    bomb_bytes = buf.getvalue()
+
+    resp = client.post(
+        "/api/me/avatar",
+        files={"image": ("avatar.png", bomb_bytes, "image/png")},
+    )
+
+    assert resp.status_code == 422
+    # Nothing was written to storage or the mirror.
+    assert client.get("/api/me/profile").json()["avatarUrl"] is None
+
+
+def test_avatar_upload_format_mismatching_declared_content_type_is_415(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """Real GIF bytes declared as ``image/png`` must not be stored as a ``.png``.
+
+    The upload decodes cleanly with Pillow, so the "is this a valid image at
+    all" check alone would accept it — the format the bytes actually sniff as
+    must also match the declared content type.
+    """
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.teacher)
+    _use_storage_backend(client, FakeStorageBackend())
+
+    buf = BytesIO()
+    Image.new("RGB", (4, 4), color=(1, 2, 3)).save(buf, format="GIF")
+    gif_bytes = buf.getvalue()
+
+    resp = client.post(
+        "/api/me/avatar",
+        files={"image": ("avatar.png", gif_bytes, "image/png")},
+    )
+
+    assert resp.status_code == 415
+    assert client.get("/api/me/profile").json()["avatarUrl"] is None
+
+
+def test_avatar_upload_garbage_bytes_with_image_content_type_is_422(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """A caller lying about the content type does not get an image accepted."""
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.teacher)
+    _use_storage_backend(client, FakeStorageBackend())
+
+    resp = client.post(
+        "/api/me/avatar",
+        files={"image": ("avatar.png", b"not actually a png", "image/png")},
+    )
+
+    assert resp.status_code == 422
+    # Nothing was written to storage or the mirror.
+    assert client.get("/api/me/profile").json()["avatarUrl"] is None
+
+
+def test_avatar_delete_clears_avatar_url_and_removes_the_object(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """Delete removes the stored object too, not just the ``avatar_path`` pointer.
+
+    Earlier builds cleared only the pointer, because ``StorageBackend`` had no
+    delete operation at all — so every deleted avatar stayed in the bucket
+    forever, paid for and unreachable. Asserting the store is empty is what
+    stops that from silently coming back.
+    """
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.student)
+    backend = FakeStorageBackend()
+    _use_storage_backend(client, backend)
+    upload_resp = client.post(
+        "/api/me/avatar",
+        files={"image": ("avatar.png", _png_bytes(), "image/png")},
+    )
+    assert upload_resp.json()["avatarUrl"] is not None
+    assert len(backend._objects) == 1
+
+    resp = client.delete("/api/me/avatar")
+
+    assert resp.status_code == 200
+    assert resp.json()["avatarUrl"] is None
+    assert client.get("/api/me/profile").json()["avatarUrl"] is None
+    assert backend._objects == {}
+
+
+def test_avatar_delete_succeeds_even_when_storage_delete_fails(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """A storage outage must not 500 a delete that already succeeded in the DB.
+
+    The user-visible contract is decided by ``users.avatar_path``, which is
+    cleared before the object removal is attempted. An unreachable bucket can
+    therefore only ever leave an orphan behind — never a profile pointing at
+    an object that is gone, and never a 500 on a delete the caller has to
+    retry.
+    """
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.student)
+
+    class _UndeletableStorage(FakeStorageBackend):
+        def delete(self, bucket: str, object_path: str) -> None:
+            raise ExternalServiceError("bucket unreachable")
+
+    backend = _UndeletableStorage()
+    _use_storage_backend(client, backend)
+    client.post("/api/me/avatar", files={"image": ("avatar.png", _png_bytes(), "image/png")})
+
+    resp = client.delete("/api/me/avatar")
+
+    assert resp.status_code == 200
+    assert resp.json()["avatarUrl"] is None
+    assert client.get("/api/me/profile").json()["avatarUrl"] is None
+    # The orphan is the accepted cost of not failing the request.
+    assert len(backend._objects) == 1
+
+
+def test_avatar_delete_with_no_avatar_set_is_a_no_op(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """Deleting when nothing is set must not reach storage with a ``None`` path."""
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.student)
+    backend = FakeStorageBackend()
+    _use_storage_backend(client, backend)
+
+    resp = client.delete("/api/me/avatar")
+
+    assert resp.status_code == 200
+    assert resp.json()["avatarUrl"] is None
+    assert backend._objects == {}
+
+
+def test_unauthenticated_avatar_post_is_401(client: TestClient) -> None:
+    resp = client.post(
+        "/api/me/avatar",
+        files={"image": ("avatar.png", _png_bytes(), "image/png")},
+    )
+    assert resp.status_code == 401
+
+
+def test_unauthenticated_avatar_delete_is_401(client: TestClient) -> None:
+    resp = client.delete("/api/me/avatar")
+    assert resp.status_code == 401
+
+
+class _SigningFailsStorageBackend(FakeStorageBackend):
+    """A storage double whose signing always fails, like a down storage backend."""
+
+    def create_signed_url(self, bucket: str, object_path: str, expires_in: int) -> str:
+        raise ExternalServiceError("storage is unreachable")
+
+
+def test_profile_get_avatar_url_is_null_when_signing_fails_not_500(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """The sidebar must render even when storage cannot sign a URL (D5.9-style rule)."""
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.teacher)
+    _use_storage_backend(client, FakeStorageBackend())
+    client.post(
+        "/api/me/avatar",
+        files={"image": ("avatar.png", _png_bytes(), "image/png")},
+    )
+
+    _use_storage_backend(client, _SigningFailsStorageBackend())
+    resp = client.get("/api/me/profile")
+
+    assert resp.status_code == 200
+    assert resp.json()["avatarUrl"] is None
+
+
+class _AuthErrorStorageBackend(FakeStorageBackend):
+    """A storage double raising ``AuthError``, like an unconfigured service-role key."""
+
+    def create_signed_url(self, bucket: str, object_path: str, expires_in: int) -> str:
+        raise AuthError("Supabase service-role key is not configured.")
+
+
+def test_profile_get_avatar_url_is_null_when_signing_raises_auth_error_not_500(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """A missing service-role key (``AuthError``) must not 500 the profile read either.
+
+    ``_avatar_url_for``'s contract is "never fail the profile read" for any
+    storage failure, not only :class:`~lemely.runtime.errors.ExternalServiceError`
+    — an unconfigured Supabase key, or a google-auth error on the GCS backend,
+    are equally not this route's problem.
+    """
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.teacher)
+    _use_storage_backend(client, FakeStorageBackend())
+    client.post(
+        "/api/me/avatar",
+        files={"image": ("avatar.png", _png_bytes(), "image/png")},
+    )
+
+    _use_storage_backend(client, _AuthErrorStorageBackend())
+    resp = client.get("/api/me/profile")
+
+    assert resp.status_code == 200
+    assert resp.json()["avatarUrl"] is None
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/me/timezone (push-delivery spec §3).
+# ---------------------------------------------------------------------------
+
+
+def _stored_zone(sm: sessionmaker[Session], user: uuid.UUID) -> tuple[str | None, bool]:
+    with sm() as session:
+        row = session.get(User, user)
+        assert row is not None
+        return row.timezone, row.timezone_is_explicit
+
+
+def test_profile_reports_the_zone_and_whether_it_was_chosen(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.teacher)
+
+    body = client.get("/api/me/profile").json()
+
+    assert body["timezone"] is None
+    assert body["timezoneIsExplicit"] is False
+
+
+@pytest.mark.parametrize("role", [Role.student, Role.teacher, Role.parent, Role.school_admin])
+def test_an_explicit_zone_is_stored_for_every_role(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], role: Role
+) -> None:
+    """On the ``me`` router because a zone applies to every role: a teacher and
+    a parent both receive ``at_risk_alert`` and both have quiet hours."""
+    user = _seed_user(pg_sessionmaker, role)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, role)
+
+    resp = client.put(
+        "/api/me/timezone", json={"timezone": "America/Los_Angeles", "explicit": True}
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"timezone": "America/Los_Angeles", "timezoneIsExplicit": True}
+    assert _stored_zone(pg_sessionmaker, user) == ("America/Los_Angeles", True)
+
+
+def test_a_device_zone_is_stored_while_nothing_was_chosen(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.student)
+
+    resp = client.put("/api/me/timezone", json={"timezone": "Europe/Paris", "explicit": False})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"timezone": "Europe/Paris", "timezoneIsExplicit": False}
+    assert _stored_zone(pg_sessionmaker, user) == ("Europe/Paris", False)
+
+
+def test_a_device_zone_never_overwrites_a_chosen_one(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """Opening the app on a plane must not undo a deliberate choice."""
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.student)
+    client.put("/api/me/timezone", json={"timezone": "Africa/Cairo", "explicit": True})
+
+    resp = client.put("/api/me/timezone", json={"timezone": "Europe/Paris", "explicit": False})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"timezone": "Africa/Cairo", "timezoneIsExplicit": True}
+    assert _stored_zone(pg_sessionmaker, user) == ("Africa/Cairo", True)
+
+
+def test_an_explicit_write_replaces_an_earlier_choice(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.student)
+    client.put("/api/me/timezone", json={"timezone": "Africa/Cairo", "explicit": True})
+
+    resp = client.put("/api/me/timezone", json={"timezone": "Asia/Tokyo", "explicit": True})
+
+    assert resp.json() == {"timezone": "Asia/Tokyo", "timezoneIsExplicit": True}
+
+
+def test_following_the_device_again_clears_the_choice(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """``timezone: null, explicit: false`` is the one body that flips the flag
+    back; the client follows it with its device zone, which is then accepted."""
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.student)
+    client.put("/api/me/timezone", json={"timezone": "Africa/Cairo", "explicit": True})
+
+    cleared = client.put("/api/me/timezone", json={"timezone": None, "explicit": False})
+    assert cleared.json() == {"timezone": None, "timezoneIsExplicit": False}
+
+    followed = client.put("/api/me/timezone", json={"timezone": "Europe/Paris", "explicit": False})
+    assert followed.json() == {"timezone": "Europe/Paris", "timezoneIsExplicit": False}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"timezone": "Mars/Olympus_Mons", "explicit": True},
+        {"timezone": "../etc/passwd", "explicit": False},
+        {"timezone": "A" * 65, "explicit": True},
+        {"timezone": None, "explicit": True},
+        {"timezone": "", "explicit": True},
+    ],
+)
+def test_a_bad_zone_is_422_and_stores_nothing(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], body: dict[str, object]
+) -> None:
+    """An unvalidated string would be stored once and then degrade to the
+    launch zone on every read forever, which looks like the feature silently
+    not working."""
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.student)
+
+    resp = client.put("/api/me/timezone", json=body)
+
+    assert resp.status_code == 422, resp.text
+    assert _stored_zone(pg_sessionmaker, user) == (None, False)
+
+
+def test_timezone_requires_a_bearer_token(client: TestClient) -> None:
+    resp = client.put("/api/me/timezone", json={"timezone": "Africa/Cairo", "explicit": True})
     assert resp.status_code == 401

@@ -41,6 +41,16 @@ export interface PushNotificationContent {
    * `sameOriginPath` for why an absolute URL is never accepted.
    */
   url: string
+  /**
+   * The reader's current unread count, when the page that answered had one
+   * cached (Task 7 / B5a). Pushes carry no payload (D5.10), so this is not
+   * "how many this push added" — it is a snapshot `pushClientBridge.ts`
+   * attaches from `NotificationCounts.unread` at answer time. Absent, not
+   * zero, whenever no page answered or the page had nothing cached: a
+   * missing value means "unknown", and `sw.ts` only calls `setAppBadge` when
+   * this key is present, so it never clobbers a real badge with a guess.
+   */
+  unread?: number
 }
 
 /**
@@ -56,11 +66,14 @@ export const GENERIC_PUSH_BODY = "You have a new notification"
 /**
  * Where a notification with no better destination sends the reader.
  *
- * The app root, not an inbox path, and deliberately so: this API is
- * role-agnostic because `at_risk_alert` is addressed to a **teacher and a
- * parent**, and neither portal has an inbox screen in this build. `/` routes by
- * role, so it is the one destination that cannot 404 for the reader who
- * received the push.
+ * The app root, not an inbox path, and deliberately so: this value is the
+ * fallback for when **no page answered the worker at all**, so the worker does
+ * not know who received the push. `/` routes by role, so it is the one
+ * destination that cannot 404 for the reader who tapped it. The typed
+ * destinations, including the teacher and parent inboxes, live in
+ * `pushClientBridge.destinationFor`, which only runs when a page did answer.
+ * This comment used to say neither of those portals had an inbox screen;
+ * both do now, and the fallback stays for the reason above.
  */
 export const DEFAULT_PUSH_URL = "/"
 
@@ -82,6 +95,13 @@ function nonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null
   const trimmed = value.trim()
   return trimmed === "" ? null : trimmed
+}
+
+/** A badge count is a real, non-negative integer or it is not shown at all
+ * — never coerced from a string, never floored from a fraction. */
+function nonNegativeInteger(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) return undefined
+  return value
 }
 
 /**
@@ -133,10 +153,13 @@ export function decidePushNotification(reply: unknown): PushNotificationContent 
   const title = nonEmptyString(candidate.title)
   if (title === null) return fallback
 
+  const unread = nonNegativeInteger(candidate.unread)
+
   return {
     title,
     body: nonEmptyString(candidate.body) ?? GENERIC_PUSH_BODY,
     url: sameOriginPath(candidate.url) ?? DEFAULT_PUSH_URL,
+    ...(unread !== undefined ? { unread } : {}),
   }
 }
 

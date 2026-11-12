@@ -117,16 +117,6 @@ enabled = true
 # The maximum file size allowed (e.g. "5MB", "500KB").
 file_size_limit = "50MiB"
 
-# The bucket the backend uploads scanned papers / mark schemes into
-# (lemely/runtime/config.py StorageSettings.bucket default "uploads"; matches
-# check_upload_cap's 25MB app-level cap in lemely/web/upload_utils.py, sized
-# generously above it here). Declaring it here means `supabase start`/
-# `db reset` always creates it — no separate manual bucket-creation step.
-[storage.buckets.uploads]
-public = false
-file_size_limit = "50MiB"
-allowed_mime_types = ["application/pdf", "image/png", "image/jpeg"]
-
 # Allow connections via S3 compatible clients
 [storage.s3_protocol]
 enabled = true

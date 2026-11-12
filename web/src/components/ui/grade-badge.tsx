@@ -1,10 +1,12 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { HTMLAttributes } from "react"
 import { cn } from "@/lib/utils"
+import { gradeChipClass, gradeTone, type GradeChipSize, type GradeTone } from "@/lib/grade"
 
 /*
  * C-1 Grade badge. Letter grade (A*–G/U) at three sizes, with a hard visual
- * split between an *achieved* result (solid fill — confident, final) and a
+ * split between an *achieved* result (confident, final: solid Jewel fill
+ * where the letter is large text, a solid 2px Jewel border elsewhere) and a
  * *predicted* one (outlined on surface — provisional by construction, per
  * LEMELY_UI_SPEC "predicted should read as provisional"). `estimated` layers
  * on top of either basis: a dashed border plus an always-visible "Estimated"
@@ -13,7 +15,13 @@ import { cn } from "@/lib/utils"
  * relying on hover or color alone.
  */
 
-export type Grade = "A*" | "A" | "B" | "C" | "D" | "E" | "F" | "G" | "U"
+/*
+ * The vocabulary is data now, served per subject and tier by
+ * `GET /api/reference` — see `lib/types.ts`'s `Grade` for why this widened to
+ * `string` rather than staying a fixed union that omitted grades some
+ * subjects genuinely award.
+ */
+export type Grade = string
 export type GradeBand = "top" | "mid" | "borderline" | "fail"
 export type GradeBadgeSize = "hero" | "medium" | "inline"
 /*
@@ -37,16 +45,23 @@ export function gradeBand(grade: string): GradeBand {
   return "fail"
 }
 
-const bandClasses: Record<GradeBand, { text: string; bg: string; border: string }> = {
-  top: { text: "text-grade-top", bg: "bg-grade-top-bg", border: "border-grade-top" },
-  mid: { text: "text-grade-mid", bg: "bg-grade-mid-bg", border: "border-grade-mid" },
-  borderline: {
-    text: "text-grade-borderline",
-    bg: "bg-grade-borderline-bg",
-    border: "border-grade-borderline",
-  },
-  fail: { text: "text-grade-fail", bg: "bg-grade-fail-bg", border: "border-grade-fail" },
+/*
+ * Provisional (outlined) chips carry the tone as border colour only (letters are small text, so they stay `text-on-surface`), and
+ * Tailwind only emits classes it sees as literals, so the full table is spelled
+ * out. Achieved chips use `gradeChipClass` (see `CHIP_SIZE` below).
+ */
+const toneOutline: Record<GradeTone, string> = {
+  "a-star": "border-grade-a-star",
+  a: "border-grade-a",
+  b: "border-grade-b",
+  c: "border-grade-c",
+  d: "border-grade-d",
+  e: "border-grade-e",
+  f: "border-grade-f",
+  g: "border-grade-g",
+  u: "border-grade-u",
 }
+const NO_TONE_OUTLINE = "border-outline"
 
 /*
  * P4.2: the grade letter is mono, not serif.
@@ -70,6 +85,20 @@ const letterSize: Record<GradeBadgeSize, string> = {
   inline: "text-data-md",
 }
 
+/*
+ * White letters on a Jewel fill clear only large-text AA (3:1), so an achieved
+ * badge keeps its fill only where the letter is large text (>= 18.66px bold):
+ * `medium` (32px display rung). `hero` and `inline` letters are 16px and 14px
+ * mono, so their achieved badge is the outlined small chip (2px Jewel border,
+ * `on-surface` letter); the thicker solid border still separates it from the
+ * 1px provisional outline, and provisional badges always carry a caption.
+ */
+const CHIP_SIZE: Record<GradeBadgeSize, GradeChipSize> = {
+  hero: "small",
+  medium: "large",
+  inline: "small",
+}
+
 const padSize: Record<GradeBadgeSize, string> = {
   hero: "px-8 py-6 rounded-xl gap-1.5",
   medium: "px-4 py-3 rounded-lg gap-1",
@@ -77,9 +106,9 @@ const padSize: Record<GradeBadgeSize, string> = {
 }
 
 const labelSize: Record<GradeBadgeSize, string> = {
-  hero: "text-eyebrow text-ink-muted",
-  medium: "text-eyebrow text-ink-muted",
-  inline: "text-data-sm text-ink-faint",
+  hero: "text-eyebrow text-on-surface-variant",
+  medium: "text-eyebrow text-on-surface-variant",
+  inline: "text-data-sm text-on-surface-variant",
 }
 
 export interface GradeBadgeProps extends Omit<HTMLAttributes<HTMLDivElement>, "children"> {
@@ -87,7 +116,10 @@ export interface GradeBadgeProps extends Omit<HTMLAttributes<HTMLDivElement>, "c
   grade: string
   size?: GradeBadgeSize
   /**
-   * achieved = a confident final result (solid fill). predicted = a forecast,
+   * achieved = a confident final result: a solid Jewel fill at `medium`, the
+   * one size whose letter is large text; a solid 2px Jewel border around an
+   * `on-surface` letter at `hero` and `inline`, where white on Jewel would fail
+   * AA (see CHIP_SIZE). predicted = a forecast,
    * provisional (outlined). target = a grade someone is aiming for, also
    * outlined, and never to be confused with either of the other two.
    */
@@ -109,7 +141,7 @@ export function GradeBadge({
   className,
   ...props
 }: GradeBadgeProps) {
-  const band = bandClasses[gradeBand(grade)]
+  const tone = gradeTone(grade)
   const provisional = estimated || basis !== "achieved"
   const label = estimated
     ? "Estimated"
@@ -127,14 +159,20 @@ export function GradeBadge({
         "inline-flex flex-col items-center justify-center leading-none border",
         padSize[size],
         provisional
-          ? cn("bg-paper-raised", band.text, band.border, estimated && "border-dashed")
-          : cn(band.bg, band.text, "border-transparent"),
+          ? cn(
+              "bg-surface-container-lowest text-on-surface",
+              tone ? toneOutline[tone] : NO_TONE_OUTLINE,
+              estimated && "border-dashed",
+            )
+          : CHIP_SIZE[size] === "large"
+            ? cn(gradeChipClass(grade, { size: "large" }), "border-transparent")
+            : gradeChipClass(grade, { size: "small" }),
         className,
       )}
       {...props}
     >
       {/* `medium` stays on the display rung: it is a section-heading-sized
-          badge inside cards whose titles are Newsreader, and a 24px mono
+          badge inside cards whose titles are display type, and a 32px mono
           letter there reads as a paper code. The two rungs that carry a grade
           as a *figure* — hero and inline — are mono. */}
       <span className={cn(size === "medium" && "font-display", letterSize[size])}>{grade}</span>

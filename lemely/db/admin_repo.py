@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
 
+from lemely.core.deletion import purge_cutoff
 from lemely.db.models import (
     Attempt,
     MarkScheme,
@@ -42,6 +43,7 @@ from lemely.db.models import (
     School,
     SchoolClass,
     Subscription,
+    TeacherPaper,
     Upload,
     User,
 )
@@ -52,6 +54,7 @@ from lemely.db.models.enums import (
     SubscriptionStatus,
     UploadStatus,
 )
+from lemely.db.session import INCLUDE_DELETED
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
@@ -114,28 +117,6 @@ class PlatformCounts:
 
 
 @dataclass(frozen=True, slots=True)
-class SpendSnapshot:
-    """Gemini spend against the configured hard ceiling.
-
-    ``ceiling_usd`` is ``None`` when no ceiling is configured, which is a real
-    configuration state and not a zero. ``thresholds_usd`` are the warning marks
-    the runtime notifies on; X-01 shows them because a number without its alarm
-    points cannot be read as safe or unsafe.
-    """
-
-    cumulative_usd: float
-    ceiling_usd: float | None
-    thresholds_usd: list[float]
-
-    @property
-    def remaining_usd(self) -> float | None:
-        """Headroom left, or ``None`` when there is no ceiling to be under."""
-        if self.ceiling_usd is None:
-            return None
-        return max(0.0, self.ceiling_usd - self.cumulative_usd)
-
-
-@dataclass(frozen=True, slots=True)
 class PendingActivation:
     """One subscription awaiting a manual decision (X-02)."""
 
@@ -183,6 +164,14 @@ class PipelineHealth:
     happened to last be written, with no way for the screen to know how stale it
     is, so the surface says the metric lives elsewhere instead of showing a
     number it cannot date.
+
+    ``purge_backlog`` is Task 10's sweeper made observable: attempts and
+    teacher-console papers (R2) whose ``deleted_at`` is more than a day past
+    :func:`~lemely.core.deletion.purge_cutoff` and are still present. A healthy
+    sweeper keeps this at zero; a rising count means purge is falling behind,
+    which is the failure mode nothing else on this screen would surface — the
+    rows are already invisible to every tenant-facing reader, so only an
+    aggregate admin count catches a purge that keeps failing.
     """
 
     subjects: list[SubjectCoverage]
@@ -191,6 +180,7 @@ class PipelineHealth:
     subject_default_boundary_keys: int
     uploads_by_status: dict[str, int]
     recent_failed_uploads: list[uuid.UUID]
+    purge_backlog: int
 
 
 class PlatformAdminService:
@@ -369,7 +359,11 @@ class PlatformAdminService:
     # -- X-03 ---------------------------------------------------------------
 
     def pipeline_health(
-        self, *, exact_boundary_keys: int, subject_default_boundary_keys: int
+        self,
+        *,
+        exact_boundary_keys: int,
+        subject_default_boundary_keys: int,
+        now: datetime | None = None,
     ) -> PipelineHealth:
         """Return corpus coverage, boundary reliance, and ingestion outcomes.
 
@@ -377,7 +371,11 @@ class PlatformAdminService:
         come from :class:`~lemely.io.grade_boundaries.GradeBoundaryStore`, which
         is a file-backed I/O object, and this module deliberately touches nothing
         but the database.
+
+        ``now`` is injected for the same reason :meth:`counts` injects it: the
+        backlog boundary is a rolling window, and a test needs it reproducible.
         """
+        moment = now or datetime.now(UTC)
         with self._sessionmaker() as session:
             coverage_rows = session.execute(
                 select(
@@ -405,6 +403,24 @@ class PlatformAdminService:
                     .limit(10)
                 ).all()
             )
+            overdue = purge_cutoff(moment) - timedelta(days=1)
+            backlog = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(Attempt)
+                    .where(Attempt.deleted_at <= overdue)
+                    .execution_options(**{INCLUDE_DELETED: True})
+                )
+                or 0
+            ) + int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(TeacherPaper)
+                    .where(TeacherPaper.deleted_at <= overdue)
+                    .execution_options(**{INCLUDE_DELETED: True})
+                )
+                or 0
+            )
             return PipelineHealth(
                 subjects=[
                     SubjectCoverage(
@@ -419,6 +435,7 @@ class PlatformAdminService:
                 subject_default_boundary_keys=subject_default_boundary_keys,
                 uploads_by_status=self._uploads_by_status(session),
                 recent_failed_uploads=failed,
+                purge_backlog=backlog,
             )
 
     # -- Internals ----------------------------------------------------------
@@ -465,7 +482,6 @@ __all__ = [
     "PlatformAdminService",
     "PlatformCounts",
     "SignupRow",
-    "SpendSnapshot",
     "SubjectCoverage",
     "SubscriptionAlreadyDecidedError",
     "SubscriptionNotFoundError",

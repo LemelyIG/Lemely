@@ -149,3 +149,59 @@ product benefit, it contains no hype word, and it survives translation.
 Exact hex values, type faces, spacing, and every component rule are `DESIGN.md`'s
 job (step 4 of Phase 2). If this file and `DESIGN.md` ever disagree on a visual
 value, `DESIGN.md` wins; if they disagree on *meaning*, this file wins.
+
+---
+
+## 7. Addendum: the mark that shipped is not concept A
+
+§3 recommended concept A — the letter `L` drawn as the corner of a ruled page,
+its foot lifting into a tick — and §4 took it into image generation. That mark
+shipped and stood for several phases. It has been replaced by **an open spiral
+notebook, drawn as a doodle, riffling its pages**.
+
+This section is an addendum rather than an edit because §1–§6 are a record of
+what was decided in Phase 2 and are worth keeping intact. What follows is what
+changed, and what did not.
+
+**What did not change.** The strategy in §1 stands unedited: same category, same
+audience, same promise, same five personality traits, same voice test. So does
+the territory in §2, including every hard ban in it — there is no mortarboard,
+no lightbulb, no owl, no sparkle, no swoosh, and the "open book" in the ban list
+is the graduation-clipart open book, not a spiral notebook seen from above with
+work on it. Nor did the meaning change: the mark is still the act of marking a
+paper, and the tick is still the heaviest stroke in it and the only one a hand
+made.
+
+**What changed, and why.** Concept A implied the page with two lines and drew
+the mark on top of it. The notebook draws the page. That let five of §2's six
+in-territory symbols into one object instead of two — the margin rule, the tick,
+the ruled line, the stacked sheet, and the dog-eared corner — where concept A
+carried the first two and gestured at the third.
+
+The notebook is **open**, and that is the load-bearing decision rather than a
+stylistic one. It gives the mark a left page and a right page: work on the
+right, unmarked; the same sheet on the left, turned over, carrying the tick. The
+mark is then not decoration applied to a page, it is *the state a page arrives
+in once it has been through the product* — which is §1's brand idea stated as a
+picture. It is also what makes the mark animate: a page turn needs somewhere to
+land, and a closed notebook has nowhere.
+
+**What §3's reasoning got right, and what it missed.** Its argument for concept A
+was that the letterform and the metaphor were the same shape rather than two
+things glued together. That was true and it is the reason the concept survived
+as long as it did. What it did not weigh is that the mark had no *behaviour*:
+the strongest thing this product does is turn a page of work into a page of
+marked work, and a static `L` cannot show that. The notebook can, and does.
+
+**Where the mark now lives.** `web/src/lib/brandMark.ts` holds every coordinate,
+once. `web/scripts/generate_mark_svg.mjs` writes the two standalone cuts from
+it; `web/src/components/ui/brand-mark.tsx` draws the inline, animated one.
+`web/public/brand/mark-favicon.svg` is the one piece authored by hand, because a
+16x16 cut is a different drawing and not a resize. Each file states its own
+reasoning, including the measured finding that an SVG in an `<img>` cannot be
+stopped by `prefers-reduced-motion` and therefore must not animate.
+
+The wordmark lockup in §4 is unaffected except in one detail: the rhyme it named
+between the wordmark's `l` and the mark's vertical rule is gone with the `L`.
+The lockup now pairs a landscape mark with the wordmark, sized so the notebook's
+drawn height matches the wordmark's cap height rather than its bounding box.

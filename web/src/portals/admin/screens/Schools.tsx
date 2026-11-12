@@ -7,8 +7,9 @@ import { Modal } from "@/components/ui/modal"
 import { Badge } from "@/components/ui/badge"
 import { Eyebrow } from "@/components/ui/primitives"
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import {
   adminLoadFailureMessage,
   adminMutationFailureMessage,
@@ -65,45 +66,49 @@ import type { SchoolSummary } from "@/lib/adminTypes"
  * fix even though it also contains both numbers.
  */
 export function Schools() {
-  const { data, isPending, isError, error } = useSchools()
+  const query = useSchools()
 
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1.5">
         <Eyebrow>Platform admin</Eyebrow>
-        <h1 className="text-display-lg text-ink">Schools</h1>
-        <p className="max-w-prose text-body-md text-ink-muted">
+        <h1 className="text-display-lg text-on-surface">Schools</h1>
+        <p className="max-w-prose text-body-md text-on-surface-variant">
           Every school on the platform: its seat quota, how many seats are already assigned, and
           who administers it. Create a school here first. A school_admin needs one to exist
           before they can be given the console that runs it.
         </p>
       </header>
 
-      {isPending ? (
-        <>
-          <PageHeaderSkeleton />
-          <ListSkeleton rows={5} />
-        </>
-      ) : isError ? (
-        <ErrorState
-          heading="We couldn't load the schools list"
-          body={adminLoadFailureMessage(error)}
-          action={{ label: "Try again", onClick: () => window.location.reload() }}
-        />
-      ) : (
-        <>
-          <CreateSchoolPanel />
-          {data.schools.length === 0 ? (
-            <EmptyState
-              marginalia="an empty campus"
-              heading="No schools yet"
-              body="Create one above. Once it has a seat quota, add a school_admin to run it."
-            />
-          ) : (
-            <SchoolsTable schools={data.schools} />
-          )}
-        </>
-      )}
+      <QueryState
+        query={query}
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={5} />
+          </>
+        }
+        error={{ heading: "We couldn't load the schools list", body: adminLoadFailureMessage }}
+      >
+        {(data) => (
+          <>
+            {/* The "no schools yet" empty view stays inside `children` rather
+                than going through `isEmpty`/`empty`: `CreateSchoolPanel` must
+                render alongside the empty state (it is the way out of it), and
+                `empty` renders in place of `children` entirely. */}
+            <CreateSchoolPanel />
+            {data.schools.length === 0 ? (
+              <EmptyState
+                marginalia="an empty campus"
+                heading="No schools yet"
+                body="Create one above. Once it has a seat quota, add a school_admin to run it."
+              />
+            ) : (
+              <SchoolsTable schools={data.schools} />
+            )}
+          </>
+        )}
+      </QueryState>
     </div>
   )
 }
@@ -184,7 +189,7 @@ function CreateSchoolPanel() {
             />
           </div>
           {create.isError ? (
-            <p className="text-body-sm text-err">{adminMutationFailureMessage(create.error)}</p>
+            <p className="text-body-sm text-error">{adminMutationFailureMessage(create.error)}</p>
           ) : null}
           <div>
             <Button type="submit" variant="primary" loading={create.isPending}>
@@ -224,7 +229,7 @@ function SchoolsTable({ schools }: { schools: SchoolSummary[] }) {
             return (
               <TR key={school.schoolId}>
                 <TD>
-                  <span className="text-body-sm text-ink">{school.name}</span>
+                  <span className="text-body-sm text-on-surface">{school.name}</span>
                 </TD>
                 <TD numeric>{school.seatQuota}</TD>
                 <TD numeric>
@@ -235,11 +240,11 @@ function SchoolsTable({ schools }: { schools: SchoolSummary[] }) {
                 </TD>
                 <TD>
                   {school.admins.length === 0 ? (
-                    <span className="text-body-sm text-ink-faint">No school_admin yet</span>
+                    <span className="text-body-sm text-on-surface-variant">No school_admin yet</span>
                   ) : (
                     <ul className="flex flex-col gap-0.5">
                       {school.admins.map((admin) => (
-                        <li key={admin.userId} className="text-body-sm text-ink-muted">
+                        <li key={admin.userId} className="text-body-sm text-on-surface-variant">
                           {admin.displayName ?? admin.email}
                         </li>
                       ))}
@@ -354,7 +359,7 @@ function EditSchoolModal({ school, onClose }: { school: SchoolSummary; onClose: 
           }
         />
         {update.isError && lastSubmittedQuota !== null ? (
-          <p className="text-body-sm text-err">
+          <p className="text-body-sm text-error">
             {schoolUpdateFailureMessage(update.error, lastSubmittedQuota, school.seatsAssigned)}
           </p>
         ) : null}
@@ -431,16 +436,16 @@ function CreateSchoolAdminModal({
         // email provider delivers anything in v1 (D7.6) — the copy must not
         // let a reader assume a mail went out when none did.
         <div className="flex flex-col gap-3">
-          <p className="text-body-md text-ink">
+          <p className="text-body-md text-on-surface">
             {create.data.email} can sign in to {school.name} now.
           </p>
           {create.data.temporaryPassword ? (
-            <div className="flex flex-col gap-1.5 rounded-md border border-rule bg-paper-sunk p-3">
-              <p className="text-body-sm text-ink">
+            <div className="flex flex-col gap-1.5 rounded-md border border-outline-variant bg-surface-container-low p-3">
+              <p className="text-body-sm text-on-surface">
                 This password won&rsquo;t be shown again, and no email has been sent for it. Copy
                 it now and share it with them yourself.
               </p>
-              <code className="w-fit rounded-sm bg-paper-raised px-1.5 py-0.5 text-data-sm text-ink">
+              <code className="w-fit rounded-sm bg-surface-container-lowest px-1.5 py-0.5 text-data-sm text-on-surface">
                 {create.data.temporaryPassword}
               </code>
             </div>
@@ -463,7 +468,7 @@ function CreateSchoolAdminModal({
             autoComplete="off"
           />
           {create.isError ? (
-            <p className="text-body-sm text-err">{schoolAdminCreateFailureMessage(create.error)}</p>
+            <p className="text-body-sm text-error">{schoolAdminCreateFailureMessage(create.error)}</p>
           ) : null}
         </div>
       )}

@@ -30,7 +30,7 @@ export function Kbd({ size = "sm", className, ...props }: KbdProps) {
   return (
     <kbd
       className={cn(
-        "inline-flex items-center justify-center rounded-sm border border-rule bg-paper-raised leading-none text-ink-muted",
+        "inline-flex items-center justify-center rounded-sm border border-outline-variant bg-surface-container-lowest leading-none text-on-surface-variant",
         sizeClasses[size],
         className,
       )}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { postVerifyPath, resendButtonLabel } from "@/portals/auth/verifyEmailLogic"
+import { canSubmitCode, postVerifyPath, resendButtonLabel } from "@/portals/auth/verifyEmailLogic"
 
 /*
  * G-07 · the two pure decisions `VerifyEmail.tsx` makes, pinned in isolation
@@ -80,5 +80,23 @@ describe("resendButtonLabel — cooldown outranks in-flight", () => {
     expect(resendButtonLabel({ cooldownSeconds: 0, isPending: false })).toBe(
       "Resend verification link",
     )
+  })
+})
+
+describe("canSubmitCode — DS15's typed-code companion to the link", () => {
+  it("rejects five digits", () => {
+    expect(canSubmitCode("12345", false)).toBe(false)
+  })
+
+  it("accepts six digits at rest", () => {
+    expect(canSubmitCode("123456", false)).toBe(true)
+  })
+
+  it("rejects six digits while the mutation is pending", () => {
+    expect(canSubmitCode("123456", true)).toBe(false)
+  })
+
+  it("rejects non-digit characters even at length six", () => {
+    expect(canSubmitCode("12a456", false)).toBe(false)
   })
 })

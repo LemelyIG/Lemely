@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-02T00:30:00Z",
+  "title": "Design System: Lemely",
+  "extensions": {
+    "colorMeta": {
+      "abyss": { "role": "primary", "displayName": "Abyss", "canonical": "#042f4f", "tonalRamp": ["oklch(0.1 0.042 242)", "oklch(0.2 0.058 242)", "oklch(0.3 0.075 242)", "oklch(0.4 0.092 242)", "oklch(0.5 0.092 242)", "oklch(0.6 0.075 242)", "oklch(0.7 0.058 242)", "oklch(0.8 0.042 242)", "oklch(0.9 0.025 242)", "oklch(0.95 0.017 242)", "oklch(0.99 0.015 242)"] },
+      "tide": { "role": "primary", "displayName": "Tide (primary on dark)", "canonical": "#7fb8e0", "tonalRamp": ["oklch(0.1 0.042 242)", "oklch(0.2 0.058 242)", "oklch(0.3 0.075 242)", "oklch(0.4 0.092 242)", "oklch(0.5 0.092 242)", "oklch(0.6 0.075 242)", "oklch(0.7 0.058 242)", "oklch(0.8 0.042 242)", "oklch(0.9 0.025 242)", "oklch(0.95 0.017 242)", "oklch(0.99 0.015 242)"] },
+      "mist-blue": { "role": "secondary", "displayName": "Mist Blue", "canonical": "oklch(0.92 0.035 235)", "tonalRamp": ["oklch(0.1 0.006 235)", "oklch(0.2 0.006 235)", "oklch(0.3 0.006 235)", "oklch(0.4 0.010 235)", "oklch(0.5 0.017 235)", "oklch(0.6 0.023 235)", "oklch(0.7 0.030 235)", "oklch(0.8 0.037 235)", "oklch(0.9 0.037 235)", "oklch(0.95 0.033 235)", "oklch(0.99 0.031 235)"] },
+      "gold": { "role": "tertiary", "displayName": "Gold (XP and streaks)", "canonical": "oklch(0.80 0.13 80)", "tonalRamp": ["oklch(0.1 0.019 80)", "oklch(0.2 0.019 80)", "oklch(0.3 0.022 80)", "oklch(0.4 0.043 80)", "oklch(0.5 0.065 80)", "oklch(0.6 0.087 80)", "oklch(0.7 0.108 80)", "oklch(0.8 0.130 80)", "oklch(0.9 0.108 80)", "oklch(0.95 0.098 80)", "oklch(0.99 0.089 80)"] },
+      "crimson": { "role": "error", "displayName": "Crimson (lost marks)", "canonical": "oklch(0.53 0.20 25)", "tonalRamp": ["oklch(0.1 0.050 25)", "oklch(0.2 0.083 25)", "oklch(0.3 0.117 25)", "oklch(0.4 0.150 25)", "oklch(0.5 0.183 25)", "oklch(0.6 0.183 25)", "oklch(0.7 0.150 25)", "oklch(0.8 0.117 25)", "oklch(0.9 0.083 25)", "oklch(0.95 0.067 25)", "oklch(0.99 0.053 25)"] },
+      "night": { "role": "neutral", "displayName": "Night (text ink, never a fill)", "canonical": "#130e10", "tonalRamp": ["oklch(0.1 0.010 240)", "oklch(0.2 0.010 240)", "oklch(0.3 0.010 240)", "oklch(0.4 0.010 240)", "oklch(0.5 0.010 240)", "oklch(0.6 0.010 240)", "oklch(0.7 0.010 240)", "oklch(0.8 0.010 240)", "oklch(0.9 0.010 240)", "oklch(0.95 0.010 240)", "oklch(0.99 0.010 240)"] },
+      "night-surface": { "role": "neutral", "displayName": "Night surface (dark surface, light inverse-surface)", "canonical": "oklch(0.16 0.014 245)", "tonalRamp": ["oklch(0.1 0.014 245)", "oklch(0.2 0.014 245)", "oklch(0.3 0.014 245)", "oklch(0.4 0.014 245)", "oklch(0.5 0.014 245)", "oklch(0.6 0.014 245)", "oklch(0.7 0.014 245)", "oklch(0.8 0.014 245)", "oklch(0.9 0.014 245)", "oklch(0.95 0.014 245)", "oklch(0.99 0.014 245)"] },
+      "success": { "role": "custom", "displayName": "Success (correct, high confidence)", "canonical": "oklch(0.60 0.12 150)" },
+      "success-text": { "role": "custom", "displayName": "Success text (success as text; dark oklch(0.72 0.12 150))", "canonical": "oklch(0.49 0.12 150)" },
+      "primary-hover": { "role": "primary", "displayName": "Primary hover (dark #9ccaea)", "canonical": "#0a3d62" }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "T1 Display", "purpose": "Wordmark, hero headlines, big scores, XP moments. 28px and above only." },
+      "headline": { "displayName": "T2 Headline", "purpose": "Page and section headings." },
+      "title": { "displayName": "T2 Title", "purpose": "Card titles and dialog headings." },
+      "body": { "displayName": "T2 Body", "purpose": "Feedback, explanations, interface copy. 65 to 75ch." },
+      "data": { "displayName": "Data", "purpose": "Marks, confidence percentages, paper and question codes." },
+      "label": { "displayName": "Label", "purpose": "Eyebrows, table headers, axis labels. Uppercase, +0.08em." }
+    },
+    "shadows": [
+      { "name": "hover-lift", "value": "0 22px 40px -26px oklch(0.3 0.06 242 / 0.4)", "purpose": "Clickable card under the pointer." },
+      { "name": "floating-panel", "value": "0 30px 60px -40px oklch(0.3 0.06 242 / 0.45), 0 0 0 1px oklch(0.92 0.01 240)", "purpose": "Menus, popovers, toasts." }
+    ],
+    "motion": [
+      { "name": "ease-out", "value": "cubic-bezier(0.2, 0.8, 0.2, 1)", "purpose": "Default easing for state transitions." },
+      { "name": "ease-expo", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Reveals and reward moments." },
+      { "name": "dur-fast", "value": "150ms", "purpose": "Hover and press." },
+      { "name": "dur-base", "value": "200ms", "purpose": "Standard transitions." },
+      { "name": "dur-slow", "value": "350ms", "purpose": "Entrances (rise 8px and fade)." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "960px" },
+      { "name": "lg", "value": "1280px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single main action on a screen.",
+      "html": "<button class=\"ds-btn-primary\">Fix my weak topics</button>",
+      "css": ".ds-btn-primary { background: #042f4f; color: #ffffff; border: 0; border-radius: 14px; padding: 14px 20px; font: 700 15px 'Schibsted Grotesk', system-ui, sans-serif; cursor: pointer; transition: background .15s cubic-bezier(.2,.8,.2,1), transform .15s cubic-bezier(.2,.8,.2,1); } .ds-btn-primary:hover { background: #0a3d62; } .ds-btn-primary:active { transform: scale(0.97); } .ds-btn-primary:focus-visible { outline: 2px solid #042f4f; outline-offset: 2px; }"
+    },
+    {
+      "name": "Tonal Button",
+      "kind": "button",
+      "refersTo": "button-tonal",
+      "description": "Second action in a pair.",
+      "html": "<button class=\"ds-btn-tonal\">See all marks</button>",
+      "css": ".ds-btn-tonal { background: oklch(0.92 0.035 235); color: #042f4f; border: 0; border-radius: 14px; padding: 14px 20px; font: 700 15px 'Schibsted Grotesk', system-ui, sans-serif; cursor: pointer; transition: background .15s cubic-bezier(.2,.8,.2,1), transform .15s; } .ds-btn-tonal:hover { background: oklch(0.88 0.045 235); } .ds-btn-tonal:active { transform: scale(0.97); } .ds-btn-tonal:focus-visible { outline: 2px solid #042f4f; outline-offset: 2px; }"
+    },
+    {
+      "name": "Streak Pill",
+      "kind": "chip",
+      "refersTo": "streak-pill",
+      "description": "Streaks, tags and status pills.",
+      "html": "<span class=\"ds-pill\">12-day streak</span>",
+      "css": ".ds-pill { display: inline-block; background: oklch(0.92 0.035 235); color: #042f4f; border-radius: 999px; padding: 6px 12px; font: 600 13px 'Schibsted Grotesk', system-ui, sans-serif; }"
+    },
+    {
+      "name": "Grade Chip",
+      "kind": "chip",
+      "refersTo": "grade-chip",
+      "description": "Jewel grade colour, white letter, always labelled.",
+      "html": "<span class=\"ds-grade ds-grade-astar\">A*</span> <span class=\"ds-grade ds-grade-a\">A</span> <span class=\"ds-grade ds-grade-c\">C</span> <span class=\"ds-grade ds-grade-f\">F</span> <span class=\"ds-grade ds-grade-g\">G</span> <span class=\"ds-grade ds-grade-u\">U</span>",
+      "css": ".ds-grade { display: inline-block; color: #ffffff; font: 800 20px 'Bricolage Grotesque', sans-serif; padding: 4px 12px; border-radius: 10px; } .ds-grade-astar { background: oklch(0.46 0.12 155); } .ds-grade-a { background: oklch(0.52 0.12 132); } .ds-grade-c { background: oklch(0.63 0.12 88); } .ds-grade-f { background: oklch(0.53 0.135 30); } .ds-grade-g { background: oklch(0.52 0.138 22); } .ds-grade-u { background: oklch(0.50 0.14 15); }"
+    },
+    {
+      "name": "Result Card",
+      "kind": "card",
+      "refersTo": "card-inner",
+      "description": "Signature result card: big score, grade, delta, progress and mark rows.",
+      "html": "<div class=\"ds-card\"><span class=\"ds-meta\">Chemistry 0620 · Paper 4 · May/June 2024</span><div class=\"ds-score\"><b>61<small>/80</small></b><span class=\"ds-g\">A</span><span class=\"ds-up\">+4 vs last</span></div><div class=\"ds-track\"><i></i></div><div class=\"ds-row\"><span>Q4(b) Missing units</span><span class=\"ds-lost\">−3</span></div><div class=\"ds-row\"><span>Q7 Moles calculation</span><span class=\"ds-lost\">−2</span></div></div>",
+      "css": ".ds-card { background: #ffffff; border: 1px solid oklch(0.87 0.012 240); border-radius: 18px; padding: 22px; display: flex; flex-direction: column; gap: 12px; font-family: 'Schibsted Grotesk', system-ui, sans-serif; color: #130e10; max-width: 420px; } .ds-meta { font-size: 14px; color: oklch(0.47 0.02 240); } .ds-score { display: flex; align-items: baseline; gap: 14px; } .ds-score b { font: 800 56px 'Bricolage Grotesque', sans-serif; letter-spacing: -0.03em; } .ds-score small { font-size: 28px; color: oklch(0.47 0.02 240); } .ds-g { background: oklch(0.52 0.12 132); color: #fff; font: 800 20px 'Bricolage Grotesque', sans-serif; padding: 4px 12px; border-radius: 10px; } .ds-up { font: 600 13px 'JetBrains Mono', monospace; color: oklch(0.49 0.12 150); } .ds-track { height: 8px; border-radius: 4px; background: oklch(0.94 0.01 240); overflow: hidden; } .ds-track i { display: block; width: 76%; height: 100%; background: #042f4f; } .ds-row { display: flex; justify-content: space-between; font-size: 15px; padding: 8px 10px; border-radius: 10px; background: oklch(0.97 0.006 240); } .ds-lost { font-family: 'JetBrains Mono', monospace; color: oklch(0.53 0.2 25); }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Standard text field.",
+      "html": "<input class=\"ds-input\" placeholder=\"Class name, e.g. Year 11 Chemistry\">",
+      "css": ".ds-input { height: 44px; padding: 0 14px; border-radius: 12px; border: 1px solid oklch(0.87 0.012 240); background: #ffffff; color: #130e10; font: 600 14px 'Schibsted Grotesk', system-ui, sans-serif; width: 280px; transition: border-color .15s, box-shadow .15s; } .ds-input::placeholder { color: oklch(0.47 0.02 240); font-weight: 400; } .ds-input:focus-visible { outline: none; border-color: #042f4f; box-shadow: 0 0 0 3px oklch(0.92 0.035 235); }"
+    },
+    {
+      "name": "Sidebar Navigation",
+      "kind": "nav",
+      "refersTo": "nav-item",
+      "description": "Sidebar nav with active item and count badge.",
+      "html": "<nav class=\"ds-nav\"><a href=\"#\" aria-current=\"page\">Overview<span class=\"ds-n\">3</span></a><a href=\"#\">Review queue<span class=\"ds-n\">14</span></a><a href=\"#\">Classes</a></nav>",
+      "css": ".ds-nav { display: flex; flex-direction: column; gap: 1px; width: 220px; font-family: 'Schibsted Grotesk', system-ui, sans-serif; } .ds-nav a { display: flex; align-items: center; padding: 9px 10px; border-radius: 12px; color: oklch(0.47 0.02 240); font-weight: 600; font-size: 13.5px; text-decoration: none; transition: background .15s, color .15s; } .ds-nav a:hover { background: oklch(0.955 0.008 240); color: #130e10; } .ds-nav a[aria-current] { background: oklch(0.92 0.035 235); color: #042f4f; } .ds-nav a:focus-visible { outline: 2px solid #042f4f; outline-offset: -2px; } .ds-n { margin-left: auto; font: 600 11px 'JetBrains Mono', monospace; padding: 1px 7px; border-radius: 999px; background: oklch(0.94 0.01 240); color: #130e10; } .ds-nav a[aria-current] .ds-n { background: #042f4f; color: #fff; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Every mark, explained.",
+    "overview": "Lemely is a paperclip. It is small, precise and cool to the touch, and its job is to hold things together: a student's papers, a teacher's class set, a term of progress. The system is one colour at two depths: Abyss (#042f4f) carries light mode and Tide (#7fb8e0) carries dark mode, both from the same Material 3 tonal palette. Teachers, parents and schools get \"Every mark, explained.\": calm tonal surfaces, monospace data, no mascot. Students get \"From paper to A*.\": the same surfaces with Binny, XP, streaks and Bricolage Grotesque at full size for the moments that earned it.",
+    "keyCharacteristics": [
+      "Material 3 colour roles only. UI code never uses a raw value when a role exists.",
+      "Cool neutrals at hue 240. No browns, no warm paper, no very dark reds.",
+      "Three typefaces with fixed jobs: Bricolage Grotesque for display, Schibsted Grotesk for everything readable, JetBrains Mono for data.",
+      "Flat tonal layering. A 1 to 1.5px outline appears only where white sits on white.",
+      "Generous, rounded geometry: cards 24, tiles 20, buttons 14, chips 12.",
+      "Binny the binder-clip bunny appears on student surfaces only."
+    ],
+    "rules": [
+      { "name": "The Roles Only Rule", "body": "UI code uses Material 3 roles (--md-primary, --md-surface-container-low, ...), never raw values. Theme switching swaps role values, not component code.", "section": "colors" },
+      { "name": "The Never Abyss On Dark Rule", "body": "On Night or any dark surface, the brand accent is Tide. Abyss on dark reads as a hole.", "section": "colors" },
+      { "name": "The Red Means Lost Rule", "body": "Crimson appears only on lost marks, low confidence and genuine errors. Never as decoration, a background wash, or a heading colour.", "section": "colors" },
+      { "name": "The Gold Is Earned Rule", "body": "Gold appears only on XP, streaks and reward moments (plus the medium-confidence dot). If nothing was earned, there is no gold.", "section": "colors" },
+      { "name": "The Letter Always Rule", "body": "A grade chip always shows its letter. A* is always green.", "section": "colors" },
+      { "name": "The T1 Over 28 Rule", "body": "Bricolage Grotesque appears at 28px and above only. Below that, use Schibsted.", "section": "typography" },
+      { "name": "The Numbers Are Measured Rule", "body": "Every mark, score delta, code and confidence value is set in JetBrains Mono or with tabular figures. Confidence is a percentage (\"64%\"), never a 0 to 1 decimal.", "section": "typography" },
+      { "name": "The Flat At Rest Rule", "body": "Surfaces are flat at rest. A shadow appears only on hover or on a floating panel.", "section": "elevation" },
+      { "name": "The Tonal Step Rule", "body": "To raise something, step it one rung up the surface ladder before reaching for a shadow or an outline.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do use Material 3 roles in code. Abyss #042f4f is primary in light mode and Tide #7fb8e0 is primary in dark mode.",
+      "Do use the audience line: \"From paper to A*.\" for students, \"Every mark, explained.\" for teachers, and \"Turn past papers into progress.\" for parents and schools.",
+      "Do set every mark, delta, code and confidence value in JetBrains Mono. Show confidence as a percentage.",
+      "Do raise surfaces by stepping up the tonal ladder. Use a 1 to 1.5px outline only for white on white.",
+      "Do show the letter on every grade chip, and keep A* green.",
+      "Do connect every number to a next step (\"Two topics need attention this month\").",
+      "Do respect prefers-reduced-motion: all motion off, Binny included.",
+      "Do keep teacher copy precise and efficient: \"14 answers below 70% confidence are waiting for your review.\""
+    ],
+    "donts": [
+      "Don't put Abyss on a dark surface. On dark, the accent is Tide.",
+      "Don't use crimson for anything except lost marks, low confidence and genuine errors.",
+      "Don't use gold anywhere nothing was earned.",
+      "Don't show Binny on teacher, parent or school surfaces, show more than one Binny on a screen, or place Binny next to the logo.",
+      "Don't set Bricolage Grotesque below 28px.",
+      "Don't bring back the retired Study Notebook kit: warm paper, Caveat handwriting, pastel stickers, paper texture, brown or warm neutrals.",
+      "Don't build generic SaaS dashboards: metric cards with gradient shadows, the HubSpot/Salesforce template.",
+      "Don't use consumer edtech gamification: Duolingo-style emoji as UI, confetti, bright primary colours, cheerleader copy.",
+      "Don't use the \"AI product\" look: purple-blue gradients, dark glassmorphic panels, neon accents on near-black.",
+      "Don't use academic or institutional aesthetics: Times New Roman, university portal greys, government-form layouts.",
+      "Don't build cookie-cutter card grids of equal-height identical boxes with colour used as decoration.",
+      "Don't use border-left or border-right over 1px as a coloured stripe, or gradient text.",
+      "Don't tilt the paperclips, or change the clip stroke from 5.",
+      "Don't say \"cram\", \"hack\", \"easy A\" or \"guaranteed grade\"."
+    ]
+  }
+}

@@ -1,5 +1,6 @@
 import {
   useMutation,
+  useQueries,
   useQuery,
   useQueryClient,
   type UseMutationResult,
@@ -36,6 +37,38 @@ export function usePlacementAvailability(
     queryFn: () =>
       request<PlacementAvailability>(`/student/placement/${subjectCode}/availability`),
     enabled: !!subjectCode,
+  })
+}
+
+/**
+ * Availability for several subjects at once, one query per subject, sharing
+ * the exact cache key `usePlacementAvailability` uses — so this and any
+ * per-subject row reading the same code hit one cached fetch, not two.
+ *
+ * The onboarding placement-choice step (`QuestionnaireStep.tsx`,
+ * `onboardingData.ts`'s `firstAvailablePlacementSubject`) needs this: when
+ * the student skips the choice, the routing decision must prefer an
+ * enrolled subject that actually has placement questions, and that means
+ * knowing every enrolled subject's availability, not just the one the
+ * student happened to look at.
+ *
+ * `useQueries` (not a `.map()` of `useQuery` calls, and not `useQuery`
+ * inside a loop) is the react-query-blessed way to run a *dynamic-length*
+ * list of queries from one hook call — the list of enrolled subjects can
+ * change in length between renders, which would break the Rules of Hooks
+ * if each query were its own `useQuery`. This is one hook call regardless
+ * of how many `subjectCodes` are passed.
+ */
+export function usePlacementAvailabilities(
+  subjectCodes: readonly string[],
+): UseQueryResult<PlacementAvailability, Error>[] {
+  return useQueries({
+    queries: subjectCodes.map((subjectCode) => ({
+      queryKey: ["placement", "availability", subjectCode],
+      queryFn: () =>
+        request<PlacementAvailability>(`/student/placement/${subjectCode}/availability`),
+      enabled: !!subjectCode,
+    })),
   })
 }
 

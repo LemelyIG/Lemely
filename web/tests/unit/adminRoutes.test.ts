@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest"
 import fs from "node:fs"
 import path from "node:path"
 
-import { appRoutes } from "@/routes"
+import { appRoutes, flattenRoutes } from "@/routes"
 import { portalPathForRole } from "@/lib/auth/RequireAuth"
 import { platformAdminRoute, schoolAdminRoute } from "@/portals/admin"
+import { platformNavItems, resolveAdminTrail, schoolNavItems } from "@/portals/admin/data"
 
 /*
  * P4.7 · the two admin lanes, and the role split that made them necessary.
@@ -65,13 +66,14 @@ function allowedRolesOf(node: unknown): readonly string[] | null {
 }
 
 const routesSource = fs.readFileSync(path.resolve(__dirname, "../../src/routes.tsx"), "utf8")
+const topLevelRoutes = flattenRoutes(appRoutes)
 
 describe("the admin lanes are mounted and guarded — P4.7", () => {
   it.each([
     ["school", ["school_admin"]],
     ["platform", ["platform_admin"]],
   ])("gates /%s to exactly %j", (portal, expected) => {
-    const route = appRoutes.find((r) => r.path === portal)
+    const route = topLevelRoutes.find((r) => r.path === portal)
     expect(route, `/${portal} is not mounted`).toBeDefined()
     expect(containsComponent(route!.element, "RequireAuth")).toBe(true)
     expect(allowedRolesOf(route!.element)).toEqual(expected)
@@ -84,14 +86,16 @@ describe("the admin lanes are mounted and guarded — P4.7", () => {
    * role in front of screens whose every request 403s.
    */
   it("does not let either admin role into the other's lane", () => {
-    const school = allowedRolesOf(appRoutes.find((r) => r.path === "school")!.element)
-    const platform = allowedRolesOf(appRoutes.find((r) => r.path === "platform")!.element)
+    const school = allowedRolesOf(topLevelRoutes.find((r) => r.path === "school")!.element)
+    const platform = allowedRolesOf(topLevelRoutes.find((r) => r.path === "platform")!.element)
     expect(school).not.toContain("platform_admin")
     expect(platform).not.toContain("school_admin")
   })
 
   it("mounts both lanes at the top level, not inside another portal", () => {
-    expect(appRoutes.map((r) => r.path)).toEqual(expect.arrayContaining(["school", "platform"]))
+    expect(topLevelRoutes.map((r) => r.path)).toEqual(
+      expect.arrayContaining(["school", "platform"]),
+    )
     expect(schoolAdminRoute.path).toBe("school")
     expect(platformAdminRoute.path).toBe("platform")
   })
@@ -126,15 +130,78 @@ describe("Task 22 · /platform/schools is registered under the guarded platform 
   })
 
   it("reaches platform_admin", () => {
-    const platform = allowedRolesOf(appRoutes.find((r) => r.path === "platform")!.element)
+    const platform = allowedRolesOf(topLevelRoutes.find((r) => r.path === "platform")!.element)
     expect(platform).toContain("platform_admin")
   })
 
   it("does not reach the other four roles", () => {
-    const platform = allowedRolesOf(appRoutes.find((r) => r.path === "platform")!.element)
+    const platform = allowedRolesOf(topLevelRoutes.find((r) => r.path === "platform")!.element)
     for (const role of ["student", "parent", "teacher", "school_admin"]) {
       expect(platform, `platform_admin's guard must not admit ${role}`).not.toContain(role)
     }
+  })
+})
+
+/*
+ * T28 · the tutoring screens X-04..X-07 are children of the guarded platform
+ * subtree and of no other lane: registered under `platformAdminRoute`, absent
+ * from `schoolAdminRoute`, each with its own title, and reachable by exactly
+ * the one role the subtree's guard admits.
+ */
+describe("T28 · the tutoring screens sit under the guarded platform subtree", () => {
+  const PATHS = ["tutors", "tutors/:tutorId", "moderation", "reports", "reports/:reportId"]
+
+  it.each(PATHS)("registers %s on platformAdminRoute", (child) => {
+    expect(platformAdminRoute.children?.some((route) => route.path === child), `/platform/${child}`).toBe(true)
+  })
+
+  it.each(PATHS)("does not register %s on schoolAdminRoute", (child) => {
+    expect(schoolAdminRoute.children?.some((route) => route.path === child), `/school/${child}`).toBe(false)
+  })
+
+  it("gives every platform child its own title", () => {
+    const titles = (platformAdminRoute.children ?? []).map((route) => (route.handle as { title?: string } | undefined)?.title)
+    expect(titles.every((title) => typeof title === "string" && title.length > 0)).toBe(true)
+    expect(new Set(titles).size).toBe(titles.length)
+  })
+
+  it("reaches platform_admin and none of the other four roles", () => {
+    const platform = allowedRolesOf(topLevelRoutes.find((r) => r.path === "platform")!.element)
+    expect(platform).toEqual(["platform_admin"])
+  })
+
+  it("lists Tutors, Moderation and Reports in the platform navigation, and not in the school one", () => {
+    expect(platformNavItems.map((item) => item.to)).toEqual(
+      expect.arrayContaining(["/platform/tutors", "/platform/moderation", "/platform/reports"]),
+    )
+    expect(schoolNavItems.map((item) => item.to)).not.toContain("/platform/tutors")
+  })
+
+  it("trails a tutor application and a report back to their list", () => {
+    expect(resolveAdminTrail("/platform/tutors/abc", "platform")).toEqual([
+      { label: "Console", to: "/platform" },
+      { label: "Tutors", to: "/platform/tutors" },
+      { label: "Application" },
+    ])
+    expect(resolveAdminTrail("/platform/reports/abc", "platform").at(-1)).toEqual({ label: "Report" })
+    expect(resolveAdminTrail("/platform/tutors", "platform")).toEqual([
+      { label: "Console", to: "/platform" },
+      { label: "Tutors" },
+    ])
+  })
+
+  const SCREENS = [
+    "TutorQueue.tsx",
+    "TutorApplication.tsx",
+    "Moderation.tsx",
+    "Reports.tsx",
+    "ReportDetail.tsx",
+  ].map((file) => `src/portals/admin/screens/tutoring/${file}`)
+
+  it.each(SCREENS)("%s renders no `error.message` and words failures through adminTutoring", (relative) => {
+    const source = fs.readFileSync(path.resolve(__dirname, "../..", relative), "utf8")
+    expect(source).not.toMatch(/\b(?:error|err)\.message\b/)
+    expect(source).toMatch(/adminFailureMessage/)
   })
 })
 
@@ -143,7 +210,7 @@ describe("the teacher portal's role list — P4.7", () => {
    * Read off the mounted route rather than the source text, so a change to the
    * constant cannot pass by the array literal being renamed.
    */
-  const teacherRoles = allowedRolesOf(appRoutes.find((r) => r.path === "teacher")!.element)
+  const teacherRoles = allowedRolesOf(topLevelRoutes.find((r) => r.path === "teacher")!.element)
 
   it("keeps school_admin, whose data the teacher API really does return", () => {
     expect(teacherRoles).toContain("school_admin")
@@ -180,7 +247,7 @@ describe("every role has somewhere to land — P4.7", () => {
     "sends %s to a portal whose own guard admits them",
     (role) => {
       const home = portalPathForRole(role).replace(/^\//, "")
-      const route = appRoutes.find((r) => r.path === home)
+      const route = topLevelRoutes.find((r) => r.path === home)
       expect(route, `${home} is not mounted`).toBeDefined()
       expect(allowedRolesOf(route!.element)).toContain(role)
     },
@@ -195,8 +262,8 @@ describe("the settings lane still reaches every role — P4.7", () => {
    * three would silently lock platform admins out of their own device list.
    * That would be invisible — the routes render, just not for them.
    */
-  it.each(["/settings/devices", "/settings/notifications"])("admits all five roles on %s", (p) => {
-    const route = appRoutes.find((r) => r.path === p)
+  it.each(["/settings/devices", "/settings/notifications", "/settings/profile"])("admits all five roles on %s", (p) => {
+    const route = topLevelRoutes.find((r) => r.path === p)
     expect(route).toBeDefined()
     const roles = allowedRolesOf(route!.element)
     expect(roles).toEqual(

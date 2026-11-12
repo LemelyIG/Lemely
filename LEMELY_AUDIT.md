@@ -236,7 +236,7 @@ By the harsh rubric, **all 15 screens are STUBBED regardless of visual polish.**
 | Study plan (schedule) | `core/study_plan.py` | **working** | `study_plan.py:13-72` |
 | Study plan AI narrative | `io/study_plan_ai.py` | **working** (needs key) | `study_plan_ai.py:45` |
 | Plagiarism check | `core/plagiarism.py` | **partial** — only student-vs-model-answer, **not** cross-student | `plagiarism.py:31-61` |
-| AI-generated-answer detection | `io/integrity.py` | **partial** — off by default (`ai_detection_enabled=False`) | `config.py:126` |
+| AI-generated-answer detection | `io/integrity.py` | **removed (F4, migration `0037`)** — was off by default; deleted outright, no measured false-positive rate, JCQ guidance says such a detector must never be sole evidence | `lemely/db/migrations/versions/0037_remove_ai_detection.py` |
 | History persistence | `io/history_store.py` | **partial** — works but silent-fail load, no lock, no migration | `history_store.py:48-67` |
 | Compare performance / aggregate weaknesses | `core/analytics.py` | **working** | `analytics.py:118-214` |
 | CLI (16 cmds) | `app/cli.py` | **partial** — 9 working, 7 partial (see §6) | `cli.py` |

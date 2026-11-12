@@ -1,12 +1,24 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
 import { lazy, Suspense } from "react"
-import { Link, Outlet, useLocation, useNavigate, useParams } from "react-router-dom"
-import { Gear, SignOut } from "@phosphor-icons/react"
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
+import { useQueryClient } from "@tanstack/react-query"
+import { Bell, Gear, GraduationCap, SignOut } from "@phosphor-icons/react"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { useCachedChildSubject, useChildren } from "@/lib/hooks/useParentApi"
-import { RouteFallback } from "@/components/ui/state-views"
+import { BrandLockup } from "@/components/ui/brand-lockup"
+import { OfflineBanner } from "@/components/ui/offline-banner"
+import { Select } from "@/components/ui/select"
+import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
+import { BadgeSync } from "@/components/badge-sync"
+import { RouteSkeleton } from "@/components/ui/route-skeleton"
+import { ScreenOutlet } from "@/components/ui/screen-outlet"
 import { Breadcrumbs, type Crumb } from "@/components/ui/breadcrumbs"
+import { Chip } from "@/components/ui/chip"
+import { useNotificationCounts } from "@/lib/hooks/useNotificationApi"
+import { unreadBadgeLabel } from "@/lib/staffInbox"
+import { ErrorBoundary } from "@/components/ui/error-boundary"
+import { portalErrorFallback } from "@/components/route-error"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { PortalNotFound } from "@/portals/misc/NotFound"
 
@@ -23,9 +35,31 @@ const SubjectDetail = lazy(() =>
   import("./screens/SubjectDetail").then((m) => ({ default: m.SubjectDetail })),
 )
 const Weaknesses = lazy(() => import("./screens/Weaknesses").then((m) => ({ default: m.Weaknesses })))
+const ParentNotifications = lazy(() =>
+  import("./screens/Notifications").then((m) => ({ default: m.ParentNotifications })),
+)
+// P-05 to P-08 (tutor marketplace, T27).
+const ChildTutoring = lazy(() =>
+  import("./screens/tutoring/ChildTutoring").then((m) => ({ default: m.ChildTutoring })),
+)
+const ParentSessionDetail = lazy(() =>
+  import("./screens/tutoring/ParentSessionDetail").then((m) => ({ default: m.ParentSessionDetail })),
+)
+const ChildTutorAccess = lazy(() =>
+  import("./screens/tutoring/ChildTutorAccess").then((m) => ({ default: m.ChildTutorAccess })),
+)
+const ParentFindTutor = lazy(() =>
+  import("./screens/tutoring/ParentFindTutor").then((m) => ({ default: m.ParentFindTutor })),
+)
+const ParentTutorProfile = lazy(() =>
+  import("./screens/tutoring/ParentFindTutor").then((m) => ({ default: m.ParentTutorProfile })),
+)
+const ParentBookSession = lazy(() =>
+  import("./screens/tutoring/ParentFindTutor").then((m) => ({ default: m.ParentBookSession })),
+)
 
 /*
- * Parent portal shell — the Study Notebook (P4.6, redesign surface 6).
+ * Parent portal shell (P4.6 redesign surface 6, now v5 Abyss).
  *
  * UI spec §4.8: "Total depth from login to the answer a parent came for: two
  * taps. Design for navigation depth and no interest in learning an interface."
@@ -66,33 +100,36 @@ function ChildSwitcher() {
   if (!childId || children.length < 2) return null
 
   return (
-    <label className="flex items-center gap-2 text-body-sm text-ink-muted">
+    <div className="flex items-center gap-2 text-body-sm text-on-surface-variant">
       {/* The visible word is hidden at mobile for width, so the accessible
           name has to come from somewhere that is never hidden — otherwise the
-          select is an unlabelled control below 640px. */}
+          select is an unlabelled control below 640px. `Select`'s own
+          `sr-only` label carries it now, in place of a bare `aria-label`
+          string. */}
       <span className="hidden sm:inline" aria-hidden="true">
         Viewing
       </span>
-      <select
-        aria-label="Choose which child to view"
+      <Select
+        label="Choose which child to view"
+        labelClassName="sr-only"
         value={childId}
         onChange={(event) => {
           // Preserve where the parent is (overview / subject / weaknesses)
           // across the switch where the path still makes sense. A subject the
           // other child does not take would 404, so only the overview and
           // weaknesses tails carry over; everything else lands on the overview.
-          const tail = location.pathname.endsWith("/weaknesses") ? "/weaknesses" : ""
+          const tail =
+            ["/weaknesses", "/tutoring", "/tutor-access"].find((t) => location.pathname.endsWith(t)) ?? ""
           navigate(`/parent/children/${event.target.value}${tail}`)
         }}
-        className="rounded-md border border-rule bg-paper-raised px-2.5 py-1.5 text-body-sm text-ink transition-colors hover:border-rule-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
       >
         {children.map((child) => (
           <option key={child.childId} value={child.childId}>
             {child.displayName}
           </option>
         ))}
-      </select>
-    </label>
+      </Select>
+    </div>
   )
 }
 
@@ -157,6 +194,20 @@ function ParentTrail() {
     trail.push({ label: "Overview" })
   } else if (path.endsWith("/weaknesses")) {
     trail.push({ label: "Overview", to: childOverview }, { label: "Weak topics" })
+  } else if (path.endsWith("/tutoring")) {
+    trail.push({ label: "Overview", to: childOverview }, { label: "Tutoring" })
+  } else if (path.endsWith("/tutor-access")) {
+    trail.push(
+      { label: "Overview", to: childOverview },
+      { label: "Tutoring", to: `${childOverview}/tutoring` },
+      { label: "Who they share with" },
+    )
+  } else if (/\/sessions\/[^/]+$/.test(path)) {
+    trail.push(
+      { label: "Overview", to: childOverview },
+      { label: "Tutoring", to: `${childOverview}/tutoring` },
+      { label: "Session" },
+    )
   } else if (/\/subjects\/[^/]+$/.test(path)) {
     trail.push(
       { label: "Overview", to: childOverview },
@@ -173,29 +224,16 @@ function ParentTrail() {
   return <Breadcrumbs items={trail} className="py-3" />
 }
 
-/*
- * The real mark, replacing the accent-circle-with-an-italic-*l* that stood in
- * for it. That placeholder is audit finding M9 ("the logo is a lowercase
- * italic *l* in a filled circle, stamped in three places") and this was the
- * third and last stamp: the student sidebar's copy went with surface 1, the
- * teacher sidebar's with surface 5, and this one was still live. Three
- * surfaces in a row have now found a defect that was already fixed elsewhere,
- * which is the standing lesson rather than a coincidence.
- *
- * It was also this file's only `font-serif` call site — D4.1's defect, where
- * the class resolves to Tailwind's default Georgia stack, so the placeholder
- * was not even rendering in the display face it was reaching for.
- *
- * `alt=""` and `aria-hidden`, not a described image: the wordmark beside it
- * already says "Lemely", so describing the mark too makes a screen reader
- * announce the brand twice.
- */
-function BrandLockup() {
+/** The inbox's unread count. Nothing while pending, on error, or at zero. */
+function UnreadNotificationsBadge() {
+  const { data } = useNotificationCounts()
+  const label = unreadBadgeLabel(data)
+  if (label === null) return null
   return (
-    <>
-      <img src="/brand/mark.svg" alt="" aria-hidden="true" className="h-6 w-6 shrink-0" />
-      <span className="text-display-sm text-ink">Lemely</span>
-    </>
+    <Chip tone="warn" className="flex-none">
+      {label}
+      <span className="sr-only"> unread</span>
+    </Chip>
   )
 }
 
@@ -204,13 +242,13 @@ function Header() {
   const navigate = useNavigate()
 
   return (
-    <header className="border-b border-rule bg-paper-raised">
+    <header className="border-b border-outline-variant bg-surface-container-lowest">
       <div className="mx-auto flex w-full max-w-240 flex-wrap items-center gap-x-4 gap-y-2 px-4 py-4 md:px-8">
         <Link
           to="/parent"
-          className="flex items-center gap-2.5 rounded-md pointer-coarse:min-h-11 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          className="flex items-center gap-2.5 rounded-md pointer-coarse:min-h-11 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         >
-          <BrandLockup />
+          <BrandLockup as="span" className="contents" />
         </Link>
         {/* `flex-wrap` on the row above and `min-w-0` here (P6.1). At the 320px
             viewport §6.1 requires, the brand lockup plus the child switcher,
@@ -231,10 +269,32 @@ function Header() {
               settings screens link to each other. Same icon-at-mobile treatment
               as Sign out beside it, `aria-label` and all, for the same
               `button-name` reason. */}
+          {/* The parent's inbox (push-delivery spec §6). at_risk_alert is
+              addressed to a parent and until now had no screen to read it
+              in; the same icon-at-mobile treatment as its neighbours. */}
+          <Link
+            to="/parent/notifications"
+            aria-label="Notifications"
+            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center text-body-sm text-on-surface-variant transition-colors hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          >
+            <Bell size={16} aria-hidden="true" />
+            <span className="hidden sm:inline">Notifications</span>
+            <UnreadNotificationsBadge />
+          </Link>
+          {/* P-07 (tutor marketplace, T27): the directory is not tied to one child, so it
+              lives here beside the inbox, with the same icon-at-mobile treatment. */}
+          <Link
+            to="/parent/tutors"
+            aria-label="Tutors"
+            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center text-body-sm text-on-surface-variant transition-colors hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          >
+            <GraduationCap size={16} aria-hidden="true" />
+            <span className="hidden sm:inline">Tutors</span>
+          </Link>
           <Link
             to="/settings/devices"
             aria-label="Settings"
-            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center text-body-sm text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center text-body-sm text-on-surface-variant transition-colors hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             <Gear size={16} aria-hidden="true" />
             <span className="hidden sm:inline">Settings</span>
@@ -248,10 +308,14 @@ function Header() {
             type="button"
             aria-label="Sign out"
             onClick={() => {
+              // A parent is an ordinary email/password account since the
+              // parent-invites design superseded D3.11 — `/login`, not the
+              // retired top-level phone sign-in route, matching
+              // `loginPathForRole`'s own current answer.
               logout()
-              navigate("/login/parent", { replace: true })
+              navigate("/login", { replace: true })
             }}
-            className="flex cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2 py-1.5 text-body-sm text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            className="flex cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2 py-1.5 text-body-sm text-on-surface-variant transition-colors hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             <SignOut size={16} aria-hidden="true" />
             <span className="hidden sm:inline">Sign out</span>
@@ -268,14 +332,17 @@ function Header() {
 // family), same as the other two portals — see the student portal for why.
 
 function ParentLayout() {
+  // Only read here for `ErrorBoundary`'s `resetKey` below — `Header` and
+  // `ParentTrail` each call `useLocation()` independently for their own
+  // needs, but this component had no reason to before now.
+  const location = useLocation()
+  const queryClient = useQueryClient()
   return (
-    // `paper-grain` (DESIGN.md §8.1): one fixed, pointer-events-none noise
-    // overlay at 0.03 opacity. The parent portal had no texture layer at all,
-    // the same gap surface 5 found in the teacher portal, and it is the whole
-    // mechanism by which §1's protected quality survives a screen made of
-    // rows and numbers.
-    <div data-portal="parent" className="paper-grain flex min-h-screen flex-col bg-paper">
+    <div data-portal="parent" className="flex min-h-dvh flex-col bg-surface">
       <SkipLink />
+      {/* Task 7 (B5a): see student/index.tsx's own comment on this line —
+          same reason, same shape. */}
+      <BadgeSync />
       <Header />
       {/* The trail sits between the header and `main` rather than inside it:
           it is wayfinding chrome, and putting it inside the skip link's target
@@ -286,10 +353,40 @@ function ParentLayout() {
       <main
         id={MAIN_CONTENT_ID}
         tabIndex={-1}
-        className="mx-auto w-full min-w-0 max-w-240 flex-1 overflow-x-hidden px-4 pb-16 pt-2 focus:outline-none md:px-8"
+        className="mx-auto w-full min-w-0 max-w-240 flex-1 overflow-x-hidden px-4 pb-16 pt-6 focus:outline-none md:px-8 lg:pt-8"
       >
-        <Suspense fallback={<RouteFallback />}>
-          <Outlet />
+        {/* PR 2 part C: offline recovery banner, above the Suspense/
+            ErrorBoundary content it sits over — it renders nothing while
+            online, so its own `mb-6` is the only spacing this adds. */}
+        <OfflineBanner
+          onRetry={() =>
+            void queryClient.refetchQueries({
+              type: "active",
+              predicate: (query) => query.state.status === "error",
+            })
+          }
+        />
+        {/* Below the offline strip on purpose: connectivity is the transient,
+            self-healing message and belongs on top, while this is a standing fact
+            about the account. Renders nothing, and no margin either, unless the
+            profile has resolved and says the address is unverified. */}
+        <VerifyEmailBanner />
+        <Suspense fallback={<RouteSkeleton />}>
+          {/* PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it
+              rebuilds each surface") for this portal: a render crash in one
+              screen stays inside this content slot rather than taking the
+              header down with it or falling out to the top-level
+              `errorElement`. Inside `Suspense` so a failed chunk load and a
+              render throw both land in this boundary.
+              `resetKey={location.pathname}` clears a caught error on
+              navigation. */}
+          <ErrorBoundary
+            label="This page"
+            resetKey={location.pathname}
+            fallback={portalErrorFallback}
+          >
+            <ScreenOutlet />
+          </ErrorBoundary>
         </Suspense>
       </main>
     </div>
@@ -304,21 +401,65 @@ export const parentRoute: RouteObject = {
     // "Your children" rather than a child's name: the route table has an id and
     // no name, and a parent with two children reads the same title on both
     // detail screens, which is the honest limit of what a static title knows.
-    { index: true, element: <Children />, handle: { title: "Your children" } },
-    { path: "children/:childId", element: <ChildOverview />, handle: { title: "Progress" } },
+    {
+      index: true,
+      element: <Children />,
+      handle: { title: "Your children", skeleton: "card-grid" },
+    },
+    {
+      path: "children/:childId",
+      element: <ChildOverview />,
+      handle: { title: "Progress", skeleton: "page-header" },
+    },
     {
       path: "children/:childId/subjects/:code",
       element: <SubjectDetail />,
-      handle: { title: "Subject progress" },
+      handle: { title: "Subject progress", skeleton: "page-header" },
     },
     {
       path: "children/:childId/weaknesses",
       element: <Weaknesses />,
-      handle: { title: "Topics to work on" },
+      handle: { title: "Topics to work on", skeleton: "page-header" },
+    },
+    // P-05 to P-08 (tutor marketplace, T27).
+    {
+      path: "children/:childId/tutoring",
+      element: <ChildTutoring />,
+      handle: { title: "Tutoring", skeleton: "list" },
+    },
+    {
+      path: "children/:childId/sessions/:bookingId",
+      element: <ParentSessionDetail />,
+      handle: { title: "Session details", skeleton: "page-header" },
+    },
+    {
+      path: "children/:childId/tutor-access",
+      element: <ChildTutorAccess />,
+      handle: { title: "Who they share with", skeleton: "list" },
+    },
+    { path: "tutors", element: <ParentFindTutor />, handle: { title: "Tutors", skeleton: "list" } },
+    {
+      path: "tutors/:tutorId",
+      element: <ParentTutorProfile />,
+      handle: { title: "Tutor profile", skeleton: "page-header" },
+    },
+    {
+      path: "tutors/:tutorId/book",
+      element: <ParentBookSession />,
+      handle: { title: "Book a session", skeleton: "page-header" },
+    },
+    {
+      path: "notifications",
+      element: <ParentNotifications />,
+      handle: { title: "Notifications", skeleton: "list" },
     },
     // P4.10. Last, so it only matches what nothing above did — an unmatched
     // path in this portal used to fall to the top-level `*` and cost the
     // reader the header and the child switcher. See `portals/misc/NotFound.tsx`.
-    { path: "*", element: <PortalNotFound />, handle: { title: "Page not found" } },
+    {
+      path: "*",
+      element: <PortalNotFound />,
+      handle: { title: "Page not found", skeleton: "page-header" },
+    },
   ],
 }

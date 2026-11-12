@@ -1,0 +1,22 @@
+{
+  "cache_hits": 0,
+  "cache_mode": "bypass",
+  "frozen_upstream": false,
+  "id_match_rate": 1.0,
+  "incomplete": [],
+  "latency_p95_ms": 264586.0,
+  "live_tags": [],
+  "mismarked_parts": [
+    "0580_s23_qp_22_theory/partial/12a",
+    "0580_s23_qp_22_theory/partial/14",
+    "0580_s23_qp_22_theory/partial/19",
+    "0580_s23_qp_22_theory/partial/2",
+    "0580_s23_qp_22_theory/partial/4",
+    "0606_s23_qp_12_theory/wrong/3b"
+  ],
+  "overrides": {},
+  "scored_parts": 78,
+  "usd_per_script_mean": 0.12242326666666666,
+  "usd_per_script_mean_now": 0.061330466666666666,
+  "validity_rate": 1.0
+}

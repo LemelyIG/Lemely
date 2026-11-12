@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from lemely.core.loose_schemas import MarkScheme, Question, QuestionType
 
-VERSION = "5"
+VERSION = "7"
 
 EXTRACTOR_SYSTEM_PROMPT = """
 You are an expert at reading scanned CAIE (Cambridge IGCSE / O-Level / A-Level) exam scripts.
 Your task is to extract the student's response for every leaf question in the mark scheme.
+
+You are given the scan as a sequence of separate page images, one image per page, in
+page order starting at page 0 (the first image is page 0, the second is page 1, and so on).
 
 A leaf question is one with marks > 0 that has no further sub-parts. Container questions
 (marks == 0 that only group sub-parts) MUST be skipped — they have no answer to extract.
@@ -31,7 +34,17 @@ Each ExtractedAnswer needs:
   - 0.80–0.95: answer clear but required minor interpretation (e.g. messy digit, standard form)
   - 0.60–0.80: genuinely borderline — handwriting partially obscured or layout ambiguous
   - 0.00–0.60: handwriting unclear, student skipped the question, or answer contradicts itself
-- source_region (string or null) — e.g. "page 2, q1a area".
+- source_region (string or null) — e.g. "page 2, q1a area". This is free descriptive text for a
+  human reader; when you mention a page number here, ALWAYS use the same 0-based page image
+  index you use in source_box.page below (e.g. "page 2 area" means image index 2, the third
+  image attached) — do not switch to 1-based counting in this field.
+- source_box (object or null) — the tight bounding box around the student's written
+  answer (not the printed question), as {"page": <0-based image index>, "box": [ymin,
+  xmin, ymax, xmax]} with all four coordinates normalised to 0-1000 relative to that
+  page image's own width/height (0,0 = top-left, 1000,1000 = bottom-right). "page" must
+  be one of the page image indices you were actually given. Omit only when you cannot
+  locate the answer on any page at all; a low-confidence or partially-obscured answer
+  should still carry your best-effort box.
 - working_out (string or null) — see below.
 
 **working_out field:**
@@ -67,22 +80,60 @@ a question blank, return answer="" with high confidence.
 
 **Example 1 — unambiguous MCQ (confidence 0.95–1.00)**
 Manifest entry: `- 1: type=mcq, marks=1`
-Student: large circled "B" with no ambiguity.
--> question_id="1", answer="B", confidence=0.97, source_region="page 1 top-right", working_out=null
+Student: large circled "B" with no ambiguity, on the first page image (page 0), the
+circle occupying roughly the top-right eighth of the page.
+-> question_id="1", answer="B", confidence=0.97, source_region="page 0 top-right",
+   source_box={"page": 0, "box": [40, 800, 120, 950]}, working_out=null
 
 **Example 2 — handwritten calculation (confidence 0.80–0.95)**
 Manifest entry: `- 3(b): type=calculation, marks=2`
-Student writes: "F = ma = 2.0 x 9.8 = 19.6 N" with intermediate steps in the working box.
+Student writes: "F = ma = 2.0 x 9.8 = 19.6 N" with intermediate steps in the working box,
+on the third page image (page 2), the final answer line near the bottom-left of the page.
 -> question_id="3(b)", answer="19.6 N", confidence=0.88,
-   source_region="page 3 q3b area",
+   source_region="page 2 q3b area",
+   source_box={"page": 2, "box": [700, 60, 780, 340]},
    working_out="F = ma = 2.0 x 9.8"
 
 **Example 3 — ambiguous MCQ, partially circled letter (confidence < 0.50)**
 Manifest entry: `- 5: type=mcq, marks=1`
-Student appears to circle both B and C; a faint line through B suggests B was reconsidered.
+Student appears to circle both B and C; a faint line through B suggests B was reconsidered,
+on the fifth page image (page 4).
 -> question_id="5", answer="C", confidence=0.38,
-   source_region="page 5 q5: pencil circle overlapping B and C, faint strikethrough on B",
-   working_out=null
+   source_region="page 4 q5: pencil circle overlapping B and C, faint strikethrough on B",
+   source_box={"page": 4, "box": [300, 120, 380, 260]}, working_out=null
+"""
+
+
+# I3 (US-010, label-free half): the "structural" SecondReader variant's
+# prompt. EXTRACTOR_SYSTEM_PROMPT above is document-guided -- it asks the
+# model to read the whole scan and report every leaf question it can find.
+# This prompt is field-guided instead: it asks the model to work through the
+# manifest one question at a time, confirming or denying each one it is
+# given rather than discovering the set from the document. Same underlying
+# task, same wire shape, different framing -- structural disagreement (the
+# model changes its answer when asked to confirm a specific field instead of
+# reporting the document) is exactly the signal this variant is measuring.
+# Not selected for production use yet -- see GeminiSettings.second_reader.
+FIELD_GUIDED_SYSTEM_PROMPT = """
+You are an expert at reading scanned CAIE (Cambridge IGCSE / O-Level / A-Level) exam scripts.
+You will be given a manifest of specific leaf questions, one at a time in the user prompt's
+list. For EACH question in that list, in order, confirm what the student wrote for exactly
+that question id -- do not skip ahead to other questions and do not report questions absent
+from the manifest.
+
+You are given the scan as a sequence of separate page images, one image per page, in
+page order starting at page 0 (the first image is page 0, the second is page 1, and so on).
+
+For the question_id you are confirming, locate it on the pages given and extract:
+- mcq: the selected letter ("A", "B", "C", "D"), or "" if blank.
+- recall / explanation: the student's free-text answer, preserving wording.
+- calculation / equation: the numerical answer including any unit, preserving standard form.
+- list / tickbox: a semicolon-separated list of the student's selected items.
+- levels_based / indicative_content: the full response as-is.
+- diagram / graph_draw: a brief description of what the student drew.
+
+Do not invent an answer for a question id you cannot locate on any page -- return an
+empty string for it. Do not report a question_id that is not in the manifest you were given.
 """
 
 
@@ -108,8 +159,14 @@ def _summarize_question(q: Question) -> str:
     return "\n".join(parts)
 
 
-def build_extractor_user_prompt(mark_scheme: MarkScheme) -> str:
-    """Build the user prompt enumerating every leaf question the student should have answered."""
+def build_extractor_user_prompt(mark_scheme: MarkScheme, *, page_count: int | None = None) -> str:
+    """Build the user prompt enumerating every leaf question the student should have answered.
+
+    ``page_count`` (I1): when the scan is sent as separate per-page image parts
+    (see ``GeminiAnswerExtractor.__call__``), naming how many pages were sent
+    and their 0-based indexing convention up front is what lets the model
+    populate ``source_box.page`` with a value that actually exists.
+    """
     leaves: list[Question] = []
     for q in mark_scheme.all_questions_flat():
         if q.parts:
@@ -125,8 +182,15 @@ def build_extractor_user_prompt(mark_scheme: MarkScheme) -> str:
 
     meta = mark_scheme.metadata
     year = meta.session_year if meta.session_year is not None else "Specimen"
+    page_note = (
+        f"You are given {page_count} page images, indexed 0 to {page_count - 1} in the "
+        "order attached. Every source_box.page value MUST be one of these indices.\n\n"
+        if page_count is not None
+        else ""
+    )
     return (
         f"Extract this student's answers from the attached scanned paper.\n\n"
+        f"{page_note}"
         f"Paper: {meta.subject_code}/{meta.paper_number}{meta.paper_variant} "
         f"{meta.session_month.value} {year} ({meta.paper_type.value}).\n\n"
         f"Question manifest:\n{manifest}\n\n"

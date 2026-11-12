@@ -33,7 +33,10 @@ or session dependency resolves, so this file needs no database.
 
 from __future__ import annotations
 
+import re
 import uuid
+from collections import Counter
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -48,7 +51,6 @@ from lemely.web.deps import AuthContext, get_auth_context, get_settings
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
     from fastapi import FastAPI
     from fastapi.dependencies.models import Dependant
@@ -65,15 +67,60 @@ SCHOOL_ADMIN = frozenset({"school_admin"})
 PLATFORM_ADMIN = frozenset({"platform_admin"})
 TEACHER_OR_SCHOOL_ADMIN = frozenset({"teacher", "school_admin"})
 STAFF = frozenset({"teacher", "school_admin", "platform_admin"})
+# Tutoring (docs/tutoring/SPEC.md §c.1): decision-log row 10, parents browse and
+# book for a linked child.
+STUDENT_OR_PARENT = frozenset({"student", "parent"})
+# Tutoring blocks B1-B3 (SPEC §c.1): a student or a tutor blocks the other side;
+# parents hold no blocks (O-18).
+STUDENT_OR_TEACHER = frozenset({"student", "teacher"})
+# Tutoring report R1 (SPEC §c.1): every party to a tutoring session may report;
+# no verified-email gate (SC-15 exception), and no admin role files reports.
+TUTORING_PARTY = frozenset({"student", "parent", "teacher"})
 
 ALL_ROLES = frozenset(role.value for role in Role)
 
 # (method, path) → the guard that route must carry. Reviewed, not inferred.
 EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
-    # ── TEACHER (3) ────────────────────
+    # ── TEACHER (24) ────────────────────
     ("POST", "/api/classes"): TEACHER,
     ("DELETE", "/api/classes/{class_id}"): TEACHER,
     ("PATCH", "/api/classes/{class_id}"): TEACHER,
+    # Tutoring T1-T5 (SPEC §c.1). ADR-T01: role half only; "owns a tutor
+    # profile" is object-level (tests/test_web_tutor.py,
+    # tests/test_web_tutoring_authz_profiles.py), invisible to this sweep.
+    ("GET", "/api/tutor/profile"): TEACHER,
+    ("POST", "/api/tutor/profile"): TEACHER,
+    ("PATCH", "/api/tutor/profile"): TEACHER,
+    ("POST", "/api/tutor/profile/submit"): TEACHER,
+    ("PUT", "/api/tutor/profile/availability"): TEACHER,
+    # Tutoring T6-T7 (SPEC §c.1): evidence is scoped to the caller's profile (O20).
+    ("POST", "/api/tutor/profile/evidence"): TEACHER,
+    ("DELETE", "/api/tutor/profile/evidence/{evidence_id}"): TEACHER,
+    # Tutoring T18, T21 (SPEC §c.1): role half only; the own-profile rule is
+    # object-level (tests/test_web_tutoring_authz_reviews.py).
+    ("POST", "/api/tutor/reviews/{review_id}/reply"): TEACHER,
+    ("GET", "/api/tutor/reviews"): TEACHER,
+    # Tutoring T19, T20 (SPEC §c.1): grant-gated and audit-logged on every read
+    # (ADR-T02); school_admin and platform_admin are denied by the guard, so there
+    # is no admin path to granted data. The grant rule is object-level
+    # (tests/test_web_tutoring_authz_grants.py).
+    ("GET", "/api/tutor/students"): TEACHER,
+    ("GET", "/api/tutor/students/{student_id}"): TEACHER,
+    # Tutoring T8 (SPEC §c.1): the caller's own profile as students see it; outcomes
+    # only while listed or in review (tests/test_web_tutoring_outcomes.py).
+    ("GET", "/api/tutor/profile/preview"): TEACHER,
+    # Tutoring T9-T17 (SPEC §c.1): role half only; the own-booking rule (O4), the
+    # notes table (O9) and the suspended/closed refusal are object-level
+    # (tests/test_web_tutoring_authz_bookings_tutor.py).
+    ("GET", "/api/tutor/bookings"): TEACHER,
+    ("GET", "/api/tutor/bookings/{booking_id}"): TEACHER,
+    ("POST", "/api/tutor/bookings/{booking_id}/accept"): TEACHER,
+    ("POST", "/api/tutor/bookings/{booking_id}/decline"): TEACHER,
+    ("POST", "/api/tutor/bookings/{booking_id}/cancel"): TEACHER,
+    ("POST", "/api/tutor/bookings/{booking_id}/complete"): TEACHER,
+    ("POST", "/api/tutor/bookings/{booking_id}/no-show"): TEACHER,
+    ("GET", "/api/tutor/bookings/{booking_id}/notes"): TEACHER,
+    ("POST", "/api/tutor/bookings/{booking_id}/notes"): TEACHER,
     # ── SCHOOL_ADMIN (8) ────────────────────
     ("GET", "/api/school/seats"): SCHOOL_ADMIN,
     ("POST", "/api/school/seats/invite"): SCHOOL_ADMIN,
@@ -91,7 +138,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/school/teachers"): SCHOOL_ADMIN,
     ("POST", "/api/school/teachers/invite"): SCHOOL_ADMIN,
     ("POST", "/api/school/teachers/{teacher_id}/remove"): SCHOOL_ADMIN,
-    # ── PLATFORM_ADMIN (9) ────────────────────
+    # ── PLATFORM_ADMIN (25) ────────────────────
     # P4.7 (UI spec X-01/X-02/X-03), and the first routes in the product gated
     # to this role. Note what the 403 sweep below therefore proves here: a
     # `school_admin` is denied every one of them. There is no super-role, and
@@ -111,7 +158,31 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/admin/schools"): PLATFORM_ADMIN,
     ("PATCH", "/api/admin/schools/{school_id}"): PLATFORM_ADMIN,
     ("POST", "/api/admin/schools/{school_id}/admins"): PLATFORM_ADMIN,
-    # ── TEACHER_OR_SCHOOL_ADMIN (4) ────────────────────
+    # Tutoring A1-A4 (SPEC §c.1): A2 alone issues logged evidence URLs (SC-22, SC-23).
+    ("GET", "/api/admin/tutors"): PLATFORM_ADMIN,
+    ("GET", "/api/admin/tutors/{tutor_id}"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/tutors/{tutor_id}/approve"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/tutors/{tutor_id}/reject"): PLATFORM_ADMIN,
+    # Tutoring A5, A12 (SPEC §c.1): suspend and close, each one transaction with its
+    # sweep (grants, future sessions, school-less enrolments; SPEC §a.3).
+    ("POST", "/api/admin/tutors/{tutor_id}/suspend"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/tutors/{tutor_id}/close"): PLATFORM_ADMIN,
+    # Tutoring A9-A11 (SPEC §c.1): the report queue, detail and resolution. A10 is the
+    # only admin path to notes, each view logged (O15, SC-23).
+    # Landing-page waitlist queue: list, CSV export, one applicant, status/note edit.
+    # Phone numbers are readable here and nowhere else.
+    ("GET", "/api/admin/waitlist"): PLATFORM_ADMIN,
+    ("GET", "/api/admin/waitlist/export.csv"): PLATFORM_ADMIN,
+    ("GET", "/api/admin/waitlist/{applicant_id}"): PLATFORM_ADMIN,
+    ("PATCH", "/api/admin/waitlist/{applicant_id}"): PLATFORM_ADMIN,
+    ("GET", "/api/admin/tutoring/reports"): PLATFORM_ADMIN,
+    ("GET", "/api/admin/tutoring/reports/{report_id}"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/tutoring/reports/{report_id}/resolve"): PLATFORM_ADMIN,
+    # Tutoring A6-A8 (SPEC §c.1): the review and reply moderation queue.
+    ("GET", "/api/admin/tutoring/moderation"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/tutoring/reviews/{review_id}/moderate"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/tutoring/replies/{reply_id}/moderate"): PLATFORM_ADMIN,
+    # ── TEACHER_OR_SCHOOL_ADMIN (7) ────────────────────
     ("GET", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
     ("POST", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
     ("DELETE", "/api/teacher/announcements/{announcement_id}"): TEACHER_OR_SCHOOL_ADMIN,
@@ -120,15 +191,45 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # the two roles that may manage a class's roster (D3.1) - platform_admin
     # cannot reach this route, mirroring every other class-mutating route.
     ("POST", "/api/school/classes/{class_id}/invite-code"): TEACHER_OR_SCHOOL_ADMIN,
-    # ── PARENT (4) ────────────────────
+    # D9 (design §5): unshare/reshare one paper from one class. Router-level
+    # guard is the STAFF triple; narrowed per-route to the two roles that
+    # manage a class, like the invite code above - platform_admin has no class
+    # scope to act in. Row-level: the class scope check, then the attempt must
+    # belong to a student on that class's roster (else 404).
+    ("POST", "/api/classes/{class_id}/papers/{attempt_id}/unshare"): TEACHER_OR_SCHOOL_ADMIN,
+    ("DELETE", "/api/classes/{class_id}/papers/{attempt_id}/unshare"): TEACHER_OR_SCHOOL_ADMIN,
+    # Controller addition (Task 13's review): the minimal read that makes
+    # unshared state visible again. Same guard, same reasoning — the two
+    # roles that manage a class, never platform_admin.
+    ("GET", "/api/classes/{class_id}/papers"): TEACHER_OR_SCHOOL_ADMIN,
+    # ── PARENT (11) ────────────────────
     ("GET", "/api/parent/children"): PARENT,
     ("GET", "/api/parent/children/{child_id}"): PARENT,
     ("GET", "/api/parent/children/{child_id}/subjects/{code}"): PARENT,
     ("GET", "/api/parent/children/{child_id}/weaknesses"): PARENT,
-    # ── PUBLIC (10) ────────────────────
+    # Tutoring PA1-PA5 (SPEC §c.1): the child link is checked on every call (O7);
+    # cancel and complete only for the parent who requested the booking (O8).
+    ("GET", "/api/parent/children/{child_id}/bookings"): PARENT,
+    ("GET", "/api/parent/children/{child_id}/bookings/{booking_id}"): PARENT,
+    ("GET", "/api/parent/children/{child_id}/bookings/{booking_id}/notes"): PARENT,
+    ("POST", "/api/parent/children/{child_id}/bookings/{booking_id}/cancel"): PARENT,
+    ("POST", "/api/parent/children/{child_id}/bookings/{booking_id}/complete"): PARENT,
+    # Tutoring PA6, PA7 (SPEC §c.1): read-only (decision row 16 i); the link is
+    # object-level and re-checked on every call (O7, O22:
+    # tests/test_web_tutoring_authz_parent_sharing.py).
+    ("GET", "/api/parent/children/{child_id}/tutor-grants"): PARENT,
+    ("GET", "/api/parent/children/{child_id}/tutor-access-log"): PARENT,
+    # ── PUBLIC (22) ────────────────────
     ("POST", "/api/auth/login"): PUBLIC,
-    ("POST", "/api/auth/otp/request"): PUBLIC,
-    ("POST", "/api/auth/otp/verify"): PUBLIC,
+    # Whether sign-in is restricted (a boolean, never the domains): read before any account exists.
+    ("GET", "/api/access/config"): PUBLIC,
+    # spec §4: the child-issued parent signup, replacing the retired
+    # `/api/auth/otp/*` pair. Public by the same necessity as `/auth/signup`
+    # itself — there is no caller identity yet, only an invite code and (from
+    # step two on) a proof token that the email step minted.
+    ("POST", "/api/auth/parent/request-code"): PUBLIC,
+    ("POST", "/api/auth/parent/verify-code"): PUBLIC,
+    ("POST", "/api/auth/parent/signup"): PUBLIC,
     # Unauthenticated by necessity: it exists to replace an access token that
     # has already expired, so gating it behind one would make it unreachable at
     # exactly the moment it is needed. The refresh token in the body is the
@@ -147,18 +248,66 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/auth/password-reset/request"): PUBLIC,
     ("POST", "/api/auth/password-reset/confirm"): PUBLIC,
     ("GET", "/api/health"): PUBLIC,
+    # PR 1 chunk C: the browser error-report sink. Deliberately unauthenticated
+    # — a signed-out login-page crash must still be reportable, and the route
+    # is rate-limited + size-capped instead (see its own module docstring).
+    ("POST", "/api/client-errors"): PUBLIC,
+    # Landing-page FAQ composer: anonymous visitor, rate-limited + size-capped
+    # (see lemely/web/routers/contact.py).
+    ("POST", "/api/contact"): PUBLIC,
+    # Landing-page waitlist: anonymous, rate-limited, size-capped, honeypotted. Step 1
+    # (POST) mints a one-time token; step 2 (PATCH) redeems it. The digest trigger is
+    # not a user route: it is guarded by the X-Cron-Secret header (404 when no secret
+    # is configured), see lemely/web/routers/waitlist.py.
+    ("GET", "/api/waitlist/config"): PUBLIC,
+    ("POST", "/api/waitlist"): PUBLIC,
+    ("PATCH", "/api/waitlist"): PUBLIC,
+    ("POST", "/api/waitlist/confirm"): PUBLIC,
+    ("POST", "/api/internal/waitlist/digest"): PUBLIC,
     # D7.3/spec §1.2: G-08's pre-account preview. Public and unauthenticated
     # by design - a visitor sees what a code joins *before* creating an
     # account, and `InviteService.preview` is written to be paranoid about
     # disclosure precisely because this route carries no bearer token at all
     # (see its own docstring for the "no id, no roster, no count" rule).
     ("GET", "/api/invites/{code}"): PUBLIC,
-    # ── AUTH_ANY (14) ────────────────────
+    # Tutoring P1-P3 (SPEC §c.1, rows 5a/5b): the minimal public card only, no
+    # availability filter; `public, max-age=60` and `X-Robots-Tag: noindex`.
+    ("GET", "/api/public/tutors"): PUBLIC,
+    ("GET", "/api/public/tutors/{tutor_id}"): PUBLIC,
+    ("GET", "/api/public/tutoring-areas"): PUBLIC,
+    # ── STUDENT_OR_PARENT (6) ────────────────────
+    # Tutoring SP1-SP2 (SPEC §c.1, row 10). SP2 also needs a verified email.
+    ("GET", "/api/tutors"): STUDENT_OR_PARENT,
+    ("GET", "/api/tutors/{tutor_id}"): STUDENT_OR_PARENT,
+    # SP3: reviews, behind a verified email.
+    ("GET", "/api/tutors/{tutor_id}/reviews"): STUDENT_OR_PARENT,
+    # SP4: outcome figures (ADR-T04), behind a verified email; SP2's 404 when hidden (O11).
+    ("GET", "/api/tutors/{tutor_id}/outcomes"): STUDENT_OR_PARENT,
+    # SP5, SP6: slots and the booking request, behind a verified email; a parent
+    # books only for a linked child (O6).
+    ("GET", "/api/tutors/{tutor_id}/slots"): STUDENT_OR_PARENT,
+    ("POST", "/api/bookings"): STUDENT_OR_PARENT,
+    # ── STUDENT_OR_TEACHER (3) ────────────────────
+    # Tutoring B1-B3 (SPEC §c.1): a student blocks by tutor profile id, a tutor by
+    # student id (SC-19, O13, O28); "owns a tutor profile" is object-level, as for TEACHER.
+    ("GET", "/api/tutoring/blocks"): STUDENT_OR_TEACHER,
+    ("POST", "/api/tutoring/blocks"): STUDENT_OR_TEACHER,
+    ("DELETE", "/api/tutoring/blocks/{counterpart_id}"): STUDENT_OR_TEACHER,
+    # ── TUTORING_PARTY (1) ────────────────────
+    # Tutoring R1 (SPEC §c.1): target visibility (O12, O19) is object-level.
+    ("POST", "/api/tutoring/reports"): TUTORING_PARTY,
+    # ── AUTH_ANY (19) ────────────────────
     ("GET", "/api/me/devices"): AUTH_ANY,
     ("DELETE", "/api/me/devices/{device_id}"): AUTH_ANY,
     ("GET", "/api/me/notification-preferences"): AUTH_ANY,
     ("PUT", "/api/me/notification-preferences"): AUTH_ANY,
     ("GET", "/api/me/profile"): AUTH_ANY,
+    ("PUT", "/api/me/timezone"): AUTH_ANY,
+    # Profile picture set/clear: any authenticated role, same as the profile
+    # GET above -- a student and a teacher both have exactly one avatar to
+    # manage, gated only by `get_auth_context` (never a caller-supplied id).
+    ("POST", "/api/me/avatar"): AUTH_ANY,
+    ("DELETE", "/api/me/avatar"): AUTH_ANY,
     ("GET", "/api/notifications"): AUTH_ANY,
     ("GET", "/api/notifications/counts"): AUTH_ANY,
     ("GET", "/api/notifications/push/config"): AUTH_ANY,
@@ -166,6 +315,11 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/notifications/push/unsubscribe"): AUTH_ANY,
     ("POST", "/api/notifications/read-all"): AUTH_ANY,
     ("POST", "/api/notifications/{notification_id}/read"): AUTH_ANY,
+    # The subject catalogue and UI enumerations: authenticated for any role
+    # (see the router's own docstring) since onboarding is a student flow but
+    # the screens resolving a syllabus code to a display name span the
+    # student portal, and the payload carries nothing user-specific.
+    ("GET", "/api/reference"): AUTH_ANY,
     # D7.3/spec §1.2: redeem is authenticated but role-agnostic - an invite's
     # own `role` decides what redeeming it does, not the caller's platform
     # role, so this is `get_auth_context` alone (no `require_role`), the same
@@ -177,9 +331,25 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # `get_auth_context` alone, the same AUTH_ANY shape as the invite-redeem
     # route above, not a `require_role` guard.
     ("POST", "/api/auth/verify-email/resend"): AUTH_ANY,
-    # ── STAFF (40) ────────────────────
+    # spec §4.4/DS15: the code half of the link-and-code pair. Authenticated
+    # (any signed-in role) because the address is read from the caller's own
+    # session, never a body field — the same AUTH_ANY shape as
+    # `verify-email/resend` above, not a `require_role` guard. Not PUBLIC like
+    # `/verify-email` (the link route): a six-digit code is a much weaker
+    # bearer credential than the link's opaque token, so it is scoped to the
+    # caller's own session rather than redeemable by anyone who has it.
+    ("POST", "/api/auth/verify-email/code"): AUTH_ANY,
+    # ── STAFF (44) ────────────────────
     ("GET", "/api/classes/{class_id}"): STAFF,
     ("GET", "/api/classes/{class_id}/analytics"): STAFF,
+    # Console paper deletion (Task 17, R2). Row-level: only the uploader may
+    # delete/restore their own paper — another teacher's, or a school_admin
+    # looking at it, gets the same fixed 404
+    # (``TeacherPaperDeletionService``'s own docstring). No integrity hold, so
+    # there is no 409 branch to gate further than the router's own STAFF.
+    ("DELETE", "/api/papers/{paper_id}"): STAFF,
+    ("POST", "/api/papers/{paper_id}/restore"): STAFF,
+    ("GET", "/api/papers/deleted"): STAFF,
     ("POST", "/api/classes/{class_id}/enroll"): STAFF,
     ("GET", "/api/classes/{class_id}/roster"): STAFF,
     ("DELETE", "/api/classes/{class_id}/students/{student_id}"): STAFF,
@@ -190,9 +360,11 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # Renders page 1 of a stored scan. Staff-only for the same reason the paper
     # detail is: it is a student's answer sheet.
     ("GET", "/api/papers/{paper_id}/preview"): STAFF,
-    ("POST", "/api/papers/{paper_id}/extract"): STAFF,
-    ("POST", "/api/papers/{paper_id}/grade"): STAFF,
     # Queues the same marking run without the stream (the console's retry).
+    # ``POST /papers/{id}/extract`` and ``POST /papers/{id}/grade`` are
+    # deleted (DS14): marking now starts at upload and runs in the
+    # background against the repository, so there is no separate SSE
+    # extract/grade step to gate here.
     ("POST", "/api/papers/{paper_id}/regrade"): STAFF,
     ("POST", "/api/quizzes/generate"): STAFF,
     ("GET", "/api/quizzes/pools"): STAFF,
@@ -220,10 +392,47 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/teacher/review"): STAFF,
     ("POST", "/api/teacher/review/bulk-approve"): STAFF,
     ("GET", "/api/teacher/review/{item_id}"): STAFF,
+    # The staff triple is the router-level guard only. This route serves an
+    # image of a student's script, so the guard that matters is the row-level
+    # one inside `ReviewService.get_item_crop_source` — the review item's own
+    # roster-union visibility rule, under which `platform_admin` sees no
+    # classes and therefore no scan. Proven in
+    # `tests/test_web_review.py::test_crop_route_refuses_a_caller_who_cannot_see_the_student`,
+    # which this table's role sweep cannot reach (it never gets past
+    # `require_role`).
+    ("GET", "/api/teacher/review/{item_id}/crop"): STAFF,
     ("POST", "/api/teacher/review/{item_id}/dismiss"): STAFF,
     ("POST", "/api/teacher/review/{item_id}/resolve"): STAFF,
     ("GET", "/api/teacher/students/{student_id}"): STAFF,
-    # ── STUDENT (51) ────────────────────
+    # ── STUDENT (80) ────────────────────
+    # Tutoring S1-S5, S14, S15 (SPEC §c.1): the caller's own bookings only (O5); a
+    # parent reads them through PA1-PA3. S15 records the safety notice (row 16 ii).
+    ("GET", "/api/student/bookings"): STUDENT,
+    ("GET", "/api/student/bookings/{booking_id}"): STUDENT,
+    ("POST", "/api/student/bookings/{booking_id}/cancel"): STUDENT,
+    ("GET", "/api/student/bookings/{booking_id}/notes"): STUDENT,
+    ("POST", "/api/student/bookings/{booking_id}/notes"): STUDENT,
+    ("POST", "/api/student/bookings/{booking_id}/complete"): STUDENT,
+    ("POST", "/api/student/tutoring-safety-notice"): STUDENT,
+    # Tutoring S12, S13 (SPEC §c.1): the outcome-figure opt-out is the student's
+    # own row (SPEC §a.5); a parent can neither read nor change it.
+    ("GET", "/api/student/tutoring-settings"): STUDENT,
+    ("PUT", "/api/student/tutoring-settings"): STUDENT,
+    # Tutoring S6, S7 (SPEC §c.1): a parent cannot review (locked row 7).
+    ("POST", "/api/student/bookings/{booking_id}/review"): STUDENT,
+    ("PATCH", "/api/student/reviews/{review_id}"): STUDENT,
+    # Tutoring S8-S11 (SPEC §c.1): the student alone grants and revokes (rows 2+3a,
+    # 4); a parent reads grants and the log only through PA6/PA7.
+    ("GET", "/api/student/tutor-grants"): STUDENT,
+    ("POST", "/api/student/tutor-grants"): STUDENT,
+    ("POST", "/api/student/tutor-grants/{grant_id}/revoke"): STUDENT,
+    ("GET", "/api/student/tutor-access-log"): STUDENT,
+    # Tutoring S17 (SPEC §c.4, SC-2c): leave a school-less class. New route on
+    # the existing student_classes router.
+    ("DELETE", "/api/student/classes/{class_id}"): STUDENT,
+    # Tutoring S16 (SPEC §c.4, SC-2e): the teachers who see the caller's
+    # progress through a class roster. New route on the existing student router.
+    ("GET", "/api/student/tutor-access/classes"): STUDENT,
     ("GET", "/api/me/student-profile"): STUDENT,
     ("PATCH", "/api/me/student-profile"): STUDENT,
     ("POST", "/api/me/student-profile/complete-onboarding"): STUDENT,
@@ -251,10 +460,30 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("DELETE", "/api/student/friends/{friendship_id}"): STUDENT,
     ("POST", "/api/student/friends/{friendship_id}/accept"): STUDENT,
     ("GET", "/api/student/leaderboard"): STUDENT,
+    # Student self-review (spec 2026-09-17): both verbs on the one path.
+    (
+        "GET",
+        "/api/student/attempts/{attempt_id}/questions/{question_result_id}/self-review",
+    ): STUDENT,
+    (
+        "POST",
+        "/api/student/attempts/{attempt_id}/questions/{question_result_id}/self-review",
+    ): STUDENT,
+    ("GET", "/api/student/attempts/{attempt_id}/questions"): STUDENT,
+    # Student paper deletion (design 2026-09-22-paper-deletion-design.md, §8).
+    ("DELETE", "/api/student/attempts/{attempt_id}"): STUDENT,
+    ("POST", "/api/student/attempts/{attempt_id}/restore"): STUDENT,
+    ("GET", "/api/student/attempts/deleted"): STUDENT,
     ("GET", "/api/student/overview"): STUDENT,
     ("GET", "/api/student/parent-links"): STUDENT,
-    ("POST", "/api/student/parent-links"): STUDENT,
     ("DELETE", "/api/student/parent-links/{parent_id}"): STUDENT,
+    # spec §4: the child-issued parent-invite surface (P3.6a's "Your parent
+    # code" / "Send a one-time link" cards). Replaces the retired
+    # `POST /api/student/parent-links` (invite an existing parent by phone).
+    ("GET", "/api/student/parent-invites"): STUDENT,
+    ("POST", "/api/student/parent-invites"): STUDENT,
+    ("DELETE", "/api/student/parent-invites/{code}"): STUDENT,
+    ("POST", "/api/student/parent-invites/code/rotate"): STUDENT,
     ("POST", "/api/student/placement"): STUDENT,
     ("GET", "/api/student/placement/{assignment_id}/result"): STUDENT,
     ("GET", "/api/student/placement/{subject_code}/availability"): STUDENT,
@@ -276,6 +505,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/student/uploads"): STUDENT,
     ("GET", "/api/student/uploads/active"): STUDENT,
     ("GET", "/api/student/uploads/{paper_id}"): STUDENT,
+    ("GET", "/api/student/widget"): STUDENT,
     ("GET", "/api/student/xp"): STUDENT,
 }
 
@@ -432,7 +662,17 @@ def test_disallowed_role_is_403(app: FastAPI, method: str, path: str, role: str)
 # chain (header → decode → claim extraction → role compare) is exercised.
 _REPRESENTATIVE = {
     guard: next((m, p) for m, p in ROUTES if EXPECTED[(m, p)] == guard)
-    for guard in (STUDENT, PARENT, TEACHER, SCHOOL_ADMIN, TEACHER_OR_SCHOOL_ADMIN, STAFF)
+    for guard in (
+        STUDENT,
+        PARENT,
+        TEACHER,
+        SCHOOL_ADMIN,
+        TEACHER_OR_SCHOOL_ADMIN,
+        STAFF,
+        STUDENT_OR_PARENT,
+        STUDENT_OR_TEACHER,
+        TUTORING_PARTY,
+    )
 }
 _REAL_TOKEN_CASES = [
     (method, path, role)
@@ -473,10 +713,39 @@ def test_a_malformed_credential_is_401_not_a_pass(app: FastAPI, header: str) -> 
 def test_the_sweeps_actually_cover_the_surface() -> None:
     """Guard against a silently empty parametrization (P6.2's decoration lesson)."""
     assert len(ROUTES) == len(EXPECTED)
-    # 8 auth entrypoints (the original 5 + issue #10's verify-email,
-    # password-reset/request, password-reset/confirm) + /api/health + invite
-    # preview.
-    assert len(_NON_PUBLIC) == len(ROUTES) - 10
+    # 9 auth entrypoints (the original 5, minus the two retired
+    # `/api/auth/otp/*` routes, plus spec §4's three `/api/auth/parent/*`
+    # routes, plus issue #10's verify-email, password-reset/request,
+    # password-reset/confirm) + /api/health + invite preview + PR 1 chunk C's
+    # client-error sink + the three public tutoring routes (P1 directory, P2
+    # card, P3 areas) + the landing page contact form + the five waitlist routes
+    # (config, step 1, step 2, email confirmation, secret-guarded digest trigger).
+    assert len(_NON_PUBLIC) == len(ROUTES) - 22
     assert len(_ROLE_GATED) > 300
-    assert len(_REPRESENTATIVE) == 6
+    assert len(_REPRESENTATIVE) == 9
     assert len(_REAL_TOKEN_CASES) >= 20
+
+
+def test_the_section_counts_in_this_file_match_what_it_registers() -> None:
+    """The "── STUDENT (60) ──" headings are checked, not decorative.
+
+    They were wrong: STUDENT read 57 against 60 entries and AUTH_ANY 18
+    against 19, because nothing compared them. A count nobody verifies drifts
+    silently, and this file is the registry a reviewer reads to answer "is the
+    new route covered?". Parsing the headings out of the source keeps the
+    numbers honest without duplicating them as literals in an assertion.
+    """
+    source = Path(__file__).read_text(encoding="utf-8")
+    headings = re.findall(r"#\s*\u2500+\s*([A-Z_]+)\s*\((\d+)\)", source)
+    assert headings, "section headings are the thing under test; none were found"
+
+    names = globals()
+    actual = Counter(
+        str(sorted(role)) if isinstance(role, frozenset) else role for role in EXPECTED.values()
+    )
+    for name, written in headings:
+        role = names[name]
+        key = str(sorted(role)) if isinstance(role, frozenset) else role
+        assert actual[key] == int(written), (
+            f"section {name} says {written}, EXPECTED holds {actual[key]}"
+        )

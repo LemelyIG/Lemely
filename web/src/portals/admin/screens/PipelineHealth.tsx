@@ -3,8 +3,8 @@ import { Card, CardBody } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Eyebrow, Meter } from "@/components/ui/primitives"
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table"
-import { ErrorState } from "@/components/ui/state-views"
 import { CardGridSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import { adminLoadFailureMessage } from "@/lib/adminOutcome"
 import { usePipelineHealth } from "@/lib/hooks/useAdminApi"
 import type { PipelineHealth as PipelineHealthData } from "@/lib/adminTypes"
@@ -38,37 +38,37 @@ import type { PipelineHealth as PipelineHealthData } from "@/lib/adminTypes"
  * screen prints it.
  */
 export function PipelineHealth() {
-  const { data, isPending, isError, error } = usePipelineHealth()
+  const query = usePipelineHealth()
 
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1.5">
         <Eyebrow>Platform admin</Eyebrow>
-        <h1 className="text-display-lg text-ink">Pipeline and corpus</h1>
-        <p className="max-w-prose text-body-md text-ink-muted">
+        <h1 className="text-display-lg text-on-surface">Pipeline and corpus</h1>
+        <p className="max-w-prose text-body-md text-on-surface-variant">
           What the marking pipeline has to work with, and what it has been falling back on.
         </p>
       </header>
 
-      {isPending ? (
-        <>
-          <PageHeaderSkeleton />
-          <CardGridSkeleton count={3} />
-        </>
-      ) : isError ? (
-        <ErrorState
-          heading="We couldn't read the pipeline's figures"
-          body={adminLoadFailureMessage(error)}
-          action={{ label: "Try again", onClick: () => window.location.reload() }}
-        />
-      ) : (
-        <>
-          <BoundaryPanel health={data} />
-          <CorpusPanel health={data} />
-          <IngestionPanel health={data} />
-          <AccuracyPanel note={data.markingAccuracyNote} />
-        </>
-      )}
+      <QueryState
+        query={query}
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <CardGridSkeleton count={3} />
+          </>
+        }
+        error={{ heading: "We couldn't read the pipeline's figures", body: adminLoadFailureMessage }}
+      >
+        {(data) => (
+          <>
+            <BoundaryPanel health={data} />
+            <CorpusPanel health={data} />
+            <IngestionPanel health={data} />
+            <AccuracyPanel note={data.markingAccuracyNote} />
+          </>
+        )}
+      </QueryState>
     </div>
   )
 }
@@ -113,12 +113,12 @@ function BoundaryPanel({ health }: { health: PipelineHealthData }) {
         </div>
 
         {total === 0 ? (
-          <p className="text-body-sm text-ink-muted">
+          <p className="text-body-sm text-on-surface-variant">
             No past papers have been marked yet, so no prediction has needed a boundary.
           </p>
         ) : (
           <>
-            <p className="max-w-prose text-body-sm text-ink-muted">
+            <p className="max-w-prose text-body-sm text-on-surface-variant">
               Measured across every past-paper attempt on record, not across the corpus. This is
               what predictions actually ran on.
             </p>
@@ -134,8 +134,8 @@ function BoundaryPanel({ health }: { health: PipelineHealthData }) {
                   return (
                     <li key={source} className="flex flex-col gap-1.5">
                       <div className="flex flex-wrap items-baseline justify-between gap-2">
-                        <span className="text-body-sm text-ink">{label.title}</span>
-                        <span className="text-body-sm tabular-nums text-ink-muted">
+                        <span className="text-body-sm text-on-surface">{label.title}</span>
+                        <span className="text-body-sm tabular-nums text-on-surface-variant">
                           {count} of {total} ({Math.round(pct)}%)
                         </span>
                       </div>
@@ -145,10 +145,10 @@ function BoundaryPanel({ health }: { health: PipelineHealthData }) {
                         // `warn`, not `accent`: the badge above this list is already the
                         // warn register, and painting the same condition in two
                         // different alert colours made one card carry two alarms.
-                        fillClassName={source === "exact" ? "bg-ink-faint" : "bg-warn"}
+                        fillClassName={source === "exact" ? "bg-on-surface-variant" : "bg-tertiary"}
                       />
                       {label.meaning ? (
-                        <span className="text-body-sm text-ink-faint">{label.meaning}</span>
+                        <span className="text-body-sm text-on-surface-variant">{label.meaning}</span>
                       ) : null}
                     </li>
                   )
@@ -157,7 +157,7 @@ function BoundaryPanel({ health }: { health: PipelineHealthData }) {
           </>
         )}
 
-        <p className="max-w-prose text-body-sm text-ink-faint">
+        <p className="max-w-prose text-body-sm text-on-surface-variant">
           Separately, the boundary store carries{" "}
           <span className="tabular-nums">{health.exactBoundaryKeys}</span> published paper variants
           and <span className="tabular-nums">{health.subjectDefaultBoundaryKeys}</span> subject
@@ -171,11 +171,11 @@ function BoundaryPanel({ health }: { health: PipelineHealthData }) {
 function CorpusPanel({ health }: { health: PipelineHealthData }) {
   return (
     <section className="flex flex-col gap-3" aria-label="Mark scheme corpus">
-      <h2 className="text-display-sm text-ink">Mark scheme corpus</h2>
+      <h2 className="text-display-sm text-on-surface">Mark scheme corpus</h2>
       {health.subjects.length === 0 ? (
         <Card>
           <CardBody>
-            <p className="text-body-sm text-ink-muted">
+            <p className="text-body-sm text-on-surface-variant">
               No papers are registered yet, so there is no coverage to report.
             </p>
           </CardBody>
@@ -200,7 +200,7 @@ function CorpusPanel({ health }: { health: PipelineHealthData }) {
                 <TD numeric>{subject.papers}</TD>
                 <TD numeric>{subject.papersWithScheme}</TD>
                 <TD numeric>
-                  <span className={subject.papersWithoutScheme > 0 ? "text-accent-ink" : undefined}>
+                  <span className={subject.papersWithoutScheme > 0 ? "text-on-primary-container" : undefined}>
                     {subject.papersWithoutScheme}
                   </span>
                 </TD>
@@ -209,7 +209,7 @@ function CorpusPanel({ health }: { health: PipelineHealthData }) {
           </TBody>
         </Table>
       )}
-      <p className="max-w-prose text-body-sm text-ink-muted">
+      <p className="max-w-prose text-body-sm text-on-surface-variant">
         A paper with no parsed mark scheme cannot be marked at all. These counts are papers
         registered in the database, not files on disk.
       </p>
@@ -227,12 +227,12 @@ function IngestionPanel({ health }: { health: PipelineHealthData }) {
         <dl className="grid gap-3 sm:grid-cols-4">
           {Object.entries(health.uploadsByStatus).map(([status, count]) => (
             <div key={status} className="flex flex-col gap-1">
-              <dt className="text-body-sm text-ink-muted capitalize">{status}</dt>
+              <dt className="text-body-sm text-on-surface-variant capitalize">{status}</dt>
               <dd
                 className={
                   status === "failed" && count > 0
-                    ? "text-data-md tabular-nums text-accent-ink"
-                    : "text-data-md tabular-nums text-ink"
+                    ? "text-data-md tabular-nums text-on-primary-container"
+                    : "text-data-md tabular-nums text-on-surface"
                 }
               >
                 {count}
@@ -241,20 +241,20 @@ function IngestionPanel({ health }: { health: PipelineHealthData }) {
           ))}
         </dl>
         {failed > 0 ? (
-          <div className="flex flex-col gap-1.5 border-t border-rule pt-3">
-            <p className="text-body-sm text-ink">
+          <div className="flex flex-col gap-1.5 border-t border-outline-variant pt-3">
+            <p className="text-body-sm text-on-surface">
               The most recent failures, newest first. These ids are what to look up in the logs.
             </p>
             <ul className="flex flex-col gap-1">
               {health.recentFailedUploadIds.map((id) => (
-                <li key={id} className="text-data-sm text-ink-muted">
+                <li key={id} className="text-data-sm text-on-surface-variant">
                   {id}
                 </li>
               ))}
             </ul>
           </div>
         ) : (
-          <p className="text-body-sm text-ink-muted">Nothing has failed.</p>
+          <p className="text-body-sm text-on-surface-variant">Nothing has failed.</p>
         )}
       </CardBody>
     </Card>
@@ -266,7 +266,7 @@ function AccuracyPanel({ note }: { note: string }) {
     <Card>
       <CardBody className="flex flex-col gap-2">
         <Eyebrow>Marking accuracy</Eyebrow>
-        <p className="max-w-prose text-body-sm text-ink-muted">{note}</p>
+        <p className="max-w-prose text-body-sm text-on-surface-variant">{note}</p>
       </CardBody>
     </Card>
   )

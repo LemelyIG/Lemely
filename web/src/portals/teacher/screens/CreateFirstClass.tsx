@@ -4,14 +4,14 @@ import { Link } from "react-router-dom"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { useCreateClass } from "@/lib/hooks/useTeacherApi"
+import { useCreateClass, useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import { teacherMutationFailureMessage } from "@/lib/teacherOutcome"
 import type { ClassSummary } from "@/lib/teacherTypes"
 import { JoinCodeChip } from "./ClassDetail"
 
 /*
- * D7.10 · the create-first-class step. `TeacherLayout`'s gate
- * (`teacherFirstClassRedirect`, `../index.tsx`) sends a teacher with zero
+ * D7.10 · the create-first-class step. The teacher setup
+ * screen (`../home/TeacherSetup`) sends a teacher with zero
  * classes here, mounted at `/teacher/first-class`. Every downstream teacher
  * screen — the review queue, the at-risk list, class analytics — reads data
  * scoped to a class, and the join code a teacher needs to hand to students
@@ -58,17 +58,17 @@ function CreatedClassPanel({ created }: { created: ClassSummary }) {
     <Card>
       <CardBody className="flex flex-col items-start gap-4">
         <div>
-          <div className="text-eyebrow text-ink-faint">You're set up</div>
+          <div className="text-eyebrow text-on-surface-variant">You're set up</div>
           <h1 className="text-display-md mt-1.5 text-pretty">"{created.label}" is ready</h1>
         </div>
-        <p className="text-body-md text-ink-muted max-w-prose">
+        <p className="text-body-md text-on-surface-variant max-w-prose">
           Share this code with your students so they can join. You'll find it again on the class
           page any time you need it.
         </p>
         {created.joinCode ? (
           <div className="flex flex-col items-start gap-1.5">
-            <span className="text-eyebrow text-ink-faint">Invite code</span>
-            <JoinCodeChip code={created.joinCode} />
+            <span className="text-eyebrow text-on-surface-variant">Invite code</span>
+            <JoinCodeChip code={created.joinCode} settle />
           </div>
         ) : (
           // Honestly nullable in the type (see `ClassDetail.tsx`'s own note on
@@ -76,7 +76,7 @@ function CreatedClassPanel({ created }: { created: ClassSummary }) {
           // independent, per D7.2 — should always receive one, since for this
           // teacher the code is their only invite path. If it is ever absent,
           // saying so plainly beats a silently blank slot.
-          <p className="text-body-sm text-ink-faint">
+          <p className="text-body-sm text-on-surface-variant">
             We couldn't generate an invite code just now. Open the class page below to find it
             once it appears.
           </p>
@@ -99,6 +99,10 @@ function CreatedClassPanel({ created }: { created: ClassSummary }) {
 
 export function CreateFirstClass() {
   const createClass = useCreateClass()
+  // The top bar's "Create" links here too, so a teacher who already has classes
+  // must not be told this is their first.
+  const { data: classesData } = useTeacherClasses()
+  const hasClasses = (classesData?.classes.length ?? 0) > 0
   const [created, setCreated] = useState<ClassSummary | null>(null)
   const [name, setName] = useState("")
   const [subjectCode, setSubjectCode] = useState("")
@@ -120,19 +124,19 @@ export function CreateFirstClass() {
 
   if (created) {
     return (
-      <div className="lm-screen flex flex-col gap-5 min-w-0 max-w-[680px]">
+      <div className="flex flex-col gap-5 min-w-0 max-w-[680px]">
         <CreatedClassPanel created={created} />
       </div>
     )
   }
 
   return (
-    <div className="lm-screen flex flex-col gap-5 min-w-0 max-w-[680px]">
+    <div className="flex flex-col gap-5 min-w-0 max-w-[680px]">
       <div>
-        <div className="text-eyebrow text-ink-faint">One quick step</div>
-        <h1 className="text-display-md mt-1.5">Create your first class</h1>
+        {!hasClasses && <div className="text-eyebrow text-on-surface-variant">One quick step</div>}
+        <h1 className="text-display-md mt-1.5">{hasClasses ? "Create a class" : "Create your first class"}</h1>
       </div>
-      <p className="text-body-md text-ink-muted max-w-prose">
+      <p className="text-body-md text-on-surface-variant max-w-prose">
         A class is where your students' work lands. It's where you'll see their marks, their weak
         topics, and who needs attention. Give it a name and you're ready to start marking.
       </p>
@@ -161,7 +165,7 @@ export function CreateFirstClass() {
               Create class
             </Button>
             {createClass.isError ? (
-              <p className="text-body-sm text-err" role="alert">
+              <p className="text-body-sm text-error" role="alert">
                 Couldn't create the class: {teacherMutationFailureMessage(createClass.error)}
               </p>
             ) : null}

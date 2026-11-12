@@ -2,7 +2,7 @@
 import { Link, Navigate } from "react-router-dom"
 import { CaretRight, TrendDown, TrendUp } from "@phosphor-icons/react"
 import { useChildren } from "@/lib/hooks/useParentApi"
-import { ErrorState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { parentLoadFailureMessage } from "@/lib/parentOutcome"
 import { relativeTime } from "@/lib/utils"
@@ -43,30 +43,30 @@ function ChildCard({ child }: { child: ChildSummary }) {
   return (
     <Link
       to={`/parent/children/${child.childId}`}
-      className="group flex items-start gap-4 rounded-lg border border-rule bg-paper-raised p-6 transition-colors hover:border-rule-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+      className="group flex items-start gap-4 rounded-lg border border-outline-variant bg-surface-container-lowest p-6 transition-colors hover:border-outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
     >
       <div className="flex min-w-0 flex-1 flex-col gap-2">
-        <div className="text-display-sm text-ink">{child.displayName}</div>
+        <div className="text-display-sm text-on-surface">{child.displayName}</div>
 
         {child.classes.length > 0 ? (
-          <div className="text-body-sm text-ink-faint">
+          <div className="text-body-sm text-on-surface-variant">
             {child.classes
               .map((c) => (c.schoolName ? `${c.name} · ${c.schoolName}` : c.name))
               .join(" · ")}
           </div>
         ) : null}
 
-        <p className="text-body-md text-ink">{child.statusLine}</p>
+        <p className="text-body-md text-on-surface">{child.statusLine}</p>
 
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-body-sm text-ink-muted">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-body-sm text-on-surface-variant">
           {trend ? (
             // Direction is never colour alone: the icon differs in shape and
             // the sentence names it ("Up" / "Down") in words.
             <span className="flex items-center gap-1.5">
               {trend.up ? (
-                <TrendUp size={15} className="text-ok" aria-hidden="true" />
+                <TrendUp size={15} className="text-success-text" aria-hidden="true" />
               ) : (
-                <TrendDown size={15} className="text-warn" aria-hidden="true" />
+                <TrendDown size={15} className="text-on-tertiary-container" aria-hidden="true" />
               )}
               {trend.text}
             </span>
@@ -84,7 +84,7 @@ function ChildCard({ child }: { child: ChildSummary }) {
           long status line never reflows under the pointer. */}
       <CaretRight
         size={18}
-        className="mt-1 flex-none text-ink-faint transition-transform ease-out-soft group-hover:translate-x-px"
+        className="mt-1 flex-none text-on-surface-variant transition-transform ease-out-soft group-hover:translate-x-px"
         aria-hidden="true"
       />
     </Link>
@@ -97,16 +97,18 @@ function ChildCard({ child }: { child: ChildSummary }) {
  * list", and P3.6 chunk a deliberately shipped the API returning a plain empty
  * list with no copy, handing that explanation here.
  *
- * The flow described is D3.11's real one and nothing else: the parent logs in
- * by phone **first** (they just did — that is why they are reading this), and
- * then the child sends the invite from their own account. There is no
- * parent-initiated request to offer, because no such route exists; inventing a
- * "Request access" button that posts nowhere would be the exact failure mode
- * this build has fixed repeatedly.
+ * The flow described is the parent-invites design's real one (design spec
+ * §2, superseding D3.11's phone-login account): the child mints a code or
+ * link from their own account's Parent access screen and shares it; the
+ * parent redeems it at `/join`, confirms an email code, and sets a password
+ * — the account and the link are created by the same server call. There is
+ * no parent-initiated request to offer, because no such route exists;
+ * inventing a "Request access" button that posts nowhere would be the exact
+ * failure mode this build has fixed repeatedly.
  *
- * "Or via the school" is likewise omitted rather than stubbed — D3.11 rejected
- * school-side linking outright (no school child-registry surface exists), so
- * naming it here would promise a path a parent cannot take.
+ * "Or via the school" is likewise omitted rather than stubbed — the design
+ * rejects school-side linking outright (no school child-registry surface
+ * exists), so naming it here would promise a path a parent cannot take.
  *
  * P3.2 reviewed this as the parent role's first-run flow and deliberately left
  * its structure alone. It is already the composed getting-started view that
@@ -117,29 +119,21 @@ function ChildCard({ child }: { child: ChildSummary }) {
  * "here is your next button" would mean either three inert steps or three
  * buttons that go nowhere.
  *
- * Step 2 says "the number you signed in with" rather than printing it back.
- * `ProfileDTO` carries no phone, and adding one to `/api/me/profile` to
- * sharpen a line of copy would put a second source beside the OTP flow that
- * already owns that fact — the same call P3.8 chunk d made about school
- * memberships. The parent typed the number moments ago; the generic phrasing
- * costs them nothing.
- *
  * P4.6 changed the surface and not the structure: tokens, the margin rule
- * (§8.5), the step numbers on the data face, and one line of Caveat marginalia
- * (§12). The marginalia is the only decorative element and it carries nothing:
+ * (§8.5), the step numbers on the data face, and one line of marginalia. The marginalia is the only decorative element and it carries nothing:
  * remove it and the screen still says everything it said.
  */
 function NoChildrenLinked() {
   return (
-    <div className="mx-auto flex max-w-140 flex-col gap-6 rounded-lg border border-rule bg-paper-raised p-8">
-      <div className="margin-rule flex flex-col gap-2">
-        <p className="text-hand text-ink-muted">Almost there</p>
+    <div className="mx-auto flex max-w-140 flex-col gap-6 rounded-lg border border-outline-variant bg-surface-container-lowest p-8">
+      <div className="flex flex-col gap-2">
+        <p className="text-body-sm text-on-surface-variant">Almost there</p>
         {/* `h1`, not `h2`: in this state it IS the page's heading, and there is
             no other one on the screen — so as an `h2` the empty state shipped
             with no level-one heading at all (axe `page-has-heading-one`, found
             by P3.10 chunk e2a's per-state pass). */}
-        <h1 className="text-display-lg text-ink">You're signed in. One step to go.</h1>
-        <p className="text-body-md text-ink-muted">
+        <h1 className="text-display-lg text-on-surface">You're signed in. One step to go.</h1>
+        <p className="text-body-md text-on-surface-variant">
           Nobody has shared their results with you yet. Your child adds you from their own
           Lemely account, so they stay in control of who sees their marks.
         </p>
@@ -148,22 +142,22 @@ function NoChildrenLinked() {
       <ol className="flex flex-col gap-4">
         {[
           "Ask your child to open Lemely and sign in.",
-          "In their account, they add a parent using the phone number you just signed in with.",
-          "Their results appear here straight away. There is no code to enter and nothing to accept.",
+          "In their account, they open Parent access and share their code or link with you.",
+          "Open what they send you, confirm your email, and you're in.",
         ].map((step, index) => (
           <li key={index} className="flex items-start gap-3">
             <span
               aria-hidden="true"
-              className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-accent-wash text-data-sm text-accent-ink"
+              className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-primary-container text-data-sm text-on-primary-container"
             >
               {index + 1}
             </span>
-            <span className="text-body-md text-ink">{step}</span>
+            <span className="text-body-md text-on-surface">{step}</span>
           </li>
         ))}
       </ol>
 
-      <p className="rounded-md bg-paper-sunk p-4 text-body-sm text-ink-muted">
+      <p className="rounded-md bg-surface-container-low p-4 text-body-sm text-on-surface-variant">
         Signing in first is what makes this work. Your child can only add a parent who
         already has an account, so nobody can be added by mistake.
       </p>
@@ -172,55 +166,56 @@ function NoChildrenLinked() {
 }
 
 export function Children() {
-  const { data, isPending, isError, error } = useChildren()
-
-  if (isPending) {
-    // Skeletons, not a line of text (§12): the shape below is the heading plus
-    // the card list this screen resolves to, so nothing jumps when it arrives.
-    return (
-      <div className="flex flex-col gap-6">
-        <PageHeaderSkeleton />
-        <ListSkeleton rows={2} />
-      </div>
-    )
-  }
-
-  if (isError) {
-    return (
-      <ErrorState
-        heading="We couldn't load your children"
-        body={parentLoadFailureMessage(error)}
-        action={{ label: "Try again", onClick: () => window.location.reload() }}
-      />
-    )
-  }
-
-  const children = data.children
-
-  // Spec: one child → skip this screen entirely. `replace` so the browser back
-  // button returns to where the parent actually came from rather than bouncing
-  // through a list they never saw.
-  if (children.length === 1) {
-    return <Navigate to={`/parent/children/${children[0].childId}`} replace />
-  }
-
-  if (children.length === 0) {
-    return <NoChildrenLinked />
-  }
+  const query = useChildren()
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="margin-rule flex flex-col gap-1">
-        <h1 className="text-display-lg text-ink">Your children</h1>
-        <p className="text-body-md text-ink-muted">
-          Tap a name to see how they're doing.
-        </p>
-      </div>
-      <div className="flex flex-col gap-3">
-        {children.map((child) => (
-          <ChildCard key={child.childId} child={child} />
-        ))}
-      </div>
+      <QueryState
+        query={query}
+        srHeading="Your children"
+        // Skeletons, not a line of text (§12): the shape below is the heading plus
+        // the card list this screen resolves to, so nothing jumps when it arrives.
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={2} />
+          </>
+        }
+        error={{ heading: "We couldn't load your children", body: parentLoadFailureMessage }}
+      >
+        {(data) => {
+          const children = data.children
+
+          // Spec: one child → skip this screen entirely. `replace` so the browser
+          // back button returns to where the parent actually came from rather than
+          // bouncing through a list they never saw. Stays inside `children` rather
+          // than `QueryState`'s `isEmpty`/`empty` (which only cover a single empty
+          // treatment): this screen branches three ways on the loaded payload —
+          // redirect, the no-children explainer, or the list — and only the last
+          // is this component's own render.
+          if (children.length === 1) {
+            return <Navigate to={`/parent/children/${children[0].childId}`} replace />
+          }
+
+          if (children.length === 0) {
+            return <NoChildrenLinked />
+          }
+
+          return (
+            <>
+              <div className="flex flex-col gap-1">
+                <h1 className="text-display-lg text-on-surface">Your children</h1>
+                <p className="text-body-md text-on-surface-variant">Tap a name to see how they're doing.</p>
+              </div>
+              <div className="flex flex-col gap-3">
+                {children.map((child) => (
+                  <ChildCard key={child.childId} child={child} />
+                ))}
+              </div>
+            </>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }

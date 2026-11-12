@@ -2,6 +2,13 @@
  * Wire types for S-29, mirroring `lemely/web/schemas_leaderboard.py` and
  * `lemely/web/schemas_student_classes.py` field for field.
  *
+ * `JoinClassResponse` below is the one exception: it mirrors
+ * `JoinClassResponseDTO` from the sibling `lemely/web/schemas_classes.py`
+ * (the `POST /api/student/classes/join` response), not either module named
+ * above. It lives here rather than in its own file because it answers the
+ * same question — "which class" — as `StudentClass` two exports below, and a
+ * screen reading one is reading both.
+ *
  * **These types carry no mark, grade or percentage, and that is structural.**
  * The backend DTOs do not declare such a field (D5.1 §0) and
  * `tests/test_schemas_leaderboard.py` fails if one is ever added, so this
@@ -87,4 +94,15 @@ export interface StudentClass {
  * state (a direct subscriber with no teacher), never an error. */
 export interface StudentClassList {
   classes: StudentClass[]
+}
+
+/**
+ * `POST /api/student/classes/join` response (`JoinClassResponseDTO`,
+ * `schemas_classes.py`). The class the caller just joined, or was already
+ * enrolled in — the endpoint is idempotent, so a repeat call with the same
+ * code returns the same body rather than an error.
+ */
+export interface JoinClassResponse {
+  classId: string
+  className: string
 }
