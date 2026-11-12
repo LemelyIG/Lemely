@@ -10,20 +10,27 @@ finds the paper deleted, or resolves no scheme (billing spec §2.4: failed work 
 
 from __future__ import annotations
 
+import contextlib
 import functools
+import io
 import threading
+import types
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
+import anyio
 import pytest
 import sqlalchemy as sa
+from fastapi import UploadFile
 from fastapi.testclient import TestClient
 from sqlalchemy import exc as sa_exc
+from starlette.datastructures import Headers
 
 from lemely.core.metered_actions import JOB_SLACK, MeteredAction
+from lemely.core.payer_chain import UsageBlockReason
 from lemely.db.models import TeacherPaper
 from lemely.db.models.enums import Role, UploadStatus
 from lemely.db.models.team import TeacherMember, TeacherMemberStatus
@@ -34,10 +41,12 @@ from lemely.db.teacher_team_repo import TeacherTeamStore
 from lemely.db.usage_ledger_repo import UsageLedger
 from lemely.io.gemini import GeminiClient
 from lemely.io.llm.cost_meter import record_llm_cost
+from lemely.runtime.config import Settings
 from lemely.web import create_app
 from lemely.web.deps import (
     ACTING_TEACHER_HEADER,
     AuthContext,
+    TeamActor,
     get_auth_context,
     get_gemini_client,
     get_history_store,
@@ -52,6 +61,7 @@ from lemely.web.services import grading as grading_service
 from lemely.web.usage import (
     USAGE_UNAVAILABLE_MESSAGE,
     MeteredJob,
+    UsageBlocked,
     UsageGrantContext,
     UsageMeter,
     UsageRequest,
@@ -592,7 +602,15 @@ def test_a_run_reclaimed_while_queued_is_abandoned_and_the_paper_is_charged_once
         record_llm_cost(Decimal("0.020"))
         return _report()
 
+    restarted: list[str] = []
+    real_restart = MeteredJob._restart_clock
+
+    def _recording_restart(self: MeteredJob) -> None:
+        restarted.append(self.ctx.request.action.value)
+        real_restart(self)
+
     monkeypatch.setattr(grading_service, "grade_paper", _grade)
+    monkeypatch.setattr(MeteredJob, "_restart_clock", _recording_restart)
     console.pool.drain()
     assert console.pool.errors == []
     jobs = jobs_for(sm, teacher)
@@ -601,8 +619,52 @@ def test_a_run_reclaimed_while_queued_is_abandoned_and_the_paper_is_charged_once
         ("regrade", UsageJobStatus.settled, 50),
     ]
     assert graded == ["grade"]
+    # The superseded job is refused before `job.run()`: no extend, no re-reserve.
+    assert restarted == ["regrade"]
     assert _remaining(sm, grant) == (950, 0)
     assert _paper(sm, paper_id).status is UploadStatus.complete
+
+
+def test_a_job_that_waited_past_the_stale_window_confirms_its_row_on_start(
+    console: _Console,
+    migrated_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``confirm_run`` refreshes liveness on start: the row is not reclaimable mid-run."""
+    sm = migrated_sessionmaker
+    teacher = seed_user(sm, Role.teacher)
+    give(sm, teacher, units=1000)
+    _as(console, teacher)
+    console.pool.hold = True
+    paper_id = _upload(console).json()["paperId"]
+    with sm.begin() as session:
+        row = session.get(TeacherPaper, uuid.UUID(paper_id))
+        assert row is not None
+        row.updated_at = datetime.now(UTC) - timedelta(minutes=20)
+    reclaims: list[bool] = []
+    real_download = console.storage.download
+
+    def _download(bucket: str, object_path: str) -> bytes:
+        # A re-run click while the run downloads the scan: before its first progress write.
+        reclaims.append(console.repo.claim_run(uuid.UUID(paper_id)))
+        return real_download(bucket, object_path)
+
+    monkeypatch.setattr(console.storage, "download", _download)
+    console.pool.drain()
+    assert console.pool.errors == []
+    assert reclaims == [False]
+    (job,) = jobs_for(sm, teacher)
+    assert (job.status, job.charged) == (UsageJobStatus.settled, 50)
+
+
+def _reclaim_mid_run(sm: sessionmaker[Session], teacher: uuid.UUID) -> None:
+    """Another request reclaims the teacher's paper while this run is still working."""
+    with sm.begin() as session:
+        session.execute(
+            sa.update(TeacherPaper)
+            .where(TeacherPaper.uploaded_by == teacher)
+            .values(run_started_at=datetime.now(UTC) + timedelta(hours=1))
+        )
 
 
 def test_a_run_reclaimed_mid_run_does_not_save_or_charge(
@@ -610,36 +672,80 @@ def test_a_run_reclaimed_mid_run_does_not_save_or_charge(
     migrated_sessionmaker: sessionmaker[Session],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The second token check, before ``finish``: a run superseded while grading discards."""
+    """``finish`` checks the token under its row lock: a run superseded while grading discards."""
     sm = migrated_sessionmaker
     teacher = seed_user(sm, Role.teacher)
     grant = give(sm, teacher, units=1000)
-    finished: list[uuid.UUID] = []
-    real_finish = TeacherPaperRepository.finish
-
-    def _recording_finish(self: TeacherPaperRepository, pid: uuid.UUID, report: object) -> None:
-        finished.append(pid)
-        real_finish(self, pid, report)  # type: ignore[arg-type]
 
     def _grade_then_reclaimed(*_a: object, **_k: object) -> object:
         record_llm_cost(Decimal("0.020"))
-        with sm.begin() as session:
-            # Another request reclaimed the row while this run was grading.
-            session.execute(
-                sa.update(TeacherPaper)
-                .where(TeacherPaper.uploaded_by == teacher)
-                .values(run_started_at=datetime.now(UTC) + timedelta(hours=1))
-            )
+        _reclaim_mid_run(sm, teacher)
         return _report()
 
-    monkeypatch.setattr(TeacherPaperRepository, "finish", _recording_finish)
     monkeypatch.setattr(grading_service, "grade_paper", _grade_then_reclaimed)
     _as(console, teacher)
-    assert _upload(console).status_code == 200
+    paper_id = _upload(console).json()["paperId"]
     (job,) = jobs_for(sm, teacher)
     assert (job.status, job.charged) == (UsageJobStatus.released, 0)
-    assert finished == []
+    row = _paper(sm, paper_id)
+    assert (row.status, row.report_json, row.error) == (UploadStatus.processing, None, None)
     assert _remaining(sm, grant) == (1000, 0)
+
+
+def test_a_run_reclaimed_mid_run_that_then_errors_leaves_the_newer_runs_paper_alone(
+    console: _Console,
+    migrated_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-review I-A: a superseded run's failure must not mark the newer run's paper failed."""
+    sm = migrated_sessionmaker
+    teacher = seed_user(sm, Role.teacher)
+    grant = give(sm, teacher, units=1000)
+
+    def _reclaimed_then_crash(*_a: object, **_k: object) -> object:
+        _reclaim_mid_run(sm, teacher)
+        raise RuntimeError("model timeout")
+
+    monkeypatch.setattr(grading_service, "grade_paper", _reclaimed_then_crash)
+    _as(console, teacher)
+    paper_id = _upload(console).json()["paperId"]
+    row = _paper(sm, paper_id)
+    assert (row.status, row.error) == (UploadStatus.processing, None)
+    (job,) = jobs_for(sm, teacher)
+    assert (job.status, job.charged) == (UsageJobStatus.released, 0)
+    assert _remaining(sm, grant) == (1000, 0)
+
+
+def test_a_superseded_binding_hold_or_missing_scheme_leaves_the_newer_runs_paper_alone(
+    console: _Console,
+    migrated_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sm = migrated_sessionmaker
+    teacher = seed_user(sm, Role.teacher)
+    give(sm, teacher, units=1000)
+    _as(console, teacher)
+
+    def _reclaimed_then_held(_extracted: object) -> None:
+        _reclaim_mid_run(sm, teacher)
+        raise grading_service.BindingHeldError(_binding_report("hold"), "before_marking")
+
+    monkeypatch.setattr(grading_service, "ensure_binding_allows_marking", _reclaimed_then_held)
+    held = _upload(console).json()["paperId"]
+    assert (_paper(sm, held).status, _paper(sm, held).error) == (UploadStatus.processing, None)
+
+    def _reclaimed_then_no_scheme(*_a: object, **_k: object) -> None:
+        _reclaim_mid_run(sm, teacher)
+        return None
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", _reclaimed_then_no_scheme)
+    unschemed = _upload(console).json()["paperId"]
+    row = _paper(sm, unschemed)
+    assert (row.status, row.error) == (UploadStatus.processing, None)
+    assert [(j.status, j.charged) for j in jobs_for(sm, teacher)] == [
+        (UsageJobStatus.released, 0),
+        (UsageJobStatus.released, 0),
+    ]
 
 
 def test_a_setup_failure_before_the_run_opens_releases_the_hold(
@@ -658,6 +764,50 @@ def test_a_setup_failure_before_the_run_opens_releases_the_hold(
     _as(console, teacher)
     assert _upload(console).status_code == 200
     assert [str(e) for e in console.pool.errors] == ["can't start new thread"]
+    (job,) = jobs_for(sm, teacher)
+    assert (job.status, job.charged) == (UsageJobStatus.released, 0)
+    assert _remaining(sm, grant) == (1000, 0)
+
+
+def test_a_setup_failure_after_subscribing_unsubscribes_and_releases(
+    console: _Console,
+    migrated_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sm = migrated_sessionmaker
+    teacher = seed_user(sm, Role.teacher)
+    grant = give(sm, teacher, units=1000)
+    subscribed: list[object] = []
+    unsubscribed: list[object] = []
+    real_subscribe = teacher_router.bus.subscribe_queue
+    real_unsubscribe = teacher_router.bus.unsubscribe_queue
+
+    def _subscribe(scope: str) -> object:
+        q = real_subscribe(scope)
+        subscribed.append(q)
+        return q
+
+    def _unsubscribe(q: object) -> None:
+        unsubscribed.append(q)
+        real_unsubscribe(q)  # type: ignore[arg-type]
+
+    class _NoThread:
+        def __init__(self, *_a: object, **_k: object) -> None:
+            pass
+
+        def start(self) -> None:
+            raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(teacher_router.bus, "subscribe_queue", _subscribe)
+    monkeypatch.setattr(teacher_router.bus, "unsubscribe_queue", _unsubscribe)
+    monkeypatch.setattr(
+        teacher_router, "threading", types.SimpleNamespace(Event=threading.Event, Thread=_NoThread)
+    )
+    _as(console, teacher)
+    assert _upload(console).status_code == 200
+    assert [str(e) for e in console.pool.errors] == ["can't start new thread"]
+    assert len(subscribed) == 1
+    assert unsubscribed == subscribed
     (job,) = jobs_for(sm, teacher)
     assert (job.status, job.charged) == (UsageJobStatus.released, 0)
     assert _remaining(sm, grant) == (1000, 0)
@@ -823,32 +973,119 @@ def test_an_unavailable_run_that_was_superseded_leaves_the_newer_runs_paper_alon
     migrated_sessionmaker: sessionmaker[Session],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Same superseded-run guard as the credits block: a stale run never fails a re-run's row."""
+    """A run reclaimed while its hold restarts, then unavailable: its ``fail`` writes nothing.
+
+    A job superseded while queued never reaches the ledger (``confirm_run`` refuses it
+    first), so the reclaim lands inside ``job.run()``'s entry here instead.
+    """
+    sm = migrated_sessionmaker
+    teacher = seed_user(sm, Role.teacher)
+    grant = give(sm, teacher, units=1000)
+    _as(console, teacher)
+
+    def _reclaimed_then_unavailable(self: MeteredJob) -> None:
+        _reclaim_mid_run(sm, teacher)
+        raise UsageUnavailable
+
+    monkeypatch.setattr(MeteredJob, "_restart_clock", _reclaimed_then_unavailable)
+    paper_id = _upload(console).json()["paperId"]
+    assert console.pool.errors == []
+    row = _paper(sm, paper_id)
+    assert (row.status, row.error) == (UploadStatus.processing, None)
+    assert _remaining(sm, grant)[1] == 0
+
+
+@pytest.mark.parametrize(
+    ("reason", "fragment"),
+    [
+        (UsageBlockReason.INSUFFICIENT_CREDITS, "Credits ran out"),
+        (UsageBlockReason.USAGE_LIMIT_REACHED, "usage limit"),
+        (UsageBlockReason.NO_ACTIVE_PLAN, "no active plan"),
+        (UsageBlockReason.OUTSTANDING_DEBT, "unpaid balance"),
+        (UsageBlockReason.OUT_OF_SEAT_SCOPE, "not covered"),
+    ],
+)
+def test_each_block_reason_has_its_own_plain_message(
+    reason: UsageBlockReason, fragment: str
+) -> None:
+    message = teacher_router.usage_blocked_message(reason)
+    assert fragment in message
+    assert ("Credits ran out" in message) is (reason is UsageBlockReason.INSUFFICIENT_CREDITS)
+    assert not message.startswith("Grading failed")
+
+
+def test_a_run_blocked_by_a_cap_fails_the_paper_with_the_cap_message(
+    console: _Console,
+    migrated_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     sm = migrated_sessionmaker
     teacher = seed_user(sm, Role.teacher)
     give(sm, teacher, units=1000)
+
+    @contextlib.contextmanager
+    def _capped(self: MeteredJob) -> Iterator[MeteredJob]:
+        self.release()  # as the real entry does: nothing is held once it is blocked
+        if self.job_id is not None:
+            raise UsageBlocked(UsageBlockReason.USAGE_LIMIT_REACHED, (40, 120))
+        yield self
+
+    monkeypatch.setattr(MeteredJob, "run", _capped)
     _as(console, teacher)
-    console.pool.hold = True
-    paper_id = _upload(console).json()["paperId"]  # job 1 queued
-    with sm.begin() as session:
-        row = session.get(TeacherPaper, uuid.UUID(paper_id))
-        assert row is not None
-        row.updated_at = datetime.now(UTC) - timedelta(minutes=20)  # reads as a lost run
-    assert _regrade(console, paper_id).status_code == 202  # job 2 reclaims the row
-    real_restart = MeteredJob._restart_clock
-    state = {"first": True}
+    paper_id = _upload(console).json()["paperId"]
+    row = _paper(sm, paper_id)
+    assert (row.status, row.error) == (
+        UploadStatus.failed,
+        teacher_router.usage_blocked_message(UsageBlockReason.USAGE_LIMIT_REACHED),
+    )
+    (job,) = jobs_for(sm, teacher)
+    assert (job.status, job.charged) == (UsageJobStatus.released, 0)
 
-    def _first_run_only(self: MeteredJob) -> None:
-        if state["first"]:
-            state["first"] = False
-            raise UsageUnavailable
-        real_restart(self)
 
-    monkeypatch.setattr(MeteredJob, "_restart_clock", _first_run_only)
-    console.pool.drain_one()  # job 1: unavailable on entry, superseded
-    between = _paper(sm, paper_id)
-    assert (between.status, between.error) == (UploadStatus.processing, None)
-    console.pool.drain_one()  # job 2 owns the row and completes
-    assert console.pool.errors == []
-    row_after = _paper(sm, paper_id)
-    assert (row_after.status, row_after.error) == (UploadStatus.complete, None)
+def test_a_cancelled_upload_still_releases_its_hold(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The release runs under a shield: a request cancelled mid-upload frees its hold."""
+    sm = migrated_sessionmaker
+    seed_catalogue(sm)
+    teacher = seed_user(sm, Role.teacher)
+    grant = give(sm, teacher, units=1000)
+    repo = TeacherPaperRepository(sm, stale_after=timedelta(minutes=15))
+    auth = AuthContext(user_id=str(teacher), role="teacher")
+    actor = TeamActor(
+        actor_user_id=teacher, lead_teacher_user_id=teacher, member_id=None, auth=auth
+    )
+    scope_box: list[anyio.CancelScope] = []
+
+    class _CancelThenFail(FakeStorageBackend):
+        def upload(
+            self, bucket: str, object_path: str, data: bytes, content_type: str | None
+        ) -> None:
+            # The client goes away while the scan uploads, and the upload then fails.
+            anyio.from_thread.run_sync(scope_box[0].cancel)
+            raise OSError("bucket unreachable")
+
+    async def _request() -> None:
+        with anyio.CancelScope() as scope:
+            scope_box.append(scope)
+            await teacher_router.upload_paper(
+                actor=actor,
+                settings=Settings(),
+                repo=repo,
+                storage=_CancelThenFail(),
+                history_store=MagicMock(),
+                gemini_client=MagicMock(spec=GeminiClient),
+                corpus=SchemeCorpusRepository(sm),
+                meter=enforcing_meter(sm),
+                scan=UploadFile(
+                    file=io.BytesIO(_SCAN),
+                    filename="scan.pdf",
+                    headers=Headers({"content-type": "application/pdf"}),
+                ),
+            )
+
+    with contextlib.suppress(OSError):
+        anyio.run(_request)
+    (job,) = jobs_for(sm, teacher)
+    assert (job.status, job.charged) == (UsageJobStatus.released, 0)
+    assert _remaining(sm, grant) == (1000, 0)

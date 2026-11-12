@@ -62,6 +62,7 @@ from lemely.core.history import (
     latest_grade_bearing,
 )
 from lemely.core.metered_actions import MAX_ESTIMATE_INPUTS, MeteredAction, UsageTarget
+from lemely.core.payer_chain import UsageBlockReason
 from lemely.core.schemas import (
     REVIEW_CONFIDENCE_THRESHOLD,
     AccuracyReport,
@@ -95,6 +96,7 @@ from lemely.db.teacher_paper_repo import (
     TeacherPaperDeletedError,
     TeacherPaperRepository,
     TeacherPaperRow,
+    TeacherRunSupersededError,
 )
 
 if TYPE_CHECKING:
@@ -381,6 +383,31 @@ CREDITS_RAN_OUT_MESSAGE = (
     "Credits ran out while this paper was waiting. Top up, then re-run marking."
 )
 
+#: The sentence for each other reason a queued paper can be blocked on entry.
+_USAGE_BLOCKED_MESSAGES: dict[UsageBlockReason, str] = {
+    UsageBlockReason.INSUFFICIENT_CREDITS: CREDITS_RAN_OUT_MESSAGE,
+    UsageBlockReason.USAGE_LIMIT_REACHED: (
+        "This paper reached a usage limit while it was waiting, so it was not marked. "
+        "Re-run marking once the limit allows."
+    ),
+    UsageBlockReason.NO_ACTIVE_PLAN: (
+        "There is no active plan or credit to mark this paper, so it was not marked. "
+        "Add credits, then re-run marking."
+    ),
+    UsageBlockReason.OUTSTANDING_DEBT: (
+        "An unpaid balance is blocking marking, so this paper was not marked. "
+        "Settle it, then re-run marking."
+    ),
+    UsageBlockReason.OUT_OF_SEAT_SCOPE: (
+        "This paper is not covered by your plan, so it was not marked."
+    ),
+}
+
+
+def usage_blocked_message(reason: UsageBlockReason) -> str:
+    """The sentence a paper blocked on entry fails with ("credits ran out" only for credits)."""
+    return _USAGE_BLOCKED_MESSAGES[reason]
+
 
 def _viewer(auth: AuthContext) -> tuple[uuid.UUID, Role]:
     """The caller's id and platform role, parsed off the validated token."""
@@ -585,17 +612,22 @@ def _run_grading_job(
     ``claim_token`` is the ``run_started_at`` the winning ``claim_run`` stamped.
     Nothing writes to a row while its job waits in the pool's queue, so after
     the stale window the console offers a re-run, and that re-run reclaims the
-    row with a new token and queues its own job. A run whose token no longer
-    matches, when it starts or before it saves its report, has been superseded:
-    it abandons (released, charged 0) and leaves the row to the run that owns it,
-    so one paper is never marked or charged twice. The token is the row's, not
-    the job's: ``job.run()`` may replace the job id when it re-reserves.
+    row with a new token and queues its own job. Every write that ends the run
+    is conditional on the token, in the repository: ``confirm_run`` before
+    ``job.run()`` opens (a superseded job is released without touching the
+    ledger, and a job that waited past the stale window refreshes its row in the
+    same statement, so it cannot be reclaimed before its first write); ``finish``
+    under its row lock (a superseded run abandons, charged 0); and every
+    ``fail``, so a superseded run never marks the newer run's paper failed. One
+    paper is never marked or charged twice. The token is the row's, not the
+    job's: ``job.run()`` may replace the job id when it re-reserves.
 
     ``job.run()`` raises :class:`UsageBlocked` on entry when the hold expired
     while the job was queued and the chain can no longer cover it. Nothing is
-    held then and no model call has been made; the paper fails with
-    :data:`CREDITS_RAN_OUT_MESSAGE`, unless a newer run owns the row. A ledger that
-    cannot restart the hold raises :class:`UsageUnavailable` instead: the same guard,
+    held then and no model call has been made; the paper fails with the sentence
+    :func:`usage_blocked_message` gives for the reason, unless a newer run owns the
+    row. A ledger that cannot restart the hold raises :class:`UsageUnavailable`
+    instead: the same guard,
     and the paper fails with :data:`USAGE_UNAVAILABLE_MESSAGE` (charged 0, no model call).
     """
     from lemely.web.routers.student import resolve_mark_scheme
@@ -607,8 +639,9 @@ def _run_grading_job(
         grade_paper,
     )
 
+    run_id_token = current_run_id.set(f"teacher:{paper_id}")
+    progress_queue: queue.SimpleQueue[Event | None] | None = None
     try:
-        run_id_token = current_run_id.set(f"teacher:{paper_id}")
         progress_queue = bus.subscribe_queue(f"teacher:{paper_id}")
         stop = threading.Event()
         tracker = threading.Thread(
@@ -619,16 +652,21 @@ def _run_grading_job(
         tracker.start()
     except BaseException:
         # `job.run()` has not opened yet, so nothing else would release the hold.
+        if progress_queue is not None:
+            bus.unsubscribe_queue(progress_queue)
+        current_run_id.reset(run_id_token)
         job.release()
         raise
     try:
+        # Before `job.run()`: a superseded job is released without a ledger extend
+        # or re-reserve, and a confirmed one has just refreshed its row's liveness.
+        if claim_token is None or not repo.confirm_run(paper_id, claim_token):
+            log.info("teacher_grade_superseded", paper_id=str(paper_id), at="start")
+            job.release()
+            return
         with job.run():
             row = repo.get(paper_id)
             if row is None:
-                job.abandon()
-                return
-            if row.run_started_at != claim_token:
-                log.info("teacher_grade_superseded", paper_id=str(paper_id), at="start")
                 job.abandon()
                 return
             with tempfile.TemporaryDirectory() as tmp:
@@ -675,6 +713,7 @@ def _run_grading_job(
                             paper_id,
                             "No mark scheme could be resolved for this paper — nothing was marked. "
                             "Attach one on upload, or add it under Mark schemes and re-run.",
+                            run_token=claim_token,
                         )
                         job.abandon()
                         return
@@ -701,27 +740,23 @@ def _run_grading_job(
                         options=settings.grading.marking_options(),
                         scan_path=scan_path,
                     )
-                # A missing row falls through: `finish` raises TeacherPaperDeletedError.
-                current = repo.get(paper_id)
-                if current is not None and current.run_started_at != claim_token:
-                    log.info("teacher_grade_superseded", paper_id=str(paper_id), at="finish")
-                    job.abandon()
-                    return
-                repo.finish(paper_id, report)
+                # Checks the token under the row lock: a superseded run raises and
+                # writes nothing, and `job.run()` releases it (charged 0).
+                repo.finish(paper_id, report, run_token=claim_token)
     except UsageBlocked as exc:
         # From `job.run()` entry, before any work: see the docstring.
         log.warning("teacher_grade_usage_blocked", paper_id=str(paper_id), reason=exc.reason.value)
-        current = repo.get(paper_id)
-        if current is not None and current.run_started_at == claim_token:
-            repo.fail(paper_id, CREDITS_RAN_OUT_MESSAGE)
+        repo.fail(paper_id, usage_blocked_message(exc.reason), run_token=claim_token)
     except UsageUnavailable:
         # From `job.run()` entry too: the ledger could not restart the queued hold, so the
         # run failed closed before any model call and charged nothing. A plain sentence, not
         # "Grading failed: ...", and the same superseded-run guard as the block above.
         log.warning("teacher_grade_usage_unavailable", paper_id=str(paper_id))
-        current = repo.get(paper_id)
-        if current is not None and current.run_started_at == claim_token:
-            repo.fail(paper_id, USAGE_UNAVAILABLE_MESSAGE)
+        repo.fail(paper_id, USAGE_UNAVAILABLE_MESSAGE, run_token=claim_token)
+    except TeacherRunSupersededError:
+        # A re-run took the paper while this run graded it: its report was not saved,
+        # and the row belongs to the newer run.
+        log.info("teacher_grade_superseded", paper_id=str(paper_id), at="finish")
     except TeacherPaperDeletedError:
         # The teacher deleted the paper mid-run. Delete already ended the run
         # on the row, and `fail` would be a no-op on it anyway: this is an
@@ -739,14 +774,14 @@ def _run_grading_job(
             failed_checks=exc.failed_check_ids,
             reasons=exc.reasons,
         )
-        repo.fail(paper_id, TEACHER_BINDING_HELD_MESSAGE)
+        repo.fail(paper_id, TEACHER_BINDING_HELD_MESSAGE, run_token=claim_token)
     except Exception as exc:
         # Marking is a long Gemini/parser call chain and can genuinely fail.
         # Recording it as a terminal state with the reason attached is the
         # whole difference between a console that explains itself and one
         # that shows "Queued" until someone reads the server log.
         log.exception("teacher_grade_failed", paper_id=str(paper_id))
-        repo.fail(paper_id, f"Grading failed: {exc}")
+        repo.fail(paper_id, f"Grading failed: {exc}", run_token=claim_token)
     finally:
         # Unsubscribe first, so nothing else can be queued behind the stop flag.
         bus.unsubscribe_queue(progress_queue)
@@ -785,8 +820,7 @@ def _start_run_if_claimed(
         return False
     # The token the claim just stamped. Read straight after winning: another claim
     # can only take the row once its `updated_at` is a stale window old.
-    claimed = repo.get(paper_id)
-    claim_token = claimed.run_started_at if claimed is not None else None
+    claim_token = repo.run_token(paper_id)
     _grading_pool.submit(
         _run_grading_job,
         paper_id,

@@ -504,7 +504,7 @@ def _seed_graded_paper(
         byte_size=15,
     )
     repo.claim_run(pid)
-    repo.finish(pid, report)
+    repo.finish(pid, report, run_token=repo.run_token(pid))
     return str(pid)
 
 
