@@ -7,6 +7,8 @@ import { Chip } from "@/components/ui/chip"
 import { Input } from "@/components/ui/input"
 import { EmptyState } from "@/components/ui/state-views"
 import { QueryState } from "@/components/ui/query-state"
+import { ListGroup, ListRow } from "@/components/ui/list-group"
+import { TableOrList } from "@/components/ui/table-or-list"
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
 import { cn, relativeTime } from "@/lib/utils"
 import {
@@ -250,148 +252,181 @@ export function Classes() {
                 action={{ label: "Create a class", onClick: () => setShowCreate(true) }}
               />
             ) : (
-              <Table density="operate"
-                // `tabIndex`/`role`/`aria-label` are required, not decorative: a
-                // horizontally scrollable container no keyboard user can reach or
-                // scroll is axe's serious `scrollable-region-focusable`. Chunk c hit
-                // exactly this on the roster/heatmap/paper tables; this table has the
-                // same shape and only escapes the finding today because it happens
-                // not to overflow at the tested viewport and data size — latent, not
-                // safe. Do not strip these as "unnecessary ARIA".
-                tabIndex={0}
-                role="region"
-                aria-label="Your classes, scrollable horizontally"
-              >
-                <caption className="sr-only">Your classes, sortable by every column</caption>
-                <THead>
-                  <TR>
-                    {COLUMNS.map((col) => {
-                      const active = col.key === sortColumn
-                      return (
-                        <TH
-                          key={col.key}
-                          aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => toggleSort(col.key)}
-                            className="inline-flex items-center gap-1 text-eyebrow text-on-surface-variant transition-colors hover:text-on-surface cursor-pointer bg-transparent border-0 p-0"
-                          >
-                            {col.label}
-                            {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
-                          </button>
-                        </TH>
-                      )
-                    })}
-                    <TH>
-                      <span className="sr-only">Actions</span>
-                    </TH>
-                  </TR>
-                </THead>
-                <TBody>
+              <TableOrList
+                label="Your classes"
+                storageKey="lemely.classes.view"
+                list={
+                <ListGroup label="Your classes">
                   {sorted.length === 0 ? (
-                    <TR>
-                      <TD colSpan={COLUMNS.length + 1} className="py-6 text-on-surface-variant text-body-md">
-                        No classes match "{search}".
-                      </TD>
-                    </TR>
+                    <ListRow title={`No classes match "${search}".`} />
                   ) : (
                     sorted.map((c) => (
-                      <TR key={c.id}>
-                        <TD>
-                          {editingId === c.id ? (
-                            <div className="flex items-center gap-2">
-                              {/* P3.3: this had no accessible name at all — no
-                                  label, no aria-label, not even a placeholder. It
-                                  appears in place of the class name when a teacher
-                                  clicks rename, so a screen reader announced an
-                                  anonymous textbox already containing text, with
-                                  nothing to say what editing it would do. There is
-                                  no room for a visible label inside a table cell
-                                  that is standing in for one line of text, so the
-                                  kit's own `sr-only` label path carries the name
-                                  instead of a bare `aria-label` string. */}
-                              <Input
-                                autoFocus
-                                label={`Rename class ${c.label}`}
-                                labelClassName="sr-only"
-                                value={editName}
-                                onChange={(e) => setEditName(e.target.value)}
-                                wrapperClassName="w-[160px]"
-                              />
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                disabled={updateClass.isPending}
-                                onClick={() => saveRename(c.id)}
-                              >
-                                Save
-                              </Button>
-                              <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>
-                                Cancel
-                              </Button>
-                            </div>
-                          ) : (
-                            <Link to={`/teacher/classes/${c.id}`} className="text-on-surface hover:underline">
-                              {c.label}
-                            </Link>
-                          )}
-                        </TD>
-                        <TD className="text-data-sm text-on-surface-variant">
-                          {c.subjectCode ? (
-                            <div className="flex flex-col gap-0.5">
-                              <span className="text-body-sm text-on-surface">{c.subjectName ?? c.subjectCode}</span>
-                              {/* Omitted when the name has resolved to the code
-                                  itself — a class's `subjectCode` is free text a
-                                  teacher typed, so most classes hit the det
-                                  registry's default profile (name === code, see
-                                  `subjectIdentifier`'s docstring) and this element
-                                  would otherwise print the same code twice. */}
-                              {(c.subjectName ?? c.subjectCode) !== c.subjectCode ? (
-                                <span className="text-data-sm text-on-surface-variant">{c.subjectCode}</span>
-                              ) : null}
-                            </div>
-                          ) : (
-                            <span className="text-body-sm text-on-surface-variant">Not set</span>
-                          )}
-                        </TD>
-                        <TD className="text-data-sm">{c.studentCount}</TD>
-                        <TD className="text-data-sm">
-                          {c.average != null ? `${Math.round(c.average)}%` : "—"}
-                        </TD>
-                        <TD className="text-body-sm text-on-surface-variant">
-                          {c.lastActivityAt ? relativeTime(c.lastActivityAt) : "No activity yet"}
-                        </TD>
-                        <TD>
-                          {c.atRiskCount ? (
-                            <Chip tone="err">{c.atRiskCount}</Chip>
-                          ) : (
-                            <span className="text-data-sm text-on-surface-variant">0</span>
-                          )}
-                        </TD>
-                        <TD className="text-end whitespace-nowrap">
-                          {editingId === c.id ? null : (
-                            <>
-                              <Button size="sm" variant="ghost" onClick={() => startRename(c)}>
-                                Rename
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className={cn("text-error", deleteClass.isPending && "opacity-50")}
-                                disabled={deleteClass.isPending}
-                                onClick={() => setPendingDelete(c)}
-                              >
-                                Delete
-                              </Button>
-                            </>
-                          )}
-                        </TD>
-                      </TR>
+                      <ListRow
+                        key={c.id}
+                        to={`/teacher/classes/${c.id}`}
+                        title={c.label}
+                        subtitle={[
+                          c.subjectName ?? c.subjectCode ?? "No subject",
+                          `${c.studentCount} ${c.studentCount === 1 ? "student" : "students"}`,
+                          c.atRiskCount ? `${c.atRiskCount} at risk` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                        trailing={
+                          <span className="text-data-sm text-on-surface">
+                            {c.average != null ? `${Math.round(c.average)}%` : "—"}
+                          </span>
+                        }
+                      />
                     ))
                   )}
-                </TBody>
-              </Table>
+                </ListGroup>
+                }
+                table={
+                  <Table density="operate"
+                    // `tabIndex`/`role`/`aria-label` are required, not decorative: a
+                    // horizontally scrollable container no keyboard user can reach or
+                    // scroll is axe's serious `scrollable-region-focusable`. Chunk c hit
+                    // exactly this on the roster/heatmap/paper tables; this table has the
+                    // same shape and only escapes the finding today because it happens
+                    // not to overflow at the tested viewport and data size — latent, not
+                    // safe. Do not strip these as "unnecessary ARIA".
+                    tabIndex={0}
+                    role="region"
+                    aria-label="Your classes, scrollable horizontally"
+                  >
+                    <caption className="sr-only">Your classes, sortable by every column</caption>
+                    <THead>
+                      <TR>
+                        {COLUMNS.map((col) => {
+                          const active = col.key === sortColumn
+                          return (
+                            <TH
+                              key={col.key}
+                              aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => toggleSort(col.key)}
+                                className="inline-flex items-center gap-1 text-eyebrow text-on-surface-variant transition-colors hover:text-on-surface cursor-pointer bg-transparent border-0 p-0"
+                              >
+                                {col.label}
+                                {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
+                              </button>
+                            </TH>
+                          )
+                        })}
+                        <TH>
+                          <span className="sr-only">Actions</span>
+                        </TH>
+                      </TR>
+                    </THead>
+                    <TBody>
+                      {sorted.length === 0 ? (
+                        <TR>
+                          <TD colSpan={COLUMNS.length + 1} className="py-6 text-on-surface-variant text-body-md">
+                            No classes match "{search}".
+                          </TD>
+                        </TR>
+                      ) : (
+                        sorted.map((c) => (
+                          <TR key={c.id}>
+                            <TD>
+                              {editingId === c.id ? (
+                                <div className="flex items-center gap-2">
+                                  {/* P3.3: this had no accessible name at all — no
+                                      label, no aria-label, not even a placeholder. It
+                                      appears in place of the class name when a teacher
+                                      clicks rename, so a screen reader announced an
+                                      anonymous textbox already containing text, with
+                                      nothing to say what editing it would do. There is
+                                      no room for a visible label inside a table cell
+                                      that is standing in for one line of text, so the
+                                      kit's own `sr-only` label path carries the name
+                                      instead of a bare `aria-label` string. */}
+                                  <Input
+                                    autoFocus
+                                    label={`Rename class ${c.label}`}
+                                    labelClassName="sr-only"
+                                    value={editName}
+                                    onChange={(e) => setEditName(e.target.value)}
+                                    wrapperClassName="w-[160px]"
+                                  />
+                                  <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    disabled={updateClass.isPending}
+                                    onClick={() => saveRename(c.id)}
+                                  >
+                                    Save
+                                  </Button>
+                                  <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>
+                                    Cancel
+                                  </Button>
+                                </div>
+                              ) : (
+                                <Link to={`/teacher/classes/${c.id}`} className="text-on-surface hover:underline">
+                                  {c.label}
+                                </Link>
+                              )}
+                            </TD>
+                            <TD className="text-data-sm text-on-surface-variant">
+                              {c.subjectCode ? (
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="text-body-sm text-on-surface">{c.subjectName ?? c.subjectCode}</span>
+                                  {/* Omitted when the name has resolved to the code
+                                      itself — a class's `subjectCode` is free text a
+                                      teacher typed, so most classes hit the det
+                                      registry's default profile (name === code, see
+                                      `subjectIdentifier`'s docstring) and this element
+                                      would otherwise print the same code twice. */}
+                                  {(c.subjectName ?? c.subjectCode) !== c.subjectCode ? (
+                                    <span className="text-data-sm text-on-surface-variant">{c.subjectCode}</span>
+                                  ) : null}
+                                </div>
+                              ) : (
+                                <span className="text-body-sm text-on-surface-variant">Not set</span>
+                              )}
+                            </TD>
+                            <TD className="text-data-sm">{c.studentCount}</TD>
+                            <TD className="text-data-sm">
+                              {c.average != null ? `${Math.round(c.average)}%` : "—"}
+                            </TD>
+                            <TD className="text-body-sm text-on-surface-variant">
+                              {c.lastActivityAt ? relativeTime(c.lastActivityAt) : "No activity yet"}
+                            </TD>
+                            <TD>
+                              {c.atRiskCount ? (
+                                <Chip tone="err">{c.atRiskCount}</Chip>
+                              ) : (
+                                <span className="text-data-sm text-on-surface-variant">0</span>
+                              )}
+                            </TD>
+                            <TD className="text-end whitespace-nowrap">
+                              {editingId === c.id ? null : (
+                                <>
+                                  <Button size="sm" variant="ghost" onClick={() => startRename(c)}>
+                                    Rename
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className={cn("text-error", deleteClass.isPending && "opacity-50")}
+                                    disabled={deleteClass.isPending}
+                                    onClick={() => setPendingDelete(c)}
+                                  >
+                                    Delete
+                                  </Button>
+                                </>
+                              )}
+                            </TD>
+                          </TR>
+                        ))
+                      )}
+                    </TBody>
+                  </Table>
+                }
+              />
             )}
 
               <ConfirmModal
