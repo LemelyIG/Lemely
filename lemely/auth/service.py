@@ -285,6 +285,13 @@ class AuthService:
         roles itself would be enforcing the same policy in two places, one of
         which is wrong for the admin caller.
 
+        ``phone`` is stored in ``public.users`` exactly as given: this method does not
+        validate it, because the HTTP routes that require one (UD-11) validate and normalise it
+        first with :func:`lemely.core.phone.validate_phone`, while the admin-provisioning
+        callers (seat invites, school admins, seeds) create accounts with none, and the user is
+        then prompted for it (``phoneMissing`` on ``GET /api/me/profile``). It is **not** sent
+        to GoTrue, which keeps a unique index on ``auth.users.phone``.
+
         ``accepted_terms`` (D7.11) stamps ``users.terms_accepted_at`` with the
         current time when ``True``, and leaves it untouched (``NULL`` for a new
         row) when ``False`` — this records consent that was actually given
@@ -333,7 +340,10 @@ class AuthService:
         contract (create the account, return a working access token) is
         unaffected either way.
         """
-        created = self._gotrue.admin_create_user(email, password, role.value, phone)
+        # GoTrue is the credential store only: the phone lives in ``public.users``. GoTrue keeps a
+        # unique index on ``auth.users.phone``, so forwarding it would refuse a parent who gives
+        # the number their child already signed up with (UD-11 makes a phone mandatory for all).
+        created = self._gotrue.admin_create_user(email, password, role.value)
         self._mirror.upsert(
             created.id,
             email=created.email,

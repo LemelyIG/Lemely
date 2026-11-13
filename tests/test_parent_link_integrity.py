@@ -452,6 +452,7 @@ def test_parent_signup_at_cap_409_creates_no_user(sm: sessionmaker[Session]) -> 
             "proofToken": verified.json()["proofToken"],
             "password": "pw-123456",
             "acceptedTerms": True,
+            "phone": "+201012345678",
         },
     )
 

@@ -552,6 +552,7 @@ def test_parent_invite_e2e_locked_out_of_student_route(
             "proofToken": proof_token,
             "password": "pw-123456",
             "acceptedTerms": True,
+            "phone": "+201012345678",
             "displayName": "New Parent",
         },
     )

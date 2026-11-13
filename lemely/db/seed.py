@@ -135,6 +135,10 @@ class DemoAccount:
 #: point of this table is a credential a human or a fresh-clone test can name.
 DEMO_PASSWORD = "Demo-Lemely-1!"  # noqa: S105 - a documented demo credential, not a real secret
 
+#: A valid phone for every demo account (UD-11: a phone is required of every user, and a payer
+#: without one is refused at checkout). Phones are not unique, so one value serves all five.
+DEMO_PHONE = "+201012345678"
+
 #: One account per :class:`Role`, all created the same email/password way —
 #: covers all five roles exactly once (pinned by
 #: ``tests/test_seed.py::TestDemoAccountTable``). The parent used to be a
@@ -256,6 +260,7 @@ def _create_or_recover_email_account(
             DEMO_PASSWORD,
             account.role,
             display_name=account.display_name,
+            phone=DEMO_PHONE,
             email_verified=account.email_verified,
         )
         return (

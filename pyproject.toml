@@ -42,6 +42,13 @@ dependencies = [
   # text/unicode notation, which this module's own text normalisation
   # handles; do not read this pin as evidence a Lark parser exists here.
   "sympy>=1.14,<2",
+  # lemely/core/phone.py: the one phone validator-and-normaliser (UD-11/UD-11a).
+  # Format validation only (libphonenumber's is_valid_number, E.164 out); there is
+  # no OTP or ownership check. Floor at the 9.x line this module was written
+  # against (installed: 9.0.43); capped at the major, like every other runtime
+  # dependency here, because libphonenumber's metadata moves with each release
+  # and a major bump is a deliberate commit that re-runs the gates.
+  "phonenumbers>=9,<10",
 ]
 
 [project.optional-dependencies]

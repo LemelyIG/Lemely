@@ -153,7 +153,12 @@ def context() -> Iterator[tuple[TestClient, AuthService, FakeUserMirror]]:
 def _signup(
     client: TestClient, *, email: str, role: str = "student", accepted_terms: bool = True
 ) -> dict[str, object]:
-    payload: dict[str, object] = {"email": email, "password": "pw-123456", "role": role}
+    payload: dict[str, object] = {
+        "email": email,
+        "password": "pw-123456",
+        "role": role,
+        "phone": "+201012345678",
+    }
     if accepted_terms is not None:
         payload["acceptedTerms"] = accepted_terms
     resp = client.post("/api/auth/signup", json=payload)
@@ -194,6 +199,7 @@ def test_signup_as_teacher_returns_a_token(
             "password": "pw-123456",
             "role": "teacher",
             "acceptedTerms": True,
+            "phone": "+201012345678",
         },
     )
     assert resp.status_code == 200, resp.text
@@ -217,6 +223,7 @@ def test_signup_elevated_role_still_forbidden(
                 "password": "pw-123456",
                 "role": role,
                 "acceptedTerms": True,
+                "phone": "+201012345678",
             },
         )
         assert resp.status_code == 403, (role, resp.text)
@@ -271,6 +278,7 @@ def test_signup_within_cooldown_is_429(
             "password": "pw-123456",
             "role": "student",
             "acceptedTerms": True,
+            "phone": "+201012345678",
         },
     )
 
@@ -295,6 +303,7 @@ def test_signup_duplicate_email_is_400_not_429_even_when_retried(
         "password": "pw-123456",
         "role": "student",
         "acceptedTerms": True,
+        "phone": "+201012345678",
     }
     first = client.post("/api/auth/signup", json=payload)
     assert first.status_code == 200, first.text

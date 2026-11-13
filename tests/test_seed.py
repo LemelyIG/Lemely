@@ -41,6 +41,7 @@ from lemely.db.seed import (
     CATALOGUE_SUBJECTS,
     DEMO_ACCOUNTS,
     DEMO_PASSWORD,
+    DEMO_PHONE,
     DemoAccountsResult,
     create_demo_accounts,
     seed_reference_data,
@@ -245,6 +246,15 @@ class TestCreateDemoAccounts:
         assert result.created == len(DEMO_ACCOUNTS)
         assert len(mirror.rows) == len(DEMO_ACCOUNTS)
         assert sorted(r.role.value for r in mirror.rows.values()) == sorted(r.value for r in Role)
+
+    def test_every_demo_account_has_a_valid_phone(self) -> None:
+        """UD-11: a phone-less demo account could never check out (422 ``phone_required``)."""
+        from lemely.core.phone import validate_phone
+
+        assert validate_phone(DEMO_PHONE) == DEMO_PHONE
+        _result, _auth_service, mirror, _link_service = _create_demo_accounts()
+
+        assert {r.phone for r in mirror.rows.values()} == {DEMO_PHONE}
 
     def test_is_idempotent(self) -> None:
         first, auth_service, mirror, link_service = _create_demo_accounts()

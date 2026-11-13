@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from PIL import Image
 
 from lemely.auth.mirror import UserMirror
+from lemely.core.phone import normalise_phone
 from lemely.db.device_repo import MAX_DEVICES, DeviceRegistry
 from lemely.db.models.enums import Role, SessionMonth
 from lemely.db.models.users import User
@@ -54,6 +55,7 @@ from lemely.web.deps import (
     require_role,
 )
 from lemely.web.devices import to_device_dto
+from lemely.web.phone_http import require_valid_phone
 from lemely.web.schemas_devices import (
     DeviceListDTO,
     DeviceRevokedDTO,
@@ -61,6 +63,8 @@ from lemely.web.schemas_devices import (
 from lemely.web.schemas_me import (
     NotificationPreferencesDTO,
     NotificationPreferencesUpdateDTO,
+    PhoneDTO,
+    PhoneUpdateDTO,
     ProfileDTO,
     TimezoneDTO,
     TimezoneUpdateDTO,
@@ -373,6 +377,7 @@ def _delete_avatar_object(storage: StorageBackend, settings: Settings, object_pa
 
 def _profile_dto(user: User, settings: Settings, storage: StorageBackend) -> ProfileDTO:
     """Build the ``ProfileDTO`` every ``/api/me/profile``-family route returns."""
+    phone = normalise_phone(user.phone)
     return ProfileDTO(
         displayName=user.display_name,
         email=user.email,
@@ -381,6 +386,8 @@ def _profile_dto(user: User, settings: Settings, storage: StorageBackend) -> Pro
         avatarUrl=_avatar_url_for(user, settings, storage),
         timezone=user.timezone,
         timezoneIsExplicit=user.timezone_is_explicit,
+        phone=phone,
+        phoneMissing=phone is None,
     )
 
 
@@ -598,6 +605,38 @@ def put_timezone(
     if user is None:
         raise HTTPException(status_code=404, detail="No profile found for this account.")
     return TimezoneDTO(timezone=user.timezone, timezoneIsExplicit=user.timezone_is_explicit)
+
+
+# ---------------------------------------------------------------------------
+# Phone: any authenticated role (UD-11).
+# ---------------------------------------------------------------------------
+
+
+@router.put("/phone", response_model=PhoneDTO)
+def put_phone(
+    payload: PhoneUpdateDTO,
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    mirror: Annotated[UserMirror, Depends(get_user_mirror)],
+) -> PhoneDTO:
+    """Add or change the caller's phone number (every role, UD-11).
+
+    Sign-up now requires a phone, but accounts made before that, and the ones an admin
+    provisions (seat invites, school admins), have none: ``GET /api/me/profile`` reports
+    ``phoneMissing`` for them and the client prompts, saving here. The same route changes a
+    number later.
+
+    The value goes through :func:`lemely.core.phone.validate_phone`, the one validator
+    sign-up and checkout use: format only, no OTP, international numbers accepted, a number
+    without ``+`` read as Egyptian, stored as E.164. A missing or malformed value is a **422**
+    ``{"code": "phone_required" | "phone_invalid", "message": ...}``. Identity is always the
+    token ``sub``. The response is the stored number.
+    """
+    phone = require_valid_phone(payload.phone)
+    user_id = _require_user_id(auth)
+    if mirror.get_by_id(user_id) is None:
+        raise HTTPException(status_code=404, detail="No profile found for this account.")
+    mirror.set_phone(user_id, phone)
+    return PhoneDTO(phone=phone)
 
 
 # ---------------------------------------------------------------------------

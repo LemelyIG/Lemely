@@ -1795,6 +1795,12 @@ def _log(message: str) -> None:
     print(message, file=sys.stderr)
 
 
+#: Every seeded account carries a valid phone (UD-11: a phone is required of every user, and a
+#: payer without one is refused at checkout with 422 ``phone_required``). Shared by every
+#: seeded account on purpose: phones are not unique, and the e2e suite never reads it back.
+SEED_PHONE = "+201012345678"
+
+
 def _signup_account(
     role_label: str, role: Role, run_tag: str, *, email_verified: bool = False
 ) -> dict[str, Any]:
@@ -1815,6 +1821,7 @@ def _signup_account(
         password,
         role,
         display_name=f"Seed {role_label.replace('-', ' ').title()}",
+        phone=SEED_PHONE,
         email_verified=email_verified,
     )
     return {

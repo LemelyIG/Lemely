@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -12,10 +11,10 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from lemely.db.billing_repo import (
-    PLACEHOLDER_PHONE,
     BillingService,
     CheckoutUnavailable,
     NotLinkedToBeneficiary,
+    PhoneRequired,
     UnknownCreditPack,
     UnknownPayer,
     _outcome_unknown,
@@ -445,23 +444,22 @@ def test_add_months_clamps_to_the_last_day(
 
 def test_billing_data_falls_back_when_the_profile_is_sparse() -> None:
     user = User(
-        id=uuid.uuid4(), email="x@example.com", role=Role.teacher, display_name=None, phone=None
+        id=uuid.uuid4(),
+        email="x@example.com",
+        role=Role.teacher,
+        display_name=None,
+        phone="+201012345678",
     )
     data = billing_data_for(user)
     assert data["first_name"] == "Lemely"
     assert data["last_name"] == "Customer"
     assert data["email"] == "x@example.com"
-    assert data["phone_number"] == PLACEHOLDER_PHONE
-    assert data["phone_number"] != "NA"
+    assert data["phone_number"] == "+201012345678"
     assert data["country"] == "EGY"
 
 
 def _user_with_phone(phone: str | None) -> User:
     return User(id=uuid.uuid4(), email="p@example.com", role=Role.student, phone=phone)
-
-
-def test_the_placeholder_phone_is_a_well_formed_e164_number() -> None:
-    assert re.fullmatch(r"\+[1-9]\d{7,14}", PLACEHOLDER_PHONE)
 
 
 @pytest.mark.parametrize(
@@ -516,8 +514,45 @@ def test_a_sent_phone_is_ascii_only() -> None:
         "+20\u0e51\u0e50\u0e51\u0e52\u0e53\u0e54\u0e55\u0e56\u0e57\u0e58",
     ],
 )
-def test_a_missing_or_unusable_phone_sends_the_placeholder_never_na(stored: str | None) -> None:
-    assert billing_data_for(_user_with_phone(stored))["phone_number"] == PLACEHOLDER_PHONE
+def test_a_missing_or_unusable_phone_is_refused_never_replaced(stored: str | None) -> None:
+    """UD-11: no placeholder and no ``"NA"`` ever reaches Paymob; the payer is asked for a phone."""
+    with pytest.raises(PhoneRequired):
+        billing_data_for(_user_with_phone(stored))
+
+
+def test_the_old_placeholder_number_is_no_longer_accepted_or_sent() -> None:
+    with pytest.raises(PhoneRequired):
+        billing_data_for(_user_with_phone("+200000000000"))
+
+
+def test_a_payer_without_a_phone_is_refused_before_anything_is_written(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    payer = seed_user(sm, phone=None)
+    client = FakePaymobClient()
+    with sm() as session, pytest.raises(PhoneRequired):
+        _service(session, client).create_pack_checkout(
+            payer_user_id=payer, beneficiary_user_id=payer, credit_pack_id=seed_pack(sm)
+        )
+    assert client.intentions == []
+    with sm() as session:
+        assert session.scalars(sa.select(Payment)).all() == []
+
+
+def test_a_parent_payer_without_a_phone_is_refused_even_when_the_child_has_one(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    parent = seed_user(sm, Role.parent, phone=None)
+    child = seed_user(sm, Role.student, phone="+201012345678")
+    link_parent(sm, parent_id=parent, child_id=child)
+    client = FakePaymobClient()
+    with sm() as session, pytest.raises(PhoneRequired):
+        _service(session, client).create_pack_checkout(
+            payer_user_id=parent, beneficiary_user_id=child, credit_pack_id=seed_pack(sm)
+        )
+    assert client.intentions == []
 
 
 def test_billing_data_truncates_long_names_to_paymobs_limit() -> None:
@@ -526,6 +561,7 @@ def test_billing_data_truncates_long_names_to_paymobs_limit() -> None:
         email="y@example.com",
         role=Role.student,
         display_name="A" * 80 + " " + "B" * 80,
+        phone="+201012345678",
     )
     data = billing_data_for(user)
     assert len(data["first_name"]) == 50

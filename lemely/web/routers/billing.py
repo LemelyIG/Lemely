@@ -18,6 +18,9 @@ public fields only). Every other route is students, parents and teachers only
   only themselves; the acting-teacher header is ignored, as billing is never a
   team permission.
 
+A payer with no valid phone gets a 422 ``{"code": "phone_required", "message": ...}`` before
+anything is written (UD-11: no placeholder number is ever sent to Paymob).
+
 The price is computed on the server from ``credit_packs``; the request body
 forbids extra fields, so a client-sent price is a 422. A Paymob failure is a
 503 whatever its cause: whether the payment row stays open or is closed is
@@ -38,6 +41,7 @@ from lemely.db.billing_repo import (
     BillingService,
     CheckoutUnavailable,
     NotLinkedToBeneficiary,
+    PhoneRequired,
     UnknownCreditPack,
     UnknownPayer,
     active_catalogue,
@@ -60,6 +64,7 @@ from lemely.web.deps_billing import (
     get_public_catalogue_cache,
     get_public_catalogue_limiter,
 )
+from lemely.web.phone_http import checkout_phone_required
 from lemely.web.ratelimit import (
     SlidingWindowLimiter,  # noqa: TC001 - FastAPI reads the type at runtime
 )
@@ -262,6 +267,10 @@ def checkout_pack(
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN, "You can only buy for a linked child"
             ) from exc
+        except PhoneRequired as exc:
+            # UD-11: Paymob needs the payer's phone and none is ever invented. The client
+            # sends the user to PUT /api/me/phone, then retries.
+            raise checkout_phone_required() from exc
         except CheckoutUnavailable as exc:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, _UNAVAILABLE) from exc
     return CheckoutDTO(paymentId=str(result.payment_id), checkoutUrl=result.checkout_url)

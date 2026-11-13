@@ -34,6 +34,7 @@ import structlog
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from lemely.core.phone import InvalidPhone, validate_phone
 from lemely.db.models import ParentChildLink, User
 from lemely.db.models.billing import (
     CreditPack,
@@ -126,6 +127,10 @@ class NotLinkedToBeneficiary(BillingError):
     """
 
 
+class PhoneRequired(BillingError):
+    """The payer has no valid phone on file, and Paymob requires one (422 ``phone_required``)."""
+
+
 class UnknownPayer(BillingError):
     """The payer has no ``users`` row, e.g. a valid token for a deleted account (403)."""
 
@@ -178,51 +183,18 @@ def add_months(moment: datetime, months: int) -> datetime:
     return moment.replace(year=year, month=month, day=day)
 
 
-#: Sent when the payer has no usable phone. ``billing_data.phone_number`` is required: a missing
-#: one is a 400 (skill ``intention-api.md``, "Common errors"), whose own examples are E.164
-#: (``+201234567890``). Most Lemely users have no phone on file, so refusing checkout for them
-#: would block nearly every payer. The literal ``"NA"`` this replaces is not E.164 and was never
-#: confirmed to pass Paymob's validation (skill audit I3, sandbox checklist S4). This value is
-#: well formed (country code 20, then ten digits) yet cannot be anyone's number: Egyptian
-#: national numbers never begin with 0. If S4 shows Paymob rejects it, the audit's fix is a 422
-#: ``phone_required`` and a phone field in the checkout UI.
-PLACEHOLDER_PHONE: Final = "+200000000000"
-# ASCII digits only: ``\d`` would also match Arabic-Indic and other Unicode digits.
-_E164_RE: Final = re.compile(r"\+[1-9][0-9]{7,14}")
-_EGYPT_LOCAL_MOBILE_RE: Final = re.compile(r"01[0125][0-9]{8}")
-_EGYPT_MOBILE_NO_TRUNK_RE: Final = re.compile(r"1[0125][0-9]{8}")
-_EGYPT_INTERNATIONAL_RE: Final = re.compile(r"20[0-9]{10}")
-_EGYPT_WITH_TRUNK_RE: Final = re.compile(r"\+200(1[0125][0-9]{8})")
-#: Arabic-Indic (U+0660..) and Persian (U+06F0..) digits to ASCII, as Egyptian users type them.
-_ASCII_DIGITS: Final = {
-    **{0x0660 + n: ord("0") + n for n in range(10)},
-    **{0x06F0 + n: ord("0") + n for n in range(10)},
-}
+def payer_phone(user: User) -> str:
+    """The payer's phone in E.164, or :class:`PhoneRequired` when none usable is on file.
 
-
-def paymob_phone(raw: str | None) -> str:
-    """The payer's phone in E.164 form, or :data:`PLACEHOLDER_PHONE` when it is unusable.
-
-    Turns Arabic-Indic and Persian digits into ASCII, strips spaces, dots, dashes and brackets,
-    then accepts ``+<digits>``, ``00<digits>``, an Egyptian local mobile (``01012345678``), the
-    same with its leading 0 dropped (``1012345678``) and a bare ``20<10 digits>``. The trunk 0
-    typed after the country code (``+2001012345678``) is removed. Anything else (free text, too
-    short, ``"NA"``, other scripts) is not sent: a malformed value is a 400 for the whole
-    checkout, and a sent value is always ASCII.
+    UD-11: every user gives a phone at sign-up or onboarding, and ``billing_data.phone_number``
+    is required by Paymob (a missing one is a 400). A user who has none, or whose stored value
+    does not validate (an older free-text entry), is asked for one; **no placeholder is ever
+    sent**. The check is :func:`lemely.core.phone.validate_phone`, the same one sign-up uses.
     """
-    cleaned = re.sub(r"[\s().-]", "", (raw or "").translate(_ASCII_DIGITS))
-    if cleaned.startswith("00"):
-        cleaned = "+" + cleaned[2:]
-    elif _EGYPT_LOCAL_MOBILE_RE.fullmatch(cleaned):
-        cleaned = "+20" + cleaned[1:]
-    elif _EGYPT_MOBILE_NO_TRUNK_RE.fullmatch(cleaned):
-        cleaned = "+20" + cleaned
-    elif _EGYPT_INTERNATIONAL_RE.fullmatch(cleaned):
-        cleaned = "+" + cleaned
-    trunk = _EGYPT_WITH_TRUNK_RE.fullmatch(cleaned)
-    if trunk is not None:
-        cleaned = "+20" + trunk.group(1)
-    return cleaned if _E164_RE.fullmatch(cleaned) else PLACEHOLDER_PHONE
+    try:
+        return validate_phone(user.phone)
+    except InvalidPhone as exc:
+        raise PhoneRequired(str(user.id)) from exc
 
 
 def billing_data_for(user: User) -> dict[str, str]:
@@ -230,14 +202,15 @@ def billing_data_for(user: User) -> dict[str, str]:
 
     First name, last name, email and phone are required by Paymob; address
     fields are not collected by Lemely and are sent as ``"NA"``, as Paymob's own
-    samples send placeholders. The phone is E.164 (see :func:`paymob_phone`).
+    samples send placeholders. The phone is the payer's own, in E.164 (see
+    :func:`payer_phone`); a payer without one raises :class:`PhoneRequired`.
     """
     first, _, last = (user.display_name or "").strip().partition(" ")
     return {
         "first_name": (first or "Lemely")[:50],
         "last_name": (last.strip() or "Customer")[:50],
         "email": user.email,
-        "phone_number": paymob_phone(user.phone),
+        "phone_number": payer_phone(user),
         "apartment": "NA",
         "floor": "NA",
         "street": "NA",
@@ -530,7 +503,8 @@ class BillingService:
 
         The price and unit count come from the ``credit_packs`` row, never from
         the caller. A parent buys only for a linked student, never for themselves
-        (``NotLinkedToBeneficiary``); no one else buys for another user.
+        (``NotLinkedToBeneficiary``); no one else buys for another user. A payer with no valid
+        phone is refused (``PhoneRequired``) before anything is written.
         """
         if not self._settings.checkout_configured:
             raise CheckoutUnavailable("Paymob checkout is not configured")
@@ -545,6 +519,7 @@ class BillingService:
             payer.role is Role.parent or payer_user_id != beneficiary_user_id
         ) and not self._may_buy_for(payer_user_id, beneficiary_user_id):
             raise NotLinkedToBeneficiary(str(beneficiary_user_id))
+        billing_data = billing_data_for(payer)  # PhoneRequired before any row is written
         payment_id = uuid.uuid4()
         payment = Payment(
             id=payment_id,
@@ -569,7 +544,7 @@ class BillingService:
         return self.create_intention_checkout(
             payment=payment,
             items=items,
-            billing_data=billing_data_for(payer),
+            billing_data=billing_data,
             subscription_plan_id=None,
         )
 
@@ -1314,7 +1289,6 @@ class BillingService:
 __all__ = [
     "CREDIT_EXPIRY_MONTHS",
     "INTENTION_EXPIRATION_SECONDS",
-    "PLACEHOLDER_PHONE",
     "RECONCILE_AFTER",
     "RECONCILE_BATCH",
     "RECONCILE_GIVE_UP_AFTER",
@@ -1330,6 +1304,7 @@ __all__ = [
     "MalformedCallback",
     "NotLinkedToBeneficiary",
     "PaidHandler",
+    "PhoneRequired",
     "UnknownCreditPack",
     "UnknownPayer",
     "active_catalogue",
@@ -1339,8 +1314,8 @@ __all__ = [
     "grant_credit_pack",
     "is_linked_parent",
     "paid_handler_for",
+    "payer_phone",
     "payment_for_viewer",
-    "paymob_phone",
     "receipts_for",
     "register_paid_handler",
     "saved_cards_for",

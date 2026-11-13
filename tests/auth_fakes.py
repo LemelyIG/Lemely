@@ -35,6 +35,7 @@ class FakeGoTrueBackend:
 
     def __init__(self) -> None:
         self._by_email: dict[str, _Account] = {}
+        self.created_with_phone: list[str | None] = []
 
     def admin_create_user(
         self,
@@ -43,6 +44,7 @@ class FakeGoTrueBackend:
         role: str,
         phone: str | None = None,
     ) -> GoTrueUser:
+        self.created_with_phone.append(phone)
         if email in self._by_email:
             raise AuthError(f"GoTrue admin-create failed (422): user already exists: {email}")
         account = _Account(uuid.uuid4(), email, password, role)
@@ -137,6 +139,11 @@ class FakeUserMirror:
         existing = self.rows.get(user_id)
         if existing is not None:
             existing.avatar_path = path
+
+    def set_phone(self, user_id: uuid.UUID, phone: str) -> None:
+        existing = self.rows.get(user_id)
+        if existing is not None:
+            existing.phone = phone
 
 
 class FakeDeviceRegistry:

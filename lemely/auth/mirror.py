@@ -127,6 +127,16 @@ class UserMirror(Protocol):
         """
         ...
 
+    def set_phone(self, user_id: uuid.UUID, phone: str) -> None:
+        """Replace ``users.phone`` with ``phone`` (UD-11).
+
+        ``phone`` is already validated and in E.164 form: the route runs
+        :func:`lemely.core.phone.validate_phone` and this writes what it is given. Unlike
+        :meth:`upsert`, an existing value is overwritten, because this is the user changing it.
+        A ``user_id`` with no mirrored row is a silent no-op, matching :meth:`set_timezone`.
+        """
+        ...
+
 
 class DbUserMirror:
     """Real :class:`UserMirror` writing through the application database."""
@@ -250,6 +260,13 @@ class DbUserMirror:
                 user.timezone_is_explicit = False
             elif not user.timezone_is_explicit:
                 user.timezone = zone
+
+    def set_phone(self, user_id: uuid.UUID, phone: str) -> None:
+        """Replace ``users.phone``, if the row exists."""
+        with session_scope(self._settings) as session:
+            user = session.get(User, user_id)
+            if user is not None:
+                user.phone = phone
 
 
 __all__ = ["DbUserMirror", "UserMirror"]

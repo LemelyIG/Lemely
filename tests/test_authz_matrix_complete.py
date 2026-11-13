@@ -316,7 +316,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/billing/cards"): TUTORING_PARTY,
     # Index R3: object-level; a parent sees only a linked child (tests/test_web_billing_summary.py).
     ("GET", "/api/billing/summary"): TUTORING_PARTY,
-    # ── AUTH_ANY (22) ────────────────────
+    # ── AUTH_ANY (23) ────────────────────
     # Billing phase 04: usage estimate, meter and history answer only about the caller.
     ("POST", "/api/usage/estimate"): AUTH_ANY,
     ("GET", "/api/usage/meter"): AUTH_ANY,
@@ -326,6 +326,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/me/notification-preferences"): AUTH_ANY,
     ("PUT", "/api/me/notification-preferences"): AUTH_ANY,
     ("GET", "/api/me/profile"): AUTH_ANY,
+    ("PUT", "/api/me/phone"): AUTH_ANY,
     ("PUT", "/api/me/timezone"): AUTH_ANY,
     # Profile picture set/clear: any authenticated role, same as the profile
     # GET above -- a student and a teacher both have exactly one avatar to
