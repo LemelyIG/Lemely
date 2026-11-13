@@ -28,7 +28,8 @@ export interface DragRelease {
 
 export interface DragGestureOptions {
   axis: DragAxis
-  onCommit: (dx: number, dy: number) => void
+  /** `velocity` is the signed release velocity along `axis` (px/ms). */
+  onCommit: (dx: number, dy: number, velocity: number) => void
   onProgress?: (dx: number, dy: number) => void
   /** The commit-versus-cancel decision for a drag that passed the distance
    * gate. Return `"cancel"` and the hook springs the target home and calls
@@ -36,6 +37,16 @@ export interface DragGestureOptions {
    * distance gate alone decides. A fling decider (swipe-back) uses `velocity`. */
   release?: (release: DragRelease) => "commit" | "cancel"
   onCancel?: () => void
+  /** Runs when a spring-back has finished (or was never needed), so a caller can clear
+   * anything it keeps alive while the target travels home. */
+  onSettled?: () => void
+  /** The CSS easing of the spring-back. Default `var(--ease-spring)` (a small overshoot, for
+   * the drawer, quiz and flashcards); swipe-back passes the iOS curve, which has none. */
+  springEasing?: string
+  /** On commit, leave the target's transform where the finger released it instead of
+   * clearing it. The caller then owns the target and must clear it (swipe-back continues the
+   * gesture off screen before it navigates). Default false. */
+  keepTransformOnCommit?: boolean
   /** Same units as `dragMath.ts`'s `shouldCommitDrag`. Default 10. */
   commitThreshold?: number
   /** Default true. `false` detaches the listener entirely (not merely a
@@ -66,8 +77,9 @@ export interface DragGestureOptions {
 }
 
 /** How long to wait for `springBack`'s `transitionend` before clearing the
- * transition anyway. Longer than `--dur-base` (320ms) with room for a slow
- * frame; the listener normally wins this race. */
+ * transition anyway. Longer than the longest spring used, `--dur-base` (200ms,
+ * pinned by gestureSafety.test.ts), with room for a slow frame; the listener
+ * normally wins this race. */
 const SPRING_FALLBACK_MS = 600
 
 interface DragState {
@@ -109,9 +121,10 @@ export function useDragGesture(ref: RefObject<HTMLElement | null>, options: Drag
       // Waiting for one left `style.transition` set on the element forever.
       if (!t.style.transform) {
         t.style.transition = ""
+        optionsRef.current.onSettled?.()
         return
       }
-      t.style.transition = "transform var(--dur-base) var(--ease-spring)"
+      t.style.transition = `transform var(--dur-base) ${optionsRef.current.springEasing ?? "var(--ease-spring)"}`
       t.style.transform = ""
       const finish = () => {
         if (springTimer !== null) {
@@ -120,6 +133,7 @@ export function useDragGesture(ref: RefObject<HTMLElement | null>, options: Drag
         }
         t.style.transition = ""
         t.removeEventListener("transitionend", onTransitionEnd)
+        optionsRef.current.onSettled?.()
       }
       // A descendant's own transition bubbles up here; only the target's counts.
       const onTransitionEnd = (event: TransitionEvent) => {
@@ -177,8 +191,8 @@ export function useDragGesture(ref: RefObject<HTMLElement | null>, options: Drag
       const passes =
         shouldCommitDrag(dx, dy, axis, threshold) && (decider?.({ dx, dy, velocity }) ?? "commit") === "commit"
       if (passes) {
-        clearTransform()
-        optionsRef.current.onCommit(dx, dy)
+        if (!optionsRef.current.keepTransformOnCommit) clearTransform()
+        optionsRef.current.onCommit(dx, dy, velocity)
       } else {
         springBack()
         optionsRef.current.onCancel?.()

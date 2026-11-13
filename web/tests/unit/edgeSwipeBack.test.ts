@@ -85,13 +85,13 @@ describe("swipe-back CSS stays inside the native frame (fix round 1)", () => {
 
   it("every swipe rule is wrapped in the phone media query", () => {
     expect(gated).not.toBe("")
-    for (const sel of ["[data-swiping]", '[data-direction="swipe"]', "::view-transition-old(root)"]) {
+    for (const sel of ["[data-swiping]", "[data-swipe-settling", "::view-transition-old(root)"]) {
       expect(section.split(sel).length, sel).toBe(gated.split(sel).length)
     }
   })
 
   it("the swipe rules also require an iOS or Android platform", () => {
-    const rules = gated.match(/html[^{}]*\[data-(?:swiping|direction="swipe")\][^{}]*\{/g) ?? []
+    const rules = gated.match(/html[^{}]*\[data-swiping\][^{}]*\{/g) ?? []
     expect(rules.length).toBeGreaterThan(0)
     for (const rule of rules) expect(rule).toContain('[data-platform="ios"], [data-platform="android"]')
   })
@@ -128,5 +128,75 @@ describe("swipe-back release lives in the drag hook (fix round 1)", () => {
     const outlet = read("components/root-outlet.tsx")
     expect(outlet).toContain("useLocation")
     expect(outlet).toMatch(/\[navigationType, key\]/)
+  })
+})
+
+describe("a committed swipe continues the gesture (fix round 2, I-1)", () => {
+  const component = read("components/edge-swipe-back.tsx")
+  const hook = read("lib/gestures/useDragGesture.ts")
+  const css = read("index.css")
+
+  it("the hook can leave the transform at the release offset and hands over the velocity", () => {
+    expect(hook).toContain("keepTransformOnCommit")
+    expect(hook).toMatch(/onCommit\(dx, dy, velocity\)/)
+  })
+
+  it("the component opts in, so release never clears the column before the slide off", () => {
+    expect(component).toContain("keepTransformOnCommit: true")
+  })
+
+  it("the column goes to the far edge on the iOS curve over a velocity-scaled, token-clamped time", () => {
+    expect(component).toContain("swipeSettleMs")
+    expect(component).toContain('"--dur-fast"')
+    expect(component).toContain('"--dur-base"')
+    expect(component).toContain("translateX(${dir * 100}%)")
+    expect(component).toContain("var(--ease-ios-spring)")
+  })
+
+  it("reduced motion skips the slide (zero duration) and the in-frame commit never navigates with a view transition", () => {
+    expect(component).toContain("prefers-reduced-motion: reduce")
+    expect(component).toContain("viewTransition: !inFrame")
+  })
+
+  it("the column comes back only once the new location is committed", () => {
+    expect(component).toMatch(/useLayoutEffect\([\s\S]*?committingRef\.current\) resetColumn\(\)[\s\S]*?\[location\.key\]/)
+  })
+
+  it("the dim and shadow are registered numbers that transition on the column's duration and curve", () => {
+    expect(css).toContain("@property --lm-swipe-progress")
+    expect(css).toContain("@property --lm-swipe-shadow")
+    expect(css).toMatch(/\[data-swipe-settling\][^{]*\{\s*transition:[^}]*--lm-swipe-progress var\(--lm-swipe-dur, var\(--dur-base\)\) var\(--ease-ios-spring\)/)
+    expect(css).toMatch(/\[data-swipe-settling="cancel"\][^{]*\{\s*--lm-swipe-shadow: 0/)
+  })
+})
+
+describe("swipe cancel (fix round 2, M-3 and M-5)", () => {
+  const component = read("components/edge-swipe-back.tsx")
+  const hook = read("lib/gestures/useDragGesture.ts")
+
+  it("spring-back takes a per-caller easing; the default keeps the drawer, quiz and flashcards on the overshoot", () => {
+    expect(hook).toContain("springEasing")
+    expect(hook).toContain('?? "var(--ease-spring)"')
+    for (const rel of ["components/ui/nav-drawer.tsx", "components/quiz/QuizTaker.tsx", "portals/student/screens/flashcards/FlashcardReview.tsx"])
+      expect(read(rel), rel).not.toContain("springEasing")
+  })
+
+  it("swipe-back springs on the iOS curve, with no overshoot", () => {
+    expect(component).toContain('springEasing: "var(--ease-ios-spring)"')
+  })
+
+  it("the swipe state clears when the spring-back finishes, not when it starts", () => {
+    expect(hook).toContain("onSettled")
+    expect(component).toMatch(/onSettled: \(\) => \{[\s\S]*?clearSwipeState\(\)/)
+    const cancel = component.slice(component.indexOf("onCancel:"), component.indexOf("onSettled:"))
+    expect(cancel).not.toContain("clearSwipeState")
+  })
+})
+
+describe("outside the native frame a swipe plays the back slide (fix round 2, M-4)", () => {
+  const css = read("index.css")
+  it("maps data-direction=swipe to the back keyframes, ungated", () => {
+    expect(css).toMatch(/html\[data-direction="swipe"\]::view-transition-old\(root\) \{\s*animation-name: lm-vt-old-back/)
+    expect(css).toMatch(/html\[data-direction="swipe"\]::view-transition-new\(root\) \{\s*animation-name: lm-vt-new-back/)
   })
 })

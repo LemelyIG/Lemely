@@ -1380,13 +1380,34 @@ html[data-direction="back"]::view-transition-new(root) {
   animation-name: lm-vt-new-back;
 }
 
+/* Outside the native frame (desktop PWA, tablet, `other`) a committed edge swipe plays the
+   same slide as any pop; the cross-fade default would read as a different gesture. */
+html[data-direction="swipe"]::view-transition-old(root) {
+  animation-name: lm-vt-old-back;
+}
+html[data-direction="swipe"]::view-transition-new(root) {
+  animation-name: lm-vt-new-back;
+}
+
 /* ── Native frame: swipe-back (native frame Task 12). The column follows the
-   finger; the shell ground under it shows a dimmed parallax strip. Scope gate:
-   phone width on iOS or Android only, so nothing paints at 721px and up or on
-   `other`. */
+   finger; the shell ground under it shows a dimmed parallax strip. On release the gesture
+   continues: a commit carries the column off screen (and the dim and strip to rest) before the
+   router navigates; a cancel fades the dim and shadow with the slide home. Scope gate: phone
+   width on iOS or Android only, so nothing paints at 721px and up or on `other`. */
+@property --lm-swipe-progress {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+@property --lm-swipe-shadow {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
+}
 @media (max-width: 720px) {
   html:is([data-platform="ios"], [data-platform="android"])[data-swiping] [data-shell-column] {
-    box-shadow: calc(-1 * var(--space-4)) 0 var(--space-4) color-mix(in oklch, var(--md-shadow) 18%, transparent);
+    box-shadow: calc(-1 * var(--space-4)) 0 var(--space-4)
+      color-mix(in oklch, var(--md-shadow) calc(var(--lm-swipe-shadow, 1) * 18%), transparent);
   }
   html:is([data-platform="ios"], [data-platform="android"])[data-swiping] body::before {
     content: "";
@@ -1397,10 +1418,20 @@ html[data-direction="back"]::view-transition-new(root) {
     pointer-events: none;
   }
   html[dir="rtl"]:is([data-platform="ios"], [data-platform="android"])[data-swiping] [data-shell-column] {
-    box-shadow: var(--space-4) 0 var(--space-4) color-mix(in oklch, var(--md-shadow) 18%, transparent);
+    box-shadow: var(--space-4) 0 var(--space-4)
+      color-mix(in oklch, var(--md-shadow) calc(var(--lm-swipe-shadow, 1) * 18%), transparent);
   }
   html[dir="rtl"]:is([data-platform="ios"], [data-platform="android"])[data-swiping] body::before {
     translate: calc((1 - var(--lm-swipe-progress, 0)) * var(--native-parallax) * 100%) 0;
+  }
+  /* Release: the dim and the strip travel on the column's own duration and curve. */
+  html:is([data-platform="ios"], [data-platform="android"])[data-swiping][data-swipe-settling] {
+    transition:
+      --lm-swipe-progress var(--lm-swipe-dur, var(--dur-base)) var(--ease-ios-spring),
+      --lm-swipe-shadow var(--lm-swipe-dur, var(--dur-base)) var(--ease-ios-spring);
+  }
+  html:is([data-platform="ios"], [data-platform="android"])[data-swiping][data-swipe-settling="cancel"] {
+    --lm-swipe-shadow: 0;
   }
   /* Pushes and pops: platform easing on the existing data-direction slides (brief §3.6). */
   :root[data-platform="android"]::view-transition-old(root),
@@ -1410,25 +1441,6 @@ html[data-direction="back"]::view-transition-new(root) {
   :root[data-platform="ios"]::view-transition-old(root),
   :root[data-platform="ios"]::view-transition-new(root) {
     animation-timing-function: var(--ease-ios-spring);
-  }
-  html:is([data-platform="ios"], [data-platform="android"])[data-direction="swipe"]::view-transition-old(root) {
-    animation: none;
-  }
-  html:is([data-platform="ios"], [data-platform="android"])[data-direction="swipe"]::view-transition-new(root) {
-    animation: lm-swipe-in var(--dur-base) var(--ease-ios-spring) both;
-  }
-  html[dir="rtl"]:is([data-platform="ios"], [data-platform="android"])[data-direction="swipe"]::view-transition-new(root) {
-    animation-name: lm-swipe-in-rtl;
-  }
-}
-@keyframes lm-swipe-in {
-  from {
-    translate: calc(-1 * var(--native-parallax) * 100%) 0;
-  }
-}
-@keyframes lm-swipe-in-rtl {
-  from {
-    translate: calc(var(--native-parallax) * 100%) 0;
   }
 }
 

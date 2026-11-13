@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { BODY_DRAG_SLOP, DISMISS_FRACTION, FLING_PX_PER_MS, bodyDragIntent, releaseVelocity, sheetRelease, swipeBackRelease, trimSamples, type PointerSample } from "@/lib/gestures/sheetMath"
+import { BODY_DRAG_SLOP, DISMISS_FRACTION, FLING_PX_PER_MS, bodyDragIntent, releaseVelocity, sheetRelease, swipeBackRelease, swipeSettleMs, trimSamples, type PointerSample } from "@/lib/gestures/sheetMath"
 
 const base = { height: 400, detent: "large" as const, detents: ["medium", "large"] as const, dismissible: true }
 
@@ -33,6 +33,9 @@ describe("swipeBackRelease (brief §6: 35% or a fast fling)", () => {
     [100, 0.1, 390, "cancel"],
     [40, 0.8, 390, "commit"],
     [-50, -0.9, 390, "cancel"],
+    // UIKit: a reverse flick cancels even past the distance threshold, and a slow reverse drift does not.
+    [250, -0.9, 390, "cancel"],
+    [250, -0.2, 390, "commit"],
   ] as const)("dx %i v %f w %i -> %s", (dx, velocity, width, want) => {
     expect(swipeBackRelease({ dx, velocity, width })).toBe(want)
   })
@@ -75,5 +78,22 @@ describe("bodyDragIntent (a press that starts in a sheet's body)", () => {
   it("a scrolled body never drags the sheet, whichever way the finger goes", () => {
     expect(bodyDragIntent({ scrollTop: 1, dy: 40 })).toBe("scroll")
     expect(bodyDragIntent({ scrollTop: 120, dy: -40 })).toBe("scroll")
+  })
+})
+
+describe("swipeSettleMs (the rest of a committed swipe)", () => {
+  const bounds = { minMs: 150, maxMs: 200 }
+  it("a faster flick finishes sooner", () => {
+    const slow = swipeSettleMs({ remaining: 200, velocity: 1, ...bounds })
+    const fast = swipeSettleMs({ remaining: 200, velocity: 2, ...bounds })
+    expect(fast).toBeLessThan(slow)
+  })
+  it("never leaves the motion token range", () => {
+    expect(swipeSettleMs({ remaining: 200, velocity: 50, ...bounds })).toBe(150)
+    expect(swipeSettleMs({ remaining: 200, velocity: 0.1, ...bounds })).toBe(200)
+  })
+  it("no measurable speed, or nothing left to travel, takes the longest duration", () => {
+    expect(swipeSettleMs({ remaining: 200, velocity: 0, ...bounds })).toBe(200)
+    expect(swipeSettleMs({ remaining: 0, velocity: 1, ...bounds })).toBe(200)
   })
 })

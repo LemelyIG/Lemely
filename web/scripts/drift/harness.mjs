@@ -149,13 +149,13 @@ export const PLATFORM_UA = {
   android: "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36",
 }
 
-async function newContext(browser, { width, height, theme, platform }) {
+async function newContext(browser, { width, height, theme, platform, motion = false }) {
   const device = platform ? { userAgent: PLATFORM_UA[platform], isMobile: true, hasTouch: true } : {}
   if (platform && !device.userAgent) throw new Error(`unknown platform ${platform}`)
   return browser.newContext({
     viewport: { width, height },
     deviceScaleFactor: 1,
-    reducedMotion: "reduce",
+    reducedMotion: motion ? "no-preference" : "reduce",
     colorScheme: theme,
     ...device,
   })
@@ -167,7 +167,7 @@ export async function openApp(browser, { width, height, theme, app, platform }) 
   if (app.surface && !surface) throw new Error(`unknown capture surface ${app.surface}`)
   const session = { ...SESSION, ...(surface?.session ?? {}), ...(app.session ?? {}) }
   const profile = { ...PROFILE, ...(surface?.profile ?? {}), ...(app.profile ?? {}) }
-  const context = await newContext(browser, { width, height, theme, platform })
+  const context = await newContext(browser, { width, height, theme, platform, motion: app.motion === true })
   await context.addInitScript(
     ([sess, chosenTheme]) => {
       window.localStorage.setItem("lemely.session", JSON.stringify(sess))
@@ -189,7 +189,9 @@ export async function openApp(browser, { width, height, theme, app, platform }) 
     const got = await page.evaluate(() => document.documentElement.dataset.platform)
     if (got !== platform) throw new Error(`html[data-platform] is ${got}, expected ${platform}`)
   }
-  await page.addStyleTag({ content: STILL_CSS + (app.css ?? "") })
+  // `app.motion` keeps real transitions and no reduced-motion preference, for motion-feel checks.
+  const pageCss = (app.motion ? "" : STILL_CSS) + (app.css ?? "")
+  if (pageCss) await page.addStyleTag({ content: pageCss })
   await page.evaluate(() => document.fonts.ready)
   if (app.act) await app.act(page, { width, theme })
   await page.waitForTimeout(150)

@@ -1515,3 +1515,166 @@ NATIVE_CHECKS.push(
     },
   },
 );
+
+// Fix round 2: a committed swipe continues the gesture (no snap to x=0), and a cancel fades with the slide.
+// The probe records the column in the same task as the hook's pointerup handler (a window bubble listener
+// runs after the handler on <html>), then once per frame, so a snap to 0 on release cannot hide.
+const SWIPE_PROBE = () => {
+  const root = document.documentElement
+  const snap = () => {
+    const c = document.querySelector("[data-shell-column]")
+    const num = (name) => parseFloat(getComputedStyle(root).getPropertyValue(name)) || 0
+    return {
+      t: performance.now(),
+      left: c ? Math.round(c.getBoundingClientRect().left * 10) / 10 : null,
+      inline: c ? c.style.transform : null,
+      swiping: root.hasAttribute("data-swiping"),
+      progress: num("--lm-swipe-progress"),
+      shadow: num("--lm-swipe-shadow"),
+    }
+  }
+  const probe = { before: 0, release: null, frames: [] }
+  window.__swipeProbe = probe
+  window.addEventListener("pointermove", () => {
+    probe.before = snap().left
+  })
+  window.addEventListener("pointerup", () => {
+    probe.release = snap()
+    const start = performance.now()
+    const tick = () => {
+      probe.frames.push(snap())
+      if (performance.now() - start < 800) requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  })
+}
+async function swipeBackWithProbe(page, { fling }) {
+  await page.getByRole("link", { name: "Classes" }).first().click()
+  await page.waitForURL(/\/student\/classes/)
+  await page.evaluate(SWIPE_PROBE)
+  await page.mouse.move(4, 400)
+  await page.mouse.down()
+  if (fling) {
+    await page.mouse.move(100, 401, { steps: 4 })
+    await page.mouse.move(210, 402, { steps: 3 })
+  } else {
+    await page.mouse.move(210, 402, { steps: 8 })
+    await page.waitForTimeout(150)
+  }
+  await page.mouse.up()
+  await page.waitForTimeout(900)
+  return page.evaluate(() => window.__swipeProbe)
+}
+function assertContinues(probe, minOffset = 100) {
+  if (!probe.release) throw new Error("no pointerup was observed")
+  if (!(probe.before > minOffset)) throw new Error(`drag never offset the column (before ${probe.before})`)
+  if (!(probe.release.left >= probe.before - 0.5))
+    throw new Error(`the column snapped on release: ${probe.before}px before, ${probe.release.left}px right after (inline "${probe.release.inline}")`)
+  if (probe.release.swiping !== true) throw new Error("the swipe state was dropped in the release frame")
+}
+NATIVE_CHECKS.push(
+  {
+    id: "native-ios-swipe-commit-continues-gesture",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student", init: STANDALONE },
+    async run(page) {
+      const probe = await swipeBackWithProbe(page, { fling: false })
+      assertContinues(probe)
+      if (!/\/student$/.test(page.url())) throw new Error("the swipe did not navigate")
+    },
+  },
+  {
+    id: "native-ios-swipe-commit-animates-off-screen",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student", init: STANDALONE, motion: true },
+    async run(page) {
+      const probe = await swipeBackWithProbe(page, { fling: false })
+      assertContinues(probe)
+      const width = 390
+      const frames = probe.frames
+      const home = frames.findIndex((f) => f.left !== null && f.left < probe.before - 1)
+      const travel = frames.slice(0, home === -1 ? frames.length : home)
+      if (travel.length < 3) throw new Error(`commit did not animate: ${travel.length} frames of travel`)
+      for (let i = 1; i < travel.length; i++)
+        if (travel[i].left < travel[i - 1].left - 0.5) throw new Error(`the column moved back during the exit: ${JSON.stringify(travel.map((f) => f.left))}`)
+      if (!travel.some((f) => f.left > probe.before + 1 && f.left < width - 1)) throw new Error("no intermediate frame: the exit jumped")
+      if (!travel.some((f) => f.progress > probe.release.progress + 0.02 && f.progress < 0.98)) throw new Error("the dim did not fade over the slide")
+      if (travel.at(-1).left < width - 2) throw new Error(`the column stopped short of the edge: ${travel.at(-1).left}`)
+      if (!/\/student$/.test(page.url())) throw new Error("the swipe did not navigate")
+      const rest = frames.at(-1)
+      if (rest.left !== 0 || rest.swiping || rest.inline) throw new Error(`state left over after the swipe: ${JSON.stringify(rest)}`)
+    },
+  },
+  {
+    id: "native-ios-swipe-fling-commit-is-faster-than-drag",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student", init: STANDALONE, motion: true },
+    async run(page) {
+      const exitMs = (probe) => {
+        const end = probe.frames.find((f) => f.left !== null && f.left >= 388)
+        if (!end) throw new Error("the column never reached the edge")
+        return end.t - probe.release.t
+      }
+      const flung = exitMs(await swipeBackWithProbe(page, { fling: true }))
+      if (flung > 260) throw new Error(`a fling took ${Math.round(flung)}ms to leave`)
+    },
+  },
+  {
+    id: "native-ios-swipe-cancel-fades-with-slide",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student/classes", init: STANDALONE, motion: true },
+    async run(page) {
+      await page.evaluate(SWIPE_PROBE)
+      await page.mouse.move(4, 400)
+      await page.mouse.down()
+      await page.mouse.move(70, 402, { steps: 10 })
+      await page.waitForTimeout(250)
+      await page.mouse.up()
+      await page.waitForTimeout(900)
+      const probe = await page.evaluate(() => window.__swipeProbe)
+      if (!/\/student\/classes/.test(page.url())) throw new Error("a short slow swipe navigated")
+      assertContinues(probe, 30)
+      const f = probe.frames
+      const cleared = f.findIndex((x) => !x.swiping)
+      if (cleared === -1) throw new Error("data-swiping never cleared")
+      if (cleared < 3) throw new Error(`the swipe state cleared after ${cleared} frames: it must last the slide home`)
+      if (f[cleared].left > 1) throw new Error(`swipe state cleared with the column ${f[cleared].left}px from home`)
+      const slide = f.slice(0, cleared)
+      if (!slide.some((x) => x.shadow > 0.02 && x.shadow < 0.98)) throw new Error("the shadow did not fade with the slide")
+      if (!slide.some((x) => x.progress > 0.02 && x.progress < probe.release.progress - 0.02)) throw new Error("the dim did not fade with the slide")
+      for (let i = 1; i < slide.length; i++)
+        if (slide[i].left > slide[i - 1].left + 0.5) throw new Error("the column overshot on cancel (iOS curve has no overshoot)")
+    },
+  },
+  {
+    // The one-shot flag must be read on every navigation. Two swipes in a row replace to the same
+    // path (no navigation-type change); a stale flag then leaks into the next tab tap.
+    id: "native-ios-swipe-flag-does-not-go-stale",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student/settings/devices", init: STANDALONE },
+    async run(page) {
+      const direction = () => page.evaluate(() => document.documentElement.dataset.direction)
+      const swipe = async () => {
+        await page.mouse.move(4, 400)
+        await page.mouse.down()
+        await page.mouse.move(230, 402, { steps: 8 })
+        await page.mouse.up()
+        await page.waitForTimeout(500)
+      }
+      await swipe()
+      if ((await direction()) !== "swipe") throw new Error(`first swipe read "${await direction()}"`)
+      await swipe()
+      if ((await direction()) !== "swipe") throw new Error(`second swipe read "${await direction()}"`)
+      await page.getByRole("link", { name: "Classes" }).first().click()
+      await page.waitForURL(/\/student\/classes/)
+      // The URL moves before React renders the new route; give the layout effect its turn.
+      await page.waitForFunction(() => document.documentElement.dataset.direction !== "swipe", null, { timeout: 1500 }).catch(() => {})
+      if ((await direction()) !== "forward") throw new Error(`a tab tap read "${await direction()}": the swipe flag went stale`)
+    },
+  },
+);

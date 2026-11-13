@@ -65,6 +65,8 @@ export function swipeBackRelease({
   width: number
 }): "commit" | "cancel" {
   if (dx <= 0) return "cancel"
+  // UIKit: a flick back toward the edge cancels even past the distance threshold.
+  if (velocity < -FLING_PX_PER_MS) return "cancel"
   // Floor: pointer deltas are whole px, so 35% of 390 (136.5) commits at 136.
   return dx >= Math.floor(width * SWIPE_COMMIT_FRACTION) || velocity > FLING_PX_PER_MS ? "commit" : "cancel"
 }
@@ -81,4 +83,24 @@ export function bodyDragIntent({ scrollTop, dy }: { scrollTop: number; dy: numbe
   if (scrollTop > 0) return "scroll"
   if (Math.abs(dy) < BODY_DRAG_SLOP) return "undecided"
   return dy > 0 ? "drag" : "scroll"
+}
+
+/**
+ * How long the rest of a committed swipe-back takes: the remaining distance at the release
+ * speed, so a harder flick finishes sooner, clamped to the motion tokens. A slow drag (or no
+ * measurable speed) takes the longest duration.
+ */
+export function swipeSettleMs({
+  remaining,
+  velocity,
+  minMs,
+  maxMs,
+}: {
+  remaining: number
+  velocity: number
+  minMs: number
+  maxMs: number
+}): number {
+  if (velocity <= 0 || remaining <= 0) return maxMs
+  return Math.min(maxMs, Math.max(minMs, remaining / velocity))
 }
