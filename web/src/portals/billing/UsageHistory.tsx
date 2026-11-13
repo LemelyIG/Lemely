@@ -47,9 +47,9 @@ function JobCard({ row }: { row: UsageJobRow }) {
       {row.status !== "settled" ? <p className="m-0 text-body-sm text-on-surface-variant">{jobStatusText(row)}</p> : null}
       <dl className="m-0 grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-1">
         <dt className="text-body-sm text-on-surface-variant">Estimate</dt>
-        <dd className="m-0 text-end text-data-sm text-on-surface-variant">{jobEstimateText(row)}</dd>
+        <dd className="m-0 text-end text-data-md text-on-surface-variant">{jobEstimateText(row)}</dd>
         <dt className="text-body-sm text-on-surface-variant">Charged</dt>
-        <dd className="m-0 text-end text-data-sm text-on-surface">{jobChargeText(row)}</dd>
+        <dd className="m-0 text-end text-data-md text-on-surface">{jobChargeText(row)}</dd>
       </dl>
     </li>
   )
