@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { useNativeFrame } from "@/lib/useNativeFrame"
 
 /** Native frame: dense teacher tables read as list rows on phones, with
@@ -9,7 +9,8 @@ export function TableOrList({
   list,
   storageKey,
   tableHeader,
-  onViewChange,
+  notices,
+  onListView,
 }: {
   label: string
   table: ReactNode
@@ -18,8 +19,13 @@ export function TableOrList({
   /** Controls that act on the table's rows (bulk bars). Shown with the table
    * on every platform, never in the native list view, which has no row state. */
   tableHeader?: ReactNode
-  /** Called when the native toggle switches views. */
-  onViewChange?: (view: "list" | "table") => void
+  /** Outcome messages for those controls (errors, results). Shown straight
+   * after `tableHeader` off native, and in both native views so a teacher who
+   * switches to the list still sees and hears the outcome. */
+  notices?: ReactNode
+  /** Called whenever the native frame resolves to the list view: on toggle,
+   * and when the frame becomes native (rotation) already showing the list. */
+  onListView?: () => void
 }) {
   const { native } = useNativeFrame()
   const [asTable, setAsTable] = useState(() => {
@@ -29,11 +35,16 @@ export function TableOrList({
       return false
     }
   })
-  if (!native) return <>{tableHeader}{table}</>
+  const listActive = native && !asTable
+  useEffect(() => {
+    if (listActive) onListView?.()
+    // onListView is a fresh closure each render; only the view resolving matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listActive])
+  if (!native) return <>{tableHeader}{notices}{table}</>
   const toggle = () => {
     const next = !asTable
     setAsTable(next)
-    onViewChange?.(next ? "table" : "list")
     try {
       sessionStorage.setItem(storageKey, next ? "table" : "list")
     } catch {
@@ -48,6 +59,7 @@ export function TableOrList({
         </button>
       </div>
       {asTable ? tableHeader : null}
+      {notices}
       {asTable ? (
         <div role="region" aria-label={label} tabIndex={0} className="-mx-4 overflow-x-auto px-4 lm-scroll">
           {table}

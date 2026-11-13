@@ -539,6 +539,18 @@ NATIVE_CHECKS.push({
       await page.getByRole("button", { name: "View table" }).click()
       await page.getByText("Select all", { exact: true }).waitFor()
       if ((await page.getByText(/\d+ selected/).count()) !== 0) throw new Error("selection survived a list round trip")
+      // A failed bulk-approve must stay visible and announced after switching to the list.
+      await page.route("**/api/teacher/review/bulk-approve", (route) =>
+        route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ detail: "boom" }) }),
+      )
+      await region.locator("tbody input[type=checkbox]").first().check()
+      await page.getByRole("button", { name: /Bulk-approve/ }).click()
+      await page.getByRole("alert").filter({ hasText: "Couldn't bulk-approve" }).waitFor()
+      await page.getByRole("button", { name: "View list" }).click()
+      const failure = page.getByRole("alert").filter({ hasText: "Couldn't bulk-approve" })
+      if (!(await failure.isVisible())) throw new Error("bulk-approve error hidden after switching to list")
+      if ((await failure.count()) !== 1) throw new Error("bulk-approve error not rendered once in list view")
+      await page.getByRole("button", { name: "View table" }).click()
       // Reload: the table choice must come back from sessionStorage, not just a same-named region.
       await page.reload({ waitUntil: "networkidle" })
       await page.getByRole("button", { name: "View list" }).waitFor()

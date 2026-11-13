@@ -465,35 +465,34 @@ export function Review() {
                   <TableOrList
                     label="Review queue"
                     storageKey="lemely.review.view"
-                    onViewChange={(view) => {
-                      if (view === "list") setSelected(new Set())
-                    }}
+                    onListView={() => setSelected((prev) => (prev.size === 0 ? prev : new Set()))}
                     tableHeader={
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <Checkbox
+                          checked={allSelected}
+                          disabled={selectableItems.length === 0}
+                          onChange={() => toggleSelectAll(items)}
+                          aria-label={allSelected ? "Deselect all selectable items" : "Select all selectable items"}
+                          label={selected.size > 0 ? `${selected.size} selected` : "Select all"}
+                        />
+                        <Button
+                          variant="ink"
+                          size="sm"
+                          disabled={selected.size === 0 || bulkApprove.isPending}
+                          onClick={() => handleBulkApprove(items)}
+                        >
+                          {bulkApprove.isPending
+                            ? "Approving…"
+                            : `Bulk-approve${selected.size > 0 ? ` (${selected.size})` : ""}`}
+                        </Button>
+                        <span className="text-body-sm text-on-surface-variant">
+                          Accepts each selected mark exactly as Lemely awarded it. Integrity flags aren't
+                          selectable here. Open one to look at it properly.
+                        </span>
+                      </div>
+                    }
+                    notices={
                       <>
-                        <div className="flex items-center gap-3 flex-wrap">
-                          <Checkbox
-                            checked={allSelected}
-                            disabled={selectableItems.length === 0}
-                            onChange={() => toggleSelectAll(items)}
-                            aria-label={allSelected ? "Deselect all selectable items" : "Select all selectable items"}
-                            label={selected.size > 0 ? `${selected.size} selected` : "Select all"}
-                          />
-                          <Button
-                            variant="ink"
-                            size="sm"
-                            disabled={selected.size === 0 || bulkApprove.isPending}
-                            onClick={() => handleBulkApprove(items)}
-                          >
-                            {bulkApprove.isPending
-                              ? "Approving…"
-                              : `Bulk-approve${selected.size > 0 ? ` (${selected.size})` : ""}`}
-                          </Button>
-                          <span className="text-body-sm text-on-surface-variant">
-                            Accepts each selected mark exactly as Lemely awarded it. Integrity flags aren't
-                            selectable here. Open one to look at it properly.
-                          </span>
-                        </div>
-
                         {bulkApprove.isError ? (
                           <div role="alert" className="text-body-sm text-error">
                             Couldn't bulk-approve: {teacherMutationFailureMessage(bulkApprove.error)}
