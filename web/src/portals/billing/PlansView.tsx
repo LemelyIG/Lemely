@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R3 V3 */
-/* R3/V3: the plans grid and the credit-pack grid repeat the same 2/3-column card rhythm back to back, so the page reads as two copies of one template; the checkout failure alert also sits above the QueryState rather than beside the card that caused it. */
+/* R3/V3: the plans grid and the credit-pack grid repeat the same 2/3-column card rhythm back to back, so the page reads as two copies of one template. A checkout failure is reported at the end of the section whose button was pressed. */
 import { useEffect, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 import { Check } from "@phosphor-icons/react"
@@ -82,10 +82,26 @@ export function PlansView(props: PlansViewProps) {
     return () => window.removeEventListener("pageshow", onShow)
   }, [resetSub, resetPack])
   const buying = canManage
-  const failure = subCheckout.isError ? subCheckout.error : packCheckout.isError ? packCheckout.error : null
+  // Which section the failed checkout came from, so its message sits beside the button that was
+  // pressed. A pack bought at the bottom of a phone screen must not report its failure at the top.
+  const [unsafeFrom, setUnsafeFrom] = useState<"plan" | "pack">("plan")
+  const failureFor = (section: "plan" | "pack"): string | null => {
+    if (unsafe) return unsafeFrom === section ? UNSAFE_URL : null
+    const m = section === "plan" ? subCheckout : packCheckout
+    return m.isError ? billingFailureMessage(m.error, "start checkout") : null
+  }
+  const failureLine = (section: "plan" | "pack") => {
+    const text = failureFor(section)
+    return text ? (
+      <p role="alert" className="m-0 text-body-sm text-error">
+        {text}
+      </p>
+    ) : null
+  }
 
-  const redirect = (res: { paymentId: string; checkoutUrl: string }) => {
+  const redirect = (section: "plan" | "pack") => (res: { paymentId: string; checkoutUrl: string }) => {
     if (startCheckoutRedirect(res, paths.overview)) return
+    setUnsafeFrom(section)
     setUnsafe(true)
     subCheckout.reset()
     packCheckout.reset()
@@ -108,7 +124,7 @@ export function PlansView(props: PlansViewProps) {
         loading={(subCheckout.isPending || subCheckout.isSuccess) && subCheckout.variables?.planTierId === tier.id}
         onClick={() => {
           setUnsafe(false)
-          subCheckout.mutate(subscriptionCheckoutRequest(tier, audience, beneficiaryId, extraSeats), { onSuccess: redirect })
+          subCheckout.mutate(subscriptionCheckoutRequest(tier, audience, beneficiaryId, extraSeats), { onSuccess: redirect("plan") })
         }}
       >
         Choose {tier.name}
@@ -125,7 +141,7 @@ export function PlansView(props: PlansViewProps) {
         loading={(packCheckout.isPending || packCheckout.isSuccess) && packCheckout.variables?.creditPackId === pack.id}
         onClick={() => {
           setUnsafe(false)
-          packCheckout.mutate(packCheckoutRequest(pack, beneficiaryId), { onSuccess: redirect })
+          packCheckout.mutate(packCheckoutRequest(pack, beneficiaryId), { onSuccess: redirect("pack") })
         }}
       >
         Buy {pack.name}
@@ -138,11 +154,6 @@ export function PlansView(props: PlansViewProps) {
       {!canManage ? (
         <p className="m-0 text-body-md text-on-surface-variant">
           {managedByName ?? "Someone else"} manages billing for this account. Ask them to make changes.
-        </p>
-      ) : null}
-      {failure || unsafe ? (
-        <p role="alert" className="m-0 text-body-sm text-error">
-          {unsafe ? UNSAFE_URL : billingFailureMessage(failure, "start checkout")}
         </p>
       ) : null}
       <QueryState
@@ -224,6 +235,7 @@ export function PlansView(props: PlansViewProps) {
                     No {interval === "month" ? "monthly" : "yearly"} plans right now.
                   </p>
                 ) : null}
+                {failureLine("plan")}
               </section>
               <section id="packs" aria-labelledby="packs-heading" className="flex scroll-mt-24 flex-col gap-4">
                 <h2 id="packs-heading" className="m-0 text-display-sm text-on-surface">Credit packs</h2>
@@ -246,6 +258,7 @@ export function PlansView(props: PlansViewProps) {
                     </li>
                   ))}
                 </ul>
+                {failureLine("pack")}
               </section>
             </>
           )
