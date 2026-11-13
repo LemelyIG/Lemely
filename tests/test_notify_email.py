@@ -473,7 +473,11 @@ def _notice(notice: str, effective_at: str = "2026-12-10T09:00:00+00:00") -> dic
 
 
 def test_billing_templates_are_disjoint_from_the_tutoring_spec() -> None:
-    assert {"subscription_notice"} == BILLING_EMAIL_TEMPLATES
+    assert {
+        "subscription_notice",
+        "auto_topup_failed",
+        "extra_seats_charge_failed",
+    } == BILLING_EMAIL_TEMPLATES
     assert set(EMAIL_TEMPLATES) >= BILLING_EMAIL_TEMPLATES
     assert BILLING_EMAIL_TEMPLATES.isdisjoint(set(VALID))
     template = EMAIL_TEMPLATES["subscription_notice"]

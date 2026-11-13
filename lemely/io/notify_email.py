@@ -415,6 +415,62 @@ class SubscriptionNotice(EmailContext):
         return "/billing"
 
 
+class AutoTopupFailed(EmailContext):
+    """An auto top-up charge was declined, so auto top-up is switched off (Phase 06).
+
+    No amount, card detail or processor name travels in the mail: the billing screen shows what
+    the payer needs. The context holds the payment id only.
+    """
+
+    template: ClassVar[str] = "auto_topup_failed"
+    notification_type: ClassVar[NotificationType] = NotificationType.billing
+    subject: ClassVar[str] = "Auto top-up could not charge your card"
+    button: ClassVar[str] = "Open billing"
+
+    payment_id: uuid.UUID
+
+    def lead(self) -> str:
+        return (
+            "We could not charge your saved card for an auto top-up, so auto top-up is turned off."
+        )
+
+    def detail(self) -> str | None:
+        return "You can check your card and turn auto top-up back on in billing settings."
+
+    def path(self) -> str:
+        return "/billing"
+
+
+class ExtraSeatsChargeFailed(EmailContext):
+    """The fallback charge for extra student seats was declined (Phase 06).
+
+    The mail states the grace window and what follows it, and carries no amount, plan name,
+    card detail or student name. The context holds the subscription id only.
+    """
+
+    template: ClassVar[str] = "extra_seats_charge_failed"
+    notification_type: ClassVar[NotificationType] = NotificationType.billing
+    subject: ClassVar[str] = "Your extra seats payment failed"
+    button: ClassVar[str] = "Open billing"
+
+    subscription_id: uuid.UUID
+
+    def lead(self) -> str:
+        return (
+            "We could not charge your card for your extra student seats. We will try again "
+            "each day; if no payment succeeds within 3 days, the extra seats are removed."
+        )
+
+    def detail(self) -> str | None:
+        return (
+            "Students beyond your plan's included seats then keep their seat until the end "
+            "of the month."
+        )
+
+    def path(self) -> str:
+        return "/billing"
+
+
 _TEMPLATE_CLASSES: Final[tuple[type[EmailContext], ...]] = (
     BookingRequested,
     BookingRequestedFamily,
@@ -427,6 +483,8 @@ _TEMPLATE_CLASSES: Final[tuple[type[EmailContext], ...]] = (
     ParentLinked,
     ClassJoinedTutor,
     SubscriptionNotice,
+    AutoTopupFailed,
+    ExtraSeatsChargeFailed,
 )
 
 #: Every template, keyed by the name stored in ``email_outbox.template``.
@@ -435,7 +493,9 @@ EMAIL_TEMPLATES: Final[Mapping[str, type[EmailContext]]] = {
 }
 
 #: Templates outside the tutoring spec's §b.4 table (Paymob billing).
-BILLING_EMAIL_TEMPLATES: Final[frozenset[str]] = frozenset({SubscriptionNotice.template})
+BILLING_EMAIL_TEMPLATES: Final[frozenset[str]] = frozenset(
+    {SubscriptionNotice.template, AutoTopupFailed.template, ExtraSeatsChargeFailed.template}
+)
 
 
 def _stop(sentence: str) -> str:
@@ -654,7 +714,9 @@ def build_transactional_provider(settings: Settings) -> TransactionalEmailProvid
 __all__ = [
     "BILLING_EMAIL_TEMPLATES",
     "EMAIL_TEMPLATES",
+    "AutoTopupFailed",
     "EmailContext",
+    "ExtraSeatsChargeFailed",
     "InvalidEmailContext",
     "MockTransactionalEmailProvider",
     "ResendTransactionalEmailProvider",

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Literal
 from lemely.db.email_outbox_repo import enqueue_in_session
 
 if TYPE_CHECKING:
+    import uuid
     from datetime import datetime
 
     from sqlalchemy.orm import Session
@@ -60,4 +61,49 @@ def enqueue_subscription_notice(
     )
 
 
-__all__ = ["SubscriptionNoticeKind", "enqueue_subscription_notice"]
+def enqueue_auto_topup_failed(
+    session: Session, *, payer_user_id: uuid.UUID, payment_id: uuid.UUID
+) -> bool:
+    """Queue the "auto top-up could not charge your card" notice to the payer.
+
+    ``True`` when a row was written; ``False`` when the payer switched billing notices off or
+    this payment's notice is already queued. One notice per failed payment: a later failure is
+    a new payment and a new notice.
+    """
+    return enqueue_in_session(
+        session,
+        recipient_user_id=payer_user_id,
+        template="auto_topup_failed",
+        context={"payment_id": payment_id},
+        dedupe_key=f"auto_topup_failed:{payment_id}",
+    )
+
+
+def enqueue_extra_seats_charge_failed(
+    session: Session,
+    *,
+    payer_user_id: uuid.UUID,
+    subscription_id: uuid.UUID,
+    first_attempt_id: uuid.UUID,
+) -> bool:
+    """Queue the "your extra seats payment failed" notice to the payer.
+
+    ``first_attempt_id`` is the first failed payment of the run of daily retries, so the payer
+    hears once per run and not once per daily attempt. ``True`` when a row was written;
+    ``False`` when billing notices are off or this run's notice is already queued.
+    """
+    return enqueue_in_session(
+        session,
+        recipient_user_id=payer_user_id,
+        template="extra_seats_charge_failed",
+        context={"subscription_id": subscription_id},
+        dedupe_key=f"extra_seats_failed:{first_attempt_id}",
+    )
+
+
+__all__ = [
+    "SubscriptionNoticeKind",
+    "enqueue_auto_topup_failed",
+    "enqueue_extra_seats_charge_failed",
+    "enqueue_subscription_notice",
+]
