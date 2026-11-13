@@ -1201,9 +1201,6 @@ async function pullStart(page) {
 }
 
 async function pullDown(page, dy, { release = true } = {}) {
-  // A mouse drag over text selects it, and a later press on that selection starts a native
-  // drag-and-drop, which cancels the pointer. A finger does neither.
-  await page.evaluate(() => window.getSelection()?.removeAllRanges());
   const { x, y } = await pullStart(page);
   await page.mouse.move(x, y);
   await page.mouse.down();

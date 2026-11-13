@@ -506,6 +506,8 @@
   --native-ptr-hold-android: 64px;
   --native-ptr-max: 140px;                  /* preview PTR_MAX: the pull's visual ceiling */
   --native-ptr-disc-max: 108px;             /* how far the Android disc travels */
+  --native-ptr-spin-ios: 0.8s;              /* one turn of the 8-spoke indicator (stepped) */
+  --native-ptr-spin-android: 1s;            /* one turn of the M3 arc */
   /* M3 elevation level 1 (the pull disc's resting shadow), tinted from the shadow role, never raw. */
   --native-elev-1: 0 1px 2px color-mix(in oklch, var(--md-shadow) 30%, transparent), 0 1px 3px 1px color-mix(in oklch, var(--md-shadow) 15%, transparent);
   /* Page ground (preview --pf-page): the native frame's own, in both themes. */
@@ -766,7 +768,9 @@
 /* The gap carries the indicator's travel, so the indicator itself reads no non-inherited variable. */
 :root[data-platform="ios"] .lm-ptr-gap { translate: 0 calc(var(--pf-pull) / 2); }
 :root[data-platform="android"] .lm-ptr-gap { translate: 0 min(var(--pf-pull), var(--native-ptr-disc-max)); }
-:root[data-platform="android"] .lm-ptr[data-ptr="settling"] .lm-ptr-gap { transition: translate var(--dur-slow) var(--ease-expo); }
+.lm-ptr:is([data-ptr="settling"], [data-ptr="refreshing"]) .lm-ptr-gap { transition: translate var(--dur-slow) var(--ease-expo); }
+/* No text selection or callout while a pull is in flight, so a drag over copy never selects it. */
+.lm-ptr[data-ptr="pulling"] { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 :root[data-platform="ios"] .lm-ptr-ios {
   position: absolute; inset-inline: 0; inset-block-start: -14px;
   display: block; inline-size: 28px; block-size: 28px; margin-inline: auto;
@@ -778,7 +782,7 @@
   opacity: clamp(0, calc(var(--pf-pull-p) * 8 - var(--i)), 1);
 }
 :root[data-platform="ios"] .lm-ptr[data-ptr="refreshing"] .lm-ptr-ios i { opacity: calc(1 - var(--i) * 0.11); }
-:root[data-platform="ios"] .lm-ptr[data-ptr="refreshing"] .lm-ptr-ios { animation: lm-ptr-spin 0.8s steps(8) infinite; }
+:root[data-platform="ios"] .lm-ptr[data-ptr="refreshing"] .lm-ptr-ios { animation: lm-ptr-spin var(--native-ptr-spin-ios) steps(8) infinite; }
 :root[data-platform="android"] .lm-ptr-md {
   position: absolute; inset-inline: 0; inset-block-start: -44px; z-index: 1;
   display: grid; place-items: center; inline-size: 40px; block-size: 40px; margin-inline: auto;
@@ -795,7 +799,7 @@
   fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round;
   stroke-dasharray: calc(var(--pf-pull-p) * 40) 60;
 }
-:root[data-platform="android"] .lm-ptr[data-ptr="refreshing"] .lm-ptr-md svg { animation: lm-ptr-spin 1s linear infinite; }
+:root[data-platform="android"] .lm-ptr[data-ptr="refreshing"] .lm-ptr-md svg { animation: lm-ptr-spin var(--native-ptr-spin-android) linear infinite; }
 :root[data-platform="android"] .lm-ptr[data-ptr="refreshing"] .lm-ptr-md circle { stroke-dasharray: 30 60; }
 @keyframes lm-ptr-spin { to { rotate: 360deg; } }
 
@@ -2039,12 +2043,12 @@ html[data-direction="back"]::view-transition-new(root) {
   /* Refreshing is a state, not a flourish: the spinner keeps turning, as it does under iOS Reduce Motion
      and Android's remove-animations. The settle and the finger-following stay stopped (the rules above). */
   :root[data-platform="android"] .lm-ptr[data-ptr="refreshing"] .lm-ptr-md svg {
-    animation-duration: 1s !important;
+    animation-duration: var(--native-ptr-spin-android) !important;
     animation-iteration-count: infinite !important;
     animation-delay: 0s !important;
   }
   :root[data-platform="ios"] .lm-ptr[data-ptr="refreshing"] .lm-ptr-ios {
-    animation-duration: 0.8s !important;
+    animation-duration: var(--native-ptr-spin-ios) !important;
     animation-iteration-count: infinite !important;
     animation-delay: 0s !important;
   }

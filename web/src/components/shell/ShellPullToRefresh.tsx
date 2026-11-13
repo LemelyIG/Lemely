@@ -46,6 +46,7 @@ export function ShellPullToRefresh({ enabled, children }: { enabled: boolean; ch
   const gap = useRef<HTMLDivElement>(null)
   const content = useRef<HTMLDivElement>(null)
   const armed = useRef(false)
+  const cleared = useRef(false)
   const wasActive = useRef(false)
   const [settling, setSettling] = useState(false)
   const { platform } = useNativeFrame()
@@ -61,10 +62,16 @@ export function ShellPullToRefresh({ enabled, children }: { enabled: boolean; ch
       if (!gapEl || !contentEl) return
       if (dy <= 0) {
         armed.current = false
+        cleared.current = false
         gapEl.style.removeProperty("--pf-pull")
         gapEl.style.removeProperty("--pf-pull-p")
         contentEl.style.removeProperty("--pf-pull")
         return
+      }
+      // The first frame of a pull drops any selection the press began, so the copy under the finger never stays highlighted.
+      if (!cleared.current) {
+        cleared.current = true
+        window.getSelection()?.removeAllRanges()
       }
       const pull = pullDistance(dy)
       gapEl.style.setProperty("--pf-pull", `${pull}px`)

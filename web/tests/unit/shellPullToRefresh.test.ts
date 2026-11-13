@@ -108,6 +108,16 @@ describe("pull rendering contract (impeccable pass)", () => {
     expect(css).toMatch(/\.lm-ptr-md \{[^}]*box-shadow: var\(--native-elev-1\)/)
     expect(css).toMatch(/--native-elev-1:[^;]*var\(--md-shadow\)/)
   })
+  it("a pull never selects text, and the spinner durations are shared tokens", () => {
+    expect(css).toMatch(/\.lm-ptr\[data-ptr="pulling"\] \{[^}]*user-select: none[^}]*-webkit-touch-callout: none/)
+    expect(read("components/shell/ShellPullToRefresh.tsx")).toContain("removeAllRanges()")
+    expect(css).toContain("animation-duration: var(--native-ptr-spin-ios) !important")
+    expect(css).toContain("animation-duration: var(--native-ptr-spin-android) !important")
+    expect(css).not.toMatch(/lm-ptr-spin 0\.8s|lm-ptr-spin 1s/)
+  })
+  it("the refreshing hold eases in on both platforms", () => {
+    expect(css).toMatch(/\.lm-ptr:is\(\[data-ptr="settling"\], \[data-ptr="refreshing"\]\) \.lm-ptr-gap \{ transition: translate var\(--dur-slow\)/)
+  })
   it("PullIndicator is gone and the hook no longer writes --lm-pull-progress", () => {
     expect(() => read("components/ui/pull-indicator.tsx")).toThrow()
     expect(read("lib/gestures/usePullToRefresh.ts")).not.toContain("setProperty(\"--lm-pull-progress")
