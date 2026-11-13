@@ -371,6 +371,29 @@ NATIVE_CHECKS.push(
         throw new Error(`main padding ${got.pad}px != tab bar ${got.want}px`);
     },
   })),
+  ...[
+    ["ios", 600],
+    ["android", 700],
+  ].map(([platform, selected]) => ({
+    id: `native-${platform}-tab-label-weights`,
+    platform,
+    width: 390,
+    app: NATIVE_HOME,
+    async run(page) {
+      const w = await page.evaluate(() => {
+        const labelOf = (link) => getComputedStyle(link.querySelector(".lm-native-tab-label")).fontWeight;
+        const plain = [...document.querySelectorAll("nav.lm-native-tabbar > *")].filter(
+          (l) => !l.querySelector("[data-emphasis]"),
+        );
+        const sel = plain.find((l) => l.getAttribute("aria-current") === "page");
+        const rest = plain.find((l) => l.getAttribute("aria-current") !== "page");
+        return { selected: sel && labelOf(sel), unselected: rest && labelOf(rest) };
+      });
+      if (w.selected !== String(selected))
+        throw new Error(`selected tab label weight ${w.selected} != ${selected}`);
+      if (w.unselected !== "500") throw new Error(`unselected tab label weight ${w.unselected} != 500`);
+    },
+  })),
   {
     id: "native-android-active-pill-centred-clear",
     platform: "android",

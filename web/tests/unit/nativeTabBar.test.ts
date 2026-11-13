@@ -73,6 +73,12 @@ describe("tab bar CSS (preview 4447a571)", () => {
     expect(block).not.toMatch(/inset-inline: 0;\s*margin-inline: auto/)
     expect(block).not.toMatch(/\[aria-current="page"\] \{/)
   })
+  it("tab labels inherit the link weight (500, 600 iOS / 700 Android selected) and track 0.01em", () => {
+    expect(block).toMatch(/\.lm-native-tabbar > \* \{[^}]*font-weight: 500/)
+    expect(block).toMatch(/\.lm-native-tabbar \.lm-native-tab-label \{[^}]*font-weight: inherit;[^}]*letter-spacing: 0\.01em/)
+    expect(block).toMatch(/\[data-platform="ios"\] \.lm-native-tabbar \[aria-current="page"\]:not\(:has\(\[data-emphasis\]\)\) \{[^}]*font-weight: 600/)
+    expect(block).toMatch(/\[data-platform="android"\] \.lm-native-tabbar \[aria-current="page"\]:not\(:has\(\[data-emphasis\]\)\) \{[^}]*font-weight: 700/)
+  })
   it("24px icons on both platforms", () => {
     expect(block).toMatch(/\.lm-native-tabbar \.lm-native-tab-icon svg \{[^}]*inline-size: var\(--native-tab-icon\);[^}]*block-size: var\(--native-tab-icon\)/)
   })

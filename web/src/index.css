@@ -1495,6 +1495,13 @@ html[data-direction="back"]::view-transition-new(root) {
     min-block-size: 0;
     padding-block-end: 0;
     justify-content: flex-start;
+    font-weight: 500;
+  }
+  /* The label span carries its own font-medium when active, which would beat the link's weight;
+     it inherits instead, so unselected 500, selected 600 (iOS) / 700 (Android), as the preview. */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-tabbar .lm-native-tab-label {
+    font-weight: inherit;
+    letter-spacing: 0.01em;
   }
   :root[data-platform="ios"] .lm-native-tabbar > * {
     padding-block-start: var(--native-tab-pad-top-ios);
