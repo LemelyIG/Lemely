@@ -85,7 +85,7 @@ describe("grouped-list CSS (preview 4447a571, variant-a.css section 4)", () => {
     expect(css).toMatch(/--native-page-android: var\(--md-surface-container-low\)/)
   })
   it("iOS: 16px page margin, 12px groups, 44px rows, hairline separators inset 16px", () => {
-    expect(block).toMatch(/:root\[data-platform="ios"\] \.lm-native-main \{[^}]*padding-inline: var\(--native-group-inset-ios\)/)
+    expect(block).toMatch(/:root\[data-platform="ios"\] \.lm-native-main \{[^}]*padding-left: max\(var\(--native-group-inset-ios\), env\(safe-area-inset-left\)\)/)
     expect(block).toMatch(/:root\[data-platform="ios"\] \.lm-native-main :is\(\.lm-native-card, \.lm-native-group\) \{[^}]*border-radius: var\(--native-group-radius-ios\)/)
     expect(block).toMatch(/:root\[data-platform="ios"\] \.lm-native-main \.lm-native-row \{[^}]*min-height: var\(--native-row-min-ios\)/)
     expect(block).toMatch(/:root\[data-platform="ios"\] \.lm-native-main \.lm-native-row \+ \.lm-native-row::before \{[^}]*inset-inline: var\(--native-sep-inset-ios\) 0;[^}]*block-size: var\(--native-hairline\);[^}]*background: var\(--md-outline\)/)

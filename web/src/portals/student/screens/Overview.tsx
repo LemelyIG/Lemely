@@ -2,7 +2,7 @@
 import { useMemo, useRef } from "react"
 import { Link } from "react-router-dom"
 import { ArrowDownRight, ArrowUpRight, Minus } from "@phosphor-icons/react"
-import { Card } from "@/components/ui/card"
+import { Card, TitledCard } from "@/components/ui/card"
 import { Meter } from "@/components/ui/primitives"
 import { SectionHead } from "@/components/ui/section-head"
 import { buttonVariants } from "@/components/ui/button"
@@ -157,7 +157,7 @@ function SubjectLedgerRow({ row }: { row: SubjectRow }) {
        * pointing at. Reserved transparent at rest so it cannot shift the row.
        */
       className={cn(
-        "group flex flex-col gap-3 w-full text-start border-t border-outline-variant px-6 py-4",
+        "lm-native-card-row group flex flex-col gap-3 w-full text-start border-t border-outline-variant px-6 py-4",
         "md:grid md:grid-subject-ledger md:items-center md:gap-4",
         "border-s-2 border-s-transparent hover:border-s-primary hover:bg-surface-container-low",
         "transition-colors duration-[var(--dur-instant)] ease-out-soft",
@@ -544,12 +544,11 @@ export function Overview() {
                 />
               </header>
 
-              <Card className="overflow-hidden">
-                <h2 className="px-6 pt-5 pb-4 text-display-md text-on-surface">Subjects this session</h2>
+              <TitledCard title="Subjects this session" className="overflow-hidden">
                 {subjects.map((row) => (
                   <SubjectLedgerRow key={row.code} row={row} />
                 ))}
-              </Card>
+              </TitledCard>
 
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                 <MomentumPanel points={momentum.points} />

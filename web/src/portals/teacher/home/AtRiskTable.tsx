@@ -8,7 +8,7 @@ import { atRiskRowModel } from "./models"
 /** `trendsReady` is false while no class has two marked papers, so an empty list means "not yet" rather than "all clear". */
 export function AtRiskTable({ students, trendsReady = true }: { students: AtRiskStudent[]; trendsReady?: boolean }) {
   return (
-    <section aria-labelledby="ar-h" className="min-w-0 rounded-card bg-surface-container-lowest p-6 shadow-panel">
+    <section aria-labelledby="ar-h" className="lm-native-card min-w-0 rounded-card bg-surface-container-lowest p-6 shadow-panel">
       <div className="flex items-baseline justify-between">
         <h2 id="ar-h" className="text-display-md">
           At-risk students<span className="sr-only">, {students.length}</span>{" "}

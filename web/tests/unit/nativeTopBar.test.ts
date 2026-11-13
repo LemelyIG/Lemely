@@ -80,10 +80,25 @@ describe("native bar CSS (preview 4447a571)", () => {
   it("details show back, title and one action", () => {
     expect(block).toMatch(/\.lm-native-bar\[data-title-level="detail"\] :is\(\[data-shell-action="settings"\], \[data-shell-action="account"\]\) \{[^}]*display: none/)
   })
-  it("details hide Create too; a root bar holding Create (four actions) ends the title before them, 208px from the end", () => {
+  it("details hide Create too; Create has left the phone bar, so no root bar needs a wide title inset", () => {
     expect(block).toMatch(/\.lm-native-bar\[data-title-level="detail"\] \[data-shell-action="create"\] \{[^}]*display: none/)
-    expect(block).toMatch(/\.lm-native-bar\[data-title-level="root"\]:has\(\[data-shell-action="create"\]\) \.lm-native-inline-title \{[^}]*inset-inline: var\(--native-bar-pad-inline\) var\(--native-title-inset-ios-wide\)/)
-    expect(css).toMatch(/--native-title-inset-ios-wide: 208px;/)
+    expect(css).not.toContain("--native-title-inset-ios-wide")
+    expect(block).not.toContain(":has([data-shell-action=\"create\"])")
+  })
+  it("the bar has no gap: the 44/48px actions butt up and the title box is inset (preview .as-bar)", () => {
+    expect(block).toMatch(/\.lm-native-bar \{[^}]*gap: 0;/)
+  })
+  it("side safe areas widen the bar and the large title", () => {
+    expect(block).toMatch(/padding-left: max\(var\(--native-bar-pad-inline\), env\(safe-area-inset-left\)\);\s*padding-right: max\(var\(--native-bar-pad-inline\), env\(safe-area-inset-right\)\)/)
+    expect(block).toMatch(/padding-left: max\(var\(--space-4\), env\(safe-area-inset-left\)\)/)
+  })
+  it("the Android back arrow colour out-specifies the trailing-icon rule", () => {
+    expect(block).toMatch(/\[data-platform="android"\] \.lm-native-bar \.lm-native-back \{ color: var\(--md-on-surface\); \}/)
+  })
+  it("the back control centres its parts and the iOS label is capped with an ellipsis", () => {
+    expect(block).toMatch(/\.lm-native-back \{ margin-inline-end: auto; align-items: center; \}/)
+    expect(block).toMatch(/\[data-platform="ios"\] \.lm-native-back-label \{[^}]*max-inline-size: var\(--native-back-label-max\);[^}]*text-overflow: ellipsis/)
+    expect(css).toMatch(/--native-back-label-max: 96px;/)
   })
   it("the iOS back rule is not out-specified by the iconbtn sizing rule", () => {
     expect(block).toMatch(/:root\[data-platform="ios"\] \.lm-native-bar \.lm-native-back \{\s*inline-size: auto;/)

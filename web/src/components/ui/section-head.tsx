@@ -54,7 +54,8 @@ export function SectionHead({
       <div className="flex flex-col gap-1 min-w-0">
         {eyebrow ? <Eyebrow>{eyebrow}</Eyebrow> : null}
         <Display className={RUNG_CLASS[rung]}>
-          <Tag>{title}</Tag>
+          {/* A level-1 head is the page's own heading: on the native frame it steps below the large title. */}
+          <Tag data-page-heading={level === 1 ? "own" : undefined}>{title}</Tag>
         </Display>
         {kicker ? <p className="text-body-md text-on-surface-variant">{kicker}</p> : null}
       </div>

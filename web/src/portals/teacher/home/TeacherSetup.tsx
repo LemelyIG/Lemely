@@ -80,7 +80,7 @@ export function TeacherSetup({ progress, firstClass, unlocks, onFiles }: { progr
             const now = i === current
             return (
               <li key={now ? `${s.key}-${nudge}` : s.key}
-                className={`flex gap-4 rounded-tile p-5 ${now ? "bg-surface-container-lowest shadow-panel" : "bg-surface-container-low"} ${now && nudge ? "animate-[em-nudge_400ms_var(--ease-expo)] motion-reduce:animate-none" : ""}`}>
+                className={`lm-native-card flex gap-4 rounded-tile p-5 ${now ? "bg-surface-container-lowest shadow-panel" : "bg-surface-container-low"} ${now && nudge ? "animate-[em-nudge_400ms_var(--ease-expo)] motion-reduce:animate-none" : ""}`}>
                 <span className={`grid size-8 shrink-0 place-items-center rounded-pill font-bold ${done ? "bg-primary text-on-primary" : now ? "bg-primary-container text-on-primary-container" : "bg-surface-container-high text-on-surface-variant"}`}>
                   {done ? <Check size={16} weight="bold" aria-label="Done" /> : i + 1}
                 </span>
@@ -110,7 +110,7 @@ export function TeacherSetup({ progress, firstClass, unlocks, onFiles }: { progr
         </ol>
       </section>
 
-      <section aria-labelledby="gs-unlock" className="rounded-card bg-surface-container-lowest p-6 shadow-panel">
+      <section aria-labelledby="gs-unlock" className="lm-native-card rounded-card bg-surface-container-lowest p-6 shadow-panel">
         <UnlockLadder unlocks={unlocks} as="h2" headingId="gs-unlock" />
       </section>
       <input ref={input} type="file" accept="application/pdf" multiple hidden onChange={(e) => upload(e.target.files)} />
