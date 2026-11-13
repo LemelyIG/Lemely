@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import TYPE_CHECKING, ClassVar, Final
 
 import sqlalchemy as sa
@@ -32,6 +33,7 @@ from lemely.core.subscription_rules import (
     subscription_amount_minor,
 )
 from lemely.db.billing_repo import (
+    INTENTION_EXPIRATION_SECONDS,
     BillingService,
     CheckoutUnavailable,
     UnknownPayer,
@@ -226,10 +228,21 @@ def sync_paymob_plan(
 
 
 _AUDIENCE_FOR_ROLE: Final = {Role.student: PlanAudience.student, Role.teacher: PlanAudience.teacher}
-#: A first payment in one of these states can never be paid: its checkout may be replaced.
-_FAILED_PAYMENT: Final = frozenset(
-    {PaymentStatus.failed, PaymentStatus.failed_mismatch, PaymentStatus.voided}
-)
+#: Closed payments: Phase 02 ignores every later callback for them, so they can never be paid.
+#: A plain ``failed`` is not here: a card decline leaves the intention open and Phase 02 lets the
+#: payment become ``paid`` on a later success (R20b). See :func:`_is_unpayable`.
+_CLOSED_PAYMENT: Final = frozenset({PaymentStatus.failed_mismatch, PaymentStatus.voided})
+#: How long a payment may still be paid after its intention was created.
+_INTENTION_LIFETIME: Final = timedelta(seconds=INTENTION_EXPIRATION_SECONDS)
+#: ``Payment.last_callback["source"]`` written when Paymob rejected the intention (no intention).
+_NO_INTENTION_SOURCE: Final = "create_intention"
+#: The constraint a racing second live checkout violates (``Subscription.__table_args__``).
+_ONE_LIVE_INDEX: Final = "uq_subscriptions_one_live_per_user"
+#: At most one ``alert=True`` plan-mode-mismatch event per tier per window (audit I8): every click
+#: on a mismatched plan is refused, but the operator is paged once. Per process, keyed by tier id,
+#: the value is the ``now`` of the last alert. Bounded by the number of tiers.
+_MODE_ALERT_EVERY: Final = timedelta(minutes=10)
+_MODE_ALERTED: Final[dict[uuid.UUID, datetime]] = {}
 _ITEM_NAME_MAX: Final = 50  # Paymob items[].name limit (research 01 §2.1)
 #: Shown to the user when a tier was synced under the other key mode; says nothing about keys.
 _PLAN_MODE_MESSAGE: Final = "This plan is being set up. Please try again later."
@@ -340,7 +353,7 @@ class SubscriptionService:
         if payer is None:
             raise UnknownPayer(str(payer_user_id))
         beneficiary = self._beneficiary_for(payer, beneficiary_user_id)
-        tier = self._sellable_tier(plan_tier_id, beneficiary)
+        tier = self._sellable_tier(plan_tier_id, beneficiary, now=now)
         if not 0 <= extra_seats <= MAX_EXTRA_SEATS_AT_CHECKOUT or (
             extra_seats > 0
             and (tier.audience is not PlanAudience.teacher or tier.extra_seat_price_minor == 0)
@@ -368,6 +381,8 @@ class SubscriptionService:
                 session.add(subscription)
                 session.flush()
         except IntegrityError as exc:
+            if not _violates_one_live(exc):
+                raise
             # A racing checkout committed a live subscription for this beneficiary first.
             raise AlreadySubscribed("this account already has a live subscription") from exc
         payment_id = uuid.uuid4()
@@ -418,7 +433,9 @@ class SubscriptionService:
             raise NotLinkedParent("only a linked parent may buy for another account")
         return payer
 
-    def _sellable_tier(self, plan_tier_id: uuid.UUID, beneficiary: User) -> PlanTier:
+    def _sellable_tier(
+        self, plan_tier_id: uuid.UUID, beneficiary: User, *, now: datetime
+    ) -> PlanTier:
         """The tier, when it may be sold to ``beneficiary`` under the configured key mode."""
         tier = self._session.get(PlanTier, plan_tier_id)
         audience = _AUDIENCE_FOR_ROLE.get(beneficiary.role)
@@ -433,15 +450,23 @@ class SubscriptionService:
         ):
             raise PlanNotPurchasable("this plan cannot be bought for this account")
         if tier.paymob_plan_mode != self._settings.key_mode:
-            alerts.error(
-                "subscription_plan_mode_mismatch",
-                plan_tier_id=str(tier.id),
-                plan_mode=tier.paymob_plan_mode,
-                key_mode=self._settings.key_mode,
-                alert=True,
-            )
+            self._note_mode_mismatch(tier, now=now)
             raise PlanModeMismatch(_PLAN_MODE_MESSAGE)
         return tier
+
+    def _note_mode_mismatch(self, tier: PlanTier, *, now: datetime) -> None:
+        """Log the mismatch; page the operator (``alert=True``) at most once per window and tier."""
+        fields = {
+            "plan_tier_id": str(tier.id),
+            "plan_mode": tier.paymob_plan_mode,
+            "key_mode": self._settings.key_mode,
+        }
+        last = _MODE_ALERTED.get(tier.id)
+        if last is not None and last <= now < last + _MODE_ALERT_EVERY:
+            log.warning("subscription_plan_mode_mismatch_repeated", **fields)
+            return
+        _MODE_ALERTED[tier.id] = now
+        alerts.error("subscription_plan_mode_mismatch", alert=True, **fields)
 
     def _require_seats_covered(
         self, teacher_id: uuid.UUID, tier: PlanTier, extra_seats: int
@@ -488,6 +513,7 @@ class SubscriptionService:
                     Subscription.user_id == beneficiary_id,
                     Subscription.status.in_(LIVE_SUBSCRIPTION_STATUSES),
                 )
+                .order_by(Subscription.id)  # a fixed lock order: racing checkouts cannot deadlock
                 .with_for_update()
             )
         )
@@ -506,7 +532,11 @@ class SubscriptionService:
         self._session.flush()
 
     def _may_replace(self, pending: Subscription, payer_id: uuid.UUID, *, now: datetime) -> bool:
-        """Whether a new checkout by ``payer_id`` may replace the unpaid ``pending`` one."""
+        """Whether a new checkout by ``payer_id`` may replace the unpaid ``pending`` one.
+
+        A payment that can no longer be paid frees it for anyone; one that still can (open, or
+        declined within the intention's lifetime) frees it only for the same payer or once stale.
+        """
         first = self._session.scalars(
             select(Payment)
             .where(
@@ -518,16 +548,42 @@ class SubscriptionService:
         ).one_or_none()
         if first is None:
             return True
-        if first.status not in _FAILED_PAYMENT and first.status not in (
+        if first.status not in (
             PaymentStatus.created,
             PaymentStatus.pending,
+            PaymentStatus.failed,
+            *_CLOSED_PAYMENT,
         ):
             return False  # paid, refunded: money moved, the activation handler owns it
         return (
-            first.status in _FAILED_PAYMENT
+            _is_unpayable(first, now=now)
             or first.created_at <= now - STALE_CHECKOUT_AFTER
             or pending.payer_user_id == payer_id
         )
+
+
+def _is_unpayable(payment: Payment, *, now: datetime) -> bool:
+    """Whether a first payment can never become ``paid`` (so its checkout is free to replace).
+
+    ``failed_mismatch`` and ``voided`` are closed. A ``failed`` one is dead only when Paymob
+    rejected the intention (``create_intention``: no intention exists) or when the intention's
+    lifetime has passed. After a card decline the Unified Checkout page stays open for an hour and
+    Phase 02 lets that payment become ``paid`` on a later success (R20b), so replacing it
+    meanwhile would put a paid first payment on an expired subscription.
+    """
+    if payment.status in _CLOSED_PAYMENT:
+        return True
+    if payment.status is not PaymentStatus.failed:
+        return False
+    if (payment.last_callback or {}).get("source") == _NO_INTENTION_SOURCE:
+        return True
+    return payment.created_at <= now - _INTENTION_LIFETIME
+
+
+def _violates_one_live(exc: IntegrityError) -> bool:
+    """Whether ``exc`` is the one-live-subscription-per-user unique index (not any other error)."""
+    diag = getattr(exc.orig, "diag", None)
+    return getattr(diag, "constraint_name", None) == _ONE_LIVE_INDEX
 
 
 __all__ = [

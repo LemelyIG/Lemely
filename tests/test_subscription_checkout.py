@@ -15,9 +15,16 @@ from typing import TYPE_CHECKING
 
 import pytest
 import sqlalchemy as sa
+from sqlalchemy import event
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from lemely.core.subscription_rules import STALE_CHECKOUT_AFTER
-from lemely.db.billing_repo import CheckoutUnavailable, PhoneRequired, UnknownPayer
+from lemely.db.billing_repo import (
+    INTENTION_EXPIRATION_SECONDS,
+    CheckoutUnavailable,
+    PhoneRequired,
+    UnknownPayer,
+)
 from lemely.db.models.billing import (
     Payment,
     PaymentPurpose,
@@ -29,6 +36,8 @@ from lemely.db.models.billing import (
 from lemely.db.models.enums import Role, SubscriptionStatus
 from lemely.db.models.team import TeacherMemberStatus
 from lemely.db.subscription_repo import (
+    _MODE_ALERT_EVERY,
+    _MODE_ALERTED,
     AlreadySubscribed,
     InvalidExtraSeats,
     NotLinkedParent,
@@ -68,6 +77,11 @@ if TYPE_CHECKING:
 def _database() -> Iterator[sessionmaker[Session]]:
     with throwaway_database() as factory:
         yield factory
+
+
+@pytest.fixture(autouse=True)
+def _fresh_alert_memo() -> None:
+    _MODE_ALERTED.clear()
 
 
 @pytest.fixture
@@ -610,18 +624,24 @@ def test_the_same_payer_supersedes_their_own_open_checkout(
         assert old.status is PaymentStatus.created
 
 
-@pytest.mark.parametrize(
-    "status", [PaymentStatus.failed, PaymentStatus.failed_mismatch, PaymentStatus.voided]
-)
-def test_a_failed_first_payment_is_superseded_by_anyone_at_once(
-    pg_sessionmaker: sessionmaker[Session], status: PaymentStatus
-) -> None:
-    parent = seed_user(pg_sessionmaker, Role.parent)
-    child = seed_user(pg_sessionmaker, Role.student)
-    link_parent(pg_sessionmaker, parent_id=parent, child_id=child)
-    tier = seed_tier(pg_sessionmaker)
-    dead = seed_subscription(
-        pg_sessionmaker,
+_NO_INTENTION = {"source": "create_intention", "error": "rejected", "outcome_unknown": False}
+_DECLINED = {"source": "callback", "success": False, "pending": False, "id": 4242}
+
+
+def _parent_child_with_pending(
+    sm: sessionmaker[Session],
+    *,
+    payment_status: PaymentStatus,
+    last_callback: dict[str, object] | None,
+    age: timedelta,
+) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
+    """A parent's pending checkout for their child: (parent, child, tier, subscription)."""
+    parent = seed_user(sm, Role.parent)
+    child = seed_user(sm, Role.student)
+    link_parent(sm, parent_id=parent, child_id=child)
+    tier = seed_tier(sm)
+    pending = seed_subscription(
+        sm,
         user_id=child,
         tier_id=tier,
         payer_id=parent,
@@ -630,15 +650,83 @@ def test_a_failed_first_payment_is_superseded_by_anyone_at_once(
         period_end=None,
     )
     seed_first_payment(
-        pg_sessionmaker,
-        subscription_id=dead,
-        status=status,
+        sm,
+        subscription_id=pending,
+        status=payment_status,
         paymob_txn_id=None,
-        created_at=T0 - timedelta(minutes=1),
+        created_at=T0 - age,
+        last_callback=last_callback,
+    )
+    return parent, child, tier, pending
+
+
+@pytest.mark.parametrize(
+    ("status", "last_callback"),
+    [
+        (PaymentStatus.failed, _NO_INTENTION),  # the intention was rejected: nothing can be paid
+        (PaymentStatus.failed_mismatch, _DECLINED),  # closed: Phase 02 ignores later callbacks
+        (PaymentStatus.voided, _DECLINED),
+    ],
+)
+def test_an_unpayable_first_payment_is_superseded_by_anyone_at_once(
+    pg_sessionmaker: sessionmaker[Session],
+    status: PaymentStatus,
+    last_callback: dict[str, object],
+) -> None:
+    _, child, tier, dead = _parent_child_with_pending(
+        pg_sessionmaker,
+        payment_status=status,
+        last_callback=last_callback,
+        age=timedelta(minutes=1),
     )
     replacement = _checkout(pg_sessionmaker, payer_user_id=child, plan_tier_id=tier)
     assert _status(pg_sessionmaker, dead) is SubscriptionStatus.expired
     assert replacement.subscription_id != dead
+
+
+def test_a_declined_card_keeps_the_checkout_payable_for_the_intention_lifetime(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Phase 02 lets a ``failed`` payment become ``paid`` while the intention is open (R20b).
+
+    A decline leaves the Unified Checkout page open for an hour, where the payer can try another
+    card. Replacing the checkout meanwhile would let that payment land on an expired plan.
+    """
+    parent, child, tier, declined = _parent_child_with_pending(
+        pg_sessionmaker,
+        payment_status=PaymentStatus.failed,
+        last_callback=_DECLINED,
+        age=timedelta(minutes=5),
+    )
+    # Another payer (the student) cannot replace it ...
+    _refused(pg_sessionmaker, AlreadySubscribed, payer_user_id=child, plan_tier_id=tier)
+    assert _status(pg_sessionmaker, declined) is SubscriptionStatus.pending_first_payment
+    # ... the payer who started it may start again (same-payer rule), as for any open checkout.
+    again = _checkout(
+        pg_sessionmaker, payer_user_id=parent, plan_tier_id=tier, beneficiary_user_id=child
+    )
+    assert _status(pg_sessionmaker, declined) is SubscriptionStatus.expired
+    assert again.subscription_id != declined
+
+
+def test_a_declined_checkout_is_replaceable_by_anyone_after_the_intention_lifetime(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _, child, tier, declined = _parent_child_with_pending(
+        pg_sessionmaker,
+        payment_status=PaymentStatus.failed,
+        last_callback=_DECLINED,
+        age=timedelta(seconds=INTENTION_EXPIRATION_SECONDS - 1),
+    )
+    _refused(pg_sessionmaker, AlreadySubscribed, payer_user_id=child, plan_tier_id=tier)
+    with pg_sessionmaker.begin() as session:
+        payment = session.scalars(
+            sa.select(Payment).where(Payment.subscription_id == declined)
+        ).one()
+        payment.created_at = T0 - timedelta(seconds=INTENTION_EXPIRATION_SECONDS)
+    taken = _checkout(pg_sessionmaker, payer_user_id=child, plan_tier_id=tier)
+    assert _status(pg_sessionmaker, declined) is SubscriptionStatus.expired
+    assert taken.subscription_id != declined
 
 
 def test_a_stale_open_checkout_is_superseded_by_another_payer_but_not_a_fresh_one(
@@ -913,6 +1001,37 @@ def test_a_plan_made_under_the_other_key_mode_is_refused_with_an_alert(
     assert keys[1] not in text
 
 
+def _mismatch_alerts(output: str) -> int:
+    return sum(
+        1 for line in output.splitlines() if "plan_mode_mismatch" in line and "alert=True" in line
+    )
+
+
+def test_the_mode_mismatch_alert_fires_once_per_tier_per_window(
+    pg_sessionmaker: sessionmaker[Session],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Every click on a mismatched plan is refused, but the operator is paged once (audit I8)."""
+    student = seed_user(pg_sessionmaker, Role.student)
+    tier = seed_tier(pg_sessionmaker)
+    settings = paymob_settings(secret_key="egy_sk_live_secret", public_key="egy_pk_live_public")
+
+    def _attempt(now_offset: timedelta) -> None:
+        with pg_sessionmaker() as session, pytest.raises(PlanModeMismatch):
+            _service(session, FakePaymobClient(), settings).create_subscription_checkout(
+                payer_user_id=student, plan_tier_id=tier, now=T0 + now_offset
+            )
+
+    _attempt(timedelta(0))
+    _attempt(timedelta(seconds=30))
+    _attempt(_MODE_ALERT_EVERY - timedelta(seconds=1))
+    logged = capsys.readouterr()
+    assert _mismatch_alerts(logged.out + logged.err) == 1
+    _attempt(_MODE_ALERT_EVERY)
+    logged = capsys.readouterr()
+    assert _mismatch_alerts(logged.out + logged.err) == 1  # a new window pages again
+
+
 def test_a_plan_in_the_configured_mode_is_sold(pg_sessionmaker: sessionmaker[Session]) -> None:
     student = seed_user(pg_sessionmaker, Role.student)
     tier = seed_tier(pg_sessionmaker, paymob_plan_mode="live")
@@ -954,6 +1073,140 @@ def test_the_intention_carries_the_payers_real_phone(
     _checkout(pg_sessionmaker, client, payer_user_id=student, plan_tier_id=tier)
     [body] = client.intentions
     assert body["billing_data"]["phone_number"] == "+201012345678"
+
+
+def test_a_phone_refusal_leaves_a_replaceable_checkout_untouched_in_the_same_session(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The phone check precedes the supersession flush: nothing is written, even uncommitted.
+
+    The committed-rows tests cannot see this (the caller never commits a refusal); a flushed
+    supersession is visible in the refusing session itself.
+    """
+    parent = seed_user(pg_sessionmaker, Role.parent, phone=None)
+    child = seed_user(pg_sessionmaker, Role.student)
+    link_parent(pg_sessionmaker, parent_id=parent, child_id=child)
+    tier = seed_tier(pg_sessionmaker)
+    pending = seed_subscription(
+        pg_sessionmaker,
+        user_id=child,
+        tier_id=tier,
+        payer_id=parent,
+        status=SubscriptionStatus.pending_first_payment,
+        period_start=None,
+        period_end=None,
+    )
+    seed_first_payment(
+        pg_sessionmaker,
+        subscription_id=pending,
+        status=PaymentStatus.created,
+        paymob_txn_id=None,
+        created_at=T0 - timedelta(minutes=10),
+    )
+    with pg_sessionmaker() as session:
+        service = _service(session, FakePaymobClient())
+        with pytest.raises(PhoneRequired):
+            service.create_subscription_checkout(
+                payer_user_id=parent, plan_tier_id=tier, beneficiary_user_id=child, now=T0
+            )
+        row = session.get(Subscription, pending)
+        assert row is not None
+        session.refresh(row)
+        assert row.status is SubscriptionStatus.pending_first_payment
+        assert session.scalar(sa.select(sa.func.count()).select_from(Subscription)) == 1
+        assert session.scalar(sa.select(sa.func.count()).select_from(Payment)) == 1
+
+
+# -- the row lock, the constraint mapping, the payload ---------------------------------------
+
+
+def test_the_live_rows_are_locked_in_a_fixed_order_until_the_checkout_ends(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The judgement of the live rows holds a ``FOR UPDATE`` lock (ordered, against deadlocks).
+
+    A live manual plan makes the checkout refuse without writing the row, so a lock held by the
+    refusing session can only come from the explicit ``FOR UPDATE``.
+    """
+    student = seed_user(pg_sessionmaker, Role.student)
+    tier = seed_tier(pg_sessionmaker)
+    manual = seed_subscription(
+        pg_sessionmaker, user_id=student, tier_id=tier, is_manually_activated=True
+    )
+    statements: list[str] = []
+
+    def _record(conn: object, cursor: object, statement: str, *rest: object) -> None:
+        statements.append(statement)
+
+    engine = pg_sessionmaker.kw["bind"]
+    event.listen(engine, "before_cursor_execute", _record)
+    try:
+        with pg_sessionmaker() as holder, pg_sessionmaker() as other:
+            service = _service(holder, FakePaymobClient())
+            with pytest.raises(AlreadySubscribed):
+                service.create_subscription_checkout(
+                    payer_user_id=student, plan_tier_id=tier, now=T0
+                )
+            # The refused session still holds its transaction, and with it the row lock.
+            other.execute(sa.text("SET LOCAL lock_timeout = '300ms'"))
+            with pytest.raises(OperationalError):
+                other.execute(
+                    sa.select(Subscription.id)
+                    .where(Subscription.id == manual)
+                    .with_for_update(nowait=True)
+                ).all()
+    finally:
+        event.remove(engine, "before_cursor_execute", _record)
+    locking = [
+        s
+        for s in statements
+        if "FROM subscriptions" in s and "subscriptions.user_id" in s and "FOR UPDATE" in s
+    ]
+    assert locking, "no locking select on subscriptions was issued"
+    assert all("ORDER BY subscriptions.id" in s for s in locking)
+
+
+def test_only_the_one_live_constraint_means_already_subscribed(
+    pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another integrity failure (the tier deleted mid-checkout) is not "already subscribed"."""
+    student = seed_user(pg_sessionmaker, Role.student)
+    tier = seed_tier(pg_sessionmaker)
+    original = SubscriptionService._retire_stale_checkout
+
+    def _retire_then_lose_the_tier(
+        self: SubscriptionService, *args: object, **kwargs: object
+    ) -> None:
+        original(self, *args, **kwargs)  # type: ignore[arg-type]
+        with pg_sessionmaker.begin() as other:
+            other.execute(sa.delete(PlanTier).where(PlanTier.id == tier))
+
+    monkeypatch.setattr(SubscriptionService, "_retire_stale_checkout", _retire_then_lose_the_tier)
+    client = FakePaymobClient()
+    with pytest.raises(IntegrityError) as excinfo:
+        _checkout(pg_sessionmaker, client, payer_user_id=student, plan_tier_id=tier)
+    assert not isinstance(excinfo.value, AlreadySubscribed)
+    assert client.intentions == []
+
+
+def test_the_intention_pins_currency_and_the_card_integration(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = seed_user(pg_sessionmaker, Role.student)
+    tier = seed_tier(pg_sessionmaker, currency="USD", price_minor=1_500)
+    settings = paymob_settings()
+    client = FakePaymobClient()
+    result = _checkout(
+        pg_sessionmaker, client, settings=settings, payer_user_id=student, plan_tier_id=tier
+    )
+    [body] = client.intentions
+    assert body["currency"] == "USD"
+    assert body["payment_methods"] == [settings.card_integration_id]  # the card 3DS integration
+    assert body["payment_methods"] != [settings.moto_integration_id]
+    with pg_sessionmaker() as session:
+        payment = session.get(Payment, result.payment_id)
+        assert payment is not None
+        assert payment.currency == "USD"
 
 
 # -- UD-5: a teacher cannot buy fewer seats than they hold -----------------------------------

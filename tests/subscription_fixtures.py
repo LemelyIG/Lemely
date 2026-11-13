@@ -307,8 +307,12 @@ def seed_first_payment(
     paid_at: datetime | None = T0,
     created_at: datetime | None = None,
     seat_quantity: int | None = None,
+    last_callback: dict[str, Any] | None = None,
 ) -> uuid.UUID:
     """Insert the ``subscription_first`` payment of ``subscription_id``.
+
+    ``last_callback`` is what Phase 02 stored last: ``{"source": "create_intention", ...}`` when no
+    intention was ever created, a callback body after a card decline.
 
     The payer is the subscription's payer, so a manual activation (no payer) cannot have one.
     """
@@ -332,6 +336,7 @@ def seed_first_payment(
             paymob_txn_id=paymob_txn_id,
             paymob_order_id=paymob_order_id,
             paid_at=paid_at if status is PaymentStatus.paid else None,
+            last_callback=last_callback,
         )
         if created_at is not None:
             payment.created_at = created_at
