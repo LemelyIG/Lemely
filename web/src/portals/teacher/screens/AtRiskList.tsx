@@ -10,6 +10,8 @@ import { cn, relativeTime } from "@/lib/utils"
 import { Select } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
+import { ListGroup, ListRow } from "@/components/ui/list-group"
+import { TableOrList } from "@/components/ui/table-or-list"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import {
   teacherLoadFailureMessage,
@@ -366,86 +368,110 @@ export function AtRiskList() {
                 }
               />
             ) : (
-              <Table density="operate"
-                tabIndex={0}
-                role="region"
-                aria-label="At-risk students, scrollable horizontally"
-              >
-                <caption className="sr-only">
-                  Flagged students across your classes, sortable by every column. Severity mirrors
-                  the order this list already arrives in from the server: most flags, then worst
-                  grade, first.
-                </caption>
-                <THead>
-                  <TR>
-                    {COLUMNS.map((col) => {
-                      const active = col.key === sortColumn
-                      return (
-                        <TH
-                          key={col.key}
-                          aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
-                          className="align-bottom"
-                        >
-                          <button
-                            type="button"
-                            onClick={() => toggleSort(col.key)}
-                            className="inline-flex items-center gap-1 text-eyebrow text-on-surface-variant transition-colors hover:text-on-surface cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-                          >
-                            {col.label}
-                            {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
-                          </button>
-                        </TH>
-                      )
-                    })}
-                  </TR>
-                </THead>
-                <TBody>
-                  {students.map((s) => (
-                    <TR key={s.studentId} className="align-top">
-                      <TD>
-                        <div className="flex items-center gap-2.5">
-                          <Avatar name={s.displayName} size="sm" />
-                          <Link to={`/teacher/students/${s.studentId}`} className="text-on-surface hover:underline">
-                            {s.displayName}
-                          </Link>
-                        </div>
-                      </TD>
-                      <TD>
-                        <Link
-                          to={`/teacher/classes/${s.classId}`}
-                          className="text-on-surface-variant transition-colors hover:text-on-surface hover:underline"
-                        >
-                          {s.className}
-                        </Link>
-                      </TD>
-                      <TD>
-                        {s.grade ? (
-                          // `AtRiskListEntryDTO.grade` is the student's latest
-                          // recorded grade — the same underlying value as
-                          // `StudentRowDTO.grade` (T-03) and
-                          // `SubjectPredictionDTO.predictedGrade` (T-05), both of
-                          // which render `basis="predicted"` for exactly this
-                          // reason (their own docstrings: "the same domain
-                          // notion... already uses for its below-target rule").
-                          // Matching that here, not `"achieved"` — the same
-                          // value must never read differently on two screens.
-                          <GradeBadge grade={s.grade} size="inline" basis="predicted" />
-                        ) : (
-                          <span className="text-body-sm text-on-surface-variant">No paper grade yet</span>
-                        )}
-                      </TD>
-                      <TD>
-                        <div className={cn("text-data-md", s.flags.length >= 2 ? "text-error" : "text-on-surface-variant")}>
-                          {s.flags.length} flag{s.flags.length === 1 ? "" : "s"}
-                        </div>
-                      </TD>
-                      <TD>
-                        <FlagsCell studentId={s.studentId} flags={s.flags} />
-                      </TD>
-                    </TR>
-                  ))}
-                </TBody>
-              </Table>
+              <TableOrList
+                label="At-risk students"
+                storageKey="lemely.atRisk.view"
+                list={
+                  <ListGroup label="At-risk students">
+                    {students.map((s) => (
+                      <ListRow
+                        key={s.studentId}
+                        to={`/teacher/students/${s.studentId}`}
+                        leading={<Avatar name={s.displayName} size="sm" />}
+                        title={s.displayName}
+                        subtitle={`${s.className} · ${s.grade ? `Predicted ${s.grade}` : "No paper grade yet"}`}
+                        trailing={
+                          <span className={cn("text-data-md", s.flags.length >= 2 ? "text-error" : "text-on-surface-variant")}>
+                            {s.flags.length} flag{s.flags.length === 1 ? "" : "s"}
+                          </span>
+                        }
+                      />
+                    ))}
+                  </ListGroup>
+                }
+                table={
+                  <Table density="operate"
+                    tabIndex={0}
+                    role="region"
+                    aria-label="At-risk students, scrollable horizontally"
+                  >
+                    <caption className="sr-only">
+                      Flagged students across your classes, sortable by every column. Severity mirrors
+                      the order this list already arrives in from the server: most flags, then worst
+                      grade, first.
+                    </caption>
+                    <THead>
+                      <TR>
+                        {COLUMNS.map((col) => {
+                          const active = col.key === sortColumn
+                          return (
+                            <TH
+                              key={col.key}
+                              aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
+                              className="align-bottom"
+                            >
+                              <button
+                                type="button"
+                                onClick={() => toggleSort(col.key)}
+                                className="inline-flex items-center gap-1 text-eyebrow text-on-surface-variant transition-colors hover:text-on-surface cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                              >
+                                {col.label}
+                                {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
+                              </button>
+                            </TH>
+                          )
+                        })}
+                      </TR>
+                    </THead>
+                    <TBody>
+                      {students.map((s) => (
+                        <TR key={s.studentId} className="align-top">
+                          <TD>
+                            <div className="flex items-center gap-2.5">
+                              <Avatar name={s.displayName} size="sm" />
+                              <Link to={`/teacher/students/${s.studentId}`} className="text-on-surface hover:underline">
+                                {s.displayName}
+                              </Link>
+                            </div>
+                          </TD>
+                          <TD>
+                            <Link
+                              to={`/teacher/classes/${s.classId}`}
+                              className="text-on-surface-variant transition-colors hover:text-on-surface hover:underline"
+                            >
+                              {s.className}
+                            </Link>
+                          </TD>
+                          <TD>
+                            {s.grade ? (
+                              // `AtRiskListEntryDTO.grade` is the student's latest
+                              // recorded grade — the same underlying value as
+                              // `StudentRowDTO.grade` (T-03) and
+                              // `SubjectPredictionDTO.predictedGrade` (T-05), both of
+                              // which render `basis="predicted"` for exactly this
+                              // reason (their own docstrings: "the same domain
+                              // notion... already uses for its below-target rule").
+                              // Matching that here, not `"achieved"` — the same
+                              // value must never read differently on two screens.
+                              <GradeBadge grade={s.grade} size="inline" basis="predicted" />
+                            ) : (
+                              <span className="text-body-sm text-on-surface-variant">No paper grade yet</span>
+                            )}
+                          </TD>
+                          <TD>
+                            <div className={cn("text-data-md", s.flags.length >= 2 ? "text-error" : "text-on-surface-variant")}>
+                              {s.flags.length} flag{s.flags.length === 1 ? "" : "s"}
+                            </div>
+                          </TD>
+                          <TD>
+                            <FlagsCell studentId={s.studentId} flags={s.flags} />
+                          </TD>
+                        </TR>
+                      ))}
+                    </TBody>
+                  </Table>
+                }
+              />
             )}
             </>
           )
