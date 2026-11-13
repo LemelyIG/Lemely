@@ -120,6 +120,7 @@ const AT_RISK_LIST = (omarAcknowledged) => {
         grade: "D",
         flags: [flag("below_target", omarAcknowledged ? { acknowledgedAt: "2026-11-13T09:00:00Z", note: "Spoke to him" } : null)],
       },
+      { studentId: "s-3", displayName: "Layla Hassan", classId: "class-1", className: "Year 11 Physics", grade: "E", flags: [flag("declining_trend"), flag("below_target"), flag("inactive")] },
     ],
   }
 }
@@ -698,7 +699,7 @@ NATIVE_CHECKS.push({
       label: "At-risk students",
       storageKey: "lemely.atRisk.view",
       rowSelector: ".lm-native-main .lm-native-row",
-      rows: 2,
+      rows: 3,
       mocks: async (page) => {
         await teacherShellMocks(page)
         await page.route(/\/api\/teacher\/at-risk(\?|$)/, (route) => jsonRoute(route, AT_RISK_LIST(false)))
@@ -854,6 +855,12 @@ NATIVE_CHECKS.push({
       await dialog.getByText("Spoke to him").waitFor()
       await page.keyboard.press("Escape")
       await dialog.waitFor({ state: "detached" })
+      // The trigger is gone, so focus must land on the row's own link, not the page.
+      const focused = await page.evaluate(() => {
+        const a = document.activeElement
+        return { tag: a?.tagName, text: a?.textContent ?? "" }
+      })
+      if (focused.tag !== "A" || !/Omar Nabil/.test(focused.text)) throw new Error(`focus not returned to the row link: ${JSON.stringify(focused)}`)
       const omar = rows.filter({ hasText: "Omar Nabil" })
       await omar.getByText(/Below target grade \(acknowledged\)/).waitFor()
       if ((await page.getByRole("button", { name: "Acknowledge flags for Omar Nabil" }).count()) !== 0) {
@@ -865,6 +872,41 @@ NATIVE_CHECKS.push({
     },
   },
 );
+
+/** Reasons read in full: the three-reason student's subtitle is not clamped or truncated, on both platforms. */
+const AT_RISK_REASONS_CHECKS = ["ios", "android"].map((platform) => ({
+  id: `native-${platform}-at-risk-reasons-read-in-full`,
+  platform,
+  width: 390,
+  app: {
+    surface: "teacher-overview",
+    state: "populated",
+    path: "/teacher/at-risk",
+    mocks: async (page) => {
+      await teacherShellMocks(page)
+      await page.route(/\/api\/teacher\/at-risk(\?|$)/, (route) => jsonRoute(route, AT_RISK_LIST(false)))
+    },
+  },
+  async run(page) {
+    const row = page.locator(".lm-native-main .lm-native-row", { hasText: "Layla Hassan" })
+    await row.first().waitFor()
+    const info = await row.first().evaluate((el) => {
+      const sub = el.querySelector("a > span:nth-of-type(2) > span:nth-of-type(2)")
+      const title = el.querySelector("a > span:nth-of-type(2) > span:nth-of-type(1)")
+      return {
+        text: sub?.textContent ?? "",
+        subClipped: sub ? sub.scrollHeight > sub.clientHeight + 1 || sub.scrollWidth > sub.clientWidth + 1 : null,
+        titleStart: title?.textContent ?? "",
+      }
+    })
+    for (const label of ["Declining trend", "Below target grade", "Inactive"]) {
+      if (!info.text.includes(label)) throw new Error(`reason missing from subtitle: ${label} (${info.text})`)
+    }
+    if (info.subClipped !== false) throw new Error(`reasons are truncated: ${JSON.stringify(info)}`)
+    if (!info.titleStart.startsWith("Layla Hassan")) throw new Error(`name not leading the title: ${info.titleStart}`)
+  },
+}))
+NATIVE_CHECKS.push(...AT_RISK_REASONS_CHECKS)
 
 /** Type a search that matches nothing: a plain message, no fake row, no empty group. */
 async function expectNoMatch(page, message) {

@@ -80,7 +80,7 @@ export function ListRow({ title, subtitle, leading, trailing, to, href, state, o
   if (action && (to || onClick)) {
     // The wrapper carries the row classes so separators and min-heights keep
     // working; the tap target and the action sit side by side inside it.
-    const main = cn("min-w-0 flex-1", base)
+    const main = cn("min-w-0 flex-1 self-stretch", base)
     return (
       <div className="lm-list-row lm-native-row flex w-full items-center" data-lines={lines}>
         {to ? (

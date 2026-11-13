@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
@@ -18,6 +18,7 @@ import {
   teacherMutationFailureMessage,
 } from "@/lib/teacherOutcome"
 import { Avatar } from "@/components/ui/avatar"
+import { CheckCircle } from "@phosphor-icons/react"
 import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { useDialogHistory } from "@/lib/nav/useDialogHistory"
 import {
@@ -147,9 +148,12 @@ const COLUMNS: { key: SortColumn; label: string }[] = [
 function AcknowledgeControl({
   studentId,
   flag,
+  askVariant = "secondary",
 }: {
   studentId: string
   flag: AtRiskFlag
+  /** The sheet sits one surface step above the page, where the secondary fill disappears in dark. */
+  askVariant?: "secondary" | "primary"
 }) {
   const [open, setOpen] = useState(false)
   const [note, setNote] = useState("")
@@ -186,7 +190,7 @@ function AcknowledgeControl({
 
   if (!open) {
     return (
-      <Button type="button" size="sm" variant="secondary" className="mt-1" onClick={() => setOpen(true)}>
+      <Button type="button" size="sm" variant={askVariant} className="mt-1" onClick={() => setOpen(true)}>
         Acknowledge
       </Button>
     )
@@ -241,7 +245,15 @@ function AcknowledgeControl({
   )
 }
 
-function FlagsCell({ studentId, flags }: { studentId: string; flags: AtRiskFlag[] }) {
+function FlagsCell({
+  studentId,
+  flags,
+  askVariant,
+}: {
+  studentId: string
+  flags: AtRiskFlag[]
+  askVariant?: "secondary" | "primary"
+}) {
   if (flags.length === 0) return <span className="text-body-sm text-on-surface-variant">—</span>
   return (
     <div className="flex flex-col gap-3 max-w-[360px]">
@@ -254,7 +266,7 @@ function FlagsCell({ studentId, flags }: { studentId: string; flags: AtRiskFlag[
             />
             <span className="flex-1 text-pretty">{f.summary}</span>
           </div>
-          <AcknowledgeControl studentId={studentId} flag={f} />
+          <AcknowledgeControl studentId={studentId} flag={f} askVariant={askVariant} />
         </div>
       ))}
     </div>
@@ -280,6 +292,7 @@ const ACK_SHEET_SURFACE =
  */
 function AtRiskListRow({ student: s }: { student: AtRiskListEntry }) {
   const [open, setOpen] = useState(false)
+  const anchor = useRef<HTMLSpanElement>(null)
   useDialogHistory({ open, dismissible: true, onClose: () => setOpen(false) })
   const pending = s.flags.some((f) => !f.acknowledged)
   const reasons = s.flags.map((f) => `${reasonLabel(f.reason)}${f.acknowledged ? " (acknowledged)" : ""}`).join(" · ")
@@ -287,32 +300,53 @@ function AtRiskListRow({ student: s }: { student: AtRiskListEntry }) {
     <ListRow
       to={`/teacher/students/${s.studentId}`}
       leading={<Avatar name={s.displayName} size="sm" />}
-      title={s.displayName}
-      subtitle={`${s.className} · ${reasons}`}
+      // The class trails the name and truncates first; the reasons own their line.
+      title={
+        <>
+          {s.displayName}
+          <span className="text-on-surface-variant"> · {s.className}</span>
+        </>
+      }
+      subtitle={reasons}
       lines={3}
       action={
-        <Sheet open={open} onOpenChange={setOpen}>
-          {pending ? (
-            <SheetTrigger asChild>
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                className="min-h-11 min-w-11 android:min-h-12! android:min-w-12!"
-                aria-label={`Acknowledge flags for ${s.displayName}`}
-              >
-                Acknowledge
-              </Button>
-            </SheetTrigger>
-          ) : null}
-          <SheetContent side="adaptive" aria-describedby="ack-sheet-desc" className={ACK_SHEET_SURFACE}>
-            <SheetTitle className="pe-8 text-display-md">{s.displayName}</SheetTitle>
-            <SheetDescription id="ack-sheet-desc">
-              {s.className}. Acknowledging notes that you have seen a flag. It is never a mute.
-            </SheetDescription>
-            <FlagsCell studentId={s.studentId} flags={s.flags} />
-          </SheetContent>
-        </Sheet>
+        <span ref={anchor} className="contents">
+          <Sheet open={open} onOpenChange={setOpen}>
+            {pending ? (
+              <SheetTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  className="min-h-11 min-w-11 px-0 android:min-h-12! android:min-w-12!"
+                  aria-label={`Acknowledge flags for ${s.displayName}`}
+                  title="Acknowledge"
+                >
+                  <CheckCircle size={22} aria-hidden="true" />
+                </Button>
+              </SheetTrigger>
+            ) : null}
+            <SheetContent
+              side="adaptive"
+              className={ACK_SHEET_SURFACE}
+              onCloseAutoFocus={(e) => {
+                // The trigger is gone once every flag is acknowledged, so focus would fall to the page.
+                if (pending) return
+                const link = anchor.current?.closest(".lm-native-row")?.querySelector("a")
+                if (link) {
+                  e.preventDefault()
+                  link.focus()
+                }
+              }}
+            >
+              <SheetTitle className="pe-8 text-display-md">{s.displayName}</SheetTitle>
+              <SheetDescription>
+                {s.className}. Acknowledging notes that you have seen a flag. It is never a mute.
+              </SheetDescription>
+              <FlagsCell studentId={s.studentId} flags={s.flags} askVariant="primary" />
+            </SheetContent>
+          </Sheet>
+        </span>
       }
     />
   )
