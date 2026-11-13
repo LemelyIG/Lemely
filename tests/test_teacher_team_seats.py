@@ -702,10 +702,25 @@ def test_claim_holds_the_subscription_lock_before_it_waits_for_the_member_row(
     assert row.scope_subjects == ["0580", "0625"]
 
 
-def test_a_claim_issues_no_grant(sm: sessionmaker[Session]) -> None:
-    """The seat allowance is Phase 05's hook; the claim itself never touches the ledger."""
+def test_a_claim_issues_this_months_prorated_seat_grant(sm: sessionmaker[Session]) -> None:
+    """The claim hook (Phase 05): one ``seat_allowance`` grant for the claim month, prorated."""
     teacher, student = add_user(sm, Role.teacher), add_user(sm)
     add_teacher_plan(sm, teacher, included_seats=1)
+    class_id, _ = add_class(sm, teacher_id=teacher, subject_code="0580")
+    seat = join(sm, class_id, student)
+    with sm() as session:
+        grants = list(session.scalars(sa.select(UsageGrant)))
+    # NOW is 14 November, a 30-day month: 17 days left (the 14th included) of 100 units.
+    [grant] = grants
+    assert grant.kind is GrantKind.seat_allowance
+    assert (grant.owner_user_id, grant.teacher_member_id) == (student, seat)
+    assert grant.units == 57
+    assert grant.expires_at == month_end(NOW)
+
+
+def test_a_claim_on_a_zero_seat_allowance_tier_issues_no_grant(sm: sessionmaker[Session]) -> None:
+    teacher, student = add_user(sm, Role.teacher), add_user(sm)
+    add_manual_teacher_plan(sm, teacher, included_seats=1)  # seat_allowance_units = 0
     class_id, _ = add_class(sm, teacher_id=teacher, subject_code="0580")
     join(sm, class_id, student)
     with sm() as session:
@@ -726,7 +741,8 @@ def test_a_seat_allowance_grant_on_a_claimed_seat_never_repays_student_debt(
             owner_user_id=student,
             kind=GrantKind.seat_allowance,
             units=40,
-            idempotency_key=f"seat:{seat_id}:2026-11",
+            # December: the claim above already issued November's grant under the 2026-11 key.
+            idempotency_key=f"seat:{seat_id}:2026-12",
             expires_at=None,
             visible=False,
             teacher_member_id=seat_id,

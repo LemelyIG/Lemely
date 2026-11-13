@@ -22,13 +22,15 @@ order:
 3. the ledger: the owner advisory locks in ascending user-id order, then the grant
    rows in chain order (index R14, ``lemely.db.usage_ledger_repo``).
 
-Steps 1 and 2 are taken here. Step 3 is not taken in this module's Phase 03 body: a
-claim touches no ledger row. Phase 05 (Task 10 Step 4) calls
-``grant_seat_allowance_on_claim`` inside ``claim_seat_for_class_join``, before each of
-its two returns, which puts the ledger locks at step 3 of the same transaction. That
-grant is a ``seat_allowance`` grant, which the ledger never uses to repay the student's
-own debt (index R13), and the seat's ``cap_units`` and ``cap_period`` bound what the
-student may overflow into the teacher's credits.
+Steps 1 and 2 are taken here. Step 3 is the seat-allowance hook:
+``claim_seat_for_class_join`` calls ``grant_seat_allowance_on_claim``
+(``lemely.db.seat_allowance_repo``) before each of its two returns, inside a savepoint,
+which puts the ledger locks at step 3 of the same transaction. That grant is a
+``seat_allowance`` grant, which the ledger never uses to repay the student's own debt
+(index R13), and the seat's ``cap_units`` and ``cap_period`` bound what the student may
+overflow into the teacher's credits. A ledger failure there is logged (alert
+``seat_allowance_grant_failed``) and never refuses the class join: the monthly job repairs
+the seat on its next tick.
 ``set_scope``, ``set_cap`` and ``request_removal`` lock only the member row (step 2).
 ``release_due`` is one ``UPDATE`` and locks no subscription row: releasing a seat only
 ever frees capacity.
@@ -46,6 +48,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Final
 
+import structlog
 from sqlalchemy import and_, case, exists, func, or_, select, true, update
 from sqlalchemy.exc import IntegrityError
 
@@ -83,6 +86,7 @@ from lemely.db.models.usage import (
     UsageGrant,
     UsageGrantBalance,
 )
+from lemely.db.seat_allowance_repo import grant_seat_allowance_on_claim
 from lemely.db.usage_ledger_repo import HELD_KINDS, UsageLedger, _usable_at
 
 if TYPE_CHECKING:
@@ -91,6 +95,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy import ColumnElement
     from sqlalchemy.orm import InstrumentedAttribute, Session, sessionmaker
+
+alerts = structlog.get_logger("lemely.db.teacher_team_repo")
 
 LIVE_PLAN_STATUSES: Final = (SubscriptionStatus.active, SubscriptionStatus.past_due)
 """Subscription states whose seats count (``past_due`` is the 3-day grace, spec §5.2)."""
@@ -317,9 +323,11 @@ class TeacherTeamService:
         decide which seat pays first ("older seat pays first"). An assistant row, live
         or removed, is never converted to a seat.
 
-        The claim takes the locks of the module docstring's steps 1 and 2 and issues
-        no grant itself. ``now`` is the claim instant, passed on to Phase 05's
-        seat-allowance-on-claim hook.
+        The claim takes the locks of the module docstring's steps 1 and 2, then issues
+        this month's seat allowance for the claim instant ``now``, prorated to the days
+        left (spec §5.9); idempotent for a re-used seat, and nothing for a ``leaving``
+        one. The grant runs in a savepoint and a failure is logged, never raised: a ledger
+        fault must not refuse a class join, and the monthly job repairs the seat.
 
         Raises:
             NoFreeSeat: A new or reactivated seat would exceed the plan's seats.
@@ -327,7 +335,6 @@ class TeacherTeamService:
                 classes enrol through school seats, spec §2.8), the student is the
                 class's own teacher, or the pair is an assistant (live or removed).
         """
-        del now  # the claim itself is instant-independent; Phase 05 adds the allowance
         cls = self._session.get(SchoolClass, class_id)
         if cls is None:
             raise TeamStateError(f"Unknown class: {class_id}")
@@ -346,6 +353,7 @@ class TeacherTeamService:
             if subject is not None and subject not in current:
                 existing.scope_subjects = sorted([*current, subject])
                 self._session.flush()
+            self._grant_seat_allowance(existing.id, now=now)
             return existing
         if self.seats_used(teacher_id) >= capacity:
             raise NoFreeSeat(f"Teacher {teacher_id} has no free seat")
@@ -372,7 +380,21 @@ class TeacherTeamService:
             member.cap_units = None
             member.cap_period = CapPeriod.month
         self._session.flush()
+        self._grant_seat_allowance(member.id, now=now)
         return member
+
+    def _grant_seat_allowance(self, member_id: uuid.UUID, *, now: datetime) -> None:
+        """Issue the seat's allowance for this month in a savepoint; a failure is only alerted."""
+        try:
+            with self._session.begin_nested():
+                grant_seat_allowance_on_claim(self._session, member_id, now=now)
+        except Exception:
+            alerts.error(
+                "seat_allowance_grant_failed",
+                alert=True,
+                teacher_member_id=str(member_id),
+                exc_info=True,
+            )
 
     # -- Seats: reads ----------------------------------------------------------
 
