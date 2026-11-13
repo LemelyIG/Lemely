@@ -226,74 +226,74 @@ function QuestionAnalysisTable({ questions }: { questions: QuizQuestionAnalysis[
         </ListGroup>
       }
       table={
-    <Table density="operate"
-      tabIndex={0}
-      role="region"
-      aria-label="Per-question analysis, scrollable horizontally"
-    >
-      <THead>
-        <TR>
-          <TH>Q</TH>
-          <TH>Question</TH>
-          <TH>Topic</TH>
-          <TH numeric>Accuracy</TH>
-          <TH numeric>Avg marks</TH>
-          <TH numeric>Full marks</TH>
-          <TH numeric>Zero</TH>
-          <TH numeric>Answered</TH>
-          <TH>Flags</TH>
-        </TR>
-      </THead>
-      <TBody>
-        {questions.map((q) => (
-          <TR key={q.questionRef}>
-            <TD className="text-data-sm text-on-surface-variant">{q.questionRef}</TD>
-            <TD className="max-w-[320px] text-on-surface">
-              <span className="line-clamp-2">{q.prompt}</span>
-            </TD>
-            <TD className="text-on-surface-variant">{q.topic ?? "—"}</TD>
-            <TD numeric className="tabular-nums">
-              {q.accuracy == null ? (
-                <span className="text-on-surface-variant" title="Nobody has been marked on this question yet">
-                  –
-                </span>
-              ) : (
-                <span
-                  className={cn(
-                    "px-1.5 py-0.5 rounded font-medium",
-                    TONE_CLASS[accuracyTone(q.accuracy)],
+        <Table density="operate"
+          tabIndex={0}
+          role="region"
+          aria-label="Per-question analysis, scrollable horizontally"
+        >
+          <THead>
+            <TR>
+              <TH>Q</TH>
+              <TH>Question</TH>
+              <TH>Topic</TH>
+              <TH numeric>Accuracy</TH>
+              <TH numeric>Avg marks</TH>
+              <TH numeric>Full marks</TH>
+              <TH numeric>Zero</TH>
+              <TH numeric>Answered</TH>
+              <TH>Flags</TH>
+            </TR>
+          </THead>
+          <TBody>
+            {questions.map((q) => (
+              <TR key={q.questionRef}>
+                <TD className="text-data-sm text-on-surface-variant">{q.questionRef}</TD>
+                <TD className="max-w-[320px] text-on-surface">
+                  <span className="line-clamp-2">{q.prompt}</span>
+                </TD>
+                <TD className="text-on-surface-variant">{q.topic ?? "—"}</TD>
+                <TD numeric className="tabular-nums">
+                  {q.accuracy == null ? (
+                    <span className="text-on-surface-variant" title="Nobody has been marked on this question yet">
+                      –
+                    </span>
+                  ) : (
+                    <span
+                      className={cn(
+                        "px-1.5 py-0.5 rounded font-medium",
+                        TONE_CLASS[accuracyTone(q.accuracy)],
+                      )}
+                    >
+                      {pct(q.accuracy)}
+                    </span>
                   )}
-                >
-                  {pct(q.accuracy)}
-                </span>
-              )}
-            </TD>
-            <TD numeric className="text-on-surface-variant tabular-nums">
-              {q.averageMarks == null ? "—" : `${q.averageMarks.toFixed(1)} / ${q.totalMarks}`}
-            </TD>
-            <TD numeric className="text-on-surface-variant tabular-nums">
-              {q.fullMarksCount}
-            </TD>
-            <TD numeric className="text-on-surface-variant tabular-nums">
-              {q.zeroMarksCount}
-            </TD>
-            <TD numeric className="text-on-surface-variant tabular-nums">
-              {q.answeredCount}
-            </TD>
-            <TD>
-              <div className="flex gap-1 flex-wrap">
-                {q.needsReviewCount > 0 ? (
-                  <Chip tone="warn">{q.needsReviewCount} to review</Chip>
-                ) : null}
-                {q.overriddenCount > 0 ? (
-                  <Chip tone="neutral">{q.overriddenCount} overridden</Chip>
-                ) : null}
-              </div>
-            </TD>
-          </TR>
-        ))}
-      </TBody>
-    </Table>
+                </TD>
+                <TD numeric className="text-on-surface-variant tabular-nums">
+                  {q.averageMarks == null ? "—" : `${q.averageMarks.toFixed(1)} / ${q.totalMarks}`}
+                </TD>
+                <TD numeric className="text-on-surface-variant tabular-nums">
+                  {q.fullMarksCount}
+                </TD>
+                <TD numeric className="text-on-surface-variant tabular-nums">
+                  {q.zeroMarksCount}
+                </TD>
+                <TD numeric className="text-on-surface-variant tabular-nums">
+                  {q.answeredCount}
+                </TD>
+                <TD>
+                  <div className="flex gap-1 flex-wrap">
+                    {q.needsReviewCount > 0 ? (
+                      <Chip tone="warn">{q.needsReviewCount} to review</Chip>
+                    ) : null}
+                    {q.overriddenCount > 0 ? (
+                      <Chip tone="neutral">{q.overriddenCount} overridden</Chip>
+                    ) : null}
+                  </div>
+                </TD>
+              </TR>
+            ))}
+          </TBody>
+        </Table>
       }
     />
   )
@@ -337,64 +337,64 @@ function StudentTable({ students }: { students: QuizStudentResult[] }) {
         </ListGroup>
       }
       table={
-    <Table density="operate"
-      tabIndex={0}
-      role="region"
-      aria-label="Per-student results, scrollable horizontally"
-    >
-      <THead>
-        <TR>
-          <TH>Student</TH>
-          <TH>Status</TH>
-          <TH numeric>Score</TH>
-          <TH>Submitted</TH>
-          <TH>Notes</TH>
-        </TR>
-      </THead>
-      <TBody>
-        {students.map((s) => (
-          <TR key={s.studentId}>
-            <TD>
-              <Link
-                to={`/teacher/students/${s.studentId}`}
-                className="text-on-surface no-underline hover:underline"
-              >
-                {s.displayName}
-              </Link>
-            </TD>
-            <TD className="text-on-surface-variant">{statusLabel(s.status)}</TD>
-            <TD numeric className="tabular-nums">
-              {s.percentage == null ? (
-                <span className="text-on-surface-variant">—</span>
-              ) : (
-                <span
-                  className={cn(
-                    "px-1.5 py-0.5 rounded font-medium",
-                    TONE_CLASS[accuracyTone(s.percentage)],
+        <Table density="operate"
+          tabIndex={0}
+          role="region"
+          aria-label="Per-student results, scrollable horizontally"
+        >
+          <THead>
+            <TR>
+              <TH>Student</TH>
+              <TH>Status</TH>
+              <TH numeric>Score</TH>
+              <TH>Submitted</TH>
+              <TH>Notes</TH>
+            </TR>
+          </THead>
+          <TBody>
+            {students.map((s) => (
+              <TR key={s.studentId}>
+                <TD>
+                  <Link
+                    to={`/teacher/students/${s.studentId}`}
+                    className="text-on-surface no-underline hover:underline"
+                  >
+                    {s.displayName}
+                  </Link>
+                </TD>
+                <TD className="text-on-surface-variant">{statusLabel(s.status)}</TD>
+                <TD numeric className="tabular-nums">
+                  {s.percentage == null ? (
+                    <span className="text-on-surface-variant">—</span>
+                  ) : (
+                    <span
+                      className={cn(
+                        "px-1.5 py-0.5 rounded font-medium",
+                        TONE_CLASS[accuracyTone(s.percentage)],
+                      )}
+                    >
+                      {s.awardedMarks}/{s.maximumMarks} · {pct(s.percentage)}
+                    </span>
                   )}
-                >
-                  {s.awardedMarks}/{s.maximumMarks} · {pct(s.percentage)}
-                </span>
-              )}
-            </TD>
-            <TD className="text-on-surface-variant">
-              {s.submittedAt ? relativeTime(s.submittedAt) : "—"}
-            </TD>
-            <TD>
-              <div className="flex gap-1 flex-wrap items-center">
-                {s.needsTeacherReview ? <Chip tone="warn">Needs review</Chip> : null}
-                {s.markingError ? (
-                  <span className="inline-flex items-center gap-1 text-body-sm text-error">
-                    <Warning weight="fill" className="h-3.5 w-3.5 flex-none" />
-                    Marking failed: {s.markingError}
-                  </span>
-                ) : null}
-              </div>
-            </TD>
-          </TR>
-        ))}
-      </TBody>
-    </Table>
+                </TD>
+                <TD className="text-on-surface-variant">
+                  {s.submittedAt ? relativeTime(s.submittedAt) : "—"}
+                </TD>
+                <TD>
+                  <div className="flex gap-1 flex-wrap items-center">
+                    {s.needsTeacherReview ? <Chip tone="warn">Needs review</Chip> : null}
+                    {s.markingError ? (
+                      <span className="inline-flex items-center gap-1 text-body-sm text-error">
+                        <Warning weight="fill" className="h-3.5 w-3.5 flex-none" />
+                        Marking failed: {s.markingError}
+                      </span>
+                    ) : null}
+                  </div>
+                </TD>
+              </TR>
+            ))}
+          </TBody>
+        </Table>
       }
     />
   )

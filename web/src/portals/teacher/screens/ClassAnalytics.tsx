@@ -619,16 +619,16 @@ export function ClassAnalytics() {
                     label="Per-paper comparison"
                     storageKey="lemely.analytics.papers.view"
                     list={
-                    <ListGroup>
-                      {data.paperComparison.map((p) => (
-                        <ListRow
-                          key={p.paperId}
-                          title={`${p.subjectCode} · Paper ${p.paperNumber} Variant ${p.paperVariant}`}
-                          subtitle={`${p.attemptCount} ${p.attemptCount === 1 ? "attempt" : "attempts"} · ${p.studentCount} ${p.studentCount === 1 ? "student" : "students"}`}
-                          trailing={<span className="text-data-sm text-on-surface">{Math.round(p.meanPercentage)}%</span>}
-                        />
-                      ))}
-                    </ListGroup>
+                      <ListGroup>
+                        {data.paperComparison.map((p) => (
+                          <ListRow
+                            key={p.paperId}
+                            title={`${p.subjectCode} · Paper ${p.paperNumber} Variant ${p.paperVariant}`}
+                            subtitle={`${p.attemptCount} ${p.attemptCount === 1 ? "attempt" : "attempts"} · ${p.studentCount} ${p.studentCount === 1 ? "student" : "students"}`}
+                            trailing={<span className="text-data-sm text-on-surface">{Math.round(p.meanPercentage)}%</span>}
+                          />
+                        ))}
+                      </ListGroup>
                     }
                     table={
                       <Table density="operate"
