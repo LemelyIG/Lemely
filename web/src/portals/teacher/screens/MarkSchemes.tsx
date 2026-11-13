@@ -4,6 +4,8 @@ import { useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { QueryState } from "@/components/ui/query-state"
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
+import { ListGroup, ListRow } from "@/components/ui/list-group"
+import { TableOrList } from "@/components/ui/table-or-list"
 import { cn } from "@/lib/utils"
 import { StatCard } from "../components/StatCard"
 import { useSchemes, useUploadScheme } from "@/lib/hooks/useTeacherApi"
@@ -129,50 +131,68 @@ export function MarkSchemes() {
               ))}
             </div>
 
-            <Table density="operate"
-              tabIndex={0}
-              role="region"
-              aria-label="Uploaded mark schemes, scrollable horizontally"
-            >
-              <caption className="sr-only">Uploaded mark schemes</caption>
-              <THead>
-                <TR>
-                  <TH>Document</TH>
-                  <TH>Paper</TH>
-                  <TH>Session</TH>
-                  <TH numeric>Marks</TH>
-                  <TH numeric>Questions</TH>
-                  <TH>Status</TH>
-                </TR>
-              </THead>
-              <TBody>
-                {schemes.map((m) => (
-                  <TR key={m.doc}>
-                    <TD className="min-w-0 max-w-[280px] overflow-hidden text-ellipsis whitespace-nowrap text-data-sm">
-                      {m.doc}
-                    </TD>
-                    <TD className="text-body-md text-on-surface-variant">{m.paper}</TD>
-                    <TD className="text-body-md text-on-surface-variant">{m.session}</TD>
-                    <TD numeric className="text-data-sm">
-                      {m.maxMarks ?? "-"}
-                    </TD>
-                    <TD numeric className="text-data-sm text-on-surface-variant">
-                      {m.questionCount ?? "-"}
-                    </TD>
-                    <TD>
-                      <span
-                        className={cn(
-                          "text-body-sm rounded-full px-[11px] py-[3px]",
-                          STATUS_CHIP[m.status],
-                        )}
-                      >
-                        {m.status}
-                      </span>
-                    </TD>
-                  </TR>
-                ))}
-              </TBody>
-            </Table>
+            <TableOrList
+              label="Mark schemes"
+              storageKey="lemely.markSchemes.view"
+              list={
+                <ListGroup label="Mark schemes">
+                  {schemes.map((m) => (
+                    <ListRow
+                      key={m.doc}
+                      title={m.doc}
+                      subtitle={`${m.paper} · ${m.session} · ${m.status}`}
+                      trailing={<span className="text-data-sm">{m.maxMarks != null ? `${m.maxMarks} marks` : "-"}</span>}
+                    />
+                  ))}
+                </ListGroup>
+              }
+              table={
+                <Table density="operate"
+                  tabIndex={0}
+                  role="region"
+                  aria-label="Uploaded mark schemes, scrollable horizontally"
+                >
+                  <caption className="sr-only">Uploaded mark schemes</caption>
+                  <THead>
+                    <TR>
+                      <TH>Document</TH>
+                      <TH>Paper</TH>
+                      <TH>Session</TH>
+                      <TH numeric>Marks</TH>
+                      <TH numeric>Questions</TH>
+                      <TH>Status</TH>
+                    </TR>
+                  </THead>
+                  <TBody>
+                    {schemes.map((m) => (
+                      <TR key={m.doc}>
+                        <TD className="min-w-0 max-w-[280px] overflow-hidden text-ellipsis whitespace-nowrap text-data-sm">
+                          {m.doc}
+                        </TD>
+                        <TD className="text-body-md text-on-surface-variant">{m.paper}</TD>
+                        <TD className="text-body-md text-on-surface-variant">{m.session}</TD>
+                        <TD numeric className="text-data-sm">
+                          {m.maxMarks ?? "-"}
+                        </TD>
+                        <TD numeric className="text-data-sm text-on-surface-variant">
+                          {m.questionCount ?? "-"}
+                        </TD>
+                        <TD>
+                          <span
+                            className={cn(
+                              "text-body-sm rounded-full px-[11px] py-[3px]",
+                              STATUS_CHIP[m.status],
+                            )}
+                          >
+                            {m.status}
+                          </span>
+                        </TD>
+                      </TR>
+                    ))}
+                  </TBody>
+                </Table>
+              }
+            />
           </>
         )}
       </QueryState>
