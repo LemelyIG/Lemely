@@ -1,11 +1,13 @@
 import { Suspense, useState } from "react"
-import { useLocation } from "react-router-dom"
+import type { MouseEvent } from "react"
+import { useLocation, useMatches, useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { List } from "@phosphor-icons/react"
 import { BadgeSync } from "@/components/badge-sync"
 import { EdgeSwipeBack } from "@/components/edge-swipe-back"
 import { InstallBanner } from "@/components/InstallBanner"
 import { portalErrorFallback } from "@/components/route-error"
+import { cn } from "@/lib/utils"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
 import { NavDrawer } from "@/components/ui/nav-drawer"
 import { BottomNav, type NavShellItem } from "@/components/ui/nav-shells"
@@ -16,6 +18,7 @@ import { MAIN_CONTENT_ID, SkipLink } from "@/components/ui/skip-link"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { ShellSidebar, type ShellSidebarContent } from "./ShellSidebar"
 import { ShellTopBar, type ShellTopBarProps } from "./ShellTopBar"
+import { activeTabTap } from "./tabTap"
 
 export interface PortalShellProps {
   portal: "student" | "teacher"
@@ -56,7 +59,20 @@ export function PortalShell({
   const [navOpen, setNavOpen] = useState(false)
   const location = useLocation()
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
+  const matches = useMatches()
+  const immersive = matches.some((m) => (m.handle as { immersive?: boolean } | undefined)?.immersive)
   const closeNav = () => setNavOpen(false)
+  const onActiveTap = (item: NavShellItem, event: MouseEvent) => {
+    if (!item.to) return
+    const action = activeTabTap({ pathname: location.pathname, tabTo: item.to, scrollY: window.scrollY })
+    if (action === "none") return
+    event.preventDefault()
+    if (action === "scroll-top") {
+      const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      window.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" })
+    } else navigate(item.to, { viewTransition: true })
+  }
   return (
     <div data-portal={portal} className="flex min-h-dvh bg-surface-container">
       <SkipLink />
@@ -71,7 +87,8 @@ export function PortalShell({
         <main
           id={MAIN_CONTENT_ID}
           tabIndex={-1}
-          className="@container/home w-full min-w-0 flex-1 overflow-x-hidden px-[72px] pt-1 pb-10 focus:outline-none max-shell-lg:px-3.5 max-shell-lg:pb-9 max-sidebar:pb-bottom-nav"
+          data-immersive={immersive || undefined}
+          className="lm-native-main @container/home w-full min-w-0 flex-1 overflow-x-hidden px-[72px] pt-1 pb-10 focus:outline-none max-shell-lg:px-3.5 max-shell-lg:pb-9 max-sidebar:pb-bottom-nav"
         >
           <OfflineBanner
             onRetry={() =>
@@ -102,7 +119,8 @@ export function PortalShell({
           },
         ]}
         emphasisId={bottomEmphasisId}
-        className="sidebar:hidden"
+        onActiveTap={onActiveTap}
+        className={cn("sidebar:hidden", immersive && "native:hidden")}
       />
     </div>
   )

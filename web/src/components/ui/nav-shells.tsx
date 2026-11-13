@@ -1,5 +1,5 @@
-import type { HTMLAttributes, ReactNode } from "react"
-import { NavLink } from "react-router-dom"
+import type { HTMLAttributes, MouseEvent, ReactNode } from "react"
+import { NavLink, useMatch } from "react-router-dom"
 import { cn } from "@/lib/utils"
 
 /*
@@ -34,6 +34,8 @@ export interface NavShellItem {
   id: string
   label: string
   icon: ReactNode
+  /** Native frame: the selected tab's icon (Phosphor `fill`); design A keeps `icon`. */
+  activeIcon?: ReactNode
   /** A route destination — renders as a router-wired `NavLink`, active state
    * from the router itself. Wins over `href`/`onClick` when present. */
   to?: string
@@ -61,9 +63,14 @@ interface NavShellLinkOwnProps {
   item: NavShellItem
   className: (isActive: boolean) => string
   children: (isActive: boolean) => ReactNode
+  /** Called when the link is clicked while it is already the active one (native tab re-tap). */
+  onActiveClick?: (event: MouseEvent) => void
 }
 
-export function NavShellLink({ item, className, children }: NavShellLinkOwnProps) {
+export function NavShellLink({ item, className, children, onActiveClick }: NavShellLinkOwnProps) {
+  // Hooks run before the branch below; a non-route item matches nothing.
+  const routeMatch = useMatch({ path: item.to ?? "/", end: item.to ? (item.end ?? false) : true })
+  const isActiveNow = !!item.to && !!routeMatch
   if (item.to) {
     return (
       <NavLink
@@ -73,6 +80,9 @@ export function NavShellLink({ item, className, children }: NavShellLinkOwnProps
         onPointerEnter={item.prefetch}
         onTouchStart={item.prefetch}
         onFocus={item.prefetch}
+        onClick={(event) => {
+          if (isActiveNow || item.active) onActiveClick?.(event)
+        }}
         className={({ isActive }) => className(isActive || !!item.active)}
       >
         {({ isActive }) => children(isActive || !!item.active)}
@@ -104,11 +114,13 @@ export interface BottomNavProps extends HTMLAttributes<HTMLElement> {
    * student portal's "Correct a paper" tab) rather than an ordinary flat
    * icon+label cell. */
   emphasisId?: string
+  /** Native frame: a tap on the tab that is already active (scroll to top, pop to root). */
+  onActiveTap?: (item: NavShellItem, event: MouseEvent) => void
   className?: string
 }
 
 /** Mobile student/teacher tab bar — fixed to the viewport bottom. */
-export function BottomNav({ items, emphasisId, className, ...props }: BottomNavProps) {
+export function BottomNav({ items, emphasisId, onActiveTap, className, ...props }: BottomNavProps) {
   return (
     <nav
       aria-label="Primary"
@@ -116,7 +128,7 @@ export function BottomNav({ items, emphasisId, className, ...props }: BottomNavP
         // P6.3: `z-nav`. The raw `z-30` put a *navigation* bar in the dropdown
         // band, above every menu and popover that would ever need to open over
         // it — the exact inversion the §7 scale exists to prevent.
-        "lm-nav-chrome lm-safe-bottom fixed inset-x-0 bottom-0 z-nav flex items-stretch border-t border-outline-variant bg-surface-container-lowest",
+        "lm-nav-chrome lm-native-tabbar lm-safe-bottom fixed inset-x-0 bottom-0 z-nav flex items-stretch border-t border-outline-variant bg-surface-container-lowest",
         className,
       )}
       {...props}
@@ -127,6 +139,7 @@ export function BottomNav({ items, emphasisId, className, ...props }: BottomNavP
           <NavShellLink
             key={item.id}
             item={item}
+            onActiveClick={onActiveTap ? (event) => onActiveTap(item, event) : undefined}
             className={(isActive) =>
               cn(
                 "flex min-h-14 flex-1 flex-col items-center justify-center gap-1 py-2.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.98]",
@@ -138,19 +151,26 @@ export function BottomNav({ items, emphasisId, className, ...props }: BottomNavP
               <>
                 <span
                   className={cn(
-                    "relative flex items-center justify-center",
+                    "lm-native-tab-icon relative flex items-center justify-center",
                     emphasis &&
                       "-mt-5 h-11 w-11 rounded-full bg-primary text-on-primary shadow-[var(--shadow-float)]",
                   )}
                 >
-                  {item.icon}
+                  {isActive && item.activeIcon ? (
+                    <>
+                      <span className="native:hidden">{item.icon}</span>
+                      <span className="hidden native:inline-flex">{item.activeIcon}</span>
+                    </>
+                  ) : (
+                    item.icon
+                  )}
                   {item.badge ? (
                     <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-error px-0.5 text-data-sm leading-none text-on-error">
                       {item.badge}
                     </span>
                   ) : null}
                 </span>
-                <span className={cn("text-xs", isActive && "font-medium")}>{item.label}</span>
+                <span className={cn("lm-native-tab-label text-xs", isActive && "font-medium")}>{item.label}</span>
               </>
             )}
           </NavShellLink>

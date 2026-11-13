@@ -94,6 +94,9 @@ export interface PageMeta {
    * `true`) everywhere else: the ordinary case needs no marker.
    */
   viewTransition?: false
+  /** Native frame: a full-screen task route. The phone tab bar hides on iOS/Android and
+   * `<main>` drops its tab-bar padding. Omitted everywhere else. */
+  immersive?: true
 }
 
 /** The product name, appended to every page title. */

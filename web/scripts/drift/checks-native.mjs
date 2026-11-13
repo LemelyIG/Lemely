@@ -3,6 +3,7 @@ import {
   studentShellMocks,
   teacherShellMocks,
 } from "./mocks.mjs";
+import { DETAIL_PATH } from "./scenes-native.mjs";
 
 export const NATIVE_HOME = {
   path: "/student",
@@ -87,7 +88,7 @@ NATIVE_CHECKS.push(
     id: `native-${platform}-detail-has-back`,
     platform,
     width: 390,
-    app: { ...NATIVE_HOME, path: "/student/practice/0606" },
+    app: { ...NATIVE_HOME, path: DETAIL_PATH },
     async run(page) {
       const header = page.locator("header[data-title-level]");
       if ((await header.getAttribute("data-title-level")) !== "detail")
@@ -190,6 +191,67 @@ NATIVE_CHECKS.push(
     async run(page) {
       if (await page.locator("[data-shell-large-title]").isVisible())
         throw new Error("other platform shows the native large title");
+    },
+  },
+);
+
+/** A page drilled in under the active Profile tab. The student router has no
+ * route nested under /student/profile, so this resolves to the shell's not-found
+ * body; the tab stays active by prefix match and the shell frame is real, which
+ * is all the re-tap logic reads (the pathname). */
+export const TAB_DRILL_PATH = "/student/profile/drilled";
+
+NATIVE_CHECKS.push(
+  {
+    id: "native-ios-tab-retap-scrolls-to-top",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student/classes" },
+    async run(page) {
+      await page.evaluate(() => {
+        document.body.style.minHeight = "3000px";
+        window.scrollTo(0, 600);
+      });
+      const tab = page
+        .getByRole("navigation", { name: "Primary" })
+        .getByRole("link", { name: "Classes" });
+      await tab.click();
+      await page.waitForFunction(() => window.scrollY === 0);
+      if (new URL(page.url()).pathname !== "/student/classes")
+        throw new Error("a tap while scrolled navigated");
+    },
+  },
+  {
+    id: "native-ios-tab-retap-pops-to-root",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_HOME, path: TAB_DRILL_PATH },
+    async run(page) {
+      const tab = page
+        .getByRole("navigation", { name: "Primary" })
+        .getByRole("link", { name: "Profile" });
+      await tab.click();
+      await page.waitForURL(/\/student\/profile$/);
+    },
+  },
+  {
+    id: "native-android-immersive-hides-tabs",
+    platform: "android",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student/correct" },
+    async run(page) {
+      if (await page.getByRole("navigation", { name: "Primary" }).isVisible())
+        throw new Error("tab bar shows on an immersive route");
+    },
+  },
+  {
+    id: "native-android-tabs-show-off-immersive",
+    platform: "android",
+    width: 390,
+    app: NATIVE_HOME,
+    async run(page) {
+      if (!(await page.getByRole("navigation", { name: "Primary" }).isVisible()))
+        throw new Error("tab bar hidden on a normal route");
     },
   },
 );

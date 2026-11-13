@@ -264,7 +264,7 @@ export const studentRoute: RouteObject = {
     {
       path: "correct",
       element: <CorrectPaper />,
-      handle: { title: "Mark a paper", skeleton: "page-header" },
+      handle: { title: "Mark a paper", skeleton: "page-header", immersive: true },
     },
     {
       path: "plan/:subjectCode",

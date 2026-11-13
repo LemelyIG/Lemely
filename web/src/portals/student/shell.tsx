@@ -198,6 +198,7 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
           end: tab.end,
           label: tab.label,
           icon: <tab.icon size={22} aria-hidden="true" />,
+          activeIcon: <tab.icon size={22} weight="fill" aria-hidden="true" />,
           prefetch: tab.id === "correct" ? prefetchCorrectPaper.onPointerEnter : undefined,
         }),
       )}

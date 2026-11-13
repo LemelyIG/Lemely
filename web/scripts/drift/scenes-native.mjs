@@ -8,7 +8,7 @@ import { STUDENT_PROFILE, studentShellMocks, teacherShellMocks } from "./mocks.m
  * scenes run without a UA ("other") and must not change.
  */
 const NO_GUTTER = "html{scrollbar-gutter:auto!important}"
-const DETAIL_PATH = "/student/practice/0606"
+export const DETAIL_PATH = "/student/practice/0606"
 /** The app's bar title on DETAIL_PATH (studentPageTitle); confirmed in Step 2. */
 const DETAIL_TITLE = "0606"
 /** The app's iOS back label on DETAIL_PATH: the parent crumb's label (Task 4

@@ -492,6 +492,13 @@
   --native-ptr-threshold: 64px;             /* --pf-ptr-threshold, both platforms */
   --native-ptr-hold-ios: 56px;              /* --pf-ptr-hold: where the content rests while refreshing */
   --native-ptr-hold-android: 64px;
+  /* Page ground (preview --pf-page): the native frame's own, in both themes. */
+  --native-page-ios: var(--md-surface-container);
+  --native-page-android: var(--md-surface-container-low);
+}
+:root[data-theme="dark"] {
+  --native-page-ios: var(--md-surface-container-lowest);
+  --native-page-android: var(--md-surface);
 }
 
 
@@ -1312,6 +1319,78 @@ html[data-direction="back"]::view-transition-new(root) {
     display: none;
   }
 }
+/* ── Native frame: tab bar (native frame Task 5; preview .a-bottombar). */
+@media (max-width: 720px) {
+  :root[data-platform="ios"] { --native-tabbar-h: var(--native-tabbar-h-ios); --native-page: var(--native-page-ios); }
+  :root[data-platform="android"] { --native-tabbar-h: var(--native-tabbar-h-android); --native-page: var(--native-page-android); }
+  :root:is([data-platform="ios"], [data-platform="android"]) [data-portal] {
+    background-color: var(--native-page);
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-main:not([data-immersive]) {
+    padding-bottom: calc(var(--native-tabbar-h) + env(safe-area-inset-bottom));
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-main[data-immersive] {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-tabbar .lm-native-tab-icon svg {
+    inline-size: var(--native-tab-icon);
+    block-size: var(--native-tab-icon);
+  }
+  :root[data-platform="ios"] .lm-native-tabbar {
+    min-height: calc(var(--native-tabbar-h-ios) + env(safe-area-inset-bottom));
+    border-top: var(--native-hairline) solid var(--md-outline-variant);
+    background-color: color-mix(in oklch, var(--md-surface-container-lowest) var(--native-glass-mix), transparent);
+    -webkit-backdrop-filter: blur(var(--blur-nav)) saturate(var(--native-glass-saturate));
+    backdrop-filter: blur(var(--blur-nav)) saturate(var(--native-glass-saturate));
+  }
+  :root[data-theme="dark"][data-platform="ios"] .lm-native-tabbar {
+    background-color: color-mix(in oklch, var(--md-surface-container-low) var(--native-glass-mix), transparent);
+  }
+  :root[data-platform="ios"] .lm-native-tabbar .lm-native-tab-label {
+    font-size: var(--native-tab-label-ios);
+  }
+  :root[data-platform="ios"] .lm-native-tabbar [aria-current="page"] {
+    color: var(--md-primary);
+    font-weight: 600;
+  }
+  :root[data-platform="android"] .lm-native-tabbar {
+    min-height: calc(var(--native-tabbar-h-android) + env(safe-area-inset-bottom));
+    border-top: 0;
+    background-color: var(--md-surface-container);
+  }
+  :root[data-platform="android"] .lm-native-tabbar .lm-native-tab-label {
+    font-size: var(--native-tab-label-android);
+  }
+  :root[data-platform="android"] .lm-native-tabbar .lm-native-tab-icon {
+    isolation: isolate;
+  }
+  /* The pill is positioned at the base rung, so the glyph is positioned too and paints above it. */
+  :root[data-platform="android"] .lm-native-tabbar .lm-native-tab-icon svg {
+    position: relative;
+  }
+  :root[data-platform="android"] .lm-native-tabbar [aria-current="page"] .lm-native-tab-icon::before {
+    content: "";
+    position: absolute;
+    z-index: var(--z-index-base);
+    inset-inline: 0;
+    margin-inline: auto;
+    inset-block-start: 50%;
+    inline-size: var(--native-tab-pill-w);
+    block-size: var(--native-tab-pill-h);
+    translate: 0 -50%;
+    border-radius: 9999px;
+    background: var(--md-secondary-container);
+  }
+  /* Selected: the label stays on-surface (bold); only the icon takes on-secondary-container. */
+  :root[data-platform="android"] .lm-native-tabbar [aria-current="page"] {
+    color: var(--md-on-surface);
+    font-weight: 700;
+  }
+  :root[data-platform="android"] .lm-native-tabbar [aria-current="page"] .lm-native-tab-icon {
+    color: var(--md-on-secondary-container);
+  }
+}
+
 /* Collapse, scroll-driven where supported (Chrome 115+, Safari 26+), as in the preview:
    the inline title and the bar's surface fade in over 70% to 100% of the large title's
    exit, and the large title fades out over its whole exit. Elsewhere, and under reduced

@@ -437,6 +437,7 @@ function TeacherLayout() {
           end: tab.end,
           label: tab.label,
           icon: <tab.icon size={22} aria-hidden="true" />,
+          activeIcon: <tab.icon size={22} weight="fill" aria-hidden="true" />,
           badge: tab.id === "review" && reviewQueueCount && reviewQueueCount > 0 ? reviewQueueCount : undefined,
         }),
       )}
@@ -472,7 +473,7 @@ export const teacherRoute: RouteObject = {
     {
       path: "review/:itemId",
       element: <ReviewItem />,
-      handle: { title: "Review a mark", skeleton: "page-header" },
+      handle: { title: "Review a mark", skeleton: "page-header", immersive: true },
     },
     {
       path: "classes",
