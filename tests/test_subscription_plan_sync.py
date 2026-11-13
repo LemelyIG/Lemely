@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 
 import httpx
 import pytest
+import sqlalchemy as sa
+from sqlalchemy.exc import OperationalError
 
 from lemely.db.billing_repo import BillingService
 from lemely.db.models.billing import PlanTier
@@ -183,7 +185,9 @@ def test_a_missing_moto_integration_is_refused_before_paymob_is_called(
     ids=["no-id", "null-id", "string-id", "bool-id", "zero-id", "negative-id"],
 )
 def test_a_response_without_a_plan_id_leaves_the_tier_unlinked(
-    pg_sessionmaker: sessionmaker[Session], response: JsonObject
+    pg_sessionmaker: sessionmaker[Session],
+    response: JsonObject,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     tier_id = seed_tier(pg_sessionmaker, paymob_plan_id=None)
     client = FakePaymobClient()
@@ -193,6 +197,25 @@ def test_a_response_without_a_plan_id_leaves_the_tier_unlinked(
     assert raised.value.code == "plan_sync_failed"
     assert isinstance(raised.value, SubscriptionError)
     assert _linked_plan(pg_sessionmaker, tier_id) is None
+    logged = capsys.readouterr()
+    assert "paymob_plan_response_unusable" in logged.out + logged.err
+    assert str(tier_id) in logged.out + logged.err
+
+
+def test_the_tier_row_is_locked_until_the_caller_commits(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Two admins syncing one tier must not both create a Paymob plan: the row is ``FOR UPDATE``."""
+    tier_id = seed_tier(pg_sessionmaker, paymob_plan_id=616_161)
+    client = FakePaymobClient()
+    lock_probe = sa.select(PlanTier.id).where(PlanTier.id == tier_id).with_for_update(nowait=True)
+    with pg_sessionmaker() as holder:
+        sync_paymob_plan(holder, client, paymob_settings(), tier_id)
+        with pg_sessionmaker() as other, pytest.raises(OperationalError, match="lock"):
+            other.execute(lock_probe)
+        holder.rollback()
+        with pg_sessionmaker() as other:
+            assert other.execute(lock_probe).scalar_one() == tier_id
 
 
 def test_a_failed_force_new_keeps_the_existing_link(pg_sessionmaker: sessionmaker[Session]) -> None:

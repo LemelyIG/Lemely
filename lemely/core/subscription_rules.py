@@ -56,7 +56,8 @@ def paymob_frequency(interval: str) -> int:
 
 
 def period_end(start: datetime, interval: str) -> datetime:
-    """End of the period that starts at ``start``."""
+    """End of the period that starts at ``start``; ``start`` must be timezone-aware."""
+    _require_aware(start, "start")
     return start + timedelta(days=paymob_frequency(interval))
 
 
@@ -113,12 +114,14 @@ def _is_true(value: object) -> bool:
 
 
 def is_successful_charge(txn: Mapping[str, object]) -> bool:
-    """Paid iff ``success`` is JSON true and no failure flag is set (research 02 §3).
+    """Paid iff ``success`` is true and no failure flag is set (research 02 §3).
 
-    ``is_auth`` is a failure flag: an authorisation holds funds, it does not capture them. A flag
-    counts as set when it is JSON true or the string ``"true"``; an absent flag is not set.
+    ``is_auth`` is a failure flag: an authorisation holds funds, it does not capture them. Every
+    flag, ``success`` included, counts as true when it is JSON true or the string ``"true"``
+    (the rule ``billing_repo._is_true`` applies to a transaction callback); an absent flag is not
+    set, and an absent ``success`` is not a success.
     """
-    return txn.get("success") is True and not any(_is_true(txn.get(f)) for f in _FAILURE_FLAGS)
+    return _is_true(txn.get("success")) and not any(_is_true(txn.get(f)) for f in _FAILURE_FLAGS)
 
 
 def parse_paymob_time(value: object) -> datetime | None:
@@ -148,8 +151,10 @@ def renewal_period_start(*, current_period_end: datetime | None, charged_at: dat
     period ends; it continues the current period with no gap and no overlap. A late charge
     (after retries) starts the new period at the charge.
     """
+    _require_aware(charged_at, "charged_at")
     if current_period_end is None:
         return charged_at
+    _require_aware(current_period_end, "current_period_end")
     return max(current_period_end, charged_at)
 
 

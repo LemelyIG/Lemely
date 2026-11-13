@@ -140,7 +140,8 @@ def sync_paymob_plan(
     Raises:
         PlanNotPurchasable: unknown tier, no interval, a price of zero or less, or no MOTO
             integration id.
-        PlanSyncFailed: Paymob answered without an integer plan id; the tier is left as it was.
+        PlanSyncFailed: Paymob answered without an integer plan id (logged as
+            ``paymob_plan_response_unusable``); the tier is left as it was.
         PaymobError: the call failed. When the outcome is unknown (no answer, or a 5xx) Paymob may
             hold an orphan plan, which is logged as ``paymob_plan_create_unknown``.
     """
@@ -176,6 +177,7 @@ def sync_paymob_plan(
         raise
     plan_id = _plan_id_of(created)
     if plan_id is None:
+        alerts.error("paymob_plan_response_unusable", plan_tier_id=str(tier.id), alert=True)
         raise PlanSyncFailed(f"Paymob returned no plan id for tier {tier.id}")
     tier.paymob_plan_id = plan_id
     log.info("paymob_plan_linked", plan_tier_id=str(tier.id), paymob_plan_id=plan_id)

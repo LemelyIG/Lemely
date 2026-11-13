@@ -59,6 +59,11 @@ def test_period_end_adds_the_paymob_cycle() -> None:
     assert period_end(start, "yearly") == start + timedelta(days=360)
 
 
+def test_a_naive_period_start_is_refused() -> None:
+    with pytest.raises(ValueError, match="timezone-aware"):
+        period_end(datetime(2026, 1, 31, 12), "monthly")
+
+
 def test_an_unknown_interval_is_refused() -> None:
     with pytest.raises(ValueError, match="unknown plan interval"):
         paymob_frequency("weekly")
@@ -157,8 +162,14 @@ def test_a_false_flag_does_not_fail_the_charge() -> None:
     assert is_successful_charge({**GOOD_CHARGE, "error_occured": False, "pending": "false"})
 
 
-@pytest.mark.parametrize("success", [False, "true", 1, None])
-def test_only_a_json_true_success_counts(success: object) -> None:
+def test_a_string_true_success_counts_like_a_json_true() -> None:
+    """The failure flags already read ``"true"`` as set; ``success`` reads the same way."""
+    assert is_successful_charge({**GOOD_CHARGE, "success": "true"})
+    assert not is_successful_charge({**GOOD_CHARGE, "success": "true", "error_occured": "true"})
+
+
+@pytest.mark.parametrize("success", [False, "false", "True", "1", 1, None])
+def test_any_other_success_value_is_not_a_success(success: object) -> None:
     assert not is_successful_charge({**GOOD_CHARGE, "success": success})
     assert not is_successful_charge({})
 
@@ -201,3 +212,14 @@ def test_renewal_period_start_continues_on_time_and_restarts_late() -> None:
     assert renewal_period_start(current_period_end=end, charged_at=early) == end
     assert renewal_period_start(current_period_end=end, charged_at=late) == late
     assert renewal_period_start(current_period_end=None, charged_at=late) == late
+
+
+def test_renewal_period_start_refuses_naive_datetimes() -> None:
+    aware = datetime(2026, 12, 10, 9, tzinfo=UTC)
+    naive = datetime(2026, 12, 10, 9)
+    with pytest.raises(ValueError, match="charged_at"):
+        renewal_period_start(current_period_end=aware, charged_at=naive)
+    with pytest.raises(ValueError, match="charged_at"):
+        renewal_period_start(current_period_end=None, charged_at=naive)
+    with pytest.raises(ValueError, match="current_period_end"):
+        renewal_period_start(current_period_end=naive, charged_at=aware)
