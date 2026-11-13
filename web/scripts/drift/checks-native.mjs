@@ -2061,3 +2061,31 @@ NATIVE_CHECKS.push(
     })),
   ),
 )
+
+/* Task 9. Popover is a sheet on native. The Notifications row is one of three call sites: a long
+   press on an unread card opens its "Mark read" popover (studentShellMocks "populated" has unread rows). */
+NATIVE_CHECKS.push(
+  ...["ios", "android"].map((platform) => ({
+  id: `native-${platform}-popover-is-sheet`,
+  platform,
+  width: 390,
+  app: { ...NATIVE_HOME, path: "/student/notifications" },
+  async run(page) {
+    const card = page.locator("main h2").first().locator("xpath=ancestor::div[@tabindex='-1'][1]")
+    await card.waitFor()
+    const box = await card.boundingBox()
+    await page.mouse.move(box.x + box.width / 2, box.y + 8)
+    await page.mouse.down()
+    await page.waitForTimeout(700)
+    await page.mouse.up()
+    const dialog = page.getByRole("dialog")
+    await dialog.waitFor().catch(() => { throw new Error("long press opened no dialog") })
+    if (!(await dialog.evaluate((el) => el.classList.contains("lm-sheet")))) throw new Error("the popover is not a sheet on native")
+    await page.waitForFunction(() => document.activeElement?.closest(".lm-sheet"), null, { timeout: 5000 }).catch(() => { throw new Error("focus did not move into the sheet") })
+    if (process.env.NF_SHOT_PATH) await page.screenshot({ path: process.env.NF_SHOT_PATH.replace(".png", `-${platform}.png`), animations: "disabled" })
+    await page.keyboard.press("Escape")
+    await dialog.waitFor({ state: "detached" })
+    if (!(await card.evaluate((el) => el === document.activeElement))) throw new Error("focus not returned to the trigger")
+  },
+  })),
+)

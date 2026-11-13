@@ -15,6 +15,7 @@ import { useDialogHistory } from "@/lib/nav/useDialogHistory"
 import { useOverlayPhase } from "@/lib/overlayPhase"
 import { useNativeFrame } from "@/lib/useNativeFrame"
 import { BottomSheetSurface } from "@/components/ui/bottom-sheet"
+import { useDialogFocus } from "@/components/ui/use-dialog-focus"
 
 /*
  * Dialog built on a portal rather than the native `<dialog>` element.
@@ -78,11 +79,6 @@ const sizeClasses = {
   lg: "max-w-[720px]",
 } as const
 
-const FOCUSABLE_SELECTOR =
-  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
-
-const AUTOFOCUS_SELECTOR = "[data-autofocus]"
-
 export function Modal({
   open,
   onClose,
@@ -100,7 +96,6 @@ export function Modal({
   const titleId = useId()
   const descriptionId = useId()
   const panelRef = useRef<HTMLDivElement>(null)
-  const previouslyFocused = useRef<HTMLElement | null>(null)
 
   // Packet B2b: `open` going false does not unmount the modal immediately —
   // `phase` stays "closing" for the exit animation (`lm-out` below), and
@@ -116,28 +111,8 @@ export function Modal({
   // `useDialogHistory` for the full contract.
   useDialogHistory({ open: mounted, dismissible, onClose })
 
-  // Focus the panel on open, restore the triggering element's focus on close.
-  useEffect(() => {
-    if (!mounted) return
-
-    previouslyFocused.current = document.activeElement as HTMLElement | null
-
-    // Defer to the next frame so the panel is in the DOM before we look for
-    // a focusable descendant inside it.
-    const raf = requestAnimationFrame(() => {
-      const panel = panelRef.current
-      // `[data-autofocus]` names the safe landing spot (the iOS action sheet's
-      // Cancel row, which is not first in DOM order); otherwise the first focusable.
-      const preferred =
-        panel?.querySelector<HTMLElement>(AUTOFOCUS_SELECTOR) ?? panel?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)
-      ;(preferred ?? panel)?.focus()
-    })
-
-    return () => {
-      cancelAnimationFrame(raf)
-      previouslyFocused.current?.focus()
-    }
-  }, [mounted])
+  // Focus the panel on open, trap Tab inside it, restore the triggering element's focus on close.
+  const trapFocus = useDialogFocus(panelRef, mounted)
 
   // Lock background scroll for as long as the modal is mounted, closing
   // animation included — otherwise the page behind it would start scrolling
@@ -160,31 +135,7 @@ export function Modal({
       }
       return
     }
-    if (event.key !== "Tab") return
-
-    // Manual focus trap: cycle Tab/Shift+Tab within the panel's focusable
-    // descendants rather than letting focus escape into the page behind the
-    // scrim.
-    const panel = panelRef.current
-    if (!panel) return
-    const focusable = Array.from(
-      panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
-    )
-    if (focusable.length === 0) {
-      event.preventDefault()
-      return
-    }
-    const first = focusable[0]
-    const last = focusable[focusable.length - 1]
-    const active = document.activeElement
-
-    if (event.shiftKey && active === first) {
-      event.preventDefault()
-      last.focus()
-    } else if (!event.shiftKey && active === last) {
-      event.preventDefault()
-      first.focus()
-    }
+    trapFocus(event.nativeEvent)
   }
 
   // One dialog contract, two surfaces: the native frame swaps only the frame

@@ -116,7 +116,7 @@ describe("ConfirmModal (Task 7)", () => {
     expect(src).toContain("dismissible={false}")
   })
   it("Modal focuses [data-autofocus] before the first focusable, and Cancel carries it", () => {
-    const modal = read("components/ui/modal.tsx")
+    const modal = read("components/ui/use-dialog-focus.ts") // the focus code moved here in Task 9
     expect(modal).toMatch(/querySelector<HTMLElement>\(AUTOFOCUS_SELECTOR\)\s*\?\?\s*panel\?\.querySelector<HTMLElement>\(FOCUSABLE_SELECTOR\)/)
     expect(modal).toContain('const AUTOFOCUS_SELECTOR = "[data-autofocus]"')
     expect(src).toMatch(/lm-action-sheet-cancel"\s*data-autofocus/)
@@ -192,5 +192,27 @@ describe("shell panels on the native frame (Task 8)", () => {
   })
   it("the Create sheet keeps its 6px eyebrow-to-title gap on native (the native surface drops SHEET_SURFACE)", () => {
     expect(read("components/shell/TopBarSheets.tsx")).toContain("native:mb-1.5")
+  })
+})
+
+describe("Popover and Select (Task 9, D4)", () => {
+  it("Popover renders a sheet on native and keeps its render-prop API", () => {
+    const src = read("components/ui/popover.tsx")
+    expect(src).toContain("useNativeFrame()")
+    expect(src).toContain("<BottomSheetSurface")
+    expect(src).toMatch(/renderTrigger: \(props: PopoverRenderProps\) => ReactNode/)
+  })
+  it("one focus trap: Modal and the native Popover share useDialogFocus", () => {
+    for (const f of ["components/ui/modal.tsx", "components/ui/popover.tsx"]) {
+      expect(read(f), f).toContain("useDialogFocus(")
+      expect(read(f), f).not.toContain("FOCUSABLE_SELECTOR =")
+    }
+    expect(read("components/ui/use-dialog-focus.ts")).toContain("FOCUSABLE_SELECTOR")
+  })
+  it("Select stays a native <select>: the OS picker is already the platform sheet", () => {
+    const src = read("components/ui/select.tsx")
+    expect(src).toMatch(/<select\b/)
+    expect(src).not.toContain("BottomSheetSurface")
+    expect(src).toContain("native frame D4")
   })
 })
