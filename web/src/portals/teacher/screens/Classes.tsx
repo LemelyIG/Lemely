@@ -259,7 +259,7 @@ export function Classes() {
                   sorted.length === 0 ? (
                     <p className="px-4 py-6 text-body-md text-on-surface-variant">No classes match "{search}".</p>
                   ) : (
-                    <ListGroup label="Your classes" footer="To rename or delete a class, or sort, tap View table.">
+                    <ListGroup footer="To rename or delete a class, or sort, tap View table.">
                       {sorted.map((c) => (
                         <ListRow
                           key={c.id}
