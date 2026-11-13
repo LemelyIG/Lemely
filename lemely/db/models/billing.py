@@ -154,6 +154,17 @@ class PlanTier(TimestampMixin, Base):
 #: The payments an auto top-up still waits on, for ``ix_payments_auto_topup_in_flight``.
 _AUTO_TOPUP_IN_FLIGHT_PREDICATE = "purpose = 'auto_topup' AND status IN ('created', 'pending')"
 
+#: Ties a queue ``dedupe_key`` to the purpose it was minted for
+#: (``ck_payments_dedupe_key_purpose``).
+#: A renewal seat charge and a seat purchase are both ``extra_seats``: only the key's prefix tells
+#: the paid handler to clear a grace instead of granting seats, so a wrong pairing is an error.
+#: ``starts_with`` (not ``LIKE``) so the ``_`` in a prefix is literal.
+_DEDUPE_KEY_PURPOSE_CHECK = (
+    "dedupe_key IS NULL "
+    "OR (purpose = 'auto_topup' AND starts_with(dedupe_key, 'auto_topup:')) "
+    "OR (purpose = 'extra_seats' AND starts_with(dedupe_key, 'extra_seat_renewal:'))"
+)
+
 
 class Subscription(TimestampMixin, Base):
     """A user's subscription to a :class:`PlanTier`.
@@ -377,6 +388,7 @@ class Payment(TimestampMixin, Base):
             "seat_quantity IS NULL OR seat_quantity > 0", name="seat_quantity_positive"
         ),
         sa.CheckConstraint("grant_units IS NULL OR grant_units > 0", name="grant_units_positive"),
+        sa.CheckConstraint(_DEDUPE_KEY_PURPOSE_CHECK, name="dedupe_key_purpose"),
         sa.CheckConstraint(
             "purpose <> 'credit_pack' OR credit_pack_id IS NOT NULL", name="credit_pack_link"
         ),
@@ -388,6 +400,21 @@ class Payment(TimestampMixin, Base):
             "ix_payments_auto_topup_in_flight",
             "beneficiary_user_id",
             postgresql_where=sa.text(_AUTO_TOPUP_IN_FLIGHT_PREDICATE),
+        ),
+        # Per-subscription lookups: ``charge_in_flight``, the void rules, the seat-renewal checks.
+        sa.Index(
+            "ix_payments_subscription_purpose",
+            "subscription_id",
+            "purpose",
+            postgresql_where=sa.text("subscription_id IS NOT NULL"),
+        ),
+        # Serves ``dedupe_key LIKE 'prefix%'`` (the queue scans); the unique btree cannot under an
+        # ICU collation. Same reason as ``ix_paymob_events_dedupe_key_prefix``.
+        sa.Index(
+            "ix_payments_dedupe_key_prefix",
+            "dedupe_key",
+            postgresql_ops={"dedupe_key": "text_pattern_ops"},
+            postgresql_where=sa.text("dedupe_key IS NOT NULL"),
         ),
     )
 
@@ -534,6 +561,9 @@ class AutoTopupSettings(TimestampMixin, Base):
         UUID(as_uuid=True), sa.ForeignKey("payments.id", ondelete="SET NULL"), nullable=True
     )
     disabled_reason: Mapped[str | None] = mapped_column(sa.String, nullable=True)
+    consented_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    """When the payer consented to unattended charges (set when ``enabled`` turns true): the
+    evidence in a chargeback dispute over a MOTO charge made while the payer was away."""
 
 
 __all__ = [

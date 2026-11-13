@@ -10,13 +10,18 @@ test that seeds exactly the row the probe looks for.
 
 from __future__ import annotations
 
+import importlib.util
+import threading
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 import sqlalchemy as sa
 from alembic.config import Config
+from alembic.operations import Operations
+from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy.exc import IntegrityError
 
@@ -63,6 +68,20 @@ DOWN_REVISION = "0055_subscription_periods"
 TABLE = "auto_topup_settings"
 IN_FLIGHT_INDEX = "ix_payments_auto_topup_in_flight"
 DEDUPE_UNIQUE = "uq_payments_dedupe_key"
+DEDUPE_PREFIX_INDEX = "ix_payments_dedupe_key_prefix"
+SUBSCRIPTION_PURPOSE_INDEX = "ix_payments_subscription_purpose"
+DEDUPE_PURPOSE_CHECK = "ck_payments_dedupe_key_purpose"
+#: Every object 0056 adds to ``payments``.
+PAYMENT_OBJECTS = {
+    DEDUPE_UNIQUE,
+    IN_FLIGHT_INDEX,
+    DEDUPE_PREFIX_INDEX,
+    SUBSCRIPTION_PURPOSE_INDEX,
+    DEDUPE_PURPOSE_CHECK,
+}
+MIGRATION_FILE = (
+    Path(__file__).parents[1] / "lemely" / "db" / "migrations" / "versions" / "0056_auto_topup.py"
+)
 GRACE_FK = "fk_subscriptions_extra_seat_grace_payment_id_payments"
 SUBSCRIPTION_COLUMNS = {"extra_seat_grace_until", "extra_seat_grace_payment_id"}
 #: Every table 0056 creates or alters, for the parity check.
@@ -96,7 +115,7 @@ def test_orm_declares_the_payment_and_subscription_objects() -> None:
     payment_names = {str(c.name) for c in payments.constraints} | {
         str(i.name) for i in payments.indexes
     }
-    assert {DEDUPE_UNIQUE, IN_FLIGHT_INDEX} <= payment_names
+    assert payment_names >= PAYMENT_OBJECTS
     subscriptions = Base.metadata.tables["subscriptions"]
     assert GRACE_FK in {str(c.name) for c in subscriptions.constraints}
     assert {c.name for c in subscriptions.columns} >= SUBSCRIPTION_COLUMNS
@@ -116,7 +135,7 @@ def test_constraints_present_by_name(migrated_sessionmaker: sessionmaker[Session
     with migrated_sessionmaker() as session:
         assert object_names(session, [TABLE]) == _orm_names()
         payments = object_names(session, ["payments"])
-        assert {DEDUPE_UNIQUE, IN_FLIGHT_INDEX} <= payments
+        assert payments >= PAYMENT_OBJECTS
         assert GRACE_FK in object_names(session, ["subscriptions"])
         assert column_names(session, "subscriptions") >= SUBSCRIPTION_COLUMNS
         assert "dedupe_key" in column_names(session, "payments")
@@ -507,8 +526,7 @@ def test_upgrade_downgrade_upgrade_round_trip(
         assert TABLE not in public_tables(session)
         assert "dedupe_key" not in column_names(session, "payments")
         assert not SUBSCRIPTION_COLUMNS & column_names(session, "subscriptions")
-        assert IN_FLIGHT_INDEX not in object_names(session, ["payments"])
-        assert DEDUPE_UNIQUE not in object_names(session, ["payments"])
+        assert not PAYMENT_OBJECTS & object_names(session, ["payments"])
         assert GRACE_FK not in object_names(session, ["subscriptions"])
         assert session.execute(sa.text("SELECT count(*) FROM payments")).scalar_one() == 2
         assert session.execute(sa.text("SELECT count(*) FROM subscriptions")).scalar_one() == 1
@@ -521,9 +539,202 @@ def test_upgrade_downgrade_upgrade_round_trip(
 
     with sm() as session:
         assert object_names(session, [TABLE]) == _orm_names()
-        assert {DEDUPE_UNIQUE, IN_FLIGHT_INDEX} <= object_names(session, ["payments"])
+        assert object_names(session, ["payments"]) >= PAYMENT_OBJECTS
         assert GRACE_FK in object_names(session, ["subscriptions"])
         assert column_names(session, "subscriptions") >= SUBSCRIPTION_COLUMNS
         sub = session.get(Subscription, scene["subscription_id"])
         assert sub is not None
         assert sub.extra_seat_grace_until is None
+
+
+def _plan(session: Session, sql: str, **params: object) -> str:
+    """``EXPLAIN`` of ``sql`` with sequential scans disabled, as one string."""
+    session.execute(sa.text("SET LOCAL enable_seqscan = off"))
+    return "\n".join(session.execute(sa.text(f"EXPLAIN {sql}"), params).scalars().all())
+
+
+def test_the_dedupe_key_prefix_index_serves_a_prefix_like(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The unique btree cannot serve ``LIKE 'prefix%'`` under an ICU collation (0053 precedent)."""
+    with migrated_sessionmaker() as session:
+        definition = session.execute(
+            sa.text("SELECT indexdef FROM pg_indexes WHERE indexname = :n"),
+            {"n": DEDUPE_PREFIX_INDEX},
+        ).scalar_one()
+        assert "text_pattern_ops" in definition
+        assert "dedupe_key IS NOT NULL" in definition
+        plan = _plan(
+            session,
+            "SELECT id FROM payments WHERE dedupe_key LIKE 'extra_seat_renewal:abc:%'",
+        )
+    assert DEDUPE_PREFIX_INDEX in plan
+
+
+def test_the_subscription_purpose_index_serves_the_per_subscription_lookups(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    with migrated_sessionmaker() as session:
+        plan = _plan(
+            session,
+            "SELECT id FROM payments WHERE subscription_id = :s AND purpose = 'extra_seats' "
+            "AND status = 'paid'",
+            s=uuid.uuid4(),
+        )
+    assert SUBSCRIPTION_PURPOSE_INDEX in plan
+
+
+@pytest.mark.parametrize(
+    ("purpose", "key"),
+    [
+        (PaymentPurpose.auto_topup, "auto_topup:u:0"),
+        (PaymentPurpose.extra_seats, "extra_seat_renewal:p:0"),
+        (PaymentPurpose.credit_pack, None),
+        (PaymentPurpose.extra_seats, None),
+        (PaymentPurpose.upgrade_proration, None),
+    ],
+)
+def test_a_dedupe_key_matching_its_purpose_is_accepted(
+    migrated_sessionmaker: sessionmaker[Session], purpose: PaymentPurpose, key: str | None
+) -> None:
+    sm = migrated_sessionmaker
+    user = seed_user(sm, Role.student)
+    pack = seed_pack(sm)
+    seed_payment_row(
+        sm,
+        payer_id=user,
+        purpose=purpose,
+        amount_minor=100,
+        credit_pack_id=pack if purpose is PaymentPurpose.credit_pack else None,
+        dedupe_key=key,
+    )
+
+
+@pytest.mark.parametrize(
+    ("purpose", "key"),
+    [
+        # A renewal seat key on a seat *purchase* is fine; on any other purpose it is a bug.
+        (PaymentPurpose.auto_topup, "extra_seat_renewal:p:0"),
+        (PaymentPurpose.extra_seats, "auto_topup:u:0"),
+        (PaymentPurpose.credit_pack, "auto_topup:u:0"),
+        (PaymentPurpose.upgrade_proration, "extra_seat_renewal:p:0"),
+        (PaymentPurpose.subscription_renewal, "auto_topup:u:0"),
+        (PaymentPurpose.extra_seats, "bogus:1"),
+        # ``_`` is a LIKE wildcard: the prefix must match literally.
+        (PaymentPurpose.extra_seats, "extra-seat-renewal:p:0"),
+        (PaymentPurpose.auto_topup, "auto-topup:u:0"),
+        (PaymentPurpose.auto_topup, ""),
+    ],
+)
+def test_a_dedupe_key_that_does_not_match_its_purpose_is_refused(
+    migrated_sessionmaker: sessionmaker[Session], purpose: PaymentPurpose, key: str
+) -> None:
+    """A renewal seat charge and a seat purchase are both ``extra_seats``: only the prefix tells
+    the paid handler to clear a grace instead of granting seats, so a wrong key is an error."""
+    sm = migrated_sessionmaker
+    user = seed_user(sm, Role.student)
+    pack = seed_pack(sm)
+    with pytest.raises(IntegrityError, match=DEDUPE_PURPOSE_CHECK):
+        seed_payment_row(
+            sm,
+            payer_id=user,
+            purpose=purpose,
+            amount_minor=100,
+            credit_pack_id=pack if purpose is PaymentPurpose.credit_pack else None,
+            dedupe_key=key,
+        )
+
+
+def test_consented_at_is_nullable_and_records_the_consent_time(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Chargeback evidence for unattended (MOTO) charges (UD-P1): when the payer enabled them."""
+    sm = migrated_sessionmaker
+    user = seed_user(sm, Role.student)
+    other = seed_user(sm, Role.student)
+    pack = seed_pack(sm)
+    when = datetime(2026, 11, 14, 8, 30, tzinfo=UTC)
+    unset = seed_auto_topup(sm, beneficiary_id=user, payer_id=user, pack_id=pack, card_id=None)
+    stamped = seed_auto_topup(
+        sm, beneficiary_id=other, payer_id=other, pack_id=pack, card_id=None, consented_at=when
+    )
+    with sm() as session:
+        assert session.get(AutoTopupSettings, unset).consented_at is None  # type: ignore[union-attr]
+        assert session.get(AutoTopupSettings, stamped).consented_at == when  # type: ignore[union-attr]
+        column = session.execute(
+            sa.text(
+                "SELECT data_type, is_nullable FROM information_schema.columns "
+                "WHERE table_name = 'auto_topup_settings' AND column_name = 'consented_at'"
+            )
+        ).one()
+    assert tuple(column) == ("timestamp with time zone", "YES")
+
+
+def _load_migration() -> object:
+    spec = importlib.util.spec_from_file_location("auto_topup_migration", MIGRATION_FILE)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("direction", ["upgrade", "downgrade"])
+def test_the_migration_resets_its_lock_timeout(
+    migrated_sessionmaker_with_downgrade: tuple[sessionmaker[Session], Callable[[str], None]],
+    direction: str,
+) -> None:
+    """``env.py`` runs a whole ``alembic upgrade`` in one transaction, so a ``SET`` that is not
+    reset would silently apply to every later migration of the run (0037/0038 precedent)."""
+    sm, downgrade_to = migrated_sessionmaker_with_downgrade
+    if direction == "upgrade":
+        downgrade_to(DOWN_REVISION)
+    module = _load_migration()
+    with sm.kw["bind"].connect() as connection:  # type: ignore[union-attr]
+        before = connection.execute(sa.text("SHOW lock_timeout")).scalar_one()
+        context = MigrationContext.configure(connection)
+        with Operations.context(context):
+            getattr(module, direction)()
+        after = connection.execute(sa.text("SHOW lock_timeout")).scalar_one()
+        connection.rollback()
+    assert after == before
+
+
+@pytest.mark.parametrize("direction", ["upgrade", "downgrade"])
+def test_the_migration_fails_fast_when_payments_is_locked(
+    migrated_sessionmaker_with_downgrade: tuple[sessionmaker[Session], Callable[[str], None]],
+    direction: str,
+) -> None:
+    """``SET lock_timeout`` first: a blocked ``ALTER`` fails in seconds instead of queueing every
+    ``payments`` query behind it while the old revision serves traffic (0037/0038 precedent)."""
+    sm, downgrade_to = migrated_sessionmaker_with_downgrade
+    if direction == "upgrade":
+        downgrade_to(DOWN_REVISION)
+    engine = sm.kw["bind"]
+    outcome: dict[str, BaseException] = {}
+
+    def run() -> None:
+        try:
+            if direction == "upgrade":
+                upgrade_head()
+            else:
+                downgrade_to(DOWN_REVISION)
+        except BaseException as exc:  # handed to the test thread to assert on
+            outcome["error"] = exc
+
+    holder = engine.connect()  # type: ignore[union-attr]
+    try:
+        holder.execute(sa.text("LOCK TABLE payments IN ACCESS EXCLUSIVE MODE"))
+        worker = threading.Thread(target=run)
+        worker.start()
+        worker.join(timeout=60)
+        failed_fast = not worker.is_alive()
+    finally:
+        holder.rollback()
+        holder.close()
+    worker.join()
+    assert failed_fast, "the migration waited for the lock instead of timing out"
+    assert "lock timeout" in str(outcome["error"])
+    with sm() as session:
+        expected = DOWN_REVISION if direction == "upgrade" else REVISION
+        assert current_revision(session) == expected

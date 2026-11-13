@@ -21,7 +21,30 @@ Paymob billing spec §4.6, §5.4, §5.5 (Phase 06). Additive:
 * ``subscriptions.extra_seat_grace_until`` / ``extra_seat_grace_payment_id``: fallback seat grace
   (spec §5.4); the payment link is ``ON DELETE SET NULL``.
 
+* ``ix_payments_subscription_purpose`` (partial, ``subscription_id IS NOT NULL``): the
+  per-subscription payment lookups (``charge_in_flight``, the void rules, the seat-renewal
+  checks).
+* ``ix_payments_dedupe_key_prefix`` (partial, ``dedupe_key IS NOT NULL``, ``text_pattern_ops``):
+  the queue scans ``dedupe_key LIKE 'prefix%'``, which the unique btree cannot serve under an ICU
+  collation (``ix_paymob_events_dedupe_key_prefix``, 0053, is the precedent).
+* ``ck_payments_dedupe_key_purpose``: a ``dedupe_key`` is NULL, or ``auto_topup:`` on an
+  ``auto_topup`` payment, or ``extra_seat_renewal:`` on an ``extra_seats`` payment. A renewal
+  seat charge and a seat purchase are both ``extra_seats`` and only the prefix tells the paid
+  handler to clear a grace instead of granting seats, so a wrong pairing must be an error, not a
+  double grant. ``starts_with`` keeps the ``_`` in the prefix literal.
+* ``auto_topup_settings.consented_at`` (nullable): when the payer consented to unattended
+  charges, the evidence in a chargeback dispute over a MOTO charge made while they were away.
+  The service sets it when ``enabled`` turns true.
+
 No ``ALTER TYPE`` and no new enum value (the ``billing`` notification type is 0055's).
+
+**Lock behaviour**, as 0037 and 0038: both directions take ACCESS EXCLUSIVE on ``payments`` and
+``subscriptions`` while the old revision may be serving traffic. ``SET lock_timeout`` first makes a
+blocked statement fail fast and retriably instead of queueing every ``payments`` query behind it.
+``env.py`` runs one ``alembic upgrade``/``downgrade`` in ONE transaction, so both directions
+``RESET lock_timeout`` before returning, or the timeout would leak into the next migration of the
+run. The order (``payments``, then ``subscriptions``) is the callback's lock order, so the
+migration cannot deadlock against a callback.
 
 ``downgrade`` refuses while money state exists, as 0054 and 0055 do: any ``auto_topup_settings``
 row, any ``payments.dedupe_key`` that is not NULL, or any ``subscriptions`` row with a grace
@@ -47,10 +70,20 @@ IN_FLIGHT_INDEX = "ix_payments_auto_topup_in_flight"
 #: compares the two catalogue definitions.
 IN_FLIGHT_PREDICATE = "purpose = 'auto_topup' AND status IN ('created', 'pending')"
 GRACE_FK = "fk_subscriptions_extra_seat_grace_payment_id_payments"
+SUBSCRIPTION_PURPOSE_INDEX = "ix_payments_subscription_purpose"
+DEDUPE_PREFIX_INDEX = "ix_payments_dedupe_key_prefix"
+DEDUPE_PURPOSE_CHECK = "ck_payments_dedupe_key_purpose"
+#: The ORM declares the same predicate (``_DEDUPE_KEY_PURPOSE_CHECK``).
+DEDUPE_PURPOSE_PREDICATE = (
+    "dedupe_key IS NULL "
+    "OR (purpose = 'auto_topup' AND starts_with(dedupe_key, 'auto_topup:')) "
+    "OR (purpose = 'extra_seats' AND starts_with(dedupe_key, 'extra_seat_renewal:'))"
+)
 
 
 def upgrade() -> None:
     """Upgrade schema."""
+    op.execute("SET lock_timeout = '5s'")
     op.create_table(
         "auto_topup_settings",
         sa.Column("id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
@@ -65,6 +98,7 @@ def upgrade() -> None:
         sa.Column("crossing_seq", sa.Integer(), server_default=sa.text("0"), nullable=False),
         sa.Column("last_payment_id", sa.UUID(), nullable=True),
         sa.Column("disabled_reason", sa.String(), nullable=True),
+        sa.Column("consented_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -129,6 +163,20 @@ def upgrade() -> None:
         ["beneficiary_user_id"],
         postgresql_where=sa.text(IN_FLIGHT_PREDICATE),
     )
+    op.create_index(
+        SUBSCRIPTION_PURPOSE_INDEX,
+        "payments",
+        ["subscription_id", "purpose"],
+        postgresql_where=sa.text("subscription_id IS NOT NULL"),
+    )
+    op.create_index(
+        DEDUPE_PREFIX_INDEX,
+        "payments",
+        ["dedupe_key"],
+        postgresql_ops={"dedupe_key": "text_pattern_ops"},
+        postgresql_where=sa.text("dedupe_key IS NOT NULL"),
+    )
+    op.create_check_constraint(op.f(DEDUPE_PURPOSE_CHECK), "payments", DEDUPE_PURPOSE_PREDICATE)
 
     op.add_column(
         "subscriptions",
@@ -145,6 +193,7 @@ def upgrade() -> None:
         ["id"],
         ondelete="SET NULL",
     )
+    op.execute("RESET lock_timeout")
 
 
 def _refuse_if_any(probe: str, message: str) -> None:
@@ -159,6 +208,7 @@ def downgrade() -> None:
     Refuses while an auto top-up setting, a payment dedupe key or a seat grace exists (see the
     module docstring).
     """
+    op.execute("SET lock_timeout = '5s'")
     _refuse_if_any(
         "SELECT 1 FROM auto_topup_settings LIMIT 1",
         "Cannot downgrade 0056_auto_topup: auto_topup_settings still has rows. A row is a "
@@ -182,7 +232,11 @@ def downgrade() -> None:
     op.drop_column("subscriptions", "extra_seat_grace_payment_id")
     op.drop_column("subscriptions", "extra_seat_grace_until")
     op.drop_index(IN_FLIGHT_INDEX, table_name="payments")
+    op.drop_constraint(op.f(DEDUPE_PURPOSE_CHECK), "payments", type_="check")
+    op.drop_index(DEDUPE_PREFIX_INDEX, table_name="payments")
+    op.drop_index(SUBSCRIPTION_PURPOSE_INDEX, table_name="payments")
     op.drop_constraint(op.f("uq_payments_dedupe_key"), "payments", type_="unique")
     op.drop_column("payments", "dedupe_key")
     op.drop_index("ix_auto_topup_settings_payer_user_id", table_name="auto_topup_settings")
     op.drop_table("auto_topup_settings")
+    op.execute("RESET lock_timeout")

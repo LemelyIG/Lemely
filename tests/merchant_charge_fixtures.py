@@ -161,8 +161,9 @@ def seed_auto_topup(
     enabled: bool = True,
     threshold: int = 500,
     cap: int = 50_000,
+    consented_at: datetime | None = None,
 ) -> uuid.UUID:
-    """Insert an ``auto_topup_settings`` row (armed, ``crossing_seq`` 0)."""
+    """Insert an ``auto_topup_settings`` row (armed, ``crossing_seq`` 0, no consent stamp)."""
     setting_id = uuid.uuid4()
     with sm.begin() as session:
         session.add(
@@ -175,6 +176,7 @@ def seed_auto_topup(
                 credit_pack_id=pack_id,
                 saved_card_id=card_id,
                 monthly_cap_minor=cap,
+                consented_at=consented_at,
             )
         )
     return setting_id
