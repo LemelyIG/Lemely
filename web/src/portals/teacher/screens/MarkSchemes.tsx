@@ -141,7 +141,7 @@ export function MarkSchemes() {
                       key={m.doc}
                       title={m.doc}
                       subtitle={`${m.paper} · ${m.session} · ${m.status}`}
-                      trailing={<span className="text-data-sm">{m.maxMarks != null ? `${m.maxMarks} marks` : "-"}</span>}
+                      trailing={m.maxMarks != null ? <span className="text-data-sm">{m.maxMarks} marks</span> : undefined}
                     />
                   ))}
                 </ListGroup>

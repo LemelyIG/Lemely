@@ -138,7 +138,7 @@ export function ClassPapers() {
                     key={row.attemptId}
                     lines={3}
                     title={row.studentName}
-                    subtitle={`${classPaperLabel(row)} · ${relativeTime(row.recordedAt)} · ${row.unshared ? "Unshared from this class" : "Shared"}`}
+                    subtitle={`${row.unshared ? "Unshared from this class · " : ""}${classPaperLabel(row)} · ${relativeTime(row.recordedAt)}`}
                     trailing={<UnshareControl classId={classId} row={row} />}
                   />
                 ))}
