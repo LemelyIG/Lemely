@@ -11,12 +11,13 @@ const shell = readFileSync(join(SRC, "components/shell/PortalShell.tsx"), "utf8"
 const studentRoutes = readFileSync(join(SRC, "portals/student/index.tsx"), "utf8")
 const teacherRoutes = readFileSync(join(SRC, "portals/teacher/index.tsx"), "utf8")
 
-describe("tapping the active tab (brief §3.2)", () => {
-  it("first scrolls to the top", () => {
-    expect(activeTabTap({ pathname: "/student/classes/7", tabTo: "/student/classes", scrollY: 300 })).toBe("scroll-top")
-  })
-  it("then pops to the tab root", () => {
+describe("tapping the active tab (audit A item 10)", () => {
+  it("drilled in below the tab root, a tap pops to the root whatever the scroll", () => {
+    expect(activeTabTap({ pathname: "/student/classes/7", tabTo: "/student/classes", scrollY: 300 })).toBe("pop-root")
     expect(activeTabTap({ pathname: "/student/classes/7", tabTo: "/student/classes", scrollY: 0 })).toBe("pop-root")
+  })
+  it("at the root, the first tap scrolls to the top", () => {
+    expect(activeTabTap({ pathname: "/student/classes", tabTo: "/student/classes", scrollY: 300 })).toBe("scroll-top")
   })
   it("does nothing at the top of the root itself", () => {
     expect(activeTabTap({ pathname: "/student/classes", tabTo: "/student/classes", scrollY: 0 })).toBe("none")

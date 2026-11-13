@@ -1,8 +1,9 @@
 /* Hallmark · pre-emit critique: P5 H4 E5 S5 R4 V4 */
 import { useLayoutEffect } from "react"
-import { Outlet, ScrollRestoration, useNavigationType } from "react-router-dom"
+import { Outlet, ScrollRestoration, useLocation, useNavigationType } from "react-router-dom"
 import { createScrollKeyer } from "@/lib/nav/scrollRestorationKey"
 import { navigationDirection } from "@/lib/nav/navigationDirection"
+import { stateDirection } from "@/lib/nav/navDirectionState"
 
 /*
  * Packet B2a · the one pathless layout route wrapping every top-level route
@@ -29,10 +30,13 @@ const scrollKey = createScrollKeyer()
 
 export function RootOutlet() {
   const navigationType = useNavigationType()
+  const location = useLocation()
+  // A PUSH that means "back" (re-tapping a tab to pop to its root) says so in its location state.
+  const explicit = stateDirection(location.state)
 
   useLayoutEffect(() => {
-    document.documentElement.dataset.direction = navigationDirection(navigationType)
-  }, [navigationType])
+    document.documentElement.dataset.direction = explicit ?? navigationDirection(navigationType)
+  }, [navigationType, explicit, location.key])
 
   return (
     <>
