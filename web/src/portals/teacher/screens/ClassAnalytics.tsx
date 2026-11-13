@@ -619,7 +619,7 @@ export function ClassAnalytics() {
                     label="Per-paper comparison"
                     storageKey="lemely.analytics.papers.view"
                     list={
-                    <ListGroup label="Per-paper comparison">
+                    <ListGroup>
                       {data.paperComparison.map((p) => (
                         <ListRow
                           key={p.paperId}

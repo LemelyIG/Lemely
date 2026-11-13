@@ -256,31 +256,33 @@ export function Classes() {
                 label="Your classes"
                 storageKey="lemely.classes.view"
                 list={
-                <ListGroup label="Your classes">
-                  {sorted.length === 0 ? (
-                    <ListRow title={`No classes match "${search}".`} />
-                  ) : (
+                sorted.length === 0 ? (
+                  <p className="px-4 py-6 text-body-md text-on-surface-variant">No classes match "{search}".</p>
+                ) : (
+                <ListGroup label="Your classes" footer="To rename or delete a class, or sort, tap View table.">
+                  {
                     sorted.map((c) => (
                       <ListRow
                         key={c.id}
                         to={`/teacher/classes/${c.id}`}
                         title={c.label}
                         subtitle={[
-                          c.subjectName ?? c.subjectCode ?? "No subject",
+                          c.subjectName ?? c.subjectCode ?? "Subject not set",
                           `${c.studentCount} ${c.studentCount === 1 ? "student" : "students"}`,
                           c.atRiskCount ? `${c.atRiskCount} at risk` : null,
                         ]
                           .filter(Boolean)
                           .join(" · ")}
                         trailing={
-                          <span className="text-data-sm text-on-surface">
-                            {c.average != null ? `${Math.round(c.average)}%` : "—"}
-                          </span>
+                          c.average != null ? (
+                            <span className="text-data-sm text-on-surface">{Math.round(c.average)}% avg</span>
+                          ) : undefined
                         }
                       />
                     ))
-                  )}
+                  }
                 </ListGroup>
+                )
                 }
                 table={
                   <Table density="operate"

@@ -204,7 +204,7 @@ function QuestionAnalysisTable({ questions }: { questions: QuizQuestionAnalysis[
       label="Per-question analysis"
       storageKey="lemely.quizResults.questions.view"
       list={
-        <ListGroup label="Per-question analysis">
+        <ListGroup>
           {questions.map((q) => (
             <ListRow
               key={q.questionRef}
@@ -218,7 +218,7 @@ function QuestionAnalysisTable({ questions }: { questions: QuizQuestionAnalysis[
                 .join(" · ")}
               trailing={
                 <span className="text-data-sm tabular-nums">
-                  {q.accuracy == null ? "–" : pct(q.accuracy)}
+                  {q.accuracy == null ? "—" : pct(q.accuracy)}
                 </span>
               }
             />
@@ -251,7 +251,7 @@ function QuestionAnalysisTable({ questions }: { questions: QuizQuestionAnalysis[
             <TD className="max-w-[320px] text-on-surface">
               <span className="line-clamp-2">{q.prompt}</span>
             </TD>
-            <TD className="text-on-surface-variant">{q.topic ?? "–"}</TD>
+            <TD className="text-on-surface-variant">{q.topic ?? "—"}</TD>
             <TD numeric className="tabular-nums">
               {q.accuracy == null ? (
                 <span className="text-on-surface-variant" title="Nobody has been marked on this question yet">
@@ -313,7 +313,7 @@ function StudentTable({ students }: { students: QuizStudentResult[] }) {
       label="Per-student results"
       storageKey="lemely.quizResults.students.view"
       list={
-        <ListGroup label="Per-student results">
+        <ListGroup>
           {students.map((s) => (
             <ListRow
               key={s.studentId}

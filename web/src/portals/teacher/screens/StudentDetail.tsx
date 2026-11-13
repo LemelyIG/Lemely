@@ -385,18 +385,13 @@ export function StudentDetailView({
               label="Attempt history"
               storageKey="lemely.studentAttempts.view"
               list={
-                <ListGroup label="Attempt history">
+                <ListGroup>
                   {student.attempts.map((a, index) => (
                     <ListRow
                       key={`${a.paperId}-${a.recordedAt}-${index}`}
                       title={`${a.subjectCode} · Paper ${a.paperNumber} Variant ${a.paperVariant}`}
                       subtitle={`${a.awardedMarks}/${a.maximumMarks} · Grade ${a.grade} · ${dates.recorded(a.recordedAt)}`}
-                      trailing={
-                        <span className="inline-flex items-center gap-2">
-                          <span className="text-data-sm tabular-nums">{Math.round(a.percentage)}%</span>
-                          {attemptAction ? attemptAction(a) : null}
-                        </span>
-                      }
+                      trailing={<span className="text-data-sm tabular-nums">{Math.round(a.percentage)}%</span>}
                     />
                   ))}
                 </ListGroup>

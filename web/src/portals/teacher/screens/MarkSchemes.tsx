@@ -43,6 +43,13 @@ const STATUS_CHIP: Record<SchemeStatus, string> = {
   custom: "bg-surface-container-low text-on-surface-variant",
 }
 
+/** The chip's tone as text colour, for list rows that lead with an unparsed status. */
+const STATUS_TEXT: Record<SchemeStatus, string> = {
+  parsed: "text-success-text",
+  pending: "text-primary",
+  custom: "text-on-surface-variant",
+}
+
 export function MarkSchemes() {
   const schemesQuery = useSchemes()
   const uploadScheme = useUploadScheme()
@@ -140,7 +147,16 @@ export function MarkSchemes() {
                     <ListRow
                       key={m.doc}
                       title={m.doc}
-                      subtitle={`${m.paper} · ${m.session} · ${m.status}`}
+                      subtitle={
+                        m.status === "parsed" ? (
+                          `${m.paper} · ${m.session} · ${m.status}`
+                        ) : (
+                          <>
+                            <span className={STATUS_TEXT[m.status]}>{m.status}</span>
+                            {` · ${m.paper} · ${m.session}`}
+                          </>
+                        )
+                      }
                       trailing={m.maxMarks != null ? <span className="text-data-sm">{m.maxMarks} marks</span> : undefined}
                     />
                   ))}
