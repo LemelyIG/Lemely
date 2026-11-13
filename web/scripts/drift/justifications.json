@@ -280,13 +280,23 @@
     "approved": "pending"
   },
   "native-ios-settings": {
-    "difference": "Settings opens as a centred dialog, not an iOS sheet with grabber and rounded top corners (Task 8), and the settings body keeps the desktop rows until Task 8 (the sheet owns the grouped look). Fresh run: 50.28% light (over the 15% cap, so it cannot pass until the sheet lands), 6.76% dark.",
-    "justification": "Each remaining difference belongs to a later or parallel native-frame task and is removed when that task lands.",
+    "difference": "The settings sheet opens at the medium detent with a grabber and drags to large, with the grouped look in its sections (Task 8). It shows the real Profile section (title 32px with a plain close button, the tab strip as pills, the section's real copy and rows) where the preview shows placeholder rows. Fresh run: 3.98% light, 4.27% dark.",
+    "justification": "Each remaining difference belongs to the app's real content or to a later native-frame task; the sheet frame, grabber, detent, scrim and grouped look are in place.",
     "approved": "pending"
   },
   "native-android-settings": {
-    "difference": "Settings opens as a centred dialog, not an Android bottom sheet with drag handle (Task 8), and the settings body keeps the desktop rows until Task 8 (the sheet owns the grouped look). Fresh run: 50.19% light (over the 15% cap, so it cannot pass until the sheet lands), 6.15% dark.",
-    "justification": "Each remaining difference belongs to a later or parallel native-frame task and is removed when that task lands.",
+    "difference": "The settings sheet opens at the medium detent with a grabber and drags to large, with the grouped look in its sections (Task 8). It shows the real Profile section (title 32px with a plain close button, the tab strip as pills, the section's real copy and rows) where the preview shows placeholder rows. Fresh run: 3.39% light, 3.66% dark.",
+    "justification": "Each remaining difference belongs to the app's real content or to a later native-frame task; the sheet frame, grabber, detent, scrim and grouped look are in place.",
+    "approved": "pending"
+  },
+  "native-ios-bell": {
+    "difference": "The bell sheet lists real notifications as Task 10 grouped rows (a rounded inset group on the sheet ground, 16px margins) where the preview's panel is a flat list; 'Mark all read' sits on its own line under the sheet title (the shared sheet header has no action slot) instead of in the title row; the two inbox links are grouped rows instead of two centred text buttons; row and sheet height follow the real rows. Fresh run: 6.75% light, 3.43% dark.",
+    "justification": "Each remaining difference belongs to the app's real content or to a later native-frame task; the sheet frame, grabber, detent, scrim and grouped look are in place.",
+    "approved": "pending"
+  },
+  "native-android-bell": {
+    "difference": "The bell sheet lists real notifications as Task 10 grouped rows (full-bleed, square, 72px two-line rows) where the preview's panel is a flat list; 'Mark all read' sits on its own line under the sheet title instead of in the title row; the two inbox links are grouped rows instead of two centred text buttons; row and sheet height follow the real rows. Fresh run: 10.79% light, 3.42% dark.",
+    "justification": "Each remaining difference belongs to the app's real content or to a later native-frame task; the sheet frame, grabber, detent, scrim and grouped look are in place.",
     "approved": "pending"
   }
 }

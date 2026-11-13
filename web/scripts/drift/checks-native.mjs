@@ -1910,3 +1910,90 @@ NATIVE_CHECKS.push(
     },
   },
 )
+
+NATIVE_CHECKS.push(
+  ...["ios", "android"].map((platform) => ({
+    id: `native-${platform}-bell-sheet`,
+    platform,
+    width: 390,
+    app: NATIVE_HOME,
+    async run(page) {
+      const bell = page.getByRole("button", { name: /^Notifications/ })
+      await bell.click()
+      const dialog = page.getByRole("dialog", { name: "Notifications" })
+      await dialog.waitFor()
+      if (!(await dialog.evaluate((el) => el.classList.contains("lm-sheet")))) throw new Error("the bell panel is not a sheet")
+      if ((await page.getByRole("menu").count()) !== 0) throw new Error("native bell still opens a menu")
+      if ((await dialog.locator(".lm-list-row").count()) === 0) throw new Error("the bell sheet has no grouped rows")
+      await page.keyboard.press("Escape")
+      await dialog.waitFor({ state: "detached" })
+      if (!(await bell.evaluate((el) => el === document.activeElement))) throw new Error("focus not returned to the bell")
+    },
+  })),
+  ...["ios", "android"].map((platform) => ({
+    id: `native-${platform}-account-sheet`,
+    platform,
+    width: 390,
+    app: NATIVE_HOME,
+    async run(page) {
+      const avatar = page.getByRole("button", { name: /^Your profile and account/ })
+      await avatar.click()
+      const dialog = page.getByRole("dialog", { name: "Account" })
+      await dialog.waitFor()
+      if ((await page.getByRole("menu").count()) !== 0) throw new Error("native avatar still opens a menu")
+      for (const name of ["Your profile", "Sign out"])
+        if ((await dialog.getByText(name, { exact: true }).count()) === 0) throw new Error(`the account sheet has no ${name} row`)
+      await page.keyboard.press("Escape")
+      await dialog.waitFor({ state: "detached" })
+      if (!(await avatar.evaluate((el) => el === document.activeElement))) throw new Error("focus not returned to the avatar")
+    },
+  })),
+  ...["ios", "android"].map((platform) => ({
+    // The settings sections sit in the native group look inside the sheet, which portals outside <main>.
+    id: `native-${platform}-settings-sheet-groups`,
+    platform,
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student/settings" },
+    async run(page) {
+      const dialog = page.getByRole("dialog", { name: "Settings" })
+      await dialog.waitFor()
+      const m = await dialog.evaluate((el) => {
+        const group = el.querySelector(".lm-native-group")
+        if (!group) return null
+        const g = group.getBoundingClientRect()
+        const s = el.getBoundingClientRect()
+        const cs = getComputedStyle(group)
+        return { radius: cs.borderTopLeftRadius, border: cs.borderTopWidth, left: g.left - s.left, right: s.right - g.right }
+      })
+      if (!m) throw new Error("no .lm-native-group in the settings sheet")
+      if (m.border !== "0px") throw new Error(`group keeps its outline (${m.border})`)
+      if (platform === "ios" && (m.radius !== "12px" || Math.abs(m.left - 16) > 0.5 || Math.abs(m.right - 16) > 0.5))
+        throw new Error(`iOS inset group wrong: radius ${m.radius}, margins ${m.left}/${m.right}`)
+      if (platform === "android" && (m.radius !== "0px" || Math.abs(m.left) > 0.5 || Math.abs(m.right) > 0.5))
+        throw new Error(`Android group not full-bleed: radius ${m.radius}, margins ${m.left}/${m.right}`)
+    },
+  })),
+  {
+    id: "native-ios-settings-sheet-back-closes",
+    platform: "ios",
+    width: 390,
+    app: NATIVE_HOME,
+    async run(page) {
+      await page.getByRole("link", { name: "Settings" }).click()
+      const dialog = page.getByRole("dialog", { name: "Settings" })
+      await dialog.waitFor()
+      const depth = () => page.evaluate(() => document.documentElement.hasAttribute("data-sheet-depth"))
+      if (await depth()) throw new Error("settings opened at large; the preview opens it at medium")
+      const grab = await dialog.locator(".lm-sheet-grabber").boundingBox()
+      await page.mouse.move(grab.x + grab.width / 2, grab.y + 2)
+      await page.mouse.down()
+      await page.mouse.move(grab.x + grab.width / 2, grab.y - 300, { steps: 8 })
+      await page.mouse.up()
+      await page.waitForFunction(() => document.documentElement.hasAttribute("data-sheet-depth"))
+      await page.goBack()
+      await dialog.waitFor({ state: "detached" })
+      if (new URL(page.url()).pathname !== "/student") throw new Error("back did not return to the page")
+      if (await depth()) throw new Error("the page stayed scaled back after the sheet closed")
+    },
+  },
+)

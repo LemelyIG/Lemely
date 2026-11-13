@@ -842,6 +842,41 @@
 @keyframes lm-ptr-spin { to { rotate: 360deg; } }
 
 
+/* ── Native frame: grouped lists inside sheets (native frame Task 8).
+   Task 10's group and row rules above are scoped to .lm-native-main, but sheets portal outside
+   <main>. A sheet is the second scope root: the bell and account sheets (ListGroup) and the
+   settings sheet (SettingsCard) get the same look. The sheet body pads 16px each side, so iOS
+   inset groups need no extra margin and Android groups bleed by exactly that padding. */
+@media (max-width: 720px) {
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-sheet :is(.lm-native-card, .lm-native-group) {
+    border: 0;
+    box-shadow: none;
+  }
+  :root[data-platform="ios"] .lm-sheet :is(.lm-native-card, .lm-native-group) { border-radius: var(--native-group-radius-ios); }
+  :root[data-platform="ios"] .lm-sheet .lm-native-group-label { padding-inline: var(--space-4); }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-sheet .lm-native-group > .lm-native-row { border-top: 0; border-bottom: 0; }
+  :root[data-platform="ios"] .lm-sheet .lm-native-row { position: relative; min-height: var(--native-row-min-ios); }
+  :root[data-platform="ios"] .lm-sheet .lm-list-row + .lm-list-row { border-top: 0; }
+  :root[data-platform="ios"] .lm-sheet .lm-native-row + .lm-native-row::before {
+    content: "";
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline: var(--native-sep-inset-ios) 0;
+    block-size: var(--native-hairline);
+    background: var(--md-outline);
+    pointer-events: none;
+  }
+  :root[data-platform="android"] .lm-sheet .lm-native-group {
+    border-radius: 0;
+    margin-inline: calc(-1 * var(--space-4));
+  }
+  :root[data-platform="android"] .lm-sheet .lm-native-group-label { padding-inline: 0; }
+  :root[data-platform="android"] .lm-sheet .lm-native-row[data-lines="1"] { min-height: var(--native-row-1-android); }
+  :root[data-platform="android"] .lm-sheet .lm-native-row[data-lines="2"] { min-height: var(--native-row-2-android); }
+  :root[data-platform="android"] .lm-sheet .lm-native-row[data-lines="3"] { min-height: var(--native-row-3-android); }
+  :root[data-platform="android"] .lm-sheet .lm-list-row + .lm-list-row { border-top: 0; }
+}
+
 /* The student Overview's subject ledger (P4.1). A named utility rather than an
    arbitrary `grid-cols-[...]` so the template is stated once and reviewable.
    `minmax(0, 1fr)` on the text column, not `1fr`: a bare `1fr` has an `auto`

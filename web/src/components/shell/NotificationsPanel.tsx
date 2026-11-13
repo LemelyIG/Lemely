@@ -5,7 +5,10 @@ import { useMarkAllNotificationsRead, useMarkNotificationRead, useNotifications 
 import type { Notification } from "@/lib/notificationTypes"
 import { unreadCountOf } from "@/lib/staffInbox"
 import { cn } from "@/lib/utils"
+import { useNativeFrame } from "@/lib/useNativeFrame"
+import { ListGroup, ListRow } from "@/components/ui/list-group"
 import { ShellIcon } from "./icons"
+import { PanelSheet } from "./PanelSheet"
 import { notificationsTriggerLabel, panelTimeLabel, titleRuns } from "./shellModel"
 import { SHELL_FOCUS_RING, SHELL_PANEL } from "./shellStyles"
 
@@ -33,12 +36,42 @@ const ITEM =
 const FOOT_LINK =
   "flex-1 cursor-pointer rounded-chip p-2 text-center text-2xs font-semibold leading-[1.3] text-primary transition-colors duration-150 data-[highlighted]:bg-surface-container-low pointer-coarse:min-h-11 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
 
-function Row({
-  notification,
-  destinationFor,
-  iconFor,
-  inboxTo,
-}: { notification: Notification } & Pick<PanelProps, "destinationFor" | "iconFor" | "inboxTo">) {
+function NotificationTitle({ notification, unread }: { notification: Notification; unread: boolean }) {
+  return (
+    <>
+      {unread ? <span className="sr-only">Unread: </span> : null}
+      {titleRuns(notification.title).map((run, i) =>
+        run.mono ? (
+          <span key={i} className="font-mono font-semibold tabular-nums">
+            {run.text}
+          </span>
+        ) : (
+          run.text
+        ),
+      )}
+    </>
+  )
+}
+
+function NotificationIcon({ icon }: { icon: ReactNode }) {
+  return <span className="grid size-8 place-items-center rounded-row bg-primary-container text-primary">{icon}</span>
+}
+
+function NotificationTime({ notification, unread }: { notification: Notification; unread: boolean }) {
+  return (
+    <time
+      dateTime={notification.createdAt}
+      className="flex flex-col items-end gap-2 font-mono text-2xs font-medium leading-[1.3] text-on-surface-variant"
+    >
+      {panelTimeLabel(notification.createdAt)}
+      {unread ? <span aria-hidden="true" className="size-2 rounded-pill bg-primary" /> : null}
+    </time>
+  )
+}
+
+type RowProps = { notification: Notification } & Pick<PanelProps, "destinationFor" | "iconFor" | "inboxTo">
+
+function MenuRow({ notification, destinationFor, iconFor, inboxTo }: RowProps) {
   const navigate = useNavigate()
   const markRead = useMarkNotificationRead()
   const unread = notification.readAt === null
@@ -50,48 +83,71 @@ function Row({
         void navigate(destinationFor(notification) ?? inboxTo)
       }}
     >
-      <span className="grid size-8 place-items-center rounded-row bg-primary-container text-primary">
-        {iconFor(notification.type)}
-      </span>
+      <NotificationIcon icon={iconFor(notification.type)} />
       <span className="flex min-w-0 flex-col">
-        {unread ? <span className="sr-only">Unread: </span> : null}
-        <b className="line-clamp-2 font-bold text-on-surface [text-wrap:pretty]">{titleRuns(notification.title).map((run, i) =>
-            run.mono ? (
-              <span key={i} className="font-mono font-semibold tabular-nums">
-                {run.text}
-              </span>
-            ) : (
-              run.text
-            ),
-          )}
+        <b className="line-clamp-2 font-bold text-on-surface [text-wrap:pretty]">
+          <NotificationTitle notification={notification} unread={unread} />
         </b>
         {notification.body ? (
           <small className="text-2xs leading-normal text-on-surface-variant">{notification.body}</small>
         ) : null}
       </span>
-      <time
-        dateTime={notification.createdAt}
-        className="flex flex-col items-end gap-2 font-mono text-2xs font-medium leading-[1.3] text-on-surface-variant"
-      >
-        {panelTimeLabel(notification.createdAt)}
-        {unread ? <span aria-hidden="true" className="size-2 rounded-pill bg-primary" /> : null}
-      </time>
+      <NotificationTime notification={notification} unread={unread} />
     </DropdownMenu.Item>
   )
 }
 
-/** Mounts only while the panel is open, so the inbox is fetched on first open. */
-function Panel({ destinationFor, iconFor, inboxTo, footerLinks, emptyMessage, errorHeading, previewLimit }: PanelProps) {
+/** The same row in the native sheet: a grouped-list row, closing the sheet as it navigates. */
+function SheetRow({ notification, destinationFor, iconFor, inboxTo, onNavigate }: RowProps & { onNavigate: () => void }) {
+  const navigate = useNavigate()
+  const markRead = useMarkNotificationRead()
+  const unread = notification.readAt === null
+  return (
+    <ListRow
+      leading={<NotificationIcon icon={iconFor(notification.type)} />}
+      title={<NotificationTitle notification={notification} unread={unread} />}
+      subtitle={notification.body || undefined}
+      trailing={<NotificationTime notification={notification} unread={unread} />}
+      onClick={() => {
+        if (unread) markRead.mutate(notification.notificationId)
+        onNavigate()
+        void navigate(destinationFor(notification) ?? inboxTo)
+      }}
+    />
+  )
+}
+
+/**
+ * The panel's content, one body for two frames. Mounts only while the panel
+ * is open, so the inbox is fetched on first open. `onNavigate` is set in the
+ * native sheet (its rows are list rows that close the sheet); without it the
+ * body is the dropdown menu's, and its rows are menu items.
+ */
+function NotificationsBody({
+  destinationFor,
+  iconFor,
+  inboxTo,
+  footerLinks,
+  emptyMessage,
+  errorHeading,
+  previewLimit,
+  onNavigate,
+}: PanelProps & { onNavigate?: () => void }) {
   const query = useNotifications()
   const markAll = useMarkAllNotificationsRead()
   const page = query.data
   const hasRows = Boolean(page && page.notifications.length > 0)
   const unreadRows = page ? unreadCountOf(page) : 0
+  const sheet = onNavigate !== undefined
+  const rows = page ? page.notifications.slice(0, previewLimit ?? 4) : []
   return (
     <>
-      <div className="mx-2 my-1.5 flex items-baseline justify-between gap-3">
-        {/* Not `text-body-sm`: that unlayered `font:` shorthand would undo the weight and leading. */}
-        <p className="text-(length:--fs-body-sm) font-extrabold leading-[1.2] tracking-[-0.01em]">Notifications</p>
+      <div className={cn("flex items-baseline gap-3", sheet ? "justify-end" : "mx-2 my-1.5 justify-between")}>
+        {/* Not `text-body-sm`: that unlayered `font:` shorthand would undo the weight and leading.
+            The sheet's own header already names it. */}
+        {sheet ? null : (
+          <p className="text-(length:--fs-body-sm) font-extrabold leading-[1.2] tracking-[-0.01em]">Notifications</p>
+        )}
         {hasRows ? (
           <button
             type="button"
@@ -124,46 +180,73 @@ function Panel({ destinationFor, iconFor, inboxTo, footerLinks, emptyMessage, er
       ) : !hasRows ? (
         <p className="px-2 pt-2 pb-3 text-(length:--fs-body-sm) leading-normal text-on-surface-variant">{emptyMessage}</p>
       ) : (
-        <div className="flex flex-col">
-          {page!.notifications.slice(0, previewLimit ?? 4).map((n) => (
-            <Row key={n.notificationId} notification={n} destinationFor={destinationFor} iconFor={iconFor} inboxTo={inboxTo} />
+        onNavigate ? (
+          <ListGroup>
+            {rows.map((n) => (
+              <SheetRow key={n.notificationId} notification={n} destinationFor={destinationFor} iconFor={iconFor} inboxTo={inboxTo} onNavigate={onNavigate} />
+            ))}
+          </ListGroup>
+        ) : (
+          <div className="flex flex-col">
+            {rows.map((n) => (
+              <MenuRow key={n.notificationId} notification={n} destinationFor={destinationFor} iconFor={iconFor} inboxTo={inboxTo} />
+            ))}
+          </div>
+        )
+      )}
+      {onNavigate ? (
+        <ListGroup>
+          {footerLinks.map((link) => (
+            <ListRow key={link.to} title={link.label} to={link.to} onNavigate={onNavigate} />
+          ))}
+        </ListGroup>
+      ) : (
+        <div className="mt-1 flex gap-1 border-t border-outline-variant pt-1">
+          {footerLinks.map((link) => (
+            <DropdownMenu.Item key={link.to} asChild>
+              <Link to={link.to} className={FOOT_LINK}>
+                {link.label}
+              </Link>
+            </DropdownMenu.Item>
           ))}
         </div>
       )}
-      <div className="mt-1 flex gap-1 border-t border-outline-variant pt-1">
-        {footerLinks.map((link) => (
-          <DropdownMenu.Item key={link.to} asChild>
-            <Link to={link.to} className={FOOT_LINK}>
-              {link.label}
-            </Link>
-          </DropdownMenu.Item>
-        ))}
-      </div>
     </>
   )
 }
 
 /**
- * The bell and the panel it drops (Radix DropdownMenu: anchored, no scroll
- * lock, arrow keys, Escape and outside click close it and focus returns to
- * the bell). `unread` comes from the counts query the top bar already reads,
- * so the dot shows before the panel is ever opened.
+ * The bell and the panel it drops. Desktop and tablet: a Radix DropdownMenu
+ * (anchored, no scroll lock, arrow keys, Escape and outside click close it and
+ * focus returns to the bell). Native phones: a content-fit sheet over the same
+ * body. `unread` comes from the counts query the top bar already reads, so the
+ * dot shows before the panel is ever opened.
  */
 export function NotificationsPanel({ unread, triggerClassName, ...panel }: NotificationsPanelProps) {
-  return (
+  const { native } = useNativeFrame()
+  const trigger = (
+    <>
+      <ShellIcon name="bell" />
+      {unread ? (
+        <i
+          aria-hidden="true"
+          className="absolute end-[7px] top-1.5 size-2 rounded-pill bg-primary shadow-[0_0_0_2px_var(--color-surface-container-lowest)]"
+        />
+      ) : null}
+    </>
+  )
+  return native ? (
+    <PanelSheet triggerLabel={notificationsTriggerLabel(unread)} triggerClassName={triggerClassName} trigger={trigger} title="Notifications">
+      {(close) => <NotificationsBody {...panel} onNavigate={close} />}
+    </PanelSheet>
+  ) : (
     <DropdownMenu.Root modal={false}>
       <DropdownMenu.Trigger aria-label={notificationsTriggerLabel(unread)} className={triggerClassName}>
-        <ShellIcon name="bell" />
-        {unread ? (
-          <i
-            aria-hidden="true"
-            className="absolute end-[7px] top-1.5 size-2 rounded-pill bg-primary shadow-[0_0_0_2px_var(--color-surface-container-lowest)]"
-          />
-        ) : null}
+        {trigger}
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content align="end" sideOffset={8} collisionPadding={10} className={SHELL_PANEL}>
-          <Panel {...panel} />
+          <NotificationsBody {...panel} />
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>

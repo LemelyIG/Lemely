@@ -244,10 +244,11 @@ export function Modal({
   ) : null
 
   if (native) {
+    // The sheet scrim is the preview's lighter dialog scrim (0.4), not the desktop modal's 0.55.
     return createPortal(
       <div className="fixed inset-0 z-modal" onKeyDown={handleKeyDown}>
         <div
-          className="fixed inset-0 z-scrim bg-scrim motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
+          className="fixed inset-0 z-scrim bg-scrim-dialog motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
           aria-hidden="true"
           onClick={dismissible ? onClose : undefined}
         />

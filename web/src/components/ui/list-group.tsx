@@ -36,10 +36,12 @@ export function ListGroup({
   )
 }
 
+/** `state` and `onNavigate` carry router state (an overlay's background) and a close hook for a row inside a sheet. */
 type ListRowAction =
-  | { to: string; onClick?: never }
-  | { onClick: () => void; to?: never }
-  | { to?: undefined; onClick?: undefined }
+  | { to: string; state?: unknown; onNavigate?: () => void; href?: never; onClick?: never }
+  | { href: string; onNavigate?: () => void; to?: never; state?: never; onClick?: never }
+  | { onClick: () => void; to?: never; href?: never; state?: never; onNavigate?: never }
+  | { to?: undefined; href?: undefined; onClick?: undefined; state?: never; onNavigate?: never }
 
 export type ListRowProps = {
   title: ReactNode
@@ -49,7 +51,7 @@ export type ListRowProps = {
   lines?: 1 | 2 | 3
 } & ListRowAction
 
-export function ListRow({ title, subtitle, leading, trailing, to, onClick, lines = subtitle ? 2 : 1 }: ListRowProps) {
+export function ListRow({ title, subtitle, leading, trailing, to, href, state, onNavigate, onClick, lines = subtitle ? 2 : 1 }: ListRowProps) {
   const cls = "lm-list-row lm-native-row lm-press lm-press-delay flex w-full items-center gap-3 px-4 py-2.5 text-start"
   const inner = (
     <>
@@ -67,9 +69,15 @@ export function ListRow({ title, subtitle, leading, trailing, to, onClick, lines
   )
   if (to)
     return (
-      <Link to={to} viewTransition className={cls} data-lines={lines}>
+      <Link to={to} state={state} viewTransition={!onNavigate} onClick={onNavigate} className={cls} data-lines={lines}>
         {inner}
       </Link>
+    )
+  if (href)
+    return (
+      <a href={href} onClick={onNavigate} className={cls} data-lines={lines}>
+        {inner}
+      </a>
     )
   if (onClick)
     return (

@@ -132,3 +132,42 @@ describe("ConfirmModal (Task 7)", () => {
     expect(css).toMatch(/\.lm-action-sheet-cancel \{[^}]*font-weight: 600/)
   })
 })
+
+describe("shell panels on the native frame (Task 8)", () => {
+  for (const file of ["components/shell/NotificationsPanel.tsx", "components/shell/AccountPanel.tsx"]) {
+    const src = read(file)
+    it(`${file}: one body, two frames`, () => {
+      expect(src).toContain("useNativeFrame()")
+      expect(src).toMatch(/native \? \(\s*<PanelSheet/)
+      expect(src).toContain("<DropdownMenu.Root modal={false}>")
+    })
+    it(`${file}: the sheet rows are list rows`, () => {
+      expect(src).toContain("<ListRow")
+      expect(src).toContain("<ListGroup")
+    })
+  }
+  it("PanelSheet reuses Modal's dialog contract instead of copying it", () => {
+    const src = read("components/shell/PanelSheet.tsx")
+    expect(src).toMatch(/<Modal\b[^>]*open=\{open\}[^>]*size="md"/)
+    expect(src).toContain('aria-haspopup="dialog"')
+    expect(src).toContain("aria-expanded={open}")
+    expect(src).not.toContain("FOCUSABLE_SELECTOR")
+    expect(src).not.toContain('role="dialog"')
+  })
+  it("SettingsModal is a medium/large sheet on native (preview data-detents) and keeps routing close", () => {
+    const src = read("portals/settings/SettingsModal.tsx")
+    expect(src).toContain("useNativeFrame()")
+    expect(src).toMatch(/detents=\{\["medium", "large"\]\}/)
+    expect(src).toMatch(/initialDetent="medium"/)
+    expect(src).toMatch(/onDismiss=\{onClose\}/)
+  })
+  it("the native settings sheet drops the safe-area top padding; desktop keeps its dialog", () => {
+    const src = read("portals/settings/SettingsModal.tsx")
+    const nativeBranch = src.slice(src.indexOf("if (native) {"), src.indexOf("  return createPortal(", src.indexOf("if (native) {") + 200))
+    expect(nativeBranch).not.toContain("safe-area-inset-top")
+    expect(src).toContain("pt-[max(env(safe-area-inset-top),1rem)]")
+  })
+  it("the Create sheet keeps its 6px eyebrow-to-title gap on native (the native surface drops SHEET_SURFACE)", () => {
+    expect(read("components/shell/TopBarSheets.tsx")).toContain("native:mb-1.5")
+  })
+})

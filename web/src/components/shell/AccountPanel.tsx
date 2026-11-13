@@ -5,7 +5,10 @@ import { useAuth } from "@/lib/auth/AuthContext"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import { useOverlayState } from "@/lib/nav/useOverlayState"
 import { cn } from "@/lib/utils"
+import { useNativeFrame } from "@/lib/useNativeFrame"
+import { ListGroup, ListRow } from "@/components/ui/list-group"
 import { ShellIcon } from "./icons"
+import { PanelSheet } from "./PanelSheet"
 import { ShellAvatar, ShellAvatarPlaceholder, profileName } from "./ShellAvatar"
 import { SHELL_ICON_BUTTON, SHELL_PANEL } from "./shellStyles"
 
@@ -43,40 +46,91 @@ function LinkText({ link }: { link: AccountLink }) {
   )
 }
 
+function Identity({ name, email, detail, avatarUrl, sheet }: { name: string; email: string; detail: string | null; avatarUrl: string | null; sheet: boolean }) {
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-2.5",
+        sheet ? "px-1 pb-1" : "mb-1 border-b border-outline-variant px-2 pt-2.5 pb-3",
+      )}
+    >
+      <ShellAvatar name={name} src={avatarUrl} size="md" />
+      <span className="flex min-w-0 flex-col">
+        {/* `--fs-body-sm` alone, not `text-body-sm`: its unlayered `font:` shorthand would undo weight and leading. */}
+        <b className="text-(length:--fs-body-sm) font-bold leading-[1.3] text-on-surface">{name}</b>
+        <small className="truncate text-(length:--fs-body-sm) leading-[1.4] text-on-surface-variant">{email}</small>
+        {detail ? (
+          <small className="truncate text-(length:--fs-body-sm) leading-[1.4] text-on-surface-variant">{detail}</small>
+        ) : null}
+      </span>
+    </div>
+  )
+}
+
 /**
  * The signed-in person's avatar at the end of the top bar and the panel it
  * drops: who, then the portal's links, then Sign out. Until the profile
- * resolves the slot holds `ShellAvatarPlaceholder`. Radix DropdownMenu gives
- * aria-haspopup/expanded, focus into the panel and back to the avatar.
+ * resolves the slot holds `ShellAvatarPlaceholder`. Desktop and tablet: a
+ * Radix DropdownMenu (aria-haspopup/expanded, focus into the panel and back
+ * to the avatar). Native phones: a content-fit sheet of grouped rows.
  */
 export function AccountPanel({ links, detail, triggerClassName }: AccountPanelProps) {
   const { data } = useProfile()
   const { logout } = useAuth()
   const navigate = useNavigate()
   const overlayState = useOverlayState()
+  const { native } = useNativeFrame()
   if (!data) return <ShellAvatarPlaceholder />
   const name = profileName(data)
-  return (
+  const label = `Your profile and account, ${name}`
+  const signOut = () => {
+    // Session caches finish clearing before the sign-in screen mounts.
+    void logout().then(() => navigate("/login", { replace: true }))
+  }
+  const trigger = <ShellAvatar name={name} src={data.avatarUrl} />
+  return native ? (
+    <PanelSheet triggerLabel={label} triggerClassName={cn(SHELL_ICON_BUTTON, triggerClassName)} trigger={trigger} title="Account">
+      {(close) => (
+        <>
+          <Identity name={name} email={data.email} detail={detail} avatarUrl={data.avatarUrl} sheet />
+          <ListGroup>
+            {links.map((link) =>
+              link.href ? (
+                <ListRow key={link.id} leading={link.icon} title={link.label} subtitle={link.description} href={link.href} onNavigate={close} />
+              ) : (
+                <ListRow
+                  key={link.id}
+                  leading={link.icon}
+                  title={link.label}
+                  subtitle={link.description}
+                  to={link.to ?? "/"}
+                  state={link.overlay ? overlayState : undefined}
+                  onNavigate={close}
+                />
+              ),
+            )}
+          </ListGroup>
+          <ListGroup>
+            <ListRow
+              leading={<ShellIcon name="out" />}
+              title="Sign out"
+              onClick={() => {
+                close()
+                signOut()
+              }}
+            />
+          </ListGroup>
+        </>
+      )}
+    </PanelSheet>
+  ) : (
     <DropdownMenu.Root modal={false}>
-      <DropdownMenu.Trigger
-        aria-label={`Your profile and account, ${name}`}
-        className={cn(SHELL_ICON_BUTTON, triggerClassName)}
-      >
-        <ShellAvatar name={name} src={data.avatarUrl} />
+      <DropdownMenu.Trigger aria-label={label} className={cn(SHELL_ICON_BUTTON, triggerClassName)}>
+        {trigger}
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content align="end" sideOffset={8} collisionPadding={10} className={cn(SHELL_PANEL, "w-65")}>
-          <div className="mb-1 flex items-center gap-2.5 border-b border-outline-variant px-2 pt-2.5 pb-3">
-            <ShellAvatar name={name} src={data.avatarUrl} size="md" />
-            <span className="flex min-w-0 flex-col">
-              {/* `--fs-body-sm` alone, not `text-body-sm`: its unlayered `font:` shorthand would undo weight and leading. */}
-              <b className="text-(length:--fs-body-sm) font-bold leading-[1.3] text-on-surface">{name}</b>
-              <small className="truncate text-(length:--fs-body-sm) leading-[1.4] text-on-surface-variant">{data.email}</small>
-              {detail ? (
-                <small className="truncate text-(length:--fs-body-sm) leading-[1.4] text-on-surface-variant">{detail}</small>
-              ) : null}
-            </span>
-          </div>
+          <Identity name={name} email={data.email} detail={detail} avatarUrl={data.avatarUrl} sheet={false} />
           {links.map((link) => (
             <DropdownMenu.Item key={link.id} asChild>
               {link.href ? (
@@ -92,13 +146,7 @@ export function AccountPanel({ links, detail, triggerClassName }: AccountPanelPr
               )}
             </DropdownMenu.Item>
           ))}
-          <DropdownMenu.Item
-            className={LINK}
-            onSelect={() => {
-              // Session caches finish clearing before the sign-in screen mounts.
-              void logout().then(() => navigate("/login", { replace: true }))
-            }}
-          >
+          <DropdownMenu.Item className={LINK} onSelect={signOut}>
             <ShellIcon name="out" />
             <span>Sign out</span>
           </DropdownMenu.Item>

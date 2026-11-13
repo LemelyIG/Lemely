@@ -44,6 +44,13 @@ describe("grouped-list CSS (preview 4447a571, variant-a.css section 4)", () => {
   const mediaSelectors = [...mediaBody.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{[^{}]*\}/g)].flatMap((m) =>
     m[1].split(/,(?![^(]*\))/).map((sel) => sel.trim()),
   )
+  /** Task 8: the sheet is the second scope root (sheets portal outside <main>). */
+  const sheetStart = css.indexOf("/* ── Native frame: grouped lists inside sheets")
+  const sheetEnd = css.indexOf("/* The student Overview's subject ledger", sheetStart)
+  const sheetBlock = css.slice(sheetStart, sheetEnd)
+  const sheetSelectors = [...sheetBlock.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}@]+)\{[^{}]*\}/g)].flatMap((m) =>
+    m[1].split(/,(?![^(]*\))/).map((sel) => sel.trim()),
+  )
   const ALLOWED_SELECTOR_START = [
     ':root[data-platform="ios"]',
     ':root[data-platform="android"]',
@@ -64,7 +71,8 @@ describe("grouped-list CSS (preview 4447a571, variant-a.css section 4)", () => {
     }
   })
   it("no lm-native- selector appears outside the media block except the two documented harmless rules", () => {
-    const outside = (css.slice(0, mediaStart) + css.slice(mediaStart + MEDIA_OPEN.length + mediaBody.length + 1)).replace(/\/\*[\s\S]*?\*\//g, "")
+    const mediaEnd = mediaStart + MEDIA_OPEN.length + mediaBody.length + 1
+    const outside = (css.slice(0, mediaStart) + css.slice(mediaEnd, sheetStart) + css.slice(sheetEnd)).replace(/\/\*[\s\S]*?\*\//g, "")
     // Task 10's classes only; other native-frame tasks own their own lm-native-* selectors.
     const offenders = [...outside.matchAll(/([^{};]+)\{/g)]
       .map((m) => m[1].trim())
@@ -83,6 +91,26 @@ describe("grouped-list CSS (preview 4447a571, variant-a.css section 4)", () => {
     expect(block).not.toContain("lm-native-page")
     expect(css).toMatch(/--native-page-ios: var\(--md-surface-container\)/)
     expect(css).toMatch(/--native-page-android: var\(--md-surface-container-low\)/)
+  })
+  it("the sheet block exists, sits after Task 10's block, and is phone-only", () => {
+    expect(sheetStart).toBeGreaterThan(mediaStart)
+    expect(sheetBlock).toContain("@media (max-width: 720px) {")
+    expect(sheetSelectors.length).toBeGreaterThan(10)
+  })
+  it("every sheet rule is gated on data-platform and scoped to .lm-sheet", () => {
+    for (const sel of sheetSelectors) {
+      expect(ALLOWED_SELECTOR_START.some((p) => sel.startsWith(p)), `ungated sheet selector: ${sel}`).toBe(true)
+      expect(sel, `unscoped sheet selector: ${sel}`).toContain(".lm-sheet ")
+    }
+  })
+  it("sheet gutter maths: iOS inset groups need no margin, Android bleeds by the 16px body padding", () => {
+    expect(sheetBlock).not.toMatch(/\.lm-sheet \{/)
+    expect(sheetBlock).toMatch(/:root\[data-platform="ios"\] \.lm-sheet :is\(\.lm-native-card, \.lm-native-group\) \{[^}]*border-radius: var\(--native-group-radius-ios\)/)
+    expect(sheetBlock).toMatch(/:root\[data-platform="android"\] \.lm-sheet \.lm-native-group \{[^}]*border-radius: 0;[^}]*margin-inline: calc\(-1 \* var\(--space-4\)\)/)
+    expect(sheetBlock).toMatch(/:root\[data-platform="ios"\] \.lm-sheet \.lm-native-row \+ \.lm-native-row::before \{[^}]*inset-inline: var\(--native-sep-inset-ios\) 0/)
+    for (const n of [1, 2, 3]) {
+      expect(sheetBlock).toMatch(new RegExp(`\\.lm-sheet \\.lm-native-row\\[data-lines="${n}"\\] \\{[^}]*min-height: var\\(--native-row-${n}-android\\)`))
+    }
   })
   it("iOS: 16px page margin, 12px groups, 44px rows, hairline separators inset 16px", () => {
     expect(block).toMatch(/:root\[data-platform="ios"\] \.lm-native-main \{[^}]*padding-left: max\(var\(--native-group-inset-ios\), env\(safe-area-inset-left\)\)/)
