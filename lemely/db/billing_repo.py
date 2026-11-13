@@ -187,25 +187,41 @@ def add_months(moment: datetime, months: int) -> datetime:
 #: national numbers never begin with 0. If S4 shows Paymob rejects it, the audit's fix is a 422
 #: ``phone_required`` and a phone field in the checkout UI.
 PLACEHOLDER_PHONE: Final = "+200000000000"
-_E164_RE: Final = re.compile(r"\+[1-9]\d{7,14}")
-_EGYPT_LOCAL_MOBILE_RE: Final = re.compile(r"01[0125]\d{8}")
-_EGYPT_INTERNATIONAL_RE: Final = re.compile(r"20\d{10}")
+# ASCII digits only: ``\d`` would also match Arabic-Indic and other Unicode digits.
+_E164_RE: Final = re.compile(r"\+[1-9][0-9]{7,14}")
+_EGYPT_LOCAL_MOBILE_RE: Final = re.compile(r"01[0125][0-9]{8}")
+_EGYPT_MOBILE_NO_TRUNK_RE: Final = re.compile(r"1[0125][0-9]{8}")
+_EGYPT_INTERNATIONAL_RE: Final = re.compile(r"20[0-9]{10}")
+_EGYPT_WITH_TRUNK_RE: Final = re.compile(r"\+200(1[0125][0-9]{8})")
+#: Arabic-Indic (U+0660..) and Persian (U+06F0..) digits to ASCII, as Egyptian users type them.
+_ASCII_DIGITS: Final = {
+    **{0x0660 + n: ord("0") + n for n in range(10)},
+    **{0x06F0 + n: ord("0") + n for n in range(10)},
+}
 
 
 def paymob_phone(raw: str | None) -> str:
     """The payer's phone in E.164 form, or :data:`PLACEHOLDER_PHONE` when it is unusable.
 
-    Strips spaces, dots, dashes and brackets, then accepts ``+<digits>``, ``00<digits>``, an
-    Egyptian local mobile (``01012345678``) and a bare ``20<10 digits>``. Anything else (free
-    text, too short, ``"NA"``) is not sent: a malformed value is a 400 for the whole checkout.
+    Turns Arabic-Indic and Persian digits into ASCII, strips spaces, dots, dashes and brackets,
+    then accepts ``+<digits>``, ``00<digits>``, an Egyptian local mobile (``01012345678``), the
+    same with its leading 0 dropped (``1012345678``) and a bare ``20<10 digits>``. The trunk 0
+    typed after the country code (``+2001012345678``) is removed. Anything else (free text, too
+    short, ``"NA"``, other scripts) is not sent: a malformed value is a 400 for the whole
+    checkout, and a sent value is always ASCII.
     """
-    cleaned = re.sub(r"[\s().-]", "", raw or "")
+    cleaned = re.sub(r"[\s().-]", "", (raw or "").translate(_ASCII_DIGITS))
     if cleaned.startswith("00"):
         cleaned = "+" + cleaned[2:]
     elif _EGYPT_LOCAL_MOBILE_RE.fullmatch(cleaned):
         cleaned = "+20" + cleaned[1:]
+    elif _EGYPT_MOBILE_NO_TRUNK_RE.fullmatch(cleaned):
+        cleaned = "+20" + cleaned
     elif _EGYPT_INTERNATIONAL_RE.fullmatch(cleaned):
         cleaned = "+" + cleaned
+    trunk = _EGYPT_WITH_TRUNK_RE.fullmatch(cleaned)
+    if trunk is not None:
+        cleaned = "+20" + trunk.group(1)
     return cleaned if _E164_RE.fullmatch(cleaned) else PLACEHOLDER_PHONE
 
 
@@ -756,12 +772,13 @@ class BillingService:
             return payment
         if payment is None:
             self._rearm_reconcile_for_reference(order_map.get("merchant_order_id"))
-            if obj.get("api_source") == "SUBSCRIPTION":
+            if obj.get("api_source") == "SUBSCRIPTION" and self._is_moto_integration(obj):
                 # Paymob charges a renewal on the plan's MOTO integration with no intention of
                 # ours, so no payment of ours can match it yet. ``api_source`` is not signed, so
-                # it picks the log level only: nothing is settled from it, and every other
-                # unmatched callback stays an error. Renewals are recorded by the subscription
-                # webhook and the drift check (Phase 05), not here (skill audit I5).
+                # the signed MOTO ``integration_id`` must agree before the log level drops:
+                # nothing is settled from it, and every other unmatched callback stays an
+                # error. Renewals are recorded by the subscription webhook and the drift check
+                # (Phase 05), not here (skill audit I5).
                 log.info(
                     "paymob_renewal_txn_callback_unmatched",
                     order_id=str(order_map.get("id"))[:32],
@@ -802,6 +819,11 @@ class BillingService:
             payment.next_reconcile_at = now
             log.warning("paymob_callback_rearmed_reconcile", payment_id=str(payment.id))
 
+    def _is_moto_integration(self, obj: JsonMap) -> bool:
+        """True when the signed ``integration_id`` is the configured MOTO integration."""
+        moto = self._settings.moto_integration_id
+        return moto is not None and _as_int(obj.get("integration_id")) == moto
+
     def _is_our_integration(self, obj: JsonMap) -> bool:
         """True when the signed ``integration_id`` is one configured for this account and mode.
 
@@ -837,10 +859,13 @@ class BillingService:
 
     def _apply_transaction(
         self, obj: JsonMap, *, source: str, payment: Payment | None = None
-    ) -> None:
+    ) -> bool:
         """Verify, dedupe and apply one transaction ``obj`` (callback or inquiry).
 
-        ``payment`` is passed by reconciliation, which already holds its row lock.
+        ``payment`` is passed by reconciliation, which already holds its row lock. Returns
+        ``False`` only when the signed ``integration_id`` is not ours and the transaction was
+        held back for manual review; every other outcome (applied, duplicate, no payment, a
+        refund child) is ``True``.
         """
         txn_id = _as_int(obj.get("id"))
         if txn_id is None:
@@ -858,25 +883,29 @@ class BillingService:
                 # An audit row under its own key: the key ``txn:<id>:...`` is the one the
                 # genuine callback for this transaction needs, and must stay free.
                 self._record_event(PaymobEventKind.transaction, f"unmatched:{txn_id}", safe)
-                return
+                return True
         child = self._is_child_transaction(obj)
-        if source == "callback" and not child and not self._is_our_integration(obj):
+        if not child and not self._is_our_integration(obj):
             # Another integration on the same account (a payment link, a dashboard test) signs
             # with the same HMAC secret, so a genuine signature and a real ``order.id`` are not
             # enough: ``integration_id`` is signed and says which integration took the payment.
-            # Logged and ignored (the route still answers 200: a retry would change nothing). The
-            # audit row has its own key so the genuine callback's ``txn:`` key stays free. A
-            # refund/void child is not judged: it settles nothing, and the parent's own callback
-            # carries the state. A reconcile inquiry is our own authenticated request, so it is
-            # not judged either (skill audit I1).
+            # It is judged on the callback and on a reconcile inquiry alike: an inquiry proves
+            # the answer came from Paymob, not which integration took the money, and the next
+            # pass would otherwise settle what the callback refused. Nothing is settled
+            # automatically; the payment stays open for a person to review (reconcile stops
+            # polling it, see ``_reconcile_one``), with an error-level alert naming the path.
+            # The audit row has its own key so the genuine callback's ``txn:`` key stays free.
+            # A refund/void child is not judged: it settles nothing, and the parent's own
+            # callback carries the state (skill audit I1, review I1).
             log.error(
                 "paymob_unexpected_integration",
+                path=source,
                 payment_id=str(payment.id),
                 txn_id=txn_id,
                 integration_id=str(obj.get("integration_id"))[:20],
             )
             self._record_event(PaymobEventKind.transaction, f"rejected_integration:{txn_id}", safe)
-            return
+            return False
         if child and (
             (_is_true(obj.get("is_refund")) or _is_true(obj.get("is_void")))
             != _is_true(obj.get("has_parent_transaction"))
@@ -903,14 +932,14 @@ class BillingService:
                 # idempotent and monotonic (the largest total and the furthest status win),
                 # and it runs only for a callback that already passed the signed checks.
                 self._apply_post_payment_flags(payment, obj, safe, txn_id=txn_id)
-            return
+            return True
         if child:
             # A refund/void child; the parent's own callback carries the state.
             log.info("paymob_child_transaction", payment_id=str(payment.id), txn_id=txn_id)
-            return
+            return True
         if payment.status in _SETTLED:
             self._apply_post_payment_flags(payment, obj, safe, txn_id=txn_id)
-            return
+            return True
         if payment.status in (PaymentStatus.failed_mismatch, PaymentStatus.voided):
             log.warning(
                 "paymob_callback_for_closed_payment",
@@ -918,7 +947,7 @@ class BillingService:
                 status=payment.status.value,
                 txn_id=txn_id,
             )
-            return
+            return True
 
         if (
             payment.status is PaymentStatus.failed
@@ -933,7 +962,7 @@ class BillingService:
             log.info(
                 "paymob_stale_pending_after_failure", payment_id=str(payment.id), txn_id=txn_id
             )
-            return
+            return True
 
         # Open (created/pending) or failed: a failed payment can still become paid on a
         # later verified success (R20b), and the grant's idempotency key keeps that to one.
@@ -960,7 +989,7 @@ class BillingService:
                 received_currency=str(currency)[:8],
                 source=source,
             )
-            return
+            return True
 
         succeeded = (
             obj.get("success") is True
@@ -998,6 +1027,7 @@ class BillingService:
             log.info(
                 "paymob_payment_failed", payment_id=str(payment.id), txn_id=txn_id, source=source
             )
+        return True
 
     def _apply_post_payment_flags(
         self, payment: Payment, obj: JsonMap, safe: JsonMap, *, txn_id: int
@@ -1210,7 +1240,13 @@ class BillingService:
                 )
                 self._reschedule_unknown(payment, now=now)
                 return
-            self._apply_transaction(obj, source="inquiry", payment=payment)
+            if not self._apply_transaction(obj, source="inquiry", payment=payment):
+                # Paymob answered with a transaction on an integration that is not ours (the
+                # alert is already logged). Never settle it automatically, and never abandon
+                # it after 24 hours either: money may have moved, so it stays open with no
+                # schedule, as a stuck payment does, until a person decides.
+                payment.next_reconcile_at = None
+                return
         if payment.status not in _OPEN:
             payment.next_reconcile_at = None
             return

@@ -32,7 +32,9 @@ carries ``status_code``, with one exception: a 5xx on a write (create intention,
 pay with token, refund, void, create plan, update, suspend, resume or cancel a
 subscription) also sets ``outcome_unknown``, because a gateway error does not say
 whether Paymob applied it. A read (inquiry, get subscription, last transaction)
-keeps a 5xx as a known failure. An empty 2xx is
+keeps a 5xx as a known failure. A write whose auth-token mint fails is a known
+failure too: nothing was sent (``outcome_unknown`` ``False``, ``status_code`` ``None``,
+the mint error chained as ``__cause__``). An empty 2xx is
 never turned into ``{}``: no Paymob endpoint documents one, and ``{}`` would read
 as a definite failure.
 
@@ -252,7 +254,22 @@ class PaymobClient:
         if auth == "secret":
             headers = self._secret_header()
         elif auth == "bearer":
-            token = bearer if bearer is not None else self._auth_token()
+            if bearer is not None:
+                token = bearer
+            else:
+                try:
+                    token = self._auth_token()
+                except PaymobNotConfigured:
+                    raise
+                except PaymobError as exc:
+                    if not write:
+                        raise
+                    # The token is minted before the write is sent, so a mint that timed out,
+                    # was refused or came back unreadable means the write never left: a known
+                    # failure, not an unknown outcome (no status either, as the write got none).
+                    raise PaymobError(
+                        f"Paymob {method} {path} was not sent: no auth token", outcome_unknown=False
+                    ) from exc
             headers = {"Authorization": f"Bearer {token}"}
             tried.append(token)
         response = self._once(method, path, headers=headers, json=json)

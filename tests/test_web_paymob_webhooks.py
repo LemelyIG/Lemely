@@ -570,7 +570,11 @@ def test_an_unmatched_renewal_callback_logs_info_and_no_error(
 ) -> None:
     sm = migrated_sessionmaker
     _payment(sm)
-    obj = {**transaction_obj(txn_id=777001, order_id=555001), "api_source": "SUBSCRIPTION"}
+    obj = {
+        **transaction_obj(txn_id=777001, order_id=555001),
+        "api_source": "SUBSCRIPTION",
+        "integration_id": PAYMOB_SETTINGS.moto_integration_id,
+    }
     with capture_logs() as logs:
         response = _post(client, transaction_callback(obj), sign_transaction(obj))
     assert response.status_code == 200

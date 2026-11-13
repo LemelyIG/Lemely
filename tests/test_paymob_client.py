@@ -680,7 +680,14 @@ def test_an_unreadable_2xx_on_a_charge_class_call_is_unknown_not_a_decline(
 
 
 def test_an_empty_2xx_is_not_turned_into_an_empty_dict_on_any_call() -> None:
-    client = _client_with_handler(lambda r: FAILURES["http_200_empty"](r))
+    def handler(request: httpx.Request) -> httpx.Response:
+        # The token mint answers properly, so the empty 2xx lands on the call itself (an empty
+        # mint answer is a different case: see the "not sent" tests below).
+        if request.url.path == "/api/auth/tokens":
+            return httpx.Response(200, json=AUTH_TOKEN_RESPONSE)
+        return FAILURES["http_200_empty"](request)
+
+    client = _client_with_handler(handler)
     for call in (
         lambda: client.cancel_subscription(1),
         lambda: client.update_subscription(1, amount_cents=5),
@@ -898,3 +905,62 @@ def test_a_4xx_on_any_write_stays_a_known_decline(
         call(_client_with_handler(_failing_with(400)))
     assert caught.value.status_code == 400
     assert caught.value.outcome_unknown is False
+
+
+# -- a failed auth-token mint before a write means nothing was sent (review m5) ------------
+
+MINT_FAILURES: dict[str, Callable[[httpx.Request], httpx.Response]] = {
+    "mint_timeout": lambda r: (_ for _ in ()).throw(httpx.ReadTimeout("slow", request=r)),
+    "mint_connect_error": lambda r: (_ for _ in ()).throw(httpx.ConnectError("refused", request=r)),
+    "mint_500": lambda r: httpx.Response(500, json={"detail": "boom"}),
+    "mint_503": lambda r: httpx.Response(503, content=b"down"),
+    "mint_html_2xx": lambda r: httpx.Response(200, content=b"<html>maintenance</html>"),
+    "mint_no_token": lambda r: httpx.Response(200, json={"detail": "no token here"}),
+    "mint_401": lambda r: httpx.Response(401, json={"detail": "incorrect credentials"}),
+}
+
+
+@pytest.mark.parametrize("failure", sorted(MINT_FAILURES))
+@pytest.mark.parametrize(
+    ("label", "call"), SUBSCRIPTION_WRITES, ids=[c[0] for c in SUBSCRIPTION_WRITES]
+)
+def test_a_failed_token_mint_before_a_write_is_a_known_failure_and_sends_nothing(
+    label: str, call: Callable[[PaymobClient], Any], failure: str
+) -> None:
+    from lemely.db.billing_repo import _outcome_unknown
+
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        return MINT_FAILURES[failure](request)
+
+    with pytest.raises(PaymobError) as caught:
+        call(_client_with_handler(handler))
+    assert seen == ["/api/auth/tokens"], f"{label} sent a write after the mint failed"
+    assert caught.value.outcome_unknown is False
+    assert caught.value.timeout is False
+    assert caught.value.status_code is None
+    assert _outcome_unknown(caught.value) is False  # what the callers read
+    assert isinstance(caught.value.__cause__, PaymobError)  # the mint failure is chained
+
+
+@pytest.mark.parametrize("failure", ["mint_timeout", "mint_500", "mint_html_2xx"])
+def test_a_failed_token_mint_before_a_read_keeps_its_own_flags(failure: str) -> None:
+    """Only a write is rewritten; a read just reports the mint failure."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return MINT_FAILURES[failure](request)
+
+    with pytest.raises(PaymobError) as caught:
+        _client_with_handler(handler).get_subscription(1)
+    assert "api/auth/tokens" in str(caught.value)  # the mint's own error, not a rewritten one
+
+
+def test_a_missing_api_key_before_a_write_is_still_not_configured() -> None:
+    client = PaymobClient(
+        PaymobSettings.model_validate({"secret_key": "sk"}),
+        http=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(500))),
+    )
+    with pytest.raises(PaymobNotConfigured):
+        client.cancel_subscription(1)

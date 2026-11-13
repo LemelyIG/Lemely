@@ -1059,6 +1059,8 @@ def test_a_callback_from_a_foreign_integration_settles_nothing(
     with capture_logs() as logs:
         _apply(sm, obj)
     assert _levels(logs, "paymob_unexpected_integration") == ["error"]
+    (entry,) = [e for e in logs if e["event"] == "paymob_unexpected_integration"]
+    assert entry["path"] == "callback"
     assert _payment(sm, pid).status is PaymentStatus.created
     assert _grants(sm, pid) == []
     # The audit row does not use up the key the genuine callback needs.
@@ -1131,9 +1133,11 @@ def test_the_foreign_integration_is_ignored_even_when_the_callback_is_otherwise_
 
 
 def _renewal_obj(**kwargs: Any) -> dict[str, Any]:
+    """A renewal charge: billed on the plan's MOTO integration, with no intention of ours."""
     return {
         **transaction_obj(txn_id=777001, order_id=555001, **kwargs),
         "api_source": "SUBSCRIPTION",
+        "integration_id": MOTO_ID,
     }
 
 
@@ -1164,6 +1168,32 @@ def test_any_other_unmatched_callback_stays_an_error(
     assert not any(e["event"] == "paymob_renewal_txn_callback_unmatched" for e in logs)
 
 
+@pytest.mark.parametrize("integration_id", [CARD_INTEGRATION_ID, FOREIGN_ID, None, "abc"])
+def test_the_renewal_marker_needs_the_signed_moto_integration_to_downgrade_the_log(
+    migrated_sessionmaker: sessionmaker[Session], integration_id: object
+) -> None:
+    """``api_source`` is unsigned; the log level rests on the signed MOTO ``integration_id``."""
+    sm = migrated_sessionmaker
+    _setup(sm)
+    obj = {**_renewal_obj(), "integration_id": integration_id}
+    with capture_logs() as logs:
+        _apply(sm, obj)
+    assert _levels(logs, "paymob_callback_unmatched") == ["error"]
+    assert not any(e["event"] == "paymob_renewal_txn_callback_unmatched" for e in logs)
+
+
+def test_no_moto_integration_configured_means_no_renewal_downgrade(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _setup(sm)
+    settings = PAYMOB_SETTINGS.model_copy(update={"moto_integration_id": None})
+    obj = {**_renewal_obj(), "integration_id": None}
+    with capture_logs() as logs:
+        _apply(sm, obj, settings)
+    assert _levels(logs, "paymob_callback_unmatched") == ["error"]
+
+
 def test_a_renewal_marker_does_not_excuse_a_reference_mismatch(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:
@@ -1192,3 +1222,30 @@ def test_a_renewal_that_does_match_one_of_our_payments_is_applied_normally(
         _apply(sm, obj)
     assert _payment(sm, pid).status is PaymentStatus.paid
     assert not any(e["event"] == "paymob_renewal_txn_callback_unmatched" for e in logs)
+
+
+def test_a_refund_or_void_child_is_not_judged_on_its_integration(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A child settles nothing (the parent's callback carries the state), so a foreign
+    ``integration_id`` on one is neither alerted nor allowed to move the payment."""
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid)))
+    child = {
+        **transaction_obj(
+            merchant_order_id=str(pid),
+            txn_id=192036466,
+            is_refund=True,
+            has_parent_transaction=True,
+        ),
+        "integration_id": FOREIGN_ID,
+    }
+    with capture_logs() as logs:
+        _apply(sm, child)
+    assert not any(e["event"] == "paymob_unexpected_integration" for e in logs)
+    assert any(e["event"] == "paymob_child_transaction" for e in logs)
+    assert _payment(sm, pid).status is PaymentStatus.paid
+    keys = {e.dedupe_key for e in _events(sm)}
+    assert not any(k.startswith("rejected_integration:") for k in keys)
+    assert any(k.startswith("child:txn:192036466") for k in keys)

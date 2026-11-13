@@ -957,3 +957,105 @@ def test_get_sweeper_wires_the_billing_job_only_when_one_exists(
         assert deps.get_sweeper().billing_reconcile is None
     finally:
         deps.get_sweeper.cache_clear()
+
+
+# -- a foreign-integration transaction is never settled automatically (review I1) ----------
+
+FOREIGN_INTEGRATION_ID = 999999
+
+
+def _foreign(pid: uuid.UUID, **kwargs: Any) -> dict[str, Any]:
+    return {
+        **transaction_obj(merchant_order_id=str(pid), **kwargs),
+        "integration_id": FOREIGN_INTEGRATION_ID,
+    }
+
+
+def test_a_foreign_integration_transaction_is_not_paid_by_the_callback_nor_by_reconcile(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The reviewer's probe: the callback refuses it, and the next reconcile pass, which is
+    answered with the very same transaction, must refuse it too."""
+    sm = migrated_sessionmaker
+    pid = _due_payment(sm, age=timedelta(minutes=20), paymob_order_id=265715202)
+    foreign = _foreign(pid)
+    client = FakePaymobClient()
+    with sm.begin() as session, structlog.testing.capture_logs() as logs:
+        BillingService(
+            session, client, PAYMOB_SETTINGS, now=lambda: FIXED_NOW
+        ).apply_transaction_callback(foreign)
+    (entry,) = [e for e in logs if e["event"] == "paymob_unexpected_integration"]
+    assert entry["path"] == "callback"
+    assert _payment(sm, pid).status is PaymentStatus.created
+    assert _payment(sm, pid).next_reconcile_at is not None  # reconcile still looks at it
+
+    client.inquiry_response = foreign
+    with structlog.testing.capture_logs() as logs:
+        assert _reconcile(sm, client) == 1
+    assert client.inquiries == [str(pid)]
+    (entry,) = [e for e in logs if e["event"] == "paymob_unexpected_integration"]
+    assert entry["log_level"] == "error"
+    assert entry["path"] == "inquiry"
+    assert entry["payment_id"] == str(pid)
+    payment = _payment(sm, pid)
+    assert payment.status is PaymentStatus.created  # open, for manual review: never paid
+    assert payment.paid_at is None
+    assert _grant_count(sm, pid) == 0
+
+
+def test_a_foreign_integration_found_by_inquiry_alone_is_held_for_manual_review(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    pid = _due_payment(sm, age=timedelta(minutes=20))
+    client = FakePaymobClient()
+    client.inquiry_response = _foreign(pid)
+    assert _reconcile(sm, client) == 1
+    held = _payment(sm, pid)
+    assert held.status is PaymentStatus.created
+    assert held.next_reconcile_at is None  # stops polling and stops alerting every pass
+    assert _grant_count(sm, pid) == 0
+    client.inquiries.clear()
+    assert _reconcile(sm, client, now=FIXED_NOW + timedelta(days=2)) == 0
+    assert client.inquiries == []
+    assert _payment(sm, pid).status is PaymentStatus.created
+
+
+def test_a_held_foreign_integration_payment_is_not_failed_after_24_hours(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Money may have moved, so the abandon-after-24-hours rule must not close it."""
+    sm = migrated_sessionmaker
+    pid = _due_payment(sm, age=timedelta(hours=30))
+    client = FakePaymobClient()
+    client.inquiry_response = _foreign(pid)
+    _reconcile(sm, client)
+    assert _payment(sm, pid).status is PaymentStatus.created
+
+
+def test_a_pending_foreign_integration_transaction_is_held_too(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    pid = _due_payment(sm, age=timedelta(minutes=20))
+    client = FakePaymobClient()
+    client.inquiry_response = _foreign(pid, success=False, pending=True)
+    _reconcile(sm, client)
+    held = _payment(sm, pid)
+    assert held.status is PaymentStatus.created
+    assert held.next_reconcile_at is None
+
+
+@pytest.mark.parametrize("integration_id", [4569876, 4569877])
+def test_our_own_integration_ids_are_still_settled_by_inquiry(
+    migrated_sessionmaker: sessionmaker[Session], integration_id: int
+) -> None:
+    sm = migrated_sessionmaker
+    pid = _due_payment(sm, age=timedelta(minutes=20))
+    client = FakePaymobClient()
+    client.inquiry_response = {
+        **transaction_obj(merchant_order_id=str(pid)),
+        "integration_id": integration_id,
+    }
+    _reconcile(sm, client)
+    assert _payment(sm, pid).status is PaymentStatus.paid

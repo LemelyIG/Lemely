@@ -476,13 +476,46 @@ def test_the_placeholder_phone_is_a_well_formed_e164_number() -> None:
         ("201012345678", "+201012345678"),
         ("(+20) 101 234 5678", "+201012345678"),
         ("+447911123456", "+447911123456"),
+        # the trunk 0 typed after the country code, a very common Egyptian entry
+        ("+2001012345678", "+201012345678"),
+        ("002001012345678", "+201012345678"),
+        ("+20 (0)101 234 5678", "+201012345678"),
+        # the leading 0 of a local mobile dropped
+        ("1012345678", "+201012345678"),
+        # Arabic-Indic and Persian digits, whole or mixed with ASCII
+        ("\u0660\u0661\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668", "+201012345678"),
+        ("+20\u0661\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668", "+20" + "1012345678"),
+        ("\u06f0\u06f1\u06f0\u06f1\u06f2\u06f3\u06f4\u06f5\u06f6\u06f7\u06f8", "+201012345678"),
     ],
 )
 def test_a_phone_on_file_is_sent_in_e164_form(stored: str, sent: str) -> None:
     assert billing_data_for(_user_with_phone(stored))["phone_number"] == sent
 
 
-@pytest.mark.parametrize("stored", [None, "", "   ", "NA", "call me", "12345", "+0123456789"])
+def test_a_sent_phone_is_ascii_only() -> None:
+    sent = billing_data_for(
+        _user_with_phone("+20\u0661\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668")
+    )
+    assert sent["phone_number"].isascii()
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        None,
+        "",
+        "   ",
+        "NA",
+        "call me",
+        "12345",
+        "+0123456789",
+        "0130000000",
+        "+2001",
+        "+20\u0e51\u0e50",
+        # ten Thai digits: \d matches them, but only ASCII digits may be sent
+        "+20\u0e51\u0e50\u0e51\u0e52\u0e53\u0e54\u0e55\u0e56\u0e57\u0e58",
+    ],
+)
 def test_a_missing_or_unusable_phone_sends_the_placeholder_never_na(stored: str | None) -> None:
     assert billing_data_for(_user_with_phone(stored))["phone_number"] == PLACEHOLDER_PHONE
 
