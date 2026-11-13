@@ -8,6 +8,8 @@ the service shell; later tasks add the lifecycle to :class:`SubscriptionService`
   amounts are re-fetched (``GET subscriptions/{id}``, ``GET .../last-transaction``).
 * Every paid period is one ``subscription_periods`` row and one ``period_allowance`` grant,
   issued through :meth:`UsageLedger.issue_grant`, which repays the owner's debt first (§5.8).
+* A first payment that lands while another plan is live becomes credits (UD-3, UD-10), through
+  the one public :func:`convert_payment_to_credits`, which Phase 06 reuses for the same case.
 * Webhook and checkout methods leave the commit to the caller. Sweep methods commit after each
   subscription, so one Paymob failure cannot undo another subscription's change.
 * Lock order: subscription row, then ``teacher_members`` rows, then ledger owner locks.
@@ -23,6 +25,7 @@ from typing import TYPE_CHECKING, ClassVar, Final
 import sqlalchemy as sa
 import structlog
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError
 
 from lemely.core.subscription_rules import (
@@ -30,29 +33,42 @@ from lemely.core.subscription_rules import (
     PAYMOB_RETRIAL_DAYS,
     STALE_CHECKOUT_AFTER,
     paymob_frequency,
+    period_end,
+    seat_capacity_for,
     subscription_amount_minor,
 )
+from lemely.db.billing_notices import enqueue_subscription_notice
 from lemely.db.billing_repo import (
+    CREDIT_EXPIRY_MONTHS,
     INTENTION_EXPIRATION_SECONDS,
     BillingService,
     CheckoutUnavailable,
     UnknownPayer,
     _outcome_unknown,
+    add_months,
     billing_data_for,
     is_linked_parent,
+    register_paid_handler,
 )
 from lemely.db.models.billing import (
     LIVE_SUBSCRIPTION_STATUSES,
+    CreditPack,
     Payment,
     PaymentPurpose,
     PaymentStatus,
+    PaymobEvent,
+    PaymobEventKind,
     PlanAudience,
     PlanTier,
     Subscription,
+    SubscriptionPeriod,
 )
 from lemely.db.models.enums import Role, SubscriptionStatus
 from lemely.db.models.team import TeacherMember, TeacherMemberKind, TeacherMemberStatus
+from lemely.db.models.usage import GrantKind
 from lemely.db.models.users import User
+from lemely.db.teacher_team_repo import TeacherTeamService
+from lemely.db.usage_ledger_repo import UsageLedger
 from lemely.io.paymob.client import PaymobError
 
 if TYPE_CHECKING:
@@ -60,6 +76,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
+    from lemely.db.billing_repo import JsonMap
+    from lemely.db.models.usage import UsageGrant
     from lemely.io.paymob.client import PaymobClient
     from lemely.runtime.config import PaymobSettings
 
@@ -136,6 +154,12 @@ class DowngradeUnavailable(SubscriptionError):
     """
 
     code: ClassVar[str] = "downgrade_unavailable"
+
+
+class NoCreditRate(SubscriptionError):
+    """No credit pack gives a rate for this payment, so it cannot be turned into credits."""
+
+    code: ClassVar[str] = "no_credit_rate"
 
 
 class PlanSyncFailed(SubscriptionError):
@@ -296,6 +320,361 @@ def _line_items(tier: PlanTier, extra_seats: int) -> list[dict[str, object]]:
             }
         )
     return items
+
+
+def _strict_int(value: object) -> int | None:
+    """``value`` when it is a real integer: a bool, a float and a digit string are not."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _seats_in_use(session: Session, teacher_id: uuid.UUID) -> int:
+    """The teacher's active student seats: the count a plan's seats must cover (UD-5).
+
+    A seat already ``leaving`` is not counted: the teacher asked for it to go, so removing
+    seats lets them subscribe or switch plan at once instead of at month end.
+    """
+    return int(
+        session.scalar(
+            select(sa.func.count())
+            .select_from(TeacherMember)
+            .where(
+                TeacherMember.teacher_user_id == teacher_id,
+                TeacherMember.kind == TeacherMemberKind.student_seat,
+                TeacherMember.status == TeacherMemberStatus.active,
+            )
+        )
+        or 0
+    )
+
+
+def _shed_excess_seats(
+    session: Session, subscription: Subscription, tier: PlanTier, *, now: datetime
+) -> int:
+    """Move the newest active seats over capacity to ``leaving`` (spec §5.4 fallback rule).
+
+    Checkout already refuses a plan with fewer seats than the teacher holds (UD-5), so this only
+    acts when a seat was claimed between checkout and payment. A leaving seat keeps working to
+    month end and gets no new month's grant. Runs before the grant is issued (lock order,
+    DV-13: member rows before ledger owner locks).
+    """
+    capacity = seat_capacity_for(
+        included_seats=tier.included_seats, extra_seats=subscription.extra_seats or 0
+    )
+    excess = _seats_in_use(session, subscription.user_id) - capacity
+    if excess <= 0:
+        return 0
+    newest = session.scalars(
+        select(TeacherMember.id)
+        .where(
+            TeacherMember.teacher_user_id == subscription.user_id,
+            TeacherMember.kind == TeacherMemberKind.student_seat,
+            TeacherMember.status == TeacherMemberStatus.active,
+        )
+        .order_by(TeacherMember.created_at.desc(), TeacherMember.id.desc())
+        .limit(excess)
+    ).all()
+    team = TeacherTeamService(session)
+    for member_id in newest:
+        team.request_removal(member_id, now=now)
+    log.warning(
+        "seats_shed_after_plan_change",
+        teacher_user_id=str(subscription.user_id),
+        count=len(newest),
+    )
+    return len(newest)
+
+
+# -- payment to credits (UD-3, UD-10; Phase 06 UD-P2) -------------------------------------
+
+
+def credit_units_for_amount(session: Session, *, amount_minor: int, currency: str) -> int | None:
+    """Credit units that ``amount_minor`` buys in the shop, or ``None`` when no pack prices it.
+
+    The one credit rate of the billing code (Phase 05 UD-3, Phase 06 UD-P2): the best
+    units-per-price among the active packs in ``currency`` that the same money could buy, or the
+    cheapest pack's rate when it buys none. The result is floored, so a conversion never grants
+    more than was paid. ``None`` also when the amount is too small for one unit.
+    """
+    if amount_minor <= 0:
+        return None
+    packs = session.execute(
+        select(CreditPack.units, CreditPack.price_minor)
+        .where(
+            CreditPack.is_active.is_(True),
+            CreditPack.currency == currency,
+            CreditPack.price_minor > 0,
+            CreditPack.units > 0,
+        )
+        .order_by(CreditPack.price_minor, CreditPack.code)
+    ).all()
+    if not packs:
+        return None
+    affordable = [pack for pack in packs if pack.price_minor <= amount_minor] or packs[:1]
+    best = affordable[0]
+    for pack in affordable[1:]:
+        if pack.units * best.price_minor > best.units * pack.price_minor:
+            best = pack
+    units = amount_minor * best.units // best.price_minor
+    return units if units > 0 else None
+
+
+def convert_payment_to_credits(
+    session: Session, payment: Payment, *, subscription: Subscription, now: datetime
+) -> UsageGrant:
+    """Turn a paid payment that bought nothing into the beneficiary's credits (UD-3, UD-10).
+
+    Issues a visible ``credit_pack`` grant that expires 12 months after ``now`` (key
+    ``credited:{payment.id}``), stamps ``payment.grant_units`` and queues the "credited" notice to
+    ``subscription``'s payer. Debt is repaid first by the ledger. Idempotent: a replay returns the
+    stored grant and queues nothing new, and the units are the first conversion's, not today's
+    rate. Callers pass ``payment.paid_at`` as ``now`` so a replay names the same instant.
+    The caller commits and holds the payment row lock; this makes no Paymob call.
+
+    Raises:
+        ValueError: the payment is not ``paid``, or ``now`` is naive.
+        NoCreditRate: no active credit pack prices the payment's amount in its currency.
+    """
+    if payment.status is not PaymentStatus.paid:
+        raise ValueError("only a paid payment can be turned into credits")
+    units = payment.grant_units
+    if units is None:
+        units = credit_units_for_amount(
+            session, amount_minor=payment.amount_minor, currency=payment.currency
+        )
+    if units is None:
+        raise NoCreditRate(f"no credit rate for payment {payment.id}")
+    grant = UsageLedger(session).issue_grant(
+        owner_user_id=payment.beneficiary_user_id,
+        kind=GrantKind.credit_pack,
+        units=units,
+        idempotency_key=f"credited:{payment.id}",
+        expires_at=add_months(now, CREDIT_EXPIRY_MONTHS),
+        visible=True,
+        effective_at=now,
+        payment_id=payment.id,
+    )
+    payment.grant_units = units
+    enqueue_subscription_notice(
+        session, subscription=subscription, notice="credited", effective_at=now
+    )
+    return grant
+
+
+# -- first payment ----------------------------------------------------------------------
+
+
+def _issue_period_grant(
+    session: Session,
+    subscription: Subscription,
+    tier: PlanTier,
+    period: SubscriptionPeriod,
+    payment: Payment,
+) -> UsageGrant | None:
+    """The period's ``period_allowance`` grant, the one definition (constraints §5.2).
+
+    Owned by the beneficiary, invisible, effective at the period start and expiring at its end;
+    the ledger repays the owner's debt first. A tier with no allowance grants nothing (the ledger
+    refuses zero units).
+    """
+    if not tier.allowance_units:
+        return None
+    return UsageLedger(session).issue_grant(
+        owner_user_id=subscription.user_id,
+        kind=GrantKind.period_allowance,
+        units=tier.allowance_units,
+        idempotency_key=f"period:{period.id}",
+        expires_at=period.period_end,
+        visible=False,
+        effective_at=period.period_start,
+        payment_id=payment.id,
+        subscription_period_id=period.id,
+    )
+
+
+def _period_for_payment(session: Session, payment_id: uuid.UUID) -> uuid.UUID | None:
+    """The period this payment already paid for, if any (the handler's replay guard)."""
+    return session.scalar(
+        select(SubscriptionPeriod.id).where(SubscriptionPeriod.payment_id == payment_id)
+    )
+
+
+#: Stored ``Subscription Created`` events one payment can match; far above what one txn names.
+_LINK_EVENT_SCAN: Final = 20
+
+
+def _link_stored_created_event(
+    session: Session, subscription: Subscription, payment: Payment, *, now: datetime
+) -> None:
+    """Link a ``Subscription Created`` webhook that arrived before the first payment's callback.
+
+    Matches only ``payload["remote"]``, the copy Paymob returned to our own ``GET`` (R26, DV-11):
+    the webhook body is unsigned. ``remote.initial_transaction`` must be the integer id of this
+    payment's transaction and ``remote.id`` an integer (a string or a bool is neither). A Paymob id
+    another subscription already holds is not linked (alert); the event stays unprocessed.
+    """
+    txn_id = payment.paymob_txn_id
+    if subscription.paymob_subscription_id is not None or txn_id is None:
+        return
+    events = session.scalars(
+        select(PaymobEvent)
+        .where(
+            PaymobEvent.kind == PaymobEventKind.subscription,
+            PaymobEvent.processed_at.is_(None),
+            PaymobEvent.payload["remote"]["initial_transaction"] == sa.type_coerce(txn_id, JSONB),
+        )
+        .order_by(PaymobEvent.created_at, PaymobEvent.id)
+        .limit(_LINK_EVENT_SCAN)
+        .with_for_update()
+    ).all()
+    for event in events:
+        remote = event.payload.get("remote")
+        if not isinstance(remote, dict):
+            continue
+        remote_id = _strict_int(remote.get("id"))
+        if (
+            remote_id is None
+            or remote_id <= 0
+            or _strict_int(remote.get("initial_transaction")) != txn_id
+        ):
+            continue
+        holder = session.scalar(
+            select(Subscription.id).where(Subscription.paymob_subscription_id == remote_id)
+        )
+        if holder is not None:
+            alerts.error(
+                "subscription_created_event_link_conflict",
+                subscription_id=str(subscription.id),
+                paymob_subscription_id=remote_id,
+                alert=True,
+            )
+            continue
+        subscription.paymob_subscription_id = remote_id
+        event.processed_at = now
+        log.info(
+            "paymob_subscription_linked",
+            subscription_id=str(subscription.id),
+            paymob_subscription_id=remote_id,
+        )
+        return
+
+
+def _convert_superseded_payment(
+    session: Session, payment: Payment, subscription: Subscription, *, paid_at: datetime
+) -> None:
+    """UD-3: the checkout lost to another live plan, so its payment becomes credits.
+
+    A pending row leaves the live set first: its payment is paid, so no later checkout may
+    replace it and it would otherwise block the account for good. The Paymob subscription it
+    created is cancelled by the sweeps, not here (DV-15, DV-27). Without a credit rate nothing is
+    granted: the payment stays ``paid`` and the alert asks for a manual refund.
+    """
+    if subscription.status is SubscriptionStatus.pending_first_payment:
+        subscription.status = SubscriptionStatus.expired
+        _bump(subscription)
+        session.flush()
+    try:
+        convert_payment_to_credits(session, payment, subscription=subscription, now=paid_at)
+    except NoCreditRate:
+        alerts.error(
+            "subscription_first_paid_for_superseded_checkout",
+            subscription_id=str(subscription.id),
+            payment_id=str(payment.id),
+            converted=False,
+            alert=True,
+        )
+        return
+    log.warning(
+        "subscription_first_paid_for_superseded_checkout",
+        subscription_id=str(subscription.id),
+        payment_id=str(payment.id),
+        converted=True,
+    )
+
+
+def handle_subscription_first(session: Session, payment: Payment, obj: JsonMap) -> None:
+    """Paid handler for ``subscription_first`` (spec §5.1 step 4), in the callback's transaction.
+
+    Phase 02 has set ``payment.status = paid`` and ``payment.paid_at`` from its injected clock and
+    holds the payment row lock; this locks the subscription (lock order: payment, event,
+    subscription, member rows, ledger). It activates the subscription, starts the first period at
+    ``paid_at``, inserts the period row and its allowance grant, and links the Paymob subscription
+    when its ``Subscription Created`` webhook came first. A replay does nothing.
+
+    The checkout may have been superseded: when another plan is live the payment becomes credits
+    instead (UD-3). A subscription in any other state raises the alert
+    ``subscription_first_paid_in_unexpected_state`` and is left alone.
+
+    Raises:
+        RuntimeError: ``payment.paid_at`` is missing (the clock is never guessed).
+    """
+    del obj  # the callback was verified and matched to ``payment`` by BillingService
+    paid_at = payment.paid_at
+    if paid_at is None:
+        raise RuntimeError(f"subscription payment {payment.id} has no paid_at")
+    if payment.subscription_id is None:
+        alerts.error(
+            "subscription_first_paid_without_subscription", payment_id=str(payment.id), alert=True
+        )
+        return
+    subscription = session.get(Subscription, payment.subscription_id, with_for_update=True)
+    if subscription is None:
+        alerts.error(
+            "subscription_first_paid_without_subscription", payment_id=str(payment.id), alert=True
+        )
+        return
+    if _period_for_payment(session, payment.id) is not None or payment.grant_units is not None:
+        return  # activated, or already turned into credits
+    if subscription.status not in (
+        SubscriptionStatus.pending_first_payment,
+        SubscriptionStatus.expired,
+    ):
+        alerts.error(
+            "subscription_first_paid_in_unexpected_state",
+            subscription_id=str(subscription.id),
+            payment_id=str(payment.id),
+            status=subscription.status.value,
+            alert=True,
+        )
+        return
+    _link_stored_created_event(session, subscription, payment, now=paid_at)
+    if _has_other_live(session, subscription):
+        _convert_superseded_payment(session, payment, subscription, paid_at=paid_at)
+        return
+    tier = session.get(PlanTier, subscription.plan_tier_id)
+    if tier is None or tier.interval is None:
+        alerts.error(
+            "subscription_first_paid_for_unusable_tier",
+            subscription_id=str(subscription.id),
+            payment_id=str(payment.id),
+            alert=True,
+        )
+        return
+    end = period_end(paid_at, tier.interval.value)
+    subscription.status = SubscriptionStatus.active
+    subscription.activated_at = paid_at
+    subscription.current_period_start = paid_at
+    subscription.current_period_end = end
+    subscription.grace_until = None
+    subscription.paymob_amount_minor = payment.amount_minor
+    _bump(subscription)
+    period = SubscriptionPeriod(
+        subscription_id=subscription.id,
+        period_start=paid_at,
+        period_end=end,
+        payment_id=payment.id,
+    )
+    session.add(period)
+    session.flush()
+    if tier.audience is PlanAudience.teacher:
+        _shed_excess_seats(session, subscription, tier, now=paid_at)
+    _issue_period_grant(session, subscription, tier, period, payment)
+    log.info(
+        "subscription_activated",
+        subscription_id=str(subscription.id),
+        payment_id=str(payment.id),
+    )
 
 
 class SubscriptionService:
@@ -477,18 +856,7 @@ class SubscriptionService:
         them subscribe at once instead of at month end. The error carries both numbers so the
         message can say how many to remove.
         """
-        in_use = int(
-            self._session.scalar(
-                select(sa.func.count())
-                .select_from(TeacherMember)
-                .where(
-                    TeacherMember.teacher_user_id == teacher_id,
-                    TeacherMember.kind == TeacherMemberKind.student_seat,
-                    TeacherMember.status == TeacherMemberStatus.active,
-                )
-            )
-            or 0
-        )
+        in_use = _seats_in_use(self._session, teacher_id)
         capacity = tier.included_seats + extra_seats
         if in_use > capacity:
             raise SeatsInsufficient(in_use=in_use, capacity=capacity)
@@ -593,6 +961,7 @@ __all__ = [
     "InvalidExtraSeats",
     "InvalidPlanChange",
     "MalformedWebhook",
+    "NoCreditRate",
     "NotLinkedParent",
     "PlanModeMismatch",
     "PlanNotPurchasable",
@@ -602,6 +971,14 @@ __all__ = [
     "SubscriptionError",
     "SubscriptionNotFound",
     "SubscriptionService",
+    "convert_payment_to_credits",
+    "credit_units_for_amount",
+    "handle_subscription_first",
     "subscription_webhook_url",
     "sync_paymob_plan",
 ]
+
+# Registered at import, so any process that settles a payment reaches the handler. The reconcile
+# sweeper gets there through ``lemely/web/billing_jobs.py``, which Task 11 makes import this module
+# (DV-10): until then only a process that imported it has the handler.
+register_paid_handler(PaymentPurpose.subscription_first, handle_subscription_first)
