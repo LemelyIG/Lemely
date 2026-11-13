@@ -276,7 +276,7 @@ export function ClassRoster() {
           label="Class roster"
           storageKey="lemely.roster.view"
           list={
-            <ListGroup label="Class roster">
+            <ListGroup label="Class roster" footer="To remove a student or sort the roster, tap View table.">
               {sorted.map((s) => (
                 <ListRow
                   key={s.studentId}

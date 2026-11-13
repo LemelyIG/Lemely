@@ -462,71 +462,77 @@ export function Review() {
                 />
               ) : (
                 <>
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <Checkbox
-                      checked={allSelected}
-                      disabled={selectableItems.length === 0}
-                      onChange={() => toggleSelectAll(items)}
-                      aria-label={allSelected ? "Deselect all selectable items" : "Select all selectable items"}
-                      label={selected.size > 0 ? `${selected.size} selected` : "Select all"}
-                    />
-                    <Button
-                      variant="ink"
-                      size="sm"
-                      disabled={selected.size === 0 || bulkApprove.isPending}
-                      onClick={() => handleBulkApprove(items)}
-                    >
-                      {bulkApprove.isPending
-                        ? "Approving…"
-                        : `Bulk-approve${selected.size > 0 ? ` (${selected.size})` : ""}`}
-                    </Button>
-                    <span className="text-body-sm text-on-surface-variant">
-                      Accepts each selected mark exactly as Lemely awarded it. Integrity flags aren't
-                      selectable here. Open one to look at it properly.
-                    </span>
-                  </div>
-
-                  {bulkApprove.isError ? (
-                    <div role="alert" className="text-body-sm text-error">
-                      Couldn't bulk-approve: {teacherMutationFailureMessage(bulkApprove.error)}
-                    </div>
-                  ) : null}
-
-                  {bulkResult ? (
-                    <div
-                      role="status"
-                      className="border border-outline-variant rounded-md p-4 bg-surface-container-low flex flex-col gap-2"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-body-md font-medium">
-                          Approved {bulkResult.approved.length} item
-                          {bulkResult.approved.length === 1 ? "" : "s"}
-                          {bulkResult.skipped.length > 0 ? ` · skipped ${bulkResult.skipped.length}` : "."}
-                        </div>
-                        <Button variant="ghost" size="sm" onClick={() => setBulkResult(null)}>
-                          Dismiss
-                        </Button>
-                      </div>
-                      {bulkResult.skipped.length > 0 ? (
-                        <ul className="flex flex-col gap-1 text-body-sm text-on-surface-variant m-0 ps-4 list-disc">
-                          {bulkResult.skipped.map((s) => {
-                            const row = snapshotRef.current.find((r) => r.itemId === s.itemId)
-                            return (
-                              <li key={s.itemId}>
-                                {row ? `${row.studentDisplayName} — ${questionLabel(row)}` : s.itemId}
-                                {": "}
-                                {SKIP_REASON_LABEL[s.reason] ?? s.reason}
-                              </li>
-                            )
-                          })}
-                        </ul>
-                      ) : null}
-                    </div>
-                  ) : null}
-
                   <TableOrList
                     label="Review queue"
                     storageKey="lemely.review.view"
+                    onViewChange={(view) => {
+                      if (view === "list") setSelected(new Set())
+                    }}
+                    tableHeader={
+                      <>
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <Checkbox
+                            checked={allSelected}
+                            disabled={selectableItems.length === 0}
+                            onChange={() => toggleSelectAll(items)}
+                            aria-label={allSelected ? "Deselect all selectable items" : "Select all selectable items"}
+                            label={selected.size > 0 ? `${selected.size} selected` : "Select all"}
+                          />
+                          <Button
+                            variant="ink"
+                            size="sm"
+                            disabled={selected.size === 0 || bulkApprove.isPending}
+                            onClick={() => handleBulkApprove(items)}
+                          >
+                            {bulkApprove.isPending
+                              ? "Approving…"
+                              : `Bulk-approve${selected.size > 0 ? ` (${selected.size})` : ""}`}
+                          </Button>
+                          <span className="text-body-sm text-on-surface-variant">
+                            Accepts each selected mark exactly as Lemely awarded it. Integrity flags aren't
+                            selectable here. Open one to look at it properly.
+                          </span>
+                        </div>
+
+                        {bulkApprove.isError ? (
+                          <div role="alert" className="text-body-sm text-error">
+                            Couldn't bulk-approve: {teacherMutationFailureMessage(bulkApprove.error)}
+                          </div>
+                        ) : null}
+
+                        {bulkResult ? (
+                          <div
+                            role="status"
+                            className="border border-outline-variant rounded-md p-4 bg-surface-container-low flex flex-col gap-2"
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="text-body-md font-medium">
+                                Approved {bulkResult.approved.length} item
+                                {bulkResult.approved.length === 1 ? "" : "s"}
+                                {bulkResult.skipped.length > 0 ? ` · skipped ${bulkResult.skipped.length}` : "."}
+                              </div>
+                              <Button variant="ghost" size="sm" onClick={() => setBulkResult(null)}>
+                                Dismiss
+                              </Button>
+                            </div>
+                            {bulkResult.skipped.length > 0 ? (
+                              <ul className="flex flex-col gap-1 text-body-sm text-on-surface-variant m-0 ps-4 list-disc">
+                                {bulkResult.skipped.map((s) => {
+                                  const row = snapshotRef.current.find((r) => r.itemId === s.itemId)
+                                  return (
+                                    <li key={s.itemId}>
+                                      {row ? `${row.studentDisplayName} — ${questionLabel(row)}` : s.itemId}
+                                      {": "}
+                                      {SKIP_REASON_LABEL[s.reason] ?? s.reason}
+                                    </li>
+                                  )
+                                })}
+                              </ul>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </>
+                    }
                     list={
                       <ListGroup label="Review queue">
                         {items.map((item) => (
@@ -536,8 +542,13 @@ export function Review() {
                             title={item.studentDisplayName}
                             subtitle={`${paperIdentityLabel(item)} · ${item.questionId ?? "no question"}`}
                             trailing={
-                              <span className="text-data-sm">
-                                {item.confidenceScore != null ? `${Math.round(item.confidenceScore * 100)}%` : "–"}
+                              <span className="flex flex-col items-end gap-1">
+                                <Chip tone={isIntegrityReason(item.reason) ? "warn" : "neutral"}>
+                                  {reasonLabel(item.reason)}
+                                </Chip>
+                                <span className="text-data-sm">
+                                  {item.confidenceScore != null ? `${Math.round(item.confidenceScore * 100)}%` : "–"}
+                                </span>
                               </span>
                             }
                           />

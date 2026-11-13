@@ -3,7 +3,24 @@ import { useNativeFrame } from "@/lib/useNativeFrame"
 
 /** Native frame: dense teacher tables read as list rows on phones, with
  * "View table" for when the grid itself is the point (brief decision 4). */
-export function TableOrList({ label, table, list, storageKey }: { label: string; table: ReactNode; list: ReactNode; storageKey: string }) {
+export function TableOrList({
+  label,
+  table,
+  list,
+  storageKey,
+  tableHeader,
+  onViewChange,
+}: {
+  label: string
+  table: ReactNode
+  list: ReactNode
+  storageKey: string
+  /** Controls that act on the table's rows (bulk bars). Shown with the table
+   * on every platform, never in the native list view, which has no row state. */
+  tableHeader?: ReactNode
+  /** Called when the native toggle switches views. */
+  onViewChange?: (view: "list" | "table") => void
+}) {
   const { native } = useNativeFrame()
   const [asTable, setAsTable] = useState(() => {
     try {
@@ -12,10 +29,11 @@ export function TableOrList({ label, table, list, storageKey }: { label: string;
       return false
     }
   })
-  if (!native) return <>{table}</>
+  if (!native) return <>{tableHeader}{table}</>
   const toggle = () => {
     const next = !asTable
     setAsTable(next)
+    onViewChange?.(next ? "table" : "list")
     try {
       sessionStorage.setItem(storageKey, next ? "table" : "list")
     } catch {
@@ -29,6 +47,7 @@ export function TableOrList({ label, table, list, storageKey }: { label: string;
           {asTable ? "View list" : "View table"}
         </button>
       </div>
+      {asTable ? tableHeader : null}
       {asTable ? (
         <div role="region" aria-label={label} tabIndex={0} className="-mx-4 overflow-x-auto px-4 lm-scroll">
           {table}
