@@ -215,4 +215,10 @@ describe("Popover and Select (Task 9, D4)", () => {
     expect(src).not.toContain("BottomSheetSurface")
     expect(src).toContain("native frame D4")
   })
+  it("the Notifications row spreads triggerProps.id so the native sheet's aria-labelledby resolves, and Popover keeps an aria-label fallback", () => {
+    expect(read("portals/student/screens/Notifications.tsx")).toContain("id={triggerProps.id}")
+    const pop = read("components/ui/popover.tsx")
+    expect(pop).toContain('"aria-labelledby": triggerId')
+    expect(pop).toContain('"aria-label": "More actions"')
+  })
 })

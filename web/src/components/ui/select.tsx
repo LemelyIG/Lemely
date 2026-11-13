@@ -24,8 +24,8 @@ export interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
  * ours is the only one, but every other behaviour — opening, closing,
  * typeahead, option rendering — stays native.
  *
- * Under the native frame D4 decision (docs/superpowers/plans/2026-11-08-native-mobile-frame.md):
- * on iOS and Android phones the native picker already is the platform's sheet or wheel, so this stays
+ * native frame D4 (docs/superpowers/plans/2026-11-08-native-mobile-frame.md): on iOS and
+ * Android phones the native picker already is the platform's sheet or wheel, so this stays
  * native there too.
  */
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select(

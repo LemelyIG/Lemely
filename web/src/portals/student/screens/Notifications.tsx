@@ -130,7 +130,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
   // `question-row` does — the menu's only item is already a visible,
   // keyboard-reachable button two lines down.
   //
-  // `triggerProps` is still wired for its `ref` only, minus its `onClick`: a
+  // `triggerProps` is still wired for its `ref` and `id` only (the id is what names the native sheet via aria-labelledby), minus its `onClick`: a
   // *tap* on a notification must not open the menu, but the popover needs the
   // trigger's ref to anchor and to hand focus back here when Escape closes it
   // (`tabIndex={-1}` makes the card focusable programmatically without adding
@@ -149,6 +149,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
       renderTrigger={({ triggerProps }) => (
         <Card
           ref={triggerProps.ref}
+          id={triggerProps.id}
           tabIndex={-1}
           className={cn(
             "transition-colors outline-none",
