@@ -151,6 +151,10 @@ class PlanTier(TimestampMixin, Base):
     )
 
 
+#: The payments an auto top-up still waits on, for ``ix_payments_auto_topup_in_flight``.
+_AUTO_TOPUP_IN_FLIGHT_PREDICATE = "purpose = 'auto_topup' AND status IN ('created', 'pending')"
+
+
 class Subscription(TimestampMixin, Base):
     """A user's subscription to a :class:`PlanTier`.
 
@@ -276,6 +280,15 @@ class Subscription(TimestampMixin, Base):
         sa.DateTime(timezone=True), nullable=True
     )
     """When the Paymob subscription was cancelled; ``None`` while Paymob may still charge."""
+    extra_seat_grace_until: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    """Fallback path (spec §5.4): when the extra seats lapse if no seat charge succeeds."""
+    extra_seat_grace_payment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), sa.ForeignKey("payments.id", ondelete="SET NULL"), nullable=True
+    )
+    """First failed renewal seat charge of the grace episode; kept after the drop so the
+    same failure never starts a second grace."""
 
     plan_tier: Mapped[PlanTier] = relationship(
         "PlanTier", back_populates="subscriptions", foreign_keys=[plan_tier_id]
@@ -369,6 +382,13 @@ class Payment(TimestampMixin, Base):
         ),
         sa.Index("ix_payments_status_next_reconcile_at", "status", "next_reconcile_at"),
         sa.Index("ix_payments_payer_user_id_paid_at", "payer_user_id", "paid_at"),
+        # The auto top-up hook's in-flight probe runs on every settle. Compares the enum
+        # labels directly, as ``_LIVE_PAID_PREDICATE`` does: ``::text`` is not IMMUTABLE.
+        sa.Index(
+            "ix_payments_auto_topup_in_flight",
+            "beneficiary_user_id",
+            postgresql_where=sa.text(_AUTO_TOPUP_IN_FLIGHT_PREDICATE),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -416,6 +436,9 @@ class Payment(TimestampMixin, Base):
     next_reconcile_at: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True
     )
+    dedupe_key: Mapped[str | None] = mapped_column(sa.String(200), nullable=True, unique=True)
+    """Queue identity for background charges (``auto_topup:{owner}:{crossing}``,
+    ``extra_seat_renewal:{period}:{attempt}``). NULL for user-initiated payments."""
 
 
 class PaymobEvent(TimestampMixin, Base):
@@ -464,9 +487,59 @@ class SavedCard(TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.true())
 
 
+class AutoTopupSettings(TimestampMixin, Base):
+    """Auto top-up for one balance (spec §4.6, §5.5).
+
+    The payer owns the row and the card. The beneficiary owns the balance. ``armed`` and
+    ``crossing_seq`` implement the dedupe key ``(user, threshold crossing)``: a crossing
+    below the threshold enqueues at most one top-up and disarms; seeing the balance at or
+    above the threshold again, or the top-up resolving, re-arms and bumps ``crossing_seq``.
+
+    There is deliberately no CHECK that an enabled row has a card: ``saved_card_id`` is
+    ``ON DELETE SET NULL`` (a user deletion cascades ``saved_cards``), and such a CHECK would
+    make every card delete fail while auto top-up is on. The service and the job enforce it.
+    """
+
+    __tablename__ = "auto_topup_settings"
+    __table_args__ = (
+        sa.UniqueConstraint("beneficiary_user_id"),
+        sa.CheckConstraint("threshold_units > 0", name="threshold_positive"),
+        sa.CheckConstraint("monthly_cap_minor >= 0", name="cap_nonnegative"),
+        sa.Index("ix_auto_topup_settings_payer_user_id", "payer_user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")
+    )
+    beneficiary_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    payer_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    enabled: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.false())
+    threshold_units: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    credit_pack_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), sa.ForeignKey("credit_packs.id"), nullable=False
+    )
+    saved_card_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), sa.ForeignKey("saved_cards.id", ondelete="SET NULL"), nullable=True
+    )
+    monthly_cap_minor: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    armed: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.true())
+    crossing_seq: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, server_default=sa.literal(0)
+    )
+    last_payment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), sa.ForeignKey("payments.id", ondelete="SET NULL"), nullable=True
+    )
+    disabled_reason: Mapped[str | None] = mapped_column(sa.String, nullable=True)
+
+
 __all__ = [
     "LIVE_SUBSCRIPTION_STATUSES",
     "PLAN_LIVE_STATUSES",
+    "AutoTopupSettings",
     "CreditPack",
     "Payment",
     "PaymentPurpose",

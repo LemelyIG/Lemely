@@ -126,6 +126,8 @@ EXPECTED_TABLES = {
     "payments",
     "paymob_events",
     "saved_cards",
+    # Auto top-up (lemely/db/models/billing.py, migration 0056).
+    "auto_topup_settings",
     # Teacher team (lemely/db/models/team.py, migration 0054).
     "teacher_members",
 }
