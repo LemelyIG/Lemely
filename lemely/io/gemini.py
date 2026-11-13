@@ -34,6 +34,7 @@ from lemely.io.llm.cost_meter import record_llm_cost, usd_decimal
 from lemely.io.llm.errors import CapTruncatedError as _CapTruncatedError
 from lemely.io.llm.errors import TransientCallError as _TransientError
 from lemely.io.llm.gemini_provider import GeminiProvider
+from lemely.io.llm.model_costs import record_model_cost
 from lemely.io.llm.pricing import PriceRow, claude_row, row_cost
 from lemely.io.llm.request import (
     LEGACY_CLAUDE_CACHE_PLAN,
@@ -2217,9 +2218,12 @@ class GeminiClient:
         # price for an unpriced model, never the NaN record value. This runs after the
         # counters, the ledger and the call record so that a price the accumulator refuses
         # (a NaN or negative override that slipped past config) skips only this feed: the
-        # money is already spent, so the call must not fail (spec §2.4).
+        # money is already spent, so the call must not fail (spec §2.4). The per-model split
+        # takes the same rounded figure, so it always sums to the job total.
         try:
-            record_llm_cost(usd_decimal(usd))
+            charged = usd_decimal(usd)
+            record_llm_cost(charged)
+            record_model_cost(model, charged)
         except ValueError:
             log.error("usage_cost_unrecordable", model=model, task_tag=task_tag, usd=usd)
         if new_total is not None:
