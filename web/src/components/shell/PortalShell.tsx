@@ -119,6 +119,7 @@ export function PortalShell({
           },
         ]}
         emphasisId={bottomEmphasisId}
+        // User decision (2026-11-13): re-tapping the active tab stays active wherever the tab bar shows, not gated to native.
         onActiveTap={onActiveTap}
         className={cn("sidebar:hidden", immersive && "native:hidden")}
       />

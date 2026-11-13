@@ -195,11 +195,9 @@ NATIVE_CHECKS.push(
   },
 );
 
-/** A page drilled in under the active Profile tab. The student router has no
- * route nested under /student/profile, so this resolves to the shell's not-found
- * body; the tab stays active by prefix match and the shell frame is real, which
- * is all the re-tap logic reads (the pathname). */
-export const TAB_DRILL_PATH = "/student/profile/drilled";
+/** A real nested page under the active Classes tab (teacher `classes/:classId`).
+ * The tab stays active by prefix match; the re-tap logic reads only the pathname. */
+export const TAB_DRILL_PATH = "/teacher/classes/c1";
 
 NATIVE_CHECKS.push(
   {
@@ -225,13 +223,13 @@ NATIVE_CHECKS.push(
     id: "native-ios-tab-retap-pops-to-root",
     platform: "ios",
     width: 390,
-    app: { ...NATIVE_HOME, path: TAB_DRILL_PATH },
+    app: { ...NATIVE_TEACHER_HOME, path: TAB_DRILL_PATH },
     async run(page) {
       const tab = page
         .getByRole("navigation", { name: "Primary" })
-        .getByRole("link", { name: "Profile" });
+        .getByRole("link", { name: "Classes" });
       await tab.click();
-      await page.waitForURL(/\/student\/profile$/);
+      await page.waitForURL(/\/teacher\/classes$/);
     },
   },
   {
@@ -287,3 +285,67 @@ NATIVE_CHECKS.push({
     await dialog.waitFor({ state: "detached" })
   },
 })
+
+NATIVE_CHECKS.push(
+  ...[
+    ["ios", "native-tabbar-h-ios"],
+    ["android", "native-tabbar-h-android"],
+  ].map(([platform, token]) => ({
+    id: `native-${platform}-tabbar-height-matches-token`,
+    platform,
+    width: 390,
+    app: NATIVE_HOME,
+    async run(page) {
+      const got = await page.evaluate((tokenName) => {
+        const probe = document.createElement("div");
+        probe.style.blockSize = `calc(var(--${tokenName}) + env(safe-area-inset-bottom))`;
+        document.body.append(probe);
+        const want = probe.getBoundingClientRect().height;
+        probe.remove();
+        const nav = document.querySelector("nav.lm-native-tabbar");
+        const main = document.querySelector(".lm-native-main");
+        const pad = parseFloat(getComputedStyle(main).paddingBottom);
+        const navBox = nav.getBoundingClientRect();
+        const labelBottom = Math.max(
+          ...[...nav.querySelectorAll(".lm-native-tab-label")].map((l) => l.getBoundingClientRect().bottom),
+        );
+        return { want, height: navBox.height, pad, labelFits: labelBottom <= navBox.bottom + 0.5 };
+      }, token);
+      if (Math.abs(got.height - got.want) > 0.5)
+        throw new Error(`tab bar height ${got.height}px != token ${got.want}px`);
+      if (!got.labelFits) throw new Error("tab labels spill below the bar");
+      if (Math.abs(got.pad - got.want) > 0.5)
+        throw new Error(`main padding ${got.pad}px != tab bar ${got.want}px`);
+    },
+  })),
+  {
+    id: "native-android-active-pill-centred-clear",
+    platform: "android",
+    width: 390,
+    app: NATIVE_HOME,
+    async run(page) {
+      const r = await page.evaluate(() => {
+        const link = document.querySelector('nav.lm-native-tabbar [aria-current="page"]');
+        const icon = link.querySelector(".lm-native-tab-icon");
+        const pseudo = getComputedStyle(icon, "::before");
+        const ib = icon.getBoundingClientRect();
+        const left = ib.left + parseFloat(pseudo.left);
+        const width = parseFloat(pseudo.width);
+        const lb = link.getBoundingClientRect();
+        const circle = document
+          .querySelector("nav.lm-native-tabbar [data-emphasis]")
+          .getBoundingClientRect();
+        return {
+          pillCentre: left + width / 2,
+          iconCentre: ib.left + ib.width / 2,
+          inLink: left >= lb.left - 0.5 && left + width <= lb.right + 0.5,
+          hitsCircle: left < circle.right && left + width > circle.left,
+        };
+      });
+      if (Math.abs(r.pillCentre - r.iconCentre) > 0.5)
+        throw new Error(`pill centre ${r.pillCentre} != icon centre ${r.iconCentre}`);
+      if (!r.inLink) throw new Error("pill spills into a neighbouring tab");
+      if (r.hitsCircle) throw new Error("pill overlaps the Correct circle");
+    },
+  },
+);

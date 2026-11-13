@@ -446,6 +446,8 @@
   --native-tab-label-ios: 10px;             /* --pf-tab-label */
   --native-tab-label-android: 12px;
   --native-tab-icon: 24px;                  /* --pf-tab-ico, both platforms */
+  --native-tab-pad-top-ios: 6px;            /* preview iOS tab link padding-block-start */
+  --native-tab-gap-ios: 2px;
   --native-tab-pill-w: 64px;                /* --pf-pill-w/h: M3 active indicator */
   --native-tab-pill-h: 32px;
   --native-tab-press-opacity-ios: 0.55;     /* iOS tab items dim instead of drawing a layer */
@@ -1434,8 +1436,18 @@ html[data-direction="back"]::view-transition-new(root) {
     inline-size: var(--native-tab-icon);
     block-size: var(--native-tab-icon);
   }
+  /* The tab links shed design A's min-h-14 / py-2.5 / centring so the bar is exactly its token height. */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-tabbar > * {
+    min-block-size: 0;
+    padding-block-end: 0;
+    justify-content: flex-start;
+  }
+  :root[data-platform="ios"] .lm-native-tabbar > * {
+    padding-block-start: var(--native-tab-pad-top-ios);
+    gap: var(--native-tab-gap-ios);
+  }
   :root[data-platform="ios"] .lm-native-tabbar {
-    min-height: calc(var(--native-tabbar-h-ios) + env(safe-area-inset-bottom));
+    block-size: calc(var(--native-tabbar-h-ios) + env(safe-area-inset-bottom));
     border-top: var(--native-hairline) solid var(--md-outline-variant);
     background-color: color-mix(in oklch, var(--md-surface-container-lowest) var(--native-glass-mix), transparent);
     -webkit-backdrop-filter: blur(var(--blur-nav)) saturate(var(--native-glass-saturate));
@@ -1446,32 +1458,42 @@ html[data-direction="back"]::view-transition-new(root) {
   }
   :root[data-platform="ios"] .lm-native-tabbar .lm-native-tab-label {
     font-size: var(--native-tab-label-ios);
+    line-height: 1.2;
   }
-  :root[data-platform="ios"] .lm-native-tabbar [aria-current="page"] {
+  /* The raised emphasis (Correct) tab is excluded from the selected-state colour and pill rules. */
+  :root[data-platform="ios"] .lm-native-tabbar [aria-current="page"]:not(:has([data-emphasis])) {
     color: var(--md-primary);
     font-weight: 600;
   }
+  :root[data-platform="android"] .lm-native-tabbar > * {
+    padding-block-start: var(--space-3);
+    gap: var(--space-1);
+  }
   :root[data-platform="android"] .lm-native-tabbar {
-    min-height: calc(var(--native-tabbar-h-android) + env(safe-area-inset-bottom));
+    block-size: calc(var(--native-tabbar-h-android) + env(safe-area-inset-bottom));
     border-top: 0;
     background-color: var(--md-surface-container);
   }
   :root[data-platform="android"] .lm-native-tabbar .lm-native-tab-label {
     font-size: var(--native-tab-label-android);
+    line-height: 1.2;
   }
   :root[data-platform="android"] .lm-native-tabbar .lm-native-tab-icon {
     isolation: isolate;
+  }
+  /* The pill is 32px tall around the 24px glyph, so the icon box keeps (pill - icon) / 2 above and below it. */
+  :root[data-platform="android"] .lm-native-tabbar .lm-native-tab-icon:not([data-emphasis]) {
+    margin-block: calc((var(--native-tab-pill-h) - var(--native-tab-icon)) / 2);
   }
   /* The pill is positioned at the base rung, so the glyph is positioned too and paints above it. */
   :root[data-platform="android"] .lm-native-tabbar .lm-native-tab-icon svg {
     position: relative;
   }
-  :root[data-platform="android"] .lm-native-tabbar [aria-current="page"] .lm-native-tab-icon::before {
+  :root[data-platform="android"] .lm-native-tabbar [aria-current="page"] .lm-native-tab-icon:not([data-emphasis])::before {
     content: "";
     position: absolute;
     z-index: var(--z-index-base);
-    inset-inline: 0;
-    margin-inline: auto;
+    inset-inline-start: calc(50% - var(--native-tab-pill-w) / 2);
     inset-block-start: 50%;
     inline-size: var(--native-tab-pill-w);
     block-size: var(--native-tab-pill-h);
@@ -1480,11 +1502,11 @@ html[data-direction="back"]::view-transition-new(root) {
     background: var(--md-secondary-container);
   }
   /* Selected: the label stays on-surface (bold); only the icon takes on-secondary-container. */
-  :root[data-platform="android"] .lm-native-tabbar [aria-current="page"] {
+  :root[data-platform="android"] .lm-native-tabbar [aria-current="page"]:not(:has([data-emphasis])) {
     color: var(--md-on-surface);
     font-weight: 700;
   }
-  :root[data-platform="android"] .lm-native-tabbar [aria-current="page"] .lm-native-tab-icon {
+  :root[data-platform="android"] .lm-native-tabbar [aria-current="page"] .lm-native-tab-icon:not([data-emphasis]) {
     color: var(--md-on-secondary-container);
   }
 }

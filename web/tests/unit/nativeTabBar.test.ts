@@ -56,15 +56,22 @@ describe("tab bar CSS (preview 4447a571)", () => {
     expect(block).toMatch(/\.lm-native-main:not\(\[data-immersive\]\) \{[^}]*padding-bottom: calc\(var\(--native-tabbar-h\) \+ env\(safe-area-inset-bottom\)\)/)
   })
   it("iOS: 49px + home indicator, glass, 10px labels", () => {
-    expect(block).toMatch(/\[data-platform="ios"\] \.lm-native-tabbar \{[^}]*min-height: calc\(var\(--native-tabbar-h-ios\) \+ env\(safe-area-inset-bottom\)\)/)
+    expect(block).toMatch(/\[data-platform="ios"\] \.lm-native-tabbar \{[^}]*block-size: calc\(var\(--native-tabbar-h-ios\) \+ env\(safe-area-inset-bottom\)\)/)
     expect(block).toMatch(/\[data-platform="ios"\] \.lm-native-tabbar \{[^}]*backdrop-filter: blur\(var\(--blur-nav\)\) saturate\(var\(--native-glass-saturate\)\)/)
     expect(block).toMatch(/\[data-theme="dark"\]\[data-platform="ios"\] \.lm-native-tabbar \{[^}]*var\(--md-surface-container-low\) var\(--native-glass-mix\)/)
     expect(block).toMatch(/\[data-platform="ios"\] \.lm-native-tabbar \.lm-native-tab-label \{[^}]*font-size: var\(--native-tab-label-ios\)/)
   })
   it("Android: 80dp, 12px labels, a 64x32 secondary-container pill behind the active icon", () => {
-    expect(block).toMatch(/\[data-platform="android"\] \.lm-native-tabbar \{[^}]*min-height: calc\(var\(--native-tabbar-h-android\) \+ env\(safe-area-inset-bottom\)\)/)
+    expect(block).toMatch(/\[data-platform="android"\] \.lm-native-tabbar \{[^}]*block-size: calc\(var\(--native-tabbar-h-android\) \+ env\(safe-area-inset-bottom\)\)/)
     expect(block).toMatch(/\[data-platform="android"\] \.lm-native-tabbar \.lm-native-tab-label \{[^}]*font-size: var\(--native-tab-label-android\)/)
-    expect(block).toMatch(/\[data-platform="android"\] \.lm-native-tabbar \[aria-current="page"\] \.lm-native-tab-icon::before \{[^}]*inline-size: var\(--native-tab-pill-w\);[^}]*block-size: var\(--native-tab-pill-h\);[^}]*background: var\(--md-secondary-container\)/)
+    expect(block).toMatch(/\[data-platform="android"\] \.lm-native-tabbar \[aria-current="page"\] \.lm-native-tab-icon:not\(\[data-emphasis\]\)::before \{[^}]*inset-inline-start: calc\(50% - var\(--native-tab-pill-w\) \/ 2\);[^}]*inline-size: var\(--native-tab-pill-w\);[^}]*block-size: var\(--native-tab-pill-h\);[^}]*background: var\(--md-secondary-container\)/)
+  })
+  it("tab links take the preview metrics and the selected rules skip the raised tab", () => {
+    expect(block).toMatch(/\[data-platform="ios"\] \.lm-native-tabbar > \* \{[^}]*padding-block-start: var\(--native-tab-pad-top-ios\);[^}]*gap: var\(--native-tab-gap-ios\)/)
+    expect(block).toMatch(/\[data-platform="android"\] \.lm-native-tabbar > \* \{[^}]*padding-block-start: var\(--space-3\);[^}]*gap: var\(--space-1\)/)
+    expect(block).toMatch(/\.lm-native-tabbar > \* \{[^}]*min-block-size: 0;[^}]*justify-content: flex-start/)
+    expect(block).not.toMatch(/inset-inline: 0;\s*margin-inline: auto/)
+    expect(block).not.toMatch(/\[aria-current="page"\] \{/)
   })
   it("24px icons on both platforms", () => {
     expect(block).toMatch(/\.lm-native-tabbar \.lm-native-tab-icon svg \{[^}]*inline-size: var\(--native-tab-icon\);[^}]*block-size: var\(--native-tab-icon\)/)

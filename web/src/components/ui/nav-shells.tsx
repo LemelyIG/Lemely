@@ -150,6 +150,7 @@ export function BottomNav({ items, emphasisId, onActiveTap, className, ...props 
             {(isActive) => (
               <>
                 <span
+                  data-emphasis={emphasis || undefined}
                   className={cn(
                     "lm-native-tab-icon relative flex items-center justify-center",
                     emphasis &&
