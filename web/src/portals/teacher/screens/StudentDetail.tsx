@@ -10,6 +10,8 @@ import { ChartFrame } from "@/components/ui/chart-frame"
 import { LineChart } from "@/components/ui/lazy-chart"
 import { WeaknessChip, type WeaknessSeverity } from "@/components/ui/weakness-chip"
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
+import { ListGroup, ListRow } from "@/components/ui/list-group"
+import { TableOrList } from "@/components/ui/table-or-list"
 import { relativeTime } from "@/lib/utils"
 import { useStudentDetail } from "@/lib/hooks/useTeacherApi"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
@@ -379,6 +381,27 @@ export function StudentDetailView({
           {student.attempts.length === 0 ? (
             <div className="text-body-md text-on-surface-variant">No papers recorded yet.</div>
           ) : (
+            <TableOrList
+              label="Attempt history"
+              storageKey="lemely.studentAttempts.view"
+              list={
+                <ListGroup label="Attempt history">
+                  {student.attempts.map((a, index) => (
+                    <ListRow
+                      key={`${a.paperId}-${a.recordedAt}-${index}`}
+                      title={`${a.subjectCode} · Paper ${a.paperNumber} Variant ${a.paperVariant}`}
+                      subtitle={`${a.awardedMarks}/${a.maximumMarks} · Grade ${a.grade} · ${dates.recorded(a.recordedAt)}`}
+                      trailing={
+                        <span className="inline-flex items-center gap-2">
+                          <span className="text-data-sm tabular-nums">{Math.round(a.percentage)}%</span>
+                          {attemptAction ? attemptAction(a) : null}
+                        </span>
+                      }
+                    />
+                  ))}
+                </ListGroup>
+              }
+              table={
             <Table density="operate"
               tabIndex={0}
               role="region"
@@ -439,6 +462,8 @@ export function StudentDetailView({
                 ))}
               </TBody>
             </Table>
+              }
+            />
           )}
         </section>
 
