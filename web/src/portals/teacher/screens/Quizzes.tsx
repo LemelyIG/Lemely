@@ -7,6 +7,8 @@ import { GradeBadge } from "@/components/ui/grade-badge"
 import { EmptyState } from "@/components/ui/state-views"
 import { Input } from "@/components/ui/input"
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
+import { ListGroup, ListRow } from "@/components/ui/list-group"
+import { TableOrList } from "@/components/ui/table-or-list"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
 import {
@@ -305,6 +307,38 @@ export function Quizzes() {
                   action={{ label: "Create a quiz", onClick: () => setShowCreate(true) }}
                 />
               ) : (
+                <TableOrList
+                  label="Your quizzes"
+                  storageKey="lemely.quizzes.view"
+                  list={
+                    sorted.length === 0 ? (
+                      <p className="px-4 py-6 text-body-md text-on-surface-variant">No quizzes match "{search}".</p>
+                    ) : (
+                      <ListGroup label="Your quizzes">
+                        {sorted.map((q) => (
+                          <ListRow
+                            key={q.id}
+                            to={`/teacher/quizzes/${q.id}`}
+                            title={q.title}
+                            subtitle={[
+                              q.subjectCode,
+                              statusLabel(q.status),
+                              q.status === "draft" ? `Step ${q.builderStep} of 6` : null,
+                              q.targetGrade ? `Target ${q.targetGrade}` : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                            trailing={
+                              <span className="text-data-sm tabular-nums">
+                                {q.questionCount} {q.questionCount === 1 ? "question" : "questions"}
+                              </span>
+                            }
+                          />
+                        ))}
+                      </ListGroup>
+                    )
+                  }
+                  table={
                 <Table density="operate"
                   tabIndex={0}
                   role="region"
@@ -394,6 +428,8 @@ export function Quizzes() {
                     )}
                   </TBody>
                 </Table>
+                  }
+                />
               )}
             </>
           )
