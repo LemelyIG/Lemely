@@ -25,6 +25,21 @@ describe("ListGroup / ListRow (brief §3.4)", () => {
   })
 })
 
+describe("ListRow action slot", () => {
+  it("renders the action beside the link, never inside it", () => {
+    const out = html(
+      createElement(ListRow, { title: "Omar", to: "/teacher/students/s-2", action: createElement("button", { type: "button" }, "Acknowledge") }),
+    )
+    expect(out).toMatch(/<a[^>]*href="\/teacher\/students\/s-2"[^>]*>.*<\/a><div[^>]*><button[^>]*>Acknowledge<\/button><\/div>/)
+    expect(out).not.toMatch(/<a[^>]*>(?:(?!<\/a>).)*<button/)
+    expect(out).toMatch(/class="lm-list-row lm-native-row[^"]*" data-lines="1"/)
+  })
+  it("a row without an action renders exactly as before", () => {
+    const out = html(createElement(ListRow, { title: "Omar", to: "/x" }))
+    expect(out).toMatch(/^<a[^>]*class="lm-list-row lm-native-row/)
+  })
+})
+
 describe("grouped-list CSS (preview 4447a571, variant-a.css section 4)", () => {
   const css = readFileSync(join(SRC, "index.css"), "utf8")
   const start = css.indexOf("/* ── Native frame: grouped lists")

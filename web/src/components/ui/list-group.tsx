@@ -54,10 +54,15 @@ export type ListRowProps = {
   titleLines?: 1 | 2
   /** Off for rows inside a sheet, which stays up while the destination loads. */
   viewTransition?: boolean
+  /** A second control beside the row's own tap target (for example "Acknowledge").
+   * Rendered outside the link, so there is never an interactive element inside
+   * another. The control brings its own 44px (iOS) / 48px (Android) target. */
+  action?: ReactNode
 } & ListRowAction
 
-export function ListRow({ title, subtitle, leading, trailing, to, href, state, onClick, lines = subtitle ? 2 : 1, titleLines = 1, viewTransition = true }: ListRowProps) {
-  const cls = "lm-list-row lm-native-row lm-press lm-press-delay flex w-full items-center gap-3 px-4 py-2.5 text-start"
+export function ListRow({ title, subtitle, leading, trailing, to, href, state, onClick, action, lines = subtitle ? 2 : 1, titleLines = 1, viewTransition = true }: ListRowProps) {
+  const base = "lm-press lm-press-delay flex items-center gap-3 px-4 py-2.5 text-start"
+  const cls = cn("lm-list-row lm-native-row w-full", base)
   const inner = (
     <>
       {leading ? <span className="flex-none">{leading}</span> : null}
@@ -72,6 +77,25 @@ export function ListRow({ title, subtitle, leading, trailing, to, href, state, o
       {trailing ? <span className="flex-none text-on-surface-variant">{trailing}</span> : null}
     </>
   )
+  if (action && (to || onClick)) {
+    // The wrapper carries the row classes so separators and min-heights keep
+    // working; the tap target and the action sit side by side inside it.
+    const main = cn("min-w-0 flex-1", base)
+    return (
+      <div className="lm-list-row lm-native-row flex w-full items-center" data-lines={lines}>
+        {to ? (
+          <Link to={to} state={state} viewTransition={viewTransition} className={main}>
+            {inner}
+          </Link>
+        ) : (
+          <button type="button" onClick={onClick} className={main}>
+            {inner}
+          </button>
+        )}
+        <div className="flex flex-none items-center pe-3">{action}</div>
+      </div>
+    )
+  }
   if (to)
     return (
       <Link to={to} state={state} viewTransition={viewTransition} className={cls} data-lines={lines}>

@@ -18,6 +18,8 @@ import {
   teacherMutationFailureMessage,
 } from "@/lib/teacherOutcome"
 import { Avatar } from "@/components/ui/avatar"
+import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
+import { useDialogHistory } from "@/lib/nav/useDialogHistory"
 import {
   useAcknowledgeAtRisk,
   useAtRiskList,
@@ -259,6 +261,63 @@ function FlagsCell({ studentId, flags }: { studentId: string; flags: AtRiskFlag[
   )
 }
 
+/** Short reason names for the list subtitle, from the same labels the filter uses. */
+function reasonLabel(reason: string): string {
+  return REASON_OPTIONS.find((o) => o.value === reason)?.label ?? reason
+}
+
+/** Light: the lowest container, like every shell panel. Dark: one step up so it lifts off the page. */
+const ACK_SHEET_SURFACE =
+  "gap-3 rounded-card border-0 bg-surface-container-lowest p-6 text-on-surface dark:bg-surface-container-high"
+
+/**
+ * One at-risk student in the native list view. The row links to the student;
+ * "Acknowledge" (the screen's core action, D3.5) sits beside it in the row's
+ * action slot and opens a bottom sheet with the same per-flag note form the
+ * table cell uses. The sheet stays mounted after the last flag is
+ * acknowledged, so the teacher sees the result and can still undo it; only
+ * the trigger goes away.
+ */
+function AtRiskListRow({ student: s }: { student: AtRiskListEntry }) {
+  const [open, setOpen] = useState(false)
+  useDialogHistory({ open, dismissible: true, onClose: () => setOpen(false) })
+  const pending = s.flags.some((f) => !f.acknowledged)
+  const reasons = s.flags.map((f) => `${reasonLabel(f.reason)}${f.acknowledged ? " (acknowledged)" : ""}`).join(" · ")
+  return (
+    <ListRow
+      to={`/teacher/students/${s.studentId}`}
+      leading={<Avatar name={s.displayName} size="sm" />}
+      title={s.displayName}
+      subtitle={`${s.className} · ${reasons}`}
+      lines={3}
+      action={
+        <Sheet open={open} onOpenChange={setOpen}>
+          {pending ? (
+            <SheetTrigger asChild>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="min-h-11 min-w-11 android:min-h-12! android:min-w-12!"
+                aria-label={`Acknowledge flags for ${s.displayName}`}
+              >
+                Acknowledge
+              </Button>
+            </SheetTrigger>
+          ) : null}
+          <SheetContent side="adaptive" aria-describedby="ack-sheet-desc" className={ACK_SHEET_SURFACE}>
+            <SheetTitle className="pe-8 text-display-md">{s.displayName}</SheetTitle>
+            <SheetDescription id="ack-sheet-desc">
+              {s.className}. Acknowledging notes that you have seen a flag. It is never a mute.
+            </SheetDescription>
+            <FlagsCell studentId={s.studentId} flags={s.flags} />
+          </SheetContent>
+        </Sheet>
+      }
+    />
+  )
+}
+
 export function AtRiskList() {
   const [reason, setReason] = useState("")
   const [acknowledged, setAcknowledged] = useState("")
@@ -372,20 +431,9 @@ export function AtRiskList() {
                 label="At-risk students"
                 storageKey="lemely.atRisk.view"
                 list={
-                  <ListGroup label="At-risk students">
+                  <ListGroup>
                     {students.map((s) => (
-                      <ListRow
-                        key={s.studentId}
-                        to={`/teacher/students/${s.studentId}`}
-                        leading={<Avatar name={s.displayName} size="sm" />}
-                        title={s.displayName}
-                        subtitle={`${s.className} · ${s.grade ? `Predicted ${s.grade}` : "No paper grade yet"}`}
-                        trailing={
-                          <span className={cn("text-data-md", s.flags.length >= 2 ? "text-error" : "text-on-surface-variant")}>
-                            {s.flags.length} flag{s.flags.length === 1 ? "" : "s"}
-                          </span>
-                        }
-                      />
+                      <AtRiskListRow key={s.studentId} student={s} />
                     ))}
                   </ListGroup>
                 }
