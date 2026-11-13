@@ -26,7 +26,7 @@ describe("native shell frame fixes (audit batch A)", () => {
     expect(css).toMatch(/> \.lm-native-card-row \{ border-inline-start-width: 0; \}/)
     expect(css).toMatch(/divide-y"\] > \*, \.border-t, \.border-b, \.lm-native-divider\) \{\s*border-block-width: 0;/)
     expect(css).toMatch(/\[data-platform="ios"\] \.lm-native-main \{\s*padding-left: max\(var\(--native-group-inset-ios\), env\(safe-area-inset-left\)\);\s*padding-right: max\(var\(--native-group-inset-ios\), env\(safe-area-inset-right\)\);/)
-    expect(css).toMatch(/\[data-platform="android"\] \.lm-native-main \{\s*padding-left: max\(var\(--native-gutter-android\), env\(safe-area-inset-left\)\);/)
+    expect(css).toMatch(/\[data-platform="android"\] \.lm-native-main \{\s*--native-bleed-l: max\(var\(--native-gutter-android\), env\(safe-area-inset-left\)\);\s*--native-bleed-r: max\(var\(--native-gutter-android\), env\(safe-area-inset-right\)\);\s*padding-left: var\(--native-bleed-l\);/)
   })
 
   it("the tab bar clears the side insets", () => {

@@ -85,9 +85,9 @@ describe("tab bar CSS (preview 4447a571)", () => {
   })
   it("owns the native page ground in both themes", () => {
     expect(css).toMatch(/--native-page-ios: var\(--md-surface-container\)/)
-    expect(css).toMatch(/:root\[data-theme="dark"\] \{[^}]*--native-page-ios: var\(--md-surface-container-lowest\)/)
+    expect(css).toMatch(/:root\[data-theme="dark"\]\[data-platform\] \{[^}]*--native-page-ios: var\(--md-surface-container-lowest\)/)
     expect(css).toMatch(/--native-page-android: var\(--md-surface-container-low\)/)
-    expect(css).toMatch(/:root\[data-theme="dark"\] \{[^}]*--native-page-android: var\(--md-surface\)/)
+    expect(css).toMatch(/:root\[data-theme="dark"\]\[data-platform\] \{[^}]*--native-page-android: var\(--md-surface\)/)
     expect(block).toMatch(/\[data-portal\] \{[^}]*background-color: var\(--native-page\)/)
   })
 })

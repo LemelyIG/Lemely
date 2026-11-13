@@ -633,8 +633,10 @@
     padding-right: max(var(--native-group-inset-ios), env(safe-area-inset-right));
   }
   :root[data-platform="android"] .lm-native-main {
-    padding-left: max(var(--native-gutter-android), env(safe-area-inset-left));
-    padding-right: max(var(--native-gutter-android), env(safe-area-inset-right));
+    --native-bleed-l: max(var(--native-gutter-android), env(safe-area-inset-left));
+    --native-bleed-r: max(var(--native-gutter-android), env(safe-area-inset-right));
+    padding-left: var(--native-bleed-l);
+    padding-right: var(--native-bleed-r);
   }
   :root[data-platform="ios"] .lm-native-main :is(.lm-native-card, .lm-native-group) { border-radius: var(--native-group-radius-ios); }
   :root[data-platform="ios"] .lm-native-main .lm-native-group-label { padding-inline: var(--space-4); }
@@ -659,14 +661,17 @@
      inside the gutter. */
   :root[data-platform="android"] .lm-native-main .lm-native-card:not([data-native-bleed="off"]) {
     border-radius: 0;
-    inline-size: calc(100% + 2 * var(--native-gutter-android));
+    inline-size: calc(100% + var(--native-bleed-l) + var(--native-bleed-r));
     max-inline-size: none;
-    margin-inline: calc(-1 * var(--native-gutter-android));
-    border-inline: var(--native-gutter-android) solid transparent;
+    margin-left: calc(-1 * var(--native-bleed-l));
+    margin-right: calc(-1 * var(--native-bleed-r));
+    border-left: var(--native-bleed-l) solid transparent;
+    border-right: var(--native-bleed-r) solid transparent;
   }
   :root[data-platform="android"] .lm-native-main .lm-native-group {
     border-radius: 0;
-    margin-inline: calc(-1 * var(--native-gutter-android));
+    margin-left: calc(-1 * var(--native-bleed-l));
+    margin-right: calc(-1 * var(--native-bleed-r));
   }
   :root[data-platform="android"] .lm-native-main .lm-native-group-label { padding-inline: calc(var(--space-4) - var(--native-gutter-android)); }
   /* M3 lists: content sits 16px from the screen edge. The card's transparent 14px gutter border already
@@ -1649,6 +1654,7 @@ html[data-direction="back"]::view-transition-new(root) {
     border-radius: var(--native-fab-radius);
     gap: var(--space-3);
   }
+  :root[data-platform="android"] .lm-native-fab:dir(rtl) { inset-inline-end: max(var(--native-fab-gap), env(safe-area-inset-left)); }
   :root[data-platform="android"] .lm-native-fab[data-extended] { padding-inline: var(--space-4); }
   :root[data-platform="android"] .lm-native-fab svg { inline-size: var(--native-tab-icon); block-size: var(--native-tab-icon); }
   /* Room under the last row so the FAB never covers the end of a page. */
@@ -1665,6 +1671,7 @@ html[data-direction="back"]::view-transition-new(root) {
     border-radius: 9999px;
     color: var(--md-primary);
   }
+  :root[data-platform="ios"] .lm-native-large-action > button:dir(rtl) { inset-inline-end: max(var(--space-2), env(safe-area-inset-left)); }
   :root[data-platform="ios"] .lm-native-large-action > button svg { inline-size: var(--native-bar-icon); block-size: var(--native-bar-icon); }
   /* The title leaves room for it. */
   :root[data-platform="ios"] .lm-native-large-title:has(+ .lm-native-large-action) {
@@ -1676,6 +1683,15 @@ html[data-direction="back"]::view-transition-new(root) {
     visibility: hidden;
   }
   :root[data-platform="ios"] .lm-native-large-action { transition: opacity var(--dur-fast) var(--ease-out-soft); }
+}
+@media (max-width: 720px) {
+  /* The More sheet's list: M3 sheet lists are flat full-width items (56dp one-line rows); iOS keeps an inset-grouped
+     surface. Neither draws the desktop outline. */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-sheet [data-list-group] { border: 0; }
+  :root[data-platform="android"] .lm-sheet [data-list-group] { border-radius: 0; background: transparent; }
+  :root[data-platform="android"] .lm-sheet [data-lines="1"] { min-height: var(--native-row-1-android); }
+  :root[data-platform="ios"] .lm-sheet [data-list-group] { border-radius: var(--native-group-radius-ios); }
+  :root[data-platform="ios"] .lm-sheet [data-lines] { min-height: var(--native-row-min-ios); }
 }
 @media (max-width: 720px) {
   :root:is([data-platform="ios"], [data-platform="android"]) .lm-sheet .lm-native-sheet-title { margin: 0; color: var(--md-on-surface); }

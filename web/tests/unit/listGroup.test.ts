@@ -94,8 +94,8 @@ describe("grouped-list CSS (preview 4447a571, variant-a.css section 4)", () => {
     expect(block).toMatch(/:root:is\(\[data-platform="ios"\], \[data-platform="android"\]\) \.lm-native-main \.lm-native-group > \.lm-native-row \{[^}]*border-top: 0;[^}]*border-bottom: 0/)
   })
   it("Android: full-bleed, square, 14px gutter kept as a transparent border on cards, 56/72/88 rows, no separators", () => {
-    expect(block).toMatch(/:root\[data-platform="android"\] \.lm-native-main \.lm-native-card:not\(\[data-native-bleed="off"\]\) \{[^}]*inline-size: calc\(100% \+ 2 \* var\(--native-gutter-android\)\);[^}]*margin-inline: calc\(-1 \* var\(--native-gutter-android\)\);[^}]*border-inline: var\(--native-gutter-android\) solid transparent/)
-    expect(block).toMatch(/:root\[data-platform="android"\] \.lm-native-main \.lm-native-group \{[^}]*margin-inline: calc\(-1 \* var\(--native-gutter-android\)\)/)
+    expect(block).toMatch(/:root\[data-platform="android"\] \.lm-native-main \.lm-native-card:not\(\[data-native-bleed="off"\]\) \{[^}]*inline-size: calc\(100% \+ var\(--native-bleed-l\) \+ var\(--native-bleed-r\)\);[^}]*margin-left: calc\(-1 \* var\(--native-bleed-l\)\);[^}]*margin-right: calc\(-1 \* var\(--native-bleed-r\)\);[^}]*border-left: var\(--native-bleed-l\) solid transparent;\s*border-right: var\(--native-bleed-r\) solid transparent/)
+    expect(block).toMatch(/:root\[data-platform="android"\] \.lm-native-main \.lm-native-group \{[^}]*margin-left: calc\(-1 \* var\(--native-bleed-l\)\)/)
     for (const n of [1, 2, 3]) {
       expect(block).toMatch(new RegExp(`:root\\[data-platform="android"\\] \\.lm-native-main \\.lm-native-row\\[data-lines="${n}"\\] \\{[^}]*min-height: var\\(--native-row-${n}-android\\)`))
     }

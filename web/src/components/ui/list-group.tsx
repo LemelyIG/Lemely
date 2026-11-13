@@ -28,7 +28,7 @@ export function ListGroup({
           {label}
         </h2>
       ) : null}
-      <div className="lm-native-group overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest dark:bg-surface-container-high">
+      <div data-list-group className="lm-native-group overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest dark:bg-surface-container-high">
         {children}
       </div>
       {footer ? <div className="lm-native-group-label px-1 text-body-sm text-on-surface-variant">{footer}</div> : null}

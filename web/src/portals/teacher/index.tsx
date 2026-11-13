@@ -26,7 +26,7 @@ import { STAFF_INBOX_ERROR, TEACHER_INBOX_EMPTY, staffDestinationFor } from "@/l
 import { navItems, resolveTrail, classesItemActive, type NavItem } from "./data"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
 import { CREATE_LABEL, CreateSheet, createGlyph } from "./components/CreateSheet"
-import { Fab } from "@/components/ui/fab"
+import { Fab, useExtendedOnScroll } from "@/components/ui/fab"
 import { titleLevelFor } from "@/components/shell/largeTitle"
 import { PortalShell } from "@/components/shell/PortalShell"
 import { ShellIcon } from "@/components/shell/icons"
@@ -442,6 +442,7 @@ function TeacherLayout() {
     underlyingPathname({ pathname: location.pathname, state: location.state, overlayBase: TEACHER_SETTINGS_BASE }),
   )
   const rootLevel = titleLevelFor(trail) === "root"
+  const fabExtended = useExtendedOnScroll()
   return (
     <PortalShell
       portal="teacher"
@@ -473,7 +474,7 @@ function TeacherLayout() {
       fab={
         rootLevel ? (
           <Fab
-            extended
+            extended={fabExtended}
             label={CREATE_LABEL}
             icon={createGlyph(24)}
             aria-haspopup="dialog"

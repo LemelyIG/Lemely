@@ -34,7 +34,7 @@ export function MoreSheet({
   }, [location.key])
   return (
     <Sheet open={open} onOpenChange={(next) => !next && onClose()}>
-      <SheetContent side="bottom" showCloseButton={false} aria-describedby={undefined} className="lm-more-sheet">
+      <SheetContent side="bottom" showCloseButton={false} aria-describedby={undefined}>
         <SheetTitle className="lm-native-sheet-title mb-4 text-display-md">More</SheetTitle>
         <ListGroup>
           {items.map((item) => (

@@ -1,4 +1,4 @@
-import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react"
+import { forwardRef, useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from "react"
 import { cn } from "@/lib/utils"
 
 /*
@@ -9,6 +9,25 @@ import { cn } from "@/lib/utils"
  * phones and nowhere else: iOS puts the same action in the large-title row, and
  * desktop keeps the top-bar button.
  */
+
+/** M3: an extended FAB shrinks to a plain FAB while the page scrolls down and extends again on scroll up or at the top. */
+export function useExtendedOnScroll(): boolean {
+  const [extended, setExtended] = useState(true)
+  useEffect(() => {
+    let last = window.scrollY
+    const onScroll = () => {
+      const y = window.scrollY
+      if (y <= 8) setExtended(true)
+      else if (y > last + 4) setExtended(false)
+      else if (y < last - 4) setExtended(true)
+      last = y
+    }
+    window.addEventListener("scroll", onScroll, { passive: true })
+    return () => window.removeEventListener("scroll", onScroll)
+  }, [])
+  return extended
+}
+
 export interface FabProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   icon: ReactNode
   label: string

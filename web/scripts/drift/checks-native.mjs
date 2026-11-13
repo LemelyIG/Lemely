@@ -1049,3 +1049,62 @@ NATIVE_CHECKS.push(
     },
   },
 );
+
+/* ── Audit A, Impeccable pass: M3 FAB scroll behaviour, full-inset bleed, flat More list. ── */
+NATIVE_CHECKS.push(
+  {
+    id: "native-android-fab-shrinks-on-scroll-down-extends-on-up",
+    platform: "android",
+    width: 390,
+    app: NATIVE_TEACHER_HOME,
+    async run(page) {
+      const fab = page.locator(".lm-native-fab");
+      const width = () => fab.evaluate((el) => Math.round(el.getBoundingClientRect().width));
+      if ((await width()) <= 56) throw new Error("the FAB is not extended at the top");
+      await page.evaluate(() => {
+        document.body.style.minHeight = "3000px";
+        window.scrollTo(0, 400);
+      });
+      await page.waitForFunction(() => document.querySelector(".lm-native-fab").getBoundingClientRect().width <= 56);
+      await page.evaluate(() => window.scrollTo(0, 300));
+      await page.waitForFunction(() => document.querySelector(".lm-native-fab").getBoundingClientRect().width > 56);
+    },
+  },
+  {
+    id: "native-android-cards-bleed-to-the-edge-under-side-insets",
+    platform: "android",
+    width: 390,
+    app: NATIVE_HOME,
+    async run(page) {
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send("Emulation.setSafeAreaInsetsOverride", { insets: { top: 0, bottom: 0, left: 40, right: 36 } });
+      await page.waitForTimeout(100);
+      const r = await page.evaluate(() => {
+        const card = document.querySelector("main .lm-native-card").getBoundingClientRect();
+        const row = document.querySelector("main .lm-native-card > .lm-native-card-row").firstElementChild.getBoundingClientRect();
+        return { x: Math.round(card.x), w: Math.round(card.width), content: Math.round(row.left) };
+      });
+      if (r.x !== 0 || r.w !== 390) throw new Error(`card ${r.x}/${r.w} does not reach both screen edges under insets`);
+      if (r.content < 40) throw new Error(`content starts at ${r.content}, inside the 40px inset`);
+    },
+  },
+  ...["ios", "android"].map((platform) => ({
+    id: `native-${platform}-more-list-is-flat-in-the-sheet`,
+    platform,
+    width: 390,
+    app: NATIVE_HOME,
+    async run(page) {
+      await page.locator("nav.lm-native-tabbar button[aria-haspopup]").click();
+      const dialog = page.getByRole("dialog", { name: "More" });
+      await dialog.waitFor();
+      const r = await dialog.evaluate((el) => {
+        const g = el.querySelector("[data-list-group]");
+        const row = el.querySelector("[data-lines]");
+        return { border: getComputedStyle(g).borderTopWidth, h: Math.round(row.getBoundingClientRect().height), radius: getComputedStyle(g).borderTopLeftRadius };
+      });
+      if (r.border !== "0px") throw new Error(`More list keeps the desktop outline (${r.border})`);
+      if (platform === "android" && (r.h < 56 || r.radius !== "0px")) throw new Error(`Android More rows ${r.h}px / radius ${r.radius}, expected 56dp flat`);
+      if (platform === "ios" && (r.h < 44 || r.radius !== "12px")) throw new Error(`iOS More rows ${r.h}px / radius ${r.radius}, expected 44pt inset-grouped`);
+    },
+  })),
+);
