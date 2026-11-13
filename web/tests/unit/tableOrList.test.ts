@@ -47,4 +47,21 @@ describe("TableOrList (brief decision 4)", () => {
       expect(readFileSync(join(SRC, f), "utf8"), f).toContain("<TableOrList")
     }
   })
+  it("every remaining teacher table screen uses it", () => {
+    const screens = [
+      "ClassPapers",
+      "AtRiskList",
+      "MarkSchemes",
+      "Quizzes",
+      "QuizResults",
+      "StudentDetail",
+      "ClassAnalytics",
+      "Classes",
+      "tutoring/PreviewReviews",
+    ]
+    for (const name of screens) {
+      const f = `portals/teacher/screens/${name}.tsx`
+      expect(readFileSync(join(SRC, f), "utf8"), f).toContain("<TableOrList")
+    }
+  })
 })

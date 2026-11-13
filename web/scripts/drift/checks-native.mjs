@@ -75,6 +75,56 @@ export const NATIVE_SUBJECT = {
 }
 
 /** Each check: { id, platform, width (default 390), theme, app, run(page) }. */
+const jsonRoute = (route, body) =>
+  route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) })
+
+const CLASS_DETAIL = {
+  id: "class-1",
+  label: "Year 11 Physics",
+  stats: [],
+  mastery: [],
+  distribution: [],
+  students: [],
+  subjectCode: "0625",
+  subjectName: "Physics",
+  schoolId: null,
+  joinCode: null,
+  atRiskCount: 0,
+  lastActivityAt: null,
+  topWeakness: null,
+}
+
+const classPaper = (n, studentName, unshared) => ({
+  attemptId: `attempt-${n}`,
+  studentId: `student-${n}`,
+  studentName,
+  subjectCode: "0625",
+  paperNumber: 2,
+  paperVariant: 1,
+  sessionMonth: "May/June",
+  sessionYear: 2026,
+  recordedAt: "2026-11-12T08:00:00Z",
+  unshared,
+})
+
+/** A teacher table screen on a phone: list rows first, no table in the DOM, then
+ * View table swaps in the scrollable region, and the choice survives a reload. */
+async function expectListThenTable(page, { label, storageKey, rowSelector, rows }) {
+  const list = page.locator(rowSelector)
+  await list.first().waitFor()
+  if ((await list.count()) !== rows) throw new Error(`${label}: expected ${rows} list rows, found ${await list.count()}`)
+  if ((await page.locator(".lm-native-main table").count()) !== 0) throw new Error(`${label}: table rendered in list view`)
+  await page.getByRole("button", { name: "View table" }).click()
+  const region = page.getByRole("region", { name: label, exact: true })
+  await region.waitFor()
+  const bodyRows = await region.locator("tbody tr").count()
+  if (bodyRows !== rows) throw new Error(`${label}: expected ${rows} table body rows, found ${bodyRows}`)
+  await page.reload({ waitUntil: "networkidle" })
+  await page.getByRole("region", { name: label, exact: true }).waitFor()
+  const stored = await page.evaluate((k) => sessionStorage.getItem(k), storageKey)
+  if (stored !== "table") throw new Error(`${label}: table choice not persisted, sessionStorage=${stored}`)
+}
+
 export const NATIVE_CHECKS = [
   ...["ios", "android"].map((platform) => ({
     id: `native-${platform}-platform-resolves`,
@@ -564,6 +614,77 @@ NATIVE_CHECKS.push({
       if (stored !== "table") throw new Error(`table choice not persisted, sessionStorage=${stored}`)
     },
   },
+  ...[
+    {
+      id: "native-android-class-papers-list-and-table",
+      surface: "class-papers",
+      path: "/teacher/classes/class-1/papers",
+      label: "Class papers",
+      storageKey: "lemely.classPapers.view",
+      rowSelector: ".lm-native-main .lm-native-row",
+      rows: 2,
+      mocks: async (page) => {
+        await teacherShellMocks(page)
+        await page.route(/\/api\/classes\/class-1(\?|$)/, (route) => jsonRoute(route, CLASS_DETAIL))
+        await page.route(/\/api\/classes\/class-1\/papers(\?|$)/, (route) =>
+          jsonRoute(route, {
+            papers: [
+              classPaper(1, "Amina Said", false),
+              classPaper(2, "Omar Nabil", true),
+            ],
+          }),
+        )
+      },
+    },
+    {
+      id: "native-android-at-risk-list-and-table",
+      surface: "at-risk",
+      path: "/teacher/at-risk",
+      label: "At-risk students",
+      storageKey: "lemely.atRisk.view",
+      rowSelector: ".lm-native-main a.lm-native-row",
+      rows: 2,
+      mocks: async (page) => {
+        await teacherShellMocks(page)
+        const flag = (reason) => ({ reason, summary: reason, evidence: {}, acknowledged: null })
+        await page.route(/\/api\/teacher\/at-risk(\?|$)/, (route) =>
+          jsonRoute(route, {
+            students: [
+              { studentId: "s-1", displayName: "Amina Said", classId: "class-1", className: "Year 11 Physics", grade: "C", flags: [flag("falling_trend"), flag("below_target")] },
+              { studentId: "s-2", displayName: "Omar Nabil", classId: "class-1", className: "Year 11 Physics", grade: "D", flags: [flag("below_target")] },
+            ],
+          }),
+        )
+      },
+    },
+    {
+      id: "native-android-mark-schemes-list-and-table",
+      surface: "mark-schemes",
+      path: "/teacher/schemes",
+      label: "Mark schemes",
+      storageKey: "lemely.markSchemes.view",
+      rowSelector: ".lm-native-main .lm-native-row",
+      rows: 2,
+      mocks: async (page) => {
+        await teacherShellMocks(page)
+        await page.route(/\/api\/schemes(\?|$)/, (route) =>
+          jsonRoute(route, {
+            schemes: [
+              { doc: "0625_s24_ms_21.pdf", paper: "Paper 2 Variant 1", session: "May 2024", maxMarks: 80, questionCount: 9, status: "parsed" },
+              { doc: "0625_w23_ms_41.pdf", paper: "Paper 4 Variant 1", session: "Nov 2023", maxMarks: null, questionCount: null, status: "pending" },
+            ],
+            stats: [],
+          }),
+        )
+      },
+    },
+  ].map((c) => ({
+    id: c.id,
+    platform: "android",
+    width: 390,
+    app: { surface: "teacher-overview", state: "populated", path: c.path, mocks: c.mocks },
+    run: (page) => expectListThenTable(page, c),
+  })),
 );
 
 /** D11: two heading texts "repeat" when equal after these steps (see Task 5b). */
