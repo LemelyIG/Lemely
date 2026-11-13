@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
+from zoneinfo import ZoneInfo
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -29,15 +30,21 @@ MAX_EXTRA_SEATS_AT_CHECKOUT: Final = 200
 #: Paymob billing cycle exactly.
 PERIOD_DAYS: Final[Mapping[str, int]] = MappingProxyType({"monthly": 30, "yearly": 360})
 
-#: How long a failed renewal keeps being retried at Paymob. ``None`` leaves Paymob's own default
-#: in force (decision UD-7 of 2026-11-13: the retry window is not set by Lemely). The plan sync
-#: passes this to ``create_plan(retrial_days=...)``, where ``None`` is sent as a null.
-PAYMOB_RETRIAL_DAYS: Final[int | None] = None
+#: How many days Paymob keeps retrying a failed renewal; the plan sync sends it as an integer
+#: ``retrial_days``. It matches ``GRACE_PERIOD``, so access ends when the retries do. Revised
+#: UD-7 (Paymob skill audit, I4): a null ``retrial_days`` may mean "no retries", so it is set.
+PAYMOB_RETRIAL_DAYS: Final = 3
+
+#: The zone Paymob's timestamps without an offset are read in. Paymob's live samples show a
+#: naive timestamp in webhook bodies and an offset on REST responses, so a naive one looks
+#: account-local, and the Egypt account's local time is Cairo. Unconfirmed until the go-live
+#: sandbox run (checklist S13).
+PAYMOB_ACCOUNT_TZ: Final = ZoneInfo("Africa/Cairo")
 
 #: A renewal is checked against its Paymob amount when it is due within this window (DV-16).
 AMOUNT_SYNC_WINDOW: Final = timedelta(days=2)
 
-_FAILURE_FLAGS: Final = ("pending", "is_voided", "is_refunded", "error_occured")
+_FAILURE_FLAGS: Final = ("pending", "is_voided", "is_refunded", "error_occured", "is_auth")
 
 
 def paymob_frequency(interval: str) -> int:
@@ -108,7 +115,8 @@ def _is_true(value: object) -> bool:
 def is_successful_charge(txn: Mapping[str, object]) -> bool:
     """Paid iff ``success`` is JSON true and no failure flag is set (research 02 §3).
 
-    A flag counts as set when it is JSON true or the string ``"true"``; an absent flag is not set.
+    ``is_auth`` is a failure flag: an authorisation holds funds, it does not capture them. A flag
+    counts as set when it is JSON true or the string ``"true"``; an absent flag is not set.
     """
     return txn.get("success") is True and not any(_is_true(txn.get(f)) for f in _FAILURE_FLAGS)
 
@@ -116,9 +124,11 @@ def is_successful_charge(txn: Mapping[str, object]) -> bool:
 def parse_paymob_time(value: object) -> datetime | None:
     """Parse a Paymob timestamp to an aware UTC datetime; ``None`` when unparseable.
 
-    A timestamp without an offset is read as UTC. That is an assumption: no recorded sandbox run
-    confirms the timezone of ``created_at`` on ``GET subscriptions/{id}/last-transaction``
-    (billing constraints UD-8), so the go-live sandbox checklist verifies it.
+    A value with an offset is converted to UTC. A value without one (a webhook body's timestamp)
+    is read as wall time in :data:`PAYMOB_ACCOUNT_TZ`, which is an assumption that no recorded
+    sandbox run confirms (UD-8). A date-only value (``starts_at``, ``next_billing``) is the
+    instant that day starts in that zone; compare such fields as dates in that zone, never
+    against UTC midnight.
     """
     if not isinstance(value, str) or not value:
         return None
@@ -126,7 +136,9 @@ def parse_paymob_time(value: object) -> datetime | None:
         parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
-    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=PAYMOB_ACCOUNT_TZ).astimezone(UTC)
+    return parsed.astimezone(UTC)
 
 
 def renewal_period_start(*, current_period_end: datetime | None, charged_at: datetime) -> datetime:
@@ -145,6 +157,7 @@ __all__ = [
     "AMOUNT_SYNC_WINDOW",
     "GRACE_PERIOD",
     "MAX_EXTRA_SEATS_AT_CHECKOUT",
+    "PAYMOB_ACCOUNT_TZ",
     "PAYMOB_RETRIAL_DAYS",
     "PERIOD_DAYS",
     "STALE_CHECKOUT_AFTER",

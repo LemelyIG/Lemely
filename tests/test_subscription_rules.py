@@ -10,6 +10,7 @@ from lemely.core.subscription_rules import (
     AMOUNT_SYNC_WINDOW,
     GRACE_PERIOD,
     MAX_EXTRA_SEATS_AT_CHECKOUT,
+    PAYMOB_ACCOUNT_TZ,
     PAYMOB_RETRIAL_DAYS,
     PERIOD_DAYS,
     STALE_CHECKOUT_AFTER,
@@ -32,6 +33,7 @@ GOOD_CHARGE = {
     "is_voided": False,
     "is_refunded": False,
     "error_occured": False,
+    "is_auth": False,
 }
 
 
@@ -44,9 +46,11 @@ def test_constants() -> None:
     assert timedelta(days=2) == AMOUNT_SYNC_WINDOW
 
 
-def test_the_paymob_retry_window_is_left_to_paymob() -> None:
-    """UD-7 (2026-11-13): Lemely does not set ``retrial_days``."""
-    assert PAYMOB_RETRIAL_DAYS is None
+def test_the_paymob_retry_window_is_three_whole_days() -> None:
+    """Revised UD-7: ``retrial_days`` is set, as an integer, to the grace period's days."""
+    assert PAYMOB_RETRIAL_DAYS == 3
+    assert type(PAYMOB_RETRIAL_DAYS) is int
+    assert timedelta(days=PAYMOB_RETRIAL_DAYS) == GRACE_PERIOD
 
 
 def test_period_end_adds_the_paymob_cycle() -> None:
@@ -141,7 +145,9 @@ def test_a_clean_charge_is_successful() -> None:
     assert is_successful_charge({"success": True})  # absent flags read as false
 
 
-@pytest.mark.parametrize("flag", ["pending", "is_voided", "is_refunded", "error_occured"])
+@pytest.mark.parametrize(
+    "flag", ["pending", "is_voided", "is_refunded", "error_occured", "is_auth"]
+)
 @pytest.mark.parametrize("value", [True, "true"])
 def test_a_set_failure_flag_fails_the_charge(flag: str, value: object) -> None:
     assert not is_successful_charge({**GOOD_CHARGE, flag: value})
@@ -157,17 +163,35 @@ def test_only_a_json_true_success_counts(success: object) -> None:
     assert not is_successful_charge({})
 
 
-def test_parse_paymob_time() -> None:
-    assert parse_paymob_time("2026-11-18T13:42:08.456634") == datetime(
-        2026, 11, 18, 13, 42, 8, 456634, tzinfo=UTC
-    )
+def test_an_aware_paymob_time_is_converted_to_utc() -> None:
     assert parse_paymob_time("2026-11-18T13:42:08+02:00") == datetime(
         2026, 11, 18, 11, 42, 8, tzinfo=UTC
     )
-    assert parse_paymob_time("not a time") is None
-    assert parse_paymob_time("") is None
-    assert parse_paymob_time(None) is None
-    assert parse_paymob_time(20261118) is None
+    assert parse_paymob_time("2026-11-18T13:42:08.456634+00:00") == datetime(
+        2026, 11, 18, 13, 42, 8, 456634, tzinfo=UTC
+    )
+    assert parse_paymob_time("2026-11-18T13:42:08Z") == datetime(
+        2026, 11, 18, 13, 42, 8, tzinfo=UTC
+    )
+
+
+def test_a_naive_paymob_time_is_read_as_cairo_wall_time() -> None:
+    assert str(PAYMOB_ACCOUNT_TZ) == "Africa/Cairo"
+    # Winter is UTC+2, summer (DST) UTC+3.
+    assert parse_paymob_time("2026-11-18T13:42:08.456634") == datetime(
+        2026, 11, 18, 11, 42, 8, 456634, tzinfo=UTC
+    )
+    assert parse_paymob_time("2026-07-01T12:00:00") == datetime(2026, 7, 1, 9, 0, tzinfo=UTC)
+
+
+def test_a_date_only_paymob_value_is_the_start_of_that_day_in_cairo() -> None:
+    assert parse_paymob_time("2026-12-10") == datetime(2026, 12, 9, 22, 0, tzinfo=UTC)
+    assert parse_paymob_time("2026-07-10") == datetime(2026, 7, 9, 21, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize("value", ["not a time", "", None, 20261118, ["2026-11-18"]])
+def test_an_unreadable_paymob_time_is_none(value: object) -> None:
+    assert parse_paymob_time(value) is None
 
 
 def test_renewal_period_start_continues_on_time_and_restarts_late() -> None:

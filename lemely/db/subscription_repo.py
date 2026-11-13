@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, ClassVar, Final
 import structlog
 
 from lemely.core.subscription_rules import PAYMOB_RETRIAL_DAYS, paymob_frequency
-from lemely.db.billing_repo import BillingService
+from lemely.db.billing_repo import BillingService, _outcome_unknown
 from lemely.db.models.billing import PlanTier
 from lemely.io.paymob.client import PaymobError
 
@@ -141,8 +141,8 @@ def sync_paymob_plan(
         PlanNotPurchasable: unknown tier, no interval, a price of zero or less, or no MOTO
             integration id.
         PlanSyncFailed: Paymob answered without an integer plan id; the tier is left as it was.
-        PaymobError: the call failed. When ``outcome_unknown`` Paymob may hold an orphan plan,
-            which is logged as ``paymob_plan_create_unknown``.
+        PaymobError: the call failed. When the outcome is unknown (no answer, or a 5xx) Paymob may
+            hold an orphan plan, which is logged as ``paymob_plan_create_unknown``.
     """
     tier = session.get(PlanTier, plan_tier_id, with_for_update=True)
     if tier is None:
@@ -166,7 +166,7 @@ def sync_paymob_plan(
             use_transaction_amount=True,
         )
     except PaymobError as exc:
-        if exc.outcome_unknown:
+        if _outcome_unknown(exc):
             alerts.error(
                 "paymob_plan_create_unknown",
                 plan_tier_id=str(tier.id),

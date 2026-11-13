@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+import httpx
 import pytest
 
 from lemely.db.billing_repo import BillingService
@@ -20,7 +22,8 @@ from lemely.db.subscription_repo import (
     subscription_webhook_url,
     sync_paymob_plan,
 )
-from lemely.io.paymob.client import PaymobError
+from lemely.io.paymob.client import PaymobClient, PaymobError
+from tests.paymob_fixtures import AUTH_TOKEN_RESPONSE, PAYMOB_SETTINGS, PLAN_RESPONSE
 from tests.subscription_fixtures import (
     FakePaymobClient,
     paymob_settings,
@@ -72,13 +75,46 @@ def test_unlinked_tier_creates_and_links_a_plan(
     assert _linked_plan(pg_sessionmaker, tier_id) == plan_id
 
 
-def test_the_paymob_retry_window_is_not_set(pg_sessionmaker: sessionmaker[Session]) -> None:
-    """UD-7: Paymob's default retry window applies, so ``retrial_days`` reaches the client unset."""
+def test_the_paymob_retry_window_is_three_days(pg_sessionmaker: sessionmaker[Session]) -> None:
+    """Revised UD-7: a null ``retrial_days`` may mean no retries, so the plan sets it."""
     tier_id = seed_tier(pg_sessionmaker, paymob_plan_id=None)
     client = FakePaymobClient()
     with pg_sessionmaker.begin() as session:
         sync_paymob_plan(session, client, paymob_settings(), tier_id)
-    assert client.calls[0][1]["retrial_days"] is None
+    assert client.calls[0][1]["retrial_days"] == 3
+
+
+def test_the_real_client_sends_retrial_days_as_a_json_integer(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The plan sync through the real ``PaymobClient``: the wire body, not the fake's record."""
+    path = "/api/acceptance/subscription-plans"
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == "/api/auth/tokens":
+            return httpx.Response(200, json=AUTH_TOKEN_RESPONSE)
+        assert request.url.path == path
+        return httpx.Response(201, json={**PLAN_RESPONSE, "id": 7_777_001})
+
+    tier_id = seed_tier(pg_sessionmaker, price_minor=12_000, paymob_plan_id=None)
+    client = PaymobClient(
+        PAYMOB_SETTINGS, http=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    with pg_sessionmaker.begin() as session:
+        assert sync_paymob_plan(session, client, paymob_settings(), tier_id) == 7_777_001
+    (request,) = (r for r in seen if r.url.path == path)
+    assert request.method == "POST"
+    assert request.headers["authorization"].startswith("Bearer ")
+    raw = request.content.decode()
+    assert '"retrial_days": 3' in raw or '"retrial_days":3' in raw
+    body = json.loads(raw)
+    assert body["retrial_days"] == 3
+    assert type(body["retrial_days"]) is int
+    assert body["use_transaction_amount"] is True
+    assert body["amount_cents"] == 12_000
+    assert _linked_plan(pg_sessionmaker, tier_id) == 7_777_001
 
 
 def test_webhook_url_joins_the_origin_and_path() -> None:
@@ -168,12 +204,21 @@ def test_a_failed_force_new_keeps_the_existing_link(pg_sessionmaker: sessionmake
     assert _linked_plan(pg_sessionmaker, tier_id) == 515_151
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        PaymobError("timed out", status_code=None, timeout=True),
+        PaymobError("bad gateway", status_code=502),
+    ],
+    ids=["no-answer", "5xx"],
+)
 def test_a_paymob_error_propagates_and_an_unknown_outcome_raises_the_alert(
-    pg_sessionmaker: sessionmaker[Session], capsys: pytest.CaptureFixture[str]
+    pg_sessionmaker: sessionmaker[Session], capsys: pytest.CaptureFixture[str], error: PaymobError
 ) -> None:
+    """A gateway 5xx does not say whether Paymob created the plan, so it is an orphan risk too."""
     tier_id = seed_tier(pg_sessionmaker, paymob_plan_id=None)
     client = FakePaymobClient()
-    client.fail["create_plan"] = PaymobError("timed out", status_code=None, timeout=True)
+    client.fail["create_plan"] = error
     with pytest.raises(PaymobError), pg_sessionmaker.begin() as session:
         sync_paymob_plan(session, client, paymob_settings(), tier_id)
     assert _linked_plan(pg_sessionmaker, tier_id) is None

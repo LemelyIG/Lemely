@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
 
+from lemely.core.subscription_rules import PAYMOB_ACCOUNT_TZ
 from lemely.db.models import import_all_models
 from lemely.db.models.billing import (
     Payment,
@@ -416,7 +417,8 @@ def charge(
     """A ``GET subscriptions/{id}/last-transaction`` body (a transaction object).
 
     ``order`` carries an integer id (DV-14); ``flags`` override ``pending``, ``is_voided``,
-    ``is_refunded`` or ``error_occured``. ``created_at`` is written naive, as Paymob does.
+    ``is_refunded``, ``error_occured`` or ``is_auth``. ``created_at`` carries the Cairo offset, as
+    the REST samples in Paymob's docs carry their account's.
     """
     return {
         "id": txn_id,
@@ -427,8 +429,9 @@ def charge(
         "is_voided": False,
         "is_refunded": False,
         "error_occured": False,
+        "is_auth": False,
         "order": {"id": order_id if order_id is not None else txn_id + 1_000_000},
-        "created_at": created_at.astimezone(UTC).replace(tzinfo=None).isoformat(),
+        "created_at": created_at.astimezone(PAYMOB_ACCOUNT_TZ).isoformat(),
     } | flags
 
 
