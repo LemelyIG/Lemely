@@ -374,6 +374,43 @@ class ClassJoinedTutor(_TutorNamed):
         return f"/parent/children/{self.child_id}/tutoring"
 
 
+class SubscriptionNotice(EmailContext):
+    """A subscription event the payer must hear about (Paymob billing spec §2.6, §5.2).
+
+    No amount, plan name, card detail or other person's name travels in the mail: the screen
+    behind the link shows them to a signed-in payer. The date is the UTC date of
+    ``effective_at`` and carries no time of day.
+    """
+
+    template: ClassVar[str] = "subscription_notice"
+    notification_type: ClassVar[NotificationType] = NotificationType.billing
+    subject: ClassVar[str] = "Your Lemely plan"
+    button: ClassVar[str] = "Open billing"
+
+    subscription_id: uuid.UUID
+    notice: Literal["renewed", "payment_failed", "expired", "cancelled"]
+    effective_at: AwareDatetime
+
+    _LEADS: ClassVar[dict[str, str]] = {
+        "renewed": "Your Lemely plan renewed. The new period ends on {date}.",
+        "payment_failed": "We could not take your plan payment. Your plan stays on until {date}.",
+        "expired": (
+            "Your Lemely plan ended on {date} because the renewal payment did not go through."
+        ),
+        "cancelled": "Your Lemely plan was cancelled and ended on {date}.",
+    }
+
+    def lead(self) -> str:
+        date = self.effective_at.astimezone(UTC).strftime("%d %b %Y")
+        return self._LEADS[self.notice].format(date=date)
+
+    def detail(self) -> str | None:
+        return None
+
+    def path(self) -> str:
+        return "/billing"
+
+
 _TEMPLATE_CLASSES: Final[tuple[type[EmailContext], ...]] = (
     BookingRequested,
     BookingRequestedFamily,
@@ -385,12 +422,16 @@ _TEMPLATE_CLASSES: Final[tuple[type[EmailContext], ...]] = (
     ParentUnlinked,
     ParentLinked,
     ClassJoinedTutor,
+    SubscriptionNotice,
 )
 
 #: Every template, keyed by the name stored in ``email_outbox.template``.
 EMAIL_TEMPLATES: Final[Mapping[str, type[EmailContext]]] = {
     cls.template: cls for cls in _TEMPLATE_CLASSES
 }
+
+#: Templates outside the tutoring spec's §b.4 table (Paymob billing).
+BILLING_EMAIL_TEMPLATES: Final[frozenset[str]] = frozenset({SubscriptionNotice.template})
 
 
 def _stop(sentence: str) -> str:
@@ -607,11 +648,13 @@ def build_transactional_provider(settings: Settings) -> TransactionalEmailProvid
 
 
 __all__ = [
+    "BILLING_EMAIL_TEMPLATES",
     "EMAIL_TEMPLATES",
     "EmailContext",
     "InvalidEmailContext",
     "MockTransactionalEmailProvider",
     "ResendTransactionalEmailProvider",
+    "SubscriptionNotice",
     "TransactionalEmailProvider",
     "build_transactional_provider",
     "render_email",

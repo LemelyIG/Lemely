@@ -17,6 +17,7 @@ import httpx
 import pytest
 
 from lemely.io.notify_email import (
+    BILLING_EMAIL_TEMPLATES,
     EMAIL_TEMPLATES,
     InvalidEmailContext,
     MockTransactionalEmailProvider,
@@ -129,7 +130,7 @@ def test_templates_are_exactly_the_ones_the_spec_table_names() -> None:
     for row in spec_b4_rows():
         named.update(re.findall(r"`([a-z_]+)`", row[3]))
     assert len(named) == 10  # non-vacuity: ten templates in the spec table
-    assert set(EMAIL_TEMPLATES) == named
+    assert set(EMAIL_TEMPLATES) - BILLING_EMAIL_TEMPLATES == named
     assert set(VALID) == named
 
 
@@ -456,3 +457,91 @@ def test_validated_start_instant_is_stored_in_utc() -> None:
     assert datetime.fromisoformat(str(stored["starts_at"])) == datetime(
         2026, 10, 30, 14, 0, tzinfo=UTC
     )
+
+
+# -- billing (Paymob billing Phase 05) -----------------------------------------
+
+SUBSCRIPTION_ID = uuid.UUID("66666666-6666-4666-8666-666666666666")
+
+
+def _notice(notice: str, effective_at: str = "2026-12-10T09:00:00+00:00") -> dict[str, object]:
+    return {
+        "subscription_id": str(SUBSCRIPTION_ID),
+        "notice": notice,
+        "effective_at": effective_at,
+    }
+
+
+def test_billing_templates_are_disjoint_from_the_tutoring_spec() -> None:
+    assert {"subscription_notice"} == BILLING_EMAIL_TEMPLATES
+    assert set(EMAIL_TEMPLATES) >= BILLING_EMAIL_TEMPLATES
+    assert BILLING_EMAIL_TEMPLATES.isdisjoint(set(VALID))
+    template = EMAIL_TEMPLATES["subscription_notice"]
+    assert template.notification_type.value == "billing"  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    ("notice", "words"),
+    [
+        ("renewed", "renewed"),
+        ("payment_failed", "could not take"),
+        ("expired", "ended"),
+        ("cancelled", "cancelled"),
+    ],
+)
+def test_subscription_notice_renders_each_notice(notice: str, words: str) -> None:
+    subject, html_body, text = render_email(
+        "subscription_notice", _notice(notice), app_base_url=BASE_URL
+    )
+    assert subject == "Your Lemely plan"
+    assert words in text
+    assert "10 Dec 2026" in text
+    assert f"{BASE_URL}/billing" in html_body
+    assert f"{BASE_URL}/billing" in text
+
+
+def test_subscription_notice_names_the_date_in_utc() -> None:
+    # 23:30 UTC on 10 Dec is already 11 Dec in Cairo; the copy names the UTC date.
+    _, _, late_utc = render_email(
+        "subscription_notice",
+        _notice("renewed", "2026-12-10T23:30:00+00:00"),
+        app_base_url=BASE_URL,
+    )
+    assert "10 Dec 2026" in late_utc
+    assert "11 Dec" not in late_utc
+    # The same instant written with a +02:00 offset names the same UTC date.
+    _, _, offset = render_email(
+        "subscription_notice",
+        _notice("renewed", "2026-12-11T01:30:00+02:00"),
+        app_base_url=BASE_URL,
+    )
+    assert "10 Dec 2026" in offset
+    assert "11 Dec" not in offset
+
+
+@pytest.mark.parametrize("notice", ["renewed", "payment_failed", "expired", "cancelled"])
+def test_subscription_notice_carries_no_amount_card_or_plan_detail(notice: str) -> None:
+    _, html_body, text = render_email("subscription_notice", _notice(notice), app_base_url=BASE_URL)
+    for rendered in (html_body, text):
+        assert "EGP" not in rendered
+        assert "card" not in rendered.lower()
+        assert str(SUBSCRIPTION_ID) not in rendered
+    # Strip the one date the copy states: no other digit may remain in the plain text.
+    assert not re.search(r"\d", text.replace("10 Dec 2026", ""))
+    fields = EMAIL_TEMPLATES["subscription_notice"].context_fields  # type: ignore[attr-defined]
+    assert fields == {"subscription_id", "notice", "effective_at"}
+
+
+def test_subscription_notice_rejects_extra_keys_unknown_notices_and_naive_instants() -> None:
+    assert validate_context("subscription_notice", _notice("renewed"))
+    for extra in ("note", "email", "amount", "plan_name", "amount_minor", "card_last4"):
+        with pytest.raises(InvalidEmailContext):
+            validate_context("subscription_notice", {**_notice("renewed"), extra: "x"})
+    with pytest.raises(InvalidEmailContext):
+        validate_context("subscription_notice", _notice("refunded"))
+    with pytest.raises(InvalidEmailContext):
+        validate_context("subscription_notice", _notice("renewed", "2026-12-10T09:00:00"))
+    for key in _notice("renewed"):
+        partial = {k: v for k, v in _notice("renewed").items() if k != key}
+        with pytest.raises(InvalidEmailContext):
+            validate_context("subscription_notice", partial)
