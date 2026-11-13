@@ -10,6 +10,7 @@ import { useStudentBookings } from "@/lib/hooks/useTutoringApi"
 import { sessionRowView, usePagedItems, type SessionRowView } from "@/lib/tutoring/sessionView"
 import type { BookingWhen } from "@/lib/tutoring/queryKeys"
 import type { Booking, BookingsPage } from "@/lib/tutoringTypes"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * S-36 · My sessions (`/student/sessions`, SPEC §d). Two tabs, Upcoming and
@@ -113,7 +114,7 @@ export function Sessions() {
 
   return (
     <div className="flex w-full max-w-160 flex-col gap-6">
-      <h1 className="m-0 text-display-md text-on-surface">My sessions</h1>
+      <PageHeading repeatsTitle={true} className="m-0 text-display-md text-on-surface">My sessions</PageHeading>
 
       <Tabs
         value={tab}

@@ -39,6 +39,7 @@ import {
 import { tutorActionFailureMessage, tutorLoadFailureMessage } from "@/lib/tutoring/tutorSessionActions"
 import { cn } from "@/lib/utils"
 import type { Outcomes, TutorOwnProfile, TutorPreview, TutorReviewItem } from "@/lib/tutoringTypes"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * T-21 · Profile preview and reviews (`/teacher/tutoring/preview`, SPEC §d).
@@ -445,7 +446,7 @@ export function PreviewReviews() {
     <div className="flex flex-col gap-8 min-w-0">
       <div className="flex flex-wrap items-end justify-between gap-3 border-b border-outline-variant pb-5">
         <div className="flex flex-col gap-1">
-          <h1 className="m-0 text-display-md text-on-surface">Profile preview and reviews</h1>
+          <PageHeading repeatsTitle={true} className="m-0 text-display-md text-on-surface">Profile preview and reviews</PageHeading>
           <p className="m-0 text-body-md text-on-surface-variant">
             This is your profile as a signed-in student reads it, and what students have said about you.
           </p>

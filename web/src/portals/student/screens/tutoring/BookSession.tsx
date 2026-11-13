@@ -12,6 +12,7 @@ import {
 } from "@/lib/hooks/useTutoringApi"
 import { bookingRefusalOf } from "@/lib/tutoring/bookingErrors"
 import type { TutorProfile } from "@/lib/tutoringTypes"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * S-35 · Book a session (`/student/tutors/:tutorId/book`, SPEC §d). The safety
@@ -44,7 +45,7 @@ function Booking({ tutor }: { tutor: TutorProfile }) {
   return (
     <div className="flex w-full max-w-160 flex-col gap-6">
       <div className="flex flex-col gap-2">
-        <h1 className="m-0 text-display-md text-on-surface">Book a session with {tutor.publicName}</h1>
+        <PageHeading repeatsTitle={false} className="m-0 text-display-md text-on-surface">Book a session with {tutor.publicName}</PageHeading>
         <p className="m-0 text-body-md text-on-surface-variant">
           <Link to={`/student/tutors/${tutor.tutorId}`} className="underline underline-offset-4">
             Back to their profile

@@ -29,6 +29,7 @@ import {
   weekHeaderKicker,
   weekProgress,
 } from "./studyPlanData"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * S-24 · Study plan, week view. Wired to the *persisted* study-plan surface
@@ -321,7 +322,7 @@ export function StudyPlanWeek() {
             const message = planUnavailableMessage(view.reason)
             return (
               <>
-                <h1 className="text-display-lg text-on-surface">{heading}</h1>
+                <PageHeading repeatsTitle={false} className="text-display-lg text-on-surface">{heading}</PageHeading>
                 <EmptyState
                   marginalia="Not enough to go on yet"
                   heading={message.heading}

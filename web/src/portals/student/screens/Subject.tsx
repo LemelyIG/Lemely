@@ -12,6 +12,7 @@ import { useReference } from "@/lib/hooks/useReferenceApi"
 import { useSubject } from "@/lib/hooks/useStudentApi"
 import { cn } from "@/lib/utils"
 import { vizText } from "../components/colors"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Subject (isSubject). Wired to `GET /student/subject/{code}` via
@@ -137,7 +138,7 @@ export function Subject() {
                   ) : null}
                   <div className="mt-1 flex items-center gap-3">
                     <SubjectGlyph subject={subjectHeader.name} className="mt-0.5" />
-                    <h1 className="text-display-lg text-on-surface">{primary}</h1>
+                    <PageHeading repeatsTitle={true} className="text-display-lg text-on-surface">{primary}</PageHeading>
                   </div>
                   <div className="mt-2 max-w-[62ch] text-pretty text-body-md text-on-surface-variant">
                     {subjectHeader.intro}

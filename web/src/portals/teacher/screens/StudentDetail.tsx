@@ -16,6 +16,7 @@ import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { teacherLoadFailureMessage } from "@/lib/teacherOutcome"
 import type { Attempt, StudentDetail as StudentDetailData, StudentWeakness } from "@/lib/teacherTypes"
 import { BackArrow } from "@/components/ui/inline-arrow"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Student detail, teacher view (T-05). `GET /teacher/students/{studentId}`
@@ -254,9 +255,9 @@ export function StudentDetailView({
           {back}
           <div className="flex items-start gap-4 flex-wrap gap-y-2 mt-1">
             <div className="min-w-0">
-              <h1 className="text-display-md mt-1.5 text-pretty">
+              <PageHeading repeatsTitle={false} className="text-display-md mt-1.5 text-pretty">
                 {student.displayName}
-              </h1>
+              </PageHeading>
               <div className="text-body-sm text-on-surface-variant mt-1">
                 {student.engagement.totalPapers} paper
                 {student.engagement.totalPapers === 1 ? "" : "s"} recorded ·{" "}

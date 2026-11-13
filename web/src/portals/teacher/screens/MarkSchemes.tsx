@@ -14,6 +14,7 @@ import {
   teacherMutationFailureMessage,
 } from "@/lib/teacherOutcome"
 import type { SchemeStatus } from "@/lib/teacherTypes"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Mark schemes. Wired to `GET /schemes` via `useSchemes()`, upload via
@@ -83,9 +84,9 @@ export function MarkSchemes() {
                 {/* A real h1, not a styled div — same `page-has-heading-one`
                     violation as Grading.tsx, surfaced by the same chunk-b
                     registry expansion. */}
-                <h1 className="text-display-md mt-1.5">
+                <PageHeading repeatsTitle={true} className="text-display-md mt-1.5">
                   Mark schemes
-                </h1>
+                </PageHeading>
               </div>
               <div className="flex-1" />
               <input

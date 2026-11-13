@@ -6,6 +6,7 @@ import type { ClassSummary } from "@/lib/teacherTypes"
 import type { Unlock } from "./growth"
 import { UnlockLadder } from "./NextUp"
 import type { SetupProgress } from "./setup"
+import { PageHeading } from "@/components/ui/page-heading"
 import "./home.css"
 
 const STEPS = [
@@ -57,7 +58,7 @@ export function TeacherSetup({ progress, firstClass, unlocks, onFiles }: { progr
     <div className="grid gap-8">
       <header className="rounded-card bg-primary p-8 text-on-primary dark:bg-primary-container dark:text-on-primary-container">
         <p className="text-eyebrow text-inverse-primary dark:text-primary">Every mark, explained.</p>
-        <h1 className="mt-2 text-display-lg">Mark your first papers</h1>
+        <PageHeading repeatsTitle={false} className="mt-2 text-display-lg">Mark your first papers</PageHeading>
         <div className="mt-6 flex flex-wrap gap-3">
           <Link to="/teacher/first-class" className="inline-flex items-center gap-2 rounded-button bg-inverse-primary px-5 py-3 btn-text text-primary transition-colors hover:bg-inverse-primary/85 dark:bg-primary dark:text-on-primary dark:hover:bg-primary-hover">Create a class</Link>
           <button type="button" onClick={() => (progress.created ? input.current?.click() : setNudge((n) => n + 1))}

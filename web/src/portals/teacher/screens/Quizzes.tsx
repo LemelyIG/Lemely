@@ -18,6 +18,7 @@ import { useReference } from "@/lib/hooks/useReferenceApi"
 import { gradeRank, widestVocabularyFor } from "@/lib/grades"
 import type { QuizSummary } from "@/lib/teacherTypes"
 import { ForwardArrow, SortArrow } from "@/components/ui/inline-arrow"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Quiz list (T-09's entry screen). Wired to `GET /teacher/quizzes`
@@ -234,7 +235,7 @@ export function Quizzes() {
                   <div className="text-eyebrow text-on-surface-variant">
                     {quizzes.length} quiz{quizzes.length === 1 ? "" : "zes"}
                   </div>
-                  <h1 className="text-display-lg text-on-surface mt-1.5">AI quizzes</h1>
+                  <PageHeading repeatsTitle={true} className="text-display-lg text-on-surface mt-1.5">AI quizzes</PageHeading>
                 </div>
                 <div className="flex-1" />
                 {/* The kit's `<Input>`, which requires a label by type rather than by

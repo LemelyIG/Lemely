@@ -24,6 +24,7 @@ import {
 import { formatAge } from "@/portals/student/screens/Notifications"
 import { useOverlayState } from "@/lib/nav/useOverlayState"
 import { cn } from "@/lib/utils"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * The teacher's inbox (push-delivery spec §6). Only `at_risk_alert` reaches a
@@ -63,7 +64,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
       <CardBody className="flex flex-col gap-2">
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
-            {/* <h2>: these rows sit directly under the page's <h1>, the same
+            {/* <h2>: these rows sit directly under the page's h1, the same
                 outline the student inbox documents. */}
             <h2 className="text-body-lg font-medium text-on-surface">{notification.title}</h2>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-on-surface-variant">
@@ -123,7 +124,7 @@ export function TeacherNotifications() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <Eyebrow>Inbox</Eyebrow>
-          <h1 className="text-display-md text-on-surface">Notifications</h1>
+          <PageHeading repeatsTitle={true} className="text-display-md text-on-surface">Notifications</PageHeading>
         </div>
         <Link
           to="/teacher/settings/notifications"

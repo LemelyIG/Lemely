@@ -14,6 +14,7 @@ import { useXpProfile } from "@/lib/hooks/useXpApi"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import { useOverlayState } from "@/lib/nav/useOverlayState"
 import type { XpDay, XpProfile, XpSource } from "@/lib/xpTypes"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * S-31 · Profile / XP / streak (P5.8 chunk D), on chunk A's
@@ -408,7 +409,7 @@ export function Profile() {
             is therefore invisible to every gate that looks at rendered output.
             `tests/unit/utilityExistence.test.ts` is the gate that now catches
             it. */}
-        <h1 className="text-display-lg text-on-surface">{name}</h1>
+        <PageHeading repeatsTitle={false} className="text-display-lg text-on-surface">{name}</PageHeading>
         <p className="lm-prose text-body-lg text-on-surface-variant">
           Everything here measures work done, never how well you did it.
         </p>

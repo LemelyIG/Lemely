@@ -8,6 +8,7 @@ import { Select } from "@/components/ui/select"
 import type { CatalogueSubject, LabelledValue } from "@/lib/referenceTypes"
 import { cn } from "@/lib/utils"
 import type { SubjectDraft } from "./onboardingData"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * S-01 · Onboarding step 1: subjects. A card per fetched catalogue subject
@@ -82,7 +83,7 @@ export function SubjectsStep({
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
-        <h1 className="text-display-lg text-on-surface">What are you studying?</h1>
+        <PageHeading repeatsTitle={false} className="text-display-lg text-on-surface">What are you studying?</PageHeading>
         <p className="max-w-[65ch] text-pretty text-body-md text-on-surface-variant">
           Pick a qualification and every subject you're sitting. We'll build the rest of
           onboarding and your study plan around this.

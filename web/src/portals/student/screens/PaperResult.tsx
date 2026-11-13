@@ -28,6 +28,7 @@ import { useAttemptQuestions } from "@/lib/hooks/useSelfReviewApi"
 import { useDeletePaper } from "@/lib/hooks/usePaperDeletionApi"
 import { useResult } from "@/lib/hooks/useStudentApi"
 import type { IntegrityRow, QuestionResult, Result } from "@/lib/studentTypes"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Paper Result (isResult) - the flagship screen. Renders one result, from
@@ -309,7 +310,7 @@ function ResultHeader({
             </div>
           </div>
           {res.headline ? (
-            <h1 className="mt-2.5 text-display-md text-on-surface">{res.headline}</h1>
+            <PageHeading repeatsTitle={false} className="mt-2.5 text-display-md text-on-surface">{res.headline}</PageHeading>
           ) : (
             <h1 className="sr-only">
               Paper result: {res.code} {res.paper}

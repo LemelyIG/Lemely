@@ -23,6 +23,7 @@ import type {
   StudentExamEntry,
 } from "@/lib/announcementTypes"
 import { cn } from "@/lib/utils"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * S-28 · Announcements & exam calendar (P5.8 chunk B).
@@ -503,7 +504,7 @@ export function Announcements() {
             The rest of this screen is still un-migrated and keeps its compat
             tokens until its own surface comes up; correcting a class that
             resolves to nothing is not a migration, it is a bug fix. */}
-        <h1 className="text-display-lg text-on-surface">What is coming up</h1>
+        <PageHeading repeatsTitle={false} className="text-display-lg text-on-surface">What is coming up</PageHeading>
       </header>
 
       <Countdown today={today} />

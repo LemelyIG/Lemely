@@ -11,6 +11,7 @@ import { normalizeInviteCode } from "@/lib/hooks/useInvitesApi"
 import { useMyClasses } from "@/lib/hooks/useLeaderboardApi"
 import { useJoinClass } from "@/lib/hooks/useStudentApi"
 import { joinClassFailureMessage, studentLoadFailureMessage } from "@/lib/studentOutcome"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * The student-side half of G-08's other gap: `POST /api/student/classes/join`
@@ -66,7 +67,7 @@ export function StudentClasses() {
     <div className="flex w-full max-w-160 flex-col gap-6">
       <div className="flex flex-col gap-1">
         <Eyebrow>Classes</Eyebrow>
-        <h1 className="text-display-md text-on-surface">Your classes</h1>
+        <PageHeading repeatsTitle={true} className="text-display-md text-on-surface">Your classes</PageHeading>
       </div>
 
       <Card>
@@ -115,7 +116,7 @@ export function StudentClasses() {
       </Card>
 
       {/* A panel inside the screen above, not a whole-route load: the page's
-          own `<h1>` and the join form both render unconditionally above this,
+          own heading and the join form both render unconditionally above this,
           so no `srHeading` is needed — there is already a landmark to land on
           mid-load or mid-failure. */}
       <QueryState

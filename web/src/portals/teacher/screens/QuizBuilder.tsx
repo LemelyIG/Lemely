@@ -48,6 +48,7 @@ import type {
 } from "@/lib/teacherTypes"
 import { statusLabel, statusTone } from "./Quizzes"
 import { BackArrow, ForwardArrow } from "@/components/ui/inline-arrow"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Quiz builder (T-09) — the stepped flow at `/teacher/quizzes/:quizId`.
@@ -1145,9 +1146,9 @@ export function QuizBuilder() {
                     <div className="text-eyebrow text-on-surface-variant">
                       {loadedQuiz.subjectCode}
                     </div>
-                    <h1 className="text-display-md mt-1 text-pretty">
+                    <PageHeading repeatsTitle={false} className="text-display-md mt-1 text-pretty">
                       {loadedQuiz.title}
-                    </h1>
+                    </PageHeading>
                   </div>
                   <div className="flex-1" />
                   <Chip tone={statusTone(loadedQuiz.status)}>{statusLabel(loadedQuiz.status)}</Chip>

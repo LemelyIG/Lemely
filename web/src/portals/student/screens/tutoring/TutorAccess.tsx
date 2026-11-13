@@ -56,6 +56,7 @@ import {
 import { usePagedItems } from "@/lib/tutoring/sessionView"
 import { safetyActionError } from "@/lib/tutoring/safetyNoticeCopy"
 import type { AccessLogEntry, AccessLogPage, Block, ClassAccessItem, Grant } from "@/lib/tutoringTypes"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * S-38 · Tutors & your data (`/student/tutor-access`, SPEC §d). The student's
@@ -578,7 +579,7 @@ function BlocksSection() {
 export function TutorAccess() {
   return (
     <div className="flex w-full max-w-160 flex-col gap-6">
-      <h1 className="m-0 text-display-md text-on-surface">Tutors &amp; your data</h1>
+      <PageHeading repeatsTitle={true} className="m-0 text-display-md text-on-surface">Tutors &amp; your data</PageHeading>
       <SharingSection />
       <LogSection />
       <ClassesSection />

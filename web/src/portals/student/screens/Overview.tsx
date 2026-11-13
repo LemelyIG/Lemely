@@ -29,6 +29,7 @@ import { useOverview } from "@/lib/hooks/useStudentApi"
 import { useMyClasses } from "@/lib/hooks/useLeaderboardApi"
 import type { MomentumPoint, SubjectRow } from "@/lib/studentTypes"
 import { vizBg } from "../components/colors"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Overview (isOverview) — the student dashboard. Wired to
@@ -476,9 +477,9 @@ export function Overview() {
           if (subjects.length === 0) {
             return (
               <>
-                <h1 className="text-display-lg text-on-surface">
+                <PageHeading repeatsTitle={false} className="text-display-lg text-on-surface">
                   {greeting}, {greetingName}.
-                </h1>
+                </PageHeading>
                 <GettingStarted
                   heading="Let's get your first paper marked"
                   body="Lemely works from your own past papers. Mark one and this page fills in on its own."

@@ -21,6 +21,7 @@ import type {
   QuizQuestionAnalysis,
   QuizStudentResult,
 } from "@/lib/teacherTypes"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Quiz results for one class (T-10), at
@@ -396,7 +397,7 @@ export function QuizResults() {
                   <div className="text-eyebrow text-on-surface-variant">
                     {data.subjectCode} · {assignment.className}
                   </div>
-                  <h1 className="text-display-md text-on-surface m-0 mt-1 text-pretty">{data.quizTitle}</h1>
+                  <PageHeading repeatsTitle={false} className="text-display-md text-on-surface m-0 mt-1 text-pretty">{data.quizTitle}</PageHeading>
                   <p className="text-body-sm text-on-surface-variant m-0 mt-1">
                     {data.questionCount} question{data.questionCount === 1 ? "" : "s"} · {data.totalMarks}{" "}
                     marks · assigned {relativeTime(assignment.assignedAt)}

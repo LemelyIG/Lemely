@@ -17,6 +17,7 @@ import {
 } from "@/lib/hooks/useFriendApi"
 import { friendActionFailureMessage } from "@/lib/friendOutcome"
 import type { Friend, FriendRequest } from "@/lib/friendTypes"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * S-30 · Friends (P5.8 chunk C).
@@ -358,7 +359,7 @@ export function Friends() {
               <Eyebrow>Friends</Eyebrow>
               {/* `text-display` was the class here and it resolves to nothing
                   — see the note in `Profile.tsx`. */}
-              <h1 className="text-display-lg text-on-surface">Who you are studying with</h1>
+              <PageHeading repeatsTitle={false} className="text-display-lg text-on-surface">Who you are studying with</PageHeading>
               <p className="lm-prose text-body-lg text-on-surface-variant">
                 Friends see your display name, XP and streak. They never see
                 your marks, your grades or which papers you have corrected.

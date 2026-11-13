@@ -865,7 +865,7 @@ describe("the source of the tutor's screens", () => {
 
   it("both screens put a title in an h1 and use no raw colour", () => {
     for (const file of [DETAIL_SCREEN, LIST_SCREEN]) {
-      expect(sources[file], file).toContain("<h1")
+      expect(sources[file], file).toMatch(/<h1\b|<PageHeading\b/)
       expect(sources[file], file).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(|oklch\(/)
     }
   })

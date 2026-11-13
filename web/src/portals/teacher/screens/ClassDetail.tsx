@@ -12,6 +12,7 @@ import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { classInviteCodeFailureMessage, teacherLoadFailureMessage } from "@/lib/teacherOutcome"
 import type { ClassDetail as ClassDetailData } from "@/lib/teacherTypes"
 import { BackArrow } from "@/components/ui/inline-arrow"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Class detail shell (T-03/T-04's shared header + tabs). Fetches
@@ -216,9 +217,9 @@ export function ClassDetailLayout() {
                         : classDetail.subjectCode
                       : "No subject set"}
                   </div>
-                  <h1 className="text-display-md mt-1.5 text-pretty">
+                  <PageHeading repeatsTitle={false} className="text-display-md mt-1.5 text-pretty">
                     {classDetail.label}
-                  </h1>
+                  </PageHeading>
                 </div>
                 <div className="flex-1" />
                 {/* Two ways to invite, deliberately not blurred into one (see the

@@ -36,6 +36,7 @@ import {
 } from "@/lib/hooks/useTeacherApi"
 import type { PaperKind, PaperSummary, PipelineStep } from "@/lib/teacherTypes"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Grading. Wired to `GET /papers` (grid + tabs) via `usePapers()` and
@@ -510,9 +511,9 @@ export function Grading() {
                   {/* A real h1, not a styled div: axe's `page-has-heading-one` fired
                       on this route the moment P3.10 chunk b added it to the audit
                       registry, and QUALITY-BAR.md requires one h1 per page. */}
-                  <h1 className="text-display-md mt-1.5">
+                  <PageHeading repeatsTitle={false} className="text-display-md mt-1.5">
                     Grading {papers.length} paper{papers.length === 1 ? "" : "s"}
-                  </h1>
+                  </PageHeading>
                 </div>
                 <div className="flex-1" />
                 <Button variant="ink" onClick={() => navigate("/teacher/review")}>

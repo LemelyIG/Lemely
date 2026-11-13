@@ -46,6 +46,7 @@ import { useUploadQueue } from "@/lib/offline/useUploadQueue"
 import { randomUuid } from "@/lib/uuid"
 import type { QuestionResult, Result, StudentCorrectFrame, UploadRun } from "@/lib/studentTypes"
 import { reassure } from "../data"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /** Which source the student is using to produce `scanFile`. */
 type ScanSource = "file" | "camera"
@@ -754,7 +755,7 @@ export function CorrectPaper() {
           header carries. The Operate lane runs texture low (§13). */}
       <header className="flex flex-wrap items-end gap-5">
         <div className="flex flex-col gap-1">
-          <h1 className="text-display-lg text-on-surface">Correct a paper</h1>
+          <PageHeading repeatsTitle={true} className="text-display-lg text-on-surface">Correct a paper</PageHeading>
           {/* max-w-[60ch] kept: a reading-measure width (character-count
            * based, not a pixel spacing value) — genuinely out of scope for
            * the 4px pixel scale, same reasoning as line-height ratios. */}

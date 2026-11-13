@@ -38,6 +38,7 @@ import {
   reasonLabel,
 } from "./Review"
 import { BackArrow, ForwardArrow } from "@/components/ui/inline-arrow"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Review item — remark (T-08). `GET /teacher/review/{itemId}`
@@ -715,9 +716,9 @@ export function ReviewItem() {
                     <Avatar name={detail.studentDisplayName} size="md" />
                   )}
                   <div className="min-w-0">
-                    <h1 className="text-display-sm text-pretty">
+                    <PageHeading repeatsTitle={false} className="text-display-sm text-pretty">
                       {detail.studentDisplayName}
-                    </h1>
+                    </PageHeading>
                     <div className="text-body-sm text-on-surface-variant mt-0.5">
                       {isConsolePaperItem(detail) ? "Grading console" : detail.className} ·{" "}
                       {paperIdentityLabel(detail)}

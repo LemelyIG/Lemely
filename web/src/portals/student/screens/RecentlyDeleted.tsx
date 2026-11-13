@@ -12,6 +12,7 @@ import { deleteCountdown } from "@/lib/paperDeletion"
 import { studentSaveFailureMessage } from "@/lib/studentOutcome"
 import { useDeletedPapers, useRestorePaper } from "@/lib/hooks/usePaperDeletionApi"
 import type { DeletedPaper } from "@/lib/studentTypes"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Recently deleted (spec 2026-09-22, Task 14). A student's own withdrawn
@@ -116,7 +117,7 @@ export function RecentlyDeleted() {
           <>
             <header className="flex flex-col gap-1">
               <Eyebrow>Recently deleted</Eyebrow>
-              <h1 className="text-display-md text-on-surface">Recently deleted</h1>
+              <PageHeading repeatsTitle={true} className="text-display-md text-on-surface">Recently deleted</PageHeading>
               <p className="max-w-[56ch] text-pretty text-body-md text-on-surface-variant">
                 A deleted paper stays here for {data.retentionDays} days, in case you want it back.
               </p>

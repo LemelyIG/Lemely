@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils"
 import { useOverlayState } from "@/lib/nav/useOverlayState"
 import { usePullToRefresh } from "@/lib/gestures/usePullToRefresh"
 import { useLongPress } from "@/lib/gestures/useLongPress"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * G-13 · The notification inbox (P5.9 chunk B).
@@ -163,7 +164,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
           <CardBody className="flex flex-col gap-2">
             <div className="flex items-start gap-3">
               <div className="min-w-0 flex-1">
-                {/* <h2>, not <h3>: these rows sit directly under the page's <h1>
+                {/* <h2>, not <h3>: these rows sit directly under the page's h1
                     with no section heading between them, so an <h3> skips a level
                     (axe `heading-order`, moderate — found the moment the audit
                     registry grew a POPULATED state for this screen in P5.11 chunk
@@ -245,7 +246,7 @@ function InboxHeading() {
   return (
     <div>
       <Eyebrow>Inbox</Eyebrow>
-      <h1 className="text-display-md text-on-surface">Notifications</h1>
+      <PageHeading repeatsTitle={true} className="text-display-md text-on-surface">Notifications</PageHeading>
     </div>
   )
 }

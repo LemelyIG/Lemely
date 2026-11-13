@@ -59,6 +59,7 @@ import {
   type AcceptErrors,
 } from "@/lib/tutoring/tutorSessionActions"
 import type { Booking, Note, NotesPage, TutorOwnProfile, TutoringMode } from "@/lib/tutoringTypes"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * T-18 · Session detail for the tutor (`/teacher/tutoring/sessions/:bookingId`,
@@ -658,13 +659,14 @@ function Detail({ booking, profile }: { booking: Booking; profile: TutorOwnProfi
           Back to tutoring
         </Link>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <h1
+          <PageHeading
+            repeatsTitle={false}
             ref={headingRef}
             tabIndex={-1}
             className="m-0 text-display-md text-on-surface focus:outline-none"
           >
             Session with {booking.student.displayName}
-          </h1>
+          </PageHeading>
           <BookingStatus state={booking.effectiveState} />
         </div>
         {outcome ? <p className="m-0 max-w-prose text-body-md text-on-surface">{outcome}</p> : null}

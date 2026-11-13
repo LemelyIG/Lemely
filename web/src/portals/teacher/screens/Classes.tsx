@@ -23,6 +23,7 @@ import {
 } from "@/lib/teacherOutcome"
 import type { ClassSummary } from "@/lib/teacherTypes"
 import { SortArrow } from "@/components/ui/inline-arrow"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Classes (T-02). Wired to `GET /teacher/classes` (`useTeacherClasses()`);
@@ -194,7 +195,7 @@ export function Classes() {
                 <div className="text-eyebrow text-on-surface-variant">
                   {classes.length} class{classes.length === 1 ? "" : "es"}
                 </div>
-                <h1 className="text-display-md mt-1.5">Classes</h1>
+                <PageHeading repeatsTitle={true} className="text-display-md mt-1.5">Classes</PageHeading>
               </div>
               <div className="flex-1" />
               <Input

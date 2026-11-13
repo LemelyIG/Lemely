@@ -25,6 +25,7 @@ import type { AtRiskFlag, AtRiskListEntry } from "@/lib/teacherTypes"
 import { SortArrow } from "@/components/ui/inline-arrow"
 import { gradeRank, widestVocabulary } from "@/lib/grades"
 import { useReference } from "@/lib/hooks/useReferenceApi"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * At-risk list (T-06). `GET /teacher/at-risk?reason=&acknowledged=`
@@ -308,7 +309,7 @@ export function AtRiskList() {
               <div className="text-eyebrow text-on-surface-variant">
                 Flagged by trajectory, not by one bad day
               </div>
-              <h1 className="text-display-lg text-on-surface mt-1">At-risk students</h1>
+              <PageHeading repeatsTitle={true} className="text-display-lg text-on-surface mt-1">At-risk students</PageHeading>
             </div>
 
             {/* The kit's `<Select>` rather than two hand-rolled `<select>`s. Both
