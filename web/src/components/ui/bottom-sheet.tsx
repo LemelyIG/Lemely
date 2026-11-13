@@ -8,7 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react"
-import { haptic } from "@/lib/haptics"
+import { nativeHaptic } from "@/lib/haptics"
 import { readPlatform } from "@/lib/platform"
 import { bodyDragIntent, releaseVelocity, sheetRelease, trimSamples, type Detent, type PointerSample } from "@/lib/gestures/sheetMath"
 import { PHONE_MEDIA } from "@/lib/useNativeFrame"
@@ -189,7 +189,7 @@ export const BottomSheetSurface = forwardRef<HTMLDivElement, BottomSheetSurfaceP
     el.style.translate = ""
     if (decision.detent !== detent) {
       setDetent(decision.detent)
-      if (readPlatform() === "android") haptic("tap")
+      nativeHaptic("tap")
     }
   }
   function onPointerUp(e: ReactPointerEvent<HTMLDivElement>): void {

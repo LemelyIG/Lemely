@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V4 */
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
 import { Chip } from "@/components/ui/chip"
@@ -9,7 +9,6 @@ import { ListSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
 import { Button } from "@/components/ui/button"
 import { Popover } from "@/components/ui/popover"
-import { PullIndicator } from "@/components/ui/pull-indicator"
 import {
   useMarkAllNotificationsRead,
   useMarkNotificationRead,
@@ -20,7 +19,6 @@ import type { Notification } from "@/lib/notificationTypes"
 import { studentDestinationFor } from "@/lib/studentInbox"
 import { cn } from "@/lib/utils"
 import { useOverlayState } from "@/lib/nav/useOverlayState"
-import { usePullToRefresh } from "@/lib/gestures/usePullToRefresh"
 import { useLongPress } from "@/lib/gestures/useLongPress"
 import { PageHeading } from "@/components/ui/page-heading"
 
@@ -263,20 +261,6 @@ export function Notifications() {
     void setAppBadge(0)
   }, [])
 
-  // Task 6 (B4b): pull-to-refresh. The surface is this screen's own content
-  // wrapper, never `document.documentElement`: the hook translates whatever
-  // it is given, and a transformed root is the containing block for every
-  // `position: fixed` descendant, so pulling here used to drag `BottomNav`
-  // and any open scrim down with the list. `usePullToRefresh` still asks the
-  // *window* whether we are at the scroll top (this wrapper does not scroll
-  // itself — the portal shell scrolls `document`). The wrapper is the screen
-  // root rather than something narrower so `--lm-pull-progress`, which the
-  // hook sets on it, still cascades to the indicator positioned inside it.
-  const pullSurfaceRef = useRef<HTMLDivElement>(null)
-  const { pulling, refreshing } = usePullToRefresh(pullSurfaceRef, {
-    onRefresh: () => query.refetch(),
-  })
-
   return (
     /*
      * `InboxHeading` sits outside `QueryState`, not inside each branch.
@@ -292,19 +276,7 @@ export function Notifications() {
      * already put the heading on its own line above their content, and only
      * the loaded render had it sharing a row with the controls.
      */
-    <div ref={pullSurfaceRef} className="relative flex flex-col gap-4">
-      {/* `top` maps the hook's own `--lm-pull-progress` (0..1) onto the
-          40px the indicator travels to reveal itself, off-screen at rest
-          (`-40px`) and fully in view once the pull is armed (`0`). */}
-      <div
-        // P6.3: `z-dropdown`, not the raw `z-10` this carried. 10 is
-        // `--z-index-sticky`'s value, i.e. this floating indicator declared
-        // the band that belongs to sticky table headers and portal top bars.
-        className="pointer-events-none absolute inset-x-0 z-dropdown flex justify-center"
-        style={{ top: "calc(var(--lm-pull-progress, 0) * 40px - 40px)" }}
-      >
-        <PullIndicator progress={pulling ? 1 : 0} refreshing={refreshing} />
-      </div>
+    <div className="relative flex flex-col gap-4">
       <InboxHeading />
       <QueryState
         query={query}

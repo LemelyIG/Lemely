@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V4 */
-import { useMemo, useRef, useState } from "react"
+import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
 import { Chip } from "@/components/ui/chip"
@@ -8,13 +8,11 @@ import { EmptyState } from "@/components/ui/state-views"
 import { ListSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
 import { Button } from "@/components/ui/button"
-import { PullIndicator } from "@/components/ui/pull-indicator"
 import {
   useAnnouncements,
   useExamCalendar,
   useMarkAnnouncementRead,
 } from "@/lib/hooks/useAnnouncementApi"
-import { usePullToRefresh } from "@/lib/gestures/usePullToRefresh"
 import { daysUntil, formatCountdown } from "@/lib/countdown"
 import type {
   ExamDate,
@@ -180,15 +178,6 @@ function AnnouncementCard({
           {announcement.body}
         </p>
 
-        {/* Issue #246/#247: this button row used to be swallowed by the
-            screen's pull-to-refresh surface — a plain tap here armed
-            `usePullToRefresh`'s gesture and its `setPointerCapture` retargeted
-            the tap's `click` away from the button entirely, so neither "Show
-            more" nor "Mark as read" ever fired. Fixed at the source in
-            `usePullToRefresh`'s own `startFilter` (it now exempts every
-            interactive control, not just this card), so this row needs no
-            special handling of its own any more — see that hook's comment for
-            the fix and the trade-off it carries. */}
         <div className="flex flex-wrap items-center gap-3">
           <Button
             variant="ghost"
@@ -468,31 +457,8 @@ export function Announcements() {
   // about the date even if the component re-renders across midnight.
   const today = useMemo(() => new Date(), [])
 
-  // Task 6 (B4b): pull-to-refresh. This screen shows two independent
-  // queries (`AnnouncementsPanel`'s own `useAnnouncements`, and
-  // `useExamCalendar` shared by `ExamCalendarPanel`/`Countdown`) — calling
-  // both hooks again here is not a second fetch, react-query dedupes by
-  // query key (the same sharing `Countdown`'s own comment already relies
-  // on), it is just how this component gets a `refetch` for each. The pull
-  // surface is this screen's own root element, same as
-  // `Notifications`/`Overview` — see that screen's comment for why it must
-  // never be `document.documentElement`.
-  const announcementsQuery = useAnnouncements()
-  const examQuery = useExamCalendar()
-  const pullSurfaceRef = useRef<HTMLDivElement>(null)
-  const { pulling, refreshing } = usePullToRefresh(pullSurfaceRef, {
-    onRefresh: () => Promise.all([announcementsQuery.refetch(), examQuery.refetch()]),
-  })
-
   return (
-    <div ref={pullSurfaceRef} className="relative flex flex-col gap-8">
-      <div
-        // P6.3: `z-dropdown`, not `z-10` — see Notifications.tsx's comment.
-        className="pointer-events-none absolute inset-x-0 z-dropdown flex justify-center"
-        style={{ top: "calc(var(--lm-pull-progress, 0) * 40px - 40px)" }}
-      >
-        <PullIndicator progress={pulling ? 1 : 0} refreshing={refreshing} />
-      </div>
+    <div className="relative flex flex-col gap-8">
       <header className="flex flex-col gap-1">
         <Eyebrow>Announcements &amp; exams</Eyebrow>
         {/* P4.4, cross-surface: `text-display` is not a class. Nothing defines

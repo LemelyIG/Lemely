@@ -1179,3 +1179,135 @@ NATIVE_CHECKS.push(
     },
   })),
 )
+
+/* Task 13: the shell's pull-to-refresh (D6). A mouse drag drives the same pointer events a finger does. */
+
+/** A point inside the pull surface that is not an interactive control, so the pull's start filter accepts it. */
+async function pullStart(page) {
+  const point = await page.evaluate(() => {
+    const main = document.querySelector(".lm-ptr");
+    const r = main.getBoundingClientRect();
+    const interactive = "a,button,input,select,textarea,summary,[role=button],[role=link],[tabindex]:not([tabindex=\"-1\"])";
+    for (let y = Math.max(r.top, 0) + 8; y < Math.min(r.bottom, window.innerHeight) - 8; y += 8) {
+      for (let x = 60; x < window.innerWidth - 60; x += 24) {
+        const el = document.elementFromPoint(x, y);
+        if (el && main.contains(el) && !el.closest(interactive)) return { x, y };
+      }
+    }
+    return null;
+  });
+  if (!point) throw new Error("no non-interactive point to start a pull from");
+  return point;
+}
+
+async function pullDown(page, dy, { release = true } = {}) {
+  // A mouse drag over text selects it, and a later press on that selection starts a native
+  // drag-and-drop, which cancels the pointer. A finger does neither.
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
+  const { x, y } = await pullStart(page);
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y + dy, { steps: 12 });
+  if (release) await page.mouse.up();
+}
+
+/** Counts `/api/` requests that reach the network layer after `arm()`; each is held for `holdMs`. */
+async function countApi(page, holdMs = 0) {
+  const seen = { calls: 0 };
+  await page.route("**/api/**", async (route) => {
+    seen.calls++;
+    if (holdMs) await new Promise((r) => setTimeout(r, holdMs));
+    return route.fallback();
+  });
+  return seen;
+}
+
+for (const [id, app, platform] of [
+  ["native-android-pull-to-refresh-refetches", NATIVE_HOME, "android"],
+  ["native-ios-pull-to-refresh-refetches", NATIVE_HOME, "ios"],
+  ["native-android-teacher-pull-to-refresh-refetches", NATIVE_TEACHER_HOME, "android"],
+]) {
+  NATIVE_CHECKS.push({
+    id,
+    platform,
+    width: 390,
+    app,
+    async run(page) {
+      await page.locator("main").waitFor();
+      await page.waitForTimeout(400);
+      const seen = await countApi(page);
+      await pullDown(page, 200);
+      await page.waitForTimeout(600);
+      if (seen.calls < 1) throw new Error("pull did not refetch the page's queries");
+    },
+  });
+}
+
+/** The computed `translate` of a selector, as a Y offset in px (0 for `none`). */
+const translateY = (page, selector) =>
+  page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return null;
+    const t = getComputedStyle(el).translate;
+    return t === "none" ? 0 : parseFloat(t.split(" ")[1]) || 0;
+  }, selector);
+
+NATIVE_CHECKS.push(
+  {
+    id: "native-ios-pull-content-follows-and-holds",
+    platform: "ios",
+    width: 390,
+    app: NATIVE_HOME,
+    async run(page) {
+      await page.locator("main").waitFor();
+      await page.waitForTimeout(400);
+      await countApi(page, 1500);
+      await pullDown(page, 40, { release: false });
+      await page.waitForTimeout(150);
+      const mid = await translateY(page, ".lm-ptr-content");
+      if (mid === null || Math.abs(mid - 40) > 1) throw new Error(`content should follow the finger 1:1 to 40px, got ${mid}`);
+      if ((await page.locator(".lm-ptr-ios").count()) !== 1) throw new Error("iOS 8-spoke indicator missing");
+      await page.mouse.up();
+      await page.waitForTimeout(500);
+      await pullDown(page, 200);
+      await page.waitForFunction(() => document.querySelector(".lm-ptr")?.dataset.ptr === "refreshing");
+      await page.waitForTimeout(100);
+      const hold = await translateY(page, ".lm-ptr-content");
+      if (Math.abs(hold - 56) > 1) throw new Error(`content should hold 56px while refreshing, got ${hold}`);
+    },
+  },
+  {
+    id: "native-android-pull-disc-moves-content-stays",
+    platform: "android",
+    width: 390,
+    app: NATIVE_HOME,
+    async run(page) {
+      await page.locator("main").waitFor();
+      await page.waitForTimeout(400);
+      await countApi(page, 1500);
+      await pullDown(page, 40, { release: false });
+      await page.waitForTimeout(150);
+      const content = await translateY(page, ".lm-ptr-content");
+      if (content !== 0) throw new Error(`Android content must stay still, got ${content}px`);
+      const disc = await translateY(page, ".lm-ptr-md");
+      if (disc === null || Math.abs(disc - 40) > 1) throw new Error(`disc should be 40px down, got ${disc}`);
+      await page.mouse.up();
+      await page.waitForTimeout(500);
+      await pullDown(page, 200);
+      await page.waitForFunction(() => document.querySelector(".lm-ptr")?.dataset.ptr === "refreshing");
+      await page.waitForTimeout(100);
+      const hold = await translateY(page, ".lm-ptr-md");
+      if (Math.abs(hold - 64) > 1) throw new Error(`disc should hold 64px while refreshing, got ${hold}`);
+      if ((await translateY(page, ".lm-ptr-content")) !== 0) throw new Error("content moved while refreshing on Android");
+    },
+  },
+  {
+    id: "native-other-has-no-shell-pull",
+    width: 390,
+    app: NATIVE_HOME,
+    async run(page) {
+      await page.locator("main").waitFor();
+      if ((await page.locator(".lm-ptr").count()) !== 0) throw new Error("the platform other must not get the native pull surface");
+    },
+  },
+);

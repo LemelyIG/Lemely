@@ -26,7 +26,7 @@ describe("BottomSheetSurface (Task 6)", () => {
     expect(src).toMatch(/useSheetScaleBack[\s\S]*window\.matchMedia\(PHONE_MEDIA\)\.matches/)
   })
   it("Android-only haptic on snap", () => {
-    expect(src).toMatch(/readPlatform\(\) === "android"[^\n]*haptic\("tap"\)/)
+    expect(src).toContain('nativeHaptic("tap")')
   })
   it("iOS keyboard: positions by visualViewport", () => {
     expect(src).toContain("window.visualViewport")

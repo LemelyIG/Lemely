@@ -20,11 +20,8 @@ function sourceOf(relative: string): string {
   return stripComments(fs.readFileSync(path.join(ROOT, relative), "utf8"))
 }
 
-const PULL_SCREENS = [
-  "src/portals/student/screens/Notifications.tsx",
-  "src/portals/student/screens/Announcements.tsx",
-  "src/portals/student/screens/Overview.tsx",
-]
+// Native frame D6: the shell owns the one pull-to-refresh surface, no screen does.
+const PULL_SCREENS = ["src/components/shell/ShellPullToRefresh.tsx"]
 
 describe("C2 — pull-to-refresh never transforms the document root", () => {
   it.each(PULL_SCREENS)("%s passes a real element ref, not document.documentElement", (relative) => {
@@ -34,7 +31,7 @@ describe("C2 — pull-to-refresh never transforms the document root", () => {
 
   it.each(PULL_SCREENS)("%s attaches that ref to a rendered element", (relative) => {
     const src = sourceOf(relative)
-    expect(src).toMatch(/ref=\{pullSurfaceRef\}/)
+    expect(src).toMatch(/ref=\{surface\}/)
   })
 
   it("usePullToRefresh clamps the imperative transform to a downward pull", () => {

@@ -42,6 +42,13 @@ export interface UsePullToRefreshOptions {
   /** Default true. `false` detaches the gesture entirely, same as
    * `useDragGesture`'s own `enabled`. */
   enabled?: boolean
+  /** Native frame: called on every pull tick with the raw downward distance
+   * (0 once the pull stops counting), so a surface can draw its own indicator
+   * and content offset from it. */
+  onPull?: (dy: number) => void
+  /** Forwarded to `useDragGesture`: move this element with the finger instead
+   * of the surface itself. */
+  transformTarget?: RefObject<HTMLElement | null>
 }
 
 export interface UsePullToRefreshResult {
@@ -65,7 +72,9 @@ export function usePullToRefresh(
   ref: RefObject<HTMLElement | null>,
   options: UsePullToRefreshOptions,
 ): UsePullToRefreshResult {
-  const { onRefresh, threshold = 72, enabled = true } = options
+  const { onRefresh, threshold = 72, enabled = true, onPull, transformTarget } = options
+  const onPullRef = useRef(onPull)
+  onPullRef.current = onPull
   const onRefreshRef = useRef(onRefresh)
   onRefreshRef.current = onRefresh
   const armedRef = useRef(false)
@@ -80,19 +89,20 @@ export function usePullToRefresh(
   // is a real scroller.
   useEffect(() => {
     const el = ref.current
-    if (!el) return
+    if (!el || !enabled) return
     const scroller = scrollSourceOf(el) ?? document.documentElement
     const previous = scroller.style.overscrollBehaviorY
     scroller.style.overscrollBehaviorY = "contain"
     return () => {
       scroller.style.overscrollBehaviorY = previous
     }
-  }, [ref])
+  }, [ref, enabled])
 
   function resetIndicator() {
     setPulling(false)
     armedRef.current = false
     ref.current?.style.setProperty("--lm-pull-progress", "0")
+    onPullRef.current?.(0)
   }
 
   useDragGesture(ref, {
@@ -103,6 +113,7 @@ export function usePullToRefresh(
     // to do nothing — and no `touchAction` here on purpose: this surface must
     // keep panning vertically or the page stops scrolling through it.
     transformClamp: "positive",
+    transformTarget,
     // Issue #246/#247: a plain tap on a button or `<Link>` at the scroll top
     // used to arm this gesture exactly like a real drag would —
     // `useDragGesture`'s `onPointerDown` calls `setPointerCapture`
@@ -175,6 +186,7 @@ export function usePullToRefresh(
       const { progress, armed } = pullState(dy, threshold, isAtScrollTop(scrollSourceRef.current))
       armedRef.current = armed
       el.style.setProperty("--lm-pull-progress", String(progress))
+      onPullRef.current?.(progress > 0 ? dy : 0)
       setPulling(progress > 0)
     },
     onCommit: () => {

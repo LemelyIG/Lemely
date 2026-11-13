@@ -19,10 +19,12 @@ import { ScreenOutlet, type ScreenOverlay } from "@/components/ui/screen-outlet"
 import { MAIN_CONTENT_ID, SkipLink } from "@/components/ui/skip-link"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { MoreSheet } from "./MoreSheet"
+import { ShellPullToRefresh } from "./ShellPullToRefresh"
 import { ShellSidebar, type ShellSidebarContent } from "./ShellSidebar"
 import { ShellTopBar, type ShellTopBarProps } from "./ShellTopBar"
 import type { NavDirectionState } from "@/lib/nav/navDirectionState"
 import { activeTabTap } from "./tabTap"
+import { titleLevelFor } from "./largeTitle"
 
 export interface PortalShellProps {
   portal: "student" | "teacher"
@@ -75,6 +77,7 @@ export function PortalShell({
   const navigate = useNavigate()
   const matches = useMatches()
   const immersive = matches.some((m) => (m.handle as { immersive?: boolean } | undefined)?.immersive)
+  const level = topBar.titleLevel ?? titleLevelFor(topBar.trail)
   const closeNav = () => setNavOpen(false)
   const onActiveTap = (item: NavShellItem, event: MouseEvent) => {
     if (!item.to) return
@@ -117,7 +120,9 @@ export function PortalShell({
           ) : (
             <Suspense fallback={<RouteSkeleton />}>
               <ErrorBoundary label="This page" resetKey={location.pathname} fallback={portalErrorFallback}>
-                <ScreenOutlet overlay={overlay} />
+                <ShellPullToRefresh enabled={native && level === "root"}>
+                  <ScreenOutlet overlay={overlay} />
+                </ShellPullToRefresh>
               </ErrorBoundary>
             </Suspense>
           )}

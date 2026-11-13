@@ -12,6 +12,8 @@
  * and `pushAutoEnable.ts` use for the same reason.
  */
 
+import { readPlatform, type Platform } from "@/lib/platform"
+
 export type HapticKind = "tap" | "success" | "warning"
 
 /** Optional, unlike `Pick<Navigator, "vibrate">` — most engines (every iOS
@@ -33,4 +35,15 @@ export function haptic(
 ): boolean {
   if (typeof nav?.vibrate !== "function") return false
   return nav.vibrate(PATTERNS[kind])
+}
+
+/** Native frame: commit gestures (pull-to-refresh trigger, sheet snap,
+ * long-press) buzz on Android only. iOS Safari has no Vibration API, and
+ * desktop Chrome's `vibrate` exists but means nothing. */
+export function nativeHaptic(
+  kind: HapticKind,
+  platform: Platform = readPlatform(),
+  nav: VibrationCapableNavigator | undefined = typeof navigator === "undefined" ? undefined : navigator,
+): boolean {
+  return platform === "android" ? haptic(kind, nav) : false
 }

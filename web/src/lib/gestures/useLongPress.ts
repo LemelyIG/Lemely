@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react"
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react"
 import { longPressDecision, shouldStartLongPress, shouldSuppressContextMenu } from "./longPressMath"
 import { GESTURE_INTERACTIVE_SELECTOR } from "./interactiveSelector"
+import { nativeHaptic } from "@/lib/haptics"
 
 /*
  * Task 5 (B4a) · long-press for a row's secondary-actions menu (question,
@@ -79,6 +80,7 @@ export function useLongPress(handlers: UseLongPressHandlers): UseLongPressResult
       if (!state) return
       state.fired = true
       suppressClickRef.current = true
+      nativeHaptic("tap")
       handlersRef.current.onLongPress(nativeEvent)
     }, holdMs)
 

@@ -504,6 +504,8 @@
   --native-ptr-threshold: 64px;             /* --pf-ptr-threshold, both platforms */
   --native-ptr-hold-ios: 56px;              /* --pf-ptr-hold: where the content rests while refreshing */
   --native-ptr-hold-android: 64px;
+  --native-ptr-max: 140px;                  /* preview PTR_MAX: the pull's visual ceiling */
+  --native-ptr-disc-max: 108px;             /* how far the Android disc travels */
   /* Page ground (preview --pf-page): the native frame's own, in both themes. */
   --native-page-ios: var(--md-surface-container);
   --native-page-android: var(--md-surface-container-low);
@@ -736,6 +738,55 @@
   }
 }
 @keyframes lm-ripple { from { --lm-press-rr: 0px; } }
+
+
+/* ── Native frame: pull-to-refresh (native frame Task 13; preview variant-a.css section 6).
+   ShellPullToRefresh sets --pf-pull / --pf-pull-p while the finger is down and data-ptr on the surface;
+   at rest and while refreshing the values come from here. iOS: the content follows the finger and rests
+   at --native-ptr-hold-ios. Android: the content stays put, the disc rests at --native-ptr-hold-android.
+   Reduced motion is covered by the global rule at the end of this file. */
+.lm-ptr { position: relative; }
+.lm-ptr-gap { position: relative; z-index: 4; block-size: 0; }
+.lm-ptr-ios, .lm-ptr-md { display: none; }
+.lm-ptr:not([data-ptr]) .lm-ptr-gap > * { visibility: hidden; }
+:root[data-platform="ios"] .lm-ptr[data-ptr="refreshing"] { --pf-pull: var(--native-ptr-hold-ios); --pf-pull-p: 1; }
+:root[data-platform="android"] .lm-ptr[data-ptr="refreshing"] { --pf-pull: var(--native-ptr-hold-android); --pf-pull-p: 1; }
+:root[data-platform="ios"] .lm-ptr[data-ptr] .lm-ptr-content { translate: 0 var(--pf-pull, 0px); }
+:root[data-platform="ios"] .lm-ptr:is([data-ptr="settling"], [data-ptr="refreshing"]) .lm-ptr-content {
+  transition: translate var(--dur-slow) var(--ease-expo);
+}
+:root[data-platform="ios"] .lm-ptr-ios {
+  position: absolute; inset-inline: 0; inset-block-start: calc(var(--pf-pull, 0px) / 2 - 14px);
+  display: block; inline-size: 28px; block-size: 28px; margin-inline: auto;
+}
+:root[data-platform="ios"] .lm-ptr-ios i {
+  position: absolute; inset-block-start: 1px; inset-inline-start: calc(50% - 1.25px);
+  inline-size: 2.5px; block-size: 7.5px; border-radius: var(--radius-pill); background: var(--md-on-surface-variant);
+  transform-origin: 50% 13px; rotate: calc(var(--i) * 45deg);
+  opacity: clamp(0, calc(var(--pf-pull-p, 0) * 8 - var(--i)), 1);
+}
+:root[data-platform="ios"] .lm-ptr[data-ptr="refreshing"] .lm-ptr-ios i { opacity: calc(1 - var(--i) * 0.11); }
+:root[data-platform="ios"] .lm-ptr[data-ptr="refreshing"] .lm-ptr-ios { animation: lm-ptr-spin 0.8s steps(8) infinite; }
+:root[data-platform="android"] .lm-ptr-md {
+  position: absolute; inset-inline: 0; inset-block-start: -44px; z-index: 1;
+  display: grid; place-items: center; inline-size: 40px; block-size: 40px; margin-inline: auto;
+  border-radius: var(--radius-pill); background: var(--md-surface-container-high); color: var(--md-primary);
+  box-shadow: 0 1px 3px oklch(0.3 0.06 242 / 0.3);
+  translate: 0 min(var(--pf-pull, 0px), var(--native-ptr-disc-max));
+  opacity: clamp(0, calc(var(--pf-pull-p, 0) * 3), 1);
+}
+:root[data-platform="android"] .lm-ptr[data-ptr="settling"] .lm-ptr-md {
+  transition: translate var(--dur-slow) var(--ease-expo), opacity var(--dur-base) linear, scale var(--dur-base) var(--ease-out);
+  scale: 0;
+}
+:root[data-platform="android"] .lm-ptr-md svg { inline-size: 24px; block-size: 24px; rotate: calc(var(--pf-pull-p, 0) * 270deg - 90deg); }
+:root[data-platform="android"] .lm-ptr-md circle {
+  fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round;
+  stroke-dasharray: calc(var(--pf-pull-p, 0) * 40) 60;
+}
+:root[data-platform="android"] .lm-ptr[data-ptr="refreshing"] .lm-ptr-md svg { animation: lm-ptr-spin 1s linear infinite; }
+:root[data-platform="android"] .lm-ptr[data-ptr="refreshing"] .lm-ptr-md circle { stroke-dasharray: 30 60; }
+@keyframes lm-ptr-spin { to { rotate: 360deg; } }
 
 
 /* The student Overview's subject ledger (P4.1). A named utility rather than an
