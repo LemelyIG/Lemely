@@ -65,9 +65,10 @@ export function BrandLockup({
         size === "sm" ? "wordmark-sm" : "wordmark-md",
         className,
       )}
-      aria-label={casing === "lower" ? "lemely" : "Lemely"}
     >
-      <span className="inline-flex items-end">
+      {/* The name lives on the drawn word as an image: `aria-label` is prohibited on a role-less
+          div or span (axe aria-prohibited-attr), and on the wrapper it would hide `children`. */}
+      <span role="img" aria-label={casing === "lower" ? "lemely" : "Lemely"} className="inline-flex items-end">
         {clip}
         <span aria-hidden="true" className="wordmark-letters text-on-surface">
           eme
