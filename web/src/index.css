@@ -1381,7 +1381,8 @@ html[data-direction="back"]::view-transition-new(root) {
 }
 
 /* Outside the native frame (desktop PWA, tablet, `other`) a committed edge swipe plays the
-   same slide as any pop; the cross-fade default would read as a different gesture. */
+   same slide as any pop; the cross-fade default would read as a different gesture. Inside the
+   frame the gated block below silences both (the column already left under the finger). */
 html[data-direction="swipe"]::view-transition-old(root) {
   animation-name: lm-vt-old-back;
 }
@@ -1432,6 +1433,17 @@ html[data-direction="swipe"]::view-transition-new(root) {
   }
   html:is([data-platform="ios"], [data-platform="android"])[data-swiping][data-swipe-settling="cancel"] {
     --lm-swipe-shadow: 0;
+  }
+  /* UIKit ignores touches while the pop completes. */
+  html:is([data-platform="ios"], [data-platform="android"])[data-swiping][data-swipe-settling="commit"] body {
+    pointer-events: none;
+  }
+  /* The column already left under the finger. RR 7 replays a reverse view transition on a history
+     pop, and a second slide after the first reads as a stutter, so the hop plays only the first. */
+  html:is([data-platform="ios"], [data-platform="android"])[data-direction="swipe"]::view-transition-group(root),
+  html:is([data-platform="ios"], [data-platform="android"])[data-direction="swipe"]::view-transition-old(root),
+  html:is([data-platform="ios"], [data-platform="android"])[data-direction="swipe"]::view-transition-new(root) {
+    animation: none;
   }
   /* Pushes and pops: platform easing on the existing data-direction slides (brief §3.6). */
   :root[data-platform="android"]::view-transition-old(root),

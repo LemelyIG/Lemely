@@ -1531,6 +1531,8 @@ const SWIPE_PROBE = () => {
       swiping: root.hasAttribute("data-swiping"),
       progress: num("--lm-swipe-progress"),
       shadow: num("--lm-swipe-shadow"),
+      // View-transition pseudo-element animations running right now (RR 7 replays one on a pop).
+      vt: document.getAnimations().filter((a) => a.playState === "running" && String(a.effect?.pseudoElement ?? "").startsWith("::view-transition")).length,
     }
   }
   const probe = { before: 0, release: null, frames: [] }
@@ -1548,9 +1550,12 @@ const SWIPE_PROBE = () => {
     requestAnimationFrame(tick)
   })
 }
-async function swipeBackWithProbe(page, { fling }) {
-  await page.getByRole("link", { name: "Classes" }).first().click()
-  await page.waitForURL(/\/student\/classes/)
+async function swipeBackWithProbe(page, { fling, deepLink = false }) {
+  if (!deepLink) {
+    // A pushed entry, so the swipe takes the history path (navigate(-1)); a deep link takes the replace path.
+    await page.getByRole("link", { name: "Classes" }).first().click()
+    await page.waitForURL(/\/student\/classes/)
+  }
   await page.evaluate(SWIPE_PROBE)
   await page.mouse.move(4, 400)
   await page.mouse.down()
@@ -1601,7 +1606,7 @@ NATIVE_CHECKS.push(
         if (travel[i].left < travel[i - 1].left - 0.5) throw new Error(`the column moved back during the exit: ${JSON.stringify(travel.map((f) => f.left))}`)
       if (!travel.some((f) => f.left > probe.before + 1 && f.left < width - 1)) throw new Error("no intermediate frame: the exit jumped")
       if (!travel.some((f) => f.progress > probe.release.progress + 0.02 && f.progress < 0.98)) throw new Error("the dim did not fade over the slide")
-      if (travel.at(-1).left < width - 2) throw new Error(`the column stopped short of the edge: ${travel.at(-1).left}`)
+      if (travel.at(-1).left < width - 12) throw new Error(`the column stopped short of the edge: ${travel.at(-1).left}`)
       if (!/\/student$/.test(page.url())) throw new Error("the swipe did not navigate")
       const rest = frames.at(-1)
       if (rest.left !== 0 || rest.swiping || rest.inline) throw new Error(`state left over after the swipe: ${JSON.stringify(rest)}`)
@@ -1614,7 +1619,7 @@ NATIVE_CHECKS.push(
     app: { ...NATIVE_HOME, path: "/student", init: STANDALONE, motion: true },
     async run(page) {
       const exitMs = (probe) => {
-        const end = probe.frames.find((f) => f.left !== null && f.left >= 388)
+        const end = probe.frames.find((f) => f.left !== null && f.left >= 378)
         if (!end) throw new Error("the column never reached the edge")
         return end.t - probe.release.t
       }
@@ -1675,6 +1680,147 @@ NATIVE_CHECKS.push(
       // The URL moves before React renders the new route; give the layout effect its turn.
       await page.waitForFunction(() => document.documentElement.dataset.direction !== "swipe", null, { timeout: 1500 }).catch(() => {})
       if ((await direction()) !== "forward") throw new Error(`a tab tap read "${await direction()}": the swipe flag went stale`)
+    },
+  },
+);
+
+// Fix round 3: one animation per committed hop; cancellable navigation; input lock; guard.
+const maxVt = (probe) => Math.max(0, ...probe.frames.map((f) => f.vt))
+NATIVE_CHECKS.push(
+  ...[
+    ["history", {}, "/student"],
+    ["replace", { deepLink: true }, "/student/classes"],
+  ].flatMap(([name, opts, path]) => [
+    {
+      id: `native-ios-swipe-commit-${name}-path-plays-no-view-transition`,
+      platform: "ios",
+      width: 390,
+      app: { ...NATIVE_HOME, path, init: STANDALONE, motion: true },
+      async run(page) {
+        const probe = await swipeBackWithProbe(page, { fling: false, ...opts })
+        assertContinues(probe)
+        if (!/\/student$/.test(page.url())) throw new Error("the swipe did not navigate")
+        if (maxVt(probe) > 0) throw new Error(`${maxVt(probe)} view-transition animation(s) ran after the column left (a second slide)`)
+      },
+    },
+    {
+      id: `native-ios-swipe-reduced-motion-${name}-path-plays-no-view-transition`,
+      platform: "ios",
+      width: 390,
+      app: { ...NATIVE_HOME, path, init: STANDALONE },
+      async run(page) {
+        const probe = await swipeBackWithProbe(page, { fling: false, ...opts })
+        if (maxVt(probe) > 0) throw new Error(`${maxVt(probe)} view-transition animation(s) ran under reduced motion`)
+        if (!/\/student$/.test(page.url())) throw new Error("the swipe did not navigate")
+      },
+    },
+  ]),
+  {
+    // A plain browser-back pop under reduced motion: RR 7 replays the reverse transition; the app's
+    // reduced-motion rule must silence it.
+    id: "native-ios-pop-reduced-motion-plays-no-view-transition",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student" },
+    async run(page) {
+      await page.getByRole("link", { name: "Classes" }).first().click()
+      await page.waitForURL(/\/student\/classes/)
+      await page.waitForTimeout(400)
+      await page.evaluate(() => {
+        window.__vtMax = 0
+        const start = performance.now()
+        const tick = () => {
+          const n = document.getAnimations().filter((a) => a.playState === "running" && String(a.effect?.pseudoElement ?? "").startsWith("::view-transition")).length
+          window.__vtMax = Math.max(window.__vtMax, n)
+          if (performance.now() - start < 800) requestAnimationFrame(tick)
+        }
+        requestAnimationFrame(tick)
+      })
+      await page.goBack()
+      await page.waitForTimeout(900)
+      const max = await page.evaluate(() => window.__vtMax)
+      if (max > 0) throw new Error(`a pop played ${max} view-transition animation(s) under reduced motion`)
+      if (!/\/student$/.test(page.url())) throw new Error("goBack did not pop")
+    },
+  },
+);
+
+/** Start a committed history-path swipe and run `during` ~60ms into the slide. */
+async function swipeThenDuringSlide(page, during) {
+  await page.getByRole("link", { name: "Classes" }).first().click()
+  await page.waitForURL(/\/student\/classes/)
+  await page.waitForTimeout(300)
+  await page.mouse.move(4, 400)
+  await page.mouse.down()
+  await page.mouse.move(210, 402, { steps: 8 })
+  await page.waitForTimeout(150)
+  await page.mouse.up()
+  await page.waitForTimeout(60)
+  await during()
+  await page.waitForTimeout(1200)
+}
+NATIVE_CHECKS.push(
+  {
+    id: "native-ios-swipe-history-back-mid-slide-pops-once",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student", init: STANDALONE, motion: true },
+    async run(page) {
+      await swipeThenDuringSlide(page, () => page.evaluate(() => history.back()))
+      if (new URL(page.url()).pathname !== "/student") throw new Error(`two pops: ended on ${page.url()}`)
+    },
+  },
+  {
+    id: "native-ios-swipe-tab-tap-mid-slide-is-ignored",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student", init: STANDALONE, motion: true },
+    async run(page) {
+      const box = await page.getByRole("link", { name: "Profile" }).first().boundingBox()
+      await swipeThenDuringSlide(page, () => page.mouse.click(box.x + box.width / 2, box.y + box.height / 2))
+      if (new URL(page.url()).pathname !== "/student") throw new Error(`a tap during the commit slide moved the page: ${page.url()}`)
+    },
+  },
+  {
+    id: "native-ios-swipe-navigation-mid-slide-is-not-popped-back",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student", init: STANDALONE, motion: true },
+    async run(page) {
+      // A programmatic click skips the input lock, isolating the cancellable navigation.
+      await swipeThenDuringSlide(page, () =>
+        page.evaluate(() => [...document.querySelectorAll("a")].find((a) => a.getAttribute("href") === "/student/profile")?.click()),
+      )
+      if (new URL(page.url()).pathname !== "/student/profile") throw new Error(`the stale swipe navigation popped the page back: ${page.url()}`)
+    },
+  },
+  {
+    id: "native-ios-swipe-guard-keeps-column-off-screen",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student", init: STANDALONE, motion: true },
+    async run(page) {
+      await page.getByRole("link", { name: "Classes" }).first().click()
+      await page.waitForURL(/\/student\/classes/)
+      // The router never reports: the guard fires with the commit still pending.
+      await page.evaluate(() => {
+        history.go = () => {}
+      })
+      await page.mouse.move(4, 400)
+      await page.mouse.down()
+      await page.mouse.move(210, 402, { steps: 8 })
+      await page.waitForTimeout(150)
+      await page.mouse.up()
+      await page.waitForTimeout(1900)
+      const got = await page.evaluate(() => ({
+        swiping: document.documentElement.hasAttribute("data-swiping"),
+        transform: document.querySelector("[data-shell-column]")?.style.transform ?? "",
+        left: document.querySelector("[data-shell-column]")?.getBoundingClientRect().left,
+        lock: getComputedStyle(document.body).pointerEvents,
+      }))
+      if (got.swiping) throw new Error("the dim and shadow outlived the guard")
+      if (got.lock === "none") throw new Error("the input lock outlived the guard")
+      if (!got.transform || got.left < 300) throw new Error(`the guard handed the old page back: ${JSON.stringify(got)}`)
     },
   },
 );

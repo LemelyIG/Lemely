@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V4 */
-import { useEffect, useLayoutEffect, useRef } from "react"
-import { useLocation, useNavigate } from "react-router-dom"
+import { useContext, useEffect, useLayoutEffect, useRef } from "react"
+import { UNSAFE_DataRouterContext, useLocation, useNavigate } from "react-router-dom"
 import { useDragGesture } from "@/lib/gestures/useDragGesture"
 import { GESTURE_INTERACTIVE_SELECTOR } from "@/lib/gestures/interactiveSelector"
 import { swipeBackRelease, swipeSettleMs } from "@/lib/gestures/sheetMath"
@@ -32,6 +32,13 @@ function durationToken(name: string, fallback: number): number {
   return Number.isFinite(ms) ? ms : fallback
 }
 
+/**
+ * Navigate once the slide is this far through its time. `--ease-ios-spring` is front-loaded: it is
+ * 98% of the way at 63% of the time, so waiting out the full duration leaves a visible beat of empty
+ * ground before the destination. The column snaps the last 2% when the new page lands.
+ */
+const NAVIGATE_AT_FRACTION = 0.65
+
 /** If the router never reports the navigation, give the column back after this long. */
 const COMMIT_GUARD_MS = 1500
 
@@ -48,6 +55,8 @@ export function EdgeSwipeBack() {
   // A committed swipe is carrying the column off screen; the next location change ends it.
   const committingRef = useRef(false)
   const guardRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // The pending navigation of a committed swipe; any intervening navigation cancels it.
+  const goTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     rootRef.current = document.documentElement
@@ -68,6 +77,10 @@ export function EdgeSwipeBack() {
       clearTimeout(guardRef.current)
       guardRef.current = null
     }
+    if (goTimerRef.current !== null) {
+      clearTimeout(goTimerRef.current)
+      goTimerRef.current = null
+    }
     committingRef.current = false
     settlingRef.current = false
     const column = columnRef.current
@@ -78,6 +91,13 @@ export function EdgeSwipeBack() {
     clearSwipeState()
   }
 
+  /** The guard fired with the router still silent (a slow Suspense): drop the dim, the shadow and
+   * the input lock, but leave the column off screen. Handing the old page back at x=0 would flash it. */
+  function releaseDim(): void {
+    guardRef.current = null
+    clearSwipeState()
+  }
+
   // The new page is in the DOM by now: only here may the column come back, or the old page
   // would flash at x=0 for a frame between the slide off and the navigation.
   useLayoutEffect(() => {
@@ -85,6 +105,11 @@ export function EdgeSwipeBack() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.key])
   useEffect(() => resetColumn, [])
+
+  // The router itself, read synchronously: a navigation that has started but not yet committed (a lazy
+  // route still loading after a tab tap) is invisible to React's effects until it lands, by which time
+  // go() would have popped the page straight back. `go()` compares against this instead.
+  const router = useContext(UNSAFE_DataRouterContext)?.router
 
   const standalone =
     typeof window === "undefined"
@@ -162,8 +187,9 @@ export function EdgeSwipeBack() {
     },
     // Commit: the gesture continues. The column carries on from the release offset to the far
     // edge, at the release speed (clamped to the motion tokens), while the dim and the parallax
-    // strip run to rest; only then does the router navigate, with no view transition for this hop
-    // (the destination is not a snapshot, and a pop would not run one anyway). Reduced motion
+    // strip run to rest; only then does the router navigate. The replace path asks for no view
+    // transition, and CSS silences the one RR 7 replays on a history pop, so the hop plays exactly
+    // one animation. Reduced motion
     // skips the slide; the column still holds its offset until the new page is in.
     onCommit: (dx, _dy, velocity) => {
       const dir = dirRef.current
@@ -172,14 +198,20 @@ export function EdgeSwipeBack() {
       const column = columnRef.current
       const inFrame = isNativeFrame(readPlatform(), window.matchMedia(PHONE_MEDIA).matches)
       const target = backTarget(window.history.state?.idx, portalRootFallback(location.pathname))
+      const startKey = router?.state.location.key
       const go = () => {
+        goTimerRef.current = null
+        // Another navigation (a history.back, a tab tap) already moved the page: this one is stale.
+        if (!committingRef.current) return
+        // ... or one is in flight, or the page already moved: this swipe's navigation is stale.
+        if (router && (router.state.navigation.state !== "idle" || router.state.location.key !== startKey)) return
         markSwipeNav()
         if (target.kind === "history") navigate(-1)
         else navigate(target.to, { replace: true, viewTransition: !inFrame })
       }
       committingRef.current = true
       settlingRef.current = true
-      guardRef.current = setTimeout(resetColumn, COMMIT_GUARD_MS)
+      guardRef.current = setTimeout(releaseDim, COMMIT_GUARD_MS)
       if (!inFrame || !column) {
         // No underlay is drawn outside the frame: hand the column back and let the pop transition play.
         column?.style.removeProperty("transform")
@@ -187,6 +219,8 @@ export function EdgeSwipeBack() {
         go()
         return
       }
+      // UIKit ignores touches while the pop completes: the input lock is CSS on this attribute.
+      root.setAttribute("data-swipe-settling", "commit")
       const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches
       const ms = reduced
         ? 0
@@ -194,19 +228,19 @@ export function EdgeSwipeBack() {
             remaining: Math.max(0, width - Math.max(0, dx * dir)),
             velocity: velocity * dir,
             minMs: durationToken("--dur-fast", 150),
-            maxMs: durationToken("--dur-base", 200),
+            // The sheet token paired with the iOS curve: a slow mid-screen release must not jerk forward.
+            maxMs: durationToken("--dur-sheet-ios", 320),
           })
       if (ms === 0) {
         go()
         return
       }
       root.style.setProperty("--lm-swipe-dur", `${ms}ms`)
-      root.setAttribute("data-swipe-settling", "commit")
       column.style.transition = `transform ${ms}ms var(--ease-ios-spring)`
       void column.offsetWidth
       column.style.transform = `translateX(${dir * 100}%)`
       root.style.setProperty("--lm-swipe-progress", "1")
-      setTimeout(go, ms)
+      goTimerRef.current = setTimeout(go, ms * NAVIGATE_AT_FRACTION)
     },
   })
 

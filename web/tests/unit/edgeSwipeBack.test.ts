@@ -148,7 +148,7 @@ describe("a committed swipe continues the gesture (fix round 2, I-1)", () => {
   it("the column goes to the far edge on the iOS curve over a velocity-scaled, token-clamped time", () => {
     expect(component).toContain("swipeSettleMs")
     expect(component).toContain('"--dur-fast"')
-    expect(component).toContain('"--dur-base"')
+    expect(component).toContain('"--dur-sheet-ios"')
     expect(component).toContain("translateX(${dir * 100}%)")
     expect(component).toContain("var(--ease-ios-spring)")
   })
@@ -198,5 +198,62 @@ describe("outside the native frame a swipe plays the back slide (fix round 2, M-
   it("maps data-direction=swipe to the back keyframes, ungated", () => {
     expect(css).toMatch(/html\[data-direction="swipe"\]::view-transition-old\(root\) \{\s*animation-name: lm-vt-old-back/)
     expect(css).toMatch(/html\[data-direction="swipe"\]::view-transition-new\(root\) \{\s*animation-name: lm-vt-new-back/)
+  })
+})
+
+describe("one animation per committed hop (fix round 3)", () => {
+  const css = read("index.css")
+  const gated = mediaBlockAfter(css, "/* ── Native frame: swipe-back")
+
+  it("inside the native frame, direction=swipe silences both view-transition snapshots", () => {
+    expect(gated).toMatch(
+      /\[data-direction="swipe"\]::view-transition-group\(root\),\s*html:is\(\[data-platform="ios"\], \[data-platform="android"\]\)\[data-direction="swipe"\]::view-transition-old\(root\),\s*html:is\(\[data-platform="ios"\], \[data-platform="android"\]\)\[data-direction="swipe"\]::view-transition-new\(root\) \{\s*animation: none/,
+    )
+    expect(gated).toContain('html:is([data-platform="ios"], [data-platform="android"])[data-direction="swipe"]')
+  })
+
+  it("the back mapping stays ungated, for outside the frame", () => {
+    const ungated = css.replace(gated, "")
+    expect(ungated).toMatch(/html\[data-direction="swipe"\]::view-transition-old\(root\) \{\s*animation-name: lm-vt-old-back/)
+  })
+})
+
+describe("a committed swipe is cancellable and locks input (fix round 3)", () => {
+  const component = read("components/edge-swipe-back.tsx")
+  const css = read("index.css")
+
+  it("keeps the navigation timer in a ref, clears it on reset and unmount, and skips a stale go", () => {
+    expect(component).toContain("goTimerRef")
+    const reset = component.slice(component.indexOf("function resetColumn"), component.indexOf("function releaseDim"))
+    expect(reset).toContain("clearTimeout(goTimerRef.current)")
+    expect(component).toContain("useEffect(() => resetColumn, [])")
+    expect(component).toMatch(/const go = \(\) => \{[\s\S]*?if \(!committingRef\.current\) return/)
+  })
+
+  it("go() also stands down for a navigation that has started but not committed, read from the router synchronously", () => {
+    expect(component).toContain("UNSAFE_DataRouterContext")
+    expect(component).toMatch(/router\.state\.navigation\.state !== "idle" \|\| router\.state\.location\.key !== startKey/)
+  })
+
+  it("navigates when the front-loaded curve is nearly done, not after the full duration", () => {
+    expect(component).toContain("NAVIGATE_AT_FRACTION = 0.65")
+    expect(component).toContain("setTimeout(go, ms * NAVIGATE_AT_FRACTION)")
+  })
+
+  it("locks pointer input on the body while the commit settles", () => {
+    expect(css).toMatch(/\[data-swipe-settling="commit"\] body \{\s*pointer-events: none/)
+    expect(component).toContain('root.setAttribute("data-swipe-settling", "commit")')
+  })
+
+  it("slow releases run on the iOS sheet duration; flings keep the fast floor", () => {
+    expect(component).toContain('"--dur-sheet-ios"')
+    expect(component).toContain('minMs: durationToken("--dur-fast", 150)')
+  })
+
+  it("the guard drops the dim but never hands the old page back at x=0", () => {
+    const release = component.slice(component.indexOf("function releaseDim"), component.indexOf("// The new page is in the DOM"))
+    expect(release).toContain("clearSwipeState()")
+    expect(release).not.toContain("transform")
+    expect(component).toContain("setTimeout(releaseDim, COMMIT_GUARD_MS)")
   })
 })
