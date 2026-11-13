@@ -468,3 +468,50 @@ NATIVE_CHECKS.push({
     },
   },
 );
+
+/** D11: two heading texts "repeat" when equal after these steps (see Task 5b). */
+const normTitle = (s) => s.trim().toLowerCase().replace(/\s+/g, " ").replace(/^(your|my) /, "");
+
+/** The `to` of each student bottom tab (STUDENT_BOTTOM_TABS in portals/student/shell.tsx)
+ * minus the raised Correct action, which is immersive and has no tab root of its own. */
+export const STUDENT_TAB_PATHS = ["/student", "/student/classes", "/student/profile"];
+/** The `to` of each teacher bottom tab (TEACHER_BOTTOM_TABS in portals/teacher/index.tsx). */
+export const TEACHER_TAB_PATHS = ["/teacher", "/teacher/grading", "/teacher/review", "/teacher/classes"];
+
+/** Tab roots of both portals plus the detail paths other checks use. Add a route
+ * here when a screen's heading changes; skip only routes the mocks cannot serve,
+ * with the reason in a comment. */
+const HEADING_ROUTES = [
+  ...[...STUDENT_TAB_PATHS, DETAIL_PATH, "/student/tutors"].map((path) => ({ ...NATIVE_HOME, path })),
+  ...[...TEACHER_TAB_PATHS, TAB_DRILL_PATH].map((path) => ({ ...NATIVE_TEACHER_HOME, path })),
+];
+
+NATIVE_CHECKS.push(
+  ...["ios", "android"].flatMap((platform) =>
+    HEADING_ROUTES.map((app) => ({
+      id: `native-${platform}-one-heading-${app.path}`,
+      platform,
+      width: 390,
+      app,
+      async run(page) {
+        const h1s = await page.getByRole("heading", { level: 1 }).count();
+        if (h1s !== 1)
+          throw new Error(`${app.path}: ${h1s} level-1 headings reach assistive technology, expected 1`);
+        const { title, headings } = await page.evaluate(() => ({
+          title: document.querySelector("[data-shell-title]")?.textContent ?? "",
+          headings: [...document.querySelectorAll("main :is(h1, h2, [role=heading])")]
+            .filter((el) => {
+              const r = el.getBoundingClientRect();
+              return el.checkVisibility() && r.width > 1 && r.height > 1;
+            })
+            .map((el) => ({ text: el.textContent ?? "", html: el.outerHTML.slice(0, 120) })),
+        }));
+        const dupes = headings.filter((h) => normTitle(h.text) === normTitle(title));
+        if (dupes.length)
+          throw new Error(
+            `${app.path}: visible heading repeats the large title: ${dupes.map((h) => h.html).join(" | ")}`,
+          );
+      },
+    })),
+  ),
+);
