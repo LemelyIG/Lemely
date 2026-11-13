@@ -1132,8 +1132,11 @@ NATIVE_CHECKS.push(
             x: el.style.getPropertyValue("--lm-press-x"),
             r: cs.getPropertyValue("--lm-press-r"),
             rr: cs.getPropertyValue("--lm-press-rr"),
+            opacity: cs.opacity,
           }
         })
+        // Release away from the element so the tap never becomes a click and navigates.
+        await page.mouse.move(2, 300)
         await page.mouse.up()
         const released = await loc.evaluate((el) => ({ flag: el.hasAttribute("data-pressed"), image: getComputedStyle(el).backgroundImage }))
         return { pressed, released }
@@ -1143,15 +1146,23 @@ NATIVE_CHECKS.push(
       // `active:scale-[0.98]`, which native must cancel (iOS owns 0.97, Android never scales).
       const targets = [
         { name: "icon button", loc: page.locator("header .lm-native-iconbtn.lm-press:visible").first(), dx: 14, dy: 14 },
+        // The tab cell: dims on iOS with no delay (it is a fixed bar, not scroll content), never scales.
+        { name: "tab cell", loc: page.locator("nav.lm-native-tabbar .lm-press:visible").nth(1), dx: 14, dy: 14, tab: true },
         { name: "Button", loc: page.locator("main .lm-press-scale:not(.lm-native-iconbtn):visible").first(), dx: 10, dy: 10 },
       ]
       for (const t of targets) {
         const { pressed, released } = await press(t.loc, t.dx, t.dy)
         if (!pressed.flag) throw new Error(`${t.name}: data-pressed not set on pointerdown`)
+        if (t.tab && platform === "ios" && pressed.opacity !== "0.55") throw new Error(`${t.name}: iOS tab opacity ${pressed.opacity} right after pointerdown, expected 0.55`)
+        if (t.tab && platform === "ios") {
+          if (released.flag || released.image !== "none") throw new Error(`${t.name}: press state stuck after pointerup`)
+          if (pressed.scale !== "none") throw new Error(`${t.name}: iOS tab scale ${pressed.scale}, expected none`)
+          continue
+        }
         if (!pressed.image.includes("radial-gradient")) throw new Error(`${t.name}: no press layer: ${pressed.image}`)
         if (pressed.overflow === "hidden") throw new Error(`${t.name}: press layer clips with overflow: hidden`)
         if (Math.abs(parseFloat(pressed.x) - t.dx) > 3) throw new Error(`${t.name}: ripple origin x ${pressed.x}, expected ${t.dx}px`)
-        if (pressed.scale !== expectScale) throw new Error(`${t.name}: ${platform} press scale ${pressed.scale}, expected ${expectScale}`)
+        if (pressed.scale !== (t.tab ? "none" : expectScale)) throw new Error(`${t.name}: ${platform} press scale ${pressed.scale}, expected ${t.tab ? "none" : expectScale}`)
         if (platform === "android" && (!pressed.r || pressed.rr !== pressed.r)) throw new Error(`${t.name}: ripple radius ${pressed.rr}, expected ${pressed.r}`)
         if (released.flag || released.image !== "none") throw new Error(`${t.name}: press state stuck after pointerup`)
       }

@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { installPressFeedback, pressOrigin } from "@/lib/pressFeedback"
+import { installPressFeedback, parseDelay, pressOrigin } from "@/lib/pressFeedback"
 
 const SRC = join(fileURLToPath(new URL("../../", import.meta.url)), "src")
 const css = readFileSync(join(SRC, "index.css"), "utf8")
@@ -196,12 +196,71 @@ describe("installPressFeedback: rows hold the highlight back (user decision: del
     expect(other.hasAttribute("data-pressed")).toBe(false)
     expect(vi.getTimerCount()).toBe(0)
   })
-  it("the delay is a token, and rows and tab cells opt in", () => {
+  it("the delay is a token, and list rows opt in", () => {
     expect(css).toMatch(/--native-press-delay: 100ms;/)
     expect(read("components/ui/list-group.tsx")).toContain("lm-press-delay")
-    expect(read("components/ui/nav-shells.tsx")).toContain("lm-press lm-press-delay")
+    // A fixed tab bar is not scroll content: it highlights instantly, on iOS and Material alike.
+    expect(read("components/ui/nav-shells.tsx")).not.toContain("lm-press-delay")
     expect(read("components/ui/button.tsx")).not.toContain("lm-press-delay")
     expect(read("components/shell/shellStyles.ts")).not.toContain("lm-press-delay")
+  })
+})
+
+describe("press delay token and disabled hit test", () => {
+  beforeEach(() => void vi.useFakeTimers())
+  afterEach(() => void vi.useRealTimers())
+  it("parseDelay reads ms and s, and rejects anything else", () => {
+    expect(parseDelay("100ms")).toBe(100)
+    expect(parseDelay(" 0.1s ")).toBe(100)
+    expect(parseDelay("250MS")).toBe(250)
+    expect(parseDelay("")).toBeNull()
+    expect(parseDelay("fast")).toBeNull()
+  })
+  it("the token is read once at install and drives the row delay", () => {
+    const root = new FakeRoot()
+    let reads = 0
+    installPressFeedback(root as unknown as Document, { readDelayToken: () => (reads++, "0.25s") })
+    const r = new FakeEl(null, "lm-press lm-press-delay")
+    root.fire("pointerdown", r, 1, 1)
+    vi.advanceTimersByTime(249)
+    expect(r.hasAttribute("data-pressed")).toBe(false)
+    vi.advanceTimersByTime(1)
+    expect(r.hasAttribute("data-pressed")).toBe(true)
+    root.fire("pointerup")
+    root.fire("pointerdown", r, 1, 1)
+    expect(reads).toBe(1)
+  })
+  it("an unreadable token falls back to 100ms", () => {
+    const root = new FakeRoot()
+    installPressFeedback(root as unknown as Document, { readDelayToken: () => "" })
+    const r = new FakeEl(null, "lm-press lm-press-delay")
+    root.fire("pointerdown", r, 1, 1)
+    vi.advanceTimersByTime(100)
+    expect(r.hasAttribute("data-pressed")).toBe(true)
+  })
+  const rowWithDisabledChild = (pointerEvents: string, rect: { left: number; top: number; width: number; height: number }) => {
+    const root = new FakeRoot()
+    installPressFeedback(root as unknown as Document, { pointerEvents: () => pointerEvents })
+    const r = new FakeEl(null, "lm-press")
+    const c = new FakeEl(r)
+    c.disabled = true
+    c.rect = rect
+    return { root, r }
+  }
+  it("a disabled child that takes pointer events does not suppress the row", () => {
+    const { root, r } = rowWithDisabledChild("auto", { left: 10, top: 5, width: 30, height: 30 })
+    root.fire("pointerdown", r, 20, 20)
+    expect(r.hasAttribute("data-pressed")).toBe(true)
+  })
+  it("a disabled child with an empty box does not suppress the row", () => {
+    const { root, r } = rowWithDisabledChild("none", { left: 20, top: 20, width: 0, height: 0 })
+    root.fire("pointerdown", r, 20, 20)
+    expect(r.hasAttribute("data-pressed")).toBe(true)
+  })
+  it("a pass-through disabled child (pointer-events none, real box) still suppresses", () => {
+    const { root, r } = rowWithDisabledChild("none", { left: 10, top: 5, width: 30, height: 30 })
+    root.fire("pointerdown", r, 20, 20)
+    expect(r.hasAttribute("data-pressed")).toBe(false)
   })
 })
 

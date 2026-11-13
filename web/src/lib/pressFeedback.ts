@@ -21,17 +21,42 @@ export function pressOrigin(rect: PressRect, x: number, y: number): { x: string;
 
 const DISABLED = '[aria-disabled="true"], :disabled'
 
+export interface PressEnv {
+  /** Raw value of `--native-press-delay`; read once at install. */
+  readDelayToken?: () => string
+  /** Computed `pointer-events` of an element. */
+  pointerEvents?: (el: Element) => string
+}
+
+const hasStyles = typeof getComputedStyle === "function"
+const defaultEnv: Required<PressEnv> = {
+  readDelayToken: () => (hasStyles ? getComputedStyle(document.documentElement).getPropertyValue("--native-press-delay") : ""),
+  pointerEvents: (el) => (hasStyles ? getComputedStyle(el).pointerEvents : "none"),
+}
+
+/** "100ms" or "0.1s" to milliseconds; null when absent or unreadable. */
+export function parseDelay(raw: string): number | null {
+  const m = /^\s*(-?\d*\.?\d+)\s*(ms|s)\s*$/i.exec(raw)
+  if (!m) return null
+  const n = parseFloat(m[1]) * (m[2].toLowerCase() === "s" ? 1000 : 1)
+  return Number.isFinite(n) ? n : null
+}
+
 /**
  * True when the press lands on something disabled. A disabled control carries
  * `pointer-events: none`, so the tap passes through to the pressable ancestor and
- * `target` is that ancestor: the descendant is found by its box instead.
+ * `target` is that ancestor: the descendant is found by its box instead. A disabled
+ * descendant with an empty box, or one that still takes pointer events, does not
+ * pass taps through, so it never suppresses the row.
  */
-function pressIsDisabled(el: HTMLElement, target: Element, x: number, y: number): boolean {
+function pressIsDisabled(el: HTMLElement, target: Element, x: number, y: number, env: Required<PressEnv>): boolean {
   if (el.matches(DISABLED)) return true
   const hit = target.closest(DISABLED)
   if (hit && el.contains(hit)) return true
   for (const d of el.querySelectorAll(DISABLED)) {
     const r = d.getBoundingClientRect()
+    if (r.width <= 0 || r.height <= 0) continue
+    if (env.pointerEvents(d) !== "none") continue
     if (x >= r.left && x <= r.left + r.width && y >= r.top && y <= r.top + r.height) return true
   }
   return false
@@ -44,14 +69,9 @@ const SLOP_PX = 8
 /** A tap released inside the delay still shows the highlight this long, as native does. */
 const FLASH_MS = 100
 
-function delayOf(el: HTMLElement): number {
-  if (!el.matches(".lm-press-delay")) return 0
-  if (typeof getComputedStyle !== "function") return DEFAULT_DELAY_MS
-  const ms = parseFloat(getComputedStyle(el).getPropertyValue("--native-press-delay"))
-  return Number.isFinite(ms) ? ms : DEFAULT_DELAY_MS
-}
-
-export function installPressFeedback(root: Document | HTMLElement): () => void {
+export function installPressFeedback(root: Document | HTMLElement, envIn: PressEnv = {}): () => void {
+  const env = { ...defaultEnv, ...envIn }
+  const delayMs = parseDelay(env.readDelayToken()) ?? DEFAULT_DELAY_MS
   let pressed: HTMLElement | null = null
   let timer: ReturnType<typeof setTimeout> | null = null
   let pending: { x: number; y: number } | null = null
@@ -96,13 +116,13 @@ export function installPressFeedback(root: Document | HTMLElement): () => void {
     // A second pointer must not leave the first element stuck pressed.
     release()
     endFlash()
-    if (!target || !el || pressIsDisabled(el, target, e.clientX, e.clientY)) return
+    if (!target || !el || pressIsDisabled(el, target, e.clientX, e.clientY, env)) return
     const o = pressOrigin(el.getBoundingClientRect(), e.clientX, e.clientY)
     el.style.setProperty("--lm-press-x", o.x)
     el.style.setProperty("--lm-press-y", o.y)
     el.style.setProperty("--lm-press-r", o.r)
     pressed = el
-    const delay = delayOf(el)
+    const delay = el.matches(".lm-press-delay") ? delayMs : 0
     if (delay <= 0) {
       el.setAttribute("data-pressed", "")
       return

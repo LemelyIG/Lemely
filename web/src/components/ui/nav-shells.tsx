@@ -152,7 +152,7 @@ export function BottomNav({ items, emphasisId, onActiveTap, className, ...props 
             onActiveClick={onActiveTap ? (event) => onActiveTap(item, event) : undefined}
             className={(isActive) =>
               cn(
-                "lm-press lm-press-delay flex min-h-14 flex-1 flex-col items-center justify-center gap-1 py-2.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.98]",
+                "lm-press flex min-h-14 flex-1 flex-col items-center justify-center gap-1 py-2.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.98]",
                 isActive && !emphasis ? "text-primary" : "text-on-surface-variant hover:text-on-surface-variant",
               )
             }
