@@ -119,11 +119,11 @@ export function PortalShell({
             <RouteSkeleton />
           ) : (
             <Suspense fallback={<RouteSkeleton />}>
-              <ErrorBoundary label="This page" resetKey={location.pathname} fallback={portalErrorFallback}>
-                <ShellPullToRefresh enabled={native && level === "root"}>
+              <ShellPullToRefresh enabled={native && level === "root"}>
+                <ErrorBoundary label="This page" resetKey={location.pathname} fallback={portalErrorFallback}>
                   <ScreenOutlet overlay={overlay} />
-                </ShellPullToRefresh>
-              </ErrorBoundary>
+                </ErrorBoundary>
+              </ShellPullToRefresh>
             </Suspense>
           )}
         </main>
