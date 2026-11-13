@@ -1,7 +1,8 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
-/* Same copy and the same polling record as the checkout return page, so the dialog and the page never disagree. Failure tells the reader the charge is still processed but offers no retry control, only a reload. */
+/* Same copy and the same polling record as the checkout return page, so the dialog and the page never disagree. Failure tells the reader the charge is still processed and offers "Check again" through the compact C-11 ErrorState. */
 import { useEffect, useRef } from "react"
 import { useQueryClient } from "@tanstack/react-query"
+import { ErrorState } from "@/components/ui/state-views"
 import { paymentPhase } from "@/lib/billingFormat"
 import { invalidateOnPaid, returnCopy } from "@/lib/checkoutReturn"
 import { invalidateBilling, usePaymentStatus } from "@/lib/hooks/useBillingApi"
@@ -26,9 +27,12 @@ export function PaymentProgress({ paymentId }: { paymentId: string }) {
 
   if (payment.isError) {
     return (
-      <p role="alert" className="m-0 text-body-sm text-error">
-        Couldn't check this payment. It is still processed on our side; reload this page in a minute.
-      </p>
+      <ErrorState
+        compact
+        heading="Couldn't check this payment"
+        body="It is still processed on our side. Check again in a minute."
+        action={{ label: "Check again", onClick: () => void payment.refetch() }}
+      />
     )
   }
   const copy = data

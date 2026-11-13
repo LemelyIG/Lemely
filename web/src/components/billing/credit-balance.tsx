@@ -47,10 +47,10 @@ export function CreditBalanceCard({
       ) : (
         <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
           {lines.map((line) => (
-            <li key={line.key} className="flex items-center justify-between gap-3 text-body-sm text-on-surface">
-              <span>{line.label}</span>
+            <li key={line.key} className="flex items-start justify-between gap-3 text-body-sm text-on-surface">
+              <span className="min-w-0">{line.label}</span>
               {line.soon ? (
-                <span className="rounded-pill bg-surface-container-high px-2.5 py-0.5 text-body-sm text-on-surface">
+                <span className="shrink-0 whitespace-nowrap rounded-pill bg-surface-container-high px-2.5 py-0.5 text-body-sm text-on-surface">
                   Expires soon
                 </span>
               ) : null}

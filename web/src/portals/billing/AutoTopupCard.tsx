@@ -1,11 +1,13 @@
 /* Hallmark · pre-emit critique: P4 H3 E3 S4 R4 V3 */
-/* E3: PayerCard still hand-rolls its pending line ("Loading auto top-up…") and its failure ("Reload the page", no retry); not a route screen, so QueryState was not forced, but the three-query composition is the next thing to fix. H3: the form is one even grid of four fields under a switch. */
+/* Impeccable retro audit: the pending line is a skeleton and the failure is the compact C-11 ErrorState with a retry. H3: the form is one even grid of four fields under a switch. */
 import { useEffect, useReducer, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
+import { SkeletonText } from "@/components/ui/skeleton"
+import { ErrorState } from "@/components/ui/state-views"
 import { Switch } from "@/components/ui/switch"
 import {
   autoTopupReducer,
@@ -216,7 +218,20 @@ function PayerCard({ beneficiaryId, audience, packsHref }: { beneficiaryId: stri
       <CardBody className="flex flex-col gap-3">
         <h2 className="m-0 text-display-sm text-on-surface">Auto top-up</h2>
         {settings.isError || cards.isError || catalogue.isError ? (
-          <p role="alert" className="m-0 text-body-sm text-error">Couldn't load auto top-up settings. Reload the page to try again.</p>
+          // The C-11 compact failure (neutral tone, polite), with a retry for whichever read failed.
+          <ErrorState
+            compact
+            heading="Couldn't load your auto top-up settings"
+            body="Nothing has changed on your account."
+            action={{
+              label: "Try again",
+              onClick: () => {
+                if (settings.isError) void settings.refetch()
+                if (cards.isError) void cards.refetch()
+                if (catalogue.isError) void catalogue.refetch()
+              },
+            }}
+          />
         ) : settings.data && cards.data && catalogue.data ? (
           <Form
             key={beneficiaryId ?? "self"}
@@ -227,7 +242,7 @@ function PayerCard({ beneficiaryId, audience, packsHref }: { beneficiaryId: stri
             packsHref={packsHref}
           />
         ) : (
-          <p role="status" className="m-0 text-body-sm text-on-surface-variant">Loading auto top-up…</p>
+          <SkeletonText lines={3} />
         )}
       </CardBody>
     </Card>
