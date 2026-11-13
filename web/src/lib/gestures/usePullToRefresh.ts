@@ -10,11 +10,8 @@ import { EDGE_ZONE_PX } from "@/lib/nav/edgeSwipeBack"
  * drag-dismiss use. `axis: "y"` gets `useDragGesture`'s own imperative
  * `translateY(dy)` on `ref` itself for free while dragging (its default
  * `transformTarget` is `ref`), which is what visibly pushes the screen's
- * content down as the user pulls. `--lm-pull-progress`, set here on the same
- * element, is the hook's own signal to `PullIndicator` (typically an
- * absolutely-positioned sibling revealed as the content moves down) — a CSS
- * custom property rather than a second ref, since the hook's signature below
- * takes only the one ref.
+ * content down as the user pulls. A surface that draws its own indicator
+ * reads the pull from `onPull(dy)` below instead.
  *
  * That ref must be an element *inside* the screen, never
  * `document.documentElement`. A transformed root becomes the containing
@@ -101,7 +98,6 @@ export function usePullToRefresh(
   function resetIndicator() {
     setPulling(false)
     armedRef.current = false
-    ref.current?.style.setProperty("--lm-pull-progress", "0")
     onPullRef.current?.(0)
   }
 
@@ -185,7 +181,6 @@ export function usePullToRefresh(
       if (!el) return
       const { progress, armed } = pullState(dy, threshold, isAtScrollTop(scrollSourceRef.current))
       armedRef.current = armed
-      el.style.setProperty("--lm-pull-progress", String(progress))
       onPullRef.current?.(progress > 0 ? dy : 0)
       setPulling(progress > 0)
     },

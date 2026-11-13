@@ -13,6 +13,7 @@
  */
 
 import { readPlatform, type Platform } from "@/lib/platform"
+import { PHONE_MEDIA, isNativeFrame } from "@/lib/useNativeFrame"
 
 export type HapticKind = "tap" | "success" | "warning"
 
@@ -37,13 +38,21 @@ export function haptic(
   return nav.vibrate(PATTERNS[kind])
 }
 
+/** Whether the viewport is phone width right now. False without a DOM. */
+function phoneNow(): boolean {
+  return typeof window !== "undefined" && window.matchMedia(PHONE_MEDIA).matches
+}
+
 /** Native frame: commit gestures (pull-to-refresh trigger, sheet snap,
- * long-press) buzz on Android only. iOS Safari has no Vibration API, and
- * desktop Chrome's `vibrate` exists but means nothing. */
+ * long-press) buzz on Android only, and only while the native frame is
+ * active (a phone-width viewport), so a tablet or a wide Android window never
+ * vibrates. iOS Safari has no Vibration API, and desktop Chrome's `vibrate`
+ * exists but means nothing. */
 export function nativeHaptic(
   kind: HapticKind,
   platform: Platform = readPlatform(),
   nav: VibrationCapableNavigator | undefined = typeof navigator === "undefined" ? undefined : navigator,
+  phone: boolean = phoneNow(),
 ): boolean {
-  return platform === "android" ? haptic(kind, nav) : false
+  return platform === "android" && isNativeFrame(platform, phone) ? haptic(kind, nav) : false
 }

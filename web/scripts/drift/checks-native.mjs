@@ -1211,7 +1211,7 @@ async function pullDown(page, dy, { release = true } = {}) {
   if (release) await page.mouse.up();
 }
 
-/** Counts `/api/` requests that reach the network layer after `arm()`; each is held for `holdMs`. */
+/** Holds every `/api/` request for `holdMs` (so a refresh stays in flight) and counts them. */
 async function countApi(page, holdMs = 0) {
   const seen = { calls: 0 };
   await page.route("**/api/**", async (route) => {
@@ -1222,10 +1222,22 @@ async function countApi(page, holdMs = 0) {
   return seen;
 }
 
-for (const [id, app, platform] of [
-  ["native-android-pull-to-refresh-refetches", NATIVE_HOME, "android"],
-  ["native-ios-pull-to-refresh-refetches", NATIVE_HOME, "ios"],
-  ["native-android-teacher-pull-to-refresh-refetches", NATIVE_TEACHER_HOME, "android"],
+/** Counts requests matching one endpoint glob; the later `page.route` runs first and `fallback()` hands the request to the scene's mock. */
+async function countEndpoint(page, glob) {
+  const seen = { calls: 0 };
+  await page.route(glob, (route) => {
+    seen.calls++;
+    return route.fallback();
+  });
+  return seen;
+}
+
+/* Each root's own data endpoint, the one its scene mocks: a refetch of anything else (the notification
+   badge, a review count) must not satisfy the check. */
+for (const [id, app, platform, glob] of [
+  ["native-android-pull-to-refresh-refetches", NATIVE_HOME, "android", "**/api/student/overview"],
+  ["native-ios-pull-to-refresh-refetches", NATIVE_HOME, "ios", "**/api/student/overview"],
+  ["native-android-teacher-pull-to-refresh-refetches", NATIVE_TEACHER_HOME, "android", "**/api/teacher/overview"],
 ]) {
   NATIVE_CHECKS.push({
     id,
@@ -1235,10 +1247,10 @@ for (const [id, app, platform] of [
     async run(page) {
       await page.locator("main").waitFor();
       await page.waitForTimeout(400);
-      const seen = await countApi(page);
+      const seen = await countEndpoint(page, glob);
       await pullDown(page, 200);
       await page.waitForTimeout(600);
-      if (seen.calls < 1) throw new Error("pull did not refetch the page's queries");
+      if (seen.calls < 1) throw new Error(`pull did not refetch the page's own endpoint (${glob})`);
     },
   });
 }
@@ -1289,16 +1301,41 @@ NATIVE_CHECKS.push(
       await page.waitForTimeout(150);
       const content = await translateY(page, ".lm-ptr-content");
       if (content !== 0) throw new Error(`Android content must stay still, got ${content}px`);
-      const disc = await translateY(page, ".lm-ptr-md");
+      const disc = await translateY(page, ".lm-ptr-gap");
       if (disc === null || Math.abs(disc - 40) > 1) throw new Error(`disc should be 40px down, got ${disc}`);
       await page.mouse.up();
       await page.waitForTimeout(500);
       await pullDown(page, 200);
       await page.waitForFunction(() => document.querySelector(".lm-ptr")?.dataset.ptr === "refreshing");
       await page.waitForTimeout(100);
-      const hold = await translateY(page, ".lm-ptr-md");
+      const hold = await translateY(page, ".lm-ptr-gap");
       if (Math.abs(hold - 64) > 1) throw new Error(`disc should hold 64px while refreshing, got ${hold}`);
       if ((await translateY(page, ".lm-ptr-content")) !== 0) throw new Error("content moved while refreshing on Android");
+    },
+  },
+  {
+    id: "native-android-wide-has-no-shell-pull",
+    platform: "android",
+    width: 800,
+    app: NATIVE_HOME,
+    async run(page) {
+      await page.locator("main").waitFor();
+      await page.waitForTimeout(400);
+      if ((await page.locator(".lm-ptr").count()) !== 0) throw new Error("a 721px+ android window must not get the native pull surface");
+      if ((await page.locator(".lm-ptr-gap").count()) !== 0) throw new Error("a 721px+ android window must not render the pull indicator");
+      // A drag from the top of the page must not move anything either.
+      await page.evaluate(() => window.getSelection()?.removeAllRanges());
+      await page.mouse.move(400, 300);
+      await page.mouse.down();
+      await page.mouse.move(400, 500, { steps: 10 });
+      const moved = await page.evaluate(() => [...document.querySelectorAll("main, main > *")].some((el) => {
+        const t = getComputedStyle(el).translate;
+        return (t !== "none" && t !== "0px") || (el.style.transform && el.style.transform !== "none");
+      }));
+      await page.mouse.up();
+      if (moved) throw new Error("a 721px+ android drag moved the page");
+      const overscroll = await page.evaluate(() => [document.documentElement, document.body, document.querySelector("main")].map((el) => el.style.overscrollBehaviorY).join("|"));
+      if (overscroll !== "||") throw new Error(`no overscroll style may be set at 721px+, got "${overscroll}"`);
     },
   },
   {

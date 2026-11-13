@@ -882,12 +882,14 @@ and "easy" stay button/keyboard-only. Reveal button, grade buttons and the
 aware via `--lm-dir` read at commit time (never cached, so a language switch
 mid-session is never stale); `startFilter` excludes the drawer's own
 scrollable nav list, so a vertical scroll in there is never fought.
-**Pull-to-refresh** (`lib/gestures/usePullToRefresh.ts`,
-`components/ui/pull-indicator.tsx::PullIndicator`) on Notifications,
-Announcements and Overview: none of the three has a scroll container of its
-own, so both the gesture and its scroll-top check key off
-`document.documentElement` — the same target `EdgeSwipeBack` already
-listens on, coexisting the way that component's own comment anticipates.
+**Pull-to-refresh** (`lib/gestures/usePullToRefresh.ts`, owned by
+`components/shell/ShellPullToRefresh.tsx`) on every root page of both
+portals, native frame only: the shell wraps the outlet, the surface is a
+plain content wrapper with no scroll container of its own, so both the
+gesture and its scroll-top check key off `window` — the same target
+`EdgeSwipeBack` already listens on, coexisting the way that component's own
+comment anticipates. The indicator is per platform (`.lm-ptr*` in
+`index.css`), not a shared component.
 **Quiz page-turn** (`QuizTaker.tsx`, `lib/quizSwipe.ts::quizSwipeAllowed`):
 swiping the question card always flushes the 600ms autosave before moving
 (a page-turn racing an unsaved answer is exactly the D3.21 shape); refuses

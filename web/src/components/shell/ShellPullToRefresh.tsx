@@ -11,8 +11,8 @@ export const PULL_THRESHOLD_PX = 64
 /** The pull's visual ceiling (`--native-ptr-max`, preview `PTR_MAX`). */
 export const PULL_MAX_PX = 140
 
-/** How long the settle transition runs (`--dur-slow`), before `data-ptr` clears. */
-const SETTLE_MS = 400
+/** How long the settle transition runs (`--dur-slow`, 350ms), before `data-ptr` clears. Pinned by shellPullToRefresh.test.ts. */
+export const SETTLE_MS = 350
 
 const SPOKES = [0, 1, 2, 3, 4, 5, 6, 7]
 
@@ -40,6 +40,11 @@ export function ShellPullToRefresh({ enabled, children }: { enabled: boolean; ch
   // The drag hook moves one element by the raw finger distance. This one is
   // hidden, so that movement is invisible and the CSS moves what it wants.
   const sink = useRef<HTMLSpanElement>(null)
+  // The pull's custom properties are written on these two only (see index.css:
+  // `--pf-pull` does not inherit), never on the surface, so a pull frame does not
+  // restyle the page inside the content.
+  const gap = useRef<HTMLDivElement>(null)
+  const content = useRef<HTMLDivElement>(null)
   const armed = useRef(false)
   const wasActive = useRef(false)
   const [settling, setSettling] = useState(false)
@@ -51,17 +56,20 @@ export function ShellPullToRefresh({ enabled, children }: { enabled: boolean; ch
     threshold: PULL_THRESHOLD_PX,
     transformTarget: sink,
     onPull: (dy) => {
-      const el = surface.current
-      if (!el) return
+      const gapEl = gap.current
+      const contentEl = content.current
+      if (!gapEl || !contentEl) return
       if (dy <= 0) {
         armed.current = false
-        el.style.removeProperty("--pf-pull")
-        el.style.removeProperty("--pf-pull-p")
+        gapEl.style.removeProperty("--pf-pull")
+        gapEl.style.removeProperty("--pf-pull-p")
+        contentEl.style.removeProperty("--pf-pull")
         return
       }
       const pull = pullDistance(dy)
-      el.style.setProperty("--pf-pull", `${pull}px`)
-      el.style.setProperty("--pf-pull-p", String(Math.min(1, pull / PULL_THRESHOLD_PX)))
+      gapEl.style.setProperty("--pf-pull", `${pull}px`)
+      gapEl.style.setProperty("--pf-pull-p", String(Math.min(1, pull / PULL_THRESHOLD_PX)))
+      contentEl.style.setProperty("--pf-pull", `${pull}px`)
       const over = dy >= PULL_THRESHOLD_PX
       if (over && !armed.current) nativeHaptic("tap")
       armed.current = over
@@ -89,7 +97,7 @@ export function ShellPullToRefresh({ enabled, children }: { enabled: boolean; ch
     <div ref={surface} data-ptr={phase} className={enabled ? "lm-ptr overscroll-y-contain" : "contents"}>
       {enabled ? (
         <>
-          <div className="lm-ptr-gap" aria-hidden="true">
+          <div ref={gap} className="lm-ptr-gap" aria-hidden="true">
             {platform === "ios" ? (
               <span className="lm-ptr-ios">
                 {SPOKES.map((i) => (
@@ -109,7 +117,7 @@ export function ShellPullToRefresh({ enabled, children }: { enabled: boolean; ch
           </span>
         </>
       ) : null}
-      <div className={enabled ? "lm-ptr-content" : "contents"}>{children}</div>
+      <div ref={content} className={enabled ? "lm-ptr-content" : "contents"}>{children}</div>
       <span ref={sink} hidden />
     </div>
   )
