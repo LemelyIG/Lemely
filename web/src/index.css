@@ -614,8 +614,9 @@
 }
 
 /* ── Native frame: grouped lists (native frame Task 10; preview variant-a.css section 4). */
-/* Opt-in marker for press feedback; Task 11 adds the native rules. */
+/* Opt-in marker for press feedback; the native rules are in the press block below. */
 .lm-press { --lm-press: 1; }
+.lm-press-scale { --lm-press-scale: 1; }
 .lm-list-row + .lm-list-row { border-top: 1px solid var(--md-outline-variant); }
 @media (max-width: 720px) {
   /* Everything below is scoped to .lm-native-main: the shell's content column, whose 14px/16px gutter
@@ -704,6 +705,32 @@
   :root[data-platform="android"] .lm-native-main .lm-native-row[data-lines="3"] { min-height: var(--native-row-3-android); }
   :root[data-platform="android"] .lm-native-main .lm-list-row + .lm-list-row { border-top: 0; }
 }
+
+/* ── Native frame: press states (native frame Task 11; preview variant-a.css section 5).
+   Phone width on iOS/Android; design A keeps its own active:scale-[0.98] rules.
+   One layer drawn as a background image (no ::after, no overflow: hidden), so it
+   follows the element's radius and never clips a badge. */
+@property --lm-press-rr { syntax: "<length-percentage>"; inherits: false; initial-value: 0px; }
+@media (max-width: 720px) {
+  :root[data-platform="ios"] { --lm-press-ink: var(--native-press-ink-light); --lm-press-layer: var(--native-press-dim); }
+  :root[data-theme="dark"][data-platform="ios"] { --lm-press-ink: var(--native-press-ink-dark); }
+  :root[data-platform="android"] { --lm-press-ink: currentColor; --lm-press-layer: var(--native-state-pressed); }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-press[data-pressed] {
+    --lm-press-rr: var(--lm-press-r);
+    background-image: radial-gradient(circle at var(--lm-press-x) var(--lm-press-y), color-mix(in oklch, var(--lm-press-ink) var(--lm-press-layer), transparent) var(--lm-press-rr), transparent var(--lm-press-rr));
+  }
+  :root[data-platform="ios"] .lm-press-scale[data-pressed] { scale: var(--native-press-scale); }
+  /* iOS tab items dim their glyph and label instead of drawing a layer. */
+  :root[data-platform="ios"] .lm-native-tabbar .lm-press[data-pressed] {
+    background-image: none;
+    opacity: var(--native-tab-press-opacity-ios);
+  }
+  /* Android: the layer ripples out from the touch point. */
+  :root[data-platform="android"] .lm-press[data-pressed] {
+    animation: lm-ripple var(--native-ripple-dur) var(--ease-m3-emphasized);
+  }
+}
+@keyframes lm-ripple { from { --lm-press-rr: 0px; } }
 
 
 /* The student Overview's subject ledger (P4.1). A named utility rather than an
@@ -1909,6 +1936,12 @@ html[data-direction="back"]::view-transition-new(root) {
   ::view-transition-old(*),
   ::view-transition-new(*) {
     animation: none !important;
+  }
+
+  /* Press states: the ripple does not grow and the scale is instant (Task 11). */
+  .lm-press {
+    transition: none;
+    animation: none;
   }
 
   /* Native sheets: the slide and the iOS scale-back stop moving (Task 6). */

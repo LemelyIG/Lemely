@@ -152,7 +152,7 @@ export function BottomNav({ items, emphasisId, onActiveTap, className, ...props 
             onActiveClick={onActiveTap ? (event) => onActiveTap(item, event) : undefined}
             className={(isActive) =>
               cn(
-                "flex min-h-14 flex-1 flex-col items-center justify-center gap-1 py-2.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.98]",
+                "lm-press flex min-h-14 flex-1 flex-col items-center justify-center gap-1 py-2.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.98]",
                 isActive && !emphasis ? "text-primary" : "text-on-surface-variant hover:text-on-surface-variant",
               )
             }
@@ -239,7 +239,7 @@ export function SidebarNav({ items, groups, variant = "default", className, ...p
               className={(isActive) =>
                 variant === "abyss"
                   ? cn(
-                      "flex w-full items-center gap-2.5 rounded-chip px-2.5 py-2 pointer-coarse:min-h-11 text-start text-label transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+                      "lm-press flex w-full items-center gap-2.5 rounded-chip px-2.5 py-2 pointer-coarse:min-h-11 text-start text-label transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
                       isActive
                         ? "bg-primary-container text-primary"
                         : "text-on-surface-variant hover:bg-surface-container hover:text-on-surface",
@@ -249,7 +249,7 @@ export function SidebarNav({ items, groups, variant = "default", className, ...p
                   // tall on every mobile width, and this is the control a student on
                   // a phone touches most. Safe as a min because the row already
                   // centres its content.
-                  "flex w-full items-center gap-2.5 rounded-md px-9px py-2 pointer-coarse:min-h-11 text-start text-body-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.98]",
+                  "lm-press flex w-full items-center gap-2.5 rounded-md px-9px py-2 pointer-coarse:min-h-11 text-start text-body-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.98]",
                   isActive
                     ? "bg-surface-container-low font-medium text-on-surface"
                     : "font-normal text-on-surface-variant hover:bg-surface-container-low",

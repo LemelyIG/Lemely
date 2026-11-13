@@ -54,7 +54,7 @@ const button = cva(
     // `ease-in-out` or `linear` on a designed transition (DESIGN.md §9.1).
     "transition-[color,background-color,border-color,transform]",
     "duration-[var(--dur-fast)] ease-out-soft",
-    "active:scale-[0.98]",
+    "active:scale-[0.98] lm-press lm-press-scale",
     "disabled:pointer-events-none disabled:opacity-50",
   ],
   {

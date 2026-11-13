@@ -1,4 +1,4 @@
-import { Suspense, useState, type ReactNode } from "react"
+import { Suspense, useEffect, useState, type ReactNode } from "react"
 import type { MouseEvent } from "react"
 import { useLocation, useMatches, useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
@@ -7,6 +7,7 @@ import { BadgeSync } from "@/components/badge-sync"
 import { EdgeSwipeBack } from "@/components/edge-swipe-back"
 import { InstallBanner } from "@/components/InstallBanner"
 import { portalErrorFallback } from "@/components/route-error"
+import { installPressFeedback } from "@/lib/pressFeedback"
 import { cn } from "@/lib/utils"
 import { useNativeFrame } from "@/lib/useNativeFrame"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
@@ -68,6 +69,7 @@ export function PortalShell({
   // Overflow destinations for the native More sheet: the sidebar's items minus the tab bar's own.
   const tabTargets = new Set(bottomTabs.map((tab) => tab.to))
   const moreItems = sidebar.items.filter((item) => item.to && !tabTargets.has(item.to))
+  useEffect(() => installPressFeedback(document), [])
   const location = useLocation()
   const queryClient = useQueryClient()
   const navigate = useNavigate()

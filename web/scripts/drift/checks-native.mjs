@@ -1108,3 +1108,36 @@ NATIVE_CHECKS.push(
     },
   })),
 );
+NATIVE_CHECKS.push(
+  ...["ios", "android"].map((platform) => ({
+    id: `native-${platform}-press-state`,
+    platform,
+    width: 390,
+    app: NATIVE_HOME,
+    async run(page) {
+      const btn = page.locator("header .lm-native-iconbtn.lm-press:visible").first()
+      await btn.waitFor()
+      const box = await btn.boundingBox()
+      await page.mouse.move(box.x + 14, box.y + 14)
+      await page.mouse.down()
+      const pressed = await btn.evaluate((el) => {
+        const cs = getComputedStyle(el)
+        return {
+          flag: el.hasAttribute("data-pressed"),
+          image: cs.backgroundImage,
+          scale: cs.scale,
+          overflow: cs.overflow,
+          x: el.style.getPropertyValue("--lm-press-x"),
+        }
+      })
+      await page.mouse.up()
+      const released = await btn.evaluate((el) => ({ flag: el.hasAttribute("data-pressed"), image: getComputedStyle(el).backgroundImage }))
+      if (!pressed.flag) throw new Error("data-pressed not set on pointerdown")
+      if (!pressed.image.includes("radial-gradient")) throw new Error(`no press layer: ${pressed.image}`)
+      if (pressed.overflow === "hidden") throw new Error("press layer clips with overflow: hidden")
+      if (pressed.x !== "14px") throw new Error(`ripple origin x ${pressed.x}, expected 14px`)
+      if (platform === "ios" && pressed.scale !== "0.97") throw new Error(`iOS button scale ${pressed.scale}`)
+      if (released.flag || released.image !== "none") throw new Error("press state stuck after pointerup")
+    },
+  })),
+)
