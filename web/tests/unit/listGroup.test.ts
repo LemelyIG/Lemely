@@ -128,9 +128,9 @@ describe("native class and data-lines hooks stay on the shared components", () =
     const src = readFileSync(join(SRC, "portals/student/screens/Subject.tsx"), "utf8")
     expect(src.match(/<Card data-native-bleed="off" className="min-w-33/g)).toHaveLength(2)
   })
-  it("PortalShell: the page and main column carry lm-native-page / lm-native-main", () => {
+  it("PortalShell: the main column carries lm-native-main and the page class is gone", () => {
     const src = read("components/shell/PortalShell.tsx")
-    expect(src).toMatch(/className="lm-native-page flex min-h-dvh/)
+    expect(src).not.toContain("lm-native-page")
     expect(src).toMatch(/className="lm-native-main @container\/home/)
   })
 })
