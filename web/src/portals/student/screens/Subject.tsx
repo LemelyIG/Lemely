@@ -144,7 +144,7 @@ export function Subject() {
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-3">
-                  <Card className="min-w-33 px-5 py-4 text-center">
+                  <Card data-native-bleed="off" className="min-w-33 px-5 py-4 text-center">
                     <div className="text-eyebrow text-on-surface-variant">Forecast grade</div>
                     {/* The data face for both figures: §4.2 puts grades, scores and
                         percentages on the tabular rung, not the display face. They
@@ -153,7 +153,7 @@ export function Subject() {
                     <div className="text-data-lg text-on-surface">{subjectHeader.forecast}</div>
                     <div className="text-body-sm text-on-surface-variant">at current trajectory</div>
                   </Card>
-                  <Card className="min-w-33 px-5 py-4 text-center">
+                  <Card data-native-bleed="off" className="min-w-33 px-5 py-4 text-center">
                     <div className="text-eyebrow text-on-surface-variant">Weighted mean</div>
                     <div className="text-data-lg text-on-surface">
                       {subjectHeader.weightedMean}

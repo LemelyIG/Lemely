@@ -44,7 +44,13 @@ describe("grouped-list CSS (preview 4447a571, variant-a.css section 4)", () => {
   const mediaSelectors = [...mediaBody.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{[^{}]*\}/g)].flatMap((m) =>
     m[1].split(/,(?![^(]*\))/).map((sel) => sel.trim()),
   )
-  const ALLOWED_SELECTOR_START = [':root[data-platform=', ':root[data-theme="dark"][data-platform=', ":root:is([data-platform="]
+  const ALLOWED_SELECTOR_START = [
+    ':root[data-platform="ios"]',
+    ':root[data-platform="android"]',
+    ':root[data-theme="dark"][data-platform="ios"]',
+    ':root[data-theme="dark"][data-platform="android"]',
+    ':root:is([data-platform="ios"], [data-platform="android"])',
+  ]
   /** The two rules documented as harmless outside the gate: a no-op custom property and the desktop divider. */
   const HARMLESS_UNGATED = [".lm-press { --lm-press: 1; }", ".lm-list-row + .lm-list-row { border-top: 1px solid var(--md-outline-variant); }"]
 
@@ -62,7 +68,7 @@ describe("grouped-list CSS (preview 4447a571, variant-a.css section 4)", () => {
     // Task 10's classes only; other native-frame tasks own their own lm-native-* selectors.
     const offenders = [...outside.matchAll(/([^{};]+)\{/g)]
       .map((m) => m[1].trim())
-      .filter((sel) => /lm-native-(card|group|row|main|page)\b/.test(sel))
+      .filter((sel) => /lm-native-(card|group|row)\b/.test(sel))
     expect(offenders).toEqual([])
     for (const rule of HARMLESS_UNGATED) {
       expect(block, `documented harmless rule missing: ${rule}`).toContain(rule)
@@ -88,7 +94,7 @@ describe("grouped-list CSS (preview 4447a571, variant-a.css section 4)", () => {
     expect(block).toMatch(/:root:is\(\[data-platform="ios"\], \[data-platform="android"\]\) \.lm-native-main \.lm-native-group > \.lm-native-row \{[^}]*border-top: 0;[^}]*border-bottom: 0/)
   })
   it("Android: full-bleed, square, 14px gutter kept as a transparent border on cards, 56/72/88 rows, no separators", () => {
-    expect(block).toMatch(/:root\[data-platform="android"\] \.lm-native-main \.lm-native-card \{[^}]*inline-size: calc\(100% \+ 2 \* var\(--native-gutter-android\)\);[^}]*margin-inline: calc\(-1 \* var\(--native-gutter-android\)\);[^}]*border-inline: var\(--native-gutter-android\) solid transparent/)
+    expect(block).toMatch(/:root\[data-platform="android"\] \.lm-native-main \.lm-native-card:not\(\[data-native-bleed="off"\]\) \{[^}]*inline-size: calc\(100% \+ 2 \* var\(--native-gutter-android\)\);[^}]*margin-inline: calc\(-1 \* var\(--native-gutter-android\)\);[^}]*border-inline: var\(--native-gutter-android\) solid transparent/)
     expect(block).toMatch(/:root\[data-platform="android"\] \.lm-native-main \.lm-native-group \{[^}]*margin-inline: calc\(-1 \* var\(--native-gutter-android\)\)/)
     for (const n of [1, 2, 3]) {
       expect(block).toMatch(new RegExp(`:root\\[data-platform="android"\\] \\.lm-native-main \\.lm-native-row\\[data-lines="${n}"\\] \\{[^}]*min-height: var\\(--native-row-${n}-android\\)`))
@@ -117,6 +123,10 @@ describe("native class and data-lines hooks stay on the shared components", () =
     expect(src).toContain('"lm-native-group overflow-hidden')
     expect(src).toContain('data-lines="2"')
     expect(src).toContain('"lm-native-row flex items-center')
+  })
+  it("Subject stat tiles opt out of the native bleed so they stay side by side", () => {
+    const src = readFileSync(join(SRC, "portals/student/screens/Subject.tsx"), "utf8")
+    expect(src.match(/<Card data-native-bleed="off" className="min-w-33/g)).toHaveLength(2)
   })
   it("PortalShell: the page and main column carry lm-native-page / lm-native-main", () => {
     const src = read("components/shell/PortalShell.tsx")

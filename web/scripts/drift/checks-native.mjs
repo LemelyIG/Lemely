@@ -48,6 +48,32 @@ export const NATIVE_FIND_TUTOR = {
   },
 }
 
+const SUBJECT_DETAIL = {
+  header: {
+    name: "Add Maths",
+    code: "0606",
+    qualificationLevel: "IGCSE",
+    intro: "Where you stand in Additional Mathematics.",
+    forecast: "B",
+    weightedMean: "62",
+    weightedMeanDelta: "+4 since first paper",
+  },
+  papersBreakdown: [],
+  topicMap: [],
+  paperHistory: [],
+}
+
+export const NATIVE_SUBJECT = {
+  path: "/student/subject/0606",
+  profile: STUDENT_PROFILE,
+  mocks: async (page) => {
+    await studentShellMocks("populated")(page)
+    await page.route(/\/api\/student\/subject\/0606(\?|$)/, (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(SUBJECT_DETAIL) }),
+    )
+  },
+}
+
 /** Each check: { id, platform, width (default 390), theme, app, run(page) }. */
 export const NATIVE_CHECKS = [
   ...["ios", "android"].map((platform) => ({
@@ -383,7 +409,7 @@ NATIVE_CHECKS.push({
     app: NATIVE_FIND_TUTOR,
     async run(page) {
       const gaps = await page.evaluate(() => {
-        const card = document.querySelector(".lm-native-main .lm-native-card")
+        const card = document.querySelector(".lm-native-main ul > li > .lm-native-card")
         if (!card) return null
         const r = card.getBoundingClientRect()
         return { left: r.left, right: window.innerWidth - r.right, width: r.width }
@@ -392,6 +418,30 @@ NATIVE_CHECKS.push({
       if (Math.abs(gaps.left - gaps.right) > 0.5 || gaps.left < -0.5)
         throw new Error(`tutor card not centred: left ${gaps.left}px, right ${gaps.right}px`)
       if (gaps.left > 0.5) throw new Error(`tutor card not full-bleed: gap ${gaps.left}px`)
+    },
+  },
+);
+NATIVE_CHECKS.push({
+    id: "native-android-subject-stats-side-by-side",
+    platform: "android",
+    width: 390,
+    app: NATIVE_SUBJECT,
+    async run(page) {
+      await page.getByText("Forecast grade").waitFor()
+      const tiles = await page.evaluate(() => {
+        const cards = [...document.querySelectorAll(".lm-native-main .lm-native-card")].filter((c) =>
+          /Forecast grade|Weighted mean/.test(c.textContent ?? ""),
+        )
+        return cards.map((c) => {
+          const r = c.getBoundingClientRect()
+          return { top: r.top, left: r.left, right: r.right, vw: window.innerWidth }
+        })
+      })
+      if (tiles.length !== 2) throw new Error(`expected 2 stat tiles, found ${tiles.length}`)
+      if (Math.abs(tiles[0].top - tiles[1].top) > 0.5)
+        throw new Error(`stat tiles stacked: tops ${tiles[0].top}px / ${tiles[1].top}px`)
+      for (const t of tiles)
+        if (t.left < -0.5 || t.right > t.vw + 0.5) throw new Error(`stat tile overflows viewport: ${t.left}..${t.right} of ${t.vw}`)
     },
   },
 );
