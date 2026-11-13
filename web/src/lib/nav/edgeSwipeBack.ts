@@ -63,3 +63,17 @@ export function edgeSwipeDecision({
 
   return "back"
 }
+
+let swipeNavPending = false
+
+/** Native frame Task 12: the next navigation comes from a committed edge swipe. */
+export function markSwipeNav(): void {
+  swipeNavPending = true
+}
+
+/** Read once by RootOutlet's direction effect; the flag clears as it is read. */
+export function consumeSwipeNav(): boolean {
+  const pending = swipeNavPending
+  swipeNavPending = false
+  return pending
+}

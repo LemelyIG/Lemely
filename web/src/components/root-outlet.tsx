@@ -4,6 +4,7 @@ import { Outlet, ScrollRestoration, useLocation, useNavigationType } from "react
 import { createScrollKeyer } from "@/lib/nav/scrollRestorationKey"
 import { navigationDirection } from "@/lib/nav/navigationDirection"
 import { stateDirection } from "@/lib/nav/navDirectionState"
+import { consumeSwipeNav } from "@/lib/nav/edgeSwipeBack"
 
 /*
  * Packet B2a · the one pathless layout route wrapping every top-level route
@@ -35,7 +36,7 @@ export function RootOutlet() {
   const explicit = stateDirection(location.state)
 
   useLayoutEffect(() => {
-    document.documentElement.dataset.direction = explicit ?? navigationDirection(navigationType)
+    document.documentElement.dataset.direction = consumeSwipeNav() ? "swipe" : (explicit ?? navigationDirection(navigationType))
   }, [navigationType, explicit, location.key])
 
   return (

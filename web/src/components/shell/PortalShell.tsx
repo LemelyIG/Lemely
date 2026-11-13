@@ -99,7 +99,7 @@ export function PortalShell({
       </NavDrawer>
       <MoreSheet open={moreOpen && native} onClose={() => setMoreOpen(false)} items={moreItems} />
       <EdgeSwipeBack />
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div data-shell-column className="flex min-w-0 flex-1 flex-col">
         <ShellTopBar {...topBar} titleLevel={level} onOpenNav={() => setNavOpen(true)} />
         <main
           id={MAIN_CONTENT_ID}

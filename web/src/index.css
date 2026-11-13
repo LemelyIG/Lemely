@@ -1380,6 +1380,55 @@ html[data-direction="back"]::view-transition-new(root) {
   animation-name: lm-vt-new-back;
 }
 
+/* ── Native frame: swipe-back (native frame Task 12). The column follows the
+   finger; the shell ground under it shows a dimmed parallax strip. */
+html[data-swiping] [data-shell-column] {
+  box-shadow: calc(-1 * var(--space-4)) 0 var(--space-4) color-mix(in oklch, var(--md-shadow) 18%, transparent);
+}
+html[data-swiping] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: color-mix(in oklch, var(--md-scrim) calc((1 - var(--lm-swipe-progress, 0)) * 30%), transparent);
+  translate: calc((var(--lm-swipe-progress, 0) - 1) * var(--native-parallax) * 100%) 0;
+  pointer-events: none;
+}
+[dir="rtl"] html[data-swiping] [data-shell-column],
+html[dir="rtl"][data-swiping] [data-shell-column] {
+  box-shadow: var(--space-4) 0 var(--space-4) color-mix(in oklch, var(--md-shadow) 18%, transparent);
+}
+html[dir="rtl"][data-swiping] body::before {
+  translate: calc((1 - var(--lm-swipe-progress, 0)) * var(--native-parallax) * 100%) 0;
+}
+/* Pushes and pops: platform easing on the existing data-direction slides (brief §3.6). */
+:root[data-platform="android"]::view-transition-old(root),
+:root[data-platform="android"]::view-transition-new(root) {
+  animation-timing-function: var(--ease-m3-emphasized);
+}
+:root[data-platform="ios"]::view-transition-old(root),
+:root[data-platform="ios"]::view-transition-new(root) {
+  animation-timing-function: var(--ease-ios-spring);
+}
+html[data-direction="swipe"]::view-transition-old(root) {
+  animation: none;
+}
+html[data-direction="swipe"]::view-transition-new(root) {
+  animation: lm-swipe-in var(--dur-base) var(--ease-ios-spring) both;
+}
+html[dir="rtl"][data-direction="swipe"]::view-transition-new(root) {
+  animation-name: lm-swipe-in-rtl;
+}
+@keyframes lm-swipe-in {
+  from {
+    translate: calc(-1 * var(--native-parallax) * 100%) 0;
+  }
+}
+@keyframes lm-swipe-in-rtl {
+  from {
+    translate: calc(var(--native-parallax) * 100%) 0;
+  }
+}
+
 /* Exit phase for a dismissible overlay (`Modal`, `NavDrawer`; DESIGN.md §9.2
    "Exits"). Mirrors of `lm-in`/`lm-slide-in-start` above, played over
    `dur-fast`/`ease-in-soft` (§9.1: fast for dismissals) rather than the
@@ -2013,6 +2062,10 @@ html[data-direction="back"]::view-transition-new(root) {
      blanket `animation-duration` above collapses it, and its from-keyframe is not held. */
   .lm-press {
     transition: none;
+  }
+
+  html[data-swiping] body::before {
+    translate: none;
   }
 
   /* Native sheets: the slide and the iOS scale-back stop moving (Task 6). */

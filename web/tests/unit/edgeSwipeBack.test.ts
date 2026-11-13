@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { edgeSwipeDecision } from "@/lib/nav/edgeSwipeBack"
+import { consumeSwipeNav, edgeSwipeDecision, markSwipeNav } from "@/lib/nav/edgeSwipeBack"
 
 /*
  * Packet B3 (Task 4) · edge-swipe-back is standalone-only (a browser tab
@@ -46,5 +46,14 @@ describe("edgeSwipeDecision", () => {
 
   it("is none exactly at the 24px edge boundary's far side", () => {
     expect(edgeSwipeDecision({ ...BASE, startX: 25 })).toBe("none")
+  })
+})
+
+describe("the swipe navigation flag is one-shot (Task 12)", () => {
+  it("consumes once, then reads false", () => {
+    expect(consumeSwipeNav()).toBe(false)
+    markSwipeNav()
+    expect(consumeSwipeNav()).toBe(true)
+    expect(consumeSwipeNav()).toBe(false)
   })
 })

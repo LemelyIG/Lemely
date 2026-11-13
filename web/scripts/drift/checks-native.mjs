@@ -1345,3 +1345,90 @@ NATIVE_CHECKS.push(
     },
   },
 );
+
+// Native frame Task 12: interactive edge swipe-back. Standalone display on both platforms (D5);
+// browser tabs keep the platform's own gesture. Playwright cannot set display-mode, so an init
+// script fakes navigator.standalone and stubs the display-mode media query.
+const STANDALONE = () => {
+  Object.defineProperty(navigator, "standalone", { value: true })
+  const real = window.matchMedia.bind(window)
+  window.matchMedia = (q) =>
+    q.includes("display-mode: standalone")
+      ? { matches: true, media: q, addEventListener() {}, removeEventListener() {} }
+      : real(q)
+}
+NATIVE_CHECKS.push(
+  {
+    id: "native-ios-standalone-swipe-back",
+    platform: "ios",
+    app: { ...NATIVE_HOME, path: "/student", init: STANDALONE },
+    async run(page) {
+      await page.getByRole("link", { name: "Classes" }).first().click()
+      await page.waitForURL(/\/student\/classes/)
+      await page.mouse.move(4, 400)
+      await page.mouse.down()
+      await page.mouse.move(60, 402, { steps: 4 })
+      if (!(await page.evaluate(() => document.documentElement.hasAttribute("data-swiping"))))
+        throw new Error("drag did not start an interactive swipe")
+      await page.mouse.move(200, 404, { steps: 6 })
+      await page.mouse.up()
+      await page.waitForURL(/\/student$/)
+    },
+  },
+  {
+    id: "native-ios-swipe-short-cancels",
+    platform: "ios",
+    app: { ...NATIVE_HOME, path: "/student/classes", init: STANDALONE },
+    async run(page) {
+      await page.mouse.move(4, 400)
+      await page.mouse.down()
+      await page.mouse.move(60, 402, { steps: 20 })
+      await page.mouse.up()
+      await page.waitForTimeout(400)
+      if (!/\/student\/classes/.test(page.url())) throw new Error("a short slow swipe navigated")
+    },
+  },
+  {
+    id: "native-android-standalone-swipe-back",
+    platform: "android",
+    app: { ...NATIVE_HOME, path: "/student", init: STANDALONE },
+    async run(page) {
+      await page.getByRole("link", { name: "Classes" }).first().click()
+      await page.waitForURL(/\/student\/classes/)
+      await page.mouse.move(4, 400)
+      await page.mouse.down()
+      await page.mouse.move(60, 402, { steps: 4 })
+      if (!(await page.evaluate(() => document.documentElement.hasAttribute("data-swiping"))))
+        throw new Error("Android standalone did not start an interactive swipe (D5 keeps it)")
+      await page.mouse.move(250, 404, { steps: 6 })
+      await page.mouse.up()
+      await page.waitForURL(/\/student$/)
+    },
+  },
+  ...["ios", "android"].map((platform) => ({
+    id: `native-${platform}-browser-tab-no-swipe-back`,
+    platform,
+    // No STANDALONE init: a browser tab, where Safari's swipe and Chrome's back take over.
+    app: { ...NATIVE_HOME, path: "/student" },
+    async run(page) {
+      await page.getByRole("link", { name: "Classes" }).first().click()
+      await page.waitForURL(/\/student\/classes/)
+      await page.mouse.move(4, 400)
+      await page.mouse.down()
+      await page.mouse.move(250, 402, { steps: 6 })
+      const swiping = await page.evaluate(() => document.documentElement.hasAttribute("data-swiping"))
+      await page.mouse.up()
+      await page.waitForTimeout(400)
+      if (swiping || !/\/student\/classes/.test(page.url())) throw new Error("the in-app swipe-back ran in a browser tab")
+    },
+  })),
+  {
+    id: "native-ios-swipe-keeps-text-selectable",
+    platform: "ios",
+    app: { ...NATIVE_HOME, path: "/student/classes", init: STANDALONE },
+    async run(page) {
+      const sel = await page.evaluate(() => getComputedStyle(document.querySelector("main")).userSelect)
+      if (sel === "none") throw new Error("content lost text selection")
+    },
+  },
+);

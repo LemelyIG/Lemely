@@ -143,7 +143,7 @@ function json(route, body, status = 200) {
   return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) })
 }
 
-/** UA strings the app's resolver maps to each platform (src/lib/platform.ts). */
+/** UA strings the app's resolver maps to each platform (public/shell-init.js). */
 export const PLATFORM_UA = {
   ios: "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1",
   android: "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36",
@@ -176,6 +176,7 @@ export async function openApp(browser, { width, height, theme, app, platform }) 
     },
     [session, theme],
   )
+  if (app.init) await context.addInitScript(app.init)
   const page = await context.newPage()
   await page.clock.setFixedTime(NOW)
   // Registration order matters: Playwright tries the most recent route first.
