@@ -201,7 +201,7 @@ NATIVE_CHECKS.push(
       const title = await page.locator("header [data-shell-title]").boundingBox();
       const actions = header.locator(":is(a, button):visible");
       const n = await actions.count();
-      if (n !== 4) throw new Error(`teacher root shows ${n} actions, expected 4`);
+      if (n !== 3) throw new Error(`teacher root shows ${n} actions, expected 3 (Create left the bar)`);
       for (let i = 0; i < n; i++) {
         const box = await actions.nth(i).boundingBox();
         const overlaps =
@@ -534,4 +534,518 @@ NATIVE_CHECKS.push(
       },
     })),
   ),
+);
+
+/* ── Audit batch A (shell frame fixes). Each check is red on the tree before its fix. ── */
+
+const rgb = (page, prop, selector) =>
+  page.evaluate(([p, sel]) => getComputedStyle(document.querySelector(sel))[p], [prop, selector]);
+/** The computed colour a token resolves to, via a throwaway probe. */
+const tokenColour = (page, token) =>
+  page.evaluate((t) => {
+    const probe = document.createElement("i");
+    probe.style.backgroundColor = `var(${t})`;
+    document.body.appendChild(probe);
+    const c = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return c;
+  }, token);
+
+NATIVE_CHECKS.push(
+  // 1. Dark grouped surfaces.
+  ...["ios", "android"].flatMap((platform) =>
+    ["light", "dark"].map((theme) => ({
+      id: `native-${platform}-${theme}-grouped-surface`,
+      platform,
+      theme,
+      width: 390,
+      app: NATIVE_HOME,
+      async run(page) {
+        const card = await rgb(page, "backgroundColor", "main .lm-native-card");
+        const pageBg = await rgb(page, "backgroundColor", "[data-portal]");
+        const want = await tokenColour(
+          page,
+          theme === "dark" ? "--md-surface-container-high" : "--md-surface-container-lowest",
+        );
+        if (card !== want) throw new Error(`${theme} card ${card}, preview surface-card ${want}`);
+        if (card === pageBg) throw new Error(`${theme} card equals the page ground ${pageBg}`);
+        if (theme === "dark") {
+          const lum = (c) => c.match(/[\d.]+/g).slice(0, 3).reduce((a, b) => a + Number(b), 0);
+          if (lum(card) <= lum(pageBg)) throw new Error(`dark card ${card} is not lighter than the page ${pageBg}`);
+        }
+      },
+    })),
+  ),
+  // 2. Back control alignment.
+  ...["ios", "android"].map((platform) => ({
+    id: `native-${platform}-back-centred`,
+    platform,
+    width: 390,
+    app: { ...NATIVE_HOME, path: DETAIL_PATH },
+    async run(page) {
+      const align = await rgb(page, "alignItems", "header .lm-native-back");
+      if (align !== "center") throw new Error(`back align-items ${align}`);
+      const mid = await page.evaluate((plat) => {
+        const back = document.querySelector("header .lm-native-back");
+        const svg = back.querySelector(plat === "ios" ? ".lm-native-back-ios" : ".lm-native-back-md");
+        const r = svg.getBoundingClientRect();
+        const b = back.getBoundingClientRect();
+        const out = { svg: r.y + r.height / 2, back: b.y + b.height / 2 };
+        const label = back.querySelector(".lm-native-back-label");
+        if (plat === "ios") {
+          const l = label.getBoundingClientRect();
+          out.label = l.y + l.height / 2;
+          out.gap = getComputedStyle(back).columnGap;
+        }
+        return out;
+      }, platform);
+      if (Math.abs(mid.svg - mid.back) > 1) throw new Error(`glyph centre ${mid.svg} vs button ${mid.back}`);
+      if (platform === "ios") {
+        if (Math.abs(mid.svg - mid.label) > 1.5) throw new Error(`chevron ${mid.svg} vs label ${mid.label}`);
+        if (mid.gap !== "2px") throw new Error(`iOS chevron-label gap ${mid.gap}, expected 2px`);
+      }
+    },
+  })),
+  // 3. Heading hierarchy on roots.
+  ...["ios", "android"].flatMap((platform) =>
+    [
+      ["student", NATIVE_HOME],
+      ["teacher", NATIVE_TEACHER_HOME],
+    ].map(([who, app]) => ({
+      id: `native-${platform}-${who}-own-heading-steps-down`,
+      platform,
+      width: 390,
+      app,
+      async run(page) {
+        const h = await page.evaluate(() => {
+          const el = document.querySelector('main [data-page-heading="own"]');
+          const large = document.querySelector("[data-shell-large-title]");
+          return el && { fs: parseFloat(getComputedStyle(el).fontSize), large: parseFloat(getComputedStyle(large).fontSize), text: el.textContent };
+        });
+        if (!h) throw new Error("no own-text page heading on the root");
+        if (h.fs > 28) throw new Error(`"${h.text}" is ${h.fs}px, expected at most 28px`);
+        if (h.fs >= h.large) throw new Error(`own heading ${h.fs}px is not below the large title ${h.large}px`);
+      },
+    })),
+  ),
+  ...["ios", "android"].map((platform) => ({
+    id: `native-${platform}-section-heading-leaves-card`,
+    platform,
+    width: 390,
+    app: NATIVE_HOME,
+    async run(page) {
+      const r = await page.evaluate(() => {
+        const h = [...document.querySelectorAll("main h2")].find((e) => /Subjects this session/i.test(e.textContent));
+        if (!h) return null;
+        const s = getComputedStyle(h);
+        const big = [...document.querySelectorAll("main .lm-native-card h2")].filter((e) => parseFloat(getComputedStyle(e).fontSize) >= 28).length;
+        return { inCard: !!h.closest(".lm-native-card"), transform: s.textTransform, family: s.fontFamily, fs: parseFloat(s.fontSize), big };
+      });
+      if (!r) throw new Error("section heading not found");
+      if (r.inCard) throw new Error("section heading still sits inside its card");
+      if (r.transform !== "uppercase" || !/mono/i.test(r.family)) throw new Error(`section label style ${r.transform} / ${r.family}`);
+      if (r.big) throw new Error(`${r.big} display-size headings still inside native cards`);
+    },
+  })),
+  {
+    id: "native-other-section-heading-stays-in-card",
+    width: 390,
+    app: NATIVE_HOME,
+    async run(page) {
+      const inCard = await page.evaluate(() => {
+        const h = [...document.querySelectorAll("main h2")].find((e) => /Subjects this session/i.test(e.textContent));
+        return h && { inCard: !!h.closest(".lm-native-card"), fs: parseFloat(getComputedStyle(h).fontSize) };
+      });
+      if (!inCard?.inCard || inCard.fs !== 32) throw new Error(`desktop-style heading changed: ${JSON.stringify(inCard)}`);
+    },
+  },
+  // 4. Left/right safe areas.
+  ...["ios", "android"].map((platform) => ({
+    id: `native-${platform}-safe-area-inline`,
+    platform,
+    width: 390,
+    app: NATIVE_HOME,
+    async run(page) {
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send("Emulation.setSafeAreaInsetsOverride", { insets: { top: 0, bottom: 0, left: 40, right: 36 } });
+      await page.waitForTimeout(100);
+      const got = await page.evaluate(() => {
+        const pad = (sel) => {
+          const s = getComputedStyle(document.querySelector(sel));
+          return [parseFloat(s.paddingLeft), parseFloat(s.paddingRight)];
+        };
+        return { main: pad("main"), bar: pad("header[data-title-level]"), tabs: pad("nav.lm-native-tabbar"), large: pad("[data-shell-large-title]") };
+      });
+      for (const [name, [l, r]] of Object.entries(got)) {
+        if (l < 40 || r < 36) throw new Error(`${name} padding ${l}/${r} does not clear the 40/36 side insets`);
+      }
+    },
+  })),
+  // 5. iOS bar gap.
+  ...[["student", NATIVE_HOME], ["teacher", NATIVE_TEACHER_HOME]].map(([who, app]) => ({
+    id: `native-ios-${who}-bar-gap-zero-title-clear`,
+    platform: "ios",
+    width: 390,
+    app,
+    async run(page) {
+      const gap = await rgb(page, "columnGap", "header[data-title-level]");
+      if (gap !== "0px") throw new Error(`bar column-gap ${gap}, expected 0px`);
+      await page.evaluate(() => window.scrollTo(0, 100000));
+      await page.waitForFunction(() => document.querySelector("header[data-title-level]").dataset.collapsed === "true");
+      const r = await page.evaluate(() => {
+        const t = document.querySelector("header [data-shell-title]").getBoundingClientRect();
+        const first = [...document.querySelectorAll("header[data-title-level] :is(a, button)")]
+          .filter((e) => e.checkVisibility()).map((e) => e.getBoundingClientRect()).sort((a, b) => a.x - b.x)[0];
+        return { right: t.right, left: t.left, firstAction: first.x, width: innerWidth };
+      });
+      if (r.right > r.firstAction + 0.5) throw new Error(`title box ends at ${r.right}, first action starts at ${r.firstAction}`);
+      if (Math.abs((r.left + r.right) / 2 - r.width / 2) > 1) throw new Error(`collapsed title is not centred on screen (${r.left}-${r.right})`);
+    },
+  })),
+  // 6. Android back arrow colour.
+  {
+    id: "native-android-back-arrow-on-surface",
+    platform: "android",
+    width: 390,
+    app: { ...NATIVE_HOME, path: DETAIL_PATH },
+    async run(page) {
+      const back = await rgb(page, "color", "header .lm-native-back");
+      const want = await page.evaluate(() => {
+        const probe = document.createElement("i");
+        probe.style.color = "var(--md-on-surface)";
+        document.body.appendChild(probe);
+        const c = getComputedStyle(probe).color;
+        probe.remove();
+        return c;
+      });
+      if (back !== want) throw new Error(`back arrow ${back}, expected on-surface ${want}`);
+    },
+  },
+  // 15. Back label cap.
+  {
+    id: "native-ios-back-label-capped",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_HOME, path: DETAIL_PATH },
+    async run(page) {
+      const r = await page.evaluate(() => {
+        const label = document.querySelector("header .lm-native-back-label");
+        label.textContent = "A parent page with a very long title that must truncate";
+        const s = getComputedStyle(label);
+        return { w: label.getBoundingClientRect().width, max: s.maxWidth, overflow: s.textOverflow };
+      });
+      if (r.max !== "96px" || r.overflow !== "ellipsis" || r.w > 96.5) throw new Error(`back label ${JSON.stringify(r)}`);
+    },
+  },
+  // 7 and 8. Edge-to-edge containers and Android grouped content.
+  ...["ios", "android"].flatMap((platform) =>
+    [
+      ["student", NATIVE_HOME, ["Momentum", "Weakest threads"]],
+      ["teacher", NATIVE_TEACHER_HOME, ["What fills in as you add more"]],
+    ].map(([who, app, headings]) => ({
+      id: `native-${platform}-${who}-containers-are-native-cards`,
+      platform,
+      width: 390,
+      app,
+      async run(page) {
+        const res = await page.evaluate((titles) => {
+          return titles.map((t) => {
+            const h = [...document.querySelectorAll("main :is(h2, h3)")].find((e) => e.textContent.trim().startsWith(t));
+            const card = h?.closest(".lm-native-card");
+            const r = card?.getBoundingClientRect();
+            return { t, card: !!card, x: r && Math.round(r.x), w: r && Math.round(r.width), found: !!h };
+          });
+        }, headings);
+        for (const c of res) {
+          if (!c.found) throw new Error(`heading "${c.t}" not found`);
+          if (!c.card) throw new Error(`"${c.t}" container is not an lm-native-card`);
+          if (platform === "android" && (c.x !== 0 || c.w !== 390)) throw new Error(`"${c.t}" card is not full-bleed (${c.x}, ${c.w})`);
+          if (platform === "ios" && (c.x !== 16 || c.w !== 358)) throw new Error(`"${c.t}" card is not inset-grouped (${c.x}, ${c.w})`);
+        }
+        const steps = who === "teacher" ? await page.locator("main ol > li.lm-native-card").count() : 1;
+        if (!steps) throw new Error("teacher setup steps are not native cards");
+      },
+    })),
+  ),
+  {
+    id: "native-android-card-content-16px-no-dividers",
+    platform: "android",
+    width: 390,
+    app: NATIVE_HOME,
+    async run(page) {
+      const r = await page.evaluate(() => {
+        const rows = [...document.querySelectorAll("main .lm-native-card > .lm-native-card-row")];
+        const insets = rows.map((row) => Math.round(row.firstElementChild.getBoundingClientRect().left));
+        const borders = [...document.querySelectorAll("main .lm-native-card > *")]
+          .map((e) => getComputedStyle(e))
+          .filter((s) => parseFloat(s.borderTopWidth) > 0 || parseFloat(s.borderBottomWidth) > 0).length;
+        return { insets, borders, rows: rows.length };
+      });
+      if (!r.rows) throw new Error("no in-card rows found");
+      if (r.insets.some((x) => x !== 16)) throw new Error(`row content starts at ${r.insets} px, expected 16`);
+      if (r.borders) throw new Error(`${r.borders} in-card dividers remain on Android`);
+    },
+  },
+  // 9. Android tab label baseline.
+  {
+    id: "native-android-tab-labels-one-baseline",
+    platform: "android",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student" },
+    async run(page) {
+      const ys = await page.evaluate(() =>
+        [...document.querySelectorAll("nav.lm-native-tabbar .lm-native-tab-label")].map((e) => Math.round(e.getBoundingClientRect().bottom * 10) / 10),
+      );
+      if (new Set(ys).size !== 1) throw new Error(`tab labels sit at different baselines: ${ys}`);
+    },
+  },
+  // 10. Active-tab re-tap.
+  ...["ios", "android"].map((platform) => ({
+    id: `native-${platform}-tab-retap-drilled-scrolled-pops-back`,
+    platform,
+    width: 390,
+    app: { ...NATIVE_TEACHER_HOME, path: TAB_DRILL_PATH },
+    async run(page) {
+      await page.evaluate(() => {
+        document.body.style.minHeight = "3000px";
+        window.scrollTo(0, 600);
+      });
+      await page.waitForFunction(() => window.scrollY > 100);
+      await page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Classes" }).click();
+      await page.waitForURL(/\/teacher\/classes$/);
+      const dir = await page.evaluate(() => document.documentElement.dataset.direction);
+      if (dir !== "back") throw new Error(`pop to root reads as ${dir}, expected back`);
+    },
+  })),
+  {
+    id: "native-ios-tab-retap-at-root-scrolls-not-navigates",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_TEACHER_HOME, path: "/teacher/classes" },
+    async run(page) {
+      await page.evaluate(() => {
+        document.body.style.minHeight = "3000px";
+        window.scrollTo(0, 600);
+      });
+      await page.waitForFunction(() => window.scrollY > 100);
+      await page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Classes" }).click();
+      await page.waitForFunction(() => window.scrollY === 0);
+      if (new URL(page.url()).pathname !== "/teacher/classes") throw new Error("a tap at the root navigated");
+    },
+  },
+  // 11. Sheet drag from content.
+  {
+    id: "native-ios-sheet-drags-from-content",
+    platform: "ios",
+    width: 390,
+    app: NATIVE_TEACHER_HOME,
+    async run(page) {
+      const trigger = page.getByRole("button", { name: "Create" }).filter({ visible: true }).first();
+      await trigger.click();
+      const dialog = page.getByRole("dialog");
+      await dialog.waitFor();
+      const title = dialog.locator("h2");
+      const box = await title.boundingBox();
+      const x = box.x + box.width / 2;
+      // An upward move from the body is the body's scroll: the sheet must not follow.
+      await page.mouse.move(x, box.y + 4);
+      await page.mouse.down();
+      await page.mouse.move(x, box.y - 40, { steps: 4 });
+      if (await dialog.evaluate((el) => el.hasAttribute("data-dragging"))) throw new Error("an upward move dragged the sheet");
+      await page.mouse.up();
+      // A mouse drag across text selects it, and pressing on a selection starts the browser's own drag.
+      await page.evaluate(() => getSelection()?.removeAllRanges());
+      // A downward move from the body at scrollTop 0 drags it, with no transition lag, and a long one dismisses.
+      await page.mouse.move(x, box.y + 4);
+      await page.mouse.down();
+      await page.mouse.move(x, box.y + 4 + 70, { steps: 6 });
+      const mid = await dialog.evaluate((el) => ({ dragging: el.hasAttribute("data-dragging"), translate: el.style.translate }));
+      if (!mid.dragging) throw new Error("a downward move from the body did not start a drag");
+      const dy = parseFloat(mid.translate.split(" ")[1]);
+      if (!(dy > 50 && dy <= 70)) throw new Error(`sheet follows the finger by ${mid.translate}, expected about 64px`);
+      await page.mouse.move(x, box.y + 500, { steps: 8 });
+      await page.mouse.up();
+      await dialog.waitFor({ state: "detached" });
+    },
+  },
+);
+
+/** The routes a phone's tab bar already holds, per portal; More must not repeat them. */
+const TAB_TARGETS = {
+  student: ["/student", "/student/classes", "/student/profile", "/student/correct"],
+  teacher: ["/teacher", "/teacher/grading", "/teacher/review", "/teacher/classes"],
+};
+
+NATIVE_CHECKS.push(
+  // 12 and 17. More is a titled sheet of overflow destinations, with popup semantics.
+  ...["ios", "android"].flatMap((platform) =>
+    [
+      ["student", NATIVE_HOME],
+      ["teacher", NATIVE_TEACHER_HOME],
+    ].map(([who, app]) => ({
+      id: `native-${platform}-${who}-more-is-a-titled-sheet`,
+      platform,
+      width: 390,
+      app,
+      async run(page) {
+        // A CSS locator: an open dialog marks the page behind it aria-hidden, which hides the button from role queries.
+        const more = page.locator("nav.lm-native-tabbar button[aria-haspopup]");
+        if ((await more.getAttribute("aria-haspopup")) !== "dialog") throw new Error("More lacks aria-haspopup=dialog");
+        if ((await more.getAttribute("aria-expanded")) !== "false") throw new Error("More lacks aria-expanded=false when closed");
+        await more.click();
+        const dialog = page.getByRole("dialog", { name: "More" });
+        await dialog.waitFor();
+        if ((await more.getAttribute("aria-expanded")) !== "true") throw new Error("More is not aria-expanded=true while open");
+        if (!(await dialog.locator(".lm-sheet-grabber").count()) && !(await page.locator(".lm-sheet [role=dialog], [role=dialog].lm-sheet").count()))
+          throw new Error("More is not a bottom sheet");
+        const hrefs = await dialog.locator("a").evaluateAll((els) => els.map((e) => new URL(e.href).pathname));
+        if (!hrefs.length) throw new Error("More lists no destinations");
+        const dupes = hrefs.filter((h) => TAB_TARGETS[who].includes(h.replace(/\/$/, "")));
+        if (dupes.length) throw new Error(`More repeats tab bar destinations ${dupes}`);
+        await dialog.locator("a").first().click();
+        await dialog.waitFor({ state: "detached" });
+        if (new URL(page.url()).pathname !== hrefs[0]) throw new Error(`row went to ${page.url()}, not ${hrefs[0]}`);
+      },
+    })),
+  ),
+  {
+    id: "native-other-768-more-keeps-the-drawer",
+    width: 768,
+    app: NATIVE_HOME,
+    async run(page) {
+      const more = page.getByRole("navigation", { name: "Primary" }).getByRole("button", { name: "More" });
+      await more.click();
+      await page.getByRole("dialog").waitFor();
+      if (await page.locator(".lm-sheet").count()) throw new Error("tablet opened a bottom sheet");
+      if ((await more.getAttribute("aria-expanded")) !== "true") throw new Error("More is not aria-expanded while the drawer is open");
+    },
+  },
+  // 13. The bar's inline title is hidden from assistive technology.
+  {
+    id: "native-ios-bar-title-aria-hidden",
+    platform: "ios",
+    width: 390,
+    app: NATIVE_HOME,
+    async run(page) {
+      if ((await page.locator("header [data-shell-title]").getAttribute("aria-hidden")) !== "true")
+        throw new Error("the bar title is exposed twice with the page h1");
+    },
+  },
+  // 14. RTL badge.
+  {
+    id: "native-ios-tab-badge-follows-rtl",
+    platform: "ios",
+    width: 390,
+    app: NATIVE_TEACHER_HOME,
+    async run(page) {
+      const measure = () =>
+        page.evaluate(() => {
+          const badge = document.querySelector("nav.lm-native-tabbar [class*='bg-error']");
+          const icon = badge.closest(".lm-native-tab-icon");
+          const b = badge.getBoundingClientRect();
+          const i = icon.getBoundingClientRect();
+          return { badgeLeft: b.left, badgeRight: b.right, iconLeft: i.left, iconRight: i.right };
+        });
+      const ltr = await measure();
+      if (!(ltr.badgeRight > ltr.iconRight)) throw new Error(`LTR badge ${JSON.stringify(ltr)} is not at the end`);
+      await page.evaluate(() => (document.documentElement.dir = "rtl"));
+      const rtl = await measure();
+      if (!(rtl.badgeLeft < rtl.iconLeft)) throw new Error(`RTL badge ${JSON.stringify(rtl)} did not move to the end side`);
+    },
+  },
+  // 16. Teacher Create leaves the phone bar.
+  ...["ios", "android"].map((platform) => ({
+    id: `native-${platform}-teacher-create-leaves-the-bar`,
+    platform,
+    width: 390,
+    app: NATIVE_TEACHER_HOME,
+    async run(page) {
+      const inBar = await page.locator("header[data-title-level] :is(a, button)").evaluateAll((els) =>
+        els.filter((e) => e.checkVisibility()).map((e) => e.getAttribute("aria-label") || e.textContent.trim()),
+      );
+      if (inBar.some((n) => /^Create/.test(n))) throw new Error(`Create is still in the bar: ${inBar}`);
+      if (inBar.length > 3) throw new Error(`${inBar.length} trailing icons in the bar: ${inBar}`);
+      if (platform === "android") {
+        if (await page.locator(".lm-native-large-action").count()) throw new Error("Android renders the iOS large-title plus");
+        const fab = page.locator(".lm-native-fab");
+        if (!(await fab.isVisible())) throw new Error("no FAB on the teacher root");
+        const r = await page.evaluate(() => {
+          const f = document.querySelector(".lm-native-fab");
+          const t = document.querySelector("nav.lm-native-tabbar").getBoundingClientRect();
+          const b = f.getBoundingClientRect();
+          const probe = document.createElement("i");
+          probe.style.backgroundColor = "var(--md-primary-container)";
+          document.body.appendChild(probe);
+          const want = getComputedStyle(probe).backgroundColor;
+          probe.remove();
+          return { h: b.height, right: innerWidth - b.right, above: t.top - b.bottom, bg: getComputedStyle(f).backgroundColor, want, text: f.textContent.trim(), radius: getComputedStyle(f).borderRadius };
+        });
+        if (r.h !== 56) throw new Error(`FAB is ${r.h}px high, expected 56`);
+        if (r.text !== "Create") throw new Error(`extended FAB label "${r.text}"`);
+        if (Math.round(r.right) !== 16 || Math.round(r.above) !== 16) throw new Error(`FAB sits ${r.right}px from the end and ${r.above}px above the tab bar, expected 16 and 16`);
+        if (r.bg !== r.want) throw new Error(`FAB background ${r.bg}, expected primary container ${r.want}`);
+        await fab.click();
+      } else {
+        const plus = page.locator(".lm-native-large-action button");
+        if (!(await plus.isVisible())) throw new Error("no + in the large-title row");
+        const place = await page.evaluate(() => {
+          const p = document.querySelector(".lm-native-large-action button").getBoundingClientRect();
+          const l = document.querySelector("[data-shell-large-title]").getBoundingClientRect();
+          return { within: p.y + p.height / 2 > l.y && p.y + p.height / 2 < l.bottom, end: innerWidth - p.right, w: p.width };
+        });
+        if (!place.within) throw new Error("the + is not in the large-title row");
+        if (place.w !== 44) throw new Error(`the + is ${place.w}px wide, expected 44`);
+        await page.evaluate(() => window.scrollTo(0, 100000));
+        await page.waitForFunction(() => document.querySelector("header[data-title-level]").dataset.collapsed === "true");
+        if (await plus.isVisible()) throw new Error("the + stays after the large title collapses");
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await page.waitForFunction(() => document.querySelector("header[data-title-level]").dataset.collapsed === "false");
+        await plus.click();
+      }
+      const dialog = page.getByRole("dialog");
+      await dialog.waitFor();
+      const sheet = await page.evaluate((plat) => {
+        const d = document.querySelector("[role=dialog]");
+        const h = d.querySelector("h2");
+        const s = getComputedStyle(h);
+        const eyebrow = [...d.querySelectorAll("p")].filter((p) => p.checkVisibility() && /^create$/i.test(p.textContent.trim())).length;
+        return { fs: s.fontSize, fw: s.fontWeight, eyebrow, text: h.textContent };
+      }, platform);
+      if (sheet.eyebrow) throw new Error("the mono CREATE eyebrow still shows on a native sheet");
+      const want = platform === "ios" ? ["17px", "600"] : ["22px", "400"];
+      if (sheet.fs !== want[0] || sheet.fw !== want[1]) throw new Error(`sheet title ${sheet.fs}/${sheet.fw}, expected ${want}`);
+      await page.keyboard.press("Escape");
+      await dialog.waitFor({ state: "detached" });
+      const focused = await page.evaluate(() => document.activeElement?.getAttribute("aria-label") || document.activeElement?.textContent?.trim());
+      if (!/^Create/.test(focused ?? "")) throw new Error(`focus returned to "${focused}", not the opener`);
+    },
+  })),
+  {
+    id: "native-ios-teacher-detail-has-no-create",
+    platform: "ios",
+    width: 390,
+    app: NATIVE_TEACHER_DETAIL,
+    async run(page) {
+      if (await page.locator(".lm-native-large-action, .lm-native-fab").count()) throw new Error("a detail page offers Create");
+    },
+  },
+  {
+    id: "native-android-student-has-no-fab",
+    platform: "android",
+    width: 390,
+    app: NATIVE_HOME,
+    async run(page) {
+      if (await page.locator(".lm-native-fab").count()) throw new Error("the student root has a FAB");
+    },
+  },
+  {
+    id: "native-other-desktop-keeps-create-in-bar",
+    width: 1440,
+    app: NATIVE_TEACHER_HOME,
+    async run(page) {
+      const create = page.locator("header[data-title-level]").getByRole("button", { name: "Create" });
+      if (!(await create.isVisible())) throw new Error("desktop lost the bar's Create button");
+      if (await page.locator(".lm-native-fab").isVisible()) throw new Error("desktop shows the FAB");
+    },
+  },
 );
