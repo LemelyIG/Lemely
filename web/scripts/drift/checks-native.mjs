@@ -478,12 +478,29 @@ export const STUDENT_TAB_PATHS = ["/student", "/student/classes", "/student/prof
 /** The `to` of each teacher bottom tab (TEACHER_BOTTOM_TABS in portals/teacher/index.tsx). */
 export const TEACHER_TAB_PATHS = ["/teacher", "/teacher/grading", "/teacher/review", "/teacher/classes"];
 
+/* Repeating screens left out because the mocks never reach their PageHeading (it renders only
+ * after data the mocks do not serve, so the route would pass without checking anything):
+ * student /subject/:code, /tutor-access, /recently-deleted; teacher /quizzes, /tutoring,
+ * /tutoring/preview, /tutoring/profile, /tutoring/availability, /at-risk, /schemes,
+ * /announcements, /deleted. /student/tutors and the tab roots stay as before. */
 /** Tab roots of both portals plus the detail paths other checks use. Add a route
  * here when a screen's heading changes; skip only routes the mocks cannot serve,
  * with the reason in a comment. */
 const HEADING_ROUTES = [
-  ...[...STUDENT_TAB_PATHS, DETAIL_PATH, "/student/tutors"].map((path) => ({ ...NATIVE_HOME, path })),
-  ...[...TEACHER_TAB_PATHS, TAB_DRILL_PATH].map((path) => ({ ...NATIVE_TEACHER_HOME, path })),
+  ...[
+    ...STUDENT_TAB_PATHS,
+    DETAIL_PATH,
+    "/student/tutors",
+    "/student/notifications",
+    "/student/sessions",
+    "/student/correct",
+  ].map((path) => ({ ...NATIVE_HOME, path })),
+  ...[
+    ...TEACHER_TAB_PATHS,
+    TAB_DRILL_PATH,
+    "/teacher/tutoring/students",
+    "/teacher/notifications",
+  ].map((path) => ({ ...NATIVE_TEACHER_HOME, path })),
 ];
 
 NATIVE_CHECKS.push(
@@ -497,6 +514,9 @@ NATIVE_CHECKS.push(
         const h1s = await page.getByRole("heading", { level: 1 }).count();
         if (h1s !== 1)
           throw new Error(`${app.path}: ${h1s} level-1 headings reach assistive technology, expected 1`);
+        const mainH1s = await page.locator("main").getByRole("heading", { level: 1 }).count();
+        if (mainH1s !== 1)
+          throw new Error(`${app.path}: ${mainH1s} level-1 headings inside <main>, expected 1`);
         const { title, headings } = await page.evaluate(() => ({
           title: document.querySelector("[data-shell-title]")?.textContent ?? "",
           headings: [...document.querySelectorAll("main :is(h1, h2, [role=heading])")]
