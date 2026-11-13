@@ -816,6 +816,42 @@ not delete storage objects.
 
 Rollback across the release is in §5.7.
 
+### 5.11 Runbook: a payment held for a foreign integration
+
+Alert: log event `paymob_unexpected_integration` (`alert=True`, `path` is `callback` or `inquiry`). A
+Paymob transaction carried a genuine signature and a real order, but its signed `integration_id` is not
+the card, Apple Pay or MOTO id in config (a payment link, a dashboard test, or an id we forgot to
+configure). Nothing was settled: the payment stays `created`/`pending` and reconcile stops polling it.
+
+1. Identify the payment from the alert's `payment_id` (and `txn_id` / order id if present):
+
+   ```sql
+   SELECT id, status, amount_minor, currency, paymob_order_id, paymob_txn_id,
+          next_reconcile_at, created_at
+   FROM payments
+   WHERE id = '<payment_id>' OR paymob_order_id = <order_id>;
+
+   SELECT dedupe_key, created_at FROM paymob_events
+   WHERE dedupe_key LIKE 'rejected_integration:%' ORDER BY created_at DESC LIMIT 20;
+   ```
+
+2. If the `integration_id` is legitimately ours, add it to config
+   (`LEMELY_PAYMOB__CARD_INTEGRATION_ID`, `..._MOTO_INTEGRATION_ID` or
+   `..._APPLE_PAY_INTEGRATION_ID`), redeploy, then hand the payment back to reconcile so it settles
+   through the normal guarded path:
+
+   ```sql
+   UPDATE payments SET next_reconcile_at = now()
+   WHERE id = '<payment_id>' AND status IN ('created', 'pending');
+   ```
+
+3. Otherwise refund the transaction in the Paymob dashboard, then mark the payment failed:
+
+   ```sql
+   UPDATE payments SET status = 'failed', next_reconcile_at = NULL
+   WHERE id = '<payment_id>' AND status IN ('created', 'pending');
+   ```
+
 ## 6. Deployment checklist
 
 Copy this. Every line maps to something above. It's written for the generic

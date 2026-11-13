@@ -874,6 +874,7 @@ class BillingService:
             # callback carries the state (skill audit I1, review I1).
             log.error(
                 "paymob_unexpected_integration",
+                alert=True,
                 path=source,
                 payment_id=str(payment.id),
                 txn_id=txn_id,

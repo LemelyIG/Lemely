@@ -996,6 +996,7 @@ def test_a_foreign_integration_transaction_is_not_paid_by_the_callback_nor_by_re
     (entry,) = [e for e in logs if e["event"] == "paymob_unexpected_integration"]
     assert entry["log_level"] == "error"
     assert entry["path"] == "inquiry"
+    assert entry["alert"] is True
     assert entry["payment_id"] == str(pid)
     payment = _payment(sm, pid)
     assert payment.status is PaymentStatus.created  # open, for manual review: never paid

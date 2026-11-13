@@ -1061,6 +1061,7 @@ def test_a_callback_from_a_foreign_integration_settles_nothing(
     assert _levels(logs, "paymob_unexpected_integration") == ["error"]
     (entry,) = [e for e in logs if e["event"] == "paymob_unexpected_integration"]
     assert entry["path"] == "callback"
+    assert entry["alert"] is True
     assert _payment(sm, pid).status is PaymentStatus.created
     assert _grants(sm, pid) == []
     # The audit row does not use up the key the genuine callback needs.
