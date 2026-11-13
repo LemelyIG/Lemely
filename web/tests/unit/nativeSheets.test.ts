@@ -163,9 +163,32 @@ describe("shell panels on the native frame (Task 8)", () => {
   })
   it("the native settings sheet drops the safe-area top padding; desktop keeps its dialog", () => {
     const src = read("portals/settings/SettingsModal.tsx")
-    const nativeBranch = src.slice(src.indexOf("if (native) {"), src.indexOf("  return createPortal(", src.indexOf("if (native) {") + 200))
+    const nativeStart = src.indexOf("if (native) {")
+    const desktopStart = src.indexOf('className="fixed inset-0 z-modal flex', nativeStart)
+    expect(nativeStart).toBeGreaterThan(-1)
+    expect(desktopStart).toBeGreaterThan(nativeStart)
+    const nativeBranch = src.slice(nativeStart, desktopStart)
     expect(nativeBranch).not.toContain("safe-area-inset-top")
     expect(src).toContain("pt-[max(env(safe-area-inset-top),1rem)]")
+  })
+  it("sheet rows navigate first; the sheet closes when the location changes (Task 8 fix round 1)", () => {
+    const sheet = read("components/shell/PanelSheet.tsx")
+    expect(sheet).toContain("useLocation()")
+    expect(sheet).toMatch(/\[location\.key, location\.state\]/)
+    expect(sheet).toContain("lemelyDialog")
+    for (const file of ["components/shell/NotificationsPanel.tsx", "components/shell/AccountPanel.tsx", "components/ui/list-group.tsx"]) {
+      const src = read(file)
+      expect(src, `${file} must not close the sheet from a row`).not.toContain("onNavigate")
+      expect(src).not.toMatch(/\bclose\(\)/)
+    }
+  })
+  it("native sheets share the dialog scrim: the Radix sheet agrees with Modal, desktop keeps bg-scrim", () => {
+    expect(read("components/ui/sheet.tsx")).toMatch(/bg-scrim native:bg-scrim-dialog/)
+    expect(read("components/ui/modal.tsx")).toContain("bg-scrim-dialog")
+  })
+  it("a notification title clamps at two lines in the sheet, like the desktop panel", () => {
+    expect(read("components/shell/NotificationsPanel.tsx")).toContain("titleLines={2}")
+    expect(read("components/ui/list-group.tsx")).toContain('titleLines === 2 ? "line-clamp-2" : "truncate"')
   })
   it("the Create sheet keeps its 6px eyebrow-to-title gap on native (the native surface drops SHEET_SURFACE)", () => {
     expect(read("components/shell/TopBarSheets.tsx")).toContain("native:mb-1.5")

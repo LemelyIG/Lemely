@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E3 S4 R3 V3 */
 import type { ReactNode } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { DropdownMenu } from "radix-ui"
@@ -90,13 +91,13 @@ export function AccountPanel({ links, detail, triggerClassName }: AccountPanelPr
   const trigger = <ShellAvatar name={name} src={data.avatarUrl} />
   return native ? (
     <PanelSheet triggerLabel={label} triggerClassName={cn(SHELL_ICON_BUTTON, triggerClassName)} trigger={trigger} title="Account">
-      {(close) => (
-        <>
+      {() => (
+        <div className="flex flex-col gap-3">
           <Identity name={name} email={data.email} detail={detail} avatarUrl={data.avatarUrl} sheet />
           <ListGroup>
             {links.map((link) =>
               link.href ? (
-                <ListRow key={link.id} leading={link.icon} title={link.label} subtitle={link.description} href={link.href} onNavigate={close} />
+                <ListRow key={link.id} leading={link.icon} title={link.label} subtitle={link.description} href={link.href} />
               ) : (
                 <ListRow
                   key={link.id}
@@ -105,7 +106,7 @@ export function AccountPanel({ links, detail, triggerClassName }: AccountPanelPr
                   subtitle={link.description}
                   to={link.to ?? "/"}
                   state={link.overlay ? overlayState : undefined}
-                  onNavigate={close}
+                  viewTransition={false}
                 />
               ),
             )}
@@ -114,13 +115,10 @@ export function AccountPanel({ links, detail, triggerClassName }: AccountPanelPr
             <ListRow
               leading={<ShellIcon name="out" />}
               title="Sign out"
-              onClick={() => {
-                close()
-                signOut()
-              }}
+              onClick={signOut}
             />
           </ListGroup>
-        </>
+        </div>
       )}
     </PanelSheet>
   ) : (

@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R3 V3 */
 import type { ReactNode } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { DropdownMenu } from "radix-ui"
@@ -71,18 +72,25 @@ function NotificationTime({ notification, unread }: { notification: Notification
 
 type RowProps = { notification: Notification } & Pick<PanelProps, "destinationFor" | "iconFor" | "inboxTo">
 
-function MenuRow({ notification, destinationFor, iconFor, inboxTo }: RowProps) {
+/** Marks a row read, then goes to where it points. The menu closes itself on select; the sheet closes when the location changes. */
+function useOpenNotification({ notification, destinationFor, inboxTo }: RowProps): { unread: boolean; open: () => void } {
   const navigate = useNavigate()
   const markRead = useMarkNotificationRead()
   const unread = notification.readAt === null
+  return {
+    unread,
+    open: () => {
+      if (unread) markRead.mutate(notification.notificationId)
+      void navigate(destinationFor(notification) ?? inboxTo)
+    },
+  }
+}
+
+function MenuRow(props: RowProps) {
+  const { notification, iconFor } = props
+  const { unread, open } = useOpenNotification(props)
   return (
-    <DropdownMenu.Item
-      className={ITEM}
-      onSelect={() => {
-        if (unread) markRead.mutate(notification.notificationId)
-        void navigate(destinationFor(notification) ?? inboxTo)
-      }}
-    >
+    <DropdownMenu.Item className={ITEM} onSelect={open}>
       <NotificationIcon icon={iconFor(notification.type)} />
       <span className="flex min-w-0 flex-col">
         <b className="line-clamp-2 font-bold text-on-surface [text-wrap:pretty]">
@@ -97,33 +105,29 @@ function MenuRow({ notification, destinationFor, iconFor, inboxTo }: RowProps) {
   )
 }
 
-/** The same row in the native sheet: a grouped-list row, closing the sheet as it navigates. */
-function SheetRow({ notification, destinationFor, iconFor, inboxTo, onNavigate }: RowProps & { onNavigate: () => void }) {
-  const navigate = useNavigate()
-  const markRead = useMarkNotificationRead()
-  const unread = notification.readAt === null
+/** The same row in the native sheet: a grouped-list row that navigates and leaves the sheet to close on arrival. */
+function SheetRow(props: RowProps) {
+  const { notification, iconFor } = props
+  const { unread, open } = useOpenNotification(props)
   return (
     <ListRow
       leading={<NotificationIcon icon={iconFor(notification.type)} />}
       title={<NotificationTitle notification={notification} unread={unread} />}
       subtitle={notification.body || undefined}
+      titleLines={2}
       trailing={<NotificationTime notification={notification} unread={unread} />}
-      onClick={() => {
-        if (unread) markRead.mutate(notification.notificationId)
-        onNavigate()
-        void navigate(destinationFor(notification) ?? inboxTo)
-      }}
+      onClick={open}
     />
   )
 }
 
 /**
  * The panel's content, one body for two frames. Mounts only while the panel
- * is open, so the inbox is fetched on first open. `onNavigate` is set in the
- * native sheet (its rows are list rows that close the sheet); without it the
- * body is the dropdown menu's, and its rows are menu items.
+ * is open, so the inbox is fetched on first open. `sheet` is set in the
+ * native sheet (its rows are list rows); without it the body is the dropdown
+ * menu's, and its rows are menu items.
  */
-function NotificationsBody({
+function NotificationsContent({
   destinationFor,
   iconFor,
   inboxTo,
@@ -131,14 +135,13 @@ function NotificationsBody({
   emptyMessage,
   errorHeading,
   previewLimit,
-  onNavigate,
-}: PanelProps & { onNavigate?: () => void }) {
+  sheet,
+}: PanelProps & { sheet?: boolean }) {
   const query = useNotifications()
   const markAll = useMarkAllNotificationsRead()
   const page = query.data
   const hasRows = Boolean(page && page.notifications.length > 0)
   const unreadRows = page ? unreadCountOf(page) : 0
-  const sheet = onNavigate !== undefined
   const rows = page ? page.notifications.slice(0, previewLimit ?? 4) : []
   return (
     <>
@@ -180,10 +183,10 @@ function NotificationsBody({
       ) : !hasRows ? (
         <p className="px-2 pt-2 pb-3 text-(length:--fs-body-sm) leading-normal text-on-surface-variant">{emptyMessage}</p>
       ) : (
-        onNavigate ? (
+        sheet ? (
           <ListGroup>
             {rows.map((n) => (
-              <SheetRow key={n.notificationId} notification={n} destinationFor={destinationFor} iconFor={iconFor} inboxTo={inboxTo} onNavigate={onNavigate} />
+              <SheetRow key={n.notificationId} notification={n} destinationFor={destinationFor} iconFor={iconFor} inboxTo={inboxTo} />
             ))}
           </ListGroup>
         ) : (
@@ -194,10 +197,10 @@ function NotificationsBody({
           </div>
         )
       )}
-      {onNavigate ? (
+      {sheet ? (
         <ListGroup>
           {footerLinks.map((link) => (
-            <ListRow key={link.to} title={link.label} to={link.to} onNavigate={onNavigate} />
+            <ListRow key={link.to} title={link.label} to={link.to} viewTransition={false} />
           ))}
         </ListGroup>
       ) : (
@@ -212,6 +215,17 @@ function NotificationsBody({
         </div>
       )}
     </>
+  )
+}
+
+/** In the sheet the header row and the two groups stack with a gap; in the menu the content keeps its own spacing. */
+function NotificationsBody(props: PanelProps & { sheet?: boolean }) {
+  return props.sheet ? (
+    <div className="flex flex-col gap-3">
+      <NotificationsContent {...props} />
+    </div>
+  ) : (
+    <NotificationsContent {...props} />
   )
 }
 
@@ -237,7 +251,7 @@ export function NotificationsPanel({ unread, triggerClassName, ...panel }: Notif
   )
   return native ? (
     <PanelSheet triggerLabel={notificationsTriggerLabel(unread)} triggerClassName={triggerClassName} trigger={trigger} title="Notifications">
-      {(close) => <NotificationsBody {...panel} onNavigate={close} />}
+      {() => <NotificationsBody {...panel} sheet />}
     </PanelSheet>
   ) : (
     <DropdownMenu.Root modal={false}>

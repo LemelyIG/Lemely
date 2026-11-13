@@ -1997,3 +1997,67 @@ NATIVE_CHECKS.push(
     },
   },
 )
+
+// A row tap navigates first, and the sheet closes when the location changes. Closing first made
+// useDialogHistory unwind with navigate(-1) while the URL was still the opening page, and with a lazy
+// route or reduced motion that pop could land before the destination's push, so the tap went nowhere.
+// Every lazy chunk requested after load is held back, so the destination is always slower than the close.
+const SHEET_NAV_CASES = [
+  {
+    id: "bell-row",
+    to: "/student/announcements",
+    async open(page) {
+      await page.getByRole("button", { name: /^Notifications/ }).click()
+      const dialog = page.getByRole("dialog", { name: "Notifications" })
+      await dialog.waitFor()
+      return { dialog, row: dialog.getByRole("button", { name: /Physics mock moved/ }) }
+    },
+  },
+  {
+    id: "bell-footer",
+    to: "/student/notifications",
+    async open(page) {
+      await page.getByRole("button", { name: /^Notifications/ }).click()
+      const dialog = page.getByRole("dialog", { name: "Notifications" })
+      await dialog.waitFor()
+      return { dialog, row: dialog.getByRole("link", { name: "All notifications" }) }
+    },
+  },
+  {
+    id: "account-row",
+    to: "/student/parents",
+    async open(page) {
+      await page.getByRole("button", { name: /^Your profile and account/ }).click()
+      const dialog = page.getByRole("dialog", { name: "Account" })
+      await dialog.waitFor()
+      return { dialog, row: dialog.getByRole("link", { name: "Your parents" }) }
+    },
+  },
+]
+
+NATIVE_CHECKS.push(
+  ...SHEET_NAV_CASES.flatMap((c) =>
+    ["reduce", "no-preference"].map((motion) => ({
+      id: `native-ios-sheet-nav-${c.id}-${motion === "reduce" ? "reduced-motion" : "motion"}`,
+      platform: "ios",
+      width: 390,
+      app: NATIVE_HOME,
+      async run(page) {
+        await page.emulateMedia({ reducedMotion: motion })
+        await page.route(/\/assets\/[^/]+\.js(\?|$)/, async (route) => {
+          await new Promise((resolve) => setTimeout(resolve, 600))
+          await route.continue()
+        })
+        const { dialog, row } = await c.open(page)
+        await row.click()
+        await page.waitForURL((url) => url.pathname === c.to, { timeout: 8000 })
+        await dialog.waitFor({ state: "detached" })
+        await page.waitForTimeout(400)
+        if (new URL(page.url()).pathname !== c.to) throw new Error(`the tap went nowhere: ${new URL(page.url()).pathname}`)
+        await page.goBack()
+        await page.waitForURL((url) => url.pathname === "/student", { timeout: 5000 })
+        if ((await page.getByRole("dialog").count()) !== 0) throw new Error("a dialog came back after Back")
+      },
+    })),
+  ),
+)
