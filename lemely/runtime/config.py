@@ -1423,6 +1423,12 @@ class PaymobSettings(BaseModel):
     notification_base_url: AbsoluteOrigin = "https://lemelyig.com"
     redirection_base_url: AbsoluteOrigin = "https://lemelyig.com"
     timeout_seconds: float = Field(default=20.0, gt=0)
+    # Whether Paymob's ``PUT subscriptions/{id}`` can change ``amount_cents`` on a
+    # ``use_transaction_amount=true`` plan (spec section 10 question 7, sandbox S14). When
+    # false, upgrades are refused, seat reductions that need a lower amount are refused, and
+    # extra seats are charged at each renewal by Phase 06's fallback job (index R19). Default
+    # true until the sandbox answers.
+    subscription_amount_updatable: bool = True
     # Test and live share one base URL, so the mode comes only from the keys and Integration
     # IDs. ``deploy.yml`` sets this for production alone: a production start on test keys
     # would sell real credits for test cards (skill audit I2).

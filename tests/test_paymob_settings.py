@@ -320,3 +320,18 @@ def test_key_mode_of_an_unreadable_key_follows_expect_live() -> None:
     assert _paymob(secret_key="sk").key_mode == "test"
     assert _paymob(secret_key="sk", expect_live=True).key_mode == "live"
     assert _paymob().key_mode == "test"
+
+
+def test_subscription_amount_updatable_defaults_to_true() -> None:
+    """Default true until sandbox S14 answers whether Paymob accepts amount PUTs."""
+    assert PaymobSettings().subscription_amount_updatable is True
+
+
+def test_subscription_amount_updatable_can_be_turned_off() -> None:
+    paymob = PaymobSettings.model_validate({"subscription_amount_updatable": False})
+    assert paymob.subscription_amount_updatable is False
+
+
+def test_subscription_amount_updatable_reads_from_the_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LEMELY_PAYMOB__SUBSCRIPTION_AMOUNT_UPDATABLE", "false")
+    assert Settings().paymob.subscription_amount_updatable is False

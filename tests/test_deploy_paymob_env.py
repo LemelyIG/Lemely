@@ -27,8 +27,15 @@ _VARIABLES = {
 }
 #: Fields that keep their code default in every environment. ``expect_live`` stays off until
 #: live keys are installed; then set ``LEMELY_PAYMOB__EXPECT_LIVE=true`` for production (see
-#: the go-live checklist, L1).
-_DEFAULTED = {"api_base", "checkout_base", "timeout_seconds", "expect_live"}
+#: the go-live checklist, L1). ``subscription_amount_updatable`` defaults to true everywhere
+#: until sandbox S14 answers R19; set the env var only if Paymob refuses amount PUTs.
+_DEFAULTED = {
+    "api_base",
+    "checkout_base",
+    "timeout_seconds",
+    "expect_live",
+    "subscription_amount_updatable",
+}
 
 
 def _env_vars() -> dict[str, str]:
