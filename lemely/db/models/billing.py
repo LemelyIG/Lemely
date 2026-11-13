@@ -20,13 +20,20 @@ from lemely.db.base import Base
 from lemely.db.models.enums import PlanInterval, SubscriptionStatus, TimestampMixin
 
 #: The statuses ``uq_subscriptions_one_live_per_user`` allows at most one of, per
-#: user, among paid-path rows (spec §4.3; index R8). Phase 05 imports this and adds
-#: ``PLAN_LIVE_STATUSES`` beside it.
+#: user, among paid-path rows (spec §4.3; index R8). A pending checkout counts: it
+#: holds the user's one live slot until it is paid or superseded.
 LIVE_SUBSCRIPTION_STATUSES: Final = (
     SubscriptionStatus.pending_first_payment,
     SubscriptionStatus.active,
     SubscriptionStatus.past_due,
 )
+
+#: The statuses in which a plan is in force: access, allowances, teacher seat allowances.
+#: ``past_due`` is the 3-day grace after a failed renewal (spec §2.6). A subset of
+#: ``LIVE_SUBSCRIPTION_STATUSES`` (a pending checkout is not a plan in force), and equal to
+#: ``teacher_team_repo.LIVE_PLAN_STATUSES``, which ``tests/test_migration_subscription_periods.py``
+#: pins.
+PLAN_LIVE_STATUSES: Final = (SubscriptionStatus.active, SubscriptionStatus.past_due)
 
 #: Compares the enum itself: ``status::text`` is only STABLE, and Postgres rejects a
 #: non-IMMUTABLE function in an index predicate. Migration 0053 therefore commits its
@@ -214,9 +221,54 @@ class Subscription(TimestampMixin, Base):
     )
     #: Optimistic-lock counter for webhook races; Phase 05 decides its use.
     version: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.literal(1))
+    paymob_amount_minor: Mapped[int | None] = mapped_column(sa.BigInteger, nullable=True)
+    """The renewal amount Lemely last set at Paymob: the first payment's amount, then each PUT.
+    The next renewal charge must equal it (spec §6 mismatch rule)."""
+    paymob_cancelled_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    """When the Paymob subscription was cancelled; ``None`` while Paymob may still charge."""
 
     plan_tier: Mapped[PlanTier] = relationship(
         "PlanTier", back_populates="subscriptions", foreign_keys=[plan_tier_id]
+    )
+
+
+class SubscriptionPeriod(TimestampMixin, Base):
+    """One paid period of a :class:`Subscription` (spec §4.3).
+
+    Unique ``(subscription_id, period_start)`` guarantees one allowance grant per period, so a
+    duplicate renewal webhook is harmless. ``payment_id`` is unique: one payment pays for one
+    period at most.
+    """
+
+    __tablename__ = "subscription_periods"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "subscription_id",
+            "period_start",
+            name="uq_subscription_periods_subscription_id_period_start",
+        ),
+        sa.CheckConstraint("period_end > period_start", name="period_order"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=sa.text("gen_random_uuid()"),
+    )
+    subscription_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        sa.ForeignKey("subscriptions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    period_start: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    payment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        sa.ForeignKey("payments.id", ondelete="RESTRICT"),
+        nullable=True,
+        unique=True,
     )
 
 
@@ -366,6 +418,7 @@ class SavedCard(TimestampMixin, Base):
 
 __all__ = [
     "LIVE_SUBSCRIPTION_STATUSES",
+    "PLAN_LIVE_STATUSES",
     "CreditPack",
     "Payment",
     "PaymentPurpose",
@@ -376,4 +429,5 @@ __all__ = [
     "PlanTier",
     "SavedCard",
     "Subscription",
+    "SubscriptionPeriod",
 ]

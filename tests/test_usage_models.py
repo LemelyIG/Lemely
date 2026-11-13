@@ -92,12 +92,13 @@ def test_db_enums_mirror_the_core_vocabularies() -> None:
     assert {m.value for m in EstimatorInputKind} == ESTIMATOR_INPUT_KINDS
 
 
-def test_payment_and_teacher_member_have_their_foreign_keys_and_later_phase_columns_are_plain() -> (
-    None
-):
+def test_payment_teacher_member_and_subscription_period_have_their_foreign_keys() -> None:
     grants = Base.metadata.tables["usage_grants"]
+    # ``subscription_period_id`` gained its foreign key in migration 0055.
     assert grants.c["subscription_period_id"].nullable
-    assert not grants.c["subscription_period_id"].foreign_keys
+    period_fks = grants.c["subscription_period_id"].foreign_keys
+    assert {fk.target_fullname for fk in period_fks} == {"subscription_periods.id"}
+    assert {fk.ondelete for fk in period_fks} == {"RESTRICT"}
     # ``teacher_member_id`` gained its foreign key in migration 0054.
     assert grants.c["teacher_member_id"].nullable
     member_fks = grants.c["teacher_member_id"].foreign_keys

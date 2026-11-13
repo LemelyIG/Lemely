@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from lemely.db.admin_repo import (
     PlatformAdminService,
     SubscriptionAlreadyDecidedError,
+    SubscriptionConflictError,
     SubscriptionNotFoundError,
 )
 from lemely.db.base import Base
@@ -171,11 +172,16 @@ def _subscription(
     *,
     status: SubscriptionStatus = SubscriptionStatus.inactive,
     created_at: datetime | None = None,
+    payer_id: uuid.UUID | None = None,
 ) -> uuid.UUID:
     subscription_id = uuid.uuid4()
     with sm.begin() as session:
         subscription = Subscription(
-            id=subscription_id, user_id=user_id, plan_tier_id=plan_id, status=status
+            id=subscription_id,
+            user_id=user_id,
+            plan_tier_id=plan_id,
+            status=status,
+            payer_user_id=payer_id,
         )
         if created_at is not None:
             subscription.created_at = created_at
@@ -542,3 +548,74 @@ def test_recent_failed_uploads_are_listed_for_triage(
 
     assert health.recent_failed_uploads == [failed]
     assert health.uploads_by_status["failed"] == 1
+
+
+# ── Manual activation beside Paymob subscriptions (billing Phase 05) ─────────
+
+
+@pytest.mark.parametrize(
+    ("status", "paid"),
+    [
+        (SubscriptionStatus.active, True),
+        (SubscriptionStatus.past_due, True),
+        (SubscriptionStatus.pending_first_payment, True),
+        (SubscriptionStatus.active, False),  # another complimentary plan
+    ],
+)
+def test_activation_is_refused_while_the_user_has_a_live_subscription(
+    pg_sessionmaker: sessionmaker[Session], status: SubscriptionStatus, paid: bool
+) -> None:
+    plan = _plan(pg_sessionmaker)
+    user = _user(pg_sessionmaker, Role.student)
+    _subscription(pg_sessionmaker, user, plan, status=status, payer_id=user if paid else None)
+    queued = _subscription(pg_sessionmaker, user, plan)
+
+    with pytest.raises(SubscriptionConflictError):
+        PlatformAdminService(pg_sessionmaker).decide_activation(queued, activate=True, note="comp")
+
+    with pg_sessionmaker() as session:
+        row = session.get(Subscription, queued)
+        assert row is not None
+        assert row.status is SubscriptionStatus.inactive
+        assert row.is_manually_activated is False
+
+
+def test_activation_still_works_when_only_ended_subscriptions_exist(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    plan = _plan(pg_sessionmaker)
+    user = _user(pg_sessionmaker, Role.student)
+    _subscription(pg_sessionmaker, user, plan, status=SubscriptionStatus.expired, payer_id=user)
+    queued = _subscription(pg_sessionmaker, user, plan)
+
+    status = PlatformAdminService(pg_sessionmaker).decide_activation(queued, activate=True)
+
+    assert status is SubscriptionStatus.active
+
+
+def test_rejection_is_not_blocked_by_a_live_subscription(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Only an activation would create a second live plan; declining one never does."""
+    plan = _plan(pg_sessionmaker)
+    user = _user(pg_sessionmaker, Role.student)
+    _subscription(pg_sessionmaker, user, plan, status=SubscriptionStatus.active, payer_id=user)
+    queued = _subscription(pg_sessionmaker, user, plan)
+
+    status = PlatformAdminService(pg_sessionmaker).decide_activation(queued, activate=False)
+
+    assert status is SubscriptionStatus.rejected
+
+
+def test_activation_route_answers_409_on_a_live_subscription(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    plan = _plan(pg_sessionmaker)
+    user = _user(pg_sessionmaker, Role.student)
+    _subscription(pg_sessionmaker, user, plan, status=SubscriptionStatus.past_due, payer_id=user)
+    queued = _subscription(pg_sessionmaker, user, plan)
+
+    for client in _client(pg_sessionmaker):
+        response = client.post(f"/api/admin/activations/{queued}/activate", json={"note": "x"})
+        assert response.status_code == 409
+        assert "live subscription" in response.json()["detail"]

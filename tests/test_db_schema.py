@@ -51,6 +51,7 @@ EXPECTED_TABLES = {
     "mark_schemes",
     "plan_tiers",
     "subscriptions",
+    "subscription_periods",
     "uploads",
     "attempts",
     "question_results",

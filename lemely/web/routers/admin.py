@@ -32,6 +32,7 @@ from lemely import __version__
 from lemely.db.admin_repo import (
     PlatformAdminService,
     SubscriptionAlreadyDecidedError,
+    SubscriptionConflictError,
     SubscriptionNotFoundError,
 )
 from lemely.db.models.enums import Role
@@ -183,7 +184,8 @@ def activate_subscription(
     """Activate a pending subscription, recording the note.
 
     A subscription that has already been decided is a **409**, not an overwrite:
-    two admins working one queue is the ordinary case here.
+    two admins working one queue is the ordinary case here. So is activating one for a
+    user who already holds a live subscription (a second live plan is never allowed).
     """
     return _decide(service, subscription_id, activate=True, note=body.note)
 
@@ -214,7 +216,7 @@ def _decide(
         status = service.decide_activation(subscription_id, activate=activate, note=note)
     except SubscriptionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SubscriptionAlreadyDecidedError as exc:
+    except (SubscriptionAlreadyDecidedError, SubscriptionConflictError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return ActivationResultDTO(subscriptionId=str(subscription_id), status=status.value)
 

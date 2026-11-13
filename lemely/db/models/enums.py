@@ -257,7 +257,9 @@ class NotificationType(enum.Enum):
     The last eight members are the tutoring marketplace's (migration
     ``0044_tutoring_enums_ext``, SPEC ``docs/tutoring/SPEC.md`` §a.1). Each has a
     same-named ``notification_preferences`` column, pinned by
-    ``tests/test_db_schema.py``'s enum/column vocabulary test.
+    ``tests/test_db_schema.py``'s enum/column vocabulary test. ``billing`` is the
+    payment notices' type (migration ``0055``); it has a preference column but no user
+    toggle.
     """
 
     grade_ready = "grade_ready"
@@ -274,6 +276,7 @@ class NotificationType(enum.Enum):
     tutor_listing = "tutor_listing"
     parent_link = "parent_link"
     tutoring_report = "tutoring_report"
+    billing = "billing"
 
 
 class XpSource(enum.Enum):

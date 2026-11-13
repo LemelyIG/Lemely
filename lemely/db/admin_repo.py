@@ -47,6 +47,7 @@ from lemely.db.models import (
     Upload,
     User,
 )
+from lemely.db.models.billing import LIVE_SUBSCRIPTION_STATUSES
 from lemely.db.models.enums import (
     AttemptOrigin,
     ReviewStatus,
@@ -79,6 +80,16 @@ class SubscriptionAlreadyDecidedError(AdminError):
         """Record the status the row already holds."""
         super().__init__(f"Subscription is already {status.value}")
         self.status = status
+
+
+class SubscriptionConflictError(AdminError):
+    """Activating would give the user a second live subscription (→ 409).
+
+    One live subscription per user (spec §4.3). Phase 02's partial unique index covers paid rows
+    only (``payer_user_id IS NOT NULL``), so this check covers manual activation. The check and a
+    concurrent paid checkout can race; that is accepted, because the paid row wins every reader's
+    ordering (index R25) and the manual row stays a harmless second live row.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,6 +347,8 @@ class PlatformAdminService:
         Raises:
             SubscriptionNotFoundError: No subscription with that id.
             SubscriptionAlreadyDecidedError: It is no longer ``inactive``.
+            SubscriptionConflictError: Activating, and the user already has a live
+                subscription (``pending_first_payment``, ``active`` or ``past_due``).
         """
         moment = now or datetime.now(UTC)
         subscription_uuid = _as_uuid(subscription_id)
@@ -348,6 +361,18 @@ class PlatformAdminService:
             if subscription.status is not SubscriptionStatus.inactive:
                 raise SubscriptionAlreadyDecidedError(subscription.status)
             if activate:
+                other_live = session.scalar(
+                    select(Subscription.id).where(
+                        Subscription.user_id == subscription.user_id,
+                        Subscription.id != subscription.id,
+                        Subscription.status.in_(LIVE_SUBSCRIPTION_STATUSES),
+                    )
+                )
+                if other_live is not None:
+                    raise SubscriptionConflictError(
+                        "This user already has a live subscription; end it before activating"
+                        " another."
+                    )
                 subscription.status = SubscriptionStatus.active
                 subscription.is_manually_activated = True
                 subscription.activated_at = moment
@@ -484,5 +509,6 @@ __all__ = [
     "SignupRow",
     "SubjectCoverage",
     "SubscriptionAlreadyDecidedError",
+    "SubscriptionConflictError",
     "SubscriptionNotFoundError",
 ]

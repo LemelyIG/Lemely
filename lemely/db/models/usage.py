@@ -207,7 +207,9 @@ class UsageGrant(TimestampMixin, Base):
         UUID(as_uuid=True), sa.ForeignKey("payments.id"), nullable=True
     )
     subscription_period_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), nullable=True
+        UUID(as_uuid=True),
+        sa.ForeignKey("subscription_periods.id", ondelete="RESTRICT"),
+        nullable=True,
     )
     idempotency_key: Mapped[str] = mapped_column(sa.String, nullable=False)
 

@@ -15,7 +15,7 @@ from lemely.db.models.academic import ExamDate, MarkScheme, Paper, Subject
 from lemely.db.models.attempts import Attempt, QuestionResult, Upload, WeaknessRecord
 from lemely.db.models.auth_cooldowns import AuthCooldown
 from lemely.db.models.auth_tokens import AuthToken
-from lemely.db.models.billing import PlanTier, Subscription
+from lemely.db.models.billing import PlanTier, Subscription, SubscriptionPeriod
 from lemely.db.models.catalogue import SubjectTopic, SyllabusPaper
 from lemely.db.models.deletion import ClassPaperExclusion
 from lemely.db.models.engagement import Streak, XpEvent
@@ -220,6 +220,7 @@ __all__ = [
     "Subject",
     "SubjectTopic",
     "Subscription",
+    "SubscriptionPeriod",
     "SubscriptionStatus",
     "SyllabusPaper",
     "TeacherMember",

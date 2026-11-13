@@ -223,9 +223,12 @@ def test_downgrade_refuses_while_a_seat_grant_exists(
     """A seat grant cannot be deleted (ledger entries RESTRICT) or nulled (seat_link CHECK).
 
     Dropping ``teacher_members`` would orphan it and make the next upgrade fail with a
-    foreign-key violation, so the downgrade stops, and the revision stays at 0054.
+    foreign-key violation, so the downgrade stops and the revision does not move (the whole
+    downgrade is one transaction, so revisions above 0054 are rolled back with it).
     """
     sm, downgrade_to = migrated_sessionmaker_with_downgrade
+    with sm() as session:
+        revision_before = current_revision(session)
     teacher, student, member = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     with sm.begin() as session:
         for uid, role in ((teacher, "teacher"), (student, "student")):
@@ -254,7 +257,7 @@ def test_downgrade_refuses_while_a_seat_grant_exists(
         downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == REVISION
+        assert current_revision(session) == revision_before
         assert TABLE in public_tables(session)
         assert GRANT_FK in object_names(session, ["usage_grants"])
         left = session.execute(
