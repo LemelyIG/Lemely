@@ -1115,29 +1115,56 @@ NATIVE_CHECKS.push(
     width: 390,
     app: NATIVE_HOME,
     async run(page) {
-      const btn = page.locator("header .lm-native-iconbtn.lm-press:visible").first()
-      await btn.waitFor()
-      const box = await btn.boundingBox()
-      await page.mouse.move(box.x + 14, box.y + 14)
-      await page.mouse.down()
-      const pressed = await btn.evaluate((el) => {
-        const cs = getComputedStyle(el)
-        return {
-          flag: el.hasAttribute("data-pressed"),
-          image: cs.backgroundImage,
-          scale: cs.scale,
-          overflow: cs.overflow,
-          x: el.style.getPropertyValue("--lm-press-x"),
-        }
-      })
-      await page.mouse.up()
-      const released = await btn.evaluate((el) => ({ flag: el.hasAttribute("data-pressed"), image: getComputedStyle(el).backgroundImage }))
-      if (!pressed.flag) throw new Error("data-pressed not set on pointerdown")
-      if (!pressed.image.includes("radial-gradient")) throw new Error(`no press layer: ${pressed.image}`)
-      if (pressed.overflow === "hidden") throw new Error("press layer clips with overflow: hidden")
-      if (pressed.x !== "14px") throw new Error(`ripple origin x ${pressed.x}, expected 14px`)
-      if (platform === "ios" && pressed.scale !== "0.97") throw new Error(`iOS button scale ${pressed.scale}`)
-      if (released.flag || released.image !== "none") throw new Error("press state stuck after pointerup")
+      // Press the element, read its computed state while held, release, read again.
+      const press = async (loc, dx, dy) => {
+        await loc.waitFor()
+        await loc.evaluate((el) => el.scrollIntoView({ block: "center" }))
+        const box = await loc.boundingBox()
+        await page.mouse.move(box.x + dx, box.y + dy)
+        await page.mouse.down()
+        const pressed = await loc.evaluate((el) => {
+          const cs = getComputedStyle(el)
+          return {
+            flag: el.hasAttribute("data-pressed"),
+            image: cs.backgroundImage,
+            scale: cs.scale,
+            overflow: cs.overflow,
+            x: el.style.getPropertyValue("--lm-press-x"),
+            r: cs.getPropertyValue("--lm-press-r"),
+            rr: cs.getPropertyValue("--lm-press-rr"),
+          }
+        })
+        await page.mouse.up()
+        const released = await loc.evaluate((el) => ({ flag: el.hasAttribute("data-pressed"), image: getComputedStyle(el).backgroundImage }))
+        return { pressed, released }
+      }
+      const expectScale = platform === "ios" ? "0.97" : "none"
+      // The header icon button, then a Button primitive: the Button also carries the web
+      // `active:scale-[0.98]`, which native must cancel (iOS owns 0.97, Android never scales).
+      const targets = [
+        { name: "icon button", loc: page.locator("header .lm-native-iconbtn.lm-press:visible").first(), dx: 14, dy: 14 },
+        { name: "Button", loc: page.locator("main .lm-press-scale:not(.lm-native-iconbtn):visible").first(), dx: 10, dy: 10 },
+      ]
+      for (const t of targets) {
+        const { pressed, released } = await press(t.loc, t.dx, t.dy)
+        if (!pressed.flag) throw new Error(`${t.name}: data-pressed not set on pointerdown`)
+        if (!pressed.image.includes("radial-gradient")) throw new Error(`${t.name}: no press layer: ${pressed.image}`)
+        if (pressed.overflow === "hidden") throw new Error(`${t.name}: press layer clips with overflow: hidden`)
+        if (Math.abs(parseFloat(pressed.x) - t.dx) > 3) throw new Error(`${t.name}: ripple origin x ${pressed.x}, expected ${t.dx}px`)
+        if (pressed.scale !== expectScale) throw new Error(`${t.name}: ${platform} press scale ${pressed.scale}, expected ${expectScale}`)
+        if (platform === "android" && (!pressed.r || pressed.rr !== pressed.r)) throw new Error(`${t.name}: ripple radius ${pressed.rr}, expected ${pressed.r}`)
+        if (released.flag || released.image !== "none") throw new Error(`${t.name}: press state stuck after pointerup`)
+      }
+      if (platform === "android") {
+        // The ripple animation is frozen by the harness, so the runtime proof is that the
+        // keyframes exist and resolve; the ripple radius above proves the end state.
+        const hasKeyframes = await page.evaluate(() =>
+          [...document.styleSheets].some((sheet) => {
+            try { return [...sheet.cssRules].some((r) => r.type === CSSRule.KEYFRAMES_RULE && r.name === "lm-ripple") } catch { return false }
+          }),
+        )
+        if (!hasKeyframes) throw new Error("lm-ripple keyframes missing from document.styleSheets")
+      }
     },
   })),
 )

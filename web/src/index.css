@@ -497,6 +497,7 @@
   --native-press-ink-dark: oklch(1 0 0);    /* ...and toward white in dark */
   --native-press-scale: 0.97;               /* --pf-press-scale, buttons only */
   --native-state-pressed: 10%;              /* --pf-press-layer (Android) */
+  --native-press-delay: 100ms;              /* rows in scrolling content hold the highlight back; buttons stay instant */
   --native-ripple-dur: 450ms;               /* --pf-ripple-dur, eased by --ease-m3-emphasized */
   /* Gestures */
   --native-parallax: 0.3;                   /* brief §3.6 */
@@ -720,6 +721,10 @@
     background-image: radial-gradient(circle at var(--lm-press-x) var(--lm-press-y), color-mix(in oklch, var(--lm-press-ink) var(--lm-press-layer), transparent) var(--lm-press-rr), transparent var(--lm-press-rr));
   }
   :root[data-platform="ios"] .lm-press-scale[data-pressed] { scale: var(--native-press-scale); }
+  /* The design A active:scale-[0.98] is a web press. On native the press owns scale: it is
+     none unless the element opts in, and Android never scales (ripple plus state layer). */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-press:not(.lm-press-scale) { scale: none; }
+  :root[data-platform="android"] .lm-press-scale { scale: none; }
   /* iOS tab items dim their glyph and label instead of drawing a layer. */
   :root[data-platform="ios"] .lm-native-tabbar .lm-press[data-pressed] {
     background-image: none;
@@ -1938,10 +1943,10 @@ html[data-direction="back"]::view-transition-new(root) {
     animation: none !important;
   }
 
-  /* Press states: the ripple does not grow and the scale is instant (Task 11). */
+  /* Press states: the scale is instant (Task 11). The ripple needs no rule here: the
+     blanket `animation-duration` above collapses it, and its from-keyframe is not held. */
   .lm-press {
     transition: none;
-    animation: none;
   }
 
   /* Native sheets: the slide and the iOS scale-back stop moving (Task 6). */

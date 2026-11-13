@@ -19,7 +19,7 @@ export const SHELL_BUTTON_TONAL = `${SHELL_BUTTON} bg-secondary-container text-o
 
 /** `.as-iconbtn`, open state from Radix's `data-state`. */
 export const SHELL_ICON_BUTTON =
-  "lm-native-iconbtn lm-press lm-press-scale relative grid size-9 flex-none cursor-pointer place-items-center rounded-chip text-on-surface-variant transition-colors duration-150 hover:bg-surface-container-low hover:text-on-surface data-[state=open]:bg-surface-container-low data-[state=open]:text-on-surface pointer-coarse:size-11 " +
+  "lm-native-iconbtn lm-press lm-press-scale relative grid size-9 flex-none cursor-pointer place-items-center rounded-chip text-on-surface-variant transition-[color,background-color,border-color,scale] duration-[var(--dur-instant)] hover:bg-surface-container-low hover:text-on-surface data-[state=open]:bg-surface-container-low data-[state=open]:text-on-surface pointer-coarse:size-11 " +
   SHELL_FOCUS_RING
 
 /** `.as-pop-panel` (+ its ≤720px inset rule). `!rounded-inner`: Radix focuses the

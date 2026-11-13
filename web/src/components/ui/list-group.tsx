@@ -50,7 +50,7 @@ export type ListRowProps = {
 } & ListRowAction
 
 export function ListRow({ title, subtitle, leading, trailing, to, onClick, lines = subtitle ? 2 : 1 }: ListRowProps) {
-  const cls = "lm-list-row lm-native-row lm-press flex w-full items-center gap-3 px-4 py-2.5 text-start"
+  const cls = "lm-list-row lm-native-row lm-press lm-press-delay flex w-full items-center gap-3 px-4 py-2.5 text-start"
   const inner = (
     <>
       {leading ? <span className="flex-none">{leading}</span> : null}

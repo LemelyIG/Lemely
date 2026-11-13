@@ -50,9 +50,9 @@ const button = cva(
      * label centres in the taller box rather than sitting at its top.
      */
     "pointer-coarse:min-h-11 pointer-coarse:min-w-11",
-    // Colour-only transition, plus the transform used by the press. Never
+    // Colour transition, plus the transform and the `scale` property (Tailwind v4 `scale-*` writes `scale`, which `transform` does not cover) used by the press. Never
     // `ease-in-out` or `linear` on a designed transition (DESIGN.md §9.1).
-    "transition-[color,background-color,border-color,transform]",
+    "transition-[color,background-color,border-color,transform,scale]",
     "duration-[var(--dur-fast)] ease-out-soft",
     "active:scale-[0.98] lm-press lm-press-scale",
     "disabled:pointer-events-none disabled:opacity-50",
