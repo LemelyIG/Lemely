@@ -31,15 +31,17 @@ const scrollKey = createScrollKeyer()
 
 export function RootOutlet() {
   const navigationType = useNavigationType()
-  const location = useLocation()
+  const { key, state } = useLocation()
   // A PUSH that means "back" (re-tapping a tab to pop to its root) says so in its location state.
-  const explicit = stateDirection(location.state)
+  const explicit = stateDirection(state)
 
   // Keyed on the location key so the one-shot swipe flag is read (and cleared) on every
-  // navigation, even a replace to the same navigation type; it cannot go stale.
+  // navigation, even a replace to the same navigation type; it cannot go stale. The
+  // explicit direction comes from the location state, which only changes with the key.
   useLayoutEffect(() => {
     document.documentElement.dataset.direction = consumeSwipeNav() ? "swipe" : (explicit ?? navigationDirection(navigationType))
-  }, [navigationType, explicit, location.key])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navigationType, key])
 
   return (
     <>

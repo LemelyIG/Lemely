@@ -190,8 +190,8 @@ describe("shell panels on the native frame (Task 8)", () => {
     expect(read("components/shell/NotificationsPanel.tsx")).toContain("titleLines={2}")
     expect(read("components/ui/list-group.tsx")).toContain('titleLines === 2 ? "line-clamp-2" : "truncate"')
   })
-  it("the Create sheet keeps its 6px eyebrow-to-title gap on native (the native surface drops SHEET_SURFACE)", () => {
-    expect(read("components/shell/TopBarSheets.tsx")).toContain("native:mb-1.5")
+  it("the Create sheet's eyebrow leaves no gap to manage on native: audit A hides it there, so the title leads", () => {
+    expect(read("components/shell/TopBarSheets.tsx")).toMatch(/text-eyebrow text-on-surface-variant native:hidden/)
   })
 })
 
