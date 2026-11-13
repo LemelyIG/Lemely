@@ -8,6 +8,8 @@ import { EmptyState } from "@/components/ui/state-views"
 import { QueryState } from "@/components/ui/query-state"
 import { WeaknessChip } from "@/components/ui/weakness-chip"
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
+import { ListGroup, ListRow } from "@/components/ui/list-group"
+import { TableOrList } from "@/components/ui/table-or-list"
 import { cn, downloadCsv, relativeTime } from "@/lib/utils"
 import { accuracyTone, TONE_CLASS, TONE_TO_SEVERITY } from "@/lib/severity"
 import { PageHeaderSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
@@ -198,6 +200,32 @@ function QuestionAnalysisTable({ questions }: { questions: QuizQuestionAnalysis[
     return <p className="text-body-sm text-on-surface-variant m-0">This quiz has no included questions.</p>
   }
   return (
+    <TableOrList
+      label="Per-question analysis"
+      storageKey="lemely.quizResults.questions.view"
+      list={
+        <ListGroup label="Per-question analysis">
+          {questions.map((q) => (
+            <ListRow
+              key={q.questionRef}
+              title={q.prompt}
+              subtitle={[
+                q.questionRef,
+                q.topic,
+                q.needsReviewCount > 0 ? `${q.needsReviewCount} to review` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+              trailing={
+                <span className="text-data-sm tabular-nums">
+                  {q.accuracy == null ? "–" : pct(q.accuracy)}
+                </span>
+              }
+            />
+          ))}
+        </ListGroup>
+      }
+      table={
     <Table density="operate"
       tabIndex={0}
       role="region"
@@ -266,6 +294,8 @@ function QuestionAnalysisTable({ questions }: { questions: QuizQuestionAnalysis[
         ))}
       </TBody>
     </Table>
+      }
+    />
   )
 }
 
@@ -279,6 +309,34 @@ function StudentTable({ students }: { students: QuizStudentResult[] }) {
     )
   }
   return (
+    <TableOrList
+      label="Per-student results"
+      storageKey="lemely.quizResults.students.view"
+      list={
+        <ListGroup label="Per-student results">
+          {students.map((s) => (
+            <ListRow
+              key={s.studentId}
+              to={`/teacher/students/${s.studentId}`}
+              title={s.displayName}
+              subtitle={[
+                statusLabel(s.status),
+                s.submittedAt ? relativeTime(s.submittedAt) : null,
+                s.needsTeacherReview ? "Needs review" : null,
+                s.markingError ? "Marking failed" : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+              trailing={
+                <span className="text-data-sm tabular-nums">
+                  {s.percentage == null ? "—" : pct(s.percentage)}
+                </span>
+              }
+            />
+          ))}
+        </ListGroup>
+      }
+      table={
     <Table density="operate"
       tabIndex={0}
       role="region"
@@ -337,6 +395,8 @@ function StudentTable({ students }: { students: QuizStudentResult[] }) {
         ))}
       </TBody>
     </Table>
+      }
+    />
   )
 }
 
