@@ -388,7 +388,7 @@ class SubscriptionNotice(EmailContext):
     button: ClassVar[str] = "Open billing"
 
     subscription_id: uuid.UUID
-    notice: Literal["renewed", "payment_failed", "expired", "cancelled"]
+    notice: Literal["renewed", "payment_failed", "expired", "cancelled", "credited"]
     effective_at: AwareDatetime
 
     _LEADS: ClassVar[dict[str, str]] = {
@@ -398,6 +398,10 @@ class SubscriptionNotice(EmailContext):
             "Your Lemely plan ended on {date} because the renewal payment did not go through."
         ),
         "cancelled": "Your Lemely plan was cancelled and ended on {date}.",
+        "credited": (
+            "Your payment on {date} was added to your credits because you already have an"
+            " active plan."
+        ),
     }
 
     def lead(self) -> str:

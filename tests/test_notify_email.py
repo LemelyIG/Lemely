@@ -487,6 +487,7 @@ def test_billing_templates_are_disjoint_from_the_tutoring_spec() -> None:
         ("payment_failed", "could not take"),
         ("expired", "ended"),
         ("cancelled", "cancelled"),
+        ("credited", "added to your credits because you already have an active plan"),
     ],
 )
 def test_subscription_notice_renders_each_notice(notice: str, words: str) -> None:
@@ -519,7 +520,10 @@ def test_subscription_notice_names_the_date_in_utc() -> None:
     assert "11 Dec" not in offset
 
 
-@pytest.mark.parametrize("notice", ["renewed", "payment_failed", "expired", "cancelled"])
+ALL_NOTICES = ["renewed", "payment_failed", "expired", "cancelled", "credited"]
+
+
+@pytest.mark.parametrize("notice", ALL_NOTICES)
 def test_subscription_notice_carries_no_amount_card_or_plan_detail(notice: str) -> None:
     _, html_body, text = render_email("subscription_notice", _notice(notice), app_base_url=BASE_URL)
     for rendered in (html_body, text):
@@ -545,3 +549,16 @@ def test_subscription_notice_rejects_extra_keys_unknown_notices_and_naive_instan
         partial = {k: v for k, v in _notice("renewed").items() if k != key}
         with pytest.raises(InvalidEmailContext):
             validate_context("subscription_notice", partial)
+
+
+@pytest.mark.parametrize("notice", ALL_NOTICES)
+def test_subscription_notice_copy_makes_no_promise_about_retries_refunds_or_the_processor(
+    notice: str,
+) -> None:
+    subject, html_body, text = render_email(
+        "subscription_notice", _notice(notice), app_base_url=BASE_URL
+    )
+    for rendered in (subject, html_body, text):
+        lowered = rendered.lower()
+        for word in ("retry", "paymob", "refund"):
+            assert word not in lowered

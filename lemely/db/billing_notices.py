@@ -4,8 +4,9 @@ The payer hears about renewals, failed renewals, expiry and cancellation. The be
 child, when a parent pays) sees the plan in the app instead. The row is written in the caller's
 transaction, so the notice commits or rolls back with the state change it describes.
 
-Billing notices share the outbox's daily cap with the tutoring templates and only leave the
-building where an email provider is configured (the mock records them as ``skipped``).
+Billing notices are exempt from the outbox's daily cap (UD-9): the delivery job neither skips
+them for it nor counts them toward it. They only leave the building where an email provider is
+configured (the mock records them as ``skipped``).
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
 
     from lemely.db.models.billing import Subscription
 
-SubscriptionNoticeKind = Literal["renewed", "payment_failed", "expired", "cancelled"]
+SubscriptionNoticeKind = Literal["renewed", "payment_failed", "expired", "cancelled", "credited"]
 
 
 def enqueue_subscription_notice(

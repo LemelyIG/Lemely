@@ -33,6 +33,7 @@ ALL_NOTICES: tuple[SubscriptionNoticeKind, ...] = (
     "payment_failed",
     "expired",
     "cancelled",
+    "credited",
 )
 
 
@@ -201,7 +202,7 @@ def test_two_different_notices_for_one_subscription_both_queue(
 
     results = [queue(pg_sessionmaker, sid, notice) for notice in ALL_NOTICES]
 
-    assert results == [True, True, True, True]
+    assert results == [True] * len(ALL_NOTICES)
     notices = sorted(str(row.context["notice"]) for row in outbox_for(pg_sessionmaker, payer))
     assert notices == sorted(ALL_NOTICES)
 
@@ -269,3 +270,38 @@ def test_a_naive_effective_at_is_refused_and_queues_nothing(
         queue(pg_sessionmaker, sid, "renewed", datetime(2026, 12, 10, 9, 0))
 
     assert outbox_for(pg_sessionmaker, payer) == []
+
+
+def test_one_payer_with_two_subscriptions_gets_both_notices_for_the_same_event(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    parent = add_user(pg_sessionmaker, Role.parent)
+    first = seed_subscription(
+        pg_sessionmaker, user_id=add_user(pg_sessionmaker, Role.student), payer_id=parent
+    )
+    second = seed_subscription(
+        pg_sessionmaker, user_id=add_user(pg_sessionmaker, Role.student), payer_id=parent
+    )
+
+    assert queue(pg_sessionmaker, first, "renewed", WHEN)
+    assert queue(pg_sessionmaker, second, "renewed", WHEN)
+
+    rows = outbox_for(pg_sessionmaker, parent)
+    assert {row.context["subscription_id"] for row in rows} == {str(first), str(second)}
+    assert len({row.dedupe_key for row in rows}) == 2
+
+
+def test_the_credited_notice_queues_once_per_payment_instant(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    payer = add_user(pg_sessionmaker, Role.student)
+    sid = seed_subscription(pg_sessionmaker, user_id=payer, payer_id=payer)
+
+    assert queue(pg_sessionmaker, sid, "credited", WHEN)
+    assert not queue(pg_sessionmaker, sid, "credited", WHEN)
+    assert queue(pg_sessionmaker, sid, "credited", LATER)
+
+    assert [row.context["notice"] for row in outbox_for(pg_sessionmaker, payer)] == [
+        "credited",
+        "credited",
+    ]
