@@ -27,8 +27,10 @@ from lemely.db.models.billing import (
     Subscription,
 )
 from lemely.db.models.enums import Role, SubscriptionStatus
+from lemely.db.models.usage import UsageGrant
 from lemely.db.models.users import User
 from lemely.db.teacher_team_repo import LIVE_PLAN_STATUSES
+from lemely.db.usage_views_repo import history_jobs_statement
 from tests.team_db import team_database
 from tests.test_migration_tutoring_enums import (
     column_names,
@@ -53,12 +55,23 @@ TABLE = "subscription_periods"
 PHASE_02_LIVE_INDEX = "uq_subscriptions_one_live_per_user"
 GRANT_FK = "fk_usage_grants_subscription_period_id_subscription_periods"
 NEW_SUBSCRIPTION_COLUMNS = {"paymob_amount_minor", "paymob_cancelled_at"}
+#: Indexes 0055 adds beside the new table: (table, name). Each is proved to serve its query below.
+PERIOD_GRANT_INDEX = ("usage_grants", "ix_usage_grants_subscription_period")
+JOB_HISTORY_INDEX = ("usage_jobs", "ix_usage_jobs_member_created")
+SWEEP_INDEXES = (
+    ("subscriptions", "ix_subscriptions_grace_expiry"),
+    ("subscriptions", "ix_subscriptions_paymob_cancel_pending"),
+    ("subscriptions", "ix_subscriptions_paymob_live_period_end"),
+    ("subscriptions", "ix_subscriptions_paymob_drift"),
+)
+NEW_INDEXES = (PERIOD_GRANT_INDEX, JOB_HISTORY_INDEX, *SWEEP_INDEXES)
 
 #: Every table 0055 creates or alters, for the parity check.
 PARITY_TABLES = (
     "subscription_periods",
     "subscriptions",
     "usage_grants",
+    "usage_jobs",
     "notification_preferences",
 )
 PARITY_ENUMS = ("notificationtype",)
@@ -198,6 +211,8 @@ def test_named_objects_present(migrated_sessionmaker: sessionmaker[Session]) -> 
         assert PHASE_02_LIVE_INDEX in object_names(session, ["subscriptions"])
         assert GRANT_FK in object_names(session, ["usage_grants"])
         assert column_names(session, "subscriptions") >= NEW_SUBSCRIPTION_COLUMNS
+        for table, index in NEW_INDEXES:
+            assert index in object_names(session, [table]), index
 
 
 def test_migrated_schema_equals_the_create_all_schema(
@@ -301,13 +316,178 @@ def test_usage_grant_period_fk_enforced(migrated_sessionmaker: sessionmaker[Sess
 def test_period_grant_fk_restricts_deleting_the_period(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:
-    """``RESTRICT`` is stated: a period that backs a grant cannot be deleted."""
-    with migrated_sessionmaker() as session:
+    """A period that backs a grant cannot be deleted, directly or by deleting its subscription."""
+    sm = migrated_sessionmaker
+    with sm() as session:
         definition = session.execute(
             sa.text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = :n"),
             {"n": GRANT_FK},
         ).scalar_one()
-    assert "ON DELETE RESTRICT" in definition
+    assert "ON DELETE RESTRICT" in definition  # stated, not the NO ACTION default
+
+    user, tier = _user(sm), _tier(sm)
+    sid = _sub(sm, user, tier, SubscriptionStatus.active, payer=user)
+    period = _period(
+        sm, sid, datetime(2026, 11, 10, tzinfo=UTC), datetime(2026, 12, 10, tzinfo=UTC)
+    )
+    with sm.begin() as session:
+        session.execute(
+            _INSERT_GRANT,
+            {
+                "u": user,
+                "at": datetime(2026, 11, 10, tzinfo=UTC),
+                "key": "restrict",
+                "period": period,
+            },
+        )
+    with pytest.raises(sa.exc.IntegrityError, match=GRANT_FK), sm.begin() as session:
+        session.execute(sa.text("DELETE FROM subscription_periods WHERE id = :p"), {"p": period})
+    # The subscription's CASCADE reaches the period, so the same restriction stops it.
+    with pytest.raises(sa.exc.IntegrityError, match=GRANT_FK), sm.begin() as session:
+        session.execute(sa.text("DELETE FROM subscriptions WHERE id = :s"), {"s": sid})
+    with sm() as session:
+        count = session.execute(sa.text("SELECT count(*) FROM subscription_periods")).scalar_one()
+    assert count == 1
+
+
+def _plan_text(
+    session: Session, statement: sa.sql.Executable, *, also_off: tuple[str, ...] = ()
+) -> str:
+    """The planner's plan for ``statement`` with sequential scans priced out.
+
+    Tables are empty in a test, so cost-based choices mean nothing; with ``enable_seqscan`` off the
+    plan names an index exactly when one can serve the query's predicate and order. ``also_off``
+    names further planner switches to turn off (``enable_sort``, ``enable_bitmapscan``) when the
+    question is whether an index can deliver the query's order without a sort.
+    """
+    for setting in also_off:
+        session.execute(sa.text(f"SET LOCAL {setting} = off"))
+    sql = str(
+        statement.compile(
+            dialect=sa.dialects.postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    session.execute(sa.text("SET LOCAL enable_seqscan = off"))
+    return "\n".join(session.execute(sa.text(f"EXPLAIN {sql}")).scalars())
+
+
+_NOW = datetime(2026, 11, 20, tzinfo=UTC)
+_LINKED = Subscription.paymob_subscription_id.is_not(None)
+_ENDED = (SubscriptionStatus.expired, SubscriptionStatus.cancelled)
+_BATCH = 200
+
+#: The sweep predicates of Phase 05 tasks 7 to 9 (p05-task-7/8/9 briefs), each with the index it
+#: must use. A sweep that drifts from these predicates loses its index; change them together.
+SWEEP_QUERIES = {
+    "ix_subscriptions_grace_expiry": (
+        sa.select(Subscription.id)
+        .where(
+            Subscription.status == SubscriptionStatus.past_due,
+            Subscription.grace_until <= _NOW,
+            _LINKED,
+        )
+        .order_by(Subscription.grace_until, Subscription.id)
+        .limit(_BATCH)
+    ),
+    "ix_subscriptions_paymob_cancel_pending": (
+        sa.select(Subscription.id)
+        .where(
+            Subscription.status.in_(_ENDED),
+            _LINKED,
+            Subscription.paymob_cancelled_at.is_(None),
+        )
+        .order_by(Subscription.current_period_end, Subscription.id)
+        .limit(_BATCH)
+    ),
+    "ix_subscriptions_paymob_live_period_end": (
+        sa.select(Subscription.id)
+        .where(
+            Subscription.status.in_(PLAN_LIVE_STATUSES),
+            Subscription.cancel_at_period_end,
+            Subscription.current_period_end <= _NOW,
+            _LINKED,
+        )
+        .order_by(Subscription.current_period_end, Subscription.id)
+        .limit(_BATCH)
+    ),
+    "ix_subscriptions_paymob_drift": (
+        sa.select(Subscription.id)
+        .where(
+            _LINKED,
+            sa.or_(
+                Subscription.status.in_(PLAN_LIVE_STATUSES),
+                sa.and_(
+                    Subscription.status.in_(_ENDED), Subscription.paymob_cancelled_at.is_(None)
+                ),
+            ),
+        )
+        .order_by(Subscription.updated_at, Subscription.id)
+        .limit(_BATCH)
+    ),
+}
+#: The period-end amount candidates (DV-16): active, linked, not cancelling, and any of four
+#: reasons to look. Served by the live-period-end index too.
+AMOUNT_QUERY = (
+    sa.select(Subscription.id)
+    .where(
+        Subscription.status == SubscriptionStatus.active,
+        _LINKED,
+        Subscription.cancel_at_period_end.is_(False),
+        sa.or_(
+            Subscription.pending_plan_tier_id.is_not(None),
+            Subscription.pending_extra_seats.is_not(None),
+            Subscription.paymob_amount_minor.is_(None),
+            Subscription.current_period_end <= _NOW,
+        ),
+    )
+    .order_by(Subscription.current_period_end, Subscription.id)
+    .limit(_BATCH)
+)
+
+
+@pytest.mark.parametrize("index", sorted(SWEEP_QUERIES))
+def test_each_subscription_sweep_query_uses_its_index(
+    migrated_sessionmaker: sessionmaker[Session], index: str
+) -> None:
+    # Bitmap scans and sorts off: one ordered index scan, so the batch's LIMIT bounds the work.
+    with migrated_sessionmaker.begin() as session:
+        plan = _plan_text(
+            session, SWEEP_QUERIES[index], also_off=("enable_bitmapscan", "enable_sort")
+        )
+    assert index in plan
+
+
+def test_the_amount_candidates_use_the_live_period_end_index(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    with migrated_sessionmaker.begin() as session:
+        plan = _plan_text(session, AMOUNT_QUERY, also_off=("enable_bitmapscan", "enable_sort"))
+    assert "ix_subscriptions_paymob_live_period_end" in plan
+
+
+def test_the_period_grant_lookup_uses_its_index(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """T7's grant extension and T9's refund clawback look grants up by their period."""
+    statement = sa.select(UsageGrant.id).where(UsageGrant.subscription_period_id == uuid.uuid4())
+    with migrated_sessionmaker.begin() as session:
+        assert PERIOD_GRANT_INDEX[1] in _plan_text(session, statement)
+
+
+def test_a_leads_usage_history_uses_the_member_created_index(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The first history page for a caller who leads seats reads member-linked jobs by the index.
+
+    Without it the funder half of the ``OR`` forces a scan of every job. Later pages add a
+    ``created_at`` cursor, which a cost-based planner may prefer to drive from
+    ``ix_usage_jobs_actor_created``; only the first page is pinned.
+    """
+    statement = history_jobs_statement(
+        uuid.uuid4(), led_members=[uuid.uuid4()], after=None, limit=50
+    )
+    with migrated_sessionmaker.begin() as session:
+        assert JOB_HISTORY_INDEX[1] in _plan_text(session, statement)
 
 
 def test_billing_notification_type_and_toggle(
@@ -381,6 +561,38 @@ def test_downgrade_refuses_while_a_period_grant_exists(
         assert left == 1
 
 
+def test_downgrade_refuses_while_a_period_exists_without_a_grant(
+    migrated_sessionmaker_with_downgrade: tuple[sessionmaker[Session], Callable[[str], None]],
+) -> None:
+    """A period with no grant (a plan with a zero allowance) is billing history too.
+
+    Dropping the table would lose it silently, and with it the link between a payment and the
+    period it paid for, so the downgrade refuses and the revision does not move.
+    """
+    sm, downgrade_to = migrated_sessionmaker_with_downgrade
+    with sm() as session:
+        revision_before = current_revision(session)
+    user, tier = _user(sm), _tier(sm)
+    sid = _sub(sm, user, tier, SubscriptionStatus.active, payer=user)
+    payment = _payment(sm, user, tier)
+    _period(
+        sm,
+        sid,
+        datetime(2026, 11, 10, tzinfo=UTC),
+        datetime(2026, 12, 10, tzinfo=UTC),
+        payment=payment,
+    )
+
+    with pytest.raises(RuntimeError, match="subscription_periods"):
+        downgrade_to(DOWN_REVISION)
+
+    with sm() as session:
+        assert current_revision(session) == revision_before
+        assert object_names(session, [TABLE]) == _orm_names()
+        count = session.execute(sa.text("SELECT count(*) FROM subscription_periods")).scalar_one()
+        assert count == 1
+
+
 def test_upgrade_downgrade_upgrade_round_trip(
     migrated_sessionmaker_with_downgrade: tuple[sessionmaker[Session], Callable[[str], None]],
 ) -> None:
@@ -405,6 +617,8 @@ def test_upgrade_downgrade_upgrade_round_trip(
         assert object_names(session, [TABLE]) == set()
         assert PHASE_02_LIVE_INDEX in object_names(session, ["subscriptions"])  # untouched
         assert GRANT_FK not in object_names(session, ["usage_grants"])
+        for table, index in NEW_INDEXES:
+            assert index not in object_names(session, [table]), index
         assert NEW_SUBSCRIPTION_COLUMNS.isdisjoint(column_names(session, "subscriptions"))
         assert "billing" not in column_names(session, "notification_preferences")
         # Billing notices are deleted (older code cannot load them); others survive.
@@ -424,6 +638,8 @@ def test_upgrade_downgrade_upgrade_round_trip(
         # Never asserts "is the head" (index R10): later phases may add revisions.
         assert object_names(session, [TABLE]) == _orm_names()
         assert GRANT_FK in object_names(session, ["usage_grants"])
+        for table, index in NEW_INDEXES:
+            assert index in object_names(session, [table]), index
         assert column_names(session, "subscriptions") >= NEW_SUBSCRIPTION_COLUMNS
         assert "billing" in column_names(session, "notification_preferences")
         assert "billing" in enum_labels(session, "notificationtype")

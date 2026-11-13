@@ -20,6 +20,7 @@ in a way nobody would notice:
 
 from __future__ import annotations
 
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -580,12 +581,16 @@ def test_activation_is_refused_while_the_user_has_a_live_subscription(
         assert row.is_manually_activated is False
 
 
+@pytest.mark.parametrize(
+    "ended",
+    [SubscriptionStatus.expired, SubscriptionStatus.cancelled, SubscriptionStatus.rejected],
+)
 def test_activation_still_works_when_only_ended_subscriptions_exist(
-    pg_sessionmaker: sessionmaker[Session],
+    pg_sessionmaker: sessionmaker[Session], ended: SubscriptionStatus
 ) -> None:
     plan = _plan(pg_sessionmaker)
     user = _user(pg_sessionmaker, Role.student)
-    _subscription(pg_sessionmaker, user, plan, status=SubscriptionStatus.expired, payer_id=user)
+    _subscription(pg_sessionmaker, user, plan, status=ended, payer_id=user)
     queued = _subscription(pg_sessionmaker, user, plan)
 
     status = PlatformAdminService(pg_sessionmaker).decide_activation(queued, activate=True)
@@ -619,3 +624,72 @@ def test_activation_route_answers_409_on_a_live_subscription(
         response = client.post(f"/api/admin/activations/{queued}/activate", json={"note": "x"})
         assert response.status_code == 409
         assert "live subscription" in response.json()["detail"]
+
+
+def test_activation_waits_for_the_users_lock_before_checking_for_a_live_plan(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Two queued plans for one user are decided one at a time (the manual/manual race).
+
+    The decision locks only the row it changes, so two admins deciding two different queued rows
+    for the same user could each see the other still ``inactive``. A per-user lock closes that:
+    while another transaction holds the user's lock, the decision does not run.
+    """
+    plan = _plan(pg_sessionmaker)
+    user = _user(pg_sessionmaker, Role.student)
+    first = _subscription(pg_sessionmaker, user, plan)
+    done = threading.Event()
+    errors: list[BaseException] = []
+
+    def decide() -> None:
+        try:
+            PlatformAdminService(pg_sessionmaker).decide_activation(first, activate=True)
+        except BaseException as exc:  # reported to the main thread
+            errors.append(exc)
+        finally:
+            done.set()
+
+    with pg_sessionmaker() as holder, holder.begin():
+        holder.execute(sa.select(User.id).where(User.id == user).with_for_update(key_share=True))
+        worker = threading.Thread(target=decide)
+        worker.start()
+        assert not done.wait(timeout=1.0), "the decision ran while the user's lock was held"
+    assert done.wait(timeout=10.0)
+    worker.join()
+    assert errors == []
+    with pg_sessionmaker() as session:
+        row = session.get(Subscription, first)
+        assert row is not None
+        assert row.status is SubscriptionStatus.active
+
+
+def test_two_queued_activations_for_one_user_cannot_both_succeed(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    plan = _plan(pg_sessionmaker)
+    user = _user(pg_sessionmaker, Role.student)
+    queued = [_subscription(pg_sessionmaker, user, plan) for _ in range(2)]
+    start = threading.Barrier(2)
+    outcomes: list[str] = []
+
+    def decide(subscription_id: uuid.UUID) -> None:
+        start.wait()
+        try:
+            PlatformAdminService(pg_sessionmaker).decide_activation(subscription_id, activate=True)
+            outcomes.append("activated")
+        except SubscriptionConflictError:
+            outcomes.append("refused")
+
+    threads = [threading.Thread(target=decide, args=(sid,)) for sid in queued]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+    assert sorted(outcomes) == ["activated", "refused"]
+    with pg_sessionmaker() as session:
+        live = session.scalar(
+            sa.select(sa.func.count())
+            .select_from(Subscription)
+            .where(Subscription.user_id == user, Subscription.status == SubscriptionStatus.active)
+        )
+    assert live == 1

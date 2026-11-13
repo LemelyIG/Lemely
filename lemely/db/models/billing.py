@@ -160,6 +160,46 @@ class Subscription(TimestampMixin, Base):
             unique=True,
             postgresql_where=sa.text(_LIVE_PAID_PREDICATE),
         ),
+        # The subscription sweeps of Phase 05 (migration 0055). Each is partial on the sweep's own
+        # predicate and ordered as the sweep orders its batch; a sweep whose WHERE does not imply
+        # the index predicate loses the index (``tests/test_migration_subscription_periods.py``
+        # pins the predicates).
+        # ``expire_overdue``: past due, past its grace, linked to Paymob.
+        sa.Index(
+            "ix_subscriptions_grace_expiry",
+            "grace_until",
+            "id",
+            postgresql_where=sa.text("status = 'past_due' AND paymob_subscription_id IS NOT NULL"),
+        ),
+        # The Paymob cancel still to push (cancel at period end, ended rows).
+        sa.Index(
+            "ix_subscriptions_paymob_cancel_pending",
+            "current_period_end",
+            "id",
+            postgresql_where=sa.text(
+                "paymob_subscription_id IS NOT NULL AND paymob_cancelled_at IS NULL"
+            ),
+        ),
+        # Period-end ends and amount candidates: linked rows in a live status, by period end.
+        sa.Index(
+            "ix_subscriptions_paymob_live_period_end",
+            "current_period_end",
+            "id",
+            postgresql_where=sa.text(
+                "paymob_subscription_id IS NOT NULL"
+                " AND status IN ('pending_first_payment', 'active', 'past_due')"
+            ),
+        ),
+        # The daily drift check: linked rows that are live or still to be cancelled, oldest first.
+        sa.Index(
+            "ix_subscriptions_paymob_drift",
+            "updated_at",
+            "id",
+            postgresql_where=sa.text(
+                "paymob_subscription_id IS NOT NULL AND (paymob_cancelled_at IS NULL"
+                " OR status IN ('pending_first_payment', 'active', 'past_due'))"
+            ),
+        ),
         sa.CheckConstraint("extra_seats >= 0", name="extra_seats_nonneg"),
         sa.CheckConstraint(
             "pending_extra_seats IS NULL OR pending_extra_seats >= 0",

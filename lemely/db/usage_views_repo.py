@@ -377,8 +377,9 @@ def history_jobs_statement(
 
     The funder branch is added only for a caller who leads a row: a correlated ``EXISTS`` in an
     ``OR`` defeats the index and would scan the whole ledger for every plain student.
-    ``usage_jobs.teacher_member_id`` has no index of its own, so a lead still scans (a later
-    migration should add one, or drive the funder half from ``usage_entries``).
+    The funder branch is served by the partial index ``ix_usage_jobs_member_created`` on
+    ``usage_jobs (teacher_member_id, created_at DESC, id DESC) WHERE teacher_member_id IS NOT NULL``
+    (migration ``0055``), combined with ``ix_usage_jobs_actor_created`` by a bitmap OR.
     """
     visible = UsageJob.actor_user_id == user_id
     if led_members:

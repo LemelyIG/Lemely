@@ -86,9 +86,10 @@ class SubscriptionConflictError(AdminError):
     """Activating would give the user a second live subscription (→ 409).
 
     One live subscription per user (spec §4.3). Phase 02's partial unique index covers paid rows
-    only (``payer_user_id IS NOT NULL``), so this check covers manual activation. The check and a
-    concurrent paid checkout can race; that is accepted, because the paid row wins every reader's
-    ordering (index R25) and the manual row stays a harmless second live row.
+    only (``payer_user_id IS NOT NULL``), so this check covers manual activation. Two manual
+    decisions for one user are serialised by a per-user lock in ``decide_activation``. The check
+    and a concurrent paid checkout can still race; that is accepted, because the paid row wins
+    every reader's ordering (index R25) and the manual row stays a harmless second live row.
     """
 
 
@@ -361,6 +362,15 @@ class PlatformAdminService:
             if subscription.status is not SubscriptionStatus.inactive:
                 raise SubscriptionAlreadyDecidedError(subscription.status)
             if activate:
+                # Per-user lock: the row lock above covers only the row being decided, so two
+                # admins deciding two different queued rows for one user would each see the
+                # other still ``inactive`` and both activate. ``FOR NO KEY UPDATE`` serialises
+                # them without blocking the foreign-key checks of a concurrent checkout.
+                session.execute(
+                    select(User.id)
+                    .where(User.id == subscription.user_id)
+                    .with_for_update(key_share=True)
+                )
                 other_live = session.scalar(
                     select(Subscription.id).where(
                         Subscription.user_id == subscription.user_id,

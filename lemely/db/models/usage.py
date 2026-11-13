@@ -9,8 +9,7 @@ Seven tables:
   and an optional expiry. ``payment_id`` is a foreign key to ``payments``
   (declared here, created by migration ``0053``); ``teacher_member_id`` is a foreign
   key to ``teacher_members`` (migration ``0054``); ``subscription_period_id`` is a
-  plain UUID column here, and migration ``0055`` adds its foreign key when the target
-  table exists.
+  foreign key to ``subscription_periods`` (migration ``0055``).
 * :class:`UsageGrantBalance`: the cached ``remaining`` and ``held`` of a grant.
   ``reconcile_balances`` rebuilds it from the entries.
 * :class:`UsageJob`: one metered action, which is also the usage history row.
@@ -178,6 +177,13 @@ class UsageGrant(TimestampMixin, Base):
             "teacher_member_id",
             postgresql_where=sa.text("teacher_member_id IS NOT NULL"),
         ),
+        # Period grants are found by their period (the UD-1 expiry extension, the refund
+        # clawback) and the RESTRICT check of a period delete scans here (migration 0055).
+        sa.Index(
+            "ix_usage_grants_subscription_period",
+            "subscription_period_id",
+            postgresql_where=sa.text("subscription_period_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
@@ -253,6 +259,15 @@ class UsageJob(TimestampMixin, Base):
             "(status = 'settled') = (settled_at IS NOT NULL)", name="settled_at_matches"
         ),
         sa.Index("ix_usage_jobs_actor_created", "actor_user_id", "created_at"),
+        # A lead's usage history reads the jobs run under their seats and assistants
+        # (``usage_views_repo.history_jobs_statement``; migration 0055).
+        sa.Index(
+            "ix_usage_jobs_member_created",
+            "teacher_member_id",
+            sa.text("created_at DESC"),
+            sa.text("id DESC"),
+            postgresql_where=sa.text("teacher_member_id IS NOT NULL"),
+        ),
         sa.Index(
             "ix_usage_jobs_open_expires",
             "expires_at",
