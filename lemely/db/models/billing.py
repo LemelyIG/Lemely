@@ -91,6 +91,10 @@ class PlanTier(TimestampMixin, Base):
         sa.CheckConstraint("included_seats >= 0", name="seats_nonneg"),
         sa.CheckConstraint("seat_allowance_units >= 0", name="seat_allowance_nonneg"),
         sa.CheckConstraint("extra_seat_price_minor >= 0", name="extra_seat_price_nonneg"),
+        sa.CheckConstraint("paymob_plan_mode IN ('test', 'live')", name="paymob_plan_mode_values"),
+        sa.CheckConstraint(
+            "(paymob_plan_id IS NULL) = (paymob_plan_mode IS NULL)", name="paymob_plan_mode_linked"
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -126,6 +130,10 @@ class PlanTier(TimestampMixin, Base):
         sa.BigInteger, nullable=False, server_default=sa.literal(0)
     )
     paymob_plan_id: Mapped[int | None] = mapped_column(sa.BigInteger, nullable=True, unique=True)
+    paymob_plan_mode: Mapped[str | None] = mapped_column(sa.String, nullable=True)
+    """The Paymob key mode (``test`` or ``live``) ``paymob_plan_id`` was created under; set exactly
+    when the id is. A plan id only exists in the mode of the keys that made it, so a checkout
+    under the other mode's keys is refused rather than sent to Paymob to 404 (audit I8)."""
     is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.true())
     #: Teacher tiers only (zero on student tiers).
     included_seats: Mapped[int] = mapped_column(

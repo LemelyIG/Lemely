@@ -237,6 +237,7 @@ def seed_tier(
                 seat_allowance_units=seat_allowance_units,
                 extra_seat_price_minor=extra_seat_price_minor,
                 paymob_plan_id=plan_id,
+                paymob_plan_mode=None if plan_id is None else "test",
                 is_active=is_active,
             )
         )

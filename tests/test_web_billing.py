@@ -178,6 +178,7 @@ def _public_seed(sm: sessionmaker[Session]) -> None:
                     allowance_units=5000,
                     interval=PlanInterval.monthly,
                     paymob_plan_id=1186,
+                    paymob_plan_mode="test",
                     features={"papers": "unlimited"},
                 ),
                 PlanTier(
@@ -188,6 +189,7 @@ def _public_seed(sm: sessionmaker[Session]) -> None:
                     allowance_units=20000,
                     interval=PlanInterval.monthly,
                     paymob_plan_id=1187,
+                    paymob_plan_mode="test",
                     included_seats=30,
                     seat_allowance_units=700,
                     extra_seat_price_minor=1500,

@@ -135,7 +135,8 @@ def sync_paymob_plan(
     The tier row is locked ``FOR UPDATE`` and the caller commits. Every refusal happens before
     Paymob is called. Owned by Phase 05 with this exact signature (index R9). Phase 07 calls it
     from the admin catalogue and adds its synced-price and synced-frequency stamps inside this
-    function, right after ``tier.paymob_plan_id`` is set.
+    function, right after ``tier.paymob_plan_id`` and ``tier.paymob_plan_mode`` (the key mode the
+    plan was created under, audit I8) are set.
 
     Raises:
         PlanNotPurchasable: unknown tier, no interval, a price of zero or less, or no MOTO
@@ -180,6 +181,7 @@ def sync_paymob_plan(
         alerts.error("paymob_plan_response_unusable", plan_tier_id=str(tier.id), alert=True)
         raise PlanSyncFailed(f"Paymob returned no plan id for tier {tier.id}")
     tier.paymob_plan_id = plan_id
+    tier.paymob_plan_mode = settings.key_mode
     log.info("paymob_plan_linked", plan_tier_id=str(tier.id), paymob_plan_id=plan_id)
     return plan_id
 

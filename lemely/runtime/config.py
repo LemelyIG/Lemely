@@ -1455,6 +1455,19 @@ class PaymobSettings(BaseModel):
         return self
 
     @property
+    def key_mode(self) -> Literal["test", "live"]:
+        """The mode objects made with these keys live in (Paymob plan ids exist in one mode only).
+
+        Read from the secret key's prefix. A key with no readable prefix (the suite's bare
+        fixtures, an unset key) is judged by ``expect_live``: live where production insists on
+        it, test everywhere else.
+        """
+        mode = _paymob_key_mode(
+            self.secret_key.get_secret_value() if self.secret_key is not None else None
+        )
+        return mode or ("live" if self.expect_live else "test")
+
+    @property
     def checkout_configured(self) -> bool:
         """True when a one-off card checkout can be created and its callback verified."""
         return all(

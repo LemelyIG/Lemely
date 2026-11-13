@@ -21,6 +21,12 @@ Paymob billing spec §4.3, §5.1-§5.3 (Phase 05). Additive:
   cancel, period end and amount candidates, daily drift). Phase 05 adds no other migration, so
   they are created here; ``tests/test_migration_subscription_periods.py`` pins the predicate each
   one serves.
+* ``plan_tiers.paymob_plan_mode`` (``test`` or ``live``, nullable text): the Paymob key mode the
+  tier's ``paymob_plan_id`` was created under (audit I8: a plan id exists in one mode only).
+  Two CHECKs: the value is ``test`` or ``live``, and it is set exactly when the id is. Existing
+  linked tiers are backfilled to ``test`` first (before launch only test-mode plans exist; nothing
+  on ``main`` or ``develop`` writes ``paymob_plan_id``). ``sync_paymob_plan`` sets it; refusing a
+  mismatched tier at checkout is a later task.
 * ``subscriptions.paymob_amount_minor`` (the renewal amount Lemely last set at Paymob) and
   ``subscriptions.paymob_cancelled_at`` (when the Paymob subscription was cancelled).
 * The one-live-subscription index is ``uq_subscriptions_one_live_per_user`` from 0053; this
@@ -40,7 +46,7 @@ so dropping ``subscription_periods`` would orphan it (0054 precedent). It also r
 period exists: a period with no grant (a zero-allowance plan) still records which payment paid for
 it, and dropping the table would lose that silently. Otherwise it deletes
 ``billing`` notifications first (older code cannot load them, precedent 0044), then drops the
-preference column, the indexes, the two subscription columns, the foreign key and the table. The ``billing``
+preference column, the indexes, the plan mode column with its checks, the two subscription columns, the foreign key and the table. The ``billing``
 enum label stays: Postgres has no ``DROP VALUE``.
 """
 
@@ -148,6 +154,18 @@ def upgrade() -> None:
         ["teacher_member_id", sa.text("created_at DESC"), sa.text("id DESC")],
         postgresql_where=sa.text("teacher_member_id IS NOT NULL"),
     )
+    op.add_column("plan_tiers", sa.Column("paymob_plan_mode", sa.String(), nullable=True))
+    op.execute("UPDATE plan_tiers SET paymob_plan_mode = 'test' WHERE paymob_plan_id IS NOT NULL")
+    op.create_check_constraint(
+        op.f("ck_plan_tiers_paymob_plan_mode_values"),
+        "plan_tiers",
+        "paymob_plan_mode IN ('test', 'live')",
+    )
+    op.create_check_constraint(
+        op.f("ck_plan_tiers_paymob_plan_mode_linked"),
+        "plan_tiers",
+        "(paymob_plan_id IS NULL) = (paymob_plan_mode IS NULL)",
+    )
     op.add_column("subscriptions", sa.Column("paymob_amount_minor", sa.BigInteger(), nullable=True))
     op.add_column(
         "subscriptions",
@@ -192,6 +210,9 @@ def downgrade() -> None:
     op.drop_column("notification_preferences", "billing")
     for name, _columns, _predicate in reversed(_SWEEP_INDEXES):
         op.drop_index(name, table_name="subscriptions")
+    op.drop_constraint(op.f("ck_plan_tiers_paymob_plan_mode_linked"), "plan_tiers", type_="check")
+    op.drop_constraint(op.f("ck_plan_tiers_paymob_plan_mode_values"), "plan_tiers", type_="check")
+    op.drop_column("plan_tiers", "paymob_plan_mode")
     op.drop_column("subscriptions", "paymob_cancelled_at")
     op.drop_column("subscriptions", "paymob_amount_minor")
     op.drop_index("ix_usage_jobs_member_created", table_name="usage_jobs")

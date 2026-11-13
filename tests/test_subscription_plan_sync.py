@@ -77,6 +77,28 @@ def test_unlinked_tier_creates_and_links_a_plan(
     assert _linked_plan(pg_sessionmaker, tier_id) == plan_id
 
 
+@pytest.mark.parametrize(
+    ("secret", "public", "mode"),
+    [
+        ("egy_sk_test_x", "egy_pk_test_x", "test"),
+        ("egy_sk_live_x", "egy_pk_live_x", "live"),
+        ("sk", "pk", "test"),  # bare fixture keys carry no mode: not production, so test
+    ],
+)
+def test_the_linked_plan_records_the_key_mode_it_was_created_under(
+    pg_sessionmaker: sessionmaker[Session], secret: str, public: str, mode: str
+) -> None:
+    """A Paymob plan id exists in one key mode only (audit I8): store which, with the id."""
+    tier_id = seed_tier(pg_sessionmaker, paymob_plan_id=None)
+    settings = paymob_settings(secret_key=secret, public_key=public)
+    with pg_sessionmaker.begin() as session:
+        sync_paymob_plan(session, FakePaymobClient(), settings, tier_id)
+    with pg_sessionmaker() as session:
+        tier = session.get(PlanTier, tier_id)
+        assert tier is not None
+        assert tier.paymob_plan_mode == mode
+
+
 def test_the_paymob_retry_window_is_three_days(pg_sessionmaker: sessionmaker[Session]) -> None:
     """Revised UD-7: a null ``retrial_days`` may mean no retries, so the plan sets it."""
     tier_id = seed_tier(pg_sessionmaker, paymob_plan_id=None)

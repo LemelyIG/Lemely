@@ -190,3 +190,15 @@ def test_expect_live_false_in_the_env_allows_test_keys(monkeypatch: pytest.Monke
     monkeypatch.setenv("LEMELY_PAYMOB__EXPECT_LIVE", "false")
     monkeypatch.setenv("LEMELY_PAYMOB__SECRET_KEY", TEST_SECRET)
     assert Settings().paymob.expect_live is False
+
+
+def test_key_mode_is_read_from_the_secret_key_prefix() -> None:
+    assert _paymob(secret_key=TEST_SECRET).key_mode == "test"
+    assert _paymob(secret_key=LIVE_SECRET).key_mode == "live"
+
+
+def test_key_mode_of_an_unreadable_key_follows_expect_live() -> None:
+    """A bare key has no prefix to read: production (``expect_live``) means live, else test."""
+    assert _paymob(secret_key="sk").key_mode == "test"
+    assert _paymob(secret_key="sk", expect_live=True).key_mode == "live"
+    assert _paymob().key_mode == "test"

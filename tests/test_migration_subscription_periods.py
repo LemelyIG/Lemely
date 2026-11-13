@@ -55,6 +55,7 @@ TABLE = "subscription_periods"
 PHASE_02_LIVE_INDEX = "uq_subscriptions_one_live_per_user"
 GRANT_FK = "fk_usage_grants_subscription_period_id_subscription_periods"
 NEW_SUBSCRIPTION_COLUMNS = {"paymob_amount_minor", "paymob_cancelled_at"}
+MODE_CHECKS = {"ck_plan_tiers_paymob_plan_mode_values", "ck_plan_tiers_paymob_plan_mode_linked"}
 #: Indexes 0055 adds beside the new table: (table, name). Each is proved to serve its query below.
 PERIOD_GRANT_INDEX = ("usage_grants", "ix_usage_grants_subscription_period")
 JOB_HISTORY_INDEX = ("usage_jobs", "ix_usage_jobs_member_created")
@@ -70,6 +71,7 @@ NEW_INDEXES = (PERIOD_GRANT_INDEX, JOB_HISTORY_INDEX, *SWEEP_INDEXES)
 PARITY_TABLES = (
     "subscription_periods",
     "subscriptions",
+    "plan_tiers",
     "usage_grants",
     "usage_jobs",
     "notification_preferences",
@@ -211,6 +213,8 @@ def test_named_objects_present(migrated_sessionmaker: sessionmaker[Session]) -> 
         assert PHASE_02_LIVE_INDEX in object_names(session, ["subscriptions"])
         assert GRANT_FK in object_names(session, ["usage_grants"])
         assert column_names(session, "subscriptions") >= NEW_SUBSCRIPTION_COLUMNS
+        assert "paymob_plan_mode" in column_names(session, "plan_tiers")
+        assert object_names(session, ["plan_tiers"]) >= MODE_CHECKS
         for table, index in NEW_INDEXES:
             assert index in object_names(session, [table]), index
 
@@ -348,6 +352,86 @@ def test_period_grant_fk_restricts_deleting_the_period(
     with sm() as session:
         count = session.execute(sa.text("SELECT count(*) FROM subscription_periods")).scalar_one()
     assert count == 1
+
+
+def _insert_tier(sm: sessionmaker[Session], *, plan_id: int | None, mode: str | None) -> uuid.UUID:
+    tier_id = uuid.uuid4()
+    with sm.begin() as session:
+        session.execute(
+            sa.text(
+                "INSERT INTO plan_tiers (id, code, name, price_minor, paymob_plan_id, "
+                "paymob_plan_mode) VALUES (:id, :code, 'Tier', 1000, :plan, :mode)"
+            ),
+            {"id": tier_id, "code": f"mode-{tier_id.hex[:8]}", "plan": plan_id, "mode": mode},
+        )
+    return tier_id
+
+
+def test_plan_mode_is_set_exactly_when_the_tier_is_linked_to_a_paymob_plan(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A Paymob plan id exists in one key mode only (audit I8): store which, and never guess."""
+    sm = migrated_sessionmaker
+    _insert_tier(sm, plan_id=None, mode=None)  # unlinked: no mode
+    _insert_tier(sm, plan_id=9001, mode="test")
+    _insert_tier(sm, plan_id=9002, mode="live")
+    with (
+        pytest.raises(sa.exc.IntegrityError, match="ck_plan_tiers_paymob_plan_mode_linked"),
+        sm.begin() as session,
+    ):  # linked with no mode
+        session.execute(
+            sa.text(
+                "INSERT INTO plan_tiers (code, name, price_minor, paymob_plan_id) "
+                "VALUES ('no-mode', 'Tier', 1000, 9003)"
+            )
+        )
+    with (
+        pytest.raises(sa.exc.IntegrityError, match="ck_plan_tiers_paymob_plan_mode_linked"),
+        sm.begin() as session,
+    ):  # a mode with nothing it is the mode of
+        session.execute(
+            sa.text(
+                "INSERT INTO plan_tiers (code, name, price_minor, paymob_plan_mode) "
+                "VALUES ('orphan-mode', 'Tier', 1000, 'test')"
+            )
+        )
+    with (
+        pytest.raises(sa.exc.IntegrityError, match="ck_plan_tiers_paymob_plan_mode_values"),
+        sm.begin() as session,
+    ):  # only the two key modes
+        session.execute(
+            sa.text(
+                "INSERT INTO plan_tiers (code, name, price_minor, paymob_plan_id, "
+                "paymob_plan_mode) VALUES ('bad-mode', 'Tier', 1000, 9004, 'sandbox')"
+            )
+        )
+
+
+def test_upgrade_backfills_linked_tiers_to_test_mode(
+    migrated_sessionmaker_with_downgrade: tuple[sessionmaker[Session], Callable[[str], None]],
+) -> None:
+    """Before launch only test-mode plans can exist, so a linked tier is read as ``test``.
+
+    Nothing on ``main`` or ``develop`` writes ``plan_tiers.paymob_plan_id`` (0053 is still on this
+    branch), so no deployed row is linked; the backfill covers a database that ran 0053 through
+    this branch's own sync code.
+    """
+    sm, downgrade_to = migrated_sessionmaker_with_downgrade
+    downgrade_to(DOWN_REVISION)
+    with sm.begin() as session:
+        session.execute(
+            sa.text(
+                "INSERT INTO plan_tiers (id, code, name, price_minor, paymob_plan_id) VALUES "
+                "(gen_random_uuid(), 'linked', 'Linked', 1000, 7001), "
+                "(gen_random_uuid(), 'unlinked', 'Unlinked', 1000, NULL)"
+            )
+        )
+    upgrade_head()
+    with sm() as session:
+        rows = dict(
+            session.execute(sa.text("SELECT code, paymob_plan_mode FROM plan_tiers")).tuples().all()
+        )
+    assert rows == {"linked": "test", "unlinked": None}
 
 
 def _plan_text(
@@ -620,6 +704,8 @@ def test_upgrade_downgrade_upgrade_round_trip(
         for table, index in NEW_INDEXES:
             assert index not in object_names(session, [table]), index
         assert NEW_SUBSCRIPTION_COLUMNS.isdisjoint(column_names(session, "subscriptions"))
+        assert "paymob_plan_mode" not in column_names(session, "plan_tiers")
+        assert not MODE_CHECKS & object_names(session, ["plan_tiers"])
         assert "billing" not in column_names(session, "notification_preferences")
         # Billing notices are deleted (older code cannot load them); others survive.
         types = set(
@@ -641,5 +727,7 @@ def test_upgrade_downgrade_upgrade_round_trip(
         for table, index in NEW_INDEXES:
             assert index in object_names(session, [table]), index
         assert column_names(session, "subscriptions") >= NEW_SUBSCRIPTION_COLUMNS
+        assert "paymob_plan_mode" in column_names(session, "plan_tiers")
+        assert object_names(session, ["plan_tiers"]) >= MODE_CHECKS
         assert "billing" in column_names(session, "notification_preferences")
         assert "billing" in enum_labels(session, "notificationtype")
