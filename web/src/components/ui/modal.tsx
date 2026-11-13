@@ -61,6 +61,8 @@ export interface ModalProps {
   /** `sm` (400px) for confirmations, `md` (520px, default) for forms, `lg`
    * (720px) for content-heavy panels. */
   size?: "sm" | "md" | "lg"
+  /** On the desktop dialog this styles the panel. On the native frame it applies to the
+   * body wrapper inside the sheet, not to the sheet panel itself. */
   className?: HTMLAttributes<HTMLDivElement>["className"]
   /** Internal, for `ConfirmModal`; call sites never set it. `"auto"` is a
    * sheet on the native frame and a centred dialog elsewhere; `"action-sheet"`
@@ -78,6 +80,8 @@ const sizeClasses = {
 
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+const AUTOFOCUS_SELECTOR = "[data-autofocus]"
 
 export function Modal({
   open,
@@ -121,8 +125,12 @@ export function Modal({
     // Defer to the next frame so the panel is in the DOM before we look for
     // a focusable descendant inside it.
     const raf = requestAnimationFrame(() => {
-      const first = panelRef.current?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)
-      ;(first ?? panelRef.current)?.focus()
+      const panel = panelRef.current
+      // `[data-autofocus]` names the safe landing spot (the iOS action sheet's
+      // Cancel row, which is not first in DOM order); otherwise the first focusable.
+      const preferred =
+        panel?.querySelector<HTMLElement>(AUTOFOCUS_SELECTOR) ?? panel?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)
+      ;(preferred ?? panel)?.focus()
     })
 
     return () => {
@@ -253,7 +261,7 @@ export function Modal({
           closing={phase === "closing"}
           header={presentation === "action-sheet" ? null : heading}
           className={presentation === "action-sheet" ? "lm-action-sheet" : undefined}
-          bodyClassName={presentation === "action-sheet" ? undefined : cn("flex flex-col gap-4 px-4 pb-4", className)}
+          bodyClassName={presentation === "action-sheet" ? "lm-action-sheet-body" : cn("flex flex-col gap-4 px-4 pb-4", className)}
         >
           {presentation === "action-sheet" ? (
             <>

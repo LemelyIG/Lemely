@@ -112,7 +112,13 @@ export function ConfirmModal({
             {pending ? (pendingLabel ?? confirmLabel) : confirmLabel}
           </button>
         </div>
-        <button type="button" className="lm-action-sheet-row lm-action-sheet-cancel" onClick={onCancel} disabled={pending}>
+        <button
+          type="button"
+          className="lm-action-sheet-row lm-action-sheet-cancel"
+          data-autofocus
+          onClick={onCancel}
+          disabled={pending}
+        >
           {cancelLabel}
         </button>
       </Modal>

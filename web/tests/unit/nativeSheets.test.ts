@@ -115,6 +115,18 @@ describe("ConfirmModal (Task 7)", () => {
   it("stays non-dismissible (no scrim close, no drag, no grabber)", () => {
     expect(src).toContain("dismissible={false}")
   })
+  it("Modal focuses [data-autofocus] before the first focusable, and Cancel carries it", () => {
+    const modal = read("components/ui/modal.tsx")
+    expect(modal).toMatch(/querySelector<HTMLElement>\(AUTOFOCUS_SELECTOR\)\s*\?\?\s*panel\?\.querySelector<HTMLElement>\(FOCUSABLE_SELECTOR\)/)
+    expect(modal).toContain('const AUTOFOCUS_SELECTOR = "[data-autofocus]"')
+    expect(src).toMatch(/lm-action-sheet-cancel"\s*data-autofocus/)
+    // The destructive row must not carry it.
+    expect(src.match(/data-autofocus/g)).toHaveLength(1)
+  })
+  it("the action-sheet body is a column with a gap and a bottom padding token", () => {
+    expect(css).toMatch(/\.lm-action-sheet-body \{[^}]*flex-direction: column;[^}]*gap: var\(--space-2\);[^}]*padding-bottom: var\(--space-2\)/)
+    expect(read("components/ui/modal.tsx")).toContain('"lm-action-sheet-body"')
+  })
   it("action-sheet rows use the native tokens", () => {
     expect(css).toMatch(/\.lm-action-sheet-row \{[^}]*min-block-size: var\(--native-action-row-h\)/)
     expect(css).toMatch(/\.lm-action-sheet-cancel \{[^}]*font-weight: 600/)

@@ -1874,9 +1874,23 @@ NATIVE_CHECKS.push(
       await dialog.waitFor()
       if (!(await dialog.evaluate((el) => el.classList.contains("lm-action-sheet")))) throw new Error("not an action sheet")
       // Modal moves focus in on the next frame; an Escape sent before that lands on the settings panel underneath.
-      await page.waitForFunction(() => document.activeElement?.closest("[role=dialog]")?.classList.contains("lm-action-sheet"))
+      // Focus must land on Cancel, never the destructive row that comes first in DOM order.
+      await page.waitForFunction(() => document.activeElement?.matches(".lm-action-sheet [data-autofocus]"), null, { timeout: 5000 }).catch(() => { throw new Error("focus did not land on the Cancel row") })
+      const focused = await page.evaluate(() => ({ cancel: document.activeElement?.classList.contains("lm-action-sheet-cancel"), label: document.activeElement?.textContent }))
+      if (!focused.cancel || focused.label !== "Stay signed in") throw new Error(`focus is on "${focused.label}", not the Cancel row`)
+      // The Cancel group sits apart from the destructive group, with room below it.
+      const gaps = await dialog.evaluate((el) => {
+        const group = el.querySelector(".lm-action-sheet-group").getBoundingClientRect()
+        const cancel = el.querySelector(".lm-action-sheet-cancel").getBoundingClientRect()
+        return { gap: cancel.top - group.bottom, below: window.innerHeight - cancel.bottom }
+      })
+      if (gaps.gap < 8) throw new Error(`group to Cancel gap is ${gaps.gap}px, expected at least 8`)
+      if (gaps.below < 8) throw new Error(`Cancel sits ${gaps.below}px above the screen edge, expected at least 8`)
+      if (process.env.NF_SHOT_PATH) await page.screenshot({ path: process.env.NF_SHOT_PATH, animations: "disabled" })
       await page.keyboard.press("Escape")
-      if (!(await dialog.isVisible())) throw new Error("Escape answered a destructive question")
+      // isVisible() stays true for the whole exit animation, so also require no data-closing after it would have started.
+      await page.waitForTimeout(400)
+      if (!(await dialog.isVisible()) || (await dialog.evaluate((el) => el.hasAttribute("data-closing")))) throw new Error("Escape answered a destructive question")
       await dialog.getByRole("button", { name: "Stay signed in" }).click()
       await dialog.waitFor({ state: "detached" })
     },
