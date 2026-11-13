@@ -1,0 +1,74 @@
+"""Subscription API DTOs (camelCase wire format; billing spec §2.1, §7, index R3).
+
+Field names match the built frontend's wire types (``web/src/lib/billingTypes.ts``): rename
+nothing here without changing them.
+"""
+
+# Pydantic's mypy plugin injects Any into generated __init__ signatures (the rule that
+# pyproject.toml's per-module override applies to the other schemas_* modules).
+# mypy: disallow-any-explicit=False
+from __future__ import annotations
+
+from datetime import datetime  # noqa: TC003 - pydantic reads the type at runtime
+
+from lemely.web.schemas import ApiModel
+from lemely.web.schemas_billing import (
+    PlanTierDTO,  # noqa: TC001 - pydantic reads the type at runtime
+)
+
+
+class SummaryBeneficiaryDTO(ApiModel):
+    userId: str
+    displayName: str | None
+    audience: str
+
+
+class SubscriptionViewDTO(ApiModel):
+    subscriptionId: str
+    status: str
+    tier: PlanTierDTO
+    currentPeriodStart: datetime | None
+    currentPeriodEnd: datetime | None
+    cancelAtPeriodEnd: bool
+    pendingTier: PlanTierDTO | None
+    graceUntil: datetime | None
+    extraSeats: int
+    pendingExtraSeats: int | None
+
+
+class SavedCardViewDTO(ApiModel):
+    cardId: str
+    maskedPan: str
+    brand: str | None
+
+
+class UsageMeterViewDTO(ApiModel):
+    fraction: float | None
+    resetsAt: datetime | None
+
+
+class CreditLotDTO(ApiModel):
+    units: int
+    expiresAt: datetime | None
+
+
+class CreditsViewDTO(ApiModel):
+    totalUnits: int
+    expiring: list[CreditLotDTO]
+
+
+class SeatsViewDTO(ApiModel):
+    capacity: int
+    used: int
+
+
+class BillingSummaryDTO(ApiModel):
+    beneficiary: SummaryBeneficiaryDTO
+    subscription: SubscriptionViewDTO | None
+    canManage: bool
+    managedByName: str | None
+    savedCard: SavedCardViewDTO | None
+    usage: UsageMeterViewDTO
+    credits: CreditsViewDTO
+    debtUnits: int
+    seats: SeatsViewDTO | None

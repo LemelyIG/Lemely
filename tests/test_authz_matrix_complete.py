@@ -301,7 +301,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/tutoring/blocks"): STUDENT_OR_TEACHER,
     ("POST", "/api/tutoring/blocks"): STUDENT_OR_TEACHER,
     ("DELETE", "/api/tutoring/blocks/{counterpart_id}"): STUDENT_OR_TEACHER,
-    # ── TUTORING_PARTY (6) ────────────────────
+    # ── TUTORING_PARTY (7) ────────────────────
     # Tutoring R1 (SPEC §c.1): target visibility (O12, O19) is object-level.
     ("POST", "/api/tutoring/reports"): TUTORING_PARTY,
     # Billing (spec 2026-11-02 §5.5, §7): the same three roles buy and pay.
@@ -314,6 +314,8 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/billing/receipts"): TUTORING_PARTY,
     # Index R3: the caller's own saved cards, masked only.
     ("GET", "/api/billing/cards"): TUTORING_PARTY,
+    # Index R3: object-level; a parent sees only a linked child (tests/test_web_billing_summary.py).
+    ("GET", "/api/billing/summary"): TUTORING_PARTY,
     # ── AUTH_ANY (22) ────────────────────
     # Billing phase 04: usage estimate, meter and history answer only about the caller.
     ("POST", "/api/usage/estimate"): AUTH_ANY,

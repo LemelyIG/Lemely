@@ -13,7 +13,10 @@ public fields only). Every other route is students, parents and teachers only
 * receipts: payments the caller *paid for*; a child never sees a parent's
   receipts, only the plan and balance they were bought;
 * cards: the caller's own active saved cards, masked only. The route never
-  touches the token cipher, so neither plaintext nor ciphertext can leave.
+  touches the token cipher, so neither plaintext nor ciphertext can leave;
+* summary: a parent names a linked student (the checkout rule), anyone else sees
+  only themselves; the acting-teacher header is ignored, as billing is never a
+  team permission.
 
 The price is computed on the server from ``credit_packs``; the request body
 forbids extra fields, so a client-sent price is a 422. A Paymob failure is a
@@ -24,6 +27,8 @@ forbids extra fields, so a client-sent price is a 422. A Paymob failure is a
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable  # noqa: TC003 - FastAPI reads the type at runtime
+from datetime import UTC, datetime
 from typing import Annotated, Final, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -41,7 +46,8 @@ from lemely.db.billing_repo import (
     receipts_for,
     saved_cards_for,
 )
-from lemely.db.models.billing import PlanAudience
+from lemely.db.billing_summary import build_billing_summary, is_linked_student
+from lemely.db.models.billing import PlanAudience, PlanTier
 from lemely.db.models.enums import Role
 from lemely.io.paymob.client import PaymobClient  # noqa: TC001 - FastAPI reads the type at runtime
 from lemely.runtime.config import Settings  # noqa: TC001 - FastAPI reads the type at runtime
@@ -73,6 +79,16 @@ from lemely.web.schemas_billing import (
     SavedCardList,
     SavedCardView,
 )
+from lemely.web.schemas_subscriptions import (
+    BillingSummaryDTO,
+    CreditLotDTO,
+    CreditsViewDTO,
+    SavedCardViewDTO,
+    SeatsViewDTO,
+    SubscriptionViewDTO,
+    SummaryBeneficiaryDTO,
+    UsageMeterViewDTO,
+)
 
 require_billing_party: Final = require_role(Role.student, Role.parent, Role.teacher)
 
@@ -98,6 +114,22 @@ def _requested_beneficiary(
     return payer
 
 
+def _plan_tier_dto(t: PlanTier) -> PlanTierDTO:
+    """One tier as the catalogue and the billing summary show it."""
+    return PlanTierDTO(
+        planTierId=str(t.id),
+        code=t.code,
+        name=t.name,
+        priceMinor=t.price_minor,
+        currency=t.currency,
+        interval=t.interval.value if t.interval is not None else None,
+        audience=t.audience.value,
+        includedSeats=t.included_seats,
+        extraSeatPriceMinor=t.extra_seat_price_minor,
+        features=dict(t.features),
+    )
+
+
 @router.get("/catalogue", response_model=CatalogueDTO)
 def get_catalogue(
     auth: Annotated[AuthContext, Depends(require_billing_party)],
@@ -108,21 +140,7 @@ def get_catalogue(
     with sm() as session:
         tiers, packs = active_catalogue(session, audience=audience)
         return CatalogueDTO(
-            planTiers=[
-                PlanTierDTO(
-                    planTierId=str(t.id),
-                    code=t.code,
-                    name=t.name,
-                    priceMinor=t.price_minor,
-                    currency=t.currency,
-                    interval=t.interval.value if t.interval is not None else None,
-                    audience=t.audience.value,
-                    includedSeats=t.included_seats,
-                    extraSeatPriceMinor=t.extra_seat_price_minor,
-                    features=dict(t.features),
-                )
-                for t in tiers
-            ],
+            planTiers=[_plan_tier_dto(t) for t in tiers],
             creditPacks=[
                 CreditPackDTO(
                     creditPackId=str(p.id),
@@ -313,4 +331,83 @@ def list_saved_cards(
                 )
                 for card in saved_cards_for(session, uuid.UUID(auth.user_id))
             ]
+        )
+
+
+def get_billing_clock() -> Callable[[], datetime]:
+    """The clock the billing summary reads "now" from; tests override it."""
+    return lambda: datetime.now(UTC)
+
+
+@router.get("/summary", response_model=BillingSummaryDTO)
+def get_billing_summary(
+    auth: Annotated[AuthContext, Depends(require_billing_party)],
+    sm: Annotated[sessionmaker[Session], Depends(get_billing_sessionmaker)],
+    clock: Annotated[Callable[[], datetime], Depends(get_billing_clock)],
+    beneficiaryId: uuid.UUID | None = None,
+) -> BillingSummaryDTO:
+    """Plan, period, usage meter, credits with expiry, debt and seats (index R3).
+
+    A parent must name a linked child (422 without one, 403 for anyone else, including a
+    linked user who is not a student); a student or teacher sees only themselves. The
+    ``X-Lemely-Acting-Teacher`` header is deliberately not read: billing is never a team
+    permission, so an assistant sees only their own summary.
+    """
+    caller = uuid.UUID(auth.user_id)
+    target = _requested_beneficiary(auth, caller, beneficiaryId)
+    with sm() as session:
+        if auth.role == Role.parent.value and not is_linked_student(session, caller, target):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, "You can only view a linked child's billing"
+            )
+        try:
+            s = build_billing_summary(
+                session, caller_user_id=caller, beneficiary_user_id=target, now=clock()
+            )
+        except LookupError as exc:
+            # A valid token whose user row is gone: refuse, and do not echo the id.
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Billing is not available") from exc
+        sub, card = s.subscription, s.saved_card
+        return BillingSummaryDTO(
+            beneficiary=SummaryBeneficiaryDTO(
+                userId=str(s.beneficiary.id),
+                displayName=s.beneficiary.display_name,
+                audience=s.audience,
+            ),
+            subscription=(
+                SubscriptionViewDTO(
+                    subscriptionId=str(sub.id),
+                    status=sub.status.value,
+                    tier=_plan_tier_dto(s.tier),
+                    currentPeriodStart=sub.current_period_start,
+                    currentPeriodEnd=sub.current_period_end,
+                    cancelAtPeriodEnd=sub.cancel_at_period_end,
+                    pendingTier=_plan_tier_dto(s.pending_tier) if s.pending_tier else None,
+                    graceUntil=sub.grace_until,
+                    extraSeats=sub.extra_seats,
+                    pendingExtraSeats=sub.pending_extra_seats,
+                )
+                if sub is not None and s.tier is not None
+                else None
+            ),
+            canManage=s.can_manage,
+            managedByName=s.managed_by_name,
+            savedCard=(
+                SavedCardViewDTO(cardId=str(card.id), maskedPan=card.masked_pan, brand=card.brand)
+                if card is not None
+                else None
+            ),
+            usage=UsageMeterViewDTO(fraction=s.meter_fraction, resetsAt=s.meter_resets_at),
+            credits=CreditsViewDTO(
+                totalUnits=s.credits_balance,
+                expiring=[
+                    CreditLotDTO(units=lot.units, expiresAt=lot.expires_at) for lot in s.credits
+                ],
+            ),
+            debtUnits=s.debt_units,
+            seats=(
+                SeatsViewDTO(capacity=s.seat_capacity, used=s.seats_used or 0)
+                if s.seat_capacity is not None
+                else None
+            ),
         )
