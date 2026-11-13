@@ -107,6 +107,61 @@ const classPaper = (n, studentName, unshared) => ({
   unshared,
 })
 
+const AT_RISK_LIST = (omarAcknowledged) => {
+  const flag = (reason, acknowledged = null) => ({ reason, summary: reason, evidence: {}, acknowledged })
+  return {
+    students: [
+      { studentId: "s-1", displayName: "Amina Said", classId: "class-1", className: "Year 11 Physics", grade: "C", flags: [flag("declining_trend"), flag("below_target")] },
+      {
+        studentId: "s-2",
+        displayName: "Omar Nabil",
+        classId: "class-1",
+        className: "Year 11 Physics",
+        grade: "D",
+        flags: [flag("below_target", omarAcknowledged ? { acknowledgedAt: "2026-11-13T09:00:00Z", note: "Spoke to him" } : null)],
+      },
+    ],
+  }
+}
+
+const CLASS_ROWS = [
+  { id: "class-1", label: "Year 11 Physics", studentCount: 24, average: 64.2, subjectCode: "0625", subjectName: "Physics", schoolId: null, joinCode: null, atRiskCount: 2, lastActivityAt: null, topWeakness: null },
+  { id: "class-2", label: "Year 10 Maths", studentCount: 1, average: null, subjectCode: null, subjectName: null, schoolId: null, joinCode: null, atRiskCount: 0, lastActivityAt: null, topWeakness: null },
+  { id: "class-3", label: "AS Chemistry", studentCount: 18, average: 71, subjectCode: "9701", subjectName: "Chemistry", schoolId: null, joinCode: null, atRiskCount: null, lastActivityAt: null, topWeakness: null },
+]
+
+const QUIZ_ROWS = [
+  { id: "quiz-1", subjectCode: "0625", title: "Forces recap", status: "published", targetGrade: "B", includedTopics: [], poolSource: null, requestedCount: 10, timeLimitMinutes: null, builderStep: 6, questionCount: 10 },
+  { id: "quiz-2", subjectCode: "0606", title: "Quadratics warm-up", status: "draft", targetGrade: null, includedTopics: [], poolSource: null, requestedCount: null, timeLimitMinutes: null, builderStep: 3, questionCount: 4 },
+]
+
+const ANALYTICS = {
+  topicWeaknesses: [],
+  heatmap: [],
+  gradeDistribution: [],
+  trend: [],
+  paperComparison: [
+    { paperId: "0625-2-2", subjectCode: "0625", paperNumber: 2, paperVariant: 2, meanPercentage: 64.5, attemptCount: 6, studentCount: 4 },
+    { paperId: "0625-4-1", subjectCode: "0625", paperNumber: 4, paperVariant: 1, meanPercentage: 58, attemptCount: 4, studentCount: 3 },
+  ],
+  engagement: { submissionsLast7Days: 5, submissionsLast30Days: 14, activeStudentsLast7Days: 3, activeStudentsLast30Days: 4, neverActiveCount: 0, medianDaysSinceLastSubmission: 3 },
+}
+
+const STUDENT = {
+  studentId: "s-yusuf",
+  displayName: "Yusuf Adel",
+  subjects: [{ subjectCode: "0625", predictedGrade: "E", latestPercentage: 44, paperCount: 2 }],
+  attempts: [
+    { paperId: "0625-4-1", subjectCode: "0625", paperNumber: 4, paperVariant: 1, awardedMarks: 35, maximumMarks: 80, percentage: 43.75, grade: "E", recordedAt: "2026-07-28T08:10:00+00:00" },
+    { paperId: "0625-2-2", subjectCode: "0625", paperNumber: 2, paperVariant: 2, awardedMarks: 21, maximumMarks: 40, percentage: 52.5, grade: "D", recordedAt: "2026-06-15T09:00:00+00:00" },
+  ],
+  weaknesses: [],
+  trend: [],
+  isAtRisk: false,
+  atRiskFlags: [],
+  engagement: { totalPapers: 2, lastActiveAt: "2026-07-28T08:10:00+00:00", daysSinceLastSubmission: 17 },
+}
+
 /** A teacher table screen on a phone: list rows first, no table in the DOM, then
  * View table swaps in the scrollable region, and the choice survives a reload. */
 async function expectListThenTable(page, { label, storageKey, rowSelector, rows }) {
@@ -642,19 +697,11 @@ NATIVE_CHECKS.push({
       path: "/teacher/at-risk",
       label: "At-risk students",
       storageKey: "lemely.atRisk.view",
-      rowSelector: ".lm-native-main a.lm-native-row",
+      rowSelector: ".lm-native-main .lm-native-row",
       rows: 2,
       mocks: async (page) => {
         await teacherShellMocks(page)
-        const flag = (reason) => ({ reason, summary: reason, evidence: {}, acknowledged: null })
-        await page.route(/\/api\/teacher\/at-risk(\?|$)/, (route) =>
-          jsonRoute(route, {
-            students: [
-              { studentId: "s-1", displayName: "Amina Said", classId: "class-1", className: "Year 11 Physics", grade: "C", flags: [flag("falling_trend"), flag("below_target")] },
-              { studentId: "s-2", displayName: "Omar Nabil", classId: "class-1", className: "Year 11 Physics", grade: "D", flags: [flag("below_target")] },
-            ],
-          }),
-        )
+        await page.route(/\/api\/teacher\/at-risk(\?|$)/, (route) => jsonRoute(route, AT_RISK_LIST(false)))
       },
     },
     {
@@ -678,14 +725,161 @@ NATIVE_CHECKS.push({
         )
       },
     },
+    {
+      id: "native-android-classes-list-and-table",
+      surface: "classes",
+      path: "/teacher/classes",
+      label: "Your classes",
+      storageKey: "lemely.classes.view",
+      rowSelector: ".lm-native-main .lm-native-row",
+      rows: 3,
+      mocks: async (page) => {
+        await teacherShellMocks(page)
+        await page.route(/\/api\/teacher\/classes(\?|$)/, (route) => jsonRoute(route, { classes: CLASS_ROWS }))
+      },
+      async extra(page) {
+        const text = await page.locator(".lm-native-main .lm-native-group").innerText()
+        if (!/64% avg/.test(text)) throw new Error("average not labelled as an average")
+        if (/—/.test(text)) throw new Error("stray dash in classes list")
+        if (!/Subject not set/.test(text)) throw new Error("missing subject-not-set wording")
+        if (!/tap View table/.test(await page.locator(".lm-native-main").innerText())) throw new Error("missing View table signpost")
+        await expectNoMatch(page, "No classes match")
+      },
+    },
+    {
+      id: "native-android-quizzes-list-and-table",
+      surface: "quizzes",
+      path: "/teacher/quizzes",
+      label: "Your quizzes",
+      storageKey: "lemely.quizzes.view",
+      rowSelector: ".lm-native-main .lm-native-row",
+      rows: 2,
+      mocks: async (page) => {
+        await teacherShellMocks(page)
+        await page.route(/\/api\/teacher\/quizzes(\?|$)/, (route) => jsonRoute(route, { quizzes: QUIZ_ROWS }))
+      },
+      async extra(page) {
+        await expectNoMatch(page, "No quizzes match")
+      },
+    },
+    {
+      id: "native-android-class-analytics-list-and-table",
+      surface: "class-analytics",
+      path: "/teacher/classes/class-1/analytics",
+      label: "Per-paper comparison",
+      storageKey: "lemely.analytics.papers.view",
+      rowSelector: ".lm-native-main .lm-native-row",
+      rows: 2,
+      mocks: async (page) => {
+        await teacherShellMocks(page)
+        await page.route(/\/api\/classes\/class-1(\?|$)/, (route) => jsonRoute(route, CLASS_DETAIL))
+        await page.route(/\/api\/classes\/class-1\/analytics(\?|$)/, (route) => jsonRoute(route, ANALYTICS))
+      },
+      async extra(page) {
+        await expectOneNameForGroup(page, "Per-paper comparison")
+      },
+    },
+    {
+      id: "native-android-student-detail-list-and-table",
+      surface: "student-detail",
+      path: "/teacher/students/s-yusuf",
+      label: "Attempt history",
+      storageKey: "lemely.studentAttempts.view",
+      rowSelector: ".lm-native-main .lm-native-row",
+      rows: 2,
+      mocks: async (page) => {
+        await teacherShellMocks(page)
+        await page.route(/\/api\/teacher\/classes(\?|$)/, (route) => jsonRoute(route, { classes: CLASS_ROWS }))
+        await page.route(/\/api\/teacher\/students\/s-yusuf(\?|$)/, (route) => jsonRoute(route, STUDENT))
+      },
+      async extra(page) {
+        if ((await page.locator(".lm-native-main .lm-native-row button").count()) !== 0) throw new Error("attempt rows hold a button")
+        if ((await page.locator(".lm-native-main .lm-native-group").getByText("Coming soon").count()) !== 0) throw new Error("Coming soon chip in attempt rows")
+        const row = await page.locator(".lm-native-main .lm-native-row").first().innerText()
+        if (!/44%/.test(row)) throw new Error(`trailing percentage missing: ${row}`)
+        await expectOneNameForGroup(page, "Attempt history")
+      },
+    },
   ].map((c) => ({
     id: c.id,
     platform: "android",
     width: 390,
     app: { surface: "teacher-overview", state: "populated", path: c.path, mocks: c.mocks },
-    run: (page) => expectListThenTable(page, c),
+    async run(page) {
+      await expectListThenTable(page, c)
+      if (c.extra) {
+        await page.getByRole("button", { name: "View list" }).click()
+        await page.locator(c.rowSelector).first().waitFor()
+        await c.extra(page)
+      }
+    },
   })),
+  {
+    id: "native-android-at-risk-acknowledge-from-list",
+    platform: "android",
+    width: 390,
+    app: {
+      surface: "teacher-overview",
+      state: "populated",
+      path: "/teacher/at-risk",
+      mocks: async (page) => {
+        await teacherShellMocks(page)
+        let acknowledged = false
+        await page.route(/\/api\/teacher\/at-risk(\?|$)/, (route) => jsonRoute(route, AT_RISK_LIST(acknowledged)))
+        await page.route(/\/api\/teacher\/at-risk\/s-2\/acknowledge$/, async (route) => {
+          const body = route.request().postDataJSON()
+          if (body.reason !== "below_target" || body.note !== "Spoke to him") {
+            return route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ detail: "unexpected body" }) })
+          }
+          acknowledged = true
+          return jsonRoute(route, { reason: "below_target", summary: "below_target", evidence: {}, acknowledged: { acknowledgedAt: "2026-11-13T09:00:00Z", note: "Spoke to him" } })
+        })
+      },
+    },
+    async run(page) {
+      const rows = page.locator(".lm-native-main .lm-native-row")
+      await rows.first().waitFor()
+      if ((await page.locator(".lm-native-main .lm-native-row a button, .lm-native-main .lm-native-row button a").count()) !== 0) {
+        throw new Error("interactive element nested inside another in a row")
+      }
+      const trigger = page.getByRole("button", { name: "Acknowledge flags for Omar Nabil" })
+      const box = await trigger.boundingBox()
+      if (!box || box.height < 48 || box.width < 48) throw new Error(`Android action target below 48px: ${JSON.stringify(box)}`)
+      await trigger.click()
+      const dialog = page.getByRole("dialog")
+      await dialog.waitFor()
+      await dialog.getByRole("button", { name: "Acknowledge", exact: true }).click()
+      await dialog.getByLabel(/Note/).fill("Spoke to him")
+      await dialog.getByRole("button", { name: "Confirm acknowledge" }).click()
+      await dialog.getByText("Spoke to him").waitFor()
+      await page.keyboard.press("Escape")
+      await dialog.waitFor({ state: "detached" })
+      const omar = rows.filter({ hasText: "Omar Nabil" })
+      await omar.getByText(/Below target grade \(acknowledged\)/).waitFor()
+      if ((await page.getByRole("button", { name: "Acknowledge flags for Omar Nabil" }).count()) !== 0) {
+        throw new Error("Acknowledge still offered when every flag is acknowledged")
+      }
+      if ((await page.getByRole("button", { name: "Acknowledge flags for Amina Said" }).count()) !== 1) {
+        throw new Error("Acknowledge missing on the row with unacknowledged flags")
+      }
+    },
+  },
 );
+
+/** Type a search that matches nothing: a plain message, no fake row, no empty group. */
+async function expectNoMatch(page, message) {
+  await page.getByRole("searchbox").fill("zzz-no-such-thing")
+  await page.getByText(message).waitFor()
+  if ((await page.locator(".lm-native-main .lm-native-row").count()) !== 0) throw new Error(`${message}: a row rendered for the no-match state`)
+  if ((await page.locator(".lm-native-main .lm-native-group").count()) !== 0) throw new Error(`${message}: an empty group rendered`)
+  await page.getByRole("searchbox").fill("")
+}
+
+/** A section heading already names the group, so the group adds no second visible label. */
+async function expectOneNameForGroup(page, name) {
+  const labels = await page.locator(".lm-native-main .lm-native-group-label").filter({ hasText: name }).count()
+  if (labels !== 0) throw new Error(`${name}: list group repeats the section heading`)
+}
 
 /** D11: two heading texts "repeat" when equal after these steps (see Task 5b). */
 const normTitle = (s) => s.trim().toLowerCase().replace(/\s+/g, " ").replace(/^(your|my) /, "");
