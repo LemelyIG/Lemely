@@ -11,6 +11,8 @@ import { QueryState } from "@/components/ui/query-state"
 import { RatingSummary } from "@/components/ui/rating-summary"
 import { SkeletonBlock } from "@/components/ui/skeleton"
 import { EmptyState } from "@/components/ui/state-views"
+import { ListGroup, ListRow } from "@/components/ui/list-group"
+import { TableOrList } from "@/components/ui/table-or-list"
 import { Table, TBody, TD, TH, TR } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { TutorCard } from "@/components/ui/tutor-card"
@@ -100,21 +102,35 @@ function WeeklyHours({ preview }: { preview: TutorPreview }) {
       {availability.length === 0 ? (
         <p className="m-0 text-body-md text-on-surface-variant">No weekly hours are set, so students can't book you yet.</p>
       ) : (
-        <Table density="operate" tabIndex={0} role="region" aria-label={`Weekly hours, ${zoneLabel}`}>
-          <TBody>
-            {WEEKDAYS.map((day) => {
-              const times = byDay.get(day.iso)
-              return (
-                <TR key={day.iso}>
-                  <TH scope="row" className="w-1/3 font-normal text-on-surface">
-                    {day.label}
-                  </TH>
-                  <TD className={times ? "text-on-surface" : "text-on-surface-variant"}>{times ? times.join(", ") : "Not available"}</TD>
-                </TR>
-              )
-            })}
-          </TBody>
-        </Table>
+        <TableOrList
+          label={`Weekly hours, ${zoneLabel}`}
+          storageKey="lemely.tutor.hours.view"
+          list={
+            <ListGroup>
+              {WEEKDAYS.map((day) => {
+                const times = byDay.get(day.iso)
+                return <ListRow key={day.iso} title={day.label} subtitle={times ? times.join(", ") : "Not available"} />
+              })}
+            </ListGroup>
+          }
+          table={
+            <Table density="operate" tabIndex={0} role="region" aria-label={`Weekly hours, ${zoneLabel}`}>
+              <TBody>
+                {WEEKDAYS.map((day) => {
+                  const times = byDay.get(day.iso)
+                  return (
+                    <TR key={day.iso}>
+                      <TH scope="row" className="w-1/3 font-normal text-on-surface">
+                        {day.label}
+                      </TH>
+                      <TD className={times ? "text-on-surface" : "text-on-surface-variant"}>{times ? times.join(", ") : "Not available"}</TD>
+                    </TR>
+                  )
+                })}
+              </TBody>
+            </Table>
+          }
+        />
       )}
     </div>
   )
