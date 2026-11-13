@@ -20,6 +20,8 @@ import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
 import { useBulkApproveReview, useReviewQueue, useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import type { BulkApproveResponse, ReviewQueueItem, ReviewQueueList } from "@/lib/teacherTypes"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
+import { ListGroup, ListRow } from "@/components/ui/list-group"
+import { TableOrList } from "@/components/ui/table-or-list"
 
 /*
  * Review queue (T-07). `GET /teacher/review?class_id=&reason=&min_age_hours=`
@@ -522,202 +524,225 @@ export function Review() {
                     </div>
                   ) : null}
 
-                  <Table density="operate"
-                    tabIndex={0}
-                    role="region"
-                    aria-label="Review queue, scrollable horizontally"
-                  >
-                    <caption className="sr-only">
-                      Review queue, oldest-waiting item first, which is the priority order the server already
-                      returns this list in
-                    </caption>
-                    <THead>
-                      <TR>
-                        <TH>
-                          <span className="sr-only">Select</span>
-                        </TH>
-                        <TH>Student</TH>
-                        <TH>Paper</TH>
-                        <TH>Question</TH>
-                        <TH>Why it's here</TH>
-                        <TH>Waiting</TH>
-                        <TH numeric>AI mark</TH>
-                        <TH numeric>Confidence</TH>
-                        <TH>
-                          <span className="sr-only">Actions</span>
-                        </TH>
-                      </TR>
-                    </THead>
-                    <TBody>
-                      {items.map((item) => (
-                        <TR key={item.itemId} className="align-top">
-                          <TD>
-                            <Checkbox
-                              checked={selected.has(item.itemId)}
-                              disabled={isIntegrityReason(item.reason)}
-                              onChange={() => toggleSelected(item.itemId)}
-                              title={
-                                isIntegrityReason(item.reason)
-                                  ? "Integrity flags aren't selectable for bulk-approve. Open this item instead"
-                                  : undefined
-                              }
-                              aria-label={
-                                isIntegrityReason(item.reason)
-                                  ? `${item.studentDisplayName}'s ${questionLabel(item)} is an integrity flag and isn't selectable here. Open it instead`
-                                  : `Select ${item.studentDisplayName}'s ${questionLabel(item)} for bulk approve`
-                              }
-                            />
-                          </TD>
-                          <TD>
-                            {/* Two row shapes, because the queue has two
-                                sources. A console-uploaded paper has no
-                                student and no class (D1.12), so it gets
-                                neither an avatar nor the two links below:
-                                rendering a person's avatar for a scan, or a
-                                link to `/teacher/students/null`, would be
-                                inventing a student this row does not have. */}
-                            {isConsolePaperItem(item) ? (
-                                <div className="flex items-center gap-2.5 min-w-0">
-                                  <span
-                                    aria-hidden="true"
-                                    className="flex-none w-8 h-8 rounded-full bg-surface-container-low border border-outline-variant flex items-center justify-center text-on-surface-variant"
-                                  >
-                                    <svg
-                                      viewBox="0 0 16 16"
-                                      className="w-3.5 h-3.5"
-                                      fill="none"
-                                      stroke="currentColor"
-                                      strokeWidth="1.5"
-                                    >
-                                      <path d="M9.5 1.5H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5z" />
-                                      <path d="M9.5 1.5V5H13" />
-                                    </svg>
-                                  </span>
-                                  <div className="min-w-0 max-w-[20ch]">
-                                    <Link
-                                      to="/teacher/grading"
-                                      className="flex items-center text-on-surface hover:underline pointer-coarse:min-h-11"
-                                    >
-                                      <span className="truncate">{item.studentDisplayName}</span>
-                                    </Link>
-                                    <span className="flex items-center text-body-sm text-on-surface-variant">
-                                      Grading console
-                                    </span>
+                  <TableOrList
+                    label="Review queue"
+                    storageKey="lemely.review.view"
+                    list={
+                      <ListGroup label="Review queue">
+                        {items.map((item) => (
+                          <ListRow
+                            key={item.itemId}
+                            to={`/teacher/review/${item.itemId}${filterQsString ? `?${filterQsString}` : ""}`}
+                            title={item.studentDisplayName}
+                            subtitle={`${paperIdentityLabel(item)} · ${item.questionId ?? "no question"}`}
+                            trailing={
+                              <span className="text-data-sm">
+                                {item.confidenceScore != null ? `${Math.round(item.confidenceScore * 100)}%` : "–"}
+                              </span>
+                            }
+                          />
+                        ))}
+                      </ListGroup>
+                    }
+                    table={
+                      <Table density="operate"
+                        tabIndex={0}
+                        role="region"
+                        aria-label="Review queue, scrollable horizontally"
+                      >
+                        <caption className="sr-only">
+                          Review queue, oldest-waiting item first, which is the priority order the server already
+                          returns this list in
+                        </caption>
+                        <THead>
+                          <TR>
+                            <TH>
+                              <span className="sr-only">Select</span>
+                            </TH>
+                            <TH>Student</TH>
+                            <TH>Paper</TH>
+                            <TH>Question</TH>
+                            <TH>Why it's here</TH>
+                            <TH>Waiting</TH>
+                            <TH numeric>AI mark</TH>
+                            <TH numeric>Confidence</TH>
+                            <TH>
+                              <span className="sr-only">Actions</span>
+                            </TH>
+                          </TR>
+                        </THead>
+                        <TBody>
+                          {items.map((item) => (
+                            <TR key={item.itemId} className="align-top">
+                              <TD>
+                                <Checkbox
+                                  checked={selected.has(item.itemId)}
+                                  disabled={isIntegrityReason(item.reason)}
+                                  onChange={() => toggleSelected(item.itemId)}
+                                  title={
+                                    isIntegrityReason(item.reason)
+                                      ? "Integrity flags aren't selectable for bulk-approve. Open this item instead"
+                                      : undefined
+                                  }
+                                  aria-label={
+                                    isIntegrityReason(item.reason)
+                                      ? `${item.studentDisplayName}'s ${questionLabel(item)} is an integrity flag and isn't selectable here. Open it instead`
+                                      : `Select ${item.studentDisplayName}'s ${questionLabel(item)} for bulk approve`
+                                  }
+                                />
+                              </TD>
+                              <TD>
+                                {/* Two row shapes, because the queue has two
+                                    sources. A console-uploaded paper has no
+                                    student and no class (D1.12), so it gets
+                                    neither an avatar nor the two links below:
+                                    rendering a person's avatar for a scan, or a
+                                    link to `/teacher/students/null`, would be
+                                    inventing a student this row does not have. */}
+                                {isConsolePaperItem(item) ? (
+                                    <div className="flex items-center gap-2.5 min-w-0">
+                                      <span
+                                        aria-hidden="true"
+                                        className="flex-none w-8 h-8 rounded-full bg-surface-container-low border border-outline-variant flex items-center justify-center text-on-surface-variant"
+                                      >
+                                        <svg
+                                          viewBox="0 0 16 16"
+                                          className="w-3.5 h-3.5"
+                                          fill="none"
+                                          stroke="currentColor"
+                                          strokeWidth="1.5"
+                                        >
+                                          <path d="M9.5 1.5H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5z" />
+                                          <path d="M9.5 1.5V5H13" />
+                                        </svg>
+                                      </span>
+                                      <div className="min-w-0 max-w-[20ch]">
+                                        <Link
+                                          to="/teacher/grading"
+                                          className="flex items-center text-on-surface hover:underline pointer-coarse:min-h-11"
+                                        >
+                                          <span className="truncate">{item.studentDisplayName}</span>
+                                        </Link>
+                                        <span className="flex items-center text-body-sm text-on-surface-variant">
+                                          Grading console
+                                        </span>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    <Avatar name={item.studentDisplayName} size="sm" />
+                                    {/* P6.2's long-content pass. `min-w-0` alone could not
+                                        make the `truncate` below fire, and this is the
+                                        first capture that ever rendered a name long enough
+                                        to show it: the table is `w-full` with the default
+                                        `table-layout: auto`, so a long name grows its own
+                                        cell, drags the table past the card, and the text is
+                                        CLIPPED by the `overflow-x-auto` wrapper rather than
+                                        ellipsised. The rule was correct and unreachable —
+                                        present, resolving, and unable to fire, which no
+                                        gate in this build can see.
+
+                                        What the capture showed is worse than a missing
+                                        ellipsis, and it is why this is bounded rather than
+                                        left to scroll: at 1440, one long name widened the
+                                        student column by ~170px and pushed the per-row
+                                        "Review →" button off the right edge of the card.
+                                        The action every row exists for became unreachable
+                                        without horizontal scrolling, on a desktop screen
+                                        with room to spare, because of one student's name.
+
+                                        A character measure rather than a pixel width, for
+                                        the same reason `CorrectPaper`'s `max-w-[60ch]` is
+                                        one: it is a count of glyphs, not a spacing value,
+                                        so it is out of scope for the 4px scale. 20ch is
+                                        about the column's own natural width, so it is a
+                                        `max` that ordinary names never reach and long ones
+                                        cannot exceed. 30ch was tried first and did not
+                                        bind — it truncated the name and the table still
+                                        grew. */}
+                                    <div className="min-w-0 max-w-[20ch]">
+                                      {/* Two stacked links to two different destinations,
+                                          so both need §6.1's floor, not just the primary
+                                          one. `min-h-11` with flex centring rather than the
+                                          `py-[11px]` this used to carry: 21.7px of line
+                                          plus 22px of padding is 43.7px, which fails the
+                                          floor by a third of a pixel and reported as "44"
+                                          until the gate started printing tenths. Hand-tuned
+                                          padding cannot be right for both rungs anyway,
+                                          because they have different line-heights.
+
+                                          `truncate` moves to an inner span: on a flex
+                                          container the text is an anonymous flex item and
+                                          text-overflow has nothing to apply to, so the
+                                          ellipsis would silently stop working. */}
+                                      <Link
+                                        to={`/teacher/students/${item.studentId}`}
+                                        className="flex items-center text-on-surface hover:underline pointer-coarse:min-h-11"
+                                      >
+                                        <span className="truncate">{item.studentDisplayName}</span>
+                                      </Link>
+                                      <Link
+                                        to={`/teacher/classes/${item.classId}`}
+                                        className="flex items-center text-body-sm text-on-surface-variant transition-colors hover:text-on-surface hover:underline pointer-coarse:min-h-11"
+                                      >
+                                        <span className="truncate">{item.className}</span>
+                                      </Link>
+                                    </div>
                                   </div>
-                                </div>
-                              ) : (
-                              <div className="flex items-center gap-2.5 min-w-0">
-                                <Avatar name={item.studentDisplayName} size="sm" />
-                                {/* P6.2's long-content pass. `min-w-0` alone could not
-                                    make the `truncate` below fire, and this is the
-                                    first capture that ever rendered a name long enough
-                                    to show it: the table is `w-full` with the default
-                                    `table-layout: auto`, so a long name grows its own
-                                    cell, drags the table past the card, and the text is
-                                    CLIPPED by the `overflow-x-auto` wrapper rather than
-                                    ellipsised. The rule was correct and unreachable —
-                                    present, resolving, and unable to fire, which no
-                                    gate in this build can see.
-
-                                    What the capture showed is worse than a missing
-                                    ellipsis, and it is why this is bounded rather than
-                                    left to scroll: at 1440, one long name widened the
-                                    student column by ~170px and pushed the per-row
-                                    "Review →" button off the right edge of the card.
-                                    The action every row exists for became unreachable
-                                    without horizontal scrolling, on a desktop screen
-                                    with room to spare, because of one student's name.
-
-                                    A character measure rather than a pixel width, for
-                                    the same reason `CorrectPaper`'s `max-w-[60ch]` is
-                                    one: it is a count of glyphs, not a spacing value,
-                                    so it is out of scope for the 4px scale. 20ch is
-                                    about the column's own natural width, so it is a
-                                    `max` that ordinary names never reach and long ones
-                                    cannot exceed. 30ch was tried first and did not
-                                    bind — it truncated the name and the table still
-                                    grew. */}
-                                <div className="min-w-0 max-w-[20ch]">
-                                  {/* Two stacked links to two different destinations,
-                                      so both need §6.1's floor, not just the primary
-                                      one. `min-h-11` with flex centring rather than the
-                                      `py-[11px]` this used to carry: 21.7px of line
-                                      plus 22px of padding is 43.7px, which fails the
-                                      floor by a third of a pixel and reported as "44"
-                                      until the gate started printing tenths. Hand-tuned
-                                      padding cannot be right for both rungs anyway,
-                                      because they have different line-heights.
-
-                                      `truncate` moves to an inner span: on a flex
-                                      container the text is an anonymous flex item and
-                                      text-overflow has nothing to apply to, so the
-                                      ellipsis would silently stop working. */}
-                                  <Link
-                                    to={`/teacher/students/${item.studentId}`}
-                                    className="flex items-center text-on-surface hover:underline pointer-coarse:min-h-11"
-                                  >
-                                    <span className="truncate">{item.studentDisplayName}</span>
-                                  </Link>
-                                  <Link
-                                    to={`/teacher/classes/${item.classId}`}
-                                    className="flex items-center text-body-sm text-on-surface-variant transition-colors hover:text-on-surface hover:underline pointer-coarse:min-h-11"
-                                  >
-                                    <span className="truncate">{item.className}</span>
-                                  </Link>
-                                </div>
-                              </div>
-                              )}
-                          </TD>
-                          <TD className="whitespace-nowrap text-body-sm text-on-surface-variant">
-                            {paperIdentityLabel(item)}
-                          </TD>
-                          <TD className="text-data-sm whitespace-nowrap">
-                            {item.questionId ?? "—"}
-                          </TD>
-                          <TD>
-                            <Chip tone={isIntegrityReason(item.reason) ? "warn" : "neutral"}>
-                              {reasonLabel(item.reason)}
-                            </Chip>
-                          </TD>
-                          <TD className="whitespace-nowrap text-body-sm text-on-surface-variant">
-                            {relativeTime(item.createdAt)}
-                          </TD>
-                          {/* The confidence gets its own column rather than sitting
-                              unlabelled under the mark. Stacked, a tone-coloured
-                              "85%" read as a second figure about the *mark* — the
-                              same shape as surface 4's unlabelled rank column, where
-                              a coloured number beside another number invited the two
-                              to be read as a pair. A percentage under "2/3" is
-                              especially open to being read as a score. */}
-                          <TD numeric className="whitespace-nowrap text-data-sm">
-                            {item.aiAwardedMarks ?? "–"}/{item.maximumMarks ?? "–"}
-                          </TD>
-                          <TD numeric className="whitespace-nowrap">
-                            {item.confidenceScore != null ? (
-                              <Chip tone={confidenceTone(item.confidenceScore)}>
-                                {Math.round(item.confidenceScore * 100)}%
-                              </Chip>
-                            ) : (
-                              <span className="text-body-sm text-on-surface-variant">–</span>
-                            )}
-                          </TD>
-                          <TD className="text-end whitespace-nowrap">
-                            <Button
-                              size="sm"
-                              variant="secondary"
-                              onClick={() =>
-                                navigate(
-                                  `/teacher/review/${item.itemId}${filterQsString ? `?${filterQsString}` : ""}`,
-                                )
-                              }
-                            >
-                              Review <ForwardArrow />
-                            </Button>
-                          </TD>
-                        </TR>
-                      ))}
-                    </TBody>
-                  </Table>
+                                  )}
+                              </TD>
+                              <TD className="whitespace-nowrap text-body-sm text-on-surface-variant">
+                                {paperIdentityLabel(item)}
+                              </TD>
+                              <TD className="text-data-sm whitespace-nowrap">
+                                {item.questionId ?? "—"}
+                              </TD>
+                              <TD>
+                                <Chip tone={isIntegrityReason(item.reason) ? "warn" : "neutral"}>
+                                  {reasonLabel(item.reason)}
+                                </Chip>
+                              </TD>
+                              <TD className="whitespace-nowrap text-body-sm text-on-surface-variant">
+                                {relativeTime(item.createdAt)}
+                              </TD>
+                              {/* The confidence gets its own column rather than sitting
+                                  unlabelled under the mark. Stacked, a tone-coloured
+                                  "85%" read as a second figure about the *mark* — the
+                                  same shape as surface 4's unlabelled rank column, where
+                                  a coloured number beside another number invited the two
+                                  to be read as a pair. A percentage under "2/3" is
+                                  especially open to being read as a score. */}
+                              <TD numeric className="whitespace-nowrap text-data-sm">
+                                {item.aiAwardedMarks ?? "–"}/{item.maximumMarks ?? "–"}
+                              </TD>
+                              <TD numeric className="whitespace-nowrap">
+                                {item.confidenceScore != null ? (
+                                  <Chip tone={confidenceTone(item.confidenceScore)}>
+                                    {Math.round(item.confidenceScore * 100)}%
+                                  </Chip>
+                                ) : (
+                                  <span className="text-body-sm text-on-surface-variant">–</span>
+                                )}
+                              </TD>
+                              <TD className="text-end whitespace-nowrap">
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={() =>
+                                    navigate(
+                                      `/teacher/review/${item.itemId}${filterQsString ? `?${filterQsString}` : ""}`,
+                                    )
+                                  }
+                                >
+                                  Review <ForwardArrow />
+                                </Button>
+                              </TD>
+                            </TR>
+                          ))}
+                        </TBody>
+                      </Table>
+                    }
+                  />
 
                   {/* Task 11 (B6c): keyset "Load more", not a virtualized
                       list or infinite scroll — deferred by design. The

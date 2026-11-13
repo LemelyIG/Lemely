@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useState, type FormEvent } from "react"
 import { Link } from "react-router-dom"
-import { Minus, TrendDown, TrendUp } from "@phosphor-icons/react"
+import { CaretRight, Minus, TrendDown, TrendUp } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { GradeBadge } from "@/components/ui/grade-badge"
@@ -16,6 +16,8 @@ import { teacherMutationFailureMessage } from "@/lib/teacherOutcome"
 import type { StudentRow } from "@/lib/teacherTypes"
 import { useClassDetailContext } from "./ClassDetail"
 import { SortArrow } from "@/components/ui/inline-arrow"
+import { ListGroup, ListRow } from "@/components/ui/list-group"
+import { TableOrList } from "@/components/ui/table-or-list"
 import { useReference } from "@/lib/hooks/useReferenceApi"
 import { gradeRank, widestVocabularyFor } from "@/lib/grades"
 
@@ -270,93 +272,113 @@ export function ClassRoster() {
           action={{ label: "Add students", onClick: () => setShowAdd(true) }}
         />
       ) : (
-        <Table density="operate"
-          tabIndex={0}
-          role="region"
-          aria-label="Class roster, scrollable horizontally"
-        >
-          <caption className="sr-only">Class roster, sortable by every column</caption>
-          <THead>
-            <TR>
-              {COLUMNS.map((col) => {
-                const active = col.key === sortColumn
-                return (
-                  <TH
-                    key={col.key}
-                    numeric={col.numeric}
-                    aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
-                    className="align-bottom"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => toggleSort(col.key)}
-                      className="inline-flex items-center gap-1 text-eyebrow text-on-surface-variant transition-colors hover:text-on-surface cursor-pointer bg-transparent border-0 p-0"
-                    >
-                      {col.label}
-                      {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
-                    </button>
+        <TableOrList
+          label="Class roster"
+          storageKey="lemely.roster.view"
+          list={
+            <ListGroup label="Class roster">
+              {sorted.map((s) => (
+                <ListRow
+                  key={s.studentId}
+                  to={`/teacher/students/${s.studentId}`}
+                  leading={<Avatar name={s.name} size="sm" />}
+                  title={s.name}
+                  subtitle={`${s.grade ? `Predicted ${s.grade}` : "No grade yet"} · ${s.paperCount ?? 0} ${s.paperCount === 1 ? "paper" : "papers"}`}
+                  trailing={<CaretRight aria-hidden className="size-4 rtl:rotate-180" />}
+                />
+              ))}
+            </ListGroup>
+          }
+          table={
+            <Table density="operate"
+              tabIndex={0}
+              role="region"
+              aria-label="Class roster, scrollable horizontally"
+            >
+              <caption className="sr-only">Class roster, sortable by every column</caption>
+              <THead>
+                <TR>
+                  {COLUMNS.map((col) => {
+                    const active = col.key === sortColumn
+                    return (
+                      <TH
+                        key={col.key}
+                        numeric={col.numeric}
+                        aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
+                        className="align-bottom"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => toggleSort(col.key)}
+                          className="inline-flex items-center gap-1 text-eyebrow text-on-surface-variant transition-colors hover:text-on-surface cursor-pointer bg-transparent border-0 p-0"
+                        >
+                          {col.label}
+                          {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
+                        </button>
+                      </TH>
+                    )
+                  })}
+                  <TH>
+                    <span className="sr-only">Actions</span>
                   </TH>
-                )
-              })}
-              <TH>
-                <span className="sr-only">Actions</span>
-              </TH>
-            </TR>
-          </THead>
-          <TBody>
-            {sorted.map((s) => (
-              <TR key={s.studentId} className="align-top">
-                <TD>
-                  <div className="flex items-center gap-2.5">
-                    <Avatar name={s.name} size="sm" />
-                    <Link
-                      to={`/teacher/students/${s.studentId}`}
-                      className="text-on-surface hover:underline"
-                    >
-                      {s.name}
-                    </Link>
-                  </div>
-                </TD>
-                <TD numeric className="text-data-sm">
-                  {s.paperCount ?? 0}
-                </TD>
-                <TD numeric className="text-data-sm">
-                  {s.mark || "—"}
-                </TD>
-                <TD>
-                  <div className="flex items-center gap-1.5">
-                    {s.grade ? (
-                      <GradeBadge grade={s.grade} size="inline" basis="predicted" />
-                    ) : (
-                      <span className="text-body-sm text-on-surface-variant">No grade yet</span>
-                    )}
-                    {s.gradeAtRisk ? <Chip tone="warn">Low</Chip> : null}
-                  </div>
-                </TD>
-                <TD>
-                  <TrendCell delta={s.delta} />
-                </TD>
-                <TD>
-                  <AtRiskCell flags={s.flags} />
-                </TD>
-                <TD className="text-body-sm text-on-surface-variant whitespace-nowrap">
-                  {s.lastActiveAt ? relativeTime(s.lastActiveAt) : "Never"}
-                </TD>
-                <TD className="text-end whitespace-nowrap">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className={cn("text-error", removeStudent.isPending && "opacity-50")}
-                    disabled={removeStudent.isPending}
-                    onClick={() => setPendingRemove(s)}
-                  >
-                    Remove
-                  </Button>
-                </TD>
-              </TR>
-            ))}
-          </TBody>
-        </Table>
+                </TR>
+              </THead>
+              <TBody>
+                {sorted.map((s) => (
+                  <TR key={s.studentId} className="align-top">
+                    <TD>
+                      <div className="flex items-center gap-2.5">
+                        <Avatar name={s.name} size="sm" />
+                        <Link
+                          to={`/teacher/students/${s.studentId}`}
+                          className="text-on-surface hover:underline"
+                        >
+                          {s.name}
+                        </Link>
+                      </div>
+                    </TD>
+                    <TD numeric className="text-data-sm">
+                      {s.paperCount ?? 0}
+                    </TD>
+                    <TD numeric className="text-data-sm">
+                      {s.mark || "—"}
+                    </TD>
+                    <TD>
+                      <div className="flex items-center gap-1.5">
+                        {s.grade ? (
+                          <GradeBadge grade={s.grade} size="inline" basis="predicted" />
+                        ) : (
+                          <span className="text-body-sm text-on-surface-variant">No grade yet</span>
+                        )}
+                        {s.gradeAtRisk ? <Chip tone="warn">Low</Chip> : null}
+                      </div>
+                    </TD>
+                    <TD>
+                      <TrendCell delta={s.delta} />
+                    </TD>
+                    <TD>
+                      <AtRiskCell flags={s.flags} />
+                    </TD>
+                    <TD className="text-body-sm text-on-surface-variant whitespace-nowrap">
+                      {s.lastActiveAt ? relativeTime(s.lastActiveAt) : "Never"}
+                    </TD>
+                    <TD className="text-end whitespace-nowrap">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className={cn("text-error", removeStudent.isPending && "opacity-50")}
+                        disabled={removeStudent.isPending}
+                        onClick={() => setPendingRemove(s)}
+                      >
+                        Remove
+                      </Button>
+                    </TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          }
+        />
       )}
 
       {/* Reversible: the student can be enrolled again from the form above,

@@ -467,6 +467,65 @@ NATIVE_CHECKS.push({
         if (t.left < -0.5 || t.right > t.vw + 0.5) throw new Error(`stat tile overflows viewport: ${t.left}..${t.right} of ${t.vw}`)
     },
   },
+  {
+    id: "native-android-review-list-and-table",
+    platform: "android",
+    width: 390,
+    app: {
+      surface: "teacher-overview",
+      state: "populated",
+      path: "/teacher/review",
+      mocks: async (page) => {
+        await teacherShellMocks(page)
+        const item = (n) => ({
+          itemId: `item-${n}`,
+          source: "attempt",
+          attemptId: `attempt-${n}`,
+          paperId: null,
+          questionResultId: `qr-${n}`,
+          studentId: `student-${n}`,
+          studentDisplayName: n === 1 ? "Amina Said" : "Omar Nabil",
+          classId: "class-1",
+          className: "Year 11 Physics",
+          subjectCode: "0625",
+          paperNumber: 2,
+          paperVariant: 1,
+          sessionMonth: "May",
+          sessionYear: 2026,
+          questionId: `3${n}`,
+          reason: "low_confidence",
+          status: "open",
+          createdAt: "2026-11-12T08:00:00Z",
+          waitingHours: 30,
+          aiAwardedMarks: 2,
+          maximumMarks: 3,
+          confidenceScore: n === 1 ? 0.72 : 0.85,
+        })
+        await page.route("**/api/teacher/review?**", (route) =>
+          route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ items: [item(1), item(2)], total: 2, nextCursor: null }),
+          }),
+        )
+      },
+    },
+    async run(page) {
+      const rows = page.locator(".lm-native-main a.lm-native-row")
+      await rows.first().waitFor()
+      if ((await rows.count()) !== 2) throw new Error(`expected 2 list rows, found ${await rows.count()}`)
+      if ((await page.locator(".lm-native-main table").count()) !== 0) throw new Error("table rendered in list view")
+      await page.getByRole("button", { name: "View table" }).click()
+      const region = page.getByRole("region", { name: "Review queue", exact: true })
+      await region.waitFor()
+      const bodyRows = await region.locator("tbody tr").count()
+      if (bodyRows !== 2) throw new Error(`expected 2 table body rows, found ${bodyRows}`)
+      await page.reload({ waitUntil: "networkidle" })
+      await page.getByRole("region", { name: "Review queue", exact: true }).waitFor()
+      const stored = await page.evaluate(() => sessionStorage.getItem("lemely.review.view"))
+      if (stored !== "table") throw new Error(`table choice not persisted, sessionStorage=${stored}`)
+    },
+  },
 );
 
 /** D11: two heading texts "repeat" when equal after these steps (see Task 5b). */
