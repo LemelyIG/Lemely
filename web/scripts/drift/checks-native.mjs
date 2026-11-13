@@ -852,7 +852,8 @@ NATIVE_CHECKS.push({
       await dialog.getByRole("button", { name: "Acknowledge", exact: true }).click()
       await dialog.getByLabel(/Note/).fill("Spoke to him")
       await dialog.getByRole("button", { name: "Confirm acknowledge" }).click()
-      await dialog.getByText("Spoke to him").waitFor()
+      // The refetched row, not the note: the textarea's own text matches "Spoke to him" the moment it is typed, so waiting on that proves nothing.
+      await dialog.getByText(/^Acknowledged /).waitFor()
       await page.keyboard.press("Escape")
       await dialog.waitFor({ state: "detached" })
       // The trigger is gone, so focus must land on the row's own link, not the page.

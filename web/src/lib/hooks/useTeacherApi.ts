@@ -295,11 +295,14 @@ export function useAcknowledgeAtRisk(
         method: "POST",
         body: JSON.stringify(body satisfies AcknowledgeAtRiskRequest),
       }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["teacher", "at-risk"] })
-      queryClient.invalidateQueries({ queryKey: ["teacher", "student", studentId] })
-      queryClient.invalidateQueries({ queryKey: ["teacher", "overview"] })
-    },
+    // Returned, so the mutation settles only after the active lists have refetched: a caller that closes its
+    // sheet in `mutate`'s onSuccess then does so with fresh rows, and focus lands on a row that still exists.
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["teacher", "at-risk"] }),
+        queryClient.invalidateQueries({ queryKey: ["teacher", "student", studentId] }),
+        queryClient.invalidateQueries({ queryKey: ["teacher", "overview"] }),
+      ]),
   })
 }
 
