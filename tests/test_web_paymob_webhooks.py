@@ -582,3 +582,83 @@ def test_an_unmatched_renewal_callback_logs_info_and_no_error(
         e["log_level"] for e in logs if e["event"] == "paymob_renewal_txn_callback_unmatched"
     ] == ["info"]
     assert not any(e["log_level"] == "error" for e in logs)
+
+
+# -- startup: the Paymob key-mode checks run in the lifespan -------------------------------
+
+
+@pytest.fixture
+def fresh_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Rebuild the settings singleton around a test that changes the env."""
+    from lemely.web import deps
+
+    monkeypatch.setenv("LEMELY_NOTIFICATIONS__SWEEPER_ENABLED", "0")
+    deps.reset_singletons()
+    try:
+        yield
+    finally:
+        deps.reset_singletons()
+
+
+@pytest.mark.usefixtures("fresh_settings")
+def test_a_key_mode_mismatch_alerts_at_startup_and_the_app_still_starts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LEMELY_PAYMOB__SECRET_KEY", "egy_sk_test_STARTUPDISTINCTIVE1")
+    monkeypatch.setenv("LEMELY_PAYMOB__PUBLIC_KEY", "egy_pk_live_STARTUPDISTINCTIVE2")
+    with capture_logs() as logs, TestClient(create_app()) as started:
+        assert started.get("/api/health").status_code == 200
+    (entry,) = [e for e in logs if e["event"] == "paymob_key_mode_mismatch"]
+    assert entry["log_level"] == "error"
+    assert entry["alert"] is True
+    assert "STARTUPDISTINCTIVE" not in str(logs)
+
+
+@pytest.mark.usefixtures("fresh_settings")
+def test_matching_keys_log_no_key_mode_alert(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LEMELY_PAYMOB__SECRET_KEY", "egy_sk_test_a")
+    monkeypatch.setenv("LEMELY_PAYMOB__PUBLIC_KEY", "egy_pk_test_b")
+    with capture_logs() as logs, TestClient(create_app()) as started:
+        assert started.get("/api/health").status_code == 200
+    assert not any(e["event"] == "paymob_key_mode_mismatch" for e in logs)
+
+
+@pytest.mark.usefixtures("fresh_settings")
+def test_a_test_key_under_expect_live_stops_the_app_from_starting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lemely.runtime.config import PaymobKeyModeError
+
+    monkeypatch.setenv("LEMELY_PAYMOB__EXPECT_LIVE", "true")
+    monkeypatch.setenv("LEMELY_PAYMOB__SECRET_KEY", "egy_sk_test_STARTUPDISTINCTIVE3")
+    monkeypatch.setenv("LEMELY_PAYMOB__PUBLIC_KEY", "egy_pk_test_STARTUPDISTINCTIVE4")
+    with pytest.raises(PaymobKeyModeError) as caught, TestClient(create_app()):
+        pass
+    assert "STARTUPDISTINCTIVE" not in str(caught.value)
+
+
+@pytest.mark.usefixtures("fresh_settings")
+def test_live_keys_under_expect_live_start_normally(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LEMELY_PAYMOB__EXPECT_LIVE", "true")
+    monkeypatch.setenv("LEMELY_PAYMOB__SECRET_KEY", "egy_sk_live_a")
+    monkeypatch.setenv("LEMELY_PAYMOB__PUBLIC_KEY", "egy_pk_live_b")
+    with TestClient(create_app()) as started:
+        assert started.get("/api/health").status_code == 200
+
+
+def test_checkout_is_unavailable_while_the_key_modes_differ(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The router turns ``CheckoutUnavailable`` into the plain 503; no intention is created."""
+    from lemely.db.billing_repo import CheckoutUnavailable
+
+    sm = migrated_sessionmaker
+    payer = seed_user(sm)
+    pack = seed_pack(sm)
+    mixed = PAYMOB_SETTINGS.model_copy(update={"public_key": "egy_pk_live_public"})
+    client = FakePaymobClient()
+    with sm() as session, pytest.raises(CheckoutUnavailable):
+        BillingService(session, client, mixed).create_pack_checkout(
+            payer_user_id=payer, beneficiary_user_id=payer, credit_pack_id=pack
+        )
+    assert client.intentions == []

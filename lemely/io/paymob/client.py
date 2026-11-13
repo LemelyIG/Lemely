@@ -27,7 +27,8 @@ body is empty or not a JSON object (a proxy or maintenance page). Then
 ``outcome_unknown`` is ``True``: the request may have been applied, so the
 caller must inquire and must never read the failure as a decline. ``timeout`` is
 the narrower flag for a deadline that expired. The exceptions are
-``PaymobNotConfigured`` (nothing was sent) and a received non-2xx status, which
+``PaymobNotConfigured`` (nothing was sent: an unset credential, or a write refused because the
+public and secret keys are in different modes) and a received non-2xx status, which
 carries ``status_code``, with one exception: a 5xx on a write (create intention,
 pay with token, refund, void, create plan, update, suspend, resume or cancel a
 subscription) also sets ``outcome_unknown``, because a gateway error does not say
@@ -248,6 +249,10 @@ class PaymobClient:
         once and a 5xx on it is an unknown outcome; only an idempotent ``GET``
         rejected with 401 is repeated, once, under a fresh token.
         """
+        if write and self._settings.key_mode_mismatch:
+            # The public and secret keys are in different modes, so Paymob would answer 404 at
+            # best: refuse before anything is sent. A known failure, like an unset credential.
+            raise PaymobNotConfigured("Paymob public and secret keys are in different modes")
         token: str | None = None
         tried: list[str] = []
         headers: dict[str, str] = {}

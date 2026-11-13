@@ -133,6 +133,10 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     ``TestClient(app)``, which is why every pre-existing test is unaffected.
     """
     settings = get_settings()
+    # A test-mode Paymob key under ``expect_live`` stops the app here (a plain error, no
+    # credentials in it); a public/secret mode mismatch only alerts, and checkout answers 503.
+    settings.paymob.require_live_keys()
+    settings.paymob.log_key_mode_mismatch()
     log_marking_flags(settings.grading.marking_options())
     if email_delivery_mode(settings) == "mock" and _tutoring_routes_mounted(_app):
         log.warning(MOCK_WARNING)

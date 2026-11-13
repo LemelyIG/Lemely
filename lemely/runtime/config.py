@@ -1379,6 +1379,10 @@ def _paymob_key_mode(key: str | None) -> Literal["test", "live"] | None:
     return "live" if match.group(1) == "live" else "test"
 
 
+class PaymobKeyModeError(RuntimeError):
+    """Startup refused: a test-mode Paymob key where live keys are required (``expect_live``)."""
+
+
 class PaymobSettings(BaseModel):
     """Paymob (Egypt) credentials and endpoints (billing spec §3, §7).
 
@@ -1424,35 +1428,51 @@ class PaymobSettings(BaseModel):
     # would sell real credits for test cards (skill audit I2).
     expect_live: bool = False
 
-    @model_validator(mode="after")
-    def _keys_match_their_mode(self) -> PaymobSettings:
-        """Refuse mixed-mode keys always, and test-mode keys when ``expect_live``.
+    @property
+    def key_mode_mismatch(self) -> bool:
+        """True when the public and secret keys are readably in different modes (test vs live).
 
-        Only a key whose prefix shows its mode is judged (the suite's fixtures use bare
-        ``sk``/``pk``), and an unset key is a supported state. Messages name the field, never
-        the key. Integration IDs carry no mode marker, so "the IDs are the Live ones" stays on
-        the go-live checklist.
+        Paymob answers 404 at checkout for a mixed pair. Only a key whose prefix shows its mode
+        is judged (the suite's fixtures use bare ``sk``/``pk``), and an unset key is a supported
+        state. Not fatal: the app starts, :attr:`checkout_configured` is ``False`` and the
+        client refuses writes until the keys are fixed (:meth:`log_key_mode_mismatch` alerts).
         """
-        keys = {
-            "secret_key": _paymob_key_mode(
-                self.secret_key.get_secret_value() if self.secret_key is not None else None
-            ),
-            "public_key": _paymob_key_mode(self.public_key),
-        }
-        modes = {mode for mode in keys.values() if mode is not None}
-        if len(modes) > 1:
-            raise ValueError(
-                "paymob.secret_key and paymob.public_key are in different modes (test vs live); "
-                "Paymob answers 404 at checkout for a mixed pair"
-            )
-        if self.expect_live:
-            for name, mode in keys.items():
-                if mode == "test":
-                    raise ValueError(
-                        f"paymob.{name} is a test-mode key but paymob.expect_live is set "
-                        "(production): refusing to start on test keys"
-                    )
-        return self
+        secret_mode = _paymob_key_mode(
+            self.secret_key.get_secret_value() if self.secret_key is not None else None
+        )
+        public_mode = _paymob_key_mode(self.public_key)
+        return secret_mode is not None and public_mode is not None and secret_mode != public_mode
+
+    def require_live_keys(self) -> None:
+        """Refuse to start on a test-mode key when ``expect_live`` is set (production).
+
+        Raises :class:`PaymobKeyModeError`, a plain ``RuntimeError`` and deliberately not a
+        pydantic ``ValidationError``: those carry the whole offending input, credentials
+        included, in ``errors()`` and ``json()``. The message names the field, never the key.
+        Integration IDs carry no mode marker, so "the IDs are the Live ones" stays on the
+        go-live checklist.
+        """
+        if not self.expect_live:
+            return
+        secret = self.secret_key.get_secret_value() if self.secret_key is not None else None
+        for name, key in (("secret_key", secret), ("public_key", self.public_key)):
+            if _paymob_key_mode(key) == "test":
+                raise PaymobKeyModeError(
+                    f"paymob.{name} is a test-mode key but paymob.expect_live is set "
+                    "(production): refusing to start on test keys"
+                )
+
+    def log_key_mode_mismatch(self) -> bool:
+        """Log ``paymob_key_mode_mismatch`` (error, ``alert=True``) and return ``True`` if any."""
+        if not self.key_mode_mismatch:
+            return False
+        structlog.get_logger("lemely.paymob").error(
+            "paymob_key_mode_mismatch",
+            alert=True,
+            detail="paymob.secret_key and paymob.public_key are in different modes; "
+            "checkout and Paymob writes answer 503 until they match",
+        )
+        return True
 
     @property
     def key_mode(self) -> Literal["test", "live"]:
@@ -1470,7 +1490,7 @@ class PaymobSettings(BaseModel):
     @property
     def checkout_configured(self) -> bool:
         """True when a one-off card checkout can be created and its callback verified."""
-        return all(
+        return not self.key_mode_mismatch and all(
             value is not None
             for value in (
                 self.secret_key,
@@ -1507,6 +1527,9 @@ class Settings(BaseSettings):
         # any code that reconstructs Settings from a dump) would reject the
         # field-name key as an extra input. Allow both field name and aliases.
         populate_by_name=True,
+        # A validation error echoes its input by default, and this model's input holds every
+        # credential. ``str(exc)`` is what a startup traceback prints to the logs.
+        hide_input_in_errors=True,
     )
     gradio: GradioSettings = GradioSettings()
     paths: PathsSettings = PathsSettings()

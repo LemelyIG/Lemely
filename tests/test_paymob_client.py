@@ -964,3 +964,46 @@ def test_a_missing_api_key_before_a_write_is_still_not_configured() -> None:
     )
     with pytest.raises(PaymobNotConfigured):
         client.cancel_subscription(1)
+
+
+# -- mixed-mode keys: writes are refused before anything is sent (review I3) ---------------
+
+MIXED_KEYS = PAYMOB_SETTINGS.model_copy(update={"public_key": "egy_pk_live_public"})
+
+
+def _mixed_client(seen: list[str]) -> PaymobClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if request.url.path == "/api/auth/tokens":
+            return httpx.Response(200, json=AUTH_TOKEN_RESPONSE)
+        return httpx.Response(200, json=SUBSCRIPTION_RESPONSE)
+
+    return PaymobClient(MIXED_KEYS, http=httpx.Client(transport=httpx.MockTransport(handler)))
+
+
+@pytest.mark.parametrize(("label", "call"), WRITE_CALLS, ids=[c[0] for c in WRITE_CALLS])
+def test_every_write_is_refused_while_the_key_modes_differ(
+    label: str, call: Callable[[PaymobClient], Any]
+) -> None:
+    from lemely.db.billing_repo import _outcome_unknown
+
+    seen: list[str] = []
+    with pytest.raises(PaymobNotConfigured) as caught:
+        call(_mixed_client(seen))
+    assert seen == [], f"{label} sent a request despite the mixed key modes"
+    assert caught.value.outcome_unknown is False  # nothing was sent: a known failure
+    assert _outcome_unknown(caught.value) is False
+    assert "different modes" in str(caught.value)
+
+
+def test_reads_still_work_while_the_key_modes_differ() -> None:
+    """A read changes nothing at Paymob, and an operator needs inquiry to look into payments."""
+    seen: list[str] = []
+    assert _mixed_client(seen).get_subscription(1264)["id"] == 1264
+
+
+def test_matching_modes_do_not_refuse_a_write() -> None:
+    client, rec = _client(
+        {("POST", "/api/acceptance/subscriptions/1264/cancel"): (200, SUBSCRIPTION_RESPONSE)}
+    )
+    assert client.cancel_subscription(1264)["id"] == 1264

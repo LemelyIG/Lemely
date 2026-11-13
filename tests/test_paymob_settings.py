@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-import pytest
-from pydantic import ValidationError
+import traceback
 
-from lemely.runtime.config import PaymobSettings, Settings
+import pytest
+from pydantic import ValidationError, model_validator
+from structlog.testing import capture_logs
+
+from lemely.runtime.config import PaymobKeyModeError, PaymobSettings, Settings
 
 
 def test_defaults_are_unconfigured_with_the_egypt_hosts() -> None:
@@ -99,12 +102,17 @@ def test_integration_ids_must_be_positive() -> None:
         PaymobSettings.model_validate({"card_integration_id": 0})
 
 
-# -- key mode: production must not run on test keys (skill audit I2) -----------------------
+# -- key mode (skill audit I2, review I2 and I3) ------------------------------------------
 
 LIVE_SECRET = "egy_sk_live_abcdef0123456789"
 LIVE_PUBLIC = "egy_pk_live_abcdef0123456789"
 TEST_SECRET = "egy_sk_test_abcdef0123456789"
 TEST_PUBLIC = "egy_pk_test_abcdef0123456789"
+COMPLETE = {
+    "api_key": "api_key_abc",
+    "hmac_secret": "hmac_abc",
+    "card_integration_id": 4569876,
+}
 
 
 def _paymob(**fields: object) -> PaymobSettings:
@@ -112,19 +120,22 @@ def _paymob(**fields: object) -> PaymobSettings:
 
 
 def test_expect_live_is_off_by_default_so_dev_and_test_keep_working() -> None:
-    assert PaymobSettings().expect_live is False
     paymob = _paymob(secret_key=TEST_SECRET, public_key=TEST_PUBLIC)
+    assert PaymobSettings().expect_live is False
     assert paymob.expect_live is False
+    paymob.require_live_keys()  # no error: nothing asked for live keys
 
 
-def test_expect_live_accepts_live_keys() -> None:
+def test_require_live_keys_accepts_live_keys() -> None:
     paymob = _paymob(expect_live=True, secret_key=LIVE_SECRET, public_key=LIVE_PUBLIC)
-    assert paymob.expect_live is True
+    paymob.require_live_keys()
 
 
-def test_expect_live_accepts_an_unconfigured_account() -> None:
+def test_require_live_keys_accepts_an_unconfigured_account() -> None:
     """Credentials unset is a supported state (checkout answers 503), even in production."""
-    assert _paymob(expect_live=True).checkout_configured is False
+    paymob = _paymob(expect_live=True)
+    paymob.require_live_keys()
+    assert paymob.checkout_configured is False
 
 
 @pytest.mark.parametrize(
@@ -134,14 +145,49 @@ def test_expect_live_accepts_an_unconfigured_account() -> None:
         {"secret_key": TEST_SECRET},
         {"public_key": TEST_PUBLIC},
         {"secret_key": "sk_test_abcdef0123456789"},
+        {"secret_key": TEST_SECRET, "public_key": LIVE_PUBLIC},
+        {"secret_key": LIVE_SECRET, "public_key": TEST_PUBLIC},
     ],
 )
-def test_expect_live_refuses_a_test_mode_key(fields: dict[str, object]) -> None:
-    with pytest.raises(ValidationError, match="test-mode"):
-        _paymob(expect_live=True, **fields)
+def test_expect_live_refuses_a_test_mode_key_with_a_plain_error(
+    fields: dict[str, object],
+) -> None:
+    paymob = _paymob(expect_live=True, **fields)  # constructing it never raises
+    with pytest.raises(PaymobKeyModeError, match="test-mode") as caught:
+        paymob.require_live_keys()
+    assert isinstance(caught.value, RuntimeError)
+    assert not isinstance(caught.value, ValidationError)
 
 
-@pytest.mark.parametrize("expect_live", [False, True])
+def test_keys_with_no_recognisable_mode_are_not_judged() -> None:
+    """The existing fixtures use bare ``sk``/``pk``; only a marked key can be refused."""
+    _paymob(expect_live=True, secret_key="sk", public_key="pk").require_live_keys()
+    assert _paymob(secret_key="sk", public_key=TEST_PUBLIC).key_mode_mismatch is False
+
+
+def test_the_refusal_names_the_field_but_carries_no_credential() -> None:
+    paymob = _paymob(
+        expect_live=True,
+        secret_key=TEST_SECRET,
+        public_key=LIVE_PUBLIC,
+        api_key="APIKEYDISTINCTIVE0001",
+        hmac_secret="HMACSECRETDISTINCTIVE02",
+    )
+    with pytest.raises(PaymobKeyModeError) as caught:
+        paymob.require_live_keys()
+    rendered = "".join(
+        [
+            str(caught.value),
+            repr(caught.value),
+            repr(caught.value.args),
+            *traceback.format_exception(caught.value),
+        ]
+    )
+    assert "secret_key" in rendered
+    for secret in (TEST_SECRET, LIVE_PUBLIC, "APIKEYDISTINCTIVE0001", "HMACSECRETDISTINCTIVE02"):
+        assert secret not in rendered
+
+
 @pytest.mark.parametrize(
     "fields",
     [
@@ -149,47 +195,119 @@ def test_expect_live_refuses_a_test_mode_key(fields: dict[str, object]) -> None:
         {"secret_key": LIVE_SECRET, "public_key": TEST_PUBLIC},
     ],
 )
-def test_public_and_secret_key_modes_must_agree(
+@pytest.mark.parametrize("expect_live", [False, True])
+def test_a_mode_mismatch_does_not_stop_the_settings_from_loading(
     fields: dict[str, object], expect_live: bool
 ) -> None:
-    with pytest.raises(ValidationError, match="different modes"):
-        _paymob(expect_live=expect_live, **fields)
+    paymob = _paymob(expect_live=expect_live, **fields, **COMPLETE)
+    assert paymob.key_mode_mismatch is True
 
 
-def test_keys_with_no_recognisable_mode_are_not_judged() -> None:
-    """The existing fixtures use bare ``sk``/``pk``; only a marked key can be refused."""
-    assert _paymob(expect_live=True, secret_key="sk", public_key="pk").expect_live is True
-    assert _paymob(secret_key="sk", public_key=TEST_PUBLIC).secret_key is not None
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"secret_key": TEST_SECRET, "public_key": TEST_PUBLIC},
+        {"secret_key": LIVE_SECRET, "public_key": LIVE_PUBLIC},
+        {"secret_key": TEST_SECRET},
+        {"public_key": LIVE_PUBLIC},
+        {"secret_key": "sk", "public_key": LIVE_PUBLIC},
+        {},
+    ],
+)
+def test_matching_unset_or_unreadable_keys_are_not_a_mismatch(fields: dict[str, object]) -> None:
+    assert _paymob(**fields).key_mode_mismatch is False
 
 
-def test_the_error_names_the_field_but_never_the_key() -> None:
-    with pytest.raises(ValidationError) as caught:
-        _paymob(expect_live=True, secret_key=TEST_SECRET, public_key=LIVE_PUBLIC)
-    message = str(caught.value)
-    assert "secret_key" in message
-    assert TEST_SECRET not in message
-    assert LIVE_PUBLIC not in message
+def test_a_mismatch_makes_checkout_unconfigured() -> None:
+    full = {"secret_key": LIVE_SECRET, "public_key": LIVE_PUBLIC, **COMPLETE}
+    assert _paymob(**full).checkout_configured is True
+    assert _paymob(**{**full, "public_key": TEST_PUBLIC}).checkout_configured is False
 
 
-def test_settings_refuse_to_start_on_test_keys_when_the_env_says_production(
+def test_a_mismatch_is_logged_as_an_alert_without_the_keys() -> None:
+    paymob = _paymob(secret_key=TEST_SECRET, public_key=LIVE_PUBLIC, **COMPLETE)
+    with capture_logs() as logs:
+        assert paymob.log_key_mode_mismatch() is True
+    (entry,) = [e for e in logs if e["event"] == "paymob_key_mode_mismatch"]
+    assert entry["log_level"] == "error"
+    assert entry["alert"] is True
+    rendered = str(logs)
+    for secret in (TEST_SECRET, LIVE_PUBLIC, COMPLETE["api_key"], COMPLETE["hmac_secret"]):
+        assert str(secret) not in rendered
+
+
+def test_no_mismatch_logs_nothing() -> None:
+    with capture_logs() as logs:
+        assert (
+            _paymob(secret_key=LIVE_SECRET, public_key=LIVE_PUBLIC).log_key_mode_mismatch() is False
+        )
+    assert logs == []
+
+
+def test_the_env_route_loads_and_the_refusal_comes_from_require_live_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("LEMELY_PAYMOB__EXPECT_LIVE", "true")
     monkeypatch.setenv("LEMELY_PAYMOB__SECRET_KEY", TEST_SECRET)
     monkeypatch.setenv("LEMELY_PAYMOB__PUBLIC_KEY", TEST_PUBLIC)
-    with pytest.raises(ValidationError, match="test-mode") as caught:
-        Settings()
-    assert TEST_SECRET not in str(caught.value)  # the env route must not echo the credentials
+    paymob = Settings().paymob  # no ValidationError, so no input dict to echo
+    with pytest.raises(PaymobKeyModeError, match="test-mode") as caught:
+        paymob.require_live_keys()
+    assert TEST_SECRET not in str(caught.value)
     assert TEST_PUBLIC not in str(caught.value)
     monkeypatch.setenv("LEMELY_PAYMOB__SECRET_KEY", LIVE_SECRET)
     monkeypatch.setenv("LEMELY_PAYMOB__PUBLIC_KEY", LIVE_PUBLIC)
-    assert Settings().paymob.expect_live is True
+    Settings().paymob.require_live_keys()
 
 
 def test_expect_live_false_in_the_env_allows_test_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LEMELY_PAYMOB__EXPECT_LIVE", "false")
     monkeypatch.setenv("LEMELY_PAYMOB__SECRET_KEY", TEST_SECRET)
-    assert Settings().paymob.expect_live is False
+    paymob = Settings().paymob
+    assert paymob.expect_live is False
+    paymob.require_live_keys()
+
+
+class _FailingSettings(Settings):
+    """The real ``Settings`` config with a validator that always fails: a stand-in for any
+    future validator that rejects a value, whose error would carry the whole input."""
+
+    @model_validator(mode="after")
+    def _always_fails(self) -> _FailingSettings:
+        raise ValueError("probe")
+
+
+SECRETS = {
+    "secret_key": "SKDISTINCTIVE0000000000001",
+    "api_key": "APIDISTINCTIVE000000000002",
+    "hmac_secret": "HMACDISTINCTIVE0000000003",
+    "card_token_key": "CTKDISTINCTIVE0000000004",
+}
+
+
+def test_a_settings_validation_error_never_echoes_the_paymob_secrets() -> None:
+    """``str``/``repr`` are what a startup traceback prints, so the root hides its input.
+
+    ``errors()`` and ``json()`` keep ``input`` by pydantic's design (only
+    ``include_input=False`` drops it), which is why the one validator that handled the keys
+    no longer raises a ``ValidationError`` (see ``require_live_keys``) and why nothing may log
+    a settings error's ``errors()``. The values here are short enough that pydantic's own
+    truncation of a long input could not hide a leak.
+    """
+    with pytest.raises(ValidationError) as caught:
+        _FailingSettings(paymob=dict(SECRETS))
+    exc = caught.value
+    forms = [
+        str(exc),
+        repr(exc),
+        str(exc.errors(include_input=False)),
+        exc.json(include_input=False),
+    ]
+    for secret in SECRETS.values():
+        for form in forms:
+            assert secret not in form
+            assert secret[:12] not in form
+            assert secret[-12:] not in form
 
 
 def test_key_mode_is_read_from_the_secret_key_prefix() -> None:
