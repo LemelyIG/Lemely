@@ -35,6 +35,8 @@ export function RootOutlet() {
   // A PUSH that means "back" (re-tapping a tab to pop to its root) says so in its location state.
   const explicit = stateDirection(location.state)
 
+  // Keyed on the location key so the one-shot swipe flag is read (and cleared) on every
+  // navigation, even a replace to the same navigation type; it cannot go stale.
   useLayoutEffect(() => {
     document.documentElement.dataset.direction = consumeSwipeNav() ? "swipe" : (explicit ?? navigationDirection(navigationType))
   }, [navigationType, explicit, location.key])

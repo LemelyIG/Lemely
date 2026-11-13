@@ -101,11 +101,12 @@ describe("H5 — a drag cleans up its own imperative state, not just its listene
     expect(body).toContain("releasePointerCapture")
   })
 
-  it("springBack registers its transitionend listener once and has a fallback", () => {
+  it("springBack's transitionend listener is removed on finish (not `once`: a bubbled descendant event must not consume it) and has a fallback", () => {
     const springAt = src.indexOf("function springBack")
     expect(springAt, "no springBack() found in useDragGesture.ts").toBeGreaterThan(-1)
     const body = src.slice(springAt, springAt + 1400)
-    expect(body).toContain("once: true")
+    expect(body).not.toContain("once: true")
+    expect(body).toContain('removeEventListener("transitionend"')
     expect(body).toContain("setTimeout")
   })
 

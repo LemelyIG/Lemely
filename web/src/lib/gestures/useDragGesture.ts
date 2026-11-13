@@ -1,5 +1,6 @@
 import { useEffect, useRef, type RefObject } from "react"
 import { clampDelta, shouldCommitDrag, type DragAxis, type DragClamp } from "./dragMath"
+import { releaseVelocity, trimSamples, type PointerSample } from "./sheetMath"
 
 /*
  * Packet B3 (Task 4) · the single source of truth for a one-finger drag
@@ -17,10 +18,23 @@ import { clampDelta, shouldCommitDrag, type DragAxis, type DragClamp } from "./d
  * whatever `onProgress` does with the same numbers.
  */
 
+/** What a release decider sees: the drag's total delta and its signed velocity
+ * along `axis` (px/ms, last 100ms window, `sheetMath.releaseVelocity`). */
+export interface DragRelease {
+  dx: number
+  dy: number
+  velocity: number
+}
+
 export interface DragGestureOptions {
   axis: DragAxis
   onCommit: (dx: number, dy: number) => void
   onProgress?: (dx: number, dy: number) => void
+  /** The commit-versus-cancel decision for a drag that passed the distance
+   * gate. Return `"cancel"` and the hook springs the target home and calls
+   * `onCancel`, so callers never re-implement the spring. Omitted: the
+   * distance gate alone decides. A fling decider (swipe-back) uses `velocity`. */
+  release?: (release: DragRelease) => "commit" | "cancel"
   onCancel?: () => void
   /** Same units as `dragMath.ts`'s `shouldCommitDrag`. Default 10. */
   commitThreshold?: number
@@ -81,6 +95,8 @@ export function useDragGesture(ref: RefObject<HTMLElement | null>, options: Drag
     }
 
     let springTimer: ReturnType<typeof setTimeout> | null = null
+    // Windowed pointer samples along the axis, for the release velocity.
+    let samples: PointerSample[] = []
 
     function springBack() {
       const t = target()
@@ -103,9 +119,13 @@ export function useDragGesture(ref: RefObject<HTMLElement | null>, options: Drag
           springTimer = null
         }
         t.style.transition = ""
-        t.removeEventListener("transitionend", finish)
+        t.removeEventListener("transitionend", onTransitionEnd)
       }
-      t.addEventListener("transitionend", finish, { once: true })
+      // A descendant's own transition bubbles up here; only the target's counts.
+      const onTransitionEnd = (event: TransitionEvent) => {
+        if (event.target === event.currentTarget) finish()
+      }
+      t.addEventListener("transitionend", onTransitionEnd)
       springTimer = setTimeout(finish, SPRING_FALLBACK_MS)
     }
 
@@ -128,6 +148,8 @@ export function useDragGesture(ref: RefObject<HTMLElement | null>, options: Drag
       // for its `position: fixed` descendants, and paying that for a drag
       // that visibly moves nothing is how C2 shifted the bottom nav.
       t.style.transform = moved === 0 ? "" : axis === "x" ? `translateX(${moved}px)` : `translateY(${moved}px)`
+      const now = performance.now()
+      samples = [...trimSamples(samples, now), [now, axis === "x" ? dx : dy] as const]
       optionsRef.current.onProgress?.(dx, dy)
     }
 
@@ -147,7 +169,14 @@ export function useDragGesture(ref: RefObject<HTMLElement | null>, options: Drag
       const dx = event.clientX - state.startX
       const dy = event.clientY - state.startY
       const threshold = optionsRef.current.commitThreshold ?? 10
-      if (shouldCommitDrag(dx, dy, optionsRef.current.axis, threshold)) {
+      const axis = optionsRef.current.axis
+      const along = axis === "x" ? dx : dy
+      const velocity = releaseVelocity(samples, performance.now(), along)
+      samples = []
+      const decider = optionsRef.current.release
+      const passes =
+        shouldCommitDrag(dx, dy, axis, threshold) && (decider?.({ dx, dy, velocity }) ?? "commit") === "commit"
+      if (passes) {
         clearTransform()
         optionsRef.current.onCommit(dx, dy)
       } else {
@@ -175,6 +204,7 @@ export function useDragGesture(ref: RefObject<HTMLElement | null>, options: Drag
       if (stateRef.current !== null) return
       if (optionsRef.current.startFilter && !optionsRef.current.startFilter(event)) return
       stateRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY }
+      samples = []
       el!.setPointerCapture(event.pointerId)
       el!.addEventListener("pointermove", onPointerMove)
       el!.addEventListener("pointerup", onPointerUp)

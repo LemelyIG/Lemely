@@ -1383,9 +1383,36 @@ NATIVE_CHECKS.push(
       await page.mouse.move(4, 400)
       await page.mouse.down()
       await page.mouse.move(60, 402, { steps: 20 })
+      // Rest past the 100ms velocity window so the release is slow and short: 56px of 390.
+      await page.waitForTimeout(250)
       await page.mouse.up()
-      await page.waitForTimeout(400)
+      // The harness zeroes motion, so no transitionend fires; the hook's 600ms fallback clears the spring.
+      await page.waitForTimeout(900)
       if (!/\/student\/classes/.test(page.url())) throw new Error("a short slow swipe navigated")
+      const left = await page.evaluate(() => ({
+        swiping: document.documentElement.hasAttribute("data-swiping"),
+        transform: document.querySelector("[data-shell-column]")?.style.transform ?? "",
+        transition: document.querySelector("[data-shell-column]")?.style.transition ?? "",
+      }))
+      if (left.swiping) throw new Error("data-swiping stayed set after a cancelled swipe")
+      if (left.transform || left.transition) throw new Error(`column not sprung home: ${JSON.stringify(left)}`)
+    },
+  },
+  {
+    id: "native-ios-swipe-fling-commits-below-distance",
+    platform: "ios",
+    app: { ...NATIVE_HOME, path: "/student", init: STANDALONE },
+    async run(page) {
+      await page.getByRole("link", { name: "Classes" }).first().click()
+      await page.waitForURL(/\/student\/classes/)
+      await page.mouse.move(4, 400)
+      await page.mouse.down()
+      await page.mouse.move(30, 401)
+      await page.waitForTimeout(8)
+      // 80px is under the 35% distance (136px of 390); only the fling can commit it.
+      await page.mouse.move(80, 402)
+      await page.mouse.up()
+      await page.waitForURL(/\/student$/, { timeout: 3000 })
     },
   },
   {
@@ -1429,6 +1456,62 @@ NATIVE_CHECKS.push(
     async run(page) {
       const sel = await page.evaluate(() => getComputedStyle(document.querySelector("main")).userSelect)
       if (sel === "none") throw new Error("content lost text selection")
+    },
+  },
+);
+
+// Fix round 1: the swipe underlay paints only inside the native frame (phone width, iOS or Android).
+const underlayPaints = (page) =>
+  page.evaluate(() => {
+    const before = getComputedStyle(document.body, "::before")
+    const column = document.querySelector("[data-shell-column]")
+    return {
+      content: before.content,
+      shadow: column ? getComputedStyle(column).boxShadow : "no-column",
+    }
+  })
+async function dragIntoSwipe(page) {
+  await page.getByRole("link", { name: "Classes" }).first().click()
+  await page.waitForURL(/\/student\/classes/)
+  await page.mouse.move(4, 400)
+  await page.mouse.down()
+  await page.mouse.move(60, 402, { steps: 4 })
+  if (!(await page.evaluate(() => document.documentElement.hasAttribute("data-swiping")))) throw new Error("drag did not start a swipe")
+}
+NATIVE_CHECKS.push(
+  {
+    id: "native-ios-swipe-underlay-paints-in-frame",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student", init: STANDALONE },
+    async run(page) {
+      await dragIntoSwipe(page)
+      const got = await underlayPaints(page)
+      await page.mouse.up()
+      if (got.content === "none" || got.shadow === "none") throw new Error(`underlay missing in the frame: ${JSON.stringify(got)}`)
+    },
+  },
+  {
+    id: "native-ios-swipe-underlay-silent-at-tablet",
+    platform: "ios",
+    width: 800,
+    app: { ...NATIVE_HOME, path: "/student", init: STANDALONE },
+    async run(page) {
+      await dragIntoSwipe(page)
+      const got = await underlayPaints(page)
+      await page.mouse.up()
+      if (got.content !== "none" || got.shadow !== "none") throw new Error(`underlay painted at 800px: ${JSON.stringify(got)}`)
+    },
+  },
+  {
+    id: "native-other-swipe-underlay-silent",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student", init: STANDALONE },
+    async run(page) {
+      await dragIntoSwipe(page)
+      const got = await underlayPaints(page)
+      await page.mouse.up()
+      if (got.content !== "none" || got.shadow !== "none") throw new Error(`underlay painted on other: ${JSON.stringify(got)}`)
     },
   },
 );

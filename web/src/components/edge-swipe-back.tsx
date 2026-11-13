@@ -23,23 +23,6 @@ function portalRootFallback(pathname: string): string {
   return segment ? `/${segment}` : "/"
 }
 
-/** The hook clears the transform on a gesture it counts as committed; a release short of the
- * threshold re-applies the offset and eases it home so the page does not snap. */
-function springColumnBack(column: HTMLElement | null, dx: number): void {
-  if (!column) return
-  column.style.transition = "none"
-  column.style.transform = `translateX(${dx}px)`
-  void column.offsetWidth
-  column.style.transition = "transform var(--dur-base) var(--ease-spring)"
-  column.style.transform = ""
-  const finish = (): void => {
-    column.style.transition = ""
-    column.removeEventListener("transitionend", finish)
-  }
-  column.addEventListener("transitionend", finish, { once: true })
-  window.setTimeout(finish, 400)
-}
-
 export function EdgeSwipeBack() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -47,8 +30,6 @@ export function EdgeSwipeBack() {
   const startXRef = useRef(0)
   const dirRef = useRef<1 | -1>(1)
   const columnRef = useRef<HTMLElement | null>(null)
-  // The last two progress samples (signed away-from-edge px and time) give the release velocity.
-  const samplesRef = useRef<{ x: number; t: number }[]>([])
 
   useEffect(() => {
     rootRef.current = document.documentElement
@@ -59,13 +40,6 @@ export function EdgeSwipeBack() {
     const root = document.documentElement
     root.removeAttribute("data-swiping")
     root.style.removeProperty("--lm-swipe-progress")
-    samplesRef.current = []
-  }
-
-  function releaseVelocity(): number {
-    const [a, b] = samplesRef.current.slice(-2)
-    if (!a || !b || b.t <= a.t) return 0
-    return (b.x - a.x) / (b.t - a.t)
   }
 
   const standalone =
@@ -80,7 +54,7 @@ export function EdgeSwipeBack() {
     axis: "x",
     enabled: standalone,
     transformTarget: columnRef,
-    touchAction: "pan-y",
+    touchAction: "pan-y pinch-zoom",
     startFilter: (event) => {
       if (typeof window === "undefined") return false
       // Issue #246/#247's exact mechanism, found by the opus review of that
@@ -107,26 +81,24 @@ export function EdgeSwipeBack() {
       const root = document.documentElement
       root.setAttribute("data-swiping", "")
       root.style.setProperty("--lm-swipe-progress", String(Math.min(1, Math.max(0, away / width))))
-      samplesRef.current.push({ x: away, t: performance.now() })
-      if (samplesRef.current.length > 2) samplesRef.current.shift()
     },
     onCancel: clearSwipeState,
-    onCommit: (dx, dy) => {
-      const velocity = releaseVelocity()
-      clearSwipeState()
-      const release = swipeBackRelease({ dx: dx * dirRef.current, velocity, width: window.innerWidth })
-      const decision = edgeSwipeDecision({
+    // Commit versus cancel is the hook's call: a short slow drag cancels and the hook springs
+    // the column home; 35% of the width or a fling commits (Task 6 `swipeBackRelease`).
+    release: ({ dx, dy, velocity }) => {
+      const dir = dirRef.current
+      const edge = edgeSwipeDecision({
         startX: startXRef.current,
         dx,
         dy,
         viewportWidth: window.innerWidth,
         standalone,
-        dir: dirRef.current,
+        dir,
       })
-      if (decision !== "back" || release !== "commit") {
-        springColumnBack(columnRef.current, dx)
-        return
-      }
+      return edge === "back" ? swipeBackRelease({ dx: dx * dir, velocity: velocity * dir, width: window.innerWidth }) : "cancel"
+    },
+    onCommit: () => {
+      clearSwipeState()
       markSwipeNav()
       const target = backTarget(window.history.state?.idx, portalRootFallback(location.pathname))
       if (target.kind === "history") navigate(-1)
