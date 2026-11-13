@@ -6,6 +6,7 @@ transaction and run on a throwaway Postgres database.
 
 from __future__ import annotations
 
+import html
 import re
 import uuid
 from datetime import UTC, datetime
@@ -106,42 +107,165 @@ def test_seats_copy_says_when_the_seats_go() -> None:
     assert mail.path() == "/billing"
 
 
-# The words the billing mail may never carry: an amount, a currency, a processor name, a refund
-# or retry promise, a masked card number.
+# Nothing in these two mails is filled in at send time (the context id is never rendered), so the
+# whole mail is pinned. Any edit to the copy shows up here and has to be read by a person.
+_NOTICE = "Open Lemely to see the details."
+_LINK = f"{BASE_URL}/billing"
+_COPY: dict[str, tuple[str, str, str]] = {
+    "auto_topup_failed": (
+        "Auto top-up could not charge your card",
+        "We could not charge your saved card for an auto top-up, so auto top-up is turned off.",
+        "You can check your card and turn auto top-up back on in billing settings.",
+    ),
+    "extra_seats_charge_failed": (
+        "Your extra seats payment failed",
+        "We could not charge your card for your extra student seats. We will try again each "
+        "day; if no payment succeeds within 3 days, the extra seats are removed.",
+        "Students beyond your plan's included seats then keep their seat until the end of "
+        "the month.",
+    ),
+}
+_HTML = (
+    '<!doctype html><html lang="en"><body style="margin:0;padding:24px;background:#f6f7f9;'
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
+    'color:#1f2933;"><div style="max-width:480px;margin:0 auto;background:#ffffff;'
+    'border-radius:12px;padding:32px;"><h1 style="margin:0 0 16px;font-size:20px;'
+    'line-height:1.3;">@SUBJECT@</h1><p style="margin:0 0 16px;font-size:15px;line-height:1.55;">'
+    '@LEAD@</p><p style="margin:0 0 16px;font-size:15px;line-height:1.55;">@DETAIL@</p>'
+    '<p style="margin:0 0 24px;"><a href="@LINK@" style="display:inline-block;'
+    "background:#1f2933;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:8px;"
+    'font-size:15px;font-weight:600;">Open billing</a></p><p style="margin:0 0 8px;'
+    'font-size:13px;line-height:1.5;color:#52606d;">If the button does not work, copy this '
+    'link into your browser:</p><p style="margin:0 0 24px;font-size:13px;line-height:1.5;'
+    'word-break:break-all;"><a href="@LINK@" style="color:#2563eb;">@LINK@</a></p>'
+    '<p style="margin:0;font-size:13px;line-height:1.5;color:#52606d;">@NOTICE@</p>'
+    "</div></body></html>"
+)
+
+
+def _expected(name: str) -> tuple[str, str, str]:
+    subject, lead, detail = _COPY[name]
+    text = f"{subject}\n\n{lead}\n\n{detail}\n\n{_LINK}\n\n{_NOTICE}\n"
+    html_body = (
+        _HTML.replace("@SUBJECT@", subject)
+        .replace("@LEAD@", html.escape(lead))
+        .replace("@DETAIL@", html.escape(detail))
+        .replace("@LINK@", _LINK)
+        .replace("@NOTICE@", _NOTICE)
+    )
+    return subject, html_body, text
+
+
+@pytest.mark.parametrize(("name", "cls", "key"), TEMPLATES)
+def test_the_exact_subject_text_and_html_of_each_mail(
+    name: str, cls: type[AutoTopupFailed] | type[ExtraSeatsChargeFailed], key: str
+) -> None:
+    assert render_email(name, _context(key), app_base_url=BASE_URL) == _expected(name)
+
+
+# What the billing mail may never carry: a number (the one "3 days" of the seats mail is the only
+# allowed digit), a currency word or sign, a card brand, the processor's name, a refund promise.
+_ALLOWED_DIGITS = "within 3 days"
 _FORBIDDEN = (
-    re.compile(r"\d\s*(?:EGP|LE\b|E£|£)", re.IGNORECASE),
-    re.compile(r"(?:EGP|E£|£|\$)\s*\d", re.IGNORECASE),
-    re.compile(r"[x*•]{2,}\s*\d{4}", re.IGNORECASE),
-    re.compile(r"\b\d{4}\b"),
+    re.compile(r"\d"),
+    re.compile(r"\b(?:pounds?|piasters?|egp|le)\b|جنيه|[£$€]", re.IGNORECASE),
+    re.compile(r"\b(?:visa|master\s?card|meeza|amex|american express)\b", re.IGNORECASE),
     re.compile(r"paymob", re.IGNORECASE),
     re.compile(r"refund", re.IGNORECASE),
     re.compile(r"\bretry\b", re.IGNORECASE),
 )
+# The auto top-up failure turns auto top-up off and never retries, so that mail may not promise
+# one. The seats mail does retry daily (its copy is pinned above), so the phrase is its own.
+_NO_TRY_AGAIN = re.compile(r"\btry\s+again\b", re.IGNORECASE)
+
+
+def _violations(name: str, mail: str, *, digits: bool = True) -> list[str]:
+    """The forbidden patterns ``mail`` matches (``digits=False`` for markup with style numbers)."""
+    scanned = mail.replace(_ALLOWED_DIGITS, "")
+    patterns = list(_FORBIDDEN if digits else _FORBIDDEN[1:])
+    if name == "auto_topup_failed":
+        patterns.append(_NO_TRY_AGAIN)
+    return [pattern.pattern for pattern in patterns if pattern.search(scanned)]
 
 
 @pytest.mark.parametrize(("name", "cls", "key"), TEMPLATES)
-def test_rendered_mail_carries_no_amount_card_processor_or_promise(
+def test_rendered_mail_carries_no_amount_card_brand_processor_or_promise(
     name: str, cls: type[AutoTopupFailed] | type[ExtraSeatsChargeFailed], key: str
 ) -> None:
     subject, html_body, text = render_email(name, _context(key), app_base_url=BASE_URL)
 
-    assert f"{BASE_URL}/billing" in html_body
-    assert text.startswith(subject)
+    assert _violations(name, subject) == []
+    assert _violations(name, text) == []
+    assert _violations(name, html_body, digits=False) == []
     # The id sits in no part of the mail: only the fixed words and the link do.
-    assert str(PAYMENT_ID) not in text
-    assert str(SUBSCRIPTION_ID) not in text
-    for pattern in _FORBIDDEN:
-        assert pattern.search(subject) is None, pattern.pattern
-        assert pattern.search(text) is None, pattern.pattern
-        assert pattern.search(html_body) is None, pattern.pattern
+    assert str(PAYMENT_ID) not in text + html_body
+    assert str(SUBSCRIPTION_ID) not in text + html_body
 
 
 @pytest.mark.parametrize(
-    "leaked",
-    ["Charged 150 EGP", "E£150", "£12", "card ****4242", "via Paymob", "we will refund you"],
+    ("name", "leaked"),
+    [
+        ("extra_seats_charge_failed", "Charged 150 EGP"),
+        ("extra_seats_charge_failed", "150 pounds"),
+        ("extra_seats_charge_failed", "1,500"),
+        ("extra_seats_charge_failed", "150.00"),
+        ("extra_seats_charge_failed", "E£150"),
+        ("extra_seats_charge_failed", "£12"),
+        ("extra_seats_charge_failed", "150 جنيه"),
+        ("extra_seats_charge_failed", "card ****4242"),
+        ("extra_seats_charge_failed", "your Visa card"),
+        ("extra_seats_charge_failed", "your Mastercard"),
+        ("extra_seats_charge_failed", "your Meeza card"),
+        ("extra_seats_charge_failed", "via Paymob"),
+        ("extra_seats_charge_failed", "we will refund you"),
+        ("extra_seats_charge_failed", "we will retry"),
+        ("extra_seats_charge_failed", "within 3 days and 4 more"),
+        ("auto_topup_failed", "We will try again tomorrow"),
+    ],
 )
-def test_the_copy_guard_itself_catches_what_it_forbids(leaked: str) -> None:
-    assert any(pattern.search(leaked) for pattern in _FORBIDDEN)
+def test_the_copy_guard_itself_catches_what_it_forbids(name: str, leaked: str) -> None:
+    assert _violations(name, leaked) != []
+
+
+def test_the_copy_guard_lets_the_one_allowed_phrase_and_the_seats_retry_through() -> None:
+    seats_lead = _COPY["extra_seats_charge_failed"][1]
+    assert _violations("extra_seats_charge_failed", seats_lead) == []
+    # "try again" is only refused in the auto top-up mail.
+    assert _violations("auto_topup_failed", seats_lead) != []
+
+
+@pytest.mark.parametrize(
+    ("cls", "name", "key", "leak"),
+    [
+        (
+            ExtraSeatsChargeFailed,
+            "extra_seats_charge_failed",
+            "subscription_id",
+            "We could not charge 150 pounds to your Visa card for your extra student seats.",
+        ),
+        (
+            AutoTopupFailed,
+            "auto_topup_failed",
+            "payment_id",
+            "We could not charge your saved card for an auto top-up, so auto top-up is turned "
+            "off. We will try again tomorrow and charge 1,500 to your Visa.",
+        ),
+    ],
+    ids=["seats-amount-and-brand", "auto-topup-retry-amount-and-brand"],
+)
+def test_an_edited_lead_goes_red_through_both_the_guard_and_the_pin(
+    monkeypatch: pytest.MonkeyPatch,
+    cls: type[AutoTopupFailed] | type[ExtraSeatsChargeFailed],
+    name: str,
+    key: str,
+    leak: str,
+) -> None:
+    monkeypatch.setattr(cls, "lead", lambda self: leak)
+
+    rendered = render_email(name, _context(key), app_base_url=BASE_URL)
+
+    assert rendered != _expected(name)
+    assert _violations(name, rendered[2]) != []
 
 
 # -- the helpers -----------------------------------------------------------------
