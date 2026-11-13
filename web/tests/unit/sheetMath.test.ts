@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { DISMISS_FRACTION, FLING_PX_PER_MS, releaseVelocity, sheetRelease, swipeBackRelease, trimSamples, type PointerSample } from "@/lib/gestures/sheetMath"
+import { BODY_DRAG_SLOP, DISMISS_FRACTION, FLING_PX_PER_MS, bodyDragIntent, releaseVelocity, sheetRelease, swipeBackRelease, trimSamples, type PointerSample } from "@/lib/gestures/sheetMath"
 
 const base = { height: 400, detent: "large" as const, detents: ["medium", "large"] as const, dismissible: true }
 
@@ -58,5 +58,22 @@ describe("releaseVelocity (last 100ms window)", () => {
   })
   it("trimSamples drops samples older than 100ms", () => {
     expect(trimSamples([[0, 0], [150, 1], [200, 2]], 220)).toEqual([[150, 1], [200, 2]])
+  })
+})
+
+describe("bodyDragIntent (a press that starts in a sheet's body)", () => {
+  it("is undecided until the finger passes the slop", () => {
+    expect(bodyDragIntent({ scrollTop: 0, dy: 3 })).toBe("undecided")
+    expect(bodyDragIntent({ scrollTop: 0, dy: -3 })).toBe("undecided")
+  })
+  it("a downward move at the top of the body drags the sheet", () => {
+    expect(bodyDragIntent({ scrollTop: 0, dy: BODY_DRAG_SLOP })).toBe("drag")
+  })
+  it("an upward move at the top is the body's own scroll", () => {
+    expect(bodyDragIntent({ scrollTop: 0, dy: -20 })).toBe("scroll")
+  })
+  it("a scrolled body never drags the sheet, whichever way the finger goes", () => {
+    expect(bodyDragIntent({ scrollTop: 1, dy: 40 })).toBe("scroll")
+    expect(bodyDragIntent({ scrollTop: 120, dy: -40 })).toBe("scroll")
   })
 })

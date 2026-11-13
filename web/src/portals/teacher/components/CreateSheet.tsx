@@ -1,3 +1,4 @@
+import type { RefObject } from "react"
 import { Books, Megaphone, Plus, Sparkle, UsersThree, type Icon } from "@phosphor-icons/react"
 import { ActionSheet } from "@/components/shell/TopBarSheets"
 import { CREATE_ACTIONS, type CreateActionIcon } from "./topBarActions"
@@ -9,14 +10,37 @@ const ACTION_ICON: Record<CreateActionIcon, Icon> = {
   class: UsersThree,
 }
 
-/** The teacher top bar's Create button: four starting points (`CREATE_ACTIONS`). */
-export function CreateSheet({ triggerClassName }: { triggerClassName: string }) {
+/** The glyph and label every Create opener shares (bar button, native FAB, iOS large-title plus). */
+export const CREATE_LABEL = "Create"
+export const createGlyph = (size: number) => <Plus size={size} aria-hidden="true" />
+
+/**
+ * The teacher's Create sheet: four starting points (`CREATE_ACTIONS`). On desktop the bar button
+ * opens it. On native phones that button is hidden and the controlled `open` state is driven by
+ * the Android FAB or the iOS large-title plus (`TeacherLayout`).
+ */
+export function CreateSheet({
+  triggerClassName,
+  open,
+  onOpenChange,
+  restoreFocusTo,
+}: {
+  triggerClassName: string
+  /** Omit all three for the self-contained bar button (dev previews). */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  restoreFocusTo?: RefObject<HTMLElement | null>
+}) {
   return (
     <ActionSheet
+      open={open}
+      onOpenChange={onOpenChange}
+      restoreFocusTo={restoreFocusTo}
+      hideTriggerOnNative
       triggerClassName={triggerClassName}
-      triggerIcon={<Plus size={16} aria-hidden="true" />}
-      triggerLabel="Create"
-      eyebrow="Create"
+      triggerIcon={createGlyph(16)}
+      triggerLabel={CREATE_LABEL}
+      eyebrow={CREATE_LABEL}
       title="Start something"
       actions={CREATE_ACTIONS.map((action) => {
         const Glyph = ACTION_ICON[action.icon]

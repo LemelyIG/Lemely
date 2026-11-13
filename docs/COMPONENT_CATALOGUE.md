@@ -126,6 +126,16 @@ hardcoded routes.
 - `item.href` renders a plain `<a>` for now; the P2.5.3 retrofit swaps in
   `react-router`'s `NavLink` where SPA routing is needed.
 
+### Native frame additions (audit batch A)
+- `fab.tsx` — `Fab({ icon, label, extended })`: the Android native phone's M3 FAB (56px, primary container,
+  bottom-end above the tab bar, safe-area aware). Renders on Android phones only; iOS puts the same action in
+  the large-title row (`ShellTopBar` `largeTitleAction`), desktop keeps the bar button. First user: the teacher's Create.
+- `card.tsx` — `TitledCard({ title })`: heading inside the card on desktop and `other`; on the native frame the
+  heading steps out as a mono section label above the grouped surface. `CardBody` carries `lm-native-card-body`.
+- `NavShellItem.popup` — a button item that opens a dialog (More): `aria-haspopup="dialog"` and `aria-expanded`.
+- `shell/MoreSheet.tsx` — the More tab on native phones: a titled bottom sheet of the destinations the tab bar
+  does not hold (`ListGroup`/`ListRow`); tablet and desktop keep the drawer.
+
 ## C-14 — Checkbox
 `checkbox.tsx` — `Checkbox({ label, ...inputProps })` (P3.8 chunk b)
 - Not named in the UI-spec §4 C-1..C-13 list — added because T-07's

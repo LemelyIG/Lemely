@@ -68,3 +68,17 @@ export function swipeBackRelease({
   // Floor: pointer deltas are whole px, so 35% of 390 (136.5) commits at 136.
   return dx >= Math.floor(width * SWIPE_COMMIT_FRACTION) || velocity > FLING_PX_PER_MS ? "commit" : "cancel"
 }
+
+/** Pixels the finger must travel before a press in a sheet's body is read as a drag or a scroll. */
+export const BODY_DRAG_SLOP = 6
+
+/**
+ * A press that starts in a sheet's scrolling body: a downward move while the body is at its top
+ * drags the sheet; an upward move, or any move while the body has scrolled, is the body's own scroll.
+ * `undecided` until the finger has moved past the slop.
+ */
+export function bodyDragIntent({ scrollTop, dy }: { scrollTop: number; dy: number }): "drag" | "scroll" | "undecided" {
+  if (scrollTop > 0) return "scroll"
+  if (Math.abs(dy) < BODY_DRAG_SLOP) return "undecided"
+  return dy > 0 ? "drag" : "scroll"
+}

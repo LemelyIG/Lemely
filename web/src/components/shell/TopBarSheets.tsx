@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
-import type { ReactNode } from "react"
+import type { ReactNode, RefObject } from "react"
 import { Link } from "react-router-dom"
 import { X } from "@phosphor-icons/react"
 import {
@@ -59,6 +59,13 @@ export interface ActionSheetProps {
   eyebrow: string
   title: string
   actions: readonly SheetAction[]
+  /** Controlled use: a second opener (the native FAB, the iOS large-title plus) drives the same sheet. */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  /** Where focus goes on close when the opener that was used is not the bar trigger. */
+  restoreFocusTo?: RefObject<HTMLElement | null>
+  /** Phones in the native frame hide the bar trigger: the action lives in the FAB or the large-title row. */
+  hideTriggerOnNative?: boolean
 }
 
 /**
@@ -67,18 +74,42 @@ export interface ActionSheetProps {
  * focus trap, Escape, scrim dismissal, the title as the accessible name and
  * focus back on the button on close.
  */
-export function ActionSheet({ triggerClassName, triggerIcon, triggerLabel, eyebrow, title, actions }: ActionSheetProps) {
+export function ActionSheet({
+  triggerClassName,
+  triggerIcon,
+  triggerLabel,
+  eyebrow,
+  title,
+  actions,
+  open,
+  onOpenChange,
+  restoreFocusTo,
+  hideTriggerOnNative = false,
+}: ActionSheetProps) {
   return (
-    <Sheet>
-      <SheetTrigger className={triggerClassName}>
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetTrigger className={cn(triggerClassName, hideTriggerOnNative && "native:hidden")}>
         {triggerIcon}
         <span className="hidden sm:inline">{triggerLabel}</span>
         <span className="sr-only sm:hidden">{triggerLabel}</span>
       </SheetTrigger>
-      <SheetContent side="adaptive" showCloseButton={false} aria-describedby={undefined} className={SHEET_SURFACE}>
+      <SheetContent
+        side="adaptive"
+        showCloseButton={false}
+        aria-describedby={undefined}
+        className={SHEET_SURFACE}
+        onCloseAutoFocus={(event) => {
+          const target = restoreFocusTo?.current
+          if (target && target.isConnected && target.checkVisibility()) {
+            event.preventDefault()
+            target.focus()
+          }
+        }}
+      >
         <CloseButton />
-        <p className="text-eyebrow text-on-surface-variant">{eyebrow}</p>
-        <SheetTitle className="mb-2 text-display-md">{title}</SheetTitle>
+        {/* No eyebrow above a heading on the native frame (craft floor); the sheet title leads. */}
+        <p className="text-eyebrow text-on-surface-variant native:hidden">{eyebrow}</p>
+        <SheetTitle className="lm-native-sheet-title mb-2 text-display-md">{title}</SheetTitle>
         <ul className="flex flex-col gap-1">
           {actions.map((action) => (
             <li key={action.id}>

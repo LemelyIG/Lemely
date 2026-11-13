@@ -1,4 +1,4 @@
-import { Suspense, useState } from "react"
+import { Suspense, useState, type ReactNode } from "react"
 import type { MouseEvent } from "react"
 import { useLocation, useMatches, useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
@@ -8,6 +8,7 @@ import { EdgeSwipeBack } from "@/components/edge-swipe-back"
 import { InstallBanner } from "@/components/InstallBanner"
 import { portalErrorFallback } from "@/components/route-error"
 import { cn } from "@/lib/utils"
+import { useNativeFrame } from "@/lib/useNativeFrame"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
 import { NavDrawer } from "@/components/ui/nav-drawer"
 import { BottomNav, type NavShellItem } from "@/components/ui/nav-shells"
@@ -16,8 +17,10 @@ import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { ScreenOutlet, type ScreenOverlay } from "@/components/ui/screen-outlet"
 import { MAIN_CONTENT_ID, SkipLink } from "@/components/ui/skip-link"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
+import { MoreSheet } from "./MoreSheet"
 import { ShellSidebar, type ShellSidebarContent } from "./ShellSidebar"
 import { ShellTopBar, type ShellTopBarProps } from "./ShellTopBar"
+import type { NavDirectionState } from "@/lib/nav/navDirectionState"
 import { activeTabTap } from "./tabTap"
 
 export interface PortalShellProps {
@@ -33,6 +36,8 @@ export interface PortalShellProps {
   pending: boolean
   /** Settings-as-dialog wiring for ScreenOutlet. */
   overlay?: ScreenOverlay
+  /** Android native phones: the portal's floating action button (hidden on immersive routes). */
+  fab?: ReactNode
 }
 
 /**
@@ -55,8 +60,14 @@ export function PortalShell({
   drawerTitle,
   pending,
   overlay,
+  fab,
 }: PortalShellProps) {
   const [navOpen, setNavOpen] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const { native } = useNativeFrame()
+  // Overflow destinations for the native More sheet: the sidebar's items minus the tab bar's own.
+  const tabTargets = new Set(bottomTabs.map((tab) => tab.to))
+  const moreItems = sidebar.items.filter((item) => item.to && !tabTargets.has(item.to))
   const location = useLocation()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
@@ -71,7 +82,7 @@ export function PortalShell({
     if (action === "scroll-top") {
       const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches
       window.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" })
-    } else navigate(item.to, { viewTransition: true })
+    } else navigate(item.to, { viewTransition: true, state: { navDirection: "back" } satisfies NavDirectionState })
   }
   return (
     <div data-portal={portal} className="flex min-h-dvh bg-surface-container">
@@ -81,6 +92,7 @@ export function PortalShell({
       <NavDrawer variant="shell" open={navOpen} onClose={closeNav} title={drawerTitle}>
         <ShellSidebar variant="drawer" {...sidebar} onClose={closeNav} />
       </NavDrawer>
+      <MoreSheet open={moreOpen && native} onClose={() => setMoreOpen(false)} items={moreItems} />
       <EdgeSwipeBack />
       <div className="flex min-w-0 flex-1 flex-col">
         <ShellTopBar {...topBar} onOpenNav={() => setNavOpen(true)} />
@@ -88,6 +100,7 @@ export function PortalShell({
           id={MAIN_CONTENT_ID}
           tabIndex={-1}
           data-immersive={immersive || undefined}
+          data-fab={fab && !immersive ? "" : undefined}
           className="lm-native-main @container/home w-full min-w-0 flex-1 overflow-x-hidden px-[72px] pt-1 pb-10 focus:outline-none max-shell-lg:px-3.5 max-shell-lg:pb-9 max-sidebar:pb-bottom-nav"
         >
           <OfflineBanner
@@ -115,7 +128,9 @@ export function PortalShell({
             id: "more",
             label: "More",
             icon: <List size={22} aria-hidden="true" />,
-            onClick: () => setNavOpen(true),
+            // Native phones get the titled sheet; tablet and desktop keep the drawer.
+            onClick: () => (native ? setMoreOpen(true) : setNavOpen(true)),
+            popup: { expanded: native ? moreOpen : navOpen },
           },
         ]}
         emphasisId={bottomEmphasisId}
@@ -123,6 +138,7 @@ export function PortalShell({
         onActiveTap={onActiveTap}
         className={cn("sidebar:hidden", immersive && "native:hidden")}
       />
+      {immersive ? null : fab}
     </div>
   )
 }

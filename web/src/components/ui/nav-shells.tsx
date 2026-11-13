@@ -55,6 +55,9 @@ export interface NavShellItem {
   /** Rendered in the filled badge style (Abyss variant only): a count that
    * asks for action, such as the review-queue depth. */
   urgent?: boolean
+  /** A button item that opens a dialog (BottomNav's "More"): announced with `aria-haspopup`
+   * and `aria-expanded`. Ignored for `to` and `href` items. */
+  popup?: { expanded: boolean }
   /** Wired by Task 11 (B6): prefetch the destination's chunk on hover/focus. */
   prefetch?: () => void
 }
@@ -102,7 +105,14 @@ export function NavShellLink({ item, className, children, onActiveClick }: NavSh
   }
 
   return (
-    <button type="button" onClick={item.onClick} aria-current={current} className={className(isActive)}>
+    <button
+      type="button"
+      onClick={item.onClick}
+      aria-current={current}
+      aria-haspopup={item.popup ? "dialog" : undefined}
+      aria-expanded={item.popup ? item.popup.expanded : undefined}
+      className={className(isActive)}
+    >
       {children(isActive)}
     </button>
   )
@@ -166,7 +176,7 @@ export function BottomNav({ items, emphasisId, onActiveTap, className, ...props 
                     item.icon
                   )}
                   {item.badge ? (
-                    <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-error px-0.5 text-data-sm leading-none text-on-error">
+                    <span className="absolute -end-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-error px-0.5 text-data-sm leading-none text-on-error">
                       {item.badge}
                     </span>
                   ) : null}

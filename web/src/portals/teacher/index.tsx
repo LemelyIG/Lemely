@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
-import { lazy, type ReactNode } from "react"
+import { lazy, useRef, useState, type ReactNode, type RefObject } from "react"
 import { Link, NavLink, useLocation } from "react-router-dom"
 import {
   SquaresFour,
@@ -25,13 +25,15 @@ import { useReviewQueueCount } from "@/lib/hooks/useReviewQueueCount"
 import { STAFF_INBOX_ERROR, TEACHER_INBOX_EMPTY, staffDestinationFor } from "@/lib/staffInbox"
 import { navItems, resolveTrail, classesItemActive, type NavItem } from "./data"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
-import { CreateSheet } from "./components/CreateSheet"
+import { CREATE_LABEL, CreateSheet, createGlyph } from "./components/CreateSheet"
+import { Fab } from "@/components/ui/fab"
+import { titleLevelFor } from "@/components/shell/largeTitle"
 import { PortalShell } from "@/components/shell/PortalShell"
 import { ShellIcon } from "@/components/shell/icons"
 import { ShellUserBlock, type ShellSidebarContent } from "@/components/shell/ShellSidebar"
 import { ShellNavList } from "@/components/shell/ShellNavList"
 import { profileName } from "@/components/shell/ShellAvatar"
-import { SHELL_BUTTON_PRIMARY, SHELL_BUTTON_TONAL } from "@/components/shell/shellStyles"
+import { SHELL_BUTTON_PRIMARY, SHELL_BUTTON_TONAL, SHELL_ICON_BUTTON } from "@/components/shell/shellStyles"
 import {
   HELP_HREF,
   INBOX_TO,
@@ -361,12 +363,17 @@ function useTeacherSidebar(): ShellSidebarContent {
 // `RouteFallback` (C-11 state-view family); see the student portal for the
 // reasoning, and `state-views.tsx` for why it is not a full `StateView`.
 
-/** The teacher's own bar buttons: Create (tonal) and Upload papers (primary). */
-function TeacherTopBarActions() {
+/** The teacher's own bar buttons: Create (tonal) and Upload papers (primary).
+ * Create's sheet is controlled by `TeacherLayout`, so the Android FAB and the iOS large-title plus open
+ * the same one; the bar's own button is hidden on native phones. */
+function TeacherTopBarActions(create: CreateControl) {
   return (
     <>
       <span data-shell-action="create" className="contents">
         <CreateSheet
+          open={create.open}
+          onOpenChange={create.onOpenChange}
+          restoreFocusTo={create.opener}
           triggerClassName={cn(
             SHELL_BUTTON_TONAL,
             "max-sm:w-9 max-sm:justify-center max-sm:px-0 max-sm:pointer-coarse:w-11",
@@ -398,8 +405,29 @@ export const TEACHER_BOTTOM_TABS: readonly {
   { id: "classes", label: "Classes", to: "/teacher/classes", icon: ChartBar },
 ]
 
+interface CreateControl {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  /** The opener that was used when it is not the bar button, so focus can go back to it. */
+  opener: RefObject<HTMLElement | null>
+}
+
 function TeacherLayout() {
   const location = useLocation()
+  const [createOpen, setCreateOpen] = useState(false)
+  const createOpener = useRef<HTMLElement | null>(null)
+  const create: CreateControl = {
+    open: createOpen,
+    onOpenChange: (open) => {
+      if (open) createOpener.current = null
+      setCreateOpen(open)
+    },
+    opener: createOpener,
+  }
+  const openCreateFrom = (element: HTMLElement) => {
+    createOpener.current = element
+    setCreateOpen(true)
+  }
   // Same query the class list subscribes to (deduped by key); a pending list
   // shows the skeleton inside the shell. A zero-class teacher sees setup on home.
   const classesQuery = useTeacherClasses()
@@ -413,6 +441,7 @@ function TeacherLayout() {
   const trail = resolveTrail(
     underlyingPathname({ pathname: location.pathname, state: location.state, overlayBase: TEACHER_SETTINGS_BASE }),
   )
+  const rootLevel = titleLevelFor(trail) === "root"
   return (
     <PortalShell
       portal="teacher"
@@ -425,11 +454,33 @@ function TeacherLayout() {
         trail,
         backFallback: "/teacher",
         navLabel: "Open teacher navigation",
-        actions: <TeacherTopBarActions />,
+        actions: TeacherTopBarActions(create),
+        largeTitleAction: (
+          <button
+            type="button"
+            aria-label={CREATE_LABEL}
+            aria-haspopup="dialog"
+            onClick={(event) => openCreateFrom(event.currentTarget)}
+            className={SHELL_ICON_BUTTON}
+          >
+            {createGlyph(22)}
+          </button>
+        ),
         notifications: TEACHER_NOTIFICATIONS_PANEL,
         settingsTo: TEACHER_SETTINGS_BASE,
         account: { links: TEACHER_ACCOUNT_LINKS, detail: profile ? roleLabel(profile.role) : null },
       }}
+      fab={
+        rootLevel ? (
+          <Fab
+            extended
+            label={CREATE_LABEL}
+            icon={createGlyph(24)}
+            aria-haspopup="dialog"
+            onClick={(event) => openCreateFrom(event.currentTarget)}
+          />
+        ) : undefined
+      }
       bottomTabs={TEACHER_BOTTOM_TABS.map(
         (tab): NavShellItem => ({
           id: tab.id,

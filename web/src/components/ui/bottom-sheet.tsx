@@ -10,7 +10,7 @@ import {
 } from "react"
 import { haptic } from "@/lib/haptics"
 import { readPlatform } from "@/lib/platform"
-import { releaseVelocity, sheetRelease, trimSamples, type Detent, type PointerSample } from "@/lib/gestures/sheetMath"
+import { bodyDragIntent, releaseVelocity, sheetRelease, trimSamples, type Detent, type PointerSample } from "@/lib/gestures/sheetMath"
 import { PHONE_MEDIA } from "@/lib/useNativeFrame"
 import { cn } from "@/lib/utils"
 
@@ -18,8 +18,10 @@ import { cn } from "@/lib/utils"
  * The native frame's bottom sheet surface (brief §3.3). Presentation and
  * gesture only: the caller keeps the dialog contract (role, aria-modal,
  * label, focus trap, Escape, history) on the props it spreads here. Drag
- * starts only on [data-sheet-drag-region] (grabber + header), so text in the
- * body stays selectable and inner scrolling stays native.
+ * starts on [data-sheet-drag-region] (grabber + header) and, once the body
+ * sits at its top, on a downward move that starts in [data-sheet-body]
+ * (user decision, 2026-11-13): an upward move or a scrolled body stays the
+ * body's own scroll, and pressing a control never starts a drag.
  */
 export interface BottomSheetSurfaceProps extends HTMLAttributes<HTMLDivElement> {
   detents?: readonly Detent[]
@@ -120,25 +122,56 @@ export const BottomSheetSurface = forwardRef<HTMLDivElement, BottomSheetSurfaceP
   const keyboard = useKeyboardInset()
   useSheetScaleBack(!closing && detent === "large")
   const drag = useRef<DragState | null>(null)
+  /** A press in the body that has not yet shown whether it is a drag or a scroll. */
+  const pending = useRef<DragState | null>(null)
+
+  // Touch: once a body press has become a drag, the browser must not also pan the body.
+  useEffect(() => {
+    const panel = panelRef.current
+    if (!panel) return
+    const stop = (event: TouchEvent) => {
+      if (drag.current && event.cancelable) event.preventDefault()
+    }
+    panel.addEventListener("touchmove", stop, { passive: false })
+    return () => panel.removeEventListener("touchmove", stop)
+  }, [])
+
+  function beginDrag(d: DragState, el: HTMLElement): void {
+    drag.current = d
+    // While the finger is down the sheet follows it with no transition (preview drops is-sheet-snapping).
+    panelRef.current?.setAttribute("data-dragging", "")
+    el.setPointerCapture(d.id)
+  }
 
   function onPointerDown(e: ReactPointerEvent<HTMLDivElement>): void {
     callerDown?.(e)
     const target = e.target as Element
-    if (e.button > 0 || !target.closest("[data-sheet-drag-region]") || target.closest(INTERACTIVE)) return
+    if (e.button > 0 || target.closest(INTERACTIVE)) return
     if (!dismissible && detents.length < 2) return
-    drag.current = { id: e.pointerId, y: e.clientY, samples: [[e.timeStamp, e.clientY]] }
-    // While the finger is down the sheet follows it with no transition (preview drops is-sheet-snapping).
-    panelRef.current?.setAttribute("data-dragging", "")
-    e.currentTarget.setPointerCapture(e.pointerId)
+    const start: DragState = { id: e.pointerId, y: e.clientY, samples: [[e.timeStamp, e.clientY]] }
+    if (target.closest("[data-sheet-drag-region]")) beginDrag(start, e.currentTarget)
+    else if (target.closest("[data-sheet-body]")) pending.current = start
   }
   function onPointerMove(e: ReactPointerEvent<HTMLDivElement>): void {
     callerMove?.(e)
+    const p = pending.current
+    if (p && p.id === e.pointerId) {
+      const body = panelRef.current?.querySelector<HTMLElement>("[data-sheet-body]")
+      const intent = bodyDragIntent({ scrollTop: body?.scrollTop ?? 0, dy: e.clientY - p.y })
+      if (intent === "scroll") pending.current = null
+      else if (intent === "drag") {
+        pending.current = null
+        // The sheet starts from where the finger is now, so it does not jump by the slop.
+        beginDrag({ id: p.id, y: e.clientY, samples: [[e.timeStamp, e.clientY]] }, e.currentTarget)
+      }
+    }
     const d = drag.current
     if (!d || d.id !== e.pointerId || !panelRef.current) return
     d.samples = [...trimSamples(d.samples, e.timeStamp), [e.timeStamp, e.clientY]]
     panelRef.current.style.translate = `0 ${Math.max(e.clientY - d.y, -24)}px`
   }
   function endDrag(e: ReactPointerEvent<HTMLDivElement>): void {
+    if (pending.current?.id === e.pointerId) pending.current = null
     const d = drag.current
     if (!d || d.id !== e.pointerId) return
     drag.current = null

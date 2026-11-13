@@ -35,6 +35,8 @@ export interface ShellTopBarProps {
   settingsTo: string
   /** Overrides the trail-derived level (native frame D2). */
   titleLevel?: "root" | "detail"
+  /** iOS only: a root page's own action (teacher Create), trailing in the large-title row; it collapses away with the title. */
+  largeTitleAction?: ReactNode
   /** Where the native back chevron goes when there is no history (portal root). */
   backFallback: string
   account: Omit<AccountPanelProps, "triggerClassName">
@@ -77,6 +79,7 @@ export function ShellTopBar({
   notifications,
   settingsTo,
   titleLevel,
+  largeTitleAction,
   backFallback,
   account,
 }: ShellTopBarProps) {
@@ -84,7 +87,7 @@ export function ShellTopBar({
   const { data: counts } = useNotificationCounts()
   const unread = unreadBadgeLabel(counts)
   const stuck = useScrolled()
-  const { native } = useNativeFrame()
+  const { native, platform } = useNativeFrame()
   const level = titleLevel ?? titleLevelFor(trail)
   const largeRef = useRef<HTMLParagraphElement>(null)
   const collapsed = useLargeTitleCollapse(largeRef, native && level === "root")
@@ -113,7 +116,8 @@ export function ShellTopBar({
         >
           <ShellIcon name="menu" />
         </button>
-        <p data-shell-title className="me-auto min-w-0 truncate text-title-bar text-on-surface lm-native-inline-title">
+        {/* aria-hidden: the page's h1 carries the name, so a screen reader would hear it twice. */}
+        <p data-shell-title aria-hidden="true" className="me-auto min-w-0 truncate text-title-bar text-on-surface lm-native-inline-title">
           {title}
         </p>
         {actions}
@@ -146,6 +150,9 @@ export function ShellTopBar({
       <p ref={largeRef} aria-hidden="true" data-shell-large-title className="lm-native-large-title hidden">
         {title}
       </p>
+      {native && platform === "ios" && level === "root" && largeTitleAction ? (
+        <div className="lm-native-large-action">{largeTitleAction}</div>
+      ) : null}
       {trail.length > 1 ? (
         <div className="-mt-3 mb-4 px-[72px] max-shell-lg:px-3.5 native:hidden">
           <Breadcrumbs items={[...trail]} />
