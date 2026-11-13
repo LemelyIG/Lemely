@@ -19,7 +19,8 @@ import { assertPortFree, startPreview } from "../serve_guard.mjs"
 
 export const WEB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
 export const REPO_DIR = path.resolve(WEB_DIR, "..")
-export const APP_PORT = 4321
+// DRIFT_APP_PORT lets parallel worktrees run the gate at once, each on its own port.
+export const APP_PORT = Number(process.env.DRIFT_APP_PORT ?? 4321)
 export const APP_BASE = `http://127.0.0.1:${APP_PORT}`
 export const KIT_PORT = 5180
 export const KIT_BASE = `http://127.0.0.1:${KIT_PORT}`
