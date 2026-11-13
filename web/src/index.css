@@ -599,6 +599,36 @@
   margin-block: var(--native-grabber-gap-android);
   background: color-mix(in oklch, var(--md-on-surface-variant) 40%, transparent);
 }
+/* iOS destructive confirm (native frame Task 7): the sheet itself is transparent and the
+   rows sit in two rounded groups, the second holding only Cancel. */
+.lm-action-sheet {
+  background: transparent;
+  gap: var(--space-2);
+  padding-inline: var(--space-2);
+}
+.lm-action-sheet [data-sheet-drag-region] {
+  display: none;
+}
+.lm-action-sheet-group,
+.lm-action-sheet-cancel {
+  border-radius: var(--native-group-radius-ios);
+  background: var(--md-surface-container-lowest);
+}
+:root[data-theme="dark"] :is(.lm-action-sheet-group, .lm-action-sheet-cancel) {
+  background: var(--md-surface-container-high);
+}
+.lm-action-sheet-row {
+  display: block;
+  inline-size: 100%;
+  min-block-size: var(--native-action-row-h);
+  border-top: var(--native-hairline) solid var(--md-outline);
+  font-size: var(--native-inline-title-size);
+  text-align: center;
+}
+.lm-action-sheet-cancel {
+  border-top: 0;
+  font-weight: 600;
+}
 /* iOS large detent: the page behind scales back, pivoting on the top of the visible area
    (--native-sheet-sy, written by useSheetScaleBack), over a near-black backdrop. */
 @media (max-width: 720px) {

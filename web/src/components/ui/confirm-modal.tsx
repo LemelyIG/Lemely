@@ -2,6 +2,7 @@
 import { Button } from "@/components/ui/button"
 import { Modal } from "@/components/ui/modal"
 import { haptic } from "@/lib/haptics"
+import { useNativeFrame } from "@/lib/useNativeFrame"
 
 /*
  * C-24 · The confirmation step for a destructive action.
@@ -71,6 +72,52 @@ export function ConfirmModal({
   onConfirm: () => void
   onCancel: () => void
 }) {
+  const { native, platform } = useNativeFrame()
+  if (native && platform === "ios") {
+    // The iOS destructive confirm is an action sheet: the question, then the
+    // destructive row, then Cancel in its own group. Modal's sr-only title and
+    // description are what the dialog's label and description point at, so the
+    // visible copy is aria-hidden and nothing is read twice. Escape, a scrim tap
+    // and a drag still cannot answer for the reader (`dismissible={false}`).
+    const spoken = [description, consequence].filter(Boolean).join(" ")
+    return (
+      <Modal
+        open={open}
+        onClose={onCancel}
+        title={title}
+        description={spoken}
+        size="sm"
+        dismissible={false}
+        hideCloseButton
+        presentation="action-sheet"
+      >
+        <div className="lm-action-sheet-group">
+          <div aria-hidden="true" className="flex flex-col gap-1 px-4 py-3 text-center">
+            <p className="text-label text-on-surface-variant">{title}</p>
+            {description ? <p className="text-body-sm text-on-surface-variant">{description}</p> : null}
+            <p className="text-body-sm text-on-surface-variant">{consequence}</p>
+          </div>
+          {error ? (
+            <p role="alert" className="px-4 pb-3 text-center text-body-sm text-error">
+              {error}
+            </p>
+          ) : null}
+          <button
+            type="button"
+            className="lm-action-sheet-row text-error"
+            onClick={() => onConfirm()}
+            disabled={pending}
+            aria-busy={pending || undefined}
+          >
+            {pending ? (pendingLabel ?? confirmLabel) : confirmLabel}
+          </button>
+        </div>
+        <button type="button" className="lm-action-sheet-row lm-action-sheet-cancel" onClick={onCancel} disabled={pending}>
+          {cancelLabel}
+        </button>
+      </Modal>
+    )
+  }
   return (
     <Modal
       open={open}

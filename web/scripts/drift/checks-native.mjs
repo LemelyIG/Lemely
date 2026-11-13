@@ -1824,3 +1824,75 @@ NATIVE_CHECKS.push(
     },
   },
 );
+
+/* Task 7. The ConfirmModal call site is the student Account and devices tab's "Sign out
+   everywhere" (AccountSettings.tsx), served by studentShellMocks. The Modal call site is
+   the report sheet on a student tutor profile (TutorProfile.tsx > ReportSheet), a
+   dismissible Modal; the profile and its side requests are stubbed below. */
+const TUTOR_ID = "tutor-amira"
+const TUTOR_PROFILE = {
+  tutorId: TUTOR_ID,
+  publicName: "Amira K.",
+  headline: "IGCSE Maths and Physics",
+  subjects: [{ code: "0580", name: "Mathematics" }],
+  modes: ["virtual"],
+  area: { code: "alexandria", name: "Alexandria" },
+  rating: { state: "new", average: null, count: 0 },
+  bio: "Five years of tutoring.",
+  qualificationNote: null,
+  otherModeNote: null,
+  documentsSeen: true,
+  availability: [],
+  zone: "Africa/Cairo",
+  zoneLabel: "Cairo time",
+  listedSince: "2026-01",
+}
+const json = (route, body, status = 200) =>
+  route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) })
+const tutorProfileMocks = async (page) => {
+  await studentShellMocks("populated")(page)
+  await page.route(`**/api/tutors/${TUTOR_ID}/**`, (route) => json(route, { items: [], nextCursor: null }))
+  await page.route(`**/api/tutors/${TUTOR_ID}/outcomes`, (route) =>
+    json(route, { tutorId: TUTOR_ID, ladder: [], duringWindowDays: 90, beforeLookbackDays: 90, subjects: [] }),
+  )
+  await page.route(`**/api/tutors/${TUTOR_ID}`, (route) => json(route, TUTOR_PROFILE))
+  await page.route("**/api/student/tutor-grants", (route) => json(route, { items: [] }))
+}
+
+NATIVE_CHECKS.push(
+  {
+    id: "native-ios-confirm-is-action-sheet",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student/settings/devices" },
+    async run(page) {
+      const trigger = page.getByRole("button", { name: "Sign out everywhere" }).first()
+      // The button stays disabled until the devices request settles; name that step if it never does.
+      await trigger.waitFor().then(() => page.waitForFunction(() => [...document.querySelectorAll("button")].some((b) => b.textContent === "Sign out everywhere" && !b.disabled), null, { timeout: 15000 })).catch((e) => { throw new Error(`trigger never enabled: ${e.message.split("\n")[0]}`) })
+      await trigger.click()
+      const dialog = page.getByRole("dialog", { name: "Sign out everywhere?" })
+      await dialog.waitFor()
+      if (!(await dialog.evaluate((el) => el.classList.contains("lm-action-sheet")))) throw new Error("not an action sheet")
+      // Modal moves focus in on the next frame; an Escape sent before that lands on the settings panel underneath.
+      await page.waitForFunction(() => document.activeElement?.closest("[role=dialog]")?.classList.contains("lm-action-sheet"))
+      await page.keyboard.press("Escape")
+      if (!(await dialog.isVisible())) throw new Error("Escape answered a destructive question")
+      await dialog.getByRole("button", { name: "Stay signed in" }).click()
+      await dialog.waitFor({ state: "detached" })
+    },
+  },
+  {
+    id: "native-android-modal-back-closes",
+    platform: "android",
+    width: 390,
+    app: { ...NATIVE_HOME, path: `/student/tutors/${TUTOR_ID}`, mocks: tutorProfileMocks },
+    async run(page) {
+      await page.getByRole("button", { name: "Report", exact: true }).click()
+      const dialog = page.getByRole("dialog")
+      await dialog.waitFor()
+      if (!(await dialog.evaluate((el) => el.classList.contains("lm-sheet")))) throw new Error("Modal is not a sheet on native")
+      await page.goBack()
+      await dialog.waitFor({ state: "detached" })
+    },
+  },
+)

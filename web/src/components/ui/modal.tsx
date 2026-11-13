@@ -2,6 +2,7 @@ import {
   useEffect,
   useId,
   useRef,
+  type AnimationEvent as ReactAnimationEvent,
   type HTMLAttributes,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
@@ -12,6 +13,8 @@ import { cn } from "@/lib/utils"
 import { lockScroll } from "@/lib/scrollLock"
 import { useDialogHistory } from "@/lib/nav/useDialogHistory"
 import { useOverlayPhase } from "@/lib/overlayPhase"
+import { useNativeFrame } from "@/lib/useNativeFrame"
+import { BottomSheetSurface } from "@/components/ui/bottom-sheet"
 
 /*
  * Dialog built on a portal rather than the native `<dialog>` element.
@@ -26,7 +29,7 @@ import { useOverlayPhase } from "@/lib/overlayPhase"
  * DESIGN.md specifies.
  *
  * Accessibility contract (DESIGN.md §12 gate 8):
- *   - `role="dialog"` + `aria-modal="true"` on the panel.
+ *   - the dialog role + `aria-modal="true"` on the panel (`panelProps`, shared by both surfaces).
  *   - `aria-labelledby` pointed at the title, generated via `useId` so every
  *     modal is labelled without the caller having to invent an id.
  *   - Focus moves into the panel on open and is trapped there (Tab/Shift+Tab
@@ -59,6 +62,12 @@ export interface ModalProps {
    * (720px) for content-heavy panels. */
   size?: "sm" | "md" | "lg"
   className?: HTMLAttributes<HTMLDivElement>["className"]
+  /** Internal, for `ConfirmModal`; call sites never set it. `"auto"` is a
+   * sheet on the native frame and a centred dialog elsewhere; `"action-sheet"`
+   * is the iOS destructive-confirm form: no visible header or footer, the
+   * caller's children are the rows, and the title and description are read
+   * aloud only. */
+  presentation?: "auto" | "action-sheet"
 }
 
 const sizeClasses = {
@@ -81,7 +90,9 @@ export function Modal({
   dismissible = true,
   size = "md",
   className,
+  presentation = "auto",
 }: ModalProps) {
+  const { native } = useNativeFrame()
   const titleId = useId()
   const descriptionId = useId()
   const panelRef = useRef<HTMLDivElement>(null)
@@ -168,6 +179,106 @@ export function Modal({
     }
   }
 
+  // One dialog contract, two surfaces: the native frame swaps only the frame
+  // (a bottom sheet); role, label, focus trap, Escape and history stay shared.
+  const panelProps = {
+    role: "dialog" as const,
+    "aria-modal": true as const,
+    "aria-labelledby": titleId,
+    "aria-describedby": description ? descriptionId : undefined,
+    tabIndex: -1,
+    // `event.target === event.currentTarget`: React's synthetic
+    // `onAnimationEnd` also hears animations bubbling from descendants, and
+    // a spinner or skeleton finishing inside a closing panel would end the
+    // exit early and yank the panel off mid-slide.
+    onAnimationEnd:
+      phase === "closing"
+        ? (event: ReactAnimationEvent<HTMLDivElement>) => {
+            if (event.target === event.currentTarget) onAnimationEnd()
+          }
+        : undefined,
+  }
+
+  const heading = (
+    <div className={cn("flex items-start justify-between gap-4", native && "w-full px-4 pb-2")}>
+      <div className="flex min-w-0 flex-col gap-1">
+        <h2 id={titleId} className="text-display-sm text-on-surface">
+          {title}
+        </h2>
+        {description ? (
+          <p id={descriptionId} className="text-body-md text-on-surface-variant">
+            {description}
+          </p>
+        ) : null}
+      </div>
+      {hideCloseButton ? null : (
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close dialog"
+          className={cn(
+            "flex shrink-0 items-center justify-center rounded-md text-on-surface-variant transition-colors",
+            native ? "h-11 w-11" : "-me-1 -mt-1 h-8 w-8",
+            "hover:bg-surface-container-low hover:text-on-surface",
+            "active:scale-[0.98]",
+          )}
+        >
+          <X size={18} aria-hidden="true" />
+        </button>
+      )}
+    </div>
+  )
+  const body = <div className="min-h-0 overflow-y-auto lm-scroll">{children}</div>
+  const foot = footer ? (
+    <div className="flex items-center justify-end gap-2 border-t border-outline-variant pt-4">
+      {footer}
+    </div>
+  ) : null
+
+  if (native) {
+    return createPortal(
+      <div className="fixed inset-0 z-modal" onKeyDown={handleKeyDown}>
+        <div
+          className="fixed inset-0 z-scrim bg-scrim motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
+          aria-hidden="true"
+          onClick={dismissible ? onClose : undefined}
+        />
+        <BottomSheetSurface
+          ref={panelRef}
+          {...panelProps}
+          detents={size === "lg" ? ["medium", "large"] : ["content"]}
+          initialDetent={size === "lg" ? "medium" : "content"}
+          dismissible={dismissible}
+          onDismiss={onClose}
+          closing={phase === "closing"}
+          header={presentation === "action-sheet" ? null : heading}
+          className={presentation === "action-sheet" ? "lm-action-sheet" : undefined}
+          bodyClassName={presentation === "action-sheet" ? undefined : cn("flex flex-col gap-4 px-4 pb-4", className)}
+        >
+          {presentation === "action-sheet" ? (
+            <>
+              <h2 id={titleId} className="sr-only">
+                {title}
+              </h2>
+              {description ? (
+                <p id={descriptionId} className="sr-only">
+                  {description}
+                </p>
+              ) : null}
+              {children}
+            </>
+          ) : (
+            <>
+              {body}
+              {foot}
+            </>
+          )}
+        </BottomSheetSurface>
+      </div>,
+      document.body,
+    )
+  }
+
   return createPortal(
     <div
       className="fixed inset-0 z-modal flex items-center justify-center p-4"
@@ -182,22 +293,7 @@ export function Modal({
       />
       <div
         ref={panelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={description ? descriptionId : undefined}
-        tabIndex={-1}
-        // `event.target === event.currentTarget`: React's synthetic
-        // `onAnimationEnd` also hears animations bubbling from descendants, and
-        // a spinner or skeleton finishing inside a closing panel would end the
-        // exit early and yank the panel off mid-slide.
-        onAnimationEnd={
-          phase === "closing"
-            ? (event) => {
-                if (event.target === event.currentTarget) onAnimationEnd()
-              }
-            : undefined
-        }
+        {...panelProps}
         className={cn(
           "relative z-modal flex max-h-[85vh] w-full flex-col gap-4 rounded-xl border border-outline-variant bg-surface-container-lowest p-6 shadow-[var(--shadow-float)]",
           phase === "closing"
@@ -207,38 +303,9 @@ export function Modal({
           className,
         )}
       >
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex min-w-0 flex-col gap-1">
-            <h2 id={titleId} className="text-display-sm text-on-surface">
-              {title}
-            </h2>
-            {description ? (
-              <p id={descriptionId} className="text-body-md text-on-surface-variant">
-                {description}
-              </p>
-            ) : null}
-          </div>
-          {hideCloseButton ? null : (
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close dialog"
-              className={cn(
-                "-me-1 -mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-on-surface-variant transition-colors",
-                "hover:bg-surface-container-low hover:text-on-surface",
-                "active:scale-[0.98]",
-              )}
-            >
-              <X size={18} aria-hidden="true" />
-            </button>
-          )}
-        </div>
-        <div className="min-h-0 overflow-y-auto lm-scroll">{children}</div>
-        {footer ? (
-          <div className="flex items-center justify-end gap-2 border-t border-outline-variant pt-4">
-            {footer}
-          </div>
-        ) : null}
+        {heading}
+        {body}
+        {foot}
       </div>
     </div>,
     document.body,

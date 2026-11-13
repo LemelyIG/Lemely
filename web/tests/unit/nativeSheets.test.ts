@@ -81,3 +81,42 @@ describe("ui/sheet.tsx (Task 6)", () => {
     expect(native).toContain("tabIndex={-1}")
   })
 })
+
+describe("Modal on the native frame (Task 7)", () => {
+  const src = read("components/ui/modal.tsx")
+  it("keeps one dialog contract and only swaps the surface", () => {
+    expect(src).toContain("useNativeFrame()")
+    expect(src.match(/role: "dialog"/g)?.length).toBe(1)
+    expect(src).not.toContain('role="dialog"')
+    expect(src).toContain("<BottomSheetSurface")
+    expect(src).toMatch(/detents=\{size === "lg" \? \["medium", "large"\] : \["content"\]\}/)
+    expect(src).toMatch(/dismissible=\{dismissible\}/)
+  })
+  it("size lg opens at medium and drags to large (D10)", () => {
+    expect(src).toMatch(/initialDetent=\{size === "lg" \? "medium" : "content"\}/)
+  })
+  it("call sites are untouched: the public props are unchanged", () => {
+    expect(src).toMatch(/export interface ModalProps \{[\s\S]*open: boolean[\s\S]*onClose: \(\) => void[\s\S]*title: ReactNode/)
+  })
+})
+
+describe("ConfirmModal (Task 7)", () => {
+  const src = read("components/ui/confirm-modal.tsx")
+  it("iOS native uses an action sheet with Cancel in its own group", () => {
+    expect(src).toMatch(/platform === "ios"[\s\S]*presentation="action-sheet"/)
+    expect(src).toContain("lm-action-sheet-cancel")
+  })
+  it("the action sheet's visible title is aria-hidden; Modal's sr-only copy labels the dialog", () => {
+    expect(src).toMatch(/<div aria-hidden="true"[^>]*>\s*<p[^>]*>\{title\}<\/p>/)
+    const modal = read("components/ui/modal.tsx")
+    expect(modal).toMatch(/presentation === "action-sheet"[\s\S]*<h2 id=\{titleId\} className="sr-only">/)
+    expect(modal).toMatch(/<p id=\{descriptionId\} className="sr-only">/)
+  })
+  it("stays non-dismissible (no scrim close, no drag, no grabber)", () => {
+    expect(src).toContain("dismissible={false}")
+  })
+  it("action-sheet rows use the native tokens", () => {
+    expect(css).toMatch(/\.lm-action-sheet-row \{[^}]*min-block-size: var\(--native-action-row-h\)/)
+    expect(css).toMatch(/\.lm-action-sheet-cancel \{[^}]*font-weight: 600/)
+  })
+})
