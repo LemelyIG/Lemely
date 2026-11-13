@@ -180,14 +180,21 @@ export function PlacementInvite() {
                 </CardBody>
               </Card>
 
-              {/* The refusal, in place of the start button. The pinned banner above
-                  carries the "Verify now" link to the existing resend flow. */}
+              {/* The refusal, in place of the start button. Known from the profile on
+                  load it is a standing fact (status); only a refused click is an alert. */}
               {needsVerification ? (
                 <Card>
-                  <CardBody role="alert" className="flex flex-col gap-3">
-                    <div className="text-body-lg font-medium text-on-surface">
+                  <CardBody
+                    role={
+                      isPlacementEmailUnverified(createPlacement.error)
+                        ? "alert"
+                        : "status"
+                    }
+                    className="flex flex-col gap-3"
+                  >
+                    <h2 className="m-0 text-display-xs text-on-surface">
                       {PLACEMENT_VERIFY_EMAIL.heading}
-                    </div>
+                    </h2>
                     <p className="text-body-md text-on-surface-variant">
                       {PLACEMENT_VERIFY_EMAIL.body}
                     </p>

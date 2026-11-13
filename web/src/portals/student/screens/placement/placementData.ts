@@ -176,5 +176,5 @@ export function isPlacementEmailUnverified(err: unknown): boolean {
 /** Shown in place of the start button; the banner above it links to the resend flow. */
 export const PLACEMENT_VERIFY_EMAIL = {
   heading: "Verify your email to start your placement test",
-  body: "The placement test is marked for you, and that unlocks once your email is verified. Check your inbox for the link, or ask for a new one.",
+  body: "Lemely marks the test for you, and marking unlocks once you verify your email. Use the link we sent you, or ask for a new one.",
 } as const
