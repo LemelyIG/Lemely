@@ -146,7 +146,7 @@ export function PlacementResult() {
                 </Card>
               ) : null}
 
-              <div className="grid grid-cols-1 gap-5 min-[720px]:grid-cols-2">
+              <div className="grid grid-cols-1 gap-5 min-[721px]:grid-cols-2">
                 <Card>
                   <CardBody className="flex flex-col gap-3">
                     <div className="text-eyebrow text-on-surface-variant">Strongest topics</div>

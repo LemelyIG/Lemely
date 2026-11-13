@@ -633,11 +633,12 @@
   }
   /* Android: full-bleed and square; the 14px page gutter stays on cards as a transparent border.
      The width is explicit (page width plus both gutters) so a card that sets w-full, or sits in a
-     flex item, bleeds symmetrically instead of sliding left. */
-  :root[data-platform="android"] .lm-native-main .lm-native-card { border-radius: 0; }
-  /* Cards that sit side by side in a flex row set data-native-bleed="off": an explicit full-row width
-     would stack them, so they keep the surface look and stay inside the gutter. */
+     flex item, bleeds symmetrically instead of sliding left. The square corners belong to the
+     bleed. Cards that sit side by side in a flex row set data-native-bleed="off": an explicit
+     full-row width would stack them, so they keep the surface look, radius included, and stay
+     inside the gutter. */
   :root[data-platform="android"] .lm-native-main .lm-native-card:not([data-native-bleed="off"]) {
+    border-radius: 0;
     inline-size: calc(100% + 2 * var(--native-gutter-android));
     max-inline-size: none;
     margin-inline: calc(-1 * var(--native-gutter-android));
