@@ -73,6 +73,9 @@ RECONCILE_BATCH: Final = 20
 # multiplication from overflowing on a payment that has been rescheduled for years.
 _MAX_BACKOFF_EXPONENT: Final = 10
 WEBHOOK_PATH: Final = "/api/webhooks/paymob/transaction"
+#: The SPA route is ``/billing/return/:paymentId`` (``web/src/routes.tsx``). The id rides in the
+#: path, not a query: Paymob appends its own ``?id=...&hmac=...`` to ``redirection_url`` and the
+#: docs do not say how it joins a URL that already has a ``?`` (skill audit C1, DV-28).
 RETURN_PATH: Final = "/billing/return"
 
 _OPEN: Final = (PaymentStatus.created, PaymentStatus.pending)
@@ -175,20 +178,50 @@ def add_months(moment: datetime, months: int) -> datetime:
     return moment.replace(year=year, month=month, day=day)
 
 
+#: Sent when the payer has no usable phone. ``billing_data.phone_number`` is required: a missing
+#: one is a 400 (skill ``intention-api.md``, "Common errors"), whose own examples are E.164
+#: (``+201234567890``). Most Lemely users have no phone on file, so refusing checkout for them
+#: would block nearly every payer. The literal ``"NA"`` this replaces is not E.164 and was never
+#: confirmed to pass Paymob's validation (skill audit I3, sandbox checklist S4). This value is
+#: well formed (country code 20, then ten digits) yet cannot be anyone's number: Egyptian
+#: national numbers never begin with 0. If S4 shows Paymob rejects it, the audit's fix is a 422
+#: ``phone_required`` and a phone field in the checkout UI.
+PLACEHOLDER_PHONE: Final = "+200000000000"
+_E164_RE: Final = re.compile(r"\+[1-9]\d{7,14}")
+_EGYPT_LOCAL_MOBILE_RE: Final = re.compile(r"01[0125]\d{8}")
+_EGYPT_INTERNATIONAL_RE: Final = re.compile(r"20\d{10}")
+
+
+def paymob_phone(raw: str | None) -> str:
+    """The payer's phone in E.164 form, or :data:`PLACEHOLDER_PHONE` when it is unusable.
+
+    Strips spaces, dots, dashes and brackets, then accepts ``+<digits>``, ``00<digits>``, an
+    Egyptian local mobile (``01012345678``) and a bare ``20<10 digits>``. Anything else (free
+    text, too short, ``"NA"``) is not sent: a malformed value is a 400 for the whole checkout.
+    """
+    cleaned = re.sub(r"[\s().-]", "", raw or "")
+    if cleaned.startswith("00"):
+        cleaned = "+" + cleaned[2:]
+    elif _EGYPT_LOCAL_MOBILE_RE.fullmatch(cleaned):
+        cleaned = "+20" + cleaned[1:]
+    elif _EGYPT_INTERNATIONAL_RE.fullmatch(cleaned):
+        cleaned = "+" + cleaned
+    return cleaned if _E164_RE.fullmatch(cleaned) else PLACEHOLDER_PHONE
+
+
 def billing_data_for(user: User) -> dict[str, str]:
     """Paymob ``billing_data`` from the payer's profile (research 01 §2.1).
 
     First name, last name, email and phone are required by Paymob; address
     fields are not collected by Lemely and are sent as ``"NA"``, as Paymob's own
-    samples send placeholders. Whether Paymob validates the ``"NA"`` phone
-    fallback is an open question for the live test account (research 01 §8 q5).
+    samples send placeholders. The phone is E.164 (see :func:`paymob_phone`).
     """
     first, _, last = (user.display_name or "").strip().partition(" ")
     return {
         "first_name": (first or "Lemely")[:50],
         "last_name": (last.strip() or "Customer")[:50],
         "email": user.email,
-        "phone_number": user.phone or "NA",
+        "phone_number": paymob_phone(user.phone),
         "apartment": "NA",
         "floor": "NA",
         "street": "NA",
@@ -468,7 +501,7 @@ class BillingService:
         return f"{self._settings.notification_base_url}{WEBHOOK_PATH}"
 
     def redirection_url(self, payment_id: uuid.UUID) -> str:
-        return f"{self._settings.redirection_base_url}{RETURN_PATH}?payment={payment_id}"
+        return f"{self._settings.redirection_base_url}{RETURN_PATH}/{payment_id}"
 
     def create_pack_checkout(
         self,
@@ -723,6 +756,19 @@ class BillingService:
             return payment
         if payment is None:
             self._rearm_reconcile_for_reference(order_map.get("merchant_order_id"))
+            if obj.get("api_source") == "SUBSCRIPTION":
+                # Paymob charges a renewal on the plan's MOTO integration with no intention of
+                # ours, so no payment of ours can match it yet. ``api_source`` is not signed, so
+                # it picks the log level only: nothing is settled from it, and every other
+                # unmatched callback stays an error. Renewals are recorded by the subscription
+                # webhook and the drift check (Phase 05), not here (skill audit I5).
+                log.info(
+                    "paymob_renewal_txn_callback_unmatched",
+                    order_id=str(order_map.get("id"))[:32],
+                    txn_id=_as_int(obj.get("id")),
+                    integration_id=str(obj.get("integration_id"))[:20],
+                )
+                return None
         log.error(
             "paymob_callback_unmatched",
             reason="reference_mismatch" if payment is not None else "no_payment_for_order",
@@ -755,6 +801,24 @@ class BillingService:
         if payment.next_reconcile_at is None or payment.next_reconcile_at > now:
             payment.next_reconcile_at = now
             log.warning("paymob_callback_rearmed_reconcile", payment_id=str(payment.id))
+
+    def _is_our_integration(self, obj: JsonMap) -> bool:
+        """True when the signed ``integration_id`` is one configured for this account and mode.
+
+        The configured ids are the card, Apple Pay and MOTO integrations: mode is set by the
+        keys, and an id from the other mode (or another integration) is not in the set. A
+        renewal arrives on the MOTO id. A missing or unreadable id is not ours.
+        """
+        ours = {
+            value
+            for value in (
+                self._settings.card_integration_id,
+                self._settings.apple_pay_integration_id,
+                self._settings.moto_integration_id,
+            )
+            if value is not None
+        }
+        return _as_int(obj.get("integration_id")) in ours
 
     @staticmethod
     def _is_child_transaction(obj: JsonMap) -> bool:
@@ -796,6 +860,23 @@ class BillingService:
                 self._record_event(PaymobEventKind.transaction, f"unmatched:{txn_id}", safe)
                 return
         child = self._is_child_transaction(obj)
+        if source == "callback" and not child and not self._is_our_integration(obj):
+            # Another integration on the same account (a payment link, a dashboard test) signs
+            # with the same HMAC secret, so a genuine signature and a real ``order.id`` are not
+            # enough: ``integration_id`` is signed and says which integration took the payment.
+            # Logged and ignored (the route still answers 200: a retry would change nothing). The
+            # audit row has its own key so the genuine callback's ``txn:`` key stays free. A
+            # refund/void child is not judged: it settles nothing, and the parent's own callback
+            # carries the state. A reconcile inquiry is our own authenticated request, so it is
+            # not judged either (skill audit I1).
+            log.error(
+                "paymob_unexpected_integration",
+                payment_id=str(payment.id),
+                txn_id=txn_id,
+                integration_id=str(obj.get("integration_id"))[:20],
+            )
+            self._record_event(PaymobEventKind.transaction, f"rejected_integration:{txn_id}", safe)
+            return
         if child and (
             (_is_true(obj.get("is_refund")) or _is_true(obj.get("is_void")))
             != _is_true(obj.get("has_parent_transaction"))
@@ -1197,6 +1278,7 @@ class BillingService:
 __all__ = [
     "CREDIT_EXPIRY_MONTHS",
     "INTENTION_EXPIRATION_SECONDS",
+    "PLACEHOLDER_PHONE",
     "RECONCILE_AFTER",
     "RECONCILE_BATCH",
     "RECONCILE_GIVE_UP_AFTER",
@@ -1222,6 +1304,7 @@ __all__ = [
     "is_linked_parent",
     "paid_handler_for",
     "payment_for_viewer",
+    "paymob_phone",
     "receipts_for",
     "register_paid_handler",
     "saved_cards_for",

@@ -447,6 +447,7 @@ jobs:
             LEMELY_PAYMOB__APPLE_PAY_INTEGRATION_ID=${{ vars.PAYMOB_APPLE_PAY_INTEGRATION_ID }}
             LEMELY_PAYMOB__NOTIFICATION_BASE_URL=https://${{ needs.resolve-env.outputs.environment == 'production' && 'lemelyig.com' || 'staging.lemelyig.com' }}
             LEMELY_PAYMOB__REDIRECTION_BASE_URL=https://${{ needs.resolve-env.outputs.environment == 'production' && 'lemelyig.com' || 'staging.lemelyig.com' }}
+            LEMELY_PAYMOB__EXPECT_LIVE=${{ needs.resolve-env.outputs.environment == 'production' }}
 
       # Asserts what is SERVING, not what was created. `revision_traffic` above
       # should have sent 100% to the new revision; this step does not trust that.

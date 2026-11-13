@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -11,6 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from lemely.db.billing_repo import (
+    PLACEHOLDER_PHONE,
     BillingService,
     CheckoutUnavailable,
     NotLinkedToBeneficiary,
@@ -74,9 +76,10 @@ def test_pack_checkout_inserts_the_payment_and_returns_the_unified_checkout_url(
     assert body["special_reference"] == str(result.payment_id)
     assert body["expiration"] == 3600
     assert body["notification_url"] == "https://lemelyig.com/api/webhooks/paymob/transaction"
-    assert body["redirection_url"] == (
-        f"https://lemelyig.com/billing/return?payment={result.payment_id}"
-    )
+    # The SPA route is /billing/return/:paymentId (web/src/routes.tsx). Paymob appends its own
+    # ?id=...&hmac=... query to this URL, so ours must carry no query string of its own.
+    assert body["redirection_url"] == f"https://lemelyig.com/billing/return/{result.payment_id}"
+    assert "?" not in body["redirection_url"]
     assert sum(item["amount"] for item in body["items"]) == body["amount"]
     assert body["billing_data"]["first_name"] == "Sara"
     assert body["billing_data"]["last_name"] == "Ali"
@@ -448,8 +451,40 @@ def test_billing_data_falls_back_when_the_profile_is_sparse() -> None:
     assert data["first_name"] == "Lemely"
     assert data["last_name"] == "Customer"
     assert data["email"] == "x@example.com"
-    assert data["phone_number"] == "NA"
+    assert data["phone_number"] == PLACEHOLDER_PHONE
+    assert data["phone_number"] != "NA"
     assert data["country"] == "EGY"
+
+
+def _user_with_phone(phone: str | None) -> User:
+    return User(id=uuid.uuid4(), email="p@example.com", role=Role.student, phone=phone)
+
+
+def test_the_placeholder_phone_is_a_well_formed_e164_number() -> None:
+    assert re.fullmatch(r"\+[1-9]\d{7,14}", PLACEHOLDER_PHONE)
+
+
+@pytest.mark.parametrize(
+    ("stored", "sent"),
+    [
+        ("+201234567890", "+201234567890"),
+        ("+20 123 456 7890", "+201234567890"),
+        ("+20-123-456-7890", "+201234567890"),
+        ("01012345678", "+201012345678"),
+        ("010 1234 5678", "+201012345678"),
+        ("00201012345678", "+201012345678"),
+        ("201012345678", "+201012345678"),
+        ("(+20) 101 234 5678", "+201012345678"),
+        ("+447911123456", "+447911123456"),
+    ],
+)
+def test_a_phone_on_file_is_sent_in_e164_form(stored: str, sent: str) -> None:
+    assert billing_data_for(_user_with_phone(stored))["phone_number"] == sent
+
+
+@pytest.mark.parametrize("stored", [None, "", "   ", "NA", "call me", "12345", "+0123456789"])
+def test_a_missing_or_unusable_phone_sends_the_placeholder_never_na(stored: str | None) -> None:
+    assert billing_data_for(_user_with_phone(stored))["phone_number"] == PLACEHOLDER_PHONE
 
 
 def test_billing_data_truncates_long_names_to_paymobs_limit() -> None:

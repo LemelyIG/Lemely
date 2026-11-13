@@ -97,3 +97,96 @@ def test_a_relative_callback_origin_is_rejected() -> None:
 def test_integration_ids_must_be_positive() -> None:
     with pytest.raises(ValidationError):
         PaymobSettings.model_validate({"card_integration_id": 0})
+
+
+# -- key mode: production must not run on test keys (skill audit I2) -----------------------
+
+LIVE_SECRET = "egy_sk_live_abcdef0123456789"
+LIVE_PUBLIC = "egy_pk_live_abcdef0123456789"
+TEST_SECRET = "egy_sk_test_abcdef0123456789"
+TEST_PUBLIC = "egy_pk_test_abcdef0123456789"
+
+
+def _paymob(**fields: object) -> PaymobSettings:
+    return PaymobSettings.model_validate(fields)
+
+
+def test_expect_live_is_off_by_default_so_dev_and_test_keep_working() -> None:
+    assert PaymobSettings().expect_live is False
+    paymob = _paymob(secret_key=TEST_SECRET, public_key=TEST_PUBLIC)
+    assert paymob.expect_live is False
+
+
+def test_expect_live_accepts_live_keys() -> None:
+    paymob = _paymob(expect_live=True, secret_key=LIVE_SECRET, public_key=LIVE_PUBLIC)
+    assert paymob.expect_live is True
+
+
+def test_expect_live_accepts_an_unconfigured_account() -> None:
+    """Credentials unset is a supported state (checkout answers 503), even in production."""
+    assert _paymob(expect_live=True).checkout_configured is False
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"secret_key": TEST_SECRET, "public_key": TEST_PUBLIC},
+        {"secret_key": TEST_SECRET},
+        {"public_key": TEST_PUBLIC},
+        {"secret_key": "sk_test_abcdef0123456789"},
+    ],
+)
+def test_expect_live_refuses_a_test_mode_key(fields: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="test-mode"):
+        _paymob(expect_live=True, **fields)
+
+
+@pytest.mark.parametrize("expect_live", [False, True])
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"secret_key": TEST_SECRET, "public_key": LIVE_PUBLIC},
+        {"secret_key": LIVE_SECRET, "public_key": TEST_PUBLIC},
+    ],
+)
+def test_public_and_secret_key_modes_must_agree(
+    fields: dict[str, object], expect_live: bool
+) -> None:
+    with pytest.raises(ValidationError, match="different modes"):
+        _paymob(expect_live=expect_live, **fields)
+
+
+def test_keys_with_no_recognisable_mode_are_not_judged() -> None:
+    """The existing fixtures use bare ``sk``/``pk``; only a marked key can be refused."""
+    assert _paymob(expect_live=True, secret_key="sk", public_key="pk").expect_live is True
+    assert _paymob(secret_key="sk", public_key=TEST_PUBLIC).secret_key is not None
+
+
+def test_the_error_names_the_field_but_never_the_key() -> None:
+    with pytest.raises(ValidationError) as caught:
+        _paymob(expect_live=True, secret_key=TEST_SECRET, public_key=LIVE_PUBLIC)
+    message = str(caught.value)
+    assert "secret_key" in message
+    assert TEST_SECRET not in message
+    assert LIVE_PUBLIC not in message
+
+
+def test_settings_refuse_to_start_on_test_keys_when_the_env_says_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LEMELY_PAYMOB__EXPECT_LIVE", "true")
+    monkeypatch.setenv("LEMELY_PAYMOB__SECRET_KEY", TEST_SECRET)
+    monkeypatch.setenv("LEMELY_PAYMOB__PUBLIC_KEY", TEST_PUBLIC)
+    with pytest.raises(ValidationError, match="test-mode") as caught:
+        Settings()
+    assert TEST_SECRET not in str(caught.value)  # the env route must not echo the credentials
+    assert TEST_PUBLIC not in str(caught.value)
+    monkeypatch.setenv("LEMELY_PAYMOB__SECRET_KEY", LIVE_SECRET)
+    monkeypatch.setenv("LEMELY_PAYMOB__PUBLIC_KEY", LIVE_PUBLIC)
+    assert Settings().paymob.expect_live is True
+
+
+def test_expect_live_false_in_the_env_allows_test_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LEMELY_PAYMOB__EXPECT_LIVE", "false")
+    monkeypatch.setenv("LEMELY_PAYMOB__SECRET_KEY", TEST_SECRET)
+    assert Settings().paymob.expect_live is False

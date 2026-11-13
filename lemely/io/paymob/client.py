@@ -12,7 +12,12 @@ the one Paymob documents for it:
   subscriptions. The token comes from ``POST api/auth/tokens`` with the API key,
   lives one hour, and is cached here for 50 minutes. The cache lock is held while
   the mint request is in flight, so concurrent callers share one mint rather than
-  each minting (a slow mint delays them by up to ``timeout_seconds``).
+  each minting (a slow mint delays them by up to ``timeout_seconds``). The skill's
+  embedded copy says ``Token`` for the subscription calls; the live docs say Bearer
+  on every one (``developers.paymob.com/paymob-docs/subscription/`` pages
+  ``create-subscription-plan``, ``subscription-actions/list-subscription-details``,
+  ``cancel-subscription``, ``suspend-subscription``, ``resume-subscription`` and
+  ``update-subscription``, checked 2026-11-13). The live docs win (skill audit M1).
 * None: ``POST api/acceptance/payments/pay`` (the payment token in the body
   authorises it).
 
@@ -23,14 +28,16 @@ body is empty or not a JSON object (a proxy or maintenance page). Then
 caller must inquire and must never read the failure as a decline. ``timeout`` is
 the narrower flag for a deadline that expired. The exceptions are
 ``PaymobNotConfigured`` (nothing was sent) and a received non-2xx status, which
-carries ``status_code``, with one exception: a 5xx on a charge-class call
-(create intention, pay with token, refund, void) also sets ``outcome_unknown``,
-because a gateway error does not say whether Paymob applied it. An empty 2xx is
+carries ``status_code``, with one exception: a 5xx on a write (create intention,
+pay with token, refund, void, create plan, update, suspend, resume or cancel a
+subscription) also sets ``outcome_unknown``, because a gateway error does not say
+whether Paymob applied it. A read (inquiry, get subscription, last transaction)
+keeps a 5xx as a known failure. An empty 2xx is
 never turned into ``{}``: no Paymob endpoint documents one, and ``{}`` would read
 as a definite failure.
 
-**Never retried.** Paymob has no idempotency keys (research 02 §8), so a charge,
-refund, void or pay call that is sent once is never sent again by this module. A
+**Never retried.** Paymob has no idempotency keys (research 02 §8), so a write
+that is sent once is never sent again by this module. A
 timeout is raised with ``timeout=True`` so the caller inquires before doing
 anything else (spec §6). The single exception is an idempotent ``GET`` whose
 cached auth token Paymob rejects with 401: the token is replaced and that one
@@ -82,7 +89,7 @@ class PaymobError(ExternalServiceError):
     :class:`PaymobNotConfigured`): the caller must inquire before any retry and
     must not treat the failure as a decline. ``timeout`` is ``True`` only when a
     deadline expired. A received error status sets ``status_code`` and leaves
-    ``outcome_unknown`` ``False``, except a 5xx on a charge-class call.
+    ``outcome_unknown`` ``False``, except a 5xx on a write.
     """
 
     def __init__(
@@ -230,14 +237,14 @@ class PaymobClient:
         allow_404: bool = False,
         sensitive: tuple[str | None, ...] = (),
         bearer: str | None = None,
-        charge_class: bool = False,
+        write: bool = False,
     ) -> JsonObject | None:
         """Send a request and return its JSON object, or ``None`` for an allowed 404.
 
         ``bearer`` is a token the caller already fetched (and put in the body);
-        otherwise a ``bearer`` call fetches its own. A charge-class call is sent
-        exactly once; only an idempotent ``GET`` rejected with 401 is repeated,
-        once, under a fresh token.
+        otherwise a ``bearer`` call fetches its own. A ``write`` is sent exactly
+        once and a 5xx on it is an unknown outcome; only an idempotent ``GET``
+        rejected with 401 is repeated, once, under a fresh token.
         """
         token: str | None = None
         tried: list[str] = []
@@ -272,9 +279,9 @@ class PaymobClient:
                 f"Paymob {method} {path} returned {response.status_code}",
                 status_code=response.status_code,
                 body=scrubbed if isinstance(scrubbed, dict) else None,
-                # A gateway 5xx on a charge-class call says nothing about whether
-                # Paymob applied it, so it is unknown even though the status is set.
-                outcome_unknown=charge_class and response.status_code >= 500,
+                # A gateway 5xx on a write says nothing about whether Paymob applied it,
+                # so it is unknown even though the status is set.
+                outcome_unknown=write and response.status_code >= 500,
             )
         if not isinstance(parsed, dict):
             # A 2xx we cannot read (empty, HTML, a JSON array): the call may well
@@ -293,11 +300,9 @@ class PaymobClient:
         auth: _Auth,
         json: Mapping[str, object] | None = None,
         sensitive: tuple[str | None, ...] = (),
-        charge_class: bool = False,
+        write: bool = False,
     ) -> JsonObject:
-        result = self._send(
-            method, path, auth=auth, json=json, sensitive=sensitive, charge_class=charge_class
-        )
+        result = self._send(method, path, auth=auth, json=json, sensitive=sensitive, write=write)
         if result is None:  # only possible with allow_404, never passed here
             raise PaymobError(f"Paymob {method} {path} returned 404", status_code=404)
         return result
@@ -306,7 +311,7 @@ class PaymobClient:
 
     def create_intention(self, body: Mapping[str, object]) -> JsonObject:
         """``POST v1/intention/`` (one-off, or with ``subscription_plan_id``)."""
-        return self._request("POST", "v1/intention/", auth="secret", json=body, charge_class=True)
+        return self._request("POST", "v1/intention/", auth="secret", json=body, write=True)
 
     # -- inquiry --------------------------------------------------------------
 
@@ -343,7 +348,7 @@ class PaymobClient:
                 "transaction_id": int(transaction_id),
                 "amount_cents": _require_amount(amount_cents),
             },
-            charge_class=True,
+            write=True,
         )
 
     def void(self, *, transaction_id: int) -> JsonObject:
@@ -357,7 +362,7 @@ class PaymobClient:
             "api/acceptance/void_refund/void",
             auth="secret",
             json={"transaction_id": int(transaction_id)},
-            charge_class=True,
+            write=True,
         )
 
     # -- subscriptions --------------------------------------------------------
@@ -392,7 +397,9 @@ class PaymobClient:
             "reminder_days": reminder_days,
             "retrial_days": retrial_days,
         }
-        return self._request("POST", "api/acceptance/subscription-plans", auth="bearer", json=body)
+        return self._request(
+            "POST", "api/acceptance/subscription-plans", auth="bearer", json=body, write=True
+        )
 
     def get_subscription(self, subscription_id: int) -> JsonObject:
         return self._request(
@@ -417,12 +424,19 @@ class PaymobClient:
         if not body:
             raise ValueError("nothing to update on the subscription")
         return self._request(
-            "PUT", f"api/acceptance/subscriptions/{int(subscription_id)}", auth="bearer", json=body
+            "PUT",
+            f"api/acceptance/subscriptions/{int(subscription_id)}",
+            auth="bearer",
+            json=body,
+            write=True,
         )
 
     def _subscription_action(self, subscription_id: int, action: str) -> JsonObject:
         return self._request(
-            "POST", f"api/acceptance/subscriptions/{int(subscription_id)}/{action}", auth="bearer"
+            "POST",
+            f"api/acceptance/subscriptions/{int(subscription_id)}/{action}",
+            auth="bearer",
+            write=True,
         )
 
     def suspend_subscription(self, subscription_id: int) -> JsonObject:
@@ -454,7 +468,7 @@ class PaymobClient:
                 "payment_token": payment_token,
             },
             sensitive=(card_token, payment_token),
-            charge_class=True,
+            write=True,
         )
 
 

@@ -546,3 +546,35 @@ def test_a_forged_child_marker_cannot_block_the_genuine_callback(
     assert _post(client, transaction_callback(genuine), signature).status_code == 200
     assert _status(sm, pid) is PaymentStatus.paid
     assert _count(sm, UsageGrant) == 1
+
+
+def test_a_signed_callback_from_a_foreign_integration_is_200_logged_and_ignored(
+    client: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    """A genuine signature from another integration on the account must not settle a payment."""
+    sm = migrated_sessionmaker
+    pid = _payment(sm)
+    obj = {**transaction_obj(merchant_order_id=str(pid)), "integration_id": 999999}
+    with capture_logs() as logs:
+        response = _post(client, transaction_callback(obj), sign_transaction(obj))
+    assert response.status_code == 200  # a 4xx/5xx would make Paymob retry a callback we refuse
+    assert _status(sm, pid) is PaymentStatus.created
+    assert _count(sm, UsageGrant) == 0
+    (entry,) = [e for e in logs if e["event"] == "paymob_unexpected_integration"]
+    assert entry["log_level"] == "error"
+    assert entry["integration_id"] == "999999"
+
+
+def test_an_unmatched_renewal_callback_logs_info_and_no_error(
+    client: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    sm = migrated_sessionmaker
+    _payment(sm)
+    obj = {**transaction_obj(txn_id=777001, order_id=555001), "api_source": "SUBSCRIPTION"}
+    with capture_logs() as logs:
+        response = _post(client, transaction_callback(obj), sign_transaction(obj))
+    assert response.status_code == 200
+    assert [
+        e["log_level"] for e in logs if e["event"] == "paymob_renewal_txn_callback_unmatched"
+    ] == ["info"]
+    assert not any(e["log_level"] == "error" for e in logs)

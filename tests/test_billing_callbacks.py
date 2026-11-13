@@ -20,6 +20,7 @@ from lemely.db.models.usage import UsageGrant
 from lemely.runtime.config import PaymobSettings
 from lemely.runtime.token_cipher import TokenCipher, TokenCipherError
 from tests.paymob_fixtures import (
+    CARD_INTEGRATION_ID,
     FIXED_NOW,
     PAYMOB_SETTINGS,
     TEST_CARD_TOKEN_KEY,
@@ -1033,3 +1034,161 @@ def test_two_concurrent_first_saves_of_the_same_card_do_not_fail(
     (card,) = _cards(sm)
     assert card.masked_pan == "xxxx-xxxx-xxxx-2222"
     assert card.paymob_token_id == 2
+
+
+# -- the signed integration_id must be one of ours (skill audit I1) --------------------------
+
+MOTO_ID = PAYMOB_SETTINGS.moto_integration_id
+APPLE_PAY_ID = 4569878
+FOREIGN_ID = 999999
+
+
+def _levels(logs: list[dict[str, Any]], event: str) -> list[str]:
+    return [str(e["log_level"]) for e in logs if e["event"] == event]
+
+
+@pytest.mark.parametrize("foreign", [FOREIGN_ID, 0, None, "999999", True, "abc"])
+def test_a_callback_from_a_foreign_integration_settles_nothing(
+    migrated_sessionmaker: sessionmaker[Session], foreign: object
+) -> None:
+    """A dashboard test or payment link shares the account HMAC secret, so it can carry a
+    genuine signature and a real ``order.id``; only the signed ``integration_id`` tells."""
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    obj = {**transaction_obj(merchant_order_id=str(pid)), "integration_id": foreign}
+    with capture_logs() as logs:
+        _apply(sm, obj)
+    assert _levels(logs, "paymob_unexpected_integration") == ["error"]
+    assert _payment(sm, pid).status is PaymentStatus.created
+    assert _grants(sm, pid) == []
+    # The audit row does not use up the key the genuine callback needs.
+    (event,) = _events(sm)
+    assert event.dedupe_key == "rejected_integration:192036465"
+    _apply(sm, transaction_obj(merchant_order_id=str(pid)))
+    assert _payment(sm, pid).status is PaymentStatus.paid
+    assert len(_grants(sm, pid)) == 1
+
+
+def test_a_callback_with_no_integration_id_settles_nothing(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    obj = transaction_obj(merchant_order_id=str(pid))
+    del obj["integration_id"]
+    _apply(sm, obj)
+    assert _payment(sm, pid).status is PaymentStatus.created
+
+
+@pytest.mark.parametrize("integration_id", [CARD_INTEGRATION_ID, MOTO_ID, APPLE_PAY_ID])
+def test_each_configured_integration_is_accepted(
+    migrated_sessionmaker: sessionmaker[Session], integration_id: int
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    settings = PAYMOB_SETTINGS.model_copy(update={"apple_pay_integration_id": APPLE_PAY_ID})
+    obj = {**transaction_obj(merchant_order_id=str(pid)), "integration_id": integration_id}
+    _apply(sm, obj, settings)
+    assert _payment(sm, pid).status is PaymentStatus.paid
+
+
+def test_an_integration_that_is_not_configured_is_not_accepted(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Apple Pay is unset in PAYMOB_SETTINGS, so its id is not ours here."""
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    obj = {**transaction_obj(merchant_order_id=str(pid)), "integration_id": APPLE_PAY_ID}
+    _apply(sm, obj)
+    assert _payment(sm, pid).status is PaymentStatus.created
+
+
+def test_a_foreign_integration_cannot_flip_a_paid_payment_to_voided(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid)))
+    voided = {
+        **transaction_obj(merchant_order_id=str(pid), is_voided=True),
+        "integration_id": FOREIGN_ID,
+    }
+    _apply(sm, voided)
+    assert _payment(sm, pid).status is PaymentStatus.paid
+
+
+def test_the_foreign_integration_is_ignored_even_when_the_callback_is_otherwise_a_duplicate(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid)))
+    _apply(sm, {**transaction_obj(merchant_order_id=str(pid)), "integration_id": FOREIGN_ID})
+    assert len(_grants(sm, pid)) == 1
+
+
+# -- renewal charges have no intention of ours (skill audit I5) ---------------------------
+
+
+def _renewal_obj(**kwargs: Any) -> dict[str, Any]:
+    return {
+        **transaction_obj(txn_id=777001, order_id=555001, **kwargs),
+        "api_source": "SUBSCRIPTION",
+    }
+
+
+def test_an_unmatched_renewal_callback_is_info_not_an_error(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _setup(sm)
+    with capture_logs() as logs:
+        _apply(sm, _renewal_obj())
+    assert _levels(logs, "paymob_renewal_txn_callback_unmatched") == ["info"]
+    assert not any(e["log_level"] == "error" for e in logs)
+    assert not any(e["event"] == "paymob_callback_unmatched" for e in logs)
+    (event,) = _events(sm)  # still audited, under the unmatched key
+    assert event.dedupe_key == "unmatched:777001"
+
+
+@pytest.mark.parametrize("api_source", ["OTHER", "IFRAME", None, "subscription", ""])
+def test_any_other_unmatched_callback_stays_an_error(
+    migrated_sessionmaker: sessionmaker[Session], api_source: str | None
+) -> None:
+    sm = migrated_sessionmaker
+    _setup(sm)
+    obj = {**transaction_obj(txn_id=777002, order_id=555002), "api_source": api_source}
+    with capture_logs() as logs:
+        _apply(sm, obj)
+    assert _levels(logs, "paymob_callback_unmatched") == ["error"]
+    assert not any(e["event"] == "paymob_renewal_txn_callback_unmatched" for e in logs)
+
+
+def test_a_renewal_marker_does_not_excuse_a_reference_mismatch(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The order matches one of our payments but the reference names another: still an error."""
+    sm = migrated_sessionmaker
+    payer = seed_user(sm)
+    pack = seed_pack(sm)
+    seed_payment(sm, payer=payer, beneficiary=payer, pack_id=pack, paymob_order_id=265715202)
+    x2 = seed_payment(sm, payer=payer, beneficiary=payer, pack_id=pack, paymob_order_id=111)
+    obj = {
+        **transaction_obj(merchant_order_id=str(x2), order_id=265715202),
+        "api_source": "SUBSCRIPTION",
+    }
+    with capture_logs() as logs:
+        _apply(sm, obj)
+    assert _levels(logs, "paymob_callback_unmatched") == ["error"]
+
+
+def test_a_renewal_that_does_match_one_of_our_payments_is_applied_normally(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    obj = {**transaction_obj(merchant_order_id=str(pid)), "api_source": "SUBSCRIPTION"}
+    with capture_logs() as logs:
+        _apply(sm, obj)
+    assert _payment(sm, pid).status is PaymentStatus.paid
+    assert not any(e["event"] == "paymob_renewal_txn_callback_unmatched" for e in logs)

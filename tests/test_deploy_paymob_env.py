@@ -60,3 +60,10 @@ def test_callback_origins_follow_the_environment_like_the_email_links() -> None:
     origin = env["LEMELY_EMAIL__APP_BASE_URL"]
     assert env[_PREFIX + "NOTIFICATION_BASE_URL"] == origin
     assert env[_PREFIX + "REDIRECTION_BASE_URL"] == origin
+
+
+def test_only_production_expects_live_keys() -> None:
+    """The startup guard (PaymobSettings.expect_live) is dead unless production sets it."""
+    env = _env_vars()
+    value = env[_PREFIX + "EXPECT_LIVE"]
+    assert value == "${{ needs.resolve-env.outputs.environment == 'production' }}"

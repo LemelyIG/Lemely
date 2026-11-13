@@ -470,6 +470,14 @@ ONE_SHOT_CALLS: list[tuple[str, Callable[[PaymobClient], Any], str, str]] = [
 ]
 
 CHARGE_LABELS = {"create_intention", "refund", "void", "pay_with_token"}
+#: Every write counts: a 5xx on one does not say whether Paymob applied it (skill audit I6).
+WRITE_LABELS = CHARGE_LABELS | {
+    "create_plan",
+    "cancel_subscription",
+    "suspend_subscription",
+    "resume_subscription",
+    "update_subscription",
+}
 
 FAILURES: dict[str, Callable[[httpx.Request], httpx.Response]] = {
     "read_timeout": lambda r: (_ for _ in ()).throw(httpx.ReadTimeout("slow", request=r)),
@@ -523,8 +531,8 @@ def test_a_failed_charge_class_call_is_sent_exactly_once(
         call(_client_with_handler(handler))
     assert seen == [(method, path)], f"{label} was sent {len(seen)} times after {failure}"
     assert caught.value.timeout is failure.endswith("timeout")
-    charge_5xx = label in CHARGE_LABELS and failure.startswith("http_5")
-    assert caught.value.outcome_unknown is (failure in UNKNOWN_OUTCOME or charge_5xx)
+    write_5xx = label in WRITE_LABELS and failure.startswith("http_5")
+    assert caught.value.outcome_unknown is (failure in UNKNOWN_OUTCOME or write_5xx)
     assert (caught.value.status_code is None) is (failure in UNKNOWN_OUTCOME)
 
 
@@ -801,9 +809,11 @@ def test_forgetting_a_rejected_token_leaves_a_newer_cached_token_alone() -> None
     assert seen == ["Bearer tok_stale", "Bearer tok_fresh"]
 
 
-# -- a 5xx is "unknown" only for charge-class calls -----------------------------
+# -- a 5xx is "unknown" for every write, and a known outcome for a read ---------
 
-OTHER_CALLS: list[tuple[str, Callable[[PaymobClient], Any]]] = [
+#: Subscription writes (the same one-shot calls as above): Bearer-authorised, not charges, but
+#: a 5xx on any of them is as ambiguous as on a charge.
+SUBSCRIPTION_WRITES: list[tuple[str, Callable[[PaymobClient], Any]]] = [
     (
         "create_plan",
         lambda c: c.create_plan(
@@ -814,11 +824,16 @@ OTHER_CALLS: list[tuple[str, Callable[[PaymobClient], Any]]] = [
             webhook_url="https://x.y",
         ),
     ),
-    ("get_subscription", lambda c: c.get_subscription(1)),
     ("update_subscription", lambda c: c.update_subscription(1, amount_cents=100)),
     ("suspend_subscription", lambda c: c.suspend_subscription(1)),
     ("resume_subscription", lambda c: c.resume_subscription(1)),
     ("cancel_subscription", lambda c: c.cancel_subscription(1)),
+]
+WRITE_CALLS = CHARGE_CLASS + SUBSCRIPTION_WRITES
+
+#: Reads, including the inquiry POST (it only looks a transaction up): a 5xx changed nothing.
+OTHER_CALLS: list[tuple[str, Callable[[PaymobClient], Any]]] = [
+    ("get_subscription", lambda c: c.get_subscription(1)),
     ("last_transaction", lambda c: c.last_transaction(1)),
     ("inquire_by_transaction", lambda c: c.inquire_by_transaction(1)),
     ("inquire_by_order_ref", lambda c: c.inquire_by_order_ref("r")),
@@ -835,8 +850,8 @@ def _failing_with(status: int) -> Callable[[httpx.Request], httpx.Response]:
 
 
 @pytest.mark.parametrize("status", [500, 502, 503, 504])
-@pytest.mark.parametrize(("label", "call"), CHARGE_CLASS, ids=[c[0] for c in CHARGE_CLASS])
-def test_a_5xx_on_a_charge_class_call_is_outcome_unknown_with_the_status_kept(
+@pytest.mark.parametrize(("label", "call"), WRITE_CALLS, ids=[c[0] for c in WRITE_CALLS])
+def test_a_5xx_on_any_write_is_outcome_unknown_with_the_status_kept(
     label: str, call: Callable[[PaymobClient], Any], status: int
 ) -> None:
     with pytest.raises(PaymobError) as caught:
@@ -847,7 +862,7 @@ def test_a_5xx_on_a_charge_class_call_is_outcome_unknown_with_the_status_kept(
 
 @pytest.mark.parametrize("status", [500, 503])
 @pytest.mark.parametrize(("label", "call"), OTHER_CALLS, ids=[c[0] for c in OTHER_CALLS])
-def test_a_5xx_on_any_other_call_is_a_known_outcome(
+def test_a_5xx_on_a_read_is_a_known_outcome(
     label: str, call: Callable[[PaymobClient], Any], status: int
 ) -> None:
     with pytest.raises(PaymobError) as caught:
@@ -856,8 +871,27 @@ def test_a_5xx_on_any_other_call_is_a_known_outcome(
     assert caught.value.outcome_unknown is False
 
 
-@pytest.mark.parametrize(("label", "call"), CHARGE_CLASS, ids=[c[0] for c in CHARGE_CLASS])
-def test_a_4xx_on_a_charge_class_call_stays_a_known_decline(
+@pytest.mark.parametrize(
+    "failure", ["read_timeout", "connect_timeout", "connect_error", "read_error"]
+)
+@pytest.mark.parametrize(("label", "call"), WRITE_CALLS, ids=[c[0] for c in WRITE_CALLS])
+def test_a_timeout_or_transport_failure_on_any_write_is_outcome_unknown(
+    label: str, call: Callable[[PaymobClient], Any], failure: str
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/auth/tokens":
+            return httpx.Response(200, json=AUTH_TOKEN_RESPONSE)
+        return FAILURES[failure](request)
+
+    with pytest.raises(PaymobError) as caught:
+        call(_client_with_handler(handler))
+    assert caught.value.status_code is None
+    assert caught.value.timeout is failure.endswith("timeout")
+    assert caught.value.outcome_unknown is True
+
+
+@pytest.mark.parametrize(("label", "call"), WRITE_CALLS, ids=[c[0] for c in WRITE_CALLS])
+def test_a_4xx_on_any_write_stays_a_known_decline(
     label: str, call: Callable[[PaymobClient], Any]
 ) -> None:
     with pytest.raises(PaymobError) as caught:

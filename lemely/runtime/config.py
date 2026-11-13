@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -1364,6 +1365,19 @@ class EmailSettings(BaseModel):
 #: An optional positive integer id where a blank env var means "not set".
 OptionalId = Annotated[int | None, BeforeValidator(_blank_to_none)]
 
+#: Paymob's key prefixes carry the mode: ``egy_sk_test_...``, ``egy_pk_live_...`` (skill
+#: ``intention-api.md``; the same shape without a region prefix also exists). A key with no
+#: such prefix has no readable mode.
+_PAYMOB_KEY_MODE_RE = re.compile(r"^(?:[a-z]{2,4}_)?[sp]k_(test|live)_")
+
+
+def _paymob_key_mode(key: str | None) -> Literal["test", "live"] | None:
+    """``"test"`` or ``"live"`` from a Paymob key's prefix, ``None`` when it shows neither."""
+    match = _PAYMOB_KEY_MODE_RE.match(key or "")
+    if match is None:
+        return None
+    return "live" if match.group(1) == "live" else "test"
+
 
 class PaymobSettings(BaseModel):
     """Paymob (Egypt) credentials and endpoints (billing spec §3, §7).
@@ -1390,7 +1404,8 @@ class PaymobSettings(BaseModel):
     per environment so a staging intention never calls back into production.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    # A validation error echoes its input by default, which here is the credentials.
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
     secret_key: OptionalSecret = None
     public_key: OptionalCredential = None
     api_key: OptionalSecret = None
@@ -1404,6 +1419,40 @@ class PaymobSettings(BaseModel):
     notification_base_url: AbsoluteOrigin = "https://lemelyig.com"
     redirection_base_url: AbsoluteOrigin = "https://lemelyig.com"
     timeout_seconds: float = Field(default=20.0, gt=0)
+    # Test and live share one base URL, so the mode comes only from the keys and Integration
+    # IDs. ``deploy.yml`` sets this for production alone: a production start on test keys
+    # would sell real credits for test cards (skill audit I2).
+    expect_live: bool = False
+
+    @model_validator(mode="after")
+    def _keys_match_their_mode(self) -> PaymobSettings:
+        """Refuse mixed-mode keys always, and test-mode keys when ``expect_live``.
+
+        Only a key whose prefix shows its mode is judged (the suite's fixtures use bare
+        ``sk``/``pk``), and an unset key is a supported state. Messages name the field, never
+        the key. Integration IDs carry no mode marker, so "the IDs are the Live ones" stays on
+        the go-live checklist.
+        """
+        keys = {
+            "secret_key": _paymob_key_mode(
+                self.secret_key.get_secret_value() if self.secret_key is not None else None
+            ),
+            "public_key": _paymob_key_mode(self.public_key),
+        }
+        modes = {mode for mode in keys.values() if mode is not None}
+        if len(modes) > 1:
+            raise ValueError(
+                "paymob.secret_key and paymob.public_key are in different modes (test vs live); "
+                "Paymob answers 404 at checkout for a mixed pair"
+            )
+        if self.expect_live:
+            for name, mode in keys.items():
+                if mode == "test":
+                    raise ValueError(
+                        f"paymob.{name} is a test-mode key but paymob.expect_live is set "
+                        "(production): refusing to start on test keys"
+                    )
+        return self
 
     @property
     def checkout_configured(self) -> bool:
