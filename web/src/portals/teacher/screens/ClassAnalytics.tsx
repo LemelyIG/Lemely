@@ -10,6 +10,8 @@ import { ChartFrame } from "@/components/ui/chart-frame"
 import { LineChart } from "@/components/ui/line-chart"
 import { BarChart } from "@/components/ui/bar-chart"
 import { WeaknessChip } from "@/components/ui/weakness-chip"
+import { ListGroup, ListRow } from "@/components/ui/list-group"
+import { TableOrList } from "@/components/ui/table-or-list"
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
 import { gradeTone, type GradeTone } from "@/lib/grade"
 import { topGradeCount } from "@/lib/gradeSummary"
@@ -613,39 +615,57 @@ export function ClassAnalytics() {
                 {data.paperComparison.length === 0 ? (
                   <div className="text-body-md text-on-surface-variant">No papers recorded for this class yet.</div>
                 ) : (
-                  <Table density="operate"
-                    tabIndex={0}
-                    role="region"
-                    aria-label="Per-paper comparison, scrollable horizontally"
-                  >
-                    <caption className="sr-only">Cohort stats per paper</caption>
-                    <THead>
-                      <TR>
-                        <TH>Paper</TH>
-                        <TH numeric>Mean</TH>
-                        <TH numeric>Attempts</TH>
-                        <TH numeric>Students</TH>
-                      </TR>
-                    </THead>
-                    <TBody>
+                  <TableOrList
+                    label="Per-paper comparison"
+                    storageKey="lemely.analytics.papers.view"
+                    list={
+                    <ListGroup label="Per-paper comparison">
                       {data.paperComparison.map((p) => (
-                        <TR key={p.paperId}>
-                          <TD className="text-data-sm text-on-surface">
-                            {p.subjectCode} · Paper {p.paperNumber} Variant {p.paperVariant}
-                          </TD>
-                          <TD numeric className="text-data-sm text-on-surface">
-                            {Math.round(p.meanPercentage)}%
-                          </TD>
-                          <TD numeric className="text-data-sm text-on-surface">
-                            {p.attemptCount}
-                          </TD>
-                          <TD numeric className="text-data-sm text-on-surface">
-                            {p.studentCount}
-                          </TD>
-                        </TR>
+                        <ListRow
+                          key={p.paperId}
+                          title={`${p.subjectCode} · Paper ${p.paperNumber} Variant ${p.paperVariant}`}
+                          subtitle={`${p.attemptCount} ${p.attemptCount === 1 ? "attempt" : "attempts"} · ${p.studentCount} ${p.studentCount === 1 ? "student" : "students"}`}
+                          trailing={<span className="text-data-sm text-on-surface">{Math.round(p.meanPercentage)}%</span>}
+                        />
                       ))}
-                    </TBody>
-                  </Table>
+                    </ListGroup>
+                    }
+                    table={
+                      <Table density="operate"
+                        tabIndex={0}
+                        role="region"
+                        aria-label="Per-paper comparison, scrollable horizontally"
+                      >
+                        <caption className="sr-only">Cohort stats per paper</caption>
+                        <THead>
+                          <TR>
+                            <TH>Paper</TH>
+                            <TH numeric>Mean</TH>
+                            <TH numeric>Attempts</TH>
+                            <TH numeric>Students</TH>
+                          </TR>
+                        </THead>
+                        <TBody>
+                          {data.paperComparison.map((p) => (
+                            <TR key={p.paperId}>
+                              <TD className="text-data-sm text-on-surface">
+                                {p.subjectCode} · Paper {p.paperNumber} Variant {p.paperVariant}
+                              </TD>
+                              <TD numeric className="text-data-sm text-on-surface">
+                                {Math.round(p.meanPercentage)}%
+                              </TD>
+                              <TD numeric className="text-data-sm text-on-surface">
+                                {p.attemptCount}
+                              </TD>
+                              <TD numeric className="text-data-sm text-on-surface">
+                                {p.studentCount}
+                              </TD>
+                            </TR>
+                          ))}
+                        </TBody>
+                      </Table>
+                    }
+                  />
                 )}
               </section>
             </>
