@@ -17,7 +17,7 @@ import itertools
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import sqlalchemy as sa
 
@@ -216,10 +216,15 @@ def seed_tier(
     seat_allowance_units: int = 0,
     extra_seat_price_minor: int = 0,
     paymob_plan_id: int | None | _AutoPlanId = _AutoPlanId.AUTO,
+    paymob_plan_mode: Literal["test", "live"] = "test",
     is_active: bool = True,
     currency: str = "EGP",
 ) -> uuid.UUID:
-    """Insert a plan tier; ``paymob_plan_id=None`` leaves it unlinked, the default links it."""
+    """Insert a plan tier; ``paymob_plan_id=None`` leaves it unlinked, the default links it.
+
+    A linked tier records the key mode its plan was created under (``paymob_plan_mode``, audit
+    I8); an unlinked one has none (the table's CHECK ties the two together).
+    """
     tier_id = uuid.uuid4()
     plan_id = next(_plan_ids) if isinstance(paymob_plan_id, _AutoPlanId) else paymob_plan_id
     with sm.begin() as session:
@@ -237,7 +242,7 @@ def seed_tier(
                 seat_allowance_units=seat_allowance_units,
                 extra_seat_price_minor=extra_seat_price_minor,
                 paymob_plan_id=plan_id,
-                paymob_plan_mode=None if plan_id is None else "test",
+                paymob_plan_mode=None if plan_id is None else paymob_plan_mode,
                 is_active=is_active,
             )
         )
