@@ -23,8 +23,10 @@ export function useBackAction(fallback: string): () => void {
 }
 
 /*
- * Packet B2a · the one back control below the `sidebar` breakpoint, where
- * there is no sidebar navigation to fall back on. Renders in the student
+ * Packet B2a · the one back control below the `sidebar` breakpoint on the
+ * flat (non-native) frame, where there is no sidebar navigation to fall back
+ * on. On native phones (iOS/Android) the bar's NativeBack is that control.
+ * Renders in the student
  * shell's top bar (`portals/student/shell.tsx`, `shell-lg:hidden`) whenever
  * the shell trail is more than one deep.
  *

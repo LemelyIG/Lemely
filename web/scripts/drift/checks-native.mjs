@@ -14,6 +14,11 @@ export const NATIVE_TEACHER_HOME = {
   state: "populated",
   mocks: teacherShellMocks,
 };
+/** A teacher detail page (trail deeper than a section root); any mocked 404 body still renders the shell bar. */
+export const NATIVE_TEACHER_DETAIL = {
+  ...NATIVE_TEACHER_HOME,
+  path: "/teacher/announcements",
+};
 
 /** Each check: { id, platform, width (default 390), theme, app, run(page) }. */
 export const NATIVE_CHECKS = [
@@ -99,6 +104,22 @@ NATIVE_CHECKS.push(
       const label = page.locator("header .lm-native-back-label");
       if ((await label.isVisible()) !== (platform === "ios"))
         throw new Error("the back label shows on iOS only");
+      if (platform === "ios") {
+        const back = await page.locator("header .lm-native-back").boundingBox();
+        const text = await label.boundingBox();
+        if (!back || !text) throw new Error("iOS back or its label has no box");
+        if (back.width <= 44)
+          throw new Error(`iOS back is ${back.width}px wide, not chevron plus label`);
+        const contained =
+          text.x >= back.x - 0.5 &&
+          text.x + text.width <= back.x + back.width + 0.5 &&
+          text.y >= back.y - 0.5 &&
+          text.y + text.height <= back.y + back.height + 0.5;
+        if (!contained)
+          throw new Error(
+            `iOS back box ${JSON.stringify(back)} does not contain its label ${JSON.stringify(text)}`,
+          );
+      }
       for (const action of ["settings", "account"]) {
         if (
           await page
@@ -108,6 +129,58 @@ NATIVE_CHECKS.push(
         )
           throw new Error(`detail shows the ${action} action`);
       }
+    },
+  })),
+  {
+    id: "native-ios-teacher-root-title-clears-actions",
+    platform: "ios",
+    width: 390,
+    app: NATIVE_TEACHER_HOME,
+    async run(page) {
+      const header = page.locator("header[data-title-level]");
+      await page.evaluate(() => window.scrollTo(0, 100000));
+      await page.waitForFunction(
+        () =>
+          document.querySelector("header[data-title-level]").dataset
+            .collapsed === "true",
+      );
+      const title = await page.locator("header [data-shell-title]").boundingBox();
+      const actions = header.locator(":is(a, button):visible");
+      const n = await actions.count();
+      if (n !== 4) throw new Error(`teacher root shows ${n} actions, expected 4`);
+      for (let i = 0; i < n; i++) {
+        const box = await actions.nth(i).boundingBox();
+        const overlaps =
+          title.x < box.x + box.width &&
+          box.x < title.x + title.width &&
+          title.y < box.y + box.height &&
+          box.y < title.y + title.height;
+        if (overlaps)
+          throw new Error(
+            `collapsed title ${JSON.stringify(title)} intersects action ${i} ${JSON.stringify(box)}`,
+          );
+      }
+    },
+  },
+  ...["ios", "android"].map((platform) => ({
+    id: `native-${platform}-teacher-detail-one-action`,
+    platform,
+    width: 390,
+    app: NATIVE_TEACHER_DETAIL,
+    async run(page) {
+      const header = page.locator("header[data-title-level]");
+      if ((await header.getAttribute("data-title-level")) !== "detail")
+        throw new Error("teacher detail route should be a detail");
+      const names = await header
+        .locator(":is(a, button):visible")
+        .evaluateAll((els) =>
+          els.map((e) => e.getAttribute("aria-label") || e.textContent.trim()),
+        );
+      const actions = names.filter((n) => !/^Back/.test(n));
+      if (actions.length !== 1)
+        throw new Error(`expected one action beside back, got ${JSON.stringify(names)}`);
+      if (!/notif/i.test(actions[0]))
+        throw new Error(`the one action should be the bell, got ${actions[0]}`);
     },
   })),
   {

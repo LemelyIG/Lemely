@@ -365,12 +365,14 @@ function useTeacherSidebar(): ShellSidebarContent {
 function TeacherTopBarActions() {
   return (
     <>
-      <CreateSheet
-        triggerClassName={cn(
-          SHELL_BUTTON_TONAL,
-          "max-sm:w-9 max-sm:justify-center max-sm:px-0 max-sm:pointer-coarse:w-11",
-        )}
-      />
+      <span data-shell-action="create" className="contents">
+        <CreateSheet
+          triggerClassName={cn(
+            SHELL_BUTTON_TONAL,
+            "max-sm:w-9 max-sm:justify-center max-sm:px-0 max-sm:pointer-coarse:w-11",
+          )}
+        />
+      </span>
       <Link to="/teacher/grading" className={cn(SHELL_BUTTON_PRIMARY, "me-2.5 max-shell-sm:hidden")}>
         <ShellIcon name="up" />
         Upload papers

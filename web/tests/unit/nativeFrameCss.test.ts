@@ -11,7 +11,7 @@ const TOKENS = [
   "--native-large-title-size", "--native-large-title-lh", "--native-large-title-pad",
   "--native-inline-title-size", "--native-inline-title-lh",
   "--native-bar-h-ios", "--native-bar-h-android", "--native-bar-pad-inline",
-  "--native-title-inset-ios", "--native-title-inset-detail-ios",
+  "--native-title-inset-ios", "--native-title-inset-ios-wide", "--native-title-inset-detail-ios",
   "--native-iconbtn-ios", "--native-iconbtn-android", "--native-bar-icon",
   // tab bar
   "--native-tabbar-h-ios", "--native-tabbar-h-android", "--native-tab-label-ios", "--native-tab-label-android",

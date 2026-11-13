@@ -435,6 +435,7 @@
   --native-bar-h-android: 64px;
   --native-bar-pad-inline: 8px;             /* .as-bar padding-inline: var(--space-2) */
   --native-title-inset-ios: 144px;          /* --pf-title-inset: centred title clears three 44px actions */
+  --native-title-inset-ios-wide: 208px;     /* end inset of a root bar with four actions (teacher): 8px pad + four 44px actions + three 8px gap-2 gaps. Not the 184px first briefed, which the teacher-root check showed overlapping the first action */
   --native-title-inset-detail-ios: 124px;   /* --pf-title-inset-detail: clears the back chevron and label */
   --native-iconbtn-ios: 44px;               /* --pf-iconbtn */
   --native-iconbtn-android: 48px;
@@ -1165,6 +1166,7 @@ html[data-direction="back"]::view-transition-new(root) {
    only. Unlayered and more specific than .lm-shell-bar-inset, so it replaces
    the flat design A phone bar's margins, height and transparency. */
 @media (max-width: 720px) {
+  :root { --lm-large-title-block: 0px; } /* the hook overwrites it inline; this keeps animation-range valid on the first frame */
   :root[data-platform="ios"] { --native-bar-h: var(--native-bar-h-ios); }
   :root[data-platform="android"] { --native-bar-h: var(--native-bar-h-android); }
   :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar {
@@ -1234,8 +1236,13 @@ html[data-direction="back"]::view-transition-new(root) {
   :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-title-level="detail"] :is([data-shell-action="settings"], [data-shell-action="account"]) {
     display: none;
   }
+  /* Teacher detail: Create is hidden too, leaving back, title and the bell. */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-title-level="detail"] [data-shell-action="create"] {
+    display: none;
+  }
   :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-back { margin-inline-end: auto; }
-  :root[data-platform="ios"] .lm-native-back {
+  /* Same specificity as the iconbtn sizing above and later, so the iOS back sizes to chevron plus label. */
+  :root[data-platform="ios"] .lm-native-bar .lm-native-back {
     inline-size: auto;
     padding-inline-end: var(--space-2);
     font-size: var(--native-inline-title-size);
@@ -1268,6 +1275,10 @@ html[data-direction="back"]::view-transition-new(root) {
   }
   :root[data-platform="ios"] .lm-native-bar[data-title-level="detail"] .lm-native-inline-title {
     inset-inline: var(--native-title-inset-detail-ios);
+  }
+  /* A root bar holding the Create action (teacher) has four actions: centre the title in the space before them. */
+  :root[data-platform="ios"] .lm-native-bar[data-title-level="root"]:has([data-shell-action="create"]) .lm-native-inline-title {
+    inset-inline: var(--native-bar-pad-inline) var(--native-title-inset-ios-wide);
   }
   /* Android: start-aligned in the row. */
   :root[data-platform="android"] .lm-native-inline-title {

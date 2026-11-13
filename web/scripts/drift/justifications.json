@@ -250,8 +250,8 @@
     "approved": "pending"
   },
   "native-ios-detail": {
-    "difference": "bar row: the account avatar is the kit's outlined squircle with a plain initial where the preview draws a primary-container circle with a bold initial (the existing design A avatar decision), the bell dot ring is the shell's; tab bar: native styling lands in Task 5, to be removed in Task 5; dark theme: the page ground is surface-container-high-over-surface where the preview's native frame uses a darker page ground (--pf-page), a shell-wide ground the native frame has not tuned yet",
-    "justification": "Native frame preview 4447a571 (.as-bar, .as-lt, .as-back, .as-title); the avatar follows the existing design A decision (variant-a.css .as-avatar vs the kit Avatar); the tab bar is Task 5",
+    "difference": "bar row: the bell dot ring is the shell's; tab bar: native styling lands in Task 5, to be removed in Task 5; dark theme: the page ground is surface-container-high-over-surface where the preview's native frame uses a darker page ground (--pf-page), a shell-wide ground the native frame has not tuned yet",
+    "justification": "Native frame preview 4447a571 (.as-bar, .as-back, .as-title); the tab bar is Task 5",
     "approved": "pending"
   },
   "native-android-root-top": {
@@ -265,8 +265,8 @@
     "approved": "pending"
   },
   "native-android-detail": {
-    "difference": "bar row: the account avatar is the kit's outlined squircle with a plain initial where the preview draws a primary-container circle with a bold initial (the existing design A avatar decision), the bell dot ring is the shell's; tab bar: native styling lands in Task 5, to be removed in Task 5; dark theme: the page ground is surface-container-high-over-surface where the preview's native frame uses a darker page ground (--pf-page), a shell-wide ground the native frame has not tuned yet",
-    "justification": "Native frame preview 4447a571 (.as-bar, .as-lt, .as-back, .as-title); the avatar follows the existing design A decision (variant-a.css .as-avatar vs the kit Avatar); the tab bar is Task 5",
+    "difference": "bar row: the bell dot ring is the shell's; tab bar: native styling lands in Task 5, to be removed in Task 5; dark theme: the page ground is surface-container-high-over-surface where the preview's native frame uses a darker page ground (--pf-page), a shell-wide ground the native frame has not tuned yet",
+    "justification": "Native frame preview 4447a571 (.as-bar, .as-back, .as-title); the tab bar is Task 5",
     "approved": "pending"
   },
   "native-android-412-root-top": {

@@ -7,6 +7,7 @@ import { largeTitleCollapsed, titleLevelFor } from "@/components/shell/largeTitl
 const SRC = join(fileURLToPath(new URL("../../", import.meta.url)), "src")
 const css = readFileSync(join(SRC, "index.css"), "utf8")
 const bar = readFileSync(join(SRC, "components/shell/ShellTopBar.tsx"), "utf8")
+const portalShell = readFileSync(join(SRC, "components/shell/PortalShell.tsx"), "utf8")
 
 describe("title level comes from the trail (D2)", () => {
   it("section pages are roots, drilled-in pages are details", () => {
@@ -36,6 +37,9 @@ describe("ShellTopBar native markup", () => {
     expect(bar).toContain("data-title-level={level}")
     expect(bar).toContain("data-collapsed={collapsed}")
     expect(bar).toMatch(/<p[^>]*aria-hidden="true"[^>]*data-shell-large-title/)
+    // Placement: the bar (and its large title) precede <main> in the shell.
+    expect(portalShell.indexOf("<ShellTopBar")).toBeGreaterThan(-1)
+    expect(portalShell.indexOf("<ShellTopBar")).toBeLessThan(portalShell.indexOf("<main"))
   })
   it("renders the native back only for details, from backFallback and the parent crumb", () => {
     expect(bar).toMatch(/level === "detail" \? \(\s*<NativeBack fallback=\{backFallback\} label=\{backLabel\}/)
@@ -75,6 +79,17 @@ describe("native bar CSS (preview 4447a571)", () => {
   })
   it("details show back, title and one action", () => {
     expect(block).toMatch(/\.lm-native-bar\[data-title-level="detail"\] :is\(\[data-shell-action="settings"\], \[data-shell-action="account"\]\) \{[^}]*display: none/)
+  })
+  it("details hide Create too; a root bar holding Create (four actions) ends the title before them, 208px from the end", () => {
+    expect(block).toMatch(/\.lm-native-bar\[data-title-level="detail"\] \[data-shell-action="create"\] \{[^}]*display: none/)
+    expect(block).toMatch(/\.lm-native-bar\[data-title-level="root"\]:has\(\[data-shell-action="create"\]\) \.lm-native-inline-title \{[^}]*inset-inline: var\(--native-bar-pad-inline\) var\(--native-title-inset-ios-wide\)/)
+    expect(css).toMatch(/--native-title-inset-ios-wide: 208px;/)
+  })
+  it("the iOS back rule is not out-specified by the iconbtn sizing rule", () => {
+    expect(block).toMatch(/:root\[data-platform="ios"\] \.lm-native-bar \.lm-native-back \{\s*inline-size: auto;/)
+  })
+  it("--lm-large-title-block has a default so animation-range is valid on the first frame", () => {
+    expect(block).toMatch(/:root \{ --lm-large-title-block: 0px; \}/)
   })
   it("scroll-driven fades only where supported and motion is allowed: 70-100% for the bar, the whole exit for the large title", () => {
     expect(block).toMatch(/@supports \(animation-timeline: scroll\(\)\)\s*\{\s*@media \(prefers-reduced-motion: no-preference\) and \(max-width: 720px\)/)
