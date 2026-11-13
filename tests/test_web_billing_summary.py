@@ -158,18 +158,26 @@ def _first_payment(
     return payment_id
 
 
-def _card(sm: sessionmaker[Session], user: uuid.UUID, pan: str, *, brand: str = "Visa") -> None:
+def _card(
+    sm: sessionmaker[Session],
+    user: uuid.UUID,
+    pan: str,
+    *,
+    brand: str = "Visa",
+    is_active: bool = True,
+    created_at: datetime = NOW - timedelta(days=10),
+) -> None:
     with sm.begin() as session:
-        session.add(
-            SavedCard(
-                user_id=user,
-                token="ciphertext",
-                token_fingerprint=uuid.uuid4().hex * 2,
-                masked_pan=pan,
-                brand=brand,
-                is_active=True,
-            )
+        card = SavedCard(
+            user_id=user,
+            token="ciphertext",
+            token_fingerprint=uuid.uuid4().hex * 2,
+            masked_pan=pan,
+            brand=brand,
+            is_active=is_active,
         )
+        card.created_at = created_at
+        session.add(card)
 
 
 def _debt(sm: sessionmaker[Session], owner: uuid.UUID, units: int) -> None:
@@ -377,6 +385,34 @@ def test_the_newest_first_payment_decides_whether_a_pending_checkout_is_open(
     assert sub["status"] == "pending_first_payment"
 
 
+def test_the_newest_of_two_open_checkouts_is_reported(sm: sessionmaker[Session]) -> None:
+    """Two open checkouts can coexist only without a payer (the live index covers paid rows)."""
+    student = add_user(sm, Role.student)
+    tier = _tier(sm)
+    older = _sub(
+        sm,
+        user=student,
+        tier=tier,
+        payer=None,
+        status=SubscriptionStatus.pending_first_payment,
+        created_at=NOW - timedelta(hours=3),
+    )
+    newer = _sub(
+        sm,
+        user=student,
+        tier=tier,
+        payer=None,
+        status=SubscriptionStatus.pending_first_payment,
+        created_at=NOW - timedelta(hours=1),
+    )
+    for sub in (older, newer):
+        _first_payment(
+            sm, sub=sub, payer=student, beneficiary=student, tier=tier, status=PaymentStatus.created
+        )
+    sub = _client(sm, student, Role.student).get(URL).json()["subscription"]
+    assert sub["subscriptionId"] == str(newer)
+
+
 def test_a_live_plan_wins_over_a_pending_checkout(sm: sessionmaker[Session]) -> None:
     student = add_user(sm, Role.student)
     tier = _tier(sm)
@@ -455,6 +491,23 @@ def test_a_parent_starting_a_plan_sees_their_own_card_not_the_childs(
     assert body["canManage"] is True
     # No plan yet: the caller would be the payer, so the card is the caller's own.
     assert body["savedCard"]["maskedPan"] == "xxxx-xxxx-xxxx-0001"
+
+
+def test_the_newest_active_card_is_shown_and_an_inactive_one_never_is(
+    sm: sessionmaker[Session],
+) -> None:
+    student = add_user(sm, Role.student)
+    _sub(sm, user=student, tier=_tier(sm), payer=student)
+    _card(sm, student, "xxxx-xxxx-xxxx-0001", created_at=NOW - timedelta(days=30))
+    _card(sm, student, "xxxx-xxxx-xxxx-0002", created_at=NOW - timedelta(days=3))
+    _card(sm, student, "xxxx-xxxx-xxxx-0003", is_active=False, created_at=NOW - timedelta(days=1))
+    client = _client(sm, student, Role.student)
+    assert client.get(URL).json()["savedCard"]["maskedPan"] == "xxxx-xxxx-xxxx-0002"
+
+    only_inactive = add_user(sm, Role.student)
+    _card(sm, only_inactive, "xxxx-xxxx-xxxx-0004", is_active=False)
+    body = _client(sm, only_inactive, Role.student).get(URL).json()
+    assert body["savedCard"] is None
 
 
 # --- access (object level) ---------------------------------------------------------------------
