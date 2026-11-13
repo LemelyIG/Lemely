@@ -21,6 +21,33 @@ export const NATIVE_TEACHER_DETAIL = {
   path: "/teacher/announcements",
 };
 
+const TUTOR_DIRECTORY = {
+  items: [
+    {
+      tutorId: "tutor-1",
+      publicName: "Dina Farouk",
+      headline: "IGCSE Physics and Maths, past-paper drills every week",
+      subjects: [{ code: "0625", name: "Physics" }],
+      modes: ["virtual", "in_person"],
+      area: { code: "cairo", name: "Cairo" },
+      rating: { state: "rated", average: 4.8, count: 12 },
+    },
+  ],
+  nextCursor: null,
+  facets: { subjects: [{ code: "0625", name: "Physics" }], areas: [{ code: "cairo", name: "Cairo" }] },
+}
+
+export const NATIVE_FIND_TUTOR = {
+  path: "/student/tutors",
+  profile: STUDENT_PROFILE,
+  mocks: async (page) => {
+    await studentShellMocks("populated")(page)
+    await page.route(/\/api\/tutors(\?|$)/, (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(TUTOR_DIRECTORY) }),
+    )
+  },
+}
+
 /** Each check: { id, platform, width (default 390), theme, app, run(page) }. */
 export const NATIVE_CHECKS = [
   ...["ios", "android"].map((platform) => ({
@@ -346,6 +373,25 @@ NATIVE_CHECKS.push(
         throw new Error(`pill centre ${r.pillCentre} != icon centre ${r.iconCentre}`);
       if (!r.inLink) throw new Error("pill spills into a neighbouring tab");
       if (r.hitsCircle) throw new Error("pill overlaps the Correct circle");
+    },
+  },
+);
+NATIVE_CHECKS.push({
+    id: "native-android-tutor-card-centred",
+    platform: "android",
+    width: 390,
+    app: NATIVE_FIND_TUTOR,
+    async run(page) {
+      const gaps = await page.evaluate(() => {
+        const card = document.querySelector(".lm-native-main .lm-native-card")
+        if (!card) return null
+        const r = card.getBoundingClientRect()
+        return { left: r.left, right: window.innerWidth - r.right, width: r.width }
+      })
+      if (!gaps) throw new Error("no .lm-native-card on Find a tutor (mock not served?)")
+      if (Math.abs(gaps.left - gaps.right) > 0.5 || gaps.left < -0.5)
+        throw new Error(`tutor card not centred: left ${gaps.left}px, right ${gaps.right}px`)
+      if (gaps.left > 0.5) throw new Error(`tutor card not full-bleed: gap ${gaps.left}px`)
     },
   },
 );

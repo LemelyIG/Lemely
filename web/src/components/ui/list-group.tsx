@@ -36,23 +36,20 @@ export function ListGroup({
   )
 }
 
-export function ListRow({
-  title,
-  subtitle,
-  leading,
-  trailing,
-  to,
-  onClick,
-  lines = subtitle ? 2 : 1,
-}: {
+type ListRowAction =
+  | { to: string; onClick?: never }
+  | { onClick: () => void; to?: never }
+  | { to?: undefined; onClick?: undefined }
+
+export type ListRowProps = {
   title: ReactNode
   subtitle?: ReactNode
   leading?: ReactNode
   trailing?: ReactNode
-  to?: string
-  onClick?: () => void
   lines?: 1 | 2 | 3
-}) {
+} & ListRowAction
+
+export function ListRow({ title, subtitle, leading, trailing, to, onClick, lines = subtitle ? 2 : 1 }: ListRowProps) {
   const cls = "lm-list-row lm-native-row lm-press flex w-full items-center gap-3 px-4 py-2.5 text-start"
   const inner = (
     <>

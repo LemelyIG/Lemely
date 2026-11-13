@@ -280,12 +280,12 @@
     "approved": "pending"
   },
   "native-ios-settings": {
-    "difference": "Task 10 grouped lists and edge-to-edge cards are in; what remains is owned by other native-frame tasks: the settings sheet container and grabber (Task 6); the light-theme gate stays over the cap until the sheet lands, so this entry cannot pass it.",
+    "difference": "Settings opens as a centred dialog, not an iOS sheet with grabber and rounded top corners (Task 6); the grouped rows inside already match. Fresh run: 50.28% light (over the 15% cap, so it cannot pass until the sheet lands), 6.76% dark.",
     "justification": "Each remaining difference belongs to a later or parallel native-frame task and is removed when that task lands.",
     "approved": "pending"
   },
   "native-android-settings": {
-    "difference": "Task 10 grouped lists and edge-to-edge cards are in; what remains is owned by other native-frame tasks: the settings bottom sheet container and drag handle (Task 6); the light-theme gate stays over the cap until the sheet lands, so this entry cannot pass it.",
+    "difference": "Settings opens as a centred dialog, not an Android bottom sheet with drag handle (Task 6); the grouped rows inside already match. Fresh run: 50.19% light (over the 15% cap, so it cannot pass until the sheet lands), 6.15% dark.",
     "justification": "Each remaining difference belongs to a later or parallel native-frame task and is removed when that task lands.",
     "approved": "pending"
   }

@@ -606,20 +606,23 @@
 .lm-press { --lm-press: 1; }
 .lm-list-row + .lm-list-row { border-top: 1px solid var(--md-outline-variant); }
 @media (max-width: 720px) {
+  /* Everything below is scoped to .lm-native-main: the shell's content column, whose 14px/16px gutter
+     the bleed and inset maths assume. Cards and groups elsewhere (auth, marketing, admin, parent,
+     camera, quiz, dialog panes) keep the design A look. */
   /* Cards and list groups lose the floating outline. */
-  :root:is([data-platform="ios"], [data-platform="android"]) :is(.lm-native-card, .lm-native-group) {
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-main :is(.lm-native-card, .lm-native-group) {
     border: 0;
     box-shadow: none;
   }
   /* iOS: inset-grouped inside a 16px page margin. */
   :root[data-platform="ios"] .lm-native-main { padding-inline: var(--native-group-inset-ios); }
-  :root[data-platform="ios"] :is(.lm-native-card, .lm-native-group) { border-radius: var(--native-group-radius-ios); }
-  :root[data-platform="ios"] .lm-native-group-label { padding-inline: var(--space-4); }
+  :root[data-platform="ios"] .lm-native-main :is(.lm-native-card, .lm-native-group) { border-radius: var(--native-group-radius-ios); }
+  :root[data-platform="ios"] .lm-native-main .lm-native-group-label { padding-inline: var(--space-4); }
   /* Rows that carry their own desktop dividers (settings, skeletons) drop them for the group separators. */
-  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-group > .lm-native-row { border-top: 0; border-bottom: 0; }
-  :root[data-platform="ios"] .lm-native-row { position: relative; min-height: var(--native-row-min-ios); }
-  :root[data-platform="ios"] .lm-list-row + .lm-list-row { border-top: 0; }
-  :root[data-platform="ios"] .lm-native-row + .lm-native-row::before {
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-main .lm-native-group > .lm-native-row { border-top: 0; border-bottom: 0; }
+  :root[data-platform="ios"] .lm-native-main .lm-native-row { position: relative; min-height: var(--native-row-min-ios); }
+  :root[data-platform="ios"] .lm-native-main .lm-list-row + .lm-list-row { border-top: 0; }
+  :root[data-platform="ios"] .lm-native-main .lm-native-row + .lm-native-row::before {
     content: "";
     position: absolute;
     inset-block-start: 0;
@@ -628,21 +631,25 @@
     background: var(--md-outline);
     pointer-events: none;
   }
-  /* Android: full-bleed and square; the 14px page gutter stays (container query). */
-  :root[data-platform="android"] .lm-native-card {
+  /* Android: full-bleed and square; the 14px page gutter stays on cards as a transparent border.
+     The width is explicit (page width plus both gutters) so a card that sets w-full, or sits in a
+     flex item, bleeds symmetrically instead of sliding left. */
+  :root[data-platform="android"] .lm-native-main .lm-native-card {
     border-radius: 0;
+    inline-size: calc(100% + 2 * var(--native-gutter-android));
+    max-inline-size: none;
     margin-inline: calc(-1 * var(--native-gutter-android));
     border-inline: var(--native-gutter-android) solid transparent;
   }
-  :root[data-platform="android"] .lm-native-group {
+  :root[data-platform="android"] .lm-native-main .lm-native-group {
     border-radius: 0;
     margin-inline: calc(-1 * var(--native-gutter-android));
   }
-  :root[data-platform="android"] .lm-native-group-label { padding-inline: calc(var(--space-4) - var(--native-gutter-android)); }
-  :root[data-platform="android"] .lm-native-row[data-lines="1"] { min-height: var(--native-row-1-android); }
-  :root[data-platform="android"] .lm-native-row[data-lines="2"] { min-height: var(--native-row-2-android); }
-  :root[data-platform="android"] .lm-native-row[data-lines="3"] { min-height: var(--native-row-3-android); }
-  :root[data-platform="android"] .lm-list-row + .lm-list-row { border-top: 0; }
+  :root[data-platform="android"] .lm-native-main .lm-native-group-label { padding-inline: calc(var(--space-4) - var(--native-gutter-android)); }
+  :root[data-platform="android"] .lm-native-main .lm-native-row[data-lines="1"] { min-height: var(--native-row-1-android); }
+  :root[data-platform="android"] .lm-native-main .lm-native-row[data-lines="2"] { min-height: var(--native-row-2-android); }
+  :root[data-platform="android"] .lm-native-main .lm-native-row[data-lines="3"] { min-height: var(--native-row-3-android); }
+  :root[data-platform="android"] .lm-native-main .lm-list-row + .lm-list-row { border-top: 0; }
 }
 
 
