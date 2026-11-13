@@ -93,11 +93,18 @@ def grant_seat_allowance_on_claim(
     for this seat this month is returned as it is: a later claim in the month never reissues or
     shrinks it. The caller commits.
     """
+    return _grant_seat(session, member_id, now=now)[0]
+
+
+def _grant_seat(
+    session: Session, member_id: uuid.UUID, *, now: datetime
+) -> tuple[UsageGrant | None, bool]:
+    """:func:`grant_seat_allowance_on_claim` plus whether this call created the grant."""
     teacher_user_id = session.scalar(
         select(TeacherMember.teacher_user_id).where(TeacherMember.id == member_id)
     )
     if teacher_user_id is None:
-        return None
+        return None, False
     tier = _live_teacher_tier(session, teacher_user_id, lock=True)  # step 1
     member = session.get(  # step 2
         TeacherMember, member_id, with_for_update=True, populate_existing=True
@@ -109,7 +116,7 @@ def grant_seat_allowance_on_claim(
         or tier is None
         or not tier.seat_allowance_units
     ):
-        return None
+        return None, False
     month_start, month_end = calendar_month_bounds(now)
     key = seat_grant_key(member.id, month_start)
     stored = session.scalars(
@@ -119,12 +126,12 @@ def grant_seat_allowance_on_claim(
         )
     ).first()
     if stored is not None:
-        return stored
+        return stored, False
     units = prorate_units(
         tier.seat_allowance_units, month_start, month_end, max(start_of_day(now), month_start)
     )
     if units <= 0:
-        return None
+        return None, False
     grant = UsageLedger(session).issue_grant(  # step 3
         owner_user_id=member.member_user_id,
         kind=GrantKind.seat_allowance,
@@ -136,12 +143,12 @@ def grant_seat_allowance_on_claim(
         teacher_member_id=member.id,
     )
     log.info("seat_allowance_granted", teacher_member_id=str(member.id), units=units)
-    return grant
+    return grant, True
 
 
 def _seats_lacking_a_grant(session: Session, *, now: datetime, limit: int) -> list[uuid.UUID]:
     """Active seats of a teacher whose counted plan grants seat units, with no grant this month."""
-    _, month_end = calendar_month_bounds(now)
+    month_start, _ = calendar_month_bounds(now)
     ranked = (
         select(
             Subscription.user_id.label("teacher_user_id"),
@@ -169,10 +176,16 @@ def _seats_lacking_a_grant(session: Session, *, now: datetime, limit: int) -> li
                 TeacherMember.kind == TeacherMemberKind.student_seat,
                 TeacherMember.status == TeacherMemberStatus.active,
                 TeacherMember.teacher_user_id.in_(paying_teachers),
+                # The same key the on-claim path dedupes on. ``expires_at`` is not a safe proxy: a
+                # clawback re-dates it, and the seat would then be a candidate on every tick.
                 ~sa.exists().where(
-                    UsageGrant.teacher_member_id == TeacherMember.id,
-                    UsageGrant.kind == GrantKind.seat_allowance,
-                    UsageGrant.expires_at == month_end,
+                    UsageGrant.owner_user_id == TeacherMember.member_user_id,
+                    UsageGrant.idempotency_key
+                    == sa.func.concat(
+                        "seat:",
+                        sa.cast(TeacherMember.id, sa.Text),
+                        f":{month_start:%Y-%m}",
+                    ),
                 ),
             )
             .order_by(TeacherMember.teacher_user_id, TeacherMember.created_at, TeacherMember.id)
@@ -188,10 +201,10 @@ def grant_monthly_seat_allowances(
 
     One bounded read of at most ``limit`` seat ids, then one transaction per seat. A seat whose
     grant raises is logged (``seat_allowance_grant_failed``, ``alert=True``) and skipped; the
-    others are unaffected. Returns the number of seats granted. Safe to run every sweep: the
-    anti-join skips seats already granted for this month and the idempotency key makes a race
-    harmless. When the batch was full the rest wait for the next tick, and
-    ``seat_allowance_batch_full`` is logged.
+    others are unaffected. Returns the number of grants this run created; a stored grant found
+    again counts for nothing. Safe to run every sweep: the anti-join skips seats already granted
+    for this month (by the grant key) and the idempotency key makes a race harmless. When the
+    batch was full the rest wait for the next tick, and ``seat_allowance_batch_full`` is logged.
     """
     with sm() as session:
         candidates = _seats_lacking_a_grant(session, now=now, limit=limit)
@@ -201,7 +214,7 @@ def grant_monthly_seat_allowances(
     for member_id in candidates:
         try:
             with sm.begin() as session:
-                grant = grant_seat_allowance_on_claim(session, member_id, now=now)
+                _, created = _grant_seat(session, member_id, now=now)
         except Exception:
             alerts.error(
                 "seat_allowance_grant_failed",
@@ -210,7 +223,7 @@ def grant_monthly_seat_allowances(
                 exc_info=True,
             )
             continue
-        if grant is not None:
+        if created:
             granted += 1
     return granted
 

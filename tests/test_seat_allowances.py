@@ -7,6 +7,7 @@ failure never refuses a class join and never stalls the other seats of the month
 
 from __future__ import annotations
 
+import logging
 import math
 import uuid
 from datetime import UTC, datetime
@@ -17,6 +18,7 @@ import sqlalchemy as sa
 from structlog.testing import capture_logs
 
 from lemely.core.subscription_rules import calendar_month_bounds
+from lemely.db import seat_allowance_repo
 from lemely.db.models.billing import PlanAudience
 from lemely.db.models.enums import PlanInterval, Role, SubscriptionStatus
 from lemely.db.models.team import (
@@ -245,16 +247,31 @@ def test_a_claim_on_the_last_day_grants_one_days_worth(sm: sessionmaker[Session]
 
 def test_a_later_visit_in_the_month_returns_the_stored_grant_untouched(
     sm: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A re-join later in the month finds the first grant (and its larger amount) as it was."""
+    """A re-join later in the month finds the first grant (and its larger amount) as it was.
+
+    The ledger's "grant replay differs" warning goes through stdlib logging, so ``caplog`` sees
+    it (structlog's ``capture_logs`` does not); the early return never reaches ``issue_grant``.
+    """
     teacher = _teacher(sm)
     student, seat = _student_seat(sm, teacher)
     first = _on_claim(sm, seat, NOV_15)
-    with capture_logs() as logs:
+    calls: list[object] = []
+    real = UsageLedger.issue_grant
+
+    def spy(self: UsageLedger, **kwargs: Any) -> UsageGrant:
+        calls.append(kwargs["idempotency_key"])
+        return real(self, **kwargs)
+
+    monkeypatch.setattr(UsageLedger, "issue_grant", spy)
+    with caplog.at_level(logging.WARNING):
         later = _on_claim(sm, seat, NOV_30)
     assert first is not None and later is not None and later.id == first.id
     assert later.units == 160
-    assert [e for e in logs if e["log_level"] in {"warning", "error"}] == []
+    assert calls == []
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
     assert len(grants_of(sm, student)) == 1
 
 
@@ -400,6 +417,59 @@ def test_the_batch_limit_bounds_a_run_and_a_full_batch_is_logged(
     with capture_logs() as logs:
         assert _monthly(sm, MONTH_START, limit=10) == 0
     assert [e for e in logs if e["event"] == "seat_allowance_batch_full"] == []
+
+
+def test_a_clawed_back_seat_grant_is_not_granted_again_nor_does_it_starve_the_batch(
+    sm: sessionmaker[Session],
+) -> None:
+    """A clawback moves ``expires_at``; the seat's key still says it was granted this month."""
+    teacher = _teacher(sm)
+    refunded = add_user(sm, Role.student)
+    refunded_seat = seed_seat(
+        sm, teacher_id=teacher, student_id=refunded, created_at=datetime(2026, 1, 1, tzinfo=UTC)
+    )
+    waiting, _ = _student_seat(sm, teacher)
+    grant = _on_claim(sm, refunded_seat, MONTH_START)
+    assert grant is not None
+    with sm.begin() as session:
+        assert UsageLedger(session).claw_back_grant(grant.id, reason="refund", now=MONTH_START) > 0
+    # The clawed-back seat sorts first; with limit=1 it must not take the slot or be counted.
+    assert _monthly(sm, MONTH_START, limit=1) == 1
+    assert len(grants_of(sm, waiting)) == 1
+    for _ in range(3):
+        assert _monthly(sm, MONTH_START) == 0
+    assert len(grants_of(sm, refunded)) == 1
+
+
+def test_a_second_job_instance_with_a_stale_candidate_list_counts_nothing(
+    sm: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two instances read the same candidates; the loser finds stored grants and counts 0."""
+    teacher = _teacher(sm)
+    seats = [_student_seat(sm, teacher)[1] for _ in range(3)]
+    stale = list(seats)
+    monkeypatch.setattr(seat_allowance_repo, "_seats_lacking_a_grant", lambda *a, **k: stale)
+    assert _monthly(sm, MONTH_START) == 3  # the winner
+    assert _monthly(sm, MONTH_START) == 0  # the loser: the same ids, already granted
+    with sm() as session:
+        assert session.scalar(sa.select(sa.func.count()).select_from(UsageGrant)) == 3
+
+
+def test_the_job_query_skips_seats_that_are_not_active(sm: sessionmaker[Session]) -> None:
+    """A leaving or removed seat sorted first must not take the only batch slot."""
+    teacher = _teacher(sm)
+    early = datetime(2026, 1, 1, tzinfo=UTC)
+    for status in (TeacherMemberStatus.leaving, TeacherMemberStatus.removed):
+        seed_seat(
+            sm,
+            teacher_id=teacher,
+            student_id=add_user(sm, Role.student),
+            status=status,
+            created_at=early,
+        )
+    active, _ = _student_seat(sm, teacher)
+    assert _monthly(sm, MONTH_START, limit=1) == 1
+    assert len(grants_of(sm, active)) == 1
 
 
 def test_the_default_batch_is_five_hundred() -> None:
