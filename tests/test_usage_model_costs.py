@@ -9,26 +9,42 @@ from __future__ import annotations
 import contextvars
 import tempfile
 import threading
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
+import sqlalchemy as sa
 from structlog.testing import capture_logs
 
+from lemely.core.metered_actions import MeteredAction
 from lemely.core.schemas import AIMarkResponse
+from lemely.db.models.billing_ops import UsageJobModelCost
+from lemely.db.models.enums import Role
+from lemely.db.models.usage import UsageJobStatus
+from lemely.db.usage_ledger_repo import UsageLedger
+from lemely.db.usage_model_costs_repo import record_job_model_costs
 from lemely.io import gemini
 from lemely.io.gemini import GeminiClient, _reset_process_counters
-from lemely.io.llm.cost_meter import cost_scope, usd_decimal
+from lemely.io.llm.cost_meter import cost_scope, record_llm_cost, usd_decimal
 from lemely.io.llm.model_costs import (
     MODEL_NAME_MAX_LENGTH,
     ModelCostAccumulator,
     model_cost_scope,
     record_model_cost,
 )
+from lemely.web import usage
+from lemely.web.usage import UsageMeter, UsageRequest
 from tests.gemini_fakes import mock_response
 from tests.test_anthropic_adapter import _VALID_MARK, _FakeAnthropic, _message, _settings
 from tests.test_cost_meter import _gemini_client, _generate, _Reply
+from tests.usage_helpers import NOW, give, jobs_for, seed_catalogue, seed_user
+
+if TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy.orm import Session, sessionmaker
 
 _TODAY = date(2026, 10, 19)
 _GEMINI = "gemini-3.8-flash"
@@ -223,3 +239,182 @@ def test_the_model_feed_uses_the_same_rounded_figure_as_the_job_feed() -> None:
             _generate(client)
     assert per_model.totals() == {_GEMINI: job.total_usd}
     assert job.total_usd == usd_decimal(gemini._process_accumulated_usd)
+
+
+# --- part B: persisted at settle ---------------------------------------------------------
+
+
+def _student(sm: sessionmaker[Session]) -> uuid.UUID:
+    seed_catalogue(sm)
+    student = seed_user(sm)
+    give(sm, student, units=1000)
+    return student
+
+
+def _request(actor: uuid.UUID) -> UsageRequest:
+    return UsageRequest(
+        actor_user_id=actor, actor_role=Role.student, action=MeteredAction.MARK_PAPER
+    )
+
+
+def _rows(sm: sessionmaker[Session]) -> list[tuple[uuid.UUID, str, Decimal]]:
+    with sm() as session:
+        return [
+            (r.usage_job_id, r.model, r.cost_usd)
+            for r in session.scalars(sa.select(UsageJobModelCost).order_by(UsageJobModelCost.model))
+        ]
+
+
+def _call_two_models() -> None:
+    record_llm_cost(Decimal("0.012"))
+    record_model_cost(_GEMINI, Decimal("0.012"))
+    record_llm_cost(Decimal("0.008"))
+    record_model_cost(_CLAUDE, Decimal("0.008"))
+
+
+def test_a_settled_job_writes_one_row_per_model_summing_to_its_cost(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    student = _student(sm)
+    meter = UsageMeter(sm, enforce=True, now=lambda: NOW)
+    with meter.reserve(meter.authorize(_request(student))).run():
+        _call_two_models()
+    (job,) = jobs_for(sm, student)
+    assert job.status is UsageJobStatus.settled
+    rows = _rows(sm)
+    assert [(r[1], r[2]) for r in rows] == [
+        (_CLAUDE, Decimal("0.008")),
+        (_GEMINI, Decimal("0.012")),
+    ]
+    assert {r[0] for r in rows} == {job.id}
+    assert sum(r[2] for r in rows) == job.actual_cost_usd
+
+
+def test_a_released_job_writes_no_model_rows(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    student = _student(sm)
+    meter = UsageMeter(sm, enforce=True, now=lambda: NOW)
+    with (
+        pytest.raises(RuntimeError, match="boom"),
+        meter.reserve(meter.authorize(_request(student))).run(),
+    ):
+        _call_two_models()
+        raise RuntimeError("boom")
+    meter.reserve(meter.authorize(_request(student))).release()
+    assert {j.status for j in jobs_for(sm, student)} == {UsageJobStatus.released}
+    assert _rows(sm) == []
+
+
+def test_an_unreserved_run_writes_no_model_rows(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    student = _student(sm)
+    meter = UsageMeter(sm, enforce=False, now=lambda: NOW)
+    with meter.reserve(meter.authorize(_request(student))).run():
+        _call_two_models()
+    assert jobs_for(sm, student) == []
+    assert _rows(sm) == []
+
+
+def test_a_job_reserved_again_under_a_new_id_writes_rows_on_the_final_id(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    student = _student(sm)
+    clock = [NOW]
+    meter = UsageMeter(sm, enforce=True, now=lambda: clock[0])
+    job = meter.reserve(meter.authorize(_request(student)))
+    first_id = job.job_id
+    clock[0] = NOW + timedelta(hours=2)
+    with sm.begin() as session:
+        assert UsageLedger(session).expire_stale_jobs(now=clock[0]) == 1
+    with job.run():
+        _call_two_models()
+    assert job.job_id != first_id
+    old, new = jobs_for(sm, student)
+    assert (old.job_id, old.status) == (first_id, UsageJobStatus.expired)
+    assert new.job_id == job.job_id
+    assert {r[0] for r in _rows(sm)} == {new.id}
+    assert len(_rows(sm)) == 2
+
+
+def test_a_failure_persisting_the_split_leaves_the_job_settled_and_alerts(
+    migrated_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sm = migrated_sessionmaker
+    student = _student(sm)
+
+    def broken(session: Session, *, job_id: uuid.UUID, totals: dict[str, Decimal]) -> int:
+        # A real database error (the cost check constraint), which aborts the transaction
+        # unless it ran in a savepoint.
+        return record_job_model_costs(
+            session, job_id=job_id, totals={model: Decimal(-1) for model in totals}
+        )
+
+    monkeypatch.setattr(usage, "record_job_model_costs", broken)
+    meter = UsageMeter(sm, enforce=True, now=lambda: NOW)
+    with capture_logs() as logs, meter.reserve(meter.authorize(_request(student))).run():
+        _call_two_models()
+    (job,) = jobs_for(sm, student)
+    assert job.status is UsageJobStatus.settled
+    assert job.charged > 0
+    assert _rows(sm) == []
+    (alert,) = [e for e in logs if e["event"] == "usage_model_cost_unrecorded"]
+    assert alert["alert"] is True
+    assert alert["job_id"] == str(job.job_id)
+    assert alert["error_type"] == "IntegrityError"
+
+
+def test_replaying_the_write_adds_to_the_row_never_duplicates(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    student = _student(sm)
+    meter = UsageMeter(sm, enforce=True, now=lambda: NOW)
+    with meter.reserve(meter.authorize(_request(student))).run():
+        record_llm_cost(Decimal("0.010"))
+        record_model_cost(_GEMINI, Decimal("0.010"))
+    (job,) = jobs_for(sm, student)
+    with sm.begin() as session:
+        assert (
+            record_job_model_costs(session, job_id=job.job_id, totals={_GEMINI: Decimal("0.005")})
+            == 1
+        )
+    assert [(r[1], r[2]) for r in _rows(sm)] == [(_GEMINI, Decimal("0.015"))]
+
+
+def test_recording_for_an_unknown_job_raises_and_an_empty_split_writes_nothing(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    import uuid as uuid_mod
+
+    with migrated_sessionmaker.begin() as session:
+        assert record_job_model_costs(session, job_id=uuid_mod.uuid4(), totals={}) == 0
+        with pytest.raises(LookupError):
+            record_job_model_costs(
+                session, job_id=uuid_mod.uuid4(), totals={_GEMINI: Decimal("0.001")}
+            )
+    assert _rows(migrated_sessionmaker) == []
+
+
+def test_the_run_scope_does_not_leak_into_the_next_run(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    student = _student(sm)
+    meter = UsageMeter(sm, enforce=True, now=lambda: NOW)
+    with meter.reserve(meter.authorize(_request(student))).run():
+        record_llm_cost(Decimal("0.010"))
+        record_model_cost(_GEMINI, Decimal("0.010"))
+    record_model_cost(_GEMINI, Decimal("9"))  # outside any scope: a no-op
+    with meter.reserve(meter.authorize(_request(student))).run():
+        record_llm_cost(Decimal("0.004"))
+        record_model_cost(_CLAUDE, Decimal("0.004"))
+    assert [(r[1], r[2]) for r in _rows(sm)] == [
+        (_CLAUDE, Decimal("0.004")),
+        (_GEMINI, Decimal("0.010")),
+    ]

@@ -79,7 +79,9 @@ from lemely.db.usage_context_repo import (
     load_chain_context,
 )
 from lemely.db.usage_ledger_repo import InsufficientBalance, UsageLedger
+from lemely.db.usage_model_costs_repo import record_job_model_costs
 from lemely.io.llm.cost_meter import cost_scope
+from lemely.io.llm.model_costs import model_cost_scope
 from lemely.runtime.config import Settings  # noqa: TC001 - FastAPI resolves it at runtime
 from lemely.web.deps import (
     AuthContext,
@@ -91,7 +93,7 @@ from lemely.web.deps import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Mapping
 
     from fastapi import Request
     from sqlalchemy.orm import Session, sessionmaker
@@ -541,14 +543,29 @@ class MeteredJob:
             _RENEWER.add(self, self._live_meter().renew_interval(self.ctx.request.action))
         entry_thread = threading.get_ident()
         token = _RUNNING_JOB.set(self)
-        scope = cost_scope()
-        accumulator = scope.__enter__()
+        scope = contextlib.ExitStack()
+        accumulator = scope.enter_context(cost_scope())
+        model_accumulator = scope.enter_context(model_cost_scope())
         try:
             yield self
         except BaseException:
-            self._exit(scope, token, entry_thread, accumulator.total_usd, settle=False)
+            self._exit(
+                scope,
+                token,
+                entry_thread,
+                accumulator.total_usd,
+                settle=False,
+                model_totals=model_accumulator.totals(),
+            )
             raise
-        self._exit(scope, token, entry_thread, accumulator.total_usd, settle=not self._abandoned)
+        self._exit(
+            scope,
+            token,
+            entry_thread,
+            accumulator.total_usd,
+            settle=not self._abandoned,
+            model_totals=model_accumulator.totals(),
+        )
 
     def _refuse_if_unrunnable(self) -> None:
         """Raise if this job finished or is running. The caller holds ``self._lock``."""
@@ -696,6 +713,7 @@ class MeteredJob:
         cost_usd: Decimal,
         *,
         settle: bool,
+        model_totals: Mapping[str, Decimal] | None = None,
     ) -> None:
         _RENEWER.remove(self)
         crossed = _RUNNING_JOB.get() is not self or threading.get_ident() != entry_thread
@@ -717,22 +735,55 @@ class MeteredJob:
                 _RUNNING_JOB.reset(token)
             raise RuntimeError(_CROSSED_CONTEXT)
         try:
-            self._end(cost_usd, settle=settle)
+            self._end(cost_usd, settle=settle, model_totals=model_totals)
         finally:
             with self._lock:
                 self._running = False
             scope.__exit__(None, None, None)
             _RUNNING_JOB.reset(token)
 
-    def _end(self, cost_usd: Decimal, *, settle: bool) -> None:
+    def _end(
+        self,
+        cost_usd: Decimal,
+        *,
+        settle: bool,
+        model_totals: Mapping[str, Decimal] | None = None,
+    ) -> None:
         """Finish once: the first caller settles or releases, any later call does nothing."""
         with self._lock:
             if self._finished:
                 return
             self._finished = True
-        self._finish(cost_usd, settle=settle)
+        self._finish(cost_usd, settle=settle, model_totals=model_totals)
 
-    def _finish(self, cost_usd: Decimal, *, settle: bool) -> None:
+    def _record_model_costs(
+        self, session: Session, model_totals: Mapping[str, Decimal] | None
+    ) -> None:
+        """Store the per-model split of a settled job; a failure never undoes the settle.
+
+        Runs in a savepoint inside the settle's transaction, against the job id as it stands
+        now (a hold re-reserved before the work started has a new one).
+        """
+        if not model_totals:
+            return
+        try:
+            with session.begin_nested():
+                record_job_model_costs(session, job_id=self.job_id, totals=model_totals)
+        except Exception as exc:
+            log.error(
+                "usage_model_cost_unrecorded",
+                alert=True,
+                job_id=str(self.job_id),
+                error_type=type(exc).__name__,
+            )
+
+    def _finish(
+        self,
+        cost_usd: Decimal,
+        *,
+        settle: bool,
+        model_totals: Mapping[str, Decimal] | None = None,
+    ) -> None:
         """Settle or release in the ledger. Callers claim the job first (:meth:`_end`)."""
         request = self.ctx.request
         if not self._reserved:
@@ -766,6 +817,7 @@ class MeteredJob:
                     settled_job = ledger.settle(self.job_id, actual_cost_usd=cost_usd, now=now)
                     if settled_job.status is UsageJobStatus.settled:
                         run_post_settle_hooks(session, settled_job, list(self.ctx.chain), now)
+                        self._record_model_costs(session, model_totals)
                     else:
                         # The sweeper closed the job while the work ran past its whole
                         # deadline: the hold is back and the balance may be spent, so a late
