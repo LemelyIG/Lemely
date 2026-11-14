@@ -59,7 +59,7 @@ function CreatedClassPanel({ created }: { created: ClassSummary }) {
     <Card>
       <CardBody className="flex flex-col items-start gap-4">
         <div>
-          <div className="text-eyebrow text-on-surface-variant">You're set up</div>
+          <div className="text-eyebrow native:hidden text-on-surface-variant">You're set up</div>
           <PageHeading repeatsTitle={false} className="text-display-md mt-1.5 text-pretty">"{created.label}" is ready</PageHeading>
         </div>
         <p className="text-body-md text-on-surface-variant max-w-prose">
@@ -134,7 +134,7 @@ export function CreateFirstClass() {
   return (
     <div className="flex flex-col gap-5 min-w-0 max-w-[680px]">
       <div>
-        {!hasClasses && <div className="text-eyebrow text-on-surface-variant">One quick step</div>}
+        {!hasClasses && <div className="text-eyebrow native:hidden text-on-surface-variant">One quick step</div>}
         <PageHeading repeatsTitle={false} className="text-display-md mt-1.5">{hasClasses ? "Create a class" : "Create your first class"}</PageHeading>
       </div>
       <p className="text-body-md text-on-surface-variant max-w-prose">

@@ -400,7 +400,7 @@ export function Profile() {
   return (
     <div className="flex flex-col gap-8">
       <header className="flex flex-col gap-1">
-        <Eyebrow>Your training log</Eyebrow>
+        <Eyebrow className="native:hidden">Your training log</Eyebrow>
         {/* `text-display` was the class here, and it does not exist: nothing in
             index.css defines it and nothing in the shipped bundle emits it, so
             this title rendered at the browser's default h1 in the body face

@@ -454,7 +454,7 @@ export function QuizResults() {
             <>
               <header className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="text-eyebrow text-on-surface-variant">
+                  <div className="text-eyebrow native:hidden text-on-surface-variant">
                     {data.subjectCode} · {assignment.className}
                   </div>
                   <PageHeading repeatsTitle={false} className="text-display-md text-on-surface m-0 mt-1 text-pretty">{data.quizTitle}</PageHeading>

@@ -437,7 +437,7 @@ export function Standings() {
   return (
     <div className="flex flex-col gap-8">
       <header className="flex flex-col gap-1">
-        <Eyebrow>Standings</Eyebrow>
+        <Eyebrow className="native:hidden">Standings</Eyebrow>
         {/* `text-display` was the class here and it resolves to nothing — see
             the note in `Profile.tsx`. */}
         <PageHeading repeatsTitle={false} className="text-display-lg text-on-surface">Effort, not marks</PageHeading>

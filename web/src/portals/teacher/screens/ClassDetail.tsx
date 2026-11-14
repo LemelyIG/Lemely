@@ -207,7 +207,7 @@ export function ClassDetailLayout() {
               </Link>
               <div className="flex items-start gap-4 flex-wrap gap-y-2 mt-1">
                 <div className="min-w-0">
-                  <div className="text-eyebrow text-on-surface-variant">
+                  <div className="text-eyebrow native:hidden text-on-surface-variant">
                     {/* No " · code" repeat when the name has already resolved to
                         the code itself (free-text `subjectCode`, det registry's
                         default profile — see `subjectIdentifier`'s docstring). */}

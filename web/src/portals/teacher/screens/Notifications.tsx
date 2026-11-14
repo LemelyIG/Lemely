@@ -123,7 +123,7 @@ export function TeacherNotifications() {
           looking for the setting. Playwright caught this. */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <Eyebrow>Inbox</Eyebrow>
+          <Eyebrow className="native:hidden">Inbox</Eyebrow>
           <PageHeading repeatsTitle={true} className="text-display-md text-on-surface">Notifications</PageHeading>
         </div>
         <Link

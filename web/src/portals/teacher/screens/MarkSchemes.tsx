@@ -87,7 +87,7 @@ export function MarkSchemes() {
           <>
             <div className="flex items-end gap-[18px] pb-[18px] border-b border-outline-variant flex-wrap gap-y-2.5">
               <div>
-                <div className="text-eyebrow text-on-surface-variant">
+                <div className="text-eyebrow native:hidden text-on-surface-variant">
                   Library · {schemes.length} scheme{schemes.length === 1 ? "" : "s"}
                 </div>
                 {/* A real h1, not a styled div — same `page-has-heading-one`

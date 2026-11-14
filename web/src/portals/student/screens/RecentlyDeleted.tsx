@@ -116,7 +116,7 @@ export function RecentlyDeleted() {
         {(data) => (
           <>
             <header className="flex flex-col gap-1">
-              <Eyebrow>Recently deleted</Eyebrow>
+              <Eyebrow className="native:hidden">Recently deleted</Eyebrow>
               <PageHeading repeatsTitle={true} className="text-display-md text-on-surface">Recently deleted</PageHeading>
               <p className="max-w-[56ch] text-pretty text-body-md text-on-surface-variant">
                 A deleted paper stays here for {data.retentionDays} days, in case you want it back.

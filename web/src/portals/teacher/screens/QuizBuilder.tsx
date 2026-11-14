@@ -1144,7 +1144,7 @@ export function QuizBuilder() {
                 </Link>
                 <div className="flex items-start gap-3 flex-wrap gap-y-2 mt-1">
                   <div className="min-w-0">
-                    <div className="text-eyebrow text-on-surface-variant">
+                    <div className="text-eyebrow native:hidden text-on-surface-variant">
                       {loadedQuiz.subjectCode}
                     </div>
                     <PageHeading repeatsTitle={false} className="text-display-md mt-1 text-pretty">

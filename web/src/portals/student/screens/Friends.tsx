@@ -356,7 +356,7 @@ export function Friends() {
         {(data) => (
           <>
             <header className="flex flex-col gap-1">
-              <Eyebrow>Friends</Eyebrow>
+              <Eyebrow className="native:hidden">Friends</Eyebrow>
               {/* `text-display` was the class here and it resolves to nothing
                   — see the note in `Profile.tsx`. */}
               <PageHeading repeatsTitle={false} className="text-display-lg text-on-surface">Who you are studying with</PageHeading>

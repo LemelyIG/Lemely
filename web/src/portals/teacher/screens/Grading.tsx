@@ -505,7 +505,7 @@ export function Grading() {
             <>
               <div className="flex items-end gap-[18px] pb-[18px] border-b border-outline-variant flex-wrap gap-y-2.5">
                 <div>
-                  <div className="text-eyebrow text-on-surface-variant">
+                  <div className="text-eyebrow native:hidden text-on-surface-variant">
                     Grading console
                   </div>
                   {/* A real h1, not a styled div: axe's `page-has-heading-one` fired

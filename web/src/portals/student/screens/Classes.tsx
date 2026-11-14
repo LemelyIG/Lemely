@@ -66,7 +66,7 @@ export function StudentClasses() {
   return (
     <div className="flex w-full max-w-160 flex-col gap-6">
       <div className="flex flex-col gap-1">
-        <Eyebrow>Classes</Eyebrow>
+        <Eyebrow className="native:hidden">Classes</Eyebrow>
         <PageHeading repeatsTitle={true} className="text-display-md text-on-surface">Your classes</PageHeading>
       </div>
 

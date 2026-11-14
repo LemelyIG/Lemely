@@ -194,7 +194,7 @@ export function Classes() {
             <>
               <div className="flex items-end gap-[18px] pb-[18px] border-b border-outline-variant flex-wrap gap-y-3">
               <div>
-                <div className="text-eyebrow text-on-surface-variant">
+                <div className="text-eyebrow native:hidden text-on-surface-variant">
                   {classes.length} class{classes.length === 1 ? "" : "es"}
                 </div>
                 <PageHeading repeatsTitle={true} className="text-display-md mt-1.5">Classes</PageHeading>

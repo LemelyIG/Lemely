@@ -145,6 +145,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
     <Popover
       open={unread && menuOpen}
       onOpenChange={setMenuOpen}
+      sheetTitle={notification.title}
       className="block"
       renderTrigger={({ triggerProps }) => (
         <Card
@@ -244,7 +245,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
 function InboxHeading() {
   return (
     <div>
-      <Eyebrow>Inbox</Eyebrow>
+      <Eyebrow className="native:hidden">Inbox</Eyebrow>
       <PageHeading repeatsTitle={true} className="text-display-md text-on-surface">Notifications</PageHeading>
     </div>
   )

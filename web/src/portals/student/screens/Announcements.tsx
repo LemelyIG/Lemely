@@ -460,7 +460,7 @@ export function Announcements() {
   return (
     <div className="relative flex flex-col gap-8">
       <header className="flex flex-col gap-1">
-        <Eyebrow>Announcements &amp; exams</Eyebrow>
+        <Eyebrow className="native:hidden">Announcements &amp; exams</Eyebrow>
         {/* P4.4, cross-surface: `text-display` is not a class. Nothing defines
             it and the shipped bundle emits no rule for it, so this title has
             been rendering at the browser's default h1 in the body face. The

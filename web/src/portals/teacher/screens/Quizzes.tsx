@@ -234,7 +234,7 @@ export function Quizzes() {
             <>
               <div className="flex items-end gap-[18px] pb-5 border-b border-outline-variant flex-wrap gap-y-3">
                 <div>
-                  <div className="text-eyebrow text-on-surface-variant">
+                  <div className="text-eyebrow native:hidden text-on-surface-variant">
                     {quizzes.length} quiz{quizzes.length === 1 ? "" : "zes"}
                   </div>
                   <PageHeading repeatsTitle={true} className="text-display-lg text-on-surface mt-1.5">AI quizzes</PageHeading>
