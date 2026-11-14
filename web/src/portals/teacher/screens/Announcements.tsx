@@ -402,7 +402,7 @@ export function Announcements() {
       ) : null}
 
       <section>
-        <h2 className="text-eyebrow text-on-surface-variant m-0 mb-2.5">
+        <h2 className="text-eyebrow native:sr-only text-on-surface-variant m-0 mb-2.5">
           Your announcements
         </h2>
         {/*

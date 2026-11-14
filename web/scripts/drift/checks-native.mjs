@@ -976,19 +976,86 @@ export const STUDENT_TAB_PATHS = ["/student", "/student/classes", "/student/prof
 /** The `to` of each teacher bottom tab (TEACHER_BOTTOM_TABS in portals/teacher/index.tsx). */
 export const TEACHER_TAB_PATHS = ["/teacher", "/teacher/grading", "/teacher/review", "/teacher/classes"];
 
-/* Repeating screens left out because the mocks never reach their PageHeading (it renders only
- * after data the mocks do not serve, so the route would pass without checking anything):
- * student /subject/:code, /tutor-access, /recently-deleted; teacher /quizzes, /tutoring,
- * /tutoring/preview, /tutoring/profile, /tutoring/availability, /at-risk, /schemes,
- * /announcements, /deleted. /student/tutors and the tab roots stay as before. */
+/** An app at `path` whose mocks are the home's, then `extra`'s. */
+const headingApp = (base, path, extra) => ({
+  ...base,
+  path,
+  servesHeading: true,
+  mocks: async (page) => {
+    await base.mocks(page);
+    if (extra) await extra(page);
+  },
+});
+const DELETED_STUDENT_PAPERS = {
+  papers: [
+    {
+      attemptId: "attempt-1",
+      paperLabel: "0625/21 May/June 2026",
+      subjectCode: "0625",
+      deletedAt: "2026-11-10T08:00:00Z",
+      restoreDeadline: "2026-12-10T08:00:00Z",
+    },
+  ],
+  retentionDays: 30,
+}
+const DELETED_TEACHER_PAPERS = {
+  papers: [
+    { paperId: "paper-1", label: "0625/21 mock", deletedAt: "2026-11-10T08:00:00Z", restoreDeadline: "2026-12-10T08:00:00Z" },
+  ],
+  retentionDays: 30,
+}
+const TUTOR_OWN_PROFILE = {
+  tutorId: "tutor-self",
+  publicName: "Dina Farouk",
+  headline: "IGCSE Physics and Maths, past-paper drills every week",
+  subjects: [{ code: "0625", name: "Physics" }],
+  modes: ["virtual"],
+  area: { code: "cairo", name: "Cairo" },
+  rating: { state: "new", average: null, count: 0 },
+  bio: "Eight years of IGCSE teaching.",
+  qualificationNote: null,
+  otherModeNote: null,
+  documentsSeen: true,
+  availability: [{ isoWeekday: 1, startMinute: 960, endMinute: 1080 }],
+  zone: "Africa/Cairo",
+  zoneLabel: "Cairo time",
+  listingState: "listed",
+  paused: false,
+  indexable: true,
+  submittedAt: "2026-09-01T10:00:00Z",
+  listedSince: "2026-09",
+  reviewNote: null,
+  evidence: [],
+};
+const PAGE_EMPTY = { items: [], nextCursor: null };
+/** The tutoring routes' own profile plus the lists a tutor's pages read. */
+const tutorOwnProfileMocks = async (page) => {
+  await page.route(/\/api\/reference(\?|$)/, (route) =>
+    jsonRoute(route, {
+      subjects: [{ code: "0625", name: "Physics", qualificationLevel: "igcse" }],
+      targetGradeVocabularies: [],
+      qualificationLevels: [{ value: "igcse", label: "IGCSE" }],
+      sessionMonths: [],
+      difficultyBands: [],
+    }),
+  );
+  await page.route(/\/api\/public\/tutoring-areas(\?|$)/, (route) =>
+    jsonRoute(route, { items: [{ code: "cairo", name: "Cairo" }] }),
+  );
+  await page.route(/\/api\/tutor\/profile(\?|$)/, (route) => jsonRoute(route, TUTOR_OWN_PROFILE));
+  await page.route(/\/api\/tutor\/profile\/preview(\?|$)/, (route) =>
+    jsonRoute(route, { profile: TUTOR_OWN_PROFILE, outcomes: null }),
+  );
+  await page.route(/\/api\/tutor\/(bookings|reviews|students)(\?|$)/, (route) => jsonRoute(route, PAGE_EMPTY));
+};
+
 /** Tab roots of both portals plus the detail paths other checks use. Add a route
- * here when a screen's heading changes; skip only routes the mocks cannot serve,
- * with the reason in a comment. */
+ * here when a screen's heading changes. Every route's mocks must serve the data its
+ * PageHeading waits on, or the check passes without looking at the heading. */
 const HEADING_ROUTES = [
   ...[
     ...STUDENT_TAB_PATHS,
     DETAIL_PATH,
-    "/student/tutors",
     "/student/notifications",
     "/student/sessions",
     "/student/correct",
@@ -999,6 +1066,40 @@ const HEADING_ROUTES = [
     "/teacher/tutoring/students",
     "/teacher/notifications",
   ].map((path) => ({ ...NATIVE_TEACHER_HOME, path })),
+  // Screens whose PageHeading renders only once their data is served.
+  { ...NATIVE_FIND_TUTOR, servesHeading: true },
+  { ...NATIVE_SUBJECT, servesHeading: true },
+  headingApp(NATIVE_HOME, "/student/tutor-access", async (page) => {
+    await page.route(/\/api\/student\/tutor-grants(\?|$)/, (route) => jsonRoute(route, { items: [] }));
+    await page.route(/\/api\/student\/tutor-access-log(\?|$)/, (route) => jsonRoute(route, PAGE_EMPTY));
+    await page.route(/\/api\/student\/tutor-access\/classes(\?|$)/, (route) => jsonRoute(route, { items: [] }));
+    await page.route(/\/api\/student\/tutoring-settings(\?|$)/, (route) =>
+      jsonRoute(route, { outcomeStatsOptOut: false, outcomePrefChangedAt: null, safetyNoticeAcknowledgedAt: null }),
+    );
+    await page.route(/\/api\/tutoring\/blocks(\?|$)/, (route) => jsonRoute(route, { items: [] }));
+  }),
+  headingApp(NATIVE_HOME, "/student/recently-deleted", async (page) => {
+    await page.route(/\/api\/student\/attempts\/deleted(\?|$)/, (route) => jsonRoute(route, DELETED_STUDENT_PAPERS));
+  }),
+  headingApp(NATIVE_TEACHER_HOME, "/teacher/deleted", async (page) => {
+    await page.route(/\/api\/papers\/deleted(\?|$)/, (route) => jsonRoute(route, DELETED_TEACHER_PAPERS));
+  }),
+  headingApp(NATIVE_TEACHER_HOME, "/teacher/quizzes", async (page) => {
+    await page.route(/\/api\/teacher\/quizzes(\?|$)/, (route) => jsonRoute(route, { quizzes: QUIZ_ROWS }));
+  }),
+  headingApp(NATIVE_TEACHER_HOME, "/teacher/at-risk", async (page) => {
+    await page.route(/\/api\/teacher\/at-risk(\?|$)/, (route) => jsonRoute(route, AT_RISK_LIST(false)));
+  }),
+  headingApp(NATIVE_TEACHER_HOME, "/teacher/schemes", async (page) => {
+    await page.route(/\/api\/schemes(\?|$)/, (route) => jsonRoute(route, { schemes: [], stats: [] }));
+  }),
+  headingApp(NATIVE_TEACHER_HOME, "/teacher/announcements", async (page) => {
+    await page.route(/\/api\/teacher\/announcements(\?|$)/, (route) => jsonRoute(route, { announcements: [] }));
+    await page.route(/\/api\/teacher\/classes(\?|$)/, (route) => jsonRoute(route, { classes: CLASS_ROWS }));
+  }),
+  ...["/teacher/tutoring", "/teacher/tutoring/profile", "/teacher/tutoring/availability", "/teacher/tutoring/preview"].map(
+    (path) => headingApp(NATIVE_TEACHER_HOME, path, tutorOwnProfileMocks),
+  ),
 ];
 
 NATIVE_CHECKS.push(
@@ -1011,6 +1112,12 @@ NATIVE_CHECKS.push(
       async run(page) {
         // A lazy route renders its heading after `networkidle` under load; count once one is in <main>.
         await page.locator("main").getByRole("heading", { level: 1 }).first().waitFor({ state: "attached", timeout: 10000 }).catch(() => {});
+        // The screen's own PageHeading, not a loading or error placeholder `h1`: a route whose mocks never reach it would pass below without checking anything.
+        if (app.servesHeading) {
+          await page.locator("main h1[data-page-heading]").first().waitFor({ state: "attached", timeout: 10000 }).catch(() => {});
+          if ((await page.locator("main h1[data-page-heading]").count()) !== 1)
+            throw new Error(`${app.path}: the screen's PageHeading never rendered (mocks do not serve its data?)`);
+        }
         const h1s = await page.getByRole("heading", { level: 1 }).count();
         if (h1s !== 1)
           throw new Error(`${app.path}: ${h1s} level-1 headings reach assistive technology, expected 1`);

@@ -142,7 +142,7 @@ export function MarkSchemes() {
               label="Mark schemes"
               storageKey="lemely.markSchemes.view"
               list={
-                <ListGroup label="Mark schemes">
+                <ListGroup>
                   {schemes.map((m) => (
                     <ListRow
                       key={m.doc}
