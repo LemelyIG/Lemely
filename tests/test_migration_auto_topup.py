@@ -525,6 +525,7 @@ def test_upgrade_downgrade_upgrade_round_trip(
         assert current_revision(session) == DOWN_REVISION
         assert TABLE not in public_tables(session)
         assert "dedupe_key" not in column_names(session, "payments")
+        assert "sent_at" not in column_names(session, "payments")
         assert not SUBSCRIPTION_COLUMNS & column_names(session, "subscriptions")
         assert not PAYMENT_OBJECTS & object_names(session, ["payments"])
         assert GRACE_FK not in object_names(session, ["subscriptions"])
@@ -540,6 +541,7 @@ def test_upgrade_downgrade_upgrade_round_trip(
     with sm() as session:
         assert object_names(session, [TABLE]) == _orm_names()
         assert object_names(session, ["payments"]) >= PAYMENT_OBJECTS
+        assert "sent_at" in column_names(session, "payments")
         assert GRACE_FK in object_names(session, ["subscriptions"])
         assert column_names(session, "subscriptions") >= SUBSCRIPTION_COLUMNS
         sub = session.get(Subscription, scene["subscription_id"])
@@ -665,6 +667,31 @@ def test_consented_at_is_nullable_and_records_the_consent_time(
             sa.text(
                 "SELECT data_type, is_nullable FROM information_schema.columns "
                 "WHERE table_name = 'auto_topup_settings' AND column_name = 'consented_at'"
+            )
+        ).one()
+    assert tuple(column) == ("timestamp with time zone", "YES")
+
+
+def test_sent_at_is_a_nullable_timestamptz_stamped_when_a_charge_is_sent(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Reconcile's give-up and stuck windows run from when a charge was sent (review I1).
+
+    A queued row can wait before it is charged, so ``created_at`` is the wrong clock for it. NULL
+    until sent, and for every checkout payment (their clock stays ``created_at``).
+    """
+    sm = migrated_sessionmaker
+    user = seed_user(sm, Role.student)
+    pack = seed_pack(sm)
+    unsent = seed_payment_row(
+        sm, payer_id=user, purpose=PaymentPurpose.credit_pack, amount_minor=100, credit_pack_id=pack
+    )
+    with sm() as session:
+        assert session.get(Payment, unsent).sent_at is None  # type: ignore[union-attr]
+        column = session.execute(
+            sa.text(
+                "SELECT data_type, is_nullable FROM information_schema.columns "
+                "WHERE table_name = 'payments' AND column_name = 'sent_at'"
             )
         ).one()
     assert tuple(column) == ("timestamp with time zone", "YES")

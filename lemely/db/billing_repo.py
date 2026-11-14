@@ -236,6 +236,17 @@ def _outcome_unknown(exc: PaymobError) -> bool:
     return exc.status_code is not None and not 400 <= exc.status_code < 500
 
 
+def _reconcile_clock(payment: Payment) -> datetime:
+    """When reconcile's give-up and stuck windows start counting for ``payment``.
+
+    A checkout starts them at ``created_at`` (its intention goes out in the same breath). A queued
+    charge can wait before it is sent, so it starts them when it was sent (``sent_at``): counted
+    from ``created_at``, a row queued over a day ago would be failed on the first reconcile pass
+    after a real charge, which a seat or top-up sweep reads as "not charged" (a double charge).
+    """
+    return payment.sent_at or payment.created_at
+
+
 def _as_int(value: object) -> int | None:
     if isinstance(value, bool):
         return None
@@ -1259,7 +1270,7 @@ class BillingService:
         if payment.status not in _OPEN:
             payment.next_reconcile_at = None
             return
-        if now - payment.created_at >= RECONCILE_GIVE_UP_AFTER:
+        if now - _reconcile_clock(payment) >= RECONCILE_GIVE_UP_AFTER:
             payment.status = PaymentStatus.failed
             payment.next_reconcile_at = None
             log.info("paymob_payment_abandoned", payment_id=str(payment.id))
@@ -1300,7 +1311,7 @@ class BillingService:
         a human. The status stays open: an unknown outcome is never "failed" (R20b), and a
         late callback can still settle it.
         """
-        if now - payment.created_at >= RECONCILE_STUCK_AFTER:
+        if now - _reconcile_clock(payment) >= RECONCILE_STUCK_AFTER:
             payment.reconcile_attempts += 1
             payment.next_reconcile_at = None
             log.error(

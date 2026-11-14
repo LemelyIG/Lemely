@@ -487,6 +487,7 @@ class MerchantChargeService:
             .values(
                 status=PaymentStatus.pending,
                 method=CARD_MOTO_METHOD,
+                sent_at=now,
                 next_reconcile_at=now + RECONCILE_AFTER,
             )
             .returning(Payment.id)

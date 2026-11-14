@@ -636,6 +636,12 @@ class Payment(TimestampMixin, Base):
     next_reconcile_at: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True
     )
+    sent_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    """When a queued charge was claimed and sent to Paymob; ``NULL`` until then and for every
+    checkout payment. A queued row can wait before it is charged, so reconcile's give-up and stuck
+    windows run from ``coalesce(sent_at, created_at)``: counted from ``created_at`` a row older than
+    a day would be failed right after a real charge (which a seat or top-up sweep reads as "not
+    charged" and charges again)."""
     dedupe_key: Mapped[str | None] = mapped_column(sa.String(200), nullable=True, unique=True)
     """Queue identity for background charges (``auto_topup:{owner}:{crossing}``,
     ``extra_seat_renewal:{period}:{attempt}``). NULL for user-initiated payments."""

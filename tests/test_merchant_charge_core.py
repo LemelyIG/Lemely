@@ -1380,3 +1380,149 @@ def test_poison_rows_do_not_starve_newer_rows_beyond_the_attempt_bound(
     assert _row(pg_sessionmaker, poison).status is PaymentStatus.failed
     assert _row(pg_sessionmaker, good).status is PaymentStatus.pending
     assert len(client.calls_to("pay_with_token")) == 1
+
+
+# ---------------------------------------------------------------------------
+# Review I1: reconcile's windows run from the send, not from the queueing.
+# ---------------------------------------------------------------------------
+
+
+def _backdate(sm: sessionmaker[Session], payment_id: uuid.UUID, **ago: float) -> None:
+    """Move ``created_at`` back, as if the row had waited in the queue (rows can wait)."""
+    with sm.begin() as session:
+        session.execute(
+            sa.update(Payment)
+            .where(Payment.id == payment_id)
+            .values(created_at=NOW - timedelta(**ago))
+        )
+
+
+def _due_first(sm: sessionmaker[Session], payment_id: uuid.UUID) -> None:
+    """Make the payment the oldest due row, so a reconcile pass reaches it before any other."""
+    with sm.begin() as session:
+        session.execute(
+            sa.update(Payment)
+            .where(Payment.id == payment_id)
+            .values(next_reconcile_at=NOW - timedelta(days=3650))
+        )
+
+
+def _queued_and_charged(
+    sm: sessionmaker[Session], client: FakeMotoClient, **waited: float
+) -> tuple[uuid.UUID, Payment]:
+    """Queue a row, let it wait ``waited`` in the queue, then charge it through the sweep."""
+    payer = seed_user(sm, Role.student)
+    seed_saved_card(sm, payer, token=TOKEN)
+    queued = _queue(sm, payer)
+    _backdate(sm, queued, **waited)
+    assert _run_queue(sm, client) == 1
+    _due_first(sm, queued)
+    return queued, _row(sm, queued)
+
+
+def _reconcile_with(
+    sm: sessionmaker[Session], answer: dict[str, Any] | None | Exception, *, at: datetime
+) -> int:
+    inquirer = FakePaymobClient()
+    inquirer.inquiry_response = answer
+    with sm() as session:
+        return BillingService(session, inquirer, PAYMOB_SETTINGS, now=lambda: at).reconcile_pending(
+            now=at
+        )
+
+
+WAITED = [
+    pytest.param({"hours": 1}, id="1h"),
+    pytest.param({"hours": 25}, id="25h"),
+    pytest.param({"days": 8}, id="8d"),
+]
+
+
+@pytest.mark.usefixtures("clean_queue")
+@pytest.mark.parametrize("waited", WAITED)
+def test_a_late_charged_row_is_not_failed_by_the_first_reconcile_while_paymob_is_still_pending(
+    pg_sessionmaker: sessionmaker[Session], waited: dict[str, float]
+) -> None:
+    # Phase 02 gives a payment up (``failed``) 24 h after its clock starts, and that is what the
+    # seat and top-up sweeps read as "definitely not charged". The clock for a queued charge starts
+    # when it is sent, not when it was queued: a row that waited a day and was then charged is
+    # still pending 20 minutes later when Paymob has not finished with it.
+    queued, row = _queued_and_charged(pg_sessionmaker, FakeMotoClient(), **waited)
+    assert row.status is PaymentStatus.pending
+    assert row.paymob_order_id is not None
+    still_pending = moto_txn(
+        order_id=row.paymob_order_id,
+        merchant_order_id=row.special_reference,
+        amount_cents=row.amount_minor,
+        success=False,
+        pending=True,
+        txn_id=778_001,
+    )
+    _reconcile_with(pg_sessionmaker, still_pending, at=NOW + timedelta(minutes=20))
+    after = _row(pg_sessionmaker, queued)
+    assert after.status is PaymentStatus.pending
+    assert after.next_reconcile_at is not None
+
+
+@pytest.mark.usefixtures("clean_queue")
+@pytest.mark.parametrize("waited", WAITED)
+def test_a_late_charged_row_with_an_unknown_pay_outcome_keeps_polling_for_a_full_window(
+    pg_sessionmaker: sessionmaker[Session], waited: dict[str, float]
+) -> None:
+    # The pay call timed out: Paymob may or may not have charged. The first inquiry finds no
+    # transaction yet, and then one that fails. Neither may end the payment while the send is
+    # young (24 h to give up, 7 days to stop polling), however long the row waited in the queue.
+    client = FakeMotoClient()
+    client.pay_response = PaymobError("pay timed out", timeout=True)
+    queued, _row_before = _queued_and_charged(pg_sessionmaker, client, **waited)
+    at = NOW + timedelta(minutes=20)
+    _reconcile_with(pg_sessionmaker, None, at=at)  # no transaction yet
+    mid = _row(pg_sessionmaker, queued)
+    assert mid.status is PaymentStatus.pending
+    assert mid.next_reconcile_at is not None
+    _due_first(pg_sessionmaker, queued)
+    _reconcile_with(pg_sessionmaker, PaymobError("down", timeout=True), at=at)
+    after = _row(pg_sessionmaker, queued)
+    assert after.status is PaymentStatus.pending
+    assert after.next_reconcile_at is not None  # not "stuck": the row is minutes old
+
+
+@pytest.mark.usefixtures("clean_queue")
+def test_the_claim_stamps_sent_at_and_the_windows_still_close_a_really_old_send(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    payer = seed_user(pg_sessionmaker, Role.student)
+    seed_saved_card(pg_sessionmaker, payer, token=TOKEN)
+    queued = _queue(pg_sessionmaker, payer)
+    assert _row(pg_sessionmaker, queued).sent_at is None  # queued, nothing sent
+    client = FakeMotoClient()
+    assert _run_queue(pg_sessionmaker, client) == 1
+    row = _row(pg_sessionmaker, queued)
+    assert row.sent_at == NOW
+    # A send that really is more than a day old and has no transaction is still given up on.
+    _due_first(pg_sessionmaker, queued)
+    _reconcile_with(pg_sessionmaker, None, at=NOW + timedelta(hours=25))
+    assert _row(pg_sessionmaker, queued).status is PaymentStatus.failed
+
+
+def test_a_checkout_payment_has_no_sent_at_and_keeps_the_created_at_clock(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    payer = seed_user(pg_sessionmaker, Role.student)
+    payment_id = seed_payment_row(
+        pg_sessionmaker,
+        payer_id=payer,
+        purpose=PaymentPurpose.extra_seats,
+        amount_minor=5_000,
+        status=PaymentStatus.created,
+        created_at=NOW - timedelta(hours=25),
+    )
+    with pg_sessionmaker.begin() as session:
+        session.execute(
+            sa.update(Payment)
+            .where(Payment.id == payment_id)
+            .values(next_reconcile_at=NOW - timedelta(days=3650))
+        )
+    assert _row(pg_sessionmaker, payment_id).sent_at is None
+    _reconcile_with(pg_sessionmaker, None, at=NOW)
+    assert _row(pg_sessionmaker, payment_id).status is PaymentStatus.failed

@@ -32,6 +32,13 @@ Paymob billing spec §4.6, §5.4, §5.5 (Phase 06). Additive:
   seat charge and a seat purchase are both ``extra_seats`` and only the prefix tells the paid
   handler to clear a grace instead of granting seats, so a wrong pairing must be an error, not a
   double grant. ``starts_with`` keeps the ``_`` in the prefix literal.
+* ``payments.sent_at`` (nullable): when a queued charge was claimed and sent to Paymob. Reconcile
+  gives a payment up 24 hours after its clock starts and stops polling it after 7 days, and for
+  a checkout that clock is ``created_at``. A queued row can wait before it is charged (charges
+  paused, a backlog), so counted from ``created_at`` it would be failed straight after a real
+  charge, and a seat or top-up sweep would read that as "not charged" and charge again.
+  Reconcile measures from ``coalesce(sent_at, created_at)``; the charge claim stamps ``sent_at``.
+  NULL for every checkout payment. No backfill: no queued charge exists before this revision.
 * ``auto_topup_settings.consented_at`` (nullable): when the payer consented to unattended
   charges, the evidence in a chargeback dispute over a MOTO charge made while they were away.
   The service sets it when ``enabled`` turns true.
@@ -49,8 +56,8 @@ migration cannot deadlock against a callback.
 ``downgrade`` refuses while money state exists, as 0054 and 0055 do: any ``auto_topup_settings``
 row, any ``payments.dedupe_key`` that is not NULL, or any ``subscriptions`` row with a grace
 column set. Dropping them would lose a payer's top-up consent, the identity that keeps a queued
-charge from running twice, or the record of a seat grace, silently. Otherwise it drops what the
-upgrade added, in reverse order, and nothing else.
+charge from running twice, or the record of a seat grace, silently. ``sent_at`` needs no probe of its own: only a charge with a ``dedupe_key`` sets it. Otherwise it
+drops what the upgrade added, in reverse order, and nothing else.
 """
 
 from collections.abc import Sequence
@@ -156,6 +163,7 @@ def upgrade() -> None:
     )
 
     op.add_column("payments", sa.Column("dedupe_key", sa.String(length=200), nullable=True))
+    op.add_column("payments", sa.Column("sent_at", sa.DateTime(timezone=True), nullable=True))
     op.create_unique_constraint(op.f("uq_payments_dedupe_key"), "payments", ["dedupe_key"])
     op.create_index(
         IN_FLIGHT_INDEX,
@@ -236,6 +244,7 @@ def downgrade() -> None:
     op.drop_index(DEDUPE_PREFIX_INDEX, table_name="payments")
     op.drop_index(SUBSCRIPTION_PURPOSE_INDEX, table_name="payments")
     op.drop_constraint(op.f("uq_payments_dedupe_key"), "payments", type_="unique")
+    op.drop_column("payments", "sent_at")
     op.drop_column("payments", "dedupe_key")
     op.drop_index("ix_auto_topup_settings_payer_user_id", table_name="auto_topup_settings")
     op.drop_table("auto_topup_settings")
