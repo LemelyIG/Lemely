@@ -3153,3 +3153,137 @@ NATIVE_CHECKS.push({
     if (r.overlap) throw new Error(`the FAB covers Load more (button ends ${r.mBottom}, FAB starts ${r.fTop})`);
   },
 });
+
+// Task 12b: the previous page is parked inert under the column during a swipe-back.
+const LAYER_PROBE = () => {
+  const root = document.documentElement
+  const frame = () => {
+    const c = document.querySelector("[data-shell-column]")
+    const layer = document.querySelector("[data-swipe-layer]")
+    const kid = layer?.querySelector("[data-swipe-scroller] > *")
+    return {
+      left: c ? c.getBoundingClientRect().left : null,
+      state: layer?.getAttribute("data-state") ?? null,
+      hasPage: Boolean(kid),
+      layerX: layer ? layer.getBoundingClientRect().left : null,
+      progress: parseFloat(getComputedStyle(root).getPropertyValue("--lm-swipe-progress")) || 0,
+      swiping: root.hasAttribute("data-swiping"),
+    }
+  }
+  const probe = { frames: [] }
+  window.__layerProbe = probe
+  const run = () => {
+    const start = performance.now()
+    const tick = () => {
+      probe.frames.push(frame())
+      if (performance.now() - start < 1100) requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  }
+  window.addEventListener("pointerup", run)
+  window.__layerFrame = frame
+}
+async function pushThenEdgeDrag(page, to = 210, hold = 150) {
+  await page.getByRole("link", { name: "Classes" }).first().click()
+  await page.waitForURL(/\/student\/classes/)
+  await page.evaluate(LAYER_PROBE)
+  await page.mouse.move(4, 400)
+  await page.mouse.down()
+  await page.mouse.move(to, 402, { steps: 8 })
+  await page.waitForTimeout(hold)
+}
+NATIVE_CHECKS.push(
+  {
+    id: "native-ios-swipe-underlay-shows-previous-page-mid-drag",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student", init: STANDALONE, motion: true },
+    async run(page) {
+      const homeText = await page.locator("main").first().innerText()
+      await pushThenEdgeDrag(page, 150, 50)
+      const got = await page.evaluate(() => {
+        const layer = document.querySelector("[data-swipe-layer]")
+        const clone = layer?.querySelector("[data-swipe-scroller] > *")
+        return {
+          frame: window.__layerFrame(),
+          hidden: clone?.getAttribute("aria-hidden"),
+          inert: clone?.hasAttribute("inert"),
+          ids: clone ? clone.querySelectorAll("[id]").length + (clone.id ? 1 : 0) : -1,
+          focusable: clone ? clone.querySelectorAll("[tabindex]:not([tabindex='-1']), [autofocus]").length : -1,
+                    cloneText: clone?.querySelector("main")?.innerText ?? "",
+          url: location.pathname,
+        }
+      })
+      await page.mouse.up()
+      if (!got.frame.hasPage || got.frame.state !== "on") throw new Error(`no previous page under the column: ${JSON.stringify(got.frame)}`)
+      if (got.hidden !== "true" || !got.inert) throw new Error(`the clone is announced or focusable: ${JSON.stringify(got)}`)
+      if (got.ids !== 0 || got.focusable !== 0) throw new Error(`the clone kept ids or focusables: ${JSON.stringify(got)}`)
+      if (!homeText.trim() || got.cloneText.trim() !== homeText.trim()) throw new Error(`the clone is not the previous (home) page: "${got.cloneText.slice(0, 60)}" vs "${homeText.slice(0, 60)}"`)
+      const expected = (got.frame.progress - 1) * 0.3 * 390
+      if (!(got.frame.progress > 0.1)) throw new Error(`progress did not move: ${got.frame.progress}`)
+      if (Math.abs(got.frame.layerX - expected) > 2) throw new Error(`parallax off the formula: x ${got.frame.layerX}, expected ${expected}`)
+    },
+  },
+  {
+    id: "native-ios-swipe-commit-never-shows-empty-ground",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student", init: STANDALONE, motion: true },
+    async run(page) {
+      await pushThenEdgeDrag(page)
+      await page.mouse.up()
+      await page.waitForURL(/\/student$/)
+      await page.waitForTimeout(700)
+      const frames = await page.evaluate(() => window.__layerProbe.frames)
+      const away = frames.filter((f) => f.left !== null && f.left > 1)
+      if (away.length < 3) throw new Error(`only ${away.length} frames with the column away`)
+      const bare = away.filter((f) => !f.hasPage)
+      if (bare.length) throw new Error(`${bare.length} of ${away.length} frames with the column away had no previous page under it`)
+      const last = frames[frames.length - 1]
+      if (last.state !== null || last.hasPage) throw new Error(`the underlay outlived the swap: ${JSON.stringify(last)}`)
+    },
+  },
+  {
+    id: "native-ios-swipe-cancel-removes-underlay",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student", init: STANDALONE, motion: true },
+    async run(page) {
+      await pushThenEdgeDrag(page, 90, 400)
+      const during = await page.evaluate(() => window.__layerFrame())
+      await page.mouse.up()
+      await page.waitForTimeout(700)
+      const after = await page.evaluate(() => ({ f: window.__layerFrame(), html: document.documentElement.hasAttribute("data-swipe-underlay"), kids: document.querySelector("[data-swipe-layer]").childElementCount }))
+      if (!/\/student\/classes/.test(page.url())) throw new Error("a short slow swipe navigated")
+      if (!during.hasPage) throw new Error("no underlay during the drag")
+      if (after.f.state !== null || after.kids !== 0 || after.html) throw new Error(`the clone stayed after a cancel: ${JSON.stringify(after)}`)
+    },
+  },
+  {
+    id: "native-ios-swipe-underlay-reduced-motion-has-no-parallax",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student", init: STANDALONE },
+    async run(page) {
+      await pushThenEdgeDrag(page, 150, 50)
+      const got = await page.evaluate(() => ({ f: window.__layerFrame(), t: getComputedStyle(document.querySelector("[data-swipe-layer]")).translate }))
+      await page.mouse.up()
+      if (!got.f.hasPage) throw new Error("no underlay under reduced motion")
+      if (got.f.layerX !== 0 || (got.t !== "none" && got.t !== "0px")) throw new Error(`parallax ran under reduced motion: x ${got.f.layerX}, translate ${got.t}`)
+    },
+  },
+  ...[
+    ["tablet", { platform: "ios", width: 800 }],
+    ["other", { width: 390 }],
+  ].map(([name, extra]) => ({
+    id: `native-${name === "other" ? "other" : "ios"}-swipe-underlay-no-clone-${name}`,
+    ...extra,
+    app: { ...NATIVE_HOME, path: "/student", init: STANDALONE },
+    async run(page) {
+      await pushThenEdgeDrag(page, 150, 50)
+      const got = await page.evaluate(() => ({ f: window.__layerFrame(), kids: document.querySelector("[data-swipe-layer]").childElementCount, display: getComputedStyle(document.querySelector("[data-swipe-layer]")).display }))
+      await page.mouse.up()
+      if (got.f.hasPage || got.kids !== 0 || got.display !== "none") throw new Error(`a clone exists off the native frame: ${JSON.stringify(got)}`)
+    },
+  })),
+);

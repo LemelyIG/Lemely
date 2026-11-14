@@ -9,6 +9,7 @@ import { backTarget } from "@/lib/nav/backTarget"
 import { isStandaloneDisplay } from "@/lib/pwa/useInstallPrompt"
 import { PHONE_MEDIA, isNativeFrame } from "@/lib/useNativeFrame"
 import { readPlatform } from "@/lib/platform"
+import { pageSnapshots, snapshotsEnabled } from "@/lib/nav/pageSnapshotCapture"
 
 /*
  * Packet B3 (Task 4) · edge-swipe-back, standalone-only (DESIGN.md §15).
@@ -57,6 +58,38 @@ export function EdgeSwipeBack() {
   const guardRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // The pending navigation of a committed swipe; any intervening navigation cancels it.
   const goTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Native frame Task 12b: the fixed layer under the column, and the previous page parked in it.
+  const layerRef = useRef<HTMLDivElement | null>(null)
+  const underlayRef = useRef<HTMLElement | null>(null)
+
+  /**
+   * Park the previous page's snapshot in the layer (hidden until the drag moves). Runs on
+   * pointerdown, so the scroll offset it sets costs a layout there and never in a drag frame.
+   */
+  function mountUnderlay(): void {
+    unmountUnderlay()
+    const layer = layerRef.current
+    const idx = window.history.state?.idx
+    if (!layer || typeof idx !== "number" || idx < 1 || !snapshotsEnabled()) return
+    const snap = pageSnapshots.get(idx - 1)
+    if (!snap) return
+    // The scroller is its own box so the dim (the layer's ::after) stays put while the page scrolls.
+    const scroller = document.createElement("div")
+    scroller.setAttribute("data-swipe-scroller", "")
+    scroller.append(snap.node)
+    layer.replaceChildren(scroller)
+    layer.setAttribute("data-state", "armed")
+    scroller.scrollTop = snap.scrollY
+    underlayRef.current = scroller
+    document.documentElement.setAttribute("data-swipe-underlay", "")
+  }
+
+  function unmountUnderlay(): void {
+    underlayRef.current?.remove()
+    underlayRef.current = null
+    layerRef.current?.removeAttribute("data-state")
+    document.documentElement.removeAttribute("data-swipe-underlay")
+  }
 
   useEffect(() => {
     rootRef.current = document.documentElement
@@ -83,6 +116,7 @@ export function EdgeSwipeBack() {
     }
     committingRef.current = false
     settlingRef.current = false
+    unmountUnderlay()
     const column = columnRef.current
     if (column) {
       column.style.transform = ""
@@ -145,13 +179,16 @@ export function EdgeSwipeBack() {
       startXRef.current = event.clientX
       // Gate pointer capture to the edge zone itself — anywhere else on the
       // page a drag is scrolling, or one of B4's own gestures, not this one.
-      return dir === 1 ? event.clientX <= EDGE_ZONE_PX : event.clientX >= window.innerWidth - EDGE_ZONE_PX
+      const onEdge = dir === 1 ? event.clientX <= EDGE_ZONE_PX : event.clientX >= window.innerWidth - EDGE_ZONE_PX
+      if (onEdge) mountUnderlay()
+      return onEdge
     },
     onProgress: (dx) => {
       const away = dx * dirRef.current
       const width = window.innerWidth
       const root = document.documentElement
       root.removeAttribute("data-swipe-settling")
+      if (layerRef.current?.hasAttribute("data-state")) layerRef.current.setAttribute("data-state", "on")
       root.setAttribute("data-swiping", "")
       root.style.setProperty("--lm-swipe-progress", String(Math.min(1, Math.max(0, away / width))))
     },
@@ -170,6 +207,7 @@ export function EdgeSwipeBack() {
       if (committingRef.current) return
       settlingRef.current = false
       clearSwipeState()
+      unmountUnderlay()
     },
     // Commit versus cancel is the hook's call: a short slow drag cancels and the hook springs
     // the column home; 35% of the width or a fling commits (Task 6 `swipeBackRelease`).
@@ -244,5 +282,6 @@ export function EdgeSwipeBack() {
     },
   })
 
-  return null
+  // Under the column in the tree and in paint order; never focusable, never announced.
+  return <div ref={layerRef} data-swipe-layer aria-hidden="true" inert />
 }

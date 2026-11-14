@@ -1481,6 +1481,10 @@ html[data-direction="swipe"]::view-transition-new(root) {
   inherits: true;
   initial-value: 1;
 }
+/* Task 12b: the swipe-back underlay layer is empty and takes no space until a drag arms it. */
+[data-swipe-layer] {
+  display: none;
+}
 @media (max-width: 720px) {
   html:is([data-platform="ios"], [data-platform="android"])[data-swiping] [data-shell-column] {
     box-shadow: calc(-1 * var(--space-4)) 0 var(--space-4)
@@ -1520,6 +1524,47 @@ html[data-direction="swipe"]::view-transition-new(root) {
   html:is([data-platform="ios"], [data-platform="android"])[data-direction="swipe"]::view-transition-old(root),
   html:is([data-platform="ios"], [data-platform="android"])[data-direction="swipe"]::view-transition-new(root) {
     animation: none;
+  }
+  /* Task 12b: the previous page, parked inert under the column. It carries the parallax (so it
+     slides in at 30% of the column's travel) and its own dim, which replaces the plain dim while
+     a snapshot is present. After a commit it stays until the new page is in, so the hand-over
+     never shows bare ground. */
+  html:is([data-platform="ios"], [data-platform="android"]) [data-swipe-layer][data-state] {
+    display: block;
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    background: var(--md-surface-container);
+  }
+  [data-swipe-scroller] {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+  }
+  html:is([data-platform="ios"], [data-platform="android"]) [data-swipe-layer][data-state="armed"] {
+    visibility: hidden;
+  }
+  html:is([data-platform="ios"], [data-platform="android"])[data-swipe-underlay][data-swiping] body::before {
+    background: none;
+  }
+  html:is([data-platform="ios"], [data-platform="android"])[data-swiping] [data-swipe-layer][data-state] {
+    translate: calc((var(--lm-swipe-progress, 0) - 1) * var(--native-parallax) * 100%) 0;
+  }
+  html[dir="rtl"]:is([data-platform="ios"], [data-platform="android"])[data-swiping] [data-swipe-layer][data-state] {
+    translate: calc((1 - var(--lm-swipe-progress, 0)) * var(--native-parallax) * 100%) 0;
+  }
+  html:is([data-platform="ios"], [data-platform="android"])[data-swiping] [data-swipe-layer][data-state]::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background: color-mix(in oklch, var(--md-scrim) calc((1 - var(--lm-swipe-progress, 0)) * 30%), transparent);
+  }
+  @media (prefers-reduced-motion: reduce) and (max-width: 720px) {
+    html:is([data-platform="ios"], [data-platform="android"])[data-swiping] [data-swipe-layer][data-state],
+    html[dir="rtl"]:is([data-platform="ios"], [data-platform="android"])[data-swiping] [data-swipe-layer][data-state] {
+      translate: none;
+    }
   }
   /* Pushes and pops: platform easing on the existing data-direction slides (brief §3.6). */
   :root[data-platform="android"]::view-transition-old(root),
