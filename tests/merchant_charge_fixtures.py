@@ -17,6 +17,9 @@ import uuid
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+import sqlalchemy as sa
+from sqlalchemy.exc import OperationalError
+
 from lemely.core.subscription_rules import subscription_amount_minor
 from lemely.db.models.billing import (
     AutoTopupSettings,
@@ -30,8 +33,11 @@ from lemely.db.models.billing import (
 from lemely.db.models.enums import Role
 from lemely.runtime.token_cipher import TokenCipher
 from tests.paymob_fixtures import (
+    INTENTION_RESPONSE,
     MOTO_INTEGRATION_ID,
+    PAYMOB_SETTINGS,
     TEST_CARD_TOKEN_KEY,
+    FakePaymobClient,
     link_parent,
     seed_pack,
     seed_user,
@@ -48,11 +54,18 @@ from tests.subscription_fixtures import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from sqlalchemy.orm import Session, sessionmaker
+
+    from lemely.runtime.config import PaymobSettings
 
 #: Paymob subscription ids the scenes hand out (``subscriptions.paymob_subscription_id`` is
 #: unique), module-wide so two scenes in one database never collide.
 _paymob_subscription_ids = itertools.count(7001)
+#: Order, intention and transaction ids the fake hands out, module-wide so two charges in one
+#: database never share a ``payments.paymob_order_id`` (unique).
+_moto_ids = itertools.count(880_001)
 
 
 def seed_saved_card(
@@ -208,6 +221,111 @@ def moto_txn(
     return obj
 
 
+#: ``INTENTION_RESPONSE`` with the MOTO integration named in its payment key, the answer a MOTO
+#: intention gets.
+MOTO_INTENTION_RESPONSE: dict[str, Any] = {
+    **INTENTION_RESPONSE,
+    "payment_keys": [{**INTENTION_RESPONSE["payment_keys"][0], "integration": MOTO_INTEGRATION_ID}],
+}
+
+
+class FakeMotoClient(FakePaymobClient):
+    """Phase 02's fake (HTTP refused) plus a scripted, recording MOTO ``pay_with_token``.
+
+    ``intention_response`` is Phase 02's attribute; the default one (the MOTO answer) is given a
+    fresh ``intention_order_id`` and ``id`` per call (set ``fresh_ids = False`` to script exact
+    ids). ``pay_response`` is the body
+    ``pay_with_token`` returns, or the exception it raises. ``on_pay`` runs inside the pay call,
+    before the answer, so a test can race a callback against it or raise from it.
+
+    ``calls`` records ``(name, kwargs)`` for ``create_intention``, ``pay_with_token`` and
+    ``inquire_by_order_ref`` (``calls_to`` filters them). When ``sessionmaker`` is given, every
+    ``create_intention`` and ``pay_with_token`` probe the database from a **separate** session and
+    appends what it saw to ``at_intention`` / ``at_pay``: the payment's status by
+    ``special_reference`` and whether its row could be locked (``FOR UPDATE NOWAIT``). A status of
+    ``pending`` and ``lock_free`` true prove the claim was committed before Paymob was called and
+    that no row lock was held across either call.
+    """
+
+    def __init__(
+        self,
+        settings: PaymobSettings = PAYMOB_SETTINGS,
+        *,
+        sessionmaker: sessionmaker[Session] | None = None,
+    ) -> None:
+        super().__init__(settings)
+        self.sessionmaker = sessionmaker
+        self.intention_response = dict(MOTO_INTENTION_RESPONSE)
+        self.fresh_ids = True
+        self.pay_response: dict[str, Any] | Exception = {
+            "id": next(_moto_ids),
+            "success": True,
+            "pending": False,
+        }
+        self.on_pay: Callable[[dict[str, Any]], None] | None = None
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.at_intention: list[dict[str, Any]] = []
+        self.at_pay: list[dict[str, Any]] = []
+        self._reference: str | None = None
+
+    def calls_to(self, name: str) -> list[dict[str, Any]]:
+        """The recorded keyword arguments of every call to ``name``."""
+        return [kwargs for called, kwargs in self.calls if called == name]
+
+    def _probe(self, special_reference: str) -> dict[str, Any]:
+        assert self.sessionmaker is not None
+        with self.sessionmaker() as session:
+            status = session.scalar(
+                sa.select(Payment.status).where(Payment.special_reference == special_reference)
+            )
+            try:
+                session.execute(
+                    sa.text(
+                        "SELECT id FROM payments WHERE special_reference = :ref FOR UPDATE NOWAIT"
+                    ),
+                    {"ref": special_reference},
+                )
+                lock_free = True
+            except OperationalError:
+                lock_free = False
+            finally:
+                session.rollback()
+        return {"status": status, "lock_free": lock_free}
+
+    def create_intention(self, body: Any) -> dict[str, Any]:
+        self.calls.append(("create_intention", dict(body)))
+        self._reference = str(body["special_reference"])
+        if self.sessionmaker is not None:
+            self.at_intention.append(self._probe(self._reference))
+        if self.on_intention is not None:
+            self.on_intention(dict(body))
+        if isinstance(self.intention_response, Exception):
+            raise self.intention_response
+        response = dict(self.intention_response)
+        if self.fresh_ids:
+            if "intention_order_id" in response:
+                response["intention_order_id"] = next(_moto_ids)
+            if "id" in response:
+                response["id"] = f"pi_test_moto_{next(_moto_ids)}"
+        self.intentions.append(dict(body))
+        return response
+
+    def pay_with_token(self, *, card_token: str, payment_token: str) -> dict[str, Any]:
+        call = {"card_token": card_token, "payment_token": payment_token}
+        self.calls.append(("pay_with_token", call))
+        if self.sessionmaker is not None and self._reference is not None:
+            self.at_pay.append(self._probe(self._reference))
+        if self.on_pay is not None:
+            self.on_pay(call)
+        if isinstance(self.pay_response, Exception):
+            raise self.pay_response
+        return dict(self.pay_response)
+
+    def inquire_by_order_ref(self, merchant_order_id: str) -> dict[str, Any] | None:
+        self.calls.append(("inquire_by_order_ref", {"merchant_order_id": merchant_order_id}))
+        return super().inquire_by_order_ref(merchant_order_id)
+
+
 def _scene(
     sm: sessionmaker[Session],
     *,
@@ -353,7 +471,9 @@ def student_with_plan(
 
 __all__ = [
     "MOTO_INTEGRATION_ID",
+    "MOTO_INTENTION_RESPONSE",
     "T0",
+    "FakeMotoClient",
     "link_parent",
     "moto_txn",
     "paymob_settings",
