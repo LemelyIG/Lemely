@@ -35,16 +35,13 @@ class FakeGoTrueBackend:
 
     def __init__(self) -> None:
         self._by_email: dict[str, _Account] = {}
-        self.created_with_phone: list[str | None] = []
 
     def admin_create_user(
         self,
         email: str,
         password: str,
         role: str,
-        phone: str | None = None,
     ) -> GoTrueUser:
-        self.created_with_phone.append(phone)
         if email in self._by_email:
             raise AuthError(f"GoTrue admin-create failed (422): user already exists: {email}")
         account = _Account(uuid.uuid4(), email, password, role)
@@ -119,12 +116,6 @@ class FakeUserMirror:
 
     def get_by_id(self, user_id: uuid.UUID) -> _MirroredUser | None:
         return self.rows.get(user_id)
-
-    def get_by_phone(self, phone: str) -> _MirroredUser | None:
-        matches = [u for u in self.rows.values() if u.phone == phone]
-        if not matches:
-            return None
-        return max(matches, key=lambda u: u.created_at)
 
     def get_by_email(self, email: str) -> _MirroredUser | None:
         return next((u for u in self.rows.values() if u.email == email), None)

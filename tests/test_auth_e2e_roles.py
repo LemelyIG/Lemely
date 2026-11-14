@@ -32,8 +32,8 @@ Two test groups live here:
    (parent locked out). This proves the invite-minted token flows through
    get_auth_context RBAC end to end, and that the link it carries is real,
    not just an asserted role. Retired phone-OTP routes (``/auth/otp/request``,
-   ``/auth/otp/verify``) are gone; ``AuthService.request_otp``/``verify_otp``
-   stay in the codebase as a kept seam but are not exercised here.
+   ``/auth/otp/verify``) are gone; ``AuthService.request_otp``
+   stays in the codebase as a kept seam but is not exercised here.
 """
 
 from __future__ import annotations

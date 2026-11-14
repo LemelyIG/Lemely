@@ -383,8 +383,8 @@ def _build_auth_service(settings: Settings) -> tuple[AuthService, DbUserMirror]:
     seeded here goes through the phone-OTP path any more (the parent-invites
     redesign moved the demo parent to email/password, see :data:`DEMO_ACCOUNTS`),
     but ``AuthService`` still requires an ``sms``/``otp_store`` pair to
-    construct — :meth:`~lemely.auth.service.AuthService.request_otp`/``verify_otp``
-    are kept as a seam for a possible future paid SMS channel — and seeding
+    construct — :meth:`~lemely.auth.service.AuthService.request_otp`
+    is kept as a seam for a possible future paid SMS channel — and seeding
     must never depend on a real gateway even for that unused path.
     """
     mirror = DbUserMirror(settings)

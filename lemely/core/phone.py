@@ -3,7 +3,10 @@
 Every place Lemely accepts or sends a phone number goes through :func:`validate_phone`:
 sign-up, the profile edit and the Paymob ``billing_data``. It parses with libphonenumber
 (the ``phonenumbers`` package), requires ``is_valid_number`` and returns E.164 text such as
-``+201012345678``. That is a *format* check only: it does not prove the number exists or
+``+201012345678``. Only a number libphonenumber types as a mobile line is accepted (``MOBILE``, or
+``FIXED_LINE_OR_MOBILE`` for regions that cannot tell the two apart); a pure landline such as
+Egyptian ``0223456789`` is refused as ``phone_invalid``, because the number is also where a payer
+is reached (M1 decision). That is a *format* check only: it does not prove the number exists or
 belongs to the person who typed it (there is no OTP, UD-11a).
 
 The default region is Egypt, so a local ``01012345678`` or a bare ``1012345678`` reads as an
@@ -22,7 +25,7 @@ from __future__ import annotations
 from typing import Final
 
 import phonenumbers
-from phonenumbers import NumberParseException, PhoneNumberFormat
+from phonenumbers import NumberParseException, PhoneNumberFormat, PhoneNumberType
 
 #: Stable error codes the HTTP layer sends as ``detail.code``.
 PHONE_REQUIRED: Final = "phone_required"
@@ -36,6 +39,11 @@ _MESSAGES: Final = {
     PHONE_REQUIRED: "Enter a phone number.",
     PHONE_INVALID: "Enter a valid phone number, for example 01012345678 or +201012345678.",
 }
+
+#: The number types accepted. ``FIXED_LINE_OR_MOBILE`` is libphonenumber's answer for regions (the
+#: US, for one) where a mobile and a landline share a numbering range; refusing it would refuse
+#: every such mobile.
+_ACCEPTED_TYPES: Final = frozenset({PhoneNumberType.MOBILE, PhoneNumberType.FIXED_LINE_OR_MOBILE})
 
 #: Anything longer is not a phone number; stops a huge string reaching the parser.
 _MAX_INPUT_LENGTH: Final = 40
@@ -62,10 +70,10 @@ def validate_phone(raw: str | None) -> str:
     """Return ``raw`` as an E.164 string, or raise :class:`InvalidPhone`.
 
     ``PHONE_REQUIRED`` for ``None`` or blank input, ``PHONE_INVALID`` for anything libphonenumber
-    does not accept as a valid number. Arabic-Indic and Persian digits are read as ASCII; digits of
-    any other script are refused. Letters are refused outright: libphonenumber would turn
-    vanity letters into digits and read ``ext`` as an extension, and neither belongs in a stored
-    number. An extension is refused for the same reason.
+    does not accept as a valid mobile number (a pure landline included). Arabic-Indic and Persian
+    digits are read as ASCII; digits of any other script are refused. Letters are refused
+    outright: libphonenumber would turn vanity letters into digits and read ``ext`` as an
+    extension, and neither belongs in a stored number. An extension is refused for the same reason.
     """
     text = (raw or "").strip().translate(_ASCII_DIGITS)
     if not text:
@@ -80,7 +88,11 @@ def validate_phone(raw: str | None) -> str:
         parsed = phonenumbers.parse(text, DEFAULT_REGION)
     except NumberParseException as exc:
         raise InvalidPhone(PHONE_INVALID) from exc
-    if parsed.extension or not phonenumbers.is_valid_number(parsed):
+    if (
+        parsed.extension
+        or not phonenumbers.is_valid_number(parsed)
+        or phonenumbers.number_type(parsed) not in _ACCEPTED_TYPES
+    ):
         raise InvalidPhone(PHONE_INVALID)
     return phonenumbers.format_number(parsed, PhoneNumberFormat.E164)
 

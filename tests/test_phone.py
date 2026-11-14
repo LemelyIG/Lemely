@@ -19,6 +19,27 @@ PERSIAN = "۰۱۰۱۲۳۴۵۶۷۸"  # 01012345678
 @pytest.mark.parametrize(
     ("typed", "stored"),
     [
+        # every Egyptian mobile prefix (010, 011, 012, 015), local and international
+        ("01012345678", "+201012345678"),
+        ("01112345678", "+201112345678"),
+        ("01212345678", "+201212345678"),
+        ("01512345678", "+201512345678"),
+        ("+201512345678", "+201512345678"),
+        # international mobiles: UK, Saudi Arabia, UAE; and the US, where libphonenumber cannot
+        # tell a mobile from a landline (FIXED_LINE_OR_MOBILE) and the number must still pass
+        ("+447911123456", "+447911123456"),
+        ("+966512345678", "+966512345678"),
+        ("+971501234567", "+971501234567"),
+        ("+12025550123", "+12025550123"),
+    ],
+)
+def test_mobile_numbers_are_accepted(typed: str, stored: str) -> None:
+    assert validate_phone(typed) == stored
+
+
+@pytest.mark.parametrize(
+    ("typed", "stored"),
+    [
         ("+201234567890", "+201234567890"),
         ("+20 123 456 7890", "+201234567890"),
         ("+20-123-456-7890", "+201234567890"),
@@ -53,6 +74,12 @@ def test_a_valid_number_is_stored_in_e164(typed: str, stored: str) -> None:
 @pytest.mark.parametrize(
     "typed",
     [
+        # M1: a landline is a well-formed number, but not one a payer is reached on
+        "0223456789",  # Cairo
+        "+20223456789",
+        "0233456789",
+        "035123456",  # Alexandria
+        "+442071234567",  # London
         "NA",
         "call me",
         "12345",

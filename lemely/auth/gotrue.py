@@ -49,7 +49,6 @@ class GoTrueBackend(Protocol):
         email: str,
         password: str,
         role: str,
-        phone: str | None = None,
     ) -> GoTrueUser:
         """Create a confirmed GoTrue user with ``role`` in ``user_metadata``."""
         ...
@@ -103,7 +102,6 @@ class HttpGoTrueBackend:
         email: str,
         password: str,
         role: str,
-        phone: str | None = None,
     ) -> GoTrueUser:
         """Admin-create a confirmed GoTrue user (service-role key)."""
         service_key = self._service_key()
@@ -114,8 +112,6 @@ class HttpGoTrueBackend:
             "email_confirm": True,
             "user_metadata": user_metadata,
         }
-        if phone is not None:
-            payload["phone"] = phone
         try:
             response = httpx.post(
                 f"{self._base_url}/auth/v1/admin/users",

@@ -1145,17 +1145,20 @@ def test_signup_stores_the_phone_in_e164(
     assert row.phone == stored
 
 
-def test_signup_never_forwards_the_phone_to_gotrue(
+def test_two_signups_may_share_one_phone(
     context: tuple[TestClient, AuthService, Settings],
 ) -> None:
-    """GoTrue keeps ``auth.users.phone`` unique; a family may share one number."""
+    """GoTrue never sees the phone (``admin_create_user`` has no such parameter), so a family
+    sharing one number can each sign up; ``public.users.phone`` is not unique."""
     client, service, _ = context
     first = client.post("/api/auth/signup", json=_signup_body(email="child@example.com"))
     second = client.post(
         "/api/auth/signup", json=_signup_body(email="sibling@example.com", role="teacher")
     )
     assert (first.status_code, second.status_code) == (200, 200)
-    assert service._gotrue.created_with_phone == [None, None]  # type: ignore[attr-defined]
+    rows = [service._mirror.get_by_id(uuid.UUID(r.json()["userId"])) for r in (first, second)]  # type: ignore[attr-defined]
+    assert rows[0] is not None and rows[1] is not None
+    assert rows[0].phone == rows[1].phone is not None
 
 
 def test_parent_signup_without_a_phone_is_422_and_creates_no_account(

@@ -58,10 +58,6 @@ class UserMirror(Protocol):
         """Return the mirrored user for ``user_id``, or ``None``."""
         ...
 
-    def get_by_phone(self, phone: str) -> User | None:
-        """Return the mirrored user with ``phone``, or ``None``."""
-        ...
-
     def get_by_email(self, email: str) -> User | None:
         """Return the mirrored user with ``email``, or ``None``.
 
@@ -186,21 +182,12 @@ class DbUserMirror:
                 session.expunge(user)
             return user
 
-    def get_by_phone(self, phone: str) -> User | None:
-        """Return the most-recently-created user with ``phone``, or ``None``."""
-        with session_scope(self._settings) as session:
-            stmt = select(User).where(User.phone == phone).order_by(User.created_at.desc()).limit(1)
-            user = session.scalars(stmt).first()
-            if user is not None:
-                session.expunge(user)
-            return user
-
     def get_by_email(self, email: str) -> User | None:
         """Return the user with ``email``, detached from the session, or ``None``.
 
         ``users.email`` is unique (migration ``0002``), so — unlike
-        :meth:`get_by_phone`, which orders by recency because phone is not
-        unique — this is a single unambiguous lookup.
+        a phone, which is not unique and is
+        deliberately never a lookup key — this is a single unambiguous lookup.
         """
         with session_scope(self._settings) as session:
             user = session.scalars(select(User).where(User.email == email)).first()

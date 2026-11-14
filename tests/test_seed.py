@@ -284,7 +284,7 @@ class TestCreateDemoAccounts:
         # empty — signup then fails 422 forever and the seeder is stuck.
         gotrue = FakeGoTrueBackend()
         teacher = next(a for a in DEMO_ACCOUNTS if a.role is Role.teacher)
-        gotrue.admin_create_user(teacher.email, DEMO_PASSWORD, teacher.role.value, None)
+        gotrue.admin_create_user(teacher.email, DEMO_PASSWORD, teacher.role.value)
 
         result, _auth_service, mirror, _link_service = _create_demo_accounts(gotrue=gotrue)
 
@@ -307,7 +307,7 @@ class TestCreateDemoAccounts:
         """
         gotrue = FakeGoTrueBackend()
         parent = next(a for a in DEMO_ACCOUNTS if a.role is Role.parent)
-        gotrue.admin_create_user(parent.email, DEMO_PASSWORD, parent.role.value, None)
+        gotrue.admin_create_user(parent.email, DEMO_PASSWORD, parent.role.value)
 
         result, _auth_service, mirror, _link_service = _create_demo_accounts(gotrue=gotrue)
 
