@@ -330,7 +330,7 @@ export const appRoutes: RouteObject[] = [
     element: <RootOutlet />,
     children: [
   // Drift builds only (a build-time constant, so a deployed build has no such route): the stacked-dialog page.
-  ...(DRIFT_BUILD ? [driftStackedDialogsRoute] : []),
+  ...(DRIFT_BUILD && driftStackedDialogsRoute ? [driftStackedDialogsRoute] : []),
   /*
    * Packet B2b · the second pathless layout route, grouping every top-level
    * route that is not one of the five portal subtrees below (which get
