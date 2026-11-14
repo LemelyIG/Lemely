@@ -122,12 +122,23 @@ POLISH_V_CHECKS.push(
       if (m.current.join() !== "Friends") throw new Error(`the current page is marked on [${m.current}], expected Friends`)
       if (platform === "ios" && m.closes !== 1) throw new Error(`iOS More has ${m.closes} close controls, expected 1`)
       if (platform === "android" && m.closes !== 0) throw new Error(`Android More has ${m.closes} visible close controls, expected 0`)
-      if (platform === "android" && m.dividers.some((d) => d !== "0px")) throw new Error(`Android More rows keep dividers ${m.dividers}`)
       const chevrons = await dialog.locator("[data-disclosure]").evaluateAll((els) => els.filter((e) => e.checkVisibility()).length)
       if (platform === "ios" && chevrons < 1) throw new Error("iOS More rows show no disclosure chevron")
       if (platform === "android" && chevrons !== 0) throw new Error("Android More rows show a chevron")
     },
   })),
+  {
+    id: "pv-android-more-rows-have-no-dividers",
+    platform: "android",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student/friends" },
+    async run(page) {
+      const dialog = await openMore(page)
+      const dividers = await dialog.evaluate((el) => [...el.querySelectorAll("a.lm-list-row")].slice(1).map((r) => getComputedStyle(r).borderTopWidth))
+      if (dividers.length < 2) throw new Error("the More list has too few rows to show a divider")
+      if (dividers.some((d) => d !== "0px")) throw new Error(`Android More rows keep dividers ${dividers}`)
+    },
+  },
   {
     id: "pv-ios-more-close-control-closes-the-sheet",
     platform: "ios",
@@ -541,7 +552,7 @@ POLISH_V_CHECKS.push(
         return { sheet, group, delta: Math.abs(lum(sheet) - lum(group)) }
       })
       if (r.sheet === r.group) throw new Error(`the group and the sheet are the same colour (${r.sheet})`)
-      if (r.delta < 0.02) throw new Error(`the group barely separates from the sheet: ${r.group} on ${r.sheet} (luminance step ${r.delta.toFixed(3)})`)
+      if (r.delta < (theme === "dark" ? 0.025 : 0.04)) throw new Error(`the group barely separates from the sheet: ${r.group} on ${r.sheet} (luminance step ${r.delta.toFixed(3)})`)
     },
   })),
 )
