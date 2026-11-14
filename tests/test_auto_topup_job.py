@@ -26,12 +26,15 @@ from lemely.db.auto_topup_repo import (
     enqueue_auto_topup,
     handle_auto_topup_paid,
     on_auto_topup_paid,
+    put_auto_topup,
     run_auto_topup_job,
 )
 from lemely.db.billing_repo import BillingService, paid_handler_for
+from lemely.db.merchant_charge_repo import charge_queued_payments
 from lemely.db.models import ParentChildLink, User
 from lemely.db.models.billing import (
     AutoTopupSettings,
+    CreditPack,
     Payment,
     PaymentPurpose,
     PaymentStatus,
@@ -43,6 +46,7 @@ from lemely.db.models.tutoring import EmailOutbox
 from lemely.db.models.usage import GrantKind, UsageGrant
 from lemely.db.usage_ledger_repo import UsageLedger
 from lemely.io.paymob.client import PaymobError
+from tests._concurrency import _Paused, _wait_until_a_backend_waits_on_a_lock
 from tests.merchant_charge_fixtures import (
     FakeMotoClient,
     moto_txn,
@@ -200,6 +204,30 @@ def _txn_for(sm: sessionmaker[Session], payment_id: uuid.UUID, txn_id: int) -> d
     )
 
 
+def _stamp_units(sm: sessionmaker[Session], payment_id: uuid.UUID, units: int = 1_000) -> None:
+    """Seeded payments bypass the enqueue that stamps ``grant_units``; stamp them like it does."""
+    with sm.begin() as session:
+        session.execute(
+            sa.update(Payment).where(Payment.id == payment_id).values(grant_units=units)
+        )
+
+
+def _decline(sm: sessionmaker[Session], payment_id: uuid.UUID) -> None:
+    """Mark a payment as a charge that was sent and failed (``sent_at`` is stamped at the claim)."""
+    with sm.begin() as session:
+        session.execute(
+            sa.update(Payment)
+            .where(Payment.id == payment_id)
+            .values(status=PaymentStatus.failed, sent_at=NOW)
+        )
+
+
+def _all_mails(sm: sessionmaker[Session]) -> dict[str, int]:
+    """How many mails of each billing top-up template are queued."""
+    templates = ("auto_topup_failed", "auto_topup_card_missing", "auto_topup_phone_required")
+    return {t: len(_mails(sm, t)) for t in templates}
+
+
 def _assert_failed_unsent(
     sm: sessionmaker[Session], client: FakeMotoClient, ids: dict[str, uuid.UUID], reason: str
 ) -> None:
@@ -254,7 +282,7 @@ def test_a_decline_switches_it_off_with_charge_failed_and_emails_the_payer_once(
     assert len(client.calls_to("pay_with_token")) == 1
 
 
-def test_a_deactivated_card_fails_without_calling_paymob_and_switches_off(
+def test_a_deactivated_card_fails_without_calling_paymob_and_tells_the_card_is_gone(
     sm: sessionmaker[Session],
 ) -> None:
     ids = _queued(sm)
@@ -262,11 +290,16 @@ def test_a_deactivated_card_fails_without_calling_paymob_and_switches_off(
         session.get_one(SavedCard, ids["card"]).is_active = False
     client = _client(sm)
 
-    assert _run(sm, client) == 2  # one charge failed unsent, one setting switched off
+    assert _run(sm, client) == 1
 
-    _assert_failed_unsent(sm, client, ids, "card_unusable")
+    _assert_failed_unsent(sm, client, ids, "card_missing")
     assert _setting(sm, ids["child"]).disabled_reason == "charge_failed"
-    assert len(_mails(sm)) == 1
+    # No charge was tried: the payer is told the card is gone, never that a charge failed.
+    assert _all_mails(sm) == {
+        "auto_topup_failed": 0,
+        "auto_topup_card_missing": 1,
+        "auto_topup_phone_required": 0,
+    }
 
 
 def test_a_failure_of_an_older_top_up_is_ignored(sm: sessionmaker[Session]) -> None:
@@ -308,7 +341,7 @@ def test_a_stale_queued_top_up_that_is_not_the_latest_is_not_charged(
 
     assert len(client.calls_to("pay_with_token")) == 1  # the latest only
     assert _payment(sm, stale).status is PaymentStatus.failed
-    assert _payment(sm, stale).last_callback == {"source": "pre_send", "reason": "card_unusable"}
+    assert _payment(sm, stale).last_callback == {"source": "pre_send", "reason": "superseded"}
     assert _payment(sm, ids["payment"]).status is PaymentStatus.pending
     assert _setting(sm, ids["child"]).enabled is True  # the stale failure is not the latest
 
@@ -316,7 +349,7 @@ def test_a_stale_queued_top_up_that_is_not_the_latest_is_not_charged(
 # -- re-checks at charge time (M5/I2) ----------------------------------------
 
 
-def test_a_parent_link_removed_before_the_charge_fails_unsent_and_switches_off(
+def test_a_parent_link_removed_after_queuing_switches_off_as_parent_unlinked_and_mails_nobody(
     sm: sessionmaker[Session],
 ) -> None:
     ids = _queued(sm)
@@ -326,14 +359,18 @@ def test_a_parent_link_removed_before_the_charge_fails_unsent_and_switches_off(
 
     _run(sm, client)
 
-    # T7 already queued the payment, so the order is: the queued charge fails unsent, then the
-    # failure sweep switches off with ``charge_failed`` (``parent_unlinked`` is T7's enqueue path).
-    _assert_failed_unsent(sm, client, ids, "card_unusable")
-    assert _setting(sm, ids["child"]).disabled_reason == "charge_failed"
-    assert len(_mails(sm)) == 1
+    _assert_failed_unsent(sm, client, ids, "parent_unlinked")
+    setting = _setting(sm, ids["child"])
+    assert (setting.enabled, setting.disabled_reason) == (False, "parent_unlinked")  # DV-10
+    # The unlinked parent no longer manages the child: no "could not charge" mail, no mail at all.
+    assert _all_mails(sm) == {
+        "auto_topup_failed": 0,
+        "auto_topup_card_missing": 0,
+        "auto_topup_phone_required": 0,
+    }
 
 
-def test_a_payer_without_a_phone_at_charge_time_fails_unsent_and_switches_off(
+def test_a_payer_without_a_phone_at_charge_time_is_told_to_add_one_not_that_a_charge_failed(
     sm: sessionmaker[Session],
 ) -> None:
     ids = _queued(sm)
@@ -342,9 +379,19 @@ def test_a_payer_without_a_phone_at_charge_time_fails_unsent_and_switches_off(
     client = _client(sm)
 
     _run(sm, client)
+    _run(sm, client)
 
     _assert_failed_unsent(sm, client, ids, "phone_required")
-    assert _setting(sm, ids["child"]).disabled_reason == "charge_failed"
+    setting = _setting(sm, ids["child"])
+    # Switched off (the brief): a re-enable is refused until a phone is added, and leaving it on
+    # would queue a doomed charge at every settle. ``charge_failed`` is the only reason the
+    # frontend knows (DV-10).
+    assert (setting.enabled, setting.disabled_reason) == (False, "charge_failed")
+    (mail,) = _mails(sm, "auto_topup_phone_required")
+    assert mail.recipient_user_id == ids["payer"]
+    assert mail.context == {"setting_id": str(ids["setting"])}
+    assert mail.dedupe_key == f"auto_topup_phone_required:{ids['setting']}:{setting.crossing_seq}"
+    assert _mails(sm) == []
 
 
 def test_a_setting_without_consent_is_not_charged(sm: sessionmaker[Session]) -> None:
@@ -359,7 +406,13 @@ def test_a_setting_without_consent_is_not_charged(sm: sessionmaker[Session]) -> 
 
     _run(sm, client)
 
-    _assert_failed_unsent(sm, client, ids, "card_unusable")
+    _assert_failed_unsent(sm, client, ids, "no_consent")
+    assert _setting(sm, ids["child"]).enabled is True  # nothing happened to the payer
+    assert _all_mails(sm) == {
+        "auto_topup_failed": 0,
+        "auto_topup_card_missing": 0,
+        "auto_topup_phone_required": 0,
+    }
 
 
 def test_a_setting_that_changed_payer_is_not_charged_to_the_old_payer(
@@ -378,12 +431,17 @@ def test_a_setting_that_changed_payer_is_not_charged_to_the_old_payer(
 
     _run(sm, client)
 
-    _assert_failed_unsent(sm, client, ids, "card_unusable")
+    _assert_failed_unsent(sm, client, ids, "payer_changed")
+    assert _setting(sm, ids["child"]).enabled is True
+    assert _mails(sm) == []
 
 
-@pytest.mark.parametrize("change", ["disabled", "no_card", "setting_gone"])
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [("disabled", "disabled"), ("no_card", "card_missing"), ("setting_gone", "setting_gone")],
+)
 def test_a_setting_that_is_off_cardless_or_gone_is_not_charged(
-    sm: sessionmaker[Session], change: str
+    sm: sessionmaker[Session], change: str, reason: str
 ) -> None:
     ids = _queued(sm)
     with sm.begin() as session:
@@ -402,7 +460,8 @@ def test_a_setting_that_is_off_cardless_or_gone_is_not_charged(
 
     _run(sm, client)
 
-    _assert_failed_unsent(sm, client, ids, "card_unusable")
+    _assert_failed_unsent(sm, client, ids, reason)
+    assert _mails(sm) == []  # never "could not charge your card"
 
 
 def test_the_card_of_another_user_on_the_setting_is_not_charged(sm: sessionmaker[Session]) -> None:
@@ -418,7 +477,8 @@ def test_the_card_of_another_user_on_the_setting_is_not_charged(sm: sessionmaker
 
     _run(sm, client)
 
-    _assert_failed_unsent(sm, client, ids, "card_unusable")
+    _assert_failed_unsent(sm, client, ids, "card_missing")
+    assert _mails(sm) == []
 
 
 # -- unknown outcome ---------------------------------------------------------
@@ -567,6 +627,7 @@ def test_a_late_paid_older_top_up_does_not_rearm(sm: sessionmaker[Session]) -> N
         dedupe_key=f"auto_topup:{uuid.uuid4()}:0",
         paid_at=NOW,
     )
+    _stamp_units(sm, older)
 
     with sm.begin() as session:
         on_auto_topup_paid(session, session.get_one(Payment, older))
@@ -577,27 +638,26 @@ def test_a_late_paid_older_top_up_does_not_rearm(sm: sessionmaker[Session]) -> N
     assert after.last_payment_id == ids["payment"]
 
 
-def test_a_paid_handler_without_paid_at_or_pack_raises(sm: sessionmaker[Session]) -> None:
+def test_a_paid_handler_without_paid_at_pack_or_units_raises(sm: sessionmaker[Session]) -> None:
     ids = _queued(sm)
-    no_clock = seed_payment_row(
-        sm,
-        payer_id=ids["payer"],
-        beneficiary_id=ids["child"],
-        purpose=PaymentPurpose.auto_topup,
-        amount_minor=10_000,
-        credit_pack_id=ids["pack"],
-        dedupe_key=f"auto_topup:{uuid.uuid4()}:0",
-    )
-    no_pack = seed_payment_row(
-        sm,
-        payer_id=ids["payer"],
-        beneficiary_id=ids["child"],
-        purpose=PaymentPurpose.auto_topup,
-        amount_minor=10_000,
-        dedupe_key=f"auto_topup:{uuid.uuid4()}:0",
-        paid_at=NOW,
-    )
-    for payment_id in (no_clock, no_pack):
+
+    def seeded(**kwargs: Any) -> uuid.UUID:
+        return seed_payment_row(
+            sm,
+            payer_id=ids["payer"],
+            beneficiary_id=ids["child"],
+            purpose=PaymentPurpose.auto_topup,
+            amount_minor=10_000,
+            dedupe_key=f"auto_topup:{uuid.uuid4()}:0",
+            **kwargs,
+        )
+
+    no_clock = seeded(credit_pack_id=ids["pack"])
+    _stamp_units(sm, no_clock)
+    no_pack = seeded(paid_at=NOW)
+    _stamp_units(sm, no_pack)
+    no_units = seeded(credit_pack_id=ids["pack"], paid_at=NOW)  # never stamped at enqueue
+    for payment_id in (no_clock, no_pack, no_units):
         with sm() as session:
             with pytest.raises(ValueError, match="no "):
                 on_auto_topup_paid(session, session.get_one(Payment, payment_id))
@@ -615,12 +675,7 @@ def test_one_setting_raising_in_the_sweep_does_not_stop_the_rest(
 ) -> None:
     first, second = _queued(sm), _queued(sm)
     for ids in (first, second):
-        with sm.begin() as session:
-            session.execute(
-                sa.update(Payment)
-                .where(Payment.id == ids["payment"])
-                .values(status=PaymentStatus.failed)
-            )
+        _decline(sm, ids["payment"])
     real = auto_topup_repo.enqueue_auto_topup_failed
 
     def flaky(session: Session, *, payer_user_id: uuid.UUID, payment_id: uuid.UUID) -> bool:
@@ -648,12 +703,7 @@ def test_the_sweep_is_bounded_per_run(
     monkeypatch.setattr(auto_topup_repo, "MERCHANT_SWEEP_BATCH", 1)
     rows = [_queued(sm), _queued(sm)]
     for ids in rows:
-        with sm.begin() as session:
-            session.execute(
-                sa.update(Payment)
-                .where(Payment.id == ids["payment"])
-                .values(status=PaymentStatus.failed)
-            )
+        _decline(sm, ids["payment"])
 
     assert _run(sm, _client(sm)) == 1
     assert _run(sm, _client(sm)) == 1
@@ -725,6 +775,241 @@ def test_the_card_missing_notice_commits_or_rolls_back_with_the_disable(
     with sm.begin() as session:
         enqueue_auto_topup(session, ids["child"], now=NOW)
     assert len(_mails(sm, "auto_topup_card_missing")) == 1
+    assert _setting(sm, ids["child"]).enabled is False
+
+
+# ---------------------------------------------------------------------------
+# The price is fixed at queue time: units snapshot, pack, price and cap re-checks (review I1, I2).
+# ---------------------------------------------------------------------------
+
+
+def test_the_queued_payment_snapshots_the_units_and_a_pack_edit_does_not_change_the_grant(
+    sm: sessionmaker[Session],
+) -> None:
+    ids = _queued(sm)
+    assert _payment(sm, ids["payment"]).grant_units == 1_000  # stamped with the price
+    with sm.begin() as session:
+        session.get_one(
+            CreditPack, ids["pack"]
+        ).units = 400  # an admin edit after the price was fixed
+    _run(sm, _client(sm))
+    obj = _txn_for(sm, ids["payment"], 990_001)
+
+    _deliver(sm, obj)
+    _deliver(sm, obj)  # a replay keeps the stamp and grants nothing more
+
+    assert _payment(sm, ids["payment"]).amount_minor == 10_000  # charged the old price
+    (grant,) = _grants(sm, ids["payment"])
+    assert grant.units == 1_000  # paid for 1000 units, granted 1000
+    assert _payment(sm, ids["payment"]).grant_units == 1_000
+
+
+def _edit(
+    sm: sessionmaker[Session],
+    ids: dict[str, uuid.UUID],
+    *,
+    pack: uuid.UUID | None = None,
+    cap: int = 50_000,
+) -> None:
+    with sm.begin() as session:
+        put_auto_topup(
+            session,
+            payer_user_id=ids["payer"],
+            beneficiary_user_id=ids["child"],
+            enabled=True,
+            threshold_units=500,
+            credit_pack_id=pack or ids["pack"],
+            saved_card_id=ids["card"],
+            monthly_cap_minor=cap,
+            now=NOW,
+        )
+
+
+def _assert_refused_for_changed_terms(
+    sm: sessionmaker[Session], client: FakeMotoClient, ids: dict[str, uuid.UUID]
+) -> AutoTopupSettings:
+    _assert_failed_unsent(sm, client, ids, "settings_changed")
+    setting = _setting(sm, ids["child"])
+    assert setting.enabled is True  # the payer's edit is respected, not punished
+    assert (setting.armed, setting.disabled_reason, setting.last_payment_id) == (True, None, None)
+    assert setting.crossing_seq == 1  # re-armed: the next crossing queues at the current terms
+    assert _all_mails(sm) == {
+        "auto_topup_failed": 0,
+        "auto_topup_card_missing": 0,
+        "auto_topup_phone_required": 0,
+    }
+    return setting
+
+
+def test_a_queued_charge_is_refused_after_the_payer_moves_to_a_cheaper_pack_and_a_lower_cap(
+    sm: sessionmaker[Session],
+) -> None:
+    ids = _queued(sm)
+    cheap = seed_pack(sm, units=200, price_minor=2_000)
+    _edit(sm, ids, pack=cheap, cap=5_000)
+    client = _client(sm)
+
+    _run(sm, client)
+
+    _assert_refused_for_changed_terms(sm, client, ids)
+    with sm.begin() as session:  # the next crossing queues at the new terms
+        queued = enqueue_auto_topup(session, ids["child"], now=NOW)
+        assert queued is not None
+        assert (queued.amount_minor, queued.grant_units, queued.credit_pack_id) == (
+            2_000,
+            200,
+            cheap,
+        )
+
+
+def test_a_queued_charge_above_a_lowered_cap_is_refused_even_with_the_same_pack(
+    sm: sessionmaker[Session],
+) -> None:
+    ids = _queued(sm)
+    with sm.begin() as session:  # a cap-only edit down to a figure the charge no longer fits
+        session.execute(
+            sa.update(AutoTopupSettings)
+            .where(AutoTopupSettings.id == ids["setting"])
+            .values(monthly_cap_minor=9_999)
+        )
+    client = _client(sm)
+
+    _run(sm, client)
+
+    _assert_refused_for_changed_terms(sm, client, ids)
+
+
+@pytest.mark.parametrize("change", ["price_up", "price_down", "deactivated"])
+def test_a_queued_charge_is_refused_when_the_pack_price_or_state_changed_after_queuing(
+    sm: sessionmaker[Session], change: str
+) -> None:
+    ids = _queued(sm)
+    with sm.begin() as session:
+        pack = session.get_one(CreditPack, ids["pack"])
+        if change == "deactivated":
+            pack.is_active = False
+        else:
+            pack.price_minor = 12_000 if change == "price_up" else 8_000
+    client = _client(sm)
+
+    _run(sm, client)
+
+    _assert_refused_for_changed_terms(sm, client, ids)
+
+
+def test_a_queued_charge_is_refused_when_the_payer_switched_to_another_pack_at_the_same_price(
+    sm: sessionmaker[Session],
+) -> None:
+    ids = _queued(sm)
+    twin = seed_pack(sm, units=1_500, price_minor=10_000)
+    _edit(sm, ids, pack=twin)
+    client = _client(sm)
+
+    _run(sm, client)
+
+    _assert_refused_for_changed_terms(sm, client, ids)
+
+
+def test_a_queued_charge_that_still_fits_the_terms_is_charged(sm: sessionmaker[Session]) -> None:
+    ids = _queued(sm)
+    _edit(sm, ids, cap=10_000)  # exactly the charge: spent so far plus this charge equals the cap
+    client = _client(sm)
+
+    _run(sm, client)
+
+    assert len(client.calls_to("pay_with_token")) == 1
+    assert _payment(sm, ids["payment"]).status is PaymentStatus.pending
+
+
+# ---------------------------------------------------------------------------
+# A card deleted after queuing (review I3): the card-missing notice, once, same transaction.
+# ---------------------------------------------------------------------------
+
+
+def test_a_card_hard_deleted_after_queuing_is_noticed_as_removed_once_and_never_as_a_failed_charge(
+    sm: sessionmaker[Session],
+) -> None:
+    ids = _queued(sm)
+    with sm.begin() as session:
+        session.delete(session.get_one(SavedCard, ids["card"]))  # ON DELETE SET NULL
+    client = _client(sm)
+
+    _run(sm, client)
+    _run(sm, client)
+
+    _assert_failed_unsent(sm, client, ids, "card_missing")
+    setting = _setting(sm, ids["child"])
+    assert (setting.enabled, setting.disabled_reason) == (False, "charge_failed")
+    (mail,) = _mails(sm, "auto_topup_card_missing")
+    assert mail.recipient_user_id == ids["payer"]
+    assert mail.dedupe_key == f"auto_topup_card_missing:{ids['setting']}:{setting.crossing_seq}"
+    assert _mails(sm) == []  # "We could not charge your saved card" is never sent
+
+
+def test_a_failing_notice_rolls_the_disable_back_and_the_next_run_finishes_it(
+    sm: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ids = _queued(sm)
+    with sm.begin() as session:
+        session.delete(session.get_one(SavedCard, ids["card"]))
+
+    def boom(*_a: Any, **_k: Any) -> bool:
+        raise RuntimeError("outbox down")
+
+    monkeypatch.setattr(auto_topup_repo, "enqueue_auto_topup_card_missing", boom)
+    with capture_logs():
+        _run(sm, _client(sm))
+
+    # The notice failed, so its disable rolled back with it: the setting is still on and nothing was
+    # sent. The payment is failed unsent either way, and the next run's sweep finishes the job.
+    assert _setting(sm, ids["child"]).enabled is True
+    assert _mails(sm, "auto_topup_card_missing") == []
+    monkeypatch.undo()
+    _run(sm, _client(sm))
+    assert len(_mails(sm, "auto_topup_card_missing")) == 1
+    assert _setting(sm, ids["child"]).enabled is False
+
+
+# ---------------------------------------------------------------------------
+# The setting row is locked from the re-check to the claim (review M1).
+# ---------------------------------------------------------------------------
+
+
+def test_a_switch_off_in_flight_wins_over_the_charge(sm: sessionmaker[Session]) -> None:
+    ids = _queued(sm)
+    client = _client(sm)
+    holder = sm()  # the payer's PUT: row locked, switch-off written, not yet committed
+    holder.execute(
+        sa.select(AutoTopupSettings.id)
+        .where(AutoTopupSettings.id == ids["setting"])
+        .with_for_update()
+    )
+    holder.execute(
+        sa.update(AutoTopupSettings)
+        .where(AutoTopupSettings.id == ids["setting"])
+        .values(enabled=False)
+    )
+    charge = _Paused(
+        lambda: charge_queued_payments(
+            sm,
+            client,
+            PAYMOB_SETTINGS,
+            purpose=PaymentPurpose.auto_topup,
+            dedupe_prefix=auto_topup_repo.AUTO_TOPUP_DEDUPE_PREFIX,
+            card_for=auto_topup_repo._card_for_charge(NOW),
+            now=NOW,
+        )
+    )
+    try:
+        _wait_until_a_backend_waits_on_a_lock(sm)  # the charge really is queued behind the PUT
+        assert client.calls == []
+    finally:
+        holder.commit()  # always release, so a red run cannot leave the row locked for others
+        holder.close()
+    charge.join()
+
+    assert charge.error is None
+    _assert_failed_unsent(sm, client, ids, "card_unusable")
     assert _setting(sm, ids["child"]).enabled is False
 
 

@@ -28,8 +28,10 @@ from lemely.core.usage_types import GrantScope, Payer
 from lemely.db.billing_notices import (
     enqueue_auto_topup_card_missing,
     enqueue_auto_topup_failed,
+    enqueue_auto_topup_phone_required,
 )
 from lemely.db.billing_repo import (
+    PhoneRequired,
     add_months,
     credit_validity_months,
     is_linked_parent,
@@ -42,6 +44,8 @@ from lemely.db.merchant_charge_repo import (
     MERCHANT_SWEEP_BATCH,
     MerchantChargeError,
     charge_queued_payments,
+    charges_configured,
+    fail_unsent,
     insert_queued_payment,
 )
 from lemely.db.models import User
@@ -58,7 +62,7 @@ from lemely.db.usage_ledger_repo import UsageLedger
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
     from datetime import datetime
 
     from sqlalchemy.orm import Session, sessionmaker
@@ -83,19 +87,28 @@ DEFAULT_CURRENCY: Final = "EGP"
 MAX_SETTING_VALUE: Final = 10**12
 
 
-def spent_this_month(session: Session, beneficiary_user_id: uuid.UUID, *, now: datetime) -> int:
-    """Minor units of in-flight and paid auto top-ups created in ``now``'s UTC calendar month."""
+def spent_this_month(
+    session: Session,
+    beneficiary_user_id: uuid.UUID,
+    *,
+    now: datetime,
+    excluding: uuid.UUID | None = None,
+) -> int:
+    """Minor units of in-flight and paid auto top-ups created in ``now``'s UTC calendar month.
+
+    ``excluding`` leaves one payment out, so a charge-time cap check can add that payment itself.
+    """
     start, end = calendar_month_bounds(now)
-    total = session.scalar(
-        sa.select(sa.func.coalesce(sa.func.sum(Payment.amount_minor), 0)).where(
-            Payment.beneficiary_user_id == beneficiary_user_id,
-            Payment.purpose == PaymentPurpose.auto_topup,
-            Payment.status.in_((*IN_FLIGHT_STATUSES, PaymentStatus.paid)),
-            Payment.created_at >= start,
-            Payment.created_at < end,
-        )
+    query = sa.select(sa.func.coalesce(sa.func.sum(Payment.amount_minor), 0)).where(
+        Payment.beneficiary_user_id == beneficiary_user_id,
+        Payment.purpose == PaymentPurpose.auto_topup,
+        Payment.status.in_((*IN_FLIGHT_STATUSES, PaymentStatus.paid)),
+        Payment.created_at >= start,
+        Payment.created_at < end,
     )
-    return int(total or 0)
+    if excluding is not None:
+        query = query.where(Payment.id != excluding)
+    return int(session.scalar(query) or 0)
 
 
 def enqueue_auto_topup(
@@ -191,6 +204,8 @@ def enqueue_auto_topup(
             "auto_topup_dedupe_conflict", beneficiary=str(owner_user_id), setting=str(setting.id)
         )
         return None
+    # What the payer pays for is fixed now, with the price: a later pack edit never changes it.
+    payment.grant_units = pack.units
     setting.armed = False
     setting.last_payment_id = payment.id
     session.flush()
@@ -231,20 +246,24 @@ def on_auto_topup_paid(session: Session, payment: Payment) -> None:
     top-up and the setting is disarmed. A late payment of an older top-up changes nothing, and a
     top-up that leaves the balance below the threshold fires again on the next crossing.
 
+    It grants exactly the ``grant_units`` stamped when the top-up was queued, with its price, and
+    never reads the pack again (an admin edit in between must not change what the payer bought).
+
     Raises:
-        ValueError: ``paid_at`` or ``credit_pack_id`` is missing (the clock is never guessed, and a
-            purpose that does not match its pack is a bug).
+        ValueError: ``paid_at``, ``credit_pack_id`` or ``grant_units`` is missing (the clock is
+            never guessed, and a purpose that does not match its pack is a bug).
     """
     paid_at = payment.paid_at
     if paid_at is None:
         raise ValueError(f"auto top-up payment {payment.id} has no paid_at")
     if payment.credit_pack_id is None:
         raise ValueError(f"auto top-up payment {payment.id} has no credit_pack_id")
-    pack = session.get_one(CreditPack, payment.credit_pack_id)
+    if payment.grant_units is None:
+        raise ValueError(f"auto top-up payment {payment.id} has no grant_units snapshot")
     UsageLedger(session).issue_grant(
         owner_user_id=payment.beneficiary_user_id,
         kind=GrantKind.auto_topup,
-        units=pack.units,
+        units=payment.grant_units,
         idempotency_key=f"{AUTO_TOPUP_DEDUPE_PREFIX}{payment.id}",
         expires_at=add_months(paid_at, credit_validity_months(session, payment_id=payment.id)),
         visible=True,
@@ -276,43 +295,213 @@ register_paid_handler(PaymentPurpose.auto_topup, handle_auto_topup_paid)
 # ---------------------------------------------------------------------------
 
 
-def _auto_topup_card(session: Session, payment: Payment) -> SavedCard | None:
-    """The card a queued top-up is charged to, re-checked now; ``None`` fails it unsent (DV-24).
+# Why a queued top-up must not be charged now (``_refusal``). Nothing was charged in any of them.
+_SETTING_GONE: Final = "setting_gone"
+_DISABLED: Final = "disabled"
+_SUPERSEDED: Final = "superseded"
+_PAYER_CHANGED: Final = "payer_changed"
+_PAYER_MISSING: Final = "payer_missing"
+_NO_CONSENT: Final = "no_consent"
+_PARENT_UNLINKED: Final = "parent_unlinked"
+_CARD_MISSING: Final = "card_missing"
+_SETTINGS_CHANGED: Final = "settings_changed"
+_PHONE_REQUIRED: Final = "phone_required"
+#: A pre-send failure whose cause is gone by the time the sweep reads it.
+_RECOVERED: Final = "recovered"
+#: Refusals that change nothing: the setting is off, gone, or has moved on to another top-up.
+_NOTHING_TO_DO: Final = frozenset({_SETTING_GONE, _DISABLED, _SUPERSEDED})
 
-    The queued row pins no card and no consent, so everything is read again at charge time: the
-    setting still exists, is enabled, carries the consent stamp, belongs to this payment's payer
-    and still has this payment as its latest top-up; a parent payer is still linked to the child
-    (DV-9); the card is the payer's own and active.
+
+def _lock_setting(session: Session, beneficiary_user_id: uuid.UUID) -> AutoTopupSettings | None:
+    return session.execute(
+        sa.select(AutoTopupSettings)
+        .where(AutoTopupSettings.beneficiary_user_id == beneficiary_user_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+
+
+def _refusal(
+    session: Session, setting: AutoTopupSettings | None, payment: Payment, *, now: datetime
+) -> str | None:
+    """Why ``payment`` must not be charged now, or ``None`` when it may be (DV-9, DV-24).
+
+    The queued row pins no card, no consent and no terms, so everything is read again at charge
+    time: the setting exists, is enabled and has this payment as its latest top-up; the payer is
+    still the setting's payer and consent is stamped; a parent payer is still linked to the child;
+    the card is the payer's own and active; the pack is the one queued and still prices the
+    payment, and the charge fits the current monthly cap; the payer still has a usable phone.
     """
-    setting = session.scalars(
-        sa.select(AutoTopupSettings).where(
-            AutoTopupSettings.beneficiary_user_id == payment.beneficiary_user_id
-        )
-    ).first()
-    if (
-        setting is None
-        or not setting.enabled
-        or setting.saved_card_id is None
-        or setting.consented_at is None
-        or setting.payer_user_id != payment.payer_user_id
-        or setting.last_payment_id != payment.id
-    ):
-        return None
+    if setting is None:
+        return _SETTING_GONE
+    if not setting.enabled:
+        return _DISABLED
+    if setting.last_payment_id != payment.id:
+        return _SUPERSEDED
+    if setting.payer_user_id != payment.payer_user_id:
+        return _PAYER_CHANGED
+    if setting.consented_at is None:
+        return _NO_CONSENT
     if payment.payer_user_id != payment.beneficiary_user_id and not is_linked_parent(
         session, payment.payer_user_id, payment.beneficiary_user_id
     ):
-        return None
-    card = session.get(SavedCard, setting.saved_card_id)
+        return _PARENT_UNLINKED
+    card = None if setting.saved_card_id is None else session.get(SavedCard, setting.saved_card_id)
     if card is None or not card.is_active or card.user_id != payment.payer_user_id:
-        return None
-    return card
+        return _CARD_MISSING
+    pack = session.get(CreditPack, setting.credit_pack_id)
+    if (
+        pack is None
+        or not pack.is_active
+        or pack.id != payment.credit_pack_id
+        or pack.price_minor != payment.amount_minor
+        or pack.currency != payment.currency
+        or spent_this_month(session, payment.beneficiary_user_id, now=now, excluding=payment.id)
+        + payment.amount_minor
+        > setting.monthly_cap_minor
+    ):
+        return _SETTINGS_CHANGED
+    payer = session.get(User, payment.payer_user_id)
+    if payer is None:
+        return _PAYER_MISSING
+    try:
+        payer_phone(payer)
+    except PhoneRequired:
+        return _PHONE_REQUIRED
+    return None
 
 
-def _disable_failed_auto_topups(sessionmaker: sessionmaker[Session]) -> int:
-    """Switch off each enabled setting whose latest top-up failed, and tell the payer (DV-23).
+def _apply_refusal(
+    session: Session, setting: AutoTopupSettings | None, payment: Payment, reason: str
+) -> None:
+    """What a refusal does to the setting, in the caller's transaction (the payment is failed).
 
-    At most ``MERCHANT_SWEEP_BATCH`` settings per run, one transaction each, so a bad row cannot
-    block or undo the others. A failure of an older top-up (not ``last_payment_id``) is ignored.
+    No refusal says "we could not charge your card": nothing was charged. An unlinked parent is
+    switched off with ``parent_unlinked`` and told nothing (they no longer manage the child). A
+    removed card and a missing phone switch it off with ``charge_failed`` (the only reason the
+    frontend recognises, DV-10) and tell the payer what to fix. Anything else (the payer changed
+    the pack, the cap or the payer) leaves the setting on and re-arms it, so the next crossing
+    queues at the current terms.
+    """
+    if setting is None or reason in _NOTHING_TO_DO:
+        return
+    if reason == _PARENT_UNLINKED:
+        setting.enabled = False
+        setting.disabled_reason = DISABLED_PARENT_UNLINKED
+        log.warning("auto_topup_parent_unlinked", beneficiary=str(setting.beneficiary_user_id))
+    elif reason == _CARD_MISSING:
+        setting.enabled = False
+        setting.disabled_reason = DISABLED_CHARGE_FAILED
+        enqueue_auto_topup_card_missing(
+            session,
+            payer_user_id=setting.payer_user_id,
+            setting_id=setting.id,
+            crossing_seq=setting.crossing_seq,
+        )
+        log.error(
+            "auto_topup_card_missing", alert=True, beneficiary=str(setting.beneficiary_user_id)
+        )
+    elif reason == _PHONE_REQUIRED:
+        setting.enabled = False
+        setting.disabled_reason = DISABLED_CHARGE_FAILED
+        enqueue_auto_topup_phone_required(
+            session,
+            payer_user_id=setting.payer_user_id,
+            setting_id=setting.id,
+            crossing_seq=setting.crossing_seq,
+        )
+        log.warning("auto_topup_phone_required", beneficiary=str(setting.beneficiary_user_id))
+    else:
+        setting.armed = True
+        setting.crossing_seq += 1
+        setting.last_payment_id = None
+        log.info(
+            "auto_topup_rearmed",
+            beneficiary=str(setting.beneficiary_user_id),
+            reason=reason,
+        )
+
+
+def _card_for_charge(now: datetime) -> Callable[[Session, Payment], SavedCard | None]:
+    """The ``card_for`` of the charge: the re-checked card, with the setting row held locked.
+
+    ``FOR UPDATE`` on the setting is taken before the claim and kept until the claim commits, so a
+    switch-off (or any edit) that comes first is seen here, and one that comes later waits for the
+    claim. Without it a payer's switch-off between the check and the claim would still be charged.
+    A refusal returns ``None``, and the queued payment then fails unsent.
+    """
+
+    def card_for(session: Session, payment: Payment) -> SavedCard | None:
+        setting = _lock_setting(session, payment.beneficiary_user_id)
+        if setting is None or _refusal(session, setting, payment, now=now) is not None:
+            return None
+        assert setting.saved_card_id is not None  # noqa: S101 - _refusal checked the card
+        return session.get(SavedCard, setting.saved_card_id)
+
+    return card_for
+
+
+def _refuse_queued_payments(sessionmaker: sessionmaker[Session], *, now: datetime) -> int:
+    """Fail unsent each queued top-up that must not be charged, with its real reason (DV-23, DV-24).
+
+    One transaction per payment (payment lock, then setting lock), so a bad row cannot block the
+    others. The consequence for the setting is applied in the same transaction.
+    """
+    with sessionmaker() as session:
+        payment_ids = list(
+            session.scalars(
+                sa.select(Payment.id)
+                .where(
+                    Payment.status == PaymentStatus.created,
+                    Payment.purpose == PaymentPurpose.auto_topup,
+                    Payment.dedupe_key.startswith(AUTO_TOPUP_DEDUPE_PREFIX, autoescape=True),
+                )
+                .order_by(Payment.created_at, Payment.id)
+                .limit(MERCHANT_SWEEP_BATCH)
+            )
+        )
+    return sum(_refuse_one(sessionmaker, payment_id, now=now) for payment_id in payment_ids)
+
+
+def _refuse_one(
+    sessionmaker: sessionmaker[Session], payment_id: uuid.UUID, *, now: datetime
+) -> bool:
+    with sessionmaker() as session:
+        try:
+            payment = session.execute(
+                sa.select(Payment)
+                .where(Payment.id == payment_id, Payment.status == PaymentStatus.created)
+                .with_for_update(skip_locked=True)
+            ).scalar_one_or_none()
+            if payment is None:
+                return False
+            setting = _lock_setting(session, payment.beneficiary_user_id)
+            reason = _refusal(session, setting, payment, now=now)
+            if reason is None or not fail_unsent(session, payment_id, reason=reason):
+                session.rollback()
+                return False
+            _apply_refusal(session, setting, payment, reason)
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            alerts.error(
+                "auto_topup_sweep_failed",
+                alert=True,
+                payment_id=str(payment_id),
+                error_type=type(exc).__name__,
+            )
+            return False
+    log.warning("auto_topup_charge_refused", payment_id=str(payment_id), reason=reason)
+    return True
+
+
+def _settle_failed_auto_topups(sessionmaker: sessionmaker[Session], *, now: datetime) -> int:
+    """Settle each enabled setting whose latest top-up failed (DV-23).
+
+    A charge that was attempted and failed switches the setting off and tells the payer. A top-up
+    refused before any charge (``sent_at`` is never stamped) is a refusal, not a failed charge, and
+    is handled by :func:`_apply_refusal`. At most ``MERCHANT_SWEEP_BATCH`` settings per run, one
+    transaction each, so a bad row cannot block or undo the others. A failure of an older top-up
+    (not ``last_payment_id``) is ignored.
     """
     with sessionmaker() as session:
         setting_ids = list(
@@ -324,14 +513,16 @@ def _disable_failed_auto_topups(sessionmaker: sessionmaker[Session]) -> int:
                 .limit(MERCHANT_SWEEP_BATCH)
             )
         )
-    return sum(_disable_one(sessionmaker, setting_id) for setting_id in setting_ids)
+    return sum(_settle_one(sessionmaker, setting_id, now=now) for setting_id in setting_ids)
 
 
-def _disable_one(sessionmaker: sessionmaker[Session], setting_id: uuid.UUID) -> bool:
+def _settle_one(
+    sessionmaker: sessionmaker[Session], setting_id: uuid.UUID, *, now: datetime
+) -> bool:
     with sessionmaker() as session:
         try:
             row = session.execute(
-                sa.select(AutoTopupSettings, Payment.id)
+                sa.select(AutoTopupSettings, Payment)
                 .join(Payment, Payment.id == AutoTopupSettings.last_payment_id)
                 .where(
                     AutoTopupSettings.id == setting_id,
@@ -342,14 +533,21 @@ def _disable_one(sessionmaker: sessionmaker[Session], setting_id: uuid.UUID) -> 
             ).first()
             if row is None:
                 return False
-            setting, payment_id = row
-            setting.enabled = False
-            setting.disabled_reason = DISABLED_CHARGE_FAILED
-            setting.armed = True
-            setting.crossing_seq += 1
-            enqueue_auto_topup_failed(
-                session, payer_user_id=setting.payer_user_id, payment_id=payment_id
-            )
+            setting, payment = row
+            payment_id = payment.id
+            if payment.sent_at is None:
+                reason = _refusal(session, setting, payment, now=now) or _RECOVERED
+                _apply_refusal(session, setting, payment, reason)
+                outcome = f"refused:{reason}"
+            else:
+                setting.enabled = False
+                setting.disabled_reason = DISABLED_CHARGE_FAILED
+                setting.armed = True
+                setting.crossing_seq += 1
+                enqueue_auto_topup_failed(
+                    session, payer_user_id=setting.payer_user_id, payment_id=payment_id
+                )
+                outcome = "charge_failed"
             session.commit()
         except Exception as exc:
             session.rollback()
@@ -360,7 +558,12 @@ def _disable_one(sessionmaker: sessionmaker[Session], setting_id: uuid.UUID) -> 
                 error_type=type(exc).__name__,
             )
             return False
-    log.warning("auto_topup_disabled", setting_id=str(setting_id), payment_id=str(payment_id))
+    log.warning(
+        "auto_topup_disabled",
+        setting_id=str(setting_id),
+        payment_id=str(payment_id),
+        outcome=outcome,
+    )
     return True
 
 
@@ -371,21 +574,25 @@ def run_auto_topup_job(
     *,
     now: datetime,
 ) -> int:
-    """Job ``billing.auto_topup``: charge the queued top-ups, then switch off the failed ones.
+    """Job ``billing.auto_topup``: refuse what must not be charged, charge the rest, then settle.
 
-    Returns how many queued charges were handled plus how many settings were switched off. Runs
-    only where charges are configured (the provider decides, T10); without it the queued rows wait.
+    Returns the queued top-ups refused, charged or failed unsent, plus the settings settled after
+    a failed top-up. Runs only where charges are configured (the provider decides, T10); without
+    it the queued rows wait.
     """
-    handled = charge_queued_payments(
+    handled = 0
+    if charges_configured(settings):
+        handled += _refuse_queued_payments(sessionmaker, now=now)
+    handled += charge_queued_payments(
         sessionmaker,
         client,
         settings,
         purpose=PaymentPurpose.auto_topup,
         dedupe_prefix=AUTO_TOPUP_DEDUPE_PREFIX,
-        card_for=_auto_topup_card,
+        card_for=_card_for_charge(now),
         now=now,
     )
-    return handled + _disable_failed_auto_topups(sessionmaker)
+    return handled + _settle_failed_auto_topups(sessionmaker, now=now)
 
 
 # ---------------------------------------------------------------------------

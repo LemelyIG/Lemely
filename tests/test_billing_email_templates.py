@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from lemely.db.billing_notices import (
     enqueue_auto_topup_card_missing,
     enqueue_auto_topup_failed,
+    enqueue_auto_topup_phone_required,
     enqueue_extra_seats_charge_failed,
 )
 from lemely.db.email_outbox_repo import count_sent_since_in_session, mark_in_session
@@ -29,6 +30,7 @@ from lemely.io.notify_email import (
     EMAIL_TEMPLATES,
     AutoTopupCardMissing,
     AutoTopupFailed,
+    AutoTopupPhoneRequired,
     EmailContext,
     ExtraSeatsChargeFailed,
     InvalidEmailContext,
@@ -52,6 +54,7 @@ TEMPLATES: tuple[tuple[str, type[EmailContext], str], ...] = (
     ("auto_topup_failed", AutoTopupFailed, "payment_id"),
     ("extra_seats_charge_failed", ExtraSeatsChargeFailed, "subscription_id"),
     ("auto_topup_card_missing", AutoTopupCardMissing, "setting_id"),
+    ("auto_topup_phone_required", AutoTopupPhoneRequired, "setting_id"),
 )
 
 
@@ -114,6 +117,16 @@ def test_card_missing_copy_says_the_card_was_removed_not_that_a_charge_failed() 
     assert mail.path() == "/billing"
 
 
+def test_phone_copy_says_to_add_a_number_not_that_a_charge_failed() -> None:
+    mail = AutoTopupPhoneRequired(setting_id=SETTING_ID)
+    assert "no mobile number" in mail.lead()
+    everything = f"{mail.subject} {mail.lead()} {mail.detail()}".lower()
+    assert "fail" not in everything
+    assert "could not charge" not in everything
+    assert "card" not in everything  # it is the number, not the card, that is missing
+    assert mail.path() == "/billing"
+
+
 def test_seats_copy_says_when_the_seats_go() -> None:
     mail = ExtraSeatsChargeFailed(subscription_id=SUBSCRIPTION_ID)
     assert "within 3 days" in mail.lead()
@@ -137,6 +150,11 @@ _COPY: dict[str, tuple[str, str, str]] = {
         "Auto top-up is off: your saved card was removed",
         "Auto top-up is turned off because your saved card was removed.",
         "Add a card and turn auto top-up back on in billing settings.",
+    ),
+    "auto_topup_phone_required": (
+        "Auto top-up is off: add a mobile number",
+        "Auto top-up is turned off because there is no mobile number on your account.",
+        "Add a mobile number to your account, then turn auto top-up back on in billing settings.",
     ),
     "extra_seats_charge_failed": (
         "Your extra seats payment failed",
@@ -370,6 +388,39 @@ def test_card_missing_helper_queues_one_row_per_disable(pg: sessionmaker[Session
         f"auto_topup_card_missing:{setting}:1",
         f"auto_topup_card_missing:{setting}:2",
     }
+
+
+def test_phone_helper_queues_one_row_per_disable_to_the_payer(pg: sessionmaker[Session]) -> None:
+    payer = seed_user(pg, Role.parent)
+    setting = uuid.uuid4()
+
+    def queue(seq: int) -> bool:
+        with pg.begin() as session:
+            return enqueue_auto_topup_phone_required(
+                session, payer_user_id=payer, setting_id=setting, crossing_seq=seq
+            )
+
+    assert (queue(1), queue(1), queue(2)) == (True, False, True)
+    rows = _outbox(pg, payer)
+    assert [r.template for r in rows] == ["auto_topup_phone_required"] * 2
+    assert rows[0].context == {"setting_id": str(setting)}
+    assert {r.dedupe_key for r in rows} == {
+        f"auto_topup_phone_required:{setting}:1",
+        f"auto_topup_phone_required:{setting}:2",
+    }
+
+
+def test_phone_notice_respects_billing_notifications_off(pg: sessionmaker[Session]) -> None:
+    quiet = seed_user(pg, Role.parent)
+    _switch_billing_off(pg, quiet)
+    with pg.begin() as session:
+        assert (
+            enqueue_auto_topup_phone_required(
+                session, payer_user_id=quiet, setting_id=uuid.uuid4(), crossing_seq=1
+            )
+            is False
+        )
+    assert _outbox(pg, quiet) == []
 
 
 def test_card_missing_notice_respects_billing_notifications_off(pg: sessionmaker[Session]) -> None:

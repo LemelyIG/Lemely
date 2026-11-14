@@ -465,6 +465,33 @@ class AutoTopupCardMissing(EmailContext):
         return "/billing"
 
 
+class AutoTopupPhoneRequired(EmailContext):
+    """Auto top-up was switched off because the payer has no usable mobile number (Phase 06 T8).
+
+    The processor needs one for every background charge, so none was attempted. The mail says what
+    to fix and carries no amount, card detail or processor name. The context holds the setting id.
+    """
+
+    template: ClassVar[str] = "auto_topup_phone_required"
+    notification_type: ClassVar[NotificationType] = NotificationType.billing
+    subject: ClassVar[str] = "Auto top-up is off: add a mobile number"
+    button: ClassVar[str] = "Open billing"
+
+    setting_id: uuid.UUID
+
+    def lead(self) -> str:
+        return "Auto top-up is turned off because there is no mobile number on your account."
+
+    def detail(self) -> str | None:
+        return (
+            "Add a mobile number to your account, then turn auto top-up back on in "
+            "billing settings."
+        )
+
+    def path(self) -> str:
+        return "/billing"
+
+
 class ExtraSeatsChargeFailed(EmailContext):
     """The fallback charge for extra student seats was declined (Phase 06).
 
@@ -509,6 +536,7 @@ _TEMPLATE_CLASSES: Final[tuple[type[EmailContext], ...]] = (
     SubscriptionNotice,
     AutoTopupFailed,
     AutoTopupCardMissing,
+    AutoTopupPhoneRequired,
     ExtraSeatsChargeFailed,
 )
 
@@ -523,6 +551,7 @@ BILLING_EMAIL_TEMPLATES: Final[frozenset[str]] = frozenset(
         SubscriptionNotice.template,
         AutoTopupFailed.template,
         AutoTopupCardMissing.template,
+        AutoTopupPhoneRequired.template,
         ExtraSeatsChargeFailed.template,
     }
 )
@@ -746,6 +775,7 @@ __all__ = [
     "EMAIL_TEMPLATES",
     "AutoTopupCardMissing",
     "AutoTopupFailed",
+    "AutoTopupPhoneRequired",
     "EmailContext",
     "ExtraSeatsChargeFailed",
     "InvalidEmailContext",

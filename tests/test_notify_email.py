@@ -477,6 +477,7 @@ def test_billing_templates_are_disjoint_from_the_tutoring_spec() -> None:
         "subscription_notice",
         "auto_topup_failed",
         "auto_topup_card_missing",
+        "auto_topup_phone_required",
         "extra_seats_charge_failed",
     } == BILLING_EMAIL_TEMPLATES
     assert set(EMAIL_TEMPLATES) >= BILLING_EMAIL_TEMPLATES

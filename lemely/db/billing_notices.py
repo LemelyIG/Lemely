@@ -98,6 +98,24 @@ def enqueue_auto_topup_card_missing(
     )
 
 
+def enqueue_auto_topup_phone_required(
+    session: Session, *, payer_user_id: uuid.UUID, setting_id: uuid.UUID, crossing_seq: int
+) -> bool:
+    """Queue the "auto top-up is off, add a mobile number" notice to the payer.
+
+    No charge was attempted (the processor needs a phone for every background charge), so the key
+    is the setting and its crossing, as for :func:`enqueue_auto_topup_card_missing`. ``True`` when
+    a row was written; ``False`` when billing notices are off or this disable is already noticed.
+    """
+    return enqueue_in_session(
+        session,
+        recipient_user_id=payer_user_id,
+        template="auto_topup_phone_required",
+        context={"setting_id": setting_id},
+        dedupe_key=f"auto_topup_phone_required:{setting_id}:{crossing_seq}",
+    )
+
+
 def enqueue_extra_seats_charge_failed(
     session: Session,
     *,
@@ -124,6 +142,7 @@ __all__ = [
     "SubscriptionNoticeKind",
     "enqueue_auto_topup_card_missing",
     "enqueue_auto_topup_failed",
+    "enqueue_auto_topup_phone_required",
     "enqueue_extra_seats_charge_failed",
     "enqueue_subscription_notice",
 ]
