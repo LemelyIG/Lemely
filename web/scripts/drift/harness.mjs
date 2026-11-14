@@ -1,8 +1,9 @@
 /*
  * Page and server setup for the drift gate and the shell behaviour runner.
  *
- * App side: the production build served by `vite preview` (run `npm run build`
- * first), every `/api/**` call mocked, so no backend is needed. Preview side:
+ * App side: the production build served by `vite preview` (run `npm run build:drift`
+ * first: the checks that call `window.__lemelyRouter` need the drift build, a plain
+ * `npm run build` strips that hook), every `/api/**` call mocked, so no backend is needed. Preview side:
  * the design kit dev server (`vite --config vite.preview.config.ts`) serving
  * `student-home-a.html`. Both sides get the same viewport, theme, frozen clock
  * (2026-11-05 10:00, the preview fixtures' "now") and no animation.
@@ -153,6 +154,11 @@ async function newContext(browser, { width, height, theme, platform, motion = fa
   const device = platform ? { userAgent: PLATFORM_UA[platform], isMobile: true, hasTouch: true } : {}
   if (platform && !device.userAgent) throw new Error(`unknown platform ${platform}`)
   return browser.newContext({
+    // The app registers a service worker with clientsClaim(). Once it claims the page, the page's own
+    // fetches go through the worker, and Playwright's page.route no longer sees them (the documented
+    // limitation), so every mocked /api call can fall through to the preview server's index.html. Which
+    // request the claim lands in front of depends on load, which made the mock-fed checks flake.
+    serviceWorkers: "block",
     viewport: { width, height },
     deviceScaleFactor: 1,
     reducedMotion: motion ? "no-preference" : "reduce",
@@ -173,8 +179,6 @@ export async function openApp(browser, { width, height, theme, app, platform }) 
       window.localStorage.setItem("lemely.session", JSON.stringify(sess))
       window.localStorage.setItem("lemely.deviceId", "drift-device")
       window.localStorage.setItem("lemely.theme", chosenTheme)
-      // Lets the production build expose its router (src/lib/nav/exposeRouter.ts) to checks.
-      window.__LEMELY_DRIFT__ = true
     },
     [session, theme],
   )

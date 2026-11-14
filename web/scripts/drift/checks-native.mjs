@@ -307,6 +307,22 @@ NATIVE_CHECKS.push(
           document.querySelector("header[data-title-level]").dataset
             .collapsed === "true",
       );
+      // The bar finishes laying out after the collapse flag flips (the title moves in, the actions mount with the
+      // shell's data): measure once the title box and the action count hold still across two frames.
+      await page.waitForFunction(
+        () =>
+          new Promise((resolve) => {
+            const read = () => {
+              const t = document.querySelector("header [data-shell-title]")?.getBoundingClientRect();
+              const n = [...document.querySelectorAll("header[data-title-level] :is(a, button)")].filter((e) => e.checkVisibility()).length;
+              return t ? `${t.x},${t.y},${t.width},${t.height},${n}` : "";
+            };
+            const a = read();
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve(a !== "" && a === read())));
+          }),
+        null,
+        { timeout: 10000, polling: 100 },
+      );
       const title = await page.locator("header [data-shell-title]").boundingBox();
       const actions = header.locator(":is(a, button):visible");
       const n = await actions.count();
@@ -356,6 +372,26 @@ NATIVE_CHECKS.push(
     },
   },
 );
+
+/** The dialog is ready for keys and for Back: focus has moved inside it (the focus trap does that a frame after
+ * mount) and the entry `useDialogHistory` pushes on open is the current one. An Escape or a Back sent earlier lands
+ * on the page underneath, or pops the page instead of the dialog. */
+async function dialogReady(page) {
+  await page.waitForFunction(() => document.activeElement?.closest("[role=dialog]") && window.history.state?.usr?.lemelyDialog === true, null, { timeout: 5000 });
+}
+
+/** Focus is handed back after a dialog unmounts, not with it: Radix's FocusScope restores it in a
+ * `setTimeout(0)` after the content is gone, and `useDialogFocus` in the cleanup of the next commit.
+ * A read taken the instant the dialog detaches can see `body`. Poll for the opener instead. */
+async function expectFocusOn(page, locator, what) {
+  const handle = await locator.elementHandle();
+  try {
+    await page.waitForFunction((el) => el === document.activeElement, handle, { timeout: 3000 });
+  } catch {
+    const active = await page.evaluate(() => document.activeElement?.getAttribute("aria-label") || document.activeElement?.tagName);
+    throw new Error(`focus not returned to ${what} (it is on "${active}")`);
+  }
+}
 
 /** A real nested page under the active Classes tab (teacher `classes/:classId`).
  * The tab stays active by prefix match; the re-tap logic reads only the pathname. */
@@ -440,7 +476,7 @@ NATIVE_CHECKS.push({
     await page.mouse.move(box.x + box.width / 2, box.y + 400, { steps: 8 })
     await page.mouse.up()
     await dialog.waitFor({ state: "detached" })
-    if (!(await trigger.evaluate((el) => el === document.activeElement))) throw new Error("focus did not return to the trigger after drag-dismiss")
+    await expectFocusOn(page, trigger, "the trigger after drag-dismiss")
     await trigger.click()
     await dialog.waitFor()
     await page.keyboard.press("Escape")
@@ -540,6 +576,8 @@ NATIVE_CHECKS.push({
     width: 390,
     app: NATIVE_FIND_TUTOR,
     async run(page) {
+      // The list renders after the page's own request settles; measuring at `networkidle` found no card yet.
+      await page.locator(".lm-native-main ul > li > .lm-native-card").first().waitFor({ timeout: 10000 }).catch(() => {})
       const gaps = await page.evaluate(() => {
         const card = document.querySelector(".lm-native-main ul > li > .lm-native-card")
         if (!card) return null
@@ -860,11 +898,13 @@ NATIVE_CHECKS.push({
       await page.keyboard.press("Escape")
       await dialog.waitFor({ state: "detached" })
       // The trigger is gone, so focus must land on the row's own link, not the page.
-      const focused = await page.evaluate(() => {
-        const a = document.activeElement
-        return { tag: a?.tagName, text: a?.textContent ?? "" }
-      })
-      if (focused.tag !== "A" || !/Omar Nabil/.test(focused.text)) throw new Error(`focus not returned to the row link: ${JSON.stringify(focused)}`)
+      // Handed over after the refetched row mounts, a task after the dialog detaches: poll, do not read once.
+      await page
+        .waitForFunction(() => document.activeElement?.tagName === "A" && /Omar Nabil/.test(document.activeElement.textContent ?? ""), null, { timeout: 3000 })
+        .catch(async () => {
+          const focused = await page.evaluate(() => ({ tag: document.activeElement?.tagName, text: (document.activeElement?.textContent ?? "").slice(0, 60) }))
+          throw new Error(`focus not returned to the row link: ${JSON.stringify(focused)}`)
+        })
       const omar = rows.filter({ hasText: "Omar Nabil" })
       await omar.getByText(/Below target grade \(acknowledged\)/).waitFor()
       if ((await page.getByRole("button", { name: "Acknowledge flags for Omar Nabil" }).count()) !== 0) {
@@ -969,6 +1009,8 @@ NATIVE_CHECKS.push(
       width: 390,
       app,
       async run(page) {
+        // A lazy route renders its heading after `networkidle` under load; count once one is in <main>.
+        await page.locator("main").getByRole("heading", { level: 1 }).first().waitFor({ state: "attached", timeout: 10000 }).catch(() => {});
         const h1s = await page.getByRole("heading", { level: 1 }).count();
         if (h1s !== 1)
           throw new Error(`${app.path}: ${h1s} level-1 headings reach assistive technology, expected 1`);
@@ -1269,10 +1311,15 @@ NATIVE_CHECKS.push(
         window.scrollTo(0, 600);
       });
       await page.waitForFunction(() => window.scrollY > 100);
+      const before = await page.evaluate(() => ({ idx: window.history.state?.idx ?? 0, length: window.history.length }));
       await page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Classes" }).click();
       await page.waitForURL(/\/teacher\/classes$/);
       const dir = await page.evaluate(() => document.documentElement.dataset.direction);
       if (dir !== "back") throw new Error(`pop to root reads as ${dir}, expected back`);
+      // The pop replaces the drilled page's entry: no new entry, so Back cannot return to the detail page.
+      const after = await page.evaluate(() => ({ idx: window.history.state?.idx ?? 0, length: window.history.length }));
+      if (after.idx !== before.idx || after.length !== before.length)
+        throw new Error(`the pop to root pushed an entry (idx ${before.idx} to ${after.idx}, length ${before.length} to ${after.length}); it must replace`);
     },
   })),
   {
@@ -1458,6 +1505,9 @@ NATIVE_CHECKS.push(
         if (await plus.isVisible()) throw new Error("the + stays after the large title collapses");
         await page.evaluate(() => window.scrollTo(0, 0));
         await page.waitForFunction(() => document.querySelector("header[data-title-level]").dataset.collapsed === "false");
+        // The flag flips at the collapse threshold, not at rest: wait for the scroll to settle at the top, so the
+        // plus is on screen when the sheet closes and focus has somewhere visible to return to.
+        await page.waitForFunction(() => new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(() => res(window.scrollY === 0)))), null, { polling: 100 });
         await plus.click();
       }
       const dialog = page.getByRole("dialog");
@@ -1474,8 +1524,12 @@ NATIVE_CHECKS.push(
       if (sheet.fs !== want[0] || sheet.fw !== want[1]) throw new Error(`sheet title ${sheet.fs}/${sheet.fw}, expected ${want}`);
       await page.keyboard.press("Escape");
       await dialog.waitFor({ state: "detached" });
-      const focused = await page.evaluate(() => document.activeElement?.getAttribute("aria-label") || document.activeElement?.textContent?.trim());
-      if (!/^Create/.test(focused ?? "")) throw new Error(`focus returned to "${focused}", not the opener`);
+      await page
+        .waitForFunction(() => /^Create/.test(document.activeElement?.getAttribute("aria-label") || document.activeElement?.textContent?.trim() || ""), null, { timeout: 3000 })
+        .catch(async () => {
+          const focused = await page.evaluate(() => document.activeElement?.getAttribute("aria-label") || document.activeElement?.tagName);
+          throw new Error(`focus returned to "${focused}", not the opener`);
+        });
     },
   })),
   {
@@ -1605,7 +1659,7 @@ NATIVE_CHECKS.push(
       const targets = [
         { name: "icon button", loc: page.locator("header .lm-native-iconbtn.lm-press:visible").first(), dx: 14, dy: 14 },
         // The tab cell: dims on iOS with no delay (it is a fixed bar, not scroll content), never scales.
-        { name: "tab cell", loc: page.locator("nav.lm-native-tabbar .lm-press:visible").nth(1), dx: 14, dy: 14, tab: true },
+        { name: "tab cell", loc: page.locator("nav.lm-native-tabbar .lm-press:visible", { hasText: "Classes" }), dx: 14, dy: 14, tab: true },
         { name: "Button", loc: page.locator("main .lm-press-scale:not(.lm-native-iconbtn):visible").first(), dx: 10, dy: 10 },
       ]
       for (const t of targets) {
@@ -1613,6 +1667,7 @@ NATIVE_CHECKS.push(
         if (!pressed.flag) throw new Error(`${t.name}: data-pressed not set on pointerdown`)
         if (t.tab && platform === "ios" && pressed.opacity !== "0.55") throw new Error(`${t.name}: iOS tab opacity ${pressed.opacity} right after pointerdown, expected 0.55`)
         if (t.tab && platform === "ios") {
+          if (pressed.image !== "none") throw new Error(`${t.name}: iOS tab drew a press layer (${pressed.image}); it dims only`)
           if (released.flag || released.image !== "none") throw new Error(`${t.name}: press state stuck after pointerup`)
           if (pressed.scale !== "none") throw new Error(`${t.name}: iOS tab scale ${pressed.scale}, expected none`)
           continue
@@ -1819,6 +1874,10 @@ NATIVE_CHECKS.push(
   {
     id: "native-ios-standalone-swipe-back",
     platform: "ios",
+    // Phone width, and a drag past 35% of it (137px of 390), so the commit is decided by distance. At the
+    // harness default of 1440px, 200px was 14% of the width and committed only on release velocity, which
+    // depends on how fast Playwright's mouse steps arrive: slow under load, so the swipe cancelled.
+    width: 390,
     app: { ...NATIVE_HOME, path: "/student", init: STANDALONE },
     async run(page) {
       await page.getByRole("link", { name: "Classes" }).first().click()
@@ -1828,7 +1887,7 @@ NATIVE_CHECKS.push(
       await page.mouse.move(60, 402, { steps: 4 })
       if (!(await page.evaluate(() => document.documentElement.hasAttribute("data-swiping"))))
         throw new Error("drag did not start an interactive swipe")
-      await page.mouse.move(200, 404, { steps: 6 })
+      await page.mouse.move(230, 404, { steps: 6 })
       await page.mouse.up()
       await page.waitForURL(/\/student$/)
     },
@@ -2065,6 +2124,8 @@ NATIVE_CHECKS.push(
       if (!travel.some((f) => f.left > probe.before + 1 && f.left < width - 1)) throw new Error("no intermediate frame: the exit jumped")
       if (!travel.some((f) => f.progress > probe.release.progress + 0.02 && f.progress < 0.98)) throw new Error("the dim did not fade over the slide")
       if (travel.at(-1).left < width - 12) throw new Error(`the column stopped short of the edge: ${travel.at(-1).left}`)
+      // The commit parks the column at the far edge through an inline transform, not a class.
+      if (!travel.some((f) => f.inline === "translateX(100%)")) throw new Error(`the commit never set inline translateX(100%): ${JSON.stringify(travel.map((f) => f.inline))}`)
       if (!/\/student$/.test(page.url())) throw new Error("the swipe did not navigate")
       const rest = frames.at(-1)
       if (rest.left !== 0 || rest.swiping || rest.inline) throw new Error(`state left over after the swipe: ${JSON.stringify(rest)}`)
@@ -2364,6 +2425,7 @@ NATIVE_CHECKS.push(
       const dialog = page.getByRole("dialog")
       await dialog.waitFor()
       if (!(await dialog.evaluate((el) => el.classList.contains("lm-sheet")))) throw new Error("Modal is not a sheet on native")
+      await dialogReady(page)
       await page.goBack()
       await dialog.waitFor({ state: "detached" })
     },
@@ -2386,7 +2448,7 @@ NATIVE_CHECKS.push(
       if ((await dialog.locator(".lm-list-row").count()) === 0) throw new Error("the bell sheet has no grouped rows")
       await page.keyboard.press("Escape")
       await dialog.waitFor({ state: "detached" })
-      if (!(await bell.evaluate((el) => el === document.activeElement))) throw new Error("focus not returned to the bell")
+      await expectFocusOn(page, bell, "the bell")
     },
   })),
   ...["ios", "android"].map((platform) => ({
@@ -2404,7 +2466,7 @@ NATIVE_CHECKS.push(
         if ((await dialog.getByText(name, { exact: true }).count()) === 0) throw new Error(`the account sheet has no ${name} row`)
       await page.keyboard.press("Escape")
       await dialog.waitFor({ state: "detached" })
-      if (!(await avatar.evaluate((el) => el === document.activeElement))) throw new Error("focus not returned to the avatar")
+      await expectFocusOn(page, avatar, "the avatar")
     },
   })),
   ...["ios", "android"].map((platform) => ({
@@ -2546,7 +2608,7 @@ NATIVE_CHECKS.push(
     if (process.env.NF_SHOT_PATH) await page.screenshot({ path: process.env.NF_SHOT_PATH.replace(".png", `-${platform}-${theme}.png`), animations: "disabled" })
     await page.keyboard.press("Escape")
     await dialog.waitFor({ state: "detached" })
-    if (!(await card.evaluate((el) => el === document.activeElement))) throw new Error("focus not returned to the trigger")
+    await expectFocusOn(page, card, "the trigger")
   },
   }))),
 )
@@ -2641,6 +2703,7 @@ NATIVE_CHECKS.push(
       await page.getByRole("button", { name: "Report", exact: true }).click()
       const dialog = page.getByRole("dialog")
       await dialog.waitFor()
+      await dialogReady(page)
       if ((await histIdx(page)) !== originIdx + 1) throw new Error("opening the modal did not push exactly one entry")
       await page.keyboard.press("Escape")
       await dialog.waitFor({ state: "detached" })
@@ -3425,7 +3488,7 @@ async function navcovExpectNone(page, what) {
 }
 const navcovRouterNavigate = (page, to, options) =>
   page.evaluate(([t, o]) => {
-    if (!window.__lemelyRouter) throw new Error("no window.__lemelyRouter (harness flag missing)")
+    if (!window.__lemelyRouter) throw new Error("no window.__lemelyRouter: build with `npm run build:drift` (a plain `npm run build` strips the hook)")
     return window.__lemelyRouter.navigate(t, o)
   }, [to, options])
 
@@ -3949,4 +4012,131 @@ NATIVE_CHECKS.push(
       if ((await page.evaluate(() => document.documentElement.dataset.direction)) !== "back") throw new Error("a pop of a drill-down read as something other than back")
     },
   },
+);
+
+// Polish B, item 17: the attribute lives for its transition, and a browser Forward reads forward.
+NATIVE_CHECKS.push(
+  {
+    id: "native-ios-nav-motion-vt-chrome-clears-after-the-hop",
+    platform: "ios",
+    width: 390,
+    app: NAV_APP,
+    async run(page) {
+      const frames = await probeNav(page, () => tabTap(page, "Correct"))
+      if (!frames.svt.length || frames.svt.some((c) => c.chrome !== "page")) throw new Error(`the hop never set data-vt-chrome="page": ${JSON.stringify(frames.svt)}`)
+      await page.waitForTimeout(500)
+      const left = await page.evaluate(() => document.documentElement.dataset.vtChrome ?? null)
+      if (left !== null) throw new Error(`data-vt-chrome stayed "${left}" after the transition finished`)
+    },
+  },
+  {
+    id: "native-ios-nav-motion-browser-forward-reads-forward",
+    platform: "ios",
+    width: 390,
+    app: NAV_APP,
+    async run(page) {
+      const direction = () => page.evaluate(() => document.documentElement.dataset.direction)
+      await pushFromContent(page)
+      await page.waitForTimeout(900)
+      await page.goBack()
+      await page.waitForTimeout(700)
+      if ((await direction()) !== "back") throw new Error(`Back read "${await direction()}"`)
+      await page.goForward()
+      await page.waitForTimeout(700)
+      if ((await direction()) !== "forward") throw new Error(`a browser Forward read "${await direction()}", want forward`)
+    },
+  },
+);
+
+// Polish B, item 20: the tab labels' tracking is 0.01em, read as a computed px value (0.01 x font size).
+NATIVE_CHECKS.push(
+  ...[
+    ["ios", 10],
+    ["android", 12],
+  ].map(([platform, size]) => ({
+    id: `native-${platform}-tab-label-letter-spacing`,
+    platform,
+    width: 390,
+    app: NATIVE_HOME,
+    async run(page) {
+      const got = await page.evaluate(() =>
+        [...document.querySelectorAll("nav.lm-native-tabbar .lm-native-tab-label")].map((l) => {
+          const cs = getComputedStyle(l)
+          return { size: parseFloat(cs.fontSize), spacing: parseFloat(cs.letterSpacing) }
+        }),
+      )
+      if (!got.length) throw new Error("no tab labels found")
+      for (const g of got) {
+        if (g.size !== size) throw new Error(`tab label font-size ${g.size}px, expected ${size}px`)
+        if (Math.abs(g.spacing - size * 0.01) > 0.005) throw new Error(`tab label letter-spacing ${g.spacing}px, expected ${size * 0.01}px (0.01em)`)
+      }
+    },
+  })),
+);
+
+// Polish B, item 21: at 320px (the smallest supported phone) the Filter row still fits: both controls inside the
+// viewport, on one row, with no sideways scroll.
+NATIVE_CHECKS.push(
+  ...["ios", "android"].map((platform) => ({
+    id: `native-${platform}-review-filter-row-fits-at-320`,
+    platform,
+    width: 320,
+    app: reviewApp(),
+    async run(page) {
+      await page.locator("[data-review-filter]").waitFor();
+      const m = await page.evaluate(() => {
+        const rect = (el) => el.getBoundingClientRect();
+        const f = rect(document.querySelector("[data-review-filter]"));
+        const view = [...document.querySelectorAll(".lm-native-main button")].find((b) => b.textContent.trim() === "View table");
+        const v = view ? rect(view) : null;
+        return {
+          f,
+          v,
+          vw: document.documentElement.clientWidth,
+          overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        };
+      });
+      if (!m.v) throw new Error("the View table toggle is missing at 320px");
+      if (m.overflow > 0) throw new Error(`the page scrolls sideways by ${m.overflow}px at 320px`);
+      for (const [name, r] of [["Filter", m.f], ["View table", m.v]])
+        if (r.left < -0.5 || r.right > m.vw + 0.5) throw new Error(`${name} spills outside the 320px viewport (${r.left}..${r.right})`);
+      if (Math.abs(m.f.top + m.f.height / 2 - (m.v.top + m.v.height / 2)) > 4) throw new Error("Filter and View table wrap onto separate rows at 320px");
+      if (m.f.right > m.v.left + 0.5 && m.v.right > m.f.left + 0.5) throw new Error("Filter and View table overlap at 320px");
+    },
+  })),
+);
+
+// Polish B, item 18: the popover sheet hands focus back to its trigger on Back and on a scrim tap, as it does on
+// Escape (checked in native-*-popover-is-sheet). The trigger is the unread notification card's long press.
+async function openPopoverSheet(page) {
+  const card = page.locator("main h2").first().locator("xpath=ancestor::div[@tabindex='-1'][1]");
+  await card.waitFor();
+  const box = await card.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + 8);
+  await page.mouse.down();
+  await page.waitForTimeout(700);
+  await page.mouse.up();
+  const dialog = page.getByRole("dialog");
+  await dialog.waitFor();
+  await dialogReady(page);
+  return { card, dialog };
+}
+NATIVE_CHECKS.push(
+  ...["ios", "android"].flatMap((platform) =>
+    [
+      ["back", (page) => page.goBack()],
+      ["scrim", (page) => page.mouse.click(195, 40)],
+    ].map(([how, close]) => ({
+      id: `native-${platform}-popover-sheet-${how}-returns-focus-to-trigger`,
+      platform,
+      width: 390,
+      app: { ...NATIVE_HOME, path: "/student/notifications" },
+      async run(page) {
+        const { card, dialog } = await openPopoverSheet(page);
+        await close(page);
+        await dialog.waitFor({ state: "detached" });
+        await expectFocusOn(page, card, "the trigger card");
+      },
+    })),
+  ),
 );
