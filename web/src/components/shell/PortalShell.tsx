@@ -84,8 +84,10 @@ export function PortalShell({
   const onActiveTap = (item: NavShellItem, event: MouseEvent) => {
     if (!item.to) return
     const action = activeTabTap({ pathname: location.pathname, tabTo: item.to, scrollY: window.scrollY })
-    if (action === "none") return
+    // Prevented even when there is nothing to do: the NavLink would otherwise REPLACE the entry with a
+    // forward view transition onto the page it is already on.
     event.preventDefault()
+    if (action === "none") return
     if (action === "scroll-top") {
       const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches
       window.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" })
