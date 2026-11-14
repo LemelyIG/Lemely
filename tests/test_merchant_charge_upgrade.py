@@ -37,6 +37,7 @@ from lemely.db.merchant_charge_repo import (
     MerchantChargeError,
     MerchantChargeService,
     SeatsExceedNewTier,
+    SeatsNotSold,
     active_seat_count,
     handle_upgrade_paid,
     offered_card_tokens,
@@ -1247,3 +1248,57 @@ def test_seats_added_after_the_quote_void_the_payment_to_credits(
     assert _grant(sm, scene["user_id"], f"credited:{payment_id}") is not None
     [event] = [log for log in logs if log["event"] == "merchant_charge_credited"]
     assert event["reason"] == "superseded"
+
+
+def test_an_upgrade_to_a_plan_that_sells_no_seats_is_refused_while_seats_are_held(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher_with_seats(sm)  # 3 extra seats
+    target = _seat_target(sm, price=40_000, seat_price=0)
+    error = _refused(sm, _CheckoutClient(), scene, target, "seats_not_sold")
+    assert isinstance(error, SeatsNotSold)
+    assert error.detail == {"extra_seats": 3}
+    with pytest.raises(SeatsNotSold):
+        _quote(sm, _CheckoutClient(), scene, target)
+
+
+def test_a_plan_that_sells_no_seats_is_fine_when_no_extra_seats_are_held(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher_with_seats(sm, extra=0)
+    target = _seat_target(sm, price=40_000, seat_price=0)
+    assert _quote(sm, _CheckoutClient(), scene, target).amount_minor == 5_000
+
+
+def test_seats_bought_after_the_quote_void_an_upgrade_to_a_plan_that_sells_none(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher_with_seats(sm, extra=0)
+    target = _seat_target(sm, price=40_000, seat_price=0)
+    payment_id = _checkout(sm, _CheckoutClient(), scene, target)
+    _update_sub(sm, scene, extra_seats=3)  # a seat purchase landed after the quote
+
+    with capture_logs() as logs:
+        _pay(sm, payment_id)
+
+    assert _sub(sm, scene).plan_tier_id == scene["tier_id"]
+    assert _grant(sm, scene["user_id"], f"credited:{payment_id}") is not None
+    [event] = [log for log in logs if log["event"] == "merchant_charge_credited"]
+    assert event["reason"] == "seats_not_sold"
+
+
+def test_equal_seat_prices_or_the_floor_apply_the_upgrade_when_seats_change(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher_with_seats(sm)
+    target = _seat_target(sm, price=40_000, seat_price=2_000)  # the seat price does not change
+    payment_id = _checkout(sm, _CheckoutClient(), scene, target)
+    _update_sub(sm, scene, extra_seats=4)  # the price is unchanged, so nothing was under-collected
+    with capture_logs() as logs:
+        _pay(sm, payment_id)
+    assert _sub(sm, scene).plan_tier_id == target
+    assert not [log for log in logs if log["event"] == "merchant_charge_credited"]

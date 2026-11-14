@@ -158,6 +158,18 @@ class MerchantChargeError(Exception):
         self.detail: dict[str, object] = dict(detail or {})
 
 
+class SeatsNotSold(MerchantChargeError):
+    """The target plan sells no extra seats while the teacher holds some (UD-5's rule, mirrored)."""
+
+    def __init__(self, *, extra_seats: int) -> None:
+        super().__init__(
+            "seats_not_sold",
+            "The new plan does not sell extra seats, and this plan has some",
+            detail={"extra_seats": extra_seats},
+        )
+        self.extra_seats = extra_seats
+
+
 class SeatsExceedNewTier(MerchantChargeError):
     """More active seats are held than the target plan (plus the usable extra seats) can seat."""
 
@@ -578,6 +590,8 @@ class MerchantChargeService:
         if not is_upgrade(old_tier, old_terms, new_tier, new_terms):
             raise MerchantChargeError("not_an_upgrade", "That plan is not an upgrade")
         if new_tier.audience is PlanAudience.teacher:
+            if _seats_not_sold(sub, new_tier, new_terms):
+                raise SeatsNotSold(extra_seats=usable_extra_seats(sub))
             in_use = active_seat_count(session, sub.user_id)
             capacity = new_terms.included_seats + usable_extra_seats(sub)
             if in_use > capacity:
@@ -1048,6 +1062,20 @@ def is_upgrade(
     )
 
 
+def _seats_not_sold(sub: Subscription, new_tier: PlanTier, new_terms: PlanTierTerms) -> bool:
+    """True when a teacher holds extra seats and the target tier sells none (seat price 0).
+
+    Such a plan holds no extra seats whatever the row says (the renewal bills none), so an upgrade
+    would either drop seats the teacher paid for or keep them for free. It is refused, as a
+    downgrade below the held seats is (UD-5).
+    """
+    return (
+        new_tier.audience is PlanAudience.teacher
+        and new_terms.extra_seat_price_minor <= 0
+        and usable_extra_seats(sub) > 0
+    )
+
+
 def _priced_extra_seats(sub: Subscription, new_tier: PlanTier) -> int:
     """Extra seats whose price changes with an upgrade: a teacher plan's usable extra seats.
 
@@ -1072,7 +1100,9 @@ def _upgrade_amount(
     cheaper seat price makes it negative and nets against the base; the charge is never below one
     piaster (Paymob needs a positive amount). ``0`` only when the period is over, which the quote
     and the checkout refuse as ``period_ending``. The quote, the checkout and the settle-time
-    reprice all use this one function, so a seat count that moved in between is a mismatch.
+    reprice all use this one function, so a seat change that moves the price in between is a
+    mismatch and voids the payment to credits. A change that leaves the price equal (the same seat
+    price on both plans, or the 1-piaster floor) applies the upgrade: nothing was under-collected.
     """
     base_diff = new_terms.price_minor - old_terms.price_minor
     if prorate_minor(max(base_diff, 0), start, end, at) <= 0:
@@ -1195,6 +1225,8 @@ def upgrade_void_reason(session: Session, sub: Subscription, payment: Payment) -
     # the terms billed NOW. Another upgrade that changed the tier (X landed, this was priced
     # old -> Y), or an admin price change on the target, makes the price differ; a payment that
     # was only converted to credits never moved the tier, so it can never trigger this.
+    if _seats_not_sold(sub, target, current_terms(session, target)):
+        return "seats_not_sold"
     repriced = _upgrade_amount(
         billed_terms(session, sub),
         current_terms(session, target),
@@ -1325,6 +1357,7 @@ __all__ = [
     "MerchantChargeError",
     "MerchantChargeService",
     "SeatsExceedNewTier",
+    "SeatsNotSold",
     "active_seat_count",
     "billed_terms",
     "bump_version",
