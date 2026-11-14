@@ -155,7 +155,7 @@ function SubjectLedgerRow({ row }: { row: SubjectRow }) {
        * pointing at. Reserved transparent at rest so it cannot shift the row.
        */
       className={cn(
-        "lm-native-card-row group flex flex-col gap-3 w-full text-start border-t border-outline-variant px-6 py-4",
+        "lm-native-card-row group flex flex-col gap-3 w-full text-start border-t border-outline-variant px-6 py-4 native:ios:px-4",
         "md:grid md:grid-subject-ledger md:items-center md:gap-4",
         "border-s-2 border-s-transparent hover:border-s-primary hover:bg-surface-container-low",
         "transition-colors duration-[var(--dur-instant)] ease-out-soft",
