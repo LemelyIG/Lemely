@@ -6,7 +6,7 @@
  *   node scripts/home-drift.mjs [--scene a,b] [--windows 390,1440] [--themes light]
  *                               [--record-baseline] [--selftest] [--list]
  *
- * Needs a fresh `npm run build` (the app side is `vite preview` of dist/).
+ * Needs a fresh `npm run build:drift` (the app side is `vite preview` of dist/).
  * Writes reports/.scratch/drift/<timestamp>/{<key>.a.png,<key>.b.png,<key>.diff.png,report.json,report.md}.
  * Baselines for before-vs-after scenes live in reports/.scratch/drift/baseline/.
  * Exit 0 only when every selected scene key passes (see compare.mjs verdict).

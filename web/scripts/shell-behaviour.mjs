@@ -2,7 +2,7 @@
 /*
  *   node scripts/shell-behaviour.mjs [--check <prefix>] [--axe]
  *
- * Runs SHELL_CHECKS against `vite preview` of dist/ (run `npm run build`
+ * Runs SHELL_CHECKS against `vite preview` of dist/ (run `npm run build:drift`
  * first). --axe additionally runs axe-core after each check's final state
  * (skipping checks marked `axe: false`) and fails on any violation. --check
  * with no value, or a prefix that matches no check, exits 1. Exit 0 only when

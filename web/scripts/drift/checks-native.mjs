@@ -4024,9 +4024,13 @@ NATIVE_CHECKS.push(
     async run(page) {
       const frames = await probeNav(page, () => tabTap(page, "Correct"))
       if (!frames.svt.length || frames.svt.some((c) => c.chrome !== "page")) throw new Error(`the hop never set data-vt-chrome="page": ${JSON.stringify(frames.svt)}`)
-      await page.waitForTimeout(500)
-      const left = await page.evaluate(() => document.documentElement.dataset.vtChrome ?? null)
-      if (left !== null) throw new Error(`data-vt-chrome stayed "${left}" after the transition finished`)
+      // The probe has already run past the transition. The unclaimed-hop fallback clears the flag at 3s, so poll for
+      // less than that: only the clear on `finished` can satisfy this.
+      await page
+        .waitForFunction(() => !document.documentElement.dataset.vtChrome, null, { timeout: 1200 })
+        .catch(async () => {
+          throw new Error(`data-vt-chrome stayed "${await page.evaluate(() => document.documentElement.dataset.vtChrome)}" after the transition finished`)
+        })
     },
   },
   {
@@ -4036,14 +4040,17 @@ NATIVE_CHECKS.push(
     app: NAV_APP,
     async run(page) {
       const direction = () => page.evaluate(() => document.documentElement.dataset.direction)
+      const settledOn = (want) =>
+        page.waitForFunction((d) => document.documentElement.dataset.direction === d, want, { timeout: 5000 }).catch(async () => {
+          throw new Error(`direction read "${await direction()}", want ${want}`)
+        })
       await pushFromContent(page)
-      await page.waitForTimeout(900)
+      await page.waitForURL(/\/student\/subject\//)
       await page.goBack()
-      await page.waitForTimeout(700)
-      if ((await direction()) !== "back") throw new Error(`Back read "${await direction()}"`)
+      await settledOn("back")
       await page.goForward()
-      await page.waitForTimeout(700)
-      if ((await direction()) !== "forward") throw new Error(`a browser Forward read "${await direction()}", want forward`)
+      await page.waitForURL(/\/student\/subject\//)
+      await settledOn("forward")
     },
   },
 );
@@ -4139,4 +4146,102 @@ NATIVE_CHECKS.push(
       },
     })),
   ),
+);
+
+// Fix round 1 (review of 597468d6): programmatic dialog closes stay paired with their history entry across
+// reopens, stacked dialogs closing together unwind to the base entry, and a tab re-tap goes back to a root
+// that sits behind the page.
+const historyIs = (page, idx) =>
+  page
+    .waitForFunction((want) => window.history.state?.idx === want && !window.history.state?.usr?.lemelyDialog, idx, { timeout: 5000 })
+    .catch(async () => {
+      const now = await page.evaluate(() => ({ idx: window.history.state?.idx, dialog: window.history.state?.usr?.lemelyDialog ?? null }));
+      throw new Error(`history is at ${JSON.stringify(now)}, want idx ${idx} and no dialog entry`);
+    });
+async function openReport(page) {
+  await page.getByRole("button", { name: "Report", exact: true }).click();
+  await page.getByRole("dialog").waitFor();
+  await dialogReady(page);
+}
+NATIVE_CHECKS.push(
+  ...["ios", "android"].flatMap((platform) => [
+    {
+      id: `native-${platform}-dialog-history-open-close-open-close-returns-to-origin`,
+      platform,
+      width: 390,
+      app: { ...NATIVE_HOME, path: `/student/tutors/${TUTOR_ID}`, mocks: tutorProfileMocks },
+      async run(page) {
+        const originIdx = await histIdx(page);
+        for (const round of [1, 2, 3]) {
+          await openReport(page);
+          await page.keyboard.press("Escape");
+          await page.getByRole("dialog").waitFor({ state: "detached" });
+          try {
+            await historyIs(page, originIdx);
+          } catch (e) {
+            throw new Error(`after close ${round}: ${e.message}`);
+          }
+        }
+      },
+    },
+    {
+      id: `native-${platform}-dialog-history-reopened-dialog-closes-on-back`,
+      platform,
+      width: 390,
+      app: { ...NATIVE_HOME, path: `/student/tutors/${TUTOR_ID}`, mocks: tutorProfileMocks },
+      async run(page) {
+        const originIdx = await histIdx(page);
+        await openReport(page);
+        await page.keyboard.press("Escape");
+        await page.getByRole("dialog").waitFor({ state: "detached" });
+        await historyIs(page, originIdx);
+        await openReport(page);
+        await page.goBack();
+        await page.getByRole("dialog").waitFor({ state: "detached", timeout: 5000 }).catch(() => {
+          throw new Error("the reopened dialog stayed open on browser Back");
+        });
+        await historyIs(page, originIdx);
+      },
+    },
+    {
+      id: `native-${platform}-dialog-history-stacked-close-both-returns-to-origin`,
+      platform,
+      width: 390,
+      app: { ...NATIVE_HOME, path: "/__drift/stacked-dialogs" },
+      async run(page) {
+        const originIdx = await histIdx(page);
+        const press = (name) => page.evaluate((n) => [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === n).click(), name);
+        await press("Open both");
+        await page.waitForFunction(() => document.querySelectorAll("[role=dialog]").length === 2, null, { timeout: 5000 });
+        await page.waitForFunction((o) => window.history.state?.idx === o + 2, originIdx, { timeout: 5000 });
+        await press("Close both");
+        await page.waitForFunction(() => document.querySelectorAll("[role=dialog]").length === 0, null, { timeout: 5000 });
+        await historyIs(page, originIdx);
+        // And the state is clean for the next round: the pair opens and closes again to the same place.
+        await press("Open both");
+        await page.waitForFunction((o) => window.history.state?.idx === o + 2, originIdx, { timeout: 5000 });
+        await press("Close both");
+        await historyIs(page, originIdx);
+      },
+    },
+    {
+      id: `native-${platform}-tab-retap-from-root-drilldown-goes-back-to-root`,
+      platform,
+      width: 390,
+      app: { ...NATIVE_TEACHER_HOME, path: "/teacher/classes" },
+      async run(page) {
+        const idxNow = () => page.evaluate(() => window.history.state?.idx ?? 0);
+        const startIdx = await idxNow();
+        await navcovRouterNavigate(page, TAB_DRILL_PATH);
+        await page.waitForURL(/\/teacher\/classes\/c1$/);
+        if ((await idxNow()) !== startIdx + 1) throw new Error("the drill-down did not push");
+        await page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Classes" }).click();
+        await page.waitForURL(/\/teacher\/classes$/);
+        // Back to the root's own entry, not an added or replaced one: Back from here leaves the tab.
+        await page.waitForFunction((i) => window.history.state?.idx === i, startIdx, { timeout: 5000 }).catch(async () => {
+          throw new Error(`re-tap left idx ${await idxNow()}, expected the root's own entry ${startIdx}`);
+        });
+      },
+    },
+  ]),
 );
