@@ -32,6 +32,7 @@ from tests.admin_billing_db import billing_database
 from tests.test_migration_tutoring_enums import (
     column_names,
     current_revision,
+    head_revision,
     object_names,
     public_tables,
     upgrade_head,
@@ -112,6 +113,22 @@ TRIGGERS = {
 }
 TRIGGER = "trg_admin_audit_log_append_only"
 FUNCTION = "admin_audit_log_append_only"
+
+
+@pytest.fixture
+def migrated_sessionmaker_with_downgrade(
+    migrated_sessionmaker_with_downgrade: tuple[sessionmaker[Session], Callable[[str], None]],
+) -> tuple[sessionmaker[Session], Callable[[str], None]]:
+    """The conftest fixture, stepped back to 0057 first.
+
+    It migrates to the head and later revisions sit above 0057. ``env.py`` runs one downgrade in
+    one transaction, so a refusal at 0057 would also undo the later revisions' downgrades and
+    leave the database at the head, not at 0057. Starting at 0057 keeps these tests about 0057
+    (the 0056 file does the same by stepping back first).
+    """
+    _, downgrade_to = migrated_sessionmaker_with_downgrade
+    downgrade_to(REVISION)
+    return migrated_sessionmaker_with_downgrade
 
 
 def _orm_names(tables: tuple[str, ...]) -> set[str]:
@@ -849,7 +866,7 @@ def test_upgrade_downgrade_upgrade_round_trip(
     upgrade_head()
 
     with sm() as session:
-        assert current_revision(session) == REVISION
+        assert current_revision(session) == head_revision()  # later revisions sit above 0057
         assert object_names(session, PARITY_TABLES_WITH_EVENTS) == after_upgrade
         assert _function_count(session) == 1
         assert session.execute(sa.text("SELECT count(*) FROM job_runs")).scalar_one() == 0

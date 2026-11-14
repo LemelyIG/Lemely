@@ -2049,9 +2049,15 @@ class SubscriptionService:
         subscription = self._payer_lock(subscription_id, actor_user_id)
         if subscription.status not in PLAN_LIVE_STATUSES or subscription.is_manually_activated:
             raise InvalidPlanChange("there is no live card subscription to cancel")
-        if not subscription.cancel_at_period_end or subscription.pending_plan_tier_id is not None:
+        if (
+            not subscription.cancel_at_period_end
+            or subscription.pending_plan_tier_id is not None
+            or subscription.suspended_at is not None
+        ):
             subscription.cancel_at_period_end = True
             subscription.pending_plan_tier_id = None
+            # The payer now asks for this cancel too, so a resume no longer undoes it.
+            subscription.suspended_at = None
             _bump(subscription)
         return subscription
 
@@ -2518,6 +2524,9 @@ class SubscriptionService:
         changed = subscription.paymob_cancelled_at is None
         if changed:
             subscription.paymob_cancelled_at = now
+        if subscription.suspended_at is not None:
+            subscription.suspended_at = None  # a cancel is a cancel, whatever suspended it first
+            changed = True
         if subscription.status in PLAN_LIVE_STATUSES and not subscription.cancel_at_period_end:
             subscription.cancel_at_period_end = True
             subscription.pending_plan_tier_id = None
@@ -2533,31 +2542,56 @@ class SubscriptionService:
         for a plan that was only suspended, and tell the payer nothing. As a cancel, the paid
         period is kept, the sweep pushes the cancel and ends the plan at its period end with the
         ``cancelled`` notice. A pending plan change can no longer apply, so it is dropped.
+
+        ``suspended_at`` marks a cancel that this suspension caused, so a ``resumed`` callback can
+        undo that cancel and no other: a cancel the payer already asked for is left as it is and
+        carries no marker (:meth:`_on_resumed`).
         """
-        del now
         if self._disagrees(subscription, remote, trigger=TRIGGER_SUSPENDED, expected="suspended"):
             return
         if subscription.status is not SubscriptionStatus.active:
             return
-        if subscription.cancel_at_period_end and subscription.pending_plan_tier_id is None:
+        if subscription.cancel_at_period_end:
             return
         subscription.cancel_at_period_end = True
+        subscription.suspended_at = now
         subscription.pending_plan_tier_id = None
         _bump(subscription)
         log.info("subscription_suspended_in_paymob", subscription_id=str(subscription.id))
 
     def _on_resumed(self, subscription: Subscription, remote: RemoteState, now: datetime) -> None:
-        """Paymob reports the subscription resumed: nothing changes.
+        """Paymob reports the subscription resumed: undo the cancel its suspension caused.
 
-        A suspension is a cancel at period end (:meth:`_on_suspended`), and the sweep may already
-        have pushed the permanent Paymob cancel, so a resume cannot be trusted to undo it: the
-        payer resubscribes if they want the plan back. A grace that a failed charge started is
-        not a suspension either, and only a paid renewal ends it.
+        Paymob bills again after a resume, so a plan Lemely still ends at period end would be
+        charged and ended. The undo applies only to a cancel marked by :meth:`_on_suspended`
+        (``suspended_at``), and only while the Paymob cancel has not been pushed
+        (``paymob_cancelled_at`` is ``NULL``) and the plan is still live. A cancel the payer
+        asked for is never undone. When the Paymob cancel was already pushed (or the plan ended)
+        the resume cannot be honoured: that is alerted ``subscription_resumed_after_cancel`` and
+        the row stays ended. A grace that a failed charge started is not a suspension either, and
+        only a paid renewal ends it.
         """
         del now
         if self._disagrees(subscription, remote, trigger=TRIGGER_RESUMED, expected="active"):
             return
-        log.info("subscription_resume_ignored", subscription_id=str(subscription.id))
+        if subscription.suspended_at is None:
+            log.info("subscription_resume_ignored", subscription_id=str(subscription.id))
+            return
+        if (
+            subscription.paymob_cancelled_at is not None
+            or subscription.status not in PLAN_LIVE_STATUSES
+        ):
+            alerts.error(
+                "subscription_resumed_after_cancel",
+                subscription_id=str(subscription.id),
+                status=subscription.status.value,
+                alert=True,
+            )
+            return
+        subscription.cancel_at_period_end = False
+        subscription.suspended_at = None
+        _bump(subscription)
+        log.info("subscription_resumed_in_paymob", subscription_id=str(subscription.id))
 
     def _free_order_id(self, txn: JsonMap) -> int | None:
         """The charge's Paymob order id, unless another payment already holds it (DV-14).

@@ -333,6 +333,11 @@ class Subscription(TimestampMixin, Base):
         sa.DateTime(timezone=True), nullable=True
     )
     """When the Paymob subscription was cancelled; ``None`` while Paymob may still charge."""
+    suspended_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    """Set when a Paymob suspension scheduled this row's cancel at period end (migration 0058).
+
+    The cause marker that lets a ``resumed`` callback undo that cancel and no other. Cleared by
+    the resume and by the payer's own cancel."""
     extra_seat_grace_until: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True
     )

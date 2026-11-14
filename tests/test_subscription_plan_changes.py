@@ -617,6 +617,136 @@ def test_a_suspension_is_a_cancel_at_period_end_with_the_same_notice(
     assert _notices(pg_sessionmaker) == [("cancelled", END)]
 
 
+def test_a_resume_before_the_period_end_undoes_the_cancel_its_suspension_caused(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Paymob bills again after a resume: the plan must not be ended while it is charged."""
+    _, _, sid = _student_sub(pg_sessionmaker)
+    client = _remote(FakePaymobClient(), state="suspended")
+    _deliver(pg_sessionmaker, client, subscription_repo.TRIGGER_SUSPENDED, NOW)
+    assert _sub(pg_sessionmaker, sid).cancel_at_period_end is True
+    resumed = _remote(FakePaymobClient(), state="active")
+    _deliver(pg_sessionmaker, resumed, subscription_repo.TRIGGER_RESUMED, NOW + timedelta(hours=1))
+    sub = _sub(pg_sessionmaker, sid)
+    assert (sub.status, sub.cancel_at_period_end, sub.suspended_at) == (
+        SubscriptionStatus.active,
+        False,
+        None,
+    )
+    assert _sweep(pg_sessionmaker, END, resumed) == 0  # nothing to push, nothing to end
+    assert resumed.calls_to("cancel_subscription") == []
+    assert _notices(pg_sessionmaker) == []
+
+
+def test_a_cancel_the_payer_asked_for_survives_a_suspension_and_a_resume(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    payer, _, sid = _student_sub(pg_sessionmaker)
+    with pg_sessionmaker.begin() as session:
+        _svc(session).schedule_cancel(sid, actor_user_id=payer, now=NOW)
+    _deliver(
+        pg_sessionmaker,
+        _remote(FakePaymobClient(), state="suspended"),
+        subscription_repo.TRIGGER_SUSPENDED,
+        NOW + timedelta(hours=1),
+    )
+    assert _sub(pg_sessionmaker, sid).suspended_at is None  # not this suspension's cancel
+    _deliver(
+        pg_sessionmaker,
+        _remote(FakePaymobClient(), state="active"),
+        subscription_repo.TRIGGER_RESUMED,
+        NOW + timedelta(hours=2),
+    )
+    sub = _sub(pg_sessionmaker, sid)
+    assert (sub.status, sub.cancel_at_period_end) == (SubscriptionStatus.active, True)
+
+
+def test_a_payer_cancel_after_a_suspension_survives_the_resume(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    payer, _, sid = _student_sub(pg_sessionmaker)
+    _deliver(
+        pg_sessionmaker,
+        _remote(FakePaymobClient(), state="suspended"),
+        subscription_repo.TRIGGER_SUSPENDED,
+        NOW,
+    )
+    with pg_sessionmaker.begin() as session:
+        _svc(session).schedule_cancel(sid, actor_user_id=payer, now=NOW + timedelta(hours=1))
+    assert _sub(pg_sessionmaker, sid).suspended_at is None
+    _deliver(
+        pg_sessionmaker,
+        _remote(FakePaymobClient(), state="active"),
+        subscription_repo.TRIGGER_RESUMED,
+        NOW + timedelta(hours=2),
+    )
+    assert _sub(pg_sessionmaker, sid).cancel_at_period_end is True
+
+
+@pytest.mark.parametrize("ended_by", ["pushed_cancel", "plan_ended"])
+def test_a_resume_after_the_paymob_cancel_was_pushed_alerts_and_keeps_the_row_ended(
+    pg_sessionmaker: sessionmaker[Session], ended_by: str
+) -> None:
+    _, _, sid = _student_sub(pg_sessionmaker)
+    client = _remote(FakePaymobClient(), state="suspended")
+    _deliver(pg_sessionmaker, client, subscription_repo.TRIGGER_SUSPENDED, NOW)
+    if ended_by == "pushed_cancel":
+        assert _sweep(pg_sessionmaker, NOW, client) == 1
+    else:
+        with pg_sessionmaker.begin() as session:  # ended with the Paymob cancel never stamped
+            row = session.get(Subscription, sid)
+            assert row is not None
+            row.status = SubscriptionStatus.cancelled
+    with capture_logs() as logs:
+        _deliver(
+            pg_sessionmaker,
+            _remote(FakePaymobClient(), state="active"),
+            subscription_repo.TRIGGER_RESUMED,
+            NOW + timedelta(hours=1),
+        )
+    assert _alerts(logs) == ["subscription_resumed_after_cancel"]
+    sub = _sub(pg_sessionmaker, sid)
+    assert sub.cancel_at_period_end is True
+    assert sub.status is (
+        SubscriptionStatus.active if ended_by == "pushed_cancel" else SubscriptionStatus.cancelled
+    )
+
+
+def test_a_resume_with_no_suspension_behind_it_changes_nothing(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _, _, sid = _student_sub(pg_sessionmaker)
+    with capture_logs() as logs:
+        _deliver(
+            pg_sessionmaker,
+            _remote(FakePaymobClient(), state="active"),
+            subscription_repo.TRIGGER_RESUMED,
+            NOW,
+        )
+    assert _alerts(logs) == []
+    sub = _sub(pg_sessionmaker, sid)
+    assert (sub.cancel_at_period_end, sub.suspended_at) == (False, None)
+
+
+def test_a_paymob_cancel_clears_the_suspension_marker(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _, _, sid = _student_sub(pg_sessionmaker)
+    _deliver(
+        pg_sessionmaker,
+        _remote(FakePaymobClient(), state="suspended"),
+        subscription_repo.TRIGGER_SUSPENDED,
+        NOW,
+    )
+    _deliver(
+        pg_sessionmaker,
+        _remote(FakePaymobClient(), state="canceled"),
+        subscription_repo.TRIGGER_CANCELED,
+        NOW + timedelta(hours=1),
+    )
+    assert _sub(pg_sessionmaker, sid).suspended_at is None
+
+
 def test_a_suspension_after_the_period_end_is_ended_by_the_next_sweep(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:

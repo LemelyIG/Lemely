@@ -1016,7 +1016,7 @@ def test_a_trigger_that_disagrees_with_paymob_state_is_ignored(
     assert any(e["event"] == "paymob_state_disagrees" for e in logs)
 
 
-def test_a_suspension_is_a_cancel_at_period_end_and_a_resume_does_not_undo_it(
+def test_a_suspension_is_a_cancel_at_period_end_and_a_resume_undoes_it(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     """P05 T8: the period-end sweep ends it as "cancelled" (see test_subscription_plan_changes)."""
@@ -1024,10 +1024,11 @@ def test_a_suspension_is_a_cancel_at_period_end_and_a_resume_does_not_undo_it(
     now = END - timedelta(days=10)
     _deliver(pg_sessionmaker, _client(state="suspended", updated_at="s"), TRIGGER_SUSPENDED, now)
     sub = _sub(pg_sessionmaker, sid)
-    assert (sub.status, sub.grace_until, sub.cancel_at_period_end) == (
+    assert (sub.status, sub.grace_until, sub.cancel_at_period_end, sub.suspended_at) == (
         SubscriptionStatus.active,
         None,
         True,
+        now,
     )
     _deliver(
         pg_sessionmaker,
@@ -1036,10 +1037,11 @@ def test_a_suspension_is_a_cancel_at_period_end_and_a_resume_does_not_undo_it(
         now + timedelta(days=1),
     )
     sub = _sub(pg_sessionmaker, sid)
-    assert (sub.status, sub.grace_until, sub.cancel_at_period_end) == (
+    assert (sub.status, sub.grace_until, sub.cancel_at_period_end, sub.suspended_at) == (
         SubscriptionStatus.active,
         None,
-        True,
+        False,
+        None,
     )
 
 
