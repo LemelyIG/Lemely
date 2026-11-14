@@ -1,0 +1,183 @@
+{
+  "metrics": [
+    {
+      "vp": "380",
+      "label": "signup empty",
+      "overflowX": -15
+    },
+    {
+      "vp": "380",
+      "label": "server phone_invalid",
+      "focusedTag": "INPUT",
+      "formLevelAlerts": []
+    },
+    {
+      "vp": "380",
+      "label": "parent step 3",
+      "overflowX": -15
+    },
+    {
+      "vp": "380",
+      "label": "parent server phone_required",
+      "alerts": []
+    },
+    {
+      "vp": "380",
+      "label": "banner on plans",
+      "overflowX": -15
+    },
+    {
+      "vp": "380",
+      "label": "profile missing",
+      "overflowX": -15
+    },
+    {
+      "vp": "380",
+      "label": "banner on profile screen (expect 0)",
+      "bannerOnProfile": 0
+    },
+    {
+      "vp": "380",
+      "label": "plan 422 prompt focus",
+      "activeId": "_r_3_",
+      "genericErrorShown": 0
+    },
+    {
+      "vp": "380",
+      "label": "checkout plan prompt",
+      "overflowX": -15
+    },
+    {
+      "vp": "380",
+      "label": "plan retry",
+      "checkoutCalls": 2,
+      "puts": 1
+    },
+    {
+      "vp": "768",
+      "label": "signup empty",
+      "overflowX": -15
+    },
+    {
+      "vp": "768",
+      "label": "server phone_invalid",
+      "focusedTag": "INPUT",
+      "formLevelAlerts": []
+    },
+    {
+      "vp": "768",
+      "label": "parent step 3",
+      "overflowX": -15
+    },
+    {
+      "vp": "768",
+      "label": "parent server phone_required",
+      "alerts": []
+    },
+    {
+      "vp": "768",
+      "label": "banner on plans",
+      "overflowX": -15
+    },
+    {
+      "vp": "768",
+      "label": "profile missing",
+      "overflowX": -15
+    },
+    {
+      "vp": "768",
+      "label": "banner on profile screen (expect 0)",
+      "bannerOnProfile": 0
+    },
+    {
+      "vp": "768",
+      "label": "plan 422 prompt focus",
+      "activeId": "_r_3_",
+      "genericErrorShown": 0
+    },
+    {
+      "vp": "768",
+      "label": "checkout plan prompt",
+      "overflowX": -15
+    },
+    {
+      "vp": "768",
+      "label": "plan retry",
+      "checkoutCalls": 2,
+      "puts": 1
+    },
+    {
+      "vp": "1440",
+      "label": "signup empty",
+      "overflowX": -15
+    },
+    {
+      "vp": "1440",
+      "label": "server phone_invalid",
+      "focusedTag": "INPUT",
+      "formLevelAlerts": []
+    },
+    {
+      "vp": "1440",
+      "label": "parent step 3",
+      "overflowX": -15
+    },
+    {
+      "vp": "1440",
+      "label": "parent server phone_required",
+      "alerts": []
+    },
+    {
+      "vp": "1440",
+      "label": "banner on plans",
+      "overflowX": -15
+    },
+    {
+      "vp": "1440",
+      "label": "profile missing",
+      "overflowX": -15
+    },
+    {
+      "vp": "1440",
+      "label": "banner on profile screen (expect 0)",
+      "bannerOnProfile": 0
+    },
+    {
+      "vp": "1440",
+      "label": "plan 422 prompt focus",
+      "activeId": "_r_3_",
+      "genericErrorShown": 0
+    },
+    {
+      "vp": "1440",
+      "label": "checkout plan prompt",
+      "overflowX": -15
+    },
+    {
+      "vp": "1440",
+      "label": "plan retry",
+      "checkoutCalls": 2,
+      "puts": 1
+    }
+  ],
+  "consoleErrors": [
+    "[380] Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)",
+    "[380] Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)",
+    "[380] Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)",
+    "[380] Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)",
+    "[380] Failed to load resource: the server responded with a status of 503 (Service Unavailable)",
+    "[380] Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)",
+    "[768] Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)",
+    "[768] Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)",
+    "[768] Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)",
+    "[768] Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)",
+    "[768] Failed to load resource: the server responded with a status of 503 (Service Unavailable)",
+    "[768] Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)",
+    "[1440] Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)",
+    "[1440] Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)",
+    "[1440] Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)",
+    "[1440] Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)",
+    "[1440] Failed to load resource: the server responded with a status of 503 (Service Unavailable)",
+    "[1440] Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)"
+  ]
+}

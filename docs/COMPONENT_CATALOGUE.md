@@ -329,6 +329,46 @@ in all of these files.
   `alsoTeachesClasses` has a name in it, and the "still counted in their results"
   line is always there (SPEC §d S-38). Copy: `lib/tutoring/accessView.ts`.
 
+## Phone number components (C-25..C-26, UD-11)
+Every account carries a phone number; it is format-checked by the server only
+(libphonenumber, region EG), never verified by text message. Client rules live in
+`lib/phone.ts` (tested): the "+20" default, the shape check, and the mapping of the
+server's `phone_required` / `phone_invalid` 422 codes to our own sentences. Match on
+the code, never on the server's message.
+
+## C-25 — Phone input
+`web/src/components/ui/phone-input.tsx` —
+`PhoneInput({ value, onValueChange, onBlur?, label?, hint?, error?, ...InputProps })`
+- A labelled `Input` (never a copy of it) with `type="tel"`, `inputMode="tel"` and
+  `autoComplete="tel"` fixed. "+20" shows in front of the number until the person
+  types their own code (a leading `+` or `00`); there is no country picker. The
+  prefix sits in `Input`'s decorative `leadingIcon` slot, so the default country is
+  carried to assistive technology by the hint ("Egypt (+20) is assumed. For another
+  country, start with + and the country code."), which `Input` ties to the field.
+- On blur a leading national zero is dropped from view and the tidied value is
+  passed to `onBlur`, so the caller validates what is on screen. Validation stays
+  with the caller (`validatePhoneField`), on blur and on submit, never per keystroke.
+- Used by sign-up (student, teacher, and the parent's last step) and by C-26.
+
+## C-26 — Phone entry form and banner
+- `web/src/components/phone-entry-form.tsx` —
+  `PhoneEntryForm({ onSaved?, submitLabel?, autoFocus?, hint?, onCancel? })`.
+  A small form of its own: `PhoneInput` plus a primary button, saving through
+  `PUT /api/me/phone` (`usePutPhone`, which updates the cached profile). A server
+  `phone_required` / `phone_invalid` lands on the field and returns focus to it; any
+  other failure (offline, 5xx) is an alert line under the button. Mounted in the
+  profile card (`Phone number` row, form shown directly when none is on file, a
+  value with Change when there is one) and inline in `PlansView` when checkout
+  answers 422 `phone_required` ("Add your phone number to continue", then the same
+  checkout is retried once the number is saved).
+- `web/src/components/ui/phone-banner.tsx` — `PhoneBanner()` (mounted in all four
+  portal layouts under `VerifyEmailBanner`) and `PhoneBannerView({ to, onDismiss? })`.
+  The verify-email strip's construction. Shows only when the profile says
+  `phoneMissing === true`; never pinned (nothing is locked for want of a number);
+  dismissible for the visit (`sessionStorage`); hidden on the profile screen itself.
+  Rules in `lib/phoneBanner.ts` (tested). Links to `/student/settings`,
+  `/teacher/settings` or `/settings/profile` by role.
+
 ## Known follow-ups for the P2.5.3 retrofit
 - Two pre-token-system components duplicate new library components and
   should be deleted in favor of the new ones once screens are retrofitted:

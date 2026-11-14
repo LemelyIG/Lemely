@@ -1,6 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import { useRef, useState, type ChangeEvent } from "react"
 import { Avatar } from "@/components/ui/avatar"
+import { PhoneEntryForm } from "@/components/phone-entry-form"
 import { Button } from "@/components/ui/button"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
@@ -58,6 +59,66 @@ function roleLabel(role: string): string {
     .filter((word) => word.length > 0)
     .map((word) => word[0].toUpperCase() + word.slice(1))
     .join(" ")
+}
+
+/**
+ * The phone number row (UD-11). With none on file the form is the row: this is the card the phone
+ * banner and the rest of the app send people to, so it should not need a click to start. With one
+ * on file it reads as a value with a Change button, the same as the other rows, and the form opens
+ * in place only on request. Saving updates the cached profile (`usePutPhone`), so the banner
+ * disappears without a reload and this row flips from the form to the value.
+ */
+function PhoneRow({ phone }: { phone: string | null }) {
+  const [editing, setEditing] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const missing = !phone
+
+  if (missing || editing) {
+    return (
+      <SettingsRow
+        label="Phone number"
+        stacked
+        description={
+          missing
+            ? "None on file yet. You'll need one to pay for a plan or credits."
+            : "Your number is shared with our payment provider when you pay."
+        }
+        control={
+          <PhoneEntryForm
+            hideLabel
+            onSaved={() => {
+              setEditing(false)
+              setSaved(true)
+            }}
+            onCancel={missing ? undefined : () => setEditing(false)}
+          />
+        }
+      />
+    )
+  }
+
+  return (
+    <SettingsRow
+      label="Phone number"
+      description="Used for payments. It is not checked by text message."
+      control={
+        <>
+          <span className="text-body-md tabular-nums text-on-surface">{phone}</span>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => {
+              setSaved(false)
+              setEditing(true)
+            }}
+          >
+            Change
+          </Button>
+        </>
+      }
+      status={saved ? <SettingsStatus>Saved.</SettingsStatus> : null}
+    />
+  )
 }
 
 /**
@@ -231,6 +292,7 @@ export function ProfileSettingsSection({
                     <span className="truncate text-body-md text-on-surface">{data.email}</span>
                   }
                 />
+                <PhoneRow phone={data.phone} />
                 <SettingsRow
                   label="Role"
                   control={

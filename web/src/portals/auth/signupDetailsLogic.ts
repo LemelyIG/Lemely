@@ -14,6 +14,7 @@
  */
 
 import type { SelfServiceRole, SignupVariables } from "@/lib/auth/AuthContext"
+import { validatePhoneField } from "@/lib/phone"
 
 /**
  * The frontend's own floor, not a mirrored backend rule — grepping
@@ -33,6 +34,8 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 export interface SignupFormValues {
   name: string
   email: string
+  /** As typed, or as `PhoneInput` tidied it: the server reads either the same way (UD-11). */
+  phone: string
   password: string
   acceptedTerms: boolean
 }
@@ -40,6 +43,7 @@ export interface SignupFormValues {
 export interface SignupFieldErrors {
   name?: string
   email?: string
+  phone?: string
   password?: string
 }
 
@@ -63,6 +67,9 @@ export function validateSignupFields(values: SignupFormValues): SignupFieldError
   } else if (!EMAIL_PATTERN.test(email)) {
     errors.email = "Enter a valid email address."
   }
+
+  const phoneError = validatePhoneField(values.phone)
+  if (phoneError) errors.phone = phoneError
 
   if (values.password.length === 0) {
     errors.password = "Enter a password."
@@ -156,5 +163,6 @@ export function buildSignupPayload(
     role,
     acceptedTerms: true,
     displayName: values.name.trim(),
+    phone: values.phone.trim(),
   }
 }

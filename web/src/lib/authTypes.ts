@@ -21,7 +21,12 @@ export interface SignupRequest {
    */
   acceptedTerms: boolean
   displayName?: string | null
-  phone?: string | null
+  /**
+   * UD-11: required for every self-service account. Typed as a plain string, in whatever format
+   * the person typed it; the server parses it (region EG) and stores E.164. A missing or blank
+   * value answers 422 `phone_required`, a bad one 422 `phone_invalid` (`lib/phone.ts`).
+   */
+  phone: string
   deviceId?: string | null
 }
 
@@ -91,6 +96,9 @@ export interface ParentSignupBody {
   /** D7.11, unchanged from `SignupRequest.acceptedTerms` — see that field's
    * own comment for why this has no default. */
   acceptedTerms: boolean
+  /** UD-11: required, same rules as `SignupRequest.phone`. A phone refusal does not consume the
+   * proof token, so the same token can be sent again with a corrected number. */
+  phone: string
   deviceId?: string | null
 }
 

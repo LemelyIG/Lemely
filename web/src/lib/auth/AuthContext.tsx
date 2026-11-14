@@ -101,7 +101,8 @@ export interface SignupVariables {
   role: SelfServiceRole
   acceptedTerms: boolean
   displayName?: string
-  phone?: string
+  /** UD-11: required, in any format the person typed; the server normalises it. */
+  phone: string
 }
 
 interface AuthContextValue {

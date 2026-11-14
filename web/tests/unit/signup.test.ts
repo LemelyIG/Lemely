@@ -40,6 +40,7 @@ const SELF_SERVICE_ROLES: readonly SelfServiceRole[] = ["student", "teacher"]
 const VALID_FIELDS: SignupFormValues = {
   name: "Amina Farouk",
   email: "amina@example.com",
+  phone: "01012345678",
   password: "correct horse battery staple",
   acceptedTerms: true,
 }
@@ -116,6 +117,7 @@ describe("buildSignupPayload", () => {
       buildSignupPayload("student", {
         name: "",
         email: "nope",
+        phone: "",
         password: "x",
         acceptedTerms: false,
       }),
@@ -132,11 +134,13 @@ describe("validateSignupFields", () => {
     const errors = validateSignupFields({
       name: "",
       email: "nope",
+      phone: "abc",
       password: "x",
       acceptedTerms: true,
     })
     expect(errors.name).toBeTruthy()
     expect(errors.email).toBeTruthy()
+    expect(errors.phone).toBeTruthy()
     expect(errors.password).toBeTruthy()
   })
 
@@ -173,5 +177,32 @@ describe("passwordStrength", () => {
     const strong = passwordStrength("Correct1Horse!Battery")
     expect(strong.label).toBe("Strong")
     expect(strong.score).toBe(4)
+  })
+})
+
+describe("phone at sign-up (UD-11)", () => {
+  it("refuses a payload with no phone, and says the field is required", () => {
+    for (const role of SELF_SERVICE_ROLES) {
+      expect(buildSignupPayload(role, { ...VALID_FIELDS, phone: "" })).toBeNull()
+      expect(buildSignupPayload(role, { ...VALID_FIELDS, phone: "   " })).toBeNull()
+    }
+    expect(validateSignupFields({ ...VALID_FIELDS, phone: "" }).phone).toBe("Enter a phone number.")
+  })
+
+  it("refuses something that cannot be a number", () => {
+    expect(buildSignupPayload("student", { ...VALID_FIELDS, phone: "call me" })).toBeNull()
+    expect(validateSignupFields({ ...VALID_FIELDS, phone: "12" }).phone).toMatch(/valid phone number/)
+  })
+
+  it("sends the number as typed, trimmed, for both roles; the server normalises it", () => {
+    for (const role of SELF_SERVICE_ROLES) {
+      expect(buildSignupPayload(role, { ...VALID_FIELDS, phone: "  01012345678 " })?.phone).toBe("01012345678")
+      expect(buildSignupPayload(role, { ...VALID_FIELDS, phone: "+44 7700 900123" })?.phone).toBe("+44 7700 900123")
+    }
+  })
+
+  it("does not flag a valid phone when another field is wrong", () => {
+    const errors = validateSignupFields({ ...VALID_FIELDS, email: "" })
+    expect(errors.phone).toBeUndefined()
   })
 })

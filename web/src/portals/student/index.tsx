@@ -25,6 +25,7 @@ import { ErrorBoundary } from "@/components/ui/error-boundary"
 import { portalErrorFallback } from "@/components/route-error"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
+import { PhoneBanner } from "@/components/ui/phone-banner"
 import { InstallBanner } from "@/components/InstallBanner"
 import { BadgeSync } from "@/components/badge-sync"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
@@ -868,6 +869,8 @@ function StudentLayout() {
               about the account. Renders nothing, and no margin either, unless the
               profile has resolved and says the address is unverified. */}
           <VerifyEmailBanner />
+          {/* UD-11: renders nothing unless the profile says there is no phone number on file. */}
+          <PhoneBanner />
           {/* Packet A7: same "renders nothing unless there's something to
               say" shape as the two banners above. Student and teacher only —
               see the component's own header for why. */}

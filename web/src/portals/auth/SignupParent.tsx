@@ -5,10 +5,12 @@ import { useAuth } from "@/lib/auth/AuthContext"
 import { portalPathForRole } from "@/lib/auth/RequireAuth"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { PhoneInput } from "@/components/ui/phone-input"
 import { Checkbox } from "@/components/ui/checkbox"
 import { CodeInput } from "@/components/auth/CodeInput"
 import { ApiError } from "@/lib/api"
 import { withNext } from "@/lib/nextPath"
+import { phoneErrorCode, phoneErrorMessage, validatePhoneField } from "@/lib/phone"
 import { normalizeInviteCode } from "@/lib/hooks/useInvitesApi"
 import { useRequestParentCode, useVerifyParentCode } from "@/lib/hooks/useParentSignupApi"
 import { MIN_PASSWORD_LENGTH, passwordStrength, strengthFillClass } from "./signupDetailsLogic"
@@ -162,6 +164,11 @@ export function SignupParent() {
   const [codeGeneration, setCodeGeneration] = useState(0)
 
   const [proofToken, setProofToken] = useState<string | null>(null)
+  // UD-11: the parent's own number, collected on the last step beside the password. `phoneRef` takes
+  // focus back when the server refuses the number, so the fix is one keystroke away.
+  const [phone, setPhone] = useState("")
+  const [phoneFieldError, setPhoneFieldError] = useState<string | undefined>(undefined)
+  const phoneRef = useRef<HTMLInputElement>(null)
   const [password, setPassword] = useState("")
   const [passwordError, setPasswordError] = useState<string | undefined>(undefined)
   const [acceptedTerms, setAcceptedTerms] = useState(false)
@@ -232,20 +239,26 @@ export function SignupParent() {
     event.preventDefault()
     const errors = validateParentPasswordStep(password)
     setPasswordError(errors.password)
+    const phoneProblem = validatePhoneField(phone)
+    setPhoneFieldError(phoneProblem)
     const missingConsent = !acceptedTerms
     setConsentError(missingConsent)
-    if (errors.password || missingConsent || !proofToken) return
+    if (phoneProblem) phoneRef.current?.focus()
+    if (errors.password || phoneProblem || missingConsent || !proofToken) return
     parentSignup.mutate(
       {
         proofToken,
         password,
         displayName: name.trim() || undefined,
         acceptedTerms: true,
+        phone: phone.trim(),
       },
       {
         onSuccess: (result) => navigate(portalPathForRole(result.role), { replace: true }),
         onError: (err) => {
           if (err instanceof ApiError && err.status === 404) setInviteDead(true)
+          // After the next frame, once the form has been re-enabled: a disabled field cannot take focus.
+          if (phoneErrorCode(err)) requestAnimationFrame(() => phoneRef.current?.focus())
         },
       },
     )
@@ -268,6 +281,9 @@ export function SignupParent() {
     return <InviteMissingPanel />
   }
 
+  // The server's refusal of the number (`phone_required` / `phone_invalid`) belongs on the field.
+  // A phone refusal does not consume the proof token, so the same step simply tries again.
+  const serverPhoneCode = phoneErrorCode(parentSignup.error)
   const requestFailure = requestCode.isError ? parentRequestCodeFailure(requestCode.error) : null
   // `verifyCode`'s 404 (the invite died between `request-code` and this
   // call) is handled in `handleVerify`'s own `onError` by setting
@@ -462,11 +478,26 @@ export function SignupParent() {
           ) : (
             <form onSubmit={handlePasswordSubmit} noValidate className="flex flex-col gap-5">
               <div className="flex flex-col gap-1.5">
-                <h1 className="text-display-lg text-on-surface">Set a password</h1>
+                <h1 className="text-display-lg text-on-surface">Finish your account</h1>
                 <p className="text-body-md text-on-surface-variant">
-                  One more step, and you'll be able to see how your child is doing.
+                  Add your phone number and choose a password, and you'll be able to see how your
+                  child is doing.
                 </p>
               </div>
+
+              <PhoneInput
+                ref={phoneRef}
+                required
+                disabled={parentSignup.isPending}
+                value={phone}
+                onValueChange={(value) => {
+                  setPhone(value)
+                  setPhoneFieldError(undefined)
+                  if (parentSignup.isError) parentSignup.reset()
+                }}
+                onBlur={(tidy) => setPhoneFieldError(validatePhoneField(tidy))}
+                error={phoneFieldError ?? (serverPhoneCode ? phoneErrorMessage(serverPhoneCode) : undefined)}
+              />
 
               <div className="flex flex-col gap-2">
                 <Input
@@ -545,7 +576,7 @@ export function SignupParent() {
                 ) : null}
               </div>
 
-              {parentSignup.isError ? (
+              {parentSignup.isError && !serverPhoneCode ? (
                 <div className="flex flex-col gap-1.5">
                   <p role="alert" className="text-body-sm text-error">
                     {parentSignupFailureMessage(parentSignup.error)}

@@ -68,6 +68,7 @@ test.describe("student sign-up: landing to dashboard", () => {
     // G-03: fill, consent, submit.
     await page.getByLabel("Name").fill("E2E Student")
     await page.getByLabel("Email").fill(email)
+    await page.getByLabel("Phone number").fill("01012345678")
     await page.getByLabel("Password").fill("a-genuinely-strong-passphrase-1")
     await page.getByRole("checkbox").check()
     await page.getByRole("button", { name: "Create account" }).click()
@@ -142,6 +143,7 @@ test.describe("student sign-up: landing to dashboard", () => {
     await page.goto("/signup/student")
     await page.getByLabel("Name").fill("E2E Student Code")
     await page.getByLabel("Email").fill(email)
+    await page.getByLabel("Phone number").fill("01012345678")
     await page.getByLabel("Password").fill("a-genuinely-strong-passphrase-4")
     await page.getByRole("checkbox").check()
     await page.getByRole("button", { name: "Create account" }).click()
@@ -180,6 +182,38 @@ test.describe("student sign-up: landing to dashboard", () => {
   })
 })
 
+test.describe("sign-up phone field (UD-11)", () => {
+  test("an empty or malformed number is refused on the field, and a number with a country code is accepted", async ({
+    page,
+  }) => {
+    await page.goto("/signup/student")
+    const phone = page.getByLabel("Phone number")
+
+    // Blur with nothing typed.
+    await phone.focus()
+    await phone.blur()
+    await expect(page.getByText("Enter a phone number.")).toBeVisible()
+
+    // Letters are never a number.
+    await phone.fill("call me")
+    await phone.blur()
+    await expect(page.getByText(/Enter a valid phone number/)).toBeVisible()
+
+    // Typing again clears the stale message; a "+" drops the "+20" default shown in front.
+    await phone.fill("+44 7700 900123")
+    await expect(page.getByText(/Enter a valid phone number/)).toHaveCount(0)
+    await phone.blur()
+    await expect(page.getByText(/Enter a valid phone number/)).toHaveCount(0)
+    await expect(phone).toHaveAttribute("autocomplete", "tel")
+    await expect(phone).toHaveAttribute("inputmode", "tel")
+
+    // A leading national zero is tidied away once the "+20" is showing.
+    await phone.fill("01012345678")
+    await phone.blur()
+    await expect(phone).toHaveValue("1012345678")
+  })
+})
+
 test.describe("teacher sign-up: role select to a class join code", () => {
   test("a visitor signs up as a teacher, skips verification, and ends the first-class step holding a join code", async ({
     page,
@@ -200,6 +234,7 @@ test.describe("teacher sign-up: role select to a class join code", () => {
 
     await page.getByLabel("Name").fill("E2E Teacher")
     await page.getByLabel("Email").fill(email)
+    await page.getByLabel("Phone number").fill("01012345678")
     await page.getByLabel("Password").fill("a-genuinely-strong-passphrase-2")
     await page.getByRole("checkbox").check()
     await page.getByRole("button", { name: "Create account" }).click()
@@ -305,6 +340,7 @@ test.describe("invite redemption: a minted seat code, redeemed signed out", () =
     const studentEmail = `invited-student-${runTag}@example.com`
     await page.getByLabel("Name").fill("E2E Invited Student")
     await page.getByLabel("Email").fill(studentEmail)
+    await page.getByLabel("Phone number").fill("01012345678")
     await page.getByLabel("Password").fill("a-genuinely-strong-passphrase-3")
     await page.getByRole("checkbox").check()
 

@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api"
+import { PHONE_CHECKOUT_HEADING, isCheckoutPhoneRequired } from "@/lib/phone"
 
 /*
  * What a payer is told when a billing write fails. Every billing write inserts its payment row
@@ -49,6 +50,9 @@ export function billingFailureMessage(err: unknown, action: string): string {
     const code = billingErrorCode(err)
     if (code && CONFLICTS[code]) return CONFLICTS[code]
   }
+  // UD-11. `PlansView` shows the phone field in place of this line; any other caller still gets a
+  // sentence that names the fix instead of "check the details".
+  if (status === 422 && isCheckoutPhoneRequired(err)) return `${PHONE_CHECKOUT_HEADING}.`
   if (status === 422) return `Couldn't ${action}. Check the details and try again.`
   return `Couldn't ${action}. Nothing was charged. Try again.`
 }

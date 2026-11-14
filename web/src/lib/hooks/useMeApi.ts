@@ -10,6 +10,7 @@ import type {
   ConfidenceRating,
   ConfidenceRatingsUpdate,
   EnrolmentListRequest,
+  PhoneState,
   Profile,
   StudentProfile,
   StudentProfileUpdate,
@@ -53,6 +54,29 @@ export function usePutTimezone(): UseMutationResult<TimezoneState, Error, Timezo
       }),
     onSuccess: (state) => {
       queryClient.setQueryData<Profile>(PROFILE_KEY, (old) => (old ? { ...old, ...state } : old))
+    },
+  })
+}
+
+/**
+ * `PUT /me/phone` (UD-11): save or change the caller's number. The body is whatever the person
+ * typed; the response is the stored E.164 value. A 422 carries `phone_required` or `phone_invalid`
+ * (`lib/phone.ts`) and the old number is kept. The result is merged into the cached profile, so
+ * the phone banner and the profile card react without waiting on a refetch, then the profile is
+ * refetched to stay the source of truth.
+ */
+export function usePutPhone(): UseMutationResult<PhoneState, Error, string> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (phone: string) =>
+      request<PhoneState>("/me/phone", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone }),
+      }),
+    onSuccess: (state) => {
+      queryClient.setQueryData<Profile>(PROFILE_KEY, (old) => (old ? { ...old, ...state } : old))
+      queryClient.invalidateQueries({ queryKey: PROFILE_KEY })
     },
   })
 }

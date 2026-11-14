@@ -6,6 +6,7 @@ import { Check } from "@phosphor-icons/react"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { PhoneEntryForm } from "@/components/phone-entry-form"
 import { CardGridSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
 import { EmptyState } from "@/components/ui/state-views"
@@ -28,6 +29,7 @@ import {
   useStartPackCheckout,
   useStartSubscriptionCheckout,
 } from "@/lib/hooks/useBillingApi"
+import { PHONE_CHECKOUT_BODY, PHONE_CHECKOUT_HEADING, isCheckoutPhoneRequired } from "@/lib/phone"
 import { extraSeatsLine, planPreselect } from "@/lib/pricingModel"
 
 /*
@@ -90,7 +92,35 @@ export function PlansView(props: PlansViewProps) {
     const m = section === "plan" ? subCheckout : packCheckout
     return m.isError ? billingFailureMessage(m.error, "start checkout") : null
   }
+  // UD-11: checkout refuses with 422 `phone_required` when the payer has no valid number on file.
+  // That is not a failure to report, it is a missing step, so the section shows the field in place
+  // and retries the same checkout the moment the number is saved. Nothing was charged: the server
+  // checks before it writes a payment row.
+  const retry = (section: "plan" | "pack") => {
+    if (section === "plan") {
+      if (subCheckout.variables) subCheckout.mutate(subCheckout.variables, { onSuccess: redirect("plan") })
+    } else if (packCheckout.variables) {
+      packCheckout.mutate(packCheckout.variables, { onSuccess: redirect("pack") })
+    }
+  }
+  const phonePrompt = (section: "plan" | "pack") => {
+    const m = section === "plan" ? subCheckout : packCheckout
+    if (!m.isError || !isCheckoutPhoneRequired(m.error)) return null
+    return (
+      <div className="flex flex-col gap-3 rounded-md border border-outline-variant bg-surface-container-low p-4">
+        <div className="flex flex-col gap-1">
+          <h3 className="m-0 text-display-xs text-on-surface">
+            {PHONE_CHECKOUT_HEADING}
+          </h3>
+          <p className="m-0 text-body-sm text-on-surface-variant">{PHONE_CHECKOUT_BODY}</p>
+        </div>
+        <PhoneEntryForm autoFocus submitLabel="Save and continue" onSaved={() => retry(section)} />
+      </div>
+    )
+  }
   const failureLine = (section: "plan" | "pack") => {
+    const prompt = phonePrompt(section)
+    if (prompt) return prompt
     const text = failureFor(section)
     return text ? (
       <p role="alert" className="m-0 text-body-sm text-error">
