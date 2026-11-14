@@ -128,9 +128,18 @@ def test_a_forged_signature_is_401_and_changes_nothing(
     assert _count(sm, UsageGrant) == 0
 
 
-def test_the_hmac_is_checked_before_the_database_is_touched(app: FastAPI) -> None:
-    """A bad signature must be answered without so much as opening a session."""
+def test_the_hmac_is_checked_before_the_database_is_touched(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bad signature must be answered without so much as opening a session.
 
+    The refused-callback record (P07 T2) opens its own session *after* the 401 is decided;
+    it is switched off here so this test keeps pinning the route itself. The record is
+    covered in ``tests/test_billing_observability.py``.
+    """
+    monkeypatch.setattr(
+        "lemely.web.routers.paymob_webhooks.record_webhook_failure", lambda *a, **k: True
+    )
     untouchable = MagicMock(spec=sessionmaker)
     untouchable.side_effect = AssertionError("a session was opened before the HMAC was verified")
     untouchable.begin.side_effect = untouchable.side_effect

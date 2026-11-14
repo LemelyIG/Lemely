@@ -139,6 +139,10 @@ class MalformedCallback(BillingError):
     """A verified callback lacks a field we need (400)."""
 
 
+class PaymentNotFoundError(BillingError):
+    """No payment has that id."""
+
+
 @dataclass(frozen=True, slots=True)
 class CheckoutResult:
     payment_id: uuid.UUID
@@ -691,6 +695,10 @@ class BillingService:
 
         Never commits: the webhook route's ``sessionmaker.begin()`` owns the
         transaction and answers 200 only after it commits.
+
+        Stamps ``Payment.callback_received_at`` on the payment the *signed* ``order.id``
+        resolves to (see ``_apply_transaction``), so the admin "missing callback" queue
+        can tell a payment whose callback never came from one reconcile found first.
         """
         self._apply_transaction(obj, source="callback")
 
@@ -903,6 +911,13 @@ class BillingService:
                 self._record_event(PaymobEventKind.transaction, f"unmatched:{txn_id}", safe)
                 return True
         child = self._is_child_transaction(obj)
+        if source == "callback" and not child:
+            # Arrival stamp (P07 DV-4): on the payment the signed ``order.id`` resolved, in
+            # this callback's transaction (payment row already locked, event insert still
+            # to come), and before the dedupe check below, so a duplicate, or a callback
+            # that reconcile has already overtaken, still counts as a callback. A refund or
+            # void child is not the parent's payment result. An inquiry never stamps.
+            payment.callback_received_at = self._now()
         if not child and not self._integration_allowed_for(payment, obj):
             # Another integration on the same account (a payment link, a dashboard test) signs
             # with the same HMAC secret, so a genuine signature and a real ``order.id`` are not
@@ -1277,6 +1292,30 @@ class BillingService:
             return
         self._schedule_next(payment, now=now)
 
+    def reconcile_payment_now(self, payment_id: uuid.UUID, *, now: datetime) -> PaymentStatus:
+        """Reconcile one payment now, ignoring its backoff schedule (admin trigger, spec §8).
+
+        Locks the payment ``FOR UPDATE`` (payment row first, then the ``paymob_events``
+        insert inside ``_reconcile_one``, the same lock order as ``reconcile_pending``) and
+        runs the per-payment routine, so every rule of the sweeper applies unchanged:
+
+        * a transaction on an integration that is not ours is never settled: the payment
+          stays open with no schedule until a person decides;
+        * a payment 24 hours old (counted from ``coalesce(sent_at, created_at)``) whose
+          inquiry shows no transaction, or one still pending, becomes ``failed``;
+        * an inquiry that errors only reschedules.
+
+        A payment that is no longer ``created`` or ``pending`` is returned untouched, so a
+        double click cannot inquire a settled payment again. Never commits: the caller's
+        transaction does. Raises :class:`PaymentNotFoundError` for an unknown id.
+        """
+        payment = self._session.get(Payment, payment_id, with_for_update=True)
+        if payment is None:
+            raise PaymentNotFoundError(str(payment_id))
+        if payment.status in _OPEN:
+            self._reconcile_one(payment, now=now)
+        return payment.status
+
     @staticmethod
     def _answers_for(payment: Payment, obj: JsonMap) -> bool:
         """False when ``obj`` names a different payment than the one inquired.
@@ -1349,6 +1388,7 @@ __all__ = [
     "MalformedCallback",
     "NotLinkedToBeneficiary",
     "PaidHandler",
+    "PaymentNotFoundError",
     "PhoneRequired",
     "UnknownCreditPack",
     "UnknownPayer",

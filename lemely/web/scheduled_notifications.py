@@ -35,6 +35,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from functools import partial
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
@@ -42,6 +43,7 @@ import structlog
 from sqlalchemy import select
 
 from lemely.db.announcement_repo import DEFAULT_CLAIM_LIMIT
+from lemely.db.billing_observability_repo import prune_webhook_failures
 from lemely.db.models.engagement import Streak
 from lemely.db.models.enums import NotificationType
 from lemely.db.models.study_plan import StudyPlan as DbStudyPlan
@@ -60,6 +62,7 @@ if TYPE_CHECKING:
     from sqlalchemy.sql import ColumnElement
 
     from lemely.db.announcement_repo import AnnouncementRow, AnnouncementService
+    from lemely.db.billing_observability_repo import JobRunRecorder
     from lemely.db.notification_repo import NotificationService
     from lemely.io.notify_email import TransactionalEmailProvider
     from lemely.io.storage import StorageBackend
@@ -430,26 +433,66 @@ def remind_study_plans(
 # ---------------------------------------------------------------------------
 
 
-def run_jobs(jobs: Sequence[tuple[str, Callable[[], int]]]) -> dict[str, int | None]:
+def _utcnow() -> datetime:
+    """Default clock: aware UTC now. Production wiring only — tests inject their own."""
+    return datetime.now(UTC)
+
+
+def _record_safely(step: Callable[[], None], *, job: str, phase: str) -> None:
+    """Run one recorder write; a failure is logged (type only) and never reaches the job.
+
+    Losing one health row must not stop a billing job or change its result. The exception
+    message is not logged: a driver error can echo SQL parameters.
+    """
+    try:
+        step()
+    except Exception as exc:
+        log.warning("job_run_record_failed", job=job, phase=phase, error_type=type(exc).__name__)
+
+
+def _run_one(
+    name: str,
+    job: Callable[[], int],
+    recorder: JobRunRecorder | None,
+    now: Callable[[], datetime],
+) -> int | None:
+    """One job's count, or ``None`` when it threw; reported to ``recorder`` either way."""
+    if recorder is not None:
+        started = now()
+        _record_safely(partial(recorder.start, name, started), job=name, phase="start")
+    error: Exception | None = None
+    count: int | None = None
+    try:
+        count = job()
+    except Exception as exc:
+        log.warning("sweep_job_failed", job=name, exc_info=True)
+        error = exc
+    if recorder is not None:
+        _record_safely(
+            partial(recorder.finish, name, now=now(), count=count, error=error),
+            job=name,
+            phase="finish",
+        )
+    return count
+
+
+def run_jobs(
+    jobs: Sequence[tuple[str, Callable[[], int]]],
+    *,
+    recorder: JobRunRecorder | None = None,
+    now: Callable[[], datetime] = _utcnow,
+) -> dict[str, int | None]:
     """Run each job in turn, each wrapped individually.
 
     A job that throws is a logged warning and the others still run (§4). The
     returned map carries each job's count, or ``None`` for one that threw, so
     a caller (and a test) can see exactly which did what.
+
+    ``recorder`` (the admin health view's ``job_runs`` writer) hears about the start and
+    the end of every job, success or failure. It never changes a result: a recorder that
+    raises is logged as ``job_run_record_failed`` and ignored.
     """
-    results: dict[str, int | None] = {}
-    for name, job in jobs:
-        try:
-            results[name] = job()
-        except Exception:
-            log.warning("sweep_job_failed", job=name, exc_info=True)
-            results[name] = None
-    return results
-
-
-def _utcnow() -> datetime:
-    """Default clock: aware UTC now. Production wiring only — tests inject their own."""
-    return datetime.now(UTC)
+    return {name: _run_one(name, job, recorder, now) for name, job in jobs}
 
 
 @dataclass(slots=True)
@@ -489,6 +532,9 @@ class Sweeper:
     usage_metering: bool = False
     usage_reconcile: ReconcileMemo = field(default_factory=ReconcileMemo)
     usage_repair: RepairCursor = field(default_factory=RepairCursor)
+    #: Writes ``job_runs`` for the admin health view (Phase 07). ``deps.get_sweeper`` sets it;
+    #: ``None`` for a sweeper built without a database, as most tests build one.
+    job_recorder: JobRunRecorder | None = None
 
     def sweep_once(self) -> dict[str, int | None]:
         """Run every job the sweeper was given (notifications, purge, email, billing, usage)."""
@@ -555,6 +601,17 @@ class Sweeper:
         billing_reconcile = self.billing_reconcile
         if billing_reconcile is not None:
             jobs.append(("billing.reconcile_pending", lambda: billing_reconcile(moment)))
+        if self.job_recorder is not None:
+            # The admin health surface: ``job_runs`` is written for every job, and the
+            # refused-callback table it reads beside it is bounded (UD-6, 90 days). Wired
+            # together by ``deps.get_sweeper``, like the other optional collaborators, so a
+            # sweeper built without a recorder keeps exactly the jobs it had.
+            jobs.append(
+                (
+                    "billing.prune_webhook_failures",
+                    lambda: prune_webhook_failures(self.sessionmaker, now=moment),
+                )
+            )
         if self.usage_metering:
             jobs.extend(
                 usage_jobs(
@@ -564,7 +621,7 @@ class Sweeper:
                     repair=self.usage_repair,
                 )
             )
-        return run_jobs(jobs)
+        return run_jobs(jobs, recorder=self.job_recorder, now=self.now)
 
 
 async def run_sweeper(sweeper: Sweeper, *, poll_seconds: float, stop: asyncio.Event) -> None:

@@ -8,8 +8,11 @@ HMAC is in the query string for both. Order of operations:
 1. No HMAC secret configured -> 503 (Paymob retries once we are configured).
 2. Body over 64 KiB -> 413, counted as it streams, before any parsing. Not JSON,
    not an object, or an ``obj`` that is not an object -> 400.
-3. HMAC mismatch or missing -> 401, logged at error level; the database is never
-   reached and nothing is stored.
+3. HMAC mismatch or missing -> 401, logged at error level. The 401 is decided first and
+   the database is not reached to decide it. Afterwards one row goes to
+   ``paymob_webhook_failures`` (kind, a fixed reason, the best-effort caller address; never
+   the body, the HMAC or the object id) in its own transaction, capped at 60 rows per
+   minute per process. A failure to record never changes the 401.
 4. Verified -> one ``sessionmaker.begin()`` transaction applies it; the 200 is
    sent only after that commits. Duplicates and unknown references are 200
    no-ops inside :class:`BillingService`, so Paymob stops retrying them. A
@@ -32,18 +35,23 @@ that the callback itself would not.
 from __future__ import annotations
 
 import json
+import time
+from datetime import UTC, datetime
 from typing import Annotated, Final
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session, sessionmaker  # noqa: TC002 - FastAPI reads the type at runtime
 
+from lemely.db.billing_observability_repo import record_webhook_failure
 from lemely.db.billing_repo import BillingService, MalformedCallback
 from lemely.io.paymob.client import PaymobClient  # noqa: TC001 - FastAPI reads the type at runtime
 from lemely.io.paymob.hmac import verify_token_hmac, verify_transaction_hmac
 from lemely.runtime.config import Settings  # noqa: TC001 - FastAPI reads the type at runtime
 from lemely.web.deps import get_settings
 from lemely.web.deps_billing import get_billing_sessionmaker, get_paymob_client
+from lemely.web.ratelimit import SlidingWindowLimiter
+from lemely.web.routers.client_errors import _client_ip
 
 log = structlog.get_logger(__name__)
 
@@ -54,6 +62,40 @@ router = APIRouter(prefix="/api/webhooks/paymob")
 _MAX_BODY_BYTES: Final = 64 * 1024
 
 _VERIFIERS = {"TRANSACTION": verify_transaction_hmac, "TOKEN": verify_token_hmac}
+
+# The ``paymob_webhook_failures.kind`` each verified callback type is filed under.
+_FAILURE_KINDS: Final = {"TRANSACTION": "transaction", "TOKEN": "token"}
+
+# One alert line per minute when the failure writer's own cap drops rows, so a flood of bad
+# signatures is visible without the log growing with it. Process-local, like the writer's cap.
+_UNRECORDED_ALERT = SlidingWindowLimiter(limit=1, window_seconds=60.0, clock=time.monotonic)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+def _record_hmac_failure(
+    sm: sessionmaker[Session], request: Request, *, kind: str, hmac_present: bool
+) -> None:
+    """File a refused callback for the admin problem queue; never turns a 401 into anything else.
+
+    Runs after the 401 is decided. Any failure (the database down, the table missing) is
+    logged by type only, because a driver error message can echo bound parameters.
+    """
+    try:
+        recorded = record_webhook_failure(
+            sm,
+            kind=kind,
+            reason="hmac_mismatch" if hmac_present else "hmac_missing",
+            remote_addr=_client_ip(request),
+            now=_utcnow(),
+        )
+    except Exception as exc:
+        log.error("paymob_hmac_failure_record_failed", kind=kind, error_type=type(exc).__name__)
+        return
+    if not recorded and _UNRECORDED_ALERT.allow("unrecorded"):
+        log.error("paymob_hmac_failure_unrecorded", alert=True, kind=kind)
 
 
 def _hmac_secret(settings: Annotated[Settings, Depends(get_settings)]) -> str:
@@ -104,6 +146,7 @@ async def _callback_body(request: Request) -> dict[str, object]:
 
 @router.post("/transaction")
 def paymob_transaction_callback(
+    request: Request,
     secret: Annotated[str, Depends(_hmac_secret)],
     body: Annotated[dict[str, object], Depends(_callback_body)],
     settings: Annotated[Settings, Depends(get_settings)],
@@ -127,6 +170,7 @@ def paymob_transaction_callback(
             obj_id=str(obj.get("id"))[:40],
             hmac_present=bool(hmac),
         )
+        _record_hmac_failure(sm, request, kind=_FAILURE_KINDS[str(kind)], hmac_present=bool(hmac))
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "HMAC verification failed")
     try:
         with sm.begin() as session:

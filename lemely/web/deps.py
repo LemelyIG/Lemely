@@ -32,6 +32,7 @@ from lemely.db.announcement_repo import AnnouncementService
 from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.auth_token_repo import AuthTokenService
+from lemely.db.billing_observability_repo import JobRunRecorder
 from lemely.db.catalogue_repo import CatalogueService
 from lemely.db.class_exclusion_repo import ClassExclusionRepository
 from lemely.db.class_repo import ClassService
@@ -869,6 +870,7 @@ def get_sweeper() -> Sweeper:
         email_daily_cap=settings.tutoring.email_daily_cap,
         billing_reconcile=get_billing_reconcile_job(),
         usage_metering=settings.usage.enforce,
+        job_recorder=JobRunRecorder(get_sessionmaker(settings)),
     )
 
 

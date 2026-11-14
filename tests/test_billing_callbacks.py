@@ -1258,3 +1258,110 @@ def test_a_refund_or_void_child_is_not_judged_on_its_integration(
     keys = {e.dedupe_key for e in _events(sm)}
     assert not any(k.startswith("rejected_integration:") for k in keys)
     assert any(k.startswith("child:txn:192036466") for k in keys)
+
+
+# -- callback arrival stamp (P07 T2, DV-4) ---------------------------------------
+
+
+def test_a_verified_callback_stamps_its_arrival_on_the_signed_payment(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    assert _payment(sm, pid).callback_received_at is None
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), success=False, pending=True))
+    assert _payment(sm, pid).callback_received_at == FIXED_NOW
+
+
+def test_a_duplicate_callback_still_stamps_its_arrival(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    obj = transaction_obj(merchant_order_id=str(pid))
+    _apply(sm, obj)
+    with sm.begin() as session:
+        session.execute(
+            sa.update(Payment).where(Payment.id == pid).values(callback_received_at=None)
+        )
+    _apply(sm, obj)  # a dedupe no-op for the payment, but a callback all the same
+    assert len(_grants(sm, pid)) == 1
+    assert _payment(sm, pid).callback_received_at == FIXED_NOW
+
+
+def test_a_callback_after_an_inquiry_already_paid_the_payment_still_stamps_it(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Reconcile learned the result first; the late real callback is a dedupe no-op that
+    must still say "a callback arrived", or the problem queue lists a payment that has one."""
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm, created_at=FIXED_NOW - timedelta(hours=1))
+    obj = transaction_obj(merchant_order_id=str(pid))
+    client = FakePaymobClient()
+    client.inquiry_response = obj
+    with sm.begin() as session:
+        BillingService(
+            session, client, PAYMOB_SETTINGS, now=lambda: FIXED_NOW
+        ).reconcile_payment_now(pid, now=FIXED_NOW)
+    paid = _payment(sm, pid)
+    assert paid.status is PaymentStatus.paid
+    assert paid.callback_received_at is None  # an inquiry is not a callback
+    _apply(sm, obj)
+    assert _payment(sm, pid).callback_received_at == FIXED_NOW
+    assert len(_grants(sm, pid)) == 1
+
+
+def test_a_signed_callback_naming_another_payment_stamps_nothing_on_it(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """``merchant_order_id`` is unsigned: a genuine signature must not stamp the payment
+    that field names. Phase 02 refuses the disagreement, so neither payment is stamped."""
+    sm = migrated_sessionmaker
+    payer = seed_user(sm)
+    pack = seed_pack(sm)
+    a = seed_payment(sm, payer=payer, beneficiary=payer, pack_id=pack, paymob_order_id=265715202)
+    b = seed_payment(sm, payer=payer, beneficiary=payer, pack_id=pack, paymob_order_id=111)
+    _apply(sm, transaction_obj(merchant_order_id=str(b), order_id=265715202))
+    assert _payment(sm, a).callback_received_at is None
+    assert _payment(sm, b).callback_received_at is None
+
+
+def test_a_callback_stamps_only_the_payment_its_signed_order_resolves_to(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    payer = seed_user(sm)
+    pack = seed_pack(sm)
+    a = seed_payment(sm, payer=payer, beneficiary=payer, pack_id=pack, paymob_order_id=265715202)
+    b = seed_payment(sm, payer=payer, beneficiary=payer, pack_id=pack, paymob_order_id=111)
+    obj = transaction_obj(merchant_order_id=str(a), order_id=265715202)
+    _apply(sm, obj)
+    assert _payment(sm, a).callback_received_at == FIXED_NOW
+    assert _payment(sm, b).callback_received_at is None
+
+
+def test_an_unmatched_callback_stamps_nothing(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid), order_id=999))
+    assert _payment(sm, pid).callback_received_at is None
+
+
+def test_a_refund_or_void_child_callback_stamps_nothing(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A child is not the parent's payment result, so it is not the parent's callback."""
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(
+        sm,
+        transaction_obj(
+            merchant_order_id=str(pid),
+            txn_id=192036466,
+            is_refund=True,
+            has_parent_transaction=True,
+        ),
+    )
+    assert _payment(sm, pid).callback_received_at is None
