@@ -3,11 +3,14 @@ import { binnyMood, deriveNextAction } from "@/portals/student/home/model"
 import { FIXTURES, STATES } from "../../dev-previews/student-home/fixtures"
 
 describe("student home preview fixtures", () => {
+  // 10 original spec states, plus sparse0-sparse3. The empty-and-sparse rule (design-empty-sparse-states
+  // memory, 2026-11-13) requires every screen to ship a first-run state and a sparse state, so the four
+  // sparse states are spec states, not strays.
   it("covers every spec state", () => {
     expect([...STATES].sort()).toEqual(
       [
         "error", "loading", "marking", "new", "no-exams", "no-plan", "one-paper", "populated", "result-in",
-        "streak-zero",
+        "sparse0", "sparse1", "sparse2", "sparse3", "streak-zero",
       ],
     )
   })
