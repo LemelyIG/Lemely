@@ -59,7 +59,7 @@ export function TableOrList({
     <div className="flex flex-col gap-2">
       <div className={cn("flex items-center px-4", toolbar ? "justify-between" : "justify-end")}>
         {toolbar}
-        <button type="button" onClick={toggle} className="lm-press text-label text-primary">
+        <button type="button" onClick={toggle} className="lm-press lm-btn text-label text-primary">
           {asTable ? "View list" : "View table"}
         </button>
       </div>

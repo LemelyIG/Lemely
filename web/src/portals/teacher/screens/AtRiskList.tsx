@@ -318,7 +318,7 @@ function AtRiskListRow({ student: s }: { student: AtRiskListEntry }) {
                   type="button"
                   size="sm"
                   variant="secondary"
-                  className="min-h-11 min-w-11 px-0 android:min-h-12! android:min-w-12!"
+                  className="min-h-11 min-w-11 px-0"
                   aria-label={`Acknowledge flags for ${s.displayName}`}
                   title="Acknowledge"
                 >
@@ -401,7 +401,7 @@ export function AtRiskList() {
           return (
             <>
               <div className="flex flex-col gap-1">
-              <div className="text-eyebrow text-on-surface-variant">
+              <div className="text-eyebrow native:hidden text-on-surface-variant">
                 Flagged by trajectory, not by one bad day
               </div>
               <PageHeading repeatsTitle={true} className="text-display-lg text-on-surface mt-1">At-risk students</PageHeading>

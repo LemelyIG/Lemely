@@ -348,7 +348,7 @@ Components are confident and rounded: big radii, heavy weights on buttons, gener
 - **Hover / Focus:** hover moves to `#0a3d62` (light) or `#9ccaea` (dark). Press scales to 0.97. Focus shows a 2px `primary` outline at a 2px offset.
 - **Tonal:** `primary-container` fill with `on-primary-container` text, for the second action in a pair ("See all marks").
 - **Outlined:** `surface-container-lowest` fill with a 1.5px `outline` border, for quiet utilities.
-- **Text (native dialog actions):** `text` and `text-error` variants. No fill and no border, label in `primary` or `error`. They are the Material 3 dialog actions on the native Android confirm (Cancel in `text`, the confirm trailing, `text-error` when the action is destructive). Every button on the native Android frame reaches 48dp; iOS keeps 44pt.
+- **Text (native dialog actions):** `text` and `text-error` variants. No fill and no border, label in `primary` or `error`. They are the Material 3 dialog actions on the native Android confirm (Cancel in `text`, the confirm trailing, `text-error` when the action is destructive). Every `Button` on the native Android frame reaches a 48dp minimum height and width (the `.lm-btn` rule in `index.css`); iOS keeps 44pt. A bare `<button>` is not a `Button`: it takes the same floor by carrying the `lm-btn` class (the table or list view toggle does). An `!` utility is not an option, because the copy checker reads it as an exclamation mark.
 - **Idle (cannot act yet):** a primary button that is waiting on input (the landing page FAQ Send until both fields are valid) fills with `outline` and keeps its `on-primary` label, rather than fading out.
 
 ### Chips
