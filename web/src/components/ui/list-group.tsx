@@ -1,5 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
 import { useId, type ReactNode } from "react"
+import { CaretRight } from "@phosphor-icons/react"
 import { Link } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { useDialogExitClick } from "@/lib/nav/dialogExit"
@@ -86,6 +87,8 @@ export function ListRow({ title, subtitle, leading, trailing, to, href, state, o
         ) : null}
       </span>
       {trailing ? <span className="flex-none text-on-surface-variant">{trailing}</span> : null}
+      {/* iOS discloses a destination with a chevron; Android rows carry none. */}
+      {to ? <CaretRight aria-hidden="true" data-disclosure className="hidden size-4 flex-none text-on-surface-variant native:ios:block rtl:rotate-180" /> : null}
     </>
   )
   if (action && (to || onClick)) {

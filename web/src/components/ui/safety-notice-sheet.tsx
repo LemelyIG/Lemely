@@ -86,7 +86,7 @@ export function SafetyNoticeSheet({
       footer={
         // "I understand" comes first in the DOM, so `Modal` still focuses it on open; the row is
         // reversed so "Not now" sits to its left, as a cancel does in `ConfirmModal`.
-        <div className="flex flex-row-reverse items-center gap-2">
+        <div data-primary-first className="flex flex-row-reverse items-center gap-2">
           <Button variant="primary" loading={pending} onClick={onAcknowledge}>
             {SAFETY_NOTICE_BUTTON}
           </Button>

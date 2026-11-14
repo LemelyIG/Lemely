@@ -215,7 +215,13 @@ export const BottomSheetSurface = forwardRef<HTMLDivElement, BottomSheetSurfaceP
       style={{ ...style, ["--lm-keyboard-inset" as string]: `${keyboard}px` }}
       className={cn("lm-sheet", className)}
     >
-      <div data-sheet-drag-region className="flex flex-col items-center select-none">
+      {/* Without a grabber (a non-dismissible dialog) the title would sit at the sheet's edge:
+          `data-no-grabber` restores the Material 3 dialog's 24px top padding. */}
+      <div
+        data-sheet-drag-region
+        data-no-grabber={dismissible || detents.length > 1 ? undefined : ""}
+        className="flex flex-col items-center select-none"
+      >
         {dismissible || detents.length > 1 ? <SheetGrabber /> : null}
         {header}
       </div>

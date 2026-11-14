@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useState, type FormEvent } from "react"
 import { Link } from "react-router-dom"
-import { CaretRight, Minus, TrendDown, TrendUp } from "@phosphor-icons/react"
+import { Minus, TrendDown, TrendUp } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { GradeBadge } from "@/components/ui/grade-badge"
@@ -173,6 +173,52 @@ function AtRiskCell({ flags }: { flags: StudentRow["flags"] }) {
   )
 }
 
+/** Short names for the three at-risk engine reasons (the At-risk screen's filter uses the same words). */
+const FLAG_REASON_LABEL: Record<string, string> = {
+  declining_trend: "Declining trend",
+  below_target: "Below target grade",
+  inactive: "Inactive",
+}
+const reasonLabel = (reason: string): string => FLAG_REASON_LABEL[reason] ?? reason
+
+/**
+ * The roster list row's subtitle: the grade line (with the low-grade marker beside the grade,
+ * as the table's "Low" chip is), then, when the student is flagged, the first flag's short
+ * reason as a warn chip plus "+n" for the rest. The roster exists to show who needs a look, so
+ * the signal sits in the row rather than behind a tap. Both lines wrap rather than truncate.
+ */
+function RosterRowSignal({ student: s }: { student: StudentRow }) {
+  const first = s.flags[0]
+  const rest = s.flags.length - 1
+  return (
+    <>
+      <span className="flex min-w-0 flex-wrap items-center gap-x-1.5">
+        <span>{s.grade ? `Predicted ${s.grade}` : "No grade yet"}</span>
+        {s.gradeAtRisk ? (
+          <Chip tone="warn" data-grade-at-risk>
+            Low
+          </Chip>
+        ) : null}
+        <span>
+          · {s.paperCount ?? 0} {s.paperCount === 1 ? "paper" : "papers"}
+        </span>
+      </span>
+      {first ? (
+        <span className="mt-1 flex items-center gap-1.5">
+          <Chip tone="warn" data-flag-reason>
+            {reasonLabel(first.reason)}
+          </Chip>
+          {rest > 0 ? (
+            <span data-flag-more className="text-label text-on-surface-variant">
+              +{rest}
+            </span>
+          ) : null}
+        </span>
+      ) : null}
+    </>
+  )
+}
+
 function AddStudentsPanel({ classId, hasSchool }: { classId: string; hasSchool: boolean }) {
   const enroll = useEnrollStudent(classId)
   const [studentId, setStudentId] = useState("")
@@ -283,8 +329,8 @@ export function ClassRoster() {
                   to={`/teacher/students/${s.studentId}`}
                   leading={<Avatar name={s.name} size="sm" />}
                   title={s.name}
-                  subtitle={`${s.grade ? `Predicted ${s.grade}` : "No grade yet"} · ${s.paperCount ?? 0} ${s.paperCount === 1 ? "paper" : "papers"}`}
-                  trailing={<CaretRight aria-hidden className="size-4 rtl:rotate-180" />}
+                  subtitle={<RosterRowSignal student={s} />}
+                  lines={3}
                 />
               ))}
             </ListGroup>
@@ -386,6 +432,7 @@ export function ClassRoster() {
           consequence line says so rather than borrowing the component's
           default claim that this cannot be undone. */}
       <ConfirmModal
+        destructive={false}
         open={pendingRemove !== null}
         title="Remove this student from the class?"
         description={pendingRemove ? pendingRemove.name : undefined}

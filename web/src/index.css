@@ -559,6 +559,9 @@
   min-block-size: var(--native-sheet-drag-min);
   touch-action: none;
 }
+[data-sheet-drag-region][data-no-grabber] {
+  padding-top: var(--space-6);
+}
 .lm-sheet[data-detent="medium"] {
   block-size: var(--native-sheet-medium);
 }

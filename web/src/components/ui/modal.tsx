@@ -71,6 +71,10 @@ export interface ModalProps {
    * caller's children are the rows, and the title and description are read
    * aloud only. */
   presentation?: "auto" | "action-sheet"
+  /** Internal, for `ConfirmModal`. On the native frame the footer is full-width and
+   * stacked, primary first (`"stacked"`, the default). `"actions"` keeps one end-aligned
+   * row of text buttons, the Material 3 dialog-actions form. */
+  footerLayout?: "stacked" | "actions"
 }
 
 const sizeClasses = {
@@ -91,6 +95,7 @@ export function Modal({
   size = "md",
   className,
   presentation = "auto",
+  footerLayout = "stacked",
 }: ModalProps) {
   const { native } = useNativeFrame()
   const titleId = useId()
@@ -180,6 +185,7 @@ export function Modal({
             native ? "h-11 w-11" : "-me-1 -mt-1 h-8 w-8",
             "hover:bg-surface-container-low hover:text-on-surface",
             "active:scale-[0.98]",
+            native && "lm-press lm-press-scale",
           )}
         >
           <X size={18} aria-hidden="true" />
@@ -188,8 +194,19 @@ export function Modal({
     </div>
   )
   const body = <div className="min-h-0 overflow-y-auto lm-scroll">{children}</div>
+  // Native frame: no divider, and the actions are full-width and stacked with the primary on
+  // top (callers list Cancel first, so the column is reversed; a caller whose own row is already
+  // primary-first marks it `data-primary-first`). `actions` is the M3 end-aligned text-button row.
+  const nativeFoot =
+    footerLayout === "actions"
+      ? "flex items-center justify-end gap-2"
+      : "flex w-full flex-col-reverse gap-2 [&>div]:flex [&>div]:w-full [&>div:not([data-primary-first])]:flex-col-reverse [&>div[data-primary-first]]:flex-col [&>div]:gap-2 [&_button]:w-full [&_button]:justify-center"
   const foot = footer ? (
-    <div className="flex items-center justify-end gap-2 border-t border-outline-variant pt-4">
+    <div
+      className={
+        native ? nativeFoot : "flex items-center justify-end gap-2 border-t border-outline-variant pt-4"
+      }
+    >
       {footer}
     </div>
   ) : null
@@ -201,7 +218,9 @@ export function Modal({
         <div
           className="fixed inset-0 z-scrim bg-scrim-dialog motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
           aria-hidden="true"
-          onClick={dismissible ? onClose : undefined}
+          // The iOS action sheet has no dismissal but its Cancel row, and a scrim tap IS Cancel:
+          // outside the sheet is where a thumb goes to back out, and it can never confirm.
+          onClick={dismissible || presentation === "action-sheet" ? onClose : undefined}
         />
         <BottomSheetSurface
           ref={panelRef}

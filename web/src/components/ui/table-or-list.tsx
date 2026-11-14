@@ -4,7 +4,6 @@ import { useNativeFrame } from "@/lib/useNativeFrame"
 /** Native frame: dense teacher tables read as list rows on phones, with
  * "View table" for when the grid itself is the point (brief decision 4). */
 export function TableOrList({
-  label,
   table,
   list,
   storageKey,
@@ -12,6 +11,7 @@ export function TableOrList({
   notices,
   onListView,
 }: {
+  /** The table's accessible name now lives on the Table itself; kept so call sites stay descriptive. */
   label: string
   table: ReactNode
   list: ReactNode
@@ -61,9 +61,10 @@ export function TableOrList({
       {asTable ? tableHeader : null}
       {notices}
       {asTable ? (
-        <div role="region" aria-label={label} tabIndex={0} className="-mx-4 overflow-x-auto px-4 lm-scroll">
-          {table}
-        </div>
+        // No region role, tab stop or overflow here: the inner Table already is the one
+        // labelled, focusable scroll region, and a second one nests a scroller in a scroller
+        // (two tab stops, one scroll).
+        <div data-table-view>{table}</div>
       ) : (
         list
       )}

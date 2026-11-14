@@ -82,6 +82,7 @@ function UnshareControl({ classId, row }: { classId: string; row: ClassPaperRow 
         Unshare
       </Button>
       <ConfirmModal
+        destructive={false}
         open={open}
         title="Unshare this paper from the class?"
         consequence={unshareConsequence(classPaperLabel(row))}

@@ -27,7 +27,7 @@ import { navItems, resolveTrail, classesItemActive, type NavItem } from "./data"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
 import { CREATE_LABEL, CreateSheet, createGlyph } from "./components/CreateSheet"
 import { Fab, useExtendedOnScroll } from "@/components/ui/fab"
-import { titleLevelFor } from "@/components/shell/largeTitle"
+import { isTabRoot, titleLevelFor } from "@/components/shell/largeTitle"
 import { PortalShell } from "@/components/shell/PortalShell"
 import { ShellIcon } from "@/components/shell/icons"
 import { ShellUserBlock, type ShellSidebarContent } from "@/components/shell/ShellSidebar"
@@ -438,10 +438,13 @@ function TeacherLayout() {
   // While Settings is a dialog the page underneath is still the page: title
   // and trail follow the background location. The trail renders at every
   // width (the D1.5 back affordance for drilled-into screens).
-  const trail = resolveTrail(
-    underlyingPathname({ pathname: location.pathname, state: location.state, overlayBase: TEACHER_SETTINGS_BASE }),
+  const pagePath = underlyingPathname({ pathname: location.pathname, state: location.state, overlayBase: TEACHER_SETTINGS_BASE })
+  const trail = resolveTrail(pagePath)
+  const level = titleLevelFor(
+    trail,
+    isTabRoot(pagePath, TEACHER_BOTTOM_TABS.map((tab) => tab.to)),
   )
-  const rootLevel = titleLevelFor(trail) === "root"
+  const rootLevel = level === "root"
   const fabExtended = useExtendedOnScroll()
   return (
     <PortalShell
@@ -453,6 +456,7 @@ function TeacherLayout() {
       topBar={{
         title: trail[trail.length - 1]?.label ?? "Overview",
         trail,
+        titleLevel: level,
         backFallback: "/teacher",
         navLabel: "Open teacher navigation",
         actions: TeacherTopBarActions(create),

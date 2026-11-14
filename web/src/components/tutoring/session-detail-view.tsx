@@ -25,6 +25,7 @@ import {
   SESSION_ZONE_LABEL,
   cancelSheetCopy,
   completeSheetCopy,
+  confirmPresentation,
   insideCancelWindowNotice,
   noteNeedsSafetyNotice,
   parentNotesFootnote,
@@ -519,7 +520,8 @@ export function SessionDetailView({
           open={openConfirm}
           title={confirmCopy.title}
           description={confirmCopy.description}
-          consequence={confirmCopy.consequence}
+          consequence={confirmPresentation(confirm === "complete" ? "complete" : "cancel", confirmCopy).consequence}
+          destructive={confirmPresentation(confirm === "complete" ? "complete" : "cancel", confirmCopy).destructive}
           confirmLabel={confirmCopy.confirmLabel}
           pendingLabel={confirmCopy.pendingLabel}
           cancelLabel={confirmCopy.cancelLabel}

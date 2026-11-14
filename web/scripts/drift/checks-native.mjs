@@ -163,6 +163,9 @@ const STUDENT = {
   engagement: { totalPapers: 2, lastActiveAt: "2026-07-28T08:10:00+00:00", daysSinceLastSubmission: 17 },
 }
 
+/** The table's own scroll region (labelled and focusable on the Table), the only one in table view. */
+const tableRegion = (page) => page.locator(".lm-native-main").getByRole("region").filter({ has: page.locator("table") });
+
 /** A teacher table screen on a phone: list rows first, no table in the DOM, then
  * View table swaps in the scrollable region, and the choice survives a reload. */
 async function expectListThenTable(page, { label, storageKey, rowSelector, rows }) {
@@ -171,12 +174,12 @@ async function expectListThenTable(page, { label, storageKey, rowSelector, rows 
   if ((await list.count()) !== rows) throw new Error(`${label}: expected ${rows} list rows, found ${await list.count()}`)
   if ((await page.locator(".lm-native-main table").count()) !== 0) throw new Error(`${label}: table rendered in list view`)
   await page.getByRole("button", { name: "View table" }).click()
-  const region = page.getByRole("region", { name: label, exact: true })
+  const region = tableRegion(page)
   await region.waitFor()
   const bodyRows = await region.locator("tbody tr").count()
   if (bodyRows !== rows) throw new Error(`${label}: expected ${rows} table body rows, found ${bodyRows}`)
   await page.reload({ waitUntil: "networkidle" })
-  await page.getByRole("region", { name: label, exact: true }).waitFor()
+  await tableRegion(page).waitFor()
   const stored = await page.evaluate((k) => sessionStorage.getItem(k), storageKey)
   if (stored !== "table") throw new Error(`${label}: table choice not persisted, sessionStorage=${stored}`)
 }
@@ -631,7 +634,7 @@ NATIVE_CHECKS.push({
       const lowConfidence = await page.locator(".lm-native-main a.lm-native-row", { hasText: "Low confidence" }).count()
       if (lowConfidence !== 2) throw new Error(`expected a reason chip on each of 2 list rows, found ${lowConfidence}`)
       await page.getByRole("button", { name: "View table" }).click()
-      const region = page.getByRole("region", { name: "Review queue", exact: true })
+      const region = tableRegion(page)
       await region.waitFor()
       const bodyRows = await region.locator("tbody tr").count()
       if (bodyRows !== 2) throw new Error(`expected 2 table body rows, found ${bodyRows}`)
@@ -660,7 +663,7 @@ NATIVE_CHECKS.push({
       // Reload: the table choice must come back from sessionStorage, not just a same-named region.
       await page.reload({ waitUntil: "networkidle" })
       await page.getByRole("button", { name: "View list" }).waitFor()
-      const reloaded = page.getByRole("region", { name: "Review queue", exact: true })
+      const reloaded = tableRegion(page)
       await reloaded.waitFor()
       const afterRows = await reloaded.locator("tbody tr").count()
       if (afterRows !== 2) throw new Error(`after reload expected 2 table body rows, found ${afterRows}`)
@@ -2675,3 +2678,407 @@ NATIVE_CHECKS.push(
     },
   },
 )
+
+/* ── Audit batch B (sheets, confirms, review and roster lists). Each check is red on the tree before its fix. ── */
+
+const rosterStudents = () => {
+  const flag = (reason, summary) => ({ reason, summary, evidence: {}, acknowledged: null });
+  const row = (id, name, grade, gradeAtRisk, flags) => ({
+    studentId: id, name, grade, mark: "21/40", delta: -4, weakTopic: null, gradeAtRisk, paperCount: 12, lastActiveAt: "2026-11-12T08:00:00Z", flags,
+  });
+  return [
+    row("s-1", "Amina Said", "C", false, []),
+    row("s-2", "Muhammad Abdelrahman El-Sayed", "E", true, [flag("declining_trend", "Marks fell over the last three papers"), flag("below_target", "Below target")]),
+    row("s-3", "Layla Hassan", "D", true, [flag("inactive", "No papers in 30 days")]),
+  ];
+};
+const rosterApp = {
+  surface: "teacher-overview",
+  state: "populated",
+  path: "/teacher/classes/class-1",
+  mocks: async (page) => {
+    await teacherShellMocks(page);
+    await page.route(/\/api\/classes\/class-1(\?|$)/, (route) =>
+      jsonRoute(route, { ...CLASS_DETAIL, students: rosterStudents() }),
+    );
+  },
+};
+
+NATIVE_CHECKS.push(
+  // 3 + 9. The roster list row carries the signal it exists for, readable in full; the chevron is iOS only and not hand-placed.
+  ...["ios", "android"].map((platform) => ({
+    id: `native-${platform}-roster-row-shows-flags-in-full`,
+    platform,
+    width: 390,
+    app: rosterApp,
+    async run(page) {
+      const rows = page.locator(".lm-native-main a.lm-native-row");
+      await rows.first().waitFor();
+      const info = await rows.evaluateAll((els) =>
+        els.map((el) => {
+          const chips = [...el.querySelectorAll("[data-flag-reason]")];
+          const low = el.querySelector("[data-grade-at-risk]");
+          const more = el.querySelector("[data-flag-more]");
+          const clipped = (n) => !!n && (n.scrollHeight > n.clientHeight + 1 || n.scrollWidth > n.clientWidth + 1);
+          const box = el.getBoundingClientRect();
+          const inside = (n) => !!n && n.getBoundingClientRect().right <= box.right + 0.5 && n.getBoundingClientRect().left >= box.left - 0.5;
+          const text = el.querySelector("a > span:nth-of-type(2)");
+          const sub = el.querySelector("a > span:nth-of-type(2) > span:nth-of-type(2)") ?? el.querySelector("span.line-clamp-2");
+          const chevrons = [...el.querySelectorAll("svg[data-disclosure]")].filter((s) => getComputedStyle(s).display !== "none");
+          return {
+            name: el.querySelector("[class*=text-body-md]")?.textContent ?? "",
+            reason: chips[0]?.textContent ?? null,
+            reasonInside: inside(chips[0]),
+            more: more?.textContent ?? null,
+            low: !!low,
+            lowInside: inside(low),
+            subClipped: clipped(sub),
+            textClipped: clipped(text),
+            chevrons: chevrons.length,
+            svgs: el.querySelectorAll("svg").length,
+          };
+        }),
+      );
+      const by = (n) => info.find((r) => r.name.startsWith(n));
+      const [amina, muhammad, layla] = [by("Amina"), by("Muhammad"), by("Layla")];
+      if (!amina || !muhammad || !layla) throw new Error(`rows not found by name: ${info.map((r) => r.name)}`);
+      if (amina.reason !== null) throw new Error("an unflagged student shows a reason chip");
+      if (muhammad.reason !== "Declining trend") throw new Error(`first flag's reason missing: ${muhammad.reason}`);
+      if (muhammad.more !== "+1") throw new Error(`"+n" for the remaining flags missing: ${muhammad.more}`);
+      if (layla.reason !== "Inactive" || layla.more !== null) throw new Error(`single flag row wrong: ${JSON.stringify(layla)}`);
+      if (!muhammad.low || !layla.low || amina.low) throw new Error("the gradeAtRisk marker is not shown by exactly the at-risk grades");
+      for (const r of info) {
+        if (r.subClipped || r.textClipped) throw new Error(`row text is clipped at 390px: ${JSON.stringify(r)}`);
+        if (r.reason && !r.reasonInside) throw new Error("the reason chip overflows the row");
+        if (r.low && !r.lowInside) throw new Error("the low-grade marker overflows the row");
+      }
+      // Item 9: the disclosure chevron is the ListRow's, on iOS only, and the roster places none by hand.
+      for (const r of info) {
+        if (r.chevrons !== (platform === "ios" ? 1 : 0)) throw new Error(`${platform} row shows ${r.chevrons} disclosure chevrons`);
+        if (r.svgs > 1) throw new Error(`row holds ${r.svgs} icons, a second chevron was placed by hand`);
+      }
+      if (process.env.NF_SHOT_PATH) await page.screenshot({ path: process.env.NF_SHOT_PATH, animations: "disabled" });
+    },
+  })),
+);
+
+const reviewItems = [
+  ["Muhammad Abdelrahman El-Sayed Hassan", "31", 0.95, "low_confidence"],
+  ["Omar Nabil", "4b", 0.52, "low_confidence"],
+  ["Amina Said", "12", 0.71, "mark_scheme_copying"],
+].map(([name, q, conf, reason], i) => ({
+  itemId: `item-${i + 1}`, source: "attempt", attemptId: `attempt-${i + 1}`, paperId: null, questionResultId: `qr-${i + 1}`,
+  studentId: `student-${i + 1}`, studentDisplayName: name, classId: "class-1", className: "Year 11 Physics", subjectCode: "0625",
+  paperNumber: 2, paperVariant: 1, sessionMonth: "May", sessionYear: 2026, questionId: q, reason, status: "open",
+  createdAt: "2026-11-12T08:00:00Z", waitingHours: 30, aiAwardedMarks: 2, maximumMarks: 3, confidenceScore: conf,
+}));
+const reviewApp = (query = "") => ({
+  surface: "teacher-overview",
+  state: "populated",
+  path: `/teacher/review${query}`,
+  mocks: async (page) => {
+    await teacherShellMocks(page);
+    await page.route("**/api/teacher/classes", (route) => jsonRoute(route, { classes: CLASS_ROWS }));
+    await page.route("**/api/teacher/review?**", (route) =>
+      jsonRoute(route, { items: reviewItems, total: reviewItems.length, nextCursor: null }),
+    );
+  },
+});
+
+NATIVE_CHECKS.push(
+  ...["ios", "android"].flatMap((platform) => [
+    // 4 + 13. The review screen on a phone: filters collapsed, no eyebrow or kicker, first row above the fold.
+    {
+      id: `native-${platform}-review-first-row-above-fold`,
+      platform,
+      width: 390,
+      app: reviewApp(),
+      async run(page) {
+        const row = page.locator(".lm-native-main a.lm-native-row").first();
+        await row.waitFor();
+        const m = await page.evaluate(() => {
+          const r = document.querySelector(".lm-native-main a.lm-native-row").getBoundingClientRect();
+          const bar = document.querySelector("[data-native-tabbar], nav[aria-label='Primary'], .lm-native-tabbar");
+          const visible = (el) => el.checkVisibility() && el.getBoundingClientRect().height > 1;
+          return {
+            bottom: r.bottom,
+            barTop: bar ? bar.getBoundingClientRect().top : innerHeight,
+            selects: [...document.querySelectorAll(".lm-native-main select")].filter(visible).length,
+            eyebrow: [...document.querySelectorAll(".lm-native-main *")].some((e) => e.textContent === "The teacher's core recurring task" && visible(e)),
+            kicker: [...document.querySelectorAll(".lm-native-main p")].some((e) => /Low-confidence marks and integrity flags land here/.test(e.textContent) && visible(e)),
+            groupLabel: [...document.querySelectorAll(".lm-native-group-label")].some((e) => /Review queue/.test(e.textContent)),
+            filter: !!document.querySelector("[data-review-filter]"),
+          };
+        });
+        if (m.bottom > m.barTop) throw new Error(`the first row ends at ${m.bottom}px, below the fold (tab bar at ${m.barTop}px)`);
+        if (m.selects !== 0) throw new Error(`${m.selects} Selects still render in the page, expected one Filter control`);
+        if (!m.filter) throw new Error("no Filter control");
+        if (m.eyebrow) throw new Error("the eyebrow shows on native");
+        if (m.kicker) throw new Error("the kicker shows on native");
+        if (m.groupLabel) throw new Error("the list group repeats the heading as a label");
+        if ((await page.locator("[data-filter-count]").count()) !== 0) throw new Error("a count badge shows with no filter applied");
+      },
+    },
+    {
+      id: `native-${platform}-review-filter-sheet`,
+      platform,
+      width: 390,
+      app: reviewApp("?class_id=class-1&reason=low_confidence"),
+      async run(page) {
+        const filter = page.locator("[data-review-filter]");
+        await filter.waitFor();
+        const badge = (await page.locator("[data-filter-count]").textContent())?.trim();
+        if (badge !== "2") throw new Error(`active-count badge is "${badge}", expected 2`);
+        await filter.click();
+        const dialog = page.getByRole("dialog", { name: "Filter the review queue" });
+        await dialog.waitFor();
+        await page.waitForTimeout(500);
+        for (const label of ["Class", "Reason", "Waiting at least"]) {
+          if ((await dialog.getByLabel(label).count()) !== 1) throw new Error(`the sheet lacks the ${label} picker`);
+        }
+        // 14. The close X is a pressable chrome control.
+        const close = await dialog.getByRole("button", { name: "Close dialog" }).evaluate((el) => ({ press: el.classList.contains("lm-press"), scale: el.classList.contains("lm-press-scale") }));
+        if (!close.press || !close.scale) throw new Error(`the close X lacks lm-press / lm-press-scale: ${JSON.stringify(close)}`);
+        // 8. The footer is full-width and stacked, primary first, with no top divider.
+        const f = await dialog.evaluate((el) => {
+          const done = [...el.querySelectorAll("button")].find((b) => b.textContent.trim() === "Done");
+          const clear = [...el.querySelectorAll("button")].find((b) => b.textContent.trim() === "Clear filters");
+          const foot = done.parentElement;
+          const d = done.getBoundingClientRect();
+          const c = clear.getBoundingClientRect();
+          const s = el.getBoundingClientRect();
+          return { doneW: d.width, clearW: c.width, sheetW: s.width, doneTop: d.top, clearTop: c.top, border: getComputedStyle(foot).borderTopWidth };
+        });
+        if (f.doneW < f.sheetW - 40 || f.clearW < f.sheetW - 40) throw new Error(`footer buttons are not full width: ${JSON.stringify(f)}`);
+        if (!(f.doneTop < f.clearTop)) throw new Error(`the primary is not first in the stack: ${JSON.stringify(f)}`);
+        if (f.border !== "0px") throw new Error(`the native footer keeps a top divider (${f.border})`);
+        if (process.env.NF_SHOT_PATH) await page.screenshot({ path: process.env.NF_SHOT_PATH, animations: "disabled" });
+        await dialog.getByRole("button", { name: "Done" }).click();
+        await dialog.waitFor({ state: "detached" });
+      },
+    },
+    // 5. Review rows lead with the question and keep the name and question whole.
+    {
+      id: `native-${platform}-review-rows-read-in-full`,
+      platform,
+      width: 390,
+      app: reviewApp(),
+      async run(page) {
+        const rows = page.locator(".lm-native-main a.lm-native-row");
+        await rows.first().waitFor();
+        const info = await rows.evaluateAll((els) =>
+          els.map((el) => {
+            const clipped = (n) => !n || n.scrollHeight > n.clientHeight + 1 || n.scrollWidth > n.clientWidth + 1;
+            const title = el.querySelector("a > span:nth-of-type(2) > span:nth-of-type(1)") ?? el.querySelector("span.text-on-surface");
+            const q = el.querySelector("[data-review-question]");
+            const chip = q?.nextElementSibling;
+            const conf = el.querySelector("[data-review-confidence]");
+            const trailing = conf?.parentElement;
+            return {
+              title: title?.textContent ?? "",
+              titleClipped: clipped(title),
+              question: q?.textContent ?? "",
+              questionClipped: clipped(q),
+              chip: chip?.textContent ?? "",
+              chipBelow: chip && q ? chip.getBoundingClientRect().top >= q.getBoundingClientRect().bottom - 1 : false,
+              chipVisible: chip ? chip.getBoundingClientRect().bottom <= el.getBoundingClientRect().bottom + 0.5 : false,
+              trailingText: trailing?.textContent ?? "",
+              confBg: conf ? getComputedStyle(conf).backgroundColor : null,
+              lines: el.getAttribute("data-lines"),
+            };
+          }),
+        );
+        const [long, omar, amina] = info;
+        if (long.question !== "Q31 · 0625 P2/1 · May 2026") throw new Error(`the subtitle does not lead with the question: "${long.question}"`);
+        for (const r of info) {
+          if (r.lines !== "3") throw new Error(`row is not a three-line row (data-lines=${r.lines})`);
+          if (r.titleClipped) throw new Error(`the name is truncated: "${r.title}"`);
+          if (r.questionClipped) throw new Error(`the question line is truncated: "${r.question}"`);
+          if (!r.chipBelow || !r.chipVisible) throw new Error(`the reason chip is not whole on its own third line: ${JSON.stringify(r)}`);
+          if (!/^\d+%$/.test(r.trailingText)) throw new Error(`the trailing slot holds more than the confidence: "${r.trailingText}"`);
+        }
+        if (omar.chip !== "Low confidence" || amina.chip === "Low confidence") throw new Error("the reason chip text is wrong");
+        if (long.confBg === omar.confBg) throw new Error("the confidence tone does not follow confidenceTone (95% and 52% look alike)");
+        if (process.env.NF_SHOT_PATH) await page.screenshot({ path: process.env.NF_SHOT_PATH, animations: "disabled" });
+      },
+    },
+    // 7 + 15. One scroll region and one tab stop in table view; the student cell's 44px sits on its wrapper.
+    {
+      id: `native-${platform}-table-view-has-one-tab-stop`,
+      platform,
+      width: 390,
+      app: reviewApp(),
+      async run(page) {
+        await page.getByRole("button", { name: "View table" }).click();
+        const region = page.locator(".lm-native-main").getByRole("region").filter({ has: page.locator("table") });
+        await region.first().waitFor();
+        const m = await page.evaluate(() => {
+          const main = document.querySelector(".lm-native-main");
+          const regions = [...main.querySelectorAll("[role=region]")];
+          const stops = [...main.querySelectorAll("[tabindex='0']")].filter((e) => e.tagName !== "A" && e.tagName !== "BUTTON" && e.tagName !== "INPUT");
+          const nested = regions.filter((r) => r.parentElement?.closest("[role=region]")).length;
+          const cell = main.querySelector("tbody tr td:nth-child(2) div.max-w-\\[20ch\\]");
+          const links = cell ? [...cell.querySelectorAll("a")] : [];
+          return {
+            regions: regions.length,
+            stops: stops.length,
+            nested,
+            cellH: cell ? cell.getBoundingClientRect().height : 0,
+            linkMin: links.map((a) => getComputedStyle(a).minHeight),
+          };
+        });
+        if (m.regions !== 1) throw new Error(`${m.regions} scroll regions in table view, expected 1`);
+        if (m.stops !== 1) throw new Error(`${m.stops} scroll tab stops in table view, expected 1`);
+        if (m.nested !== 0) throw new Error("a region nests inside another region");
+        if (m.cellH < 43.5) throw new Error(`the student cell wrapper is ${m.cellH}px tall, under the 44px floor`);
+        if (m.linkMin.some((v) => v === "44px")) throw new Error(`min-h-11 still sits on each link: ${m.linkMin}`);
+        if (process.env.NF_SHOT_PATH) await page.screenshot({ path: process.env.NF_SHOT_PATH, animations: "disabled" });
+      },
+    },
+  ]),
+);
+
+/** The `Sign out everywhere` confirm: reversible, so not destructive. */
+async function openSignOutConfirm(page) {
+  const trigger = page.getByRole("button", { name: "Sign out everywhere" }).first();
+  await trigger.waitFor();
+  await page.waitForFunction(() => [...document.querySelectorAll("button")].some((b) => b.textContent === "Sign out everywhere" && !b.disabled), null, { timeout: 15000 });
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "Sign out everywhere?" });
+  await dialog.waitFor();
+  await page.waitForTimeout(500);
+  return dialog;
+}
+/** The Classes table's Delete confirm: destructive. */
+async function openDeleteClassConfirm(page) {
+  await page.getByRole("button", { name: "View table" }).click();
+  await page.getByRole("button", { name: /^Delete/ }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Delete this class?" });
+  await dialog.waitFor();
+  await page.waitForTimeout(500);
+  return dialog;
+}
+const classesApp = {
+  surface: "teacher-overview",
+  state: "populated",
+  path: "/teacher/classes",
+  mocks: async (page) => {
+    await teacherShellMocks(page);
+    await page.route(/\/api\/teacher\/classes(\?|$)/, (route) => jsonRoute(route, { classes: CLASS_ROWS }));
+  },
+};
+const signOutApp = { ...NATIVE_HOME, path: "/student/settings/devices" };
+const colourOf = (loc) => loc.evaluate((el) => ({ color: getComputedStyle(el).color, bg: getComputedStyle(el).backgroundColor }));
+const transparent = (bg) => bg === "rgba(0, 0, 0, 0)" || bg === "transparent";
+
+NATIVE_CHECKS.push(
+  // 1 + 10. iOS: the confirm row is error only when destructive; the rows press.
+  {
+    id: "native-ios-confirm-colour-follows-destructive",
+    platform: "ios",
+    width: 390,
+    app: signOutApp,
+    async run(page) {
+      const dialog = await openSignOutConfirm(page);
+      const confirm = await colourOf(dialog.getByRole("button", { name: "Sign out everywhere" }));
+      const primary = await tokenColour(page, "--md-primary");
+      const error = await tokenColour(page, "--md-error");
+      if (confirm.color === error) throw new Error("a reversible confirm is drawn in the error colour");
+      if (confirm.color !== primary) throw new Error(`reversible confirm is ${confirm.color}, expected the primary ${primary}`);
+      if (process.env.NF_SHOT_PATH) await page.screenshot({ path: process.env.NF_SHOT_PATH, animations: "disabled" });
+    },
+  },
+  {
+    id: "native-ios-confirm-destructive-is-error-and-rows-press",
+    platform: "ios",
+    width: 390,
+    app: classesApp,
+    async run(page) {
+      const dialog = await openDeleteClassConfirm(page);
+      const confirm = dialog.getByRole("button", { name: "Delete class" });
+      if ((await colourOf(confirm)).color !== (await tokenColour(page, "--md-error"))) throw new Error("a destructive confirm is not in the error colour");
+      for (const row of await dialog.locator(".lm-action-sheet-row").all()) {
+        if (!(await row.evaluate((el) => el.classList.contains("lm-press")))) throw new Error("an action-sheet row lacks lm-press");
+      }
+      if (process.env.NF_SHOT_PATH) await page.screenshot({ path: process.env.NF_SHOT_PATH, animations: "disabled" });
+    },
+  },
+  // 11. A scrim tap is Cancel on the iOS action sheet, and never confirms.
+  {
+    id: "native-ios-action-sheet-scrim-tap-cancels",
+    platform: "ios",
+    width: 390,
+    app: classesApp,
+    async run(page) {
+      let deletes = 0;
+      page.on("request", (r) => {
+        if (r.method() === "DELETE") deletes++;
+      });
+      const dialog = await openDeleteClassConfirm(page);
+      await page.mouse.click(195, 60);
+      await dialog.waitFor({ state: "detached", timeout: 3000 }).catch(() => {
+        throw new Error("a scrim tap did not cancel the action sheet");
+      });
+      if (deletes !== 0) throw new Error("a scrim tap confirmed the deletion");
+    },
+  },
+  // 1 + 2 + 12. Android: M3 dialog actions, error only when destructive, 24px above the title.
+  ...[
+    ["destructive", classesApp, openDeleteClassConfirm, "Delete class", true],
+    ["nondestructive", signOutApp, openSignOutConfirm, "Sign out everywhere", false],
+  ].map(([kind, app, open, confirmName, destructive]) => ({
+    id: `native-android-confirm-${kind}-follows-m3-actions`,
+    platform: "android",
+    width: 390,
+    app,
+    async run(page) {
+      const dialog = await open(page);
+      const buttons = dialog.getByRole("button");
+      if ((await buttons.count()) !== 2) throw new Error(`the confirm has ${await buttons.count()} buttons, expected two text buttons`);
+      const cancel = buttons.first();
+      const confirm = dialog.getByRole("button", { name: confirmName });
+      const [c, k] = [await colourOf(cancel), await colourOf(confirm)];
+      if (!transparent(c.bg) || !transparent(k.bg)) throw new Error(`the actions are filled, not text buttons: ${JSON.stringify({ c, k })}`);
+      const error = await tokenColour(page, "--md-error");
+      const primary = await tokenColour(page, "--md-primary");
+      if (destructive && k.color !== error) throw new Error(`destructive confirm is ${k.color}, expected the error role ${error}`);
+      if (!destructive && k.color !== primary) throw new Error(`reversible confirm is ${k.color}, expected the primary role ${primary}`);
+      if (c.color === error) throw new Error("Cancel is drawn in the error role");
+      const [cb, kb] = [await cancel.boundingBox(), await confirm.boundingBox()];
+      if (!(kb.x > cb.x)) throw new Error("the confirm does not trail Cancel");
+      const focus = await page.evaluate(() => document.activeElement?.textContent?.trim());
+      if (focus === confirmName) throw new Error("focus landed on the confirm, not Cancel");
+      const gap = await dialog.evaluate((el) => el.querySelector("h2").getBoundingClientRect().top - el.getBoundingClientRect().top);
+      if (gap < 24) throw new Error(`the title sits ${gap}px below the sheet's top edge, expected at least 24`);
+      if (process.env.NF_SHOT_PATH) await page.screenshot({ path: process.env.NF_SHOT_PATH, animations: "disabled" });
+    },
+  })),
+);
+
+/* 6. A bottom tab destination is a root: large title, no back button, however long its trail. */
+NATIVE_CHECKS.push(
+  ...["ios", "android"].flatMap((platform) =>
+    [
+      ...STUDENT_TAB_PATHS.map((path) => ({ ...NATIVE_HOME, path })),
+      ...TEACHER_TAB_PATHS.map((path) => ({ ...NATIVE_TEACHER_HOME, path })),
+    ].map((app) => ({
+      id: `native-${platform}-tab-root-is-root-${app.path}`,
+      platform,
+      width: 390,
+      app,
+      async run(page) {
+        const header = page.locator("header[data-title-level]");
+        await header.waitFor();
+        const level = await header.getAttribute("data-title-level");
+        if (level !== "root") throw new Error(`${app.path} is a ${level} page, expected a root`);
+        if (!(await page.locator("[data-shell-large-title]").isVisible())) throw new Error(`${app.path} shows no large title`);
+        const backs = await page
+          .getByRole("button", { name: /back/i })
+          .or(page.getByRole("link", { name: /back/i }))
+          .filter({ visible: true })
+          .count();
+        if (backs !== 0) throw new Error(`${app.path} shows ${backs} back control(s)`);
+      },
+    })),
+  ),
+);

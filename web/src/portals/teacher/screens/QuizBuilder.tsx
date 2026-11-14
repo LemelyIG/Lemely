@@ -1015,6 +1015,7 @@ function StepAssign({
           </ul>
         )}
         <ConfirmModal
+          destructive={false}
           open={unassigning !== null}
           title="Remove this quiz from the class?"
           description={

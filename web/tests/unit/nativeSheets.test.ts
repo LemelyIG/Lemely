@@ -120,8 +120,10 @@ describe("ConfirmModal (Task 7)", () => {
     expect(modal).toMatch(/querySelector<HTMLElement>\(AUTOFOCUS_SELECTOR\)\s*\?\?\s*panel\?\.querySelector<HTMLElement>\(FOCUSABLE_SELECTOR\)/)
     expect(modal).toContain('const AUTOFOCUS_SELECTOR = "[data-autofocus]"')
     expect(src).toMatch(/lm-action-sheet-cancel"\s*data-autofocus/)
-    // The destructive row must not carry it.
-    expect(src.match(/data-autofocus/g)).toHaveLength(1)
+    // The destructive row must not carry it: one in the iOS action sheet, one on the Android Cancel text button.
+    const ios = src.slice(0, src.indexOf("if (native) {"))
+    expect(ios.match(/data-autofocus/g)).toHaveLength(1)
+    expect(src.match(/data-autofocus/g)).toHaveLength(2)
   })
   it("the action-sheet body is a column with a gap and a bottom padding token", () => {
     expect(css).toMatch(/\.lm-action-sheet-body \{[^}]*flex-direction: column;[^}]*gap: var\(--space-2\);[^}]*padding-bottom: var\(--space-2\)/)

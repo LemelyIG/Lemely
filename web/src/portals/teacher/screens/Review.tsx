@@ -1,6 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useEffect, useRef, useState } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
+import { Funnel } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Select } from "@/components/ui/select"
@@ -22,6 +23,8 @@ import type { BulkApproveResponse, ReviewQueueItem, ReviewQueueList } from "@/li
 import { ForwardArrow } from "@/components/ui/inline-arrow"
 import { ListGroup, ListRow } from "@/components/ui/list-group"
 import { TableOrList } from "@/components/ui/table-or-list"
+import { Modal } from "@/components/ui/modal"
+import { useNativeFrame } from "@/lib/useNativeFrame"
 
 /*
  * Review queue (T-07). `GET /teacher/review?class_id=&reason=&min_age_hours=`
@@ -235,6 +238,15 @@ const SKIP_REASON_LABEL: Record<string, string> = {
   already_closed: "already resolved or dismissed",
 }
 
+/** "0625 P2/1 · May 2026": the paper in the width a phone row can hold. */
+function compactPaperLabel(item: ReviewQueueItem): string {
+  if (!item.subjectCode) return "Quiz question"
+  const paper =
+    item.paperNumber != null ? ` P${item.paperNumber}${item.paperVariant != null ? `/${item.paperVariant}` : ""}` : ""
+  const session = item.sessionMonth && item.sessionYear ? ` · ${item.sessionMonth} ${item.sessionYear}` : ""
+  return `${item.subjectCode}${paper}${session}`
+}
+
 function questionLabel(item: ReviewQueueItem): string {
   return item.questionId ? `Q${item.questionId}` : "this question"
 }
@@ -295,6 +307,8 @@ export function Review() {
     cursor,
   })
   const bulkApprove = useBulkApproveReview()
+  const { native } = useNativeFrame()
+  const [filterOpen, setFilterOpen] = useState(false)
 
   if (queueQuery.data && queueQuery.data !== mergedData) {
     setMergedData(queueQuery.data)
@@ -391,6 +405,43 @@ export function Review() {
           const allSelected =
             selectableItems.length > 0 && selectableItems.every((i) => selected.has(i.itemId))
 
+          const activeFilterCount = [classId, reason, minAgeHours].filter((v) => v !== "").length
+          const filterControls = (
+            <>
+                <Select
+                label="Class"
+                value={classId}
+                onChange={(e) => updateFilter("class_id", e.target.value)}
+                wrapperClassName="min-w-[170px]"
+              >
+                <option value="">All classes</option>
+                {(classesQuery.data?.classes ?? []).map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                  </option>
+                ))}
+              </Select>
+              <Select label="Reason" value={reason} onChange={(e) => updateFilter("reason", e.target.value)}>
+                {REASON_FILTER_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                label="Waiting at least"
+                value={minAgeHours}
+                onChange={(e) => updateFilter("min_age_hours", e.target.value)}
+              >
+                {AGE_FILTER_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+            </>
+          )
+
           return (
             <>
               <SectionHead
@@ -399,41 +450,59 @@ export function Review() {
                 kicker="Low-confidence marks and integrity flags land here, oldest first. Bulk-approve the trivially fine ones. Open anything that needs a real look."
                 rung="display-md"
                 level={1}
+                repeatsTitle={true}
               />
 
-              <div className="flex items-end gap-4 flex-wrap">
-                <Select
-                  label="Class"
-                  value={classId}
-                  onChange={(e) => updateFilter("class_id", e.target.value)}
-                  wrapperClassName="min-w-[170px]"
-                >
-                  <option value="">All classes</option>
-                  {(classesQuery.data?.classes ?? []).map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.label}
-                    </option>
-                  ))}
-                </Select>
-                <Select label="Reason" value={reason} onChange={(e) => updateFilter("reason", e.target.value)}>
-                  {REASON_FILTER_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </Select>
-                <Select
-                  label="Waiting at least"
-                  value={minAgeHours}
-                  onChange={(e) => updateFilter("min_age_hours", e.target.value)}
-                >
-                  {AGE_FILTER_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+              {native ? (
+                <>
+                  {/* One Filter control with a count of what is applied, so the first row
+                      sits above the fold; the three pickers live in a sheet. */}
+                  <div className="flex justify-end">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={<Funnel size={16} />}
+                      aria-haspopup="dialog"
+                      aria-label={activeFilterCount > 0 ? `Filter, ${activeFilterCount} applied` : "Filter"}
+                      data-review-filter
+                      onClick={() => setFilterOpen(true)}
+                    >
+                      Filter
+                      {activeFilterCount > 0 ? (
+                        <span
+                          data-filter-count
+                          aria-hidden="true"
+                          className="ms-1 inline-flex min-w-5 items-center justify-center rounded-pill bg-primary px-1.5 text-3xs text-on-primary"
+                        >
+                          {activeFilterCount}
+                        </span>
+                      ) : null}
+                    </Button>
+                  </div>
+                  <Modal
+                    open={filterOpen}
+                    onClose={() => setFilterOpen(false)}
+                    title="Filter the review queue"
+                    size="sm"
+                    footer={
+                      <>
+                        {activeFilterCount > 0 ? (
+                          <Button variant="secondary" onClick={() => setSearchParams({}, { replace: true })}>
+                            Clear filters
+                          </Button>
+                        ) : null}
+                        <Button variant="primary" onClick={() => setFilterOpen(false)}>
+                          Done
+                        </Button>
+                      </>
+                    }
+                  >
+                    {filterControls}
+                  </Modal>
+                </>
+              ) : (
+                <div className="flex items-end gap-4 flex-wrap">{filterControls}</div>
+              )}
 
               {/*
                * The empty branch stays inside `children` rather than going
@@ -533,22 +602,32 @@ export function Review() {
                       </>
                     }
                     list={
-                      <ListGroup label="Review queue">
+                      <ListGroup>
                         {items.map((item) => (
                           <ListRow
                             key={item.itemId}
                             to={`/teacher/review/${item.itemId}${filterQsString ? `?${filterQsString}` : ""}`}
                             title={item.studentDisplayName}
-                            subtitle={`${paperIdentityLabel(item)} · ${item.questionId ?? "no question"}`}
-                            trailing={
-                              <span className="flex flex-col items-end gap-1">
-                                <Chip tone={isIntegrityReason(item.reason) ? "warn" : "neutral"}>
+                            titleLines={2}
+                            lines={3}
+                            subtitle={
+                              <>
+                                <span data-review-question className="block">
+                                  {item.questionId ? questionLabel(item) : "No question"} · {compactPaperLabel(item)}
+                                </span>
+                                <Chip tone={isIntegrityReason(item.reason) ? "warn" : "neutral"} className="mt-1">
                                   {reasonLabel(item.reason)}
                                 </Chip>
-                                <span className="text-data-sm">
-                                  {item.confidenceScore != null ? `${Math.round(item.confidenceScore * 100)}%` : "–"}
-                                </span>
-                              </span>
+                              </>
+                            }
+                            trailing={
+                              item.confidenceScore != null ? (
+                                <Chip tone={confidenceTone(item.confidenceScore)} data-review-confidence>
+                                  {Math.round(item.confidenceScore * 100)}%
+                                </Chip>
+                              ) : (
+                                <span className="text-body-sm">–</span>
+                              )
                             }
                           />
                         ))}
@@ -670,7 +749,7 @@ export function Review() {
                                         cannot exceed. 30ch was tried first and did not
                                         bind — it truncated the name and the table still
                                         grew. */}
-                                    <div className="min-w-0 max-w-[20ch]">
+                                    <div className="flex min-w-0 max-w-[20ch] flex-col justify-center pointer-coarse:min-h-11">
                                       {/* Two stacked links to two different destinations,
                                           so both need §6.1's floor, not just the primary
                                           one. `min-h-11` with flex centring rather than the
@@ -687,13 +766,13 @@ export function Review() {
                                           ellipsis would silently stop working. */}
                                       <Link
                                         to={`/teacher/students/${item.studentId}`}
-                                        className="flex items-center text-on-surface hover:underline pointer-coarse:min-h-11"
+                                        className="flex items-center text-on-surface hover:underline"
                                       >
                                         <span className="truncate">{item.studentDisplayName}</span>
                                       </Link>
                                       <Link
                                         to={`/teacher/classes/${item.classId}`}
-                                        className="flex items-center text-body-sm text-on-surface-variant transition-colors hover:text-on-surface hover:underline pointer-coarse:min-h-11"
+                                        className="flex items-center text-body-sm text-on-surface-variant transition-colors hover:text-on-surface hover:underline"
                                       >
                                         <span className="truncate">{item.className}</span>
                                       </Link>

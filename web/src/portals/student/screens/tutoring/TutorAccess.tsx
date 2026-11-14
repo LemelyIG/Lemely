@@ -560,6 +560,7 @@ function BlocksSection() {
       </QueryState>
       {copy ? (
         <ConfirmModal
+          destructive={false}
           open={open}
           title={copy.title}
           consequence={copy.consequence}

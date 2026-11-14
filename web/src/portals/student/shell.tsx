@@ -4,6 +4,7 @@ import type { AccountLink } from "@/components/shell/AccountPanel"
 import { ShellIcon, type ShellIconName } from "@/components/shell/icons"
 import type { NotificationsPanelProps } from "@/components/shell/NotificationsPanel"
 import { PortalShell } from "@/components/shell/PortalShell"
+import { isTabRoot, titleLevelFor } from "@/components/shell/largeTitle"
 import { profileName } from "@/components/shell/ShellAvatar"
 import { ShellUserBlock } from "@/components/shell/ShellSidebar"
 import { ShellTree, type ShellTreeRow } from "@/components/shell/ShellTree"
@@ -129,6 +130,7 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
       : shellItem
   })
   const trail = studentShellTrail(pagePath)
+  const titleLevel = titleLevelFor(trail, isTabRoot(pagePath, STUDENT_BOTTOM_TABS.map((tab) => tab.to)))
   const detail = studentDetailLine(
     qualificationLevelLabel(reference?.qualificationLevels, studentProfile.data?.profile.qualificationLevel),
     subjects.length,
@@ -175,6 +177,7 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
       topBar={{
         title: studentPageTitle(pagePath, subjects),
         trail,
+        titleLevel,
         backFallback: "/student",
         navLabel: "Open student navigation",
         actions: (
@@ -182,7 +185,7 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
             {/* Packet B2a: a drilled-in page's trail has no linked crumb
                 ("Practice / 0580"), so below the sidebar column this is the
                 way back. Never on a section page, which design A shows bare. */}
-            {trail.length > 1 ? <BackControl fallback="/student" className="shell-lg:hidden native:hidden" /> : null}
+            {titleLevel === "detail" ? <BackControl fallback="/student" className="shell-lg:hidden native:hidden" /> : null}
             {/* Not on the upload screen itself, where it would do nothing. */}
             {location.pathname === "/student/correct" ? null : upload("me-2.5 max-shell-sm:hidden")}
           </>

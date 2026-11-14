@@ -2,6 +2,7 @@
 import type { ReactNode } from "react"
 import { Display, Eyebrow } from "./primitives"
 import { cn } from "@/lib/utils"
+import { PageHeading } from "./page-heading"
 
 /*
  * A page or panel head — eyebrow, title, kicker, action — as one primitive
@@ -39,6 +40,7 @@ export function SectionHead({
   level = 2,
   rung = "display-md",
   className,
+  repeatsTitle,
 }: {
   eyebrow?: string
   title: string
@@ -47,17 +49,25 @@ export function SectionHead({
   level?: 1 | 2 | 3
   rung?: SectionHeadRung
   className?: string
+  /** Level 1 only. Says whether this heading repeats the shell title. When it does, the native
+   * frame hides the heading visually (the large title replaces it; still the page's h1 for
+   * assistive technology) and drops the eyebrow and kicker, which the phone has no room for. */
+  repeatsTitle?: boolean
 }) {
   const Tag = `h${level}` as "h1" | "h2" | "h3"
   return (
     <div className={cn("flex items-end justify-between gap-4", className)}>
       <div className="flex flex-col gap-1 min-w-0">
-        {eyebrow ? <Eyebrow>{eyebrow}</Eyebrow> : null}
+        {eyebrow ? <Eyebrow className={cn(repeatsTitle && "native:hidden")}>{eyebrow}</Eyebrow> : null}
         <Display className={RUNG_CLASS[rung]}>
           {/* A level-1 head is the page's own heading: on the native frame it steps below the large title. */}
-          <Tag data-page-heading={level === 1 ? "own" : undefined}>{title}</Tag>
+          {level === 1 && repeatsTitle !== undefined ? (
+            <PageHeading repeatsTitle={repeatsTitle}>{title}</PageHeading>
+          ) : (
+            <Tag data-page-heading={level === 1 ? "own" : undefined}>{title}</Tag>
+          )}
         </Display>
-        {kicker ? <p className="text-body-md text-on-surface-variant">{kicker}</p> : null}
+        {kicker ? <p className={cn("text-body-md text-on-surface-variant", repeatsTitle && "native:hidden")}>{kicker}</p> : null}
       </div>
       {action ? <div className="shrink-0">{action}</div> : null}
     </div>

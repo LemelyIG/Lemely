@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils"
  *   - `ink`       solid ink fill, for a dark panel or a teacher's primary CTA
  *   - `secondary` raised paper with a hairline rule, the default
  *   - `ghost`     no fill and no border, for Cancel and inline actions
+ *   - `text`, `text-error`  Material 3 dialog actions: text only, in the primary / error role
  *
  * Rewritten in Phase 2 from the build-era version, which carried three real
  * defects against the new system rather than merely old colours:
@@ -74,6 +75,10 @@ const button = cva(
         secondary:
           "border border-outline-variant bg-surface-container-lowest text-on-surface hover:border-outline hover:bg-surface-container-low",
         ghost: "border-0 bg-transparent text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface",
+        /** Material 3 dialog action: a text button in the primary role (native Android confirm). */
+        text: "border-0 bg-transparent text-primary hover:bg-surface-container-low",
+        /** The same text button in the error role, for the destructive confirm. */
+        "text-error": "border-0 bg-transparent text-error hover:bg-surface-container-low",
       },
       size: {
         sm: "text-body-sm px-3 py-1.5 font-medium",
