@@ -65,7 +65,7 @@ import httpx
 from lemely.runtime.errors import ExternalServiceError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Mapping, Sequence
 
     from lemely.runtime.config import PaymobSettings
 
@@ -331,9 +331,22 @@ class PaymobClient:
 
     # -- intentions -----------------------------------------------------------
 
-    def create_intention(self, body: Mapping[str, object]) -> JsonObject:
-        """``POST v1/intention/`` (one-off, or with ``subscription_plan_id``)."""
-        return self._request("POST", "v1/intention/", auth="secret", json=body, write=True)
+    def create_intention(
+        self, body: Mapping[str, object], *, sensitive: Sequence[str] = ()
+    ) -> JsonObject:
+        """``POST v1/intention/`` (one-off, or with ``subscription_plan_id``).
+
+        ``sensitive`` lists values the body carries that must never leave in an error (the saved
+        card tokens of ``card_tokens``): they are scrubbed from the error body of a refusal.
+        """
+        return self._request(
+            "POST",
+            "v1/intention/",
+            auth="secret",
+            json=body,
+            sensitive=tuple(sensitive),
+            write=True,
+        )
 
     # -- inquiry --------------------------------------------------------------
 

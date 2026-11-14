@@ -35,6 +35,17 @@ creates the payment with :meth:`~MerchantChargeService.new_payment` (flush only)
 :func:`insert_queued_payment` and lets ``charge_saved_card`` commit it. A refusal in step 1
 propagates; the caller rolls back, and nothing was ever committed.
 
+**Payer-present charges** (Phase 06 T4, DV-25, DV-26). A plan upgrade is a Phase 02 checkout on the
+card (Normal 3DS) integration that offers the payer's saved cards through ``card_tokens``; the
+issuer keeps the liability and the payer may pay with any card. The quote and the checkout share one
+planner (:meth:`MerchantChargeService._plan_upgrade`), a checkout is recorded before Paymob is
+called (:meth:`~lemely.db.billing_repo.BillingService.create_intention_checkout`), and only the
+verified callback or a reconcile inquiry settles it. An abandoned checkout can still be paid up to
+an hour later, so :func:`on_upgrade_paid` re-checks under the subscription lock whether the payment
+still buys what it was priced for; when it does not, the money becomes credits (UD-P2) instead of
+a tier change. The handler makes no Paymob call (DV-1): Phase 05's drift check pushes the new
+amount.
+
 Logs carry payment ids, status codes and flags only: never the card token (plain or encrypted),
 the payment key, the intention client secret, billing data or a response body.
 """
@@ -42,26 +53,49 @@ the payment key, the intention client secret, billing data or a response body.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
 import sqlalchemy as sa
 import structlog
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from lemely.core.usage_pricing import prorate_minor, prorate_units
 from lemely.db.billing_repo import (
     INTENTION_EXPIRATION_SECONDS,
+    MAX_CARD_TOKENS,
     RECONCILE_AFTER,
     WEBHOOK_PATH,
     BillingError,
     BillingService,
+    CheckoutResult,
+    CheckoutUnavailable,
     PhoneRequired,
     _as_int,
     _outcome_unknown,
     billing_data_for,
+    is_linked_parent,
+    register_paid_handler,
     saved_cards_for,
 )
 from lemely.db.models import User
-from lemely.db.models.billing import Payment, PaymentPurpose, PaymentStatus, SavedCard
+from lemely.db.models.billing import (
+    PLAN_LIVE_STATUSES,
+    Payment,
+    PaymentPurpose,
+    PaymentStatus,
+    PlanAudience,
+    PlanTier,
+    PlanTierTerms,
+    SavedCard,
+    Subscription,
+    SubscriptionPeriod,
+)
+from lemely.db.models.enums import SubscriptionStatus
+from lemely.db.models.team import TeacherMember, TeacherMemberKind, TeacherMemberStatus
+from lemely.db.models.usage import GrantKind
+from lemely.db.subscription_repo import NoCreditRate, convert_payment_to_credits
+from lemely.db.usage_ledger_repo import UsageLedger
 from lemely.io.paymob.client import PaymobError
 from lemely.runtime.token_cipher import TokenCipherError
 
@@ -111,11 +145,30 @@ _ITEM_NAMES: Final[dict[PaymentPurpose, str]] = {
 
 
 class MerchantChargeError(Exception):
-    """A merchant charge was refused before any write; ``code`` is the machine-readable reason."""
+    """A merchant charge was refused before any write; ``code`` is the machine-readable reason.
 
-    def __init__(self, code: str, message: str | None = None) -> None:
+    ``detail`` carries extra machine-readable facts for the HTTP body (never secrets).
+    """
+
+    def __init__(
+        self, code: str, message: str | None = None, *, detail: Mapping[str, object] | None = None
+    ) -> None:
         super().__init__(message or code)
         self.code = code
+        self.detail: dict[str, object] = dict(detail or {})
+
+
+class SeatsExceedNewTier(MerchantChargeError):
+    """More active seats are held than the target plan (plus the usable extra seats) can seat."""
+
+    def __init__(self, *, in_use: int, capacity: int) -> None:
+        super().__init__(
+            "seats_exceed_new_tier",
+            "More students hold a seat than the new plan seats",
+            detail={"in_use": in_use, "capacity": capacity},
+        )
+        self.in_use = in_use
+        self.capacity = capacity
 
 
 class ChargeAlreadyAttempted(Exception):
@@ -413,6 +466,138 @@ class MerchantChargeService:
         self._session.flush()
         return payment
 
+    # -- payer-present upgrade (3DS checkout, saved cards offered) ---------------
+
+    def quote_upgrade(
+        self,
+        *,
+        subscription_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        plan_tier_id: uuid.UUID,
+        now: datetime,
+    ) -> ChargeQuote:
+        """What an upgrade to ``plan_tier_id`` would charge now; writes nothing, calls nobody.
+
+        Needs no phone, card or pending check: it is the same planner as the checkout, so the
+        amount, allowance and period end match what :meth:`start_upgrade_checkout` would bill.
+        """
+        plan = self._plan_upgrade(
+            subscription_id=subscription_id,
+            actor_user_id=actor_user_id,
+            plan_tier_id=plan_tier_id,
+            now=now,
+            lock=False,
+        )
+        return ChargeQuote(
+            amount_minor=plan.amount_minor,
+            currency=plan.currency,
+            allowance_units=plan.allowance_units,
+            period_end=plan.period_end,
+        )
+
+    def start_upgrade_checkout(
+        self,
+        *,
+        subscription_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        plan_tier_id: uuid.UUID,
+        now: datetime,
+    ) -> CheckoutResult:
+        """Record an ``upgrade_proration`` payment and open its 3DS checkout.
+
+        Refuses before any write (:class:`MerchantChargeError`, or
+        :class:`~lemely.db.billing_repo.PhoneRequired`); the caller rolls back. Past the refusals
+        the payment is committed ``created`` by Phase 02's checkout before Paymob is called, which
+        also releases the subscription lock.
+        :class:`~lemely.db.billing_repo.CheckoutUnavailable` (unconfigured, refused, or an unknown
+        outcome) propagates: the payer never got a client secret, so nothing was charged. The tier
+        changes only when the verified callback arrives (:func:`on_upgrade_paid`).
+        """
+        plan = self._plan_upgrade(
+            subscription_id=subscription_id,
+            actor_user_id=actor_user_id,
+            plan_tier_id=plan_tier_id,
+            now=now,
+            lock=True,
+        )
+        refuse_if_charge_pending(self._session, plan.subscription.id)
+        payer = self._session.get(User, actor_user_id)
+        if payer is None:
+            raise MerchantChargeError("unknown_payer", "The payer has no account")
+        billing_data_for(payer)  # PhoneRequired before any write
+        payment = self.new_payment(
+            purpose=PaymentPurpose.upgrade_proration,
+            payer_user_id=actor_user_id,
+            beneficiary_user_id=plan.subscription.user_id,
+            amount_minor=plan.amount_minor,
+            currency=plan.currency,
+            subscription_id=plan.subscription.id,
+            plan_tier_id=plan.new_tier.id,
+        )
+        # The injected clock is the checkout's birth: the void-at-settle rules compare against it.
+        payment.created_at = now
+        self._session.flush()
+        return start_present_checkout(
+            self._session,
+            self._client,
+            self._settings,
+            payment=payment,
+            item_name=UPGRADE_ITEM_NAME,
+            now=now,
+        )
+
+    def _plan_upgrade(
+        self,
+        *,
+        subscription_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        plan_tier_id: uuid.UUID,
+        now: datetime,
+        lock: bool,
+    ) -> _UpgradePlan:
+        """Validate an upgrade and price it; the one planner the quote and the checkout share."""
+        session = self._session
+        if not self._settings.subscription_amount_updatable:
+            raise MerchantChargeError(
+                "upgrade_unavailable",
+                "Plan upgrades are not available right now",
+                detail={"next": "cancel_and_resubscribe"},
+            )
+        sub = payable_subscription(session, subscription_id, actor_user_id, lock=lock)
+        if sub.paymob_subscription_id is None:
+            raise MerchantChargeError("upgrade_unavailable", "This plan cannot be upgraded")
+        if sub.cancel_at_period_end or sub.pending_plan_tier_id is not None:
+            raise MerchantChargeError("plan_change_pending", "A plan change is already scheduled")
+        new_tier = session.get(PlanTier, plan_tier_id)
+        if new_tier is None or not new_tier.is_active:
+            raise MerchantChargeError("tier_not_found", "That plan is not available")
+        old_tier = session.get(PlanTier, sub.plan_tier_id)
+        assert old_tier is not None  # noqa: S101 - the foreign key
+        old_terms = billed_terms(session, sub)
+        new_terms = current_terms(session, new_tier)
+        if not is_upgrade(old_tier, old_terms, new_tier, new_terms):
+            raise MerchantChargeError("not_an_upgrade", "That plan is not an upgrade")
+        if new_tier.audience is PlanAudience.teacher:
+            in_use = active_seat_count(session, sub.user_id)
+            capacity = new_terms.included_seats + usable_extra_seats(sub)
+            if in_use > capacity:
+                raise SeatsExceedNewTier(in_use=in_use, capacity=capacity)
+        start, end = sub.current_period_start, sub.current_period_end
+        if start is None or end is None:
+            raise MerchantChargeError("subscription_not_active", "The plan has no current period")
+        amount = prorate_minor(new_terms.price_minor - old_terms.price_minor, start, end, now)
+        if amount <= 0:
+            raise MerchantChargeError("period_ending", "The current period is about to end")
+        allowance = _allowance_gain(old_terms, new_terms, start, end, now)
+        return _UpgradePlan(
+            subscription=sub,
+            new_tier=new_tier,
+            amount_minor=amount,
+            currency=new_tier.currency,
+            allowance_units=allowance,
+            period_end=end,
+        )
+
     # -- the charge -------------------------------------------------------------
 
     def charge_saved_card(self, payment: Payment, card: SavedCard, *, now: datetime) -> Payment:
@@ -697,18 +882,422 @@ def _payment_key(response: Mapping[str, object]) -> str | None:
     return key if isinstance(key, str) and key else None
 
 
+# ---------------------------------------------------------------------------
+# Payer-present charges: shared helpers (T5 reuses them).
+# ---------------------------------------------------------------------------
+
+#: The intention item name of an upgrade (Paymob shows it on the receipt).
+UPGRADE_ITEM_NAME: Final = "Plan upgrade (prorated)"
+
+
+@dataclass(frozen=True, slots=True)
+class ChargeQuote:
+    """What a payer-present charge would cost now, as the quote route shows it."""
+
+    amount_minor: int
+    currency: str
+    allowance_units: int
+    period_end: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class _UpgradePlan:
+    subscription: Subscription
+    new_tier: PlanTier
+    amount_minor: int
+    currency: str
+    allowance_units: int
+    period_end: datetime
+
+
+def usable_extra_seats(sub: Subscription) -> int:
+    """Extra seats the subscription can still seat: a scheduled reduction lowers them at once."""
+    extra = sub.extra_seats or 0
+    pending = sub.pending_extra_seats
+    return extra if pending is None else min(extra, pending)
+
+
+def active_seat_count(session: Session, teacher_user_id: uuid.UUID) -> int:
+    """Seats held by an active, non-leaving student (a ``leaving`` seat frees up, UD-5, DV-8)."""
+    return int(
+        session.scalar(
+            sa.select(sa.func.count())
+            .select_from(TeacherMember)
+            .where(
+                TeacherMember.teacher_user_id == teacher_user_id,
+                TeacherMember.kind == TeacherMemberKind.student_seat,
+                TeacherMember.status == TeacherMemberStatus.active,
+            )
+        )
+        or 0
+    )
+
+
+def lock_subscription(session: Session, subscription_id: uuid.UUID) -> Subscription | None:
+    """The subscription row under ``FOR UPDATE``, reloaded so the lock sees current values."""
+    return session.get(Subscription, subscription_id, with_for_update=True, populate_existing=True)
+
+
+def current_period(session: Session, sub: Subscription) -> SubscriptionPeriod | None:
+    """The period row that ends where the subscription's current period ends, if there is one."""
+    if sub.current_period_end is None:
+        return None
+    return session.scalars(
+        sa.select(SubscriptionPeriod)
+        .where(
+            SubscriptionPeriod.subscription_id == sub.id,
+            SubscriptionPeriod.period_end == sub.current_period_end,
+        )
+        .order_by(SubscriptionPeriod.period_start.desc())
+        .limit(1)
+    ).first()
+
+
+def payable_subscription(
+    session: Session, subscription_id: uuid.UUID, actor_user_id: uuid.UUID, *, lock: bool
+) -> Subscription:
+    """The subscription ``actor_user_id`` may pay for, or a refusal that leaks nothing.
+
+    ``not_found`` (one code, one message) unless the actor is the payer, and, when the payer is
+    not the subscriber, still linked to them (DV-9): a stranger, a beneficiary and an unlinked
+    parent cannot be told apart from an unknown id. Then ``subscription_not_active`` unless the
+    plan is ``active``. Locks the row when ``lock``.
+    """
+    sub = (
+        lock_subscription(session, subscription_id)
+        if lock
+        else session.get(Subscription, subscription_id)
+    )
+    payer = None if sub is None else sub.payer_user_id
+    if (
+        sub is None
+        or payer is None
+        or payer != actor_user_id
+        or (payer != sub.user_id and not is_linked_parent(session, payer, sub.user_id))
+    ):
+        raise MerchantChargeError("not_found", "Subscription not found")
+    if sub.status is not SubscriptionStatus.active:
+        raise MerchantChargeError("subscription_not_active", "The plan is not active")
+    return sub
+
+
+def refuse_if_charge_pending(session: Session, subscription_id: uuid.UUID) -> None:
+    """Refuse (``charge_in_flight``) while an upgrade or seat purchase is under way (DV-26).
+
+    Only a ``pending`` checkout payment counts (a transaction is being confirmed, e.g. 3DS).
+    An abandoned ``created`` one never blocks: it may still be paid, and the settle-time rules
+    keep that safe.
+    """
+    in_flight = session.scalar(
+        sa.select(Payment.id)
+        .where(
+            Payment.subscription_id == subscription_id,
+            Payment.purpose.in_((PaymentPurpose.upgrade_proration, PaymentPurpose.extra_seats)),
+            Payment.dedupe_key.is_(None),
+            Payment.status == PaymentStatus.pending,
+        )
+        .limit(1)
+    )
+    if in_flight is not None:
+        raise MerchantChargeError("charge_in_flight", "A payment for this plan is being confirmed")
+
+
+def bump_version(sub: Subscription) -> None:
+    """Advance ``subscriptions.version`` (a plain counter: the mapper does not do it)."""
+    sub.version = (sub.version or 0) + 1
+
+
+def billed_terms(session: Session, sub: Subscription) -> PlanTierTerms:
+    """The terms version the subscriber is billed on (UD13-A): what they pay, not the tier's."""
+    terms = session.scalars(
+        sa.select(PlanTierTerms).where(
+            PlanTierTerms.plan_tier_id == sub.plan_tier_id,
+            PlanTierTerms.terms_version == sub.terms_version,
+        )
+    ).one_or_none()
+    if terms is None:
+        raise RuntimeError(f"subscription {sub.id} has no terms row for its version")
+    return terms
+
+
+def current_terms(session: Session, tier: PlanTier) -> PlanTierTerms:
+    """The tier's current terms version: what a new purchase of the tier is priced at."""
+    terms = session.scalars(
+        sa.select(PlanTierTerms).where(
+            PlanTierTerms.plan_tier_id == tier.id,
+            PlanTierTerms.terms_version == tier.terms_version,
+        )
+    ).one_or_none()
+    if terms is None:
+        raise RuntimeError(f"plan tier {tier.id} has no terms row for its version")
+    return terms
+
+
+def is_upgrade(
+    old_tier: PlanTier, old_terms: PlanTierTerms, new_tier: PlanTier, new_terms: PlanTierTerms
+) -> bool:
+    """Same audience, interval and currency, and a higher price than the one being paid."""
+    return (
+        new_tier.id != old_tier.id
+        and new_tier.audience is old_tier.audience
+        and new_tier.interval is old_tier.interval
+        and new_tier.currency == old_tier.currency
+        and new_terms.price_minor > old_terms.price_minor
+    )
+
+
+def _allowance_gain(
+    old_terms: PlanTierTerms,
+    new_terms: PlanTierTerms,
+    start: datetime,
+    end: datetime,
+    at: datetime,
+) -> int:
+    """Allowance units the upgrade adds for the rest of the period (never negative)."""
+    difference = new_terms.allowance_units - old_terms.allowance_units
+    if difference <= 0:
+        return 0
+    return max(0, prorate_units(difference, start, end, at))
+
+
+def offered_card_tokens(
+    service: BillingService, session: Session, payer_id: uuid.UUID
+) -> list[str]:
+    """The payer's newest saved cards (at most three), decrypted, for Unified Checkout to offer.
+
+    A card whose token will not open (a ciphertext moved to another user's row, a rotated key) is
+    skipped and logged by card id: an offer is a convenience, never a reason to refuse a payment.
+    Tokens are secrets: callers hand them to the intention and nothing else.
+    """
+    try:
+        if service.cipher is None:
+            return []
+    except TokenCipherError:
+        log.warning("card_token_key_unusable_for_offer")
+        return []
+    tokens: list[str] = []
+    for card in saved_cards_for(session, payer_id)[:MAX_CARD_TOKENS]:
+        try:
+            tokens.append(service.card_token(card))
+        except (TokenCipherError, BillingError):
+            log.warning("saved_card_not_offered", card_id=str(card.id))
+    return tokens
+
+
+def start_present_checkout(
+    session: Session,
+    client: PaymobClient,
+    settings: PaymobSettings,
+    *,
+    payment: Payment,
+    item_name: str,
+    now: datetime,
+) -> CheckoutResult:
+    """Open the 3DS checkout of a payer-present ``payment`` that the caller added and flushed.
+
+    One item that equals the payment amount, the payer's offered saved cards, and Phase 02's
+    ``create_intention_checkout`` for everything else (commit before the Paymob call, definite
+    4xx to ``failed``, unknown to ``created`` for reconcile). When checkout is not configured the
+    flushed payment is rolled back first, so nothing is left behind.
+    """
+    payer = session.get(User, payment.payer_user_id)
+    if payer is None:
+        raise MerchantChargeError("unknown_payer", "The payer has no account")
+    billing = BillingService(session, client, settings, now=lambda: now)
+    billing_data = billing_data_for(payer)
+    if not settings.checkout_configured:
+        session.rollback()
+        raise CheckoutUnavailable("Paymob checkout is not configured")
+    items: list[dict[str, object]] = [
+        {"name": item_name[:50], "amount": payment.amount_minor, "quantity": 1}
+    ]
+    return billing.create_intention_checkout(
+        payment=payment,
+        items=items,
+        billing_data=billing_data,
+        subscription_plan_id=None,
+        card_tokens=offered_card_tokens(billing, session, payer.id),
+    )
+
+
+# ---------------------------------------------------------------------------
+# The upgrade's paid handler.
+# ---------------------------------------------------------------------------
+
+
+def upgrade_void_reason(session: Session, sub: Subscription, payment: Payment) -> str | None:
+    """Why a paid upgrade no longer buys what it was priced for, or ``None`` when it does (DV-26).
+
+    Checked under the subscription lock, in this order: the plan ended; the period rolled since
+    the checkout was priced; the target is no longer an upgrade over the tier now billed (another
+    payment already switched it); another upgrade was paid after this checkout was priced, so its
+    amount was computed from a tier that is no longer current.
+    """
+    if sub.status not in PLAN_LIVE_STATUSES or sub.current_period_start is None:
+        return "plan_ended"
+    if sub.current_period_start > payment.created_at:
+        return "period_rolled"
+    target = None if payment.plan_tier_id is None else session.get(PlanTier, payment.plan_tier_id)
+    current = session.get(PlanTier, sub.plan_tier_id)
+    if (
+        target is None
+        or current is None
+        or not is_upgrade(
+            current, billed_terms(session, sub), target, current_terms(session, target)
+        )
+    ):
+        return "not_an_upgrade_now"
+    later = session.scalar(
+        sa.select(Payment.id)
+        .where(
+            Payment.subscription_id == sub.id,
+            Payment.purpose == PaymentPurpose.upgrade_proration,
+            Payment.status == PaymentStatus.paid,
+            Payment.id != payment.id,
+            Payment.paid_at >= payment.created_at,
+        )
+        .limit(1)
+    )
+    return "superseded" if later is not None else None
+
+
+def credit_void_payment(
+    session: Session, payment: Payment, sub: Subscription, *, reason: str, paid_at: datetime
+) -> None:
+    """Turn a paid charge whose effect is void into the beneficiary's credits (UD-P2, DV-17).
+
+    Without an admin-set rate the conversion fails closed: nothing is granted, the payment stays
+    ``paid`` and ``merchant_charge_unconvertible`` asks an operator for a manual refund. It never
+    raises, because the handler runs in the callback transaction and a raise would reject a
+    callback that already moved money.
+    """
+    try:
+        convert_payment_to_credits(session, payment, subscription=sub, now=paid_at)
+    except NoCreditRate as exc:
+        alerts.error(
+            "merchant_charge_unconvertible",
+            alert=True,
+            payment_id=str(payment.id),
+            subscription_id=str(sub.id),
+            purpose=payment.purpose.value,
+            void_reason=reason,
+            reason=exc.reason,
+        )
+        return
+    log.info(
+        "merchant_charge_credited",
+        payment_id=str(payment.id),
+        subscription_id=str(sub.id),
+        purpose=payment.purpose.value,
+        reason=reason,
+    )
+
+
+def on_upgrade_paid(session: Session, payment: Payment) -> None:
+    """Apply a paid ``upgrade_proration`` payment: switch the tier and grant the allowance gain.
+
+    Runs once per payment inside Phase 02's callback or reconcile transaction, after the payment
+    lock, the event insert, the integration guard and the amount check (lock order: payment, event,
+    subscription, ledger). It makes no Paymob call (DV-1). A payment whose effect is void at settle
+    time becomes credits instead (:func:`upgrade_void_reason`).
+
+    Raises:
+        RuntimeError: ``payment.paid_at`` is missing (the clock is never guessed).
+    """
+    paid_at = payment.paid_at
+    if paid_at is None:
+        raise RuntimeError(f"upgrade payment {payment.id} has no paid_at")
+    sub = (
+        None
+        if payment.subscription_id is None
+        else lock_subscription(session, payment.subscription_id)
+    )
+    if sub is None or payment.plan_tier_id is None:
+        alerts.error(
+            "merchant_charge_paid_without_subscription", alert=True, payment_id=str(payment.id)
+        )
+        return
+    reason = upgrade_void_reason(session, sub, payment)
+    if reason is not None:
+        credit_void_payment(session, payment, sub, reason=reason, paid_at=paid_at)
+        return
+    target = session.get(PlanTier, payment.plan_tier_id)
+    assert target is not None  # noqa: S101 - the foreign key, and upgrade_void_reason read it
+    old_terms = billed_terms(session, sub)
+    new_terms = current_terms(session, target)
+    period = current_period(session, sub)
+    start, end = sub.current_period_start, sub.current_period_end
+    assert start is not None and end is not None  # noqa: S101 - upgrade_void_reason checked
+    sub.plan_tier_id = target.id
+    sub.terms_version = new_terms.terms_version
+    # The pending terms move was for the tier just left: the target's current terms replace it.
+    sub.pending_terms_version = None
+    sub.pending_terms_effective_at = None
+    sub.terms_notice_sent_at = None
+    bump_version(sub)
+    session.flush()
+    units = _allowance_gain(old_terms, new_terms, start, end, paid_at)
+    if units > 0 and paid_at < end:
+        UsageLedger(session).issue_grant(
+            owner_user_id=sub.user_id,
+            kind=GrantKind.period_allowance,
+            units=units,
+            idempotency_key=f"upgrade:{payment.id}",
+            expires_at=end,
+            visible=False,
+            effective_at=paid_at,
+            payment_id=payment.id,
+            subscription_period_id=None if period is None else period.id,
+        )
+    log.info(
+        "merchant_charge_upgrade_applied",
+        payment_id=str(payment.id),
+        subscription_id=str(sub.id),
+        plan_tier_id=str(target.id),
+        granted_units=units if paid_at < end else 0,
+    )
+
+
+def handle_upgrade_paid(session: Session, payment: Payment, obj: Mapping[str, object]) -> None:
+    """Paid handler for ``upgrade_proration`` (the callback body is verified and not needed)."""
+    del obj
+    on_upgrade_paid(session, payment)
+
+
+register_paid_handler(PaymentPurpose.upgrade_proration, handle_upgrade_paid)
+
+
 __all__ = [
     "CARD_MOTO_METHOD",
     "FAILED_STATUSES",
     "IN_FLIGHT_STATUSES",
     "MAX_SWEEP_ERRORS",
     "MERCHANT_SWEEP_BATCH",
+    "UPGRADE_ITEM_NAME",
     "ChargeAlreadyAttempted",
+    "ChargeQuote",
     "ChargesUnavailable",
     "MerchantChargeError",
     "MerchantChargeService",
+    "SeatsExceedNewTier",
+    "active_seat_count",
+    "billed_terms",
+    "bump_version",
     "charge_queued_payments",
     "charges_configured",
+    "credit_void_payment",
+    "current_period",
+    "current_terms",
     "fail_unsent",
+    "handle_upgrade_paid",
     "insert_queued_payment",
+    "is_upgrade",
+    "lock_subscription",
+    "offered_card_tokens",
+    "on_upgrade_paid",
+    "payable_subscription",
+    "refuse_if_charge_pending",
+    "start_present_checkout",
+    "upgrade_void_reason",
+    "usable_extra_seats",
 ]

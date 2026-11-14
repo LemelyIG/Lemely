@@ -63,6 +63,8 @@ log = structlog.get_logger(__name__)
 
 CREDIT_EXPIRY_MONTHS: Final = 12
 INTENTION_EXPIRATION_SECONDS: Final = 3600
+#: Saved cards one intention may offer (live ``pay-with-saved-cards/cit.md``).
+MAX_CARD_TOKENS: Final = 3
 RECONCILE_AFTER: Final = timedelta(minutes=15)
 RECONCILE_GIVE_UP_AFTER: Final = timedelta(hours=24)
 RECONCILE_MAX_BACKOFF: Final = timedelta(hours=4)
@@ -582,12 +584,17 @@ class BillingService:
         items: Sequence[JsonMap],
         billing_data: JsonMap,
         subscription_plan_id: int | None,
+        card_tokens: Sequence[str] = (),
     ) -> CheckoutResult:
         """Commit ``payment``, create its Paymob intention, return the checkout URL.
 
-        Shared with Phase 05 (subscriptions pass ``subscription_plan_id``). The call
-        is never retried. ``CheckoutUnavailable`` is raised on every failure, but
-        the payment's fate depends on what Paymob may have done:
+        Shared with Phase 05 (subscriptions pass ``subscription_plan_id``) and Phase 06
+        (upgrades and seat purchases pass the payer's decrypted saved-card ``card_tokens``,
+        at most :data:`MAX_CARD_TOKENS`: Unified Checkout then offers those cards, and 3DS
+        still runs on the unchanged card integration). The tokens are secrets: they go only
+        into the intention body and the client's ``sensitive`` scrub list, never a log, the
+        payment row or an exception. The call is never retried. ``CheckoutUnavailable`` is
+        raised on every failure, but the payment's fate depends on what Paymob may have done:
 
         * A definite rejection (a received non-5xx error status), or a 2xx with no
           client secret: nothing can be paid, so the payment is marked ``failed``.
@@ -596,6 +603,8 @@ class BillingService:
           the payment stays ``created`` with its ``next_reconcile_at`` and the
           reconcile job settles it by inquiry. It is never marked ``failed`` here.
         """
+        if len(card_tokens) > MAX_CARD_TOKENS:
+            raise ValueError(f"at most {MAX_CARD_TOKENS} saved cards can be offered at checkout")
         if not self._settings.checkout_configured:
             raise CheckoutUnavailable("Paymob checkout is not configured")
         for item in items:
@@ -631,7 +640,11 @@ class BillingService:
         if subscription_plan_id is not None:
             body["subscription_plan_id"] = subscription_plan_id
         try:
-            response = self._client.create_intention(body)
+            if card_tokens:
+                body["card_tokens"] = list(card_tokens)
+                response = self._client.create_intention(body, sensitive=tuple(card_tokens))
+            else:
+                response = self._client.create_intention(body)
         except PaymobError as exc:
             unknown = _outcome_unknown(exc)
             if unknown:
@@ -1373,6 +1386,7 @@ class BillingService:
 __all__ = [
     "CREDIT_EXPIRY_MONTHS",
     "INTENTION_EXPIRATION_SECONDS",
+    "MAX_CARD_TOKENS",
     "RECONCILE_AFTER",
     "RECONCILE_BATCH",
     "RECONCILE_GIVE_UP_AFTER",
