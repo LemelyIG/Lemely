@@ -19,6 +19,7 @@ import pytest
 import sqlalchemy as sa
 from structlog.testing import capture_logs
 
+from lemely.db import billing_repo, merchant_charge_repo
 from lemely.db.billing_repo import (
     RECONCILE_AFTER,
     BillingService,
@@ -45,18 +46,18 @@ from lemely.db.models.billing import (
     SavedCard,
 )
 from lemely.db.models.enums import Role
-from lemely.db.models.usage import UsageGrant
 from lemely.io.paymob.client import PaymobError, PaymobNotConfigured
 from tests.merchant_charge_fixtures import (
     FakeMotoClient,
     moto_txn,
     paymob_settings,
-    seed_pack,
+    seed_payment_row,
     seed_saved_card,
     seed_user,
     throwaway_database,
 )
 from tests.paymob_fixtures import (
+    CARD_INTEGRATION_ID,
     MOTO_INTEGRATION_ID,
     PAYMOB_SETTINGS,
     TEST_CARD_TOKEN_KEY,
@@ -103,6 +104,14 @@ def _payer(sm: sessionmaker[Session], **user: Any) -> tuple[uuid.UUID, uuid.UUID
     return payer, seed_saved_card(sm, payer, token=TOKEN)
 
 
+def _dedupe_key(purpose: PaymentPurpose) -> str:
+    prefix = {
+        PaymentPurpose.auto_topup: "auto_topup",
+        PaymentPurpose.extra_seats: "extra_seat_renewal",
+    }[purpose]
+    return f"{prefix}:{uuid.uuid4()}:1"
+
+
 def _charge(
     sm: sessionmaker[Session],
     client: FakeMotoClient,
@@ -112,11 +121,14 @@ def _charge(
     settings: PaymobSettings = PAYMOB_SETTINGS,
     purpose: PaymentPurpose = PaymentPurpose.auto_topup,
     amount: int = 10_000,
-    credit_pack_id: uuid.UUID | None = None,
-    grant_units: int | None = None,
+    keyed: bool = True,
     now: datetime = NOW,
 ) -> uuid.UUID:
-    """Create a payment and charge it the way a sweeper job does; a refusal rolls it back."""
+    """Create a payment and charge it the way a sweeper job does; a refusal rolls it back.
+
+    The dedupe key carries the prefix 0056's CHECK pairs with ``purpose``. ``keyed=False`` makes
+    a checkout-style payment (no key), which the service must refuse to charge.
+    """
     with sm() as session:
         service = MerchantChargeService(session, client, settings)
         payment = service.new_payment(
@@ -125,12 +137,8 @@ def _charge(
             beneficiary_user_id=payer,
             amount_minor=amount,
             currency="EGP",
-            credit_pack_id=credit_pack_id,
-            dedupe_key=f"auto_topup:{uuid.uuid4()}:1"
-            if purpose is PaymentPurpose.auto_topup
-            else None,
+            dedupe_key=_dedupe_key(purpose) if keyed else None,
         )
-        payment.grant_units = grant_units
         payment_id = payment.id
         card = session.get(SavedCard, card_id)
         assert card is not None
@@ -167,18 +175,6 @@ def _ciphertext(sm: sessionmaker[Session], card_id: uuid.UUID) -> str:
         card = session.get(SavedCard, card_id)
         assert card is not None
         return card.token
-
-
-def _grants(sm: sessionmaker[Session], owner: uuid.UUID) -> int:
-    with sm() as session:
-        return (
-            session.scalar(
-                sa.select(sa.func.count())
-                .select_from(UsageGrant)
-                .where(UsageGrant.owner_user_id == owner)
-            )
-            or 0
-        )
 
 
 def _no_inquiry(client: FakeMotoClient) -> None:
@@ -584,22 +580,29 @@ def test_a_stale_created_row_loses_the_claim_to_another_worker(
 # ---------------------------------------------------------------------------
 
 
-def _charged_pack(
-    sm: sessionmaker[Session], client: FakeMotoClient
-) -> tuple[uuid.UUID, uuid.UUID, Payment]:
+@pytest.fixture
+def paid_calls(monkeypatch: pytest.MonkeyPatch) -> list[uuid.UUID]:
+    """Stand in for auto top-up's paid handler (T8 registers the real one at import time).
+
+    ``monkeypatch.setitem`` on the registry rather than ``register_paid_handler``: it is undone
+    after the test, so it can neither outlive it nor collide with T8's import-time registration
+    (``register_paid_handler`` refuses a second, different handler). Each call is one effect.
+    """
+    calls: list[uuid.UUID] = []
+
+    def handler(_session: Session, payment: Payment, _obj: Any) -> None:
+        assert payment.paid_at == NOW  # set from the service clock before the handler runs
+        calls.append(payment.id)
+
+    monkeypatch.setitem(billing_repo._PAID_HANDLERS, PaymentPurpose.auto_topup, handler)
+    return calls
+
+
+def _charged_topup(sm: sessionmaker[Session], client: FakeMotoClient) -> tuple[uuid.UUID, Payment]:
     payer = seed_user(sm, Role.student)
     card = seed_saved_card(sm, payer, token=TOKEN)
-    pack = seed_pack(sm, price_minor=10_000, units=100)
-    payment_id = _charge(
-        sm,
-        client,
-        payer=payer,
-        card_id=card,
-        purpose=PaymentPurpose.credit_pack,
-        credit_pack_id=pack,
-        grant_units=100,
-    )
-    return payer, payment_id, _row(sm, payment_id)
+    payment_id = _charge(sm, client, payer=payer, card_id=card)
+    return payment_id, _row(sm, payment_id)
 
 
 def _deliver(sm: sessionmaker[Session], obj: dict[str, Any]) -> None:
@@ -619,13 +622,13 @@ def _reconcile(sm: sessionmaker[Session], obj: dict[str, Any] | None) -> int:
 
 
 def _paid_once(
-    sm: sessionmaker[Session], payer: uuid.UUID, payment_id: uuid.UUID, txn: int
+    sm: sessionmaker[Session], paid: list[uuid.UUID], payment_id: uuid.UUID, txn: int
 ) -> None:
     row = _row(sm, payment_id)
     assert row.status is PaymentStatus.paid
     assert row.paid_at == NOW
     assert row.paymob_txn_id == txn
-    assert _grants(sm, payer) == 1
+    assert paid == [payment_id]  # the paid handler ran once
     with sm() as session:
         events = session.scalar(
             sa.select(sa.func.count())
@@ -635,11 +638,11 @@ def _paid_once(
     assert events == 1
 
 
-def test_callback_twice_then_reconcile_pays_and_grants_once(
-    pg_sessionmaker: sessionmaker[Session],
+def test_callback_twice_then_reconcile_pays_and_runs_the_handler_once(
+    pg_sessionmaker: sessionmaker[Session], paid_calls: list[uuid.UUID]
 ) -> None:
     client = FakeMotoClient()
-    payer, payment_id, row = _charged_pack(pg_sessionmaker, client)
+    payment_id, row = _charged_topup(pg_sessionmaker, client)
     assert row.status is PaymentStatus.pending
     assert row.paymob_order_id is not None
     obj = moto_txn(
@@ -651,14 +654,14 @@ def test_callback_twice_then_reconcile_pays_and_grants_once(
     _deliver(pg_sessionmaker, obj)
     _deliver(pg_sessionmaker, obj)
     _reconcile(pg_sessionmaker, obj)
-    _paid_once(pg_sessionmaker, payer, payment_id, 777_001)
+    _paid_once(pg_sessionmaker, paid_calls, payment_id, 777_001)
 
 
-def test_reconcile_then_callback_twice_pays_and_grants_once(
-    pg_sessionmaker: sessionmaker[Session],
+def test_reconcile_then_callback_twice_pays_and_runs_the_handler_once(
+    pg_sessionmaker: sessionmaker[Session], paid_calls: list[uuid.UUID]
 ) -> None:
     client = FakeMotoClient()
-    payer, payment_id, row = _charged_pack(pg_sessionmaker, client)
+    payment_id, row = _charged_topup(pg_sessionmaker, client)
     assert row.paymob_order_id is not None
     obj = moto_txn(
         order_id=row.paymob_order_id,
@@ -669,37 +672,44 @@ def test_reconcile_then_callback_twice_pays_and_grants_once(
     assert _reconcile(pg_sessionmaker, obj) == 1
     _deliver(pg_sessionmaker, obj)
     _deliver(pg_sessionmaker, obj)
-    _paid_once(pg_sessionmaker, payer, payment_id, 777_002)
+    _paid_once(pg_sessionmaker, paid_calls, payment_id, 777_002)
 
 
-def test_a_callback_from_a_foreign_integration_is_held_back_and_pays_nothing(
+@pytest.mark.parametrize(
+    ("label", "integration_id"),
+    [("card", CARD_INTEGRATION_ID), ("foreign", 9_999_999)],
+)
+def test_a_callback_from_another_integration_is_held_back_and_pays_nothing(
     pg_sessionmaker: sessionmaker[Session],
+    paid_calls: list[uuid.UUID],
+    label: str,
+    integration_id: int,
 ) -> None:
-    # Phase 02's integration guard: a transaction on an integration that is not ours does not
-    # settle the payment, even with a real order id. The MOTO id is in the allowed set (the
-    # callback below pays), so a MOTO charge can settle at all.
+    # A MOTO-charged payment accepts only the MOTO integration (Phase 02's per-payment guard):
+    # a transaction on the card (3DS) integration, or on one that is not ours, settles nothing
+    # even with a real order id. The MOTO callback that follows still pays.
     client = FakeMotoClient()
-    payer, payment_id, row = _charged_pack(pg_sessionmaker, client)
+    payment_id, row = _charged_topup(pg_sessionmaker, client)
     assert row.paymob_order_id is not None
-    foreign = transaction_obj(
-        txn_id=777_003,
+    other = transaction_obj(
+        txn_id=777_003 if label == "card" else 777_013,
         order_id=row.paymob_order_id,
         merchant_order_id=row.special_reference,
         amount_cents=row.amount_minor,
     )
-    foreign["integration_id"] = 9_999_999
-    _deliver(pg_sessionmaker, foreign)
+    other["integration_id"] = integration_id
+    _deliver(pg_sessionmaker, other)
     assert _row(pg_sessionmaker, payment_id).status is PaymentStatus.pending
-    assert _grants(pg_sessionmaker, payer) == 0
+    assert paid_calls == []
     ours = moto_txn(
         order_id=row.paymob_order_id,
         merchant_order_id=row.special_reference,
         amount_cents=row.amount_minor,
-        txn_id=777_004,
+        txn_id=777_004 if label == "card" else 777_014,
     )
     _deliver(pg_sessionmaker, ours)
     assert _row(pg_sessionmaker, payment_id).status is PaymentStatus.paid
-    assert _grants(pg_sessionmaker, payer) == 1
+    assert paid_calls == [payment_id]
 
 
 # ---------------------------------------------------------------------------
@@ -1105,3 +1115,268 @@ def test_new_payment_flushes_a_created_row_with_its_reference(
         )
         session.rollback()
     assert _count(pg_sessionmaker, payer) == 0
+
+
+# ---------------------------------------------------------------------------
+# Review fixes: a saved card is charged only for a queued payment of its own.
+# ---------------------------------------------------------------------------
+
+
+def _committed_payment(
+    sm: sessionmaker[Session],
+    payer: uuid.UUID,
+    *,
+    purpose: PaymentPurpose = PaymentPurpose.auto_topup,
+    dedupe_key: str | None = None,
+    paymob_order_id: int | None = None,
+) -> uuid.UUID:
+    return seed_payment_row(
+        sm,
+        payer_id=payer,
+        purpose=purpose,
+        amount_minor=6_000,
+        dedupe_key=dedupe_key if dedupe_key is not None else _dedupe_key(purpose),
+        paymob_order_id=paymob_order_id,
+    )
+
+
+def _charge_loaded(
+    sm: sessionmaker[Session], client: FakeMotoClient, payment_id: uuid.UUID, card_id: uuid.UUID
+) -> None:
+    with sm() as session:
+        payment = session.get(Payment, payment_id)
+        card = session.get(SavedCard, card_id)
+        assert payment is not None
+        assert card is not None
+        MerchantChargeService(session, client, PAYMOB_SETTINGS).charge_saved_card(
+            payment, card, now=NOW
+        )
+
+
+def test_a_payment_without_a_dedupe_key_is_never_charged_by_saved_card(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    # UD-P1 as an invariant: only a queued charge (the key 0056 ties to its purpose) is
+    # MOTO-charged. An ``extra_seats`` purchase (no key) is a 3DS checkout; never taken here.
+    client = FakeMotoClient()
+    payer, card = _payer(pg_sessionmaker)
+    with pytest.raises(MerchantChargeError) as raised:
+        _charge(
+            pg_sessionmaker,
+            client,
+            payer=payer,
+            card_id=card,
+            purpose=PaymentPurpose.extra_seats,
+            keyed=False,
+        )
+    assert raised.value.code == "not_a_queued_charge"
+    _assert_refused_cleanly(pg_sessionmaker, client, payer)
+
+
+@pytest.mark.parametrize("started", ["order", "intention"])
+def test_a_payment_with_a_paymob_checkout_is_never_charged_by_saved_card(
+    pg_sessionmaker: sessionmaker[Session], started: str
+) -> None:
+    client = FakeMotoClient()
+    payer, card = _payer(pg_sessionmaker)
+    payment_id = _committed_payment(
+        pg_sessionmaker, payer, paymob_order_id=4_200_001 if started == "order" else None
+    )
+    if started == "intention":
+        with pg_sessionmaker.begin() as session:
+            session.execute(
+                sa.update(Payment)
+                .where(Payment.id == payment_id)
+                .values(paymob_intention_id="pi_x")
+            )
+    with pytest.raises(MerchantChargeError) as raised:
+        _charge_loaded(pg_sessionmaker, client, payment_id, card)
+    assert raised.value.code == "not_a_queued_charge"
+    assert client.calls == []
+    assert _row(pg_sessionmaker, payment_id).status is PaymentStatus.created
+
+
+def test_a_checkout_started_after_the_row_was_loaded_still_loses_the_claim(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    # The in-memory row looked queued; before the claim a checkout intention was attached to it.
+    # The claim's own WHERE refuses, so nothing is sent for a payment the payer can also pay.
+    client = FakeMotoClient()
+    payer, card = _payer(pg_sessionmaker)
+    payment_id = _committed_payment(pg_sessionmaker, payer)
+    with pg_sessionmaker() as session:
+        payment = session.get(Payment, payment_id)
+        card_row = session.get(SavedCard, card)
+        assert payment is not None
+        assert card_row is not None
+        with pg_sessionmaker.begin() as other:
+            other.execute(
+                sa.update(Payment).where(Payment.id == payment_id).values(paymob_order_id=4_200_002)
+            )
+        with pytest.raises(ChargeAlreadyAttempted):
+            MerchantChargeService(session, client, PAYMOB_SETTINGS).charge_saved_card(
+                payment, card_row, now=NOW
+            )
+    assert client.calls == []
+    assert _row(pg_sessionmaker, payment_id).status is PaymentStatus.created
+
+
+def test_only_queued_purposes_have_a_moto_item_name() -> None:
+    # Upgrades and credit packs are 3DS checkouts (UD-P1) and are never charged to a saved card.
+    assert set(merchant_charge_repo._ITEM_NAMES) == {
+        PaymentPurpose.auto_topup,
+        PaymentPurpose.extra_seats,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Review fixes: the card is checked atomically with the claim.
+# ---------------------------------------------------------------------------
+
+
+def test_a_card_deactivated_after_it_was_loaded_is_not_charged(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    client = FakeMotoClient()
+    payer, card = _payer(pg_sessionmaker)
+    payment_id = _committed_payment(pg_sessionmaker, payer)
+    with pg_sessionmaker() as session:
+        payment = session.get(Payment, payment_id)
+        card_row = session.get(SavedCard, card)
+        assert payment is not None
+        assert card_row is not None
+        assert card_row.is_active  # what the service sees: a stale, still-active card
+        with pg_sessionmaker.begin() as other:
+            other.execute(sa.update(SavedCard).where(SavedCard.id == card).values(is_active=False))
+        with pytest.raises(MerchantChargeError) as raised:
+            MerchantChargeService(session, client, PAYMOB_SETTINGS).charge_saved_card(
+                payment, card_row, now=NOW
+            )
+    assert raised.value.code == "no_saved_card"
+    assert client.calls == []
+    assert _row(pg_sessionmaker, payment_id).status is PaymentStatus.created
+
+
+@pytest.mark.usefixtures("clean_queue")
+def test_a_queued_payment_whose_card_is_removed_mid_sweep_fails_unsent(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    payer, card = _payer(pg_sessionmaker)
+    queued = _queue(pg_sessionmaker, payer)
+    client = FakeMotoClient()
+
+    def removed_after_loading(session: Session, payment: Payment) -> SavedCard | None:
+        loaded = _active_card(session, payment)
+        with pg_sessionmaker.begin() as other:
+            other.execute(sa.update(SavedCard).where(SavedCard.id == card).values(is_active=False))
+        return loaded
+
+    assert _run_queue(pg_sessionmaker, client, card_for=removed_after_loading) == 1
+    row = _row(pg_sessionmaker, queued)
+    assert row.status is PaymentStatus.failed
+    assert row.last_callback == {"source": "pre_send", "reason": "card_unusable"}
+    assert client.calls == []
+
+
+@pytest.mark.usefixtures("clean_queue")
+def test_a_queued_payment_is_never_charged_to_another_payers_genuine_card(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    # The owner check is the only thing between a queued charge and someone else's card: a
+    # foreign card decrypts fine under its own owner's id, so only the payer comparison refuses it.
+    payer = seed_user(pg_sessionmaker, Role.student)
+    _other, others_card = _payer(pg_sessionmaker)
+    queued = _queue(pg_sessionmaker, payer)
+    client = FakeMotoClient()
+
+    def others(session: Session, _payment: Payment) -> SavedCard | None:
+        return session.get(SavedCard, others_card)
+
+    assert _run_queue(pg_sessionmaker, client, card_for=others) == 1
+    row = _row(pg_sessionmaker, queued)
+    assert row.status is PaymentStatus.failed
+    assert row.last_callback == {"source": "pre_send", "reason": "card_unusable"}
+    assert client.calls == []
+
+
+# ---------------------------------------------------------------------------
+# Review fixes: a row that raises on every sweep cannot block the queue for good.
+# ---------------------------------------------------------------------------
+
+
+def _error_note(sm: sessionmaker[Session], payment_id: uuid.UUID) -> dict[str, Any] | None:
+    return _row(sm, payment_id).last_callback
+
+
+@pytest.mark.usefixtures("clean_queue")
+def test_a_poison_row_is_failed_unsent_after_repeated_sweep_errors(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    payer = seed_user(pg_sessionmaker, Role.student)
+    seed_saved_card(pg_sessionmaker, payer, token=TOKEN)
+    poison = _queue(pg_sessionmaker, payer)
+    client = FakeMotoClient()
+
+    def card_for(session: Session, payment: Payment) -> SavedCard | None:
+        if payment.id == poison:
+            raise RuntimeError("unknown_payer-like failure")
+        return _active_card(session, payment)
+
+    assert merchant_charge_repo.MAX_SWEEP_ERRORS == 3  # pinned: the loops below count to it
+    for attempt in range(1, 3):
+        with capture_logs() as logs:
+            assert _run_queue(pg_sessionmaker, client, card_for=card_for) == 0
+        row = _row(pg_sessionmaker, poison)
+        assert row.status is PaymentStatus.created  # tried again next run
+        assert row.last_callback == {
+            "source": "sweep_error",
+            "attempts": attempt,
+            "error_type": "RuntimeError",
+        }
+        assert [e for e in logs if e["event"] == "merchant_charge_sweep_failed"]
+
+    with capture_logs() as logs:
+        assert _run_queue(pg_sessionmaker, client, card_for=card_for) == 1
+    row = _row(pg_sessionmaker, poison)
+    assert row.status is PaymentStatus.failed
+    assert row.last_callback == {"source": "pre_send", "reason": "sweep_error"}
+    assert row.next_reconcile_at is None
+    (gave_up,) = [e for e in logs if e["event"] == "merchant_charge_sweep_gave_up"]
+    assert gave_up["alert"] is True
+    assert gave_up["payment_id"] == str(poison)
+    assert client.calls == []  # nothing was ever sent for it
+    # Gone from the queue: a further run has nothing to do.
+    assert _run_queue(pg_sessionmaker, client, card_for=card_for) == 0
+
+
+@pytest.mark.usefixtures("clean_queue")
+def test_poison_rows_do_not_starve_newer_rows_beyond_the_attempt_bound(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    # A batch of one: the oldest (poison) row holds the only slot until it is failed, then the
+    # row behind it is charged. Without the bound it would hold the slot for good.
+    payer = seed_user(pg_sessionmaker, Role.student)
+    seed_saved_card(pg_sessionmaker, payer, token=TOKEN)
+    poison = _queue(pg_sessionmaker, payer)
+    good = _queue(pg_sessionmaker, payer)
+    client = FakeMotoClient()
+
+    def card_for(session: Session, payment: Payment) -> SavedCard | None:
+        if payment.id == poison:
+            raise RuntimeError("poison")
+        return _active_card(session, payment)
+
+    for _ in range(4):
+        charge_queued_payments(
+            pg_sessionmaker,
+            client,
+            PAYMOB_SETTINGS,
+            purpose=PaymentPurpose.auto_topup,
+            dedupe_prefix="auto_topup:",
+            card_for=card_for,
+            now=NOW,
+            limit=1,
+        )
+    assert _row(pg_sessionmaker, poison).status is PaymentStatus.failed
+    assert _row(pg_sessionmaker, good).status is PaymentStatus.pending
+    assert len(client.calls_to("pay_with_token")) == 1

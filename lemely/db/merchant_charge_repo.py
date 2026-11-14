@@ -68,6 +68,7 @@ from lemely.runtime.token_cipher import TokenCipherError
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from datetime import datetime
+    from typing import NoReturn
 
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -88,16 +89,19 @@ FAILED_STATUSES: Final = (
 )
 #: Queued rows one sweep run charges, oldest first; the rest wait for the next run.
 MERCHANT_SWEEP_BATCH: Final = 200
+#: Unexpected sweep errors one queued row may raise before it is failed unsent: a row that errors on
+#: every run (a deleted payer, a bug in ``card_for``) would otherwise hold its place at the head of
+#: the oldest-first batch forever.
+MAX_SWEEP_ERRORS: Final = 3
 #: ``payments.method`` of a saved-card MOTO charge.
 CARD_MOTO_METHOD: Final = "card_moto"
 
-#: The intention item name (Paymob shows it on the receipt; at most 50 characters). Purposes a
-#: saved card is never charged for are absent, and :meth:`charge_saved_card` refuses them.
+#: The intention item name (Paymob shows it on the receipt; at most 50 characters). Only the two
+#: queued purposes are here: upgrades, credit packs and seat purchases are 3DS checkouts (UD-P1) and
+#: are never charged to a saved card, so :meth:`charge_saved_card` refuses everything else.
 _ITEM_NAMES: Final[dict[PaymentPurpose, str]] = {
     PaymentPurpose.auto_topup: "Credit auto top-up",
     PaymentPurpose.extra_seats: "Extra student seats",
-    PaymentPurpose.upgrade_proration: "Plan upgrade",
-    PaymentPurpose.credit_pack: "Credit pack",
 }
 
 
@@ -290,8 +294,60 @@ def _charge_queued_one(
                 payment_id=str(payment_id),
                 error_type=type(exc).__name__,
             )
-            return False
+            return _note_sweep_error(session, payment_id, type(exc).__name__)
         return True
+
+
+def _note_sweep_error(session: Session, payment_id: uuid.UUID, error_type: str) -> bool:
+    """Count an unexpected sweep error on the row; fail it unsent once it keeps happening.
+
+    Returns whether the row was failed (handled). Nothing was sent for it (a post-claim error never
+    reaches here, and the writes below are conditional on ``created``), so ``fail_unsent`` is the
+    truth. The count lives in ``last_callback`` so no column is needed.
+    """
+    try:
+        row = session.execute(
+            sa.select(Payment.status, Payment.last_callback).where(Payment.id == payment_id)
+        ).one_or_none()
+        if row is None or row.status is not PaymentStatus.created:
+            session.rollback()
+            return False
+        note = row.last_callback or {}
+        previous = note.get("attempts") if note.get("source") == "sweep_error" else 0
+        attempts = (previous if isinstance(previous, int) else 0) + 1
+        if attempts >= MAX_SWEEP_ERRORS:
+            gave_up = fail_unsent(session, payment_id, reason="sweep_error")
+            session.commit()
+            if gave_up:
+                alerts.error(
+                    "merchant_charge_sweep_gave_up",
+                    alert=True,
+                    payment_id=str(payment_id),
+                    error_type=error_type,
+                    attempts=attempts,
+                )
+            return gave_up
+        session.execute(
+            sa.update(Payment)
+            .where(Payment.id == payment_id, Payment.status == PaymentStatus.created)
+            .values(
+                last_callback={
+                    "source": "sweep_error",
+                    "attempts": attempts,
+                    "error_type": error_type,
+                }
+            )
+        )
+        session.commit()
+    except Exception as exc:
+        session.rollback()
+        alerts.error(
+            "merchant_charge_sweep_error_note_failed",
+            alert=True,
+            payment_id=str(payment_id),
+            error_type=type(exc).__name__,
+        )
+    return False
 
 
 def _fail_queued(session: Session, payment_id: uuid.UUID, reason: str) -> bool:
@@ -377,6 +433,10 @@ class MerchantChargeService:
             raise ChargesUnavailable
         if payment.status is not PaymentStatus.created:
             raise ChargeAlreadyAttempted
+        if not _is_queued_charge(payment):
+            raise MerchantChargeError(
+                "not_a_queued_charge", "Only a queued charge is charged to a saved card"
+            )
         if not card.is_active or card.user_id != payment.payer_user_id:
             raise MerchantChargeError("no_saved_card", "The card is not the payer's active card")
         token = self._decrypt(card)
@@ -387,6 +447,7 @@ class MerchantChargeService:
         if item_name is None:
             raise ValueError(f"a saved card is never charged for {payment.purpose.value}")
         payment_id = payment.id
+        card_id = card.id
         amount = payment.amount_minor
         items: list[dict[str, object]] = [{"name": item_name[:50], "amount": amount, "quantity": 1}]
         if sum(_as_int(item["amount"]) or 0 for item in items) != amount:
@@ -405,10 +466,24 @@ class MerchantChargeService:
             "extras": {"payment_id": str(payment_id), "purpose": payment.purpose.value},
         }
 
-        # Record first: claim created -> pending and commit before Paymob is called.
+        # Record first: claim created -> pending and commit before Paymob is called. The claim's
+        # WHERE re-checks, atomically with the claim, everything checked above on a copy that may
+        # be stale: the payment is still ``created`` and still a queued charge (no checkout
+        # attached to it since it was loaded), and the card is still the payer's active card.
         claimed = self._session.execute(
             sa.update(Payment)
-            .where(Payment.id == payment_id, Payment.status == PaymentStatus.created)
+            .where(
+                Payment.id == payment_id,
+                Payment.status == PaymentStatus.created,
+                Payment.dedupe_key.is_not(None),
+                Payment.paymob_order_id.is_(None),
+                Payment.paymob_intention_id.is_(None),
+                sa.exists().where(
+                    SavedCard.id == card_id,
+                    SavedCard.user_id == Payment.payer_user_id,
+                    SavedCard.is_active.is_(True),
+                ),
+            )
             .values(
                 status=PaymentStatus.pending,
                 method=CARD_MOTO_METHOD,
@@ -418,8 +493,7 @@ class MerchantChargeService:
             .execution_options(synchronize_session=False)
         ).first()
         if claimed is None:
-            self._session.rollback()
-            raise ChargeAlreadyAttempted
+            self._refuse_claim(payment_id)
         self._session.commit()
 
         try:
@@ -427,6 +501,33 @@ class MerchantChargeService:
         except Exception as exc:
             self._after_unexpected_error(payment_id, exc, now=now)
         return self._reload(payment)
+
+    def _refuse_claim(self, payment_id: uuid.UUID) -> NoReturn:
+        """The claim matched nothing: say why, roll back and raise. Nothing was sent.
+
+        Read inside the same transaction (it still holds the caller's flushed payment, if any):
+        a payment that is no longer ``created``, or that a checkout has since claimed, belongs to
+        someone else (:class:`ChargeAlreadyAttempted`); otherwise it was the card that went away
+        between the caller loading it and now (``no_saved_card``).
+        """
+        row = self._session.execute(
+            sa.select(
+                Payment.status,
+                Payment.dedupe_key,
+                Payment.paymob_order_id,
+                Payment.paymob_intention_id,
+            ).where(Payment.id == payment_id)
+        ).one_or_none()
+        self._session.rollback()
+        if (
+            row is None
+            or row.status is not PaymentStatus.created
+            or row.dedupe_key is None
+            or row.paymob_order_id is not None
+            or row.paymob_intention_id is not None
+        ):
+            raise ChargeAlreadyAttempted
+        raise MerchantChargeError("no_saved_card", "The card is no longer the payer's active card")
 
     def _decrypt(self, card: SavedCard) -> str:
         try:
@@ -571,6 +672,20 @@ class MerchantChargeService:
         return payment
 
 
+def _is_queued_charge(payment: Payment) -> bool:
+    """True for a payment this service may charge: queued (a ``dedupe_key``), no checkout attached.
+
+    UD-P1 as an invariant. The 0056 CHECK ties a ``dedupe_key`` to the purposes charged on a saved
+    card (auto top-up, the renewal seat charge), so a payment with one cannot be a 3DS purchase; a
+    payment with a Paymob order or intention id already has a checkout the payer can complete.
+    """
+    return (
+        payment.dedupe_key is not None
+        and payment.paymob_order_id is None
+        and payment.paymob_intention_id is None
+    )
+
+
 def _payment_key(response: Mapping[str, object]) -> str | None:
     """``payment_keys[0].key`` of an intention answer, or ``None`` when there is no usable one."""
     keys = response.get("payment_keys")
@@ -585,6 +700,7 @@ __all__ = [
     "CARD_MOTO_METHOD",
     "FAILED_STATUSES",
     "IN_FLIGHT_STATUSES",
+    "MAX_SWEEP_ERRORS",
     "MERCHANT_SWEEP_BATCH",
     "ChargeAlreadyAttempted",
     "ChargesUnavailable",

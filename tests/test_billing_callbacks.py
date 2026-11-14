@@ -1083,16 +1083,24 @@ def test_a_callback_with_no_integration_id_settles_nothing(
     assert _payment(sm, pid).status is PaymentStatus.created
 
 
-@pytest.mark.parametrize("integration_id", [CARD_INTEGRATION_ID, MOTO_ID, APPLE_PAY_ID])
-def test_each_configured_integration_is_accepted(
-    migrated_sessionmaker: sessionmaker[Session], integration_id: int
+@pytest.mark.parametrize(
+    ("integration_id", "settles"),
+    [(CARD_INTEGRATION_ID, True), (APPLE_PAY_ID, True), (MOTO_ID, False)],
+    ids=["card", "apple_pay", "moto"],
+)
+def test_a_checkout_payment_is_settled_only_by_the_card_and_apple_pay_integrations(
+    migrated_sessionmaker: sessionmaker[Session], integration_id: int, settles: bool
 ) -> None:
+    """A credit pack is a 3DS checkout: the MOTO integration (no 3DS, Lemely carries the
+    chargeback liability) never settles it, though the MOTO id is configured for this account.
+    The full matrix is in ``tests/test_billing_integration_guard.py``."""
     sm = migrated_sessionmaker
     _, pid = _setup(sm)
     settings = PAYMOB_SETTINGS.model_copy(update={"apple_pay_integration_id": APPLE_PAY_ID})
     obj = {**transaction_obj(merchant_order_id=str(pid)), "integration_id": integration_id}
     _apply(sm, obj, settings)
-    assert _payment(sm, pid).status is PaymentStatus.paid
+    expected = PaymentStatus.paid if settles else PaymentStatus.created
+    assert _payment(sm, pid).status is expected
 
 
 def test_an_integration_that_is_not_configured_is_not_accepted(

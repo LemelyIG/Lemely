@@ -1047,10 +1047,14 @@ def test_a_pending_foreign_integration_transaction_is_held_too(
     assert held.next_reconcile_at is None
 
 
-@pytest.mark.parametrize("integration_id", [4569876, 4569877])
-def test_our_own_integration_ids_are_still_settled_by_inquiry(
-    migrated_sessionmaker: sessionmaker[Session], integration_id: int
+@pytest.mark.parametrize(
+    ("integration_id", "settles"), [(4569876, True), (4569877, False)], ids=["card", "moto"]
+)
+def test_a_checkout_payment_is_settled_by_inquiry_only_on_the_card_integration(
+    migrated_sessionmaker: sessionmaker[Session], integration_id: int, settles: bool
 ) -> None:
+    """The MOTO id is ours but never settles a 3DS checkout payment (the same rule as the
+    callback path); it is held back and polling stops for a person to review."""
     sm = migrated_sessionmaker
     pid = _due_payment(sm, age=timedelta(minutes=20))
     client = FakePaymobClient()
@@ -1059,4 +1063,9 @@ def test_our_own_integration_ids_are_still_settled_by_inquiry(
         "integration_id": integration_id,
     }
     _reconcile(sm, client)
-    assert _payment(sm, pid).status is PaymentStatus.paid
+    held = _payment(sm, pid)
+    if settles:
+        assert held.status is PaymentStatus.paid
+    else:
+        assert held.status is PaymentStatus.created
+        assert held.next_reconcile_at is None

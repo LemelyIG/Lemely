@@ -817,6 +817,38 @@ class BillingService:
         }
         return _as_int(obj.get("integration_id")) in ours
 
+    def _integration_allowed_for(self, payment: Payment, obj: JsonMap) -> bool:
+        """True when ``payment`` may be settled by a transaction on the signed ``integration_id``.
+
+        Which integration may take a payment follows how it was started, so a purchase that
+        needs a 3DS challenge can never settle through the no-3DS MOTO integration (Lemely, not
+        the issuer, carries that chargeback liability, UD-P1):
+
+        * a **renewal** keeps Phase 05's rule: any integration configured for this account
+          and mode (Paymob charges it on the plan's MOTO integration);
+        * a payment with a ``dedupe_key`` was **charged by us on a saved card** (auto top-up,
+          the fallback seat charge): the MOTO integration only. The 0056 CHECK ties the key to
+          those purposes, so it is the reliable discriminator: ``purpose`` is ambiguous
+          (``extra_seats`` is both) and ``method`` is overwritten by the first callback;
+        * every other payment is a **checkout** the payer completes in Unified Checkout: the
+          card and Apple Pay integrations only.
+        """
+        if payment.purpose is PaymentPurpose.subscription_renewal:
+            return self._is_our_integration(obj)
+        integration = _as_int(obj.get("integration_id"))
+        if payment.dedupe_key is not None:
+            moto = self._settings.moto_integration_id
+            return moto is not None and integration == moto
+        checkout = {
+            value
+            for value in (
+                self._settings.card_integration_id,
+                self._settings.apple_pay_integration_id,
+            )
+            if value is not None
+        }
+        return integration in checkout
+
     @staticmethod
     def _is_child_transaction(obj: JsonMap) -> bool:
         """True for a refund/void child. Any of the three markers is enough.
@@ -860,7 +892,7 @@ class BillingService:
                 self._record_event(PaymobEventKind.transaction, f"unmatched:{txn_id}", safe)
                 return True
         child = self._is_child_transaction(obj)
-        if not child and not self._is_our_integration(obj):
+        if not child and not self._integration_allowed_for(payment, obj):
             # Another integration on the same account (a payment link, a dashboard test) signs
             # with the same HMAC secret, so a genuine signature and a real ``order.id`` are not
             # enough: ``integration_id`` is signed and says which integration took the payment.
@@ -871,7 +903,8 @@ class BillingService:
             # polling it, see ``_reconcile_one``), with an error-level alert naming the path.
             # The audit row has its own key so the genuine callback's ``txn:`` key stays free.
             # A refund/void child is not judged: it settles nothing, and the parent's own
-            # callback carries the state (skill audit I1, review I1).
+            # callback carries the state (skill audit I1, review I1). Which integrations a payment
+            # accepts depends on how it was started (``_integration_allowed_for``).
             log.error(
                 "paymob_unexpected_integration",
                 alert=True,
