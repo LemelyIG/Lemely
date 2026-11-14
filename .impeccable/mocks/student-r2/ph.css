@@ -1,0 +1,77 @@
+/* Practice hub · round 1 */
+.sjhd.root{grid-template-columns:minmax(0,1fr)}
+.hwr{display:grid;grid-template-columns:40px minmax(0,1fr) 18px;gap:12px;align-items:center;padding:10px 12px;border-radius:16px;background:var(--pc);color:var(--ink);min-height:60px}
+.hwr .at span{color:var(--v)}
+.sic.hw{background:var(--p);color:#fff}
+.pgrid,.ptile.big,.hwr{flex:none}
+.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pgrid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.pgrid.four{grid-template-columns:repeat(4,minmax(0,1fr))}
+.ptile{display:grid;align-content:start;gap:4px;padding:14px;border-radius:20px;background:#fff;box-shadow:inset 0 0 0 1.5px var(--ov);color:var(--ink);min-height:112px;transition:transform .15s var(--ease)}
+.ptile:active{transform:scale(.97)}
+.ptile b{font:700 16px/1.2 'Schibsted Grotesk';margin-top:8px}
+.ptile>span:last-child{font:500 13px/1.3 'Schibsted Grotesk';color:var(--v)}
+.ptile>span:last-child b{font:800 15px 'JetBrains Mono';color:var(--p);margin:0}
+.pti{width:40px;height:40px;border-radius:13px;display:grid;place-items:center;background:var(--pc);color:var(--p)}
+.pcard .pti{background:oklch(.94 .04 300);color:oklch(.42 .1 300)}
+.ppap .pti{background:oklch(.94 .04 150);color:var(--ok)}
+.ptest .pti{background:oklch(.95 .04 80);color:oklch(.42 .09 70)}
+.pgrid.three .ptile{min-height:104px;padding:12px}.pgrid.three .ptile b{font-size:14.5px}
+/* B: big tile */
+.ptile.big{grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;min-height:0;padding:12px 14px 12px 8px}
+.ptile.big .at{display:grid;gap:2px}.ptile.big .at b{margin:0;font-size:18px}
+.ptile.big .at span{font:500 13.5px 'Schibsted Grotesk';color:var(--v)}
+.ptile.big em{font-style:normal;font-weight:700;color:var(--p)}
+.ptile.big .btn{pointer-events:none}
+/* C: tinted tiles */
+.pgrid.tint .ptile{box-shadow:none;min-height:124px;position:relative;overflow:hidden}
+.pgrid.tint .pset{background:var(--pc)}.pgrid.tint .pcard{background:oklch(.95 .03 300)}.pgrid.tint .ppap{background:oklch(.95 .03 150)}.pgrid.tint .ptest{background:oklch(.96 .03 80)}
+.pgrid.tint .pti{background:none;position:absolute;right:-8px;bottom:-10px;width:72px;height:72px;opacity:.35}
+.pgrid.tint .pti svg{width:64px;height:64px;stroke-width:1.3}
+.pgrid.tint .ptile b{margin-top:0;font-size:17px}
+/* rows */
+.h2row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.h2row .lnk{min-height:44px;display:inline-flex;align-items:center;color:var(--p);font:600 13.5px 'Schibsted Grotesk'}
+.wmr{display:grid;grid-template-columns:minmax(0,1fr) auto 18px;gap:12px;align-items:center;padding:10px 0;color:var(--ink);box-shadow:0 -1px 0 var(--ov);min-height:56px}
+.wmr .at span{color:var(--v)}
+.wmr.res,.wmr:has(.sic){grid-template-columns:40px minmax(0,1fr) auto}
+.wmr:has(.sic):not(.res){grid-template-columns:40px minmax(0,1fr) 18px}
+.plus{display:grid;justify-items:end;font:800 17px/1 'JetBrains Mono';color:var(--p)}.plus small{font:600 12px 'Schibsted Grotesk';color:var(--v);margin-top:2px}
+.sic.go{background:var(--p);color:#fff}.sic.ok{background:var(--okc);color:var(--ok)}.sic.pp{background:oklch(.94 .04 150);color:var(--ok)}
+.rsm{font:700 14px 'Schibsted Grotesk';color:var(--p);min-height:44px;display:inline-flex;align-items:center}
+.wmr:hover b,.ppr:hover b,.hwr:hover b{color:var(--p)}
+/* builder sheet */
+.wtog{display:flex;align-items:center;justify-content:space-between;font:600 14px 'Schibsted Grotesk';color:var(--ink);min-height:44px}
+.sw{width:48px;height:28px;border-radius:14px;background:var(--o);position:relative;flex:none}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:transform .2s var(--ease)}
+.sw.on{background:var(--p)}.sw.on::after{transform:translateX(20px)}
+.more summary{list-style:none;min-height:44px;display:flex;align-items:center;gap:6px;font:600 14px 'Schibsted Grotesk';color:var(--p);cursor:pointer}
+.more summary::-webkit-details-marker{display:none}
+.more summary::after{content:"";width:7px;height:7px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(45deg) translateY(-2px);margin-left:4px}
+.avl{margin:0;display:flex;align-items:center;gap:6px;font:600 13.5px 'Schibsted Grotesk';color:var(--ok)}
+.lnk.q.tc{display:inline-flex;align-items:center;justify-content:center;gap:6px}
+/* past papers */
+.ppr{display:grid;grid-template-columns:40px minmax(0,1fr) auto 18px;gap:12px;align-items:center;padding:10px 0;color:var(--ink);box-shadow:0 -1px 0 var(--ov);min-height:60px}
+.ppr .at span{color:var(--v)}
+.psc{font:700 14px 'JetBrains Mono';color:var(--ok)}
+.ppopt{display:grid;gap:8px}
+.ppopt button{display:grid;grid-template-columns:40px minmax(0,1fr);gap:12px;align-items:center;text-align:left;border:0;background:#fff;border-radius:16px;padding:10px 12px;box-shadow:inset 0 0 0 1.5px var(--ov);color:var(--ink);min-height:60px;cursor:pointer}
+.ppopt button.on{box-shadow:inset 0 0 0 2px var(--p);background:var(--pc)}
+.ppopt .at span{color:var(--v)}
+/* desktop */
+.phd{flex:1;min-height:0;overflow:auto;scrollbar-width:none;display:flex;flex-direction:column;gap:20px;padding:8px 40px 28px}
+.phd .hwr{max-width:560px}
+.pgrid.four .ptile{min-height:128px;padding:18px}
+.pcols{display:grid;grid-template-columns:1fr 1fr;gap:40px;align-items:start}
+/* final */
+.say2.sm{flex:none}.say2.sm .bub2{font-size:15px}
+.avl.wait{color:var(--v)}.avl.no{color:oklch(.42 .09 70)}
+.spin{width:14px;height:14px;border-radius:50%;border:2px solid var(--o);border-top-color:var(--p);animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.phr{display:grid;grid-template-columns:minmax(0,560px) minmax(0,1fr);gap:24px;align-items:center}
+.pgrid.tint.four .ptile{min-height:140px}
+.pgrid.tint .ptile:hover{filter:brightness(.98)}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}}
+.ptile:focus-visible,.wmr:focus-visible,.ppr:focus-visible,.hwr:focus-visible{outline:2.5px solid var(--p);outline-offset:2px;border-radius:16px}
+@media (prefers-reduced-motion:reduce){.ptile,.sw::after{transition:none}}
