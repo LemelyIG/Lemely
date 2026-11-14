@@ -1314,3 +1314,133 @@ def test_a_backed_off_cancel_does_not_starve_the_rows_behind_it(
     assert _sweep(pg_sessionmaker, NOW + timedelta(minutes=1), client, limit=1) == 1
     assert _sub(pg_sessionmaker, behind).paymob_cancelled_at is not None
     assert _sub(pg_sessionmaker, stuck).paymob_cancelled_at is None
+
+
+# -- I-1: a charge Paymob made early, then a PUT, then the webhook --------------------------
+
+
+def _early_charge_then_put(
+    sm: sessionmaker[Session], *, second_replacement: bool = False
+) -> tuple[uuid.UUID, FakePaymobClient]:
+    """A downgrade (10 000 to 6 000) is pushed 12 hours before the period end, one day after
+    Paymob charged the old 10 000. With ``second_replacement`` it is first pushed to 6 000 and
+    then, 8 hours later, re-chosen as 8 000 (so 6 000 is the latest replaced amount)."""
+    payer, _, sid = _student_sub(sm)
+    first = seed_tier(sm, price_minor=6_000)
+    client = _remote(FakePaymobClient())
+    with sm.begin() as session:
+        _svc(session, client).schedule_downgrade(
+            sid, actor_user_id=payer, plan_tier_id=first, now=NOW
+        )
+    if second_replacement:
+        assert _sweep(sm, END - timedelta(hours=20), client) == 1
+        second = seed_tier(sm, price_minor=8_000)
+        with sm.begin() as session:
+            _svc(session, client).schedule_downgrade(
+                sid, actor_user_id=payer, plan_tier_id=second, now=END - timedelta(hours=19)
+            )
+    assert _sweep(sm, END - timedelta(hours=12), client) == 1  # the PUT lands after Paymob charged
+    return sid, client
+
+
+def _renewal_webhook(
+    sm: sessionmaker[Session], client: FakePaymobClient, *, amount: int, charged_at: datetime
+) -> list[str]:
+    client.last_transactions[PID] = charge(888, amount, created_at=charged_at)
+    with capture_logs() as logs:
+        _deliver(sm, client, subscription_repo.TRIGGER_SUCCESS, END - timedelta(hours=11))
+    return _alerts(logs)
+
+
+def test_a_put_replaces_the_amount_and_remembers_the_one_it_replaced(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sid, client = _early_charge_then_put(pg_sessionmaker)
+    sub = _sub(pg_sessionmaker, sid)
+    assert (sub.paymob_amount_minor, sub.previous_amount_minor, sub.amount_replaced_at) == (
+        6_000,
+        10_000,
+        END - timedelta(hours=12),
+    )
+    assert _puts(client) == [(PID, 6_000)]
+
+
+def test_an_early_charge_then_a_put_then_the_webhook_is_paid_and_grants_a_period(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sid, client = _early_charge_then_put(pg_sessionmaker)
+    alerts_raised = _renewal_webhook(
+        pg_sessionmaker, client, amount=10_000, charged_at=END - timedelta(days=1)
+    )
+    assert alerts_raised == []
+    assert _payments(pg_sessionmaker) == [(10_000, PaymentStatus.paid)]
+    sub = _sub(pg_sessionmaker, sid)
+    assert sub.current_period_end > END  # type: ignore[operator]
+    # Paymob now bills 6 000, so the stamp says so; the downgrade is still pending (the charge was
+    # not at the new amount) and the replaced amount is spent.
+    assert sub.paymob_amount_minor == 6_000
+    assert sub.pending_plan_tier_id is not None
+    assert (sub.previous_amount_minor, sub.amount_replaced_at) == (None, None)
+
+
+def test_the_replaced_amount_covers_only_the_period_right_after_the_replacement(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sid, client = _early_charge_then_put(pg_sessionmaker)
+    _renewal_webhook(pg_sessionmaker, client, amount=10_000, charged_at=END - timedelta(days=1))
+    client.last_transactions[PID] = charge(889, 10_000, created_at=END - timedelta(days=1))
+    with capture_logs() as logs:
+        _deliver(
+            pg_sessionmaker, client, subscription_repo.TRIGGER_SUCCESS, END + timedelta(days=30)
+        )
+    assert _alerts(logs) == ["subscription_renewal_mismatch"]
+    assert [status for _, status in _payments(pg_sessionmaker)] == [
+        PaymentStatus.paid,
+        PaymentStatus.failed_mismatch,
+    ]
+
+
+def test_a_charge_made_after_the_replacement_at_the_old_amount_is_a_mismatch(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sid, client = _early_charge_then_put(pg_sessionmaker)
+    alerts_raised = _renewal_webhook(
+        pg_sessionmaker, client, amount=10_000, charged_at=END - timedelta(hours=10)
+    )
+    assert alerts_raised == ["subscription_renewal_mismatch"]
+    assert _payments(pg_sessionmaker) == [(10_000, PaymentStatus.failed_mismatch)]
+    assert _sub(pg_sessionmaker, sid).current_period_end == END
+
+
+def test_a_charge_exactly_at_the_replacement_time_is_not_before_it(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _, client = _early_charge_then_put(pg_sessionmaker)
+    alerts_raised = _renewal_webhook(
+        pg_sessionmaker, client, amount=10_000, charged_at=END - timedelta(hours=12)
+    )
+    assert alerts_raised == ["subscription_renewal_mismatch"]
+
+
+@pytest.mark.parametrize(
+    ("amount", "status"),
+    [(10_000, PaymentStatus.failed_mismatch), (6_000, PaymentStatus.paid)],
+)
+def test_after_a_second_replacement_only_the_latest_previous_amount_counts(
+    pg_sessionmaker: sessionmaker[Session], amount: int, status: PaymentStatus
+) -> None:
+    sid, client = _early_charge_then_put(pg_sessionmaker, second_replacement=True)
+    sub = _sub(pg_sessionmaker, sid)
+    assert (sub.paymob_amount_minor, sub.previous_amount_minor) == (8_000, 6_000)
+    _renewal_webhook(pg_sessionmaker, client, amount=amount, charged_at=END - timedelta(days=1))
+    assert _payments(pg_sessionmaker) == [(amount, status)]
+
+
+def test_no_other_amount_is_widened_by_a_replacement(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _, client = _early_charge_then_put(pg_sessionmaker)
+    alerts_raised = _renewal_webhook(
+        pg_sessionmaker, client, amount=9_000, charged_at=END - timedelta(days=1)
+    )
+    assert alerts_raised == ["subscription_renewal_mismatch"]

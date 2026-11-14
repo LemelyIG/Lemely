@@ -983,6 +983,9 @@ def handle_subscription_first(session: Session, payment: Payment, obj: JsonMap) 
             subscription.current_period_end = end
             subscription.grace_until = None
             subscription.paymob_amount_minor = payment.amount_minor
+            # The replaced amount only covers the period right after its replacement.
+            subscription.previous_amount_minor = None
+            subscription.amount_replaced_at = None
             _bump(subscription)
             session.flush()
     except IntegrityError as exc:
@@ -1150,6 +1153,9 @@ def _grant_renewal_period(
             subscription.current_period_start = start
             subscription.current_period_end = end
             subscription.paymob_amount_minor = payment.amount_minor
+            # The replaced amount only covers the period right after its replacement.
+            subscription.previous_amount_minor = None
+            subscription.amount_replaced_at = None
             _bump(subscription)
             session.flush()
     except IntegrityError as exc:
@@ -1908,8 +1914,30 @@ class SubscriptionService:
         current_tier = session.get(PlanTier, subscription.plan_tier_id)
         expected = self.next_renewal_amount(subscription)
         accepted = {expected}
-        if subscription.paymob_amount_minor is not None:
-            accepted.add(subscription.paymob_amount_minor)
+        stamped = subscription.paymob_amount_minor
+        if stamped is not None:
+            accepted.add(stamped)
+        # Paymob can charge up to EARLY_CHARGE_WINDOW before the period end, and a PUT may have
+        # replaced the amount after that charge and before this webhook was processed. That one
+        # charge, at the latest replaced amount and stamped before the replacement, is ours and
+        # paid. Nothing else widens the set.
+        previous = subscription.previous_amount_minor
+        replaced_at = subscription.amount_replaced_at
+        via_previous = (
+            previous is not None
+            and replaced_at is not None
+            and amount == previous
+            and amount not in accepted
+            and charged_at < replaced_at
+        )
+        if via_previous:
+            accepted.add(amount)
+            log.info(
+                "subscription_renewal_at_replaced_amount",
+                subscription_id=str(subscription.id),
+                charged_minor=amount,
+                stamped_minor=stamped,
+            )
         mismatch = (
             current_tier is None or currency != current_tier.currency or amount not in accepted
         )
@@ -1941,12 +1969,13 @@ class SubscriptionService:
                 payment_id=str(payment.id),
                 expected_minor=expected,
                 stamped_minor=subscription.paymob_amount_minor,
+                previous_minor=subscription.previous_amount_minor,
                 received_minor=amount,
                 currency=currency,
                 alert=True,
             )
             return False
-        return _settle_renewal(
+        granted = _settle_renewal(
             session,
             subscription,
             payment,
@@ -1954,6 +1983,11 @@ class SubscriptionService:
             now=now,
             amount_updatable=self._settings.subscription_amount_updatable,
         )
+        if granted and via_previous:
+            # The period was paid at the replaced amount, but Paymob now holds the stamped one:
+            # the grant stamped the charge, and the stamp must keep saying what Paymob will bill.
+            subscription.paymob_amount_minor = stamped
+        return granted
 
     # -- grace and expiry (spec §2.6, §5.2) --------------------------------------------
 
@@ -2164,6 +2198,9 @@ class SubscriptionService:
         is processed would make that paid charge a mismatch. ``now`` is the caller's clock;
         without one the wall clock is used.
 
+        A PUT that changes the amount keeps the replaced one in ``previous_amount_minor`` with the
+        time in ``amount_replaced_at`` (only the latest), for a charge Paymob made early.
+
         An unknown outcome (timeout, transport, 5xx) leaves the stamp alone and returns ``False``.
         Paymob may nevertheless hold the new amount, so the subscription is remembered and the
         next sweep sends the expected amount again even if it equals the stamp (M-1); a stamp
@@ -2212,6 +2249,12 @@ class SubscriptionService:
             return False
         _AMOUNT_UNCERTAIN.discard(subscription.id)
         _AMOUNT_PUT_FAILURES.clear(subscription.id)
+        replaced = subscription.paymob_amount_minor
+        if replaced is not None and replaced != expected:
+            # Paymob may have charged the replaced amount early, before this PUT landed: keep it
+            # (only the latest one) so that charge is still paid (see _apply_successful_charge).
+            subscription.previous_amount_minor = replaced
+            subscription.amount_replaced_at = at
         subscription.paymob_amount_minor = expected
         _bump(subscription)
         log.info(

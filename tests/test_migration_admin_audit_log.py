@@ -867,7 +867,9 @@ def test_upgrade_downgrade_upgrade_round_trip(
 
     with sm() as session:
         assert current_revision(session) == head_revision()  # later revisions sit above 0057
-        assert object_names(session, PARITY_TABLES_WITH_EVENTS) == after_upgrade
+        # Later revisions add their own objects on top (0058's CHECK on subscriptions).
+        later = {"ck_subscriptions_previous_amount_paired"}
+        assert object_names(session, PARITY_TABLES_WITH_EVENTS) - later == after_upgrade
         assert _function_count(session) == 1
         assert session.execute(sa.text("SELECT count(*) FROM job_runs")).scalar_one() == 0
         # The terms history was rebuilt for the tier the downgrade left without one.

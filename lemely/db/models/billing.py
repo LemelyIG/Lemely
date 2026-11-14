@@ -250,6 +250,10 @@ class Subscription(TimestampMixin, Base):
             "(pending_terms_version IS NULL) = (pending_terms_effective_at IS NULL)",
             name="pending_terms_paired",
         ),
+        sa.CheckConstraint(
+            "(previous_amount_minor IS NULL) = (amount_replaced_at IS NULL)",
+            name="previous_amount_paired",
+        ),
         # The terms the subscriber is on, and the terms it moves to at renewal. Composite so a
         # version of another tier is impossible. ``MATCH SIMPLE`` (the default) skips the
         # pending key while ``pending_terms_version`` is NULL.
@@ -338,6 +342,15 @@ class Subscription(TimestampMixin, Base):
 
     The cause marker that lets a ``resumed`` callback undo that cancel and no other. Cleared by
     the resume and by the payer's own cancel."""
+    previous_amount_minor: Mapped[int | None] = mapped_column(sa.BigInteger, nullable=True)
+    """The renewal amount the last PUT replaced, with ``amount_replaced_at`` (migration 0058).
+
+    Paymob can charge up to three days early, so a PUT can land after it charged the old amount.
+    A renewal at this amount, charged before ``amount_replaced_at``, is still paid. Cleared when a
+    renewal grants a period."""
+    amount_replaced_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
     extra_seat_grace_until: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True
     )
