@@ -9,3 +9,8 @@ export function activeTabTap({ pathname, tabTo, scrollY }: { pathname: string; t
   if (here !== tabTo.replace(/\/+$/, "")) return "pop-root"
   return scrollY > 0 ? "scroll-top" : "none"
 }
+
+/** A plain primary-button click. A modified or non-primary click on a tab keeps the browser's own behaviour (new tab, new window). */
+export function isPlainPrimaryClick(event: { button: number; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }): boolean {
+  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
+}

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
-import { activeTabTap } from "@/components/shell/tabTap"
+import { activeTabTap, isPlainPrimaryClick } from "@/components/shell/tabTap"
 
 const SRC = join(fileURLToPath(new URL("../../", import.meta.url)), "src")
 const css = readFileSync(join(SRC, "index.css"), "utf8")
@@ -89,5 +89,19 @@ describe("tab bar CSS (preview 4447a571)", () => {
     expect(css).toMatch(/--native-page-android: var\(--md-surface-container-low\)/)
     expect(css).toMatch(/:root\[data-theme="dark"\]\[data-platform\] \{[^}]*--native-page-android: var\(--md-surface\)/)
     expect(block).toMatch(/\[data-portal\] \{[^}]*background-color: var\(--native-page\)/)
+  })
+})
+
+describe("isPlainPrimaryClick (final review minor 1)", () => {
+  const click = { button: 0, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false }
+  it("accepts a plain primary click", () => {
+    expect(isPlainPrimaryClick(click)).toBe(true)
+  })
+  it("leaves modified and non-primary clicks to the browser", () => {
+    expect(isPlainPrimaryClick({ ...click, ctrlKey: true })).toBe(false)
+    expect(isPlainPrimaryClick({ ...click, metaKey: true })).toBe(false)
+    expect(isPlainPrimaryClick({ ...click, shiftKey: true })).toBe(false)
+    expect(isPlainPrimaryClick({ ...click, altKey: true })).toBe(false)
+    expect(isPlainPrimaryClick({ ...click, button: 1 })).toBe(false)
   })
 })

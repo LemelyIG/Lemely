@@ -4608,6 +4608,27 @@ const ROOT_VT_SAMPLER = () => {
   }
   requestAnimationFrame(tick)
 }
+/** No view transition running and none started for 600ms, bounded at 5s so a page that keeps starting them fails by name. */
+const quietTransitions = (page) =>
+  page.evaluate(
+    () =>
+      new Promise((resolve, reject) => {
+        const t0 = performance.now()
+        let seen = window.__svtSeen
+        let quietSince = t0
+        const poll = () => {
+          const live = document.getAnimations().some((a) => String(a.effect?.pseudoElement ?? "").startsWith("::view-transition"))
+          if (live || window.__svtSeen !== seen) {
+            seen = window.__svtSeen
+            quietSince = performance.now()
+          }
+          if (performance.now() - quietSince > 600) resolve()
+          else if (performance.now() - t0 > 5000) reject(new Error("view transitions never went quiet within 5s"))
+          else setTimeout(poll, 50)
+        }
+        poll()
+      }),
+  )
 const DIALOG_CLOSE_CASES = [
   {
     id: "more-sheet",
@@ -4651,25 +4672,7 @@ NATIVE_CHECKS.push(
         await page.waitForURL(c.awayUrl)
         await page.evaluate(() => window.__lemelyRouter.navigate(-1))
         await page.waitForURL(c.backUrl)
-        // The drill-down's own transitions must be over before the close is watched: no transition running and
-        // no new one started for 600ms (the URL moves before React Router starts its transition).
-        await page.evaluate(
-          () =>
-            new Promise((resolve) => {
-              let seen = window.__svtSeen
-              let quietSince = performance.now()
-              const poll = () => {
-                const live = document.getAnimations().some((a) => String(a.effect?.pseudoElement ?? "").startsWith("::view-transition"))
-                if (live || window.__svtSeen !== seen) {
-                  seen = window.__svtSeen
-                  quietSince = performance.now()
-                }
-                if (performance.now() - quietSince > 600) resolve()
-                else setTimeout(poll, 50)
-              }
-              poll()
-            }),
-        )
+        await quietTransitions(page)
         await page.evaluate(ROOT_VT_SAMPLER)
         await c.open(page)
         await page.getByRole("dialog").waitFor()
@@ -4712,3 +4715,82 @@ NATIVE_CHECKS.push(
     },
   })),
 )
+
+// Final review fix round 1: the ConfirmModal repush is the only forward self-move (target `current + 1`).
+const CONFIRM_APP = { ...classesApp, motion: true };
+async function openClassConfirm(page) {
+  const viewTable = page.getByRole("button", { name: "View table" });
+  if (await viewTable.count()) await viewTable.click();
+  await page.getByRole("button", { name: /^Delete/ }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Delete this class?" });
+  await dialog.waitFor();
+  await dialogReady(page);
+  return dialog;
+}
+const dialogEntryNow = (page) => page.evaluate(() => ({ idx: window.history.state?.idx, id: window.history.state?.usr?.lemelyDialogId ?? null, dialog: window.history.state?.usr?.lemelyDialog ?? null }));
+NATIVE_CHECKS.push(
+  ...["ios", "android"].flatMap((platform) => [
+    {
+      id: `native-${platform}-dialog-history-confirm-back-repushes`,
+      platform,
+      width: 390,
+      app: classesApp,
+      async run(page) {
+        const originIdx = await histIdx(page);
+        const dialog = await openClassConfirm(page);
+        const open = await dialogEntryNow(page);
+        if (open.idx !== originIdx + 1) throw new Error(`the confirm did not push one entry: ${JSON.stringify(open)}`);
+        // Back twice: a non-dismissible confirm keeps its entry each time (a forward re-push), same entry id.
+        for (const round of [1, 2]) {
+          await page.goBack();
+          await page
+            .waitForFunction(([want, id]) => window.history.state?.idx === want && window.history.state?.usr?.lemelyDialogId === id, [open.idx, open.id], { timeout: 5000 })
+            .catch(async () => {
+              throw new Error(`after Back ${round} the entry is ${JSON.stringify(await dialogEntryNow(page))}, want ${JSON.stringify(open)}`);
+            });
+          if (!(await dialog.isVisible())) throw new Error(`Back ${round} closed the confirm`);
+        }
+        await dialog.getByRole("button", { name: "Keep it" }).click();
+        await dialog.waitFor({ state: "detached" });
+        await historyIs(page, originIdx);
+        // A slowed repush: answer the confirm while the forward move is still in flight.
+        await openClassConfirm(page);
+        await slowHistoryGo(page, 1200);
+        await page.goBack();
+        await dialog.getByRole("button", { name: "Keep it" }).click();
+        await dialog.waitFor({ state: "detached" });
+        await historyIs(page, originIdx);
+      },
+    },
+    {
+      id: `native-${platform}-dialog-close-after-drill-down-plays-no-page-transition-confirm-repush`,
+      platform,
+      width: 390,
+      app: CONFIRM_APP,
+      async run(page) {
+        await page.locator("main").waitFor();
+        await page.evaluate(() => {
+          window.__svtSeen = 0;
+          const real = document.startViewTransition.bind(document);
+          document.startViewTransition = (...a) => {
+            window.__svtSeen += 1;
+            return real(...a);
+          };
+        });
+        await navcovRouterNavigate(page, "/teacher/classes/c1");
+        await page.waitForURL(/\/teacher\/classes\/c1$/);
+        await page.evaluate(() => window.__lemelyRouter.navigate(-1));
+        await page.waitForURL(/\/teacher\/classes$/);
+        await quietTransitions(page);
+        await openClassConfirm(page);
+        await quietTransitions(page);
+        await page.evaluate(ROOT_VT_SAMPLER);
+        await page.goBack(); // the confirm re-pushes: a forward POP onto the same page
+        await page.waitForFunction(() => window.__rootVt.done, null, { timeout: 5000 });
+        const { names } = await page.evaluate(() => window.__rootVt);
+        if (names.length) throw new Error(`the confirm's re-push animated the page: ${[...new Set(names)].join(", ")}`);
+        if (!(await page.getByRole("dialog", { name: "Delete this class?" }).isVisible())) throw new Error("Back closed the confirm");
+      },
+    },
+  ]),
+);

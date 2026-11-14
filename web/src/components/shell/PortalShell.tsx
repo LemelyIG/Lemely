@@ -25,7 +25,7 @@ import { ShellSidebar, type ShellSidebarContent } from "./ShellSidebar"
 import { ShellTopBar, type ShellTopBarProps } from "./ShellTopBar"
 import type { NavDirectionState } from "@/lib/nav/navDirectionState"
 import { stepsBackToRoot } from "@/lib/nav/historyPaths"
-import { activeTabTap } from "./tabTap"
+import { activeTabTap, isPlainPrimaryClick } from "./tabTap"
 import { titleLevelFor } from "./largeTitle"
 
 export interface PortalShellProps {
@@ -83,6 +83,7 @@ export function PortalShell({
   const closeNav = () => setNavOpen(false)
   const onActiveTap = (item: NavShellItem, event: MouseEvent) => {
     if (!item.to) return
+    if (!isPlainPrimaryClick(event)) return
     const action = activeTabTap({ pathname: location.pathname, tabTo: item.to, scrollY: window.scrollY })
     // Prevented even when there is nothing to do: the NavLink would otherwise REPLACE the entry with a
     // forward view transition onto the page it is already on.

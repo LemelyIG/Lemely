@@ -21,8 +21,9 @@ import { nextDialogHistoryAction } from "@/lib/nav/dialogHistory"
  * `expectSelfPop(targetIdx)` records the history index the move ends on, and a
  * popstate is ours only when `history.state.idx` equals one of those targets.
  * A popstate that arrives late (a busy main thread, a slow traversal) still
- * lands on its target and is still ours; a real Back never lands on a target
- * while the move before it is outstanding, because traversals run in order.
+ * lands on its target and is still ours; a real Back issued before it never lands on a
+ * target while the move is outstanding, because traversals run in order. (A deferred unwind issues its move inside a
+ * popstate handler, so a Back the user queued earlier can land on that target; the outcome is still what they asked for.)
  */
 
 export interface DialogHistoryEntry {
