@@ -111,3 +111,27 @@ Status: confirmed via `/impeccable shape`, 2026-11-08. No code yet.
 ## Research sources
 
 Apple HIG, via third-party measurements because the HIG pages are JS-rendered; verify the numbers in the iOS Figma kit before they become tokens. Material Components docs (navigation bar, top app bar, bottom sheet). web.dev "App design". Chrome viewport-resize and View Transitions guides. WebKit's Safari 26 notes on scroll-driven animations. MDN on Popover, Vibration and `userAgentData`. Konsta UI as a Tailwind reference for iOS vs Material dimensions.
+
+## Drift log
+
+- **Measured:** 2026-11-14 with `node scripts/home-drift.mjs` on `12536a05`, a `build:drift` tree. Report: `reports/.scratch/drift/2026-11-14T19-16-48-631Z`.
+- **Columns:** each cell is the share of pixels that differ from the preview (or, for the teacher scenes, the capture state), at 390×844 unless the id says otherwise.
+- **Gate scenes:** they pass at 0 px. With an approved justification they pass up to 15%.
+- **Log scenes:** they have no cap, but still need an approved entry.
+
+| Scene id | Platform | Rule | Light | Dark | Justification | Approved |
+|---|---|---|---|---|---|---|
+| native-ios-root-top | iOS | gate | 0.84% | 1.03% | Bar and tab bar follow preview 4447a571. The avatar, tab set and raised Correct tab are design A decisions. | yes (user, 2026-11-14) |
+| native-ios-root-scrolled | iOS | gate | 0.83% | 1.03% | Same as root-top. | yes (user, 2026-11-14) |
+| native-ios-detail | iOS | gate | 0.91% | 0.92% | Compact bar and back follow the preview. The tab set and raised Correct tab are design A decisions. | yes (user, 2026-11-14) |
+| native-ios-settings | iOS | gate | 3.38% | 3.66% | The sheet frame, grabber, detents and grouped look follow the preview. The rest is the real Profile section where the preview has placeholder rows. | yes (user, 2026-11-14) |
+| native-ios-bell | iOS | gate | 11.74% | 3.05% | Real notifications as grouped rows. "Mark all read" sits on its own line, and the inbox links are grouped rows. The preview has a flat placeholder list. | yes (user, 2026-11-14) |
+| native-android-root-top | Android | gate | 0.99% | 1.09% | Same as iOS root-top. | yes (user, 2026-11-14) |
+| native-android-root-scrolled | Android | gate | 1.00% | 1.09% | Same as iOS root-top. | yes (user, 2026-11-14) |
+| native-android-detail | Android | gate | 1.37% | 0.96% | Same as iOS detail. | yes (user, 2026-11-14) |
+| native-android-settings | Android | gate | 2.69% | 3.01% | Same as iOS settings. | yes (user, 2026-11-14) |
+| native-android-bell | Android | gate | 12.46% | 2.63% | Same as iOS bell, with full-bleed 72px two-line rows. | yes (user, 2026-11-14) |
+| native-android-412-root-top | Android 412×915 | log | 0.88% | 0.96% | Same as iOS root-top. | yes (user, 2026-11-14) |
+| native-android-412-root-scrolled | Android 412×915 | log | 0.89% | 0.96% | Same as iOS root-top. | yes (user, 2026-11-14) |
+| native-teacher-ios-root-top | iOS | log | captured | captured | No teacher native preview exists. Only the app side is captured, for human review (Task 16 Step 0, item 5). | n/a: log-only capture, reviewed by the user 2026-11-14 ("looks right") |
+| native-teacher-android-root-top | Android | log | captured | captured | Same as the iOS teacher scene. | n/a: log-only capture, reviewed by the user 2026-11-14 ("looks right") |

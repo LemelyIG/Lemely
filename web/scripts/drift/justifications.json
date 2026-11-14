@@ -242,61 +242,61 @@
   "native-ios-root-top": {
     "difference": "bar row: the account avatar is the kit's outlined squircle with a plain initial where the preview draws a primary-container circle with a bold initial (the existing design A avatar decision), the bell dot ring is the shell's; tab bar: the app keeps its own tab set and the raised Correct tab (Overview, Correct, Classes, Profile, More) where the preview draws Overview, Upload, Classes, Profile, More, so tab icons and labels differ; the bar height (49px iOS, 80px Android plus the inset), glass, label size and filled selected icon follow the preview; the app draws the Android pill as a pseudo-element on the icon box where the preview pads the icon, the iOS 0.5px hairline sits inside the 49px so its links are 48.5px, and the raised Correct tab takes no pill or selected colour",
     "justification": "Native frame preview 4447a571 (.as-bar, .as-lt, .as-back, .as-title); the avatar follows the existing design A decision (variant-a.css .as-avatar vs the kit Avatar); the tab set and the raised Correct tab are design A decisions (nav-shells.tsx emphasisId); the bar itself follows the preview .a-bottombar",
-    "approved": "pending"
+    "approved": "yes"
   },
   "native-ios-root-scrolled": {
     "difference": "bar row: the account avatar is the kit's outlined squircle with a plain initial where the preview draws a primary-container circle with a bold initial (the existing design A avatar decision), the bell dot ring is the shell's; tab bar: the app keeps its own tab set and the raised Correct tab (Overview, Correct, Classes, Profile, More) where the preview draws Overview, Upload, Classes, Profile, More, so tab icons and labels differ; the bar height (49px iOS, 80px Android plus the inset), glass, label size and filled selected icon follow the preview; the app draws the Android pill as a pseudo-element on the icon box where the preview pads the icon, the iOS 0.5px hairline sits inside the 49px so its links are 48.5px, and the raised Correct tab takes no pill or selected colour",
     "justification": "Native frame preview 4447a571 (.as-bar, .as-lt, .as-back, .as-title); the avatar follows the existing design A decision (variant-a.css .as-avatar vs the kit Avatar); the tab set and the raised Correct tab are design A decisions (nav-shells.tsx emphasisId); the bar itself follows the preview .a-bottombar",
-    "approved": "pending"
+    "approved": "yes"
   },
   "native-ios-detail": {
     "difference": "bar row: the bell dot ring is the shell's; tab bar: the app keeps its own tab set and the raised Correct tab (Overview, Correct, Classes, Profile, More) where the preview draws Overview, Upload, Classes, Profile, More, so tab icons and labels differ; the bar height (49px iOS, 80px Android plus the inset), glass, label size and filled selected icon follow the preview; the app draws the Android pill as a pseudo-element on the icon box where the preview pads the icon, the iOS 0.5px hairline sits inside the 49px so its links are 48.5px, and the raised Correct tab takes no pill or selected colour",
     "justification": "Native frame preview 4447a571 (.as-bar, .as-back, .as-title); the tab set and the raised Correct tab are design A decisions (nav-shells.tsx emphasisId); the bar itself follows the preview .a-bottombar",
-    "approved": "pending"
+    "approved": "yes"
   },
   "native-android-root-top": {
     "difference": "bar row: the account avatar is the kit's outlined squircle with a plain initial where the preview draws a primary-container circle with a bold initial (the existing design A avatar decision), the bell dot ring is the shell's; tab bar: the app keeps its own tab set and the raised Correct tab (Overview, Correct, Classes, Profile, More) where the preview draws Overview, Upload, Classes, Profile, More, so tab icons and labels differ; the bar height (49px iOS, 80px Android plus the inset), glass, label size and filled selected icon follow the preview; the app draws the Android pill as a pseudo-element on the icon box where the preview pads the icon, the iOS 0.5px hairline sits inside the 49px so its links are 48.5px, and the raised Correct tab takes no pill or selected colour",
     "justification": "Native frame preview 4447a571 (.as-bar, .as-lt, .as-back, .as-title); the avatar follows the existing design A decision (variant-a.css .as-avatar vs the kit Avatar); the tab set and the raised Correct tab are design A decisions (nav-shells.tsx emphasisId); the bar itself follows the preview .a-bottombar",
-    "approved": "pending"
+    "approved": "yes"
   },
   "native-android-root-scrolled": {
     "difference": "bar row: the account avatar is the kit's outlined squircle with a plain initial where the preview draws a primary-container circle with a bold initial (the existing design A avatar decision), the bell dot ring is the shell's; tab bar: the app keeps its own tab set and the raised Correct tab (Overview, Correct, Classes, Profile, More) where the preview draws Overview, Upload, Classes, Profile, More, so tab icons and labels differ; the bar height (49px iOS, 80px Android plus the inset), glass, label size and filled selected icon follow the preview; the app draws the Android pill as a pseudo-element on the icon box where the preview pads the icon, the iOS 0.5px hairline sits inside the 49px so its links are 48.5px, and the raised Correct tab takes no pill or selected colour",
     "justification": "Native frame preview 4447a571 (.as-bar, .as-lt, .as-back, .as-title); the avatar follows the existing design A decision (variant-a.css .as-avatar vs the kit Avatar); the tab set and the raised Correct tab are design A decisions (nav-shells.tsx emphasisId); the bar itself follows the preview .a-bottombar",
-    "approved": "pending"
+    "approved": "yes"
   },
   "native-android-detail": {
     "difference": "bar row: the bell dot ring is the shell's; tab bar: the app keeps its own tab set and the raised Correct tab (Overview, Correct, Classes, Profile, More) where the preview draws Overview, Upload, Classes, Profile, More, so tab icons and labels differ; the bar height (49px iOS, 80px Android plus the inset), glass, label size and filled selected icon follow the preview; the app draws the Android pill as a pseudo-element on the icon box where the preview pads the icon, the iOS 0.5px hairline sits inside the 49px so its links are 48.5px, and the raised Correct tab takes no pill or selected colour",
     "justification": "Native frame preview 4447a571 (.as-bar, .as-back, .as-title); the tab set and the raised Correct tab are design A decisions (nav-shells.tsx emphasisId); the bar itself follows the preview .a-bottombar",
-    "approved": "pending"
+    "approved": "yes"
   },
   "native-android-412-root-top": {
     "difference": "bar row: the account avatar is the kit's outlined squircle with a plain initial where the preview draws a primary-container circle with a bold initial (the existing design A avatar decision), the bell dot ring is the shell's; tab bar: the app keeps its own tab set and the raised Correct tab (Overview, Correct, Classes, Profile, More) where the preview draws Overview, Upload, Classes, Profile, More, so tab icons and labels differ; the bar height (49px iOS, 80px Android plus the inset), glass, label size and filled selected icon follow the preview; the app draws the Android pill as a pseudo-element on the icon box where the preview pads the icon, the iOS 0.5px hairline sits inside the 49px so its links are 48.5px, and the raised Correct tab takes no pill or selected colour",
     "justification": "Native frame preview 4447a571 (.as-bar, .as-lt, .as-back, .as-title); the avatar follows the existing design A decision (variant-a.css .as-avatar vs the kit Avatar); the tab set and the raised Correct tab are design A decisions (nav-shells.tsx emphasisId); the bar itself follows the preview .a-bottombar",
-    "approved": "pending"
+    "approved": "yes"
   },
   "native-android-412-root-scrolled": {
     "difference": "bar row: the account avatar is the kit's outlined squircle with a plain initial where the preview draws a primary-container circle with a bold initial (the existing design A avatar decision), the bell dot ring is the shell's; tab bar: the app keeps its own tab set and the raised Correct tab (Overview, Correct, Classes, Profile, More) where the preview draws Overview, Upload, Classes, Profile, More, so tab icons and labels differ; the bar height (49px iOS, 80px Android plus the inset), glass, label size and filled selected icon follow the preview; the app draws the Android pill as a pseudo-element on the icon box where the preview pads the icon, the iOS 0.5px hairline sits inside the 49px so its links are 48.5px, and the raised Correct tab takes no pill or selected colour",
     "justification": "Native frame preview 4447a571 (.as-bar, .as-lt, .as-back, .as-title); the avatar follows the existing design A decision (variant-a.css .as-avatar vs the kit Avatar); the tab set and the raised Correct tab are design A decisions (nav-shells.tsx emphasisId); the bar itself follows the preview .a-bottombar",
-    "approved": "pending"
+    "approved": "yes"
   },
   "native-ios-settings": {
-    "difference": "The settings sheet opens at the medium detent with a grabber and drags to large, with the grouped look in its sections (Task 8). It shows the real Profile section (title 32px with a plain close button, the tab strip as pills, the section's real copy and rows) where the preview shows placeholder rows. Fresh run: 3.98% light, 4.27% dark.",
-    "justification": "Each remaining difference belongs to the app's real content or to a later native-frame task; the sheet frame, grabber, detent, scrim and grouped look are in place.",
-    "approved": "pending"
+    "difference": "The settings sheet opens at the medium detent with a grabber and drags to large, with the grouped look in its sections (Task 8). It shows the real Profile section (title 32px with a plain close button, the tab strip as pills, the section's real copy and rows) where the preview shows placeholder rows. Fresh run on the integrated tree: 3.38% light, 3.66% dark.",
+    "justification": "Each remaining difference belongs to the app's real content (real rows, copy and sections where the preview shows placeholders); the sheet frame, grabber, detent, scrim and grouped look are in place.",
+    "approved": "yes"
   },
   "native-android-settings": {
-    "difference": "The settings sheet opens at the medium detent with a grabber and drags to large, with the grouped look in its sections (Task 8). It shows the real Profile section (title 32px with a plain close button, the tab strip as pills, the section's real copy and rows) where the preview shows placeholder rows. Fresh run: 3.39% light, 3.66% dark.",
-    "justification": "Each remaining difference belongs to the app's real content or to a later native-frame task; the sheet frame, grabber, detent, scrim and grouped look are in place.",
-    "approved": "pending"
+    "difference": "The settings sheet opens at the medium detent with a grabber and drags to large, with the grouped look in its sections (Task 8). It shows the real Profile section (title 32px with a plain close button, the tab strip as pills, the section's real copy and rows) where the preview shows placeholder rows. Fresh run on the integrated tree: 2.69% light, 3.01% dark.",
+    "justification": "Each remaining difference belongs to the app's real content (real rows, copy and sections where the preview shows placeholders); the sheet frame, grabber, detent, scrim and grouped look are in place.",
+    "approved": "yes"
   },
   "native-ios-bell": {
     "difference": "The bell sheet lists real notifications as Task 10 grouped rows (a rounded inset group on the sheet ground, 16px margins) where the preview's panel is a flat list; 'Mark all read' sits on its own line under the sheet title (the shared sheet header has no action slot) instead of in the title row; the two inbox links are grouped rows instead of two centred text buttons; row and sheet height follow the real rows. The sheet stacks the header, the notification group and the link group with a 12px gap (the preview has none). Fresh run on the integrated tree: 11.74% light, 3.05% dark.",
-    "justification": "Each remaining difference belongs to the app's real content or to a later native-frame task; the sheet frame, grabber, detent, scrim and grouped look are in place.",
-    "approved": "pending"
+    "justification": "Each remaining difference belongs to the app's real content (real rows, copy and sections where the preview shows placeholders); the sheet frame, grabber, detent, scrim and grouped look are in place.",
+    "approved": "yes"
   },
   "native-android-bell": {
     "difference": "The bell sheet lists real notifications as Task 10 grouped rows (full-bleed, square, 72px two-line rows) where the preview's panel is a flat list; 'Mark all read' sits on its own line under the sheet title instead of in the title row; the two inbox links are grouped rows instead of two centred text buttons; row and sheet height follow the real rows. The sheet stacks the header, the notification group and the link group with a 12px gap (the preview has none). Fresh run on the integrated tree: 12.46% light, 2.63% dark.",
-    "justification": "Each remaining difference belongs to the app's real content or to a later native-frame task; the sheet frame, grabber, detent, scrim and grouped look are in place.",
-    "approved": "pending"
+    "justification": "Each remaining difference belongs to the app's real content (real rows, copy and sections where the preview shows placeholders); the sheet frame, grabber, detent, scrim and grouped look are in place.",
+    "approved": "yes"
   }
 }
