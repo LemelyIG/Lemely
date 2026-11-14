@@ -8,6 +8,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import pytest
+import sqlalchemy as sa
 
 from lemely.core.usage_types import GrantScope, Payer
 from lemely.db.models.enums import Role
@@ -429,6 +430,36 @@ def test_shorten_grant_expiry_never_moves_an_expiry_later_and_floors_at_the_star
         ).expires_at == NOW + timedelta(hours=1)
         floored = ledger.shorten_grant_expiry(gid, expires_at=start - timedelta(days=1))
         assert floored.expires_at == start + timedelta(microseconds=1)
+
+
+def _owner_lock_held(session: Session, owner: uuid.UUID) -> bool:
+    return bool(
+        session.scalar(
+            sa.text(
+                "SELECT count(*) FROM pg_locks l WHERE l.locktype = 'advisory'"
+                " AND l.pid = pg_backend_pid() AND l.granted AND l.objsubid = 1"
+                " AND ((l.classid::bigint << 32) | l.objid::bigint)"
+                " = hashtextextended(:key, 0)"
+            ),
+            {"key": f"usage:{owner}"},
+        )
+    )
+
+
+def test_shorten_grant_expiry_takes_no_lock_when_it_would_move_nothing(
+    sm: sessionmaker[Session],
+) -> None:
+    owner = add_user(sm)
+    gid = grant(sm, owner, 100, expires_at=NOW + timedelta(hours=1))
+    with sm.begin() as session:
+        UsageLedger(session).shorten_grant_expiry(gid, expires_at=NOW + timedelta(days=9))
+        assert not _owner_lock_held(session, owner)  # later than the stored expiry: no lock
+        UsageLedger(session).shorten_grant_expiry(gid, expires_at=NOW + timedelta(hours=1))
+        assert not _owner_lock_held(session, owner)  # equal: no lock
+    with sm.begin() as session:
+        UsageLedger(session).shorten_grant_expiry(gid, expires_at=NOW)
+        assert _owner_lock_held(session, owner)  # a real move takes the owner lock
+    assert grant_row(sm, gid).expires_at == NOW
 
 
 def test_shorten_grant_expiry_of_an_unknown_grant_raises(sm: sessionmaker[Session]) -> None:

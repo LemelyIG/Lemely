@@ -33,7 +33,7 @@ from lemely.db.models.billing import (
 from lemely.db.models.enums import Role, SubscriptionStatus
 from lemely.db.models.team import TeacherMember, TeacherMemberStatus
 from lemely.db.models.tutoring import EmailOutbox
-from lemely.db.models.usage import UsageDebt, UsageGrantBalance
+from lemely.db.models.usage import GrantKind, UsageDebt, UsageGrantBalance
 from lemely.db.subscription_repo import (
     TRIGGER_CANCELED,
     TRIGGER_CREATED,
@@ -921,6 +921,66 @@ def test_seats_are_shed_before_the_period_grant_is_issued(
     assert seen == [
         [TeacherMemberStatus.active, TeacherMemberStatus.leaving, TeacherMemberStatus.leaving]
     ]
+
+
+def test_no_ledger_lock_is_taken_before_the_member_rows_are_locked(
+    pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DV-13: member rows lock before any ledger lock, including the grace-ending step.
+
+    The teacher's old period grant is extended (a failed renewal), so the paid renewal ends that
+    extension: that is a ledger write, and it must come after the seats are shed.
+    """
+    teacher, sid, _ = _teacher_with_three_seats(pg_sessionmaker)
+    old_end = T0 + timedelta(days=30)
+    period_id = uuid.uuid4()
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            SubscriptionPeriod(
+                id=period_id, subscription_id=sid, period_start=T0, period_end=old_end
+            )
+        )
+        session.flush()
+        UsageLedger(session).issue_grant(
+            owner_user_id=teacher,
+            kind=GrantKind.period_allowance,
+            units=100,
+            idempotency_key=f"period:{period_id}",
+            expires_at=old_end + timedelta(days=3),  # extended during grace
+            visible=False,
+            effective_at=T0,
+            subscription_period_id=period_id,
+        )
+    events: list[str] = []
+    ledger_locks_at_removal: list[int] = []
+    real_removal = subscription_repo.TeacherTeamService.request_removal
+    real_shorten = UsageLedger.shorten_grant_expiry
+
+    def removal(self: Any, member_id: Any, *, now: Any) -> Any:
+        events.append("shed")
+        ledger_locks_at_removal.append(
+            self._session.scalar(
+                sa.text(
+                    "SELECT count(*) FROM pg_locks l WHERE l.locktype = 'advisory'"
+                    " AND l.pid = pg_backend_pid() AND l.granted AND l.objsubid = 1"
+                    " AND ((l.classid::bigint << 32) | l.objid::bigint)"
+                    " = hashtextextended(:key, 0)"
+                ),
+                {"key": f"usage:{teacher}"},
+            )
+        )
+        return real_removal(self, member_id, now=now)
+
+    def shorten(self: UsageLedger, grant_id: uuid.UUID, **kwargs: Any) -> Any:
+        events.append("shorten")
+        return real_shorten(self, grant_id, **kwargs)
+
+    monkeypatch.setattr(subscription_repo.TeacherTeamService, "request_removal", removal)
+    monkeypatch.setattr(UsageLedger, "shorten_grant_expiry", shorten)
+    _deliver(pg_sessionmaker, _client(amount=6_000))
+    assert events.count("shed") == 2 and "shorten" in events
+    assert max(i for i, e in enumerate(events) if e == "shed") < events.index("shorten")
+    assert ledger_locks_at_removal == [0, 0]  # no ledger owner lock was held when members locked
 
 
 def test_a_pending_seat_reduction_moves_the_newest_excess_seats_to_leaving(

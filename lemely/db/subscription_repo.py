@@ -111,10 +111,15 @@ TRIGGER_RESUMED: Final = "resumed"
 #: first, so a backlog cannot hold one transaction's worth of Paymob calls open.
 SUBSCRIPTION_SWEEP_BATCH: Final = 200
 
-#: How far ahead of ``current_period_end`` Paymob may charge a renewal (a day early, plus a
-#: margin). A failure trigger that arrives while the period still runs further ahead than this
-#: belongs to a renewal that was already paid, and is ignored.
-EARLY_CHARGE_WINDOW: Final = timedelta(days=1, hours=6)
+#: How far ahead of ``current_period_end`` a genuine failure can arrive. Paymob bills on a Cairo
+#: calendar date while ``current_period_end`` is a UTC instant (about a day of difference), and
+#: a renewal paid late on a retry day restarts our period at the charge while Paymob may keep
+#: its own schedule (up to ``PAYMOB_RETRIAL_DAYS``): so a failure for an unpaid renewal can land
+#: up to roughly 3 days 6 hours before the period end (S13 sandbox checklist to confirm). The
+#: window errs wide on purpose: a failure is ignored on the period alone only when the period
+#: runs further ahead than this (the renewal is certainly paid); closer than this, it is
+#: ignored only when Paymob's last charge confirms the payment (``_confirms_payment``).
+EARLY_CHARGE_WINDOW: Final = timedelta(days=3, hours=6)
 
 #: Paymob ids and amounts above this are not Paymob data: the columns are 64-bit and a hostile or
 #: corrupt body must not become a database error that makes the webhook fail on every retry.
@@ -978,6 +983,7 @@ def _grant_renewal_period(
     tier, seats = _period_terms(session, subscription, with_pending=apply_pending)
     assert tier.interval is not None  # noqa: S101 - the caller checked
     live = subscription.status in PLAN_LIVE_STATUSES
+    old_period_end = subscription.current_period_end
     start = (
         renewal_period_start(
             current_period_end=subscription.current_period_end, charged_at=charged_at
@@ -986,9 +992,6 @@ def _grant_renewal_period(
         else charged_at
     )
     end = period_end(start, tier.interval.value)
-    if live:
-        # A renewal paid during grace: the old period's leftover must not stack onto the new one.
-        _end_period_grants(session, subscription, now=now)
     try:
         # A savepoint: reactivating an ended plan can trip the one-live-per-user index when a
         # checkout committed after the locks were taken, and then nothing may change.
@@ -1025,6 +1028,11 @@ def _grant_renewal_period(
     session.flush()
     if tier.audience is PlanAudience.teacher:
         _shed_excess_seats(session, subscription, tier, now=now)
+    if live:
+        # A renewal paid during grace: the old period's leftover must not stack onto the new one.
+        # After the seat shedding: that locks member rows, and no member lock may follow a ledger
+        # lock (DV-13). The old period is the one the subscription pointed at before this call.
+        _end_period_grants(session, subscription, now=now, period_end=old_period_end)
     _issue_period_grant(session, subscription, tier, period, payment)
     enqueue_subscription_notice(
         session, subscription=subscription, notice="renewed", effective_at=end
@@ -1163,17 +1171,17 @@ def handle_subscription_renewal(session: Session, payment: Payment, obj: JsonMap
 
 
 def _period_grants(
-    session: Session, subscription: Subscription
+    session: Session, subscription: Subscription, period_end: datetime | None
 ) -> list[tuple[uuid.UUID, datetime]]:
-    """``(grant id, the period's end)`` for the grants of the current period."""
-    if subscription.current_period_end is None:
+    """``(grant id, the period's end)`` for the grants of the period ending at ``period_end``."""
+    if period_end is None:
         return []
     rows = session.execute(
         select(UsageGrant.id, SubscriptionPeriod.period_end)
         .join(SubscriptionPeriod, SubscriptionPeriod.id == UsageGrant.subscription_period_id)
         .where(
             SubscriptionPeriod.subscription_id == subscription.id,
-            SubscriptionPeriod.period_end == subscription.current_period_end,
+            SubscriptionPeriod.period_end == period_end,
         )
         .order_by(UsageGrant.id)
     ).all()
@@ -1193,7 +1201,9 @@ def _extend_period_grants(
     that fails here is retried by Paymob for ever).
     """
     ledger = UsageLedger(session)
-    for grant_id, issued_end in _period_grants(session, subscription):
+    for grant_id, issued_end in _period_grants(
+        session, subscription, subscription.current_period_end
+    ):
         try:
             with session.begin_nested():
                 ledger.extend_grant_expiry(
@@ -1215,15 +1225,19 @@ def _extend_period_grants(
             )
 
 
-def _end_period_grants(session: Session, subscription: Subscription, *, now: datetime) -> None:
-    """End the current period's grace extension: its grants go back to ``max(period end, now)``.
+def _end_period_grants(
+    session: Session, subscription: Subscription, *, now: datetime, period_end: datetime | None
+) -> None:
+    """End the grace extension of the period ending at ``period_end``.
+
+    Its grants go back to ``max(period end, now)``.
 
     Called when the plan expires or a renewal is paid while the old period's leftover is still
     extended, so the leftover neither outlives an expired plan nor stacks onto the new period.
     A grant that was never extended is untouched. Best effort, like the extension.
     """
     ledger = UsageLedger(session)
-    for grant_id, ends_at in _period_grants(session, subscription):
+    for grant_id, ends_at in _period_grants(session, subscription, period_end):
         try:
             with session.begin_nested():
                 ledger.shorten_grant_expiry(grant_id, expires_at=max(ends_at, now))
@@ -1933,7 +1947,9 @@ class SubscriptionService:
         # The notice names the date the plan actually ended: the stored deadline when the sweep
         # got to it after the grace, today when Paymob gave up before it.
         deadline = min(subscription.grace_until or subscription.current_period_end or now, now)
-        _end_period_grants(self._session, subscription, now=now)
+        _end_period_grants(
+            self._session, subscription, now=now, period_end=subscription.current_period_end
+        )
         subscription.grace_until = None
         _bump(subscription)
         enqueue_subscription_notice(
@@ -1973,7 +1989,12 @@ class SubscriptionService:
     def _stamp_if_already_cancelled(
         self, subscription: Subscription, *, now: datetime, status_code: int
     ) -> bool:
-        """After a refused cancel: stamp the row when Paymob says the subscription is gone."""
+        """After a refused cancel: stamp the row when Paymob says the subscription is gone.
+
+        Two 404s (the cancel and the read-back) also stamp the row and alert
+        ``subscription_paymob_missing``. A wrong API key or base URL gives the same pair, so a
+        burst of these alerts means a configuration fault, not many deleted subscriptions.
+        """
         paymob_id = subscription.paymob_subscription_id
         assert paymob_id is not None  # noqa: S101 - the caller checked
         try:
@@ -2034,7 +2055,7 @@ class SubscriptionService:
         end = subscription.current_period_end
         if end is not None and end > now + EARLY_CHARGE_WINDOW:
             reason = "period_already_paid"
-        elif remote.last_transaction is not None and is_successful_charge(remote.last_transaction):
+        elif self._confirms_payment(subscription, remote):
             reason = "last_charge_succeeded"
         else:
             return False
@@ -2045,6 +2066,37 @@ class SubscriptionService:
             reason=reason,
         )
         return True
+
+    def _confirms_payment(self, subscription: Subscription, remote: RemoteState) -> bool:
+        """Whether Paymob's last charge is a payment this subscription has not recorded yet.
+
+        ``last-transaction`` can return an older success (the first payment, or the charge that
+        paid the current period) when the declined attempt left nothing newer, so a success counts
+        only if it is not Paymob's ``initial_transaction``, is not already recorded as a payment,
+        and is newer than every payment already recorded (or, with none, the period start). Any
+        other success proves nothing: the failure then stands.
+        """
+        txn = remote.last_transaction
+        if txn is None or not is_successful_charge(txn):
+            return False
+        txn_id = _strict_int(txn.get("id"))
+        if txn_id is None or txn_id == _strict_int(remote.subscription.get("initial_transaction")):
+            return False
+        session = self._session
+        if session.scalar(select(Payment.id).where(Payment.paymob_txn_id == txn_id)) is not None:
+            return False
+        charged_at = parse_paymob_time(txn.get("created_at"))
+        if charged_at is None:
+            return False
+        floor = (
+            session.scalar(
+                select(sa.func.max(Payment.paid_at)).where(
+                    Payment.subscription_id == subscription.id, Payment.status == PaymentStatus.paid
+                )
+            )
+            or subscription.current_period_start
+        )
+        return floor is None or charged_at > floor
 
     def _on_failed(self, subscription: Subscription, remote: RemoteState, now: datetime) -> None:
         if self._stale_failure(subscription, remote, trigger=TRIGGER_FAILED, now=now):

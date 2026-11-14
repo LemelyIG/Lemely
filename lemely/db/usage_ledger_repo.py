@@ -1057,7 +1057,12 @@ class UsageLedger:
         nothing unheld to refund closes the grant by moving ``expires_at`` earlier and leaves no
         entry, and the grant row records no closure, so a lapsed grant is extended only when the
         caller states the expiry the grant was issued with (``issued_expires_at``) and the grant
-        still carries it: an expiry that was moved is never reopened. The owner lock and the
+        still carries it: an expiry that was moved is never reopened. One gap remains: a claw-back
+        of a grant that had already lapsed (and was not yet swept) while all its units were held
+        leaves ``expires_at`` at the issued value and writes no entry, so such a grant can still
+        be extended. Closing it needs a durable closure marker on the grant (a schema change),
+        or ``claw_back_grant`` stamping ``expires_at`` even when it is already earlier. The
+        owner lock and the
         balance row lock are the ones :meth:`expire_grants` takes, and the grant is re-read under
         them, so an extend and a sweep never both win: a sweep queued behind an extend finds the
         expiry moved and skips the grant; an extend queued behind a sweep finds it expired.
@@ -1096,19 +1101,31 @@ class UsageLedger:
         Moves ``expires_at`` earlier and touches nothing else: no entry, no balance change. A
         value in the past makes the leftover unusable at once and leaves it for
         :meth:`expire_grants` to take. An expiry never moves later, and one is never set at or
-        before ``effective_at`` (the table's check), so a repeat is a no-op. Same locks as
-        :meth:`extend_grant_expiry` and :meth:`expire_grants`.
+        before ``effective_at`` (the table's check), so a repeat is a no-op. A call that would
+        move nothing returns before taking any lock (it is on the renewal and expiry paths, where
+        a ledger lock must not be taken needlessly: see the lock order of the subscription
+        module); one that moves it takes the locks of :meth:`extend_grant_expiry` and
+        :meth:`expire_grants` and decides again under them.
 
         Raises:
             LookupError: no such grant.
         """
-        grant = self._session.get(UsageGrant, grant_id)
-        if grant is None:
+        # A fresh, lock-free read of the columns (not the identity map's possibly stale entity).
+        row = self._session.execute(
+            sa.select(
+                UsageGrant.owner_user_id, UsageGrant.effective_at, UsageGrant.expires_at
+            ).where(UsageGrant.id == grant_id)
+        ).one_or_none()
+        if row is None:
             raise LookupError(f"no usage grant {grant_id}")
-        self._lock_owners([grant.owner_user_id])
+        owner_user_id, effective_at, current = row
+        target = max(expires_at, effective_at + timedelta(microseconds=1))
+        grant = self._session.get_one(UsageGrant, grant_id)
+        if current is not None and target >= current:
+            return grant  # nothing to move: no lock taken
+        self._lock_owners([owner_user_id])
         self._locked_balance(grant_id)
         self._session.refresh(grant)
-        target = max(expires_at, grant.effective_at + timedelta(microseconds=1))
         if grant.expires_at is None or target < grant.expires_at:
             grant.expires_at = target
             self._session.flush()

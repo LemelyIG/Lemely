@@ -13,7 +13,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
 import sqlalchemy as sa
@@ -26,6 +26,7 @@ from lemely.db.models.enums import Role, SubscriptionStatus
 from lemely.db.models.tutoring import EmailOutbox
 from lemely.db.models.usage import GrantKind, UsageEntry, UsageGrant, UsageGrantBalance
 from lemely.db.subscription_repo import (
+    EARLY_CHARGE_WINDOW,
     SUBSCRIPTION_SWEEP_BATCH,
     TRIGGER_CANCELED,
     TRIGGER_FAILED,
@@ -58,6 +59,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
 PID = 4321
+INITIAL_TXN = 777  # ``remote_subscription``'s default ``initial_transaction``
 END = T0 + timedelta(days=30)
 GRACE = timedelta(days=3)
 
@@ -94,12 +96,28 @@ def _linked(
 
 
 def _client(
-    state: str = "active", pid: int = PID, updated_at: str = "t1", *, last_ok: bool = False
+    state: str = "active",
+    pid: int = PID,
+    updated_at: str = "t1",
+    *,
+    last: Literal["initial", "declined", "fresh"] = "initial",
 ) -> FakePaymobClient:
-    """A Paymob whose last charge is a declined one (``last_ok``: a successful one)."""
+    """A Paymob whose ``last-transaction`` is, by default, the OLD first-payment success.
+
+    That is the realistic case a failure trigger meets (a declined attempt may leave nothing
+    newer), and the one a default of "a declined charge" would hide. ``declined`` scripts a failed
+    last charge, ``fresh`` a new success.
+    """
     client = FakePaymobClient()
     client.subscriptions[pid] = remote_subscription(pid, state=state, updated_at=updated_at)
-    client.last_transactions[pid] = charge(900 + pid, 10_000, success=last_ok)
+    if last == "initial":
+        client.last_transactions[pid] = charge(INITIAL_TXN, 10_000, created_at=T0)
+    elif last == "declined":
+        client.last_transactions[pid] = charge(900 + pid, 10_000, success=False, created_at=END)
+    else:
+        client.last_transactions[pid] = charge(
+            950 + pid, 10_000, created_at=END - timedelta(hours=3)
+        )
     return client
 
 
@@ -403,7 +421,7 @@ def test_a_failure_replayed_after_a_successful_charge_is_ignored_even_near_the_p
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     _, sid = _linked(pg_sessionmaker)
-    client = _client(last_ok=True)  # Paymob's last charge succeeded: no failure is open
+    client = _client(last="fresh")  # a new success Lemely has not recorded: no failure is open
     with capture_logs() as logs:
         _deliver(pg_sessionmaker, client, TRIGGER_FAILED, END - timedelta(hours=2))
     assert _sub(pg_sessionmaker, sid).status is SubscriptionStatus.active
@@ -422,6 +440,112 @@ def test_an_unreadable_last_charge_falls_back_to_the_period_alone(
         _deliver(pg_sessionmaker, client, TRIGGER_FAILED, END - timedelta(hours=2))
     assert _sub(pg_sessionmaker, sid).status is SubscriptionStatus.past_due
     assert any(e["event"] == "subscription_failure_unconfirmed" for e in logs)
+
+
+def test_an_old_success_as_the_last_charge_does_not_hide_a_genuine_failure(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """``last-transaction`` returned Paymob's first payment: the renewal still failed."""
+    _, sid = _linked(pg_sessionmaker)
+    _deliver(pg_sessionmaker, _client(updated_at="f1"), TRIGGER_FAILED, END + timedelta(hours=1))
+    assert _sub(pg_sessionmaker, sid).status is SubscriptionStatus.past_due
+    _deliver(pg_sessionmaker, _client(updated_at="o1"), TRIGGER_OVERDUE, END + timedelta(days=3))
+    assert _sub(pg_sessionmaker, sid).status is SubscriptionStatus.expired
+
+
+def test_a_declined_last_charge_is_a_genuine_failure(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _, sid = _linked(pg_sessionmaker)
+    _deliver(pg_sessionmaker, _client(last="declined"), TRIGGER_FAILED, END + timedelta(hours=1))
+    assert _sub(pg_sessionmaker, sid).status is SubscriptionStatus.past_due
+
+
+def test_a_charge_already_recorded_as_a_renewal_does_not_confirm_payment(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The charge that paid the current period is Paymob's last one: the next failure stands."""
+    _, sid = _linked(pg_sessionmaker)
+    paid_at = END - timedelta(hours=2)
+    paid = _client(updated_at="p")
+    paid.last_transactions[PID] = charge(888, 10_000, created_at=paid_at)
+    _deliver(pg_sessionmaker, paid, TRIGGER_SUCCESS, paid_at)
+    new_end = _sub(pg_sessionmaker, sid).current_period_end
+    assert new_end is not None and new_end > END
+    failing = _client(updated_at="f")
+    failing.last_transactions[PID] = charge(888, 10_000, created_at=paid_at)  # still the old one
+    failed_at = new_end - timedelta(hours=2)
+    _deliver(pg_sessionmaker, failing, TRIGGER_FAILED, failed_at)
+    assert _sub(pg_sessionmaker, sid).status is SubscriptionStatus.past_due
+
+
+def test_a_success_older_than_the_last_payment_does_not_confirm_payment(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _, sid = _linked(pg_sessionmaker)
+    paid_at = END - timedelta(hours=2)
+    paid = _client(updated_at="p")
+    paid.last_transactions[PID] = charge(888, 10_000, created_at=paid_at)
+    _deliver(pg_sessionmaker, paid, TRIGGER_SUCCESS, paid_at)
+    new_end = _sub(pg_sessionmaker, sid).current_period_end
+    assert new_end is not None
+    failing = _client(updated_at="f")
+    failing.last_transactions[PID] = charge(999, 10_000, created_at=paid_at - timedelta(days=1))
+    _deliver(pg_sessionmaker, failing, TRIGGER_FAILED, new_end - timedelta(hours=2))
+    assert _sub(pg_sessionmaker, sid).status is SubscriptionStatus.past_due
+
+
+def test_the_initial_transaction_never_confirms_payment_whatever_its_stamp(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _, sid = _linked(pg_sessionmaker)
+    client = _client()
+    # Paymob's own initial transaction, stamped (by skew) after the period started.
+    client.last_transactions[PID] = charge(INITIAL_TXN, 10_000, created_at=END - timedelta(hours=3))
+    _deliver(pg_sessionmaker, client, TRIGGER_FAILED, END - timedelta(hours=2))
+    assert _sub(pg_sessionmaker, sid).status is SubscriptionStatus.past_due
+
+
+def test_a_recorded_charge_never_confirms_payment_whatever_its_stamp(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _, sid = _linked(pg_sessionmaker)
+    paid_at = END - timedelta(hours=2)
+    paid = _client(updated_at="p")
+    paid.last_transactions[PID] = charge(888, 10_000, created_at=paid_at)
+    _deliver(pg_sessionmaker, paid, TRIGGER_SUCCESS, paid_at)
+    new_end = _sub(pg_sessionmaker, sid).current_period_end
+    assert new_end is not None
+    failing = _client(updated_at="f")
+    # The recorded charge 888 again, stamped after its own payment time (skew).
+    failing.last_transactions[PID] = charge(888, 10_000, created_at=paid_at + timedelta(hours=1))
+    _deliver(pg_sessionmaker, failing, TRIGGER_FAILED, new_end - timedelta(hours=2))
+    assert _sub(pg_sessionmaker, sid).status is SubscriptionStatus.past_due
+
+
+def test_a_failure_three_days_before_the_period_end_is_still_honoured(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A renewal paid late can leave Paymob's schedule ~3 days ahead of our period end."""
+    _, honoured = _linked(pg_sessionmaker, 1)
+    _, ignored = _linked(pg_sessionmaker, 2)
+    _deliver(pg_sessionmaker, _client(pid=1), TRIGGER_FAILED, END - timedelta(days=3), 1)
+    _deliver(pg_sessionmaker, _client(pid=2), TRIGGER_FAILED, END - timedelta(days=4), 2)
+    assert _sub(pg_sessionmaker, honoured).status is SubscriptionStatus.past_due
+    assert _sub(pg_sessionmaker, ignored).status is SubscriptionStatus.active
+
+
+def test_the_period_alone_ignores_a_failure_only_beyond_the_early_charge_window(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A renewal paid late may leave Paymob's schedule days ahead of ours: only farther is paid."""
+    _, inside = _linked(pg_sessionmaker, 1)
+    _, beyond = _linked(pg_sessionmaker, 2)
+    window = EARLY_CHARGE_WINDOW
+    _deliver(pg_sessionmaker, _client(pid=1), TRIGGER_FAILED, END - window + timedelta(hours=1), 1)
+    _deliver(pg_sessionmaker, _client(pid=2), TRIGGER_FAILED, END - window - timedelta(hours=1), 2)
+    assert _sub(pg_sessionmaker, inside).status is SubscriptionStatus.past_due
+    assert _sub(pg_sessionmaker, beyond).status is SubscriptionStatus.active
 
 
 # -- I-1: only a suspension is resumed -------------------------------------------------
