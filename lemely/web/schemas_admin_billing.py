@@ -169,3 +169,40 @@ class UsageEstimatorVersionDTO(ApiModel):
     perInputHigh: Units
     effectiveFrom: datetime | None = None
     reason: Reason
+
+
+# -- payments (shared by the customer view and the problem queue) ----------------
+
+
+class RefundDTO(ApiModel):
+    id: str
+    paymentId: str
+    currency: str
+    kind: Literal["refund", "void"]
+    status: Literal["requested", "succeeded", "failed", "unknown"]
+    amountMinor: int
+    reason: str
+    adminUserId: str
+    clawedBackUnits: int
+    createdAt: datetime
+    updatedAt: datetime
+
+
+class AdminPaymentRowDTO(ApiModel):
+    id: str
+    payerUserId: str
+    beneficiaryUserId: str
+    purpose: str
+    status: str
+    amountMinor: int
+    currency: str
+    refundedMinor: int
+    paymobOrderId: str | None
+    paymobTxnId: str | None
+    planTierId: str | None
+    creditPackId: str | None
+    subscriptionId: str | None
+    seatQuantity: int | None
+    createdAt: datetime
+    paidAt: datetime | None
+    refunds: list[RefundDTO]

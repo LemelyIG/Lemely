@@ -10,7 +10,7 @@ from __future__ import annotations
 import enum
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Final, Literal
@@ -28,6 +28,7 @@ from lemely.db.models.admin_audit import (
     AdminAuditLog,
 )
 from lemely.db.models.billing import CreditPack, PlanAudience, PlanTier, PlanTierTerms
+from lemely.db.models.billing_ops import PaymentRefund, RefundKind, RefundStatus
 from lemely.db.models.usage import EstimatorInputKind, UsageEstimator, UsageRate
 from lemely.db.subscription_repo import PlanNotPurchasable, PlanSyncFailed
 from lemely.db.subscription_repo import sync_paymob_plan as link_paymob_plan
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session, sessionmaker
 
+    from lemely.db.models.billing import Payment
     from lemely.db.models.enums import PlanInterval
     from lemely.io.paymob.client import PaymobClient
     from lemely.runtime.config import PaymobSettings
@@ -825,6 +827,54 @@ class AdminCatalogueService:
             return row
 
 
+def _callback_refunded(last_callback: Mapping[str, object] | None) -> int:
+    """``refunded_amount_cents`` as Paymob last reported it; 0 when absent or not a count."""
+    value = (last_callback or {}).get("refunded_amount_cents")
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return max(value, 0)
+    if isinstance(value, str) and value.strip().isascii() and value.strip().isdigit():
+        return int(value.strip())
+    return 0
+
+
+@dataclass(frozen=True, slots=True)
+class PaymentView:
+    """A payment with its refund attempts, oldest first (DV-19)."""
+
+    payment: Payment
+    refunds: list[PaymentRefund] = field(default_factory=list)
+
+    @property
+    def refunded_minor(self) -> int:
+        """Money already returned: the larger of our succeeded refunds and Paymob's total.
+
+        A refund made in the Paymob dashboard leaves no ``payment_refunds`` row; Phase 02
+        records it in ``last_callback.refunded_amount_cents``.
+        """
+        console = sum(
+            r.amount_minor
+            for r in self.refunds
+            if r.status is RefundStatus.succeeded and r.kind is RefundKind.refund
+        )
+        return max(console, _callback_refunded(self.payment.last_callback))
+
+
+def payment_views(session: Session, payments: Sequence[Payment]) -> list[PaymentView]:
+    """Attach refunds to ``payments`` in one query, keeping the input order."""
+    ids = [p.id for p in payments]
+    by_payment: dict[uuid.UUID, list[PaymentRefund]] = {pid: [] for pid in ids}
+    if ids:
+        for refund in session.scalars(
+            select(PaymentRefund)
+            .where(PaymentRefund.payment_id.in_(ids))
+            .order_by(PaymentRefund.created_at, PaymentRefund.id)
+        ):
+            by_payment[refund.payment_id].append(refund)
+    return [PaymentView(payment=p, refunds=by_payment[p.id]) for p in payments]
+
+
 __all__ = [
     "CREDIT_PACK_MUTABLE",
     "PLAN_TIER_MUTABLE",
@@ -839,6 +889,7 @@ __all__ = [
     "CatalogueSnapshot",
     "CreditPackFields",
     "FreeAllowanceView",
+    "PaymentView",
     "PaymobCallError",
     "PlanTierFields",
     "ReasonRequiredError",
@@ -846,6 +897,7 @@ __all__ = [
     "audited",
     "idempotency_lookup",
     "lock_idempotency_key",
+    "payment_views",
     "paymob_drift",
     "require_reason",
     "snapshot",

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import uuid
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -32,21 +32,36 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.db.admin_billing_repo import AdminCatalogueService
+from lemely.db.admin_customer_repo import AdminCustomerService
 from lemely.db.base import Base
 from lemely.db.models import import_all_models
 from lemely.db.models.admin_audit import AdminAuditLog
-from lemely.db.models.billing import CreditPack, PlanAudience, PlanTier
-from lemely.db.models.enums import PlanInterval, Role
+from lemely.db.models.billing import (
+    CreditPack,
+    Payment,
+    PaymentPurpose,
+    PaymentStatus,
+    PlanAudience,
+    PlanTier,
+    Subscription,
+    SubscriptionPeriod,
+)
+from lemely.db.models.enums import PlanInterval, Role, SubscriptionStatus
+from lemely.db.models.usage import GrantKind, UsageJob, UsageRate
 from lemely.db.models.users import User
+from lemely.db.usage_ledger_repo import UsageLedger
 from lemely.runtime.config import DatabaseSettings, PaymobSettings
 from lemely.web.deps import AuthContext, get_auth_context
-from lemely.web.deps_admin_billing import get_admin_catalogue_service
+from lemely.web.deps_admin_billing import get_admin_catalogue_service, get_admin_customer_service
 from tests.paymob_fixtures import PAYMOB_SETTINGS
 from tests.paymob_fixtures import FakePaymobClient as BaseFakePaymobClient
 from tests.tutoring_app import app_with_routers
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping
+    from decimal import Decimal
+
+    from lemely.core.usage_types import Payer
 
 import_all_models()
 
@@ -288,6 +303,9 @@ def service_overrides(
         get_admin_catalogue_service: lambda: AdminCatalogueService(
             factory, paymob, paymob_settings, now=clock
         ),
+        get_admin_customer_service: lambda: AdminCustomerService(
+            factory, paymob, paymob_settings, now=clock
+        ),
     }
 
 
@@ -307,3 +325,162 @@ def admin_client(
         user_id=str(admin_id), role=Role.platform_admin.value
     )
     return TestClient(app)
+
+
+def add_rate(
+    factory: sessionmaker[Session], action: str, units_per_usd: int = 1000, version: int = 1
+) -> None:
+    with factory.begin() as session:
+        session.add(
+            UsageRate(
+                version=version,
+                action=action,
+                units_per_usd=units_per_usd,
+                effective_from=NOW - timedelta(days=60),
+            )
+        )
+
+
+def grant(
+    factory: sessionmaker[Session],
+    owner: uuid.UUID,
+    *,
+    units: int,
+    kind: GrantKind = GrantKind.adjustment,
+    visible: bool = True,
+    expires_at: datetime | None = NOW + timedelta(days=300),
+    effective_at: datetime = NOW - timedelta(days=1),
+    payment_id: uuid.UUID | None = None,
+) -> uuid.UUID:
+    """Issue a grant through the ledger (so balances and debt repayment stay consistent)."""
+    with factory.begin() as session:
+        issued = UsageLedger(session).issue_grant(
+            owner_user_id=owner,
+            kind=kind,
+            units=units,
+            idempotency_key=f"seed:{uuid.uuid4()}",
+            expires_at=expires_at,
+            visible=visible,
+            effective_at=effective_at,
+            payment_id=payment_id,
+        )
+        return issued.id
+
+
+def metered_job(
+    factory: sessionmaker[Session],
+    actor: uuid.UUID,
+    payers: list[Payer],
+    *,
+    action: str = "mark_paper",
+    low: int,
+    high: int,
+    cost: Decimal | None,
+    estimator_version: int = 1,
+    rate_version: int = 1,
+    created_at: datetime = NOW,
+) -> uuid.UUID:
+    """Reserve and (when ``cost`` is given) settle one job; returns ``usage_jobs.id``.
+
+    ``created_at`` is written afterwards because the row's default is the real clock.
+    """
+    job_id = uuid.uuid4()
+    with factory.begin() as session:
+        ledger = UsageLedger(session)
+        ledger.reserve(
+            job_id=job_id,
+            actor_user_id=actor,
+            action=action,
+            payers=payers,
+            estimate_low=low,
+            estimate_high=high,
+            estimator_version=estimator_version,
+            rate_version=rate_version,
+            teacher_member_id=None,
+            expires_at=created_at + timedelta(minutes=10),
+            now=created_at,
+        )
+        if cost is not None:
+            ledger.settle(job_id, actual_cost_usd=cost, now=created_at)
+    with factory.begin() as session:
+        job = session.scalars(sa.select(UsageJob).where(UsageJob.job_id == job_id)).one()
+        job.created_at = created_at
+        return job.id
+
+
+def add_payment(
+    factory: sessionmaker[Session],
+    *,
+    payer: uuid.UUID,
+    beneficiary: uuid.UUID | None = None,
+    purpose: PaymentPurpose = PaymentPurpose.credit_pack,
+    status: PaymentStatus = PaymentStatus.paid,
+    amount_minor: int = 10000,
+    paid_at: datetime | None = NOW,
+    created_at: datetime = NOW - timedelta(minutes=5),
+    updated_at: datetime | None = None,
+    paymob_order_id: int | None = None,
+    paymob_txn_id: int | None = None,
+    plan_tier_id: uuid.UUID | None = None,
+    credit_pack_id: uuid.UUID | None = None,
+    last_callback: dict[str, object] | None = None,
+) -> uuid.UUID:
+    """One payment. A ``credit_pack`` payment with no pack gets a fresh one (a check demands it)."""
+    pid = uuid.uuid4()
+    if purpose is PaymentPurpose.credit_pack and credit_pack_id is None:
+        credit_pack_id = add_credit_pack(factory, code=f"pack_{pid.hex[:12]}")
+    with factory.begin() as session:
+        session.add(
+            Payment(
+                id=pid,
+                payer_user_id=payer,
+                beneficiary_user_id=beneficiary or payer,
+                purpose=purpose,
+                status=status,
+                amount_minor=amount_minor,
+                currency="EGP",
+                special_reference=str(pid),
+                paymob_order_id=paymob_order_id,
+                paymob_txn_id=paymob_txn_id,
+                plan_tier_id=plan_tier_id,
+                credit_pack_id=credit_pack_id,
+                last_callback=last_callback,
+                paid_at=paid_at if status is not PaymentStatus.created else None,
+                created_at=created_at,
+                updated_at=updated_at or created_at,
+            )
+        )
+    return pid
+
+
+def add_subscription(
+    factory: sessionmaker[Session],
+    user: uuid.UUID,
+    tier: uuid.UUID,
+    *,
+    status: SubscriptionStatus = SubscriptionStatus.active,
+    start: datetime = NOW - timedelta(days=4),
+    end: datetime | None = NOW + timedelta(days=26),
+    manual: bool = False,
+    paymob_subscription_id: int | None = None,
+) -> uuid.UUID:
+    """A subscription and, when it has a period end, its ``subscription_periods`` row."""
+    sid = uuid.uuid4()
+    with factory.begin() as session:
+        session.add(
+            Subscription(
+                id=sid,
+                user_id=user,
+                payer_user_id=user,
+                plan_tier_id=tier,
+                status=status,
+                is_manually_activated=manual,
+                current_period_start=start,
+                current_period_end=end,
+                paymob_subscription_id=paymob_subscription_id,
+            )
+        )
+        session.flush()
+        if end is not None:
+            session.add(SubscriptionPeriod(subscription_id=sid, period_start=start, period_end=end))
+    return sid

@@ -7,6 +7,7 @@ client, so construction is free.
 from __future__ import annotations
 
 from lemely.db.admin_billing_repo import AdminCatalogueService
+from lemely.db.admin_customer_repo import AdminCustomerService
 from lemely.db.session import get_sessionmaker
 from lemely.web.deps import get_settings
 from lemely.web.deps_billing import get_paymob_client
@@ -17,4 +18,9 @@ def get_admin_catalogue_service() -> AdminCatalogueService:
     return AdminCatalogueService(get_sessionmaker(settings), get_paymob_client(), settings.paymob)
 
 
-__all__ = ["get_admin_catalogue_service"]
+def get_admin_customer_service() -> AdminCustomerService:
+    settings = get_settings()  # one Settings read: sessionmaker and Paymob settings agree
+    return AdminCustomerService(get_sessionmaker(settings), get_paymob_client(), settings.paymob)
+
+
+__all__ = ["get_admin_catalogue_service", "get_admin_customer_service"]
