@@ -476,6 +476,7 @@ def test_billing_templates_are_disjoint_from_the_tutoring_spec() -> None:
     assert {
         "subscription_notice",
         "auto_topup_failed",
+        "auto_topup_card_missing",
         "extra_seats_charge_failed",
     } == BILLING_EMAIL_TEMPLATES
     assert set(EMAIL_TEMPLATES) >= BILLING_EMAIL_TEMPLATES

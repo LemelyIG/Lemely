@@ -372,7 +372,7 @@ def _redact_tokens(obj: JsonMap) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 
 
-def _credit_validity_months(session: Session, payment_id: uuid.UUID) -> int:
+def credit_validity_months(session: Session, *, payment_id: uuid.UUID | None = None) -> int:
     """The admin-set credit validity: ``billing_settings.credit_validity_months`` (``id = 1``).
 
     Read in the caller's transaction, no lock. Fails closed: a missing row (the migration and
@@ -386,7 +386,11 @@ def _credit_validity_months(session: Session, payment_id: uuid.UUID) -> int:
     if months is None:
         # A paid customer is left without credits and every retry fails the same way, so a
         # person must restore the row: an alert, with the payment to re-run.
-        log.error("credit_validity_setting_missing", alert=True, payment_id=str(payment_id))
+        log.error(
+            "credit_validity_setting_missing",
+            alert=True,
+            payment_id=None if payment_id is None else str(payment_id),
+        )
         raise CreditValiditySettingMissing("no billing settings row: credit validity is not set")
     return months
 
@@ -409,7 +413,7 @@ def grant_credit_pack(session: Session, payment: Payment, obj: JsonMap) -> None:
         kind=GrantKind.credit_pack,
         units=payment.grant_units,
         idempotency_key=f"payment:{payment.id}",
-        expires_at=add_months(paid_at, _credit_validity_months(session, payment.id)),
+        expires_at=add_months(paid_at, credit_validity_months(session, payment_id=payment.id)),
         visible=True,
         effective_at=paid_at,
         payment_id=payment.id,
@@ -1459,6 +1463,7 @@ __all__ = [
     "active_catalogue",
     "add_months",
     "billing_data_for",
+    "credit_validity_months",
     "describe_payment",
     "grant_credit_pack",
     "is_linked_parent",

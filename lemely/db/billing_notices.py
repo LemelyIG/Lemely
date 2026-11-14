@@ -79,6 +79,25 @@ def enqueue_auto_topup_failed(
     )
 
 
+def enqueue_auto_topup_card_missing(
+    session: Session, *, payer_user_id: uuid.UUID, setting_id: uuid.UUID, crossing_seq: int
+) -> bool:
+    """Queue the "auto top-up is off, your saved card was removed" notice to the payer.
+
+    No payment exists for this case (no charge was attempted), so the key is the setting and its
+    crossing: one notice per disable, and a later disable after a re-enable (which bumps
+    ``crossing_seq``) is a new notice. ``True`` when a row was written; ``False`` when the payer
+    switched billing notices off or this disable is already noticed.
+    """
+    return enqueue_in_session(
+        session,
+        recipient_user_id=payer_user_id,
+        template="auto_topup_card_missing",
+        context={"setting_id": setting_id},
+        dedupe_key=f"auto_topup_card_missing:{setting_id}:{crossing_seq}",
+    )
+
+
 def enqueue_extra_seats_charge_failed(
     session: Session,
     *,
@@ -103,6 +122,7 @@ def enqueue_extra_seats_charge_failed(
 
 __all__ = [
     "SubscriptionNoticeKind",
+    "enqueue_auto_topup_card_missing",
     "enqueue_auto_topup_failed",
     "enqueue_extra_seats_charge_failed",
     "enqueue_subscription_notice",

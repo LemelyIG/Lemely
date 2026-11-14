@@ -441,6 +441,30 @@ class AutoTopupFailed(EmailContext):
         return "/billing"
 
 
+class AutoTopupCardMissing(EmailContext):
+    """Auto top-up was switched off because the payer's saved card was removed (Phase 06 T8).
+
+    No charge was attempted, so the mail must not say one failed. No amount, card detail or
+    processor name travels in it. The context holds the setting id only.
+    """
+
+    template: ClassVar[str] = "auto_topup_card_missing"
+    notification_type: ClassVar[NotificationType] = NotificationType.billing
+    subject: ClassVar[str] = "Auto top-up is off: your saved card was removed"
+    button: ClassVar[str] = "Open billing"
+
+    setting_id: uuid.UUID
+
+    def lead(self) -> str:
+        return "Auto top-up is turned off because your saved card was removed."
+
+    def detail(self) -> str | None:
+        return "Add a card and turn auto top-up back on in billing settings."
+
+    def path(self) -> str:
+        return "/billing"
+
+
 class ExtraSeatsChargeFailed(EmailContext):
     """The fallback charge for extra student seats was declined (Phase 06).
 
@@ -484,6 +508,7 @@ _TEMPLATE_CLASSES: Final[tuple[type[EmailContext], ...]] = (
     ClassJoinedTutor,
     SubscriptionNotice,
     AutoTopupFailed,
+    AutoTopupCardMissing,
     ExtraSeatsChargeFailed,
 )
 
@@ -494,7 +519,12 @@ EMAIL_TEMPLATES: Final[Mapping[str, type[EmailContext]]] = {
 
 #: Templates outside the tutoring spec's §b.4 table (Paymob billing).
 BILLING_EMAIL_TEMPLATES: Final[frozenset[str]] = frozenset(
-    {SubscriptionNotice.template, AutoTopupFailed.template, ExtraSeatsChargeFailed.template}
+    {
+        SubscriptionNotice.template,
+        AutoTopupFailed.template,
+        AutoTopupCardMissing.template,
+        ExtraSeatsChargeFailed.template,
+    }
 )
 
 
@@ -714,6 +744,7 @@ def build_transactional_provider(settings: Settings) -> TransactionalEmailProvid
 __all__ = [
     "BILLING_EMAIL_TEMPLATES",
     "EMAIL_TEMPLATES",
+    "AutoTopupCardMissing",
     "AutoTopupFailed",
     "EmailContext",
     "ExtraSeatsChargeFailed",

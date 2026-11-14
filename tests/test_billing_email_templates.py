@@ -17,6 +17,7 @@ import sqlalchemy as sa
 from pydantic import ValidationError
 
 from lemely.db.billing_notices import (
+    enqueue_auto_topup_card_missing,
     enqueue_auto_topup_failed,
     enqueue_extra_seats_charge_failed,
 )
@@ -26,7 +27,9 @@ from lemely.db.models.tutoring import EmailOutbox
 from lemely.io.notify_email import (
     BILLING_EMAIL_TEMPLATES,
     EMAIL_TEMPLATES,
+    AutoTopupCardMissing,
     AutoTopupFailed,
+    EmailContext,
     ExtraSeatsChargeFailed,
     InvalidEmailContext,
     render_email,
@@ -43,15 +46,18 @@ if TYPE_CHECKING:
 BASE_URL = "https://staging.lemelyig.example"
 PAYMENT_ID = uuid.UUID("77777777-7777-4777-8777-777777777777")
 SUBSCRIPTION_ID = uuid.UUID("88888888-8888-4888-8888-888888888888")
+SETTING_ID = uuid.UUID("99999999-9999-4999-8999-999999999999")
 
-TEMPLATES: tuple[tuple[str, type[AutoTopupFailed] | type[ExtraSeatsChargeFailed], str], ...] = (
+TEMPLATES: tuple[tuple[str, type[EmailContext], str], ...] = (
     ("auto_topup_failed", AutoTopupFailed, "payment_id"),
     ("extra_seats_charge_failed", ExtraSeatsChargeFailed, "subscription_id"),
+    ("auto_topup_card_missing", AutoTopupCardMissing, "setting_id"),
 )
 
 
 def _context(key: str) -> dict[str, object]:
-    return {key: str(PAYMENT_ID if key == "payment_id" else SUBSCRIPTION_ID)}
+    ids = {"payment_id": PAYMENT_ID, "setting_id": SETTING_ID}
+    return {key: str(ids.get(key, SUBSCRIPTION_ID))}
 
 
 # -- the templates ---------------------------------------------------------------
@@ -59,7 +65,7 @@ def _context(key: str) -> dict[str, object]:
 
 @pytest.mark.parametrize(("name", "cls", "key"), TEMPLATES)
 def test_both_failure_templates_are_registered_billing_templates(
-    name: str, cls: type[AutoTopupFailed] | type[ExtraSeatsChargeFailed], key: str
+    name: str, cls: type[EmailContext], key: str
 ) -> None:
     assert EMAIL_TEMPLATES[name] is cls
     assert cls.template == name
@@ -76,7 +82,7 @@ def test_subjects_are_the_briefed_ones() -> None:
 
 @pytest.mark.parametrize(("name", "cls", "key"), TEMPLATES)
 def test_context_refuses_extra_and_missing_keys_and_bad_ids(
-    name: str, cls: type[AutoTopupFailed] | type[ExtraSeatsChargeFailed], key: str
+    name: str, cls: type[EmailContext], key: str
 ) -> None:
     good = _context(key)
     assert validate_context(name, good) == good
@@ -98,6 +104,16 @@ def test_auto_topup_copy_says_it_is_off_and_where_to_turn_it_on() -> None:
     assert mail.path() == "/billing"
 
 
+def test_card_missing_copy_says_the_card_was_removed_not_that_a_charge_failed() -> None:
+    mail = AutoTopupCardMissing(setting_id=SETTING_ID)
+    assert "your saved card was removed" in mail.lead()
+    assert "auto top-up is turned off" in mail.lead().lower()
+    everything = f"{mail.subject} {mail.lead()} {mail.detail()}".lower()
+    assert "fail" not in everything
+    assert "could not charge" not in everything
+    assert mail.path() == "/billing"
+
+
 def test_seats_copy_says_when_the_seats_go() -> None:
     mail = ExtraSeatsChargeFailed(subscription_id=SUBSCRIPTION_ID)
     assert "within 3 days" in mail.lead()
@@ -116,6 +132,11 @@ _COPY: dict[str, tuple[str, str, str]] = {
         "Auto top-up could not charge your card",
         "We could not charge your saved card for an auto top-up, so auto top-up is turned off.",
         "You can check your card and turn auto top-up back on in billing settings.",
+    ),
+    "auto_topup_card_missing": (
+        "Auto top-up is off: your saved card was removed",
+        "Auto top-up is turned off because your saved card was removed.",
+        "Add a card and turn auto top-up back on in billing settings.",
     ),
     "extra_seats_charge_failed": (
         "Your extra seats payment failed",
@@ -158,7 +179,7 @@ def _expected(name: str) -> tuple[str, str, str]:
 
 @pytest.mark.parametrize(("name", "cls", "key"), TEMPLATES)
 def test_the_exact_subject_text_and_html_of_each_mail(
-    name: str, cls: type[AutoTopupFailed] | type[ExtraSeatsChargeFailed], key: str
+    name: str, cls: type[EmailContext], key: str
 ) -> None:
     assert render_email(name, _context(key), app_base_url=BASE_URL) == _expected(name)
 
@@ -183,14 +204,14 @@ def _violations(name: str, mail: str, *, digits: bool = True) -> list[str]:
     """The forbidden patterns ``mail`` matches (``digits=False`` for markup with style numbers)."""
     scanned = mail.replace(_ALLOWED_DIGITS, "")
     patterns = list(_FORBIDDEN if digits else _FORBIDDEN[1:])
-    if name == "auto_topup_failed":
+    if name.startswith("auto_topup"):
         patterns.append(_NO_TRY_AGAIN)
     return [pattern.pattern for pattern in patterns if pattern.search(scanned)]
 
 
 @pytest.mark.parametrize(("name", "cls", "key"), TEMPLATES)
 def test_rendered_mail_carries_no_amount_card_brand_processor_or_promise(
-    name: str, cls: type[AutoTopupFailed] | type[ExtraSeatsChargeFailed], key: str
+    name: str, cls: type[EmailContext], key: str
 ) -> None:
     subject, html_body, text = render_email(name, _context(key), app_base_url=BASE_URL)
 
@@ -200,6 +221,7 @@ def test_rendered_mail_carries_no_amount_card_brand_processor_or_promise(
     # The id sits in no part of the mail: only the fixed words and the link do.
     assert str(PAYMENT_ID) not in text + html_body
     assert str(SUBSCRIPTION_ID) not in text + html_body
+    assert str(SETTING_ID) not in text + html_body
 
 
 @pytest.mark.parametrize(
@@ -255,7 +277,7 @@ def test_the_copy_guard_lets_the_one_allowed_phrase_and_the_seats_retry_through(
 )
 def test_an_edited_lead_goes_red_through_both_the_guard_and_the_pin(
     monkeypatch: pytest.MonkeyPatch,
-    cls: type[AutoTopupFailed] | type[ExtraSeatsChargeFailed],
+    cls: type[EmailContext],
     name: str,
     key: str,
     leak: str,
@@ -328,6 +350,39 @@ def test_auto_topup_helper_queues_one_row_to_the_payer(pg: sessionmaker[Session]
     assert row.template == "auto_topup_failed"
     assert row.context == {"payment_id": str(payment)}
     assert row.dedupe_key == f"auto_topup_failed:{payment}"
+
+
+def test_card_missing_helper_queues_one_row_per_disable(pg: sessionmaker[Session]) -> None:
+    payer = seed_user(pg, Role.parent)
+    setting = uuid.uuid4()
+
+    def queue(seq: int) -> bool:
+        with pg.begin() as session:
+            return enqueue_auto_topup_card_missing(
+                session, payer_user_id=payer, setting_id=setting, crossing_seq=seq
+            )
+
+    assert (queue(1), queue(1), queue(2)) == (True, False, True)
+    rows = _outbox(pg, payer)
+    assert [r.template for r in rows] == ["auto_topup_card_missing"] * 2
+    assert rows[0].context == {"setting_id": str(setting)}
+    assert {r.dedupe_key for r in rows} == {
+        f"auto_topup_card_missing:{setting}:1",
+        f"auto_topup_card_missing:{setting}:2",
+    }
+
+
+def test_card_missing_notice_respects_billing_notifications_off(pg: sessionmaker[Session]) -> None:
+    quiet = seed_user(pg, Role.parent)
+    _switch_billing_off(pg, quiet)
+    with pg.begin() as session:
+        assert (
+            enqueue_auto_topup_card_missing(
+                session, payer_user_id=quiet, setting_id=uuid.uuid4(), crossing_seq=1
+            )
+            is False
+        )
+    assert _outbox(pg, quiet) == []
 
 
 def test_seats_helper_queues_one_row_to_the_payer(pg: sessionmaker[Session]) -> None:
