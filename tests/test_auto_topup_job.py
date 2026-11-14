@@ -46,6 +46,7 @@ from lemely.db.models.tutoring import EmailOutbox
 from lemely.db.models.usage import GrantKind, UsageGrant
 from lemely.db.usage_ledger_repo import UsageLedger
 from lemely.io.paymob.client import PaymobError
+from lemely.runtime.token_cipher import TokenCipher
 from tests._concurrency import _Paused, _wait_until_a_backend_waits_on_a_lock
 from tests.merchant_charge_fixtures import (
     FakeMotoClient,
@@ -57,6 +58,7 @@ from tests.merchant_charge_fixtures import (
 )
 from tests.paymob_fixtures import (
     PAYMOB_SETTINGS,
+    TEST_CARD_TOKEN_KEY,
     FakePaymobClient,
     link_parent,
     seed_pack,
@@ -1011,6 +1013,174 @@ def test_a_switch_off_in_flight_wins_over_the_charge(sm: sessionmaker[Session]) 
     assert charge.error is None
     _assert_failed_unsent(sm, client, ids, "card_unusable")
     assert _setting(sm, ids["child"]).enabled is False
+
+
+# ---------------------------------------------------------------------------
+# A failure no setting explains must stop, not loop (re-review I4).
+# ---------------------------------------------------------------------------
+
+
+def _alerts(logs: list[dict[str, Any]], event: str) -> list[dict[str, Any]]:
+    return [e for e in logs if e.get("event") == event and e.get("alert") is True]
+
+
+def test_an_undecryptable_card_switches_off_notices_once_and_alerts_instead_of_looping(
+    sm: sessionmaker[Session],
+) -> None:
+    ids = _queued(sm)
+    with sm.begin() as session:  # a ciphertext sealed for another user (R22 row move, key rotation)
+        session.get_one(SavedCard, ids["card"]).token = TokenCipher(TEST_CARD_TOKEN_KEY).encrypt(
+            TOKEN, uuid.uuid4()
+        )
+    client = _client(sm)
+    alert_events: list[dict[str, Any]] = []
+
+    for _ in range(3):  # the settle path re-queues at every crossing while the setting is on
+        with capture_logs() as logs:
+            _run(sm, client)
+        alert_events += _alerts(logs, "auto_topup_card_unusable")
+        with sm.begin() as session:
+            enqueue_auto_topup(session, ids["child"], now=NOW)
+
+    assert client.calls == []  # nothing is ever sent
+    setting = _setting(sm, ids["child"])
+    assert (setting.enabled, setting.disabled_reason) == (False, "charge_failed")
+    (mail,) = _mails(sm, "auto_topup_card_missing")
+    assert mail.recipient_user_id == ids["payer"]
+    assert _mails(sm) == []
+    assert len(alert_events) == 1  # once, when it was switched off
+    assert alert_events[0]["beneficiary"] == str(ids["child"])
+    with sm() as session:  # and no further payment rows pile up
+        rows = session.scalar(
+            sa.select(sa.func.count())
+            .select_from(Payment)
+            .where(Payment.beneficiary_user_id == ids["child"])
+        )
+    assert rows == 1
+
+
+def test_a_sweep_give_up_switches_off_notices_and_alerts_instead_of_re_arming(
+    sm: sessionmaker[Session],
+) -> None:
+    ids = _queued(sm)
+    with sm.begin() as session:  # what T3's MAX_SWEEP_ERRORS give-up leaves behind
+        session.execute(
+            sa.update(Payment)
+            .where(Payment.id == ids["payment"])
+            .values(
+                status=PaymentStatus.failed,
+                last_callback={"source": "pre_send", "reason": "sweep_error"},
+            )
+        )
+
+    with capture_logs() as logs:
+        assert _run(sm, _client(sm)) == 1
+
+    setting = _setting(sm, ids["child"])
+    assert (setting.enabled, setting.disabled_reason) == (False, "charge_failed")
+    assert len(_mails(sm, "auto_topup_card_missing")) == 1
+    assert len(_alerts(logs, "auto_topup_card_unusable")) == 1
+
+
+def test_a_pre_send_failure_whose_cause_cleared_re_arms_quietly(sm: sessionmaker[Session]) -> None:
+    ids = _queued(sm)
+    with sm.begin() as session:  # refused for a missing phone; the payer has since added one
+        session.execute(
+            sa.update(Payment)
+            .where(Payment.id == ids["payment"])
+            .values(
+                status=PaymentStatus.failed,
+                last_callback={"source": "pre_send", "reason": "phone_required"},
+            )
+        )
+
+    with capture_logs() as logs:
+        _run(sm, _client(sm))
+
+    setting = _setting(sm, ids["child"])
+    assert (setting.enabled, setting.armed, setting.last_payment_id) == (True, True, None)
+    assert [e for e in logs if e.get("alert")] == []
+    assert _all_mails(sm) == {
+        "auto_topup_failed": 0,
+        "auto_topup_card_missing": 0,
+        "auto_topup_phone_required": 0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# A card the payer removed is expected; one that vanished is not (re-review N3).
+# ---------------------------------------------------------------------------
+
+
+def test_a_card_the_payer_deactivated_is_logged_at_info_without_an_alert(
+    sm: sessionmaker[Session],
+) -> None:
+    ids = _queued(sm)
+    with sm.begin() as session:
+        session.get_one(SavedCard, ids["card"]).is_active = False
+
+    with capture_logs() as logs:
+        _run(sm, _client(sm))
+
+    assert [e for e in logs if e.get("alert")] == []
+    removed = [e for e in logs if e.get("event") == "auto_topup_card_removed"]
+    assert [e["log_level"] for e in removed] == ["info"]
+    assert len(_mails(sm, "auto_topup_card_missing")) == 1  # the payer is still told
+
+
+def test_a_card_that_vanished_still_alerts(sm: sessionmaker[Session]) -> None:
+    ids = _queued(sm)
+    with sm.begin() as session:
+        session.delete(session.get_one(SavedCard, ids["card"]))
+
+    with capture_logs() as logs:
+        _run(sm, _client(sm))
+
+    assert len(_alerts(logs, "auto_topup_card_missing")) == 1
+
+
+# ---------------------------------------------------------------------------
+# One lock order, payment then setting (re-review N1).
+# ---------------------------------------------------------------------------
+
+
+def test_the_refuse_pass_and_the_charge_pass_do_not_deadlock(sm: sessionmaker[Session]) -> None:
+    ids = _queued(sm)
+    client = _client(sm)
+    refuser = sm()  # _refuse_one: the payment first ...
+    refuser.execute(
+        sa.select(Payment.id).where(Payment.id == ids["payment"]).with_for_update(skip_locked=True)
+    ).one()
+    charge = _Paused(
+        lambda: charge_queued_payments(
+            sm,
+            client,
+            PAYMOB_SETTINGS,
+            purpose=PaymentPurpose.auto_topup,
+            dedupe_prefix=auto_topup_repo.AUTO_TOPUP_DEDUPE_PREFIX,
+            card_for=auto_topup_repo._card_for_charge(NOW),
+            now=NOW,
+        )
+    )
+    refuser_error: Exception | None = None
+    try:
+        _wait_until_a_backend_waits_on_a_lock(sm)  # the charge is queued behind the payment lock
+        try:
+            auto_topup_repo._lock_setting(refuser, ids["child"])  # ... then the setting
+        except Exception as exc:
+            refuser_error = exc
+    finally:
+        refuser.rollback()  # always release, so a red run cannot leave rows locked for others
+        refuser.close()
+    with capture_logs() as logs:
+        charge.join()
+
+    # With the setting locked first by the charge, the two wait on each other and Postgres aborts
+    # one side (a false alert, and a step towards the give-up of I4).
+    assert refuser_error is None
+    assert charge.error is None
+    assert [e for e in logs if e.get("event") == "merchant_charge_sweep_failed"] == []
+    assert len(client.calls_to("pay_with_token")) == 1  # the payment was charged once, after
 
 
 # ---------------------------------------------------------------------------

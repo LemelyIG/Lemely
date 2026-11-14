@@ -306,6 +306,12 @@ _PARENT_UNLINKED: Final = "parent_unlinked"
 _CARD_MISSING: Final = "card_missing"
 _SETTINGS_CHANGED: Final = "settings_changed"
 _PHONE_REQUIRED: Final = "phone_required"
+#: A card that passed every check but cannot be charged (its token will not decrypt), or a queued
+#: row the charge gave up on after repeated errors: nothing in the setting explains the failure, so
+#: re-arming would loop. Only the sweep derives it, from the stored pre-send reason.
+_CARD_UNUSABLE: Final = "card_unusable"
+#: Stored pre-send reasons (``last_callback.reason``) that no current setting state explains.
+_UNEXPLAINED_STORED: Final = frozenset({"card_unusable", "sweep_error"})
 #: A pre-send failure whose cause is gone by the time the sweep reads it.
 _RECOVERED: Final = "recovered"
 #: Refusals that change nothing: the setting is off, gone, or has moved on to another top-up.
@@ -378,9 +384,11 @@ def _apply_refusal(
     No refusal says "we could not charge your card": nothing was charged. An unlinked parent is
     switched off with ``parent_unlinked`` and told nothing (they no longer manage the child). A
     removed card and a missing phone switch it off with ``charge_failed`` (the only reason the
-    frontend recognises, DV-10) and tell the payer what to fix. Anything else (the payer changed
-    the pack, the cap or the payer) leaves the setting on and re-arms it, so the next crossing
-    queues at the current terms.
+    frontend recognises, DV-10) and tell the payer what to fix. A card that passes every check but
+    cannot be charged, or a row the charge gave up on, is switched off the same way and alerts: it
+    would fail again, so re-arming would loop. Only a cause that can clear by itself (the payer
+    changed the pack, the cap or the payer, or the cause is already gone) leaves the setting on and
+    re-arms it, so the next crossing queues at the current terms.
     """
     if setting is None or reason in _NOTHING_TO_DO:
         return
@@ -388,7 +396,8 @@ def _apply_refusal(
         setting.enabled = False
         setting.disabled_reason = DISABLED_PARENT_UNLINKED
         log.warning("auto_topup_parent_unlinked", beneficiary=str(setting.beneficiary_user_id))
-    elif reason == _CARD_MISSING:
+    elif reason in (_CARD_MISSING, _CARD_UNUSABLE):
+        removed_by_payer = reason == _CARD_MISSING and _card_removed_by_payer(session, setting)
         setting.enabled = False
         setting.disabled_reason = DISABLED_CHARGE_FAILED
         enqueue_auto_topup_card_missing(
@@ -397,9 +406,18 @@ def _apply_refusal(
             setting_id=setting.id,
             crossing_seq=setting.crossing_seq,
         )
-        log.error(
-            "auto_topup_card_missing", alert=True, beneficiary=str(setting.beneficiary_user_id)
-        )
+        beneficiary = str(setting.beneficiary_user_id)
+        if reason == _CARD_UNUSABLE:
+            alerts.error(
+                "auto_topup_card_unusable",
+                alert=True,
+                beneficiary=beneficiary,
+                payment_id=str(payment.id),
+            )
+        elif removed_by_payer:
+            log.info("auto_topup_card_removed", beneficiary=beneficiary)  # their own action
+        else:
+            log.error("auto_topup_card_missing", alert=True, beneficiary=beneficiary)
     elif reason == _PHONE_REQUIRED:
         setting.enabled = False
         setting.disabled_reason = DISABLED_CHARGE_FAILED
@@ -421,6 +439,18 @@ def _apply_refusal(
         )
 
 
+def _card_removed_by_payer(session: Session, setting: AutoTopupSettings) -> bool:
+    """True when the setting's card is the payer's own and was deactivated: their own action.
+
+    A card that is gone (hard-deleted) or that belongs to someone else is not something the payer
+    did through the app, so it stays an alert.
+    """
+    if setting.saved_card_id is None:
+        return False
+    card = session.get(SavedCard, setting.saved_card_id)
+    return card is not None and card.user_id == setting.payer_user_id and not card.is_active
+
+
 def _card_for_charge(now: datetime) -> Callable[[Session, Payment], SavedCard | None]:
     """The ``card_for`` of the charge: the re-checked card, with the setting row held locked.
 
@@ -428,9 +458,22 @@ def _card_for_charge(now: datetime) -> Callable[[Session, Payment], SavedCard | 
     switch-off (or any edit) that comes first is seen here, and one that comes later waits for the
     claim. Without it a payer's switch-off between the check and the claim would still be charged.
     A refusal returns ``None``, and the queued payment then fails unsent.
+
+    Lock order, everywhere: payment, then setting. The payment is locked first here, as the refuse
+    pass locks it, so a replica refusing the payment and one charging it cannot wait on each other.
+    (The callback locks a ``pending`` payment, never the ``created`` one charged here; the settle
+    hook and the settings PUT take the setting without any payment lock.)
     """
 
     def card_for(session: Session, payment: Payment) -> SavedCard | None:
+        session.execute(
+            sa.select(Payment)
+            .where(Payment.id == payment.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if payment.status is not PaymentStatus.created:
+            return None  # another replica got to it first: the failure helper then does nothing
         setting = _lock_setting(session, payment.beneficiary_user_id)
         if setting is None or _refusal(session, setting, payment, now=now) is not None:
             return None
@@ -536,7 +579,10 @@ def _settle_one(
             setting, payment = row
             payment_id = payment.id
             if payment.sent_at is None:
-                reason = _refusal(session, setting, payment, now=now) or _RECOVERED
+                reason = _refusal(session, setting, payment, now=now)
+                if reason is None:
+                    stored = (payment.last_callback or {}).get("reason")
+                    reason = _CARD_UNUSABLE if stored in _UNEXPLAINED_STORED else _RECOVERED
                 _apply_refusal(session, setting, payment, reason)
                 outcome = f"refused:{reason}"
             else:
