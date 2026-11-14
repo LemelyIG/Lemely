@@ -91,6 +91,18 @@ interface DragState {
   samples: PointerSample[]
   /** The press began on a row, link or button, so its click must be swallowed if it turns into a drag. */
   onControl?: boolean
+  /** A vertical scroller between the press and the sheet body: while it is scrolled down, a downward move scrolls it. */
+  inner?: HTMLElement | null
+}
+
+/** The nearest vertically scrollable ancestor of `target` that sits inside `body`, if any. */
+function innerScroller(target: Element, body: Element): HTMLElement | null {
+  for (let el: Element | null = target; el && el !== body; el = el.parentElement) {
+    if (!(el instanceof HTMLElement) || el.scrollHeight <= el.clientHeight) continue
+    const overflow = getComputedStyle(el).overflowY
+    if (overflow === "auto" || overflow === "scroll") return el
+  }
+  return null
 }
 
 /** Elements inside the drag region that keep their own click: header buttons, links, fields. */
@@ -137,6 +149,8 @@ export const BottomSheetSurface = forwardRef<HTMLDivElement, BottomSheetSurfaceP
   /** Set when a drag that began on a row or button ends: the click that follows must not fire it. */
   const swallowClick = useRef(false)
   const swallowTimer = useRef<number | undefined>(undefined)
+  /** The swallow's 100ms window is open: a stray pointer end (the cancel a dismissal can cause) must not close it early. */
+  const swallowArmed = useRef(false)
   useEffect(() => () => window.clearTimeout(swallowTimer.current), [])
 
   // Touch: once a body press has become a drag, the browser must not also pan the body.
@@ -165,21 +179,24 @@ export const BottomSheetSurface = forwardRef<HTMLDivElement, BottomSheetSurfaceP
     if (!dismissible && detents.length < 2) return
     const start: DragState = { id: e.pointerId, y: e.clientY, samples: [[e.timeStamp, e.clientY]], onControl: !!target.closest(INTERACTIVE) }
     if (target.closest("[data-sheet-drag-region]")) beginDrag(start, e.currentTarget)
-    else if (target.closest("[data-sheet-body]")) pending.current = start
+    else {
+      const body = target.closest("[data-sheet-body]")
+      if (body) pending.current = { ...start, inner: innerScroller(target, body) }
+    }
   }
   function onPointerMove(e: ReactPointerEvent<HTMLDivElement>): void {
     callerMove?.(e)
     const p = pending.current
     if (p && p.id === e.pointerId) {
       const body = panelRef.current?.querySelector<HTMLElement>("[data-sheet-body]")
-      const intent = bodyDragIntent({ scrollTop: body?.scrollTop ?? 0, dy: e.clientY - p.y })
+      const intent = bodyDragIntent({ scrollTop: Math.max(body?.scrollTop ?? 0, p.inner?.scrollTop ?? 0), dy: e.clientY - p.y })
       if (intent === "scroll") pending.current = null
       else if (intent === "drag") {
         pending.current = null
         // A press that began on a row or button must not click when the finger lifts.
         if (p.onControl) swallowClick.current = true
         // The sheet starts from where the finger is now, so it does not jump by the slop.
-        beginDrag({ id: p.id, y: e.clientY, samples: [[e.timeStamp, e.clientY]] }, e.currentTarget)
+        beginDrag({ id: p.id, y: e.clientY, samples: [[e.timeStamp, e.clientY]], onControl: p.onControl }, e.currentTarget)
       }
     }
     const d = drag.current
@@ -191,7 +208,7 @@ export const BottomSheetSurface = forwardRef<HTMLDivElement, BottomSheetSurfaceP
     if (pending.current?.id === e.pointerId) pending.current = null
     const d = drag.current
     if (!d || d.id !== e.pointerId) {
-      swallowClick.current = false
+      if (!swallowArmed.current) swallowClick.current = false
       return
     }
     drag.current = null
@@ -200,7 +217,11 @@ export const BottomSheetSurface = forwardRef<HTMLDivElement, BottomSheetSurfaceP
     const armSwallow = () => {
       if (!swallowClick.current) return
       window.clearTimeout(swallowTimer.current)
-      swallowTimer.current = window.setTimeout(() => { swallowClick.current = false }, 100)
+      swallowArmed.current = true
+      swallowTimer.current = window.setTimeout(() => {
+        swallowClick.current = false
+        swallowArmed.current = false
+      }, 100)
     }
     const el = panelRef.current
     if (!el) {
@@ -233,6 +254,7 @@ export const BottomSheetSurface = forwardRef<HTMLDivElement, BottomSheetSurfaceP
   function onClickCapture(e: ReactMouseEvent<HTMLDivElement>): void {
     if (swallowClick.current) {
       swallowClick.current = false
+      swallowArmed.current = false
       e.preventDefault()
       e.stopPropagation()
       return

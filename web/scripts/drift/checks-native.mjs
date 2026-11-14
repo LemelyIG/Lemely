@@ -1053,20 +1053,61 @@ const tutorOwnProfileMocks = async (page) => {
   await page.route(/\/api\/tutor\/(bookings|reviews|students)(\?|$)/, (route) => jsonRoute(route, PAGE_EMPTY));
 };
 
+/** The profile screen's training log: a level, a week and a short streak. */
+const studentProfileMocks = async (page) => {
+  await page.route(/\/api\/student\/xp(\?|$)/, (route) =>
+    jsonRoute(route, {
+      totalXp: 340,
+      level: 3,
+      levelStartXp: 300,
+      nextLevelXp: 500,
+      streak: { current: 4, longest: 9, lastActiveOn: "2026-11-12", freezesAvailable: 1 },
+      week: { start: "2026-11-09", end: "2026-11-15", total: 120, bySource: [{ source: "paper_corrected", xp: 120 }] },
+      calendar: [{ day: "2026-11-12", xp: 40 }],
+      calendarStart: "2026-08-17",
+      calendarEnd: "2026-11-15",
+    }),
+  );
+};
+/** Practice generator: the topic list its heading waits on, and an available preview. */
+export const studentPracticeMocks = async (page) => {
+  await page.route(/\/api\/student\/practice\/0606\/topics(\?|$)/, (route) =>
+    jsonRoute(route, { subjectCode: "0606", topics: [], weakTopics: [], untopicedCount: 12 }),
+  );
+  await page.route(/\/api\/student\/practice\/0606\/preview(\?|$)/, (route) =>
+    jsonRoute(route, { available: true, reason: null, requestedCount: 10, availableCount: 12, topics: [] }),
+  );
+};
+/** Grading console: an empty paper list with the four tabs. */
+const teacherGradingMocks = async (page) => {
+  await page.route(/\/api\/papers(\?|$)/, (route) =>
+    jsonRoute(route, {
+      papers: [],
+      tabs: ["all", "review", "graded", "processing"].map((id) => ({ id, label: id, count: "0" })),
+    }),
+  );
+};
+/** The class the tab drill-down opens (`/teacher/classes/c1`). */
+const teacherClassDetailMocks = async (page) => {
+  await page.route(/\/api\/classes\/c1(\?|$)/, (route) => jsonRoute(route, { ...CLASS_DETAIL, id: "c1" }));
+};
+
+/** Routes whose one heading used to be satisfied by a loading placeholder alone. They are served
+ * below, with the data their own PageHeading waits on, so the check looks at the real heading. */
+const PLACEHOLDER_HEADING_PATHS = ["/student/profile", DETAIL_PATH, "/teacher/grading", TAB_DRILL_PATH];
+
 /** Tab roots of both portals plus the detail paths other checks use. Add a route
  * here when a screen's heading changes. Every route's mocks must serve the data its
  * PageHeading waits on, or the check passes without looking at the heading. */
 const HEADING_ROUTES = [
   ...[
-    ...STUDENT_TAB_PATHS,
-    DETAIL_PATH,
+    ...STUDENT_TAB_PATHS.filter((path) => !PLACEHOLDER_HEADING_PATHS.includes(path)),
     "/student/notifications",
     "/student/sessions",
     "/student/correct",
   ].map((path) => ({ ...NATIVE_HOME, path })),
   ...[
-    ...TEACHER_TAB_PATHS,
-    TAB_DRILL_PATH,
+    ...TEACHER_TAB_PATHS.filter((path) => !PLACEHOLDER_HEADING_PATHS.includes(path)),
     "/teacher/tutoring/students",
     "/teacher/notifications",
   ].map((path) => ({ ...NATIVE_TEACHER_HOME, path })),
@@ -1101,6 +1142,10 @@ const HEADING_ROUTES = [
     await page.route(/\/api\/teacher\/announcements(\?|$)/, (route) => jsonRoute(route, { announcements: [] }));
     await page.route(/\/api\/teacher\/classes(\?|$)/, (route) => jsonRoute(route, { classes: CLASS_ROWS }));
   }),
+  headingApp(NATIVE_HOME, "/student/profile", studentProfileMocks),
+  headingApp(NATIVE_HOME, DETAIL_PATH, studentPracticeMocks),
+  headingApp(NATIVE_TEACHER_HOME, "/teacher/grading", teacherGradingMocks),
+  headingApp(NATIVE_TEACHER_HOME, TAB_DRILL_PATH, teacherClassDetailMocks),
   ...["/teacher/tutoring", "/teacher/tutoring/profile", "/teacher/tutoring/availability", "/teacher/tutoring/preview"].map(
     (path) => headingApp(NATIVE_TEACHER_HOME, path, tutorOwnProfileMocks),
   ),
@@ -1123,8 +1168,11 @@ NATIVE_CHECKS.push(
           await page.locator("main h1[data-page-heading]").first().waitFor({ state: "attached", timeout: 10000 }).catch(() => {
             throw new Error(`${app.path}: the screen's PageHeading never rendered (mocks do not serve its data?)`);
           });
-          if ((await page.locator("main h1[data-page-heading]").count()) !== 1)
-            throw new Error(`${app.path}: the screen's PageHeading never rendered (mocks do not serve its data?)`);
+          const own = await page.locator("main h1[data-page-heading]").count();
+          if (own !== 1)
+            throw new Error(
+              `${app.path}: ${own} PageHeading h1 in <main>, expected 1 (mocks do not serve its data, or the screen renders none or two): ${await page.locator("main h1").evaluateAll((els) => els.map((e) => e.outerHTML.slice(0, 100)).join(" | "))}`,
+            );
         }
         const h1s = await page.getByRole("heading", { level: 1 }).count();
         if (h1s !== 1)

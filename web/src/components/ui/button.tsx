@@ -54,9 +54,9 @@ const button = cva(
     // Material's floor is 48dp, not 44: `.lm-btn` carries it on the Android native frame (index.css, unlayered, so it
     // outranks the utility floor above without `!`). The iOS 44pt floor above stays.
     "lm-btn",
-    // Colour transition, plus the transform and the `scale` property (Tailwind v4 `scale-*` writes `scale`, which `transform` does not cover) used by the press. Never
-    // `ease-in-out` or `linear` on a designed transition (DESIGN.md §9.1).
-    "transition-[color,background-color,border-color,transform,scale]",
+    // Colour transition. The native frame adds the `scale` property (Tailwind v4 `scale-*` writes `scale`, which `transform` does not cover)
+    // for the press; desktop keeps the base list, so its press does not animate. Never `ease-in-out` or `linear` on a designed transition (DESIGN.md §9.1).
+    "transition-[color,background-color,border-color,transform] native:transition-[color,background-color,border-color,transform,scale]",
     "duration-[var(--dur-fast)] ease-out-soft",
     "active:scale-[0.98] lm-press lm-press-scale",
     "disabled:pointer-events-none disabled:opacity-50",

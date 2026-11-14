@@ -206,6 +206,8 @@ export function PracticeGenerator() {
                   from — before the source control below asks the student to
                   choose among them. */}
               <SectionHead
+                level={1}
+                repeatsTitle={false}
                 title={`Practice for ${subjectName}`}
                 kicker="Questions come from past papers, your own marked papers, or Lemely's practice bank; pick a source or use all."
               />

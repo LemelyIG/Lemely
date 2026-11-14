@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils"
 /** Native frame: dense teacher tables read as list rows on phones, with
  * "View table" for when the grid itself is the point (brief decision 4). */
 export function TableOrList({
+  label,
   table,
   list,
   storageKey,
@@ -14,7 +15,8 @@ export function TableOrList({
   onListView,
   toolbar,
 }: {
-  /** The table's accessible name now lives on the Table itself; kept so call sites stay descriptive. */
+  /** The accessible name of the native list view (a labelled group). The table view is named by
+   * the Table itself, so this is not applied there. */
   label: string
   table: ReactNode
   list: ReactNode
@@ -72,7 +74,9 @@ export function TableOrList({
         // (two tab stops, one scroll).
         <div data-table-view>{table}</div>
       ) : (
-        list
+        <div role="group" aria-label={label}>
+          {list}
+        </div>
       )}
     </div>
   )

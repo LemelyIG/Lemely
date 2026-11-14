@@ -23,7 +23,7 @@ export function ShellAvatar({
   className?: string
 }) {
   const box = size === "sm" ? "size-8" : "size-[38px]"
-  return <Avatar name={name} src={src ?? undefined} size="sm" className={cn("flex-none", box, className)} />
+  return <Avatar name={name} src={src ?? undefined} size={size} className={cn("flex-none", box, className)} />
 }
 
 /**

@@ -1,4 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V3 */
+import { NoBreakTitle } from "@/components/shell/NoBreakTitle"
 import { Link, useNavigate } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
 import { Chip } from "@/components/ui/chip"
@@ -66,7 +67,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
           <div className="min-w-0 flex-1">
             {/* <h2>: these rows sit directly under the page's h1, the same
                 outline the student inbox documents. */}
-            <h2 className="text-body-lg font-medium text-on-surface">{notification.title}</h2>
+            <h2 className="text-body-lg font-medium text-on-surface"><NoBreakTitle title={notification.title} /></h2>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-on-surface-variant">
               <Chip tone={notification.type === "at_risk_alert" ? "warn" : "neutral"}>
                 {staffTypeLabel(notification.type)}

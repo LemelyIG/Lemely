@@ -11,7 +11,8 @@ import { useNativeFrame } from "@/lib/useNativeFrame"
 import { ListGroup, ListRow } from "@/components/ui/list-group"
 import { ShellIcon } from "./icons"
 import { PanelSheet } from "./PanelSheet"
-import { notificationsTriggerLabel, panelTimeLabel, titleRuns } from "./shellModel"
+import { notificationsTriggerLabel, panelTimeLabel } from "./shellModel"
+import { NoBreakTitle } from "./NoBreakTitle"
 import { SHELL_FOCUS_RING, SHELL_PANEL } from "./shellStyles"
 
 export interface NotificationsPanelProps {
@@ -42,15 +43,7 @@ function NotificationTitle({ notification, unread }: { notification: Notificatio
   return (
     <>
       {unread ? <span className="sr-only">Unread: </span> : null}
-      {titleRuns(notification.title).map((run, i) =>
-        run.mono ? (
-          <span key={i} className="font-mono font-semibold tabular-nums">
-            {run.text}
-          </span>
-        ) : (
-          run.text
-        ),
-      )}
+      <NoBreakTitle title={notification.title} mono />
     </>
   )
 }

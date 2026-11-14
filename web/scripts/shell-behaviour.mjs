@@ -11,6 +11,7 @@
 import path from "node:path"
 import { chromium } from "@playwright/test"
 import { NATIVE_CHECKS } from "./drift/checks-native.mjs"
+import { FINAL_V_CHECKS } from "./drift/checks-final-v.mjs"
 import { POLISH_V_CHECKS } from "./drift/checks-polish-v.mjs"
 import { SHELL_CHECKS } from "./drift/checks-shell.mjs"
 import { WEB_DIR, openApp, startServers } from "./drift/harness.mjs"
@@ -26,7 +27,7 @@ const withAxe = argv.includes("--axe")
 const AXE = path.join(WEB_DIR, "node_modules", "axe-core", "axe.min.js")
 
 async function main() {
-  const checks = [...SHELL_CHECKS, ...NATIVE_CHECKS, ...POLISH_V_CHECKS].filter((c) => c.id.startsWith(prefix))
+  const checks = [...SHELL_CHECKS, ...NATIVE_CHECKS, ...POLISH_V_CHECKS, ...FINAL_V_CHECKS].filter((c) => c.id.startsWith(prefix))
   if (!checks.length) {
     console.error(`no checks match --check ${prefix}`)
     process.exitCode = 1

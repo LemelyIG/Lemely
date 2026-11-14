@@ -1,4 +1,5 @@
 /* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V4 */
+import { NoBreakTitle } from "@/components/shell/NoBreakTitle"
 import { useEffect, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
@@ -173,7 +174,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
                     does have "Notices"/"Calendar" <h2>s above them. Do not
                     normalize the two to the same level; the level has to describe
                     the actual outline, not match a sibling screen. */}
-                <h2 className="text-body-lg font-medium text-on-surface">{notification.title}</h2>
+                <h2 className="text-body-lg font-medium text-on-surface"><NoBreakTitle title={notification.title} /></h2>
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-on-surface-variant">
                   <Chip tone={notification.type === "at_risk_alert" ? "warn" : "neutral"}>
                     {typeLabel(notification.type)}
