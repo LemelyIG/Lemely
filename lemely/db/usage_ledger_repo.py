@@ -93,6 +93,10 @@ _SPEND_ORDER = (
 )
 
 
+class GrantAlreadyExpired(ValueError):
+    """A grant's expiry cannot be extended: the sweep or a claw-back already took its leftover."""
+
+
 class StrandedHolds(RuntimeError):
     """A job holds units on grants its stored payer chain no longer reaches."""
 
@@ -1032,7 +1036,12 @@ class UsageLedger:
         return amount
 
     def extend_grant_expiry(
-        self, grant_id: uuid.UUID, *, expires_at: datetime, now: datetime
+        self,
+        grant_id: uuid.UUID,
+        *,
+        expires_at: datetime,
+        now: datetime,
+        issued_expires_at: datetime | None = None,
     ) -> UsageGrant:
         """Keep a grant's leftover usable until ``expires_at`` (a plan's failed-renewal grace).
 
@@ -1044,14 +1053,19 @@ class UsageLedger:
         A grant whose ``expires_at`` has passed can still be extended while the expiry sweep has
         not processed it: Paymob charges a renewal at the period end, so its failure usually
         arrives at or after the end. Once the sweep has taken the leftover (an ``expire`` entry) or
-        a claw-back closed the grant (a ``refund`` entry), it is not reopened. The owner lock and
-        the balance row lock are the ones :meth:`expire_grants` takes, and the grant is re-read
-        under them, so an extend and a sweep never both win: a sweep queued behind an extend finds
-        the expiry moved and skips the grant; an extend queued behind a sweep finds it expired.
+        a claw-back refunded it (a ``refund`` entry), it is not reopened. A claw-back that found
+        nothing unheld to refund closes the grant by moving ``expires_at`` earlier and leaves no
+        entry, and the grant row records no closure, so a lapsed grant is extended only when the
+        caller states the expiry the grant was issued with (``issued_expires_at``) and the grant
+        still carries it: an expiry that was moved is never reopened. The owner lock and the
+        balance row lock are the ones :meth:`expire_grants` takes, and the grant is re-read under
+        them, so an extend and a sweep never both win: a sweep queued behind an extend finds the
+        expiry moved and skips the grant; an extend queued behind a sweep finds it expired.
 
         Raises:
-            ValueError: ``expires_at`` is not after ``now``, or the sweep (or a claw-back) already
-                expired the grant.
+            GrantAlreadyExpired: the grant lapsed and the sweep or a claw-back took it, or it
+                lapsed and ``issued_expires_at`` is not given or is not its current expiry.
+            ValueError: ``expires_at`` is not after ``now``.
             LookupError: no such grant.
         """
         if expires_at <= now:
@@ -1065,12 +1079,38 @@ class UsageLedger:
         if grant.expires_at is None:
             return grant
         if grant.expires_at <= now and (
-            self._entry_count(grant_id, UsageEntryKind.expire)
+            issued_expires_at is None
+            or grant.expires_at != issued_expires_at
+            or self._entry_count(grant_id, UsageEntryKind.expire)
             or self._entry_count(grant_id, UsageEntryKind.refund)
         ):
-            raise ValueError(f"usage grant {grant_id} already expired")
+            raise GrantAlreadyExpired(f"usage grant {grant_id} already expired")
         if expires_at > grant.expires_at:
             grant.expires_at = expires_at
+            self._session.flush()
+        return grant
+
+    def shorten_grant_expiry(self, grant_id: uuid.UUID, *, expires_at: datetime) -> UsageGrant:
+        """End a grant's usability at ``expires_at`` (undoing :meth:`extend_grant_expiry`).
+
+        Moves ``expires_at`` earlier and touches nothing else: no entry, no balance change. A
+        value in the past makes the leftover unusable at once and leaves it for
+        :meth:`expire_grants` to take. An expiry never moves later, and one is never set at or
+        before ``effective_at`` (the table's check), so a repeat is a no-op. Same locks as
+        :meth:`extend_grant_expiry` and :meth:`expire_grants`.
+
+        Raises:
+            LookupError: no such grant.
+        """
+        grant = self._session.get(UsageGrant, grant_id)
+        if grant is None:
+            raise LookupError(f"no usage grant {grant_id}")
+        self._lock_owners([grant.owner_user_id])
+        self._locked_balance(grant_id)
+        self._session.refresh(grant)
+        target = max(expires_at, grant.effective_at + timedelta(microseconds=1))
+        if grant.expires_at is None or target < grant.expires_at:
+            grant.expires_at = target
             self._session.flush()
         return grant
 
@@ -1444,6 +1484,7 @@ __all__ = [
     "FAILED_EXPIRY_BACKOFF",
     "HELD_KINDS",
     "REMAINING_KINDS",
+    "GrantAlreadyExpired",
     "InsufficientBalance",
     "StaleJobSweep",
     "StrandedHolds",

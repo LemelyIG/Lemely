@@ -31,6 +31,7 @@ from lemely.db.subscription_repo import (
     TRIGGER_FAILED,
     TRIGGER_OVERDUE,
     TRIGGER_RESUMED,
+    TRIGGER_SUCCESS,
     TRIGGER_SUSPENDED,
     SubscriptionNotFound,
     SubscriptionService,
@@ -40,6 +41,7 @@ from lemely.io.paymob.client import PaymobError
 from tests.subscription_fixtures import (
     T0,
     FakePaymobClient,
+    charge,
     paymob_settings,
     remote_subscription,
     seed_subscription,
@@ -91,9 +93,13 @@ def _linked(
     return student, seed_subscription(sm, user_id=student, tier_id=tier_id, **options)
 
 
-def _client(state: str = "active", pid: int = PID, updated_at: str = "t1") -> FakePaymobClient:
+def _client(
+    state: str = "active", pid: int = PID, updated_at: str = "t1", *, last_ok: bool = False
+) -> FakePaymobClient:
+    """A Paymob whose last charge is a declined one (``last_ok``: a successful one)."""
     client = FakePaymobClient()
     client.subscriptions[pid] = remote_subscription(pid, state=state, updated_at=updated_at)
+    client.last_transactions[pid] = charge(900 + pid, 10_000, success=last_ok)
     return client
 
 
@@ -299,7 +305,8 @@ def test_a_failure_after_the_expiry_sweep_does_not_reopen_the_allowance(
     assert _sub(pg_sessionmaker, sid).status is SubscriptionStatus.past_due
     assert _grant_state(pg_sessionmaker, gid)[0] == END
     assert _usable(pg_sessionmaker, owner, failed_at) == 0
-    assert _alerts(logs) == ["subscription_grace_extension_failed"]
+    assert _alerts(logs) == []  # the normal path: an info log, not a page
+    assert any(e["event"] == "subscription_grace_extension_skipped" for e in logs)
 
 
 def test_only_the_current_periods_grants_are_extended(
@@ -318,6 +325,17 @@ def test_only_the_current_periods_grants_are_extended(
             )
         )
         session.flush()
+        older_grant = UsageLedger(session).issue_grant(
+            owner_user_id=owner,
+            kind=GrantKind.period_allowance,
+            units=20,
+            idempotency_key=f"period:{older}",
+            expires_at=END,  # an earlier period's leftover that still runs: not this period's
+            visible=False,
+            effective_at=T0 - timedelta(days=30),
+            subscription_period_id=older,
+        )
+        older_id = older_grant.id
         other = UsageLedger(session).issue_grant(
             owner_user_id=owner,
             kind=GrantKind.credit_pack,
@@ -331,6 +349,7 @@ def test_only_the_current_periods_grants_are_extended(
     _deliver(pg_sessionmaker, _client(), TRIGGER_FAILED, END - timedelta(hours=2))
     assert _grant_state(pg_sessionmaker, current)[0] == END - timedelta(hours=2) + GRACE
     assert _grant_state(pg_sessionmaker, other_id)[0] == END + timedelta(days=1)
+    assert _grant_state(pg_sessionmaker, older_id)[0] == END
 
 
 def test_a_failing_grant_extension_does_not_stop_the_plan_going_past_due(
@@ -347,6 +366,119 @@ def test_a_failing_grant_extension_does_not_stop_the_plan_going_past_due(
         _deliver(pg_sessionmaker, _client(), TRIGGER_FAILED, END - timedelta(hours=2))
     assert _sub(pg_sessionmaker, sid).status is SubscriptionStatus.past_due
     assert _alerts(logs) == ["subscription_grace_extension_failed"]
+
+
+# -- C-1: a failure trigger for a renewal that was already paid is ignored ---------------
+
+
+def test_a_late_failure_after_a_paid_renewal_is_ignored(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    # T0..END was just paid; Paymob redelivers the day-0 failure an hour later.
+    _, sid = _linked(pg_sessionmaker)
+    with capture_logs() as logs:
+        _deliver(
+            pg_sessionmaker, _client(updated_at="after"), TRIGGER_FAILED, T0 + timedelta(hours=1)
+        )
+    sub = _sub(pg_sessionmaker, sid)
+    assert (sub.status, sub.grace_until) == (SubscriptionStatus.active, None)
+    assert _notices(pg_sessionmaker) == []
+    ignored = [e for e in logs if e["event"] == "subscription_stale_failure_ignored"]
+    assert [e["reason"] for e in ignored] == ["period_already_paid"]
+    # and the sweeps never touch it
+    client = _client()
+    assert _sweep(pg_sessionmaker, T0 + timedelta(hours=1) + GRACE, client) == 0
+    assert client.names() == []
+
+
+def test_a_late_overdue_on_a_paid_plan_is_ignored(pg_sessionmaker: sessionmaker[Session]) -> None:
+    _, sid = _linked(pg_sessionmaker)
+    client = _client(updated_at="x")
+    _deliver(pg_sessionmaker, client, TRIGGER_OVERDUE, T0 + timedelta(hours=1))
+    assert _sub(pg_sessionmaker, sid).status is SubscriptionStatus.active
+    assert _notices(pg_sessionmaker) == []
+
+
+def test_a_failure_replayed_after_a_successful_charge_is_ignored_even_near_the_period_end(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _, sid = _linked(pg_sessionmaker)
+    client = _client(last_ok=True)  # Paymob's last charge succeeded: no failure is open
+    with capture_logs() as logs:
+        _deliver(pg_sessionmaker, client, TRIGGER_FAILED, END - timedelta(hours=2))
+    assert _sub(pg_sessionmaker, sid).status is SubscriptionStatus.active
+    assert [e["reason"] for e in logs if e["event"] == "subscription_stale_failure_ignored"] == [
+        "last_charge_succeeded"
+    ]
+
+
+def test_an_unreadable_last_charge_falls_back_to_the_period_alone(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _, sid = _linked(pg_sessionmaker)
+    client = _client()
+    client.fail["last_transaction"] = PaymobError("down", status_code=503)
+    with capture_logs() as logs:
+        _deliver(pg_sessionmaker, client, TRIGGER_FAILED, END - timedelta(hours=2))
+    assert _sub(pg_sessionmaker, sid).status is SubscriptionStatus.past_due
+    assert any(e["event"] == "subscription_failure_unconfirmed" for e in logs)
+
+
+# -- I-1: only a suspension is resumed -------------------------------------------------
+
+
+def test_resume_does_not_clear_a_grace_a_failed_charge_started(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _, sid = _linked(pg_sessionmaker)
+    first = END - timedelta(hours=2)  # Paymob charged early and was declined
+    _deliver(pg_sessionmaker, _client(updated_at="f1"), TRIGGER_FAILED, first)
+    _deliver(
+        pg_sessionmaker,
+        _client(updated_at="r1"),
+        TRIGGER_RESUMED,
+        END - timedelta(hours=1),
+    )
+    sub = _sub(pg_sessionmaker, sid)
+    assert (sub.status, sub.grace_until) == (SubscriptionStatus.past_due, first + GRACE)
+    # Paymob's retry fails: the first deadline stands.
+    _deliver(pg_sessionmaker, _client(updated_at="f2"), TRIGGER_FAILED, END + timedelta(days=2))
+    assert _sub(pg_sessionmaker, sid).grace_until == first + GRACE
+
+
+# -- M-1, M-2: the extended leftover does not outlive the plan or stack on a renewal -----
+
+
+def test_a_renewal_paid_during_grace_ends_the_extended_leftover(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    owner, sid = _linked(pg_sessionmaker)
+    old = _period_grant(pg_sessionmaker, owner, sid, units=500)
+    failed_at = END - timedelta(hours=2)
+    _deliver(pg_sessionmaker, _client(), TRIGGER_FAILED, failed_at)
+    assert _grant_state(pg_sessionmaker, old)[0] == failed_at + GRACE
+    paid_at = END + timedelta(days=1)
+    client = _client()
+    client.last_transactions[PID] = charge(888, 10_000, created_at=paid_at)
+    _deliver(pg_sessionmaker, client, TRIGGER_SUCCESS, paid_at)
+    assert _sub(pg_sessionmaker, sid).status is SubscriptionStatus.active
+    assert _grant_state(pg_sessionmaker, old)[0] == paid_at  # ended at the reactivation
+    # Only the new period's 1 000 units are usable, not 1 000 plus the old leftover.
+    assert _usable(pg_sessionmaker, owner, paid_at + timedelta(hours=1)) == 1_000
+
+
+def test_an_overdue_expiry_before_the_grace_date_ends_the_extended_leftover(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    owner, sid = _linked(pg_sessionmaker)
+    old = _period_grant(pg_sessionmaker, owner, sid, units=500)
+    _deliver(pg_sessionmaker, _client(updated_at="f"), TRIGGER_FAILED, END - timedelta(hours=2))
+    gave_up = END + timedelta(days=1)
+    _deliver(pg_sessionmaker, _client(updated_at="o"), TRIGGER_OVERDUE, gave_up)
+    assert _sub(pg_sessionmaker, sid).status is SubscriptionStatus.expired
+    assert _grant_state(pg_sessionmaker, old)[0] == gave_up
+    assert _usable(pg_sessionmaker, owner, gave_up + timedelta(minutes=1)) == 0
+    assert ("expired", gave_up) in _notices(pg_sessionmaker)
 
 
 # -- expiry -----------------------------------------------------------------------------
@@ -398,7 +530,8 @@ def test_failed_overdue_trigger_expires_at_once_with_no_paymob_write(
         None,
     )
     assert "cancel_subscription" not in client.names()  # DV-15: no write in the webhook txn
-    assert _notices(pg_sessionmaker) == [("expired", grace)]
+    # Paymob gave up before the grace date: the notice names the day the plan ended.
+    assert _notices(pg_sessionmaker) == [("expired", END + timedelta(days=1))]
 
 
 def test_a_failed_overdue_for_a_plan_already_ended_changes_nothing(
@@ -479,6 +612,20 @@ def test_a_4xx_cancel_whose_read_back_fails_is_not_stamped(
     client.fail["get_subscription"] = PaymobError("down", status_code=503)
     assert _sweep(pg_sessionmaker, grace, client) == 1
     assert _sub(pg_sessionmaker, sid).paymob_cancelled_at is None
+
+
+def test_a_subscription_paymob_no_longer_has_is_alerted_and_stops_being_retried(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    grace = END + GRACE
+    sid = _past_due(pg_sessionmaker, PID, grace)
+    client = _client()
+    client.fail["cancel_subscription"] = PaymobError("not found", status_code=404)
+    client.fail["get_subscription"] = PaymobError("not found", status_code=404)
+    with capture_logs() as logs:
+        assert _sweep(pg_sessionmaker, grace, client) == 1
+    assert _sub(pg_sessionmaker, sid).paymob_cancelled_at == grace  # marked: no retry loop
+    assert _alerts(logs) == ["subscription_paymob_missing"]
 
 
 # -- sweep shape ------------------------------------------------------------------------

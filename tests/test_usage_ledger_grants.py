@@ -12,11 +12,12 @@ import pytest
 from lemely.core.usage_types import GrantScope, Payer
 from lemely.db.models.enums import Role
 from lemely.db.models.usage import GrantKind, UsageEntryKind
-from lemely.db.usage_ledger_repo import UsageLedger
+from lemely.db.usage_ledger_repo import GrantAlreadyExpired, UsageLedger
 from tests._concurrency import _Paused, _wait_until_a_backend_waits_on_a_lock
 from tests.usage_db import (
     NOW,
     add_debt,
+    add_rate,
     add_seat_member,
     add_user,
     balance,
@@ -26,6 +27,7 @@ from tests.usage_db import (
     grant,
     grant_row,
     own_chain,
+    reserve,
     usage_database,
 )
 
@@ -238,12 +240,16 @@ def test_meter_fraction_reads_the_seat_grant_for_in_scope_work(sm: sessionmaker[
 
 
 def _extend_expiry(
-    factory: sessionmaker[Session], grant_id: uuid.UUID, expires_at: datetime
+    factory: sessionmaker[Session],
+    grant_id: uuid.UUID,
+    expires_at: datetime,
+    *,
+    issued: datetime | None = None,
 ) -> datetime | None:
     with factory.begin() as session:
         return (
             UsageLedger(session)
-            .extend_grant_expiry(grant_id, expires_at=expires_at, now=NOW)
+            .extend_grant_expiry(grant_id, expires_at=expires_at, now=NOW, issued_expires_at=issued)
             .expires_at
         )
 
@@ -305,12 +311,12 @@ def _sweep_grants(factory: sessionmaker[Session]) -> int:
 def test_extend_grant_expiry_revives_a_lapsed_grant_the_sweep_has_not_taken(
     sm: sessionmaker[Session],
 ) -> None:
-    owner, gid, _gone = _expired_grant(sm)
+    owner, gid, gone = _expired_grant(sm)
     later = NOW + timedelta(days=3)
     assert balance(sm, gid) == (100, 0)
     with sm() as session:
         assert UsageLedger(session).available(own_chain(owner), now=NOW) == 0
-    assert _extend_expiry(sm, gid, later) == later
+    assert _extend_expiry(sm, gid, later, issued=gone) == later
     assert balance(sm, gid) == (100, 0)
     assert len(entries(sm, grant_id=gid)) == 1  # still only the grant entry
     with sm() as session:
@@ -328,27 +334,117 @@ def test_extend_grant_expiry_refuses_a_grant_the_sweep_already_expired(
     assert balance(sm, gid) == (0, 0)
 
 
-def test_extend_grant_expiry_refuses_a_grant_a_claw_back_closed(
+def test_extend_grant_expiry_refuses_a_grant_a_claw_back_refunded(
     sm: sessionmaker[Session],
 ) -> None:
     owner = add_user(sm)
-    gid = grant(sm, owner, 100, expires_at=NOW + timedelta(days=5))
+    issued = NOW + timedelta(days=5)
+    gid = grant(sm, owner, 100, expires_at=issued)
     with sm.begin() as session:
         UsageLedger(session).claw_back_grant(gid, reason="refund", now=NOW)
-    with pytest.raises(ValueError, match="already expired"), sm.begin() as session:
+    with pytest.raises(GrantAlreadyExpired), sm.begin() as session:
         UsageLedger(session).extend_grant_expiry(
-            gid, expires_at=NOW + timedelta(days=3), now=NOW + timedelta(seconds=1)
+            gid,
+            expires_at=NOW + timedelta(days=3),
+            now=NOW + timedelta(seconds=1),
+            issued_expires_at=issued,
         )
     assert balance(sm, gid) == (0, 0)
 
 
+def test_extend_grant_expiry_refuses_a_grant_a_claw_back_closed_with_nothing_to_refund(
+    sm: sessionmaker[Session],
+) -> None:
+    """Fully held at the claw-back: no refund entry is written, yet the grant is closed."""
+    add_rate(sm)
+    owner = add_user(sm)
+    issued = NOW + timedelta(days=5)
+    gid = grant(sm, owner, 500, expires_at=issued)
+    job_id = reserve(sm, own_chain(owner), 500)
+    with sm.begin() as session:
+        assert UsageLedger(session).claw_back_grant(gid, reason="refund", now=NOW) == 0
+    with sm.begin() as session:
+        UsageLedger(session).release(job_id, now=NOW + timedelta(minutes=1))
+    assert not [e for e in entries(sm, grant_id=gid) if e.kind is UsageEntryKind.refund]
+    later = NOW + timedelta(minutes=2)
+    chain = own_chain(owner)
+    with sm() as session:
+        assert UsageLedger(session).available(chain, now=later) == 0  # closed
+    for vouched in (issued, None):
+        with pytest.raises(GrantAlreadyExpired), sm.begin() as session:
+            UsageLedger(session).extend_grant_expiry(
+                gid,
+                expires_at=later + timedelta(days=3),
+                now=later,
+                issued_expires_at=vouched,
+            )
+    with sm() as session:
+        assert UsageLedger(session).available(chain, now=later) == 0  # still closed
+
+
+def test_extend_grant_expiry_refuses_a_lapsed_grant_without_the_issued_expiry(
+    sm: sessionmaker[Session],
+) -> None:
+    _owner, gid, gone = _expired_grant(sm)
+    with pytest.raises(GrantAlreadyExpired), sm.begin() as session:
+        UsageLedger(session).extend_grant_expiry(gid, expires_at=NOW + timedelta(days=3), now=NOW)
+    with pytest.raises(GrantAlreadyExpired), sm.begin() as session:
+        UsageLedger(session).extend_grant_expiry(
+            gid,
+            expires_at=NOW + timedelta(days=3),
+            now=NOW,
+            issued_expires_at=gone - timedelta(hours=1),
+        )
+    assert grant_row(sm, gid).expires_at == gone
+
+
+def test_shorten_grant_expiry_ends_an_extension_without_touching_units(
+    sm: sessionmaker[Session],
+) -> None:
+    owner = add_user(sm)
+    end = NOW + timedelta(hours=1)
+    gid = grant(sm, owner, 100, expires_at=end)
+    assert _extend_expiry(sm, gid, NOW + timedelta(days=3)) == NOW + timedelta(days=3)
+    before = (balance(sm, gid), [e.id for e in entries(sm, grant_id=gid)])
+    with sm.begin() as session:
+        shortened = UsageLedger(session).shorten_grant_expiry(gid, expires_at=NOW)
+        assert shortened.expires_at == NOW
+    assert (balance(sm, gid), [e.id for e in entries(sm, grant_id=gid)]) == before
+    with sm() as session:
+        assert UsageLedger(session).available(own_chain(owner), now=NOW) == 0
+    assert _sweep_grants(sm) == 1  # the unused rest is now the sweep's to take
+    assert balance(sm, gid) == (0, 0)
+
+
+def test_shorten_grant_expiry_never_moves_an_expiry_later_and_floors_at_the_start(
+    sm: sessionmaker[Session],
+) -> None:
+    owner = add_user(sm)
+    gid = grant(sm, owner, 100, expires_at=NOW + timedelta(hours=1))
+    start = grant_row(sm, gid).effective_at
+    with sm.begin() as session:
+        ledger = UsageLedger(session)
+        assert ledger.shorten_grant_expiry(
+            gid, expires_at=NOW + timedelta(days=9)
+        ).expires_at == NOW + timedelta(hours=1)
+        floored = ledger.shorten_grant_expiry(gid, expires_at=start - timedelta(days=1))
+        assert floored.expires_at == start + timedelta(microseconds=1)
+
+
+def test_shorten_grant_expiry_of_an_unknown_grant_raises(sm: sessionmaker[Session]) -> None:
+    with pytest.raises(LookupError), sm.begin() as session:
+        UsageLedger(session).shorten_grant_expiry(uuid.uuid4(), expires_at=NOW)
+
+
 def test_a_sweep_queued_behind_an_open_extend_skips_the_grant(sm: sessionmaker[Session]) -> None:
-    owner, gid, _gone = _expired_grant(sm)
+    owner, gid, gone = _expired_grant(sm)
     later = NOW + timedelta(days=3)
     holder = sm()
     try:
         holder.begin()
-        UsageLedger(holder).extend_grant_expiry(gid, expires_at=later, now=NOW)
+        UsageLedger(holder).extend_grant_expiry(
+            gid, expires_at=later, now=NOW, issued_expires_at=gone
+        )
         sweeping = _Paused(lambda: _sweep_grants(sm))
         _wait_until_a_backend_waits_on_a_lock(sm)  # the sweep is queued behind the extend
         holder.commit()
@@ -368,7 +464,7 @@ def test_an_extend_queued_behind_an_open_sweep_is_refused(sm: sessionmaker[Sessi
     try:
         holder.begin()
         assert UsageLedger(holder).expire_grants(now=NOW) == 1
-        extending = _Paused(lambda: _extend_expiry(sm, gid, NOW + timedelta(days=3)))
+        extending = _Paused(lambda: _extend_expiry(sm, gid, NOW + timedelta(days=3), issued=gone))
         _wait_until_a_backend_waits_on_a_lock(sm)  # the extend is queued behind the sweep
         holder.commit()
     finally:
@@ -389,7 +485,7 @@ def test_extend_and_sweep_started_together_never_both_win(
 
     def extend() -> datetime | None:
         barrier.wait()
-        return _extend_expiry(sm, gid, later)
+        return _extend_expiry(sm, gid, later, issued=gone)
 
     def sweep() -> int:
         barrier.wait()
