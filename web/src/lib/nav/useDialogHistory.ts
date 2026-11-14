@@ -86,9 +86,15 @@ export function useDialogHistory({
     // unmount the last render is one navigation behind. Unwind only when the
     // current entry is still the one we pushed; otherwise the reader has
     // navigated (or replaced it) and `navigate(-1)` would undo that.
-    if (!isDialogEntry(window.history.state, pushedIdx)) return
-    dialogHistoryStack.expectSelfPop()
-    navigateRef.current(-1)
+    const unwind = () => {
+      if (!isDialogEntry(window.history.state, pushedIdx)) return
+      dialogHistoryStack.expectSelfPop()
+      navigateRef.current(-1)
+    }
+    // Stacked overlays closing in one tick: the overlay above is still popping, so the live entry is
+    // its entry, not ours. Wait for that popstate, then read again.
+    if (dialogHistoryStack.hasPendingSelfPop()) dialogHistoryStack.afterNextSelfPop(unwind)
+    else unwind()
   }
 
   const unwindRef = useRef(unwindEntry)

@@ -4,7 +4,7 @@ import { UNSAFE_DataRouterContext, useLocation, useNavigate } from "react-router
 import { useDragGesture } from "@/lib/gestures/useDragGesture"
 import { GESTURE_INTERACTIVE_SELECTOR } from "@/lib/gestures/interactiveSelector"
 import { swipeBackRelease, swipeSettleMs } from "@/lib/gestures/sheetMath"
-import { EDGE_ZONE_PX, edgeSwipeDecision, markSwipeNav } from "@/lib/nav/edgeSwipeBack"
+import { EDGE_ZONE_PX, clearSwipeNav, edgeSwipeDecision, markSwipeNav } from "@/lib/nav/edgeSwipeBack"
 import { backTarget } from "@/lib/nav/backTarget"
 import { isStandaloneDisplay } from "@/lib/pwa/useInstallPrompt"
 import { PHONE_MEDIA, isNativeFrame } from "@/lib/useNativeFrame"
@@ -126,9 +126,16 @@ export function EdgeSwipeBack() {
   }
 
   /** The guard fired with the router still silent (a slow Suspense): drop the dim, the shadow and
-   * the input lock, but leave the column off screen. Handing the old page back at x=0 would flash it. */
+   * the input lock, but leave the column off screen. Handing the old page back at x=0 would flash it.
+   *
+   * `settlingRef` and `committingRef` stay set on purpose: the column is still off screen, so a second
+   * drag must not start. They recover when the shell's next navigation lands (the layout effect below
+   * runs `resetColumn`), and a tab tap or a link is exactly that: BottomNav is the way out.
+   * The one-shot swipe flag is the exception. No navigation consumed it, so drop it here or it would
+   * label the next, unrelated hop "swipe". */
   function releaseDim(): void {
     guardRef.current = null
+    clearSwipeNav()
     clearSwipeState()
   }
 
@@ -140,6 +147,10 @@ export function EdgeSwipeBack() {
   }, [location.key])
   useEffect(() => resetColumn, [])
 
+  // `UNSAFE_DataRouterContext` rather than `import { router } from "@/App"`: App imports the route
+  // table, the route table imports the shell, and the shell mounts this component, so importing
+  // App here would close an import cycle. The context hands over the same router instance.
+  //
   // The router itself, read synchronously: a navigation that has started but not yet committed (a lazy
   // route still loading after a tab tap) is invisible to React's effects until it lands, by which time
   // go() would have popped the page straight back. `go()` compares against this instead.

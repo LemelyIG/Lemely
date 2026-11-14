@@ -30,15 +30,70 @@ interface RouterLike {
   subscribe(listener: (state: { location: { key: string }; matches: readonly MatchLike[] }) => void): () => void
 }
 
-export function installVtChrome(router: RouterLike, root: HTMLElement = document.documentElement): () => void {
+/**
+ * The matches the DOM is showing right now. The router's own state moves on commit; the screen on
+ * paint can lag it. When a second hop interrupts a first before React rendered it, "the page I am
+ * leaving" is the one still painted, not the matches of the interrupted hop. RootOutlet reports what
+ * it rendered here; until it has, the last committed matches stand in.
+ */
+let rendered: readonly MatchLike[] | null = null
+
+export function noteRenderedMatches(matches: readonly MatchLike[]): void {
+  rendered = matches
+}
+
+/** How long a set attribute may outlive its hop when no view transition ever claims it (no VT support, an aborted navigation). */
+const CLEAR_FALLBACK_MS = 3000
+
+interface ViewTransitionHost {
+  startViewTransition?: (...args: unknown[]) => { finished: Promise<unknown> } | undefined
+}
+
+export function installVtChrome(
+  router: RouterLike,
+  root: HTMLElement = document.documentElement,
+  host: ViewTransitionHost | undefined = typeof document === "undefined" ? undefined : (document as unknown as ViewTransitionHost),
+): () => void {
   let lastKey = router.state.location.key
   let lastMatches = router.state.matches
-  return router.subscribe((state) => {
+  // Each hop that sets the attribute gets a token; a clear only counts for the hop it belongs to, so
+  // the end of an old transition cannot wipe the attribute a newer hop just set.
+  let token = 0
+  let fallback: ReturnType<typeof setTimeout> | undefined
+  const clear = (own: number) => {
+    if (own !== token) return
+    delete root.dataset.vtChrome
+  }
+
+  // The attribute lives for the transition it was set for: clear it when that transition finishes.
+  // React Router starts the transition after our subscriber, so wrapping the host method is the one
+  // place that sees it.
+  const real = host?.startViewTransition
+  if (host && real) {
+    host.startViewTransition = function (this: unknown, ...args: unknown[]) {
+      const transition = real.apply(host, args)
+      const own = token
+      if (root.dataset.vtChrome && transition?.finished) void transition.finished.then(() => clear(own), () => clear(own))
+      return transition
+    }
+  }
+
+  const unsubscribe = router.subscribe((state) => {
     // Loading states and fetchers re-publish the same location; only a location change is a hop.
     if (state.location.key === lastKey) return
-    if (hopCrossesImmersive(lastMatches, state.matches)) root.dataset.vtChrome = "page"
-    else delete root.dataset.vtChrome
+    token += 1
+    clearTimeout(fallback)
+    if (hopCrossesImmersive(rendered ?? lastMatches, state.matches)) {
+      root.dataset.vtChrome = "page"
+      const own = token
+      fallback = setTimeout(() => clear(own), CLEAR_FALLBACK_MS)
+    } else delete root.dataset.vtChrome
     lastKey = state.location.key
     lastMatches = state.matches
   })
+  return () => {
+    unsubscribe()
+    clearTimeout(fallback)
+    if (host && real) host.startViewTransition = real
+  }
 }

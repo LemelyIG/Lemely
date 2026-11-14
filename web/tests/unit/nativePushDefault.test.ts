@@ -193,18 +193,25 @@ describe("middleware order and install point", () => {
 })
 
 describe("exposeRouterForChecks", () => {
-  it("exposes only in dev or under the drift flag", () => {
+  it("exposes only in dev or in a drift build, and a deployed build carries no hook", () => {
     const router = { navigate: () => {} }
     const prod: Record<string, unknown> = {}
     vi.stubEnv("DEV", false)
+    vi.stubEnv("VITE_LEMELY_DRIFT", "")
     expect(exposeRouterForChecks(router, prod)).toBe(false)
     expect(prod.__lemelyRouter).toBeUndefined()
+    // A runtime flag on `window` no longer opens it: only the build decides.
     const flagged: Record<string, unknown> = { __LEMELY_DRIFT__: true }
-    expect(exposeRouterForChecks(router, flagged)).toBe(true)
-    expect(flagged.__lemelyRouter).toBe(router)
+    expect(exposeRouterForChecks(router, flagged)).toBe(false)
     vi.stubEnv("DEV", true)
     const dev: Record<string, unknown> = {}
     expect(exposeRouterForChecks(router, dev)).toBe(true)
     vi.unstubAllEnvs()
+  })
+
+  it("the drift build is an opt-in script, and the hook reads the build-time variable", () => {
+    const pkg = readFileSync(resolve(import.meta.dirname, "..", "..", "package.json"), "utf8")
+    expect(pkg).toMatch(/"build:drift": "VITE_LEMELY_DRIFT=1 npm run build"/)
+    expect(readFileSync(resolve(__dirname, "../../src/lib/nav/exposeRouter.ts"), "utf8")).toContain('import.meta.env.VITE_LEMELY_DRIFT === "1"')
   })
 })

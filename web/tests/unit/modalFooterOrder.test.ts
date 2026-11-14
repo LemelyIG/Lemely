@@ -40,12 +40,38 @@ function footers(src: string): { text: string; line: number }[] {
   return out
 }
 
+/**
+ * The opening tags of every `<Button ...>` in `src`, each read to its own closing `>`. A plain
+ * `[^>]*` stops early at the `>` of an arrow function (`onClick={() => go()}`) or a comparison inside
+ * a prop expression, so a `variant` after it went unseen. This reads strings and balanced `{}`.
+ */
+function buttonTags(src: string): string[] {
+  const out: string[] = []
+  for (const m of src.matchAll(/<Button\b/g)) {
+    let i = (m.index ?? 0) + m[0].length
+    const start = m.index ?? 0
+    let depth = 0
+    let quote: string | null = null
+    for (; i < src.length; i++) {
+      const c = src[i]
+      if (quote) {
+        if (c === quote && src[i - 1] !== "\\") quote = null
+      } else if (depth === 0 && (c === '"' || c === "'")) quote = c
+      else if (c === "{") depth++
+      else if (c === "}") depth--
+      else if (c === ">" && depth === 0) break
+    }
+    out.push(src.slice(start, i + 1))
+  }
+  return out
+}
+
 export function footerOffenders(src: string): number[] {
   const bad: number[] = []
   for (const f of footers(src)) {
     // A ternary footer is two separate rows; judge each branch on its own.
     for (const branch of f.text.split(/\)\s*:\s*\(/)) {
-      const tags = [...branch.matchAll(/<Button\b[^>]*>/g)].map((t) => t[0])
+      const tags = buttonTags(branch)
       if (tags.length < 2) continue
       if (!/variant="(?:primary|accent)"/.test(tags[0])) continue
       if (/data-primary-first/.test(branch)) continue
@@ -68,5 +94,12 @@ describe("Modal footers whose first button is the primary action are marked data
     expect(footerOffenders(bare)).toEqual([1])
     expect(footerOffenders(bare.replace("<div>", "<div data-primary-first>"))).toEqual([])
     expect(footerOffenders(`<Modal footer={<><Button variant="secondary">No</Button><Button variant="accent">Yes</Button></>} />`)).toEqual([])
+  })
+  it("reads past an arrow function before `variant`, which a [^>]* tag regex stopped at", () => {
+    const arrow = `<Modal footer={<div><Button onClick={() => save()} variant="primary">Keep</Button><Button>Remove</Button></div>} />`
+    expect(footerOffenders(arrow)).toEqual([1])
+    expect(footerOffenders(arrow.replace("<div>", "<div data-primary-first>"))).toEqual([])
+    const quoted = `<Modal footer={<div><Button aria-label="a > b" variant="accent">Keep</Button><Button>Remove</Button></div>} />`
+    expect(footerOffenders(quoted)).toEqual([1])
   })
 })

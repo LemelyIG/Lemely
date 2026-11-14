@@ -213,6 +213,8 @@ describe("press delay token and disabled hit test", () => {
     expect(parseDelay("100ms")).toBe(100)
     expect(parseDelay(" 0.1s ")).toBe(100)
     expect(parseDelay("250MS")).toBe(250)
+    expect(parseDelay("-50ms")).toBe(0)
+    expect(parseDelay("-0.1s")).toBe(0)
     expect(parseDelay("")).toBeNull()
     expect(parseDelay("fast")).toBeNull()
   })

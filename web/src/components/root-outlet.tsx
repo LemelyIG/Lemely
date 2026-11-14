@@ -1,9 +1,10 @@
 /* Hallmark · pre-emit critique: P5 H4 E5 S5 R4 V4 */
 import { useEffect, useLayoutEffect, useRef } from "react"
-import { Outlet, ScrollRestoration, useLocation, useNavigationType } from "react-router-dom"
+import { Outlet, ScrollRestoration, useLocation, useMatches, useNavigationType } from "react-router-dom"
 import { createScrollKeyer } from "@/lib/nav/scrollRestorationKey"
 import { resolveDirection } from "@/lib/nav/navigationDirection"
 import { stateDirection } from "@/lib/nav/navDirectionState"
+import { noteRenderedMatches } from "@/lib/nav/vtChrome"
 import { consumeSwipeNav } from "@/lib/nav/edgeSwipeBack"
 import { installSnapshotSessionGuard, dropSnapshotsFrom } from "@/lib/nav/pageSnapshotCapture"
 
@@ -37,6 +38,17 @@ export function RootOutlet() {
   const explicit = stateDirection(state)
   // The entry being left, so a POP out of a tab-bar entry can read as the tab switch it undoes.
   const leaving = useRef<unknown>(undefined)
+  // History's entry index of the page being left. A POP to a larger index is a browser Forward.
+  const leavingIdx = useRef<number | undefined>(
+    typeof window === "undefined" ? undefined : (window.history.state?.idx as number | undefined),
+  )
+  const matches = useMatches()
+
+  // What the DOM is showing, for vtChrome: the router commits before React paints, so a hop that
+  // interrupts another must compare against this rather than the last committed state.
+  useLayoutEffect(() => {
+    noteRenderedMatches(matches.map((m) => ({ route: { handle: m.handle } })))
+  }, [matches])
 
   // Keyed on the location key so the one-shot swipe flag is read (and cleared) on every
   // navigation, even a replace to the same navigation type; it cannot go stale. The
@@ -44,9 +56,12 @@ export function RootOutlet() {
   useLayoutEffect(() => {
     const leavingDirection = stateDirection(leaving.current)
     leaving.current = state
+    const idx = window.history.state?.idx as number | undefined
+    const popForward = navigationType === "POP" && typeof idx === "number" && typeof leavingIdx.current === "number" && idx > leavingIdx.current
+    leavingIdx.current = idx
     document.documentElement.dataset.direction = consumeSwipeNav()
       ? "swipe"
-      : resolveDirection(navigationType, explicit, leavingDirection)
+      : resolveDirection(navigationType, explicit, leavingDirection, popForward)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigationType, key])
 

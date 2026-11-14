@@ -32,6 +32,8 @@ export type PopStateOutcome = "self" | "none" | "closeOnly" | "repush"
 export function createDialogHistoryStack() {
   const entries: DialogHistoryEntry[] = []
   let pendingSelfPops = 0
+  // Work that needs the history cursor settled: it runs on the popstate of the move in flight.
+  const afterSelfPop: Array<() => void> = []
 
   return {
     /** Call when an overlay has pushed its history entry. Returns the release. */
@@ -43,6 +45,20 @@ export function createDialogHistoryStack() {
       }
     },
 
+    /** Is a history move of our own still in flight (its popstate has not arrived)? */
+    hasPendingSelfPop(): boolean {
+      return pendingSelfPops > 0
+    },
+
+    /**
+     * Run `fn` once the move in flight has landed, and the cursor reads true. Stacked overlays that
+     * close in one tick need this: the second `navigate(-1)` would otherwise look at the history entry
+     * before the first has popped, see the wrong entry, and skip, leaving its own entry orphaned.
+     */
+    afterNextSelfPop(fn: () => void): void {
+      afterSelfPop.push(fn)
+    },
+
     /** Call immediately before moving the history cursor ourselves. */
     expectSelfPop(): void {
       pendingSelfPops += 1
@@ -51,6 +67,9 @@ export function createDialogHistoryStack() {
     handlePopState(): PopStateOutcome {
       if (pendingSelfPops > 0) {
         pendingSelfPops -= 1
+        // One deferred unwind per popstate: each runs against the cursor the move before it left,
+        // and queues its own `expectSelfPop`, so a third waits for the second's popstate in turn.
+        afterSelfPop.shift()?.()
         return "self"
       }
 

@@ -1,5 +1,5 @@
 import type { MouseEvent } from "react"
-import { resolvePath, useNavigate, type NavigateOptions, type To } from "react-router-dom"
+import { resolvePath, useNavigate, useResolvedPath, type NavigateOptions, type To } from "react-router-dom"
 import { dialogHistoryStack } from "@/lib/nav/dialogHistoryStack"
 
 /*
@@ -16,21 +16,42 @@ import { dialogHistoryStack } from "@/lib/nav/dialogHistoryStack"
  * The decision reads the live history state at click time, never a render's.
  */
 
-function sameUrl(to: To): boolean {
-  const target = resolvePath(to, window.location.pathname)
-  const norm = (search: string) => (search === "?" ? "" : search)
-  return target.pathname === window.location.pathname && norm(target.search) === norm(window.location.search)
+/** `?` and `#` alone are empty. */
+const normSearch = (search: string) => (search === "?" ? "" : search)
+const normHash = (hash: string) => (hash === "#" ? "" : hash)
+
+/**
+ * Would `navigate(to)` land on the URL the reader is already at? Path, search AND hash must all
+ * match: `#section` on the same page is a destination, not a no-op. `basePathname` is what a relative
+ * `to` resolves against. React Router resolves `navigate("sibling")` against the calling route's
+ * pathname (not the address bar's), so the caller passes that.
+ */
+export function isSameUrl(
+  to: To,
+  basePathname: string,
+  current: { pathname: string; search: string; hash: string },
+): boolean {
+  const target = resolvePath(to, basePathname)
+  return (
+    target.pathname === current.pathname &&
+    normSearch(target.search) === normSearch(current.search) &&
+    normHash(target.hash) === normHash(current.hash)
+  )
 }
 
 /** `navigate`, but a navigation out of an open dialog replaces its entry. */
 export function useDialogExitNavigate(): (to: To, options?: NavigateOptions) => void {
   const navigate = useNavigate()
+  const route = useResolvedPath(".")
   return (to, options) => {
     if (!dialogHistoryStack.topEntryIsCurrent()) {
       void navigate(to, options)
       return
     }
-    if (sameUrl(to) && !options?.state) {
+    // `relative: "path"` resolves against the address bar; the default resolves against the route.
+    const base = options?.relative === "path" ? window.location.pathname : route.pathname
+    // A navigation that carries state is a destination even at this URL: popping would drop it.
+    if (isSameUrl(to, base, window.location) && options?.state === undefined) {
       window.history.back()
       return
     }

@@ -91,14 +91,16 @@ describe("native shell frame fixes (audit batch A)", () => {
     expect(read("components/shell/MoreSheet.tsx")).toContain('<SheetTitle className="lm-native-sheet-title mb-4 text-display-md">More</SheetTitle>')
   })
 
-  it("a pop to the tab root is a PUSH that reads as back", () => {
+  it("a pop to the tab root is a REPLACE that reads as back", () => {
     expect(stateDirection({ navDirection: "back" })).toBe("back")
     expect(stateDirection({ lemelyDialog: true })).toBeUndefined()
     expect(stateDirection(null)).toBeUndefined()
     expect(read("components/shell/PortalShell.tsx")).toContain('state: { navDirection: "back" }')
-    expect(read("components/root-outlet.tsx")).toContain("resolveDirection(navigationType, explicit, leavingDirection)")
+    expect(read("components/root-outlet.tsx")).toContain("resolveDirection(navigationType, explicit, leavingDirection, popForward)")
+    expect(read("components/shell/PortalShell.tsx")).toMatch(/navigate\(item\.to, \{ replace: true, viewTransition: true, state: \{ navDirection: "back" \}/)
     // The explicit direction still wins over the router action (the helper's own tests pin it).
     expect(resolveDirection("PUSH", stateDirection({ navDirection: "back" }))).toBe("back")
+    expect(resolveDirection("REPLACE", stateDirection({ navDirection: "back" }))).toBe("back")
   })
 
   it("hand-rolled outlined containers on the audited roots are native cards", () => {

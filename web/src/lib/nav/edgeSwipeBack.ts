@@ -71,6 +71,11 @@ export function markSwipeNav(): void {
   swipeNavPending = true
 }
 
+/** A commit whose navigation never arrived (the guard fired): the flag must not leak into the next hop. */
+export function clearSwipeNav(): void {
+  swipeNavPending = false
+}
+
 /** Read once by RootOutlet's direction effect; the flag clears as it is read. */
 export function consumeSwipeNav(): boolean {
   const pending = swipeNavPending

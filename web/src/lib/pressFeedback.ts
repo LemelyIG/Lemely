@@ -34,12 +34,12 @@ const defaultEnv: Required<PressEnv> = {
   pointerEvents: (el) => (hasStyles ? getComputedStyle(el).pointerEvents : "none"),
 }
 
-/** "100ms" or "0.1s" to milliseconds; null when absent or unreadable. */
+/** "100ms" or "0.1s" to milliseconds, never below 0 (a negative token would schedule in the past); null when absent or unreadable. */
 export function parseDelay(raw: string): number | null {
   const m = /^\s*(-?\d*\.?\d+)\s*(ms|s)\s*$/i.exec(raw)
   if (!m) return null
   const n = parseFloat(m[1]) * (m[2].toLowerCase() === "s" ? 1000 : 1)
-  return Number.isFinite(n) ? n : null
+  return Number.isFinite(n) ? Math.max(0, n) : null
 }
 
 /**

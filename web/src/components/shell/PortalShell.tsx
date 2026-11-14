@@ -87,7 +87,11 @@ export function PortalShell({
     if (action === "scroll-top") {
       const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches
       window.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" })
-    } else navigate(item.to, { viewTransition: true, state: { navDirection: "back" } satisfies NavDirectionState })
+    } else {
+      // REPLACE, not PUSH: the pop to the tab's root takes the drilled page's own history entry, so Back from
+      // the root does not return to the page the reader just left. The direction still reads "back" from the state.
+      navigate(item.to, { replace: true, viewTransition: true, state: { navDirection: "back" } satisfies NavDirectionState })
+    }
   }
   return (
     <div data-portal={portal} className="flex min-h-dvh bg-surface-container">

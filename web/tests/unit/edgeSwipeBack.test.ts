@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
-import { consumeSwipeNav, edgeSwipeDecision, markSwipeNav } from "@/lib/nav/edgeSwipeBack"
+import { clearSwipeNav, consumeSwipeNav, edgeSwipeDecision, markSwipeNav } from "@/lib/nav/edgeSwipeBack"
 
 /*
  * Packet B3 (Task 4) · edge-swipe-back is standalone-only (a browser tab
@@ -58,6 +58,20 @@ describe("the swipe navigation flag is one-shot (Task 12)", () => {
     markSwipeNav()
     expect(consumeSwipeNav()).toBe(true)
     expect(consumeSwipeNav()).toBe(false)
+  })
+})
+
+describe("a swipe whose navigation never arrived drops its flag (polish B, item 16)", () => {
+  it("clearSwipeNav un-marks a pending swipe", () => {
+    markSwipeNav()
+    clearSwipeNav()
+    expect(consumeSwipeNav()).toBe(false)
+  })
+
+  it("the commit guard (releaseDim) calls it, so the next hop is not labelled swipe", () => {
+    const component = readFileSync(join(fileURLToPath(new URL("../../", import.meta.url)), "src/components/edge-swipe-back.tsx"), "utf8")
+    const releaseDim = component.slice(component.indexOf("function releaseDim"), component.indexOf("useLayoutEffect("))
+    expect(releaseDim).toContain("clearSwipeNav()")
   })
 })
 

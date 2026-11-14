@@ -15,6 +15,12 @@ describe("navigationDirection", () => {
   })
 
   describe("resolveDirection", () => {
+    it("reads a browser Forward (a POP to a later entry) as forward, or tab when the tab bar made that entry", () => {
+      expect(resolveDirection("POP", undefined, undefined, true)).toBe("forward")
+      expect(resolveDirection("POP", undefined, "tab", true)).toBe("forward")
+      expect(resolveDirection("POP", "tab", undefined, true)).toBe("tab")
+      expect(resolveDirection("POP", undefined, undefined, false)).toBe("back")
+    })
     it("follows the router action with no explicit direction", () => {
       expect(resolveDirection("PUSH")).toBe("forward")
       expect(resolveDirection("POP")).toBe("back")

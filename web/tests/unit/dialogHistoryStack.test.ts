@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { createDialogHistoryStack } from "@/lib/nav/dialogHistoryStack"
 
@@ -125,6 +127,36 @@ describe("createDialogHistoryStack", () => {
     expect(confirm.close).not.toHaveBeenCalled()
   })
 
+  it("a deferred unwind runs on the popstate of the move in flight, once", () => {
+    stack.expectSelfPop()
+    expect(stack.hasPendingSelfPop()).toBe(true)
+    const second = vi.fn()
+    stack.afterNextSelfPop(second)
+    expect(second).not.toHaveBeenCalled()
+
+    expect(stack.handlePopState()).toBe("self")
+    expect(second).toHaveBeenCalledTimes(1)
+    expect(stack.hasPendingSelfPop()).toBe(false)
+
+    stack.expectSelfPop()
+    stack.handlePopState()
+    expect(second).toHaveBeenCalledTimes(1)
+  })
+
+  it("stacked unwinds run one per popstate, each queueing the next move", () => {
+    const order: string[] = []
+    stack.expectSelfPop() // overlay B's navigate(-1) is in flight
+    stack.afterNextSelfPop(() => {
+      order.push("A")
+      stack.expectSelfPop()
+    })
+    expect(stack.handlePopState()).toBe("self")
+    expect(order).toEqual(["A"])
+    expect(stack.hasPendingSelfPop()).toBe(true)
+    expect(stack.handlePopState()).toBe("self")
+    expect(stack.hasPendingSelfPop()).toBe(false)
+  })
+
   it("reports how many overlays hold a history entry", () => {
     expect(stack.size).toBe(0)
     const release = stack.register(overlay(true))
@@ -142,5 +174,22 @@ describe("createDialogHistoryStack", () => {
     expect(stack.topEntryIsCurrent()).toBe(false)
     releaseTop()
     expect(stack.topEntryIsCurrent()).toBe(true)
+  })
+})
+
+describe("wiring (polish B, item 18)", () => {
+  const read = (rel: string) => readFileSync(join(import.meta.dirname, "..", "..", "src", rel), "utf8")
+
+  it("useDialogHistory defers an unwind while another overlay's move is still in flight", () => {
+    const hook = read("lib/nav/useDialogHistory.ts")
+    const unwind = hook.slice(hook.indexOf("function unwindEntry"), hook.indexOf("const unwindRef"))
+    expect(unwind).toContain("dialogHistoryStack.hasPendingSelfPop()")
+    expect(unwind).toContain("dialogHistoryStack.afterNextSelfPop(unwind)")
+  })
+
+  it("Popover never reads the DOM during render to name its sheet", () => {
+    const popover = read("components/ui/popover.tsx")
+    expect(popover).not.toContain("document.getElementById")
+    expect(popover).toContain("triggerRef.current?.id === triggerId")
   })
 })

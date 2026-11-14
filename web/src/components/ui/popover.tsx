@@ -2,6 +2,7 @@ import { createPortal } from "react-dom"
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -129,11 +130,13 @@ export function Popover({
 
   // The trigger names the sheet. A call site that does not spread `triggerProps.id`
   // (the notification row wires only the ref) would leave a dangling reference, so
-  // those fall back to a plain label rather than an unnamed dialog.
-  const sheetLabel =
-    sheetOpen && document.getElementById(triggerId)
-      ? { "aria-labelledby": triggerId }
-      : { "aria-label": "More actions" }
+  // those fall back to a plain label rather than an unnamed dialog. Read from the ref in
+  // a layout effect (before paint), never from the DOM during render.
+  const [triggerNamed, setTriggerNamed] = useState(false)
+  useLayoutEffect(() => {
+    setTriggerNamed(sheetOpen && triggerRef.current?.id === triggerId)
+  }, [sheetOpen, triggerId])
+  const sheetLabel = triggerNamed ? { "aria-labelledby": triggerId } : { "aria-label": "More actions" }
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     if (event.key !== "Escape") return
