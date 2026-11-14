@@ -304,14 +304,19 @@ def _alerts(logs: list[Any]) -> list[str]:
 
 
 def _upgraded_scene(
-    sm: sessionmaker[Session], *, renewal: int, new_price: int = 40_000, stamped: bool = True
+    sm: sessionmaker[Session],
+    *,
+    renewal: int,
+    new_price: int = 40_000,
+    stamped: bool = True,
+    **kwargs: Any,
 ) -> dict[str, uuid.UUID]:
     """A scene whose subscription moved to a dearer tier after the renewal paid (an upgrade).
 
     ``stamped``: the renewal recorded the terms version it billed (``period.terms_version``);
     without it the period's terms are unknowable once the tier has changed.
     """
-    scene = _scene(sm, renewal=renewal)
+    scene = _scene(sm, renewal=renewal, **kwargs)
     if stamped:
         with sm.begin() as session:
             session.execute(
@@ -654,8 +659,8 @@ def test_a_decline_starts_the_grace_and_one_email_then_retries_daily_up_to_three
 
     _run(sm, client, now=NOW + timedelta(hours=1))
     after = _sub(sm, scene)
-    # The grace runs from the first charge that was sent, for ``grace_days`` (3 by default).
-    assert after.extra_seat_grace_until == NOW + timedelta(days=3)
+    # The grace runs from when the failure is seen, for ``grace_days`` (3 by default).
+    assert after.extra_seat_grace_until == NOW + timedelta(hours=1, days=3)
     assert after.extra_seat_grace_payment_id == first.id
     (notice,) = _notices(sm, scene["payer_id"])
     assert notice.dedupe_key == f"extra_seats_failed:{first.id}"
@@ -683,7 +688,7 @@ def test_a_decline_starts_the_grace_and_one_email_then_retries_daily_up_to_three
     # No fourth attempt; the grace ends and the seats drop; the email went out once in total.
     _run(sm, client, now=NOW + timedelta(days=2, hours=23))
     assert len(_attempts(sm, scene)) == 3
-    _run(sm, client, now=NOW + timedelta(days=3))
+    _run(sm, client, now=NOW + timedelta(days=3, hours=1))
     assert len(_attempts(sm, scene)) == 3
     assert len(client.calls_to("pay_with_token")) == 3
     assert _sub(sm, scene).extra_seats == 0
@@ -705,13 +710,13 @@ def test_the_grace_and_the_attempts_follow_the_billing_setting(
         client = _declining()
         _run(sm, client)
         _run(sm, client, now=NOW + timedelta(hours=1))
-        assert _sub(sm, scene).extra_seat_grace_until == NOW + timedelta(days=2)
+        assert _sub(sm, scene).extra_seat_grace_until == NOW + timedelta(hours=1, days=2)
         (notice,) = _notices(sm, scene["payer_id"])
         assert notice.context["grace_days"] == 2
         _run(sm, client, now=NOW + SEAT_RETRY_INTERVAL)
         _run(sm, client, now=NOW + SEAT_RETRY_INTERVAL + timedelta(hours=2))
         assert len(_attempts(sm, scene)) == 2  # two days, two attempts
-        _run(sm, client, now=NOW + timedelta(days=2))
+        _run(sm, client, now=NOW + timedelta(days=2, hours=1))
         assert _sub(sm, scene).extra_seats == 0
     finally:
         _set_grace_days(sm, 3)
@@ -736,7 +741,7 @@ def test_an_admin_changing_grace_days_mid_grace_changes_nothing_for_a_running_gr
         # The cap of this grace is the 3 it started with: not 7, and not 1.
         assert len(_attempts(sm, scene)) == 3
         assert len(client.calls_to("pay_with_token")) == 3
-        assert _sub(sm, scene).extra_seat_grace_until == NOW + timedelta(days=3)
+        assert _sub(sm, scene).extra_seat_grace_until == NOW + timedelta(hours=1, days=3)
     finally:
         _set_grace_days(sm, 3)
 
@@ -886,11 +891,11 @@ def test_the_drop_waits_while_a_retry_is_pending_then_a_paid_retry_keeps_the_sea
     unknown, second = _accepted_retry(sm, scene)
 
     with capture_logs() as logs:
-        _run(sm, unknown, now=NOW + timedelta(days=3, minutes=1))  # the grace is over
+        _run(sm, unknown, now=NOW + timedelta(days=3, hours=2))  # the grace is over
 
     assert _sub(sm, scene).extra_seats == 2  # not dropped: the retry may have charged the card
     assert "extra_seats_dropped" not in _alerts(logs)
-    _deliver(sm, second, at=NOW + timedelta(days=3, minutes=5))
+    _deliver(sm, second, at=NOW + timedelta(days=3, hours=2, minutes=5))
 
     after = _sub(sm, scene)
     assert (after.extra_seats, after.extra_seat_grace_until) == (2, None)
@@ -903,14 +908,14 @@ def test_the_drop_runs_once_the_pending_retry_has_failed(
     sm = pg_sessionmaker
     scene = _scene(sm, seats=4)
     unknown, second = _accepted_retry(sm, scene)
-    _run(sm, unknown, now=NOW + timedelta(days=3, minutes=1))
+    _run(sm, unknown, now=NOW + timedelta(days=3, hours=2))
     assert _sub(sm, scene).extra_seats == 2
     with sm.begin() as session:  # reconcile gave up on it
         session.execute(
             sa.update(Payment).where(Payment.id == second.id).values(status=PaymentStatus.failed)
         )
 
-    _run(sm, unknown, now=NOW + timedelta(days=3, minutes=10))
+    _run(sm, unknown, now=NOW + timedelta(days=3, hours=3))
 
     assert _sub(sm, scene).extra_seats == 0
 
@@ -1431,6 +1436,174 @@ def test_a_purchase_converted_to_credits_does_not_reduce_the_seat_charge(
 
     (attempt,) = _attempts(sm, scene)
     assert attempt.amount_minor == 4_000
+
+
+# ---------------------------------------------------------------------------
+# Re-review N-I1, N-M1..M5.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("days", "outage"),
+    [(3, timedelta(days=3, hours=1)), (1, timedelta(days=1, hours=1))],
+)
+def test_a_grace_never_starts_with_its_deadline_already_passed(
+    pg_sessionmaker: sessionmaker[Session], days: int, outage: timedelta
+) -> None:
+    # The job was down for the grace length after attempt 1 was declined. The grace starts when the
+    # failure is seen, so the customer still gets a whole grace, and a retry, before the drop.
+    sm = pg_sessionmaker
+    _set_grace_days(sm, days)
+    try:
+        scene = _scene(sm)
+        client = _declining()
+        _run(sm, client)
+        back = NOW + outage
+
+        _run(sm, client, now=back)
+        assert _sub(sm, scene).extra_seat_grace_until == back + timedelta(days=days)
+        assert len(_notices(sm, scene["payer_id"])) == 1
+
+        _run(sm, client, now=back + timedelta(minutes=5))  # the very next run
+        assert _sub(sm, scene).extra_seats == 2  # not dropped
+        assert len(_attempts(sm, scene)) == 2  # and the retry the email promised was made
+        assert len(client.calls_to("pay_with_token")) == 2
+
+        _run(sm, client, now=back + timedelta(days=days))
+        assert _sub(sm, scene).extra_seats == 0
+    finally:
+        _set_grace_days(sm, 3)
+
+
+def test_a_late_success_after_a_drop_and_a_re_purchase_is_still_credited(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene, _ = _grace_expired_scene(sm)
+    retry = _seed_attempt(sm, scene, 2, PaymentStatus.failed, with_order=True)
+    _run(sm, FakeMotoClient())
+    assert _sub(sm, scene).extra_seats == 0
+    _update_sub(sm, scene, extra_seats=1)  # the teacher bought a seat back after the drop
+
+    with capture_logs() as logs:
+        _deliver(sm, {a.id: a for a in _attempts(sm, scene)}[retry], at=NOW + timedelta(hours=2))
+
+    assert {a.id: a for a in _attempts(sm, scene)}[retry].grant_units is not None
+    assert _sub(sm, scene).extra_seats == 1
+    assert "renewal_seat_payment_credited" in _alerts(logs)
+
+
+def test_unknown_terms_alert_once_per_period_and_hold_no_place_in_the_batch(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    unknown = _upgraded_scene(
+        sm, renewal=30_000, stamped=False, start=T0 - timedelta(days=5), end=T0 + timedelta(days=25)
+    )
+    due, _ = _grace_expired_scene(sm)
+
+    with capture_logs() as logs:
+        for minutes in (0, 5, 10, 15):
+            _run(sm, FakeMotoClient(), limit=1, now=NOW + timedelta(minutes=minutes))
+
+    assert _alerts(logs).count("extra_seat_terms_unknown") == 1  # once, not once per run
+    assert _attempts(sm, unknown) == []
+    assert _sub(sm, due).extra_seats == 0  # the drop was not starved by the unknown row
+
+
+def test_an_earlier_periods_retry_paid_after_the_roll_ends_that_periods_grace(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _scene(sm)
+    old_period = uuid.uuid4()
+    first = seed_payment_row(
+        sm,
+        payer_id=scene["payer_id"],
+        beneficiary_id=scene["user_id"],
+        purpose=PaymentPurpose.extra_seats,
+        amount_minor=4_000,
+        status=PaymentStatus.failed,
+        subscription_id=scene["subscription_id"],
+        seat_quantity=2,
+        dedupe_key=f"{RENEWAL_SEAT_DEDUPE_PREFIX}{old_period}:1",
+    )
+    retry = seed_payment_row(
+        sm,
+        payer_id=scene["payer_id"],
+        beneficiary_id=scene["user_id"],
+        purpose=PaymentPurpose.extra_seats,
+        amount_minor=4_000,
+        status=PaymentStatus.pending,
+        subscription_id=scene["subscription_id"],
+        seat_quantity=2,
+        dedupe_key=f"{RENEWAL_SEAT_DEDUPE_PREFIX}{old_period}:2",
+        paymob_order_id=next(_order_ids),
+    )
+    _update_sub(
+        sm,
+        scene,
+        extra_seat_grace_until=NOW + timedelta(days=1),
+        extra_seat_grace_payment_id=first,
+    )
+    with sm() as session:
+        payment = session.get(Payment, retry)
+        assert payment is not None
+
+    _deliver(sm, payment, at=NOW)  # the old period's retry succeeds after the roll
+
+    after = _sub(sm, scene)
+    assert after.extra_seat_grace_until is None  # that period's debt is paid
+    with sm() as session:
+        paid = session.get(Payment, retry)
+        assert paid is not None
+        assert paid.status is PaymentStatus.paid
+        assert paid.grant_units is None  # the seats were held for that period: the money stands
+    _run(sm, FakeMotoClient(), now=NOW + timedelta(days=1, minutes=1))
+    assert _sub(sm, scene).extra_seats == 2  # and the seats are not dropped
+
+
+def test_a_retry_that_failed_unsent_also_spaces_the_next_attempt(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _scene(sm)
+    first = _seed_attempt(sm, scene, 1, PaymentStatus.failed, created_at=NOW, sent_at=NOW)
+    _update_sub(
+        sm,
+        scene,
+        extra_seat_grace_until=NOW + timedelta(days=3),
+        extra_seat_grace_payment_id=first,
+    )
+    # Attempt 2 was queued on day 1 and failed before it was sent (no card at that moment).
+    _seed_attempt(sm, scene, 2, PaymentStatus.failed, created_at=NOW + timedelta(days=1))
+
+    with sm.begin() as session:
+        changed = repo._process_seat_row(
+            session, scene["subscription_id"], fallback=True, now=NOW + timedelta(days=1, minutes=5)
+        )
+
+    assert changed is False
+    assert len(_attempts(sm, scene)) == 2  # the last retry is not burnt minutes later
+
+
+def test_a_drop_deferred_on_an_unresolved_attempt_alerts_once_after_a_day(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene, _ = _grace_expired_scene(sm)  # the grace ended at NOW - 1h
+    _seed_attempt(sm, scene, 2, PaymentStatus.pending, sent_at=NOW - timedelta(days=2))
+    client = FakeMotoClient()
+
+    with capture_logs() as early:
+        _run(sm, client, now=NOW + timedelta(hours=20))  # 21h past the deadline
+    with capture_logs() as late:
+        _run(sm, client, now=NOW + timedelta(days=1))  # 25h past it
+        _run(sm, client, now=NOW + timedelta(days=2))
+
+    assert "extra_seats_drop_stuck" not in _alerts(early)
+    assert _alerts(late) == ["extra_seats_drop_stuck"]  # once
+    assert _sub(sm, scene).extra_seats == 2  # still waiting for the outcome
 
 
 # ---------------------------------------------------------------------------

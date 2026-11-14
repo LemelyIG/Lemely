@@ -1848,21 +1848,33 @@ def _settle_renewal_seat_payment(
 ) -> None:
     """A fallback renewal seat charge was paid: end its grace, or convert it to credits (UD-P2).
 
-    It pays for seats the subscription already holds, so it adds none. It buys nothing when the
-    plan ended, when it belongs to an earlier period, or when the seats were already dropped (a
-    late success, R20b, or a callback that waited on the drop's subscription lock): that money
-    becomes credits and ``renewal_seat_payment_credited`` alerts, never silently kept. A grace
-    belonging to another period is left alone, and so is a payment the grace does not cover.
+    It pays for seats the subscription already holds, so it adds none. A payment for the period
+    whose grace is running ends that grace, even when the period has rolled since: those seats
+    were held for it, so the money stands. Otherwise it buys nothing when the plan ended, when it
+    belongs to an earlier period, or when its period's grace already ended (the marker says so: a
+    drop, or an earlier paid attempt; a late success, R20b, or a callback that waited on the
+    drop's subscription lock): that money becomes credits and ``renewal_seat_payment_credited``
+    alerts, never silently kept. A grace belonging to another period is left alone.
     """
     assert payment.dedupe_key is not None  # noqa: S101 - the caller matched the prefix
     key_period = payment.dedupe_key.removeprefix(RENEWAL_SEAT_DEDUPE_PREFIX).partition(":")[0]
     period = current_period(session, sub)
+    grace_period = _grace_period_id(session, sub)
     reason: str | None = None
     if sub.status not in PLAN_LIVE_STATUSES:
         reason = "plan_ended"
+    elif sub.extra_seat_grace_until is not None and grace_period == key_period:
+        # This period's grace is paid up, whether or not the period has rolled since: the seats
+        # were held for it, so the money stands and the grace ends.
+        sub.extra_seat_grace_until = None
+        bump_version(sub)
+        session.flush()
+        return
     elif period is None or key_period != str(period.id):
         reason = "period_ended"
-    elif (sub.extra_seats or 0) <= 0:
+    elif grace_period == key_period or (sub.extra_seats or 0) <= 0:
+        # The marker says this period's grace already ended (a drop, or an earlier paid attempt):
+        # whatever seats are held now were not bought by this payment.
         reason = "seats_dropped"
     if reason is not None:
         alerts.error(
@@ -1873,11 +1885,6 @@ def _settle_renewal_seat_payment(
             reason=reason,
         )
         credit_void_payment(session, payment, sub, reason=reason, paid_at=paid_at)
-        return
-    if sub.extra_seat_grace_until is not None and _grace_period_id(session, sub) == key_period:
-        sub.extra_seat_grace_until = None
-        bump_version(sub)
-        session.flush()
 
 
 def on_extra_seats_paid(session: Session, payment: Payment) -> None:
@@ -1975,6 +1982,28 @@ def seat_grace_days(session: Session) -> int:
     return int(configured)
 
 
+#: Alerts already raised by this process, by ``(event, key)``: a condition that stays true (a
+#: period whose terms are unknown, a drop that cannot proceed) must alert once, not every run.
+_ALERTED: Final[set[tuple[str, str]]] = set()
+_ALERTED_MAX: Final = 10_000
+#: How long past its deadline a grace may wait on an unresolved attempt before it is alerted.
+DROP_STUCK_ALERT_AFTER: Final = timedelta(hours=24)
+
+
+def _alert_once(event: str, key: str, **fields: object) -> None:
+    """Raise ``event`` (``alert=True``) the first time this process sees ``key``.
+
+    A restart, or another replica, may alert once more; the set is cleared when it grows large.
+    """
+    ident = (event, key)
+    if ident in _ALERTED:
+        return
+    if len(_ALERTED) >= _ALERTED_MAX:
+        _ALERTED.clear()
+    _ALERTED.add(ident)
+    alerts.error(event, alert=True, **fields)
+
+
 def _attempt_prefix(period_id: uuid.UUID) -> str:
     return f"{RENEWAL_SEAT_DEDUPE_PREFIX}{period_id}:"
 
@@ -2056,9 +2085,9 @@ def renewal_seat_shortfall(session: Session, sub: Subscription, period: Subscrip
         return 0
     terms = _period_terms(session, sub, period, renewal)
     if terms is None:
-        alerts.error(
+        _alert_once(
             "extra_seat_terms_unknown",
-            alert=True,
+            str(period.id),
             subscription_id=str(sub.id),
             period_id=str(period.id),
         )
@@ -2255,6 +2284,14 @@ def _end_grace(session: Session, sub: Subscription, *, now: datetime) -> bool:
     )
     if unknown is not None:
         log.info("extra_seats_drop_deferred", subscription_id=str(sub.id))
+        until = sub.extra_seat_grace_until
+        if until is not None and now >= until + DROP_STUCK_ALERT_AFTER:
+            _alert_once(
+                "extra_seats_drop_stuck",
+                f"{sub.id}:{until.isoformat()}",
+                subscription_id=str(sub.id),
+                payment_id=str(unknown),
+            )
         return changed
     _drop_extra_seats(session, sub, now=now)
     return True
@@ -2278,11 +2315,13 @@ def _supersede_after_paid(session: Session, sub: Subscription, attempts: list[Pa
 
 
 def _grace_cap(session: Session, first: Payment, until: datetime) -> int:
-    """Attempts one grace allows, frozen when it started (the grace runs from the first send).
+    """Attempts one grace allows, frozen when it started.
 
-    A grace starts at ``first.sent_at + grace_days`` and one attempt is allowed per day, so the
-    cap is that span in days: an admin changing ``grace_days`` mid-grace changes nothing for a
-    grace already running. A first attempt that was never sent has no send time; the setting then
+    A grace ends at ``seen + grace_days`` and one attempt is allowed per day from the first send,
+    so the cap is the days from that send to the deadline: ``grace_days`` when the failure was
+    seen at once, more when the job was late to see it (the customer still gets the full grace
+    to put it right). An admin changing ``grace_days`` mid-grace changes nothing for a grace
+    already running. A first attempt that was never sent has no send time; the setting then
     applies as it is now (nothing was charged, so there is no burst to fear).
     """
     if first.sent_at is None:
@@ -2315,7 +2354,7 @@ def _after_failed_attempt(
         if until is not None:
             return False  # another period's grace still holds the marker: it ends on its own
         days = seat_grace_days(session)
-        sub.extra_seat_grace_until = (first.sent_at or now) + timedelta(days=days)
+        sub.extra_seat_grace_until = now + timedelta(days=days)  # from when the failure is seen
         sub.extra_seat_grace_payment_id = first.id
         bump_version(sub)
         enqueue_extra_seats_charge_failed(
@@ -2332,7 +2371,7 @@ def _after_failed_attempt(
         or until is None
         or until <= now
         or len(attempts) >= _grace_cap(session, first, until)
-        or (latest.sent_at is not None and now < latest.sent_at + SEAT_RETRY_INTERVAL)
+        or now < (latest.sent_at or latest.created_at) + SEAT_RETRY_INTERVAL
     ):
         return False
     plan = _ShortfallPlan(first.amount_minor, first.currency, first.seat_quantity)
@@ -2373,8 +2412,9 @@ def _seat_candidate_ids(
     latest send (a retry): until then it is not visited and takes no place in the batch. A
     subscription with a queued attempt is always visited. On the fallback path a qualifying
     subscription is visited when the exact shortfall (billed terms, paid in-period purchases
-    taken off) is above zero, or when its terms are unknown (to alert), and it has no paid
-    attempt and not only in-flight ones. Rows with nothing to do are left out, and the order is
+    taken off) is above zero and it has no paid attempt and not only in-flight ones. A period
+    whose terms are unknown owes nothing and is never a candidate (it alerts through
+    :func:`_alert_unknown_terms`). Rows with nothing to do are left out, and the order is
     by due time, so they can neither fill the batch nor starve a drop or a retry.
     """
     renewal = aliased(Payment)
@@ -2394,7 +2434,11 @@ def _seat_candidate_ids(
             stmt = stmt.where(Payment.status.in_(statuses))
         return stmt
 
-    last_sent = sa.select(sa.func.max(Payment.sent_at)).where(*attempts_where()).scalar_subquery()
+    last_sent = (
+        sa.select(sa.func.max(sa.func.coalesce(Payment.sent_at, Payment.created_at)))
+        .where(*attempts_where())
+        .scalar_subquery()
+    )
     bought = (
         sa.select(sa.func.coalesce(sa.func.sum(Payment.seat_quantity), 0))
         .where(
@@ -2416,16 +2460,16 @@ def _seat_candidate_ids(
     queued = has_attempt(PaymentStatus.created)
     wanted = [queued]
     if fallback:
+        terms_unknown = sa.and_(
+            SubscriptionPeriod.terms_version.is_(None),
+            renewal.plan_tier_id != Subscription.plan_tier_id,
+        )
         seat = terms.extra_seat_price_minor
         gap = (
             terms.price_minor
             + Subscription.extra_seats * seat
             - renewal.amount_minor
             - bought * seat
-        )
-        terms_unknown = sa.and_(
-            SubscriptionPeriod.terms_version.is_(None),
-            renewal.plan_tier_id != Subscription.plan_tier_id,
         )
         wanted.append(
             sa.and_(
@@ -2435,10 +2479,9 @@ def _seat_candidate_ids(
                 PlanTier.audience == PlanAudience.teacher,
                 renewal.purpose == PaymentPurpose.subscription_renewal,
                 renewal.status == PaymentStatus.paid,
-                sa.or_(
-                    terms_unknown,
-                    sa.and_(seat > 0, sa.func.least(Subscription.extra_seats * seat, gap) > 0),
-                ),
+                ~terms_unknown,
+                seat > 0,
+                sa.func.least(Subscription.extra_seats * seat, gap) > 0,
                 sa.or_(~has_attempt(PaymentStatus.paid), queued),
                 sa.or_(~has_attempt(), has_attempt(*FAILED_STATUSES), queued),
             )
@@ -2472,6 +2515,46 @@ def _seat_candidate_ids(
             .limit(limit)
         )
     )
+
+
+def _alert_unknown_terms(session: Session, *, limit: int) -> None:
+    """Alert, once per period, for qualifying periods whose billed terms cannot be known.
+
+    Such a period owes nothing (:func:`renewal_seat_shortfall`), so it is not a candidate and
+    holds no place in the batch; this read-only pass is the only place that looks at it.
+    """
+    renewal = aliased(Payment)
+    rows = session.execute(
+        sa.select(Subscription.id, SubscriptionPeriod.id)
+        .join(PlanTier, PlanTier.id == Subscription.plan_tier_id)
+        .join(
+            SubscriptionPeriod,
+            sa.and_(
+                SubscriptionPeriod.subscription_id == Subscription.id,
+                SubscriptionPeriod.period_end == Subscription.current_period_end,
+            ),
+        )
+        .join(renewal, renewal.id == SubscriptionPeriod.payment_id)
+        .where(
+            Subscription.status == SubscriptionStatus.active,
+            Subscription.paymob_subscription_id.is_not(None),
+            Subscription.extra_seats > 0,
+            PlanTier.audience == PlanAudience.teacher,
+            renewal.purpose == PaymentPurpose.subscription_renewal,
+            renewal.status == PaymentStatus.paid,
+            SubscriptionPeriod.terms_version.is_(None),
+            renewal.plan_tier_id != Subscription.plan_tier_id,
+        )
+        .order_by(SubscriptionPeriod.period_start, Subscription.id)
+        .limit(limit)
+    ).all()
+    for subscription_id, period_id in rows:
+        _alert_once(
+            "extra_seat_terms_unknown",
+            str(period_id),
+            subscription_id=str(subscription_id),
+            period_id=str(period_id),
+        )
 
 
 def _seat_row_one(
@@ -2524,6 +2607,8 @@ def run_extra_seat_renewal_job(
         except SeatGraceSettingMissing:
             return 0
         candidates = _seat_candidate_ids(session, fallback=fallback, now=now, limit=limit)
+        if fallback:
+            _alert_unknown_terms(session, limit=limit)
     handled = sum(
         _seat_row_one(sessionmaker, subscription_id, fallback=fallback, now=now)
         for subscription_id in candidates

@@ -58,6 +58,15 @@ TEMPLATES: tuple[tuple[str, type[EmailContext], str], ...] = (
 )
 
 
+#: The exact context each template accepts (the allow-list the outbox validates against).
+_CONTEXT_FIELDS: dict[str, frozenset[str]] = {
+    "auto_topup_failed": frozenset({"payment_id"}),
+    "extra_seats_charge_failed": frozenset({"subscription_id", "grace_days"}),
+    "auto_topup_card_missing": frozenset({"setting_id"}),
+    "auto_topup_phone_required": frozenset({"setting_id"}),
+}
+
+
 def _context(key: str) -> dict[str, object]:
     ids = {"payment_id": PAYMENT_ID, "setting_id": SETTING_ID}
     return {key: str(ids.get(key, SUBSCRIPTION_ID))}
@@ -74,7 +83,7 @@ def test_both_failure_templates_are_registered_billing_templates(
     assert cls.template == name
     assert cls.notification_type is NotificationType.billing
     assert name in BILLING_EMAIL_TEMPLATES  # the daily-cap exemption (UD-9) keys on this set
-    assert key in cls.context_fields
+    assert cls.context_fields == _CONTEXT_FIELDS[name]
     assert cls.button == "Open billing"
 
 
