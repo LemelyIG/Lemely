@@ -52,6 +52,7 @@ from lemely.db.billing_repo import (
 )
 from lemely.db.models.billing import (
     LIVE_SUBSCRIPTION_STATUSES,
+    PLAN_LIVE_STATUSES,
     CreditPack,
     Payment,
     PaymentPurpose,
@@ -65,7 +66,7 @@ from lemely.db.models.billing import (
 )
 from lemely.db.models.enums import Role, SubscriptionStatus
 from lemely.db.models.team import TeacherMember, TeacherMemberKind, TeacherMemberStatus
-from lemely.db.models.usage import GrantKind
+from lemely.db.models.usage import GrantKind, UsageGrant
 from lemely.db.models.users import User
 from lemely.db.teacher_team_repo import TeacherTeamService
 from lemely.db.usage_ledger_repo import UsageLedger
@@ -77,7 +78,6 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from lemely.db.billing_repo import JsonMap
-    from lemely.db.models.usage import UsageGrant
     from lemely.io.paymob.client import PaymobClient
     from lemely.runtime.config import PaymobSettings
 
@@ -378,10 +378,13 @@ def _shed_excess_seats(
     team = TeacherTeamService(session)
     for member_id in newest:
         team.request_removal(member_id, now=now)
-    log.warning(
+    # A student the teacher did not choose to remove loses the seat at month end: page someone.
+    alerts.error(
         "seats_shed_after_plan_change",
         teacher_user_id=str(subscription.user_id),
+        subscription_id=str(subscription.id),
         count=len(newest),
+        alert=True,
     )
     return len(newest)
 
@@ -420,6 +423,17 @@ def credit_units_for_amount(session: Session, *, amount_minor: int, currency: st
     return units if units > 0 else None
 
 
+def _has_grant(session: Session, owner_id: uuid.UUID, idempotency_key: str) -> bool:
+    return (
+        session.scalar(
+            select(UsageGrant.id).where(
+                UsageGrant.owner_user_id == owner_id, UsageGrant.idempotency_key == idempotency_key
+            )
+        )
+        is not None
+    )
+
+
 def convert_payment_to_credits(
     session: Session, payment: Payment, *, subscription: Subscription, now: datetime
 ) -> UsageGrant:
@@ -433,11 +447,22 @@ def convert_payment_to_credits(
     The caller commits and holds the payment row lock; this makes no Paymob call.
 
     Raises:
-        ValueError: the payment is not ``paid``, or ``now`` is naive.
+        ValueError: the payment is not ``paid``; it is a credit pack payment (it already bought
+            its credits); it already paid for a subscription period; or it carries grant units
+            that no earlier conversion issued.
         NoCreditRate: no active credit pack prices the payment's amount in its currency.
     """
     if payment.status is not PaymentStatus.paid:
         raise ValueError("only a paid payment can be turned into credits")
+    if payment.purpose is PaymentPurpose.credit_pack:
+        raise ValueError("a credit pack payment already bought its credits")
+    if _period_for_payment(session, payment.id) is not None:
+        raise ValueError("this payment already paid for a subscription period")
+    credited_key = f"credited:{payment.id}"
+    if payment.grant_units is not None and not _has_grant(
+        session, payment.beneficiary_user_id, credited_key
+    ):
+        raise ValueError("this payment carries grant units that no conversion issued")
     units = payment.grant_units
     if units is None:
         units = credit_units_for_amount(
@@ -449,7 +474,7 @@ def convert_payment_to_credits(
         owner_user_id=payment.beneficiary_user_id,
         kind=GrantKind.credit_pack,
         units=units,
-        idempotency_key=f"credited:{payment.id}",
+        idempotency_key=credited_key,
         expires_at=add_months(now, CREDIT_EXPIRY_MONTHS),
         visible=True,
         effective_at=now,
@@ -560,6 +585,88 @@ def _link_stored_created_event(
         return
 
 
+def lock_paymob_transaction(session: Session, txn_id: int) -> None:
+    """Serialise everything that acts on one Paymob transaction id, until the transaction ends.
+
+    The first-payment handler takes it after the payment row lock and before any subscription
+    lock; the subscription webhook (T6 ``_resolve``) takes it before it looks the payment up. Of
+    the callback and the ``Subscription Created`` webhook for one first charge, whichever runs
+    second then sees the other's commit, so the webhook's event is linked or the payment is found.
+    """
+    session.execute(
+        sa.text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": f"paymob_txn:{txn_id}"},
+    )
+
+
+def _lock_subscriptions(session: Session, subscription_id: uuid.UUID) -> Subscription | None:
+    """Lock ``subscription_id`` and the beneficiary's live rows together, in id order.
+
+    One ordered ``FOR UPDATE`` over the whole set (not "mine, then theirs") is what keeps two late
+    payments of one account from deadlocking: both lock the same rows in the same order. The
+    returned row is re-read after the lock, so its status is the committed one.
+    """
+    user_id = session.scalar(select(Subscription.user_id).where(Subscription.id == subscription_id))
+    if user_id is None:
+        return None
+    rows = session.scalars(
+        select(Subscription)
+        .where(
+            sa.or_(
+                Subscription.id == subscription_id,
+                sa.and_(
+                    Subscription.user_id == user_id,
+                    Subscription.status.in_(LIVE_SUBSCRIPTION_STATUSES),
+                ),
+            )
+        )
+        .order_by(Subscription.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).all()
+    return next((row for row in rows if row.id == subscription_id), None)
+
+
+def _live_others(session: Session, subscription: Subscription) -> list[Subscription]:
+    """The beneficiary's other live rows (locked by :func:`_lock_subscriptions`)."""
+    return list(
+        session.scalars(
+            select(Subscription).where(
+                Subscription.user_id == subscription.user_id,
+                Subscription.id != subscription.id,
+                Subscription.status.in_(LIVE_SUBSCRIPTION_STATUSES),
+            )
+        )
+    )
+
+
+#: A first payment in one of these states moved money that was not returned.
+_MONEY_PAID: Final = (PaymentStatus.paid, PaymentStatus.refunded, PaymentStatus.partially_refunded)
+
+
+def _is_plan_in_force(session: Session, other: Subscription) -> bool:
+    """Whether ``other`` is a plan the payer has, not an unpaid checkout waiting for money.
+
+    ``active`` and ``past_due`` are in force. A ``pending_first_payment`` row is not, unless a
+    first payment of it already settled (its handler has not finished): then it is treated as in
+    force, because expiring it would throw away money.
+    """
+    if other.status in PLAN_LIVE_STATUSES:
+        return True
+    return (
+        session.scalar(
+            select(Payment.id)
+            .where(
+                Payment.subscription_id == other.id,
+                Payment.purpose == PaymentPurpose.subscription_first,
+                Payment.status.in_(_MONEY_PAID),
+            )
+            .limit(1)
+        )
+        is not None
+    )
+
+
 def _convert_superseded_payment(
     session: Session, payment: Payment, subscription: Subscription, *, paid_at: datetime
 ) -> None:
@@ -618,7 +725,9 @@ def handle_subscription_first(session: Session, payment: Payment, obj: JsonMap) 
             "subscription_first_paid_without_subscription", payment_id=str(payment.id), alert=True
         )
         return
-    subscription = session.get(Subscription, payment.subscription_id, with_for_update=True)
+    if payment.paymob_txn_id is not None:
+        lock_paymob_transaction(session, payment.paymob_txn_id)
+    subscription = _lock_subscriptions(session, payment.subscription_id)
     if subscription is None:
         alerts.error(
             "subscription_first_paid_without_subscription", payment_id=str(payment.id), alert=True
@@ -639,7 +748,8 @@ def handle_subscription_first(session: Session, payment: Payment, obj: JsonMap) 
         )
         return
     _link_stored_created_event(session, subscription, payment, now=paid_at)
-    if _has_other_live(session, subscription):
+    others = _live_others(session, subscription)
+    if any(_is_plan_in_force(session, other) for other in others):
         _convert_superseded_payment(session, payment, subscription, paid_at=paid_at)
         return
     tier = session.get(PlanTier, subscription.plan_tier_id)
@@ -652,13 +762,32 @@ def handle_subscription_first(session: Session, payment: Payment, obj: JsonMap) 
         )
         return
     end = period_end(paid_at, tier.interval.value)
-    subscription.status = SubscriptionStatus.active
-    subscription.activated_at = paid_at
-    subscription.current_period_start = paid_at
-    subscription.current_period_end = end
-    subscription.grace_until = None
-    subscription.paymob_amount_minor = payment.amount_minor
-    _bump(subscription)
+    try:
+        # A savepoint: a live row committed after the locks were taken (a brand-new checkout
+        # is not locked) trips the unique index, and the payment then becomes credits.
+        with session.begin_nested():
+            for unpaid in others:  # only unpaid pending checkouts reach here: they leave first
+                unpaid.status = SubscriptionStatus.expired
+                _bump(unpaid)
+                log.info(
+                    "subscription_unpaid_checkout_expired_by_payment",
+                    subscription_id=str(unpaid.id),
+                    paid_subscription_id=str(subscription.id),
+                )
+            session.flush()
+            subscription.status = SubscriptionStatus.active
+            subscription.activated_at = paid_at
+            subscription.current_period_start = paid_at
+            subscription.current_period_end = end
+            subscription.grace_until = None
+            subscription.paymob_amount_minor = payment.amount_minor
+            _bump(subscription)
+            session.flush()
+    except IntegrityError as exc:
+        if not _violates_one_live(exc):
+            raise
+        _convert_superseded_payment(session, payment, subscription, paid_at=paid_at)
+        return
     period = SubscriptionPeriod(
         subscription_id=subscription.id,
         period_start=paid_at,
@@ -974,6 +1103,7 @@ __all__ = [
     "convert_payment_to_credits",
     "credit_units_for_amount",
     "handle_subscription_first",
+    "lock_paymob_transaction",
     "subscription_webhook_url",
     "sync_paymob_plan",
 ]

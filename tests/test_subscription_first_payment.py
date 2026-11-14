@@ -8,6 +8,7 @@ helper :func:`convert_payment_to_credits`, which Phase 06 reuses.
 
 from __future__ import annotations
 
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -52,6 +53,7 @@ from tests.paymob_fixtures import (
     INTENTION_RESPONSE,
     PAYMOB_SETTINGS,
     seed_pack,
+    seed_payment,
     sign_transaction,
     transaction_callback,
     transaction_obj,
@@ -69,7 +71,7 @@ from tests.subscription_fixtures import (
     seed_user,
     throwaway_database,
 )
-from tests.team_db import emptied_after
+from tests.team_db import add_assistant, emptied_after
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -747,6 +749,254 @@ def test_the_callback_for_a_superseded_checkout_converts_it_through_phase_02(
     assert (grant.kind, grant.units) == (GrantKind.credit_pack, 100)
 
 
+# -- T5-I1: only an unpaid pending replacement is expired, never a plan in force -----------
+
+
+def _pending_replacement(
+    sm: sessionmaker[Session],
+    student: uuid.UUID,
+    *,
+    first_payment: PaymentStatus | None = PaymentStatus.created,
+) -> uuid.UUID:
+    """A same-payer pending checkout, with a first payment in ``first_payment`` (or none)."""
+    sid = seed_subscription(
+        sm,
+        user_id=student,
+        tier_id=seed_tier(sm),
+        payer_id=student,
+        status=SubscriptionStatus.pending_first_payment,
+        period_start=None,
+        period_end=None,
+    )
+    if first_payment is not None:
+        seed_first_payment(
+            sm,
+            subscription_id=sid,
+            status=first_payment,
+            paymob_txn_id=None,
+            paid_at=PAID_AT if first_payment is PaymentStatus.paid else None,
+        )
+    return sid
+
+
+@pytest.mark.parametrize(
+    "replacement_payment",
+    [None, PaymentStatus.created, PaymentStatus.pending, PaymentStatus.failed],
+    ids=["no-payment", "created", "pending", "declined"],
+)
+def test_an_old_checkout_paid_beside_an_unpaid_replacement_activates_and_expires_it(
+    pg_sessionmaker: sessionmaker[Session], replacement_payment: PaymentStatus | None
+) -> None:
+    student, sid, pid = _pending(pg_sessionmaker, status=SubscriptionStatus.expired)
+    replacement = _pending_replacement(pg_sessionmaker, student, first_payment=replacement_payment)
+    _handle(pg_sessionmaker, pid)
+
+    assert _subscription(pg_sessionmaker, sid).status is SubscriptionStatus.active
+    assert _subscription(pg_sessionmaker, replacement).status is SubscriptionStatus.expired
+    assert _subscription(pg_sessionmaker, replacement).version == 2
+    [grant] = grants_of(pg_sessionmaker, student)
+    assert grant.kind is GrantKind.period_allowance
+    assert _outbox(pg_sessionmaker, student) == []
+
+
+def test_a_replacement_with_money_behind_it_is_a_plan_so_the_old_payment_becomes_credits(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    seed_pack(pg_sessionmaker)
+    student, sid, pid = _pending(pg_sessionmaker, status=SubscriptionStatus.expired)
+    replacement = _pending_replacement(pg_sessionmaker, student, first_payment=PaymentStatus.paid)
+    _handle(pg_sessionmaker, pid)
+    assert _subscription(pg_sessionmaker, sid).status is SubscriptionStatus.expired
+    assert _subscription(pg_sessionmaker, replacement).status is (
+        SubscriptionStatus.pending_first_payment
+    )
+    [grant] = grants_of(pg_sessionmaker, student)
+    assert grant.kind is GrantKind.credit_pack
+
+
+def test_a_plan_in_force_is_never_expired_to_make_room(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    seed_pack(pg_sessionmaker)
+    # A manual plan (no payer) is outside the unique index: a pending checkout can sit beside it.
+    student, sid, pid, live = _superseded(pg_sessionmaker, other_payer_is_student=False)
+    replacement = _pending_replacement(
+        pg_sessionmaker, student, first_payment=PaymentStatus.created
+    )
+    _handle(pg_sessionmaker, pid)
+    assert _subscription(pg_sessionmaker, live).status is SubscriptionStatus.active
+    assert _subscription(pg_sessionmaker, sid).status is SubscriptionStatus.expired
+    assert _subscription(pg_sessionmaker, replacement).status is (
+        SubscriptionStatus.pending_first_payment
+    )
+    assert [g.kind for g in grants_of(pg_sessionmaker, student)] == [GrantKind.credit_pack]
+
+
+def test_two_late_payments_of_one_account_settle_to_one_plan_without_a_deadlock(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A and B are both paid at once: one activates, the other becomes credits, nobody hangs."""
+    seed_pack(pg_sessionmaker)
+    for round_number in range(3):
+        student = seed_user(pg_sessionmaker, Role.student)
+        tier = seed_tier(pg_sessionmaker)
+        sids: list[uuid.UUID] = []
+        pids: list[uuid.UUID] = []
+        for index, status in enumerate(
+            (SubscriptionStatus.expired, SubscriptionStatus.pending_first_payment)
+        ):
+            sid = seed_subscription(
+                pg_sessionmaker,
+                user_id=student,
+                tier_id=tier,
+                payer_id=student,
+                status=status,
+                period_start=None,
+                period_end=None,
+            )
+            sids.append(sid)
+            pids.append(
+                seed_first_payment(
+                    pg_sessionmaker,
+                    subscription_id=sid,
+                    paymob_txn_id=2_000 + round_number * 10 + index,
+                    paid_at=PAID_AT,
+                )
+            )
+        barrier = threading.Barrier(2)
+        errors: list[BaseException] = []
+
+        def run(
+            pid: uuid.UUID,
+            barrier: threading.Barrier = barrier,
+            errors: list[BaseException] = errors,
+        ) -> None:
+            try:
+                barrier.wait(timeout=10)
+                _handle(pg_sessionmaker, pid)
+            except BaseException as exc:  # reported through the assertion below
+                errors.append(exc)
+
+        threads = [threading.Thread(target=run, args=(pid,)) for pid in pids]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+        assert not any(thread.is_alive() for thread in threads), "a handler hung (deadlock)"
+        assert errors == []
+        statuses = sorted(_subscription(pg_sessionmaker, sid).status.value for sid in sids)
+        assert statuses == ["active", "expired"]
+        kinds = sorted(g.kind.value for g in grants_of(pg_sessionmaker, student))
+        assert kinds == [GrantKind.credit_pack.value, GrantKind.period_allowance.value]
+
+
+def test_the_account_rows_are_locked_lowest_id_first_whichever_one_is_paid(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The deadlock guard, deterministically: the paid row has the HIGHER id.
+
+    A holder keeps the lower-id row locked, so the handler blocks on it. If the handler had locked
+    its own (higher) row first, as a naive ``get(..., with_for_update=True)`` does, that row would
+    already be locked and the probe below could not take it.
+    """
+    student = seed_user(pg_sessionmaker, Role.student)
+    tier = seed_tier(pg_sessionmaker)
+    low, high = sorted(
+        seed_subscription(
+            pg_sessionmaker,
+            user_id=student,
+            tier_id=tier,
+            payer_id=student,
+            status=SubscriptionStatus.expired,
+            period_start=None,
+            period_end=None,
+        )
+        for _ in range(2)
+    )
+    with pg_sessionmaker.begin() as session:  # the lower id is the live, unpaid replacement
+        session.execute(
+            sa.update(Subscription)
+            .where(Subscription.id == low)
+            .values(status=SubscriptionStatus.pending_first_payment)
+        )
+    pid = seed_first_payment(
+        pg_sessionmaker, subscription_id=high, paid_at=PAID_AT, paymob_txn_id=6_001
+    )
+    holder = pg_sessionmaker()
+    holder.execute(sa.select(Subscription.id).where(Subscription.id == low).with_for_update())
+    done = threading.Event()
+
+    def run() -> None:
+        _handle(pg_sessionmaker, pid)
+        done.set()
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    try:
+        assert not done.wait(timeout=1.5)  # blocked on the lower row
+        probe = pg_sessionmaker()
+        try:
+            probe.execute(
+                sa.select(Subscription.id)
+                .where(Subscription.id == high)
+                .with_for_update(nowait=True)
+            )
+        finally:
+            probe.rollback()
+            probe.close()
+    finally:
+        holder.rollback()
+        holder.close()
+        thread.join(timeout=30)
+    assert done.is_set()
+    assert _subscription(pg_sessionmaker, high).status is SubscriptionStatus.active
+
+
+def test_a_unique_index_race_on_activation_falls_back_to_credits(
+    pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M-1: the live check read stale, a live row exists; the savepoint turns it into credits."""
+    seed_pack(pg_sessionmaker)
+    student, sid, pid, live = _superseded(pg_sessionmaker)
+    monkeypatch.setattr(subscription_repo, "_live_others", lambda session, subscription: [])
+    _handle(pg_sessionmaker, pid)  # no IntegrityError, so the webhook would answer 200
+    assert _subscription(pg_sessionmaker, sid).status is SubscriptionStatus.expired
+    assert _subscription(pg_sessionmaker, live).status is SubscriptionStatus.active
+    assert _periods(pg_sessionmaker, sid) == []
+    [grant] = grants_of(pg_sessionmaker, student)
+    assert grant.kind is GrantKind.credit_pack
+
+
+# -- the per-transaction advisory lock (T5-I2) -----------------------------------------------
+
+
+def test_the_handler_waits_for_the_advisory_lock_on_the_paymob_transaction_id(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student, sid, pid = _pending(pg_sessionmaker, txn_id=4_242)
+    holder = pg_sessionmaker()
+    holder.execute(
+        sa.text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": "paymob_txn:4242"},
+    )
+    done = threading.Event()
+
+    def run() -> None:
+        _handle(pg_sessionmaker, pid)
+        done.set()
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    try:
+        assert not done.wait(timeout=1.5), "the handler ran without taking the transaction lock"
+    finally:
+        holder.rollback()
+        holder.close()
+    thread.join(timeout=30)
+    assert done.is_set()
+    assert _subscription(pg_sessionmaker, sid).status is SubscriptionStatus.active
+
+
 # -- the webhook answers 200 for a paid, superseded checkout -------------------------------
 
 WEBHOOK_URL = "/api/webhooks/paymob/transaction"
@@ -769,13 +1019,14 @@ def _post_callback(http: TestClient, obj: dict[str, Any]) -> Any:
     )
 
 
-def test_a_restarted_checkout_whose_first_one_is_paid_late_answers_200_and_becomes_credits(
+def test_a_restarted_checkout_whose_first_one_is_paid_late_activates_and_expires_the_unpaid_one(
     app: FastAPI, pg_sessionmaker: sessionmaker[Session]
 ) -> None:
-    """Review I-2: A is replaced by the same payer's B, then A is paid while B is pending.
+    """T5-I1: A is replaced by the same payer's B, then A is paid while B is still unpaid.
 
-    Reactivating A would hit ``uq_subscriptions_one_live_per_user`` and 500 on every retry, so
-    the payment becomes credits (UD-3), B is untouched, and B's own payment still activates it.
+    No plan is in force, so the payer gets the plan they paid for: A activates and the unpaid B
+    expires in the same transaction (no credits, and the unique live index is never hit). B paid
+    later meets a plan in force (A), so UD-3 turns it into credits.
     """
     seed_pack(pg_sessionmaker, units=100, price_minor=10_000)
     sm = pg_sessionmaker
@@ -793,22 +1044,24 @@ def test_a_restarted_checkout_whose_first_one_is_paid_late_answers_200_and_becom
 
     assert (response.status_code, response.json()) == (200, {"status": "ok"})
     assert _payment(sm, pid_a).status is PaymentStatus.paid
-    assert _subscription(sm, sid_a).status is SubscriptionStatus.expired
-    assert _subscription(sm, sid_b).status is SubscriptionStatus.pending_first_payment
-    assert _periods(sm, sid_a) == []
-    [credit] = grants_of(sm, student)
-    assert (credit.kind, credit.units, credit.visible) == (GrantKind.credit_pack, 100, True)
-    assert _payment(sm, pid_a).grant_units == 100
-    [notice] = _outbox(sm, student)
-    assert notice.context["notice"] == "credited"
+    assert _subscription(sm, sid_a).status is SubscriptionStatus.active
+    assert _subscription(sm, sid_b).status is SubscriptionStatus.expired
+    assert len(_periods(sm, sid_a)) == 1
+    [allowance] = grants_of(sm, student)
+    assert allowance.kind is GrantKind.period_allowance
+    assert _payment(sm, pid_a).grant_units is None
+    assert _outbox(sm, student) == []
 
     assert _post_callback(http, obj_a).status_code == 200  # Paymob retries: nothing changes
     assert len(grants_of(sm, student)) == 1
 
     assert _post_callback(http, _obj_for(pid_b, order_b, txn_id=802)).status_code == 200
-    assert _subscription(sm, sid_b).status is SubscriptionStatus.active
+    assert _subscription(sm, sid_a).status is SubscriptionStatus.active
+    assert _subscription(sm, sid_b).status is SubscriptionStatus.expired
     kinds = sorted(grant.kind.value for grant in grants_of(sm, student))
     assert kinds == [GrantKind.credit_pack.value, GrantKind.period_allowance.value]
+    [notice] = _outbox(sm, student)
+    assert notice.context["notice"] == "credited"
 
 
 def test_the_late_paid_checkout_with_the_replacement_already_live_answers_200(
@@ -1090,3 +1343,103 @@ def test_the_activation_time_is_the_payment_time_not_the_wall_clock(
     [grant] = grants_of(pg_sessionmaker, student)
     assert grant.effective_at == paid
     assert _subscription(pg_sessionmaker, sid).current_period_start == paid
+
+
+# -- review minors -----------------------------------------------------------------------
+
+
+def test_credits_go_to_the_beneficiary_and_the_notice_to_the_payer_who_is_a_parent(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """M-2: a parent paid for a child; the child owns the credits, the parent hears of it."""
+    seed_pack(pg_sessionmaker)
+    parent = seed_user(pg_sessionmaker, Role.parent)
+    child = seed_user(pg_sessionmaker, Role.student)
+    sid = seed_subscription(
+        pg_sessionmaker,
+        user_id=child,
+        tier_id=seed_tier(pg_sessionmaker),
+        payer_id=parent,
+        status=SubscriptionStatus.expired,
+        period_start=None,
+        period_end=None,
+    )
+    seed_subscription(
+        pg_sessionmaker, user_id=child, tier_id=seed_tier(pg_sessionmaker), payer_id=child
+    )
+    pid = seed_first_payment(pg_sessionmaker, subscription_id=sid, paid_at=PAID_AT, paymob_txn_id=5)
+    _handle(pg_sessionmaker, pid)
+    [grant] = grants_of(pg_sessionmaker, child)
+    assert grant.kind is GrantKind.credit_pack
+    assert grants_of(pg_sessionmaker, parent) == []
+    assert len(_outbox(pg_sessionmaker, parent)) == 1
+    assert _outbox(pg_sessionmaker, child) == []
+
+
+def test_an_assistant_is_never_a_seat(pg_sessionmaker: sessionmaker[Session]) -> None:
+    """M-3: assistants do not count toward capacity, so none is shed for being over it."""
+    teacher, _, pid, members = _teacher_plan(pg_sessionmaker, included_seats=2, seats=2)
+    assistant = add_assistant(
+        pg_sessionmaker, teacher_id=teacher, assistant_id=seed_user(pg_sessionmaker, Role.student)
+    )
+    _handle(pg_sessionmaker, pid)
+    assert {_seat_status(pg_sessionmaker, m).status for m in members} == {
+        TeacherMemberStatus.active
+    }
+    assert _seat_status(pg_sessionmaker, assistant).status is TeacherMemberStatus.active
+
+
+def test_shedding_a_seat_raises_an_alert(pg_sessionmaker: sessionmaker[Session]) -> None:
+    """M-7: the backstop removes a student the teacher did not choose to remove: page someone."""
+    _, _, pid, _ = _teacher_plan(pg_sessionmaker, included_seats=2, seats=3)
+    with capture_logs() as logs:
+        _handle(pg_sessionmaker, pid)
+    [entry] = _events_named(logs, "seats_shed_after_plan_change")
+    assert entry["alert"] is True
+    assert entry["count"] == 1
+
+
+def test_convert_refuses_a_credit_pack_payment(pg_sessionmaker: sessionmaker[Session]) -> None:
+    """M-4: a pack's ``grant_units`` is its checkout snapshot; converting it would pay twice."""
+    seed_pack(pg_sessionmaker)
+    payer = seed_user(pg_sessionmaker, Role.student)
+    pack = seed_pack(pg_sessionmaker)
+    pid = seed_payment(
+        pg_sessionmaker,
+        payer=payer,
+        beneficiary=payer,
+        pack_id=pack,
+        status=PaymentStatus.paid,
+        paid_at=PAID_AT,
+    )
+    sid = seed_subscription(
+        pg_sessionmaker, user_id=payer, tier_id=seed_tier(pg_sessionmaker), payer_id=payer
+    )
+    with pytest.raises(ValueError, match="credit pack"):
+        _convert(pg_sessionmaker, pid, sid)
+    assert grants_of(pg_sessionmaker, payer) == []
+
+
+def test_convert_refuses_a_payment_that_already_paid_for_a_period(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    seed_pack(pg_sessionmaker)
+    student, sid, pid = _pending(pg_sessionmaker)
+    _handle(pg_sessionmaker, pid)  # activated: the payment bought a period
+    with pytest.raises(ValueError, match="period"):
+        _convert(pg_sessionmaker, pid, sid)
+    assert [g.kind for g in grants_of(pg_sessionmaker, student)] == [GrantKind.period_allowance]
+
+
+def test_convert_refuses_grant_units_that_no_conversion_issued(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    seed_pack(pg_sessionmaker)
+    student, sid, pid = _pending(pg_sessionmaker)
+    with pg_sessionmaker.begin() as session:
+        payment = session.get(Payment, pid)
+        assert payment is not None
+        payment.grant_units = 500  # a snapshot, but no credited grant exists
+    with pytest.raises(ValueError, match="grant units"):
+        _convert(pg_sessionmaker, pid, sid)
+    assert grants_of(pg_sessionmaker, student) == []
