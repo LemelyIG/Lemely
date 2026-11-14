@@ -51,6 +51,9 @@ describe("shouldDefaultToPush", () => {
     expect(decide({ currentState: { lemelyDialog: true } })).toBe(false)
     expect(decide({ options: { state: { lemelyDialog: true } } })).toBe(false)
   })
+  it("skips a navigation made from inside a route-backed overlay (Settings)", () => {
+    expect(decide({ currentState: { backgroundLocation: { pathname: "/teacher" } } })).toBe(false)
+  })
   it("skips a route-backed overlay", () => {
     expect(decide({ options: { state: { backgroundLocation: { pathname: "/student" } } } })).toBe(false)
   })

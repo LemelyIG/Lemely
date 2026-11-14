@@ -63,8 +63,10 @@ export function shouldDefaultToPush(input: PushDecisionInput): boolean {
   if (typeof to === "number") return false
   if (options?.replace) return false
   // A navigation made from inside an open dialog or sheet dismisses it: native iOS closes the
-  // sheet and shows the destination, with no push behind it.
+  // sheet and shows the destination, with no push behind it. A route-backed overlay (Settings)
+  // is the same sheet: its entry carries `backgroundLocation`, so leaving it does not push either.
   if (hasKey(currentState, "lemelyDialog") || hasKey(options?.state, "lemelyDialog")) return false
+  if (hasKey(currentState, "backgroundLocation")) return false
   // A route-backed overlay opens as a dialog over the page, it is not a drill-down.
   if (hasKey(options?.state, "backgroundLocation")) return false
   const target = targetPathname(to, currentPathname)

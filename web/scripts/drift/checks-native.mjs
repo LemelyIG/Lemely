@@ -3369,7 +3369,7 @@ NATIVE_CHECKS.push({
 // ---------------------------------------------------------------------------------------------
 
 /** Installed standalone (as STANDALONE) and records every document.startViewTransition call. */
-const VT_PROBE = () => {
+const NAVCOV_VT_PROBE = () => {
   Object.defineProperty(navigator, "standalone", { value: true })
   const real = window.matchMedia.bind(window)
   window.matchMedia = (q) =>
@@ -3377,14 +3377,14 @@ const VT_PROBE = () => {
       ? { matches: true, media: q, addEventListener() {}, removeEventListener() {} }
       : real(q)
   // The harness's fixed clock fakes performance.now/measure on the instance; keep the real ones.
-  window.__realPerf = {}
-  for (const k of ["now", "measure", "getEntriesByName", "clearMeasures"]) window.__realPerf[k] = performance[k].bind(performance)
-  window.__vt = []
+  window.__navcovPerf = {}
+  for (const k of ["now", "measure", "getEntriesByName", "clearMeasures"]) window.__navcovPerf[k] = performance[k].bind(performance)
+  window.__navcovVt = []
   const start = document.startViewTransition?.bind(document)
   if (start) {
     document.startViewTransition = (arg) => {
       const rec = { from: location.pathname, to: null, direction: null }
-      window.__vt.push(rec)
+      window.__navcovVt.push(rec)
       const transition = start(arg)
       transition.updateCallbackDone
         .then(() => {
@@ -3397,7 +3397,7 @@ const VT_PROBE = () => {
   }
 }
 
-const PUSH_SUBJECT_MOCKS = async (page) => {
+const NAVCOV_SUBJECT_MOCKS = async (page) => {
   await NATIVE_SUBJECT.mocks(page)
   // Overview lists the subjects; the subject page lists a paper so its history row can be tapped.
   await page.route(/\/api\/student\/subject\/0606(\?|$)/, (route) =>
@@ -3407,28 +3407,28 @@ const PUSH_SUBJECT_MOCKS = async (page) => {
     }),
   )
 }
-const PUSH_APP = (path) => ({ ...NATIVE_HOME, path, init: VT_PROBE, mocks: PUSH_SUBJECT_MOCKS })
+const NAVCOV_APP = (path) => ({ ...NATIVE_HOME, path, init: NAVCOV_VT_PROBE, mocks: NAVCOV_SUBJECT_MOCKS })
 
-const vtLog = (page) => page.evaluate(() => window.__vt)
-async function expectOneTransition(page, to, direction) {
-  await page.waitForFunction(() => window.__vt.some((r) => r.direction !== null), null, { timeout: 5000 }).catch(() => {})
-  const log = await vtLog(page)
+const navcovVtLog = (page) => page.evaluate(() => window.__navcovVt)
+async function navcovExpectOne(page, to, direction) {
+  await page.waitForFunction(() => window.__navcovVt.some((r) => r.direction !== null), null, { timeout: 5000 }).catch(() => {})
+  const log = await navcovVtLog(page)
   if (log.length !== 1) throw new Error(`expected one view transition, saw ${log.length}: ${JSON.stringify(log)}`)
   if (log[0].direction !== direction) throw new Error(`direction ${log[0].direction}, expected ${direction}`)
   if (to && log[0].to !== to) throw new Error(`transition went to ${log[0].to}, expected ${to}`)
 }
-async function expectNoTransition(page, what) {
+async function navcovExpectNone(page, what) {
   await page.waitForTimeout(700)
-  const log = await vtLog(page)
+  const log = await navcovVtLog(page)
   if (log.length) throw new Error(`${what} started a view transition: ${JSON.stringify(log)}`)
 }
-const routerNavigate = (page, to, options) =>
+const navcovRouterNavigate = (page, to, options) =>
   page.evaluate(([t, o]) => {
     if (!window.__lemelyRouter) throw new Error("no window.__lemelyRouter (harness flag missing)")
     return window.__lemelyRouter.navigate(t, o)
   }, [to, options])
 
-const PUSH_CASES = {
+const NAVCOV_CASES = {
   link: {
     path: "/student",
     to: "/student/subject/0606",
@@ -3454,16 +3454,16 @@ const PUSH_CASES = {
 
 NATIVE_CHECKS.push(
   ...["ios", "android"].flatMap((platform) =>
-    Object.entries(PUSH_CASES).map(([name, c]) => ({
+    Object.entries(NAVCOV_CASES).map(([name, c]) => ({
       id: `native-${platform}-push-default-${name}-starts-a-forward-transition`,
       platform,
       width: 390,
-      app: PUSH_APP(c.path),
+      app: NAVCOV_APP(c.path),
       async run(page) {
         await page.locator("main").waitFor()
         await c.act(page)
         await page.waitForURL(`**${c.to}`)
-        await expectOneTransition(page, c.to, "forward")
+        await navcovExpectOne(page, c.to, "forward")
       },
     })),
   ),
@@ -3471,16 +3471,16 @@ NATIVE_CHECKS.push(
     id: `native-${platform}-push-default-back-plays-back`,
     platform,
     width: 390,
-    app: PUSH_APP("/student"),
+    app: NAVCOV_APP("/student"),
     async run(page) {
       await page.locator("main").waitFor()
-      await PUSH_CASES.link.act(page)
+      await NAVCOV_CASES.link.act(page)
       await page.waitForURL("**/student/subject/0606")
-      await expectOneTransition(page, "/student/subject/0606", "forward")
+      await navcovExpectOne(page, "/student/subject/0606", "forward")
       await page.evaluate(() => window.history.back())
       await page.waitForURL(/\/student$/)
-      await page.waitForFunction(() => window.__vt.length >= 2 && window.__vt[1].direction !== null, null, { timeout: 5000 }).catch(() => {})
-      const log = await vtLog(page)
+      await page.waitForFunction(() => window.__navcovVt.length >= 2 && window.__navcovVt[1].direction !== null, null, { timeout: 5000 }).catch(() => {})
+      const log = await navcovVtLog(page)
       if (log.length !== 2 || log[1].direction !== "back") throw new Error(`back did not play back: ${JSON.stringify(log)}`)
     },
   })),
@@ -3490,22 +3490,22 @@ NATIVE_CHECKS.push(
     ["other-390", { width: 390 }],
     ["tablet-ios-800", { width: 800, platform: "ios" }],
   ].flatMap(([name, frame]) =>
-    Object.entries(PUSH_CASES)
+    Object.entries(NAVCOV_CASES)
       // On the touch tablet the notification card's Open tap opens its long-press popover instead
       // (pre-existing, unrelated); the same navigate() call is covered by the programmatic case.
       .filter(([caseName]) => !(name.startsWith("tablet") && caseName === "notification"))
       .map(([caseName, c]) => ({
       id: `native-push-default-none-on-${name}-${caseName}`,
       ...frame,
-      app: PUSH_APP(c.path),
+      app: NAVCOV_APP(c.path),
       async run(page) {
         await page.locator("main").waitFor()
         await c.act(page).catch(async () => {
           // A phone-only row may be absent on a wide layout; the programmatic route is the same call.
-          await routerNavigate(page, c.to)
+          await navcovRouterNavigate(page, c.to)
         })
         await page.waitForURL(`**${c.to}`)
-        await expectNoTransition(page, `${name} ${caseName}`)
+        await navcovExpectNone(page, `${name} ${caseName}`)
       },
     })),
   ),
@@ -3513,37 +3513,37 @@ NATIVE_CHECKS.push(
     id: "native-ios-push-default-none-for-a-search-param-change",
     platform: "ios",
     width: 390,
-    app: PUSH_APP("/student/classes"),
+    app: NAVCOV_APP("/student/classes"),
     async run(page) {
       await page.locator("main").waitFor()
-      await routerNavigate(page, "?filter=open")
+      await navcovRouterNavigate(page, "?filter=open")
       await page.waitForURL(/filter=open/)
-      await expectNoTransition(page, "a search-only navigation")
+      await navcovExpectNone(page, "a search-only navigation")
     },
   },
   {
     id: "native-ios-push-default-none-for-explicit-false",
     platform: "ios",
     width: 390,
-    app: PUSH_APP("/student"),
+    app: NAVCOV_APP("/student"),
     async run(page) {
       await page.locator("main").waitFor()
-      await routerNavigate(page, "/student/classes", { viewTransition: false })
+      await navcovRouterNavigate(page, "/student/classes", { viewTransition: false })
       await page.waitForURL(/\/student\/classes/)
-      await expectNoTransition(page, "viewTransition: false")
+      await navcovExpectNone(page, "viewTransition: false")
     },
   },
   {
     id: "native-ios-push-default-router-exposure-pushes",
     platform: "ios",
     width: 390,
-    app: PUSH_APP("/student"),
+    app: NAVCOV_APP("/student"),
     async run(page) {
       await page.locator("main").waitFor()
       // Control: the window router (harness flag) drives a programmatic push through the middleware.
-      await routerNavigate(page, "/student/classes")
+      await navcovRouterNavigate(page, "/student/classes")
       await page.waitForURL(/\/student\/classes/)
-      await expectOneTransition(page, "/student/classes", "forward")
+      await navcovExpectOne(page, "/student/classes", "forward")
     },
   },
   ...[
@@ -3566,12 +3566,12 @@ NATIVE_CHECKS.push(
     id: `native-ios-push-default-none-for-sheet-${name}`,
     platform: "ios",
     width: 390,
-    app: { ...NATIVE_HOME, init: VT_PROBE, mocks: PUSH_SUBJECT_MOCKS },
+    app: { ...NATIVE_HOME, init: NAVCOV_VT_PROBE, mocks: NAVCOV_SUBJECT_MOCKS },
     async run(page) {
       const { row } = await c.open(page)
       await row.click()
       await page.waitForFunction(() => location.pathname !== "/student", null, { timeout: 5000 })
-      await expectNoTransition(page, `a ${name} tap`)
+      await navcovExpectNone(page, `a ${name} tap`)
     },
   })),
 );
@@ -3582,12 +3582,12 @@ NATIVE_CHECKS.push({
   id: "native-ios-snapshot-capture-is-measured",
   platform: "ios",
   width: 390,
-  app: PUSH_APP("/student"),
+  app: NAVCOV_APP("/student"),
   async run(page) {
     await page.locator("main").waitFor()
-    // Put the real User Timing methods back (VT_PROBE kept them) so the figure is a real one.
-    await page.evaluate(() => Object.assign(performance, window.__realPerf))
-    await PUSH_CASES.link.act(page)
+    // Put the real User Timing methods back (NAVCOV_VT_PROBE kept them) so the figure is a real one.
+    await page.evaluate(() => Object.assign(performance, window.__navcovPerf))
+    await NAVCOV_CASES.link.act(page)
     await page.waitForURL("**/student/subject/0606")
     const got = await page.evaluate(() =>
       performance.getEntriesByName("lemely:snapshot-capture").map((e) => ({ ms: e.duration, ...e.detail })),
@@ -3596,3 +3596,41 @@ NATIVE_CHECKS.push({
     console.log(`      capture timing: ${got.map((g) => `${g.ms.toFixed(1)}ms (${g.outcome})`).join(", ")}`)
   },
 });
+
+// Fix round 1: Settings is a route-backed sheet on phones. Its entry carries `backgroundLocation`,
+// so a link out of it ("Open class") dismisses the sheet with no push behind it.
+NATIVE_CHECKS.push(
+  ...["ios", "android"].map((platform) => ({
+    id: `native-${platform}-push-default-none-for-settings-sheet-open-class`,
+    platform,
+    width: 390,
+    app: {
+      ...NATIVE_TEACHER_HOME,
+      init: NAVCOV_VT_PROBE,
+      mocks: async (page) => {
+        await teacherShellMocks(page)
+        await page.route("**/api/teacher/classes", (route) =>
+          jsonRoute(route, {
+            classes: [{ id: "c1", label: "Y11 Physics A", studentCount: 24, average: 64.2, subjectCode: "0625", subjectName: "Physics", schoolId: null, joinCode: "PHY11A", atRiskCount: 2, lastActivityAt: null, topWeakness: null }],
+          }),
+        )
+      },
+    },
+    async run(page) {
+      await page.locator("main").waitFor()
+      await page.getByRole("link", { name: "Settings" }).click()
+      const dialog = page.getByRole("dialog")
+      await dialog.waitFor()
+      // Switching tabs inside the sheet replaces its entry and keeps the overlay state.
+      await dialog.getByText("Classes and grading", { exact: false }).first().click()
+      const open = dialog.getByRole("link", { name: "Open Y11 Physics A" })
+      await open.waitFor()
+      const before = (await navcovVtLog(page)).length
+      await open.click()
+      await page.waitForURL(/\/teacher\/classes\/c1/)
+      await page.waitForTimeout(700)
+      const log = await navcovVtLog(page)
+      if (log.length !== before) throw new Error(`"Open class" from the Settings sheet started a view transition: ${JSON.stringify(log.slice(before))}`)
+    },
+  })),
+);

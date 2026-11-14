@@ -5,7 +5,7 @@
  * to find it by walking React's private fiber tree, which breaks with any React internals change.
  * This is the supported seam instead: present in the dev server, and in a production build only
  * when the harness set `window.__LEMELY_DRIFT__` before the app loaded (`scripts/drift/harness.mjs`
- * does, through an init script). A shopper's browser sets neither, and the router is no more
+ * does, through an init script). A student's or teacher's browser sets neither, and the router is no more
  * powerful than typing a URL.
  */
 export const DRIFT_FLAG = "__LEMELY_DRIFT__"
