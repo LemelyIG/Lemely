@@ -39,7 +39,8 @@ export interface FabProps extends ButtonHTMLAttributes<HTMLButtonElement> {
  * and the portal layout above it do not re-render on every extend or collapse.
  */
 export const ScrollFab = forwardRef<HTMLButtonElement, Omit<FabProps, "extended">>(function ScrollFab(props, ref) {
-  return <Fab ref={ref} extended={useExtendedOnScroll()} {...props} />
+  const extended = useExtendedOnScroll()
+  return <Fab ref={ref} extended={extended} {...props} />
 })
 
 export const Fab = forwardRef<HTMLButtonElement, FabProps>(function Fab(

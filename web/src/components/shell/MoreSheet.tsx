@@ -46,7 +46,7 @@ export function MoreSheet({
       >
         {/* iOS sheets close from the top corner, as the Create sheet does; Android has the scrim and Back. */}
         <div className="hidden native:ios:contents">
-          <CloseButton />
+          <CloseButton className="top-[27px] -translate-y-1/2" />
         </div>
         <ListGroup>
           {items.map((item) => (

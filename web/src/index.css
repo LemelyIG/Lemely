@@ -933,6 +933,9 @@
     background: var(--md-secondary-container);
     border-radius: var(--radius-pill);
     margin-inline: var(--space-3);
+    /* The pill is inset by its margin, and the row's own 16px padding drops by the same amount, so the
+       glyph and label stay on the other rows' x. */
+    padding-inline: calc(var(--space-4) - var(--space-3));
     inline-size: auto;
   }
   :root[data-platform="android"] .lm-sheet [data-list-group] [aria-current="page"] :is(span, svg) { color: var(--md-on-secondary-container); }
