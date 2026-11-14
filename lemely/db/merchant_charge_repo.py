@@ -1130,10 +1130,19 @@ def upgrade_void_reason(session: Session, sub: Subscription, payment: Payment) -
 
     Checked under the subscription lock, in this order: the plan ended; the period rolled since
     the checkout was priced; the target is no longer an upgrade over the tier now billed (another
-    payment already switched it); another upgrade was paid after this checkout was priced, so its
-    amount was computed from a tier that is no longer current.
+    payment already switched it); the price recomputed from the terms billed now, at the instant
+    the checkout was priced, differs from the amount charged (an upgrade landed after the quote,
+    or the target's price changed).
+
+    A downgrade, cancel or seat-capacity change scheduled after the checkout is not re-checked
+    here: the payer bought the upgrade for the rest of the period, and the scheduled change takes
+    effect at the renewal as it would have anyway, so no money is lost either way.
     """
-    if sub.status not in PLAN_LIVE_STATUSES or sub.current_period_start is None:
+    if (
+        sub.status not in PLAN_LIVE_STATUSES
+        or sub.current_period_start is None
+        or sub.current_period_end is None
+    ):
         return "plan_ended"
     if sub.current_period_start > payment.created_at:
         return "period_rolled"
@@ -1147,18 +1156,17 @@ def upgrade_void_reason(session: Session, sub: Subscription, payment: Payment) -
         )
     ):
         return "not_an_upgrade_now"
-    later = session.scalar(
-        sa.select(Payment.id)
-        .where(
-            Payment.subscription_id == sub.id,
-            Payment.purpose == PaymentPurpose.upgrade_proration,
-            Payment.status == PaymentStatus.paid,
-            Payment.id != payment.id,
-            Payment.paid_at >= payment.created_at,
-        )
-        .limit(1)
+    # Reprice: what this checkout would cost if it were started at the instant it was priced, from
+    # the terms billed NOW. Another upgrade that changed the tier (X landed, this was priced
+    # old -> Y), or an admin price change on the target, makes the price differ; a payment that
+    # was only converted to credits never moved the tier, so it can never trigger this.
+    repriced = prorate_minor(
+        current_terms(session, target).price_minor - billed_terms(session, sub).price_minor,
+        sub.current_period_start,
+        sub.current_period_end,
+        payment.created_at,
     )
-    return "superseded" if later is not None else None
+    return "superseded" if repriced != payment.amount_minor else None
 
 
 def credit_void_payment(

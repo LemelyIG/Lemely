@@ -683,14 +683,10 @@ def test_a_paid_upgrade_switches_the_tier_once_through_the_real_callback_path(
     obj = _txn(_payment(sm, payment_id))
 
     _deliver(sm, obj)
-    _deliver(sm, obj)  # Paymob retries a callback
-    with sm() as session:  # and the reconcile pass finds nothing left to settle
-        reconcile = _CheckoutClient()
-        reconcile.inquiry_response = None  # other tests' open payments: nothing to settle
-        BillingService(
-            session, reconcile, PAYMOB_SETTINGS, now=lambda: NOW + timedelta(hours=1)
-        ).reconcile_pending(now=NOW + timedelta(hours=1))
-        session.commit()
+    # Paymob retries a callback. There is deliberately no reconcile leg: ``reconcile_pending``
+    # never selects a ``paid`` payment, so it would pass whatever the handler does. Exactly-once
+    # rests on the two callbacks, the ``upgrade:{id}`` grant key and ``version`` bumped once.
+    _deliver(sm, obj)
 
     after = _sub(sm, scene)
     assert after.plan_tier_id == target
@@ -712,8 +708,7 @@ def test_a_paid_upgrade_switches_the_tier_once_through_the_real_callback_path(
     assert grant.expires_at == PERIOD_END
     assert grant.subscription_period_id == scene["period_id"]
     assert grant.payment_id == payment_id
-    assert client.names() == [] and reconcile.names() == []  # no Paymob write anywhere
-    assert str(payment_id) not in reconcile.inquiries  # a paid payment is never inquired
+    assert client.names() == []  # no Paymob write anywhere
     assert _credited_notices(sm, scene["payer_id"]) == 0
 
 
@@ -1063,3 +1058,91 @@ def test_a_quote_cannot_be_edited() -> None:
     quote = ChargeQuote(amount_minor=1, currency="EGP", allowance_units=0, period_end=PERIOD_END)
     with pytest.raises(dataclasses.FrozenInstanceError):
         quote.amount_minor = 2  # type: ignore[misc]
+
+
+def _publish_terms(
+    sm: sessionmaker[Session], tier_id: uuid.UUID, version: int, price_minor: int
+) -> None:
+    """An admin publishes the next terms version of ``tier_id`` at ``price_minor``."""
+    with sm.begin() as session:
+        session.execute(
+            sa.text(
+                "INSERT INTO plan_tier_terms (plan_tier_id, terms_version, price_minor, "
+                "extra_seat_price_minor, allowance_units, included_seats, seat_allowance_units) "
+                "SELECT plan_tier_id, :v, :p, extra_seat_price_minor, allowance_units, "
+                "included_seats, seat_allowance_units FROM plan_tier_terms "
+                "WHERE plan_tier_id = :tier AND terms_version = 1"
+            ),
+            {"tier": tier_id, "v": version, "p": price_minor},
+        )
+        session.execute(
+            sa.text("UPDATE plan_tiers SET price_minor = :p, terms_version = :v WHERE id = :t"),
+            {"t": tier_id, "v": version, "p": price_minor},
+        )
+
+
+def test_a_credited_payment_does_not_supersede_a_correctly_priced_upgrade(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _student(sm)
+    x_tier = _target(sm, price_minor=20_000)
+    y_tier = _target(sm, price_minor=30_000, allowance_units=5_000)
+    client = _CheckoutClient()
+    a = _checkout(sm, client, scene, x_tier)
+    b = _checkout(sm, client, scene, x_tier, now=NOW + timedelta(minutes=1))
+    _pay(sm, a, at=NOW + timedelta(minutes=2))  # applied: the tier is X
+    c = _checkout(sm, client, scene, y_tier, now=NOW + timedelta(minutes=3))  # priced X -> Y
+    with capture_logs() as logs:
+        _pay(sm, b, at=NOW + timedelta(minutes=4))  # stale same-target tab: credited, moves nothing
+        _pay(sm, c, at=NOW + timedelta(minutes=5))
+
+    reasons = [log["reason"] for log in logs if log["event"] == "merchant_charge_credited"]
+    assert reasons == ["not_an_upgrade_now"]  # only B; C was priced correctly and is applied
+    assert _sub(sm, scene).plan_tier_id == y_tier
+    assert _grant(sm, scene["user_id"], f"upgrade:{c}") is not None
+    assert _grant(sm, scene["user_id"], f"credited:{c}") is None
+    assert _grant(sm, scene["user_id"], f"credited:{b}") is not None
+
+
+def test_an_upgrade_credited_for_a_rolled_period_does_not_void_a_later_one(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _student(sm)
+    x_tier = _target(sm, price_minor=20_000)
+    old_checkout = _checkout(sm, _CheckoutClient(), scene, x_tier)
+    renewed = NOW + timedelta(days=1)
+    _update_sub(
+        sm, scene, current_period_start=renewed, current_period_end=renewed + timedelta(days=30)
+    )
+    fresh_now = renewed + timedelta(days=15)
+    fresh = _checkout(sm, _CheckoutClient(), scene, x_tier, now=fresh_now)
+    _pay(sm, old_checkout, at=fresh_now + timedelta(minutes=1))  # credited: period_rolled
+    with capture_logs() as logs:
+        _pay(sm, fresh, at=fresh_now + timedelta(minutes=2))
+
+    assert not [log for log in logs if log["event"] == "merchant_charge_credited"]
+    assert _sub(sm, scene).plan_tier_id == x_tier
+    assert _grant(sm, scene["user_id"], f"upgrade:{fresh}") is not None
+
+
+def test_a_target_price_raised_between_checkout_and_payment_is_credited_not_applied(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _student(sm)
+    target = _target(sm, price_minor=20_000)
+    payment_id = _checkout(sm, _CheckoutClient(), scene, target)  # charged 5 000
+    _publish_terms(sm, target, 2, 40_000)
+
+    with capture_logs() as logs:
+        _pay(sm, payment_id)
+
+    after = _sub(sm, scene)
+    assert (after.plan_tier_id, after.terms_version) == (scene["tier_id"], 1)  # never moved to v2
+    assert _grant(sm, scene["user_id"], f"upgrade:{payment_id}") is None
+    credited = _grant(sm, scene["user_id"], f"credited:{payment_id}")
+    assert credited is not None
+    [event] = [log for log in logs if log["event"] == "merchant_charge_credited"]
+    assert event["reason"] == "superseded"
