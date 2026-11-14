@@ -25,7 +25,8 @@ describe("native shell frame fixes (audit batch A)", () => {
     expect(css).toMatch(/\.lm-native-card:not\(\[data-native-bleed="off"\]\) \{\s*padding-inline: calc\(var\(--space-4\) - var\(--native-gutter-android\)\);/)
     expect(css).toMatch(/> :is\(\.lm-native-card-body, \.lm-native-card-row\) \{ padding-inline: 0; \}/)
     expect(css).toMatch(/> \.lm-native-card-row \{ border-inline-start-width: 0; \}/)
-    expect(css).toMatch(/divide-y"\] > \*, \.border-t, \.border-b, \.lm-native-divider\) \{\s*border-block-width: 0;/)
+    expect(css).toMatch(/divide-y"\] > \*, \.lm-native-divider\) \{\s*border-block-width: 0;/)
+    expect(css).toMatch(/\.lm-native-card:not\(\[data-native-bleed="off"\]\) > :is\(\.border-t, \.border-b\) \{\s*border-block-width: 0;/)
     expect(css).toMatch(/\[data-platform="ios"\] \.lm-native-main \{\s*padding-left: max\(var\(--native-group-inset-ios\), env\(safe-area-inset-left\)\);\s*padding-right: max\(var\(--native-group-inset-ios\), env\(safe-area-inset-right\)\);/)
     expect(css).toMatch(/\[data-platform="android"\] \.lm-native-main \{\s*--native-bleed-l: max\(var\(--native-gutter-android\), env\(safe-area-inset-left\)\);\s*--native-bleed-r: max\(var\(--native-gutter-android\), env\(safe-area-inset-right\)\);\s*padding-left: var\(--native-bleed-l\);/)
   })
@@ -39,8 +40,8 @@ describe("native shell frame fixes (audit batch A)", () => {
   })
 
   it("an own-text page heading steps down on native phones only", () => {
-    expect(css).toMatch(/\[data-page-heading="own"\] \{\s*font: 800 var\(--native-headline-size\) \/ var\(--native-headline-lh\) var\(--font-display\);/)
-    expect(css).toMatch(/--native-headline-size: 28px;/)
+    expect(css).toMatch(/\[data-page-heading="own"\] \{\s*font: 800 var\(--native-headline-size\) \/ var\(--native-headline-lh\) var\(--font-sans\);/)
+    expect(css).toMatch(/--native-headline-size: 24px;/)
   })
 
   it("the FAB is an M3 56px primary-container button above the tab bar; the iOS plus sits in the large-title row", () => {
@@ -88,7 +89,7 @@ describe("native shell frame fixes (audit batch A)", () => {
     expect(shell).toContain("onClick: () => (native ? setMoreOpen(true) : setNavOpen(true))")
     expect(shell).toContain("open={moreOpen && native}")
     expect(shell).toContain("tabTargets.has(item.to)")
-    expect(read("components/shell/MoreSheet.tsx")).toContain('<SheetTitle className="lm-native-sheet-title mb-4 text-display-md">More</SheetTitle>')
+    expect(read("components/shell/MoreSheet.tsx")).toContain('<SheetTitle className="lm-native-sheet-title w-full px-6 pb-4 pt-0 text-display-md">More</SheetTitle>')
   })
 
   it("a pop to the tab root is a REPLACE that reads as back", () => {

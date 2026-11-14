@@ -2836,7 +2836,7 @@ const reviewItems = [
   paperNumber: 2, paperVariant: 1, sessionMonth: "May", sessionYear: 2026, questionId: q, reason, status: "open",
   createdAt: "2026-11-12T08:00:00Z", waitingHours: 30, aiAwardedMarks: 2, maximumMarks: 3, confidenceScore: conf,
 }));
-const reviewApp = (query = "", nextCursor = null) => ({
+export const reviewApp = (query = "", nextCursor = null) => ({
   surface: "teacher-overview",
   state: "populated",
   path: `/teacher/review${query}`,

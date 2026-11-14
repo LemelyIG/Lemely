@@ -139,6 +139,12 @@ describe("index.css carries the View Transition rules and their reduced-motion g
     expect(css).toContain("html:active-view-transition .lm-screen")
   })
 
+  it("does it with a zero duration, never `animation: none`, which restarts the entrance when the transition ends", () => {
+    const rule = css.match(/html:active-view-transition \.lm-screen \{([^}]*)\}/)?.[1] ?? ""
+    expect(rule).toMatch(/animation-duration:\s*0s/)
+    expect(rule).not.toMatch(/animation:\s*none/)
+  })
+
   it("styles the root pseudo-elements directionally", () => {
     expect(css).toContain("::view-transition-old(root)")
     expect(css).toContain("::view-transition-new(root)")

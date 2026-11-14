@@ -77,7 +77,8 @@ describe("ui/sheet.tsx (Task 6)", () => {
   it("does not forward the desktop panel class to the native surface; the body carries the inset", () => {
     const native = src.slice(src.indexOf("<BottomSheetSurface"), src.indexOf("</BottomSheetSurface>"))
     expect(native).not.toContain("className={className}")
-    expect(native).toContain('bodyClassName="p-6"')
+    expect(native).toContain("bodyClassName={nativeBodyClassName}")
+    expect(src).toContain('nativeBodyClassName = "p-6"')
     expect(native).toContain("tabIndex={-1}")
   })
 })
