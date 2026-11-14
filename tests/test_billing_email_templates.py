@@ -74,7 +74,7 @@ def test_both_failure_templates_are_registered_billing_templates(
     assert cls.template == name
     assert cls.notification_type is NotificationType.billing
     assert name in BILLING_EMAIL_TEMPLATES  # the daily-cap exemption (UD-9) keys on this set
-    assert cls.context_fields == frozenset({key})
+    assert key in cls.context_fields
     assert cls.button == "Open billing"
 
 
@@ -88,7 +88,9 @@ def test_context_refuses_extra_and_missing_keys_and_bad_ids(
     name: str, cls: type[EmailContext], key: str
 ) -> None:
     good = _context(key)
-    assert validate_context(name, good) == good
+    # The seats mail also carries the grace; a row queued before that field reads as 3 days.
+    expected = {**good, "grace_days": 3} if name == "extra_seats_charge_failed" else good
+    assert validate_context(name, good) == expected
     with pytest.raises(InvalidEmailContext):
         validate_context(name, {**good, "amount_minor": 100})
     with pytest.raises(InvalidEmailContext):
@@ -338,6 +340,7 @@ def _seats(
     payer: uuid.UUID,
     subscription_id: uuid.UUID,
     first_attempt_id: uuid.UUID,
+    grace_days: int = 3,
 ) -> bool:
     with sm.begin() as session:
         return enqueue_extra_seats_charge_failed(
@@ -345,6 +348,7 @@ def _seats(
             payer_user_id=payer,
             subscription_id=subscription_id,
             first_attempt_id=first_attempt_id,
+            grace_days=grace_days,
         )
 
 
@@ -444,8 +448,37 @@ def test_seats_helper_queues_one_row_to_the_payer(pg: sessionmaker[Session]) -> 
 
     (row,) = _outbox(pg, payer)
     assert row.template == "extra_seats_charge_failed"
-    assert row.context == {"subscription_id": str(subscription)}
+    assert row.context == {"subscription_id": str(subscription), "grace_days": 3}
     assert row.dedupe_key == f"extra_seats_failed:{first}"
+
+
+def test_seats_context_is_the_id_and_the_grace_and_an_old_row_reads_as_three_days() -> None:
+    assert ExtraSeatsChargeFailed.context_fields == frozenset({"subscription_id", "grace_days"})
+    old = validate_context("extra_seats_charge_failed", {"subscription_id": str(SUBSCRIPTION_ID)})
+    assert ExtraSeatsChargeFailed.model_validate(old).grace_days == 3  # queued before the field
+    for bad in (0, 8, -1, "three"):
+        with pytest.raises(InvalidEmailContext):
+            validate_context(
+                "extra_seats_charge_failed",
+                {"subscription_id": str(SUBSCRIPTION_ID), "grace_days": bad},
+            )
+
+
+@pytest.mark.parametrize("days", [1, 2, 3, 7])
+def test_the_seats_row_carries_the_grace_the_failure_started(
+    pg: sessionmaker[Session], days: int
+) -> None:
+    payer = seed_user(pg, Role.teacher)
+
+    assert _seats(pg, payer, uuid.uuid4(), uuid.uuid4(), days) is True
+
+    (row,) = _outbox(pg, payer)
+    assert row.context["grace_days"] == days
+    lead = ExtraSeatsChargeFailed.model_validate(
+        {**row.context, "subscription_id": str(SUBSCRIPTION_ID)}
+    ).lead()
+    assert f"within {days} day" in lead
+    assert ("each day" in lead) == (days > 1)
 
 
 def test_the_same_failure_is_queued_once(pg: sessionmaker[Session]) -> None:

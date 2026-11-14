@@ -122,8 +122,12 @@ def enqueue_extra_seats_charge_failed(
     payer_user_id: uuid.UUID,
     subscription_id: uuid.UUID,
     first_attempt_id: uuid.UUID,
+    grace_days: int,
 ) -> bool:
     """Queue the "your extra seats payment failed" notice to the payer.
+
+    ``grace_days`` is the grace this run started with (``billing_settings.grace_days`` then), so
+    the copy names the days the payer really has.
 
     ``first_attempt_id`` is the first failed payment of the run of daily retries, so the payer
     hears once per run and not once per daily attempt. ``True`` when a row was written;
@@ -133,7 +137,7 @@ def enqueue_extra_seats_charge_failed(
         session,
         recipient_user_id=payer_user_id,
         template="extra_seats_charge_failed",
-        context={"subscription_id": subscription_id},
+        context={"subscription_id": subscription_id, "grace_days": grace_days},
         dedupe_key=f"extra_seats_failed:{first_attempt_id}",
     )
 

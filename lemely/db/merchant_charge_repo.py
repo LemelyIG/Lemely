@@ -1843,6 +1843,43 @@ def seats_void_reason(session: Session, sub: Subscription, payment: Payment) -> 
     return "superseded" if repriced != payment.amount_minor else None
 
 
+def _settle_renewal_seat_payment(
+    session: Session, sub: Subscription, payment: Payment, *, paid_at: datetime
+) -> None:
+    """A fallback renewal seat charge was paid: end its grace, or convert it to credits (UD-P2).
+
+    It pays for seats the subscription already holds, so it adds none. It buys nothing when the
+    plan ended, when it belongs to an earlier period, or when the seats were already dropped (a
+    late success, R20b, or a callback that waited on the drop's subscription lock): that money
+    becomes credits and ``renewal_seat_payment_credited`` alerts, never silently kept. A grace
+    belonging to another period is left alone, and so is a payment the grace does not cover.
+    """
+    assert payment.dedupe_key is not None  # noqa: S101 - the caller matched the prefix
+    key_period = payment.dedupe_key.removeprefix(RENEWAL_SEAT_DEDUPE_PREFIX).partition(":")[0]
+    period = current_period(session, sub)
+    reason: str | None = None
+    if sub.status not in PLAN_LIVE_STATUSES:
+        reason = "plan_ended"
+    elif period is None or key_period != str(period.id):
+        reason = "period_ended"
+    elif (sub.extra_seats or 0) <= 0:
+        reason = "seats_dropped"
+    if reason is not None:
+        alerts.error(
+            "renewal_seat_payment_credited",
+            alert=True,
+            payment_id=str(payment.id),
+            subscription_id=str(sub.id),
+            reason=reason,
+        )
+        credit_void_payment(session, payment, sub, reason=reason, paid_at=paid_at)
+        return
+    if sub.extra_seat_grace_until is not None and _grace_period_id(session, sub) == key_period:
+        sub.extra_seat_grace_until = None
+        bump_version(sub)
+        session.flush()
+
+
 def on_extra_seats_paid(session: Session, payment: Payment) -> None:
     """Apply a paid ``extra_seats`` payment: raise ``extra_seats`` by the quantity bought.
 
@@ -1872,26 +1909,7 @@ def on_extra_seats_paid(session: Session, payment: Payment) -> None:
         )
         return
     if payment.dedupe_key is not None and payment.dedupe_key.startswith(RENEWAL_SEAT_DEDUPE_PREFIX):
-        if sub.status not in PLAN_LIVE_STATUSES:
-            log.warning(
-                "renewal_seat_paid_for_ended_plan",
-                payment_id=str(payment.id),
-                subscription_id=str(sub.id),
-            )
-        period = current_period(session, sub)
-        key_period = payment.dedupe_key.removeprefix(RENEWAL_SEAT_DEDUPE_PREFIX).partition(":")[0]
-        if period is None or key_period != str(period.id):
-            # A late success for an earlier period must not end this period's grace (m1).
-            log.warning(
-                "renewal_seat_paid_for_other_period",
-                payment_id=str(payment.id),
-                subscription_id=str(sub.id),
-            )
-            return
-        if sub.extra_seat_grace_until is not None:
-            sub.extra_seat_grace_until = None
-            bump_version(sub)
-            session.flush()
+        _settle_renewal_seat_payment(session, sub, payment, paid_at=paid_at)
         return
     quantity = payment.seat_quantity
     if quantity is None:
@@ -1981,33 +1999,24 @@ def _renewal_payment(session: Session, period: SubscriptionPeriod) -> Payment | 
 
 def _period_terms(
     session: Session, sub: Subscription, period: SubscriptionPeriod, renewal: Payment
-) -> PlanTierTerms:
-    """The terms the period was billed on, never the tier's live ones (UD13-A, DV-3).
+) -> PlanTierTerms | None:
+    """The terms the period was billed on, never the tier's live ones (UD13-A, DV-3), or ``None``.
 
-    ``period.terms_version`` when the renewal stamped it. Otherwise the terms the subscriber is
-    billed on (:func:`billed_terms`), unless the subscription has changed tier since the renewal
-    (an upgrade): then the renewal payment's own tier, at the version in force when the renewal
-    was paid (the oldest one when the history starts later than that). Reading the new tier
-    would turn the upgrade's price gap into a "seat" charge.
+    ``period.terms_version`` when the renewal stamped it, on the renewal payment's own tier.
+    Otherwise the terms the subscriber is billed on (:func:`billed_terms`), but only while the
+    subscription is still on the renewal's tier. After a tier change (an upgrade) with no stamped
+    version the billed terms of the period cannot be known exactly, and a guess would turn the
+    upgrade's price gap into a "seat" charge: ``None``, and the caller charges nothing.
     """
     tier_id = renewal.plan_tier_id or sub.plan_tier_id
-    if period.terms_version is None and tier_id == sub.plan_tier_id:
-        return billed_terms(session, sub)
-    query = sa.select(PlanTierTerms).where(PlanTierTerms.plan_tier_id == tier_id)
-    if period.terms_version is not None:
-        terms = session.scalars(
-            query.where(PlanTierTerms.terms_version == period.terms_version)
-        ).first()
-    else:
-        at = renewal.paid_at or period.period_start
-        terms = (
-            session.scalars(
-                query.where(PlanTierTerms.created_at <= at)
-                .order_by(PlanTierTerms.terms_version.desc())
-                .limit(1)
-            ).first()
-            or session.scalars(query.order_by(PlanTierTerms.terms_version).limit(1)).first()
+    if period.terms_version is None:
+        return billed_terms(session, sub) if tier_id == sub.plan_tier_id else None
+    terms = session.scalars(
+        sa.select(PlanTierTerms).where(
+            PlanTierTerms.plan_tier_id == tier_id,
+            PlanTierTerms.terms_version == period.terms_version,
         )
+    ).one_or_none()
     if terms is None:
         raise RuntimeError(f"subscription {sub.id} has no terms row for its period")
     return terms
@@ -2030,7 +2039,10 @@ def renewal_seat_shortfall(session: Session, sub: Subscription, period: Subscrip
 
     ``expected`` is the period's own terms (price plus the extra seats at their seat price);
     ``charged`` is the renewal payment's amount. Seats bought and paid during this period are
-    taken off (they paid the prorated share when bought; abandoned checkouts do not count, DV-27).
+    taken off (they paid the prorated share when bought; abandoned checkouts and purchases turned
+    into credits do not count, DV-27). A period whose terms cannot be known exactly (the tier
+    changed and the renewal stamped no version) owes nothing and alerts
+    ``extra_seat_terms_unknown``.
     The result is clamped to the value of the extra seats, so a renewal that was cheap for any
     other reason never turns into a bigger charge. It never reads ``paymob_amount_minor`` or the
     tier's live price: after an upgrade or a price rise those would charge something that is not
@@ -2043,6 +2055,14 @@ def renewal_seat_shortfall(session: Session, sub: Subscription, period: Subscrip
     if renewal is None:
         return 0
     terms = _period_terms(session, sub, period, renewal)
+    if terms is None:
+        alerts.error(
+            "extra_seat_terms_unknown",
+            alert=True,
+            subscription_id=str(sub.id),
+            period_id=str(period.id),
+        )
+        return 0
     seat_price = terms.extra_seat_price_minor
     extra = sub.extra_seats or 0
     if seat_price <= 0:
@@ -2056,6 +2076,7 @@ def renewal_seat_shortfall(session: Session, sub: Subscription, period: Subscrip
             Payment.purpose == PaymentPurpose.extra_seats,
             Payment.dedupe_key.is_(None),
             Payment.status == PaymentStatus.paid,
+            Payment.grant_units.is_(None),  # one turned into credits added no seats
             Payment.created_at >= period.period_start,
         )
     )
@@ -2126,7 +2147,10 @@ def queue_renewal_seat_charge(
     if _seat_checkout_open(session, sub, now):
         log.info("renewal_seat_charge_deferred", subscription_id=str(sub.id))
         return None
-    seat_price = _period_terms(session, sub, period, renewal).extra_seat_price_minor
+    terms = _period_terms(session, sub, period, renewal)
+    if terms is None:
+        return None
+    seat_price = terms.extra_seat_price_minor
     whole = shortfall % seat_price == 0
     plan = _ShortfallPlan(shortfall, renewal.currency, shortfall // seat_price if whole else None)
     return _queue_attempt(session, sub, period, 1, plan)
@@ -2147,10 +2171,24 @@ def _period_attempts(
     return sorted(rows, key=lambda row: int((row.dedupe_key or prefix).removeprefix(prefix) or 0))
 
 
+def _grace_period_id(session: Session, sub: Subscription) -> str | None:
+    """The period the running grace belongs to: the one its first failed attempt was keyed to."""
+    if sub.extra_seat_grace_payment_id is None:
+        return None
+    key = session.scalar(
+        sa.select(Payment.dedupe_key).where(Payment.id == sub.extra_seat_grace_payment_id)
+    )
+    if key is None or not key.startswith(RENEWAL_SEAT_DEDUPE_PREFIX):
+        return None
+    return key.removeprefix(RENEWAL_SEAT_DEDUPE_PREFIX).partition(":")[0]
+
+
 def _drop_extra_seats(session: Session, sub: Subscription, *, now: datetime) -> None:
     """End the grace by removing the extra seats and the newest students beyond the plan's own.
 
     ``extra_seat_grace_payment_id`` stays: the same failed period never starts a second grace.
+    Every extra seat goes, including ones bought and paid earlier in the period: they were paid
+    for the period that has ended and the new period's amount is unpaid, so no credit is owed.
     Takes member row locks only (subscription, then members) and no ledger lock.
     """
     included = billed_terms(session, sub).included_seats
@@ -2185,6 +2223,43 @@ def _drop_extra_seats(session: Session, sub: Subscription, *, now: datetime) -> 
     )
 
 
+def _end_grace(session: Session, sub: Subscription, *, now: datetime) -> bool:
+    """The grace has elapsed: fail every unsent retry, then drop the seats unless one is unknown.
+
+    A queued (``created``) retry was never sent, so it is failed unsent (no MOTO call) in this
+    transaction, before the drop: otherwise the charge pass would bill the card for seats that
+    were just removed. A ``pending`` retry may already have charged the card, so the drop waits
+    for its outcome (callback or reconcile): a late success would otherwise buy nothing. Returns
+    whether anything changed.
+    """
+    changed = False
+    queued = session.scalars(
+        sa.select(Payment.id).where(
+            Payment.subscription_id == sub.id,
+            Payment.purpose == PaymentPurpose.extra_seats,
+            Payment.dedupe_key.startswith(RENEWAL_SEAT_DEDUPE_PREFIX, autoescape=True),
+            Payment.status == PaymentStatus.created,
+        )
+    ).all()
+    for payment_id in queued:
+        changed = fail_unsent(session, payment_id, reason="grace_ended") or changed
+    unknown = session.scalar(
+        sa.select(Payment.id)
+        .where(
+            Payment.subscription_id == sub.id,
+            Payment.purpose == PaymentPurpose.extra_seats,
+            Payment.dedupe_key.startswith(RENEWAL_SEAT_DEDUPE_PREFIX, autoescape=True),
+            Payment.status.in_(IN_FLIGHT_STATUSES),
+        )
+        .limit(1)
+    )
+    if unknown is not None:
+        log.info("extra_seats_drop_deferred", subscription_id=str(sub.id))
+        return changed
+    _drop_extra_seats(session, sub, now=now)
+    return True
+
+
 def _supersede_after_paid(session: Session, sub: Subscription, attempts: list[Payment]) -> bool:
     """One attempt is paid: fail the queued ones unsent; alert when a second was paid too (R20b)."""
     paid = [a for a in attempts if a.status is PaymentStatus.paid]
@@ -2202,6 +2277,19 @@ def _supersede_after_paid(session: Session, sub: Subscription, attempts: list[Pa
     return changed
 
 
+def _grace_cap(session: Session, first: Payment, until: datetime) -> int:
+    """Attempts one grace allows, frozen when it started (the grace runs from the first send).
+
+    A grace starts at ``first.sent_at + grace_days`` and one attempt is allowed per day, so the
+    cap is that span in days: an admin changing ``grace_days`` mid-grace changes nothing for a
+    grace already running. A first attempt that was never sent has no send time; the setting then
+    applies as it is now (nothing was charged, so there is no burst to fear).
+    """
+    if first.sent_at is None:
+        return seat_grace_days(session)
+    return max(1, (until - first.sent_at) // timedelta(days=1))
+
+
 def _after_failed_attempt(
     session: Session,
     sub: Subscription,
@@ -2209,21 +2297,25 @@ def _after_failed_attempt(
     attempts: list[Payment],
     *,
     fallback: bool,
-    grace_days: int,
     now: datetime,
 ) -> bool:
     """The period has attempts and none is paid: start the grace, or retry once a day.
 
     An attempt whose outcome is unknown (``created``, ``pending``) blocks everything: only a
-    definite failure starts a grace or allows another charge (spec section 6).
+    definite failure starts a grace or allows another charge (spec section 6). A retry waits a
+    full interval after the previous one was *sent* (so a missed day never causes a burst) and
+    stops at the cap frozen when the grace started.
     """
     latest = attempts[-1]
     if latest.status not in FAILED_STATUSES:
         return False
     first = attempts[0]
-    grace = timedelta(days=grace_days)
+    until = sub.extra_seat_grace_until
     if sub.extra_seat_grace_payment_id != first.id:
-        sub.extra_seat_grace_until = now + grace
+        if until is not None:
+            return False  # another period's grace still holds the marker: it ends on its own
+        days = seat_grace_days(session)
+        sub.extra_seat_grace_until = (first.sent_at or now) + timedelta(days=days)
         sub.extra_seat_grace_payment_id = first.id
         bump_version(sub)
         enqueue_extra_seats_charge_failed(
@@ -2231,16 +2323,16 @@ def _after_failed_attempt(
             payer_user_id=sub.payer_user_id or sub.user_id,
             subscription_id=sub.id,
             first_attempt_id=first.id,
+            grace_days=days,
         )
         return True
-    until = sub.extra_seat_grace_until
     if (
         not fallback
         or sub.status is not SubscriptionStatus.active
         or until is None
         or until <= now
-        or len(attempts) >= grace_days
-        or now < until - grace + len(attempts) * SEAT_RETRY_INTERVAL
+        or len(attempts) >= _grace_cap(session, first, until)
+        or (latest.sent_at is not None and now < latest.sent_at + SEAT_RETRY_INTERVAL)
     ):
         return False
     plan = _ShortfallPlan(first.amount_minor, first.currency, first.seat_quantity)
@@ -2259,10 +2351,8 @@ def _process_seat_row(
     ).one_or_none()
     if sub is None:
         return False
-    grace_days = seat_grace_days(session)
     if sub.extra_seat_grace_until is not None and sub.extra_seat_grace_until <= now:
-        _drop_extra_seats(session, sub, now=now)
-        return True
+        return _end_grace(session, sub, now=now)
     period = current_period(session, sub)
     if period is None:
         return False
@@ -2271,37 +2361,72 @@ def _process_seat_row(
         return _supersede_after_paid(session, sub, attempts)
     if not attempts:
         return fallback and queue_renewal_seat_charge(session, sub, period, now=now) is not None
-    return _after_failed_attempt(
-        session, sub, period, attempts, fallback=fallback, grace_days=grace_days, now=now
-    )
+    return _after_failed_attempt(session, sub, period, attempts, fallback=fallback, now=now)
 
 
-def _seat_candidate_ids(session: Session, *, fallback: bool, limit: int) -> list[uuid.UUID]:
-    """Up to ``limit`` subscriptions the job may have work on, oldest deadline first (DV-23).
+def _seat_candidate_ids(
+    session: Session, *, fallback: bool, now: datetime, limit: int
+) -> list[uuid.UUID]:
+    """Up to ``limit`` subscriptions the job has work on right now, the longest-due first (DV-23).
 
-    A subscription in a grace, or one with a queued attempt, always; on the fallback path also one
-    that qualifies and whose renewal left a gap in the billed terms (a cheap pre-filter: the exact
-    amount is computed again under the lock). Rows with nothing to do are left out: a paid
-    attempt, a renewal that covers the seats, an attempt still in flight. Otherwise they would
-    fill the batch until the period rolls and starve the rows that need work.
+    A subscription in a grace is due at the earlier of its deadline and one interval after its
+    latest send (a retry): until then it is not visited and takes no place in the batch. A
+    subscription with a queued attempt is always visited. On the fallback path a qualifying
+    subscription is visited when the exact shortfall (billed terms, paid in-period purchases
+    taken off) is above zero, or when its terms are unknown (to alert), and it has no paid
+    attempt and not only in-flight ones. Rows with nothing to do are left out, and the order is
+    by due time, so they can neither fill the batch nor starve a drop or a retry.
     """
     renewal = aliased(Payment)
     terms = aliased(PlanTierTerms)
     attempt_key = sa.func.concat(RENEWAL_SEAT_DEDUPE_PREFIX, SubscriptionPeriod.id, ":%")
 
-    def has_attempt(*statuses: PaymentStatus) -> sa.ColumnElement[bool]:
-        stmt = sa.exists().where(
+    def attempts_where() -> list[sa.ColumnElement[bool]]:
+        return [
             Payment.subscription_id == Subscription.id,
             Payment.purpose == PaymentPurpose.extra_seats,
             Payment.dedupe_key.like(attempt_key),
-        )
+        ]
+
+    def has_attempt(*statuses: PaymentStatus) -> sa.ColumnElement[bool]:
+        stmt = sa.exists().where(*attempts_where())
         if statuses:
             stmt = stmt.where(Payment.status.in_(statuses))
         return stmt
 
+    last_sent = sa.select(sa.func.max(Payment.sent_at)).where(*attempts_where()).scalar_subquery()
+    bought = (
+        sa.select(sa.func.coalesce(sa.func.sum(Payment.seat_quantity), 0))
+        .where(
+            Payment.subscription_id == Subscription.id,
+            Payment.purpose == PaymentPurpose.extra_seats,
+            Payment.dedupe_key.is_(None),
+            Payment.status == PaymentStatus.paid,
+            Payment.grant_units.is_(None),
+            Payment.created_at >= SubscriptionPeriod.period_start,
+        )
+        .scalar_subquery()
+    )
+    retry_due = last_sent + sa.literal(SEAT_RETRY_INTERVAL, sa.Interval())
+    grace_due = sa.func.least(
+        Subscription.extra_seat_grace_until,
+        sa.func.coalesce(retry_due, Subscription.extra_seat_grace_until),
+    )
+    in_grace = Subscription.extra_seat_grace_until.is_not(None)
     queued = has_attempt(PaymentStatus.created)
-    wanted = [Subscription.extra_seat_grace_until.is_not(None), queued]
+    wanted = [queued]
     if fallback:
+        seat = terms.extra_seat_price_minor
+        gap = (
+            terms.price_minor
+            + Subscription.extra_seats * seat
+            - renewal.amount_minor
+            - bought * seat
+        )
+        terms_unknown = sa.and_(
+            SubscriptionPeriod.terms_version.is_(None),
+            renewal.plan_tier_id != Subscription.plan_tier_id,
+        )
         wanted.append(
             sa.and_(
                 Subscription.status == SubscriptionStatus.active,
@@ -2310,12 +2435,15 @@ def _seat_candidate_ids(session: Session, *, fallback: bool, limit: int) -> list
                 PlanTier.audience == PlanAudience.teacher,
                 renewal.purpose == PaymentPurpose.subscription_renewal,
                 renewal.status == PaymentStatus.paid,
-                terms.price_minor + Subscription.extra_seats * terms.extra_seat_price_minor
-                > renewal.amount_minor,
+                sa.or_(
+                    terms_unknown,
+                    sa.and_(seat > 0, sa.func.least(Subscription.extra_seats * seat, gap) > 0),
+                ),
                 sa.or_(~has_attempt(PaymentStatus.paid), queued),
                 sa.or_(~has_attempt(), has_attempt(*FAILED_STATUSES), queued),
             )
         )
+    due = sa.case((in_grace, grace_due), else_=Subscription.current_period_start)
     return list(
         session.scalars(
             sa.select(Subscription.id)
@@ -2331,17 +2459,16 @@ def _seat_candidate_ids(session: Session, *, fallback: bool, limit: int) -> list
             .outerjoin(
                 terms,
                 sa.and_(
-                    terms.plan_tier_id == Subscription.plan_tier_id,
-                    terms.terms_version == Subscription.terms_version,
+                    terms.plan_tier_id
+                    == sa.func.coalesce(renewal.plan_tier_id, Subscription.plan_tier_id),
+                    terms.terms_version
+                    == sa.func.coalesce(
+                        SubscriptionPeriod.terms_version, Subscription.terms_version
+                    ),
                 ),
             )
-            .where(sa.or_(*wanted))
-            .order_by(
-                sa.func.coalesce(
-                    Subscription.extra_seat_grace_until, Subscription.current_period_start
-                ),
-                Subscription.id,
-            )
+            .where(sa.or_(sa.and_(in_grace, grace_due <= now), sa.and_(~in_grace, sa.or_(*wanted))))
+            .order_by(due, Subscription.id)
             .limit(limit)
         )
     )
@@ -2384,14 +2511,19 @@ def run_extra_seat_renewal_job(
     Only when Paymob cannot take an amount change (``subscription_amount_updatable`` false) does
     the job queue anything: otherwise the user's own charge or the amount push covers the seats
     (DV-3). With the flag true it still finishes what exists (a grace that ends drops its seats,
-    a paid attempt supersedes a queued one). Up to ``limit`` subscriptions are visited, each in
-    its own transaction under ``FOR UPDATE SKIP LOCKED`` (a row another worker holds is left to
-    it, a failing row is rolled back and alerted alone), and then the queued attempts are charged
-    to the payer's active card over MOTO. Returns the rows changed plus the attempts handled.
+    a paid attempt supersedes a queued one). A missing ``billing_settings`` row fails the whole
+    run with one alert. Up to ``limit`` subscriptions that are due are visited, each in its own
+    transaction under ``FOR UPDATE SKIP LOCKED`` (a row another worker holds is left to it, a
+    failing row is rolled back and alerted alone), and then the queued attempts are charged to
+    the payer's active card over MOTO. Returns the rows changed plus the attempts handled.
     """
     fallback = not settings.subscription_amount_updatable
     with sessionmaker() as session:
-        candidates = _seat_candidate_ids(session, fallback=fallback, limit=limit)
+        try:
+            seat_grace_days(session)
+        except SeatGraceSettingMissing:
+            return 0
+        candidates = _seat_candidate_ids(session, fallback=fallback, now=now, limit=limit)
     handled = sum(
         _seat_row_one(sessionmaker, subscription_id, fallback=fallback, now=now)
         for subscription_id in candidates

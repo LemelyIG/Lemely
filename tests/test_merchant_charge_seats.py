@@ -817,7 +817,23 @@ def test_a_renewal_seat_payment_only_clears_the_grace(
 ) -> None:
     sm = pg_sessionmaker
     scene = _teacher(sm)
-    _update_sub(sm, scene, extra_seat_grace_until=NOW + timedelta(days=3))
+    declined = seed_payment_row(  # the failed first attempt that started this period's grace
+        sm,
+        payer_id=scene["payer_id"],
+        beneficiary_id=scene["user_id"],
+        purpose=PaymentPurpose.extra_seats,
+        amount_minor=1_000,
+        status=PaymentStatus.failed,
+        subscription_id=scene["subscription_id"],
+        seat_quantity=1,
+        dedupe_key=f"{RENEWAL_SEAT_DEDUPE_PREFIX}{scene['period_id']}:1",
+    )
+    _update_sub(
+        sm,
+        scene,
+        extra_seat_grace_until=NOW + timedelta(days=3),
+        extra_seat_grace_payment_id=declined,
+    )
     payment_id = seed_payment_row(
         sm,
         payer_id=scene["payer_id"],
@@ -827,7 +843,7 @@ def test_a_renewal_seat_payment_only_clears_the_grace(
         status=PaymentStatus.pending,
         subscription_id=scene["subscription_id"],
         seat_quantity=1,
-        dedupe_key=f"{RENEWAL_SEAT_DEDUPE_PREFIX}{scene['period_id']}:1",
+        dedupe_key=f"{RENEWAL_SEAT_DEDUPE_PREFIX}{scene['period_id']}:2",
         paymob_order_id=next(_order_ids),
     )
     payment = _payment(sm, payment_id)
@@ -849,7 +865,7 @@ def test_a_renewal_seat_payment_only_clears_the_grace(
     assert _payment(sm, payment_id).status is PaymentStatus.paid
 
 
-def test_a_renewal_seat_payment_for_an_ended_plan_is_logged_not_credited(
+def test_a_renewal_seat_payment_for_an_ended_plan_becomes_credits_with_an_alert(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     sm = pg_sessionmaker
@@ -880,9 +896,8 @@ def test_a_renewal_seat_payment_for_an_ended_plan_is_logged_not_credited(
         _deliver(sm, obj)
 
     assert _sub(sm, scene).extra_seats == 1
-    assert [log["event"] for log in logs if log["log_level"] == "warning"] == [
-        "renewal_seat_paid_for_ended_plan"
-    ]
+    assert [log["event"] for log in logs if log.get("alert")] == ["renewal_seat_payment_credited"]
+    assert _payment(sm, payment_id).grant_units is not None  # never silently kept (UD-P2)
 
 
 def test_the_handler_refuses_a_payment_with_no_paid_at(
@@ -1104,7 +1119,7 @@ def _capacity_of(sm: sessionmaker[Session], scene: Mapping[str, uuid.UUID]) -> i
 # ---------------------------------------------------------------------------
 
 
-def test_a_renewal_seat_payment_for_another_period_does_not_clear_the_grace(
+def test_a_renewal_seat_payment_for_another_period_becomes_credits_and_keeps_the_grace(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     sm = pg_sessionmaker
@@ -1141,8 +1156,9 @@ def test_a_renewal_seat_payment_for_another_period_does_not_clear_the_grace(
     after = _sub(sm, scene)
     assert after.extra_seat_grace_until == grace
     assert after.version == before.version
-    assert "renewal_seat_paid_for_other_period" in [log["event"] for log in logs]
+    assert [log["event"] for log in logs if log.get("alert")] == ["renewal_seat_payment_credited"]
     assert _payment(sm, payment_id).status is PaymentStatus.paid
+    assert _payment(sm, payment_id).grant_units is not None
 
 
 # ---------------------------------------------------------------------------

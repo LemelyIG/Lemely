@@ -38,6 +38,7 @@ from pydantic import (
     AwareDatetime,
     BaseModel,
     ConfigDict,
+    Field,
     ValidationError,
     field_validator,
     model_validator,
@@ -496,7 +497,7 @@ class ExtraSeatsChargeFailed(EmailContext):
     """The fallback charge for extra student seats was declined (Phase 06).
 
     The mail states the grace window and what follows it, and carries no amount, plan name,
-    card detail or student name. The context holds the subscription id only.
+    card detail or student name. The context holds the subscription id and the grace length.
     """
 
     template: ClassVar[str] = "extra_seats_charge_failed"
@@ -505,11 +506,17 @@ class ExtraSeatsChargeFailed(EmailContext):
     button: ClassVar[str] = "Open billing"
 
     subscription_id: uuid.UUID
+    #: The grace the failure started (``billing_settings.grace_days``); rows queued before the
+    #: field existed were all 3-day graces.
+    grace_days: int = Field(default=3, ge=1, le=7)
 
     def lead(self) -> str:
+        head = "We could not charge your card for your extra student seats. "
+        if self.grace_days == 1:
+            return head + "If no payment succeeds within 1 day, the extra seats are removed."
         return (
-            "We could not charge your card for your extra student seats. We will try again "
-            "each day; if no payment succeeds within 3 days, the extra seats are removed."
+            head + "We will try again each day; if no payment succeeds within "
+            f"{self.grace_days} days, the extra seats are removed."
         )
 
     def detail(self) -> str | None:
