@@ -560,10 +560,8 @@ class AdminCatalogueService:
         """Create a new Paymob plan at the tier's current price and interval, and link it.
 
         Delegates to Phase 05's ``sync_paymob_plan(..., force_new=True)``, which locks the
-        tier, calls Paymob and links the plan with the key mode it was made under. The synced
-        price and frequency are stamped here, in the same transaction (DV-11).
-        Part B moves that stamp into ``sync_paymob_plan`` so a checkout-created link stamps
-        too, and deletes this copy.
+        tier, calls Paymob, links the plan with the key mode it was made under and stamps the
+        synced price and frequency (one stamping path, shared with the checkout link).
 
         Every Paymob failure rolls the transaction back: no link, no stamp, no audit row.
         """
@@ -582,10 +580,6 @@ class AdminCatalogueService:
                 created_plan_id = link_paymob_plan(
                     s, self._client, self._settings, plan_tier_id, force_new=True
                 )
-                if tier.interval is None:  # the helper already refused it; narrows the type
-                    raise PlanNotPurchasable("a plan tier without an interval cannot renew")
-                tier.paymob_plan_synced_price_minor = tier.price_minor
-                tier.paymob_plan_synced_frequency = paymob_frequency(tier.interval.value)
                 s.flush()
                 audited(
                     s,

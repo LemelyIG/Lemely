@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, ClassVar, Final
 
 import sqlalchemy as sa
 import structlog
+from sqlalchemy import event as sa_event
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -244,9 +245,9 @@ def sync_paymob_plan(
 
     The tier row is locked ``FOR UPDATE`` and the caller commits. Every refusal happens before
     Paymob is called. Owned by Phase 05 with this exact signature (index R9). Phase 07 calls it
-    from the admin catalogue and adds its synced-price and synced-frequency stamps inside this
-    function, right after ``tier.paymob_plan_id`` and ``tier.paymob_plan_mode`` (the key mode the
-    plan was created under, audit I8) are set.
+    from the admin catalogue. Beside ``tier.paymob_plan_id`` and ``tier.paymob_plan_mode`` (the
+    key mode the plan was created under, audit I8) it stamps the price and frequency it sent
+    (``paymob_plan_synced_*``), and it logs ``paymob_plan_linked`` only after the commit.
 
     Raises:
         PlanNotPurchasable: unknown tier, no interval, a price of zero or less, or no MOTO
@@ -292,8 +293,30 @@ def sync_paymob_plan(
         raise PlanSyncFailed(f"Paymob returned no plan id for tier {tier.id}")
     tier.paymob_plan_id = plan_id
     tier.paymob_plan_mode = settings.key_mode
-    log.info("paymob_plan_linked", plan_tier_id=str(tier.id), paymob_plan_id=plan_id)
+    # What Paymob was just sent, for the admin drift warning: stamped here so a link made at
+    # checkout carries it too. Same row, same lock, same transaction as the link.
+    tier.paymob_plan_synced_price_minor = tier.price_minor
+    tier.paymob_plan_synced_frequency = paymob_frequency(tier.interval.value)
+    _log_linked_after_commit(session, tier.id, plan_id)
     return plan_id
+
+
+def _log_linked_after_commit(session: Session, plan_tier_id: uuid.UUID, plan_id: int) -> None:
+    """Log ``paymob_plan_linked`` when (and only if) the link commits.
+
+    A rolled-back link is not a link: the caller's later failure must not leave this line in
+    the log. The listener removes itself after the first commit or rollback.
+    """
+
+    def on_commit(_session: Session) -> None:
+        log.info("paymob_plan_linked", plan_tier_id=str(plan_tier_id), paymob_plan_id=plan_id)
+        sa_event.remove(session, "after_rollback", on_rollback)
+
+    def on_rollback(_session: Session) -> None:
+        sa_event.remove(session, "after_commit", on_commit)
+
+    sa_event.listen(session, "after_commit", on_commit, once=True)
+    sa_event.listen(session, "after_rollback", on_rollback, once=True)
 
 
 _AUDIENCE_FOR_ROLE: Final = {Role.student: PlanAudience.student, Role.teacher: PlanAudience.teacher}

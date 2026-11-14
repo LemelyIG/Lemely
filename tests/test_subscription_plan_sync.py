@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import httpx
 import pytest
 import sqlalchemy as sa
+import structlog.testing
 from sqlalchemy.exc import OperationalError
 
 from lemely.db.billing_repo import BillingService
@@ -75,6 +76,60 @@ def test_unlinked_tier_creates_and_links_a_plan(
     assert sent["use_transaction_amount"] is True
     assert sent["webhook_url"] == "https://api.lemely.test" + SUBSCRIPTION_WEBHOOK_PATH
     assert _linked_plan(pg_sessionmaker, tier_id) == plan_id
+    with pg_sessionmaker() as session:
+        tier = session.get(PlanTier, tier_id)
+        assert tier is not None
+        # R9: the price and frequency Paymob was sent, stamped by the link itself, so a tier
+        # linked at checkout (this path) is comparable for drift, not "unverified".
+        assert (tier.paymob_plan_synced_price_minor, tier.paymob_plan_synced_frequency) == (
+            12_000,
+            frequency,
+        )
+
+
+def test_a_forced_relink_restamps_the_new_price(pg_sessionmaker: sessionmaker[Session]) -> None:
+    tier_id = seed_tier(pg_sessionmaker, price_minor=12_000, paymob_plan_id=None)
+    with pg_sessionmaker.begin() as session:
+        sync_paymob_plan(session, FakePaymobClient(), paymob_settings(), tier_id)
+    with pg_sessionmaker.begin() as session:
+        session.execute(
+            sa.update(PlanTier).where(PlanTier.id == tier_id).values(price_minor=15_000)
+        )
+    with pg_sessionmaker.begin() as session:
+        sync_paymob_plan(session, FakePaymobClient(), paymob_settings(), tier_id, force_new=True)
+    with pg_sessionmaker() as session:
+        tier = session.get(PlanTier, tier_id)
+        assert tier is not None
+        assert tier.paymob_plan_synced_price_minor == 15_000
+
+
+def test_paymob_plan_linked_is_logged_only_after_the_commit(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    tier_id = seed_tier(pg_sessionmaker, paymob_plan_id=None)
+    with structlog.testing.capture_logs() as logs:
+        with pg_sessionmaker() as session, session.begin():
+            sync_paymob_plan(session, FakePaymobClient(), paymob_settings(), tier_id)
+            assert [e for e in logs if e["event"] == "paymob_plan_linked"] == []
+        linked = [e for e in logs if e["event"] == "paymob_plan_linked"]
+    assert len(linked) == 1
+    assert linked[0]["plan_tier_id"] == str(tier_id)
+
+
+def test_a_rolled_back_link_logs_no_paymob_plan_linked(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    tier_id = seed_tier(pg_sessionmaker, paymob_plan_id=None)
+    with (
+        structlog.testing.capture_logs() as logs,
+        pytest.raises(RuntimeError),
+        pg_sessionmaker() as session,
+        session.begin(),
+    ):
+        sync_paymob_plan(session, FakePaymobClient(), paymob_settings(), tier_id)
+        raise RuntimeError("the caller failed after the link")
+    assert [e for e in logs if e["event"] == "paymob_plan_linked"] == []
+    assert _linked_plan(pg_sessionmaker, tier_id) is None
 
 
 @pytest.mark.parametrize(
