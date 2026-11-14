@@ -1,6 +1,8 @@
 import { createBrowserRouter } from "react-router-dom"
 import { appRoutes } from "@/routes"
 import { applyDocumentMeta } from "@/lib/meta/documentMeta"
+import { installNavigateMiddleware } from "@/lib/nav/navigateMiddleware"
+import { snapshotCaptureMiddleware } from "@/lib/nav/pageSnapshotCapture"
 
 /*
  * The router instance, and nothing else.
@@ -12,6 +14,14 @@ import { applyDocumentMeta } from "@/lib/meta/documentMeta"
  * environment. See the note at the top of `routes.tsx`.
  */
 export const router = createBrowserRouter(appRoutes)
+
+/*
+ * Navigate middleware, in one place (see `lib/nav/navigateMiddleware.ts`). The swipe-back
+ * snapshot is cloned from the page being left, so it must see the options as they will actually
+ * run. A native push-default middleware (viewTransition on drill-downs) is installed in a LATER
+ * call, which wraps outside this one and therefore runs BEFORE capture.
+ */
+installNavigateMiddleware(router, [snapshotCaptureMiddleware])
 
 /*
  * P6.5 · the document title, driven from the route table.

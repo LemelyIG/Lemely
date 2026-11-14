@@ -1537,10 +1537,19 @@ html[data-direction="swipe"]::view-transition-new(root) {
     pointer-events: none;
     background: var(--md-surface-container);
   }
-  [data-swipe-scroller] {
+  html:is([data-platform="ios"], [data-platform="android"]) [data-swipe-scroller] {
     position: absolute;
     inset: 0;
     overflow: hidden;
+    /* The layer itself reads the drag progress (translate, dim). Resetting it here stops the
+       inherited value restyling the whole cloned page on every drag frame. */
+    --lm-swipe-progress: 0;
+    --lm-swipe-shadow: 0;
+  }
+  /* The clone keeps the page's trailing bar actions out of the strip: the real bar's own
+     actions sit at the same spot, so they would show twice. */
+  html:is([data-platform="ios"], [data-platform="android"]) [data-swipe-scroller] header [data-shell-title] ~ * {
+    visibility: hidden;
   }
   html:is([data-platform="ios"], [data-platform="android"]) [data-swipe-layer][data-state="armed"] {
     visibility: hidden;

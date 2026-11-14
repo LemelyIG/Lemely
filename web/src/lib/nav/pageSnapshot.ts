@@ -64,52 +64,108 @@ export function createSnapshotStore<T>(limit: number = SNAPSHOT_LIMIT): Snapshot
   }
 }
 
-/** Whether a column of `nodeCount` elements may be cloned. */
-export function withinNodeCap(nodeCount: number, cap: number = SNAPSHOT_NODE_CAP): boolean {
-  return nodeCount <= cap
-}
-
 /** Canvases bigger than this (in pixels) are left blank rather than encoded. */
 const CANVAS_PIXEL_CAP = 1_000_000
-const LIVE_MEDIA = "video, audio, iframe, embed, object, script"
+/** Elements that are dropped from a clone: nothing may play, load or run inside a parked page. */
+const LIVE_MEDIA = new Set(["video", "audio", "iframe", "embed", "object", "script"])
+/** Attributes removed from every cloned element: duplicate ids, focus entry points, and form
+ * names (a cloned radio would otherwise join, and uncheck, a real radio group). */
+const STRIPPED_ATTRS = ["id", "autofocus", "name", "tabindex", "data-shell-column"]
 
-/**
- * Make a deep clone safe to park in the document: no duplicate ids, nothing focusable or
- * announced, nothing playing, no form control that could join a real radio group.
- */
-export function sanitizeClone(clone: HTMLElement, original: HTMLElement): void {
-  const sourceCanvases = original.querySelectorAll("canvas")
-  clone.querySelectorAll("canvas").forEach((copy, i) => {
-    const source = sourceCanvases[i]
-    if (!source || source.width * source.height > CANVAS_PIXEL_CAP) return
-    try {
-      const img = document.createElement("img")
-      img.src = source.toDataURL()
-      img.className = copy.className
-      img.setAttribute("style", copy.getAttribute("style") ?? "")
-      copy.replaceWith(img)
-    } catch {
-      // A tainted canvas cannot be read: it stays blank.
-    }
-  })
-  clone.querySelectorAll(LIVE_MEDIA).forEach((el) => el.remove())
-  const strip = (el: Element) => {
-    el.removeAttribute("id")
-    el.removeAttribute("autofocus")
-    el.removeAttribute("name")
-    el.removeAttribute("data-shell-column")
-    el.removeAttribute("tabindex")
-  }
-  strip(clone)
-  clone.querySelectorAll("[id], [autofocus], [name], [data-shell-column], [tabindex]").forEach(strip)
-  clone.setAttribute("aria-hidden", "true")
-  clone.setAttribute("inert", "")
+/** Thrown from the copy when the column has more elements than the cap. */
+export class SnapshotCapExceeded extends Error {}
+
+interface CopyState {
+  count: number
+  cap: number
 }
 
-/** Clone `column`, or null when it is too large to be worth holding. */
-export function captureColumn(column: HTMLElement, scrollY: number): PageSnapshot | null {
-  if (!withinNodeCap(column.querySelectorAll("*").length)) return null
-  const node = column.cloneNode(true) as HTMLElement
-  sanitizeClone(node, column)
-  return { node, scrollY }
+/**
+ * One pass over `src`: counts, clones and sanitises together, and stops (throws
+ * `SnapshotCapExceeded`) the moment the count passes the cap, so an oversized page costs at most
+ * `cap` elements of work. Returns null for an element that is dropped (live media).
+ */
+export function copyElement(src: Element, state: CopyState): Element | null {
+  const tag = src.localName
+  if (LIVE_MEDIA.has(tag)) return null
+  state.count += 1
+  if (state.count > state.cap) throw new SnapshotCapExceeded()
+  let copy: Element | null = null
+  if (tag === "canvas") copy = canvasToImage(src as HTMLCanvasElement)
+  if (!copy) {
+    copy = src.cloneNode(false) as Element
+    for (const attr of STRIPPED_ATTRS) copy.removeAttribute(attr)
+    for (const child of Array.from(src.childNodes)) {
+      if (child.nodeType === 1) {
+        const inner = copyElement(child as Element, state)
+        if (inner) copy.appendChild(inner)
+      } else if (child.nodeType === 3) {
+        copy.appendChild(child.cloneNode(false))
+      }
+    }
+  }
+  return copy
+}
+
+/** A canvas clone is blank, so a small, readable canvas becomes an image of its current pixels. */
+function canvasToImage(source: HTMLCanvasElement): Element | null {
+  if (source.width * source.height > CANVAS_PIXEL_CAP) return null
+  try {
+    const img = document.createElement("img")
+    img.src = source.toDataURL()
+    img.className = source.className
+    const style = source.getAttribute("style")
+    if (style) img.setAttribute("style", style)
+    return img
+  } catch {
+    // A tainted canvas cannot be read: it stays a blank clone.
+    return null
+  }
+}
+
+/** Clone `column` into a detached, inert copy, or null when it is too large to be worth holding. */
+export function captureColumn(column: HTMLElement, scrollY: number, cap: number = SNAPSHOT_NODE_CAP): PageSnapshot | null {
+  let node: Element | null
+  try {
+    node = copyElement(column, { count: 0, cap })
+  } catch (error) {
+    if (error instanceof SnapshotCapExceeded) return null
+    throw error
+  }
+  if (!node) return null
+  node.setAttribute("aria-hidden", "true")
+  node.setAttribute("inert", "")
+  return { node: node as HTMLElement, scrollY }
+}
+
+export interface SessionLike {
+  userId: string
+}
+
+/**
+ * Snapshots are one user's pages, held in memory: they must not outlive the session. Clears the
+ * store when the session ends or the signed-in user changes; a silent token refresh (same user)
+ * keeps them. Returns the unsubscribe.
+ */
+export function watchSessionForSnapshots(
+  subscribe: (listener: (session: SessionLike | null) => void) => () => void,
+  store: Pick<SnapshotStore<unknown>, "clear">,
+  initialUserId: string | null,
+): () => void {
+  let current = initialUserId
+  return subscribe((session) => {
+    const next = session?.userId ?? null
+    if (next !== current) store.clear()
+    current = next
+  })
+}
+
+/**
+ * What a `navigate(to, options)` call means for the snapshot of the page being left: a push
+ * clones it; a replace swaps the page at the same history index, so that index's old copy is
+ * dropped; a numeric delta (back or forward) needs nothing.
+ */
+export function navigateSnapshotAction(to: unknown, options?: { replace?: boolean }): "capture" | "drop" | "none" {
+  if (typeof to === "number") return "none"
+  return options?.replace ? "drop" : "capture"
 }

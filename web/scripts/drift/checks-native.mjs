@@ -3210,7 +3210,7 @@ NATIVE_CHECKS.push(
           inert: clone?.hasAttribute("inert"),
           ids: clone ? clone.querySelectorAll("[id]").length + (clone.id ? 1 : 0) : -1,
           focusable: clone ? clone.querySelectorAll("[tabindex]:not([tabindex='-1']), [autofocus]").length : -1,
-                    cloneText: clone?.querySelector("main")?.innerText ?? "",
+          cloneText: clone?.querySelector("main")?.innerText ?? "",
           url: location.pathname,
         }
       })
@@ -3287,3 +3287,77 @@ NATIVE_CHECKS.push(
     },
   })),
 );
+
+// Task 12b fix round 1: a push through navigate() (a button, not a Link) clones the page as it is
+// at that moment, scroll included, so the underlay matches the offset the page is restored to.
+// The router is found through React's fiber tree (RouterProvider's `router` prop): the page code
+// that calls navigate() all goes through that one function.
+NATIVE_CHECKS.push({
+  id: "native-ios-swipe-underlay-matches-scroll-after-programmatic-navigate",
+  platform: "ios",
+  width: 390,
+  app: { ...NATIVE_HOME, path: "/student", init: STANDALONE, motion: true },
+  async run(page) {
+    await page.locator("main").waitFor()
+    // Scroll after the page has settled, well past any settle-time capture.
+    await page.waitForTimeout(900)
+    await page.evaluate(() => window.scrollTo(0, 150))
+    await page.waitForTimeout(300)
+    const left = await page.evaluate(() => window.scrollY)
+    if (!(left > 50)) throw new Error(`the overview did not scroll (scrollY ${left})`)
+    await page.evaluate(() => {
+      const root = document.getElementById("root")
+      const key = Object.keys(root).find((k) => k.startsWith("__reactContainer"))
+      const seen = new Set()
+      const stack = [root[key]]
+      while (stack.length) {
+        const fiber = stack.pop()
+        if (!fiber || seen.has(fiber)) continue
+        seen.add(fiber)
+        const router = fiber.memoizedProps?.router
+        if (router && typeof router.navigate === "function") return void router.navigate("/student/classes")
+        stack.push(fiber.sibling, fiber.child)
+      }
+      throw new Error("no router in the fiber tree")
+    })
+    await page.waitForURL(/\/student\/classes/)
+    await page.waitForTimeout(500)
+    await page.mouse.move(4, 400)
+    await page.mouse.down()
+    await page.mouse.move(150, 402, { steps: 8 })
+    await page.waitForTimeout(50)
+    const during = await page.evaluate(() => document.querySelector("[data-swipe-scroller]")?.scrollTop ?? null)
+    await page.mouse.up()
+    await page.waitForURL(/\/student$/)
+    await page.waitForTimeout(500)
+    const restored = await page.evaluate(() => window.scrollY)
+    if (during === null) throw new Error("no underlay under the column")
+    if (Math.abs(during - left) > 2) throw new Error(`the underlay shows the page at scroll ${during}, left at ${left} (restored to ${restored})`)
+  },
+});
+
+// Task 12b fix round 1: the clone does not restyle per drag frame, and does not repeat the bar actions.
+NATIVE_CHECKS.push({
+  id: "native-ios-swipe-underlay-is-insulated-and-has-no-duplicate-actions",
+  platform: "ios",
+  width: 390,
+  app: { ...NATIVE_HOME, path: "/student", init: STANDALONE, motion: true },
+  async run(page) {
+    await pushThenEdgeDrag(page, 150, 50)
+    const got = await page.evaluate(() => {
+      const scroller = document.querySelector("[data-swipe-scroller]")
+      const inner = scroller?.querySelector("main *")
+      const trailing = [...(scroller?.querySelectorAll("header [data-shell-title] ~ *") ?? [])]
+      return {
+        root: getComputedStyle(document.documentElement).getPropertyValue("--lm-swipe-progress"),
+        inner: inner ? getComputedStyle(inner).getPropertyValue("--lm-swipe-progress") : null,
+        trailing: trailing.length,
+        visible: trailing.filter((el) => getComputedStyle(el).visibility !== "hidden").length,
+      }
+    })
+    await page.mouse.up()
+    if (!(parseFloat(got.root) > 0.05)) throw new Error(`no drag progress on the root: ${JSON.stringify(got)}`)
+    if (got.inner === null || parseFloat(got.inner) !== 0) throw new Error(`the clone inherits the drag progress and restyles each frame: ${JSON.stringify(got)}`)
+    if (got.trailing === 0 || got.visible !== 0) throw new Error(`the clone repeats the bar actions: ${JSON.stringify(got)}`)
+  },
+});
