@@ -13,10 +13,12 @@ from datetime import datetime
 from typing import Final
 
 import sqlalchemy as sa
+from sqlalchemy import event
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from lemely.db.base import Base
+from lemely.db.models.admin_audit import APPEND_ONLY_FUNCTION_SQL
 from lemely.db.models.enums import PlanInterval, SubscriptionStatus, TimestampMixin
 
 #: The statuses ``uq_subscriptions_one_live_per_user`` allows at most one of, per
@@ -95,6 +97,8 @@ class PlanTier(TimestampMixin, Base):
         sa.CheckConstraint(
             "(paymob_plan_id IS NULL) = (paymob_plan_mode IS NULL)", name="paymob_plan_mode_linked"
         ),
+        sa.CheckConstraint("version >= 1", name="version_min"),
+        sa.CheckConstraint("terms_version >= 1", name="terms_version_min"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -134,6 +138,19 @@ class PlanTier(TimestampMixin, Base):
     """The Paymob key mode (``test`` or ``live``) ``paymob_plan_id`` was created under; set exactly
     when the id is. A plan id only exists in the mode of the keys that made it, so a checkout
     under the other mode's keys is refused rather than sent to Paymob to 404 (audit I8)."""
+    paymob_plan_synced_price_minor: Mapped[int | None] = mapped_column(sa.BigInteger, nullable=True)
+    """``price_minor`` as last sent to Paymob when the plan was created (drift warning)."""
+    paymob_plan_synced_frequency: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    """Paymob plan frequency in days (30 or 360) as last sent when the plan was created."""
+    paymob_plan_synced_retrial_days: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    """``retrial_days`` as last sent when the plan was created (the admin grace-days setting)."""
+    version: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text("1"))
+    """Optimistic-concurrency counter: an admin edit sends the version it read."""
+    terms_version: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, server_default=sa.text("1")
+    )
+    """The current row of ``plan_tier_terms``. A price or entitlement change inserts the next
+    version there; subscribers move to it at their next renewal after a notice."""
     is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.true())
     #: Teacher tiers only (zero on student tiers).
     included_seats: Mapped[int] = mapped_column(
@@ -228,6 +245,31 @@ class Subscription(TimestampMixin, Base):
             "pending_extra_seats IS NULL OR pending_extra_seats >= 0",
             name="pending_extra_seats_nonneg",
         ),
+        sa.CheckConstraint("terms_version >= 1", name="terms_version_min"),
+        sa.CheckConstraint(
+            "(pending_terms_version IS NULL) = (pending_terms_effective_at IS NULL)",
+            name="pending_terms_paired",
+        ),
+        # The terms the subscriber is on, and the terms it moves to at renewal. Composite so a
+        # version of another tier is impossible. ``MATCH SIMPLE`` (the default) skips the
+        # pending key while ``pending_terms_version`` is NULL.
+        sa.ForeignKeyConstraint(
+            ["plan_tier_id", "terms_version"],
+            ["plan_tier_terms.plan_tier_id", "plan_tier_terms.terms_version"],
+            name="fk_subscriptions_terms",
+        ),
+        sa.ForeignKeyConstraint(
+            ["plan_tier_id", "pending_terms_version"],
+            ["plan_tier_terms.plan_tier_id", "plan_tier_terms.terms_version"],
+            name="fk_subscriptions_pending_terms",
+        ),
+        # Which live subscribers of a tier are still on older terms (the renewal move sweep).
+        sa.Index(
+            "ix_subscriptions_terms_move",
+            "plan_tier_id",
+            "terms_version",
+            postgresql_where=sa.text("status IN ('active', 'past_due')"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -300,6 +342,20 @@ class Subscription(TimestampMixin, Base):
     )
     """First failed renewal seat charge of the grace episode; kept after the drop so the
     same failure never starts a second grace."""
+    terms_version: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, server_default=sa.text("1")
+    )
+    """The ``plan_tier_terms`` version this subscription is billed on."""
+    pending_terms_version: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    """The terms it moves to at ``pending_terms_effective_at`` (its next renewal)."""
+    pending_terms_effective_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    terms_notice_sent_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    """When the notice email for the pending move was sent (never earlier than the notice period
+    before the effective date)."""
 
     plan_tier: Mapped[PlanTier] = relationship(
         "PlanTier", back_populates="subscriptions", foreign_keys=[plan_tier_id]
@@ -342,6 +398,112 @@ class SubscriptionPeriod(TimestampMixin, Base):
         nullable=True,
         unique=True,
     )
+    terms_version: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    """The ``plan_tier_terms`` version this period was billed on; NULL means the subscription's
+    ``terms_version`` at the time (rows written before terms existed)."""
+
+
+class PlanTierTerms(Base):
+    """One immutable version of a tier's price and entitlements (UD13-A).
+
+    A price or entitlement change inserts the next ``terms_version``; ``plan_tiers`` keeps the
+    current number, and a subscription keeps the version it is billed on until its renewal after
+    the notice. Append-only: a trigger rejects UPDATE and DELETE (the function is the audit log's,
+    ``admin_audit_log_append_only``), installed by migration ``0057_admin_audit_log`` and by the
+    ``after_create`` listeners below on ``create_all`` databases.
+
+    Every tier has version 1 from its first insert: ``trg_plan_tiers_seed_terms`` writes it from
+    the new tier's own columns, so a tier can never exist without the history row the
+    subscription foreign keys point at.
+    """
+
+    __tablename__ = "plan_tier_terms"
+    __table_args__ = (
+        sa.UniqueConstraint("plan_tier_id", "terms_version"),
+        sa.CheckConstraint("terms_version >= 1", name="terms_version_min"),
+        sa.CheckConstraint(
+            "price_minor >= 0 AND extra_seat_price_minor >= 0 AND allowance_units >= 0 "
+            "AND included_seats >= 0 AND seat_allowance_units >= 0",
+            name="amounts_nonneg",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")
+    )
+    plan_tier_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), sa.ForeignKey("plan_tiers.id", ondelete="RESTRICT"), nullable=False
+    )
+    terms_version: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    price_minor: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    extra_seat_price_minor: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    allowance_units: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    included_seats: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    seat_allowance_units: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+PLAN_TIER_TERMS_TRIGGER_SQL = """
+CREATE TRIGGER trg_plan_tier_terms_append_only
+BEFORE UPDATE OR DELETE ON plan_tier_terms
+FOR EACH ROW EXECUTE FUNCTION admin_audit_log_append_only()
+"""
+
+SEED_TERMS_FUNCTION_SQL = """
+CREATE OR REPLACE FUNCTION plan_tiers_seed_terms() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    -- A tier with a negative amount is invalid (``plan_tiers`` has no CHECK for it; the admin
+    -- API validates) and the history refuses negatives: such a tier gets no terms row, so
+    -- nothing can subscribe to it, instead of the insert of the tier itself failing.
+    IF NEW.price_minor >= 0 AND NEW.extra_seat_price_minor >= 0
+       AND NEW.allowance_units >= 0 AND NEW.included_seats >= 0
+       AND NEW.seat_allowance_units >= 0 THEN
+        INSERT INTO plan_tier_terms (
+            plan_tier_id, terms_version, price_minor, extra_seat_price_minor,
+            allowance_units, included_seats, seat_allowance_units
+        ) VALUES (
+            NEW.id, NEW.terms_version, NEW.price_minor, NEW.extra_seat_price_minor,
+            NEW.allowance_units, NEW.included_seats, NEW.seat_allowance_units
+        );
+    END IF;
+    RETURN NEW;
+END;
+$$
+"""
+
+SEED_TERMS_TRIGGER_SQL = """
+CREATE TRIGGER trg_plan_tiers_seed_terms
+AFTER INSERT ON plan_tiers
+FOR EACH ROW EXECUTE FUNCTION plan_tiers_seed_terms()
+"""
+
+
+def _install_terms_append_only(target: sa.Table, connection: sa.Connection, **_kw: object) -> None:
+    """Install the append-only trigger after ``create_all`` creates ``plan_tier_terms``.
+
+    The shared function is created here too, idempotently, because table creation order is not
+    fixed.
+    """
+    if connection.dialect.name == "postgresql":
+        connection.execute(sa.text(APPEND_ONLY_FUNCTION_SQL))
+        connection.execute(sa.text(PLAN_TIER_TERMS_TRIGGER_SQL))
+
+
+def _install_terms_seed(target: sa.Table, connection: sa.Connection, **_kw: object) -> None:
+    """After ``create_all`` creates ``plan_tiers``: seed version 1 of every new tier's terms."""
+    if connection.dialect.name == "postgresql":
+        connection.execute(sa.text(SEED_TERMS_FUNCTION_SQL))
+        connection.execute(sa.text(SEED_TERMS_TRIGGER_SQL))
+
+
+event.listen(PlanTierTerms.__table__, "after_create", _install_terms_append_only)
+event.listen(PlanTier.__table__, "after_create", _install_terms_seed)
 
 
 class CreditPack(TimestampMixin, Base):
@@ -357,6 +519,12 @@ class CreditPack(TimestampMixin, Base):
     __table_args__ = (
         sa.CheckConstraint("units >= 0", name="units_nonneg"),
         sa.CheckConstraint("price_minor >= 0", name="price_nonneg"),
+        sa.CheckConstraint("version >= 1", name="version_min"),
+        sa.CheckConstraint(
+            "signup_validity_days IS NULL "
+            "OR (starts_with(code, 'signup_') AND signup_validity_days BETWEEN 1 AND 3650)",
+            name="signup_validity",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -370,6 +538,11 @@ class CreditPack(TimestampMixin, Base):
         sa.String(3), nullable=False, server_default=sa.literal("EGP")
     )
     is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.true())
+    version: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text("1"))
+    """Optimistic-concurrency counter: an admin edit sends the version it read."""
+    signup_validity_days: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    """How long the grant of a ``signup_*`` pack lasts; NULL means it never expires. Only a
+    signup pack may set it (``ck_credit_packs_signup_validity``)."""
 
 
 class Payment(TimestampMixin, Base):
@@ -466,6 +639,10 @@ class Payment(TimestampMixin, Base):
     dedupe_key: Mapped[str | None] = mapped_column(sa.String(200), nullable=True, unique=True)
     """Queue identity for background charges (``auto_topup:{owner}:{crossing}``,
     ``extra_seat_renewal:{period}:{attempt}``). NULL for user-initiated payments."""
+    callback_received_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    """When Paymob last called us about this payment (admin "missing callback" queue)."""
 
 
 class PaymobEvent(TimestampMixin, Base):
@@ -578,6 +755,7 @@ __all__ = [
     "PaymobEventKind",
     "PlanAudience",
     "PlanTier",
+    "PlanTierTerms",
     "SavedCard",
     "Subscription",
     "SubscriptionPeriod",

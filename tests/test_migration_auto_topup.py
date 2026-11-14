@@ -708,6 +708,9 @@ def test_the_migration_fails_fast_when_payments_is_locked(
     """``SET lock_timeout`` first: a blocked ``ALTER`` fails in seconds instead of queueing every
     ``payments`` query behind it while the old revision serves traffic (0037/0038 precedent)."""
     sm, downgrade_to = migrated_sessionmaker_with_downgrade
+    # The fixture migrates to the head, which later migrations move past 0056; step back to 0056
+    # first so the locked run below starts from this revision.
+    downgrade_to(REVISION)
     if direction == "upgrade":
         downgrade_to(DOWN_REVISION)
     engine = sm.kw["bind"]

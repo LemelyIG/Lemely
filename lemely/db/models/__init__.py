@@ -12,6 +12,7 @@ from __future__ import annotations
 # These imports must come before import_all_models so they are always available
 # regardless of whether the caller has already triggered the lazy imports.
 from lemely.db.models.academic import ExamDate, MarkScheme, Paper, Subject
+from lemely.db.models.admin_audit import AdminAuditLog
 from lemely.db.models.attempts import Attempt, QuestionResult, Upload, WeaknessRecord
 from lemely.db.models.auth_cooldowns import AuthCooldown
 from lemely.db.models.auth_tokens import AuthToken
@@ -102,10 +103,12 @@ def import_all_models() -> None:
     """
     from lemely.db.models import (  # noqa: F401
         academic,
+        admin_audit,
         attempts,
         auth_cooldowns,
         auth_tokens,
         billing,
+        billing_ops,
         catalogue,
         deletion,
         engagement,
@@ -144,6 +147,7 @@ from lemely.db.models.otp_challenges import OtpChallenge  # noqa: E402
 __all__ = [
     "SESSION_MONTH_LABELS",
     # Models
+    "AdminAuditLog",
     "Announcement",
     "AnnouncementRead",
     "AtRiskAcknowledgement",

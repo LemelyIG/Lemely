@@ -130,6 +130,17 @@ EXPECTED_TABLES = {
     "auto_topup_settings",
     # Teacher team (lemely/db/models/team.py, migration 0054).
     "teacher_members",
+    # Admin billing (lemely/db/models/admin_audit.py and billing_ops.py, migration 0057).
+    "admin_audit_log",
+    "job_runs",
+    "paymob_webhook_failures",
+    "payment_refunds",
+    "usage_job_model_costs",
+    "signup_allowance_off_periods",
+    "credit_conversion_rates",
+    "billing_settings",
+    "plan_tier_terms",
+    "llm_price_overrides",
 }
 
 # Tables deliberately excluded from `test_every_model_has_timestamps` below.
@@ -153,6 +164,12 @@ EXPECTED_TABLES = {
 # of the same shape: one row per T6 upload attempt, never updated.
 # ``usage_entries`` (migration 0052) is the usage ledger: a trigger rejects every
 # UPDATE and DELETE, so it carries ``created_at`` (and ``event_at``) only.
+# Migration 0057: ``admin_audit_log`` is append-only (a trigger rejects UPDATE and DELETE),
+# ``paymob_webhook_failures`` and ``usage_job_model_costs`` and ``signup_allowance_off_periods``
+# are written once and never updated (``received_at`` / ``created_at`` only), and ``job_runs``
+# is one upserted row per job whose ``last_*`` columns are its own timestamps.
+# ``plan_tier_terms`` is the append-only history of a tier's terms (``created_at`` only; the same
+# trigger as the audit log).
 TABLES_WITHOUT_TIMESTAMPS = {
     "otp_challenges",
     "auth_cooldowns",
@@ -163,6 +180,12 @@ TABLES_WITHOUT_TIMESTAMPS = {
     "tutor_access_audit",
     "tutor_evidence_uploads",
     "usage_entries",
+    "admin_audit_log",
+    "job_runs",
+    "paymob_webhook_failures",
+    "usage_job_model_costs",
+    "signup_allowance_off_periods",
+    "plan_tier_terms",
 }
 
 

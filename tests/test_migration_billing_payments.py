@@ -146,6 +146,9 @@ def test_orm_declares_the_named_objects_of_the_new_tables() -> None:
         "uq_credit_packs_code",
         "ck_credit_packs_units_nonneg",
         "ck_credit_packs_price_nonneg",
+        # Migration 0057 (UD-13): the edit counter and the signup validity.
+        "ck_credit_packs_version_min",
+        "ck_credit_packs_signup_validity",
     }
     assert _orm_names("saved_cards") == {
         "pk_saved_cards",
@@ -156,6 +159,7 @@ def test_orm_declares_the_named_objects_of_the_new_tables() -> None:
         "pk_paymob_events",
         "uq_paymob_events_dedupe_key",
         "ix_paymob_events_dedupe_key_prefix",
+        "ix_admin_paymob_events_created_at",  # 0057
     }
     assert {
         "pk_payments",
@@ -173,6 +177,15 @@ def test_orm_declares_the_named_objects_of_the_new_tables() -> None:
         "ck_payments_credit_pack_link",
         "ix_payments_status_next_reconcile_at",
         "ix_payments_payer_user_id_paid_at",
+        # Migration 0056 (auto top-up and merchant charges).
+        "uq_payments_dedupe_key",
+        "ck_payments_dedupe_key_purpose",
+        "ix_payments_auto_topup_in_flight",
+        "ix_payments_subscription_purpose",
+        "ix_payments_dedupe_key_prefix",
+        # Migration 0057 (admin payments and margin queries).
+        "ix_admin_payments_paid_at",
+        "ix_admin_payments_status_created_at",
     } == _orm_names("payments")
     assert _orm_names("plan_tiers") >= PLAN_TIER_OBJECTS
     assert _orm_names("subscriptions") >= SUBSCRIPTION_OBJECTS
