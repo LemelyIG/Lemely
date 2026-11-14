@@ -18,6 +18,7 @@ the service shell; later tasks add the lifecycle to :class:`SubscriptionService`
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, ClassVar, Final
@@ -26,14 +27,18 @@ import sqlalchemy as sa
 import structlog
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
 from lemely.core.subscription_rules import (
     MAX_EXTRA_SEATS_AT_CHECKOUT,
     PAYMOB_RETRIAL_DAYS,
     STALE_CHECKOUT_AFTER,
+    is_successful_charge,
+    parse_paymob_time,
     paymob_frequency,
     period_end,
+    renewal_period_start,
     seat_capacity_for,
     subscription_amount_minor,
 )
@@ -45,6 +50,7 @@ from lemely.db.billing_repo import (
     CheckoutUnavailable,
     UnknownPayer,
     _outcome_unknown,
+    _redact_tokens,
     add_months,
     billing_data_for,
     is_linked_parent,
@@ -88,6 +94,20 @@ alerts = structlog.get_logger("lemely.db.subscription_repo")
 #: Path of the subscription webhook route (``lemely/web/routers/paymob_webhooks.py``, prefix
 #: ``/api/webhooks/paymob``; the Cloudflare Worker proxies only ``/api/*``).
 SUBSCRIPTION_WEBHOOK_PATH: Final = "/api/webhooks/paymob/subscription"
+
+#: The ``trigger_type`` values of a subscription callback, exactly as Paymob sends them (the HMAC
+#: is computed over the raw string, so dispatch matches the wire bytes; audit M6).
+TRIGGER_CREATED: Final = "Subscription Created"
+TRIGGER_SUCCESS: Final = "Successful Transaction"
+TRIGGER_FAILED: Final = "Failed Transaction"
+TRIGGER_OVERDUE: Final = "Failed Overdue Transaction"
+TRIGGER_CANCELED: Final = "canceled"
+TRIGGER_SUSPENDED: Final = "suspended"
+TRIGGER_RESUMED: Final = "resumed"
+
+#: Paymob ids and amounts above this are not Paymob data: the columns are 64-bit and a hostile or
+#: corrupt body must not become a database error that makes the webhook fail on every retry.
+_MAX_PAYMOB_INT: Final = 10**15
 
 
 class SubscriptionError(Exception):
@@ -806,6 +826,275 @@ def handle_subscription_first(session: Session, payment: Payment, obj: JsonMap) 
     )
 
 
+# -- renewals -----------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteState:
+    """What Paymob itself returned for a webhook: never read from the (partly unsigned) body.
+
+    ``subscription`` is ``GET subscriptions/{id}``; ``last_transaction`` is the charge, fetched
+    for a ``Successful Transaction`` trigger only.
+    """
+
+    subscription: JsonMap
+    last_transaction: JsonMap | None = None
+
+
+TriggerHandler = Callable[[Subscription, RemoteState, "datetime"], None]
+
+
+class _OtherPlanLive(Exception):
+    """A renewal could not reactivate a lapsed plan: the account holds another live one."""
+
+
+def parse_subscription_webhook(body: JsonMap) -> tuple[str, int]:
+    """``(trigger_type, subscription id)``, the two fields the HMAC signs.
+
+    ``paymob_request_id`` and every other field are unsigned, so nothing here returns them.
+
+    Raises:
+        MalformedWebhook: the trigger is missing or not a string, or the id is not a positive
+            integer (a bool, a float and a digit string are not).
+    """
+    trigger = body.get("trigger_type")
+    data = body.get("subscription_data")
+    paymob_id = _strict_int(data.get("id")) if isinstance(data, Mapping) else None
+    if (
+        not isinstance(trigger, str)
+        or not trigger
+        or paymob_id is None
+        or not 0 < paymob_id <= _MAX_PAYMOB_INT
+    ):
+        raise MalformedWebhook("trigger_type and an integer subscription_data.id are required")
+    return trigger, paymob_id
+
+
+def _period_terms(
+    session: Session, subscription: Subscription, *, with_pending: bool
+) -> tuple[PlanTier, int]:
+    """The tier and extra seats the next period uses, with or without the pending change.
+
+    A tier that sells no extra seats holds none, whatever the row says.
+    """
+    pending_tier_id = subscription.pending_plan_tier_id if with_pending else None
+    tier = session.get(PlanTier, pending_tier_id or subscription.plan_tier_id)
+    if tier is None:
+        raise RuntimeError(f"subscription {subscription.id} has no plan tier")
+    seats = (
+        subscription.pending_extra_seats
+        if with_pending and subscription.pending_extra_seats is not None
+        else subscription.extra_seats or 0
+    )
+    return tier, seats if tier.extra_seat_price_minor > 0 else 0
+
+
+def _expected_renewal_amount(session: Session, subscription: Subscription) -> int:
+    """What Paymob should charge at the next renewal, pending changes included (DV-12).
+
+    Task 8 makes this the public ``next_renewal_amount`` without changing the result.
+    """
+    tier, seats = _period_terms(session, subscription, with_pending=True)
+    return subscription_amount_minor(
+        price_minor=tier.price_minor,
+        extra_seats=seats,
+        extra_seat_price_minor=tier.extra_seat_price_minor,
+    )
+
+
+def _grant_renewal_period(
+    session: Session,
+    subscription: Subscription,
+    payment: Payment,
+    *,
+    charged_at: datetime,
+    now: datetime,
+    apply_pending: bool,
+) -> SubscriptionPeriod:
+    """Start the paid period: move the subscription, insert the period, grant the allowance.
+
+    A plan in force continues from its period end (no gap, no overlap, however early the charge
+    landed); a late charge or a reactivated plan starts at the charge. The pending tier and seat
+    changes are applied only when ``apply_pending`` (the charge was the amount they set).
+    Excess seats are shed before the grant is issued (lock order, DV-13).
+
+    Raises:
+        _OtherPlanLive: the plan was ended and the account now holds another live one; nothing
+            was changed.
+    """
+    tier, seats = _period_terms(session, subscription, with_pending=apply_pending)
+    assert tier.interval is not None  # noqa: S101 - the caller checked
+    start = (
+        renewal_period_start(
+            current_period_end=subscription.current_period_end, charged_at=charged_at
+        )
+        if subscription.status in PLAN_LIVE_STATUSES
+        else charged_at
+    )
+    end = period_end(start, tier.interval.value)
+    try:
+        # A savepoint: reactivating an ended plan can trip the one-live-per-user index when a
+        # checkout committed after the locks were taken, and then nothing may change.
+        with session.begin_nested():
+            if apply_pending:
+                subscription.plan_tier_id = tier.id
+                subscription.pending_plan_tier_id = None
+                subscription.extra_seats = seats
+                subscription.pending_extra_seats = None
+            subscription.status = SubscriptionStatus.active
+            subscription.grace_until = None
+            subscription.current_period_start = start
+            subscription.current_period_end = end
+            subscription.paymob_amount_minor = payment.amount_minor
+            _bump(subscription)
+            session.flush()
+    except IntegrityError as exc:
+        if not _violates_one_live(exc):
+            raise
+        raise _OtherPlanLive from exc
+    period = SubscriptionPeriod(
+        subscription_id=subscription.id,
+        period_start=start,
+        period_end=end,
+        payment_id=payment.id,
+    )
+    session.add(period)
+    session.flush()
+    if tier.audience is PlanAudience.teacher:
+        _shed_excess_seats(session, subscription, tier, now=now)
+    _issue_period_grant(session, subscription, tier, period, payment)
+    enqueue_subscription_notice(
+        session, subscription=subscription, notice="renewed", effective_at=end
+    )
+    log.info(
+        "subscription_renewed",
+        subscription_id=str(subscription.id),
+        payment_id=str(payment.id),
+        period_end=end.isoformat(),
+    )
+    return period
+
+
+def _note_charge_kept(subscription: Subscription, payment: Payment, *, reason: str) -> None:
+    """A renewal charge moved money but bought no period: an operator must refund it (UD-2)."""
+    alerts.error(
+        "subscription_charge_on_ended_subscription",
+        subscription_id=str(subscription.id),
+        payment_id=str(payment.id),
+        status=subscription.status.value,
+        reason=reason,
+        alert=True,
+    )
+
+
+def _settle_renewal(
+    session: Session,
+    subscription: Subscription,
+    payment: Payment,
+    *,
+    charged_at: datetime,
+    now: datetime,
+) -> bool:
+    """Grant the period a paid renewal payment bought, or keep the payment for a refund.
+
+    Returns ``True`` when a period was granted. The caller holds the subscription lock and has
+    accepted the payment's amount. A plan in force renews. A plan that lapsed for non-payment
+    (``expired``) and ran before (``activated_at``) is reactivated when the account holds no other
+    live plan (UD-2): the user is paying to keep it. A user-cancelled plan, a checkout that never
+    activated (a credits-converted one included) and a lapse that lost its slot to another plan
+    stay ended: the payment stays ``paid``, no period is granted and the alert asks for a refund.
+    The Paymob subscription of such a row is cancelled by the sweeps (DV-15, DV-27).
+    """
+    status = subscription.status
+    if status not in PLAN_LIVE_STATUSES:
+        if status is not SubscriptionStatus.expired:
+            _note_charge_kept(
+                subscription,
+                payment,
+                reason="cancelled" if status is SubscriptionStatus.cancelled else "not_a_plan",
+            )
+            return False
+        if subscription.activated_at is None:
+            _note_charge_kept(subscription, payment, reason="never_activated")
+            return False
+        if _has_other_live(session, subscription):
+            _note_charge_kept(subscription, payment, reason="other_plan_live")
+            return False
+    elif subscription.cancel_at_period_end:
+        log.warning(
+            "subscription_renewal_after_cancel_request",
+            subscription_id=str(subscription.id),
+            payment_id=str(payment.id),
+        )
+    expected = _expected_renewal_amount(session, subscription)
+    apply_pending = payment.amount_minor == expected
+    if not apply_pending and (
+        subscription.pending_plan_tier_id is not None
+        or subscription.pending_extra_seats is not None
+    ):
+        log.warning(
+            "subscription_pending_change_deferred",
+            subscription_id=str(subscription.id),
+            charged_minor=payment.amount_minor,
+            expected_minor=expected,
+        )
+    tier, _ = _period_terms(session, subscription, with_pending=apply_pending)
+    if tier.interval is None:
+        alerts.error(
+            "subscription_renewal_for_unusable_tier",
+            subscription_id=str(subscription.id),
+            payment_id=str(payment.id),
+            alert=True,
+        )
+        return False
+    try:
+        _grant_renewal_period(
+            session,
+            subscription,
+            payment,
+            charged_at=charged_at,
+            now=now,
+            apply_pending=apply_pending,
+        )
+    except _OtherPlanLive:
+        _note_charge_kept(subscription, payment, reason="other_plan_live")
+        return False
+    return True
+
+
+def handle_subscription_renewal(session: Session, payment: Payment, obj: JsonMap) -> None:
+    """Paid handler for ``subscription_renewal``, in the callback's transaction (DV-33).
+
+    Renewals reach Lemely through the subscription webhook and the drift check, which record the
+    payment already ``paid`` and grant the period themselves; Phase 02 dispatches nothing to this
+    handler today, but a renewal payment that is settled by its own callback gets the same
+    period here. One period per payment: a replay does nothing. The clock is the payment's
+    ``paid_at``, never the wall clock.
+
+    Raises:
+        RuntimeError: ``payment.paid_at`` is missing.
+    """
+    del obj  # the callback was verified and matched to ``payment`` by BillingService
+    paid_at = payment.paid_at
+    if paid_at is None:
+        raise RuntimeError(f"subscription renewal payment {payment.id} has no paid_at")
+    subscription = (
+        _lock_subscriptions(session, payment.subscription_id)
+        if payment.subscription_id is not None
+        else None
+    )
+    if subscription is None:
+        alerts.error(
+            "subscription_renewal_paid_without_subscription",
+            payment_id=str(payment.id),
+            alert=True,
+        )
+        return
+    if _period_for_payment(session, payment.id) is not None:
+        return
+    _settle_renewal(session, subscription, payment, charged_at=paid_at, now=paid_at)
+
+
 class SubscriptionService:
     """The subscription lifecycle, bound to one session (see the module docstring)."""
 
@@ -1058,6 +1347,258 @@ class SubscriptionService:
             or pending.payer_user_id == payer_id
         )
 
+    # -- subscription webhooks (spec §5.2) ---------------------------------------------
+
+    def apply_renewal_webhook(self, body: JsonMap, *, now: datetime) -> None:
+        """Apply one HMAC-verified subscription callback, at most once (R26, DV-11).
+
+        The HMAC covers the trigger and the id only, so nothing else in ``body`` is read. Every
+        Paymob read comes first with no lock held (``GET subscriptions/{id}``, plus
+        ``last-transaction`` for a ``Successful Transaction``); then the subscription is locked,
+        the event is stored under a key built from those re-fetched facts, and the handler runs.
+        A delivery already processed is a no-op; one stored unprocessed (the plan was not linked
+        yet) is applied now. Correctness never rests on the key: each handler is idempotent under
+        the subscription lock. An unmatched delivery is stored unprocessed with the remote copy,
+        which the first-payment handler and the drift check link later.
+
+        The caller commits. A ``PaymobError`` from a read propagates before any write, so the
+        route answers 5xx and Paymob retries.
+
+        Raises:
+            MalformedWebhook: no trigger, or no integer subscription id.
+            PaymobError: a Paymob read failed.
+        """
+        trigger, paymob_id = parse_subscription_webhook(body)
+        remote = self._client.get_subscription(paymob_id)
+        txn = self._client.last_transaction(paymob_id) if trigger == TRIGGER_SUCCESS else None
+        state = RemoteState(remote, txn)
+        dedupe_key = f"sub:{paymob_id}:{trigger}:{_fingerprint(trigger, state)}"
+        subscription = self._resolve(paymob_id, remote)
+        session = self._session
+        payload: dict[str, object] = {
+            "body": {"trigger_type": trigger, "subscription_data": {"id": paymob_id}},
+            "remote": _redact_tokens(remote),
+        }
+        event_id = session.execute(
+            pg_insert(PaymobEvent)
+            .values(kind=PaymobEventKind.subscription, dedupe_key=dedupe_key, payload=payload)
+            .on_conflict_do_nothing(index_elements=[PaymobEvent.dedupe_key])
+            .returning(PaymobEvent.id)
+        ).scalar_one_or_none()
+        event = session.scalars(
+            select(PaymobEvent)
+            .where(PaymobEvent.dedupe_key == dedupe_key)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).one()
+        if event_id is None and (event.processed_at is not None or subscription is None):
+            log.info("paymob_subscription_webhook_duplicate", trigger_type=trigger)
+            return
+        if subscription is None:
+            log.warning(
+                "paymob_subscription_webhook_unmatched",
+                paymob_subscription_id=paymob_id,
+                trigger_type=trigger,
+            )
+            return
+        handler = self._handlers().get(trigger)
+        if handler is not None:
+            handler(subscription, state, now)
+        event.processed_at = now
+
+    def _handlers(self) -> dict[str, TriggerHandler]:
+        """Trigger to handler.
+
+        A trigger with none (``Subscription Created``, ``updated``, ...) is stored, marked
+        processed and answered 200 (DV-29).
+        """
+        return {TRIGGER_SUCCESS: self._on_successful_transaction}
+
+    def _resolve(self, paymob_id: int, remote: JsonMap) -> Subscription | None:
+        """Our subscription for a Paymob id, locked; linked through its first payment if new.
+
+        ``remote`` must be Paymob's own answer for ``paymob_id``: a copy that names another id is
+        unmatched. The transaction-scoped advisory lock on the initial transaction comes first,
+        the one the first-payment handler takes, so of the first charge's callback and the
+        ``Subscription Created`` webhook the second sees the first's commit (T5-I2). Linking goes
+        only through a ``subscription_first`` payment and works for an expired row too: a late
+        ``Subscription Created`` for a credits-converted checkout must link, or the extra Paymob
+        subscription could never be found and cancelled.
+        """
+        session = self._session
+        if _strict_int(remote.get("id")) != paymob_id:
+            log.warning("paymob_subscription_remote_mismatch", paymob_subscription_id=paymob_id)
+            return None
+        initial = _strict_int(remote.get("initial_transaction"))
+        if initial is not None and not 0 < initial <= _MAX_PAYMOB_INT:
+            initial = None
+        if initial is not None:
+            lock_paymob_transaction(session, initial)
+        linked_id = session.scalar(
+            select(Subscription.id).where(Subscription.paymob_subscription_id == paymob_id)
+        )
+        if linked_id is not None:
+            return _lock_subscriptions(session, linked_id)
+        if initial is None:
+            return None
+        payment = session.scalars(
+            select(Payment).where(
+                Payment.paymob_txn_id == initial,
+                Payment.purpose == PaymentPurpose.subscription_first,
+            )
+        ).one_or_none()
+        if payment is None or payment.subscription_id is None:
+            return None
+        subscription = _lock_subscriptions(session, payment.subscription_id)
+        if subscription is None:
+            return None
+        if subscription.paymob_subscription_id is None:
+            subscription.paymob_subscription_id = paymob_id
+            _bump(subscription)
+            session.flush()
+            log.info(
+                "paymob_subscription_linked",
+                subscription_id=str(subscription.id),
+                paymob_subscription_id=paymob_id,
+            )
+        elif subscription.paymob_subscription_id != paymob_id:
+            alerts.error(
+                "subscription_link_conflict",
+                subscription_id=str(subscription.id),
+                paymob_subscription_id=paymob_id,
+                alert=True,
+            )
+            return None
+        return subscription
+
+    def _on_successful_transaction(
+        self, subscription: Subscription, state: RemoteState, now: datetime
+    ) -> None:
+        txn = state.last_transaction
+        if txn is None:
+            log.warning("subscription_success_without_charge", subscription_id=str(subscription.id))
+            return
+        self._apply_successful_charge(
+            subscription,
+            txn,
+            now=now,
+            initial_transaction=_strict_int(state.subscription.get("initial_transaction")),
+        )
+
+    def _apply_successful_charge(
+        self,
+        subscription: Subscription,
+        txn: JsonMap,
+        *,
+        now: datetime,
+        initial_transaction: int | None = None,
+    ) -> bool:
+        """Record one renewal charge and grant its period. ``True`` when a period was granted.
+
+        The one acceptance rule of renewals (DV-12); the drift check calls it too. Nothing is
+        written for a charge that cannot be read (alert), that is not a success, that is Paymob's
+        initial transaction (the first payment's, whatever the order of its callback), or that is
+        already recorded. The charge is accepted only in the subscription's own currency and for
+        the amount Lemely last set at Paymob or the one it expects next: any other amount is
+        stored ``failed_mismatch`` with no grant. Pending tier and seat changes apply only when
+        the charge is the expected (new) amount, so a failed price update never grants the new
+        tier for the old price. A charge on an ended plan is handled by :func:`_settle_renewal`.
+        The caller holds the subscription lock and commits.
+        """
+        session = self._session
+        txn_id = _strict_int(txn.get("id"))
+        amount = _strict_int(txn.get("amount_cents"))
+        currency = txn.get("currency")
+        if (
+            txn_id is None
+            or not 0 < txn_id <= _MAX_PAYMOB_INT
+            or amount is None
+            or not 0 < amount <= _MAX_PAYMOB_INT
+            or not isinstance(currency, str)
+            or len(currency) != 3
+        ):
+            alerts.error(
+                "subscription_last_transaction_unreadable",
+                subscription_id=str(subscription.id),
+                alert=True,
+            )
+            return False
+        if not is_successful_charge(txn):
+            log.info("subscription_last_transaction_not_successful", txn_id=txn_id)
+            return False
+        if txn_id == initial_transaction:
+            log.info("subscription_charge_is_initial_transaction", txn_id=txn_id)
+            return False
+        if session.scalar(select(Payment.id).where(Payment.paymob_txn_id == txn_id)) is not None:
+            return False
+        if subscription.payer_user_id is None:
+            alerts.error(
+                "subscription_renewal_without_payer",
+                subscription_id=str(subscription.id),
+                alert=True,
+            )
+            return False
+        charged_at = parse_paymob_time(txn.get("created_at"))
+        if charged_at is None:
+            log.warning("subscription_charge_time_unreadable", txn_id=txn_id)
+            charged_at = now
+        current_tier = session.get(PlanTier, subscription.plan_tier_id)
+        expected = _expected_renewal_amount(session, subscription)
+        accepted = {expected}
+        if subscription.paymob_amount_minor is not None:
+            accepted.add(subscription.paymob_amount_minor)
+        mismatch = (
+            current_tier is None or currency != current_tier.currency or amount not in accepted
+        )
+        tier, seats = _period_terms(session, subscription, with_pending=amount == expected)
+        payment = Payment(
+            id=uuid.uuid4(),
+            special_reference=f"subscription-renewal:{txn_id}",
+            payer_user_id=subscription.payer_user_id,
+            beneficiary_user_id=subscription.user_id,
+            purpose=PaymentPurpose.subscription_renewal,
+            plan_tier_id=tier.id,
+            subscription_id=subscription.id,
+            seat_quantity=seats or None,  # the CHECK forbids 0
+            amount_minor=amount,
+            currency=currency,
+            status=PaymentStatus.failed_mismatch if mismatch else PaymentStatus.paid,
+            paymob_order_id=self._free_order_id(txn),
+            paymob_txn_id=txn_id,
+            method="card",
+            last_callback=_redact_tokens(txn),
+            paid_at=None if mismatch else charged_at,
+        )
+        session.add(payment)
+        session.flush()
+        if mismatch:
+            alerts.error(
+                "subscription_renewal_mismatch",
+                subscription_id=str(subscription.id),
+                payment_id=str(payment.id),
+                expected_minor=expected,
+                stamped_minor=subscription.paymob_amount_minor,
+                received_minor=amount,
+                currency=currency,
+                alert=True,
+            )
+            return False
+        return _settle_renewal(session, subscription, payment, charged_at=charged_at, now=now)
+
+    def _free_order_id(self, txn: JsonMap) -> int | None:
+        """The charge's Paymob order id, unless another payment already holds it (DV-14).
+
+        The docs show ``order`` as a bare integer and as an object; a renewal payment that stores
+        it lets a later refund or void callback find the payment by its signed order id. The
+        column is unique, so an id that is taken is left out rather than failing the renewal.
+        """
+        order = txn.get("order")
+        order_id = _strict_int(order.get("id") if isinstance(order, Mapping) else order)
+        if order_id is None or not 0 < order_id <= _MAX_PAYMOB_INT:
+            return None
+        taken = self._session.scalar(select(Payment.id).where(Payment.paymob_order_id == order_id))
+        return None if taken is not None else order_id
+
 
 def _is_unpayable(payment: Payment, *, now: datetime) -> bool:
     """Whether a first payment can never become ``paid`` (so its checkout is free to replace).
@@ -1077,6 +1618,19 @@ def _is_unpayable(payment: Payment, *, now: datetime) -> bool:
     return payment.created_at <= now - _INTENTION_LIFETIME
 
 
+def _fingerprint(trigger: str, state: RemoteState) -> str:
+    """The part of a webhook's dedupe key that comes from Paymob's own answers, never the body.
+
+    A success is the charge it carries; anything else is the subscription's remote state and
+    last-update stamp, so a replayed signature maps to one key (DV-11).
+    """
+    if trigger == TRIGGER_SUCCESS:
+        txn_id = _strict_int(state.last_transaction.get("id")) if state.last_transaction else None
+        return f"txn:{txn_id}" if txn_id is not None else "txn:none"
+    remote = state.subscription
+    return f"{remote.get('state')}:{remote.get('updated_at')}"[:100]
+
+
 def _violates_one_live(exc: IntegrityError) -> bool:
     """Whether ``exc`` is the one-live-subscription-per-user unique index (not any other error)."""
     diag = getattr(exc.orig, "diag", None)
@@ -1085,6 +1639,13 @@ def _violates_one_live(exc: IntegrityError) -> bool:
 
 __all__ = [
     "SUBSCRIPTION_WEBHOOK_PATH",
+    "TRIGGER_CANCELED",
+    "TRIGGER_CREATED",
+    "TRIGGER_FAILED",
+    "TRIGGER_OVERDUE",
+    "TRIGGER_RESUMED",
+    "TRIGGER_SUCCESS",
+    "TRIGGER_SUSPENDED",
     "AlreadySubscribed",
     "DowngradeUnavailable",
     "InvalidExtraSeats",
@@ -1095,15 +1656,19 @@ __all__ = [
     "PlanModeMismatch",
     "PlanNotPurchasable",
     "PlanSyncFailed",
+    "RemoteState",
     "SeatsInsufficient",
     "SubscriptionCheckout",
     "SubscriptionError",
     "SubscriptionNotFound",
     "SubscriptionService",
+    "TriggerHandler",
     "convert_payment_to_credits",
     "credit_units_for_amount",
     "handle_subscription_first",
+    "handle_subscription_renewal",
     "lock_paymob_transaction",
+    "parse_subscription_webhook",
     "subscription_webhook_url",
     "sync_paymob_plan",
 ]
@@ -1112,3 +1677,4 @@ __all__ = [
 # sweeper gets there through ``lemely/web/billing_jobs.py``, which Task 11 makes import this module
 # (DV-10): until then only a process that imported it has the handler.
 register_paid_handler(PaymentPurpose.subscription_first, handle_subscription_first)
+register_paid_handler(PaymentPurpose.subscription_renewal, handle_subscription_renewal)

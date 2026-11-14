@@ -268,8 +268,13 @@ def seed_subscription(
     is_manually_activated: bool = False,
     paymob_cancelled_at: datetime | None = None,
     created_at: datetime | None = None,
+    activated_at: datetime | None = None,
 ) -> uuid.UUID:
-    """Insert a subscription row exactly as given (no ledger effect, no period row)."""
+    """Insert a subscription row exactly as given (no ledger effect, no period row).
+
+    ``activated_at`` is ``None`` unless given: a plan that was paid for and ran has it set, one
+    that never activated (a converted checkout, a pending row) does not.
+    """
     sub_id = uuid.uuid4()
     with sm.begin() as session:
         sub = Subscription(
@@ -289,6 +294,7 @@ def seed_subscription(
             grace_until=grace_until,
             is_manually_activated=is_manually_activated,
             paymob_cancelled_at=paymob_cancelled_at,
+            activated_at=activated_at,
         )
         if created_at is not None:
             sub.created_at = created_at
