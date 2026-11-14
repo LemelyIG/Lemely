@@ -1146,3 +1146,104 @@ def test_a_target_price_raised_between_checkout_and_payment_is_credited_not_appl
     assert credited is not None
     [event] = [log for log in logs if log["event"] == "merchant_charge_credited"]
     assert event["reason"] == "superseded"
+
+
+# ---------------------------------------------------------------------------
+# Teacher upgrade: the extra-seat price difference is part of the charge (UD, M2).
+# ---------------------------------------------------------------------------
+
+
+def _teacher_with_seats(sm: sessionmaker[Session], **kwargs: Any) -> dict[str, uuid.UUID]:
+    """A teacher paying 30 000 with 3 extra seats at 2 000 each, half the period left."""
+    options: dict[str, Any] = {"included": 2, "seat_price": 2_000, "price": 30_000, "extra": 3}
+    options.update(kwargs)
+    return teacher_with_plan(sm, **options)
+
+
+def _seat_target(sm: sessionmaker[Session], *, price: int, seat_price: int) -> uuid.UUID:
+    return seed_tier(
+        sm,
+        audience=PlanAudience.teacher,
+        price_minor=price,
+        allowance_units=2_000,
+        included_seats=2,
+        extra_seat_price_minor=seat_price,
+    )
+
+
+def test_a_teacher_upgrade_charges_the_base_and_the_seat_price_difference(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher_with_seats(sm)
+    target = _seat_target(sm, price=40_000, seat_price=5_000)
+    client = _CheckoutClient()
+
+    quote = _quote(sm, client, scene, target)
+    payment_id = _checkout(sm, client, scene, target)
+
+    # (40 000 - 30 000) + (5 000 - 2 000) x 3 extra seats = 19 000, half the period left.
+    assert quote.amount_minor == 9_500
+    assert _payment(sm, payment_id).amount_minor == 9_500
+    assert client.intentions[0]["items"][0]["amount"] == 9_500
+    _pay(sm, payment_id)
+    assert _sub(sm, scene).plan_tier_id == target
+
+
+def test_a_student_upgrade_ignores_extra_seats_and_seat_prices(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _student(sm)
+    _update_sub(sm, scene, extra_seats=3)  # a student plan sells no seats
+    target = _target(sm, extra_seat_price_minor=9_000)
+    assert _quote(sm, _CheckoutClient(), scene, target).amount_minor == 5_000
+
+
+def test_a_scheduled_seat_reduction_lowers_the_seats_priced(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher_with_seats(sm, pending=1)
+    target = _seat_target(sm, price=40_000, seat_price=5_000)
+    # (10 000 + 3 000 x 1 usable extra seat) / 2
+    assert _quote(sm, _CheckoutClient(), scene, target).amount_minor == 6_500
+
+
+def test_a_cheaper_seat_price_nets_against_the_base_difference(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher_with_seats(sm)
+    target = _seat_target(sm, price=40_000, seat_price=1_000)
+    # (10 000 - 1 000 x 3) / 2
+    assert _quote(sm, _CheckoutClient(), scene, target).amount_minor == 3_500
+
+
+def test_a_seat_credit_larger_than_the_base_difference_still_charges_one_piaster(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher_with_seats(sm)
+    target = _seat_target(sm, price=30_001, seat_price=1_000)  # 1 - 3 000 < 0
+    payment_id = _checkout(sm, _CheckoutClient(), scene, target)
+    assert _payment(sm, payment_id).amount_minor == 1
+
+
+def test_seats_added_after_the_quote_void_the_payment_to_credits(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher_with_seats(sm)
+    target = _seat_target(sm, price=40_000, seat_price=5_000)
+    payment_id = _checkout(sm, _CheckoutClient(), scene, target)
+    _update_sub(sm, scene, extra_seats=4)  # a seat purchase landed after the quote
+
+    with capture_logs() as logs:
+        _pay(sm, payment_id)
+
+    assert _sub(sm, scene).plan_tier_id == scene["tier_id"]
+    assert _grant(sm, scene["user_id"], f"upgrade:{payment_id}") is None
+    assert _grant(sm, scene["user_id"], f"credited:{payment_id}") is not None
+    [event] = [log for log in logs if log["event"] == "merchant_charge_credited"]
+    assert event["reason"] == "superseded"

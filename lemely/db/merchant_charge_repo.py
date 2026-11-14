@@ -585,7 +585,9 @@ class MerchantChargeService:
         start, end = sub.current_period_start, sub.current_period_end
         if start is None or end is None:
             raise MerchantChargeError("subscription_not_active", "The plan has no current period")
-        amount = prorate_minor(new_terms.price_minor - old_terms.price_minor, start, end, now)
+        amount = _upgrade_amount(
+            old_terms, new_terms, _priced_extra_seats(sub, new_tier), start, end, now
+        )
         if amount <= 0:
             raise MerchantChargeError("period_ending", "The current period is about to end")
         allowance = _allowance_gain(old_terms, new_terms, start, end, now)
@@ -1046,6 +1048,39 @@ def is_upgrade(
     )
 
 
+def _priced_extra_seats(sub: Subscription, new_tier: PlanTier) -> int:
+    """Extra seats whose price changes with an upgrade: a teacher plan's usable extra seats.
+
+    A scheduled reduction lowers them at once (the seats it drops are not billed again), the same
+    figure the capacity check uses. A student plan sells no seats.
+    """
+    return usable_extra_seats(sub) if new_tier.audience is PlanAudience.teacher else 0
+
+
+def _upgrade_amount(
+    old_terms: PlanTierTerms,
+    new_terms: PlanTierTerms,
+    extra_seats: int,
+    start: datetime,
+    end: datetime,
+    at: datetime,
+) -> int:
+    """What an upgrade charges at ``at``: the base price difference plus the seat price difference.
+
+    The seat part is ``(new seat price - billed seat price) x extra_seats``, added to the base
+    difference and prorated once for the rest of the period (so both parts round together). A
+    cheaper seat price makes it negative and nets against the base; the charge is never below one
+    piaster (Paymob needs a positive amount). ``0`` only when the period is over, which the quote
+    and the checkout refuse as ``period_ending``. The quote, the checkout and the settle-time
+    reprice all use this one function, so a seat count that moved in between is a mismatch.
+    """
+    base_diff = new_terms.price_minor - old_terms.price_minor
+    if prorate_minor(max(base_diff, 0), start, end, at) <= 0:
+        return 0
+    seat_diff = (new_terms.extra_seat_price_minor - old_terms.extra_seat_price_minor) * extra_seats
+    return max(prorate_minor(max(base_diff + seat_diff, 0), start, end, at), 1)
+
+
 def _allowance_gain(
     old_terms: PlanTierTerms,
     new_terms: PlanTierTerms,
@@ -1160,8 +1195,10 @@ def upgrade_void_reason(session: Session, sub: Subscription, payment: Payment) -
     # the terms billed NOW. Another upgrade that changed the tier (X landed, this was priced
     # old -> Y), or an admin price change on the target, makes the price differ; a payment that
     # was only converted to credits never moved the tier, so it can never trigger this.
-    repriced = prorate_minor(
-        current_terms(session, target).price_minor - billed_terms(session, sub).price_minor,
+    repriced = _upgrade_amount(
+        billed_terms(session, sub),
+        current_terms(session, target),
+        _priced_extra_seats(sub, target),
         sub.current_period_start,
         sub.current_period_end,
         payment.created_at,
