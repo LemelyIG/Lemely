@@ -10,7 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { CodeInput } from "@/components/auth/CodeInput"
 import { ApiError } from "@/lib/api"
 import { withNext } from "@/lib/nextPath"
-import { phoneErrorCode, phoneErrorMessage, validatePhoneField } from "@/lib/phone"
+import { cleanPhoneInput, phoneErrorCode, phoneErrorMessage, validatePhoneField } from "@/lib/phone"
 import { normalizeInviteCode } from "@/lib/hooks/useInvitesApi"
 import { useRequestParentCode, useVerifyParentCode } from "@/lib/hooks/useParentSignupApi"
 import { MIN_PASSWORD_LENGTH, passwordStrength, strengthFillClass } from "./signupDetailsLogic"
@@ -251,7 +251,7 @@ export function SignupParent() {
         password,
         displayName: name.trim() || undefined,
         acceptedTerms: true,
-        phone: phone.trim(),
+        phone: cleanPhoneInput(phone),
       },
       {
         onSuccess: (result) => navigate(portalPathForRole(result.role), { replace: true }),
@@ -480,7 +480,7 @@ export function SignupParent() {
               <div className="flex flex-col gap-1.5">
                 <h1 className="text-display-lg text-on-surface">Finish your account</h1>
                 <p className="text-body-md text-on-surface-variant">
-                  Add your phone number and choose a password, and you'll be able to see how your
+                  Add your mobile number and choose a password, and you'll be able to see how your
                   child is doing.
                 </p>
               </div>

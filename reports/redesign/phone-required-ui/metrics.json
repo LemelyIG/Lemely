@@ -18,7 +18,7 @@
     },
     {
       "vp": "380",
-      "label": "parent server phone_required",
+      "label": "parent server phone_invalid",
       "alerts": []
     },
     {
@@ -71,7 +71,7 @@
     },
     {
       "vp": "768",
-      "label": "parent server phone_required",
+      "label": "parent server phone_invalid",
       "alerts": []
     },
     {
@@ -124,7 +124,7 @@
     },
     {
       "vp": "1440",
-      "label": "parent server phone_required",
+      "label": "parent server phone_invalid",
       "alerts": []
     },
     {

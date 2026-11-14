@@ -107,7 +107,7 @@ export function PlansView(props: PlansViewProps) {
     const m = section === "plan" ? subCheckout : packCheckout
     if (!m.isError || !isCheckoutPhoneRequired(m.error)) return null
     return (
-      <div className="flex flex-col gap-3 rounded-md border border-outline-variant bg-surface-container-low p-4">
+      <div className="flex max-w-2xl flex-col gap-3 rounded-md border border-outline-variant bg-surface-container-low p-4">
         <div className="flex flex-col gap-1">
           <h3 className="m-0 text-display-xs text-on-surface">
             {PHONE_CHECKOUT_HEADING}

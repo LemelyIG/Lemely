@@ -3,7 +3,7 @@ import { useRef, useState, type FormEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { PhoneInput } from "@/components/ui/phone-input"
 import { usePutPhone } from "@/lib/hooks/useMeApi"
-import { phoneErrorCode, phoneErrorMessage, validatePhoneField } from "@/lib/phone"
+import { cleanPhoneInput, phoneErrorCode, phoneErrorMessage, validatePhoneField } from "@/lib/phone"
 import { settingsSaveFailureMessage } from "@/lib/settingsOutcome"
 
 /*
@@ -74,7 +74,7 @@ export function PhoneEntryForm({
     setFailure(null)
     const problem = validatePhoneField(value)
     if (problem) return fail(problem)
-    put.mutate(value.trim(), {
+    put.mutate(cleanPhoneInput(value), {
       onSuccess: (state) => onSaved?.(state.phone),
       onError: (err) => {
         const code = phoneErrorCode(err)

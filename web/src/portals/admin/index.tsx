@@ -26,7 +26,7 @@ import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SidebarNav, type NavShellItem } from "@/components/ui/nav-shells"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
-import { PhoneBanner } from "@/components/ui/phone-banner"
+import { PhoneBannerSlot } from "@/components/ui/phone-banner-slot"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { ScreenOutlet } from "@/components/ui/screen-outlet"
@@ -375,7 +375,7 @@ function AdminLayout({ lane }: { lane: AdminLane }) {
               profile has resolved and says the address is unverified. */}
           <VerifyEmailBanner />
           {/* UD-11: renders nothing unless the profile says there is no phone number on file. */}
-          <PhoneBanner />
+          <PhoneBannerSlot />
           <Suspense fallback={<RouteSkeleton />}>
             {/* PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it
                 rebuilds each surface") for both admin lanes: a render crash

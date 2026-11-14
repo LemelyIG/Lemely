@@ -130,9 +130,9 @@ import {
  * school for a fresh code), not the account itself. Either way, submit routes
  * to `/verify-email`, per this task's own instruction, unconditionally.
  *
- * ── Binding requirement 6 — a phone number, required (UD-11) ───────────────
+ * ── Binding requirement 6 — a mobile number, required (UD-11) ───────────────
  *
- * Every account carries a phone number, because payment needs one and a placeholder is never sent
+ * Every account carries a mobile number, because payment needs one and a placeholder is never sent
  * to the payment provider. The field sits after the email, uses `PhoneInput` (the "+20" default,
  * `tel` keypad, autofill) and is checked for shape only; the server is the validator and answers
  * 422 `phone_required` / `phone_invalid`, which land on the field itself. The number is never

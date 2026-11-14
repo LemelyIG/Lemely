@@ -2,6 +2,7 @@
 import { useState } from "react"
 import { Link, useLocation } from "react-router-dom"
 import { Phone, X } from "@phosphor-icons/react"
+import { MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import {
   phoneBannerState,
@@ -11,7 +12,7 @@ import {
 } from "@/lib/phoneBanner"
 
 /*
- * "Add your phone number", mounted once in each of the four portal layouts directly under
+ * "Add your mobile number", mounted once in each of the four portal layouts directly under
  * `VerifyEmailBanner`, whose construction this follows: the same strip, `role="status"` so it never
  * interrupts a screen reader, and its own `mb-6` so that rendering nothing costs nothing.
  *
@@ -46,21 +47,23 @@ export function PhoneBannerView({ to, onDismiss }: { to: string; onDismiss?: () 
     >
       <Phone size={16} className="text-on-surface-variant" aria-hidden="true" />
       <p className="min-w-48 flex-1 text-body-sm text-on-surface">
-        <span className="font-medium">Add your phone number.</span> You'll need one on your account
+        <span className="font-medium">Add your mobile number.</span> You'll need one on your account
         to pay for a plan or credits.
       </p>
       <Link
         to={to}
-        className="shrink-0 text-body-sm text-on-primary-container underline decoration-1 underline-offset-2 transition-[color,transform] hover:text-primary-hover active:scale-[0.98]"
+        className="shrink-0 text-body-sm text-on-primary-container underline decoration-1 underline-offset-2 transition-[color,transform] hover:text-primary-hover active:scale-[0.98] pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
       >
-        Add phone number
+        Add mobile number
       </Link>
       {onDismiss ? (
         <button
           type="button"
           onClick={onDismiss}
-          aria-label="Dismiss the phone reminder"
-          className="ms-auto shrink-0 rounded-sm p-1 text-on-surface-variant transition-[color,transform] hover:text-on-surface active:scale-[0.98]"
+          aria-label="Dismiss the mobile reminder"
+          // A 44px target, painted over the strip's own padding: the negative margins give back the
+          // space so the strip is no taller than the sibling's.
+          className="-my-2.5 -me-2 ms-auto inline-flex size-11 shrink-0 items-center justify-center rounded-sm text-on-surface-variant transition-[color,transform] hover:text-on-surface active:scale-[0.98]"
         >
           <X size={14} aria-hidden="true" />
         </button>
@@ -82,6 +85,9 @@ export function PhoneBanner() {
   const dismiss = () => {
     setDismissed(true)
     writePhoneBannerDismissed(typeof window === "undefined" ? undefined : window.sessionStorage)
+    // The button that held focus is about to unmount; leave focus on the page's main region rather
+    // than on <body>, so the next Tab continues from the content.
+    document.getElementById(MAIN_CONTENT_ID)?.focus()
   }
 
   return <PhoneBannerView to={profileSettingsPath(data?.role)} onDismiss={dismiss} />

@@ -10,7 +10,7 @@ import { BrandLockup } from "@/components/ui/brand-lockup"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { Select } from "@/components/ui/select"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
-import { PhoneBanner } from "@/components/ui/phone-banner"
+import { PhoneBannerSlot } from "@/components/ui/phone-banner-slot"
 import { BadgeSync } from "@/components/badge-sync"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { ScreenOutlet } from "@/components/ui/screen-outlet"
@@ -394,7 +394,7 @@ function ParentLayout() {
             profile has resolved and says the address is unverified. */}
         <VerifyEmailBanner />
         {/* UD-11: renders nothing unless the profile says there is no phone number on file. */}
-        <PhoneBanner />
+        <PhoneBannerSlot />
         <Suspense fallback={<RouteSkeleton />}>
           {/* PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it
               rebuilds each surface") for this portal: a render crash in one

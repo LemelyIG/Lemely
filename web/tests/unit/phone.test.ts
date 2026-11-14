@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest"
 import { ApiError } from "@/lib/api"
 import {
+  PHONE_CHECKOUT_BODY,
   PHONE_CHECKOUT_HEADING,
   PHONE_INVALID_MESSAGE,
   PHONE_REQUIRED_MESSAGE,
+  cleanPhoneInput,
   isCheckoutPhoneRequired,
   phoneErrorCode,
   phoneErrorMessage,
@@ -21,6 +23,16 @@ import { billingFailureMessage } from "@/lib/billingOutcome"
 
 const phone422 = (code: string) =>
   new ApiError(422, "422 Unprocessable", { code, message: "server wording, never shown" })
+
+describe("wording: the server accepts mobile numbers only, so the copy says mobile", () => {
+  it("names the rule in both field errors and never says 'phone number'", () => {
+    expect(PHONE_REQUIRED_MESSAGE).toBe("Enter a mobile number.")
+    expect(PHONE_INVALID_MESSAGE).toBe("Enter a valid mobile number, for example 01012345678 or +201012345678.")
+    for (const text of [PHONE_REQUIRED_MESSAGE, PHONE_INVALID_MESSAGE, PHONE_CHECKOUT_HEADING, PHONE_CHECKOUT_BODY]) {
+      expect(text).not.toMatch(/phone number/i)
+    }
+  })
+})
 
 describe("usesDefaultPrefix", () => {
   it("is on for an empty field and for a national number", () => {
@@ -64,10 +76,82 @@ describe("validatePhoneField", () => {
   it("accepts Arabic-Indic digits, which the server reads as ASCII", () => {
     expect(validatePhoneField("٠١٠١٢٣٤٥٦٧٨")).toBeUndefined()
   })
-  it("refuses letters, a stray plus, and numbers that are too short or too long", () => {
-    for (const bad of ["call me", "0101abc5678", "+", "12", "123456", "1234567890123456", "010+1234567"]) {
+  it("refuses letters and numbers with too few digits", () => {
+    for (const bad of ["call me", "0101abc5678", "+", "12"]) {
       expect(validatePhoneField(bad), bad).toBe(PHONE_INVALID_MESSAGE)
     }
+  })
+})
+
+describe("cleanPhoneInput", () => {
+  it("strips invisible formatting characters that contact apps add around a number", () => {
+    // LRE/PDF embedding marks, LRM/RLM, and the isolates (U+2066-U+2069).
+    expect(cleanPhoneInput("\u202a+20 101 234 5678\u202c")).toBe("+20 101 234 5678")
+    expect(cleanPhoneInput("\u200e01012345678\u200f")).toBe("01012345678")
+    expect(cleanPhoneInput("\u2066+201012345678\u2069")).toBe("+201012345678")
+    expect(cleanPhoneInput("\u202b\u202d\u202e0101\u2067\u2068 2345678")).toBe("0101 2345678")
+  })
+  it("reads a full-width plus as a plus", () => {
+    expect(cleanPhoneInput("\uff0b201012345678")).toBe("+201012345678")
+  })
+  it("trims, and leaves everything else exactly as typed", () => {
+    expect(cleanPhoneInput("  (010) 1234-5678/ ")).toBe("(010) 1234-5678/")
+    expect(cleanPhoneInput("٠١٠١٢٣٤٥٦٧٨")).toBe("٠١٠١٢٣٤٥٦٧٨")
+  })
+})
+
+describe("the client never blocks a number the server accepts", () => {
+  // The five inputs the review found the client refusing while the server stored a number.
+  const accepted: [string, string][] = [
+    ["LTR embedding marks around the number", "\u202a+20 101 234 5678\u202c"],
+    ["a left-to-right mark in front", "\u200e01012345678"],
+    ["a full-width plus", "\uff0b201012345678"],
+    ["a trailing slash", "+201012345678/"],
+    ["a 00 international prefix that makes 17 digits", "0043 664 1234567890"],
+  ]
+  it.each(accepted)("accepts %s", (_name, input) => {
+    expect(validatePhoneField(input)).toBeUndefined()
+  })
+
+  it("accepts the other punctuation libphonenumber tolerates", () => {
+    for (const ok of ["(+20) 101 234 5678", "+20-101-234-5678", "+20.101.234.5678", "01012345678.", "~01012345678", "‑01012345678", "+20 101 234 5678 "]) {
+      expect(validatePhoneField(ok), ok).toBeUndefined()
+    }
+  })
+
+  it("does not count a leading 00 toward the digit limit, or the trunk zero after +20", () => {
+    expect(validatePhoneField("00201012345678")).toBeUndefined()
+    expect(validatePhoneField("+2001012345678")).toBeUndefined()
+  })
+
+  it("still refuses what no number can be", () => {
+    for (const bad of ["call me", "0101abc5678", "+", "/", "12", "00", "0".repeat(41), "010 1234 567;ext=5"]) {
+      expect(validatePhoneField(bad), bad).toBe(PHONE_INVALID_MESSAGE)
+    }
+    expect(validatePhoneField("\u200e")).toBe(PHONE_REQUIRED_MESSAGE)
+  })
+})
+
+describe("the +20 display follows what the server reads", () => {
+  it("hides the prefix for an Arabic-digit 00 and for a plain 20 number", () => {
+    expect(usesDefaultPrefix("٠٠٢٠١٠١٢٣٤٥٦٧٨")).toBe(false)
+    expect(usesDefaultPrefix("201012345678")).toBe(false)
+    expect(usesDefaultPrefix("۰۰۲۰۱۰۱۲۳۴۵۶۷۸")).toBe(false)
+    expect(usesDefaultPrefix("\uff0b201012345678")).toBe(false)
+    expect(usesDefaultPrefix("\u202a+201012345678")).toBe(false)
+  })
+  it("keeps the prefix while a number that starts with 20 is still being typed", () => {
+    expect(usesDefaultPrefix("2010")).toBe(true)
+    expect(usesDefaultPrefix("٠١٠١٢٣٤٥٦٧٨")).toBe(true)
+  })
+  it("drops a leading national zero typed in Arabic or Persian digits too", () => {
+    expect(tidyPhoneInput("٠١٠١٢٣٤٥٦٧٨")).toBe("١٠١٢٣٤٥٦٧٨")
+    expect(tidyPhoneInput("۰۱۰۱۲۳۴۵۶۷۸")).toBe("۱۰۱۲۳۴۵۶۷۸")
+    expect(tidyPhoneInput("٠٠٢٠١٠١٢٣٤٥٦٧٨")).toBe("٠٠٢٠١٠١٢٣٤٥٦٧٨")
+  })
+  it("writes the cleaned value back: invisible marks gone, full-width plus fixed", () => {
+    expect(tidyPhoneInput("\u200e01012345678")).toBe("1012345678")
+    expect(tidyPhoneInput("\u202a\uff0b20 101 234 5678\u202c")).toBe("+20 101 234 5678")
   })
 })
 
@@ -98,6 +182,8 @@ describe("checkout 422 phone_required", () => {
   })
   it("reads as the fix, not as 'check the details', anywhere billingFailureMessage is used", () => {
     expect(billingFailureMessage(phone422("phone_required"), "start checkout")).toBe(`${PHONE_CHECKOUT_HEADING}.`)
+    expect(PHONE_CHECKOUT_HEADING).toBe("Add your mobile number to continue")
+    expect(PHONE_CHECKOUT_BODY).toMatch(/mobile number/)
     // Other 422s keep the generic sentence.
     expect(billingFailureMessage(new ApiError(422, "422", { code: "other" }), "start checkout")).toBe(
       "Couldn't start checkout. Check the details and try again.",

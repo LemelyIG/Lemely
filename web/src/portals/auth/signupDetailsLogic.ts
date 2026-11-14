@@ -14,7 +14,7 @@
  */
 
 import type { SelfServiceRole, SignupVariables } from "@/lib/auth/AuthContext"
-import { validatePhoneField } from "@/lib/phone"
+import { cleanPhoneInput, validatePhoneField } from "@/lib/phone"
 
 /**
  * The frontend's own floor, not a mirrored backend rule — grepping
@@ -163,6 +163,6 @@ export function buildSignupPayload(
     role,
     acceptedTerms: true,
     displayName: values.name.trim(),
-    phone: values.phone.trim(),
+    phone: cleanPhoneInput(values.phone),
   }
 }

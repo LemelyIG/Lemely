@@ -4,7 +4,7 @@ import { lazy, Suspense, useState, type ReactNode } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
-import { PhoneBanner } from "@/components/ui/phone-banner"
+import { PhoneBannerSlot } from "@/components/ui/phone-banner-slot"
 import { InstallBanner } from "@/components/InstallBanner"
 import { BadgeSync } from "@/components/badge-sync"
 import { BrandLockup } from "@/components/ui/brand-lockup"
@@ -721,7 +721,7 @@ function TeacherLayout() {
               profile has resolved and says the address is unverified. */}
           <VerifyEmailBanner />
           {/* UD-11: renders nothing unless the profile says there is no phone number on file. */}
-          <PhoneBanner />
+          <PhoneBannerSlot />
           {/* Packet A7: same "renders nothing unless there's something to
               say" shape as the two banners above. Student and teacher only —
               see the component's own header for why. */}

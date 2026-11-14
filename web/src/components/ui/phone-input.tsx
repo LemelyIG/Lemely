@@ -53,7 +53,7 @@ export interface PhoneInputProps
 const DEFAULT_HINT = `Egypt (${DEFAULT_PHONE_PREFIX}) is assumed. Elsewhere, start with + and the country code.`
 
 export const PhoneInput = forwardRef<HTMLInputElement, PhoneInputProps>(function PhoneInput(
-  { value, onValueChange, onBlur, label = "Phone number", hint = DEFAULT_HINT, className, ...props },
+  { value, onValueChange, onBlur, label = "Mobile number", hint = DEFAULT_HINT, className, ...props },
   ref,
 ) {
   const showPrefix = usesDefaultPrefix(value)

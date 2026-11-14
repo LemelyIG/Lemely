@@ -88,7 +88,7 @@ test("a fresh visitor joins via a child's invite code, signs up with an emailed 
   await expect(page.getByRole("heading", { name: "Finish your account" })).toBeVisible({
     timeout: 15_000,
   })
-  await page.getByLabel("Phone number").fill("01012345678")
+  await page.getByLabel("Mobile number").fill("01012345678")
   await page.getByLabel("Password").fill("a-genuinely-strong-passphrase-1")
   // Name-qualified rather than a bare role: the sole checkbox on this step
   // (`SignupParent.tsx`'s `parent-signup-consent`) has no `<label>`, only an

@@ -43,7 +43,7 @@ describe("sign-up phone field", () => {
   const fill = async (user: ReturnType<typeof userEvent.setup>) => {
     await user.type(screen.getByLabelText("Name"), "Amina Farouk")
     await user.type(screen.getByLabelText("Email"), "amina@example.com")
-    await user.type(screen.getByLabelText("Phone number"), "01012345678")
+    await user.type(screen.getByLabelText("Mobile number"), "01012345678")
     await user.type(screen.getByLabelText("Password"), "correct horse battery staple")
     await user.click(screen.getByRole("checkbox"))
   }
@@ -52,11 +52,11 @@ describe("sign-up phone field", () => {
     s.signup = fakeMutation()
   })
 
-  it("asks for a required phone number between the email and the password", () => {
+  it("asks for a required mobile number between the email and the password", () => {
     open()
-    const labels = screen.getAllByText(/^(Name|Email|Phone number|Password)$/).map((el) => el.textContent)
-    expect(labels).toEqual(["Name", "Email", "Phone number", "Password"])
-    expect((screen.getByLabelText("Phone number") as HTMLInputElement).required).toBe(true)
+    const labels = screen.getAllByText(/^(Name|Email|Mobile number|Password)$/).map((el) => el.textContent)
+    expect(labels).toEqual(["Name", "Email", "Mobile number", "Password"])
+    expect((screen.getByLabelText("Mobile number") as HTMLInputElement).required).toBe(true)
   })
 
   it("will not submit without a number, and says so on the field", async () => {
@@ -67,7 +67,7 @@ describe("sign-up phone field", () => {
     await user.type(screen.getByLabelText("Password"), "correct horse battery staple")
     await user.click(screen.getByRole("checkbox"))
     await user.click(screen.getByRole("button", { name: "Create account" }))
-    expect(screen.getByText("Enter a phone number.")).toBeTruthy()
+    expect(screen.getByText("Enter a mobile number.")).toBeTruthy()
     expect((s.signup as ReturnType<typeof fakeMutation>).mutate).not.toHaveBeenCalled()
   })
 
@@ -83,27 +83,27 @@ describe("sign-up phone field", () => {
   })
 
   it.each([
-    ["phone_required", "Enter a phone number."],
-    ["phone_invalid", "Enter a valid phone number, for example 01012345678 or +201012345678."],
+    ["phone_required", "Enter a mobile number."],
+    ["phone_invalid", "Enter a valid mobile number, for example 01012345678 or +201012345678."],
   ])("shows the server's %s on the field and not in the form-level alert", async (code, sentence) => {
     s.signup = fakeMutation({ isError: true, error: phone422(code) })
     open()
     expect(screen.getByText(sentence)).toBeTruthy()
     expect(screen.queryByText("server wording")).toBeNull()
     expect(screen.queryByText(/couldn't create your account/i)).toBeNull()
-    expect(screen.getByLabelText("Phone number").getAttribute("aria-invalid")).toBe("true")
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Phone number")))
+    expect(screen.getByLabelText("Mobile number").getAttribute("aria-invalid")).toBe("true")
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Mobile number")))
   })
 
   it("keeps the form-level alert for every other failure", () => {
     s.signup = fakeMutation({ isError: true, error: new ApiError(500, "500") })
     open()
     expect(screen.getByRole("alert")).toBeTruthy()
-    expect(screen.getByLabelText("Phone number").getAttribute("aria-invalid")).toBeNull()
+    expect(screen.getByLabelText("Mobile number").getAttribute("aria-invalid")).toBeNull()
   })
 })
 
-describe("checkout asks for the phone number in place", () => {
+describe("checkout asks for the mobile number in place", () => {
   const paths = billingPaths({ role: "student" })
   const open = () =>
     render(
@@ -132,8 +132,8 @@ describe("checkout asks for the phone number in place", () => {
   it("shows the plain sentence and a phone field instead of a generic error, for a plan", () => {
     s.subCheckout = fakeMutation({ isError: true, error: phone422("phone_required") })
     open()
-    expect(screen.getByRole("heading", { name: "Add your phone number to continue" })).toBeTruthy()
-    expect(screen.getByLabelText("Phone number")).toBeTruthy()
+    expect(screen.getByRole("heading", { name: "Add your mobile number to continue" })).toBeTruthy()
+    expect(screen.getByLabelText("Mobile number")).toBeTruthy()
     expect(screen.getByRole("button", { name: "Save and continue" })).toBeTruthy()
     expect(screen.queryByText(/Check the details/)).toBeNull()
     expect(screen.queryByText(/Couldn't start checkout/)).toBeNull()
@@ -142,14 +142,14 @@ describe("checkout asks for the phone number in place", () => {
   it("shows it under the credit packs when a pack was the one that stopped", () => {
     s.packCheckout = fakeMutation({ isError: true, error: phone422("phone_required") })
     open()
-    const heading = screen.getByRole("heading", { name: "Add your phone number to continue" })
+    const heading = screen.getByRole("heading", { name: "Add your mobile number to continue" })
     expect(heading.closest("section")?.id).toBe("packs")
   })
 
   it("keeps the ordinary failure line for any other checkout error", () => {
     s.subCheckout = fakeMutation({ isError: true, error: new ApiError(503, "503") })
     open()
-    expect(screen.queryByRole("heading", { name: "Add your phone number to continue" })).toBeNull()
+    expect(screen.queryByRole("heading", { name: "Add your mobile number to continue" })).toBeNull()
     expect(screen.getByRole("alert").textContent).toMatch(/Payments are unavailable/)
   })
 
@@ -165,7 +165,7 @@ describe("checkout asks for the phone number in place", () => {
     )
     s.put = put
     open()
-    await user.type(screen.getByLabelText("Phone number"), "01012345678")
+    await user.type(screen.getByLabelText("Mobile number"), "01012345678")
     await user.click(screen.getByRole("button", { name: "Save and continue" }))
     expect(put.mutate.mock.calls[0][0]).toBe("1012345678")
     expect(sub.mutate).toHaveBeenCalledTimes(1)
@@ -184,7 +184,7 @@ describe("checkout asks for the phone number in place", () => {
     )
     s.put = put
     open()
-    await user.type(screen.getByLabelText("Phone number"), "+201012345678")
+    await user.type(screen.getByLabelText("Mobile number"), "+201012345678")
     await user.click(screen.getByRole("button", { name: "Save and continue" }))
     expect(pack.mutate).toHaveBeenCalledTimes(1)
     expect(pack.mutate.mock.calls[0][0]).toBe(variables)
@@ -201,9 +201,9 @@ describe("checkout asks for the phone number in place", () => {
     )
     s.put = put
     open()
-    await user.type(screen.getByLabelText("Phone number"), "01012345678")
+    await user.type(screen.getByLabelText("Mobile number"), "01012345678")
     await user.click(screen.getByRole("button", { name: "Save and continue" }))
-    expect(screen.getByText(/Enter a valid phone number/)).toBeTruthy()
+    expect(screen.getByText(/Enter a valid mobile number/)).toBeTruthy()
     expect(sub.mutate).not.toHaveBeenCalled()
   })
 })

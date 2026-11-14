@@ -22,6 +22,7 @@ vi.mock("@/lib/hooks/useMeApi", () => ({
 import { PhoneInput } from "@/components/ui/phone-input"
 import { PhoneEntryForm } from "@/components/phone-entry-form"
 import { PhoneBanner, PhoneBannerView } from "@/components/ui/phone-banner"
+import { PhoneBannerSlot } from "@/components/ui/phone-banner-slot"
 
 function Controlled({ onBlur }: { onBlur?: (v: string) => void }) {
   const [value, setValue] = useState("")
@@ -33,7 +34,7 @@ const phone422 = (code: string) => new ApiError(422, "422", { code, message: "se
 describe("PhoneInput", () => {
   it("is a labelled telephone field with the keypad and autofill hints", () => {
     render(h(Controlled))
-    const field = screen.getByLabelText("Phone number")
+    const field = screen.getByLabelText("Mobile number")
     expect(field.getAttribute("type")).toBe("tel")
     expect(field.getAttribute("inputmode")).toBe("tel")
     expect(field.getAttribute("autocomplete")).toBe("tel")
@@ -41,7 +42,7 @@ describe("PhoneInput", () => {
 
   it("states the default country and the exception in a hint tied to the field", () => {
     render(h(Controlled))
-    const field = screen.getByLabelText("Phone number")
+    const field = screen.getByLabelText("Mobile number")
     const hint = screen.getByText(/Egypt \(\+20\) is assumed/)
     expect(hint.textContent).toMatch(/start with \+ and the country code/)
     expect(field.getAttribute("aria-describedby")).toBe(hint.id)
@@ -51,7 +52,7 @@ describe("PhoneInput", () => {
     const user = userEvent.setup()
     render(h(Controlled))
     expect(screen.getByText("+20")).toBeTruthy()
-    await user.type(screen.getByLabelText("Phone number"), "+44 7700 900123")
+    await user.type(screen.getByLabelText("Mobile number"), "+44 7700 900123")
     expect(screen.queryByText("+20")).toBeNull()
   })
 
@@ -59,7 +60,7 @@ describe("PhoneInput", () => {
     const user = userEvent.setup()
     const onBlur = vi.fn()
     render(h(Controlled, { onBlur }))
-    const field = screen.getByLabelText("Phone number") as HTMLInputElement
+    const field = screen.getByLabelText("Mobile number") as HTMLInputElement
     await user.type(field, "01012345678")
     await user.tab()
     expect(field.value).toBe("1012345678")
@@ -76,8 +77,8 @@ describe("PhoneEntryForm", () => {
     const user = userEvent.setup()
     render(h(PhoneEntryForm))
     await user.click(screen.getByRole("button", { name: "Save number" }))
-    const field = screen.getByLabelText("Phone number")
-    expect(screen.getByText("Enter a phone number.")).toBeTruthy()
+    const field = screen.getByLabelText("Mobile number")
+    expect(screen.getByText("Enter a mobile number.")).toBeTruthy()
     expect(field.getAttribute("aria-invalid")).toBe("true")
     expect((s.put as ReturnType<typeof fakeMutation>).mutate).not.toHaveBeenCalled()
   })
@@ -85,11 +86,11 @@ describe("PhoneEntryForm", () => {
   it("refuses an obvious non-number, then clears the message when the person edits", async () => {
     const user = userEvent.setup()
     render(h(PhoneEntryForm))
-    await user.type(screen.getByLabelText("Phone number"), "call me")
+    await user.type(screen.getByLabelText("Mobile number"), "call me")
     await user.click(screen.getByRole("button", { name: "Save number" }))
-    expect(screen.getByText(/Enter a valid phone number/)).toBeTruthy()
-    await user.type(screen.getByLabelText("Phone number"), "1")
-    expect(screen.queryByText(/Enter a valid phone number/)).toBeNull()
+    expect(screen.getByText(/Enter a valid mobile number/)).toBeTruthy()
+    await user.type(screen.getByLabelText("Mobile number"), "1")
+    expect(screen.queryByText(/Enter a valid mobile number/)).toBeNull()
   })
 
   it("sends the number as typed, trimmed, and reports the stored one through onSaved", async () => {
@@ -101,7 +102,7 @@ describe("PhoneEntryForm", () => {
     )
     s.put = put
     render(h(PhoneEntryForm, { onSaved, submitLabel: "Save and continue" }))
-    await user.type(screen.getByLabelText("Phone number"), "+20 101 234 5678 ")
+    await user.type(screen.getByLabelText("Mobile number"), "+20 101 234 5678 ")
     await user.click(screen.getByRole("button", { name: "Save and continue" }))
     expect(put.mutate).toHaveBeenCalledTimes(1)
     expect(put.mutate.mock.calls[0][0]).toBe("+20 101 234 5678")
@@ -109,8 +110,8 @@ describe("PhoneEntryForm", () => {
   })
 
   it.each([
-    ["phone_required", "Enter a phone number."],
-    ["phone_invalid", "Enter a valid phone number, for example 01012345678 or +201012345678."],
+    ["phone_required", "Enter a mobile number."],
+    ["phone_invalid", "Enter a valid mobile number, for example 01012345678 or +201012345678."],
   ])("puts the server's %s on the field, in our words, and returns focus to it", async (code, sentence) => {
     const user = userEvent.setup()
     const put = fakeMutation()
@@ -119,11 +120,11 @@ describe("PhoneEntryForm", () => {
     )
     s.put = put
     render(h(PhoneEntryForm))
-    await user.type(screen.getByLabelText("Phone number"), "01012345678")
+    await user.type(screen.getByLabelText("Mobile number"), "01012345678")
     await user.click(screen.getByRole("button", { name: "Save number" }))
     expect(screen.getByText(sentence)).toBeTruthy()
     expect(screen.queryByText("server wording")).toBeNull()
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Phone number")))
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Mobile number")))
   })
 
   it("reports a failure that retyping cannot fix under the button, not on the field", async () => {
@@ -134,24 +135,24 @@ describe("PhoneEntryForm", () => {
     )
     s.put = put
     render(h(PhoneEntryForm))
-    await user.type(screen.getByLabelText("Phone number"), "01012345678")
+    await user.type(screen.getByLabelText("Mobile number"), "01012345678")
     await user.click(screen.getByRole("button", { name: "Save number" }))
     expect(screen.getByRole("alert").textContent).toMatch(/connection|offline|network/i)
-    expect(screen.getByLabelText("Phone number").getAttribute("aria-invalid")).toBeNull()
+    expect(screen.getByLabelText("Mobile number").getAttribute("aria-invalid")).toBeNull()
   })
 
   it("disables the field and shows the button busy while saving", () => {
     s.put = fakeMutation({ isPending: true })
     render(h(PhoneEntryForm))
-    expect((screen.getByLabelText("Phone number") as HTMLInputElement).disabled).toBe(true)
+    expect((screen.getByLabelText("Mobile number") as HTMLInputElement).disabled).toBe(true)
     expect(screen.getByRole("button", { name: "Save number" }).getAttribute("aria-busy")).toBe("true")
   })
 
   it("can keep the label for assistive technology only, when the row already shows it", () => {
     render(h(PhoneEntryForm, { hideLabel: true }))
-    const label = screen.getByText("Phone number", { selector: "label" })
+    const label = screen.getByText("Mobile number", { selector: "label" })
     expect(label.className).toContain("sr-only")
-    expect(screen.getByLabelText("Phone number")).toBeTruthy()
+    expect(screen.getByLabelText("Mobile number")).toBeTruthy()
   })
 
   it("offers Cancel only when asked to", async () => {
@@ -176,15 +177,15 @@ describe("PhoneBanner", () => {
   it("says what the number is for and links to the card for this role", () => {
     s.profile = profile({})
     open()
-    expect(screen.getByRole("status").textContent).toMatch(/Add your phone number\./)
+    expect(screen.getByRole("status").textContent).toMatch(/Add your mobile number\./)
     expect(screen.getByRole("status").textContent).toMatch(/pay for a plan or credits/)
-    expect(screen.getByRole("link", { name: "Add phone number" }).getAttribute("href")).toBe("/student/settings")
+    expect(screen.getByRole("link", { name: "Add mobile number" }).getAttribute("href")).toBe("/student/settings")
   })
 
   it("links a parent to the top-level profile screen", () => {
     s.profile = profile({ role: "parent" })
     open("/parent")
-    expect(screen.getByRole("link", { name: "Add phone number" }).getAttribute("href")).toBe("/settings/profile")
+    expect(screen.getByRole("link", { name: "Add mobile number" }).getAttribute("href")).toBe("/settings/profile")
   })
 
   it("renders nothing, and no margin, when the number is present or the profile is unknown", () => {
@@ -205,14 +206,57 @@ describe("PhoneBanner", () => {
     const user = userEvent.setup()
     s.profile = profile({})
     const first = open()
-    await user.click(screen.getByRole("button", { name: "Dismiss the phone reminder" }))
+    await user.click(screen.getByRole("button", { name: "Dismiss the mobile reminder" }))
     expect(screen.queryByRole("status")).toBeNull()
     first.unmount()
     expect(open().container.innerHTML).toBe("")
   })
 
+  it("the dismiss control is a 44px target and the link grows to 44px on touch", () => {
+    render(h(MemoryRouter, null, h(PhoneBannerView, { to: "/settings/profile", onDismiss: () => undefined })))
+    expect(screen.getByRole("button", { name: "Dismiss the mobile reminder" }).className).toContain("size-11")
+    expect(screen.getByRole("link", { name: "Add mobile number" }).className).toContain("pointer-coarse:min-h-11")
+  })
+
+  it("moves focus to the main region when the dismissed strip unmounts, not to the page", async () => {
+    const user = userEvent.setup()
+    s.profile = profile({})
+    const main = document.createElement("main")
+    main.id = "main-content"
+    main.tabIndex = -1
+    document.body.appendChild(main)
+    try {
+      open()
+      await user.click(screen.getByRole("button", { name: "Dismiss the mobile reminder" }))
+      expect(document.activeElement).toBe(main)
+    } finally {
+      main.remove()
+    }
+  })
+
   it("the view shows no dismiss control when it is given no handler", () => {
     render(h(MemoryRouter, null, h(PhoneBannerView, { to: "/settings/profile" })))
     expect(screen.queryByRole("button")).toBeNull()
+  })
+})
+
+describe("PhoneBannerSlot (what the layouts mount)", () => {
+  const openSlot = () => render(h(MemoryRouter, { initialEntries: ["/student/overview"] }, h(PhoneBannerSlot)))
+
+  beforeEach(() => {
+    window.sessionStorage.clear()
+  })
+
+  it("renders nothing while the profile is unknown or the number is on file, without loading the banner", () => {
+    s.profile = { data: undefined }
+    expect(openSlot().container.innerHTML).toBe("")
+    s.profile = { data: { role: "student", phoneMissing: false, phone: "+201012345678" } }
+    expect(openSlot().container.innerHTML).toBe("")
+  })
+
+  it("loads the banner once the profile says the mobile number is missing", async () => {
+    s.profile = { data: { role: "student", phoneMissing: true, phone: null } }
+    openSlot()
+    expect(await screen.findByRole("link", { name: "Add mobile number" })).toBeTruthy()
   })
 })
