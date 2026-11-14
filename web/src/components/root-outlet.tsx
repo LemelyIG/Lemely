@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P5 H4 E5 S5 R4 V4 */
-import { useEffect, useLayoutEffect } from "react"
+import { useEffect, useLayoutEffect, useRef } from "react"
 import { Outlet, ScrollRestoration, useLocation, useNavigationType } from "react-router-dom"
 import { createScrollKeyer } from "@/lib/nav/scrollRestorationKey"
 import { resolveDirection } from "@/lib/nav/navigationDirection"
@@ -35,12 +35,18 @@ export function RootOutlet() {
   const { key, state } = useLocation()
   // A PUSH that means "back" (re-tapping a tab to pop to its root) or "tab" (a tab-bar tap) says so in its location state.
   const explicit = stateDirection(state)
+  // The entry being left, so a POP out of a tab-bar entry can read as the tab switch it undoes.
+  const leaving = useRef<unknown>(undefined)
 
   // Keyed on the location key so the one-shot swipe flag is read (and cleared) on every
   // navigation, even a replace to the same navigation type; it cannot go stale. The
   // explicit direction comes from the location state, which only changes with the key.
   useLayoutEffect(() => {
-    document.documentElement.dataset.direction = consumeSwipeNav() ? "swipe" : resolveDirection(navigationType, explicit)
+    const leavingDirection = stateDirection(leaving.current)
+    leaving.current = state
+    document.documentElement.dataset.direction = consumeSwipeNav()
+      ? "swipe"
+      : resolveDirection(navigationType, explicit, leavingDirection)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigationType, key])
 

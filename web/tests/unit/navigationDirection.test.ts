@@ -31,5 +31,14 @@ describe("navigationDirection", () => {
     it("reads a pop back to a tab-tagged entry as back", () => {
       expect(resolveDirection("POP", "tab")).toBe("back")
     })
+
+    it("reads a pop that leaves a tab-bar entry as the tab switch it undoes", () => {
+      expect(resolveDirection("POP", undefined, "tab")).toBe("tab")
+    })
+
+    it("reads a pop that leaves a drill-down pushed from a tab as back", () => {
+      expect(resolveDirection("POP", "tab", undefined)).toBe("back")
+      expect(resolveDirection("POP", undefined, "back")).toBe("back")
+    })
   })
 })

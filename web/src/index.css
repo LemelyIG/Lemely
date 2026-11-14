@@ -522,11 +522,17 @@
   --native-page-android: var(--md-surface-container-low);
   /* Grouped surface (preview --pf-group = --surface-card): white in light, the raised container in dark. */
   --native-group-surface: var(--md-surface-container-lowest);
+  /* Edge shadow of the page on top during a push, pop or swipe: colour and strength per theme. */
+  --native-edge-shadow: var(--md-shadow);
+  --native-edge-shadow-strength: 18%;
 }
 :root[data-theme="dark"][data-platform] { /* not a second dark ladder: only the native frame's own grounds */
   --native-page-ios: var(--md-surface-container-lowest);
   --native-page-android: var(--md-surface);
   --native-group-surface: var(--md-surface-container-high);
+  /* --md-shadow is a light blue on the dark ground and would glow; black reads as depth. */
+  --native-edge-shadow: oklch(0 0 0);
+  --native-edge-shadow-strength: 40%;
 }
 
 /* ── Native frame: sheets (native frame Task 6; preview .as-pop-panel / .as-modal).
@@ -1556,7 +1562,7 @@ html[data-direction="swipe"]::view-transition-new(root) {
 @media (max-width: 720px) {
   html:is([data-platform="ios"], [data-platform="android"])[data-swiping] [data-shell-column] {
     box-shadow: calc(-1 * var(--space-4)) 0 var(--space-4)
-      color-mix(in oklch, var(--md-shadow) calc(var(--lm-swipe-shadow, 1) * 18%), transparent);
+      color-mix(in oklch, var(--native-edge-shadow) calc(var(--lm-swipe-shadow, 1) * var(--native-edge-shadow-strength)), transparent);
   }
   html:is([data-platform="ios"], [data-platform="android"])[data-swiping] body::before {
     content: "";
@@ -1568,7 +1574,7 @@ html[data-direction="swipe"]::view-transition-new(root) {
   }
   html[dir="rtl"]:is([data-platform="ios"], [data-platform="android"])[data-swiping] [data-shell-column] {
     box-shadow: var(--space-4) 0 var(--space-4)
-      color-mix(in oklch, var(--md-shadow) calc(var(--lm-swipe-shadow, 1) * 18%), transparent);
+      color-mix(in oklch, var(--native-edge-shadow) calc(var(--lm-swipe-shadow, 1) * var(--native-edge-shadow-strength)), transparent);
   }
   html[dir="rtl"]:is([data-platform="ios"], [data-platform="android"])[data-swiping] body::before {
     translate: calc((1 - var(--lm-swipe-progress, 0)) * var(--native-parallax) * 100%) 0;
@@ -1655,14 +1661,31 @@ html[data-direction="swipe"]::view-transition-new(root) {
   }
   html:is([data-platform="ios"], [data-platform="android"])::view-transition-group(lm-chrome-top),
   html:is([data-platform="ios"], [data-platform="android"])::view-transition-group(lm-chrome-tabs),
-  html:is([data-platform="ios"], [data-platform="android"])::view-transition-new(lm-chrome-top),
   html:is([data-platform="ios"], [data-platform="android"])::view-transition-new(lm-chrome-tabs) {
     animation: none;
   }
-  html:is([data-platform="ios"], [data-platform="android"])::view-transition-old(lm-chrome-top),
   html:is([data-platform="ios"], [data-platform="android"])::view-transition-old(lm-chrome-tabs) {
     animation: none;
     display: none;
+  }
+  /* The top bar's old and new snapshots cross-fade (plus-lighter, so unchanged pixels stay put) and
+     only a changed title or back chevron is seen to change. The group never moves. */
+  html:is([data-platform="ios"], [data-platform="android"])::view-transition-old(lm-chrome-top) {
+    animation: lm-vt-fade-out var(--dur-fast) linear both;
+  }
+  html:is([data-platform="ios"], [data-platform="android"])::view-transition-new(lm-chrome-top) {
+    animation: lm-vt-fade-in var(--dur-fast) linear both;
+  }
+  /* A hop into or out of an immersive route (the tab bar is hidden there): the bar is not a group,
+     so it rides in the root snapshot with its page (UIKit hidesBottomBarWhenPushed). `vtChrome.ts`
+     sets this before the old snapshot is taken. */
+  html[data-vt-chrome="page"] .lm-native-tabbar {
+    view-transition-name: none;
+  }
+  /* A swipe already moved the page under the finger: the chrome stays fully silent. */
+  html:is([data-platform="ios"], [data-platform="android"])[data-direction="swipe"]::view-transition-old(lm-chrome-top),
+  html:is([data-platform="ios"], [data-platform="android"])[data-direction="swipe"]::view-transition-new(lm-chrome-top) {
+    animation: none;
   }
 
   html:is([data-platform="ios"], [data-platform="android"]) {
@@ -1686,13 +1709,13 @@ html[data-direction="swipe"]::view-transition-new(root) {
   :root[data-platform="ios"][data-direction="forward"]::view-transition-new(root) {
     animation: lm-vt-ios-new-push var(--dur-sheet-ios) var(--ease-ios-spring) both;
     box-shadow: calc(-1 * var(--lm-vt-sign) * var(--space-4)) 0 var(--space-4)
-      color-mix(in oklch, var(--md-shadow) 18%, transparent);
+      color-mix(in oklch, var(--native-edge-shadow) var(--native-edge-shadow-strength), transparent);
   }
   :root[data-platform="ios"][data-direction="back"]::view-transition-old(root) {
     animation: lm-vt-ios-old-pop var(--dur-sheet-ios) var(--ease-ios-spring) both;
     z-index: var(--z-index-sticky);
     box-shadow: calc(-1 * var(--lm-vt-sign) * var(--space-4)) 0 var(--space-4)
-      color-mix(in oklch, var(--md-shadow) 18%, transparent);
+      color-mix(in oklch, var(--native-edge-shadow) var(--native-edge-shadow-strength), transparent);
   }
   :root[data-platform="ios"][data-direction="back"]::view-transition-new(root) {
     animation: lm-vt-ios-new-pop var(--dur-sheet-ios) var(--ease-ios-spring) both;

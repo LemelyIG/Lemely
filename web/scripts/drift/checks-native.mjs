@@ -3660,11 +3660,27 @@ const NAV_PROBE = () => {
         old: pseudo("::view-transition-old(root)"),
         new: pseudo("::view-transition-new(root)"),
         names: [...document.querySelectorAll(".lm-native-bar, .lm-native-tabbar")].map((el) => getComputedStyle(el).viewTransitionName),
+        // An absent pseudo-element resolves no box; a live group resolves its px size.
+        tabsGroup: getComputedStyle(html, "::view-transition-group(lm-chrome-tabs)").width,
+        topGroup: getComputedStyle(html, "::view-transition-group(lm-chrome-top)").width,
       })
     }
     if (performance.now() - t0 < 1200) requestAnimationFrame(tick)
   }
   window.__navFrames = frames
+  // What the app had set when React Router took the old snapshot (NF motion fix round 1).
+  window.__svtCalls = []
+  if (!document.__svtWrapped) {
+    document.__svtWrapped = true
+    const real = document.startViewTransition.bind(document)
+    document.startViewTransition = (...args) => {
+      window.__svtCalls.push({
+        chrome: html.dataset.vtChrome ?? null,
+        tabName: document.querySelector(".lm-native-tabbar") ? getComputedStyle(document.querySelector(".lm-native-tabbar")).viewTransitionName : "absent",
+      })
+      return real(...args)
+    }
+  }
   window.__navNamesBefore = [...document.querySelectorAll(".lm-native-bar, .lm-native-tabbar")].map((el) => getComputedStyle(el).viewTransitionName)
   requestAnimationFrame(tick)
 }
@@ -3675,6 +3691,7 @@ async function probeNav(page, action) {
   await page.waitForTimeout(1300)
   const frames = await page.evaluate(() => window.__navFrames)
   frames.before = await page.evaluate(() => window.__navNamesBefore)
+  frames.svt = await page.evaluate(() => window.__svtCalls)
   return frames
 }
 
@@ -3696,11 +3713,17 @@ async function pushFromContent(page) {
 }
 const tabTap = (page, name) => page.locator("nav.lm-native-tabbar").getByRole("link", { name }).first().click()
 
+/** The top bar's old and new snapshots may fade (a changed title or chevron); nothing else on the chrome may animate. */
+const chromeMoving = (frames) =>
+  chromeAnims(frames).filter(
+    (a) => !(a.pe.includes("lm-chrome-top") && /view-transition-(old|new)/.test(a.pe) && /^lm-vt-fade-(in|out)$/.test(a.name) && a.dur <= 150),
+  )
+
 function chromeStays(frames, before) {
   if (!rootAnims(frames).length) throw new Error("no root transition ran, so the check proves nothing")
   const names = new Set([...before, ...frames.flatMap((f) => f.names)])
   if (!names.has("lm-chrome-top") || !names.has("lm-chrome-tabs")) throw new Error(`the bars carry no view-transition-name: ${[...names].join(", ")}`)
-  const moving = chromeAnims(frames)
+  const moving = chromeMoving(frames)
   if (moving.length) throw new Error(`the bars animated: ${[...new Set(moving.map((a) => `${a.pe} ${a.name}`))].join("; ")}`)
 }
 
@@ -3847,4 +3870,79 @@ NATIVE_CHECKS.push(
       },
     })),
   ),
+);
+
+// NF motion fix round 1: a hop into or out of an immersive route (the tab bar is hidden there) must not
+// leave a one-sided tab-bar group, and the attribute that prevents it must exist when React Router takes
+// the old snapshot. An ordinary hop keeps the group.
+const IMMERSIVE_HOPS = [
+  ["into", false, async (page) => tabTap(page, "Correct")],
+  ["out-of", true, async (page) => page.goBack()],
+]
+NATIVE_CHECKS.push(
+  ...["ios", "android"].flatMap((platform) =>
+    IMMERSIVE_HOPS.map(([kind, needsPush, act]) => ({
+      id: `native-${platform}-nav-motion-hop-${kind}-immersive-has-no-one-sided-tab-bar-group`,
+      platform,
+      width: 390,
+      app: NAV_APP,
+      async run(page) {
+        if (needsPush) {
+          await tabTap(page, "Correct")
+          await page.waitForTimeout(900)
+        }
+        const frames = await probeNav(page, () => act(page))
+        if (!rootAnims(frames).length) throw new Error("no root transition ran, so the check proves nothing")
+        if (!frames.svt.length) throw new Error("React Router never called startViewTransition")
+        for (const call of frames.svt)
+          if (call.chrome !== "page") throw new Error(`data-vt-chrome was ${call.chrome} when the old snapshot was taken, want page`)
+        const oneSided = frames.filter((f) => /px/.test(f.tabsGroup))
+        if (oneSided.length) throw new Error(`${oneSided.length} frame(s) had an lm-chrome-tabs group (${oneSided[0].tabsGroup}); the bar must ride with its page`)
+        if (!frames.some((f) => /px/.test(f.topGroup))) throw new Error("the top bar lost its own group on this hop")
+      },
+    })),
+  ),
+  ...["ios", "android"].map((platform) => ({
+    id: `native-${platform}-nav-motion-ordinary-hop-keeps-the-tab-bar-group`,
+    platform,
+    width: 390,
+    app: NAV_APP,
+    async run(page) {
+      const frames = await probeNav(page, () => tabTap(page, "Profile"))
+      if (frames.svt.some((c) => c.chrome !== null || c.tabName !== "lm-chrome-tabs")) throw new Error(`an ordinary hop dropped the tab bar group: ${JSON.stringify(frames.svt)}`)
+      if (!frames.some((f) => /px/.test(f.tabsGroup))) throw new Error("no lm-chrome-tabs group existed during an ordinary hop")
+      const topFades = chromeAnims(frames).filter((x) => x.pe.includes("lm-chrome-top") && /view-transition-(old|new)/.test(x.pe) && /^lm-vt-fade-(in|out)$/.test(x.name))
+      if (new Set(topFades.map((x) => x.pe)).size !== 2) throw new Error(`the top bar's old and new snapshots did not both cross-fade: ${topFades.map((x) => x.pe)}`)
+      if (topFades.some((x) => x.dur > 150)) throw new Error("the top bar fade ran longer than 150ms")
+    },
+  })),
+  {
+    id: "native-ios-nav-motion-pop-out-of-a-tab-entry-reads-tab",
+    platform: "ios",
+    width: 390,
+    app: NAV_APP,
+    async run(page) {
+      await tabTap(page, "Profile")
+      await page.waitForTimeout(700)
+      const frames = await probeNav(page, () => page.goBack())
+      const names = new Set(rootAnims(frames).map((a) => a.name))
+      if (![...names].length || [...names].some((n) => !/^lm-vt-fade-(in|out)$/.test(n))) throw new Error(`popping out of a tab entry ran ${[...names].join(", ")}; want the tab fade`)
+      if (await page.evaluate(() => document.documentElement.dataset.direction) !== "tab") throw new Error("direction was not tab")
+    },
+  },
+  {
+    id: "native-ios-nav-motion-pop-of-a-drill-down-from-a-tab-reads-back",
+    platform: "ios",
+    width: 390,
+    app: NAV_APP,
+    async run(page) {
+      await tabTap(page, "Classes")
+      await page.waitForTimeout(700)
+      await pushFromContent(page)
+      await page.waitForTimeout(900)
+      await page.goBack()
+      await page.waitForTimeout(700)
+      if ((await page.evaluate(() => document.documentElement.dataset.direction)) !== "back") throw new Error("a pop of a drill-down read as something other than back")
+    },
+  },
 );

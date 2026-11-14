@@ -19,13 +19,16 @@ export function navigationDirection(type: "POP" | "PUSH" | "REPLACE"): "back" | 
 
 /**
  * The direction `html[data-direction]` gets for a navigation: the router action, unless the
- * location state names one. A "tab" tag only means something on the PUSH that the tab bar made;
- * popping back to that history entry later is a back, not another tab switch.
+ * location state names one. A "tab" tag on the destination only means something on the PUSH the tab
+ * bar made. A POP that leaves an entry the tab bar made is the same tab switch undone ("tab"); any
+ * other POP, including popping a drill-down pushed from a tab, is a back.
  */
 export function resolveDirection(
   type: "POP" | "PUSH" | "REPLACE",
   explicit?: "back" | "tab",
+  leaving?: "back" | "tab",
 ): "back" | "forward" | "tab" {
+  if (type === "POP") return leaving === "tab" ? "tab" : "back"
   if (explicit === "tab") return type === "PUSH" ? "tab" : navigationDirection(type)
   return explicit ?? navigationDirection(type)
 }

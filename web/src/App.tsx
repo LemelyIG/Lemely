@@ -5,6 +5,7 @@ import { installNavigateMiddleware } from "@/lib/nav/navigateMiddleware"
 import { snapshotCaptureMiddleware } from "@/lib/nav/pageSnapshotCapture"
 import { createNativePushDefault } from "@/lib/nav/nativePushDefault"
 import { exposeRouterForChecks } from "@/lib/nav/exposeRouter"
+import { installVtChrome } from "@/lib/nav/vtChrome"
 
 /*
  * The router instance, and nothing else.
@@ -16,6 +17,9 @@ import { exposeRouterForChecks } from "@/lib/nav/exposeRouter"
  * environment. See the note at the top of `routes.tsx`.
  */
 export const router = createBrowserRouter(appRoutes)
+
+// Registered here, before `RouterProvider` mounts and subscribes, so it runs before the view transition starts.
+installVtChrome(router)
 
 /*
  * Navigate middleware, in one place (see `lib/nav/navigateMiddleware.ts`). The swipe-back

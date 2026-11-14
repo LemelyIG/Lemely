@@ -96,7 +96,7 @@ describe("native shell frame fixes (audit batch A)", () => {
     expect(stateDirection({ lemelyDialog: true })).toBeUndefined()
     expect(stateDirection(null)).toBeUndefined()
     expect(read("components/shell/PortalShell.tsx")).toContain('state: { navDirection: "back" }')
-    expect(read("components/root-outlet.tsx")).toContain("resolveDirection(navigationType, explicit)")
+    expect(read("components/root-outlet.tsx")).toContain("resolveDirection(navigationType, explicit, leavingDirection)")
     // The explicit direction still wins over the router action (the helper's own tests pin it).
     expect(resolveDirection("PUSH", stateDirection({ navDirection: "back" }))).toBe("back")
   })
