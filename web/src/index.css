@@ -436,7 +436,7 @@
   --native-bar-pad-inline: 8px;             /* .as-bar padding-inline: var(--space-2) */
   --native-title-inset-ios: 144px;          /* --pf-title-inset: centred title clears three 44px actions */
   --native-title-inset-detail-ios: 124px;   /* --pf-title-inset-detail: clears the back chevron and label */
-  --native-headline-size: 28px;             /* a screen h1 that says its own words (greeting, hero) steps down from display-lg so the large title stays the root's loudest line; Bricolage floor */
+  --native-headline-size: 24px;             /* a screen h1 that says its own words (greeting, hero) steps down so the large title stays the root's loudest line. 24px is under Bricolage's 28px floor, so it is set in the UI face */
   --native-headline-lh: 1.15;
   --native-iconbtn-ios: 44px;               /* --pf-iconbtn */
   --native-iconbtn-android: 48px;
@@ -468,6 +468,7 @@
   --native-sheet-title-android: 22px;       /* M3 Title Large */
   --native-fab-size: 56px;                  /* M3 FAB; the extended FAB is this high */
   --native-fab-radius: 16px;                /* M3 FAB container shape */
+  --native-fab-dur: 200ms;                  /* M3 FAB extend / collapse */
   --native-fab-gap: 16px;                   /* above the tab bar and off the end edge */
   --native-back-label-max: 96px;            /* the iOS back label truncates past this */
   --native-sheet-scale-back: 0.94;          /* --pf-sheet-scale, iOS only */
@@ -530,9 +531,11 @@
   --native-page-ios: var(--md-surface-container-lowest);
   --native-page-android: var(--md-surface);
   --native-group-surface: var(--md-surface-container-high);
-  /* --md-shadow is a light blue on the dark ground and would glow; black reads as depth. */
-  --native-edge-shadow: oklch(0 0 0);
-  --native-edge-shadow-strength: 40%;
+  /* --md-shadow is a light blue on the dark ground and would glow. The scrim role is the dark ink
+     (oklch 0.20, alpha 0.55), so the edge shadow takes it and the strength makes up the alpha it
+     already carries (72% of 0.55 is the 40% the shadow had when it was raw black). */
+  --native-edge-shadow: var(--md-scrim);
+  --native-edge-shadow-strength: 72%;
 }
 
 /* ── Native frame: sheets (native frame Task 6; preview .as-pop-panel / .as-modal).
@@ -566,6 +569,14 @@
 .lm-sheet[data-dragging] {
   transition: none;
 }
+/* Dark: the dim is a dark scrim over a dark page, so a container-low sheet sinks into it. One container
+   step up, plus a hairline along the top edge (the sheet's own, so it follows the corner radius), lifts
+   it off the page. Modal, Popover and the Sheet family all render .lm-sheet. */
+:root[data-theme="dark"] .lm-sheet:not(.lm-action-sheet) {
+  background: var(--md-surface-container);
+  box-shadow: inset 0 var(--native-hairline) 0 var(--md-outline-variant);
+}
+
 /* The drag target is the grabber plus header: at least a finger tall (44px iOS, 48px Android),
    while the visible grabber keeps the preview's geometry. */
 [data-sheet-drag-region] {
@@ -674,6 +685,16 @@
   }
 }
 
+/* Material's 48dp touch floor for every Button on the Android native frame. A plain rule here rather than
+   a `!` utility on the component: unlayered CSS outranks the layered `pointer-coarse:min-h-11` floor,
+   and the copy checker reads a `!` suffix in a class string as an exclamation mark. */
+@media (max-width: 720px) {
+  :root[data-platform="android"] .lm-btn {
+    min-block-size: var(--native-iconbtn-android);
+    min-inline-size: var(--native-iconbtn-android);
+  }
+}
+
 /* ── Native frame: grouped lists (native frame Task 10; preview variant-a.css section 4). */
 /* Opt-in marker for press feedback; the native rules are in the press block below. */
 .lm-press { --lm-press: 1; }
@@ -746,12 +767,20 @@
   :root[data-platform="android"] .lm-native-main .lm-native-card:not([data-native-bleed="off"]) > :is(.lm-native-card-body, .lm-native-card-row) { padding-inline: 0; }
   /* The hover margin rule a row reserves is a pointer affordance; on a phone it only shifts the content. */
   :root[data-platform="android"] .lm-native-main .lm-native-card:not([data-native-bleed="off"]) > .lm-native-card-row { border-inline-start-width: 0; }
-  :root[data-platform="android"] .lm-native-main .lm-native-card:not([data-native-bleed="off"]) :is([class*="divide-y"] > *, .border-t, .border-b, .lm-native-divider) {
+  /* iOS: the same reserved rule would put the row's content 2px right of the section label above the group
+     (label and content both sit one 16px inset in from the group edge). */
+  :root[data-platform="ios"] .lm-native-main .lm-native-card > .lm-native-card-row { border-inline-start-width: 0; }
+  /* Row dividers only: `divide-y` children, `.lm-native-divider`, and the card's direct rows. A border on an
+     input or a table header deeper in the card is that control's own edge and stays. */
+  :root[data-platform="android"] .lm-native-main .lm-native-card:not([data-native-bleed="off"]) :is([class*="divide-y"] > *, .lm-native-divider) {
+    border-block-width: 0;
+  }
+  :root[data-platform="android"] .lm-native-main .lm-native-card:not([data-native-bleed="off"]) > :is(.border-t, .border-b) {
     border-block-width: 0;
   }
   /* A screen heading that says its own words steps down so the large title stays the root's loudest line. */
   :root:is([data-platform="ios"], [data-platform="android"]) [data-page-heading="own"] {
-    font: 800 var(--native-headline-size) / var(--native-headline-lh) var(--font-display);
+    font: 800 var(--native-headline-size) / var(--native-headline-lh) var(--font-sans);
     letter-spacing: -0.02em;
   }
   /* A heading that used to sit inside its card is a section label above the grouped surface (preview .a-sec-h);
@@ -869,6 +898,11 @@
     box-shadow: none;
   }
   :root[data-platform="ios"] .lm-sheet :is(.lm-native-card, .lm-native-group) { border-radius: var(--native-group-radius-ios); }
+  /* iOS light: an inset group is lowest (white) and must read against the sheet, so a sheet that holds
+     one sits on the grouped-list ground, one step down from the plain sheet. */
+  :root[data-platform="ios"]:not([data-theme="dark"]) .lm-sheet:not(.lm-action-sheet):has(.lm-native-group) {
+    background: var(--md-surface-container);
+  }
   :root[data-platform="ios"] .lm-sheet .lm-native-group-label { padding-inline: var(--space-4); }
   :root:is([data-platform="ios"], [data-platform="android"]) .lm-sheet .lm-native-group > .lm-native-row { border-top: 0; border-bottom: 0; }
   :root[data-platform="ios"] .lm-sheet .lm-native-row { position: relative; min-height: var(--native-row-min-ios); }
@@ -891,6 +925,17 @@
   :root[data-platform="android"] .lm-sheet .lm-native-row[data-lines="2"] { min-height: var(--native-row-2-android); }
   :root[data-platform="android"] .lm-sheet .lm-native-row[data-lines="3"] { min-height: var(--native-row-3-android); }
   :root[data-platform="android"] .lm-sheet .lm-list-row + .lm-list-row { border-top: 0; }
+  /* The page the reader is on. iOS tints the row's title and glyph with the one tint colour; Android
+     (M3 navigation items) seats it in a secondary-container pill. Never colour alone: aria-current is set. */
+  :root[data-platform="ios"] .lm-sheet [data-list-group] [aria-current="page"] { color: var(--md-primary); font-weight: 600; }
+  :root[data-platform="ios"] .lm-sheet [data-list-group] [aria-current="page"] :is(span, svg) { color: var(--md-primary); }
+  :root[data-platform="android"] .lm-sheet [data-list-group] [aria-current="page"] {
+    background: var(--md-secondary-container);
+    border-radius: var(--radius-pill);
+    margin-inline: var(--space-3);
+    inline-size: auto;
+  }
+  :root[data-platform="android"] .lm-sheet [data-list-group] [aria-current="page"] :is(span, svg) { color: var(--md-on-secondary-container); }
 }
 
 /* The student Overview's subject ledger (P4.1). A named utility rather than an
@@ -1414,7 +1459,12 @@ body {
    not use `viewTransition` — a deep link, a signed-out redirect, anything
    outside shell chrome. */
 html:active-view-transition .lm-screen {
-  animation: none;
+  /* Not `animation: none`. That drops the animation for the transition's length and brings it back
+     when the transition ends, and a changed `animation-name` restarts the animation: every screen
+     faded in a second time just after the slide had finished (nf-polish item 15). A zero duration
+     lets the animation finish at once; once the transition is over the duration returns, but the
+     animation is already past its end, so nothing replays. */
+  animation-duration: 0s;
 }
 
 /* View Transitions for portal-internal navigation (DESIGN.md §9.4), driven
@@ -1686,6 +1736,11 @@ html[data-direction="swipe"]::view-transition-new(root) {
   html:is([data-platform="ios"], [data-platform="android"])[data-direction="swipe"]::view-transition-old(lm-chrome-top),
   html:is([data-platform="ios"], [data-platform="android"])[data-direction="swipe"]::view-transition-new(lm-chrome-top) {
     animation: none;
+  }
+  /* The old bar snapshot is dropped, as the tab bar's is: with no animation it would sit opaque over
+     the new bar for the whole transition and show the old title. */
+  html:is([data-platform="ios"], [data-platform="android"])[data-direction="swipe"]::view-transition-old(lm-chrome-top) {
+    display: none;
   }
 
   html:is([data-platform="ios"], [data-platform="android"]) {
@@ -2135,10 +2190,31 @@ html[data-direction="swipe"]::view-transition-new(root) {
     block-size: var(--native-fab-size);
     min-inline-size: var(--native-fab-size);
     border-radius: var(--native-fab-radius);
-    gap: var(--space-3);
   }
   :root[data-platform="android"] .lm-native-fab:dir(rtl) { inset-inline-end: max(var(--native-fab-gap), env(safe-area-inset-left)); }
-  :root[data-platform="android"] .lm-native-fab[data-extended] { padding-inline: var(--space-4); }
+  /* M3 extend/collapse: the container is always 16px of padding around the 24px glyph (56px, a plain
+     FAB), and the label's grid track opens from 0fr to 1fr, so width and label fade move together
+     over 200ms on the emphasized curve. The gap rides on the label so a collapsed FAB has none. */
+  :root[data-platform="android"] .lm-native-fab { padding-inline: var(--space-4); gap: 0; }
+  :root[data-platform="android"] .lm-native-fab-label {
+    display: grid;
+    grid-template-columns: minmax(0, 0fr);
+    opacity: 0;
+    transition: grid-template-columns var(--native-fab-dur) var(--ease-m3-emphasized), opacity var(--native-fab-dur) var(--ease-m3-emphasized);
+  }
+  :root[data-platform="android"] .lm-native-fab-label > * {
+    min-inline-size: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    padding-inline-start: 0;
+    transition: padding-inline-start var(--native-fab-dur) var(--ease-m3-emphasized);
+  }
+  :root[data-platform="android"] .lm-native-fab[data-extended] .lm-native-fab-label { grid-template-columns: minmax(0, 1fr); opacity: 1; }
+  :root[data-platform="android"] .lm-native-fab[data-extended] .lm-native-fab-label > * { padding-inline-start: var(--space-3); }
+  @media (prefers-reduced-motion: reduce) {
+    :root[data-platform="android"] .lm-native-fab-label,
+    :root[data-platform="android"] .lm-native-fab-label > * { transition: none; }
+  }
   :root[data-platform="android"] .lm-native-fab svg { inline-size: var(--native-tab-icon); block-size: var(--native-tab-icon); }
   /* Room under the last row so the FAB never covers the end of a page. */
   :root[data-platform="android"] .lm-native-main[data-fab]:not([data-immersive]) {
