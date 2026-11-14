@@ -10,21 +10,42 @@ from __future__ import annotations
 import enum
 import uuid
 from collections.abc import Mapping, Sequence
-from datetime import date, datetime
+from dataclasses import asdict, dataclass
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final, Literal
 
 import sqlalchemy as sa
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
+from lemely.core.metered_actions import MeteredAction
+from lemely.core.subscription_rules import paymob_frequency
 from lemely.db.models.admin_audit import (
     HAS_IDEMPOTENCY_KEY_SQL,
     IDEMPOTENCY_KEY_SQL,
     AdminAuditLog,
 )
+from lemely.db.models.billing import CreditPack, PlanAudience, PlanTier
+from lemely.db.models.usage import EstimatorInputKind, UsageEstimator, UsageRate
+from lemely.db.subscription_repo import PlanNotPurchasable, PlanSyncFailed
+from lemely.db.subscription_repo import sync_paymob_plan as link_paymob_plan
+from lemely.db.usage_catalogue_repo import (
+    SIGNUP_STUDENT_PACK,
+    SIGNUP_TEACHER_PACK,
+    TEACHER_SIGNUP_VALIDITY,
+    ensure_usage_catalogue,
+)
+from lemely.io.paymob.client import PaymobError, PaymobNotConfigured
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
+    from collections.abc import Callable
+
+    from sqlalchemy.orm import Session, sessionmaker
+
+    from lemely.db.models.enums import PlanInterval
+    from lemely.io.paymob.client import PaymobClient
+    from lemely.runtime.config import PaymobSettings
 
 #: Prefix of the advisory-lock key, so an admin key can never equal the usage ledger's
 #: ``usage:<owner id>`` keys (DV-12: both hash into the same 64-bit space).
@@ -206,19 +227,563 @@ def lock_idempotency_key(session: Session, idempotency_key: str) -> None:
     )
 
 
+# A version may start a little in the past (clock skew between admin and server), never more.
+_BACKDATE_TOLERANCE: Final = timedelta(minutes=5)
+
+#: How a tier compares with its Paymob plan (:func:`paymob_drift`).
+DriftState = Literal["in_sync", "not_synced", "unverified", "drifted"]
+FreeAudience = Literal["student", "teacher"]
+
+#: The free start is stored as non-sellable credit packs whose code starts with this prefix
+#: (Phase 04 deviation 7). The prefix is reserved: such a pack must never become sellable, so
+#: only ``PUT /free-allowances`` (units alone) may touch one.
+SIGNUP_PREFIX: Final = "signup_"
+
+PLAN_TIER_MUTABLE: Final = (
+    "name",
+    "price_minor",
+    "allowance_units",
+    "included_seats",
+    "seat_allowance_units",
+    "extra_seat_price_minor",
+    "features",
+    "is_active",
+)
+_PLAN_TIER_AUDIT: Final = (
+    "code",
+    "name",
+    "audience",
+    "interval",
+    "price_minor",
+    "currency",
+    "allowance_units",
+    "included_seats",
+    "seat_allowance_units",
+    "extra_seat_price_minor",
+    "features",
+    "is_active",
+    "paymob_plan_id",
+    "paymob_plan_mode",
+    "paymob_plan_synced_price_minor",
+    "paymob_plan_synced_frequency",
+)
+CREDIT_PACK_MUTABLE: Final = ("name", "units", "price_minor", "is_active")
+_CREDIT_PACK_AUDIT: Final = ("code", "name", "units", "price_minor", "currency", "is_active")
+_SIGNUP_CODES: Final[dict[FreeAudience, str]] = {
+    "student": SIGNUP_STUDENT_PACK,
+    "teacher": SIGNUP_TEACHER_PACK,
+}
+_RATE_AUDIT: Final = ("version", "action", "units_per_usd", "effective_from")
+_ESTIMATOR_AUDIT: Final = (
+    "version",
+    "action",
+    "input_kind",
+    "base_low",
+    "base_high",
+    "per_input_low",
+    "per_input_high",
+    "effective_from",
+)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+@dataclass(frozen=True, slots=True)
+class PlanTierFields:
+    code: str
+    name: str
+    audience: PlanAudience
+    interval: PlanInterval
+    price_minor: int
+    currency: str
+    allowance_units: int
+    included_seats: int
+    seat_allowance_units: int
+    extra_seat_price_minor: int
+    features: dict[str, object]
+    is_active: bool
+
+
+@dataclass(frozen=True, slots=True)
+class CreditPackFields:
+    code: str
+    name: str
+    units: int
+    price_minor: int
+    currency: str
+    is_active: bool
+
+
+@dataclass(frozen=True, slots=True)
+class FreeAllowanceView:
+    """The student free allowance or teacher signup credits, and the pack that stores it."""
+
+    audience: FreeAudience
+    pack: CreditPack
+    valid_days: int | None
+
+
+def _free_allowance_view(audience: FreeAudience, pack: CreditPack) -> FreeAllowanceView:
+    days = None if audience == "student" else TEACHER_SIGNUP_VALIDITY.days
+    return FreeAllowanceView(audience=audience, pack=pack, valid_days=days)
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogueSnapshot:
+    plan_tiers: list[PlanTier]
+    credit_packs: list[CreditPack]
+    free_allowances: list[FreeAllowanceView]
+    usage_rates: list[UsageRate]
+    usage_estimators: list[UsageEstimator]
+
+
+def paymob_drift(tier: PlanTier, key_mode: str) -> DriftState:
+    """How the tier compares with the Paymob plan it is linked to.
+
+    ``not_synced`` (no plan), ``drifted`` (the plan was made under the other key mode, which
+    cannot be charged with these keys, or the price or frequency changed since the sync),
+    ``unverified`` (a plan set outside the admin sync: no stamps to compare) or ``in_sync``.
+    """
+    if tier.paymob_plan_id is None:
+        return "not_synced"
+    if tier.paymob_plan_mode != key_mode:
+        return "drifted"
+    if tier.paymob_plan_synced_price_minor is None or tier.interval is None:
+        return "unverified"
+    if tier.paymob_plan_synced_price_minor != tier.price_minor or (
+        tier.paymob_plan_synced_frequency != paymob_frequency(tier.interval.value)
+    ):
+        return "drifted"
+    return "in_sync"
+
+
+def _check_tier_shape(tier: PlanTier) -> None:
+    if tier.audience is PlanAudience.student and (
+        (tier.included_seats or 0)
+        or (tier.seat_allowance_units or 0)
+        or (tier.extra_seat_price_minor or 0)
+    ):
+        raise AdminInvalidError("seat_fields_on_student_tier", "Student tiers carry no seats.")
+
+
+def require_reason(reason: str) -> None:
+    """Refuse a blank reason before anything is read or written."""
+    if not (reason or "").strip():
+        raise ReasonRequiredError
+
+
+def _require_metered(action: str) -> None:
+    try:
+        MeteredAction(action)
+    except ValueError as exc:
+        raise AdminInvalidError("unknown_action", f"{action} is not a metered action.") from exc
+
+
+class AdminCatalogueService:
+    """Plan tiers, credit packs, free allowances, usage rates and estimators (spec §8 area 1).
+
+    Tiers and packs are edited in place (their history is the audit log). Rates and
+    estimators are versioned: every write is a new row with the next version for its
+    action, and old rows are never touched. Free allowances are the two signup packs, edited
+    only through :meth:`set_free_allowance`.
+
+    Every write checks its input first and adds its audit row last, in the same transaction
+    as the change: a refused write leaves neither.
+    """
+
+    def __init__(
+        self,
+        sessionmaker: sessionmaker[Session],
+        client: PaymobClient,
+        paymob_settings: PaymobSettings,
+        *,
+        now: Callable[[], datetime] = _utcnow,
+    ) -> None:
+        self._sm = sessionmaker
+        self._client = client
+        self._settings = paymob_settings
+        self._now = now
+
+    @property
+    def key_mode(self) -> str:
+        """The Paymob key mode (``test`` or ``live``) plans are created under now."""
+        return self._settings.key_mode
+
+    def catalogue(self) -> CatalogueSnapshot:
+        with self._sm() as s:
+            packs = list(s.scalars(select(CreditPack).order_by(CreditPack.code)))
+            signup = {p.code: p for p in packs}
+            return CatalogueSnapshot(
+                plan_tiers=list(s.scalars(select(PlanTier).order_by(PlanTier.code))),
+                credit_packs=[p for p in packs if not p.code.startswith(SIGNUP_PREFIX)],
+                free_allowances=[
+                    _free_allowance_view(audience, signup[code])
+                    for audience, code in _SIGNUP_CODES.items()
+                    if code in signup
+                ],
+                usage_rates=list(
+                    s.scalars(
+                        select(UsageRate).order_by(UsageRate.action, UsageRate.version.desc())
+                    )
+                ),
+                usage_estimators=list(
+                    s.scalars(
+                        select(UsageEstimator).order_by(
+                            UsageEstimator.action, UsageEstimator.version.desc()
+                        )
+                    )
+                ),
+            )
+
+    # -- tiers ---------------------------------------------------------------
+
+    def create_plan_tier(
+        self, fields: PlanTierFields, *, admin_user_id: uuid.UUID, reason: str
+    ) -> PlanTier:
+        """Add a tier. Its terms version 1 is written by ``trg_plan_tiers_seed_terms``."""
+        require_reason(reason)
+        try:
+            with self._sm.begin() as s:
+                if s.scalar(select(PlanTier.id).where(PlanTier.code == fields.code)) is not None:
+                    raise AdminConflictError(
+                        "code_taken", f"A tier with code {fields.code} exists."
+                    )
+                tier = PlanTier(**asdict(fields))
+                _check_tier_shape(tier)
+                s.add(tier)
+                s.flush()
+                audited(
+                    s,
+                    admin_user_id,
+                    AuditAction.PLAN_TIER_CREATE,
+                    AuditTarget.PLAN_TIER,
+                    tier.id,
+                    reason,
+                    None,
+                    snapshot(tier, _PLAN_TIER_AUDIT),
+                )
+                return tier
+        except IntegrityError as exc:
+            raise AdminConflictError(
+                "code_taken", f"A tier with code {fields.code} exists."
+            ) from exc
+
+    def update_plan_tier(
+        self,
+        plan_tier_id: uuid.UUID,
+        changes: Mapping[str, object],
+        *,
+        admin_user_id: uuid.UUID,
+        reason: str,
+    ) -> PlanTier:
+        require_reason(reason)
+        if set(changes) - set(PLAN_TIER_MUTABLE):
+            raise AdminInvalidError(
+                "immutable_field", "code, audience, interval and currency are fixed."
+            )
+        with self._sm.begin() as s:
+            tier = s.get(PlanTier, plan_tier_id, with_for_update=True)
+            if tier is None:
+                raise AdminNotFoundError("plan_tier_not_found")
+            before = snapshot(tier, _PLAN_TIER_AUDIT)
+            for name, value in changes.items():
+                setattr(tier, name, value)
+            _check_tier_shape(tier)
+            s.flush()
+            audited(
+                s,
+                admin_user_id,
+                AuditAction.PLAN_TIER_UPDATE,
+                AuditTarget.PLAN_TIER,
+                tier.id,
+                reason,
+                before,
+                snapshot(tier, _PLAN_TIER_AUDIT),
+            )
+            return tier
+
+    def sync_paymob_plan(
+        self, plan_tier_id: uuid.UUID, *, admin_user_id: uuid.UUID, reason: str
+    ) -> PlanTier:
+        """Create a new Paymob plan at the tier's current price and interval, and link it.
+
+        Delegates to Phase 05's ``sync_paymob_plan(..., force_new=True)``, which locks the
+        tier, calls Paymob and links the plan with the key mode it was made under. The synced
+        price and frequency are stamped here, in the same transaction (DV-11).
+        Part B moves that stamp into ``sync_paymob_plan`` so a checkout-created link stamps
+        too, and deletes this copy.
+
+        Every Paymob failure rolls the transaction back: no link, no stamp, no audit row.
+        """
+        require_reason(reason)
+        try:
+            with self._sm.begin() as s:
+                tier = s.get(PlanTier, plan_tier_id, with_for_update=True)
+                if tier is None:
+                    raise AdminNotFoundError("plan_tier_not_found")
+                before = snapshot(tier, _PLAN_TIER_AUDIT)
+                link_paymob_plan(s, self._client, self._settings, plan_tier_id, force_new=True)
+                if tier.interval is None:  # the helper already refused it; narrows the type
+                    raise PlanNotPurchasable("a plan tier without an interval cannot renew")
+                tier.paymob_plan_synced_price_minor = tier.price_minor
+                tier.paymob_plan_synced_frequency = paymob_frequency(tier.interval.value)
+                s.flush()
+                audited(
+                    s,
+                    admin_user_id,
+                    AuditAction.PLAN_TIER_SYNC,
+                    AuditTarget.PLAN_TIER,
+                    tier.id,
+                    reason,
+                    before,
+                    snapshot(tier, _PLAN_TIER_AUDIT),
+                )
+                return tier
+        except PlanNotPurchasable as exc:
+            raise AdminInvalidError("not_billable", str(exc)) from exc
+        except PlanSyncFailed as exc:
+            raise PaymobCallError("paymob_plan_response_unusable", str(exc)) from exc
+        except PaymobNotConfigured as exc:
+            raise PaymobCallError("paymob_not_configured", str(exc)) from exc
+        except PaymobError as exc:
+            raise PaymobCallError("paymob_plan_create_failed", str(exc)) from exc
+
+    # -- packs ---------------------------------------------------------------
+
+    def create_credit_pack(
+        self, fields: CreditPackFields, *, admin_user_id: uuid.UUID, reason: str
+    ) -> CreditPack:
+        require_reason(reason)
+        if fields.code.startswith(SIGNUP_PREFIX):
+            raise AdminConflictError(
+                "reserved_code", "Signup packs are set through free allowances."
+            )
+        try:
+            with self._sm.begin() as s:
+                if (
+                    s.scalar(select(CreditPack.id).where(CreditPack.code == fields.code))
+                    is not None
+                ):
+                    raise AdminConflictError(
+                        "code_taken", f"A pack with code {fields.code} exists."
+                    )
+                pack = CreditPack(**asdict(fields))
+                s.add(pack)
+                s.flush()
+                audited(
+                    s,
+                    admin_user_id,
+                    AuditAction.CREDIT_PACK_CREATE,
+                    AuditTarget.CREDIT_PACK,
+                    pack.id,
+                    reason,
+                    None,
+                    snapshot(pack, _CREDIT_PACK_AUDIT),
+                )
+                return pack
+        except IntegrityError as exc:
+            raise AdminConflictError(
+                "code_taken", f"A pack with code {fields.code} exists."
+            ) from exc
+
+    def update_credit_pack(
+        self,
+        credit_pack_id: uuid.UUID,
+        changes: Mapping[str, object],
+        *,
+        admin_user_id: uuid.UUID,
+        reason: str,
+    ) -> CreditPack:
+        require_reason(reason)
+        if set(changes) - set(CREDIT_PACK_MUTABLE):
+            raise AdminInvalidError("immutable_field", "code and currency are fixed.")
+        with self._sm.begin() as s:
+            pack = s.get(CreditPack, credit_pack_id, with_for_update=True)
+            if pack is None:
+                raise AdminNotFoundError("credit_pack_not_found")
+            if pack.code.startswith(SIGNUP_PREFIX):
+                raise AdminConflictError(
+                    "signup_pack_use_free_allowances", "Edit signup packs through free allowances."
+                )
+            before = snapshot(pack, _CREDIT_PACK_AUDIT)
+            for name, value in changes.items():
+                setattr(pack, name, value)
+            s.flush()
+            audited(
+                s,
+                admin_user_id,
+                AuditAction.CREDIT_PACK_UPDATE,
+                AuditTarget.CREDIT_PACK,
+                pack.id,
+                reason,
+                before,
+                snapshot(pack, _CREDIT_PACK_AUDIT),
+            )
+            return pack
+
+    def set_free_allowance(
+        self, *, audience: FreeAudience, units: int, admin_user_id: uuid.UUID, reason: str
+    ) -> FreeAllowanceView:
+        """Set the units of the student free allowance or the teacher signup credits.
+
+        Units alone: the pack stays inactive at price zero, and ``0`` switches the allowance
+        off. Phase 04's ``ensure_usage_catalogue`` creates the signup packs on first use, so
+        the first edit works on a fresh database too.
+        """
+        require_reason(reason)
+        code = _SIGNUP_CODES[audience]
+        with self._sm.begin() as s:
+            ensure_usage_catalogue(s, now=self._now())
+            pack = s.scalars(
+                select(CreditPack).where(CreditPack.code == code).with_for_update()
+            ).one()
+            before = snapshot(pack, _CREDIT_PACK_AUDIT)
+            pack.units = units
+            s.flush()
+            audited(
+                s,
+                admin_user_id,
+                AuditAction.FREE_ALLOWANCE_UPDATE,
+                AuditTarget.CREDIT_PACK,
+                pack.id,
+                reason,
+                before,
+                snapshot(pack, _CREDIT_PACK_AUDIT),
+            )
+            return _free_allowance_view(audience, pack)
+
+    # -- versioned rows ------------------------------------------------------
+
+    def _effective(self, effective_from: datetime | None) -> datetime:
+        now = self._now()
+        if effective_from is None:
+            return now
+        if effective_from < now - _BACKDATE_TOLERANCE:
+            raise AdminInvalidError(
+                "effective_from_in_past", "A new version cannot start in the past."
+            )
+        return effective_from
+
+    def add_usage_rate(
+        self,
+        *,
+        action: str,
+        units_per_usd: int,
+        effective_from: datetime | None,
+        admin_user_id: uuid.UUID,
+        reason: str,
+    ) -> UsageRate:
+        require_reason(reason)
+        _require_metered(action)
+        starts = self._effective(effective_from)
+        with self._sm.begin() as s:
+            lock_idempotency_key(s, f"catalogue-version:usage_rates:{action}")
+            latest = s.scalars(
+                select(UsageRate)
+                .where(UsageRate.action == action)
+                .order_by(UsageRate.version.desc())
+                .limit(1)
+            ).first()
+            row = UsageRate(
+                version=(latest.version if latest else 0) + 1,
+                action=action,
+                units_per_usd=units_per_usd,
+                effective_from=starts,
+            )
+            s.add(row)
+            s.flush()
+            audited(
+                s,
+                admin_user_id,
+                AuditAction.USAGE_RATE_VERSION,
+                AuditTarget.USAGE_RATE,
+                row.id,
+                reason,
+                snapshot(latest, _RATE_AUDIT) if latest else None,
+                snapshot(row, _RATE_AUDIT),
+            )
+            return row
+
+    def add_usage_estimator(
+        self,
+        *,
+        action: str,
+        input_kind: EstimatorInputKind,
+        base_low: int,
+        base_high: int,
+        per_input_low: int,
+        per_input_high: int,
+        effective_from: datetime | None,
+        admin_user_id: uuid.UUID,
+        reason: str,
+    ) -> UsageEstimator:
+        require_reason(reason)
+        _require_metered(action)
+        if base_low > base_high or per_input_low > per_input_high:
+            raise AdminInvalidError(
+                "low_above_high", "Each low bound must not exceed its high bound."
+            )
+        if input_kind is EstimatorInputKind.none and (per_input_low or per_input_high):
+            raise AdminInvalidError("per_input_without_input_kind")
+        starts = self._effective(effective_from)
+        with self._sm.begin() as s:
+            lock_idempotency_key(s, f"catalogue-version:usage_estimators:{action}")
+            latest = s.scalars(
+                select(UsageEstimator)
+                .where(UsageEstimator.action == action)
+                .order_by(UsageEstimator.version.desc())
+                .limit(1)
+            ).first()
+            row = UsageEstimator(
+                version=(latest.version if latest else 0) + 1,
+                action=action,
+                input_kind=input_kind,
+                base_low=base_low,
+                base_high=base_high,
+                per_input_low=per_input_low,
+                per_input_high=per_input_high,
+                effective_from=starts,
+            )
+            s.add(row)
+            s.flush()
+            audited(
+                s,
+                admin_user_id,
+                AuditAction.USAGE_ESTIMATOR_VERSION,
+                AuditTarget.USAGE_ESTIMATOR,
+                row.id,
+                reason,
+                snapshot(latest, _ESTIMATOR_AUDIT) if latest else None,
+                snapshot(row, _ESTIMATOR_AUDIT),
+            )
+            return row
+
+
 __all__ = [
+    "CREDIT_PACK_MUTABLE",
+    "PLAN_TIER_MUTABLE",
+    "SIGNUP_PREFIX",
     "AdminBillingError",
+    "AdminCatalogueService",
     "AdminConflictError",
     "AdminInvalidError",
     "AdminNotFoundError",
     "AuditAction",
     "AuditTarget",
+    "CatalogueSnapshot",
+    "CreditPackFields",
+    "FreeAllowanceView",
     "PaymobCallError",
+    "PlanTierFields",
     "ReasonRequiredError",
     "already_applied",
     "audited",
     "idempotency_lookup",
     "lock_idempotency_key",
+    "paymob_drift",
+    "require_reason",
     "snapshot",
     "to_jsonable",
 ]

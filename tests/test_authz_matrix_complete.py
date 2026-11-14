@@ -156,7 +156,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/school/teachers"): SCHOOL_ADMIN,
     ("POST", "/api/school/teachers/invite"): SCHOOL_ADMIN,
     ("POST", "/api/school/teachers/{teacher_id}/remove"): SCHOOL_ADMIN,
-    # ── PLATFORM_ADMIN (21) ────────────────────
+    # ── PLATFORM_ADMIN (30) ────────────────────
     # P4.7 (UI spec X-01/X-02/X-03), and the first routes in the product gated
     # to this role. Note what the 403 sweep below therefore proves here: a
     # `school_admin` is denied every one of them. There is no super-role, and
@@ -194,6 +194,17 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/admin/tutoring/moderation"): PLATFORM_ADMIN,
     ("POST", "/api/admin/tutoring/reviews/{review_id}/moderate"): PLATFORM_ADMIN,
     ("POST", "/api/admin/tutoring/replies/{reply_id}/moderate"): PLATFORM_ADMIN,
+    # Admin billing (Phase 07, spec §8): one router gated to platform_admin; every write is
+    # audited in the same transaction (tests/test_admin_billing_*.py).
+    ("GET", "/api/admin/billing/catalogue"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/billing/tiers"): PLATFORM_ADMIN,
+    ("PUT", "/api/admin/billing/tiers/{plan_tier_id}"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/billing/tiers/{plan_tier_id}/sync"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/billing/packs"): PLATFORM_ADMIN,
+    ("PUT", "/api/admin/billing/packs/{credit_pack_id}"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/billing/rates"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/billing/estimators"): PLATFORM_ADMIN,
+    ("PUT", "/api/admin/billing/free-allowances"): PLATFORM_ADMIN,
     # ── TEACHER_OR_SCHOOL_ADMIN (7) ────────────────────
     ("GET", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
     ("POST", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
