@@ -219,8 +219,28 @@ FINAL_V_CHECKS.push(
       if (!r) throw new Error("no button.lm-press-scale on the page to measure")
       if (r.platform !== "other") throw new Error(`expected platform other, got ${r.platform}`)
       if (/\bscale\b/.test(r.props)) throw new Error(`desktop button transition animates scale: ${r.props}`)
+      const icon = await page.evaluate(() => {
+        const b = document.querySelector("button.lm-native-iconbtn")
+        return b ? getComputedStyle(b).transitionProperty : null
+      })
+      if (icon === null) throw new Error("no shell icon button (.lm-native-iconbtn) on the page to measure")
+      if (/\bscale\b/.test(icon)) throw new Error(`desktop shell icon button transition animates scale: ${icon}`)
     },
   },
+  ...PLATFORMS.map((platform) => ({
+    id: `fv-${platform}-shell-icon-button-keeps-scale`,
+    platform,
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student/settings", motion: true },
+    async run(page) {
+      const props = await page.evaluate(() => {
+        const b = document.querySelector("button.lm-native-iconbtn")
+        return b ? getComputedStyle(b).transitionProperty : null
+      })
+      if (props === null) throw new Error("no shell icon button on the page to measure")
+      if (!/\bscale\b/.test(props)) throw new Error(`the native shell icon button lost its scale transition: ${props}`)
+    },
+  })),
   ...PLATFORMS.map((platform) => ({
     id: `fv-${platform}-button-transition-keeps-scale`,
     platform,
