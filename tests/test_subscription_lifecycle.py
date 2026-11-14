@@ -269,16 +269,37 @@ def test_the_expiring_allowance_is_usable_until_the_grace_date_and_not_after(
     assert _usable(pg_sessionmaker, owner, grace) == 0
 
 
-def test_a_failure_after_the_allowance_already_lapsed_does_not_reopen_it(
+def test_a_failure_after_the_period_end_but_before_the_sweep_gets_the_leftover_back(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     owner, sid = _linked(pg_sessionmaker)
-    gid = _period_grant(pg_sessionmaker, owner, sid)
+    gid = _period_grant(pg_sessionmaker, owner, sid, units=500)
+    failed_at = END + timedelta(hours=1)  # Paymob charges at the period end: this is the usual case
+    grace = failed_at + GRACE
+    assert _usable(pg_sessionmaker, owner, failed_at) == 0  # lapsed, not yet swept
     with capture_logs() as logs:
-        _deliver(pg_sessionmaker, _client(), TRIGGER_FAILED, END + timedelta(hours=1))
+        _deliver(pg_sessionmaker, _client(), TRIGGER_FAILED, failed_at)
+    assert _grant_state(pg_sessionmaker, gid) == (grace, 500, 1)  # no new units, no new entry
+    assert _usable(pg_sessionmaker, owner, failed_at) == 500
+    assert _usable(pg_sessionmaker, owner, grace - timedelta(seconds=1)) == 500
+    assert _usable(pg_sessionmaker, owner, grace) == 0
+    assert _alerts(logs) == []
+
+
+def test_a_failure_after_the_expiry_sweep_does_not_reopen_the_allowance(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    owner, sid = _linked(pg_sessionmaker)
+    gid = _period_grant(pg_sessionmaker, owner, sid, units=500)
+    failed_at = END + timedelta(hours=1)
+    with pg_sessionmaker.begin() as session:
+        assert UsageLedger(session).expire_grants(now=END + timedelta(minutes=1)) == 1
+    with capture_logs() as logs:
+        _deliver(pg_sessionmaker, _client(), TRIGGER_FAILED, failed_at)
     assert _sub(pg_sessionmaker, sid).status is SubscriptionStatus.past_due
     assert _grant_state(pg_sessionmaker, gid)[0] == END
-    assert _alerts(logs) == []
+    assert _usable(pg_sessionmaker, owner, failed_at) == 0
+    assert _alerts(logs) == ["subscription_grace_extension_failed"]
 
 
 def test_only_the_current_periods_grants_are_extended(

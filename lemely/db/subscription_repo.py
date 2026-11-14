@@ -1819,9 +1819,11 @@ class SubscriptionService:
     def _extend_period_grants(
         self, subscription: Subscription, *, until: datetime, now: datetime
     ) -> None:
-        """Keep the current period's unexpired grants usable until ``until`` (UD-1 (b)).
+        """Keep the current period's grants usable until ``until`` (UD-1 (b)).
 
-        No units are granted and none are lost. A grant that already lapsed stays lapsed. The
+        No units are granted and none are lost. A grant whose expiry passed is extended too, while
+        the expiry sweep has not taken its leftover (the failure usually arrives at or after the
+        period end); one the sweep already expired is refused by the ledger and alerted. The
         extension is best effort: a ledger failure is alerted and rolled back alone, because the
         failed renewal itself must still be recorded (a webhook that fails here is retried by
         Paymob for ever).
@@ -1835,7 +1837,6 @@ class SubscriptionService:
             .where(
                 SubscriptionPeriod.subscription_id == subscription.id,
                 SubscriptionPeriod.period_end == subscription.current_period_end,
-                UsageGrant.expires_at > now,
                 UsageGrant.expires_at < until,
             )
             .order_by(UsageGrant.id)

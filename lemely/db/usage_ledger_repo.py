@@ -1039,13 +1039,19 @@ class UsageLedger:
         Moves ``expires_at`` later and touches nothing else: no entry is written and no balance
         changes, so a lapse loses nothing and a grace period grants nothing. An expiry never moves
         earlier (a grant already expiring later, or never, is returned as it is), so a repeat is a
-        no-op. Takes the owner lock, and re-reads the grant under it, so it cannot race the
-        expiry sweep or a claw-back.
+        no-op.
+
+        A grant whose ``expires_at`` has passed can still be extended while the expiry sweep has
+        not processed it: Paymob charges a renewal at the period end, so its failure usually
+        arrives at or after the end. Once the sweep has taken the leftover (an ``expire`` entry) or
+        a claw-back closed the grant (a ``refund`` entry), it is not reopened. The owner lock and
+        the balance row lock are the ones :meth:`expire_grants` takes, and the grant is re-read
+        under them, so an extend and a sweep never both win: a sweep queued behind an extend finds
+        the expiry moved and skips the grant; an extend queued behind a sweep finds it expired.
 
         Raises:
-            ValueError: ``expires_at`` is not after ``now``, or the grant already expired at
-                ``now`` (its leftover is no longer usable, and a clawed-back grant is closed this
-                way too: neither is reopened).
+            ValueError: ``expires_at`` is not after ``now``, or the sweep (or a claw-back) already
+                expired the grant.
             LookupError: no such grant.
         """
         if expires_at <= now:
@@ -1054,10 +1060,14 @@ class UsageLedger:
         if grant is None:
             raise LookupError(f"no usage grant {grant_id}")
         self._lock_owners([grant.owner_user_id])
+        self._locked_balance(grant_id)
         self._session.refresh(grant)
         if grant.expires_at is None:
             return grant
-        if grant.expires_at <= now:
+        if grant.expires_at <= now and (
+            self._entry_count(grant_id, UsageEntryKind.expire)
+            or self._entry_count(grant_id, UsageEntryKind.refund)
+        ):
             raise ValueError(f"usage grant {grant_id} already expired")
         if expires_at > grant.expires_at:
             grant.expires_at = expires_at
