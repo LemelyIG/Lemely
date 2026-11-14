@@ -1,5 +1,6 @@
 import type { HTMLAttributes, MouseEvent, ReactNode } from "react"
 import { NavLink, useMatch } from "react-router-dom"
+import { useDialogExitClick } from "@/lib/nav/dialogExit"
 import { cn } from "@/lib/utils"
 
 /*
@@ -74,6 +75,7 @@ export function NavShellLink({ item, className, children, onActiveClick }: NavSh
   // Hooks run before the branch below; a non-route item matches nothing.
   const routeMatch = useMatch({ path: item.to ?? "/", end: item.to ? (item.end ?? false) : true })
   const isActiveNow = !!item.to && !!routeMatch
+  const dialogExitClick = useDialogExitClick(item.to ?? "/", { viewTransition: true })
   if (item.to) {
     return (
       <NavLink
@@ -85,6 +87,7 @@ export function NavShellLink({ item, className, children, onActiveClick }: NavSh
         onFocus={item.prefetch}
         onClick={(event) => {
           if (isActiveNow || item.active) onActiveClick?.(event)
+          dialogExitClick(event)
         }}
         className={({ isActive }) => className(isActive || !!item.active)}
       >

@@ -10,8 +10,9 @@ import { createDialogHistoryStack } from "@/lib/nav/dialogHistoryStack"
  * "which overlay does this back press belong to?" a single, ordered decision.
  */
 
-function overlay(dismissible: boolean) {
+function overlay(dismissible: boolean, current = false) {
   return {
+    isCurrent: () => current,
     isDismissible: () => dismissible,
     close: vi.fn(),
     repush: vi.fn(),
@@ -130,5 +131,16 @@ describe("createDialogHistoryStack", () => {
     expect(stack.size).toBe(1)
     release()
     expect(stack.size).toBe(0)
+  })
+
+  it("topEntryIsCurrent reads the top-most overlay only", () => {
+    const stack = createDialogHistoryStack()
+    expect(stack.topEntryIsCurrent()).toBe(false)
+    stack.register(overlay(true, true))
+    expect(stack.topEntryIsCurrent()).toBe(true)
+    const releaseTop = stack.register(overlay(true, false))
+    expect(stack.topEntryIsCurrent()).toBe(false)
+    releaseTop()
+    expect(stack.topEntryIsCurrent()).toBe(true)
   })
 })

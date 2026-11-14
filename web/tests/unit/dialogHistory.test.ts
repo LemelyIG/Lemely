@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
-import { nextDialogHistoryAction } from "@/lib/nav/dialogHistory"
+import { isDialogEntry, nextDialogHistoryAction } from "@/lib/nav/dialogHistory"
 import { stripComments } from "./support/jsxSource"
 
 /*
@@ -94,5 +94,22 @@ describe("useDialogHistory's own history push does not reset scroll", () => {
     const navigateCall = pushBlock?.[0].match(/navigate\(location, \{[\s\S]*?\n\s*\}\)/)
     expect(navigateCall).not.toBeNull()
     expect(navigateCall?.[0]).toMatch(/preventScrollReset:\s*true/)
+  })
+})
+
+describe("isDialogEntry (exact guard on unwind)", () => {
+  const dialog = { idx: 3, key: "k", usr: { lemelyDialog: true } }
+  it("matches the same idx with the dialog flag", () => {
+    expect(isDialogEntry(dialog, 3)).toBe(true)
+  })
+  it("rejects another idx (navigated past the entry)", () => {
+    expect(isDialogEntry({ ...dialog, idx: 4 }, 3)).toBe(false)
+  })
+  it("rejects the same idx once the entry was replaced (flag dropped)", () => {
+    expect(isDialogEntry({ idx: 3, key: "k", usr: null }, 3)).toBe(false)
+  })
+  it("rejects missing state or a missing recorded idx", () => {
+    expect(isDialogEntry(null, 3)).toBe(false)
+    expect(isDialogEntry(dialog, null)).toBe(false)
   })
 })

@@ -36,3 +36,17 @@ export function nextDialogHistoryAction(input: {
   if (!hasEntry) return "none"
   return dismissible ? "closeOnly" : "repush"
 }
+
+/**
+ * Is `historyState` (a `window.history.state` value) still exactly the entry a
+ * dialog pushed at index `idx`? Same react-router index AND `usr.lemelyDialog`
+ * set. A replace keeps the index but drops the flag, so it fails the second
+ * half; a push past the entry fails the first.
+ */
+export function isDialogEntry(historyState: unknown, idx: number | null): boolean {
+  if (idx === null || typeof historyState !== "object" || historyState === null) return false
+  const state = historyState as { idx?: unknown; usr?: unknown }
+  if (state.idx !== idx) return false
+  const usr = state.usr
+  return typeof usr === "object" && usr !== null && (usr as { lemelyDialog?: unknown }).lemelyDialog === true
+}

@@ -25,7 +25,7 @@ export function PanelSheet({
   triggerClassName?: string
   trigger: ReactNode
   title: string
-  children: (close: () => void) => ReactNode
+  children: ReactNode
 }) {
   const [open, setOpen] = useState(false)
   const openRef = useRef(open)
@@ -52,7 +52,7 @@ export function PanelSheet({
         {trigger}
       </button>
       <Modal open={open} onClose={close} title={title} size="md" hideCloseButton>
-        {children(close)}
+        {children}
       </Modal>
     </>
   )

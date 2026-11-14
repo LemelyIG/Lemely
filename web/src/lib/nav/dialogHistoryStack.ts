@@ -23,6 +23,8 @@ export interface DialogHistoryEntry {
   isDismissible: () => boolean
   close: () => void
   repush: () => void
+  /** Read live: is the current history entry the one this overlay pushed? */
+  isCurrent: () => boolean
 }
 
 export type PopStateOutcome = "self" | "none" | "closeOnly" | "repush"
@@ -70,6 +72,16 @@ export function createDialogHistoryStack() {
         return "repush"
       }
       return "none"
+    },
+
+    /**
+     * True when the current history entry is the top-most open overlay's own
+     * pushed entry. A navigation out of the overlay should then REPLACE that
+     * entry, so one Back from the destination returns to the origin.
+     */
+    topEntryIsCurrent(): boolean {
+      const top = entries[entries.length - 1]
+      return top ? top.isCurrent() : false
     },
 
     get size(): number {

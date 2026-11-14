@@ -1,6 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R3 V3 */
 import type { ReactNode } from "react"
-import { Link, useNavigate } from "react-router-dom"
+import { Link } from "react-router-dom"
+import { useDialogExitNavigate } from "@/lib/nav/dialogExit"
 import { DropdownMenu } from "radix-ui"
 import { useMarkAllNotificationsRead, useMarkNotificationRead, useNotifications } from "@/lib/hooks/useNotificationApi"
 import type { Notification } from "@/lib/notificationTypes"
@@ -74,14 +75,14 @@ type RowProps = { notification: Notification } & Pick<PanelProps, "destinationFo
 
 /** Marks a row read, then goes to where it points. The menu closes itself on select; the sheet closes when the location changes. */
 function useOpenNotification({ notification, destinationFor, inboxTo }: RowProps): { unread: boolean; open: () => void } {
-  const navigate = useNavigate()
+  const navigate = useDialogExitNavigate()
   const markRead = useMarkNotificationRead()
   const unread = notification.readAt === null
   return {
     unread,
     open: () => {
       if (unread) markRead.mutate(notification.notificationId)
-      void navigate(destinationFor(notification) ?? inboxTo)
+      navigate(destinationFor(notification) ?? inboxTo)
     },
   }
 }
@@ -251,7 +252,7 @@ export function NotificationsPanel({ unread, triggerClassName, ...panel }: Notif
   )
   return native ? (
     <PanelSheet triggerLabel={notificationsTriggerLabel(unread)} triggerClassName={triggerClassName} trigger={trigger} title="Notifications">
-      {() => <NotificationsBody {...panel} sheet />}
+      <NotificationsBody {...panel} sheet />
     </PanelSheet>
   ) : (
     <DropdownMenu.Root modal={false}>

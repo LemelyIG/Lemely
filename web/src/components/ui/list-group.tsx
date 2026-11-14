@@ -2,6 +2,7 @@
 import { useId, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { cn } from "@/lib/utils"
+import { useDialogExitClick } from "@/lib/nav/dialogExit"
 
 /*
  * Native frame grouped lists (brief §3.4). One component, two platform looks:
@@ -60,6 +61,16 @@ export type ListRowProps = {
   action?: ReactNode
 } & ListRowAction
 
+/** The row's router link. A tap inside an open dialog replaces the dialog's history entry (see `dialogExit`). */
+function RowLink({ to, state, viewTransition, className, lines, children }: { to: string; state?: unknown; viewTransition: boolean; className: string; lines?: number; children: ReactNode }) {
+  const onClick = useDialogExitClick(to, { state, viewTransition })
+  return (
+    <Link to={to} state={state} viewTransition={viewTransition} onClick={onClick} className={className} data-lines={lines}>
+      {children}
+    </Link>
+  )
+}
+
 export function ListRow({ title, subtitle, leading, trailing, to, href, state, onClick, action, lines = subtitle ? 2 : 1, titleLines = 1, viewTransition = true }: ListRowProps) {
   const base = "lm-press lm-press-delay flex items-center gap-3 px-4 py-2.5 text-start"
   const cls = cn("lm-list-row lm-native-row w-full", base)
@@ -84,9 +95,9 @@ export function ListRow({ title, subtitle, leading, trailing, to, href, state, o
     return (
       <div className="lm-list-row lm-native-row flex w-full items-center" data-lines={lines}>
         {to ? (
-          <Link to={to} state={state} viewTransition={viewTransition} className={main}>
+          <RowLink to={to} state={state} viewTransition={viewTransition} className={main}>
             {inner}
-          </Link>
+          </RowLink>
         ) : (
           <button type="button" onClick={onClick} className={main}>
             {inner}
@@ -98,9 +109,9 @@ export function ListRow({ title, subtitle, leading, trailing, to, href, state, o
   }
   if (to)
     return (
-      <Link to={to} state={state} viewTransition={viewTransition} className={cls} data-lines={lines}>
+      <RowLink to={to} state={state} viewTransition={viewTransition} className={cls} lines={lines}>
         {inner}
-      </Link>
+      </RowLink>
     )
   if (href)
     return (

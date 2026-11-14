@@ -2453,10 +2453,11 @@ NATIVE_CHECKS.push(
   },
 )
 
-// A row tap navigates first, and the sheet closes when the location changes. Closing first made
-// useDialogHistory unwind with navigate(-1) while the URL was still the opening page, and with a lazy
-// route or reduced motion that pop could land before the destination's push, so the tap went nowhere.
-// Every lazy chunk requested after load is held back, so the destination is always slower than the close.
+// A row tap navigates first, and the sheet closes when the location changes. Closing first would have
+// useDialogHistory unwind with navigate(-1) before the destination's push landed (a lazy route or reduced
+// motion), so the tap went nowhere. Every lazy chunk requested after load is held back below, so the
+// destination always arrives after the close would have. The Back, idx and orphan checks that follow live
+// in the dialog-exit group further down.
 const SHEET_NAV_CASES = [
   {
     id: "bell-row",
@@ -2544,4 +2545,133 @@ NATIVE_CHECKS.push(
     if (!(await card.evaluate((el) => el === document.activeElement))) throw new Error("focus not returned to the trigger")
   },
   }))),
+)
+
+/* Task 8b. A row tap inside a dialog REPLACES the dialog's history entry, so the history reads
+   [origin, destination] and one Back returns to the origin. A push past the entry leaves an orphan:
+   [origin, dialog, destination], whose second Back is a dead press. Proven by react-router's own
+   history.state.idx, which is the origin's idx + 1 at the destination only without the orphan. */
+const histIdx = (page) => page.evaluate(() => window.history.state?.idx ?? 0)
+
+async function runDialogExit(page, { open, to }) {
+  const origin = new URL(page.url())
+  const originIdx = await histIdx(page)
+  const { dialog, row } = await open(page)
+  await row.click()
+  await page.waitForURL((url) => url.pathname === to, { timeout: 8000 })
+  await dialog.waitFor({ state: "detached" })
+  await page.waitForTimeout(400)
+  const idx = await histIdx(page)
+  if (idx !== originIdx + 1) throw new Error(`orphan dialog entry: destination idx ${idx}, expected ${originIdx + 1}`)
+  await page.goBack()
+  await page.waitForURL((url) => url.pathname === origin.pathname, { timeout: 5000 })
+  if ((await page.getByRole("dialog").count()) !== 0) throw new Error("a dialog came back after Back")
+  if ((await histIdx(page)) !== originIdx) throw new Error(`Back landed on idx ${await histIdx(page)}, expected the origin ${originIdx}`)
+  // The second Back must leave the origin (a URL change, or an idx decrease): not a dead press.
+  await page.goBack()
+  await page.waitForTimeout(500)
+  const left = page.url() !== origin.href || (await histIdx(page)) < originIdx
+  if (!left) throw new Error("the second Back was a dead press: the origin never changed")
+}
+
+const MORE_ROW_CASE = {
+  id: "more-row",
+  to: null,
+  async open(page) {
+    await page.locator("nav.lm-native-tabbar button[aria-haspopup]").click()
+    const dialog = page.getByRole("dialog", { name: "More" })
+    await dialog.waitFor()
+    return { dialog, row: dialog.locator("a").first() }
+  },
+}
+
+NATIVE_CHECKS.push(
+  ...["ios", "android"].flatMap((platform) =>
+    [...SHEET_NAV_CASES, MORE_ROW_CASE].map((c) => ({
+      id: `native-${platform}-dialog-exit-${c.id}-one-back-to-origin`,
+      platform,
+      width: 390,
+      app: NATIVE_HOME,
+      async run(page) {
+        let to = c.to
+        if (!to) {
+          // The More sheet's first destination, read from the open sheet.
+          await page.locator("nav.lm-native-tabbar button[aria-haspopup]").click()
+          const dialog = page.getByRole("dialog", { name: "More" })
+          await dialog.waitFor()
+          to = new URL(await dialog.locator("a").first().evaluate((a) => a.href)).pathname
+          await page.keyboard.press("Escape")
+          await dialog.waitFor({ state: "detached" })
+          await page.waitForTimeout(400)
+        }
+        await runDialogExit(page, { open: c.open, to })
+      },
+    })),
+  ),
+  ...["ios", "android"].map((platform) => ({
+    id: `native-${platform}-dialog-exit-same-path-row-leaves-no-entry`,
+    platform,
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student/notifications" },
+    async run(page) {
+      const originIdx = await histIdx(page)
+      await page.getByRole("button", { name: /^Notifications/ }).click()
+      const dialog = page.getByRole("dialog", { name: "Notifications" })
+      await dialog.waitFor()
+      await dialog.getByRole("link", { name: "All notifications" }).click()
+      await dialog.waitFor({ state: "detached" })
+      await page.waitForTimeout(400)
+      if (new URL(page.url()).pathname !== "/student/notifications") throw new Error("a same-path row changed the URL")
+      const idx = await histIdx(page)
+      if (idx !== originIdx) throw new Error(`same-path row left idx ${idx}, expected ${originIdx}`)
+      if ((await page.getByRole("dialog").count()) !== 0) throw new Error("the dialog stayed open")
+    },
+  })),
+  ...["ios", "android"].map((platform) => ({
+    id: `native-${platform}-dialog-exit-modal-close-unwinds-once`,
+    platform,
+    width: 390,
+    app: { ...NATIVE_HOME, path: `/student/tutors/${TUTOR_ID}`, mocks: tutorProfileMocks },
+    async run(page) {
+      const originIdx = await histIdx(page)
+      await page.getByRole("button", { name: "Report", exact: true }).click()
+      const dialog = page.getByRole("dialog")
+      await dialog.waitFor()
+      if ((await histIdx(page)) !== originIdx + 1) throw new Error("opening the modal did not push exactly one entry")
+      await page.keyboard.press("Escape")
+      await dialog.waitFor({ state: "detached" })
+      await page.waitForTimeout(500)
+      const idx = await histIdx(page)
+      if (idx !== originIdx) throw new Error(`Modal close left idx ${idx}, expected ${originIdx} (double or missed unwind)`)
+    },
+  })),
+  {
+    id: "native-other-768-dialog-exit-drawer-row-one-back-to-origin",
+    width: 768,
+    app: NATIVE_TEACHER_HOME,
+    async run(page) {
+      const origin = new URL(page.url())
+      let to = null
+      await runDialogExit(page, {
+        to: await (async () => {
+          const more = page.getByRole("navigation", { name: "Primary" }).getByRole("button", { name: "More" })
+          await more.click()
+          const dialog = page.getByRole("dialog")
+          await dialog.waitFor()
+          const hrefs = await dialog.getByRole("link").evaluateAll((els) => els.map((e) => new URL(e.href).pathname))
+          to = hrefs.find((h) => h !== origin.pathname)
+          await page.keyboard.press("Escape")
+          await dialog.waitFor({ state: "detached" })
+          await page.waitForTimeout(400)
+          return to
+        })(),
+        async open(p) {
+          await p.getByRole("navigation", { name: "Primary" }).getByRole("button", { name: "More" }).click()
+          const dialog = p.getByRole("dialog")
+          await dialog.waitFor()
+          return { dialog, row: dialog.locator(`a[href="${to}"]`).first() }
+        },
+      })
+    },
+  },
 )

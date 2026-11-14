@@ -91,7 +91,7 @@ export function AccountPanel({ links, detail, triggerClassName }: AccountPanelPr
   const trigger = <ShellAvatar name={name} src={data.avatarUrl} />
   return native ? (
     <PanelSheet triggerLabel={label} triggerClassName={cn(SHELL_ICON_BUTTON, triggerClassName)} trigger={trigger} title="Account">
-      {() => (
+      {(
         <div className="flex flex-col gap-3">
           <Identity name={name} email={data.email} detail={detail} avatarUrl={data.avatarUrl} sheet />
           <ListGroup>
