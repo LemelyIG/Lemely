@@ -600,6 +600,10 @@ these directly in GitHub — nothing here needs to be typed anywhere else.
 | `GEMINI_API_KEY` | Env secret (staging + production) | Reuse the key from your local `.env`, or mint a new one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey). Fine to reuse the same key for both environments. |
 | `ANTHROPIC_API_KEY` | Env secret (staging + production) — required only when a task tag resolves to a `claude-` model (development option; not used by default) | [console.anthropic.com](https://console.anthropic.com) → API Keys. The default `gemini.correction_model` is `gemini-3.1-flash-lite`, so leaving it empty is fine unless you configure a `claude-` model. Set a spend limit on the Anthropic workspace. Never put the value in the repo. |
 | `RESEND_API_KEY` | Env secret (staging + production) — **optional** | [resend.com](https://resend.com) → API Keys → Create, with *Sending access* only. Leave it unset and the deploy still succeeds: an absent secret renders as the empty string, which the backend reads as *not configured* and falls back to the offline mock provider, so nothing sends. Setting it is the entire switch-on. **Reusing one key across both environments shares one 100/day free-tier allowance** — a staging smoke test spends production's quota, so mint a second Resend account for staging or leave staging unset. See `docs/email-delivery.md`. |
+| `EDGE_ORIGIN_SECRET` | Env secret (staging + production) — optional | A long random string you make up (`openssl rand -hex 32`; letters, digits and `_ . ~ + / : = @ -` only). One value feeds both the backend (`LEMELY_EDGE__ORIGIN_SECRET`) and the Worker (`ORIGIN_SECRET`), so they cannot drift. Unset, the edge check is off. See "Edge secret and scheduled jobs" below. |
+| `EDGE_ORIGIN_SECRET_PREVIOUS` | Env secret (staging + production) — optional, only while rotating | The value being rotated out: the backend still accepts it, the Worker never sends it. Leave unset otherwise. |
+| `TURNSTILE_SECRET_KEY` / `TURNSTILE_SITE_KEY` | Env secret (staging + production) — optional | Cloudflare dashboard → Turnstile → add a widget for `lemelyig.com` / `staging.lemelyig.com`. The site key is public, the secret key is not. Unset, the waitlist skips the bot check. |
+| `WAITLIST_DIGEST_SECRET` | Env secret (staging + production) — optional | A random string. The backend's digest endpoint and the Cloud Scheduler job's `X-Cron-Secret` header both use it. Unset, the endpoint answers 404 and the scheduler job is skipped with a warning. |
 
 **No new secret or variable for GCS.** The upload bucket and the runtime service
 account `deploy.yml` deploys as are both just names `deploy.yml` derives itself from
@@ -706,6 +710,315 @@ runs turned up, none of which are obvious from the config:
   created>`, which is how you tell it apart from a container that started
   and then died.
 
+## Access gate and staging purge
+
+Before launch only verified `@lemelyig.com` accounts get in, in staging and production. The gate is
+`LEMELY_ACCESS__ALLOWED_EMAIL_DOMAINS` (`[access] allowed_email_domains` in `lemely.toml`), a
+comma-separated list that `deploy.yml` sets to `lemelyig.com` for both environments.
+
+What it does, server side:
+
+- **Signup, login, refresh, parent OTP and invite/seat account creation** answer `403` with
+  `{"detail": {"code": "access_restricted", "reason": "domain"}}` for any other address, and create
+  nothing (no GoTrue user, no `users` row, no token, no mail).
+- **Every authenticated route** answers the same `403` to a signed-in caller whose stored email is
+  not on the list, or (`"reason": "unverified"`) is on it but was never verified
+  (`users.email_verified_at`). That cuts off sessions that are already open, on the next request.
+  Only `POST /api/auth/verify-email/code` and `.../resend` skip the verified check, so an
+  `@lemelyig.com` account can still prove its inbox; they still require an allowed domain.
+- **Public and unaffected:** the landing, `/api/waitlist*`, `/api/contact`, `/api/health`,
+  `/api/internal/*` and static assets. `GET /api/access/config` returns `{"restricted": bool}`
+  (never the domains) so the SPA can show the "coming soon" screen.
+- Matching is exact and case-insensitive: `x@sub.lemelyig.com`, `x@lemelyig.com.evil.com`,
+  `x@lemelyig.co`, quoted-local-part tricks and non-ASCII lookalikes are all refused.
+- The gate only refuses accounts; the purge below is what removes them.
+
+**Opening access at launch:** set the variable to an empty value (change the one line in
+`deploy.yml`, or `LEMELY_ACCESS__ALLOWED_EMAIL_DOMAINS=` on the Cloud Run service) and redeploy. An
+empty list means open: no check runs anywhere, and `/api/access/config` reports
+`{"restricted": false}`.
+
+Supabase Auth is only used by the backend (the browser never talks to it), so the gate covers
+every path. As defense in depth the owner may still turn off "Allow new users to sign up" in the
+Supabase dashboard (Authentication > Sign In / Providers) for both projects: the backend creates
+users with the service-role key, which that switch does not block.
+
+### Purging non-allow-listed accounts (staging and production)
+
+`lemely admin purge-users` deletes every account outside the allow-list with its data **and its
+files**. The owner has decided this applies to production too: before launch, accounts, data and
+files of users without an `@lemelyig.com` email are not kept. It is a dry run unless `--execute`
+is given.
+
+**Order for production. Do not reorder.**
+
+1. **Release deploy.** It brings the database to Alembic head. The purge needs the current schema and
+   refuses to run on any other.
+2. **Database backup** (Supabase dashboard, Database > Backups, or a `pg_dump`), confirmed before
+   continuing. Object deletes are permanent unless the buckets have versioning or soft delete
+   turned on (check this; the bootstrap script does not set it).
+3. **Dry run** (below). It prints a count summary first (accounts kept, unverified allow-listed
+   accounts that are kept, accounts to delete, dependent rows, storage objects per bucket), then
+   a warning if the storage configuration is unsafe, the **kept accounts whose data is affected**
+   (for example a kept student's class or booking owned by a purged teacher or tutor), rows per
+   table, and the full list of accounts (id, email, role, created_at). Nothing is deleted.
+4. **Owner confirms** the list, including the affected kept accounts. Unverified `@lemelyig.com`
+   accounts are kept. **Check the privileged section first:** the summary lists any
+   `platform_admin` or `school_admin` account in the delete list under a `!!!` banner. The rule is
+   unchanged (only verified `@lemelyig.com` accounts survive), so an admin on another address,
+   including the owner's own personal address, would lose console access. Move that admin to an
+   `@lemelyig.com` address and verify it before executing.
+5. **Execute**: the same command with `--execute`.
+
+#### Recommended: run it as a one-off Cloud Run job
+
+The job runs the backend image as the service's own runtime service account with the service's
+own environment, so the database URL, Supabase service-role key, `gcs` backend and the three
+bucket names are exactly what production uses, and nothing is saved on a laptop. The runtime
+service account holds `roles/storage.objectAdmin` (delete and list objects) on the uploads and
+avatars buckets, and on the evidence bucket also `roles/storage.legacyBucketReader`
+(`scripts/gcp-bootstrap.sh`). The purge needs nothing more: it never reads bucket metadata
+except on the evidence bucket, where the app's own privacy check does. The person running the
+commands needs `roles/run.developer`, `roles/iam.serviceAccountUser` on the runtime service
+account, and `roles/logging.viewer`.
+
+```bash
+PROJECT=<gcp-project-id>; ENV=staging            # or: ENV=production
+REGION=us-central1; SERVICE=lemely-backend-$ENV
+SA=lemely-backend-$ENV@$PROJECT.iam.gserviceaccount.com
+IMAGE=$(gcloud run services describe $SERVICE --project $PROJECT --region $REGION \
+  --format='value(spec.template.spec.containers[0].image)')
+# The service's env vars, joined with a delimiter that cannot occur in a URL or key. They pass
+# through this shell's memory only; nothing is written to disk.
+ENVVARS=$(gcloud run services describe $SERVICE --project $PROJECT --region $REGION --format=json \
+  | jq -r '.spec.template.spec.containers[0].env
+      | if any(.[]; has("valueFrom")) then error("a Secret Manager reference needs --set-secrets") else . end
+      | map("\(.name)=\(.value)") | join("##")')
+[ -n "$ENVVARS" ] || { echo "env copy failed; do not continue" >&2; return 1 2>/dev/null || exit 1; }
+
+# Dry run (staging):
+gcloud run jobs deploy lemely-purge-$ENV --project $PROJECT --region $REGION \
+  --image "$IMAGE" --service-account "$SA" --set-env-vars "^##^$ENVVARS" \
+  --command python --max-retries 0 --task-timeout 3600 --memory 1Gi \
+  --args=-m,lemely.app.cli,admin,purge-users,--keep-domain,lemelyig.com
+# Dry run (production): the same, with the extra flag
+#   --args=-m,lemely.app.cli,admin,purge-users,--keep-domain,lemelyig.com,--i-know-this-is-production
+gcloud run jobs execute lemely-purge-$ENV --project $PROJECT --region $REGION --wait
+gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=lemely-purge-$ENV" \
+  --project $PROJECT --freshness=1h --order=asc --format='value(textPayload)'
+
+# Execute (staging), after the owner has confirmed the dry-run output:
+gcloud run jobs update lemely-purge-$ENV --project $PROJECT --region $REGION \
+  --args=-m,lemely.app.cli,admin,purge-users,--keep-domain,lemelyig.com,--execute
+# Execute (production):
+#   --args=-m,lemely.app.cli,admin,purge-users,--keep-domain,lemelyig.com,--execute,--i-know-this-is-production
+gcloud run jobs execute lemely-purge-$ENV --project $PROJECT --region $REGION --wait
+# read the logs as above; then remove the job
+gcloud run jobs delete lemely-purge-$ENV --project $PROJECT --region $REGION --quiet
+```
+
+`--max-retries 0` matters: a failed run is read and re-run by a person, not retried blindly. The
+env-var copy fails loudly if any variable is a Secret Manager reference (`valueFrom`); the deploy
+workflow sets all of them as plain values today. If that ever changes, map those with
+`--set-secrets` and drop them from the copy.
+
+#### Fallback: run it locally
+
+Only if the job route is unavailable. Export every one of these (use the target environment's
+values; never reuse staging's for production) and authenticate with
+`gcloud auth application-default login` as a principal that holds
+`roles/storage.objectAdmin` on the three buckets (and `roles/storage.legacyBucketReader` on the
+evidence one):
+
+```bash
+export LEMELY_DATABASE__URL='postgresql+psycopg://...'   # session pooler URL of the target
+export LEMELY_SUPABASE__URL='https://<ref>.supabase.co'
+export LEMELY_SUPABASE__SERVICE_ROLE_KEY='...'
+export LEMELY_STORAGE__BACKEND=gcs
+export LEMELY_STORAGE__GCS_PROJECT=<gcp-project-id>
+export LEMELY_STORAGE__GCS_PROJECT_NUMBER=<gcp-project-number>
+export LEMELY_STORAGE__BUCKET=<project>-uploads-<env>
+export LEMELY_STORAGE__AVATAR_BUCKET=<project>-avatars-<env>
+export LEMELY_STORAGE__TUTOR_EVIDENCE_BUCKET=<project>-tutor-evidence-<env>
+lemely admin purge-users --keep-domain lemelyig.com [--i-know-this-is-production]
+```
+
+#### What the tool does and refuses
+
+- **Execute order: database, then objects, then Auth.** It first collects the object keys the
+  doomed rows name (uploaded scans and an upload's sibling `mark_scheme.pdf`, teacher papers and
+  their schemes, avatars, tutor evidence) and lists each purged user's key prefix
+  (`uploads/{id}/`, `teacher/{id}/`, `{id}/` in the avatar bucket, `tutor-evidence/{profile}/`)
+  for objects no row references; a key that a surviving row also references is kept. Bucket
+  reachability is proven before anything changes.
+- It then deletes the rows in **one transaction** (children first, composite foreign keys
+  included; the keys are read from the database, so a new table is covered). A foreign key that
+  is `NO ACTION` is deleted or cleared explicitly even when a `CASCADE` path also reaches the
+  row, because PostgreSQL checks it per deleted row. **If the database step fails it rolls back,
+  and no storage object and no Auth user has been touched**: a failure can never leave rows
+  pointing at deleted files. If the failure comes from the commit itself the server may still
+  have committed; the message then says so and asks for a dry run to see what remains.
+- Only after the commit it deletes the objects (a missing object counts as done), then the
+  matching Supabase Auth users (an already-deleted user counts as done). Every failure is
+  listed and the exit code is 1 if any step failed. **If an object fails, the Auth step is
+  skipped** (the output says `Supabase Auth users deleted: skipped (...)`, and the JSON has
+  `authSkipped` and `authSkippedReason`), which keeps the purged accounts listed as Auth orphans:
+  a re-run has no rows left, so it sweeps `uploads/{id}/`, `teacher/{id}/` and `{id}/` of those
+  orphans and finishes the job. Re-running also removes Auth users that have no `users` row and
+  are not on the allow-list (with `--include-unverified-allowlisted` also keep-domain ones
+  without a row).
+- **A failed key outside those folders is never retried.** Every production writer follows the
+  per-user layout (`uploads/{user}/{paper}/...` in `student.py`, `teacher/{user}/{paper}/...` in
+  `teacher.py`, `{user}/{uuid}.{ext}` avatars in `me.py`), so those keys are found again. Tutor
+  evidence (`tutor-evidence/{profile}/...`, keyed by the deleted profile) and any hand-seeded or
+  legacy key are not. On any storage failure the command prints a `Delete these by hand` list of
+  exactly those failed keys (JSON: `objectsFailedByHand`); delete them in the bucket yourself.
+- **Orphans are listed.** Auth users with no `users` row (left by an earlier run, or mid-signup)
+  are printed with their id, email and the folders that will be swept, in a dry run and with
+  `--execute`, in text and in the JSON (`orphans`). Read that list before executing.
+- **If the Supabase Auth listing fails, `--execute` stops before any change** (rows and files
+  gone but Auth sessions live is the worse state). A dry run warns and continues.
+- A verified allow-listed account is never deleted. `--include-unverified-allowlisted` also
+  deletes the unverified ones. Run the purge in a quiet window: with that flag, a colleague signing
+  up mid-run (their Auth user exists a moment before their row) would be deleted too.
+- **Schema check:** it refuses unless the database is at Alembic head, naming the revision it
+  found and the one it expects.
+- **Environment check, two flags.** A target positively identified as production is refused unless
+  `--i-know-this-is-production` is given. A target the tool cannot recognise as local, staging or
+  production (a mistyped URL looks like this) is refused unless `--target-is-unrecognised` is
+  given; the production flag never covers it, so typing it for production cannot also get past a
+  wrong URL.
+- **Storage check:** outside a local database `--execute` refuses unless the backend is `gcs`, all
+  three bucket names are set explicitly and each names the detected environment (`staging` or
+  `production`), and every bucket answers with the configured credentials. "Answers" means a
+  one-object listing (`storage.objects.list`), never a bucket-metadata read, so no extra IAM is
+  needed. The dry run runs the same probe and prints any failure as a warning, so it proves what
+  `--execute` needs. A default `local` backend would delete nothing and still report
+  success, which is why this is enforced.
+- **uuid columns with no foreign key** are listed in `NON_FK_UUID_COLUMNS` with their disposition
+  (`lemely/db/user_purge.py`), and a test fails if a migration adds one that is not. Today:
+  `friendships.pair_low/pair_high` are derived copies of the cascading requester and addressee, so
+  the friendship goes with the user; `tutoring_admin_access` ids are an append-only admin read log
+  kept by design (tutoring SPEC SC-23; it holds ids of profiles, bookings, evidence and reports,
+  no account data, and `admin_user_id` is cleared); `ai_detection_removal_audit_log.source_id` is a
+  `review_queue` row id written once by migration 0037.
+- **Waitlist applicants are never touched**; they are not users. The tool stops with an error if
+  a future migration ever links that table to `users`.
+- **Gate cost:** while access is restricted every authenticated request does one extra `users`
+  read (and a route that also needs a verified email reads the same row twice). It goes away when
+  access opens; if it matters, the gate can later hand its row to the dependencies that follow.
+- **Gate side effect:** while access is restricted the API never returns verification dev links
+  or codes, and a deployed service with a restricted gate and no `LEMELY_EMAIL__API_KEY` refuses
+  to start (set the key in both environments before this deploys).
+
+## Edge secret and scheduled jobs
+
+Two pieces of `deploy.yml` automate infrastructure that used to be manual.
+
+### The edge secret
+
+The Cloudflare Worker adds `X-Lemely-Edge-Secret` to every request it proxies, and routes that use
+the edge guard (`lemely/web/edge.py`; today the public waitlist routes) refuse a request without
+it. Only then is `CF-Connecting-IP` trusted as the caller's address for rate limiting. This closes
+the gap above where the `*.run.app` URL bypasses the Worker.
+
+- GitHub secret `EDGE_ORIGIN_SECRET` (per environment) feeds both halves: the **`edge-secret`**
+  job runs `wrangler secret put ORIGIN_SECRET`, and `deploy-backend` passes
+  `LEMELY_EDGE__ORIGIN_SECRET`. The `edge-secret` job runs **before** `deploy-backend` and
+  `deploy-frontend` (both `needs` it), so the Worker is already sending the secret when a backend
+  that checks it takes traffic. An empty secret skips the push and the backend treats empty as
+  "no check", so deploying before the secret exists changes nothing. In CI `wrangler secret put`
+  creates a draft Worker if none exists yet; the first `wrangler deploy` replaces it, keeping the
+  secret.
+- **Enabling it for the first time (two deploys).** The Worker that is live when you first set
+  the secret is still the old code, which does not send the header, so a backend that enforces the
+  secret would refuse every waitlist call until the new Worker is out. Deploy this code once with
+  `EDGE_ORIGIN_SECRET` unset (the new Worker ships, the backend checks nothing; an empty secret
+  means unset, and the waitlist routes serve normally), then add `EDGE_ORIGIN_SECRET` and deploy
+  again.
+- **Rotating the edge secret without refusing requests.** The backend accepts the current secret
+  and an optional previous one (`EDGE_ORIGIN_SECRET_PREVIOUS` -> `LEMELY_EDGE__ORIGIN_SECRET_PREVIOUS`;
+  blank means unset). Because the Worker is updated before the backend rolls out, a one-step swap
+  would briefly refuse waitlist calls. Use three deploys:
+  1. Keep `EDGE_ORIGIN_SECRET` as it is and set `EDGE_ORIGIN_SECRET_PREVIOUS` to the **new** value.
+     The backend now accepts both; the Worker still sends the old one.
+  2. Set `EDGE_ORIGIN_SECRET` to the **new** value and `EDGE_ORIGIN_SECRET_PREVIOUS` to the **old**
+     one. The Worker switches to the new value first, and every backend revision accepts both.
+  3. Clear `EDGE_ORIGIN_SECRET_PREVIOUS`.
+
+  If the waitlist form can be refused for the whole backend build and rollout (several minutes),
+  set `EDGE_ORIGIN_SECRET` to the new value in one deploy and skip the rest.
+
+### Cloud Scheduler jobs
+
+`.github/scheduler-jobs.json` is the desired state, and `scripts/scheduler_reconcile.py` brings
+Cloud Scheduler (`us-central1`) in line with it as the **last step of `deploy-backend`**, after the
+serving-revision and health checks. Today it holds the daily waitlist digest
+(`0 7 * * *` UTC, `POST /api/internal/waitlist/digest` on the public host).
+
+- Jobs are named `lemely-<environment>-<id>`. Missing jobs are created, existing ones are
+  rewritten (schedule, URI and the `X-Cron-Secret` header, so a rotated secret propagates), and
+  jobs that are no longer in the file are deleted, which is how renames and removals take effect.
+- **Ownership.** Cloud Scheduler jobs have no labels, so every job it creates carries
+  `managed-by=lemely-deploy` in its description. Deletion only ever touches jobs whose name starts
+  with `lemely-<environment>-` **and** whose description has that marker. Anything else in the
+  project is left alone. If a desired name is already taken by a job without the marker, the step
+  fails and changes nothing.
+- A job whose secret is empty is skipped with a `::warning::` and is not deleted. Any gcloud error
+  fails the step. Secrets are never printed.
+- Each job names a GitHub secret in the file; it must also be mapped into that step's `env`
+  (a test checks this). Adding a job is: add the entry, add the secret line if it is new, deploy.
+- A pending claim on the digest (the backend claims each UTC day before sending) answers 503
+  `digest_pending` instead of pretending it was sent; it becomes takeable after five minutes. Every
+  job is created and updated with `--max-retry-attempts=3 --min-backoff=6m --max-backoff=30m`
+  (`RETRY_FLAGS` in the script), so a failed or pending run is retried, and the first retry lands
+  after that five-minute lease.
+
+**One-time setup per environment project** (once per GCP project; `PROJECT_ID` and `SA_EMAIL` are
+`GCP_PROJECT_ID` and `GCP_SERVICE_ACCOUNT`):
+
+```
+gcloud services enable cloudscheduler.googleapis.com --project=PROJECT_ID
+
+gcloud iam roles create lemelyDeploySchedulerManager --project=PROJECT_ID \
+  --title="Lemely deploy: manage Cloud Scheduler jobs" --stage=GA \
+  --permissions=cloudscheduler.jobs.create,cloudscheduler.jobs.update,cloudscheduler.jobs.delete,cloudscheduler.jobs.get,cloudscheduler.jobs.list,cloudscheduler.locations.get
+
+gcloud projects add-iam-policy-binding PROJECT_ID \
+  --member="serviceAccount:SA_EMAIL" \
+  --role="projects/PROJECT_ID/roles/lemelyDeploySchedulerManager" --condition=None
+```
+
+`roles/cloudscheduler.admin` also works but is broader. No `iam.serviceAccounts.actAs` is needed:
+the jobs carry no OIDC or OAuth token, only the secret header.
+
+To trigger the digest by hand once a deploy has created the job:
+`gcloud scheduler jobs run lemely-<environment>-waitlist-digest --project=PROJECT_ID --location=us-central1`.
+If Cloudflare's bot protection challenges Cloud Scheduler's requests (403 HTML in the job log), add a
+WAF skip rule for `/api/internal/*`.
+
+### IndexNow after a production frontend change
+
+The `indexnow` job tells IndexNow (Bing, Yandex and others) which public URLs to recrawl.
+
+- **Production only.** `if: needs.resolve-env.outputs.environment == 'production'`; staging never
+  runs it, so staging URLs are never submitted. It `needs` `deploy-frontend` and `smoke-test`, so it
+  runs only after a good deploy and never masks a failed one.
+- **Only when the frontend changed.** `scripts/indexnow_submit.py` diffs HEAD against the commit of
+  the last *submitted* production deploy. That commit is recorded as an artifact named
+  `frontend-submitted-<sha>` (kept 90 days), uploaded only after IndexNow accepted a submission,
+  and found through the Actions artifacts API (`actions: read`). This beats `github.event.before`
+  (a skipped or failed earlier deploy cannot hide a change) and a Worker tag (no Cloudflare
+  read access needed). If there is no marker, it expired, or git cannot diff the commit, the script
+  submits. The frontend path list (`FRONTEND_INCLUDE` / `FRONTEND_EXCLUDE`, excluding `web/tests`,
+  `web/e2e`, `web/dev-previews`) lives only in that script.
+- **The submission.** The script checks `https://lemelyig.com/<key>.txt` serves the key, then POSTs
+  `{host, key, keyLocation, urlList}` (URLs from `web/public/sitemap.xml`) to
+  `https://api.indexnow.org/indexnow`. 200 and 202 are success; 400, 403, 422 and 429 log a
+  `::warning::`. The key is public (`web/public/<key>.txt`), so no secret is involved.
+- **Never fails the deploy.** The job is `continue-on-error` and the script always exits 0. Try it
+  with `python scripts/indexnow_submit.py --dry-run [--force]`.
+
 ## Known gaps this setup doesn't close
 
 Carried over from `docs/deployment.md` §5, still true here — not
@@ -734,6 +1047,8 @@ regressions this pipeline introduced, just not solved by it:
   answers a paper's status from the same Postgres row, so this is a
   scheduling gap, not a correctness one — and it has not been observed
   either way, because this branch has not been deployed.
-- Everything else in `docs/deployment.md` §5 (no scheduler,
-  `/api/teacher/overview`'s N+1) is unchanged by this pipeline — it deploys
-  the app as-is, it doesn't fix it.
+- Everything else in `docs/deployment.md` §5 (`/api/teacher/overview`'s N+1)
+  is unchanged by this pipeline — it deploys the app as-is, it doesn't fix it.
+  The in-process notification sweeper still needs `--min-instances=1` for timely
+  delivery; the waitlist digest does not, because Cloud Scheduler (see "Edge
+  secret and scheduled jobs" above) wakes the service itself.

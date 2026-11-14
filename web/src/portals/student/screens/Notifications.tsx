@@ -144,6 +144,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
 
   return (
     <Popover
+      label="Notification actions"
       open={unread && menuOpen}
       onOpenChange={setMenuOpen}
       sheetTitle={notification.title}

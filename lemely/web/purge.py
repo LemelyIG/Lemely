@@ -76,7 +76,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
@@ -85,6 +84,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from lemely.core.deletion import purge_cutoff
+from lemely.core.object_keys import sibling_scheme_key
 from lemely.db.models.attempts import Attempt, Upload
 from lemely.db.models.teacher_papers import TeacherPaper
 from lemely.db.session import INCLUDE_DELETED
@@ -412,13 +412,7 @@ def _teacher_paper_objects(paper: TeacherPaper, cutoff: datetime) -> tuple[str, 
     return tuple(p for p in (paper.storage_path, paper.scheme_storage_path) if p is not None)
 
 
-def _scheme_path(storage_path: str) -> str:
-    """Where a student's own mark-scheme scan sits beside ``storage_path``.
-
-    The same derivation the marking run reads it from
-    (``lemely.web.routers.student``).
-    """
-    return f"{PurePosixPath(storage_path).parent.as_posix()}/mark_scheme.pdf"
+_scheme_path = sibling_scheme_key
 
 
 __all__ = ["DEFAULT_PURGE_LIMIT", "purge_expired_papers", "purge_expired_teacher_papers"]

@@ -1,17 +1,19 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
-import { Link } from 'react-router-dom'
 import { buttonVariants } from '@/components/ui/button'
 import { marketingLinks } from './content'
+import { useWaitlist } from './waitlist/WaitlistDialog'
 
 export function ConversionActions() {
+  const waitlist = useWaitlist()
   return (
     <div className="brand-actions">
-      <Link
-        to={marketingLinks.signup}
+      <button
+        type="button"
+        onClick={(e) => waitlist.open(e.currentTarget)}
         className={buttonVariants({ variant: 'primary', size: 'lg' })}
       >
-        Upload your first paper free
-      </Link>
+        Join the waitlist
+      </button>
       <a
         href={marketingLinks.demo}
         aria-label="Book a Demo (opens your email app)"

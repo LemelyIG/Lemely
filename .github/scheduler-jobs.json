@@ -1,0 +1,14 @@
+{
+  "_comment": "Desired Cloud Scheduler jobs, reconciled on every deploy by scripts/scheduler_reconcile.py. Each job is created as lemely-<environment>-<id>. Adding an entry creates it, editing one updates it, and removing or renaming one deletes the old job, but only jobs carrying the lemely-deploy ownership marker are ever deleted. `secret` names a GitHub secret (per environment); the deploy step must also map it into its env. An empty secret skips that job with a warning and never deletes it. See docs/ci-cd.md.",
+  "jobs": [
+    {
+      "id": "waitlist-digest",
+      "description": "Daily waitlist applicant digest to the team",
+      "schedule": "0 7 * * *",
+      "timeZone": "UTC",
+      "method": "POST",
+      "path": "/api/internal/waitlist/digest",
+      "secret": "WAITLIST_DIGEST_SECRET"
+    }
+  ]
+}

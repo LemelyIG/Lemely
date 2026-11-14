@@ -1,0 +1,11 @@
+/* Confirm-page preview chrome. Never shipped. */
+@import "../../src/index.css";
+@source "../../src";
+@source "./";
+@import "../../src/portals/marketing/waitlist/waitlist.css";
+
+.pv-bar { position: sticky; top: 0; z-index: 90; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 10px 16px; background: oklch(0.16 0.014 245); color: oklch(0.95 0.006 240); font: 600 13px/1.2 var(--font-sans); }
+.pv-bar b { font: 600 11px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: #7fb8e0; }
+.pv-bar .grp { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.pv-bar a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; border-radius: 8px; border: 1px solid oklch(0.45 0.02 240); color: inherit; text-decoration: none; }
+.pv-bar a[aria-current="true"] { background: #7fb8e0; color: #042f4f; border-color: #7fb8e0; }

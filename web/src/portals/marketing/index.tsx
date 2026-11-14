@@ -8,11 +8,13 @@ import { DEFAULT_TITLE, DEFAULT_DESCRIPTION } from "@/lib/meta/documentMeta"
 import type { PageMeta } from "@/lib/meta/documentMeta"
 import { MarketingHeader } from "./MarketingHeader"
 import { MarketingFooter } from "./MarketingFooter"
+import { WaitlistProvider } from "./waitlist/WaitlistDialog"
 import "./marketing.css"
 import "./brand-tokens.css"
 import "./brand.css"
 
 const Landing = lazy(() => import("./Landing").then(m => ({ default: m.Landing })))
+const ConfirmEmail = lazy(() => import("./waitlist/ConfirmEmail").then(m => ({ default: m.ConfirmEmail })))
 const DataHandling = lazy(() => import("./DataHandling").then(m => ({ default: m.DataHandling })))
 
 /**
@@ -56,12 +58,16 @@ function HashScroll() {
 }
 
 export function MarketingFrame({ children }: { children: React.ReactNode }) {
-  return <div className="marketing-brand min-h-dvh">
-    <SkipLink />
-    <MarketingHeader />
-    <main id={MAIN_CONTENT_ID} tabIndex={-1}>{children}</main>
-    <MarketingFooter />
-  </div>
+  /* No theme pin here: `<html data-theme>` is the one switch (anonymous visitors light, signed-in
+     users their own choice, `lib/theme/theme.ts`), so the frame and every portal agree. */
+  return <WaitlistProvider>
+    <div className="marketing-brand min-h-dvh">
+      <SkipLink />
+      <MarketingHeader />
+      <main id={MAIN_CONTENT_ID} tabIndex={-1}>{children}</main>
+      <MarketingFooter />
+    </div>
+  </WaitlistProvider>
 }
 
 /**
@@ -146,6 +152,27 @@ export const dataHandlingRoute: RouteObject = {
     description:
       "What Lemely stores about an account, what happens to a paper you upload, where a scan is sent to be read, and who else can see your work.",
     skeleton: "page-header",
+  } satisfies PageMeta,
+}
+
+/** The page the waitlist confirmation email links to. Public, in the marketing frame, never gated. */
+export function MarketingWaitlistConfirm() {
+  return (
+    <MarketingFrame>
+      <Suspense fallback={<RouteSkeleton />}>
+        <ConfirmEmail />
+      </Suspense>
+    </MarketingFrame>
+  )
+}
+
+export const waitlistConfirmRoute: RouteObject = {
+  path: "waitlist/confirm",
+  element: <MarketingWaitlistConfirm />,
+  handle: {
+    title: "Confirm your email",
+    description: "Confirm your email address for the Lemely waitlist.",
+    skeleton: "standalone",
   } satisfies PageMeta,
 }
 

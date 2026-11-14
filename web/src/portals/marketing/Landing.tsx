@@ -8,8 +8,7 @@ import { BinnyFaq } from './BinnyFaq'
 import { ConversionActions } from './ConversionActions'
 import { useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { Link } from 'react-router-dom'
-import { UploadSimple } from '@phosphor-icons/react'
+import { useWaitlist } from './waitlist/WaitlistDialog'
 import { useLandingMotion } from './useLandingMotion'
 import { useSceneMotion } from './useSceneMotion'
 import { useMobileUpload } from './useMobileUpload'
@@ -23,6 +22,7 @@ export function Landing() {
   const ref = useRef<HTMLDivElement>(null)
   const closing = useSceneMotion<HTMLElement>()
   const showUpload = useMobileUpload()
+  const waitlist = useWaitlist()
   useLandingMotion(ref)
   return (
     <div ref={ref} className="brand-landing">
@@ -45,13 +45,13 @@ export function Landing() {
             <span>explained.</span>
           </h2>
           <p>
-            Upload your first hand-written paper free. Marks, explanations and a
-            next step in minutes. No card, no setup.
+            Apply for early access in about 30 seconds. We'll email you when it
+            opens. No card, no setup.
           </p>
           <ConversionActions />
         </div>
         <div className="brand-closing-cameo" aria-hidden="true">
-          <span className="brand-closing-bubble">Go on. One paper.</span>
+          <span className="brand-closing-bubble">Go on. Two steps.</span>
           <div className="brand-closing-peek">
             <BinnyPeek />
           </div>
@@ -60,17 +60,17 @@ export function Landing() {
       {createPortal(
         <aside
           className="marketing-brand brand-mobile-upload-host"
-          aria-label="Upload your first paper"
+          aria-label="Join the waitlist"
         >
-          <Link
-            to="/signup"
+          <button
+            type="button"
             className="brand-mobile-upload"
             data-shown={showUpload}
             tabIndex={showUpload ? undefined : -1}
+            onClick={(e) => waitlist.open(e.currentTarget)}
           >
-            <UploadSimple aria-hidden="true" size={20} weight="bold" />
-            Upload free
-          </Link>
+            Join the waitlist
+          </button>
         </aside>,
         document.body,
       )}

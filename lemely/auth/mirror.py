@@ -40,6 +40,9 @@ class UserMirror(Protocol):
     ) -> None:
         """Insert or update the mirrored row for ``user_id``.
 
+        An update that changes the email address (case aside) clears ``email_verified_at``: the
+        verification proved the old inbox, not the new one.
+
         ``terms_accepted_at`` (D7.11) is written only when the caller supplies
         one; ``None`` leaves an existing row's value untouched rather than
         clearing it, the same rule ``phone``/``display_name`` already follow.
@@ -152,6 +155,10 @@ class DbUserMirror:
                     )
                 )
             else:
+                if user.email.lower() != email.lower():
+                    # GoTrue now says a different address than the one that was verified: the new
+                    # inbox is unproven, so the access gate must not carry the old proof over.
+                    user.email_verified_at = None
                 user.email = email
                 user.role = role
                 if phone is not None:

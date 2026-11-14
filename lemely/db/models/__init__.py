@@ -120,6 +120,7 @@ def import_all_models() -> None:
         thresholds,
         tutoring,
         users,
+        waitlist,
     )
 
 

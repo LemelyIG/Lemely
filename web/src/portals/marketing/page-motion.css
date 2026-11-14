@@ -11,7 +11,7 @@
 .brand-closing h2 { color:var(--brand-white); }
 .brand-closing h2 span { color:var(--brand-tide); }
 .brand-closing p { color:var(--brand-night-muted); }
-.marketing-brand .brand-closing .brand-actions a:first-child { background:var(--brand-tide); color:var(--brand-abyss); }
+.marketing-brand .brand-closing .brand-actions :is(a, button):first-child { background:var(--brand-tide); color:var(--brand-abyss); }
 .marketing-brand .brand-closing .brand-actions a:last-child { color:var(--brand-white); border-color:var(--brand-tide); }
 .brand-conversation-log .brand-typing { display:flex; align-items:center; gap:5px; padding:14px 16px; background:var(--brand-subtle); border-radius:18px 18px 18px 6px; width:max-content; }
 .brand-typing i { width:8px; height:8px; border-radius:50%; background:var(--brand-typing-dot); animation:brand-typing 1s ease-in-out infinite; }

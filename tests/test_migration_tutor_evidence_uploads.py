@@ -55,13 +55,12 @@ def test_orm_declares_the_three_named_objects() -> None:
     }
 
 
-def test_revision_chains_from_0050_and_is_the_head() -> None:
+def test_revision_chains_from_0050() -> None:
     script_dir = ScriptDirectory.from_config(Config("alembic.ini"))
     revision = script_dir.get_revision(REVISION)
     assert revision is not None
     assert revision.down_revision == DOWN_REVISION
     assert len(REVISION) <= 32  # alembic_version.version_num is varchar(32)
-    assert head_revision() == REVISION
 
 
 def test_constraints_present_by_name(migrated_sessionmaker: sessionmaker[Session]) -> None:
@@ -113,7 +112,7 @@ def test_upgrade_downgrade_upgrade_round_trip(
     upgrade_head()
 
     with sm() as session:
-        assert current_revision(session) == REVISION
+        assert current_revision(session) == head_revision()
         assert object_names(session, [TABLE]) == _orm_names()
         assert object_names(session, earlier) == before
         count = session.execute(sa.text(f"SELECT count(*) FROM {TABLE}")).scalar_one()  # noqa: S608 - constant

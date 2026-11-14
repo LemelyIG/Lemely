@@ -4,6 +4,7 @@ import {
   THEME_STORAGE_KEY,
   isThemePreference,
   readThemePreference,
+  resolveEffectiveTheme,
   resolveTheme,
 } from "../../src/lib/theme/theme.ts"
 import { themeStore } from "../../src/lib/theme/useTheme.ts"
@@ -209,5 +210,28 @@ describe("themeStore (the shared store behind every useTheme() instance)", () =>
     themeStore.setPreference("dark")
 
     expect(calls).toEqual([])
+  })
+})
+
+describe("resolveEffectiveTheme: signed in ? preference : light", () => {
+  const prefs = ["system", "light", "dark"] as const
+  it("is light for every anonymous combination, whatever the preference or the OS", () => {
+    for (const pref of prefs) for (const os of [true, false]) expect(resolveEffectiveTheme(false, pref, os)).toBe("light")
+  })
+  it("equals resolveTheme for every signed-in combination", () => {
+    for (const pref of prefs) for (const os of [true, false]) expect(resolveEffectiveTheme(true, pref, os)).toBe(resolveTheme(pref, os))
+  })
+})
+
+describe("themeStore signed-in state", () => {
+  it("notifies subscribers when the session appears or disappears, not on no-op writes", () => {
+    themeStore.setSignedIn(false)
+    const calls: boolean[] = []
+    const unsub = themeStore.subscribe(() => calls.push(themeStore.getSignedInSnapshot()))
+    themeStore.setSignedIn(true)
+    themeStore.setSignedIn(true)
+    themeStore.setSignedIn(false)
+    unsub()
+    expect(calls).toEqual([true, false])
   })
 })

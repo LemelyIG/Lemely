@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,8 +25,15 @@ from pydantic import (
 from pydantic_settings import (
     BaseSettings,
     DotEnvSettingsSource,
+    NoDecode,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
+)
+
+# A multi-label DNS name (letters, digits, inner hyphens); the matching rule proper is
+# ``lemely.core.access`` (``runtime`` may not import ``core``).
+_ACCESS_DOMAIN = re.compile(
+    r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+"
 )
 
 
@@ -649,7 +657,11 @@ class DatabaseSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # Full SQLAlchemy URL. psycopg (v3) sync driver by default.
-    url: str = "postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres"
+    # repr=False: the URL carries the database password, and a settings object ends up in
+    # tracebacks and logs. Type and readers are unchanged.
+    url: str = Field(
+        default="postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres", repr=False
+    )
     # Echo SQL to the logger (debugging only).
     echo: bool = False
     # QueuePool sizing.
@@ -1252,6 +1264,96 @@ class TutoringSettings(BaseModel):
     email_daily_cap: int = Field(default=60, ge=0)
 
 
+class EdgeSettings(BaseModel):
+    """What proves a request came through the Cloudflare Worker.
+
+    The Worker adds ``X-Lemely-Edge-Secret`` to every request it forwards. Where a route uses
+    the edge guard (:func:`lemely.web.edge.edge_caller`), a request without the matching header
+    is refused when ``origin_secret`` is set, and only then is ``CF-Connecting-IP`` trusted as
+    the caller's address. Unset (dev, tests) the guard is off and the socket peer is used.
+    Deployed it is ``LEMELY_EDGE__ORIGIN_SECRET``; never put it in ``lemely.toml``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    origin_secret: OptionalSecret = None
+    # The value being rotated out: still accepted (never sent by the Worker) so a rotation can
+    # roll out without refusing requests that carry the old one. Blank means unset.
+    origin_secret_previous: OptionalSecret = None
+
+
+class WaitlistSettings(BaseModel):
+    """The landing-page waitlist's scheduled digest.
+
+    ``digest_secret`` guards ``POST /api/internal/waitlist/digest``, which Cloud Scheduler
+    calls once a day with the value in an ``X-Cron-Secret`` header. Unset (the default) the
+    endpoint answers 404, so a machine with no secret never exposes a trigger. Never put it
+    in ``lemely.toml``: deployed it is the ``LEMELY_WAITLIST__DIGEST_SECRET`` environment
+    variable.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    digest_secret: OptionalSecret = None
+    # Cloudflare Turnstile for step 1 (``POST /api/waitlist``). With no secret the check is
+    # skipped (dev, tests); with one, a missing or invalid token is refused. The site key is
+    # public and reaches the SPA through ``GET /api/waitlist/config``.
+    turnstile_secret_key: OptionalSecret = None
+    turnstile_site_key: OptionalCredential = None
+
+
+class AccessSettings(BaseModel):
+    """Who may create or use an account while Lemely is not launched.
+
+    ``allowed_email_domains`` is the allow-list. **Empty means open** (local dev, tests, and the
+    day access is opened): no check runs anywhere. Non-empty, only accounts whose verified email
+    domain equals an entry may sign up, log in or call any authenticated route; everyone else
+    gets 403 ``access_restricted``. Matching is exact and case-insensitive
+    (:func:`lemely.core.access.is_allowed_email`); a subdomain is not its parent.
+
+    Deployed it is ``LEMELY_ACCESS__ALLOWED_EMAIL_DOMAINS``, a comma-separated list
+    (``lemelyig.com`` or ``lemelyig.com,example.org``); in ``lemely.toml`` a list. A JSON array
+    in the environment works too. Setting it empty opens access again.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # ``NoDecode`` keeps pydantic-settings from JSON-parsing the env value, so a plain
+    # ``lemelyig.com`` is accepted as well as ``["lemelyig.com"]``.
+    allowed_email_domains: Annotated[list[str], NoDecode] = Field(default_factory=list)
+
+    @field_validator("allowed_email_domains", mode="before")
+    @classmethod
+    def _parse_domains(cls, value: object) -> object:
+        """Accept a comma/space-separated string or a list; normalise and validate each entry."""
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped.startswith("["):
+                import json
+
+                value = json.loads(stripped)
+            else:
+                value = stripped.replace(",", " ").split()
+        if not isinstance(value, list | tuple):
+            return value
+        domains: list[str] = []
+        for entry in value:
+            if not isinstance(entry, str):
+                raise ValueError(f"allowed_email_domains entries must be strings, got {entry!r}")
+            text = entry.strip()
+            if not text:
+                continue
+            domain = text.lower().removeprefix("@")
+            if not text.isascii() or not _ACCESS_DOMAIN.fullmatch(domain):
+                raise ValueError(f"{entry!r} is not a domain such as 'lemelyig.com'")
+            if domain not in domains:
+                domains.append(domain)
+        return domains
+
+    @property
+    def restricted(self) -> bool:
+        """Whether access is limited to :attr:`allowed_email_domains` (a non-empty list)."""
+        return bool(self.allowed_email_domains)
+
+
 class EmailSettings(BaseModel):
     """Transactional-email credentials for the account-lifecycle mails (D7.7).
 
@@ -1359,6 +1461,9 @@ class Settings(BaseSettings):
     notifications: NotificationsSettings = NotificationsSettings()
     email: EmailSettings = EmailSettings()
     tutoring: TutoringSettings = TutoringSettings()
+    waitlist: WaitlistSettings = WaitlistSettings()
+    access: AccessSettings = AccessSettings()
+    edge: EdgeSettings = EdgeSettings()
     database: DatabaseSettings = DatabaseSettings()
     supabase: SupabaseSettings = SupabaseSettings()
     auth: AuthSettings = AuthSettings()

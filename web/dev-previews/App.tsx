@@ -736,7 +736,7 @@ function AppBody() {
                   that did not open, sitting on the page that exists to prove
                   the kit works. `renderTrigger` yields
                   `{ open, triggerProps }`; only the latter is spread. */}
-              <Popover
+              <Popover label="Kit popover example"
                 renderTrigger={({ triggerProps }) => (
                   <Button size="sm" {...triggerProps}>
                     Open popover

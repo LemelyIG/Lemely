@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
@@ -20,14 +21,17 @@ from fastapi.responses import JSONResponse
 from lemely import __version__
 from lemely.io.model_table import configured_models
 from lemely.runtime.config import anthropic_key_missing_tags, log_marking_flags
-from lemely.runtime.errors import EmptyGradeBoundaryStoreError
-from lemely.web.deps import get_settings, get_sweeper
+from lemely.runtime.errors import AccessRestrictedError, EmptyGradeBoundaryStoreError
+from lemely.web.deps import access_restricted_detail, get_settings, get_sweeper
+from lemely.web.edge import BodyLimitMiddleware
 from lemely.web.routers import (
+    access,
     admin,
     admin_tutor_sanctions,
     admin_tutoring_moderation,
     admin_tutoring_reports,
     admin_tutors,
+    admin_waitlist,
     announcements,
     auth,
     classes,
@@ -74,6 +78,7 @@ from lemely.web.routers import (
     tutoring_public,
     tutoring_reports,
     tutoring_reviews,
+    waitlist,
     widget,
     xp,
 )
@@ -124,6 +129,17 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
     settings = get_settings()
     log_marking_flags(settings.grading.marking_options())
+    if (
+        settings.access.restricted
+        and os.environ.get("K_SERVICE")
+        and email_delivery_mode(settings) == "mock"
+    ):
+        # Mock email hands verification links back in API responses; while the gate is the only
+        # thing keeping strangers out, a deployed service must send real mail or not start.
+        raise RuntimeError(
+            "[access] allowed_email_domains is set on a deployed service but no email provider "
+            "is configured (LEMELY_EMAIL__API_KEY): refusing to start."
+        )
     if email_delivery_mode(settings) == "mock" and _tutoring_routes_mounted(_app):
         log.warning(MOCK_WARNING)
     # The same model table `lemely doctor` checks: every configured claude- model.
@@ -172,10 +188,20 @@ def create_app() -> FastAPI:
         version=__version__,
         lifespan=_lifespan,
     )
+    # Body-size cap for the public waitlist writes, enforced while the body is read.
+    app.add_middleware(
+        BodyLimitMiddleware,
+        limit=waitlist.MAX_BODY_BYTES,
+        paths=waitlist.BODY_LIMITED_PATHS,
+        methods=frozenset({"POST", "PATCH"}),
+    )
     app.include_router(meta.router)
+    app.include_router(access.router)
     app.include_router(reference.router)
     app.include_router(client_errors.router)
     app.include_router(contact.router)
+    app.include_router(waitlist.router)
+    app.include_router(admin_waitlist.router)
     app.include_router(auth.router)
     app.include_router(teacher.router)
     app.include_router(classes.router)
@@ -226,6 +252,19 @@ def create_app() -> FastAPI:
     app.include_router(admin_tutor_sanctions.router)
     app.include_router(tutoring_reports.router)
     app.include_router(admin_tutoring_reports.router)
+
+    @app.exception_handler(AccessRestrictedError)
+    async def _access_restricted(_request: Request, exc: AccessRestrictedError) -> JSONResponse:
+        """Answer 403 ``access_restricted`` wherever the auth service refuses an address.
+
+        Raised by :class:`~lemely.auth.service.AuthService` on signup, login, refresh and the
+        parent code flows, including when a seat or invite creator reaches it. It is not an
+        ``AuthError``, so no route's own 400/401 mapping can swallow it. Same body shape as
+        the dependency's refusal (``{"detail": {"code": ..., "reason": ...}}``).
+        """
+        return JSONResponse(
+            status_code=403, content={"detail": access_restricted_detail(exc.reason)}
+        )
 
     @app.exception_handler(EmptyGradeBoundaryStoreError)
     async def _thresholds_not_ingested(

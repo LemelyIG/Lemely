@@ -105,7 +105,7 @@ export const SITE_NAME = "Lemely"
  */
 export const DEFAULT_TITLE = "Lemely, marking for CAIE past papers"
 export const DEFAULT_DESCRIPTION =
-  "Lemely marks a photographed or uploaded CAIE past-paper attempt against the official marking scheme, with method marks, and returns per-question marks, a grade, and the topics to work on."
+  "Lemely marks Cambridge IGCSE, O Level and A Level past papers against the official mark scheme, with method marks, a grade and topics to work on."
 
 /**
  * Type guard for a route handle carrying page metadata.
@@ -175,6 +175,28 @@ function setMetaTag(attr: "name" | "property", key: string, content: string): vo
   tag.setAttribute("content", content)
 }
 
+/** The production origin. Staging builds point their canonical here too, so staging never competes with it. */
+export const CANONICAL_ORIGIN = "https://lemelyig.com"
+
+/**
+ * The canonical URL for a pathname: the production origin plus the path, with
+ * `/landing` (an alias of `/`, see `routes.tsx`) collapsed to `/` and any query
+ * or hash dropped.
+ */
+export function canonicalUrl(pathname: string): string {
+  return `${CANONICAL_ORIGIN}${pathname === "/landing" ? "/" : pathname}`
+}
+
+function setCanonical(href: string): void {
+  let link = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]')
+  if (!link) {
+    link = document.createElement("link")
+    link.setAttribute("rel", "canonical")
+    document.head.appendChild(link)
+  }
+  link.setAttribute("href", href)
+}
+
 /**
  * Applies a match chain's metadata to the live document.
  *
@@ -194,4 +216,7 @@ export function applyDocumentMeta(matches: readonly { handle?: unknown }[]): voi
   // that page rather than as the site root.
   setMetaTag("property", "og:title", title)
   setMetaTag("property", "og:description", description)
+  const url = canonicalUrl(window.location.pathname)
+  setCanonical(url)
+  setMetaTag("property", "og:url", url)
 }

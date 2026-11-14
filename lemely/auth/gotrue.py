@@ -63,6 +63,23 @@ class GoTrueBackend(Protocol):
         ...
 
 
+class GoTrueAdmin(Protocol):
+    """Account-removal operations against GoTrue, for the staging purge tool only.
+
+    Separate from :class:`GoTrueBackend` on purpose: the request path never lists or deletes
+    users, and keeping these off that Protocol leaves every :class:`GoTrueBackend` test fake
+    unchanged.
+    """
+
+    def list_users(self) -> list[GoTrueUser]:
+        """Every GoTrue user, across all pages."""
+        ...
+
+    def delete_user(self, user_id: uuid.UUID) -> bool:
+        """Delete ``user_id``; ``True`` if it existed, ``False`` if already gone (idempotent)."""
+        ...
+
+
 def _parse_user(body: dict[str, Any]) -> GoTrueUser:
     """Build a :class:`GoTrueUser` from a GoTrue JSON user object."""
     try:
@@ -187,4 +204,76 @@ class HttpGoTrueBackend:
             )
 
 
-__all__ = ["GoTrueBackend", "GoTrueToken", "GoTrueUser", "HttpGoTrueBackend"]
+class HttpGoTrueAdmin:
+    """Real :class:`GoTrueAdmin` over the GoTrue admin REST API (service-role key)."""
+
+    _PAGE_SIZE = 200
+    # A runaway loop guard: 500 pages of 200 is far past any staging project.
+    _MAX_PAGES = 500
+
+    def __init__(self, settings: Settings) -> None:
+        """Initialise against ``settings.supabase``."""
+        self._settings = settings
+        self._base_url = settings.supabase.url.rstrip("/")
+
+    def _headers(self) -> dict[str, str]:
+        key = self._settings.supabase.service_role_key
+        if key is None:
+            raise AuthError("Supabase service-role key is not configured.")
+        secret = key.get_secret_value()
+        return {"Authorization": f"Bearer {secret}", "apikey": secret}
+
+    def list_users(self) -> list[GoTrueUser]:
+        """Page through ``GET /auth/v1/admin/users`` until a short page ends the list."""
+        users: list[GoTrueUser] = []
+        headers = self._headers()
+        for page in range(1, self._MAX_PAGES + 1):
+            try:
+                response = httpx.get(
+                    f"{self._base_url}/auth/v1/admin/users",
+                    params={"page": page, "per_page": self._PAGE_SIZE},
+                    headers=headers,
+                    timeout=_TIMEOUT_SECONDS,
+                )
+            except httpx.HTTPError as exc:
+                raise ExternalServiceError(f"GoTrue admin-list request failed: {exc}") from exc
+            if response.status_code >= 400:
+                raise AuthError(
+                    f"GoTrue admin-list failed ({response.status_code}): {response.text}"
+                )
+            body = cast("dict[str, Any]", response.json())
+            raw = cast("list[dict[str, Any]]", body.get("users", []))
+            for item in raw:
+                # A user with no email (phone-only) has nothing to match on; keep it out of the
+                # purge's reach rather than guess.
+                if item.get("email"):
+                    users.append(_parse_user(item))
+            if len(raw) < self._PAGE_SIZE:
+                return users
+        raise ExternalServiceError("GoTrue admin-list did not end within the page limit.")
+
+    def delete_user(self, user_id: uuid.UUID) -> bool:
+        """``DELETE /auth/v1/admin/users/{id}``; a 404 means it is already gone."""
+        try:
+            response = httpx.delete(
+                f"{self._base_url}/auth/v1/admin/users/{user_id}",
+                headers=self._headers(),
+                timeout=_TIMEOUT_SECONDS,
+            )
+        except httpx.HTTPError as exc:
+            raise ExternalServiceError(f"GoTrue admin-delete request failed: {exc}") from exc
+        if response.status_code == 404:
+            return False
+        if response.status_code >= 400:
+            raise AuthError(f"GoTrue admin-delete failed ({response.status_code}): {response.text}")
+        return True
+
+
+__all__ = [
+    "GoTrueAdmin",
+    "GoTrueBackend",
+    "GoTrueToken",
+    "GoTrueUser",
+    "HttpGoTrueAdmin",
+    "HttpGoTrueBackend",
+]
