@@ -242,8 +242,9 @@ def sync_paymob_plan(
     """Create the tier's Paymob subscription plan if it has none (or ``force_new``); link it.
 
     Plans use the MOTO integration (research 02 §6) and ``use_transaction_amount=true``, so extra
-    seats bought at the first checkout are part of every renewal. ``force_new`` re-links a tier
-    after an admin changes its price or interval; existing subscriptions keep their plan.
+    seats bought at the first checkout are part of every renewal. ``force_new`` creates a new
+    Paymob plan and re-links the tier (an admin re-sync, for example after the plan drifted from
+    the tier's price or frequency); existing subscriptions keep their plan.
 
     The tier row is locked ``FOR UPDATE`` and the caller commits. Every refusal happens before
     Paymob is called. Owned by Phase 05 with this exact signature (index R9). Phase 07 calls it
@@ -295,30 +296,90 @@ def sync_paymob_plan(
         raise PlanSyncFailed(f"Paymob returned no plan id for tier {tier.id}")
     tier.paymob_plan_id = plan_id
     tier.paymob_plan_mode = settings.key_mode
-    # What Paymob was just sent, for the admin drift warning: stamped here so a link made at
-    # checkout carries it too. Same row, same lock, same transaction as the link.
+    # What Paymob was just sent, for the admin drift warning. The one place a link is made (checkout
+    # refuses an unlinked tier), so the stamp is written with it: same row, lock and transaction.
     tier.paymob_plan_synced_price_minor = tier.price_minor
     tier.paymob_plan_synced_frequency = paymob_frequency(tier.interval.value)
     _log_linked_after_commit(session, tier.id, plan_id)
     return plan_id
 
 
-def _log_linked_after_commit(session: Session, plan_tier_id: uuid.UUID, plan_id: int) -> None:
-    """Log ``paymob_plan_linked`` when (and only if) the link commits.
+#: ``Session.info`` key holding the links whose ``paymob_plan_linked`` line is still undecided.
+_PENDING_LINKS_KEY: Final = "lemely.paymob_plan_links"
 
-    A rolled-back link is not a link: the caller's later failure must not leave this line in
-    the log. The listener removes itself after the first commit or rollback.
+
+@dataclass(slots=True)
+class _PendingLink:
+    plan_tier_id: uuid.UUID
+    plan_id: int
+    #: The transactions open when the link was made, innermost first. The link is discarded when
+    #: any of them is rolled back.
+    held_by: list[object]
+    committed: bool = False
+    discarded: bool = False
+
+
+def _pending_links(session: Session) -> list[_PendingLink]:
+    links: list[_PendingLink] = session.info.get(_PENDING_LINKS_KEY, [])
+    return links
+
+
+def _links_after_commit(session: Session) -> None:
+    # SQLAlchemy dispatches this for a savepoint release too; there the session is still inside
+    # the (nested) transaction being committed.
+    if not session.in_nested_transaction():
+        for link in _pending_links(session):
+            link.committed = True
+
+
+def _links_after_soft_rollback(session: Session, rolled_back: object) -> None:
+    for link in _pending_links(session):
+        if any(rolled_back is held for held in link.held_by):
+            link.discarded = True
+
+
+def _links_after_transaction_end(session: Session, ended: object) -> None:
+    """Decide the pending links when the outermost transaction ends.
+
+    However it ended: commit, rollback, or ``close()``, which emits neither.
     """
+    if getattr(ended, "parent", None) is not None:
+        return
+    for link in session.info.pop(_PENDING_LINKS_KEY, []):
+        if link.committed and not link.discarded:
+            log.info(
+                "paymob_plan_linked",
+                plan_tier_id=str(link.plan_tier_id),
+                paymob_plan_id=link.plan_id,
+            )
 
-    def on_commit(_session: Session) -> None:
-        log.info("paymob_plan_linked", plan_tier_id=str(plan_tier_id), paymob_plan_id=plan_id)
-        sa_event.remove(session, "after_rollback", on_rollback)
 
-    def on_rollback(_session: Session) -> None:
-        sa_event.remove(session, "after_commit", on_commit)
+def _log_linked_after_commit(session: Session, plan_tier_id: uuid.UUID, plan_id: int) -> None:
+    """Log ``paymob_plan_linked`` when (and only if) the link commits for good.
 
-    sa_event.listen(session, "after_commit", on_commit, once=True)
-    sa_event.listen(session, "after_rollback", on_rollback, once=True)
+    A rolled-back link is not a link: the caller's later failure must not leave this line in the
+    log, and a link that did commit must be logged. It is judged on the outermost transaction:
+    a savepoint release is not a commit, a savepoint that holds the link and is rolled back
+    discards it, and an unrelated savepoint rolled back later does not. The line is written when
+    the outermost transaction ends. The three listeners are registered once per session and
+    share one pending list in ``session.info``, which each transaction end empties, so a
+    long-lived session never accumulates listeners.
+    """
+    held_by: list[object] = []
+    transaction = session.get_nested_transaction() or session.get_transaction()
+    while transaction is not None:
+        held_by.append(transaction)
+        transaction = transaction.parent
+    session.info.setdefault(_PENDING_LINKS_KEY, []).append(
+        _PendingLink(plan_tier_id=plan_tier_id, plan_id=plan_id, held_by=held_by)
+    )
+    for name, listener in (
+        ("after_commit", _links_after_commit),
+        ("after_soft_rollback", _links_after_soft_rollback),
+        ("after_transaction_end", _links_after_transaction_end),
+    ):
+        if not sa_event.contains(session, name, listener):
+            sa_event.listen(session, name, listener)
 
 
 _AUDIENCE_FOR_ROLE: Final = {Role.student: PlanAudience.student, Role.teacher: PlanAudience.teacher}

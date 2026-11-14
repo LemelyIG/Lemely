@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
@@ -35,7 +35,7 @@ from tests.subscription_fixtures import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Mapping, Sequence
 
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -55,6 +55,90 @@ def _linked_plan(factory: sessionmaker[Session], tier_id: uuid.UUID) -> int | No
         tier = session.get(PlanTier, tier_id)
         assert tier is not None
         return tier.paymob_plan_id
+
+
+def _linked_events(logs: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    return [e for e in logs if e["event"] == "paymob_plan_linked"]
+
+
+def _listener_count(session: Session) -> int:
+    """The link-log listeners still registered on ``session`` (after_commit and friends)."""
+    names = ("after_commit", "after_soft_rollback", "after_transaction_end")
+    return sum(
+        len(getattr(session.dispatch, name).listeners)
+        for name in names  # type: ignore[arg-type]
+    )
+
+
+def test_a_link_inside_a_savepoint_that_the_outer_transaction_rolls_back_is_not_logged(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """RM1 probe A: releasing a savepoint dispatches ``after_commit`` but is not a commit."""
+    tier_id = seed_tier(pg_sessionmaker, paymob_plan_id=None)
+    with structlog.testing.capture_logs() as logs, pg_sessionmaker() as session, session.begin():
+        with session.begin_nested():
+            sync_paymob_plan(session, FakePaymobClient(), paymob_settings(), tier_id)
+        assert _linked_events(logs) == []
+        session.rollback()
+    assert _linked_events(logs) == []
+    assert _linked_plan(pg_sessionmaker, tier_id) is None
+
+
+def test_a_committed_link_is_logged_despite_an_unrelated_savepoint_rollback(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """RM1 probe B: the retry pattern (a caught savepoint rollback) must not hide the line."""
+    tier_id = seed_tier(pg_sessionmaker, paymob_plan_id=None)
+    with structlog.testing.capture_logs() as logs, pg_sessionmaker() as session, session.begin():
+        sync_paymob_plan(session, FakePaymobClient(), paymob_settings(), tier_id)
+        nested = session.begin_nested()
+        nested.rollback()
+    assert len(_linked_events(logs)) == 1
+    assert _linked_plan(pg_sessionmaker, tier_id) is not None
+
+
+def test_a_link_made_in_a_savepoint_that_is_rolled_back_is_not_logged_when_the_rest_commits(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    tier_id = seed_tier(pg_sessionmaker, paymob_plan_id=None)
+    with structlog.testing.capture_logs() as logs, pg_sessionmaker() as session, session.begin():
+        nested = session.begin_nested()
+        sync_paymob_plan(session, FakePaymobClient(), paymob_settings(), tier_id)
+        nested.rollback()
+    assert _linked_events(logs) == []
+    assert _linked_plan(pg_sessionmaker, tier_id) is None
+
+
+def test_the_link_log_adds_no_listener_per_link_and_empties_its_pending_list(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """RM2: a session that links many tiers keeps one set of listeners, not one per link."""
+    tiers = [seed_tier(pg_sessionmaker, paymob_plan_id=None) for _ in range(3)]
+    with structlog.testing.capture_logs() as logs, pg_sessionmaker() as session:
+        baseline = _listener_count(session)
+        for tier_id in tiers:
+            with session.begin():
+                sync_paymob_plan(session, FakePaymobClient(), paymob_settings(), tier_id)
+                assert _listener_count(session) == baseline + 3
+            assert session.info.get("lemely.paymob_plan_links") is None
+        assert _listener_count(session) == baseline + 3
+    assert len(_linked_events(logs)) == 3
+
+
+def test_closing_a_session_without_committing_logs_nothing_and_clears_the_pending_link(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """RM3: ``close()`` emits no rollback event; a reused session must not log a stale link."""
+    tier_id = seed_tier(pg_sessionmaker, paymob_plan_id=None)
+    with structlog.testing.capture_logs() as logs, pg_sessionmaker() as session:
+        session.begin()
+        sync_paymob_plan(session, FakePaymobClient(), paymob_settings(), tier_id)
+        session.close()
+        with session.begin():
+            session.execute(sa.text("SELECT 1"))
+        assert session.info.get("lemely.paymob_plan_links") is None
+    assert _linked_events(logs) == []
+    assert _linked_plan(pg_sessionmaker, tier_id) is None
 
 
 @pytest.mark.parametrize(
