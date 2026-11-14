@@ -12,7 +12,7 @@ const ACTION_ICON: Record<CreateActionIcon, Icon> = {
 
 /** The glyph and label every Create opener shares (bar button, native FAB, iOS large-title plus). */
 export const CREATE_LABEL = "Create"
-export const createGlyph = (size: number) => <Plus size={size} aria-hidden="true" />
+export const createGlyph = (size: number, weight?: "bold") => <Plus size={size} weight={weight} aria-hidden="true" />
 
 /**
  * The teacher's Create sheet: four starting points (`CREATE_ACTIONS`). On desktop the bar button

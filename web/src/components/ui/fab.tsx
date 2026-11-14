@@ -34,6 +34,14 @@ export interface FabProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   extended?: boolean
 }
 
+/**
+ * The FAB that follows the page scroll. The scroll listener and its state live here, so the shell
+ * and the portal layout above it do not re-render on every extend or collapse.
+ */
+export const ScrollFab = forwardRef<HTMLButtonElement, Omit<FabProps, "extended">>(function ScrollFab(props, ref) {
+  return <Fab ref={ref} extended={useExtendedOnScroll()} {...props} />
+})
+
 export const Fab = forwardRef<HTMLButtonElement, FabProps>(function Fab(
   { icon, label, extended = false, className, type = "button", ...props },
   ref,
@@ -50,7 +58,12 @@ export const Fab = forwardRef<HTMLButtonElement, FabProps>(function Fab(
       {...props}
     >
       {icon}
-      <span className={extended ? "text-label" : "sr-only"}>{label}</span>
+      {/* The label stays mounted, so the accessible name never changes: a grid track animates its
+          width between 0fr and 1fr (see .lm-native-fab-label in index.css). When collapsed the text
+          is clipped, not removed, so it is still the button's name. */}
+      <span className="lm-native-fab-label">
+        <span className="text-label">{label}</span>
+      </span>
     </button>
   )
 })
