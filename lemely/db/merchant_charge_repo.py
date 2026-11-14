@@ -63,9 +63,10 @@ from typing import TYPE_CHECKING, Final
 
 import sqlalchemy as sa
 import structlog
+from sqlalchemy import event as sa_event
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from lemely.core.subscription_rules import MAX_EXTRA_SEATS_AT_CHECKOUT, subscription_amount_minor
+from lemely.core.subscription_rules import AMOUNT_SYNC_WINDOW, subscription_amount_minor
 from lemely.core.usage_pricing import prorate_minor, prorate_units
 from lemely.db.billing_repo import (
     INTENTION_EXPIRATION_SECONDS,
@@ -101,7 +102,11 @@ from lemely.db.models.billing_ops import BillingSettings
 from lemely.db.models.enums import SubscriptionStatus
 from lemely.db.models.team import TeacherMember, TeacherMemberKind, TeacherMemberStatus
 from lemely.db.models.usage import GrantKind
-from lemely.db.subscription_repo import NoCreditRate, convert_payment_to_credits
+from lemely.db.subscription_repo import (
+    NoCreditRate,
+    SubscriptionService,
+    convert_payment_to_credits,
+)
 from lemely.db.teacher_team_repo import TeacherTeamService
 from lemely.db.usage_ledger_repo import UsageLedger
 from lemely.io.paymob.client import PaymobError
@@ -617,6 +622,7 @@ class MerchantChargeService:
         )
         if amount <= 0:
             raise MerchantChargeError("period_ending", "The current period is about to end")
+        self._refuse_in_amount_window(sub, now)
         allowance = _allowance_gain(old_terms, new_terms, start, end, now)
         return _UpgradePlan(
             subscription=sub,
@@ -626,6 +632,32 @@ class MerchantChargeService:
             allowance_units=allowance,
             period_end=end,
         )
+
+    def _refuse_in_amount_window(self, sub: Subscription, now: datetime) -> None:
+        """Refuse (``period_ending``) a seat or upgrade charge Paymob could not learn about in time.
+
+        UD-P6. A change paid for now reaches Paymob only through a push of the new renewal amount
+        after the settle. Within ``AMOUNT_SYNC_WINDOW`` of the period end there may be no time left
+        to repair a failed or unknown push before Paymob renews, and a renewal at the stale
+        amount would carry the new seats or tier for free. So in the window a charge is allowed
+        only while the amount is confirmed: Paymob takes amount updates and its stamp equals
+        the renewal amount Lemely expects now. Unlinked rows have nothing to push.
+        """
+        end = sub.current_period_end
+        if sub.paymob_subscription_id is None or end is None or now < end - AMOUNT_SYNC_WINDOW:
+            return
+        confirmed = (
+            self._settings.subscription_amount_updatable
+            and sub.paymob_amount_minor
+            == SubscriptionService(self._session, self._client, self._settings).next_renewal_amount(
+                sub
+            )
+        )
+        if not confirmed:
+            raise MerchantChargeError(
+                "period_ending",
+                "The renewal is too close to change the plan or seats; try after it renews",
+            )
 
     # -- payer-present extra seats (3DS checkout, saved cards offered) -----------
 
@@ -745,6 +777,7 @@ class MerchantChargeService:
         amount = _seat_amount(seats, terms.extra_seat_price_minor, start, end, now)
         if amount <= 0:
             raise MerchantChargeError("period_ending", "The current period is about to end")
+        self._refuse_in_amount_window(sub, now)
         return _SeatPlan(
             subscription=sub,
             seat_price_minor=terms.extra_seat_price_minor,
@@ -1151,12 +1184,28 @@ class _UpgradePlan:
     period_end: datetime
 
 
+class SeatCeilingSettingMissing(MerchantChargeError):
+    """``billing_settings`` has no row: the seat ceiling is unknown, so nothing is sold."""
+
+    def __init__(self) -> None:
+        super().__init__("payments_unavailable", "The seat ceiling setting is missing")
+
+
 def seat_ceiling(session: Session) -> int:
-    """The most extra seats one subscription may hold: the admin setting, else the built-in 200."""
+    """The most extra seats one subscription may hold: ``billing_settings.max_extra_seats``.
+
+    Fails closed, as the credit-validity read does: ``create_all`` and the migration both insert
+    the row, so a missing one is a damaged database. It raises :class:`SeatCeilingSettingMissing`
+    and alerts, and no constant stands in for it (a purchase is refused; a paid handler fails,
+    the callback rolls back and Paymob retries).
+    """
     configured = session.scalar(
         sa.select(BillingSettings.max_extra_seats).where(BillingSettings.id == 1)
     )
-    return MAX_EXTRA_SEATS_AT_CHECKOUT if configured is None else int(configured)
+    if configured is None:
+        alerts.error("seat_ceiling_setting_missing", alert=True)
+        raise SeatCeilingSettingMissing
+    return int(configured)
 
 
 def _seat_amount(
@@ -1177,8 +1226,10 @@ def _upgrade_applied_this_period(session: Session, sub: Subscription) -> bool:
     pending reduction drops are charged nothing at the new seat price. Lifting that reduction
     afterwards would bring them back at a price nobody paid, so :meth:`schedule_seat_reduction`
     refuses to lift one while such an upgrade exists. A payment converted to credits changed
-    nothing (``grant_units`` set) and does not count. The rule is conservative: it cannot tell a
-    reduction scheduled before the upgrade from one scheduled after it, because the reduction
+    nothing (``grant_units`` set) and does not count; one that voided with no credit rate stays
+    ``paid`` with ``grant_units`` NULL, so it counts (a conservative false positive). The rule
+    is also conservative in that it cannot tell a reduction scheduled before the upgrade from one
+    scheduled after it, because the reduction
     carries no timestamp; deeper reductions stay allowed and the lock ends at the renewal.
     """
     start = sub.current_period_start
@@ -1602,6 +1653,7 @@ def on_upgrade_paid(session: Session, payment: Payment) -> None:
             payment_id=payment.id,
             subscription_period_id=None if period is None else period.id,
         )
+    queue_amount_push(session, sub.id)
     log.info(
         "merchant_charge_upgrade_applied",
         payment_id=str(payment.id),
@@ -1618,6 +1670,116 @@ def handle_upgrade_paid(session: Session, payment: Payment, obj: Mapping[str, ob
 
 
 register_paid_handler(PaymentPurpose.upgrade_proration, handle_upgrade_paid)
+
+
+# ---------------------------------------------------------------------------
+# Pushing the new renewal amount after a settle (UD-P6).
+# ---------------------------------------------------------------------------
+
+#: ``session.info`` key holding the subscription ids whose amount to push when the session commits.
+_PUSH_KEY: Final = "merchant_charge_amount_pushes"
+_amount_pusher: Callable[[uuid.UUID], None] | None = None
+
+
+def register_amount_pusher(pusher: Callable[[uuid.UUID], None] | None) -> None:
+    """Set the function that pushes one subscription's renewal amount (wiring, T10).
+
+    A paid handler holds no Paymob client (DV-1), so the process that serves callbacks registers
+    one, typically ``functools.partial(push_renewal_amount, factory, client, settings)``. ``None``
+    unregisters it. Without one a settle logs ``subscription_amount_push_not_configured`` and the
+    window refusal plus Phase 05's period-end sweep still protect the renewal.
+    """
+    global _amount_pusher
+    _amount_pusher = pusher
+
+
+def push_renewal_amount(
+    factory: sessionmaker[Session],
+    client: PaymobClient,
+    settings: PaymobSettings,
+    subscription_id: uuid.UUID,
+) -> None:
+    """Push the subscription's renewal amount with Phase 05's ``sync_renewal_amount``.
+
+    Its own transaction, so it never runs inside the callback's. A definite refusal, and an
+    unknown outcome (which leaves the stamp behind the expected amount), are not pushed: both log
+    ``subscription_amount_push_failed`` with ``alert=True``, and the window refusal then holds
+    until the amount is confirmed.
+    """
+    with factory.begin() as session:
+        sub = lock_subscription(session, subscription_id)
+        if sub is None:
+            return
+        service = SubscriptionService(session, client, settings)
+        try:
+            service.sync_renewal_amount(sub)
+        except PaymobError as exc:
+            alerts.error(
+                "subscription_amount_push_failed",
+                alert=True,
+                subscription_id=str(subscription_id),
+                reason="refused",
+                status_code=exc.status_code,
+            )
+            return
+        if (
+            sub.paymob_subscription_id is not None
+            and settings.subscription_amount_updatable
+            and sub.paymob_amount_minor != service.next_renewal_amount(sub)
+        ):
+            alerts.error(
+                "subscription_amount_push_failed",
+                alert=True,
+                subscription_id=str(subscription_id),
+                reason="unknown_outcome",
+            )
+
+
+def _run_amount_push(subscription_id: uuid.UUID) -> None:
+    pusher = _amount_pusher
+    if pusher is None:
+        log.warning("subscription_amount_push_not_configured", subscription_id=str(subscription_id))
+        return
+    try:
+        pusher(subscription_id)
+    except Exception as exc:
+        # After the commit: nothing may undo the settle, and the sweep repairs the stamp.
+        alerts.error(
+            "subscription_amount_push_failed",
+            alert=True,
+            subscription_id=str(subscription_id),
+            reason="error",
+            error_type=type(exc).__name__,
+        )
+
+
+def _pushes_after_commit(session: Session) -> None:
+    # A savepoint release also dispatches this; only the outermost commit pushes.
+    if session.in_nested_transaction():
+        return
+    for subscription_id in dict.fromkeys(session.info.pop(_PUSH_KEY, [])):
+        _run_amount_push(subscription_id)
+
+
+def _pushes_after_transaction_end(session: Session, ended: object) -> None:
+    if getattr(ended, "parent", None) is None:
+        session.info.pop(_PUSH_KEY, None)  # a rollback pushes nothing
+
+
+def queue_amount_push(session: Session, subscription_id: uuid.UUID) -> None:
+    """Push ``subscription_id``'s renewal amount once the outermost transaction commits.
+
+    Never inside the callback transaction: Paymob is called after the settle is durable, so a slow
+    or failing Paymob cannot reject a callback that already moved money. The push is idempotent
+    (it sends only when the stamp differs from the expected amount), so a duplicate is harmless.
+    """
+    session.info.setdefault(_PUSH_KEY, []).append(subscription_id)
+    for name, listener in (
+        ("after_commit", _pushes_after_commit),
+        ("after_transaction_end", _pushes_after_transaction_end),
+    ):
+        if not sa_event.contains(session, name, listener):
+            sa_event.listen(session, name, listener)
 
 
 # ---------------------------------------------------------------------------
@@ -1693,8 +1855,20 @@ def on_extra_seats_paid(session: Session, payment: Payment) -> None:
                 payment_id=str(payment.id),
                 subscription_id=str(sub.id),
             )
-        sub.extra_seat_grace_until = None
-        session.flush()
+        period = current_period(session, sub)
+        key_period = payment.dedupe_key.removeprefix(RENEWAL_SEAT_DEDUPE_PREFIX).partition(":")[0]
+        if period is None or key_period != str(period.id):
+            # A late success for an earlier period must not end this period's grace (m1).
+            log.warning(
+                "renewal_seat_paid_for_other_period",
+                payment_id=str(payment.id),
+                subscription_id=str(sub.id),
+            )
+            return
+        if sub.extra_seat_grace_until is not None:
+            sub.extra_seat_grace_until = None
+            bump_version(sub)
+            session.flush()
         return
     quantity = payment.seat_quantity
     if quantity is None:
@@ -1706,6 +1880,7 @@ def on_extra_seats_paid(session: Session, payment: Payment) -> None:
     sub.extra_seats = (sub.extra_seats or 0) + quantity
     bump_version(sub)
     session.flush()
+    queue_amount_push(session, sub.id)
     log.info(
         "merchant_charge_seats_applied",
         payment_id=str(payment.id),
@@ -1738,6 +1913,7 @@ __all__ = [
     "ChargesUnavailable",
     "MerchantChargeError",
     "MerchantChargeService",
+    "SeatCeilingSettingMissing",
     "SeatsExceedNewTier",
     "SeatsNotSold",
     "active_seat_count",
@@ -1758,7 +1934,10 @@ __all__ = [
     "on_extra_seats_paid",
     "on_upgrade_paid",
     "payable_subscription",
+    "push_renewal_amount",
+    "queue_amount_push",
     "refuse_if_charge_pending",
+    "register_amount_pusher",
     "seat_ceiling",
     "seats_void_reason",
     "start_present_checkout",

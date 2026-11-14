@@ -13,6 +13,7 @@ Runs on a throwaway Postgres database (``create_all``); skips without a local Po
 
 from __future__ import annotations
 
+import functools
 import itertools
 import uuid
 from collections.abc import Mapping, Sequence
@@ -36,7 +37,11 @@ from lemely.db.merchant_charge_repo import (
     ChargeQuote,
     MerchantChargeError,
     MerchantChargeService,
+    SeatCeilingSettingMissing,
     handle_extra_seats_paid,
+    push_renewal_amount,
+    register_amount_pusher,
+    seat_ceiling,
 )
 from lemely.db.models.billing import (
     Payment,
@@ -45,11 +50,12 @@ from lemely.db.models.billing import (
     PlanAudience,
     Subscription,
 )
-from lemely.db.models.billing_ops import CreditConversionRate
+from lemely.db.models.billing_ops import BillingSettings, CreditConversionRate
 from lemely.db.models.enums import Role, SubscriptionStatus
 from lemely.db.models.team import TeacherMember, TeacherMemberStatus
 from lemely.db.models.tutoring import EmailOutbox
 from lemely.db.models.usage import UsageGrant
+from lemely.db.subscription_repo import TRIGGER_SUCCESS, SubscriptionService
 from lemely.db.teacher_team_repo import NoFreeSeat, TeacherTeamService
 from lemely.io.paymob.client import PaymobError
 from tests.merchant_charge_fixtures import (
@@ -69,7 +75,15 @@ from tests.paymob_fixtures import (
     PAYMOB_SETTINGS,
     transaction_obj,
 )
-from tests.subscription_fixtures import T0, FakePaymobClient, grants_of, paymob_settings
+from tests.subscription_fixtures import (
+    T0,
+    FakePaymobClient,
+    charge,
+    grants_of,
+    paymob_settings,
+    remote_subscription,
+    subscription_webhook,
+)
 from tests.team_db import add_assistant, add_class, enrol
 
 if TYPE_CHECKING:
@@ -108,6 +122,14 @@ class _CheckoutClient(FakePaymobClient):
         response["intention_order_id"] = next(_order_ids)
         response["id"] = f"pi_test_seat_{next(_order_ids)}"
         return response
+
+
+@pytest.fixture(autouse=True)
+def _no_amount_pusher() -> Iterator[None]:
+    """No test inherits another's registered pusher (the default is "not configured")."""
+    register_amount_pusher(None)
+    yield
+    register_amount_pusher(None)
 
 
 @pytest.fixture(scope="module")
@@ -822,6 +844,7 @@ def test_a_renewal_seat_payment_only_clears_the_grace(
     after = _sub(sm, scene)
     assert after.extra_seats == before.extra_seats  # it pays for seats that already exist
     assert after.extra_seat_grace_until is None
+    assert after.version == before.version + 1  # a client polling ``version`` sees the change
     assert _payment(sm, payment_id).status is PaymentStatus.paid
 
 
@@ -1073,3 +1096,378 @@ def test_cancelling_a_reduction_is_fine_when_no_upgrade_landed(
 def _capacity_of(sm: sessionmaker[Session], scene: Mapping[str, uuid.UUID]) -> int:
     with sm() as session:
         return TeacherTeamService(session).seat_capacity(scene["user_id"])
+
+
+# ---------------------------------------------------------------------------
+# A renewal seat payment must be for this period (m1).
+# ---------------------------------------------------------------------------
+
+
+def test_a_renewal_seat_payment_for_another_period_does_not_clear_the_grace(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher(sm)
+    grace = NOW + timedelta(days=3)
+    _update_sub(sm, scene, extra_seat_grace_until=grace)
+    payment_id = seed_payment_row(
+        sm,
+        payer_id=scene["payer_id"],
+        beneficiary_id=scene["user_id"],
+        purpose=PaymentPurpose.extra_seats,
+        amount_minor=1_000,
+        status=PaymentStatus.failed,  # a late success of an earlier attempt (R20b)
+        subscription_id=scene["subscription_id"],
+        seat_quantity=1,
+        dedupe_key=f"{RENEWAL_SEAT_DEDUPE_PREFIX}{uuid.uuid4()}:1",
+        paymob_order_id=next(_order_ids),
+    )
+    payment = _payment(sm, payment_id)
+    assert payment.paymob_order_id is not None
+    before = _sub(sm, scene)
+
+    with capture_logs() as logs:
+        _deliver(
+            sm,
+            moto_txn(
+                order_id=payment.paymob_order_id,
+                merchant_order_id=str(payment_id),
+                amount_cents=1_000,
+                txn_id=next(_txn_ids),
+            ),
+        )
+
+    after = _sub(sm, scene)
+    assert after.extra_seat_grace_until == grace
+    assert after.version == before.version
+    assert "renewal_seat_paid_for_other_period" in [log["event"] for log in logs]
+    assert _payment(sm, payment_id).status is PaymentStatus.paid
+
+
+# ---------------------------------------------------------------------------
+# The seat ceiling fails closed (m2).
+# ---------------------------------------------------------------------------
+
+
+def test_a_missing_settings_row_stops_a_purchase_and_alerts(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher(sm)
+    with sm.begin() as session:
+        snapshot = dict(
+            session.execute(sa.select(BillingSettings.__table__).where(BillingSettings.id == 1))
+            .mappings()
+            .one()
+        )
+        session.execute(sa.delete(BillingSettings).where(BillingSettings.id == 1))
+    try:
+        with capture_logs() as logs:
+            with pytest.raises(SeatCeilingSettingMissing):
+                _buy(sm, _CheckoutClient(), scene, 1)
+            with sm() as session, pytest.raises(SeatCeilingSettingMissing):
+                seat_ceiling(session)
+    finally:
+        with sm.begin() as session:
+            session.execute(sa.insert(BillingSettings).values(**snapshot))
+
+    assert _seat_payments(sm, scene) == 0
+    assert {log["event"] for log in logs if log.get("alert")} == {"seat_ceiling_setting_missing"}
+
+
+def test_the_admin_ceiling_bounds_a_purchase(pg_sessionmaker: sessionmaker[Session]) -> None:
+    sm = pg_sessionmaker
+    with sm.begin() as session:
+        row = session.get(BillingSettings, 1)
+        assert row is not None
+        saved = row.max_extra_seats
+        row.max_extra_seats = 10
+    try:
+        scene = _teacher(sm, extra=5)
+        _refused(sm, _CheckoutClient(), scene, 6, "invalid_seats")
+        assert _buy(sm, _CheckoutClient(), scene, 5)
+    finally:
+        with sm.begin() as session:
+            row = session.get(BillingSettings, 1)
+            assert row is not None
+            row.max_extra_seats = saved
+
+
+# ---------------------------------------------------------------------------
+# The I3 lock has two exclusions (m3).
+# ---------------------------------------------------------------------------
+
+
+def _seeded_upgrade(
+    sm: sessionmaker[Session],
+    scene: Mapping[str, uuid.UUID],
+    *,
+    paid_at: datetime,
+    grant_units: int | None = None,
+) -> None:
+    payment_id = seed_payment_row(
+        sm,
+        payer_id=scene["payer_id"],
+        beneficiary_id=scene["user_id"],
+        purpose=PaymentPurpose.upgrade_proration,
+        amount_minor=5_000,
+        status=PaymentStatus.paid,
+        subscription_id=scene["subscription_id"],
+        plan_tier_id=scene["tier_id"],
+        paid_at=paid_at,
+    )
+    if grant_units is not None:
+        with sm.begin() as session:
+            session.execute(
+                sa.update(Payment).where(Payment.id == payment_id).values(grant_units=grant_units)
+            )
+
+
+def test_a_credited_upgrade_does_not_lock_a_pending_reduction(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher(sm, extra=3, pending=1)
+    _seeded_upgrade(sm, scene, paid_at=NOW, grant_units=50)  # converted to credits: nothing moved
+    _reduce(sm, scene, 3)
+    assert _sub(sm, scene).pending_extra_seats is None
+
+
+def test_an_upgrade_from_an_earlier_period_does_not_lock_a_pending_reduction(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher(sm, extra=3, pending=1)
+    _seeded_upgrade(sm, scene, paid_at=T0 - timedelta(days=1))  # the lock ended at the renewal
+    _reduce(sm, scene, 3)
+    assert _sub(sm, scene).pending_extra_seats is None
+
+
+# ---------------------------------------------------------------------------
+# UD-P6: push the new renewal amount after the settle, refuse late changes.
+# ---------------------------------------------------------------------------
+
+
+def _wire_pusher(
+    sm: sessionmaker[Session], client: FakePaymobClient, settings: Any = PAYMOB_SETTINGS
+) -> None:
+    register_amount_pusher(functools.partial(push_renewal_amount, sm, client, settings))
+
+
+def test_a_settled_seat_purchase_pushes_the_new_renewal_amount_after_the_commit(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher(sm)  # 30 000 + 1 seat at 2 000: Paymob holds 32 000
+    payment_id = _buy(sm, _CheckoutClient(), scene, 2)
+    push_client = FakePaymobClient()
+    _wire_pusher(sm, push_client)
+    paymob_id = _sub(sm, scene).paymob_subscription_id
+    assert paymob_id is not None
+
+    _pay(sm, payment_id)
+
+    assert push_client.calls_to("update_subscription") == [
+        {
+            "subscription_id": paymob_id,
+            "amount_cents": 36_000,
+            "ends_at": None,
+            "next_billing": None,
+        }
+    ]
+    assert _sub(sm, scene).paymob_amount_minor == 36_000
+    assert _sub(sm, scene).extra_seats == 3
+
+
+def test_a_settled_upgrade_pushes_the_new_renewal_amount(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher(sm)
+    target = _seat_tier(sm, price=40_000, seat_price=5_000)
+    payment_id = _upgrade_checkout(sm, _CheckoutClient(), scene, target)
+    push_client = FakePaymobClient()
+    _wire_pusher(sm, push_client)
+
+    _pay(sm, payment_id)
+
+    assert [c["amount_cents"] for c in push_client.calls_to("update_subscription")] == [45_000]
+    assert _sub(sm, scene).paymob_amount_minor == 45_000  # 40 000 + 1 seat x 5 000
+
+
+def test_a_credited_or_rolled_back_settle_pushes_nothing(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    # A stale stamp: any push would send an update, so silence proves no push was queued.
+    scene = _teacher(sm, extra=3, paymob_amount=32_000)
+    credited = _buy(sm, _CheckoutClient(), scene, 2)
+    push_client = FakePaymobClient()
+    _wire_pusher(sm, push_client)
+    _update_sub(sm, scene, status=SubscriptionStatus.expired)
+    _pay(sm, credited, at=NOW + timedelta(minutes=5))  # void: plan_ended
+    assert push_client.names() == []
+
+    scene = _teacher(sm, extra=3, paymob_amount=32_000)
+    applied = _buy(sm, _CheckoutClient(), scene, 2)
+    obj = _txn(_payment(sm, applied))
+    with sm() as session:
+        BillingService(
+            session, _CheckoutClient(), PAYMOB_SETTINGS, now=lambda: NOW
+        ).apply_transaction_callback(obj)
+        session.rollback()  # the callback transaction is abandoned: nothing was settled
+        session.execute(sa.text("SELECT 1"))
+        session.commit()  # a later commit on the same session must not push the rolled-back id
+    assert push_client.names() == []
+
+
+def test_a_refused_push_alerts_and_leaves_the_settle_in_place(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher(sm)
+    payment_id = _buy(sm, _CheckoutClient(), scene, 2)
+    push_client = FakePaymobClient()
+    push_client.fail["update_subscription"] = PaymobError("bad request", status_code=400)
+    _wire_pusher(sm, push_client)
+
+    with capture_logs() as logs:
+        _pay(sm, payment_id)
+
+    [alert] = [log for log in logs if log.get("alert")]
+    assert alert["event"] == "subscription_amount_push_failed"
+    assert alert["reason"] == "refused"
+    after = _sub(sm, scene)
+    assert after.extra_seats == 3  # the settle committed
+    assert after.paymob_amount_minor == 32_000  # the stamp still names what Paymob holds
+    assert _payment(sm, payment_id).status is PaymentStatus.paid
+
+
+def test_an_unknown_push_outcome_alerts_as_not_pushed(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher(sm)
+    payment_id = _buy(sm, _CheckoutClient(), scene, 2)
+    push_client = FakePaymobClient()
+    push_client.fail["update_subscription"] = PaymobError("timed out", timeout=True)
+    _wire_pusher(sm, push_client)
+
+    with capture_logs() as logs:
+        _pay(sm, payment_id)
+
+    [alert] = [log for log in logs if log.get("alert")]
+    assert (alert["event"], alert["reason"]) == (
+        "subscription_amount_push_failed",
+        "unknown_outcome",
+    )
+    assert _sub(sm, scene).paymob_amount_minor == 32_000
+
+
+def test_a_pusher_that_raises_alerts_and_never_undoes_the_settle(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher(sm)
+    payment_id = _buy(sm, _CheckoutClient(), scene, 2)
+
+    def broken(subscription_id: uuid.UUID) -> None:
+        raise ConnectionError("down")
+
+    register_amount_pusher(broken)
+    with capture_logs() as logs:
+        _pay(sm, payment_id)
+
+    [alert] = [log for log in logs if log.get("alert")]
+    assert (alert["event"], alert["reason"]) == ("subscription_amount_push_failed", "error")
+    assert _sub(sm, scene).extra_seats == 3
+
+
+def test_without_a_registered_pusher_a_settle_warns_and_does_not_alert(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher(sm)
+    payment_id = _buy(sm, _CheckoutClient(), scene, 2)
+    with capture_logs() as logs:
+        _pay(sm, payment_id)
+    assert "subscription_amount_push_not_configured" in [log["event"] for log in logs]
+    assert not [log for log in logs if log.get("alert")]
+
+
+def test_a_seat_purchase_in_the_sync_window_is_refused_while_the_amount_is_unconfirmed(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    stale = _teacher(sm, extra=3, paymob_amount=32_000)  # Paymob holds 32 000; 36 000 is due
+    inside = PERIOD_END - timedelta(days=1)
+    _refused(sm, _CheckoutClient(), stale, 1, "period_ending", now=inside)
+    with pytest.raises(MerchantChargeError) as quoted:
+        _quote(sm, _CheckoutClient(), stale, 1, now=inside)
+    assert quoted.value.code == "period_ending"
+    # Outside the window there is time for the sweep to repair the stamp.
+    assert _buy(sm, _CheckoutClient(), stale, 1, now=PERIOD_END - timedelta(days=3))
+
+
+def test_a_seat_purchase_in_the_sync_window_is_refused_when_paymob_takes_no_amount_updates(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher(sm)  # the stamp matches the expected amount, but it can never be updated
+    settings = paymob_settings(subscription_amount_updatable=False)
+    inside = PERIOD_END - timedelta(days=1)
+    _refused(
+        sm, _CheckoutClient(settings), scene, 1, "period_ending", now=inside, settings=settings
+    )
+
+
+def test_a_seat_purchase_in_the_sync_window_is_allowed_when_the_amount_is_confirmed(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher(sm)  # the stamp equals the expected renewal amount: the push is confirmed
+    assert _buy(sm, _CheckoutClient(), scene, 1, now=PERIOD_END - timedelta(days=1))
+
+
+def test_an_upgrade_in_the_sync_window_is_refused_while_the_amount_is_unconfirmed(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    stale = _teacher(sm, extra=3, paymob_amount=32_000)
+    target = _seat_tier(sm, price=40_000, seat_price=5_000)
+    inside = PERIOD_END - timedelta(days=1)
+    with pytest.raises(MerchantChargeError) as caught:
+        _upgrade_checkout(sm, _CheckoutClient(), stale, target, now=inside)
+    assert caught.value.code == "period_ending"
+    confirmed = _teacher(sm, extra=3)
+    assert _upgrade_checkout(sm, _CheckoutClient(), confirmed, target, now=inside)
+
+
+def test_a_renewal_after_a_pushed_seat_purchase_is_charged_the_new_amount(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The review's probe: seats bought before the renewal do not ride free into the next one."""
+    sm = pg_sessionmaker
+    scene = _teacher(sm)
+    payment_id = _buy(sm, _CheckoutClient(), scene, 2)
+    client = FakePaymobClient()
+    _wire_pusher(sm, client)
+    _pay(sm, payment_id)
+    sub = _sub(sm, scene)
+    assert (sub.extra_seats, sub.paymob_amount_minor) == (3, 36_000)
+    pid = sub.paymob_subscription_id
+    assert pid is not None
+    client.subscriptions[pid] = remote_subscription(pid, amount_cents=36_000)
+    client.last_transactions[pid] = charge(
+        9_100_001, 36_000, created_at=PERIOD_END - timedelta(hours=2)
+    )
+
+    with sm.begin() as session:
+        SubscriptionService(session, client, paymob_settings()).apply_renewal_webhook(
+            subscription_webhook(TRIGGER_SUCCESS, pid), now=PERIOD_END + timedelta(minutes=5)
+        )
+
+    after = _sub(sm, scene)
+    assert after.current_period_start == PERIOD_END
+    assert (after.extra_seats, after.paymob_amount_minor) == (3, 36_000)
+    assert after.paymob_amount_minor == 30_000 + after.extra_seats * 2_000  # nothing is free
