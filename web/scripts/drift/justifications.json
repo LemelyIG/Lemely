@@ -290,12 +290,12 @@
     "approved": "pending"
   },
   "native-ios-bell": {
-    "difference": "The bell sheet lists real notifications as Task 10 grouped rows (a rounded inset group on the sheet ground, 16px margins) where the preview's panel is a flat list; 'Mark all read' sits on its own line under the sheet title (the shared sheet header has no action slot) instead of in the title row; the two inbox links are grouped rows instead of two centred text buttons; row and sheet height follow the real rows. The sheet stacks the header, the notification group and the link group with a 12px gap (the preview has none). Fresh run: 12.35% light, 3.66% dark.",
+    "difference": "The bell sheet lists real notifications as Task 10 grouped rows (a rounded inset group on the sheet ground, 16px margins) where the preview's panel is a flat list; 'Mark all read' sits on its own line under the sheet title (the shared sheet header has no action slot) instead of in the title row; the two inbox links are grouped rows instead of two centred text buttons; row and sheet height follow the real rows. The sheet stacks the header, the notification group and the link group with a 12px gap (the preview has none). Fresh run on the integrated tree: 11.74% light, 3.05% dark.",
     "justification": "Each remaining difference belongs to the app's real content or to a later native-frame task; the sheet frame, grabber, detent, scrim and grouped look are in place.",
     "approved": "pending"
   },
   "native-android-bell": {
-    "difference": "The bell sheet lists real notifications as Task 10 grouped rows (full-bleed, square, 72px two-line rows) where the preview's panel is a flat list; 'Mark all read' sits on its own line under the sheet title instead of in the title row; the two inbox links are grouped rows instead of two centred text buttons; row and sheet height follow the real rows. The sheet stacks the header, the notification group and the link group with a 12px gap (the preview has none). Fresh run: 13.57% light, 3.25% dark.",
+    "difference": "The bell sheet lists real notifications as Task 10 grouped rows (full-bleed, square, 72px two-line rows) where the preview's panel is a flat list; 'Mark all read' sits on its own line under the sheet title instead of in the title row; the two inbox links are grouped rows instead of two centred text buttons; row and sheet height follow the real rows. The sheet stacks the header, the notification group and the link group with a 12px gap (the preview has none). Fresh run on the integrated tree: 12.46% light, 2.63% dark.",
     "justification": "Each remaining difference belongs to the app's real content or to a later native-frame task; the sheet frame, grabber, detent, scrim and grouped look are in place.",
     "approved": "pending"
   }
