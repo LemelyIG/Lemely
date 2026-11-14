@@ -1415,8 +1415,12 @@ def test_a_missing_settings_row_refuses_the_grant_and_rolls_the_callback_back(
     _, pid = _setup(sm)
     with sm.begin() as session:
         session.execute(sa.text("DELETE FROM billing_settings"))
-    with pytest.raises(billing_repo.CreditValiditySettingMissing):
+    with capture_logs() as logs, pytest.raises(billing_repo.CreditValiditySettingMissing):
         _apply(sm, transaction_obj(merchant_order_id=str(pid)))
+    (alert,) = [e for e in logs if e["event"] == "credit_validity_setting_missing"]
+    assert alert["alert"] is True
+    assert alert["log_level"] == "error"
+    assert alert["payment_id"] == str(pid)
     assert _payment(sm, pid).status is PaymentStatus.created
     assert _grants(sm, pid) == []
     assert _events(sm) == []

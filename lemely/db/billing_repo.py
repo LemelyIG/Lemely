@@ -64,10 +64,6 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
-#: The validity a credit pack had before it became an admin setting. Not read by any code path
-#: (``billing_settings.credit_validity_months`` is); kept only because
-#: ``tests/test_subscription_first_payment.py`` still imports it.
-CREDIT_EXPIRY_MONTHS: Final = 12
 INTENTION_EXPIRATION_SECONDS: Final = 3600
 #: Saved cards one intention may offer (live ``pay-with-saved-cards/cit.md``).
 MAX_CARD_TOKENS: Final = 3
@@ -376,7 +372,7 @@ def _redact_tokens(obj: JsonMap) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 
 
-def _credit_validity_months(session: Session) -> int:
+def _credit_validity_months(session: Session, payment_id: uuid.UUID) -> int:
     """The admin-set credit validity: ``billing_settings.credit_validity_months`` (``id = 1``).
 
     Read in the caller's transaction, no lock. Fails closed: a missing row (the migration and
@@ -388,6 +384,9 @@ def _credit_validity_months(session: Session) -> int:
         select(BillingSettings.credit_validity_months).where(BillingSettings.id == 1)
     )
     if months is None:
+        # A paid customer is left without credits and every retry fails the same way, so a
+        # person must restore the row: an alert, with the payment to re-run.
+        log.error("credit_validity_setting_missing", alert=True, payment_id=str(payment_id))
         raise CreditValiditySettingMissing("no billing settings row: credit validity is not set")
     return months
 
@@ -410,7 +409,7 @@ def grant_credit_pack(session: Session, payment: Payment, obj: JsonMap) -> None:
         kind=GrantKind.credit_pack,
         units=payment.grant_units,
         idempotency_key=f"payment:{payment.id}",
-        expires_at=add_months(paid_at, _credit_validity_months(session)),
+        expires_at=add_months(paid_at, _credit_validity_months(session, payment.id)),
         visible=True,
         effective_at=paid_at,
         payment_id=payment.id,
@@ -1434,7 +1433,6 @@ class BillingService:
 
 
 __all__ = [
-    "CREDIT_EXPIRY_MONTHS",
     "INTENTION_EXPIRATION_SECONDS",
     "MAX_CARD_TOKENS",
     "RECONCILE_AFTER",

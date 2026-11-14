@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
 
 from lemely.db import billing_repo, subscription_repo
-from lemely.db.billing_repo import CREDIT_EXPIRY_MONTHS, BillingService, add_months
+from lemely.db.billing_repo import BillingService, add_months
 from lemely.db.models.billing import (
     Payment,
     PaymentPurpose,
@@ -145,6 +145,14 @@ def _set_validity(sm: sessionmaker[Session], months: int = 12) -> None:
         else:
             row.credit_validity_months = months
             row.version += 1
+
+
+def _validity(sm: sessionmaker[Session]) -> int:
+    """The credit validity currently in ``billing_settings`` (what a new pack's expiry reads)."""
+    with sm() as session:
+        months = session.scalar(sa.select(BillingSettings.credit_validity_months))
+    assert months is not None
+    return months
 
 
 def _delete_settings(sm: sessionmaker[Session]) -> None:
@@ -676,7 +684,7 @@ def test_a_superseded_checkout_paid_while_another_is_live_becomes_credits(
     assert (grant.units, grant.visible, grant.payment_id) == (100, True, pid)
     assert grant.owner_user_id == student
     assert grant.effective_at == PAID_AT
-    assert grant.expires_at == add_months(PAID_AT, CREDIT_EXPIRY_MONTHS)
+    assert grant.expires_at == add_months(PAID_AT, _validity(pg_sessionmaker))
     assert _payment(pg_sessionmaker, pid).grant_units == 100
     assert _payment(pg_sessionmaker, pid).status is PaymentStatus.paid
 
@@ -1164,7 +1172,7 @@ def test_convert_payment_to_credits_issues_visible_twelve_month_credits(
         True,
         student,
     )
-    assert grant.expires_at == add_months(PAID_AT, CREDIT_EXPIRY_MONTHS)
+    assert grant.expires_at == add_months(PAID_AT, _validity(pg_sessionmaker))
     assert _payment(pg_sessionmaker, pid).grant_units == 250
 
 
