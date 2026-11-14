@@ -458,6 +458,8 @@ export function QuizResults() {
                     {data.subjectCode} · {assignment.className}
                   </div>
                   <PageHeading repeatsTitle={false} className="text-display-md text-on-surface m-0 mt-1 text-pretty">{data.quizTitle}</PageHeading>
+                  {/* Data, not a kicker: kept on native as a quiet line under the heading. */}
+                  <p data-native-meta className="hidden native:block m-0 mt-1 text-body-sm text-on-surface-variant">{data.subjectCode} · {assignment.className}</p>
                   <p className="text-body-sm text-on-surface-variant m-0 mt-1">
                     {data.questionCount} question{data.questionCount === 1 ? "" : "s"} · {data.totalMarks}{" "}
                     marks · assigned {relativeTime(assignment.assignedAt)}

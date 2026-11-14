@@ -1150,6 +1150,8 @@ export function QuizBuilder() {
                     <PageHeading repeatsTitle={false} className="text-display-md mt-1 text-pretty">
                       {loadedQuiz.title}
                     </PageHeading>
+                    {/* Data, not a kicker: kept on native as a quiet line under the heading. */}
+                    <p data-native-meta className="hidden native:block m-0 mt-1 text-body-sm text-on-surface-variant">{loadedQuiz.subjectCode}</p>
                   </div>
                   <div className="flex-1" />
                   <Chip tone={statusTone(loadedQuiz.status)}>{statusLabel(loadedQuiz.status)}</Chip>
