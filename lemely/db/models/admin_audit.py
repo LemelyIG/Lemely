@@ -13,9 +13,12 @@ TRUNCATE is not blocked (statement-level, used by test cleanup only).
 
 ``ix_admin_audit_log_idempotency`` serves ``admin_billing_repo.already_applied``: an admin
 request that carries an idempotency key stores it in ``after`` and is looked up by
-``(action, after ->> 'idempotency_key')``. The index is partial on rows that carry a key, and
-both the query and the migration spell the expression exactly as below (``IDEMPOTENCY_KEY_SQL``
-and ``HAS_IDEMPOTENCY_KEY_SQL``), or Postgres would not use it.
+``(action, after ->> 'idempotency_key')``. The index is UNIQUE and partial on rows that carry a
+key: ``lock_idempotency_key`` serialises two identical requests so the second sees the first's
+row, and the unique index makes a duplicate impossible even for a caller that forgot the lock
+(the insert fails instead of recording a second grant). Both the query and the migration spell
+the expression exactly as below (``IDEMPOTENCY_KEY_SQL`` and ``HAS_IDEMPOTENCY_KEY_SQL``), or
+Postgres would not use it.
 """
 
 from __future__ import annotations
@@ -66,6 +69,7 @@ class AdminAuditLog(Base):
             "ix_admin_audit_log_idempotency",
             "action",
             sa.text(IDEMPOTENCY_KEY_SQL),
+            unique=True,
             postgresql_where=sa.text(HAS_IDEMPOTENCY_KEY_SQL),
         ),
     )

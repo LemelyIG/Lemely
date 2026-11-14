@@ -351,3 +351,61 @@ def test_create_all_and_the_cleanup_leave_the_one_billing_settings_row(
         assert (
             session.scalar(sa.text("SELECT price_change_notice_days FROM billing_settings")) == 14
         )
+
+
+def test_create_all_makes_the_idempotency_key_unique_per_action(sm: sessionmaker[Session]) -> None:
+    admin = add_user(sm, Role.platform_admin)
+    after = {"idempotency_key": "admin-grant:u:r1"}
+    with sm.begin() as session:
+        audited(session, admin, "customer.grant", "user", uuid.uuid4(), "why", None, after)
+    # No lock taken: the unique index refuses the second grant.
+    with (
+        pytest.raises(IntegrityError, match="ix_admin_audit_log_idempotency"),
+        sm.begin() as session,
+    ):
+        audited(session, admin, "customer.grant", "user", uuid.uuid4(), "why", None, after)
+    with sm.begin() as session:
+        audited(session, admin, "customer.adjust", "user", uuid.uuid4(), "why", None, after)
+        audited(session, admin, "customer.grant", "user", uuid.uuid4(), "why", None, None)
+        audited(session, admin, "customer.grant", "user", uuid.uuid4(), "why", None, None)
+    assert _row_count(sm) == 4
+
+
+def test_create_all_gives_a_tier_that_becomes_valid_by_an_update_its_terms(
+    sm: sessionmaker[Session],
+) -> None:
+    tier = _tier(sm, -100)
+    with sm.begin() as session:
+        session.execute(
+            sa.text("UPDATE plan_tiers SET price_minor = 7700 WHERE id = :t"), {"t": tier}
+        )
+        session.execute(
+            sa.text("UPDATE plan_tiers SET price_minor = 7800 WHERE id = :t"), {"t": tier}
+        )
+    with sm() as session:
+        rows = session.execute(
+            sa.text(
+                "SELECT terms_version, price_minor FROM plan_tier_terms WHERE plan_tier_id = :t"
+            ),
+            {"t": tier},
+        ).all()
+    assert [tuple(r) for r in rows] == [(1, 7700)]
+
+
+def test_a_terms_row_blocks_deleting_its_admin(sm: sessionmaker[Session]) -> None:
+    admin = add_user(sm, Role.platform_admin)
+    tier = _tier(sm)
+    with sm.begin() as session:
+        session.execute(
+            sa.text(
+                "INSERT INTO plan_tier_terms (plan_tier_id, terms_version, price_minor, "
+                "extra_seat_price_minor, allowance_units, included_seats, "
+                "seat_allowance_units, created_by) VALUES (:t, 2, 1, 1, 1, 1, 1, :a)"
+            ),
+            {"t": tier, "a": admin},
+        )
+    with (
+        pytest.raises(IntegrityError, match="fk_plan_tier_terms_created_by_users"),
+        sm.begin() as session,
+    ):
+        session.execute(sa.text("DELETE FROM users WHERE id = :u"), {"u": admin})

@@ -36,9 +36,11 @@ phase. Every table and column the phase's tasks need is here:
 * ``plan_tier_terms`` (UD13-A): the append-only history of a tier's price and entitlements,
   backfilled with version 1 of every valid tier (no negative amount), plus
   ``trg_plan_tiers_seed_terms`` so every later valid tier gets its version 1 the moment it is
-  inserted. A tier with a negative amount is invalid (``plan_tiers`` has no CHECK for it) and
-  gets no terms row, so the insert of the tier itself never fails and nothing can subscribe to
-  it. ``subscriptions`` gains ``terms_version``,
+  inserted, or later by an UPDATE if it had none (a tier with a negative amount is invalid,
+  ``plan_tiers`` has no CHECK for it, and gets no terms row, so the insert of the tier itself
+  never fails and nothing can subscribe to it). ``created_by`` is NULL on rows the trigger
+  writes (the audit log records who created the tier) and ``RESTRICT`` on the user.
+  ``subscriptions`` gains ``terms_version``,
   ``pending_terms_version``, ``pending_terms_effective_at`` and ``terms_notice_sent_at`` with
   composite foreign keys into the history and ``ix_subscriptions_terms_move``;
   ``subscription_periods.terms_version`` records the version a period was billed on. The
@@ -55,28 +57,43 @@ phase. Every table and column the phase's tasks need is here:
   plain ``created_at`` index would win the lead's usage-history plan away from
   ``ix_usage_jobs_member_created``.
 
-**Lock behaviour**, as 0037, 0038 and 0056: both directions take locks on ``payments`` (a new
-column, and the index builds that block writes), ``subscriptions`` (new columns and foreign keys),
-``plan_tiers``, ``credit_packs``, ``subscription_periods``, and on ``usage_jobs``,
-``usage_entries`` and ``paymob_events`` (the index builds) while the old revision may be serving
-traffic. The order is ``payments`` before ``subscriptions``, the callback's lock order, so the
-migration cannot deadlock against a callback. ``SET
-lock_timeout`` first makes a blocked statement fail fast and retriably instead of queueing
-every ``payments`` query behind it. ``env.py`` runs one ``alembic upgrade``/``downgrade`` in
-ONE transaction, so both directions ``RESET lock_timeout`` before returning, or the timeout
-would leak into the next migration of the run. The tables are small and the builds are plain
-(not CONCURRENTLY, which cannot run in a transaction).
+**Lock behaviour**, as 0037, 0038 and 0056. Both directions lock, in this order: ``plan_tiers``
+and ``credit_packs`` (new columns), the new tables' foreign keys on ``users``, ``payments`` and
+``usage_jobs``, ``payments`` (new column), ``usage_jobs``, ``usage_entries`` and
+``paymob_events`` (index builds), then ``subscriptions`` and ``subscription_periods`` (new
+columns, foreign keys), while the old revision may be serving traffic. That is NOT the
+callback's order (``payments`` first), so a callback that holds a ``payments`` row lock and
+reads ``plan_tiers`` can deadlock with the migration. Postgres then aborts one side after
+``deadlock_timeout``, and ``SET lock_timeout`` makes a blocked statement fail fast; either way
+the whole migration rolls back and is retried. Nothing is corrupted. Run it in a quiet window.
+``env.py`` runs one ``alembic upgrade``/``downgrade`` in ONE transaction, so both directions
+``RESET lock_timeout`` before returning, or the timeout would leak into the next migration of
+the run.
+
+The index builds are plain ``CREATE INDEX`` (``CONCURRENTLY`` cannot run in a transaction), so
+each blocks writes to its table while it runs, and ``lock_timeout`` bounds only the wait for the
+lock, not the build. That is acceptable at the current table sizes (``usage_entries`` and
+``paymob_events`` are small before launch); check their row counts before a production cutover
+that happens later.
 
 ``downgrade`` refuses while money or policy history exists, as 0054, 0055 and 0056 do: any
 ``admin_audit_log`` row (the record of who changed money and why), any ``payment_refunds`` row
 (a refund request, possibly sent to Paymob with no recorded outcome), any
 ``credit_conversion_rates`` row (the rate an admin set; dropping it stops conversions), an edited
 ``billing_settings`` row (``version > 1``), any ``llm_price_overrides`` row, a ``plan_tier_terms``
-row above version 1 or a subscription with pending terms, or any ``signup_allowance_off_periods``
+row above version 1, a subscription with pending terms, a tier or pack with ``version > 1`` or
+a signup pack whose validity differs from the seeded one, or any ``signup_allowance_off_periods``
 row (dropping it would let the repair job grant the allowance retroactively). Otherwise it drops
 exactly what the upgrade added, in reverse order, the trigger functions included. ``job_runs``,
 ``paymob_webhook_failures`` and ``usage_job_model_costs`` are operational records that the next
 runs and settles rebuild; the downgrade drops them.
+
+The upgrade itself inserts ``signup_allowance_off_periods`` rows (one per ``signup_*`` pack
+already at ``units = 0``), so on such a database the downgrade refuses with no admin action at
+all. That is intended: the row is what UD-5 needs, and dropping it would let the repair job
+grant the allowance retroactively. ``TRUNCATE`` is not blocked by the append-only triggers (test
+cleanup relies on it), so the guards protect against an accident, not against an operator
+who empties the tables first.
 """
 
 import uuid
@@ -124,8 +141,13 @@ LANGUAGE plpgsql AS $$
 BEGIN
     -- A tier with a negative amount is invalid (``plan_tiers`` has no CHECK for it; the admin
     -- API validates) and the history refuses negatives: such a tier gets no terms row, so
-    -- nothing can subscribe to it, instead of the insert of the tier itself failing.
-    IF NEW.price_minor >= 0 AND NEW.extra_seat_price_minor >= 0
+    -- nothing can subscribe to it, instead of the insert of the tier itself failing. When a
+    -- tier that has no terms at all becomes valid by an UPDATE, its current version is written
+    -- then. A tier that already has terms is never touched here (the admin API inserts the
+    -- next version itself, before it moves ``terms_version``).
+    IF (TG_OP = 'INSERT'
+        OR NOT EXISTS (SELECT 1 FROM plan_tier_terms WHERE plan_tier_id = NEW.id))
+       AND NEW.price_minor >= 0 AND NEW.extra_seat_price_minor >= 0
        AND NEW.allowance_units >= 0 AND NEW.included_seats >= 0
        AND NEW.seat_allowance_units >= 0 THEN
         INSERT INTO plan_tier_terms (
@@ -143,7 +165,8 @@ $$
 
 _SEED_TERMS_TRIGGER = """
 CREATE TRIGGER trg_plan_tiers_seed_terms
-AFTER INSERT ON plan_tiers
+AFTER INSERT OR UPDATE OF price_minor, extra_seat_price_minor, allowance_units,
+    included_seats, seat_allowance_units ON plan_tiers
 FOR EACH ROW EXECUTE FUNCTION plan_tiers_seed_terms()
 """
 
@@ -210,6 +233,7 @@ def upgrade() -> None:
         IDEMPOTENCY_INDEX,
         "admin_audit_log",
         ["action", sa.text(IDEMPOTENCY_KEY_EXPRESSION)],
+        unique=True,
         postgresql_where=sa.text(HAS_IDEMPOTENCY_KEY),
     )
     op.execute(_APPEND_ONLY_FUNCTION)
@@ -466,7 +490,7 @@ def upgrade() -> None:
             ["created_by"],
             ["users.id"],
             name=op.f("fk_plan_tier_terms_created_by_users"),
-            ondelete="SET NULL",
+            ondelete="RESTRICT",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_plan_tier_terms")),
         sa.UniqueConstraint(
@@ -678,6 +702,21 @@ def downgrade() -> None:
         "Cannot downgrade 0057_admin_audit_log: plan_tier_terms holds a terms version above 1. "
         "Subscribers may be billed on it, and dropping the history would lose what each one "
         "agreed to. Downgrading past 0057 is not possible once a plan's terms changed.",
+    )
+    _refuse_if_any(
+        "SELECT 1 FROM plan_tiers WHERE version > 1 LIMIT 1",
+        "Cannot downgrade 0057_admin_audit_log: a plan tier has been edited (version > 1). The "
+        "edit counter is dropped with the column, and an admin's change would be lost "
+        "silently. Downgrading past 0057 is not possible once a tier was changed.",
+    )
+    _refuse_if_any(
+        "SELECT 1 FROM credit_packs WHERE version > 1 "
+        "OR (signup_validity_days IS NOT NULL "
+        "AND NOT (code = 'signup_teacher' AND signup_validity_days = 30)) LIMIT 1",
+        "Cannot downgrade 0057_admin_audit_log: a credit pack has been edited (version > 1) or a "
+        "signup pack's validity differs from the one this migration seeded (30 days for "
+        "signup_teacher, none for the others). Dropping the columns would revert an admin's "
+        "change silently. Downgrading past 0057 is not possible once they were changed.",
     )
     _refuse_if_any(
         "SELECT 1 FROM subscriptions WHERE pending_terms_version IS NOT NULL LIMIT 1",

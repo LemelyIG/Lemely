@@ -412,9 +412,9 @@ class PlanTierTerms(Base):
     ``admin_audit_log_append_only``), installed by migration ``0057_admin_audit_log`` and by the
     ``after_create`` listeners below on ``create_all`` databases.
 
-    Every tier has version 1 from its first insert: ``trg_plan_tiers_seed_terms`` writes it from
-    the new tier's own columns, so a tier can never exist without the history row the
-    subscription foreign keys point at.
+    Every valid tier has version 1 from its first insert: ``trg_plan_tiers_seed_terms`` writes it
+    from the new tier's own columns (and when a tier without terms is fixed by an UPDATE), so a
+    valid tier can never exist without the history row the subscription foreign keys point at.
     """
 
     __tablename__ = "plan_tier_terms"
@@ -444,8 +444,11 @@ class PlanTierTerms(Base):
         sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )
     created_by: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
     )
+    """The admin who wrote this version; NULL on a version the seed trigger wrote (the audit log
+    records who created the tier). ``RESTRICT``: ``SET NULL`` would be an UPDATE the append-only
+    trigger refuses."""
 
 
 PLAN_TIER_TERMS_TRIGGER_SQL = """
@@ -460,8 +463,13 @@ LANGUAGE plpgsql AS $$
 BEGIN
     -- A tier with a negative amount is invalid (``plan_tiers`` has no CHECK for it; the admin
     -- API validates) and the history refuses negatives: such a tier gets no terms row, so
-    -- nothing can subscribe to it, instead of the insert of the tier itself failing.
-    IF NEW.price_minor >= 0 AND NEW.extra_seat_price_minor >= 0
+    -- nothing can subscribe to it, instead of the insert of the tier itself failing. When a
+    -- tier that has no terms at all becomes valid by an UPDATE, its current version is written
+    -- then. A tier that already has terms is never touched here (the admin API inserts the
+    -- next version itself, before it moves ``terms_version``).
+    IF (TG_OP = 'INSERT'
+        OR NOT EXISTS (SELECT 1 FROM plan_tier_terms WHERE plan_tier_id = NEW.id))
+       AND NEW.price_minor >= 0 AND NEW.extra_seat_price_minor >= 0
        AND NEW.allowance_units >= 0 AND NEW.included_seats >= 0
        AND NEW.seat_allowance_units >= 0 THEN
         INSERT INTO plan_tier_terms (
@@ -479,7 +487,8 @@ $$
 
 SEED_TERMS_TRIGGER_SQL = """
 CREATE TRIGGER trg_plan_tiers_seed_terms
-AFTER INSERT ON plan_tiers
+AFTER INSERT OR UPDATE OF price_minor, extra_seat_price_minor, allowance_units,
+    included_seats, seat_allowance_units ON plan_tiers
 FOR EACH ROW EXECUTE FUNCTION plan_tiers_seed_terms()
 """
 

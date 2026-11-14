@@ -375,6 +375,7 @@ def test_the_idempotency_index_is_partial_on_the_key_expression(
             sa.text("SELECT indexdef FROM pg_indexes WHERE indexname = :n"),
             {"n": "ix_admin_audit_log_idempotency"},
         ).scalar_one()
+    assert definition.startswith("CREATE UNIQUE INDEX")
     assert "(action, ((after ->> 'idempotency_key'::text)))" in definition
     assert "WHERE (after ? 'idempotency_key'::text)" in definition
 
@@ -1441,6 +1442,198 @@ def test_downgrade_refuses_while_a_subscription_has_pending_terms(
 
     with sm() as session:
         assert current_revision(session) == REVISION
+
+
+def _audit(sm: sessionmaker[Session], admin: uuid.UUID, action: str, key: str | None) -> None:
+    after = '\'{"idempotency_key": "' + key + "\"}'::jsonb" if key is not None else "NULL"
+    with sm.begin() as session:
+        session.execute(
+            sa.text(
+                "INSERT INTO admin_audit_log (admin_user_id, action, target_kind, target_id, "  # noqa: S608
+                f"reason, after) VALUES (:a, :act, 'user', :t, 'why', {after})"
+            ),
+            {"a": admin, "act": action, "t": uuid.uuid4()},
+        )
+
+
+def test_the_idempotency_key_is_unique_per_action_even_without_the_lock(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A caller that forgets ``lock_idempotency_key`` cannot record a second grant: the insert
+    is refused. The same key under another action, and rows without a key, are unaffected."""
+    admin = _user(migrated_sessionmaker)
+    _audit(migrated_sessionmaker, admin, "customer.grant", "admin-grant:u:r1")
+    with (
+        pytest.raises(IntegrityError, match="ix_admin_audit_log_idempotency"),
+        migrated_sessionmaker.begin() as session,
+    ):
+        session.execute(
+            sa.text(
+                "INSERT INTO admin_audit_log (admin_user_id, action, target_kind, target_id, "
+                "reason, after) VALUES (:a, 'customer.grant', 'user', :t, 'why', "
+                '\'{"idempotency_key": "admin-grant:u:r1"}\'::jsonb)'
+            ),
+            {"a": admin, "t": uuid.uuid4()},
+        )
+    _audit(migrated_sessionmaker, admin, "customer.adjust", "admin-grant:u:r1")
+    _audit(migrated_sessionmaker, admin, "customer.grant", "admin-grant:u:r2")
+    _audit(migrated_sessionmaker, admin, "customer.grant", None)
+    _audit(migrated_sessionmaker, admin, "customer.grant", None)
+    with migrated_sessionmaker() as session:
+        assert session.execute(sa.text("SELECT count(*) FROM admin_audit_log")).scalar_one() == 5
+
+
+def test_a_terms_row_blocks_deleting_the_admin_who_wrote_it(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """``created_by`` is RESTRICT: SET NULL would be an UPDATE the append-only trigger refuses,
+    which surfaced as a confusing "append-only" error on a user delete."""
+    admin = _user(migrated_sessionmaker)
+    tier = _tier(migrated_sessionmaker)
+    with migrated_sessionmaker.begin() as session:
+        session.execute(
+            sa.text(
+                "INSERT INTO plan_tier_terms (plan_tier_id, terms_version, price_minor, "
+                "extra_seat_price_minor, allowance_units, included_seats, "
+                "seat_allowance_units, created_by) VALUES (:t, 2, 1, 1, 1, 1, 1, :a)"
+            ),
+            {"t": tier, "a": admin},
+        )
+    with (
+        pytest.raises(IntegrityError, match="fk_plan_tier_terms_created_by_users"),
+        migrated_sessionmaker.begin() as session,
+    ):
+        session.execute(sa.text("DELETE FROM users WHERE id = :u"), {"u": admin})
+
+
+def test_a_tier_that_becomes_valid_by_an_update_gets_its_terms(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A negative amount gets no terms at insert. Fixing it later must write the tier's current
+    version then, or the tier could never be subscribed to."""
+    tier = _tier(migrated_sessionmaker, "fixed-later", -100)
+    with migrated_sessionmaker.begin() as session:
+        session.execute(
+            sa.text("UPDATE plan_tiers SET name = 'renamed' WHERE id = :t"), {"t": tier}
+        )
+        session.execute(
+            sa.text("UPDATE plan_tiers SET price_minor = -5 WHERE id = :t"), {"t": tier}
+        )
+    with migrated_sessionmaker() as session:
+        assert (
+            session.execute(
+                sa.text("SELECT count(*) FROM plan_tier_terms WHERE plan_tier_id = :t"),
+                {"t": tier},
+            ).scalar_one()
+            == 0
+        )
+    with migrated_sessionmaker.begin() as session:
+        session.execute(
+            sa.text("UPDATE plan_tiers SET price_minor = 7700 WHERE id = :t"), {"t": tier}
+        )
+    with migrated_sessionmaker() as session:
+        row = session.execute(
+            sa.text(
+                "SELECT terms_version, price_minor, created_by FROM plan_tier_terms "
+                "WHERE plan_tier_id = :t"
+            ),
+            {"t": tier},
+        ).one()
+    assert tuple(row) == (1, 7700, None)
+
+
+def test_updating_a_tier_that_has_terms_adds_no_row_and_never_fails(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The admin API inserts the next version itself before it moves ``terms_version``: the
+    trigger must not write, or conflict with, a tier that already has terms."""
+    tier = _tier(migrated_sessionmaker, "has-terms", 100)
+    _terms_v2(migrated_sessionmaker, tier, 200)
+    with migrated_sessionmaker.begin() as session:
+        session.execute(
+            sa.text("UPDATE plan_tiers SET price_minor = 200, terms_version = 2 WHERE id = :t"),
+            {"t": tier},
+        )
+    with migrated_sessionmaker() as session:
+        versions = (
+            session.execute(
+                sa.text(
+                    "SELECT terms_version FROM plan_tier_terms WHERE plan_tier_id = :t "
+                    "ORDER BY terms_version"
+                ),
+                {"t": tier},
+            )
+            .scalars()
+            .all()
+        )
+    assert list(versions) == [1, 2]
+
+
+def test_downgrade_refuses_after_a_tier_was_edited(
+    migrated_sessionmaker_with_downgrade: tuple[sessionmaker[Session], Callable[[str], None]],
+) -> None:
+    sm, downgrade_to = migrated_sessionmaker_with_downgrade
+    tier = _tier(sm)
+    with sm.begin() as session:
+        session.execute(sa.text("UPDATE plan_tiers SET version = 2 WHERE id = :t"), {"t": tier})
+
+    with pytest.raises(RuntimeError, match="plan tier has been edited"):
+        downgrade_to(DOWN_REVISION)
+
+    with sm() as session:
+        assert current_revision(session) == REVISION
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "UPDATE credit_packs SET version = 2",
+        "UPDATE credit_packs SET signup_validity_days = 7 WHERE code = 'signup_student'",
+        "UPDATE credit_packs SET signup_validity_days = 45 WHERE code = 'signup_teacher'",
+    ],
+)
+def test_downgrade_refuses_after_a_pack_or_its_signup_validity_was_edited(
+    migrated_sessionmaker_with_downgrade: tuple[sessionmaker[Session], Callable[[str], None]],
+    statement: str,
+) -> None:
+    sm, downgrade_to = migrated_sessionmaker_with_downgrade
+    _pack(sm, "signup_student")
+    _pack(sm, "signup_teacher", 2000)
+    with sm.begin() as session:
+        session.execute(
+            sa.text(
+                "UPDATE credit_packs SET signup_validity_days = 30 WHERE code = 'signup_teacher'"
+            )
+        )
+        session.execute(sa.text(statement))
+
+    with pytest.raises(RuntimeError, match="credit pack has been edited"):
+        downgrade_to(DOWN_REVISION)
+
+    with sm() as session:
+        assert current_revision(session) == REVISION
+
+
+def test_downgrade_accepts_the_seeded_signup_validity(
+    migrated_sessionmaker_with_downgrade: tuple[sessionmaker[Session], Callable[[str], None]],
+) -> None:
+    """Teacher credits at 30 days, the student allowance with none, and a teacher pack created
+    without a validity (a catalogue row written before the setting was used) are all fine."""
+    sm, downgrade_to = migrated_sessionmaker_with_downgrade
+    _pack(sm, "signup_student")
+    _pack(sm, "signup_teacher", 2000)
+    _pack(sm, "starter", 100)
+    with sm.begin() as session:
+        session.execute(
+            sa.text(
+                "UPDATE credit_packs SET signup_validity_days = 30 WHERE code = 'signup_teacher'"
+            )
+        )
+
+    downgrade_to(DOWN_REVISION)
+
+    with sm() as session:
+        assert current_revision(session) == DOWN_REVISION
 
 
 def _load_migration() -> object:

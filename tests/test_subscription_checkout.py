@@ -35,6 +35,7 @@ from lemely.db.models.billing import (
 )
 from lemely.db.models.enums import Role, SubscriptionStatus
 from lemely.db.models.team import TeacherMemberStatus
+from lemely.db.models.users import User
 from lemely.db.subscription_repo import (
     _MODE_ALERT_EVERY,
     _MODE_ALERTED,
@@ -1169,23 +1170,33 @@ def test_the_live_rows_are_locked_in_a_fixed_order_until_the_checkout_ends(
 def test_only_the_one_live_constraint_means_already_subscribed(
     pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Another integrity failure (the tier deleted mid-checkout) is not "already subscribed"."""
+    """Another integrity failure of the subscription insert is not "already subscribed".
+
+    The beneficiary is deleted from a second session after the checkout read it and before it
+    inserts the subscription, so the insert itself fails on a foreign key to ``users``
+    (``fk_subscriptions_payer_user_id_users``, the first one Postgres checks).
+    The failure must come from that insert (asserted by constraint name): a failure from any
+    other statement would pass the test without exercising the service's constraint mapping.
+    """
     student = seed_user(pg_sessionmaker, Role.student)
     tier = seed_tier(pg_sessionmaker)
     original = SubscriptionService._retire_stale_checkout
 
-    def _retire_then_lose_the_tier(
+    def _retire_then_lose_the_user(
         self: SubscriptionService, *args: object, **kwargs: object
     ) -> None:
         original(self, *args, **kwargs)  # type: ignore[arg-type]
         with pg_sessionmaker.begin() as other:
-            other.execute(sa.delete(PlanTier).where(PlanTier.id == tier))
+            other.execute(sa.delete(User).where(User.id == student))
 
-    monkeypatch.setattr(SubscriptionService, "_retire_stale_checkout", _retire_then_lose_the_tier)
+    monkeypatch.setattr(SubscriptionService, "_retire_stale_checkout", _retire_then_lose_the_user)
     client = FakePaymobClient()
     with pytest.raises(IntegrityError) as excinfo:
         _checkout(pg_sessionmaker, client, payer_user_id=student, plan_tier_id=tier)
     assert not isinstance(excinfo.value, AlreadySubscribed)
+    diag = getattr(excinfo.value.orig, "diag", None)
+    assert getattr(diag, "constraint_name", None) == "fk_subscriptions_payer_user_id_users"
+    assert "INSERT INTO subscriptions" in (excinfo.value.statement or "")
     assert client.intentions == []
 
 
