@@ -130,7 +130,6 @@ export function ClassPapers() {
           />
         ) : (
           <TableOrList
-            label="Class papers"
             storageKey="lemely.classPapers.view"
             list={
               <ListGroup label="Class papers">

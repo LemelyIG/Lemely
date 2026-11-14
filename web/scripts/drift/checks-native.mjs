@@ -75,10 +75,10 @@ export const NATIVE_SUBJECT = {
 }
 
 /** Each check: { id, platform, width (default 390), theme, app, run(page) }. */
-const jsonRoute = (route, body) =>
+export const jsonRoute = (route, body) =>
   route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) })
 
-const CLASS_DETAIL = {
+export const CLASS_DETAIL = {
   id: "class-1",
   label: "Year 11 Physics",
   stats: [],
@@ -94,7 +94,7 @@ const CLASS_DETAIL = {
   topWeakness: null,
 }
 
-const classPaper = (n, studentName, unshared) => ({
+export const classPaper = (n, studentName, unshared) => ({
   attemptId: `attempt-${n}`,
   studentId: `student-${n}`,
   studentName,
@@ -131,7 +131,7 @@ const CLASS_ROWS = [
   { id: "class-3", label: "AS Chemistry", studentCount: 18, average: 71, subjectCode: "9701", subjectName: "Chemistry", schoolId: null, joinCode: null, atRiskCount: null, lastActivityAt: null, topWeakness: null },
 ]
 
-const QUIZ_ROWS = [
+export const QUIZ_ROWS = [
   { id: "quiz-1", subjectCode: "0625", title: "Forces recap", status: "published", targetGrade: "B", includedTopics: [], poolSource: null, requestedCount: 10, timeLimitMinutes: null, builderStep: 6, questionCount: 10 },
   { id: "quiz-2", subjectCode: "0606", title: "Quadratics warm-up", status: "draft", targetGrade: null, includedTopics: [], poolSource: null, requestedCount: null, timeLimitMinutes: null, builderStep: 3, questionCount: 4 },
 ]
@@ -2942,7 +2942,7 @@ const rosterStudents = () => {
     row("s-3", "Layla Hassan", "D", true, [flag("inactive", "No papers in 30 days")]),
   ];
 };
-const rosterApp = {
+export const rosterApp = {
   surface: "teacher-overview",
   state: "populated",
   path: "/teacher/classes/class-1",

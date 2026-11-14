@@ -308,7 +308,6 @@ export function Quizzes() {
                 />
               ) : (
                 <TableOrList
-                  label="Your quizzes"
                   storageKey="lemely.quizzes.view"
                   list={
                     sorted.length === 0 ? (

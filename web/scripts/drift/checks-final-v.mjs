@@ -1,4 +1,5 @@
-import { NATIVE_HOME, NATIVE_TEACHER_HOME, studentPracticeMocks } from "./checks-native.mjs"
+import { CLASS_DETAIL, NATIVE_HOME, NATIVE_TEACHER_HOME, QUIZ_ROWS, classPaper, jsonRoute, rosterApp, studentPracticeMocks } from "./checks-native.mjs"
+import { teacherShellMocks } from "./mocks.mjs"
 
 /*
  * NF final polish, lane F1 (visual). Behaviour checks for items 1, 4 and 5 of nf-final-polish-brief.md.
@@ -49,9 +50,9 @@ FINAL_V_CHECKS.push(
       const dialog = page.getByRole("dialog", { name: "Notifications" })
       await dialog.waitFor()
       await page.waitForTimeout(350)
-      const split = await widthsThatSplitTheDate(dialog.locator(".lm-list-row").first(), "12 Nov")
+      const split = await widthsThatSplitTheDate(dialog.locator(".lm-list-row").first(), "Thu 12 Nov")
       if (split === null) throw new Error("the bell row has no date span to check")
-      if (split.length) throw new Error(`the date "12 Nov" splits across lines when the title is ${split.join(", ")}px wide`)
+      if (split.length) throw new Error(`the date "Thu 12 Nov" splits across lines when the title is ${split.join(", ")}px wide`)
     },
   })),
   ...PLATFORMS.map((platform) => ({
@@ -61,9 +62,9 @@ FINAL_V_CHECKS.push(
     app: { ...NATIVE_HOME, path: "/student/notifications" },
     async run(page) {
       await page.locator("main h2", { hasText: "Physics mock moved" }).waitFor()
-      const split = await widthsThatSplitTheDate(page.locator("main h2", { hasText: "Physics mock moved" }), "12 Nov")
+      const split = await widthsThatSplitTheDate(page.locator("main h2", { hasText: "Physics mock moved" }), "Thu 12 Nov")
       if (split === null) throw new Error("the page title has no date span to check")
-      if (split.length) throw new Error(`the date "12 Nov" splits across lines when the title is ${split.join(", ")}px wide`)
+      if (split.length) throw new Error(`the date "Thu 12 Nov" splits across lines when the title is ${split.join(", ")}px wide`)
     },
   })),
   // 4. The native list view is a group named by TableOrList's `label`.
@@ -79,6 +80,60 @@ FINAL_V_CHECKS.push(
       })
     },
   })),
+)
+
+/**
+ * Native lists whose ListGroup already names itself (a section with a visible h2): the name is
+ * announced once, from the heading. TableOrList must not add a group of the same name around it.
+ */
+const SELF_NAMED_LISTS = [
+  {
+    name: "Class roster",
+    app: rosterApp,
+  },
+  {
+    name: "Class papers",
+    app: {
+      ...NATIVE_TEACHER_HOME,
+      path: "/teacher/classes/class-1/papers",
+      mocks: async (page) => {
+        await teacherShellMocks(page)
+        await page.route(/\/api\/classes\/class-1(\?|$)/, (route) => jsonRoute(route, CLASS_DETAIL))
+        await page.route(/\/api\/classes\/class-1\/papers(\?|$)/, (route) =>
+          jsonRoute(route, { papers: [classPaper(1, "Amina Said", false), classPaper(2, "Omar Nabil", true)] }),
+        )
+      },
+    },
+  },
+  {
+    name: "Your quizzes",
+    app: {
+      ...NATIVE_TEACHER_HOME,
+      path: "/teacher/quizzes",
+      mocks: async (page) => {
+        await teacherShellMocks(page)
+        await page.route(/\/api\/teacher\/quizzes(\?|$)/, (route) => jsonRoute(route, { quizzes: QUIZ_ROWS }))
+      },
+    },
+  },
+]
+FINAL_V_CHECKS.push(
+  ...PLATFORMS.flatMap((platform) =>
+    SELF_NAMED_LISTS.map(({ name, app }) => ({
+      id: `fv-${platform}-self-named-list-is-named-once-${name.toLowerCase().replace(/ /g, "-")}`,
+      platform,
+      width: 390,
+      app,
+      async run(page) {
+        await page.getByRole("heading", { name, exact: true }).waitFor({ timeout: 8000 })
+        const heading = await page.getByRole("heading", { name, exact: true }).count()
+        const group = await page.getByRole("group", { name, exact: true }).count()
+        const region = await page.getByRole("region", { name, exact: true }).count()
+        if (heading !== 1 || region !== 1 || group !== 0)
+          throw new Error(`"${name}" is announced ${heading} heading, ${region} region, ${group} group; expected 1 heading, 1 region, 0 group`)
+      },
+    })),
+  ),
 )
 
 /** Press on the first More row, drag down by `steps * 22` px, release, and click that row inside the swallow window. */
@@ -218,13 +273,14 @@ FINAL_V_CHECKS.push(
       })
       if (!r) throw new Error("no button.lm-press-scale on the page to measure")
       if (r.platform !== "other") throw new Error(`expected platform other, got ${r.platform}`)
-      if (/\bscale\b/.test(r.props)) throw new Error(`desktop button transition animates scale: ${r.props}`)
+      const BASE = "color, background-color, border-color, transform"
+      if (r.props !== BASE) throw new Error(`desktop button transition is "${r.props}", base is "${BASE}"`)
       const icon = await page.evaluate(() => {
         const b = document.querySelector("button.lm-native-iconbtn")
         return b ? getComputedStyle(b).transitionProperty : null
       })
       if (icon === null) throw new Error("no shell icon button (.lm-native-iconbtn) on the page to measure")
-      if (/\bscale\b/.test(icon)) throw new Error(`desktop shell icon button transition animates scale: ${icon}`)
+      if (/\bscale\b/.test(icon) || !/^color, /.test(icon)) throw new Error(`desktop shell icon button transition is "${icon}", base is transition-colors`)
     },
   },
   ...PLATFORMS.map((platform) => ({

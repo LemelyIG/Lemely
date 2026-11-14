@@ -15,9 +15,10 @@ export function TableOrList({
   onListView,
   toolbar,
 }: {
-  /** The accessible name of the native list view (a labelled group). The table view is named by
-   * the Table itself, so this is not applied there. */
-  label: string
+  /** The accessible name of the native list view, as a labelled group. Pass it only when the list
+   * is not already named: a `ListGroup` with its own `label` is a named section with a heading, and a
+   * second name on the group would be announced twice. The table view is named by the Table itself. */
+  label?: string
   table: ReactNode
   list: ReactNode
   storageKey: string
@@ -74,9 +75,13 @@ export function TableOrList({
         // (two tab stops, one scroll).
         <div data-table-view>{table}</div>
       ) : (
-        <div role="group" aria-label={label}>
-          {list}
-        </div>
+        label ? (
+          <div role="group" aria-label={label}>
+            {list}
+          </div>
+        ) : (
+          list
+        )
       )}
     </div>
   )
