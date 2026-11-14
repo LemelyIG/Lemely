@@ -1365,3 +1365,58 @@ def test_a_refund_or_void_child_callback_stamps_nothing(
         ),
     )
     assert _payment(sm, pid).callback_received_at is None
+
+
+# -- credit validity is an admin setting (UD-13) ----------------------------------------------
+
+
+def _set_validity(sm: sessionmaker[Session], months: int) -> None:
+    with sm.begin() as session:
+        session.execute(
+            sa.text("UPDATE billing_settings SET credit_validity_months = :m"), {"m": months}
+        )
+
+
+def test_a_pack_expires_after_the_admin_set_validity_and_an_edit_changes_new_packs_only(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _, first = _setup(sm)
+    _set_validity(sm, 6)
+    _apply(sm, transaction_obj(merchant_order_id=str(first)))
+    (grant,) = _grants(sm, first)
+    assert grant.expires_at == add_months(FIXED_NOW, 6)
+
+    _set_validity(sm, 24)
+    payer = seed_user(sm)
+    second = seed_payment(
+        sm, payer=payer, beneficiary=payer, pack_id=seed_pack(sm), paymob_order_id=265715203
+    )
+    _apply(sm, transaction_obj(merchant_order_id=str(second), txn_id=192036466, order_id=265715203))
+    (later,) = _grants(sm, second)
+    assert later.expires_at == add_months(FIXED_NOW, 24)
+    (unchanged,) = _grants(sm, first)
+    assert unchanged.expires_at == add_months(FIXED_NOW, 6)
+
+
+def test_the_default_setting_is_twelve_months(migrated_sessionmaker: sessionmaker[Session]) -> None:
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    _apply(sm, transaction_obj(merchant_order_id=str(pid)))
+    (grant,) = _grants(sm, pid)
+    assert grant.expires_at == add_months(FIXED_NOW, 12)
+
+
+def test_a_missing_settings_row_refuses_the_grant_and_rolls_the_callback_back(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Fail closed: no constant stands in, the payment stays unpaid and Paymob retries."""
+    sm = migrated_sessionmaker
+    _, pid = _setup(sm)
+    with sm.begin() as session:
+        session.execute(sa.text("DELETE FROM billing_settings"))
+    with pytest.raises(billing_repo.CreditValiditySettingMissing):
+        _apply(sm, transaction_obj(merchant_order_id=str(pid)))
+    assert _payment(sm, pid).status is PaymentStatus.created
+    assert _grants(sm, pid) == []
+    assert _events(sm) == []

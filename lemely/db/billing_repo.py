@@ -30,9 +30,11 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Final
 from urllib.parse import urlencode
 
+import psycopg
 import structlog
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import OperationalError
 
 from lemely.core.phone import InvalidPhone, validate_phone
 from lemely.db.models import ParentChildLink, User
@@ -47,6 +49,7 @@ from lemely.db.models.billing import (
     PlanTier,
     SavedCard,
 )
+from lemely.db.models.billing_ops import BillingSettings
 from lemely.db.models.enums import Role
 from lemely.db.models.usage import GrantKind
 from lemely.db.usage_ledger_repo import UsageLedger
@@ -61,6 +64,9 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
+#: The validity a credit pack had before it became an admin setting. Not read by any code path
+#: (``billing_settings.credit_validity_months`` is); kept only because
+#: ``tests/test_subscription_first_payment.py`` still imports it.
 CREDIT_EXPIRY_MONTHS: Final = 12
 INTENTION_EXPIRATION_SECONDS: Final = 3600
 #: Saved cards one intention may offer (live ``pay-with-saved-cards/cit.md``).
@@ -143,6 +149,17 @@ class MalformedCallback(BillingError):
 
 class PaymentNotFoundError(BillingError):
     """No payment has that id."""
+
+
+class PaymentBusyError(BillingError):
+    """Another transaction holds the payment's row lock (a sweeper pass, a callback, a click).
+
+    The admin route maps it to 409. The caller's transaction is aborted and must roll back.
+    """
+
+
+class CreditValiditySettingMissing(BillingError):
+    """``billing_settings`` has no ``id = 1`` row, so a credit pack's validity is unknown."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -359,8 +376,28 @@ def _redact_tokens(obj: JsonMap) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 
 
+def _credit_validity_months(session: Session) -> int:
+    """The admin-set credit validity: ``billing_settings.credit_validity_months`` (``id = 1``).
+
+    Read in the caller's transaction, no lock. Fails closed: a missing row (the migration and
+    ``create_all`` both insert it, so its absence is a damaged database) raises
+    :class:`CreditValiditySettingMissing`, and no constant stands in for it. The paid handler
+    then fails, the callback rolls back and answers 5xx, and Paymob retries.
+    """
+    months = session.scalar(
+        select(BillingSettings.credit_validity_months).where(BillingSettings.id == 1)
+    )
+    if months is None:
+        raise CreditValiditySettingMissing("no billing settings row: credit validity is not set")
+    return months
+
+
 def grant_credit_pack(session: Session, payment: Payment, obj: JsonMap) -> None:
-    """Issue the beneficiary's visible credit grant, expiring 12 months after payment."""
+    """Issue the beneficiary's visible credit grant, expiring after the admin-set validity.
+
+    The validity is read now, so an edited setting changes packs paid from then on and
+    never a grant already issued.
+    """
     if payment.grant_units is None:
         raise RuntimeError(f"credit pack payment {payment.id} has no grant_units snapshot")
     # ``paid_at`` is set from the service's injected clock before any handler runs;
@@ -373,7 +410,7 @@ def grant_credit_pack(session: Session, payment: Payment, obj: JsonMap) -> None:
         kind=GrantKind.credit_pack,
         units=payment.grant_units,
         idempotency_key=f"payment:{payment.id}",
-        expires_at=add_months(paid_at, CREDIT_EXPIRY_MONTHS),
+        expires_at=add_months(paid_at, _credit_validity_months(session)),
         visible=True,
         effective_at=paid_at,
         payment_id=payment.id,
@@ -1319,10 +1356,23 @@ class BillingService:
         * an inquiry that errors only reschedules.
 
         A payment that is no longer ``created`` or ``pending`` is returned untouched, so a
-        double click cannot inquire a settled payment again. Never commits: the caller's
-        transaction does. Raises :class:`PaymentNotFoundError` for an unknown id.
+        double click cannot inquire a settled payment again. The row is read fresh under the
+        lock, so a caller may load the payment first. The lock is ``NOWAIT``: a payment another
+        transaction holds (the sweeper mid-inquiry, a callback) raises :class:`PaymentBusyError`
+        at once instead of stalling the request, and the caller must roll back. Never commits:
+        the caller's transaction does. Raises :class:`PaymentNotFoundError` for an unknown id.
         """
-        payment = self._session.get(Payment, payment_id, with_for_update=True)
+        try:
+            # ``populate_existing``: the lock alone does not refresh an object this session
+            # already loaded (an admin route reads the payment first). A stale ``pending``
+            # here would let the 24-hour give-up overwrite a payment a callback just paid.
+            payment = self._session.get(
+                Payment, payment_id, with_for_update={"nowait": True}, populate_existing=True
+            )
+        except OperationalError as exc:
+            if isinstance(exc.orig, psycopg.errors.LockNotAvailable):
+                raise PaymentBusyError(str(payment_id)) from None
+            raise
         if payment is None:
             raise PaymentNotFoundError(str(payment_id))
         if payment.status in _OPEN:
@@ -1398,10 +1448,12 @@ __all__ = [
     "BillingService",
     "CheckoutResult",
     "CheckoutUnavailable",
+    "CreditValiditySettingMissing",
     "JsonMap",
     "MalformedCallback",
     "NotLinkedToBeneficiary",
     "PaidHandler",
+    "PaymentBusyError",
     "PaymentNotFoundError",
     "PhoneRequired",
     "UnknownCreditPack",

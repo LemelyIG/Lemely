@@ -21,7 +21,12 @@ from lemely.db.billing_observability_repo import (
     prune_webhook_failures,
     record_webhook_failure,
 )
-from lemely.db.billing_repo import BillingService, PaymentNotFoundError
+from lemely.db.billing_repo import (
+    BillingError,
+    BillingService,
+    PaymentBusyError,
+    PaymentNotFoundError,
+)
 from lemely.db.class_repo import ClassService
 from lemely.db.models.billing import Payment, PaymentStatus
 from lemely.db.models.billing_ops import JobRun, PaymobWebhookFailure
@@ -112,7 +117,7 @@ def test_start_then_finish_records_the_run(sm: sessionmaker[Session]) -> None:
 
 
 def test_a_finish_without_a_start_row_still_inserts(sm: sessionmaker[Session]) -> None:
-    JobRunRecorder(sm).finish("billing.x", now=NOW, count=None, error=RuntimeError("boom"))
+    JobRunRecorder(sm).finish("billing.x", now=NOW, count=None, error=BillingError("boom"))
     row = _row(sm, "billing.x")
     assert row.last_started_at == NOW
     assert (row.last_outcome, row.consecutive_failures, row.total_runs, row.total_failures) == (
@@ -132,10 +137,10 @@ def test_a_failing_job_counts_up_and_a_later_success_resets(sm: sessionmaker[Ses
     for minute in (1, 2):
         at = NOW + timedelta(minutes=minute)
         recorder.start(name, at)
-        recorder.finish(name, now=at + timedelta(seconds=1), count=None, error=RuntimeError("boom"))
+        recorder.finish(name, now=at + timedelta(seconds=1), count=None, error=BillingError("boom"))
     row = _row(sm, name)
     assert row.last_outcome == "failed"
-    assert row.last_error == "RuntimeError: boom"
+    assert row.last_error == "BillingError: boom"
     assert row.last_result_count is None
     assert row.consecutive_failures == 2
     assert (row.total_runs, row.total_failures) == (3, 2)
@@ -153,7 +158,7 @@ def test_a_failing_job_counts_up_and_a_later_success_resets(sm: sessionmaker[Ses
 
 def test_a_start_keeps_the_previous_outcome_until_the_run_ends(sm: sessionmaker[Session]) -> None:
     recorder = JobRunRecorder(sm)
-    recorder.finish("j", now=NOW, count=None, error=RuntimeError("boom"))
+    recorder.finish("j", now=NOW, count=None, error=BillingError("boom"))
     recorder.start("j", NOW + timedelta(minutes=1))
     row = _row(sm, "j")
     assert row.last_started_at == NOW + timedelta(minutes=1)
@@ -162,11 +167,37 @@ def test_a_start_keeps_the_previous_outcome_until_the_run_ends(sm: sessionmaker[
 
 def test_the_error_text_is_cut_to_the_column_as_a_whole(sm: sessionmaker[Session]) -> None:
     """The column is 200 characters: type plus message is cut together, or the insert fails."""
-    text = describe_job_error(ValueError("x" * 500))
+    text = describe_job_error(BillingError("x" * 500))
     assert len(text) == 200
-    assert text.startswith("ValueError: xxx")
-    JobRunRecorder(sm).finish("j", now=NOW, count=None, error=ValueError("x" * 500))
+    assert text.startswith("BillingError: xxx")
+    JobRunRecorder(sm).finish("j", now=NOW, count=None, error=BillingError("x" * 500))
     assert _row(sm, "j").last_error == text
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        ValueError("card tok_secret for ana@example.com"),
+        RuntimeError("GET https://x.test/pay?key=secret failed"),
+        KeyError("tok_secret"),
+        OSError("host 10.0.0.5 refused"),
+    ],
+    ids=lambda e: type(e).__name__,
+)
+def test_only_allowlisted_types_keep_their_message(exc: Exception) -> None:
+    """A message is kept only for the project's own error types; anything else is type only."""
+    assert describe_job_error(exc) == type(exc).__name__
+
+
+def test_the_projects_own_errors_keep_their_message() -> None:
+    from lemely.runtime.errors import ExternalServiceError
+
+    assert describe_job_error(BillingError("no billing settings row")) == (
+        "BillingError: no billing settings row"
+    )
+    assert describe_job_error(ExternalServiceError("paymob down")) == (
+        "ExternalServiceError: paymob down"
+    )
 
 
 def test_a_database_error_records_its_type_alone(sm: sessionmaker[Session]) -> None:
@@ -266,7 +297,7 @@ def test_a_raising_job_is_recorded_failed_and_a_later_success_resets_it(
 
     def flaky() -> int:
         if state["fail"]:
-            raise RuntimeError("boom")
+            raise BillingError("boom")
         return 4
 
     for _ in range(2):
@@ -275,7 +306,7 @@ def test_a_raising_job_is_recorded_failed_and_a_later_success_resets_it(
     assert (row.last_outcome, row.consecutive_failures, row.last_error) == (
         "failed",
         2,
-        "RuntimeError: boom",
+        "BillingError: boom",
     )
     state["fail"] = False
     run_jobs([("flaky", flaky)], recorder=recorder, now=lambda: NOW + timedelta(minutes=1))
@@ -639,3 +670,96 @@ def test_reconcile_payment_now_counts_the_give_up_from_the_send_of_a_queued_char
             sa.update(Payment).where(Payment.id == pid).values(sent_at=NOW - timedelta(minutes=5))
         )
     assert _reconcile_now(sm, FakePaymobClient(), pid) is PaymentStatus.created
+
+
+# -- reconcile_payment_now: a stale copy, and a busy row ------------------------------------
+
+ORDER = 265715202
+
+
+def _stale_scenario(
+    sm: sessionmaker[Session], *, age: timedelta
+) -> tuple[PaymentStatus, list[str]]:
+    """The caller read the payment, then a genuine callback paid it, then it reconciles."""
+    pid = _open_payment(sm, age=age, status=PaymentStatus.pending, paymob_order_id=ORDER)
+    obj = transaction_obj(merchant_order_id=str(pid), order_id=ORDER)
+    client = FakePaymobClient()
+    client.inquiry_response = obj
+    with sm.begin() as admin:
+        before = admin.get(Payment, pid)  # e.g. an admin route reading it for its audit row
+        assert before is not None and before.status is PaymentStatus.pending
+        with sm.begin() as callback:
+            BillingService(
+                callback, client, PAYMOB_SETTINGS, now=lambda: NOW
+            ).apply_transaction_callback(obj)
+        returned = BillingService(
+            admin, client, PAYMOB_SETTINGS, now=lambda: NOW
+        ).reconcile_payment_now(pid, now=NOW)
+        assert returned is PaymentStatus.paid
+    assert _grants(sm, pid) == 1
+    return _payment(sm, pid).status, client.inquiries
+
+
+@pytest.mark.parametrize(
+    "age", [timedelta(hours=25), timedelta(hours=2)], ids=["over-24h", "young"]
+)
+def test_a_payment_paid_after_the_caller_read_it_is_not_overwritten(
+    sm: sessionmaker[Session], age: timedelta
+) -> None:
+    """Without ``populate_existing`` the locked read keeps the caller's stale ``pending``, and the
+    24-hour give-up writes ``failed`` over a payment a callback just paid."""
+    status, inquiries = _stale_scenario(sm, age=age)
+    assert status is PaymentStatus.paid
+    assert inquiries == []
+
+
+def test_a_payment_locked_elsewhere_raises_busy_without_an_inquiry(
+    sm: sessionmaker[Session],
+) -> None:
+    pid = _open_payment(sm)
+    client = FakePaymobClient()
+    client.inquiry_response = transaction_obj(merchant_order_id=str(pid))
+    with sm.begin() as holder:
+        holder.execute(sa.select(Payment).where(Payment.id == pid).with_for_update())
+        with sm() as admin, pytest.raises(PaymentBusyError):
+            BillingService(admin, client, PAYMOB_SETTINGS, now=lambda: NOW).reconcile_payment_now(
+                pid, now=NOW
+            )
+    assert client.inquiries == []
+    assert _payment(sm, pid).status is PaymentStatus.created
+
+
+# -- the failure row is written after the response -----------------------------------------
+
+
+def test_the_failure_row_is_a_background_task_run_after_the_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from fastapi import Request
+
+    seen: list[str] = []
+    monkeypatch.setattr(
+        paymob_webhooks, "record_webhook_failure", lambda sm, **kw: seen.append(kw["kind"]) or True
+    )
+    settings = Settings().model_copy(update={"paymob": PAYMOB_SETTINGS})
+    obj = transaction_obj()
+    request = Request(
+        {"type": "http", "headers": [(b"x-forwarded-for", b"5.6.7.8")], "client": ("9.9.9.9", 1)}
+    )
+    response = paymob_webhooks.paymob_transaction_callback(
+        request,
+        "s3cret",
+        transaction_callback(obj),
+        settings,
+        None,  # type: ignore[arg-type]  # never reached before the response
+        FakePaymobClient(),
+        hmac="0" * 128,
+    )
+    assert response.status_code == 401  # type: ignore[union-attr]
+    assert response.body == b'{"detail":"HMAC verification failed"}'  # type: ignore[union-attr]
+    assert seen == []  # nothing is written while the response is being decided
+    assert response.background is not None  # type: ignore[union-attr]
+    asyncio.run(response.background())  # type: ignore[union-attr]
+    assert seen == ["transaction"]

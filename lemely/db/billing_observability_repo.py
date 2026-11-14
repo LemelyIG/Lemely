@@ -21,12 +21,12 @@ from collections import deque
 from datetime import timedelta
 from typing import TYPE_CHECKING, Final
 
-import psycopg
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import StatementError
 
+from lemely.db.billing_repo import BillingError
 from lemely.db.models.billing_ops import JobRun, PaymobWebhookFailure
+from lemely.runtime.errors import LemelyError
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -134,17 +134,23 @@ def prune_webhook_failures(
     return int(result.rowcount)  # type: ignore[attr-defined]
 
 
+#: Exception types whose message a job's author wrote and controls, so it is safe to keep:
+#: the project's own errors (``LemelyError``: ``PaymobError`` carries a method, a path and an
+#: exception type) and billing's. Every other type, builtin or library, may format a message
+#: from data (an address, a URL with a query string, a SQL parameter), so only its name is kept.
+_SAFE_MESSAGE_TYPES: Final = (LemelyError, BillingError)
+
+
 def describe_job_error(exc: BaseException) -> str:
     """The text ``job_runs.last_error`` keeps for ``exc``, at most 200 characters.
 
-    Exception type plus message, cut as a whole. A database error (SQLAlchemy's
-    ``StatementError`` family, which carries the bound parameters, or a raw driver error)
-    contributes its type alone: its message can echo SQL parameters, such as a card token
-    or an email.
+    The type name, plus ``: <message>`` only for the allowlisted types above, cut as a whole.
+    Platform admins read this column, so a message that could echo bound parameters, a card
+    token or an email (every database error, any exception of unknown origin) is never kept.
     """
-    if isinstance(exc, StatementError | psycopg.Error):
-        return type(exc).__name__[:MAX_ERROR_CHARS]
-    return f"{type(exc).__name__}: {exc}"[:MAX_ERROR_CHARS]
+    if isinstance(exc, _SAFE_MESSAGE_TYPES):
+        return f"{type(exc).__name__}: {exc}"[:MAX_ERROR_CHARS]
+    return type(exc).__name__[:MAX_ERROR_CHARS]
 
 
 class JobRunRecorder:

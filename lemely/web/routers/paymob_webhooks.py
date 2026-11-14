@@ -9,7 +9,8 @@ HMAC is in the query string for both. Order of operations:
 2. Body over 64 KiB -> 413, counted as it streams, before any parsing. Not JSON,
    not an object, or an ``obj`` that is not an object -> 400.
 3. HMAC mismatch or missing -> 401, logged at error level. The 401 is decided first and
-   the database is not reached to decide it. Afterwards one row goes to
+   the database is not reached to decide it. Once the response is sent (a background task),
+   one row goes to
    ``paymob_webhook_failures`` (kind, a fixed reason, the best-effort caller address; never
    the body, the HMAC or the object id) in its own transaction, capped at 60 rows per
    minute per process. A failure to record never changes the 401.
@@ -42,6 +43,8 @@ from typing import Annotated, Final
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session, sessionmaker  # noqa: TC002 - FastAPI reads the type at runtime
+from starlette.background import BackgroundTask
+from starlette.responses import JSONResponse
 
 from lemely.db.billing_observability_repo import record_webhook_failure
 from lemely.db.billing_repo import BillingService, MalformedCallback
@@ -76,20 +79,21 @@ def _utcnow() -> datetime:
 
 
 def _record_hmac_failure(
-    sm: sessionmaker[Session], request: Request, *, kind: str, hmac_present: bool
+    sm: sessionmaker[Session], *, kind: str, hmac_present: bool, remote_addr: str, now: datetime
 ) -> None:
-    """File a refused callback for the admin problem queue; never turns a 401 into anything else.
+    """File a refused callback for the admin problem queue, after the 401 has been sent.
 
-    Runs after the 401 is decided. Any failure (the database down, the table missing) is
-    logged by type only, because a driver error message can echo bound parameters.
+    Runs as a Starlette background task, so the write never delays the response, and any
+    failure (the database down, the table missing) is logged by type only: a driver error
+    message can echo bound parameters.
     """
     try:
         recorded = record_webhook_failure(
             sm,
             kind=kind,
             reason="hmac_mismatch" if hmac_present else "hmac_missing",
-            remote_addr=_client_ip(request),
-            now=_utcnow(),
+            remote_addr=remote_addr,
+            now=now,
         )
     except Exception as exc:
         log.error("paymob_hmac_failure_record_failed", kind=kind, error_type=type(exc).__name__)
@@ -144,7 +148,7 @@ async def _callback_body(request: Request) -> dict[str, object]:
     return body
 
 
-@router.post("/transaction")
+@router.post("/transaction", response_model=None)
 def paymob_transaction_callback(
     request: Request,
     secret: Annotated[str, Depends(_hmac_secret)],
@@ -153,7 +157,7 @@ def paymob_transaction_callback(
     sm: Annotated[sessionmaker[Session], Depends(get_billing_sessionmaker)],
     client: Annotated[PaymobClient, Depends(get_paymob_client)],
     hmac: Annotated[str | None, Query()] = None,
-) -> dict[str, str]:
+) -> dict[str, str] | JSONResponse:
     """Verify and apply a Paymob transaction or card-token callback."""
     kind = body.get("type")
     verifier = _VERIFIERS.get(kind) if isinstance(kind, str) else None
@@ -170,8 +174,21 @@ def paymob_transaction_callback(
             obj_id=str(obj.get("id"))[:40],
             hmac_present=bool(hmac),
         )
-        _record_hmac_failure(sm, request, kind=_FAILURE_KINDS[str(kind)], hmac_present=bool(hmac))
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "HMAC verification failed")
+        # The 401 is decided; the row is written after it is sent (a background task is not
+        # run for a raised ``HTTPException``, so the response is built here). The body is the
+        # one ``HTTPException`` would have produced.
+        return JSONResponse(
+            {"detail": "HMAC verification failed"},
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            background=BackgroundTask(
+                _record_hmac_failure,
+                sm,
+                kind=_FAILURE_KINDS[str(kind)],
+                hmac_present=bool(hmac),
+                remote_addr=_client_ip(request),
+                now=_utcnow(),
+            ),
+        )
     try:
         with sm.begin() as session:
             service = BillingService(session, client, settings.paymob)
