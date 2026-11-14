@@ -92,7 +92,9 @@ export function ConfirmModal({
     return (
       <Modal
         open={open}
-        onClose={onCancel}
+        // A scrim tap is Cancel, but not while the mutation is in flight: Cancel is disabled then,
+        // and a sheet that closed under a pending delete would hide its outcome and any error.
+        onClose={pending ? () => {} : onCancel}
         title={title}
         description={spoken}
         size="sm"

@@ -51,6 +51,8 @@ const button = cva(
      * label centres in the taller box rather than sitting at its top.
      */
     "pointer-coarse:min-h-11 pointer-coarse:min-w-11",
+    // Material's floor is 48dp, not 44: every Button variant on the Android native frame (the iOS 44pt floor above stays).
+    "native:android:min-h-12! native:android:min-w-12!",
     // Colour transition, plus the transform and the `scale` property (Tailwind v4 `scale-*` writes `scale`, which `transform` does not cover) used by the press. Never
     // `ease-in-out` or `linear` on a designed transition (DESIGN.md §9.1).
     "transition-[color,background-color,border-color,transform,scale]",

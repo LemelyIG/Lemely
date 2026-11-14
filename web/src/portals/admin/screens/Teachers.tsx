@@ -266,7 +266,7 @@ function RemoveTeacherDialog({
           : "They own no classes here, so nothing needs reassigning."
       }
       footer={
-        <div className="flex flex-wrap justify-end gap-2">
+        <div data-primary-first className="flex flex-wrap justify-end gap-2">
           <Button variant="primary" onClick={onClose}>
             Keep them
           </Button>

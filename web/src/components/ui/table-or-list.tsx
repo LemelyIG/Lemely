@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react"
 import { useNativeFrame } from "@/lib/useNativeFrame"
+import { cn } from "@/lib/utils"
 
 /** Native frame: dense teacher tables read as list rows on phones, with
  * "View table" for when the grid itself is the point (brief decision 4). */
@@ -10,6 +11,7 @@ export function TableOrList({
   tableHeader,
   notices,
   onListView,
+  toolbar,
 }: {
   /** The table's accessible name now lives on the Table itself; kept so call sites stay descriptive. */
   label: string
@@ -26,6 +28,8 @@ export function TableOrList({
   /** Called whenever the native frame resolves to the list view: on toggle,
    * and when the frame becomes native (rotation) already showing the list. */
   onListView?: () => void
+  /** A control that shares the native view-toggle row, on its leading side (the Review filter). */
+  toolbar?: ReactNode
 }) {
   const { native } = useNativeFrame()
   const [asTable, setAsTable] = useState(() => {
@@ -53,7 +57,8 @@ export function TableOrList({
   }
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex justify-end px-4">
+      <div className={cn("flex items-center px-4", toolbar ? "justify-between" : "justify-end")}>
+        {toolbar}
         <button type="button" onClick={toggle} className="lm-press text-label text-primary">
           {asTable ? "View list" : "View table"}
         </button>

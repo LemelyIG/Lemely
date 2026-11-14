@@ -97,7 +97,7 @@ export function Modal({
   presentation = "auto",
   footerLayout = "stacked",
 }: ModalProps) {
-  const { native } = useNativeFrame()
+  const { native, platform } = useNativeFrame()
   const titleId = useId()
   const descriptionId = useId()
   const panelRef = useRef<HTMLDivElement>(null)
@@ -182,7 +182,7 @@ export function Modal({
           aria-label="Close dialog"
           className={cn(
             "flex shrink-0 items-center justify-center rounded-md text-on-surface-variant transition-colors",
-            native ? "h-11 w-11" : "-me-1 -mt-1 h-8 w-8",
+            native ? (platform === "android" ? "h-12 w-12" : "h-11 w-11") : "-me-1 -mt-1 h-8 w-8",
             "hover:bg-surface-container-low hover:text-on-surface",
             "active:scale-[0.98]",
             native && "lm-press lm-press-scale",

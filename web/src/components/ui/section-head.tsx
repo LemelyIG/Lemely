@@ -56,7 +56,10 @@ export function SectionHead({
 }) {
   const Tag = `h${level}` as "h1" | "h2" | "h3"
   return (
-    <div className={cn("flex items-end justify-between gap-4", className)}>
+    // When the large title replaces the heading and there is no action, everything inside is
+    // hidden on native: the wrapper leaves the flow too (`sr-only` keeps the h1 for assistive
+    // technology) so it does not take a slot in the page's column gap.
+    <div className={cn("flex items-end justify-between gap-4", repeatsTitle && !action && "native:sr-only", className)}>
       <div className="flex flex-col gap-1 min-w-0">
         {eyebrow ? <Eyebrow className={cn(repeatsTitle && "native:hidden")}>{eyebrow}</Eyebrow> : null}
         <Display className={RUNG_CLASS[rung]}>

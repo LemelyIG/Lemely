@@ -2765,14 +2765,14 @@ NATIVE_CHECKS.push(
 const reviewItems = [
   ["Muhammad Abdelrahman El-Sayed Hassan", "31", 0.95, "low_confidence"],
   ["Omar Nabil", "4b", 0.52, "low_confidence"],
-  ["Amina Said", "12", 0.71, "mark_scheme_copying"],
+  ["Amina Said", "12", 0.71, "plagiarism_flag"],
 ].map(([name, q, conf, reason], i) => ({
   itemId: `item-${i + 1}`, source: "attempt", attemptId: `attempt-${i + 1}`, paperId: null, questionResultId: `qr-${i + 1}`,
   studentId: `student-${i + 1}`, studentDisplayName: name, classId: "class-1", className: "Year 11 Physics", subjectCode: "0625",
   paperNumber: 2, paperVariant: 1, sessionMonth: "May", sessionYear: 2026, questionId: q, reason, status: "open",
   createdAt: "2026-11-12T08:00:00Z", waitingHours: 30, aiAwardedMarks: 2, maximumMarks: 3, confidenceScore: conf,
 }));
-const reviewApp = (query = "") => ({
+const reviewApp = (query = "", nextCursor = null) => ({
   surface: "teacher-overview",
   state: "populated",
   path: `/teacher/review${query}`,
@@ -2780,7 +2780,7 @@ const reviewApp = (query = "") => ({
     await teacherShellMocks(page);
     await page.route("**/api/teacher/classes", (route) => jsonRoute(route, { classes: CLASS_ROWS }));
     await page.route("**/api/teacher/review?**", (route) =>
-      jsonRoute(route, { items: reviewItems, total: reviewItems.length, nextCursor: null }),
+      jsonRoute(route, { items: reviewItems, total: reviewItems.length, nextCursor }),
     );
   },
 });
@@ -2817,6 +2817,20 @@ NATIVE_CHECKS.push(
         if (m.kicker) throw new Error("the kicker shows on native");
         if (m.groupLabel) throw new Error("the list group repeats the heading as a label");
         if ((await page.locator("[data-filter-count]").count()) !== 0) throw new Error("a count badge shows with no filter applied");
+        // Filter and View table share one row, and no blank band sits above them.
+        const rowInfo = await page.evaluate(() => {
+          const f = document.querySelector("[data-review-filter]").getBoundingClientRect();
+          const v = [...document.querySelectorAll(".lm-native-main button")].find((b) => b.textContent.trim() === "View table").getBoundingClientRect();
+          const row = document.querySelector("[data-review-filter]").parentElement;
+          const root = row.parentElement;
+          const top = root.getBoundingClientRect().top;
+          // The lowest bottom edge of anything rendered above the row, in the page's own content.
+          const above = [...document.querySelectorAll(".lm-native-main *")].filter((e) => e.getBoundingClientRect().height > 2 && e.getBoundingClientRect().bottom <= top + 0.5 && !e.contains(root) && e.checkVisibility());
+          const prevBottom = above.length ? Math.max(...above.map((e) => e.getBoundingClientRect().bottom)) : document.querySelector(".lm-native-main").getBoundingClientRect().top;
+          return { dy: Math.abs(f.top + f.height / 2 - (v.top + v.height / 2)), gap: top - prevBottom };
+        });
+        if (rowInfo.dy > 4) throw new Error(`Filter and View table are on different rows (${rowInfo.dy}px apart)`);
+        if (rowInfo.gap > 20) throw new Error(`a ${rowInfo.gap}px band sits above the Filter row`);
       },
     },
     {
@@ -2836,6 +2850,15 @@ NATIVE_CHECKS.push(
         for (const label of ["Class", "Reason", "Waiting at least"]) {
           if ((await dialog.getByLabel(label).count()) !== 1) throw new Error(`the sheet lacks the ${label} picker`);
         }
+        // The touch floor: 48dp on Android, 44pt on iOS, for every button in the sheet and the Filter button.
+        const floor = platform === "android" ? 48 : 44;
+        const small = await page.evaluate((fl) => [...document.querySelectorAll("[role=dialog] button, [data-review-filter]")].filter((b) => b.checkVisibility()).map((b) => ({ t: b.textContent.trim() || b.getAttribute("aria-label"), h: b.getBoundingClientRect().height, w: b.getBoundingClientRect().width })).filter((b) => b.h < fl - 0.5 || b.w < fl - 0.5), floor);
+        if (small.length) throw new Error(`controls under the ${floor}px floor: ${JSON.stringify(small)}`);
+        const pickerGap = await dialog.evaluate((el) => {
+          const sel = [...el.querySelectorAll("select")].map((x) => x.closest("label, div").getBoundingClientRect());
+          return sel.length > 1 ? sel[1].top - sel[0].bottom : -1;
+        });
+        if (pickerGap < 10) throw new Error(`the pickers sit ${pickerGap}px apart`);
         // 14. The close X is a pressable chrome control.
         const close = await dialog.getByRole("button", { name: "Close dialog" }).evaluate((el) => ({ press: el.classList.contains("lm-press"), scale: el.classList.contains("lm-press-scale") }));
         if (!close.press || !close.scale) throw new Error(`the close X lacks lm-press / lm-press-scale: ${JSON.stringify(close)}`);
@@ -2897,7 +2920,7 @@ NATIVE_CHECKS.push(
           if (!r.chipBelow || !r.chipVisible) throw new Error(`the reason chip is not whole on its own third line: ${JSON.stringify(r)}`);
           if (!/^\d+%$/.test(r.trailingText)) throw new Error(`the trailing slot holds more than the confidence: "${r.trailingText}"`);
         }
-        if (omar.chip !== "Low confidence" || amina.chip === "Low confidence") throw new Error("the reason chip text is wrong");
+        if (omar.chip !== "Low confidence" || amina.chip !== "Matches mark-scheme wording") throw new Error("the reason chip text is wrong");
         if (long.confBg === omar.confBg) throw new Error("the confidence tone does not follow confidenceTone (95% and 52% look alike)");
         if (process.env.NF_SHOT_PATH) await page.screenshot({ path: process.env.NF_SHOT_PATH, animations: "disabled" });
       },
@@ -2917,21 +2940,23 @@ NATIVE_CHECKS.push(
           const regions = [...main.querySelectorAll("[role=region]")];
           const stops = [...main.querySelectorAll("[tabindex='0']")].filter((e) => e.tagName !== "A" && e.tagName !== "BUTTON" && e.tagName !== "INPUT");
           const nested = regions.filter((r) => r.parentElement?.closest("[role=region]")).length;
-          const cell = main.querySelector("tbody tr td:nth-child(2) div.max-w-\\[20ch\\]");
-          const links = cell ? [...cell.querySelectorAll("a")] : [];
+          const links = [...main.querySelectorAll("tbody tr td:nth-child(2) a")];
           return {
             regions: regions.length,
             stops: stops.length,
             nested,
-            cellH: cell ? cell.getBoundingClientRect().height : 0,
-            linkMin: links.map((a) => getComputedStyle(a).minHeight),
+            links: links.length,
+            heights: links.map((a) => a.getBoundingClientRect().height),
+            hasClass: links.some((a) => /Year 11 Physics/.test(a.textContent)),
           };
         });
         if (m.regions !== 1) throw new Error(`${m.regions} scroll regions in table view, expected 1`);
         if (m.stops !== 1) throw new Error(`${m.stops} scroll tab stops in table view, expected 1`);
         if (m.nested !== 0) throw new Error("a region nests inside another region");
-        if (m.cellH < 43.5) throw new Error(`the student cell wrapper is ${m.cellH}px tall, under the 44px floor`);
-        if (m.linkMin.some((v) => v === "44px")) throw new Error(`min-h-11 still sits on each link: ${m.linkMin}`);
+        // One link to the student carries the name and the class, and every link is at least 44px on a finger.
+        if (m.links !== 3) throw new Error(`the student cells hold ${m.links} links, expected one per row`);
+        if (m.heights.some((h) => h < 43.5)) throw new Error(`a student-cell link is under 44px: ${m.heights}`);
+        if (!m.hasClass) throw new Error("the class is not inside the student link");
         if (process.env.NF_SHOT_PATH) await page.screenshot({ path: process.env.NF_SHOT_PATH, animations: "disabled" });
       },
     },
@@ -3022,6 +3047,27 @@ NATIVE_CHECKS.push(
       if (deletes !== 0) throw new Error("a scrim tap confirmed the deletion");
     },
   },
+  // 11b. ...and not while the action is pending: the sheet stays up to show its outcome.
+  {
+    id: "native-ios-action-sheet-scrim-tap-ignored-while-pending",
+    platform: "ios",
+    width: 390,
+    app: classesApp,
+    async run(page) {
+      await page.route(/\/api\/.*classes\/class-/, (route) => {
+        if (route.request().method() === "DELETE") return; // held: the mutation stays pending
+        return route.fallback();
+      });
+      const dialog = await openDeleteClassConfirm(page);
+      await dialog.getByRole("button", { name: "Delete class" }).click();
+      await page.waitForFunction(() => document.querySelector(".lm-action-sheet [aria-busy=true]"), null, { timeout: 5000 }).catch(() => {
+        throw new Error("the confirm never went pending");
+      });
+      await page.mouse.click(195, 60);
+      await page.waitForTimeout(500);
+      if (!(await dialog.isVisible()) || (await dialog.evaluate((el) => el.hasAttribute("data-closing")))) throw new Error("a scrim tap closed the sheet while the action was pending");
+    },
+  },
   // 1 + 2 + 12. Android: M3 dialog actions, error only when destructive, 24px above the title.
   ...[
     ["destructive", classesApp, openDeleteClassConfirm, "Delete class", true],
@@ -3046,6 +3092,9 @@ NATIVE_CHECKS.push(
       if (c.color === error) throw new Error("Cancel is drawn in the error role");
       const [cb, kb] = [await cancel.boundingBox(), await confirm.boundingBox()];
       if (!(kb.x > cb.x)) throw new Error("the confirm does not trail Cancel");
+      for (const [name, b] of [["Cancel", cb], [confirmName, kb]]) {
+        if (b.height < 47.5 || b.width < 47.5) throw new Error(`${name} is ${b.width}x${b.height}, under the 48dp Android floor`);
+      }
       const focus = await page.evaluate(() => document.activeElement?.textContent?.trim());
       if (focus === confirmName) throw new Error("focus landed on the confirm, not Cancel");
       const gap = await dialog.evaluate((el) => el.querySelector("h2").getBoundingClientRect().top - el.getBoundingClientRect().top);
@@ -3082,3 +3131,25 @@ NATIVE_CHECKS.push(
     })),
   ),
 );
+
+/* 9. The Create FAB on the Android Grading, Review and Classes tabs never covers the end of the list. */
+NATIVE_CHECKS.push({
+  id: "native-android-fab-clears-load-more",
+  platform: "android",
+  width: 390,
+  app: reviewApp("", "cursor-2"),
+  async run(page) {
+    const more = page.getByRole("button", { name: "Load more" });
+    await more.waitFor();
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await page.waitForTimeout(400);
+    const r = await page.evaluate(() => {
+      const fab = document.querySelector(".lm-native-fab");
+      const m = [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Load more").getBoundingClientRect();
+      const f = fab?.getBoundingClientRect();
+      return { fab: !!fab, overlap: f ? !(m.bottom <= f.top || m.top >= f.bottom || m.right <= f.left || m.left >= f.right) : false, mBottom: m.bottom, fTop: f?.top };
+    });
+    if (!r.fab) throw new Error("no Create FAB on the Review tab");
+    if (r.overlap) throw new Error(`the FAB covers Load more (button ends ${r.mBottom}, FAB starts ${r.fTop})`);
+  },
+});

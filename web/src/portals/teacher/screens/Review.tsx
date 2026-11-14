@@ -406,6 +406,28 @@ export function Review() {
             selectableItems.length > 0 && selectableItems.every((i) => selected.has(i.itemId))
 
           const activeFilterCount = [classId, reason, minAgeHours].filter((v) => v !== "").length
+          const filterButton = (
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<Funnel size={16} />}
+              aria-haspopup="dialog"
+              aria-label={activeFilterCount > 0 ? `Filter, ${activeFilterCount} applied` : "Filter"}
+              data-review-filter
+              onClick={() => setFilterOpen(true)}
+            >
+              Filter
+              {activeFilterCount > 0 ? (
+                <span
+                  data-filter-count
+                  aria-hidden="true"
+                  className="ms-1 inline-flex min-w-5 items-center justify-center rounded-pill bg-primary px-1.5 text-3xs text-on-primary"
+                >
+                  {activeFilterCount}
+                </span>
+              ) : null}
+            </Button>
+          )
           const filterControls = (
             <>
                 <Select
@@ -454,55 +476,32 @@ export function Review() {
               />
 
               {native ? (
-                <>
-                  {/* One Filter control with a count of what is applied, so the first row
-                      sits above the fold; the three pickers live in a sheet. */}
-                  <div className="flex justify-end">
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      icon={<Funnel size={16} />}
-                      aria-haspopup="dialog"
-                      aria-label={activeFilterCount > 0 ? `Filter, ${activeFilterCount} applied` : "Filter"}
-                      data-review-filter
-                      onClick={() => setFilterOpen(true)}
-                    >
-                      Filter
+                <Modal
+                  open={filterOpen}
+                  onClose={() => setFilterOpen(false)}
+                  title="Filter the review queue"
+                  size="sm"
+                  footer={
+                    <>
                       {activeFilterCount > 0 ? (
-                        <span
-                          data-filter-count
-                          aria-hidden="true"
-                          className="ms-1 inline-flex min-w-5 items-center justify-center rounded-pill bg-primary px-1.5 text-3xs text-on-primary"
-                        >
-                          {activeFilterCount}
-                        </span>
-                      ) : null}
-                    </Button>
-                  </div>
-                  <Modal
-                    open={filterOpen}
-                    onClose={() => setFilterOpen(false)}
-                    title="Filter the review queue"
-                    size="sm"
-                    footer={
-                      <>
-                        {activeFilterCount > 0 ? (
-                          <Button variant="secondary" onClick={() => setSearchParams({}, { replace: true })}>
-                            Clear filters
-                          </Button>
-                        ) : null}
-                        <Button variant="primary" onClick={() => setFilterOpen(false)}>
-                          Done
+                        <Button variant="secondary" onClick={() => setSearchParams({}, { replace: true })}>
+                          Clear filters
                         </Button>
-                      </>
-                    }
-                  >
-                    {filterControls}
-                  </Modal>
-                </>
+                      ) : null}
+                      <Button variant="primary" onClick={() => setFilterOpen(false)}>
+                        Done
+                      </Button>
+                    </>
+                  }
+                >
+                  <div className="flex flex-col gap-3">{filterControls}</div>
+                </Modal>
               ) : (
                 <div className="flex items-end gap-4 flex-wrap">{filterControls}</div>
               )}
+              {/* With rows, Filter shares the View table row (TableOrList `toolbar`); an empty
+                  queue has no such row, so Filter stands alone and a filter can still be cleared. */}
+              {native && items.length === 0 ? <div className="flex justify-start">{filterButton}</div> : null}
 
               {/*
                * The empty branch stays inside `children` rather than going
@@ -533,6 +532,7 @@ export function Review() {
                 <>
                   <TableOrList
                     label="Review queue"
+                    toolbar={filterButton}
                     storageKey="lemely.review.view"
                     onListView={() => setSelected((prev) => (prev.size === 0 ? prev : new Set()))}
                     tableHeader={
@@ -749,34 +749,20 @@ export function Review() {
                                         cannot exceed. 30ch was tried first and did not
                                         bind — it truncated the name and the table still
                                         grew. */}
-                                    <div className="flex min-w-0 max-w-[20ch] flex-col justify-center pointer-coarse:min-h-11">
-                                      {/* Two stacked links to two different destinations,
-                                          so both need §6.1's floor, not just the primary
-                                          one. `min-h-11` with flex centring rather than the
-                                          `py-[11px]` this used to carry: 21.7px of line
-                                          plus 22px of padding is 43.7px, which fails the
-                                          floor by a third of a pixel and reported as "44"
-                                          until the gate started printing tenths. Hand-tuned
-                                          padding cannot be right for both rungs anyway,
-                                          because they have different line-heights.
-
-                                          `truncate` moves to an inner span: on a flex
-                                          container the text is an anonymous flex item and
-                                          text-overflow has nothing to apply to, so the
-                                          ellipsis would silently stop working. */}
-                                      <Link
-                                        to={`/teacher/students/${item.studentId}`}
-                                        className="flex items-center text-on-surface hover:underline"
-                                      >
-                                        <span className="truncate">{item.studentDisplayName}</span>
-                                      </Link>
-                                      <Link
-                                        to={`/teacher/classes/${item.classId}`}
-                                        className="flex items-center text-body-sm text-on-surface-variant transition-colors hover:text-on-surface hover:underline"
-                                      >
-                                        <span className="truncate">{item.className}</span>
-                                      </Link>
-                                    </div>
+                                    {/* One link to the student with the class as plain text under
+                                        the name, so the cell has one target and it carries §6.1's
+                                        44px floor (`min-h-11`, flex-centred) on a finger. The class
+                                        used to be a second link; two stacked links in one 44px cell
+                                        each fall under the floor. `truncate` sits on inner spans:
+                                        on a flex container the text is an anonymous flex item and
+                                        text-overflow has nothing to apply to. */}
+                                    <Link
+                                      to={`/teacher/students/${item.studentId}`}
+                                      className="flex min-w-0 max-w-[20ch] flex-col justify-center text-on-surface hover:underline pointer-coarse:min-h-11"
+                                    >
+                                      <span className="truncate">{item.studentDisplayName}</span>
+                                      <span className="truncate text-body-sm text-on-surface-variant">{item.className}</span>
+                                    </Link>
                                   </div>
                                   )}
                               </TD>
