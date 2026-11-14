@@ -517,4 +517,31 @@ POLISH_V_CHECKS.push(
       if (replays.length) throw new Error(`a screen entrance restarted after the slide: ${JSON.stringify(replays)}`)
     },
   })),
+  // 3. iOS: the inset group reads against the sheet surface, in both themes.
+  ...["light", "dark"].map((theme) => ({
+    id: `pv-ios-more-group-reads-against-the-sheet-${theme}`,
+    platform: "ios",
+    theme,
+    width: 390,
+    app: NATIVE_HOME,
+    async run(page) {
+      const dialog = await openMore(page)
+      const r = await dialog.evaluate((el) => {
+        // Colours come back in oklch; a 1x1 canvas turns any of them into sRGB.
+        const ctx = document.createElement("canvas").getContext("2d", { willReadFrequently: true })
+        const lum = (css) => {
+          ctx.clearRect(0, 0, 1, 1)
+          ctx.fillStyle = css
+          ctx.fillRect(0, 0, 1, 1)
+          const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data
+          return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
+        }
+        const sheet = getComputedStyle(el).backgroundColor
+        const group = getComputedStyle(el.querySelector("[data-list-group]")).backgroundColor
+        return { sheet, group, delta: Math.abs(lum(sheet) - lum(group)) }
+      })
+      if (r.sheet === r.group) throw new Error(`the group and the sheet are the same colour (${r.sheet})`)
+      if (r.delta < 0.02) throw new Error(`the group barely separates from the sheet: ${r.group} on ${r.sheet} (luminance step ${r.delta.toFixed(3)})`)
+    },
+  })),
 )
