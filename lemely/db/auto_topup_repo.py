@@ -78,7 +78,20 @@ def enqueue_auto_topup(
         .where(AutoTopupSettings.beneficiary_user_id == owner_user_id)
         .with_for_update()
     ).scalar_one_or_none()
-    if setting is None or not setting.enabled or setting.saved_card_id is None:
+    if setting is None or not setting.enabled:
+        return None
+    if setting.saved_card_id is None:
+        # Only after a hard card delete (``ON DELETE SET NULL``). Switch it off so the setting
+        # stops claiming auto top-up is on; the user notice is T8's.
+        setting.enabled = False
+        setting.disabled_reason = DISABLED_CHARGE_FAILED
+        session.flush()
+        log.error("auto_topup_card_missing", alert=True, beneficiary=str(owner_user_id))
+        return None
+    if setting.consented_at is None:
+        # An unattended MOTO charge without consent evidence is undefendable in a dispute.
+        # Stay armed: a later consent stamp lets the next settle queue.
+        log.error("auto_topup_no_consent", alert=True, beneficiary=str(owner_user_id))
         return None
     if setting.payer_user_id != owner_user_id and not is_linked_parent(
         session, setting.payer_user_id, owner_user_id
@@ -127,9 +140,13 @@ def enqueue_auto_topup(
         amount_minor=pack.price_minor,
         currency=pack.currency,
         credit_pack_id=pack.id,
-        dedupe_key=f"{AUTO_TOPUP_DEDUPE_PREFIX}{owner_user_id}:{setting.crossing_seq}",
+        dedupe_key=f"{AUTO_TOPUP_DEDUPE_PREFIX}{setting.id}:{setting.crossing_seq}",
     )
     if payment is None:
+        # Impossible under the row lock with a per-setting key: a bug signal, never silent.
+        log.warning(
+            "auto_topup_dedupe_conflict", beneficiary=str(owner_user_id), setting=str(setting.id)
+        )
         return None
     setting.armed = False
     setting.last_payment_id = payment.id
@@ -143,7 +160,14 @@ def auto_topup_post_settle_hook(
     """Post-settle hook: check auto top-up for each distinct credits owner, in chain order."""
     owners = dict.fromkeys(p.owner_user_id for p in payers if p.scope is GrantScope.CREDITS)
     for owner in owners:
-        enqueue_auto_topup(session, owner, now=now)
+        try:
+            with session.begin_nested():
+                enqueue_auto_topup(session, owner, now=now)
+        except Exception:
+            # One owner's fault must not skip the other owners in the chain.
+            log.error(
+                "auto_topup_enqueue_failed", alert=True, beneficiary=str(owner), exc_info=True
+            )
 
 
 __all__ = [

@@ -652,7 +652,7 @@ class Payment(TimestampMixin, Base):
     a day would be failed right after a real charge (which a seat or top-up sweep reads as "not
     charged" and charges again)."""
     dedupe_key: Mapped[str | None] = mapped_column(sa.String(200), nullable=True, unique=True)
-    """Queue identity for background charges (``auto_topup:{owner}:{crossing}``,
+    """Queue identity for background charges (``auto_topup:{setting}:{crossing}``,
     ``extra_seat_renewal:{period}:{attempt}``). NULL for user-initiated payments."""
     callback_received_at: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True

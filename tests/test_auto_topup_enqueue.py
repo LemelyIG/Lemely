@@ -18,11 +18,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 import sqlalchemy as sa
+from structlog.testing import capture_logs
 
 from lemely.core.usage_types import GrantScope, Payer
 from lemely.db import auto_topup_repo
 from lemely.db.auto_topup_repo import (
     AUTO_TOPUP_DEDUPE_PREFIX,
+    DISABLED_CHARGE_FAILED,
     DISABLED_PARENT_UNLINKED,
     auto_topup_post_settle_hook,
     enqueue_auto_topup,
@@ -86,6 +88,7 @@ def _scene(
     self_paying: bool = False,
     price_minor: int = 10_000,
     pack_active: bool = True,
+    consented: bool = True,
 ) -> dict[str, uuid.UUID]:
     """A parent paying for a linked child (or the child paying for itself) with a 1000-unit pack."""
     child = seed_user(sm, Role.student)
@@ -94,7 +97,7 @@ def _scene(
         link_parent(sm, parent_id=parent, child_id=child)
     pack = seed_pack(sm, units=1_000, price_minor=price_minor, is_active=pack_active)
     card = seed_saved_card(sm, parent)
-    seed_auto_topup(
+    setting = seed_auto_topup(
         sm,
         beneficiary_id=child,
         payer_id=parent,
@@ -103,10 +106,11 @@ def _scene(
         enabled=enabled,
         threshold=threshold,
         cap=cap,
+        consented_at=NOW - timedelta(days=30) if consented else None,
     )
     if credits:
         _credits(sm, child, credits)
-    return {"parent": parent, "child": child, "pack": pack, "card": card}
+    return {"parent": parent, "child": child, "pack": pack, "card": card, "setting": setting}
 
 
 def _enqueue(sm: sessionmaker[Session], owner: uuid.UUID, now: datetime = NOW) -> uuid.UUID | None:
@@ -171,7 +175,7 @@ def test_one_payment_per_crossing_with_the_crossing_key(sm: sessionmaker[Session
     assert payment.amount_minor == 10_000
     assert payment.currency == "EGP"
     assert payment.credit_pack_id == ids["pack"]
-    assert payment.dedupe_key == f"auto_topup:{ids['child']}:0"
+    assert payment.dedupe_key == f"auto_topup:{ids['setting']}:0"
     setting = _setting(sm, ids["child"])
     assert (setting.armed, setting.last_payment_id) == (False, first)
 
@@ -194,7 +198,9 @@ def test_no_setting_does_nothing(sm: sessionmaker[Session]) -> None:
     assert _enqueue(sm, seed_user(sm, Role.student)) is None
 
 
-def test_a_setting_without_a_card_does_nothing(sm: sessionmaker[Session]) -> None:
+def test_a_setting_whose_card_was_deleted_is_switched_off_with_an_alert(
+    sm: sessionmaker[Session],
+) -> None:
     ids = _scene(sm, credits=0)
     with sm.begin() as session:
         session.execute(
@@ -202,8 +208,68 @@ def test_a_setting_without_a_card_does_nothing(sm: sessionmaker[Session]) -> Non
             .where(AutoTopupSettings.beneficiary_user_id == ids["child"])
             .values(saved_card_id=None)
         )
-    assert _enqueue(sm, ids["child"]) is None
+    with capture_logs() as logs:
+        assert _enqueue(sm, ids["child"]) is None
     assert _top_ups(sm, ids["child"]) == []
+    setting = _setting(sm, ids["child"])
+    assert setting.enabled is False
+    assert setting.disabled_reason == DISABLED_CHARGE_FAILED == "charge_failed"
+    (line,) = [e for e in logs if e["event"] == "auto_topup_card_missing"]
+    assert line["alert"] is True
+    # Switched off once: the next settle finds a disabled setting and stays quiet.
+    with capture_logs() as again:
+        assert _enqueue(sm, ids["child"]) is None
+    assert [e for e in again if e["event"] == "auto_topup_card_missing"] == []
+
+
+def test_a_setting_without_consent_queues_nothing_stays_armed_and_alerts(
+    sm: sessionmaker[Session],
+) -> None:
+    ids = _scene(sm, credits=0, consented=False)
+    assert _setting(sm, ids["child"]).consented_at is None
+    with capture_logs() as logs:
+        assert _enqueue(sm, ids["child"]) is None
+    assert _top_ups(sm, ids["child"]) == []
+    setting = _setting(sm, ids["child"])
+    assert (setting.enabled, setting.armed) == (True, True)
+    (line,) = [e for e in logs if e["event"] == "auto_topup_no_consent"]
+    assert line["alert"] is True
+    with sm.begin() as session:  # a later consent stamp lets the next settle queue
+        session.execute(
+            sa.update(AutoTopupSettings)
+            .where(AutoTopupSettings.beneficiary_user_id == ids["child"])
+            .values(consented_at=NOW)
+        )
+    assert _enqueue(sm, ids["child"]) is not None
+
+
+def test_a_recreated_setting_gets_a_new_key_and_does_not_collide_with_history(
+    sm: sessionmaker[Session],
+) -> None:
+    ids = _scene(sm, credits=0)
+    first = _enqueue(sm, ids["child"])
+    assert first is not None
+    with sm.begin() as session:
+        session.get_one(Payment, first).status = PaymentStatus.paid
+        session.execute(
+            sa.delete(AutoTopupSettings).where(
+                AutoTopupSettings.beneficiary_user_id == ids["child"]
+            )
+        )
+    new_setting = seed_auto_topup(
+        sm,
+        beneficiary_id=ids["child"],
+        payer_id=ids["parent"],
+        pack_id=ids["pack"],
+        card_id=ids["card"],
+        consented_at=NOW,
+    )
+    assert new_setting != ids["setting"]
+    second = _enqueue(sm, ids["child"])
+    assert second is not None
+    with sm() as session:
+        assert session.get_one(Payment, first).dedupe_key == f"auto_topup:{ids['setting']}:0"
+        assert session.get_one(Payment, second).dedupe_key == f"auto_topup:{new_setting}:0"
 
 
 def test_below_threshold_while_disarmed_does_nothing(sm: sessionmaker[Session]) -> None:
@@ -252,7 +318,7 @@ def test_back_above_threshold_rearms_once_and_the_next_crossing_has_a_new_key(
     second = _enqueue(sm, ids["child"])
     assert second is not None
     with sm() as session:
-        assert session.get_one(Payment, second).dedupe_key == f"auto_topup:{ids['child']}:1"
+        assert session.get_one(Payment, second).dedupe_key == f"auto_topup:{ids['setting']}:1"
 
 
 # --- cap, in-flight, month --------------------------------------------------------------
@@ -272,13 +338,22 @@ def test_cap_allows_a_top_up_that_lands_exactly_on_it(sm: sessionmaker[Session])
     assert _enqueue(sm, ids["child"]) is not None  # 10 000 + 10 000 == 20 000
 
 
-def test_cap_counts_in_flight_but_not_failed_top_ups(sm: sessionmaker[Session]) -> None:
+def test_cap_ignores_failed_and_voided_top_ups(sm: sessionmaker[Session]) -> None:
     ids = _scene(sm, credits=0, cap=15_000)
     _seed_top_up(sm, ids, status=PaymentStatus.failed)
     _seed_top_up(sm, ids, status=PaymentStatus.voided)
     with sm() as session:
         assert spent_this_month(session, ids["child"], now=NOW) == 0
     assert _enqueue(sm, ids["child"]) is not None
+
+
+def test_spent_this_month_counts_in_flight_and_paid_top_ups(sm: sessionmaker[Session]) -> None:
+    ids = _scene(sm, credits=0)
+    _seed_top_up(sm, ids, status=PaymentStatus.created, amount_minor=1_000)
+    _seed_top_up(sm, ids, status=PaymentStatus.pending, amount_minor=2_000)
+    _seed_top_up(sm, ids, status=PaymentStatus.paid, amount_minor=4_000)
+    with sm() as session:
+        assert spent_this_month(session, ids["child"], now=NOW) == 7_000
 
 
 def test_in_flight_top_up_blocks_another(sm: sessionmaker[Session]) -> None:
@@ -480,6 +555,7 @@ def test_a_teacher_credits_payer_in_a_seat_chain_triggers_the_teachers_setting(
         payer_id=teacher,
         pack_id=pack,
         card_id=seed_saved_card(sm, teacher),
+        consented_at=NOW - timedelta(days=30),
     )
     chain = [
         Payer(
@@ -494,3 +570,35 @@ def test_a_teacher_credits_payer_in_a_seat_chain_triggers_the_teachers_setting(
         auto_topup_post_settle_hook(session, object(), chain, NOW)  # type: ignore[arg-type]
     assert _count_top_ups(sm, teacher) == 1
     assert _count_top_ups(sm, student) == 0
+
+
+def test_one_owners_failure_does_not_skip_the_next_owner_in_the_chain(
+    sm: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    broken = _scene(sm, credits=0)
+    healthy = _scene(sm, credits=0)
+    real = auto_topup_repo.enqueue_auto_topup
+
+    def flaky(session: Session, owner: uuid.UUID, *, now: datetime) -> Payment | None:
+        if owner == broken["child"]:
+            session.execute(
+                sa.update(AutoTopupSettings)
+                .where(AutoTopupSettings.beneficiary_user_id == owner)
+                .values(armed=False)
+            )
+            raise RuntimeError("boom")
+        return real(session, owner, now=now)
+
+    monkeypatch.setattr(auto_topup_repo, "enqueue_auto_topup", flaky)
+    chain = [
+        Payer(owner_user_id=broken["child"], scope=GrantScope.CREDITS),
+        Payer(owner_user_id=healthy["child"], scope=GrantScope.CREDITS),
+    ]
+    with capture_logs() as logs, sm.begin() as session:
+        auto_topup_post_settle_hook(session, object(), chain, NOW)  # type: ignore[arg-type]
+    assert _count_top_ups(sm, healthy["child"]) == 1
+    assert _count_top_ups(sm, broken["child"]) == 0
+    assert _setting(sm, broken["child"]).armed is True  # the failed owner's write was rolled back
+    (line,) = [e for e in logs if e["event"] == "auto_topup_enqueue_failed"]
+    assert line["alert"] is True
+    assert line["beneficiary"] == str(broken["child"])
