@@ -22,12 +22,13 @@ const ROW =
   "flex items-center gap-3 rounded-lg p-2.5 text-on-surface transition-colors duration-150 hover:bg-surface-container-low dark:hover:bg-surface-container-highest " +
   SHEET_FOCUS_RING
 
-function CloseButton() {
+export function CloseButton({ className }: { className?: string } = {}) {
   return (
     <SheetClose
       className={cn(
         "absolute end-4 top-4 flex h-9 w-9 items-center justify-center rounded-pill bg-surface-container-low text-on-surface-variant transition-colors hover:text-on-surface pointer-coarse:h-11 pointer-coarse:w-11 dark:bg-surface-container-highest",
         SHEET_FOCUS_RING,
+        className,
       )}
     >
       <X size={16} aria-hidden="true" />

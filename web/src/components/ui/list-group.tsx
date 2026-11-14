@@ -56,6 +56,8 @@ export type ListRowProps = {
   titleLines?: 1 | 2
   /** Off for rows inside a sheet, which stays up while the destination loads. */
   viewTransition?: boolean
+  /** The row names the page the reader is on: `aria-current="page"`, with the marker in index.css. */
+  current?: boolean
   /** A second control beside the row's own tap target (for example "Acknowledge").
    * Rendered outside the link, so there is never an interactive element inside
    * another. The control brings its own 44px (iOS) / 48px (Android) target. */
@@ -63,16 +65,16 @@ export type ListRowProps = {
 } & ListRowAction
 
 /** The row's router link. A tap inside an open dialog replaces the dialog's history entry (see `dialogExit`). */
-function RowLink({ to, state, viewTransition, className, lines, children }: { to: string; state?: unknown; viewTransition: boolean; className: string; lines?: number; children: ReactNode }) {
+function RowLink({ to, state, viewTransition, className, lines, current, children }: { to: string; state?: unknown; viewTransition: boolean; className: string; lines?: number; current?: boolean; children: ReactNode }) {
   const onClick = useDialogExitClick(to, { state, viewTransition })
   return (
-    <Link to={to} state={state} viewTransition={viewTransition} onClick={onClick} className={className} data-lines={lines}>
+    <Link to={to} state={state} viewTransition={viewTransition} onClick={onClick} className={className} data-lines={lines} aria-current={current ? "page" : undefined}>
       {children}
     </Link>
   )
 }
 
-export function ListRow({ title, subtitle, leading, trailing, to, href, state, onClick, action, lines = subtitle ? 2 : 1, titleLines = 1, viewTransition = true }: ListRowProps) {
+export function ListRow({ title, subtitle, leading, trailing, to, href, state, onClick, action, lines = subtitle ? 2 : 1, titleLines = 1, viewTransition = true, current }: ListRowProps) {
   const base = "lm-press lm-press-delay flex items-center gap-3 px-4 py-2.5 text-start"
   const cls = cn("lm-list-row lm-native-row w-full", base)
   const inner = (
@@ -98,7 +100,7 @@ export function ListRow({ title, subtitle, leading, trailing, to, href, state, o
     return (
       <div className="lm-list-row lm-native-row flex w-full items-center" data-lines={lines}>
         {to ? (
-          <RowLink to={to} state={state} viewTransition={viewTransition} className={main}>
+          <RowLink to={to} state={state} viewTransition={viewTransition} className={main} current={current}>
             {inner}
           </RowLink>
         ) : (
@@ -112,7 +114,7 @@ export function ListRow({ title, subtitle, leading, trailing, to, href, state, o
   }
   if (to)
     return (
-      <RowLink to={to} state={state} viewTransition={viewTransition} className={cls} lines={lines}>
+      <RowLink to={to} state={state} viewTransition={viewTransition} className={cls} lines={lines} current={current}>
         {inner}
       </RowLink>
     )

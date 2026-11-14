@@ -1,9 +1,10 @@
 import { useEffect } from "react"
-import { useLocation } from "react-router-dom"
+import { matchPath, useLocation } from "react-router-dom"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { ListGroup, ListRow } from "@/components/ui/list-group"
 import type { NavShellItem } from "@/components/ui/nav-shells"
 import { useDialogHistory } from "@/lib/nav/useDialogHistory"
+import { CloseButton } from "./TopBarSheets"
 
 /**
  * The More tab on native phones (user decision, 2026-11-13): a titled bottom sheet listing only the
@@ -34,8 +35,19 @@ export function MoreSheet({
   }, [location.key])
   return (
     <Sheet open={open} onOpenChange={(next) => !next && onClose()}>
-      <SheetContent side="bottom" showCloseButton={false} aria-describedby={undefined}>
-        <SheetTitle className="lm-native-sheet-title mb-4 text-display-md">More</SheetTitle>
+      <SheetContent
+        side="bottom"
+        showCloseButton={false}
+        aria-describedby={undefined}
+        // The title rides in the drag region right under the grabber; the list gets its own margin
+        // from the header's bottom padding (the sheet title rule zeroes margins, padding is not reset).
+        nativeHeader={<SheetTitle className="lm-native-sheet-title w-full px-6 pb-4 pt-0 text-display-md">More</SheetTitle>}
+        nativeBodyClassName="px-6 pb-6 pt-0"
+      >
+        {/* iOS sheets close from the top corner, as the Create sheet does; Android has the scrim and Back. */}
+        <div className="hidden native:ios:contents">
+          <CloseButton />
+        </div>
         <ListGroup>
           {items.map((item) => (
             <ListRow
@@ -45,6 +57,7 @@ export function MoreSheet({
               leading={item.icon}
               trailing={item.badge !== undefined ? <span className="text-metadata">{item.badge}</span> : undefined}
               lines={1}
+              current={Boolean(item.to && matchPath({ path: item.to, end: item.end ?? false }, location.pathname))}
               // The sheet closes on arrival: native iOS dismisses it and shows the destination, with no push.
               viewTransition={false}
             />

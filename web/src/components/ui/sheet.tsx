@@ -49,11 +49,18 @@ function SheetContent({
   children,
   side = "right",
   showCloseButton = true,
+  nativeHeader,
+  nativeBodyClassName = "p-6",
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   /** `adaptive`: a floating panel from the end edge from `sm`, a bottom sheet below it. */
   side?: "top" | "right" | "bottom" | "left" | "adaptive"
   showCloseButton?: boolean
+  /** The native grabber sheet's header, inside the drag region right under the grabber (a title that
+   * should sit close to it). Where the sheet is not native it renders first in the content instead. */
+  nativeHeader?: React.ReactNode
+  /** Classes for the native sheet's scrolling body; the default is the 24px inset. */
+  nativeBodyClassName?: string
 }) {
   const { native } = useNativeFrame()
   const closeRef = React.useRef<HTMLButtonElement>(null)
@@ -68,8 +75,8 @@ function SheetContent({
             data-slot="sheet-content"
             detents={["content"]}
             onDismiss={() => closeRef.current?.click()}
-            header={null}
-            bodyClassName="p-6"
+            header={nativeHeader ?? null}
+            bodyClassName={nativeBodyClassName}
           >
             {children}
             <SheetPrimitive.Close ref={closeRef} tabIndex={-1} className="sr-only">
@@ -102,6 +109,7 @@ function SheetContent({
         )}
         {...props}
       >
+        {nativeHeader}
         {children}
         {showCloseButton && (
           <SheetPrimitive.Close className="absolute top-4 end-4 rounded-xs opacity-70 ring-offset-surface transition-opacity hover:opacity-100 active:opacity-100 focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-on-surface-variant">

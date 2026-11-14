@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type HTMLAttributes,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react"
@@ -22,7 +23,10 @@ import { cn } from "@/lib/utils"
  * starts on [data-sheet-drag-region] (grabber + header) and, once the body
  * sits at its top, on a downward move that starts in [data-sheet-body]
  * (user decision, 2026-11-13): an upward move or a scrolled body stays the
- * body's own scroll, and pressing a control never starts a drag.
+ * body's own scroll. A press on a row or button in the body may start that
+ * drag too once it has moved past the slop, and the click that follows a drag
+ * is swallowed so the row does not also fire. Fields (input, select, textarea)
+ * never start one, and neither do the controls inside the grabber header.
  */
 export interface BottomSheetSurfaceProps extends HTMLAttributes<HTMLDivElement> {
   detents?: readonly Detent[]
@@ -85,10 +89,14 @@ interface DragState {
   id: number
   y: number
   samples: PointerSample[]
+  /** The press began on a row, link or button, so its click must be swallowed if it turns into a drag. */
+  onControl?: boolean
 }
 
 /** Elements inside the drag region that keep their own click: header buttons, links, fields. */
 const INTERACTIVE = "button, a, input, select, textarea, [role=button]"
+/** Fields never start a sheet drag, wherever they sit: a press there is a caret or a slider move. */
+const FIELD = "input, select, textarea, [role=slider]"
 
 export const BottomSheetSurface = forwardRef<HTMLDivElement, BottomSheetSurfaceProps>(function BottomSheetSurface(
   {
@@ -106,6 +114,7 @@ export const BottomSheetSurface = forwardRef<HTMLDivElement, BottomSheetSurfaceP
     onPointerMove: callerMove,
     onPointerUp: callerUp,
     onPointerCancel: callerCancel,
+    onClickCapture: callerClickCapture,
     ...panel
   },
   ref,
@@ -125,6 +134,10 @@ export const BottomSheetSurface = forwardRef<HTMLDivElement, BottomSheetSurfaceP
   const drag = useRef<DragState | null>(null)
   /** A press in the body that has not yet shown whether it is a drag or a scroll. */
   const pending = useRef<DragState | null>(null)
+  /** Set when a drag that began on a row or button ends: the click that follows must not fire it. */
+  const swallowClick = useRef(false)
+  const swallowTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(swallowTimer.current), [])
 
   // Touch: once a body press has become a drag, the browser must not also pan the body.
   useEffect(() => {
@@ -147,9 +160,10 @@ export const BottomSheetSurface = forwardRef<HTMLDivElement, BottomSheetSurfaceP
   function onPointerDown(e: ReactPointerEvent<HTMLDivElement>): void {
     callerDown?.(e)
     const target = e.target as Element
-    if (e.button > 0 || target.closest(INTERACTIVE)) return
+    const inRegion = target.closest("[data-sheet-drag-region]")
+    if (e.button > 0 || target.closest(FIELD) || (inRegion && target.closest(INTERACTIVE))) return
     if (!dismissible && detents.length < 2) return
-    const start: DragState = { id: e.pointerId, y: e.clientY, samples: [[e.timeStamp, e.clientY]] }
+    const start: DragState = { id: e.pointerId, y: e.clientY, samples: [[e.timeStamp, e.clientY]], onControl: !!target.closest(INTERACTIVE) }
     if (target.closest("[data-sheet-drag-region]")) beginDrag(start, e.currentTarget)
     else if (target.closest("[data-sheet-body]")) pending.current = start
   }
@@ -162,6 +176,8 @@ export const BottomSheetSurface = forwardRef<HTMLDivElement, BottomSheetSurfaceP
       if (intent === "scroll") pending.current = null
       else if (intent === "drag") {
         pending.current = null
+        // A press that began on a row or button must not click when the finger lifts.
+        if (p.onControl) swallowClick.current = true
         // The sheet starts from where the finger is now, so it does not jump by the slop.
         beginDrag({ id: p.id, y: e.clientY, samples: [[e.timeStamp, e.clientY]] }, e.currentTarget)
       }
@@ -174,17 +190,33 @@ export const BottomSheetSurface = forwardRef<HTMLDivElement, BottomSheetSurfaceP
   function endDrag(e: ReactPointerEvent<HTMLDivElement>): void {
     if (pending.current?.id === e.pointerId) pending.current = null
     const d = drag.current
-    if (!d || d.id !== e.pointerId) return
+    if (!d || d.id !== e.pointerId) {
+      swallowClick.current = false
+      return
+    }
     drag.current = null
+    // The click, if the browser sends one, arrives right after this pointerup. Armed after the
+    // decision below: a dismissal clicks the sheet's own hidden Close, and that click must pass.
+    const armSwallow = () => {
+      if (!swallowClick.current) return
+      window.clearTimeout(swallowTimer.current)
+      swallowTimer.current = window.setTimeout(() => { swallowClick.current = false }, 100)
+    }
     const el = panelRef.current
-    if (!el) return
+    if (!el) {
+      armSwallow()
+      return
+    }
     el.removeAttribute("data-dragging")
     const dy = e.clientY - d.y
     const velocity = releaseVelocity(d.samples, e.timeStamp, e.clientY)
     const decision = sheetRelease({ dy, velocity, height: el.offsetHeight, detent, detents, dismissible })
     if (decision.kind === "dismiss") {
       // The exit slides out from where the finger left the sheet: the translate stays.
+      swallowClick.current = false
       onDismiss()
+      swallowClick.current = d.onControl === true
+      armSwallow()
       return
     }
     el.style.translate = ""
@@ -192,10 +224,20 @@ export const BottomSheetSurface = forwardRef<HTMLDivElement, BottomSheetSurfaceP
       setDetent(decision.detent)
       nativeHaptic("tap")
     }
+    armSwallow()
   }
   function onPointerUp(e: ReactPointerEvent<HTMLDivElement>): void {
     callerUp?.(e)
     endDrag(e)
+  }
+  function onClickCapture(e: ReactMouseEvent<HTMLDivElement>): void {
+    if (swallowClick.current) {
+      swallowClick.current = false
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
+    callerClickCapture?.(e)
   }
   function onPointerCancel(e: ReactPointerEvent<HTMLDivElement>): void {
     callerCancel?.(e)
@@ -212,6 +254,9 @@ export const BottomSheetSurface = forwardRef<HTMLDivElement, BottomSheetSurfaceP
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerCancel}
+      onClickCapture={onClickCapture}
+      // A link's native drag-and-drop (a mouse or a stylus) would take the pointer away mid-drag; nothing in a sheet is draggable.
+      onDragStart={(event) => event.preventDefault()}
       style={{ ...style, ["--lm-keyboard-inset" as string]: `${keyboard}px` }}
       className={cn("lm-sheet", className)}
     >

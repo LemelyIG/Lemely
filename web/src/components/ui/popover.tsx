@@ -14,6 +14,7 @@ import { useDialogHistory } from "@/lib/nav/useDialogHistory"
 import { useNativeFrame } from "@/lib/useNativeFrame"
 import { BottomSheetSurface } from "@/components/ui/bottom-sheet"
 import { useDialogFocus } from "@/components/ui/use-dialog-focus"
+import { useOverlayPhase } from "@/lib/overlayPhase"
 
 /*
  * Anchored popover for menus, filter panels and small pickers — content that
@@ -66,6 +67,9 @@ export interface PopoverProps {
   align?: "start" | "end"
   className?: string
   contentClassName?: string
+  /** Native sheet only: a short one-line visible title that also names the dialog. Without it the
+   * trigger names the sheet, which suits a button but not a whole card. */
+  sheetTitle?: string
 }
 
 export function Popover({
@@ -77,14 +81,19 @@ export function Popover({
   align = "start",
   className,
   contentClassName,
+  sheetTitle,
 }: PopoverProps) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen)
   const isControlled = openProp !== undefined
   const open = isControlled ? openProp : uncontrolledOpen
   const contentId = useId()
   const triggerId = useId()
+  const sheetTitleId = useId()
   const { native } = useNativeFrame()
-  const sheetOpen = native && open
+  // Like Modal: the sheet stays mounted (history entry, scroll lock, focus trap live) while it
+  // slides out, and only "closed" unmounts it.
+  const { phase, onAnimationEnd } = useOverlayPhase(native && open)
+  const sheetOpen = native && phase !== "closed"
   const sheetRef = useRef<HTMLDivElement>(null)
 
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -130,13 +139,17 @@ export function Popover({
 
   // The trigger names the sheet. A call site that does not spread `triggerProps.id`
   // (the notification row wires only the ref) would leave a dangling reference, so
-  // those fall back to a plain label rather than an unnamed dialog. Read from the ref in
-  // a layout effect (before paint), never from the DOM during render.
+  // those fall back to a plain label rather than an unnamed dialog. A visible sheet title
+  // wins. Read from the ref in a layout effect (before paint), never from the DOM during render.
   const [triggerNamed, setTriggerNamed] = useState(false)
   useLayoutEffect(() => {
     setTriggerNamed(sheetOpen && triggerRef.current?.id === triggerId)
   }, [sheetOpen, triggerId])
-  const sheetLabel = triggerNamed ? { "aria-labelledby": triggerId } : { "aria-label": "More actions" }
+  const sheetLabel = sheetTitle
+    ? { "aria-labelledby": sheetTitleId }
+    : triggerNamed
+      ? { "aria-labelledby": triggerId }
+      : { "aria-label": "More actions" }
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     if (event.key !== "Escape") return
@@ -186,6 +199,22 @@ export function Popover({
                 }}
                 detents={["content"]}
                 onDismiss={close}
+                closing={phase === "closing"}
+                // Only the sheet's own exit ends the phase: a child's animation must not.
+                onAnimationEnd={
+                  phase === "closing"
+                    ? (event) => {
+                        if (event.target === event.currentTarget) onAnimationEnd()
+                      }
+                    : undefined
+                }
+                header={
+                  sheetTitle ? (
+                    <h2 id={sheetTitleId} className="lm-native-sheet-title w-full truncate px-4 pb-2 text-display-md">
+                      {sheetTitle}
+                    </h2>
+                  ) : null
+                }
                 bodyClassName="flex flex-col gap-1 px-1 pb-4 [&_button]:min-h-11"
               >
                 {children}
