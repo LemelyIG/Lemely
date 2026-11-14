@@ -1,4 +1,5 @@
 import { NATIVE_HOME, NATIVE_SUBJECT, NATIVE_TEACHER_HOME, reviewApp } from "./checks-native.mjs"
+import { teacherShellMocks } from "./mocks.mjs"
 
 /*
  * NF polish batch, lane P1 (visual). Behaviour checks for items 1-14 and 24 of nf-polish-brief.md.
@@ -555,4 +556,145 @@ POLISH_V_CHECKS.push(
       if (r.delta < (theme === "dark" ? 0.025 : 0.04)) throw new Error(`the group barely separates from the sheet: ${r.group} on ${r.sheet} (luminance step ${r.delta.toFixed(3)})`)
     },
   })),
+  // 1 (fix round 1). Eyebrows that carry data keep it on native, as a quiet line under the heading.
+  ...PLATFORMS.flatMap((platform) =>
+    [
+      ["class-detail", "/teacher/classes/class-1", "Physics · 0625", "Year 11 Physics"],
+      ["quiz-results", "/teacher/quizzes/quiz-1/assignments/asg-1/results", "0625 · Year 11 Physics", "Forces quiz"],
+      ["quiz-builder", "/teacher/quizzes/quiz-1?step=3", "0625", "Forces quiz"],
+    ].map(([name, path, meta, heading]) => ({
+      id: `pv-${platform}-${name}-keeps-its-subject-as-a-quiet-line`,
+      platform,
+      width: 390,
+      app: { ...NATIVE_TEACHER_HOME, path, mocks: dataEyebrowMocks },
+      async run(page) {
+        const h = page.locator("main h1", { hasText: heading })
+        await h.waitFor()
+        const r = await page.evaluate((text) => {
+          const line = [...document.querySelectorAll("main [data-native-meta]")].find((e) => e.textContent.trim() === text)
+          const eyebrow = [...document.querySelectorAll("main .text-eyebrow")].filter((e) => e.checkVisibility() && e.textContent.trim() === text)
+          const h1 = document.querySelector("main h1")
+          const lineBox = line?.getBoundingClientRect()
+          return {
+            shown: !!line && line.checkVisibility(),
+            mono: line ? getComputedStyle(line).fontFamily.toLowerCase().includes("mono") : null,
+            upper: line ? getComputedStyle(line).textTransform : null,
+            below: lineBox && h1 ? lineBox.top >= h1.getBoundingClientRect().bottom - 1 || h1.getBoundingClientRect().height < 2 || getComputedStyle(h1).position === "absolute" : false,
+            eyebrows: eyebrow.length,
+          }
+        }, meta)
+        if (!r.shown) throw new Error(`the subject "${meta}" is not shown on native`)
+        if (r.mono || r.upper === "uppercase") throw new Error("the subject is still styled as a mono eyebrow")
+        if (r.eyebrows) throw new Error("the eyebrow itself still shows above the heading")
+      },
+    })),
+  ),
+  {
+    id: "pv-other-1280-class-detail-keeps-the-eyebrow-and-no-meta-line",
+    width: 1280,
+    app: { ...NATIVE_TEACHER_HOME, path: "/teacher/classes/class-1", mocks: dataEyebrowMocks },
+    async run(page) {
+      await page.locator("main h1", { hasText: "Year 11 Physics" }).waitFor()
+      const r = await page.evaluate(() => ({
+        eyebrow: [...document.querySelectorAll("main .text-eyebrow")].some((e) => e.checkVisibility() && e.textContent.trim() === "Physics · 0625"),
+        meta: [...document.querySelectorAll("main [data-native-meta]")].some((e) => e.checkVisibility()),
+      }))
+      if (!r.eyebrow) throw new Error("desktop lost the subject eyebrow")
+      if (r.meta) throw new Error("desktop shows the native meta line")
+    },
+  },
+  // 3 (fix round 1). The Android current pill keeps the row's glyph on the other rows' x; the iOS close centres on the title.
+  {
+    id: "pv-android-more-current-row-keeps-its-content-aligned",
+    platform: "android",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student/friends" },
+    async run(page) {
+      const dialog = await openMore(page)
+      const xs = await dialog.evaluate((el) =>
+        [...el.querySelectorAll("a.lm-list-row")].map((a) => ({ cur: a.hasAttribute("aria-current"), x: a.querySelector("svg").getBoundingClientRect().left })),
+      )
+      const cur = xs.find((x) => x.cur)
+      const other = xs.find((x) => !x.cur)
+      if (!cur || !other) throw new Error("no current and other row")
+      if (Math.abs(cur.x - other.x) > 0.5) throw new Error(`the current row's glyph is at x=${cur.x}, the others at x=${other.x}`)
+    },
+  },
+  {
+    id: "pv-ios-more-close-is-centred-on-the-title",
+    platform: "ios",
+    width: 390,
+    app: NATIVE_HOME,
+    async run(page) {
+      const dialog = await openMore(page)
+      const r = await dialog.evaluate((el) => {
+        const t = el.querySelector(".lm-native-sheet-title")
+        const range = document.createRange()
+        range.selectNodeContents(t)
+        const text = range.getBoundingClientRect()
+        const c = el.querySelector('[data-slot="sheet-close"]').getBoundingClientRect()
+        return { title: (text.top + text.bottom) / 2, close: (c.top + c.bottom) / 2 }
+      })
+      if (Math.abs(r.title - r.close) > 2) throw new Error(`the close control centre is at y=${r.close}, the title's at y=${r.title}`)
+    },
+  },
+  // 15 (fix round 1). Desktop: a view-transition navigation plays one entrance, and none replays after it.
+  {
+    id: "pv-other-1280-view-transition-nav-replays-no-entrance",
+    width: 1280,
+    app: { ...NATIVE_HOME, motion: true },
+    async run(page) {
+      await page.locator("main").waitFor()
+      await page.evaluate(() => {
+        window.__starts = []
+        window.__opacity = []
+        const seen = new WeakSet()
+        const t0 = performance.now()
+        const tick = () => {
+          const t = Math.round(performance.now() - t0)
+          for (const a of document.documentElement.getAnimations({ subtree: true })) {
+            if (seen.has(a)) continue
+            seen.add(a)
+            window.__starts.push({ t, name: a.animationName ?? "", pseudo: a.effect?.pseudoElement ?? "", cls: a.effect?.target?.className?.toString() ?? "" })
+          }
+          const screen = document.querySelector("[data-screen]")
+          if (screen) window.__opacity.push({ t, o: Number(getComputedStyle(screen).opacity) })
+          requestAnimationFrame(tick)
+        }
+        requestAnimationFrame(tick)
+      })
+      await page.locator('a[href="/student/classes"]:visible').first().click()
+      await page.waitForURL("**/student/classes")
+      await page.waitForTimeout(1000)
+      const { starts, opacity } = await page.evaluate(() => ({ starts: window.__starts, opacity: window.__opacity }))
+      const vt = starts.find((s) => /view-transition-new\(root\)/.test(s.pseudo))
+      if (!vt) throw new Error(`no view transition ran: ${JSON.stringify(starts.map((s) => s.name))}`)
+      const dips = opacity.filter((x) => x.t >= vt.t && x.o < 0.99)
+      if (dips.length) throw new Error(`the screen fades again after the transition began (min opacity ${Math.min(...dips.map((d) => d.o))})`)
+      const replays = starts.filter((s) => s.name === "lm-in" && /lm-screen/.test(s.cls) && s.t > vt.t + 150)
+      if (replays.length) throw new Error(`an entrance restarted after the transition: ${JSON.stringify(replays)}`)
+    },
+  },
 )
+
+async function dataEyebrowMocks(page) {
+  await teacherShellMocks(page)
+  const json = (route, body) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) })
+  await page.route(/\/api\/classes\/class-1(\?|$)/, (route) =>
+    json(route, {
+      id: "class-1", label: "Year 11 Physics", stats: [], mastery: [], distribution: [], students: [], subjectCode: "0625",
+      subjectName: "Physics", schoolId: null, joinCode: null, atRiskCount: 0, lastActivityAt: null, topWeakness: null,
+    }),
+  )
+  const quiz = { id: "quiz-1", subjectCode: "0625", title: "Forces quiz", status: "draft", targetGrade: "B", includedTopics: [], poolSource: null, requestedCount: null, timeLimitMinutes: null, builderStep: 3, questionCount: 0 }
+  await page.route(/\/api\/teacher\/quizzes\/quiz-1(\?|$)/, (route) => json(route, { quiz, questions: [] }))
+  await page.route(/\/api\/teacher\/quizzes\/pool-count/, (route) => json(route, { matching: 0, byBand: {}, shortfall: null, message: null }))
+  await page.route(/\/api\/teacher\/quizzes\/quiz-1\/assignments\/asg-1\/results/, (route) =>
+    json(route, {
+      assignment: { id: "asg-1", classId: "class-1", className: "Year 11 Physics", assignedAt: "2026-11-01T09:00:00Z", dueAt: null, closesAt: null, rosterSize: 0, submissionCounts: {} },
+      quizTitle: "Forces quiz", subjectCode: "0625", questionCount: 0, totalMarks: 0,
+      completion: { rosterSize: 0, completedCount: 0, completionRate: null, statusCounts: {}, offRosterSubmissionCount: 0 },
+      averagePercentage: null, medianPercentage: null, scoreDistribution: [], questionAnalysis: [], students: [], topicWeaknesses: [],
+    }),
+  )
+}
