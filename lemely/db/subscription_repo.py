@@ -17,6 +17,7 @@ the service shell; later tasks add the lifecycle to :class:`SubscriptionService`
 
 from __future__ import annotations
 
+import enum
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -123,6 +124,19 @@ SUBSCRIPTION_SWEEP_BATCH: Final = 200
 EARLY_CHARGE_WINDOW: Final = timedelta(days=3, hours=6)
 
 
+class AmountPush(enum.StrEnum):
+    """What :meth:`SubscriptionService.sync_renewal_amount` did."""
+
+    SENT = "sent"
+    UNCHANGED = "unchanged"
+    #: Nothing to push to: no Paymob link, or the fixed-amount fallback path.
+    UNAVAILABLE = "unavailable"
+    #: Refused: the period has ended, so Paymob may already have charged the old amount.
+    PERIOD_OVER = "period_over"
+    #: The PUT may or may not have landed (timeout, transport, 5xx); the next pass repeats it.
+    UNKNOWN_OUTCOME = "unknown_outcome"
+
+
 class _RetryLedger:
     """Per-process consecutive-failure state with an exponential, capped backoff.
 
@@ -157,10 +171,12 @@ _CANCEL_RETRY: Final = _RetryLedger(base=timedelta(minutes=10), cap=timedelta(ho
 _AMOUNT_PUT_FAILURES: Final = _RetryLedger(base=timedelta(0), cap=timedelta(0))
 #: Page after this many consecutive unknown-outcome PUTs of one subscription, then every multiple.
 _AMOUNT_PUT_ALERT_EVERY: Final = 3
-#: Subscriptions whose last amount PUT had an unknown outcome: Paymob may hold an amount the stamp
-#: does not show, so the next sweep sends the expected amount again even when it equals the
-#: stamp (M-1). Per process, like ``_MODE_ALERTED``.
-_AMOUNT_UNCERTAIN: Final[set[uuid.UUID]] = set()
+#: How far a charge's Paymob timestamp may sit after our own record of a PUT and still count as
+#: made before it. Paymob stamps ``created_at`` with its own clock (and a zone we assume,
+#: UD-8), so a charge made just before the PUT can read as just after it. Accepting a charge made
+#: up to this long after the PUT, at the replaced amount, costs nothing: Paymob cannot charge that
+#: amount once the PUT has landed, so only a genuinely early charge ever matches.
+PAYMOB_CLOCK_SKEW: Final = timedelta(seconds=60)
 
 #: Paymob ids and amounts above this are not Paymob data: the columns are 64-bit and a hostile or
 #: corrupt body must not become a database error that makes the webhook fail on every retry.
@@ -454,6 +470,13 @@ def _bump(subscription: Subscription) -> None:
     """Advance ``version`` unless the mapper already does it (``version_id_col``)."""
     if sa.inspect(Subscription).version_id_col is None:
         subscription.version = (subscription.version or 0) + 1
+
+
+def _clear_amount_marks(subscription: Subscription) -> None:
+    """Forget the replaced amount and an uncertain PUT: a plan that ended has no renewal left."""
+    subscription.previous_amount_minor = None
+    subscription.amount_replaced_at = None
+    subscription.amount_sync_uncertain_at = None
 
 
 def _has_other_live(session: Session, subscription: Subscription) -> bool:
@@ -1399,10 +1422,20 @@ def _end_period_grants(
 class SubscriptionService:
     """The subscription lifecycle, bound to one session (see the module docstring)."""
 
-    def __init__(self, session: Session, client: PaymobClient, settings: PaymobSettings) -> None:
+    def __init__(
+        self,
+        session: Session,
+        client: PaymobClient,
+        settings: PaymobSettings,
+        *,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
         self._session = session
         self._client = client
         self._settings = settings
+        #: Read only to time an amount PUT after it returns (``amount_replaced_at``); everything
+        #: else takes the caller's ``now``.
+        self._clock = clock or (lambda: datetime.now(UTC))
 
     def _billing(self, now: datetime) -> BillingService:
         """A payments service whose clock is the caller's ``now``, never the wall clock (DV-8)."""
@@ -1928,7 +1961,7 @@ class SubscriptionService:
             and replaced_at is not None
             and amount == previous
             and amount not in accepted
-            and charged_at < replaced_at
+            and charged_at < replaced_at + PAYMOB_CLOCK_SKEW
         )
         if via_previous:
             accepted.add(amount)
@@ -1938,6 +1971,17 @@ class SubscriptionService:
                 charged_minor=amount,
                 stamped_minor=stamped,
             )
+            if amount < expected:
+                # The payer paid what Paymob held, so the period is granted, but a change made
+                # since (an upgrade, added seats) is worth more than that: someone collects the
+                # difference.
+                alerts.error(
+                    "subscription_renewal_paid_previous_amount",
+                    subscription_id=str(subscription.id),
+                    charged_minor=amount,
+                    expected_minor=expected,
+                    alert=True,
+                )
         mismatch = (
             current_tier is None or currency != current_tier.currency or amount not in accepted
         )
@@ -2187,25 +2231,29 @@ class SubscriptionService:
 
     def sync_renewal_amount(
         self, subscription: Subscription, *, now: datetime | None = None
-    ) -> bool:
-        """PUT :meth:`next_renewal_amount` to Paymob if it differs from the stamp; ``True`` if sent.
+    ) -> AmountPush:
+        """PUT :meth:`next_renewal_amount` to Paymob if it differs from the stamp.
 
         The one way any phase changes a Paymob subscription amount (index R6). Stamps
-        ``paymob_amount_minor`` in the caller's transaction on success. Nothing is sent without a
-        Paymob link, when nothing changed, on the fixed-amount fallback path (Paymob cannot change
-        the amount there), or once the period has ended (``current_period_end <= now``): Paymob
-        may already have charged the old amount, and a PUT that lands before the renewal webhook
-        is processed would make that paid charge a mismatch. ``now`` is the caller's clock;
-        without one the wall clock is used.
+        ``paymob_amount_minor`` in the caller's transaction on success (``AmountPush.SENT``).
+        Nothing is sent without a Paymob link or on the fixed-amount fallback path
+        (``UNAVAILABLE``: Paymob cannot change the amount there), when nothing changed
+        (``UNCHANGED``), or once the period has ended (``PERIOD_OVER``, ``current_period_end <=
+        now``): Paymob may already have charged the old amount, and a PUT that lands before the
+        renewal webhook is processed would make that paid charge a mismatch. ``now`` is the
+        caller's clock; without one the wall clock is used.
 
         A PUT that changes the amount keeps the replaced one in ``previous_amount_minor`` with the
-        time in ``amount_replaced_at`` (only the latest), for a charge Paymob made early.
+        time it was replaced in ``amount_replaced_at`` (only the latest), for a charge Paymob made
+        early (:meth:`_apply_successful_charge`). The time is read after the PUT returns, never
+        earlier than ``now``: a charge made while the PUT was in flight is still before it.
 
-        An unknown outcome (timeout, transport, 5xx) leaves the stamp alone and returns ``False``.
-        Paymob may nevertheless hold the new amount, so the subscription is remembered and the
-        next sweep sends the expected amount again even if it equals the stamp (M-1); a stamp
-        claiming a PUT that may not have landed would hide the difference for good. After
-        ``_AMOUNT_PUT_ALERT_EVERY`` consecutive unknown outcomes the failure is alerted (M-7).
+        An unknown outcome (timeout, transport, 5xx) leaves the stamp alone and returns
+        ``UNKNOWN_OUTCOME``. Paymob may nevertheless hold the new amount, so the row records
+        ``amount_sync_uncertain_at`` (durable, so any replica and any restart sees it) and the
+        next sweep sends the expected amount again even if it equals the stamp (M-1). After
+        ``_AMOUNT_PUT_ALERT_EVERY`` consecutive unknown outcomes the failure is alerted (M-7;
+        the count is per process).
 
         Raises:
             PaymobError: a definite refusal; the stamp is unchanged and the sweep rolls the row
@@ -2213,24 +2261,25 @@ class SubscriptionService:
         """
         paymob_id = subscription.paymob_subscription_id
         if paymob_id is None or not self._settings.subscription_amount_updatable:
-            return False
-        at = now if now is not None else datetime.now(UTC)
+            return AmountPush.UNAVAILABLE
+        at = now if now is not None else self._clock()
         if subscription.current_period_end is not None and subscription.current_period_end <= at:
             log.info("paymob_amount_put_skipped_period_over", subscription_id=str(subscription.id))
-            return False
+            return AmountPush.PERIOD_OVER
         expected = self.next_renewal_amount(subscription)
         if (
             expected == subscription.paymob_amount_minor
-            and subscription.id not in _AMOUNT_UNCERTAIN
+            and subscription.amount_sync_uncertain_at is None
         ):
-            return False
+            return AmountPush.UNCHANGED
         try:
             self._client.update_subscription(paymob_id, amount_cents=expected)
         except PaymobError as exc:
             status = exc.status_code
             if not (exc.outcome_unknown or status is None or not 400 <= status < 500):
                 raise
-            _AMOUNT_UNCERTAIN.add(subscription.id)
+            subscription.amount_sync_uncertain_at = at
+            _bump(subscription)
             failures = _AMOUNT_PUT_FAILURES.failed(subscription.id, at)
             log.warning(
                 "paymob_amount_put_unknown",
@@ -2246,15 +2295,19 @@ class SubscriptionService:
                     consecutive_failures=failures,
                     alert=True,
                 )
-            return False
-        _AMOUNT_UNCERTAIN.discard(subscription.id)
+            return AmountPush.UNKNOWN_OUTCOME
+        landed_at = max(at, self._clock())
+        subscription.amount_sync_uncertain_at = None
         _AMOUNT_PUT_FAILURES.clear(subscription.id)
         replaced = subscription.paymob_amount_minor
         if replaced is not None and replaced != expected:
             # Paymob may have charged the replaced amount early, before this PUT landed: keep it
             # (only the latest one) so that charge is still paid (see _apply_successful_charge).
+            # Two replacements inside the early-charge window are not both covered: a charge at
+            # the amount before the previous one is refused, an accepted limitation (rare, and it
+            # alerts a mismatch for an operator to reconcile).
             subscription.previous_amount_minor = replaced
-            subscription.amount_replaced_at = at
+            subscription.amount_replaced_at = landed_at
         subscription.paymob_amount_minor = expected
         _bump(subscription)
         log.info(
@@ -2262,7 +2315,7 @@ class SubscriptionService:
             subscription_id=str(subscription.id),
             amount_minor=expected,
         )
-        return True
+        return AmountPush.SENT
 
     def apply_period_end_changes(
         self, *, now: datetime, limit: int = SUBSCRIPTION_SWEEP_BATCH
@@ -2371,7 +2424,7 @@ class SubscriptionService:
                     S.pending_plan_tier_id.is_not(None),
                     S.pending_extra_seats.is_not(None),
                     S.paymob_amount_minor.is_(None),
-                    S.id.in_(_AMOUNT_UNCERTAIN),
+                    S.amount_sync_uncertain_at.is_not(None),
                     S.current_period_end <= now + AMOUNT_SYNC_WINDOW,
                 ),
             )
@@ -2383,7 +2436,7 @@ class SubscriptionService:
         try:
             for row in result:
                 if (
-                    row.id in _AMOUNT_UNCERTAIN
+                    row.amount_sync_uncertain_at is not None
                     or self.next_renewal_amount(row) != row.paymob_amount_minor
                 ):
                     found.append(row.id)
@@ -2400,9 +2453,8 @@ class SubscriptionService:
             or subscription.cancel_at_period_end
             or subscription.paymob_subscription_id is None
         ):
-            _AMOUNT_UNCERTAIN.discard(subscription.id)
             return False
-        return self.sync_renewal_amount(subscription, now=now)
+        return self.sync_renewal_amount(subscription, now=now) is AmountPush.SENT
 
     def _push_cancel(self, subscription: Subscription, now: datetime) -> bool:
         """Sweep step: cancel the Paymob subscription; a failure backs off and is alerted.
@@ -2441,6 +2493,7 @@ class SubscriptionService:
         subscription.status = SubscriptionStatus.cancelled
         subscription.grace_until = None
         subscription.suspended_at = None  # the plan is over: no resume can act on it (M-2)
+        _clear_amount_marks(subscription)
         _bump(subscription)
         # Past tense, so it goes out now and names the stored period end (UD-4 (b)).
         enqueue_subscription_notice(
@@ -2554,6 +2607,7 @@ class SubscriptionService:
         )
         subscription.grace_until = None
         subscription.suspended_at = None
+        _clear_amount_marks(subscription)
         _bump(subscription)
         enqueue_subscription_notice(
             self._session, subscription=subscription, notice="expired", effective_at=deadline

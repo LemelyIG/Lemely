@@ -351,6 +351,12 @@ class Subscription(TimestampMixin, Base):
     amount_replaced_at: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True
     )
+    amount_sync_uncertain_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    """Set when the last amount PUT had an unknown outcome (migration 0058): Paymob may hold an
+    amount the stamp does not show, so the next sweep sends the expected amount again. Cleared by
+    a PUT that succeeds, and when the plan ends."""
     extra_seat_grace_until: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True
     )

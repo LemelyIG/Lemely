@@ -106,6 +106,7 @@ from lemely.db.models.enums import SubscriptionStatus
 from lemely.db.models.team import TeacherMember, TeacherMemberKind, TeacherMemberStatus
 from lemely.db.models.usage import GrantKind
 from lemely.db.subscription_repo import (
+    AmountPush,
     NoCreditRate,
     SubscriptionService,
     convert_payment_to_credits,
@@ -1735,7 +1736,7 @@ def push_renewal_amount(
             return
         service = SubscriptionService(session, client, settings)
         try:
-            service.sync_renewal_amount(sub)
+            pushed = service.sync_renewal_amount(sub)
         except PaymobError as exc:
             alerts.error(
                 "subscription_amount_push_failed",
@@ -1754,7 +1755,7 @@ def push_renewal_amount(
                 "subscription_amount_push_failed",
                 alert=True,
                 subscription_id=str(subscription_id),
-                reason="unknown_outcome",
+                reason="period_over" if pushed is AmountPush.PERIOD_OVER else "unknown_outcome",
             )
 
 

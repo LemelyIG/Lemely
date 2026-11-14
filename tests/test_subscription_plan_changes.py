@@ -19,6 +19,7 @@ from lemely.db.models.billing import Payment, PaymentStatus, PlanAudience, Subsc
 from lemely.db.models.enums import PlanInterval, Role, SubscriptionStatus
 from lemely.db.models.tutoring import EmailOutbox
 from lemely.db.subscription_repo import (
+    AmountPush,
     DowngradeUnavailable,
     InvalidPlanChange,
     SeatsInsufficient,
@@ -907,8 +908,12 @@ def test_sync_renewal_amount_is_a_no_op_without_a_link_or_a_difference(
     client = FakePaymobClient()
     with pg_sessionmaker.begin() as session:
         svc = _svc(session, client)
-        assert svc.sync_renewal_amount(session.get(Subscription, linked)) is False  # type: ignore[arg-type]
-        assert svc.sync_renewal_amount(session.get(Subscription, unlinked)) is False  # type: ignore[arg-type]
+        linked_row = session.get(Subscription, linked)
+        unlinked_row = session.get(Subscription, unlinked)
+        assert linked_row is not None
+        assert unlinked_row is not None
+        assert svc.sync_renewal_amount(linked_row) is AmountPush.UNCHANGED
+        assert svc.sync_renewal_amount(unlinked_row) is AmountPush.UNAVAILABLE
     assert client.calls == []
 
 
@@ -927,7 +932,7 @@ def test_the_fallback_path_never_puts_an_amount(pg_sessionmaker: sessionmaker[Se
         assert updatable.next_renewal_amount(row) == 6_000
         other = session.get(Subscription, unstamped)
         assert other is not None
-        assert fallback.sync_renewal_amount(other) is False
+        assert fallback.sync_renewal_amount(other) is AmountPush.UNAVAILABLE
     assert _sweep_with(pg_sessionmaker, client, FALLBACK) == 0
     assert client.calls == []
 
@@ -1105,10 +1110,10 @@ def test_sync_renewal_amount_refuses_once_the_period_is_over_for_any_caller(
         svc = _svc(session, client)
         row = session.get(Subscription, sid)
         assert row is not None
-        assert svc.sync_renewal_amount(row, now=END) is False
-        assert svc.sync_renewal_amount(row, now=END + timedelta(hours=1)) is False
+        assert svc.sync_renewal_amount(row, now=END) is AmountPush.PERIOD_OVER
+        assert svc.sync_renewal_amount(row, now=END + timedelta(hours=1)) is AmountPush.PERIOD_OVER
         assert client.calls == []
-        assert svc.sync_renewal_amount(row, now=END - timedelta(seconds=1)) is True
+        assert svc.sync_renewal_amount(row, now=END - timedelta(seconds=1)) is AmountPush.SENT
     assert _puts(client) == [(PID, 6_000)]
 
 
@@ -1139,11 +1144,15 @@ def test_an_unknown_put_that_landed_is_repaired_after_the_downgrade_is_cleared(
     client = FakePaymobClient()
     client.fail["update_subscription"] = PaymobError("timeout", timeout=True)
     assert _sweep(pg_sessionmaker, NOW, client) == 0
+    assert _sub(pg_sessionmaker, sid).amount_sync_uncertain_at == NOW  # durable (R-4)
     del client.fail["update_subscription"]
     with pg_sessionmaker.begin() as session:
         _svc(session).schedule_downgrade(sid, actor_user_id=payer, plan_tier_id=tier, now=NOW)
+    # A restart or another replica: nothing in this process remembers the failure.
+    subscription_repo._AMOUNT_PUT_FAILURES._state.clear()
     assert _sweep(pg_sessionmaker, NOW + timedelta(hours=1), client) == 1  # outside the window
     assert _puts(client) == [(PID, 6_000), (PID, 10_000)]
+    assert _sub(pg_sessionmaker, sid).amount_sync_uncertain_at is None
     assert _sweep(pg_sessionmaker, NOW + timedelta(hours=2), client) == 0  # certain again
     assert len(_puts(client)) == 2
 
@@ -1412,27 +1421,46 @@ def test_a_charge_made_after_the_replacement_at_the_old_amount_is_a_mismatch(
     assert _sub(pg_sessionmaker, sid).current_period_end == END
 
 
-def test_a_charge_exactly_at_the_replacement_time_is_not_before_it(
-    pg_sessionmaker: sessionmaker[Session],
+@pytest.mark.parametrize(
+    ("after_seconds", "paid"),
+    [(-1, True), (0, True), (59, True), (60, False), (61, False)],
+)
+def test_clock_skew_up_to_sixty_seconds_still_counts_as_before_the_replacement(
+    pg_sessionmaker: sessionmaker[Session], after_seconds: int, paid: bool
 ) -> None:
+    """R-1: Paymob's ``created_at`` comes from its own clock, so a charge stamped a few seconds
+    after our PUT may have been made just before it. The tolerance is 60 seconds, exclusive."""
     _, client = _early_charge_then_put(pg_sessionmaker)
     alerts_raised = _renewal_webhook(
-        pg_sessionmaker, client, amount=10_000, charged_at=END - timedelta(hours=12)
+        pg_sessionmaker,
+        client,
+        amount=10_000,
+        charged_at=END - timedelta(hours=12) + timedelta(seconds=after_seconds),
     )
-    assert alerts_raised == ["subscription_renewal_mismatch"]
+    assert alerts_raised == ([] if paid else ["subscription_renewal_mismatch"])
 
 
 @pytest.mark.parametrize(
-    ("amount", "status"),
-    [(10_000, PaymentStatus.failed_mismatch), (6_000, PaymentStatus.paid)],
+    ("amount", "charged_before_end", "status"),
+    [
+        # Paymob held 6 000 from END-20h to END-12h: a charge then is genuine.
+        (6_000, timedelta(hours=16), PaymentStatus.paid),
+        # Paymob held 10 000 before END-20h. Only the latest replaced amount is kept, so this
+        # genuine early charge is refused and alerted for an operator (accepted limitation R-2:
+        # two replacements inside the early-charge window are not both covered).
+        (10_000, timedelta(days=1), PaymentStatus.failed_mismatch),
+    ],
 )
 def test_after_a_second_replacement_only_the_latest_previous_amount_counts(
-    pg_sessionmaker: sessionmaker[Session], amount: int, status: PaymentStatus
+    pg_sessionmaker: sessionmaker[Session],
+    amount: int,
+    charged_before_end: timedelta,
+    status: PaymentStatus,
 ) -> None:
     sid, client = _early_charge_then_put(pg_sessionmaker, second_replacement=True)
     sub = _sub(pg_sessionmaker, sid)
     assert (sub.paymob_amount_minor, sub.previous_amount_minor) == (8_000, 6_000)
-    _renewal_webhook(pg_sessionmaker, client, amount=amount, charged_at=END - timedelta(days=1))
+    _renewal_webhook(pg_sessionmaker, client, amount=amount, charged_at=END - charged_before_end)
     assert _payments(pg_sessionmaker) == [(amount, status)]
 
 
@@ -1444,3 +1472,119 @@ def test_no_other_amount_is_widened_by_a_replacement(
         pg_sessionmaker, client, amount=9_000, charged_at=END - timedelta(days=1)
     )
     assert alerts_raised == ["subscription_renewal_mismatch"]
+
+
+# -- re-review: R-1, R-3, R-4 and the P06 reason -------------------------------------------
+
+
+class _SlowPutClient(FakePaymobClient):
+    """A Paymob whose amount PUT takes ``put_duration`` on a clock the service also reads."""
+
+    def __init__(self, clock: list[datetime], put_duration: timedelta) -> None:
+        super().__init__()
+        self._clock = clock
+        self._put_duration = put_duration
+
+    def update_subscription(self, subscription_id: int, **kwargs: Any) -> Any:
+        result = super().update_subscription(subscription_id, **kwargs)
+        self._clock[0] += self._put_duration  # the PUT returns this much later
+        return result
+
+
+def test_the_replacement_is_timed_when_the_put_returns_not_when_the_pass_started(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """R-1: the pass started at S, and the PUT of this row only returned five minutes later.
+    Paymob charged the old amount two minutes after S, while the PUT was in flight: that charge
+    is before the replacement, so it is paid. Stamping S instead would make it a mismatch."""
+    sm = pg_sessionmaker
+    payer, _, sid = _student_sub(sm)
+    lower = seed_tier(sm, price_minor=6_000)
+    start = END - timedelta(hours=12)
+    clock = [start]
+    client = _remote(_SlowPutClient(clock, timedelta(minutes=5)))
+    with sm.begin() as session:
+        _svc(session, client).schedule_downgrade(
+            sid, actor_user_id=payer, plan_tier_id=lower, now=NOW
+        )
+    with sm() as session:
+        service = SubscriptionService(session, client, paymob_settings(), clock=lambda: clock[0])
+        assert service.apply_period_end_changes(now=start) == 1
+    assert _sub(sm, sid).amount_replaced_at == start + timedelta(minutes=5)
+    client.last_transactions[PID] = charge(888, 10_000, created_at=start + timedelta(minutes=2))
+    with capture_logs() as logs:
+        _deliver(sm, client, subscription_repo.TRIGGER_SUCCESS, start + timedelta(minutes=10))
+    assert _alerts(logs) == []
+    assert _payments(sm) == [(10_000, PaymentStatus.paid)]
+    assert _sub(sm, sid).current_period_end > END  # type: ignore[operator]
+
+
+def test_a_renewal_paid_at_the_replaced_amount_below_the_expected_one_is_granted_and_alerted(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """R-3: Paymob charged the old 10 000 early; an upgrade to 15 000 was settled and pushed
+    before the webhook. The payer paid what Paymob held, so the period is granted, but the gap
+    is alerted so it can be collected."""
+    sm = pg_sessionmaker
+    _, _, sid = _student_sub(sm)
+    dearer = seed_tier(sm, price_minor=15_000)
+    client = _remote(FakePaymobClient())
+    with sm.begin() as session:
+        sub = session.get(Subscription, sid)
+        assert sub is not None
+        sub.plan_tier_id = dearer  # what an upgrade settle does
+        session.flush()
+        svc = _svc(session, client)
+        assert (
+            svc.sync_renewal_amount(sub, now=END - timedelta(days=1, hours=20)) is AmountPush.SENT
+        )
+    assert _puts(client) == [(PID, 15_000)]
+    client.last_transactions[PID] = charge(888, 10_000, created_at=END - timedelta(days=3))
+    with capture_logs() as logs:
+        _deliver(sm, client, subscription_repo.TRIGGER_SUCCESS, END - timedelta(days=1))
+    assert _alerts(logs) == ["subscription_renewal_paid_previous_amount"]
+    assert _payments(sm) == [(10_000, PaymentStatus.paid)]
+    assert _sub(sm, sid).current_period_end > END  # type: ignore[operator]
+
+
+def test_ending_a_plan_forgets_the_replaced_amount_and_an_uncertain_put(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Nothing renews an ended plan, and the marks must not block 0058's downgrade."""
+    _, _, sid = _student_sub(pg_sessionmaker, cancel_at_period_end=True)
+    with pg_sessionmaker.begin() as session:
+        row = session.get(Subscription, sid)
+        assert row is not None
+        row.previous_amount_minor = 6_000
+        row.amount_replaced_at = NOW
+        row.amount_sync_uncertain_at = NOW
+    assert _sweep(pg_sessionmaker, END, _remote(FakePaymobClient())) >= 1
+    sub = _sub(pg_sessionmaker, sid)
+    assert sub.status is SubscriptionStatus.cancelled
+    assert (sub.previous_amount_minor, sub.amount_replaced_at, sub.amount_sync_uncertain_at) == (
+        None,
+        None,
+        None,
+    )
+
+
+def test_p06_names_the_period_over_refusal_instead_of_calling_it_unknown(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Nit: ``push_renewal_amount`` reaches ``sync_renewal_amount``, which refuses after the
+    period end; the alert must say so rather than ``unknown_outcome``."""
+    from lemely.db.merchant_charge_repo import push_renewal_amount
+
+    # The period ended a month before the wall clock the unclocked P06 call reads.
+    payer, _, sid = _student_sub(
+        pg_sessionmaker, period_start=T0 - timedelta(days=60), period_end=T0 - timedelta(days=30)
+    )
+    lower = seed_tier(pg_sessionmaker, price_minor=6_000)
+    with pg_sessionmaker.begin() as session:
+        _svc(session).schedule_downgrade(sid, actor_user_id=payer, plan_tier_id=lower, now=NOW)
+    client = FakePaymobClient()
+    with capture_logs() as logs:
+        push_renewal_amount(pg_sessionmaker, client, paymob_settings(), sid)
+    pushes = [e for e in logs if e["event"] == "subscription_amount_push_failed"]
+    assert [e["reason"] for e in pushes] == ["period_over"]
+    assert client.calls == []

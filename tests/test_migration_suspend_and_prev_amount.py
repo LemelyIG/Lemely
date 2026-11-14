@@ -45,7 +45,12 @@ MIGRATION_FILE = (
 )
 
 
-NEW_COLUMNS = {"suspended_at", "previous_amount_minor", "amount_replaced_at"}
+NEW_COLUMNS = {
+    "suspended_at",
+    "previous_amount_minor",
+    "amount_replaced_at",
+    "amount_sync_uncertain_at",
+}
 PAIRED_CHECK = "ck_subscriptions_previous_amount_paired"
 
 
@@ -63,7 +68,7 @@ def _marked_subscription(sm: sessionmaker[Session], assignment: str) -> uuid.UUI
 
 def test_the_model_declares_the_columns() -> None:
     columns = Base.metadata.tables["subscriptions"].columns
-    for name in ("suspended_at", "amount_replaced_at"):
+    for name in ("suspended_at", "amount_replaced_at", "amount_sync_uncertain_at"):
         assert columns[name].nullable is True
         assert getattr(columns[name].type, "timezone", False) is True
     assert columns["previous_amount_minor"].nullable is True
@@ -102,7 +107,8 @@ def test_the_columns_have_the_right_types_and_start_null(
         )
         stamped = session.execute(
             sa.text(
-                "SELECT suspended_at, previous_amount_minor, amount_replaced_at "
+                "SELECT suspended_at, previous_amount_minor, amount_replaced_at, "
+                "amount_sync_uncertain_at "
                 "FROM subscriptions WHERE id = :s"
             ),
             {"s": sid},
@@ -111,8 +117,9 @@ def test_the_columns_have_the_right_types_and_start_null(
         "suspended_at": "timestamp with time zone",
         "previous_amount_minor": "bigint",
         "amount_replaced_at": "timestamp with time zone",
+        "amount_sync_uncertain_at": "timestamp with time zone",
     }
-    assert tuple(stamped) == (None, None, None)  # every row starts unmarked
+    assert tuple(stamped) == (None, None, None, None)  # every row starts unmarked
 
 
 def test_the_previous_amount_and_its_time_are_set_together_or_not_at_all(
@@ -144,6 +151,7 @@ def test_migrated_schema_equals_the_create_all_schema(
     [
         ("suspended_at = now()", "suspended_at"),
         ("previous_amount_minor = 100, amount_replaced_at = now()", "previous_amount_minor"),
+        ("amount_sync_uncertain_at = now()", "amount_sync_uncertain_at"),
     ],
 )
 def test_downgrade_refuses_while_a_suspension_or_replaced_amount_is_recorded(
@@ -180,7 +188,8 @@ def test_upgrade_downgrade_upgrade_round_trip(
             session.execute(
                 sa.text(
                     "SELECT count(*) FROM subscriptions WHERE suspended_at IS NULL "
-                    "AND previous_amount_minor IS NULL AND amount_replaced_at IS NULL"
+                    "AND previous_amount_minor IS NULL AND amount_replaced_at IS NULL "
+                    "AND amount_sync_uncertain_at IS NULL"
                 )
             ).scalar_one()
             == 1
