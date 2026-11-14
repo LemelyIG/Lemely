@@ -3703,10 +3703,10 @@ const txRange = (frames, which) => {
   return { min: Math.min(...v), max: Math.max(...v), first: v[0] }
 }
 
-/** A More-sheet row (`ListRow` carries `viewTransition`, and no tab state): a real PUSH, not a tab switch. */
+/** A content drill-down (the Home subject card, pushed by the native push default, no tab state): a real
+    PUSH, not a tab switch. More-sheet rows no longer push (nav coverage passes `viewTransition={false}`). */
 async function pushFromContent(page) {
-  await page.locator("nav.lm-native-tabbar").getByRole("button", { name: "More" }).click()
-  const link = page.getByRole("dialog").getByRole("link").first()
+  const link = page.locator('main a[href="/student/subject/0606"]').first()
   await link.waitFor()
   await page.waitForTimeout(400)
   await link.click()
@@ -3936,7 +3936,11 @@ NATIVE_CHECKS.push(
     width: 390,
     app: NAV_APP,
     async run(page) {
+      // Enter Overview by a tab tap (its entry carries the tab state), so the push below starts from a
+      // tab-entered page that has a content drill-down (Classes has none).
       await tabTap(page, "Classes")
+      await page.waitForTimeout(700)
+      await tabTap(page, "Overview")
       await page.waitForTimeout(700)
       await pushFromContent(page)
       await page.waitForTimeout(900)
