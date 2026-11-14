@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 */
 import type { RefObject } from "react"
 import { Books, Megaphone, Plus, Sparkle, UsersThree, type Icon } from "@phosphor-icons/react"
 import { ActionSheet } from "@/components/shell/TopBarSheets"

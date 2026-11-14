@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 */
 const RING_COLOR: Record<string, string> = {
   "A*": "var(--color-grade-a-star)",
   A: "var(--color-grade-a)",

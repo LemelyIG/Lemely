@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P3 H4 E4 S4 R4 V3 */
 import { Avatar } from "@/components/ui/avatar"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import type { Profile } from "@/lib/meTypes"

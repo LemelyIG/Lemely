@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P5 H4 E5 S5 R4 V4 */
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { usePullToRefresh } from "@/lib/gestures/usePullToRefresh"

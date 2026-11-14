@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V3 */
 import { useEffect } from "react"
 import { matchPath, useLocation } from "react-router-dom"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"

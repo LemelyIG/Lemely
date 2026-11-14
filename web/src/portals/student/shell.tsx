@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R3 V3 */
 import { Link, matchPath, useLocation } from "react-router-dom"
 import { ChalkboardTeacher, House, NotePencil, UserCircle, type Icon } from "@phosphor-icons/react"
 import type { AccountLink } from "@/components/shell/AccountPanel"

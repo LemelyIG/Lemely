@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R3 V3 */
 import { Suspense, useEffect, useState, type ReactNode } from "react"
 import type { MouseEvent } from "react"
 import { useLocation, useMatches, useNavigate } from "react-router-dom"

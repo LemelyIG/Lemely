@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E5 S4 R5 V3 */
 import { cn } from "@/lib/utils"
 
 /*

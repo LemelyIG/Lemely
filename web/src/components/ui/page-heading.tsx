@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P5 H4 E5 S5 R5 V3 */
 import type { ComponentProps } from "react"
 import { cn } from "@/lib/utils"
 

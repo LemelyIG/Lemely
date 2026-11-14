@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
 import { useEffect, useId, useState, type ReactNode } from "react"
 import type { NavShellItem } from "@/components/ui/nav-shells"
 import { cn } from "@/lib/utils"

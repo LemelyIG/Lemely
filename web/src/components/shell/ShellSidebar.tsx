@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
 import { useId, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { BrandLockup } from "@/components/ui/brand-lockup"

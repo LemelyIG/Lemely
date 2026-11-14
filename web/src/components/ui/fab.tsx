@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P5 H4 E5 S4 R4 V3 */
 import { forwardRef, useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from "react"
 import { cn } from "@/lib/utils"
 

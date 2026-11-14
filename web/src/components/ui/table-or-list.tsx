@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E3 S4 R4 V3 */
 import { useEffect, useState, type ReactNode } from "react"
 import { useNativeFrame } from "@/lib/useNativeFrame"
 import { cn } from "@/lib/utils"

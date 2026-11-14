@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R3 V3 */
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { Gear } from "@phosphor-icons/react"
