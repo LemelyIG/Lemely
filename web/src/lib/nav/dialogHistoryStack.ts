@@ -16,6 +16,13 @@ import { nextDialogHistoryAction } from "@/lib/nav/dialogHistory"
  * *synchronously*, while the popstate its `navigate(-1)` causes arrives a tick
  * later — by which point the instance below would wrongly take it for a real
  * back press and close too.
+ *
+ * A move of ours is recognised by where it lands, not by a count and a clock.
+ * `expectSelfPop(targetIdx)` records the history index the move ends on, and a
+ * popstate is ours only when `history.state.idx` equals one of those targets.
+ * A popstate that arrives late (a busy main thread, a slow traversal) still
+ * lands on its target and is still ours; a real Back never lands on a target
+ * while the move before it is outstanding, because traversals run in order.
  */
 
 export interface DialogHistoryEntry {
@@ -27,18 +34,33 @@ export interface DialogHistoryEntry {
   isCurrent: () => boolean
 }
 
-/** A history move of ours whose popstate has not arrived after this long never will (`navigate(-1)` at the first entry fires none). */
-export const SELF_POP_EXPIRY_MS = 1000
+/**
+ * Give-up time for a move of ours that never reports (a `navigate(-1)` with nowhere to go fires no popstate).
+ * It is not how a late popstate is told apart from a real Back: that is the target index. A move landing
+ * after this long is simply no longer expected, so keep it far above any real delay.
+ */
+export const SELF_POP_GIVE_UP_MS = 10_000
 
 export type PopStateOutcome = "self" | "none" | "closeOnly" | "repush"
 
+interface PendingMove {
+  /** The history index the move ends on. */
+  target: number
+  /** Called once when the move lands, or when it is given up on. */
+  onSettle: (() => void) | undefined
+  giveUp: ReturnType<typeof setTimeout>
+}
+
 export function createDialogHistoryStack() {
   const entries: DialogHistoryEntry[] = []
-  let pendingSelfPops = 0
+  const moves: PendingMove[] = []
   // Work that needs the history cursor settled: it runs on the popstate of the move in flight.
   const afterSelfPop: Array<() => void> = []
-  // One expiry per move in flight, oldest first, so a move that never reports cannot leave the count stuck.
-  const expiries: Array<ReturnType<typeof setTimeout>> = []
+
+  function settle(move: PendingMove) {
+    clearTimeout(move.giveUp)
+    move.onSettle?.()
+  }
 
   return {
     /** Call when an overlay has pushed its history entry. Returns the release. */
@@ -52,41 +74,50 @@ export function createDialogHistoryStack() {
 
     /** Is a history move of our own still in flight (its popstate has not arrived)? */
     hasPendingSelfPop(): boolean {
-      return pendingSelfPops > 0
+      return moves.length > 0
     },
 
     /** A move in flight or an unwind waiting on one: the window listener must stay up for either. */
     hasPendingWork(): boolean {
-      return pendingSelfPops > 0 || afterSelfPop.length > 0
+      return moves.length > 0 || afterSelfPop.length > 0
     },
 
     /**
      * Run `fn` once the move in flight has landed, and the cursor reads true. Stacked overlays that
      * close in one tick need this: the second `navigate(-1)` would otherwise look at the history entry
      * before the first has popped, see the wrong entry, and skip, leaving its own entry orphaned.
+     * It also runs when a real Back lands with no move outstanding (the overlay above was closed by
+     * Back, so the cursor is settled and what was waiting for it can go).
      */
     afterNextSelfPop(fn: () => void): void {
       afterSelfPop.push(fn)
     },
 
-    /** Call immediately before moving the history cursor ourselves. */
-    expectSelfPop(): void {
-      pendingSelfPops += 1
-      const expiry: ReturnType<typeof setTimeout> = setTimeout(() => {
-        const at = expiries.indexOf(expiry)
-        if (at === -1) return
-        expiries.splice(at, 1)
-        pendingSelfPops = Math.max(0, pendingSelfPops - 1)
-        afterSelfPop.shift()?.()
-      }, SELF_POP_EXPIRY_MS)
-      expiries.push(expiry)
+    /**
+     * Call immediately before moving the history cursor ourselves, with the index the move ends on.
+     * `onSettle` runs when that move lands or is given up on.
+     */
+    expectSelfPop(targetIdx: number, onSettle?: () => void): void {
+      const move: PendingMove = {
+        target: targetIdx,
+        onSettle,
+        giveUp: setTimeout(() => {
+          const at = moves.indexOf(move)
+          if (at === -1) return
+          moves.splice(at, 1)
+          settle(move)
+          afterSelfPop.shift()?.()
+        }, SELF_POP_GIVE_UP_MS),
+      }
+      moves.push(move)
     },
 
-    handlePopState(): PopStateOutcome {
-      if (pendingSelfPops > 0) {
-        pendingSelfPops -= 1
-        const expiry = expiries.shift()
-        if (expiry !== undefined) clearTimeout(expiry)
+    /** `currentIdx` is the history index the popstate landed on (`history.state.idx`). */
+    handlePopState(currentIdx: number | null): PopStateOutcome {
+      const at = currentIdx === null ? -1 : moves.findIndex((m) => m.target === currentIdx)
+      if (at !== -1) {
+        const [move] = moves.splice(at, 1)
+        settle(move)
         // One deferred unwind per popstate: each runs against the cursor the move before it left,
         // and queues its own `expectSelfPop`, so a third waits for the second's popstate in turn.
         afterSelfPop.shift()?.()
@@ -94,23 +125,25 @@ export function createDialogHistoryStack() {
       }
 
       const top = entries[entries.length - 1]
-      if (!top) return "none"
-
-      const action = nextDialogHistoryAction({
-        event: "popstate",
-        dismissible: top.isDismissible(),
-        hasEntry: true,
-      })
-
-      if (action === "closeOnly") {
-        top.close()
-        return "closeOnly"
+      let outcome: PopStateOutcome = "none"
+      if (top) {
+        const action = nextDialogHistoryAction({
+          event: "popstate",
+          dismissible: top.isDismissible(),
+          hasEntry: true,
+        })
+        if (action === "closeOnly") {
+          top.close()
+          outcome = "closeOnly"
+        } else if (action === "repush") {
+          top.repush()
+          outcome = "repush"
+        }
       }
-      if (action === "repush") {
-        top.repush()
-        return "repush"
-      }
-      return "none"
+      // A real Back with no move of ours outstanding: nothing is going to settle the cursor for work that
+      // is waiting on it (its trigger, the overlay above, has just gone), so release one waiting unwind now.
+      if (moves.length === 0) afterSelfPop.shift()?.()
+      return outcome
     },
 
     /**

@@ -25,9 +25,21 @@ export function hopCrossesImmersive(prev: readonly MatchLike[], next: readonly M
   return isImmersive(prev) !== isImmersive(next)
 }
 
+interface LocationLike {
+  key: string
+  pathname?: string
+}
+
 interface RouterLike {
-  state: { location: { key: string }; matches: readonly MatchLike[] }
-  subscribe(listener: (state: { location: { key: string }; matches: readonly MatchLike[] }) => void): () => void
+  state: { location: LocationLike; matches: readonly MatchLike[] }
+  subscribe(listener: (state: { location: LocationLike; matches: readonly MatchLike[] }) => void): () => void
+}
+
+/** The native phone frame: a phone-width viewport on iOS or Android (`useNativeFrame`'s rule, read without React). */
+function nativeFrameNow(root: HTMLElement): boolean {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false
+  const platform = root.dataset.platform
+  return (platform === "ios" || platform === "android") && window.matchMedia("(max-width: 720px)").matches
 }
 
 /**
@@ -46,22 +58,30 @@ export function noteRenderedMatches(matches: readonly MatchLike[]): void {
 const CLEAR_FALLBACK_MS = 3000
 
 interface ViewTransitionHost {
-  startViewTransition?: (...args: unknown[]) => { finished: Promise<unknown> } | undefined
+  startViewTransition?: (...args: unknown[]) => { finished: Promise<unknown>; skipTransition?: () => void } | undefined
 }
 
 export function installVtChrome(
   router: RouterLike,
   root: HTMLElement = document.documentElement,
   host: ViewTransitionHost | undefined = typeof document === "undefined" ? undefined : (document as unknown as ViewTransitionHost),
+  isNative: () => boolean = () => nativeFrameNow(root),
 ): () => void {
   let lastKey = router.state.location.key
   let lastMatches = router.state.matches
-  // Each hop that sets the attribute gets a token; a clear only counts for the hop it belongs to, so
-  // the end of an old transition cannot wipe the attribute a newer hop just set.
+  let lastPathname = router.state.location.pathname
+  // Did the hop being committed keep the pathname? A dialog or sheet closing is a same-URL POP, and React
+  // Router replays a view transition on any POP whose destination ever started one: the page would slide onto itself.
+  let samePath = false
+  // Two tokens. Each hop that sets the attribute gets a hop token. Each view transition that takes the
+  // attribute over gets a claim token. A clear counts only when it is the newest claim of the newest hop:
+  // the end of an old transition, or of a transition a newer one has since replaced (two hops committing
+  // back to back), cannot wipe the attribute the newer one is still carrying.
   let token = 0
+  let claims = 0
   let fallback: ReturnType<typeof setTimeout> | undefined
-  const clear = (own: number) => {
-    if (own !== token) return
+  const clear = (own: number, claim?: number) => {
+    if (own !== token || (claim !== undefined && claim !== claims)) return
     delete root.dataset.vtChrome
   }
 
@@ -71,12 +91,17 @@ export function installVtChrome(
   const real = host?.startViewTransition
   if (host && real) {
     host.startViewTransition = function (this: unknown, ...args: unknown[]) {
-      const transition = real.apply(host, args)
+      // Read before the call: the hop this transition belongs to is the one whose flag is set right now.
       const own = token
-      if (root.dataset.vtChrome && transition?.finished) {
+      const carries = Boolean(root.dataset.vtChrome)
+      const transition = real.apply(host, args)
+      // Native frame only: desktop and tablet keep their transitions unchanged.
+      if (samePath && isNative()) transition?.skipTransition?.()
+      if (carries && transition?.finished) {
         // A transition has the flag now, and its `finished` ends it: the fallback is for hops nobody claims.
         clearTimeout(fallback)
-        void transition.finished.then(() => clear(own), () => clear(own))
+        const claim = ++claims
+        void transition.finished.then(() => clear(own, claim), () => clear(own, claim))
       }
       return transition
     }
@@ -86,6 +111,8 @@ export function installVtChrome(
     // Loading states and fetchers re-publish the same location; only a location change is a hop.
     if (state.location.key === lastKey) return
     token += 1
+    samePath = state.location.pathname !== undefined && state.location.pathname === lastPathname
+    lastPathname = state.location.pathname
     clearTimeout(fallback)
     if (hopCrossesImmersive(rendered ?? lastMatches, state.matches)) {
       root.dataset.vtChrome = "page"

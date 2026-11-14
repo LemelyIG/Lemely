@@ -84,14 +84,14 @@ describe("useDialogHistory's own history push does not reset scroll", () => {
   // true` on this specific `navigate()` call is what stops that, without
   // touching PUSH-resets-to-top behaviour for real navigation elsewhere.
   const source = read("lib/nav/useDialogHistory.ts")
-  const pushBlock = source.match(/if \(action === "push"\) \{[\s\S]*?\n {4}\}/)
+  const pushBlock = source.match(/function pushEntry\(\) \{[\s\S]*?\n {2}\}\n/)
 
   it("has a push branch to inspect (source shape sanity check)", () => {
     expect(pushBlock).not.toBeNull()
   })
 
   it("the push branch's navigate() call passes preventScrollReset: true", () => {
-    const navigateCall = pushBlock?.[0].match(/navigate\(location, \{[\s\S]*?\n\s*\}\)/)
+    const navigateCall = pushBlock?.[0].match(/navigateRef\.current\(at, \{[\s\S]*?\n\s*\}\)/)
     expect(navigateCall).not.toBeNull()
     expect(navigateCall?.[0]).toMatch(/preventScrollReset:\s*true/)
   })
@@ -107,6 +107,13 @@ describe("isDialogEntry (exact guard on unwind)", () => {
   })
   it("rejects the same idx once the entry was replaced (flag dropped)", () => {
     expect(isDialogEntry({ idx: 3, key: "k", usr: null }, 3)).toBe(false)
+  })
+  it("with an id, matches only the entry that push made", () => {
+    const withId = { idx: 3, key: "k", usr: { lemelyDialog: true, lemelyDialogId: 7 } }
+    expect(isDialogEntry(withId, 3, 7)).toBe(true)
+    expect(isDialogEntry(withId, 3, 8)).toBe(false)
+    expect(isDialogEntry(dialog, 3, 7)).toBe(false)
+    expect(isDialogEntry(withId, 3)).toBe(true)
   })
   it("rejects missing state or a missing recorded idx", () => {
     expect(isDialogEntry(null, 3)).toBe(false)

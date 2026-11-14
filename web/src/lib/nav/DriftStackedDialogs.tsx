@@ -33,6 +33,15 @@ export default function DriftStackedDialogs() {
       >
         Close both
       </button>
+      <button type="button" onClick={() => setLower(false)}>
+        Close lower
+      </button>
+      <button type="button" onClick={() => setLower(true)}>
+        Open lower
+      </button>
+      <button type="button" onClick={() => setUpper(false)}>
+        Close upper
+      </button>
       <Modal open={lower} onClose={() => setLower(false)} title="Lower dialog">
         <p>Lower</p>
       </Modal>

@@ -1,5 +1,5 @@
 import type { MouseEvent } from "react"
-import { resolvePath, useNavigate, useResolvedPath, type NavigateOptions, type To } from "react-router-dom"
+import { parsePath, resolvePath, useNavigate, useResolvedPath, type NavigateOptions, type To } from "react-router-dom"
 import { dialogHistoryStack } from "@/lib/nav/dialogHistoryStack"
 
 /*
@@ -16,24 +16,49 @@ import { dialogHistoryStack } from "@/lib/nav/dialogHistoryStack"
  * The decision reads the live history state at click time, never a render's.
  */
 
-/** `?` and `#` alone are empty. */
-const normSearch = (search: string) => (search === "?" ? "" : search)
-const normHash = (hash: string) => (hash === "#" ? "" : hash)
+/** `?` and `#` alone are empty, and a bare `x` is `?x` / `#x` (React Router's `normalizeSearch` and `normalizeHash`). */
+const normSearch = (search: string | undefined) => (!search || search === "?" ? "" : search.startsWith("?") ? search : `?${search}`)
+const normHash = (hash: string | undefined) => (!hash || hash === "#" ? "" : hash.startsWith("#") ? hash : `#${hash}`)
+
+/**
+ * A pathname as the router matches it: percent-encoding decoded (`matchRoutes` runs `decodeURI`, so `/a%20b`
+ * and `/a b` are one route) and no trailing slash (`/a/` matches the `/a` route). Case stays: a param
+ * (`/tutors/ABC`) is a different page from `/tutors/abc`.
+ */
+function routerPathname(pathname: string): string {
+  let decoded = pathname
+  try {
+    decoded = decodeURI(pathname)
+  } catch {
+    // A malformed escape is compared as written.
+  }
+  const trimmed = decoded.replace(/\/+$/, "")
+  return trimmed === "" ? "/" : trimmed
+}
+
+/** Does `to` carry no pathname at all (`"?x"`, `"#x"`, `{ search }`)? Only then does React Router resolve it against the address bar; `""` and `{ pathname: "" }` stay relative to the route. */
+function isPathless(to: To): boolean {
+  if (to === "") return false
+  const pathname = typeof to === "string" ? parsePath(to).pathname : to.pathname
+  return pathname === undefined || pathname === null
+}
 
 /**
  * Would `navigate(to)` land on the URL the reader is already at? Path, search AND hash must all
  * match: `#section` on the same page is a destination, not a no-op. `basePathname` is what a relative
  * `to` resolves against. React Router resolves `navigate("sibling")` against the calling route's
- * pathname (not the address bar's), so the caller passes that.
+ * pathname (not the address bar's), so the caller passes that. A `to` with no pathname (`"?x"`, `"#x"`,
+ * an object without `pathname`) resolves against the current URL instead, as React Router does.
+ * Paths compare as the router matches them: percent-encoding decoded, trailing slash ignored.
  */
 export function isSameUrl(
   to: To,
   basePathname: string,
   current: { pathname: string; search: string; hash: string },
 ): boolean {
-  const target = resolvePath(to, basePathname)
+  const target = resolvePath(to, isPathless(to) ? current.pathname : basePathname)
   return (
-    target.pathname === current.pathname &&
+    routerPathname(target.pathname) === routerPathname(current.pathname) &&
     normSearch(target.search) === normSearch(current.search) &&
     normHash(target.hash) === normHash(current.hash)
   )

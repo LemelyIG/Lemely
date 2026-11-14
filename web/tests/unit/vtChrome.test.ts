@@ -89,6 +89,38 @@ describe("vtChrome lifetime and the interrupted hop (polish B, item 17)", () => 
     expect(h.root.dataset.vtChrome).toBe("page")
   })
 
+  it("two hops committing back to back: the first transition's end does not clear the flag the second still carries", async () => {
+    const finishers: Array<() => void> = []
+    let listener: (s: { location: { key: string }; matches: ReturnType<typeof page> }) => void = () => {}
+    const router = {
+      state: { location: { key: "a" }, matches: page() },
+      subscribe(l: typeof listener) {
+        listener = l
+        return () => {}
+      },
+    }
+    const root = { dataset: {} as Record<string, string | undefined> } as unknown as HTMLElement
+    const host = {
+      startViewTransition: () => ({ finished: new Promise<void>((res) => finishers.push(res)) }),
+    }
+    installVtChrome(router, root, host)
+    noteRenderedMatches(page())
+    // Both hops commit before either transition starts: the router's own transition starts run after.
+    listener({ location: { key: "b" }, matches: page(true) })
+    listener({ location: { key: "c" }, matches: page(true) })
+    expect(root.dataset.vtChrome).toBe("page")
+    host.startViewTransition() // the interrupted first one
+    host.startViewTransition() // the one that carries the latest hop
+    finishers[0]()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(root.dataset.vtChrome).toBe("page")
+    finishers[1]()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(root.dataset.vtChrome).toBeUndefined()
+  })
+
   it("clears on its own when no view transition ever claims it", () => {
     vi.useFakeTimers()
     const h = harness()
@@ -107,5 +139,45 @@ describe("vtChrome lifetime and the interrupted hop (polish B, item 17)", () => 
     expect(h.root.dataset.vtChrome).toBe("page")
     h.emit("c", page())
     expect(h.root.dataset.vtChrome).toBeUndefined()
+  })
+})
+
+describe("a hop that keeps the pathname plays no transition (final review I1)", () => {
+  const setup = (native: boolean) => {
+    type Loc = { key: string; pathname: string }
+    let listener: (s: { location: Loc; matches: ReturnType<typeof page> }) => void = () => {}
+    const router = {
+      state: { location: { key: "a", pathname: "/p" } as Loc, matches: page() },
+      subscribe(l: typeof listener) {
+        listener = l
+        return () => {}
+      },
+    }
+    const root = { dataset: {} as Record<string, string | undefined> } as unknown as HTMLElement
+    const skipped = vi.fn()
+    const host = { startViewTransition: () => ({ finished: new Promise<void>(() => {}), skipTransition: skipped }) }
+    installVtChrome(router, root, host, () => native)
+    return { emit: (key: string, pathname: string) => listener({ location: { key, pathname }, matches: page() }), host, skipped }
+  }
+
+  it("skips the transition of a same-path hop (a dialog closing is a same-URL POP)", () => {
+    const h = setup(true)
+    h.emit("b", "/p")
+    h.host.startViewTransition()
+    expect(h.skipped).toHaveBeenCalledTimes(1)
+  })
+
+  it("lets a hop to another path play", () => {
+    const h = setup(true)
+    h.emit("b", "/q")
+    h.host.startViewTransition()
+    expect(h.skipped).not.toHaveBeenCalled()
+  })
+
+  it("leaves desktop and tablet alone", () => {
+    const h = setup(false)
+    h.emit("b", "/p")
+    h.host.startViewTransition()
+    expect(h.skipped).not.toHaveBeenCalled()
   })
 })
