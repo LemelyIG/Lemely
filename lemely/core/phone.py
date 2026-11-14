@@ -36,8 +36,8 @@ DEFAULT_REGION: Final = "EG"
 
 #: Plain messages for the user. They never echo the input.
 _MESSAGES: Final = {
-    PHONE_REQUIRED: "Enter a phone number.",
-    PHONE_INVALID: "Enter a valid phone number, for example 01012345678 or +201012345678.",
+    PHONE_REQUIRED: "Enter a mobile number.",
+    PHONE_INVALID: "Enter a valid mobile number, for example 01012345678 or +201012345678.",
 }
 
 #: The number types accepted. ``FIXED_LINE_OR_MOBILE`` is libphonenumber's answer for regions (the
