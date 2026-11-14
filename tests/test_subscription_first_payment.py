@@ -11,6 +11,7 @@ from __future__ import annotations
 import threading
 import uuid
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -21,7 +22,6 @@ from structlog.testing import capture_logs
 from lemely.db import billing_repo, subscription_repo
 from lemely.db.billing_repo import CREDIT_EXPIRY_MONTHS, BillingService, add_months
 from lemely.db.models.billing import (
-    CreditPack,
     Payment,
     PaymentPurpose,
     PaymentStatus,
@@ -32,6 +32,7 @@ from lemely.db.models.billing import (
     Subscription,
     SubscriptionPeriod,
 )
+from lemely.db.models.billing_ops import CreditConversionRate
 from lemely.db.models.enums import PlanInterval, Role, SubscriptionStatus
 from lemely.db.models.team import TeacherMember, TeacherMemberStatus
 from lemely.db.models.tutoring import EmailOutbox
@@ -92,12 +93,14 @@ def _database() -> Iterator[sessionmaker[Session]]:
 def pg_sessionmaker(_database: sessionmaker[Session]) -> Iterator[sessionmaker[Session]]:
     """The module's database, emptied after each test.
 
-    Credit packs set the conversion rate and ``paymob_events`` dedupe by transaction id, and
-    neither hangs off ``users``, so they are cleared here too.
+    Credit packs, conversion rates and ``paymob_events`` (deduped by transaction id) do not hang
+    off ``users``, so they are cleared here too.
     """
     yield from emptied_after(_database)
     with _database.begin() as session:
-        session.execute(sa.text("TRUNCATE credit_packs, paymob_events CASCADE"))
+        session.execute(
+            sa.text("TRUNCATE credit_packs, credit_conversion_rates, paymob_events CASCADE")
+        )
 
 
 # -- seeding ----------------------------------------------------------------------------
@@ -128,6 +131,23 @@ def _pending(
         sm, subscription_id=sid, amount_minor=amount_minor, paymob_txn_id=txn_id, paid_at=PAID_AT
     )
     return student, sid, pid
+
+
+def _set_rate(
+    sm: sessionmaker[Session], currency: str = "EGP", units_per_minor: str = "0.01"
+) -> None:
+    """The admin-set rate for ``currency`` (UD-12); a second call is an edit (version 2)."""
+    with sm.begin() as session:
+        row = session.scalars(
+            sa.select(CreditConversionRate).where(CreditConversionRate.currency == currency)
+        ).one_or_none()
+        if row is None:
+            session.add(
+                CreditConversionRate(currency=currency, units_per_minor=Decimal(units_per_minor))
+            )
+        else:
+            row.units_per_minor = Decimal(units_per_minor)
+            row.version += 1
 
 
 def _handle(sm: sessionmaker[Session], pid: uuid.UUID) -> None:
@@ -614,7 +634,7 @@ def test_a_subscription_that_is_already_linked_keeps_its_id(
 def test_a_superseded_checkout_paid_while_another_is_live_becomes_credits(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    seed_pack(pg_sessionmaker, units=100, price_minor=10_000)  # 1 unit per 100 minor
+    _set_rate(pg_sessionmaker)
     student, sid, pid, live = _superseded(pg_sessionmaker)
     with capture_logs() as logs:
         _handle(pg_sessionmaker, pid)
@@ -637,7 +657,7 @@ def test_a_superseded_checkout_paid_while_another_is_live_becomes_credits(
 def test_the_payer_is_told_the_payment_became_credits(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    seed_pack(pg_sessionmaker)
+    _set_rate(pg_sessionmaker)
     student, _, pid, _ = _superseded(pg_sessionmaker)
     _handle(pg_sessionmaker, pid)
     [row] = _outbox(pg_sessionmaker, student)
@@ -649,7 +669,7 @@ def test_the_payer_is_told_the_payment_became_credits(
 def test_the_converted_handler_replayed_changes_nothing(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    seed_pack(pg_sessionmaker)
+    _set_rate(pg_sessionmaker)
     student, sid, pid, live = _superseded(pg_sessionmaker)
     _handle(pg_sessionmaker, pid)
     with pg_sessionmaker.begin() as session:  # the other plan lapses, then the handler replays
@@ -666,7 +686,7 @@ def test_a_pending_checkout_paid_while_a_manual_plan_is_live_is_expired_not_stra
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     """A paid pending row can never be replaced by a checkout, so it must leave the live set."""
-    seed_pack(pg_sessionmaker)
+    _set_rate(pg_sessionmaker)
     student, sid, pid = _pending(pg_sessionmaker)
     seed_subscription(
         pg_sessionmaker,
@@ -686,7 +706,7 @@ def test_the_extra_paymob_subscription_is_left_for_the_sweeps_to_cancel(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     """DV-27: linked, ended, not yet cancelled at Paymob. The webhook path never calls Paymob."""
-    seed_pack(pg_sessionmaker)
+    _set_rate(pg_sessionmaker)
     _, sid, pid, _ = _superseded(pg_sessionmaker)
     event = _stored_created_event(pg_sessionmaker, remote={"id": 4321, "initial_transaction": 777})
     _handle(pg_sessionmaker, pid)
@@ -700,7 +720,7 @@ def test_the_extra_paymob_subscription_is_left_for_the_sweeps_to_cancel(
 def test_the_unique_live_index_is_never_hit_by_a_superseded_payment(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    seed_pack(pg_sessionmaker)
+    _set_rate(pg_sessionmaker)
     student, sid, pid, live = _superseded(pg_sessionmaker)
     _handle(pg_sessionmaker, pid)  # activating would violate uq_subscriptions_one_live_per_user
     with pg_sessionmaker() as session:
@@ -716,7 +736,7 @@ def test_the_unique_live_index_is_never_hit_by_a_superseded_payment(
 def test_a_superseded_payment_with_no_credit_rate_keeps_the_money_visible_and_alerts(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    student, sid, pid, _ = _superseded(pg_sessionmaker)  # no credit pack seeded
+    student, sid, pid, _ = _superseded(pg_sessionmaker)  # no rate row set
     with capture_logs() as logs:
         _handle(pg_sessionmaker, pid)
     [entry] = _events_named(logs, "subscription_first_paid_for_superseded_checkout")
@@ -732,7 +752,7 @@ def test_a_superseded_payment_with_no_credit_rate_keeps_the_money_visible_and_al
 def test_the_callback_for_a_superseded_checkout_converts_it_through_phase_02(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    seed_pack(pg_sessionmaker, units=100, price_minor=10_000)
+    _set_rate(pg_sessionmaker)
     client = FakePaymobClient()
     student, sid, pid, order = _checkout(pg_sessionmaker, client)
     with pg_sessionmaker.begin() as session:  # a second checkout replaced it and went live
@@ -802,7 +822,7 @@ def test_an_old_checkout_paid_beside_an_unpaid_replacement_activates_and_expires
 def test_a_replacement_with_money_behind_it_is_a_plan_so_the_old_payment_becomes_credits(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    seed_pack(pg_sessionmaker)
+    _set_rate(pg_sessionmaker)
     student, sid, pid = _pending(pg_sessionmaker, status=SubscriptionStatus.expired)
     replacement = _pending_replacement(pg_sessionmaker, student, first_payment=PaymentStatus.paid)
     _handle(pg_sessionmaker, pid)
@@ -817,7 +837,7 @@ def test_a_replacement_with_money_behind_it_is_a_plan_so_the_old_payment_becomes
 def test_a_plan_in_force_is_never_expired_to_make_room(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    seed_pack(pg_sessionmaker)
+    _set_rate(pg_sessionmaker)
     # A manual plan (no payer) is outside the unique index: a pending checkout can sit beside it.
     student, sid, pid, live = _superseded(pg_sessionmaker, other_payer_is_student=False)
     replacement = _pending_replacement(
@@ -836,7 +856,7 @@ def test_two_late_payments_of_one_account_settle_to_one_plan_without_a_deadlock(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     """A and B are both paid at once: one activates, the other becomes credits, nobody hangs."""
-    seed_pack(pg_sessionmaker)
+    _set_rate(pg_sessionmaker)
     for round_number in range(3):
         student = seed_user(pg_sessionmaker, Role.student)
         tier = seed_tier(pg_sessionmaker)
@@ -956,7 +976,7 @@ def test_a_unique_index_race_on_activation_falls_back_to_credits(
     pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """M-1: the live check read stale, a live row exists; the savepoint turns it into credits."""
-    seed_pack(pg_sessionmaker)
+    _set_rate(pg_sessionmaker)
     student, sid, pid, live = _superseded(pg_sessionmaker)
     monkeypatch.setattr(subscription_repo, "_live_others", lambda session, subscription: [])
     _handle(pg_sessionmaker, pid)  # no IntegrityError, so the webhook would answer 200
@@ -1028,7 +1048,7 @@ def test_a_restarted_checkout_whose_first_one_is_paid_late_activates_and_expires
     expires in the same transaction (no credits, and the unique live index is never hit). B paid
     later meets a plan in force (A), so UD-3 turns it into credits.
     """
-    seed_pack(pg_sessionmaker, units=100, price_minor=10_000)
+    _set_rate(pg_sessionmaker)
     sm = pg_sessionmaker
     client = FakePaymobClient()
     student, sid_a, pid_a, order_a = _checkout(sm, client)
@@ -1067,7 +1087,7 @@ def test_a_restarted_checkout_whose_first_one_is_paid_late_activates_and_expires
 def test_the_late_paid_checkout_with_the_replacement_already_live_answers_200(
     app: FastAPI, pg_sessionmaker: sessionmaker[Session]
 ) -> None:
-    seed_pack(pg_sessionmaker)
+    _set_rate(pg_sessionmaker)
     sm = pg_sessionmaker
     client = FakePaymobClient()
     student, sid_a, pid_a, order_a = _checkout(sm, client)
@@ -1107,7 +1127,7 @@ def _convert(
 def test_convert_payment_to_credits_issues_visible_twelve_month_credits(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    seed_pack(pg_sessionmaker, units=100, price_minor=10_000)
+    _set_rate(pg_sessionmaker)
     student, sid, pid = _pending(pg_sessionmaker, amount_minor=25_000)
     grant = _convert(pg_sessionmaker, pid, sid)
     assert grant.units == 250
@@ -1123,11 +1143,11 @@ def test_convert_payment_to_credits_issues_visible_twelve_month_credits(
 def test_convert_payment_to_credits_is_idempotent_and_keeps_the_first_rate(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    seed_pack(pg_sessionmaker, units=100, price_minor=10_000)
+    _set_rate(pg_sessionmaker, "EGP", "0.01")
     student, sid, pid = _pending(pg_sessionmaker)
     first = _convert(pg_sessionmaker, pid, sid)
-    with pg_sessionmaker.begin() as session:  # the shop's rate changes before the replay
-        session.execute(sa.update(CreditPack).values(units=999))
+    with pg_sessionmaker.begin() as session:  # the admin's rate changes before the replay
+        session.execute(sa.update(CreditConversionRate).values(units_per_minor=Decimal("9.99")))
     second = _convert(pg_sessionmaker, pid, sid)
     assert second.id == first.id
     assert len(grants_of(pg_sessionmaker, student)) == 1
@@ -1138,7 +1158,7 @@ def test_convert_payment_to_credits_is_idempotent_and_keeps_the_first_rate(
 def test_convert_payment_to_credits_repays_debt_first(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    seed_pack(pg_sessionmaker, units=100, price_minor=10_000)
+    _set_rate(pg_sessionmaker)
     student, sid, pid = _pending(pg_sessionmaker)
     seed_debt(pg_sessionmaker, student, 30)
     grant = _convert(pg_sessionmaker, pid, sid)
@@ -1148,7 +1168,7 @@ def test_convert_payment_to_credits_repays_debt_first(
 def test_convert_payment_to_credits_needs_a_paid_payment(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    seed_pack(pg_sessionmaker)
+    _set_rate(pg_sessionmaker)
     _, sid, pid = _pending(pg_sessionmaker)
     with pg_sessionmaker.begin() as session:
         payment = session.get(Payment, pid)
@@ -1164,43 +1184,67 @@ def test_convert_payment_to_credits_needs_a_paid_payment(
 def test_an_amount_too_small_for_one_unit_is_refused_not_granted_as_zero(
     pg_sessionmaker: sessionmaker[Session], amount_minor: int
 ) -> None:
-    seed_pack(pg_sessionmaker, units=1, price_minor=100)
+    _set_rate(pg_sessionmaker, "EGP", "0.01")
     _, sid, pid = _pending(pg_sessionmaker, amount_minor=amount_minor)
     with pytest.raises(NoCreditRate):
         _convert(pg_sessionmaker, pid, sid)
 
 
-def test_credit_rate_follows_what_the_same_money_buys_in_the_shop(
+def test_credit_units_follow_the_admin_set_rate_for_the_currency(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    seed_pack(pg_sessionmaker, units=100, price_minor=10_000)  # 0.010 units per minor
-    seed_pack(pg_sessionmaker, units=1_200, price_minor=100_000)  # 0.012 units per minor
-    seed_pack(pg_sessionmaker, units=99_999, price_minor=50_000, is_active=False)  # ignored
+    """UD-12: units = floor(amount x the rate row), per currency, exact decimal arithmetic."""
+    _set_rate(pg_sessionmaker, "EGP", "0.01")
+    _set_rate(pg_sessionmaker, "USD", "5")
     with pg_sessionmaker() as session:
-        # Below the cheapest pack: that pack's rate. Between the two: the small pack's.
-        assert credit_units_for_amount(session, amount_minor=5_000, currency="EGP") == 50
-        assert credit_units_for_amount(session, amount_minor=50_000, currency="EGP") == 500
-        # Buys the big pack: the big pack's better rate. The result is floored.
-        assert credit_units_for_amount(session, amount_minor=100_000, currency="EGP") == 1_200
-        assert credit_units_for_amount(session, amount_minor=100_001, currency="EGP") == 1_200
-        assert credit_units_for_amount(session, amount_minor=10_001, currency="EGP") == 100
+        assert credit_units_for_amount(session, amount_minor=10_000, currency="EGP") == 100
+        assert credit_units_for_amount(session, amount_minor=10_099, currency="EGP") == 100
+        assert credit_units_for_amount(session, amount_minor=10_000, currency="USD") == 50_000
 
 
-def test_credit_rate_ignores_other_currencies_and_free_or_empty_packs(
+def test_a_changed_rate_changes_the_credits_granted(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    with pg_sessionmaker.begin() as session:
-        for code, units, price, currency in (
-            ("usd", 500, 10_000, "USD"),
-            ("free", 100, 0, "EGP"),
-            ("empty", 0, 10_000, "EGP"),
-        ):
-            session.add(
-                CreditPack(code=code, name=code, units=units, price_minor=price, currency=currency)
-            )
+    _set_rate(pg_sessionmaker, "EGP", "0.01")
+    student, sid, pid = _pending(pg_sessionmaker, amount_minor=10_000)
+    first = _convert(pg_sessionmaker, pid, sid)
+    assert first.units == 100
+
+    _set_rate(pg_sessionmaker, "EGP", "0.025")  # the admin raises it (version 2)
+    other, other_sid, other_pid = _pending(pg_sessionmaker, amount_minor=10_000, txn_id=778)
+    second = _convert(pg_sessionmaker, other_pid, other_sid)
+    assert second.units == 250
+    assert _payment(pg_sessionmaker, other_pid).grant_units == 250
+    assert _payment(pg_sessionmaker, pid).grant_units == 100  # the first stays as converted
+
+
+def test_a_missing_rate_refuses_and_a_pack_price_is_not_a_rate(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """No row for the currency: nothing is converted, whatever the credit packs would say."""
+    seed_pack(pg_sessionmaker, units=100, price_minor=10_000)
+    _set_rate(pg_sessionmaker, "USD", "5")  # another currency's rate is not this one's
+    student, sid, pid = _pending(pg_sessionmaker)
     with pg_sessionmaker() as session:
         assert credit_units_for_amount(session, amount_minor=10_000, currency="EGP") is None
-        assert credit_units_for_amount(session, amount_minor=10_000, currency="USD") == 500
+    with pytest.raises(NoCreditRate):
+        _convert(pg_sessionmaker, pid, sid)
+    assert grants_of(pg_sessionmaker, student) == []
+    assert _payment(pg_sessionmaker, pid).grant_units is None
+
+
+def test_the_rate_is_read_inside_the_callers_transaction(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """An uncommitted rate change in the caller's own transaction is the rate used."""
+    _set_rate(pg_sessionmaker, "EGP", "0.01")
+    with pg_sessionmaker.begin() as session:
+        session.execute(
+            sa.update(CreditConversionRate)
+            .where(CreditConversionRate.currency == "EGP")
+            .values(units_per_minor=Decimal("0.5"))
+        )
+        assert credit_units_for_amount(session, amount_minor=10_000, currency="EGP") == 5_000
 
 
 # -- UD-5: seats over capacity move to leaving, before the grant ---------------------------
@@ -1312,7 +1356,7 @@ def test_a_leaving_seat_does_not_push_an_active_seat_out(
 def test_a_superseded_teacher_checkout_sheds_nothing(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    seed_pack(pg_sessionmaker)
+    _set_rate(pg_sessionmaker)
     teacher, sid, pid, members = _teacher_plan(pg_sessionmaker, included_seats=2, seats=3)
     with pg_sessionmaker.begin() as session:
         sub = session.get(Subscription, sid)
@@ -1352,7 +1396,7 @@ def test_credits_go_to_the_beneficiary_and_the_notice_to_the_payer_who_is_a_pare
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     """M-2: a parent paid for a child; the child owns the credits, the parent hears of it."""
-    seed_pack(pg_sessionmaker)
+    _set_rate(pg_sessionmaker)
     parent = seed_user(pg_sessionmaker, Role.parent)
     child = seed_user(pg_sessionmaker, Role.student)
     sid = seed_subscription(
@@ -1401,7 +1445,7 @@ def test_shedding_a_seat_raises_an_alert(pg_sessionmaker: sessionmaker[Session])
 
 def test_convert_refuses_a_credit_pack_payment(pg_sessionmaker: sessionmaker[Session]) -> None:
     """M-4: a pack's ``grant_units`` is its checkout snapshot; converting it would pay twice."""
-    seed_pack(pg_sessionmaker)
+    _set_rate(pg_sessionmaker)
     payer = seed_user(pg_sessionmaker, Role.student)
     pack = seed_pack(pg_sessionmaker)
     pid = seed_payment(
@@ -1423,7 +1467,7 @@ def test_convert_refuses_a_credit_pack_payment(pg_sessionmaker: sessionmaker[Ses
 def test_convert_refuses_a_payment_that_already_paid_for_a_period(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    seed_pack(pg_sessionmaker)
+    _set_rate(pg_sessionmaker)
     student, sid, pid = _pending(pg_sessionmaker)
     _handle(pg_sessionmaker, pid)  # activated: the payment bought a period
     with pytest.raises(ValueError, match="period"):
@@ -1434,7 +1478,7 @@ def test_convert_refuses_a_payment_that_already_paid_for_a_period(
 def test_convert_refuses_grant_units_that_no_conversion_issued(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    seed_pack(pg_sessionmaker)
+    _set_rate(pg_sessionmaker)
     student, sid, pid = _pending(pg_sessionmaker)
     with pg_sessionmaker.begin() as session:
         payment = session.get(Payment, pid)

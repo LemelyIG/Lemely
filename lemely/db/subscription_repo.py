@@ -21,6 +21,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
+from decimal import ROUND_FLOOR, Decimal
 from typing import TYPE_CHECKING, ClassVar, Final
 
 import sqlalchemy as sa
@@ -60,7 +61,6 @@ from lemely.db.billing_repo import (
 from lemely.db.models.billing import (
     LIVE_SUBSCRIPTION_STATUSES,
     PLAN_LIVE_STATUSES,
-    CreditPack,
     Payment,
     PaymentPurpose,
     PaymentStatus,
@@ -71,6 +71,7 @@ from lemely.db.models.billing import (
     Subscription,
     SubscriptionPeriod,
 )
+from lemely.db.models.billing_ops import CreditConversionRate
 from lemely.db.models.enums import Role, SubscriptionStatus
 from lemely.db.models.team import TeacherMember, TeacherMemberKind, TeacherMemberStatus
 from lemely.db.models.usage import GrantKind, UsageGrant
@@ -178,7 +179,7 @@ class DowngradeUnavailable(SubscriptionError):
 
 
 class NoCreditRate(SubscriptionError):
-    """No credit pack gives a rate for this payment, so it cannot be turned into credits."""
+    """No admin-set rate converts this payment, so it cannot be turned into credits (UD-12)."""
 
     code: ClassVar[str] = "no_credit_rate"
 
@@ -414,33 +415,27 @@ def _shed_excess_seats(
 
 
 def credit_units_for_amount(session: Session, *, amount_minor: int, currency: str) -> int | None:
-    """Credit units that ``amount_minor`` buys in the shop, or ``None`` when no pack prices it.
+    """Credit units that ``amount_minor`` converts to, or ``None`` when it cannot be converted.
 
-    The one credit rate of the billing code (Phase 05 UD-3, Phase 06 UD-P2): the best
-    units-per-price among the active packs in ``currency`` that the same money could buy, or the
-    cheapest pack's rate when it buys none. The result is floored, so a conversion never grants
-    more than was paid. ``None`` also when the amount is too small for one unit.
+    The one credit rate of the billing code (Phase 05 UD-3, Phase 06 UD-P2) is the fixed,
+    admin-set ``credit_conversion_rates.units_per_minor`` of ``currency`` (UD-12): usage units per
+    minor currency unit, exact decimal. The result is ``floor(amount_minor x rate)``, so a
+    conversion never grants more than was paid. It fails closed: ``None`` when the currency has no
+    row (nothing is inferred from credit packs or any constant) and when the amount is too small
+    for one unit. The read runs in the caller's transaction and takes no lock; a rate edited
+    concurrently applies to the next conversion, and a replay keeps the units already stamped on
+    the payment.
     """
     if amount_minor <= 0:
         return None
-    packs = session.execute(
-        select(CreditPack.units, CreditPack.price_minor)
-        .where(
-            CreditPack.is_active.is_(True),
-            CreditPack.currency == currency,
-            CreditPack.price_minor > 0,
-            CreditPack.units > 0,
+    rate = session.scalar(
+        select(CreditConversionRate.units_per_minor).where(
+            CreditConversionRate.currency == currency
         )
-        .order_by(CreditPack.price_minor, CreditPack.code)
-    ).all()
-    if not packs:
+    )
+    if rate is None or rate <= 0:
         return None
-    affordable = [pack for pack in packs if pack.price_minor <= amount_minor] or packs[:1]
-    best = affordable[0]
-    for pack in affordable[1:]:
-        if pack.units * best.price_minor > best.units * pack.price_minor:
-            best = pack
-    units = amount_minor * best.units // best.price_minor
+    units = int((Decimal(amount_minor) * rate).to_integral_value(rounding=ROUND_FLOOR))
     return units if units > 0 else None
 
 
@@ -471,7 +466,7 @@ def convert_payment_to_credits(
         ValueError: the payment is not ``paid``; it is a credit pack payment (it already bought
             its credits); it already paid for a subscription period; or it carries grant units
             that no earlier conversion issued.
-        NoCreditRate: no active credit pack prices the payment's amount in its currency.
+        NoCreditRate: no admin-set rate for the payment's currency, or the amount is below one unit.
     """
     if payment.status is not PaymentStatus.paid:
         raise ValueError("only a paid payment can be turned into credits")
