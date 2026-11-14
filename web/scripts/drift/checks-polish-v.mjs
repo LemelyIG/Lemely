@@ -383,22 +383,26 @@ POLISH_V_CHECKS.push(
           const el = document.createElement(tag)
           el.className = cls
           el.textContent = "x"
+          el.dataset.probe = ""
           parent.appendChild(el)
           return getComputedStyle(el).borderBottomWidth
         }
         const nested = document.createElement("div")
         card.appendChild(nested)
-        return {
+        const d = document.createElement("div")
+        d.className = "divide-y"
+        const out = {
           directRow: mk("div", "border-b border-outline", card),
           input: mk("input", "border-b border-outline", nested),
           header: mk("th", "border-b border-outline", nested),
           divided: (() => {
-            const d = document.createElement("div")
-            d.className = "divide-y"
             card.appendChild(d)
             return mk("div", "border-b border-outline", d)
           })(),
         }
+        // The probes are not app content: remove them so the final state (which --axe audits) is the app's own.
+        for (const el of [nested, d, ...card.querySelectorAll(":scope > [data-probe]")]) el.remove()
+        return out
       })
       if (r.directRow !== "0px") throw new Error(`a direct row divider survived (${r.directRow})`)
       if (r.input === "0px") throw new Error("the strip removed an input's own border")

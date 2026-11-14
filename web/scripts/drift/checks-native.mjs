@@ -428,6 +428,8 @@ NATIVE_CHECKS.push(
         .getByRole("link", { name: "Classes" });
       await tab.click();
       await page.waitForURL(/\/teacher\/classes$/);
+      // The final state (which --axe audits) is the settled root, not the outgoing drilled page.
+      await page.getByRole("heading", { level: 1, name: "Classes", exact: true }).waitFor({ state: "attached" });
     },
   },
   {
@@ -1427,6 +1429,8 @@ NATIVE_CHECKS.push(
       const after = await page.evaluate(() => ({ idx: window.history.state?.idx ?? 0, length: window.history.length }));
       if (after.idx !== before.idx || after.length !== before.length)
         throw new Error(`the pop to root pushed an entry (idx ${before.idx} to ${after.idx}, length ${before.length} to ${after.length}); it must replace`);
+      // The final state (which --axe audits) is the settled root, not the outgoing drilled page.
+      await page.getByRole("heading", { level: 1, name: "Classes", exact: true }).waitFor({ state: "attached" });
     },
   })),
   {
@@ -2728,6 +2732,7 @@ const histIdx = (page) => page.evaluate(() => window.history.state?.idx ?? 0)
 
 async function runDialogExit(page, { open, to }) {
   const origin = new URL(page.url())
+  const originHeading = await page.locator("h1").first().textContent()
   const originIdx = await histIdx(page)
   const { dialog, row } = await open(page)
   await row.click()
@@ -2745,6 +2750,10 @@ async function runDialogExit(page, { open, to }) {
   await page.waitForTimeout(500)
   const left = page.url() !== origin.href || (await histIdx(page)) < originIdx
   if (!left) throw new Error("the second Back was a dead press: the origin never changed")
+  // Return to the origin, so the final state (which --axe audits) is the app and not the page before it.
+  await page.goForward()
+  await page.waitForURL((url) => url.pathname === origin.pathname, { timeout: 5000 })
+  await page.locator("h1", { hasText: originHeading }).first().waitFor({ state: "attached" })
 }
 
 const MORE_ROW_CASE = {
