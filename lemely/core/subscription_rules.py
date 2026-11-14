@@ -80,6 +80,34 @@ def subscription_amount_minor(
     return price_minor + extra_seats * extra_seat_price_minor
 
 
+def expected_renewal_amount_minor(
+    *,
+    price_minor: int,
+    extra_seats: int,
+    extra_seat_price_minor: int,
+    paymob_amount_minor: int | None,
+    amount_updatable: bool,
+) -> int:
+    """What Paymob charges at the next renewal (the single rule behind ``next_renewal_amount``).
+
+    When Paymob can change the amount (``amount_updatable``) it is the plan price plus extra
+    seats, with any pending change already applied by the caller. On the fixed-amount fallback
+    path Paymob keeps charging the stamped amount whatever Lemely wants, so that stamp is the
+    answer whenever one is set: nothing is ever expected that Paymob will not charge. Without a
+    stamp there is nothing to hold fixed and the computed amount stands.
+
+    Raises:
+        ValueError: as :func:`subscription_amount_minor`.
+    """
+    if not amount_updatable and paymob_amount_minor is not None:
+        return paymob_amount_minor
+    return subscription_amount_minor(
+        price_minor=price_minor,
+        extra_seats=extra_seats,
+        extra_seat_price_minor=extra_seat_price_minor,
+    )
+
+
 def seat_capacity_for(*, included_seats: int, extra_seats: int) -> int:
     """Seats a teacher subscription holds: included plus extra (spec §4.4)."""
     if included_seats < 0 or extra_seats < 0:
@@ -167,6 +195,7 @@ __all__ = [
     "PERIOD_DAYS",
     "STALE_CHECKOUT_AFTER",
     "calendar_month_bounds",
+    "expected_renewal_amount_minor",
     "is_successful_charge",
     "parse_paymob_time",
     "paymob_frequency",

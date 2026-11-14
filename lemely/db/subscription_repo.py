@@ -33,10 +33,12 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
 from lemely.core.subscription_rules import (
+    AMOUNT_SYNC_WINDOW,
     GRACE_PERIOD,
     MAX_EXTRA_SEATS_AT_CHECKOUT,
     PAYMOB_RETRIAL_DAYS,
     STALE_CHECKOUT_AFTER,
+    expected_renewal_amount_minor,
     is_successful_charge,
     parse_paymob_time,
     paymob_frequency,
@@ -970,16 +972,23 @@ def _period_terms(
     return tier, seats if tier.extra_seat_price_minor > 0 else 0
 
 
-def _expected_renewal_amount(session: Session, subscription: Subscription) -> int:
-    """What Paymob should charge at the next renewal, pending changes included (DV-12).
+def _expected_renewal_amount(
+    session: Session, subscription: Subscription, *, amount_updatable: bool = True
+) -> int:
+    """What Paymob should charge at the next renewal, pending changes included (DV-12, R6).
 
-    Task 8 makes this the public ``next_renewal_amount`` without changing the result.
+    The body of :meth:`SubscriptionService.next_renewal_amount`. ``amount_updatable`` is
+    ``PaymobSettings.subscription_amount_updatable``; only the paid-handler entry point
+    (:func:`handle_subscription_renewal`, which no production path dispatches) leaves it at its
+    default.
     """
     tier, seats = _period_terms(session, subscription, with_pending=True)
-    return subscription_amount_minor(
+    return expected_renewal_amount_minor(
         price_minor=tier.price_minor,
         extra_seats=seats,
         extra_seat_price_minor=tier.extra_seat_price_minor,
+        paymob_amount_minor=subscription.paymob_amount_minor,
+        amount_updatable=amount_updatable,
     )
 
 
@@ -1020,6 +1029,13 @@ def _grant_renewal_period(
         # checkout committed after the locks were taken, and then nothing may change.
         with session.begin_nested():
             if apply_pending:
+                if tier.id != subscription.plan_tier_id:
+                    # (plan_tier_id, terms_version) is a composite foreign key: a tier change
+                    # moves to the target's current terms, and a pending move to terms only the
+                    # old tier has is dropped with it (P07-T1 review M3).
+                    subscription.terms_version = tier.terms_version
+                    subscription.pending_terms_version = None
+                    subscription.pending_terms_effective_at = None
                 subscription.plan_tier_id = tier.id
                 subscription.pending_plan_tier_id = None
                 subscription.extra_seats = seats
@@ -1088,6 +1104,7 @@ def _settle_renewal(
     *,
     charged_at: datetime,
     now: datetime,
+    amount_updatable: bool = True,
 ) -> bool:
     """Grant the period a paid renewal payment bought, or keep the payment for a refund.
 
@@ -1123,7 +1140,7 @@ def _settle_renewal(
             payment_id=str(payment.id),
             alert=True,
         )
-    expected = _expected_renewal_amount(session, subscription)
+    expected = _expected_renewal_amount(session, subscription, amount_updatable=amount_updatable)
     apply_pending = payment.amount_minor == expected
     if not apply_pending and (
         subscription.pending_plan_tier_id is not None
@@ -1790,7 +1807,7 @@ class SubscriptionService:
             log.warning("subscription_charge_time_in_future", txn_id=txn_id)
             charged_at = now
         current_tier = session.get(PlanTier, subscription.plan_tier_id)
-        expected = _expected_renewal_amount(session, subscription)
+        expected = self.next_renewal_amount(subscription)
         accepted = {expected}
         if subscription.paymob_amount_minor is not None:
             accepted.add(subscription.paymob_amount_minor)
@@ -1830,7 +1847,14 @@ class SubscriptionService:
                 alert=True,
             )
             return False
-        return _settle_renewal(session, subscription, payment, charged_at=charged_at, now=now)
+        return _settle_renewal(
+            session,
+            subscription,
+            payment,
+            charged_at=charged_at,
+            now=now,
+            amount_updatable=self._settings.subscription_amount_updatable,
+        )
 
     # -- grace and expiry (spec §2.6, §5.2) --------------------------------------------
 
@@ -1872,6 +1896,293 @@ class SubscriptionService:
             .limit(limit)
         ).all()
         return sum(self._sweep_one(sid, self._expire_if_due, now) for sid in ids)
+
+    # -- plan changes (spec §5.3) ------------------------------------------------------
+
+    def schedule_downgrade(
+        self,
+        subscription_id: uuid.UUID,
+        *,
+        actor_user_id: uuid.UUID,
+        plan_tier_id: uuid.UUID,
+        now: datetime,
+    ) -> Subscription:
+        """Switch to a cheaper tier at the next renewal. The current tier clears a pending one.
+
+        Nothing is sent to Paymob: the amount sweep (:meth:`apply_period_end_changes`) pushes the
+        lower amount, and the renewal applies the tier. The caller commits.
+
+        Raises:
+            SubscriptionNotFound: unknown subscription, or the actor is not its payer (the two
+                are indistinguishable).
+            InvalidPlanChange: not an active card subscription, a cancel is scheduled, or the
+                target is not an active, cheaper tier of the same audience, interval and
+                currency, or it sells no extra seats while some are held.
+            SeatsInsufficient: a teacher tier whose seats the seated students would not fit
+                (UD-5: active, non-leaving seats only).
+            DowngradeUnavailable: ``subscription_amount_updatable`` is ``False``.
+        """
+        del now
+        subscription = self._payer_lock(subscription_id, actor_user_id)
+        if (
+            subscription.status is not SubscriptionStatus.active
+            or subscription.is_manually_activated
+        ):
+            raise InvalidPlanChange("only an active card subscription can change plan")
+        if subscription.cancel_at_period_end:
+            raise InvalidPlanChange("this subscription is cancelled at period end")
+        if plan_tier_id == subscription.plan_tier_id:
+            if subscription.pending_plan_tier_id is not None:
+                subscription.pending_plan_tier_id = None
+                _bump(subscription)
+            return subscription
+        if not self._settings.subscription_amount_updatable:
+            # Paymob cannot lower the amount, so the plan would keep renewing at the old price.
+            # Clearing (above) and cancelling stay available.
+            raise DowngradeUnavailable(
+                "Plan downgrades are not available for this subscription yet."
+            )
+        current = self._session.get(PlanTier, subscription.plan_tier_id)
+        target = self._session.get(PlanTier, plan_tier_id)
+        if (
+            current is None
+            or target is None
+            or not target.is_active
+            or target.audience is not current.audience
+            or target.interval is not current.interval
+            or target.currency != current.currency
+        ):
+            raise InvalidPlanChange("choose an active plan for the same audience and interval")
+        if target.price_minor >= current.price_minor:
+            raise InvalidPlanChange("not a downgrade; upgrades apply immediately")
+        extra = (
+            subscription.pending_extra_seats
+            if subscription.pending_extra_seats is not None
+            else subscription.extra_seats or 0
+        )
+        if extra and target.extra_seat_price_minor == 0:
+            raise InvalidPlanChange("the new plan has no extra seats; remove them first")
+        if current.audience is PlanAudience.teacher:
+            capacity = seat_capacity_for(included_seats=target.included_seats, extra_seats=extra)
+            in_use = _seats_in_use(self._session, subscription.user_id)
+            if in_use > capacity:
+                raise SeatsInsufficient(in_use=in_use, capacity=capacity)
+        subscription.pending_plan_tier_id = target.id
+        _bump(subscription)
+        return subscription
+
+    def schedule_cancel(
+        self, subscription_id: uuid.UUID, *, actor_user_id: uuid.UUID | None, now: datetime
+    ) -> Subscription:
+        """Cancel at period end; access continues until then (spec §5.3).
+
+        Nothing is sent to Paymob: the sweep pushes the cancel and ends the plan at its period
+        end. ``actor_user_id=None`` is the system (the fixed-amount terms move); anyone else must
+        be the payer. The caller commits.
+
+        Raises:
+            SubscriptionNotFound: unknown subscription, or the actor is not its payer.
+            InvalidPlanChange: nothing live to cancel, or a manual activation.
+        """
+        del now
+        subscription = self._payer_lock(subscription_id, actor_user_id)
+        if subscription.status not in PLAN_LIVE_STATUSES or subscription.is_manually_activated:
+            raise InvalidPlanChange("there is no live card subscription to cancel")
+        if not subscription.cancel_at_period_end or subscription.pending_plan_tier_id is not None:
+            subscription.cancel_at_period_end = True
+            subscription.pending_plan_tier_id = None
+            _bump(subscription)
+        return subscription
+
+    def _payer_lock(
+        self, subscription_id: uuid.UUID, actor_user_id: uuid.UUID | None
+    ) -> Subscription:
+        """Lock a subscription the actor pays for; a stranger sees "unknown" (no IDOR oracle)."""
+        subscription = self._lock(subscription_id)
+        if actor_user_id is not None and subscription.payer_user_id != actor_user_id:
+            raise SubscriptionNotFound(f"unknown subscription {subscription_id}")
+        return subscription
+
+    def next_renewal_amount(self, subscription: Subscription) -> int:
+        """What Paymob will charge at the next renewal, pending changes included (index R6).
+
+        The single source of the expected renewal amount: the amount sweep, the renewal
+        acceptance (DV-12) and the drift check all use it. On the fixed-amount fallback path it
+        is the stamped amount (:func:`expected_renewal_amount_minor`).
+        """
+        return _expected_renewal_amount(
+            self._session,
+            subscription,
+            amount_updatable=self._settings.subscription_amount_updatable,
+        )
+
+    def sync_renewal_amount(self, subscription: Subscription) -> bool:
+        """PUT :meth:`next_renewal_amount` to Paymob if it differs from the stamp; ``True`` if sent.
+
+        The one way any phase changes a Paymob subscription amount (index R6). Stamps
+        ``paymob_amount_minor`` in the caller's transaction on success. Nothing is sent without a
+        Paymob link, when nothing changed, or on the fixed-amount fallback path (Paymob cannot
+        change the amount there). An unknown outcome (timeout, transport, 5xx) leaves the stamp
+        alone and returns ``False``: the PUT is idempotent and the next pass repeats it, while a
+        stamp claiming a PUT that may not have landed would hide the difference for good.
+
+        Raises:
+            PaymobError: a definite refusal; the stamp is unchanged and the sweep rolls the row
+                back and alerts.
+        """
+        paymob_id = subscription.paymob_subscription_id
+        if paymob_id is None or not self._settings.subscription_amount_updatable:
+            return False
+        expected = self.next_renewal_amount(subscription)
+        if expected == subscription.paymob_amount_minor:
+            return False
+        try:
+            self._client.update_subscription(paymob_id, amount_cents=expected)
+        except PaymobError as exc:
+            status = exc.status_code
+            if not (exc.outcome_unknown or status is None or not 400 <= status < 500):
+                raise
+            log.warning(
+                "paymob_amount_put_unknown",
+                subscription_id=str(subscription.id),
+                amount_minor=expected,
+                exc_info=True,
+            )
+            return False
+        subscription.paymob_amount_minor = expected
+        _bump(subscription)
+        log.info(
+            "paymob_subscription_amount_set",
+            subscription_id=str(subscription.id),
+            amount_minor=expected,
+        )
+        return True
+
+    def apply_period_end_changes(
+        self, *, now: datetime, limit: int = SUBSCRIPTION_SWEEP_BATCH
+    ) -> int:
+        """Push amounts and cancels to Paymob, and end cancelled plans at their period end.
+
+        Four candidate sets, each bounded to ``limit`` rows and each row its own skip-locked
+        transaction (:meth:`_sweep_one`); returns how many rows changed. The session must hold no
+        uncommitted work.
+
+        * **Amount** (DV-16): an active, linked, not-cancelling row with a pending tier or seat
+          change, no stamp, or a renewal within ``AMOUNT_SYNC_WINDOW`` (which repairs a stamp
+          left behind by a cleared change), read without a lock and pushed only when
+          ``next_renewal_amount`` differs from the stamp.
+        * **Cancel, live** (DV-15): a live cancel-at-period-end row Paymob has not cancelled yet.
+        * **Cancel, ended** (DV-15 fourth set, DV-27): an ``expired`` or ``cancelled`` linked row
+          with no cancel stamp. This is the only retry of a cancel that failed at expiry and the
+          only cancel for a row an overdue webhook expired or a credits-converted checkout.
+          Rows with no period (``NULL`` end) go first.
+        * **End**: a live cancel-at-period-end row whose period is over becomes ``cancelled`` and
+          the payer gets the ``cancelled`` notice.
+
+        Raises:
+            ValueError: ``limit`` is below 1.
+        """
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+        S = Subscription
+        linked = S.paymob_subscription_id.is_not(None)  # complimentary rows: Phase 07 (R15)
+        amount_ids = self._amount_candidates(now, limit)
+        cancel_live = self._session.scalars(
+            select(S.id)
+            .where(
+                S.status.in_(PLAN_LIVE_STATUSES),
+                S.cancel_at_period_end.is_(True),
+                linked,
+                S.paymob_cancelled_at.is_(None),
+            )
+            .order_by(S.current_period_end.asc().nulls_first(), S.id)
+            .limit(limit)
+        ).all()
+        cancel_ended = self._session.scalars(
+            select(S.id)
+            .where(
+                S.status.in_((SubscriptionStatus.expired, SubscriptionStatus.cancelled)),
+                linked,
+                S.paymob_cancelled_at.is_(None),
+            )
+            .order_by(S.current_period_end.asc().nulls_first(), S.id)
+            .limit(limit)
+        ).all()
+        end_ids = self._session.scalars(
+            select(S.id)
+            .where(
+                S.status.in_(PLAN_LIVE_STATUSES),
+                S.cancel_at_period_end.is_(True),
+                S.current_period_end <= now,
+                linked,
+            )
+            .order_by(S.current_period_end, S.id)
+            .limit(limit)
+        ).all()
+        changed = sum(self._sweep_one(sid, self._push_amount, now) for sid in amount_ids)
+        changed += sum(self._sweep_one(sid, self._push_cancel, now) for sid in cancel_live)
+        changed += sum(self._sweep_one(sid, self._push_cancel, now) for sid in cancel_ended)
+        changed += sum(self._sweep_one(sid, self._end_cancelled, now) for sid in end_ids)
+        return changed
+
+    def _amount_candidates(self, now: datetime, limit: int) -> list[uuid.UUID]:
+        """Ids of rows whose Paymob amount may be stale (DV-16), oldest renewal first."""
+        S = Subscription
+        rows = self._session.scalars(
+            select(S)
+            .where(
+                S.status == SubscriptionStatus.active,
+                S.paymob_subscription_id.is_not(None),
+                S.cancel_at_period_end.is_(False),
+                sa.or_(
+                    S.pending_plan_tier_id.is_not(None),
+                    S.pending_extra_seats.is_not(None),
+                    S.paymob_amount_minor.is_(None),
+                    S.current_period_end <= now + AMOUNT_SYNC_WINDOW,
+                ),
+            )
+            .order_by(S.current_period_end, S.id)
+            .limit(limit)
+        ).all()
+        return [row.id for row in rows if self.next_renewal_amount(row) != row.paymob_amount_minor]
+
+    def _push_amount(self, subscription: Subscription, now: datetime) -> bool:
+        """Sweep step: PUT the amount of a row that is still an active, linked plan."""
+        del now
+        if (
+            subscription.status is not SubscriptionStatus.active
+            or subscription.cancel_at_period_end
+            or subscription.paymob_subscription_id is None
+        ):
+            return False
+        return self.sync_renewal_amount(subscription)
+
+    def _push_cancel(self, subscription: Subscription, now: datetime) -> bool:
+        """Sweep step: cancel the Paymob subscription (a refusal or unknown outcome is retried)."""
+        return self._cancel_at_paymob(subscription, now=now)
+
+    def _end_cancelled(self, subscription: Subscription, now: datetime) -> bool:
+        """Sweep step: end a cancel-at-period-end plan whose period is over, re-checked locked."""
+        if (
+            not subscription.cancel_at_period_end
+            or subscription.status not in PLAN_LIVE_STATUSES
+            or subscription.paymob_subscription_id is None
+            or subscription.current_period_end is None
+            or subscription.current_period_end > now
+        ):
+            return False
+        subscription.status = SubscriptionStatus.cancelled
+        subscription.grace_until = None
+        _bump(subscription)
+        # Past tense, so it goes out now and names the stored period end (UD-4 (b)).
+        enqueue_subscription_notice(
+            self._session,
+            subscription=subscription,
+            notice="cancelled",
+            effective_at=subscription.current_period_end,
+        )
+        log.info("subscription_cancelled_at_period_end", subscription_id=str(subscription.id))
+        return True
 
     def _lock(self, subscription_id: uuid.UUID) -> Subscription:
         """The subscription, locked and re-read, or :class:`SubscriptionNotFound`."""
@@ -2155,30 +2466,37 @@ class SubscriptionService:
             _bump(subscription)
 
     def _on_suspended(self, subscription: Subscription, remote: RemoteState, now: datetime) -> None:
+        """Paymob reports the subscription suspended: treat it as a cancel at period end.
+
+        The period-end sweep would otherwise expire the row and push a permanent Paymob cancel
+        for a plan that was only suspended, and tell the payer nothing. As a cancel, the paid
+        period is kept, the sweep pushes the cancel and ends the plan at its period end with the
+        ``cancelled`` notice. A pending plan change can no longer apply, so it is dropped.
+        """
+        del now
         if self._disagrees(subscription, remote, trigger=TRIGGER_SUSPENDED, expected="suspended"):
             return
         if subscription.status is not SubscriptionStatus.active:
             return
-        subscription.status = SubscriptionStatus.past_due
-        subscription.grace_until = max(subscription.current_period_end or now, now)
+        if subscription.cancel_at_period_end and subscription.pending_plan_tier_id is None:
+            return
+        subscription.cancel_at_period_end = True
+        subscription.pending_plan_tier_id = None
         _bump(subscription)
+        log.info("subscription_suspended_in_paymob", subscription_id=str(subscription.id))
 
     def _on_resumed(self, subscription: Subscription, remote: RemoteState, now: datetime) -> None:
+        """Paymob reports the subscription resumed: nothing changes.
+
+        A suspension is a cancel at period end (:meth:`_on_suspended`), and the sweep may already
+        have pushed the permanent Paymob cancel, so a resume cannot be trusted to undo it: the
+        payer resubscribes if they want the plan back. A grace that a failed charge started is
+        not a suspension either, and only a paid renewal ends it.
+        """
+        del now
         if self._disagrees(subscription, remote, trigger=TRIGGER_RESUMED, expected="active"):
             return
-        if subscription.status is not SubscriptionStatus.past_due:
-            return
-        if subscription.current_period_end is None or subscription.current_period_end <= now:
-            return  # the paid period is over; the next renewal reactivates
-        if subscription.grace_until != subscription.current_period_end:
-            # Only a suspension is resumed (``_on_suspended`` sets exactly this marker). A grace
-            # that a failed charge started means this period is unpaid: it ends at its first
-            # deadline, and only a paid renewal reactivates (retries never move the deadline).
-            log.warning("subscription_resume_ignored_unpaid", subscription_id=str(subscription.id))
-            return
-        subscription.status = SubscriptionStatus.active
-        subscription.grace_until = None
-        _bump(subscription)
+        log.info("subscription_resume_ignored", subscription_id=str(subscription.id))
 
     def _free_order_id(self, txn: JsonMap) -> int | None:
         """The charge's Paymob order id, unless another payment already holds it (DV-14).

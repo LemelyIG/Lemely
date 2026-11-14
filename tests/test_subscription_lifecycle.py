@@ -548,7 +548,7 @@ def test_the_period_alone_ignores_a_failure_only_beyond_the_early_charge_window(
     assert _sub(pg_sessionmaker, beyond).status is SubscriptionStatus.active
 
 
-# -- I-1: only a suspension is resumed -------------------------------------------------
+# -- I-1: a resume never clears a grace a failed charge started ----------------------
 
 
 def test_resume_does_not_clear_a_grace_a_failed_charge_started(
@@ -1016,12 +1016,19 @@ def test_a_trigger_that_disagrees_with_paymob_state_is_ignored(
     assert any(e["event"] == "paymob_state_disagrees" for e in logs)
 
 
-def test_suspend_then_resume(pg_sessionmaker: sessionmaker[Session]) -> None:
+def test_a_suspension_is_a_cancel_at_period_end_and_a_resume_does_not_undo_it(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """P05 T8: the period-end sweep ends it as "cancelled" (see test_subscription_plan_changes)."""
     _, sid = _linked(pg_sessionmaker)
     now = END - timedelta(days=10)
     _deliver(pg_sessionmaker, _client(state="suspended", updated_at="s"), TRIGGER_SUSPENDED, now)
     sub = _sub(pg_sessionmaker, sid)
-    assert (sub.status, sub.grace_until) == (SubscriptionStatus.past_due, END)
+    assert (sub.status, sub.grace_until, sub.cancel_at_period_end) == (
+        SubscriptionStatus.active,
+        None,
+        True,
+    )
     _deliver(
         pg_sessionmaker,
         _client(state="active", updated_at="r"),
@@ -1029,7 +1036,11 @@ def test_suspend_then_resume(pg_sessionmaker: sessionmaker[Session]) -> None:
         now + timedelta(days=1),
     )
     sub = _sub(pg_sessionmaker, sid)
-    assert (sub.status, sub.grace_until) == (SubscriptionStatus.active, None)
+    assert (sub.status, sub.grace_until, sub.cancel_at_period_end) == (
+        SubscriptionStatus.active,
+        None,
+        True,
+    )
 
 
 def test_resume_after_the_paid_period_ended_stays_past_due(
