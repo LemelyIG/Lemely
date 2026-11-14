@@ -50,6 +50,7 @@ from lemely.db.subscription_repo import (
 )
 from lemely.db.usage_ledger_repo import UsageLedger
 from lemely.io.paymob.client import PaymobError
+from tests.paymob_fixtures import MOTO_INTEGRATION_ID
 from tests.subscription_fixtures import (
     T0,
     FakePaymobClient,
@@ -531,12 +532,18 @@ def test_a_failure_after_the_grant_rolls_everything_back_and_a_retry_grants_once
 def test_a_paymob_read_error_propagates_before_any_write(
     pg_sessionmaker: sessionmaker[Session], failing: str
 ) -> None:
-    """An unknown outcome (a timeout, a 5xx): the route answers 503 and Paymob retries."""
+    """An unknown outcome (a timeout, a 5xx): the route answers 503 and Paymob retries.
+
+    The error is caught inside the transaction and the transaction then COMMITS, so a row written
+    before the read would survive: rolling back would hide it.
+    """
     student, sid = _linked(pg_sessionmaker)
     client = _client()
     client.fail[failing] = PaymobError("Paymob timed out", timeout=True, outcome_unknown=True)
-    with pytest.raises(PaymobError):
-        _deliver(pg_sessionmaker, client)
+    with pg_sessionmaker.begin() as session:
+        service = SubscriptionService(session, client, paymob_settings())
+        with pytest.raises(PaymobError):
+            service.apply_renewal_webhook(SUCCESS_BODY, now=NOW)
     assert _events(pg_sessionmaker) == []
     assert _renewals(pg_sessionmaker, sid) == []
     assert grants_of(pg_sessionmaker, student) == []
@@ -661,6 +668,25 @@ def test_the_first_charge_is_never_taken_for_a_renewal(
     _deliver(pg_sessionmaker, client)
     assert _renewals(pg_sessionmaker, sid) == []
     assert grants_of(pg_sessionmaker, student) == []
+
+
+def test_a_charge_on_the_moto_integration_is_accepted(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _, sid = _linked(pg_sessionmaker)
+    _deliver(pg_sessionmaker, _client(integration_id=MOTO_INTEGRATION_ID))
+    assert len(_periods(pg_sessionmaker, sid)) == 1
+
+
+def test_a_charge_on_another_integration_is_refused_and_alerted(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student, sid = _linked(pg_sessionmaker)
+    with capture_logs() as logs:
+        _deliver(pg_sessionmaker, _client(integration_id=MOTO_INTEGRATION_ID + 1))
+    assert _renewals(pg_sessionmaker, sid) == []
+    assert grants_of(pg_sessionmaker, student) == []
+    assert "paymob_unexpected_integration" in _alerts(logs)
 
 
 def test_a_renewal_with_no_payer_is_not_recorded(pg_sessionmaker: sessionmaker[Session]) -> None:

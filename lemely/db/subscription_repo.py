@@ -1498,9 +1498,10 @@ class SubscriptionService:
         The one acceptance rule of renewals (DV-12); the drift check calls it too. Nothing is
         written for a charge that cannot be read (alert), that is not a success, that is Paymob's
         initial transaction (the first payment's, whatever the order of its callback), or that is
-        already recorded. The charge is accepted only in the subscription's own currency and for
-        the amount Lemely last set at Paymob or the one it expects next: any other amount is
-        stored ``failed_mismatch`` with no grant. Pending tier and seat changes apply only when
+        already recorded. A charge that names an integration other than MOTO is refused (alert).
+        The charge is accepted only in the subscription's own currency and for the amount Lemely
+        last set at Paymob or the one it expects next: any other amount is stored
+        ``failed_mismatch`` with no grant. Pending tier and seat changes apply only when
         the charge is the expected (new) amount, so a failed price update never grants the new
         tier for the old price. A charge on an ended plan is handled by :func:`_settle_renewal`.
         The caller holds the subscription lock and commits.
@@ -1528,6 +1529,20 @@ class SubscriptionService:
             return False
         if txn_id == initial_transaction:
             log.info("subscription_charge_is_initial_transaction", txn_id=txn_id)
+            return False
+        charged_on = _strict_int(txn.get("integration_id"))
+        moto = self._settings.moto_integration_id
+        if charged_on is not None and moto is not None and charged_on != moto:
+            # Plans are created on the MOTO integration, so a renewal on another one is not ours
+            # to settle (audit I1): nothing is written and an operator looks at it.
+            alerts.error(
+                "paymob_unexpected_integration",
+                path="subscription_webhook",
+                subscription_id=str(subscription.id),
+                txn_id=txn_id,
+                integration_id=str(charged_on)[:20],
+                alert=True,
+            )
             return False
         if session.scalar(select(Payment.id).where(Payment.paymob_txn_id == txn_id)) is not None:
             return False
