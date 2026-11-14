@@ -25,6 +25,7 @@ import pytest
 import sqlalchemy as sa
 from structlog.testing import capture_logs
 
+from lemely.core.subscription_rules import AMOUNT_SYNC_WINDOW
 from lemely.db.billing_repo import (
     BillingService,
     CheckoutUnavailable,
@@ -1446,20 +1447,21 @@ def test_an_upgrade_in_the_sync_window_is_refused_while_the_amount_is_unconfirme
 def test_a_renewal_after_a_pushed_seat_purchase_is_charged_the_new_amount(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    """The review's probe: seats bought before the renewal do not ride free into the next one."""
+    """Paymob charges whatever amount it was last told, so without the push the renewal is old."""
     sm = pg_sessionmaker
     scene = _teacher(sm)
     payment_id = _buy(sm, _CheckoutClient(), scene, 2)
     client = FakePaymobClient()
+    pid = _sub(sm, scene).paymob_subscription_id
+    assert pid is not None
+    client.subscriptions[pid] = remote_subscription(pid, amount_cents=32_000)  # what it holds now
     _wire_pusher(sm, client)
     _pay(sm, payment_id)
     sub = _sub(sm, scene)
     assert (sub.extra_seats, sub.paymob_amount_minor) == (3, 36_000)
-    pid = sub.paymob_subscription_id
-    assert pid is not None
-    client.subscriptions[pid] = remote_subscription(pid, amount_cents=36_000)
+    told = client.subscriptions[pid]["amount_cents"]  # the amount the fake will charge
     client.last_transactions[pid] = charge(
-        9_100_001, 36_000, created_at=PERIOD_END - timedelta(hours=2)
+        9_100_001, told, created_at=PERIOD_END - timedelta(hours=2)
     )
 
     with sm.begin() as session:
@@ -1471,3 +1473,98 @@ def test_a_renewal_after_a_pushed_seat_purchase_is_charged_the_new_amount(
     assert after.current_period_start == PERIOD_END
     assert (after.extra_seats, after.paymob_amount_minor) == (3, 36_000)
     assert after.paymob_amount_minor == 30_000 + after.extra_seats * 2_000  # nothing is free
+
+
+# ---------------------------------------------------------------------------
+# Unlinked and ending plans (I-R1, m-R4) and the guards' edges (n-R1).
+# ---------------------------------------------------------------------------
+
+
+def test_an_unlinked_card_plan_cannot_buy_seats_inside_or_outside_the_window(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher(sm)
+    _update_sub(sm, scene, paymob_subscription_id=None)  # the Subscription Created event is lost
+    for now in (NOW, PERIOD_END - timedelta(days=1)):
+        _refused(sm, _CheckoutClient(), scene, 1, "upgrade_unavailable", now=now)
+        with pytest.raises(MerchantChargeError) as quoted:
+            _quote(sm, _CheckoutClient(), scene, 1, now=now)
+        assert quoted.value.code == "upgrade_unavailable"
+
+
+def test_a_manually_activated_plan_is_exempt_from_the_window(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher(sm, extra=3, paymob_amount=32_000)  # a stale stamp would refuse a card plan
+    _update_sub(sm, scene, paymob_subscription_id=None, is_manually_activated=True)
+    assert _buy(sm, _CheckoutClient(), scene, 1, now=PERIOD_END - timedelta(days=1))
+
+
+def test_a_cancelling_plan_cannot_buy_seats(pg_sessionmaker: sessionmaker[Session]) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher(sm)
+    _update_sub(sm, scene, cancel_at_period_end=True)
+    _refused(sm, _CheckoutClient(), scene, 1, "plan_change_pending")
+
+
+def test_a_cancelling_plan_cannot_upgrade(pg_sessionmaker: sessionmaker[Session]) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher(sm)
+    _update_sub(sm, scene, cancel_at_period_end=True)
+    target = _seat_tier(sm, price=40_000, seat_price=5_000)
+    with pytest.raises(MerchantChargeError) as caught:
+        _upgrade_checkout(sm, _CheckoutClient(), scene, target)
+    assert caught.value.code == "plan_change_pending"
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"cancel_at_period_end": True},
+        {"status": SubscriptionStatus.cancelled},
+        {"paymob_cancelled_at": T0},
+    ],
+)
+def test_the_push_skips_a_cancelling_or_cancelled_plan_quietly(
+    pg_sessionmaker: sessionmaker[Session], values: dict[str, Any]
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher(sm, extra=3, paymob_amount=32_000)  # stale: an active row would be pushed
+    _update_sub(sm, scene, **values)
+    client = FakePaymobClient()
+    with capture_logs() as logs:
+        push_renewal_amount(sm, client, PAYMOB_SETTINGS, scene["subscription_id"])
+    assert client.names() == []
+    assert [log["event"] for log in logs] == ["subscription_amount_push_skipped"]
+    assert not [log for log in logs if log.get("alert")]
+
+
+def test_a_settle_inside_a_savepoint_pushes_only_after_the_outer_commit(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher(sm)
+    payment_id = _buy(sm, _CheckoutClient(), scene, 2)
+    obj = _txn(_payment(sm, payment_id))
+    pushed: list[uuid.UUID] = []
+    register_amount_pusher(pushed.append)
+
+    with sm.begin() as session:
+        billing = BillingService(session, _CheckoutClient(), PAYMOB_SETTINGS, now=lambda: NOW)
+        with session.begin_nested():
+            billing.apply_transaction_callback(obj)
+        assert pushed == []  # a savepoint release is not a commit
+
+    assert pushed == [scene["subscription_id"]]
+
+
+def test_the_window_opens_at_exactly_two_days_before_the_period_end(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    stale = _teacher(sm, extra=3, paymob_amount=32_000)
+    boundary = PERIOD_END - AMOUNT_SYNC_WINDOW
+    assert _buy(sm, _CheckoutClient(), stale, 1, now=boundary - timedelta(microseconds=1))
+    _refused(sm, _CheckoutClient(), stale, 1, "period_ending", now=boundary)

@@ -634,17 +634,24 @@ class MerchantChargeService:
         )
 
     def _refuse_in_amount_window(self, sub: Subscription, now: datetime) -> None:
-        """Refuse (``period_ending``) a seat or upgrade charge Paymob could not learn about in time.
+        """Refuse a seat or upgrade charge whose new renewal amount Paymob could not learn in time.
 
         UD-P6. A change paid for now reaches Paymob only through a push of the new renewal amount
-        after the settle. Within ``AMOUNT_SYNC_WINDOW`` of the period end there may be no time left
-        to repair a failed or unknown push before Paymob renews, and a renewal at the stale
-        amount would carry the new seats or tier for free. So in the window a charge is allowed
-        only while the amount is confirmed: Paymob takes amount updates and its stamp equals
-        the renewal amount Lemely expects now. Unlinked rows have nothing to push.
+        after the settle. Only a manually activated plan is exempt: Paymob never renews it. A
+        card plan whose Paymob link has not landed yet (``upgrade_unavailable``, as for an
+        upgrade) is refused at any time: nothing can push its amount, and the renewal webhook
+        would link it at the old amount and carry the new seats or tier for free. Within
+        ``AMOUNT_SYNC_WINDOW`` of the period end there may be no time left to repair a failed or
+        unknown push before Paymob renews, so a charge is allowed only while the amount is
+        confirmed: Paymob takes amount updates and its stamp equals the renewal amount Lemely
+        expects now (``period_ending`` otherwise).
         """
+        if sub.is_manually_activated:
+            return
+        if sub.paymob_subscription_id is None:
+            raise MerchantChargeError("upgrade_unavailable", "This plan cannot be changed yet")
         end = sub.current_period_end
-        if sub.paymob_subscription_id is None or end is None or now < end - AMOUNT_SYNC_WINDOW:
+        if end is None or now < end - AMOUNT_SYNC_WINDOW:
             return
         confirmed = (
             self._settings.subscription_amount_updatable
@@ -756,6 +763,8 @@ class MerchantChargeService:
                 "invalid_seats", f"Buy between 1 and {MAX_SEATS_PER_PURCHASE} seats at a time"
             )
         sub = payable_subscription(session, subscription_id, actor_user_id, lock=lock)
+        if sub.cancel_at_period_end:
+            raise MerchantChargeError("plan_change_pending", "The plan is set to end")
         tier = session.get(PlanTier, sub.plan_tier_id)
         assert tier is not None  # noqa: S101 - the foreign key
         terms = billed_terms(session, sub)
@@ -1709,6 +1718,15 @@ def push_renewal_amount(
     with factory.begin() as session:
         sub = lock_subscription(session, subscription_id)
         if sub is None:
+            return
+        if (
+            sub.status is not SubscriptionStatus.active
+            or sub.cancel_at_period_end
+            or sub.paymob_subscription_id is None
+            or sub.paymob_cancelled_at is not None
+        ):
+            # The sweep's own guards: a plan that is ending or gone has no amount worth changing.
+            log.info("subscription_amount_push_skipped", subscription_id=str(subscription_id))
             return
         service = SubscriptionService(session, client, settings)
         try:
