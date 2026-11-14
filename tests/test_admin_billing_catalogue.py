@@ -13,11 +13,13 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
+import sqlalchemy as sa
 from pydantic import SecretStr
 from sqlalchemy import func, select
 
 from lemely.db.admin_billing_repo import (
     AdminCatalogueService,
+    AdminConflictError,
     ReasonRequiredError,
     paymob_drift,
 )
@@ -81,14 +83,14 @@ TEACHER_TIER: dict[str, Any] = {
 def _tier_update(**changes: Any) -> dict[str, Any]:
     body: dict[str, Any] = {
         "name": "Student monthly",
-        "priceMinor": 25000,
+        "priceMinor": 20000,
         "allowanceUnits": 1000,
         "includedSeats": 0,
         "seatAllowanceUnits": 0,
         "extraSeatPriceMinor": 0,
         "features": {},
         "isActive": True,
-        "reason": "price rise",
+        "reason": "rename",
     }
     body.update(changes)
     return body
@@ -182,7 +184,7 @@ def test_update_replaces_features_whole_and_audits_before_and_after(
     assert resp.json()["features"] == {"b": 3}
     first, second = audit_rows(sm, "catalogue.plan_tier.update")
     assert first.before is not None and first.after is not None
-    assert (first.before["price_minor"], first.after["price_minor"]) == (20000, 25000)
+    assert (first.before["name"], first.after["name"]) == ("Student Monthly", "Student monthly")
     assert second.after is not None and second.after["features"] == {"b": 3}
 
 
@@ -233,9 +235,11 @@ def test_sync_stamps_price_and_frequency_and_shows_drift_after_a_price_change(
         assert (row.paymob_plan_synced_price_minor, row.paymob_plan_synced_frequency) == (20000, 30)
         assert row.paymob_plan_mode == "test"
 
-    changed = client.put(f"{P}/tiers/{tier}", json=_tier_update(priceMinor=25000))
-    assert changed.status_code == 200, changed.text
-    assert changed.json()["paymobDrift"] == "drifted"
+    # A price edit through the API is refused until T13 (see the terms tests); move it directly.
+    with sm.begin() as session:
+        session.execute(sa.update(PlanTier).where(PlanTier.id == tier).values(price_minor=25000))
+    drifted = client.get(f"{P}/catalogue").json()["planTiers"]
+    assert [t["paymobDrift"] for t in drifted] == ["drifted"]
     [sync_row] = audit_rows(sm, "catalogue.plan_tier.sync_paymob")
     assert sync_row.before is not None and sync_row.after is not None
     assert sync_row.before["paymob_plan_id"] is None
@@ -770,3 +774,247 @@ def test_each_catalogue_write_adds_exactly_one_audit_row(
     ]
     assert [w.status_code for w in writes] == [200] * 8, [w.text for w in writes]
     assert audit_count(sm) == 8
+
+
+# -- terms are not editable in place until T13 (I1) ---------------------------------
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"priceMinor": 30000},
+        {"allowanceUnits": 1500},
+        {"extraSeatPriceMinor": 100},
+        {"includedSeats": 3},
+        {"seatAllowanceUnits": 50},
+    ],
+    ids=["price", "allowance", "extra_seat_price", "included_seats", "seat_allowance"],
+)
+def test_a_terms_change_on_a_tier_with_terms_is_refused(
+    sm: sessionmaker[Session], admin: uuid.UUID, change: dict[str, Any]
+) -> None:
+    client = admin_client(sm, admin)
+    created = client.post(f"{P}/tiers", json=TEACHER_TIER).json()
+    update = {
+        "name": created["name"],
+        "priceMinor": created["priceMinor"],
+        "allowanceUnits": created["allowanceUnits"],
+        "includedSeats": created["includedSeats"],
+        "seatAllowanceUnits": created["seatAllowanceUnits"],
+        "extraSeatPriceMinor": created["extraSeatPriceMinor"],
+        "features": {},
+        "isActive": True,
+        "reason": "edit terms",
+        **change,
+    }
+
+    resp = client.put(f"{P}/tiers/{created['id']}", json=update)
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"]["code"] == "terms_versioning_pending"
+    with sm() as session:
+        tier = session.get(PlanTier, uuid.UUID(created["id"]))
+        assert tier is not None
+        assert (tier.price_minor, tier.allowance_units, tier.included_seats) == (50000, 5000, 10)
+        terms = session.scalars(
+            select(PlanTierTerms).where(PlanTierTerms.plan_tier_id == tier.id)
+        ).all()
+        assert [(t.terms_version, t.price_minor, t.allowance_units) for t in terms] == [
+            (1, 50000, 5000)
+        ]
+    assert audit_rows(sm, "catalogue.plan_tier.update") == []
+
+
+def test_a_name_features_and_active_edit_still_works_with_the_terms_unchanged(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    tier = add_plan_tier(sm, price_minor=20000, allowance_units=1000)
+    resp = admin_client(sm, admin).put(
+        f"{P}/tiers/{tier}", json=_tier_update(name="Renamed", features={"x": 1}, isActive=False)
+    )
+    assert resp.status_code == 200, resp.text
+    assert (resp.json()["name"], resp.json()["isActive"], resp.json()["priceMinor"]) == (
+        "Renamed",
+        False,
+        20000,
+    )
+    assert len(audit_rows(sm, "catalogue.plan_tier.update")) == 1
+
+
+# -- DTO bounds follow the column types (M1) ------------------------------------------
+
+
+def test_a_tier_price_above_the_integer_column_is_422_not_a_500(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    client = admin_client(sm, admin)
+    too_big = client.post(f"{P}/tiers", json={**TEACHER_TIER, "priceMinor": 3_000_000_000})
+    assert too_big.status_code == 422
+    biggest = client.post(f"{P}/tiers", json={**TEACHER_TIER, "priceMinor": 2**31 - 1})
+    assert biggest.status_code == 200, biggest.text
+    tier = biggest.json()["id"]
+    update = _tier_update(priceMinor=3_000_000_000)
+    assert client.put(f"{P}/tiers/{tier}", json=update).status_code == 422
+    assert audit_count(sm) == 1
+
+
+# -- versions never start before the latest (M2) --------------------------------------
+
+
+@pytest.mark.parametrize("kind", ["rates", "estimators"])
+def test_a_version_cannot_start_before_the_latest_one(
+    sm: sessionmaker[Session], admin: uuid.UUID, kind: str
+) -> None:
+    client = admin_client(sm, admin)
+
+    def post(effective_from: str | None) -> Any:
+        body: dict[str, Any] = (
+            {"action": "mark_paper", "unitsPerUsd": 1000, "reason": "tune"}
+            if kind == "rates"
+            else _estimator()
+        )
+        if effective_from is not None:
+            body["effectiveFrom"] = effective_from
+        return client.post(f"{P}/{kind}", json=body)
+
+    later = (NOW + timedelta(days=30)).isoformat()
+    assert post(later).status_code == 200
+    audits = audit_count(sm)
+
+    refused = post(None)  # starts now, before the scheduled version
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["detail"]["code"] == "effective_from_before_latest"
+    assert post((NOW + timedelta(days=10)).isoformat()).status_code == 422
+    assert audit_count(sm) == audits
+    assert post((NOW + timedelta(days=31)).isoformat()).status_code == 200
+
+
+# -- a failure after Paymob created the plan is alerted (M3) ---------------------------
+
+
+def test_a_failure_after_the_plan_is_created_logs_an_orphan_alert_and_no_link(
+    sm: sessionmaker[Session], admin: uuid.UUID, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import structlog.testing
+
+    from lemely.db import admin_billing_repo
+
+    def boom(*_a: Any, **_k: Any) -> None:
+        raise RuntimeError("audit insert failed")
+
+    monkeypatch.setattr(admin_billing_repo, "audited", boom)
+    tier = add_plan_tier(sm)
+    paymob = FakePaymobClient()
+    service = AdminCatalogueService(sm, paymob, PAYMOB_SETTINGS, now=lambda: NOW)
+
+    with structlog.testing.capture_logs() as logs, pytest.raises(RuntimeError):
+        service.sync_paymob_plan(tier, admin_user_id=admin, reason="sync")
+
+    orphans = [e for e in logs if e["event"] == "paymob_plan_orphaned"]
+    assert len(orphans) == 1
+    assert orphans[0]["alert"] is True
+    assert orphans[0]["paymob_plan_id"] == 9001
+    assert orphans[0]["plan_tier_id"] == str(tier)
+    with sm() as session:
+        assert session.get(PlanTier, tier).paymob_plan_id is None  # type: ignore[union-attr]
+
+
+def test_a_refusal_before_paymob_is_called_logs_no_orphan(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    import structlog.testing
+
+    tier = add_plan_tier(sm, price_minor=0)
+    service = AdminCatalogueService(sm, FakePaymobClient(), PAYMOB_SETTINGS, now=lambda: NOW)
+    with structlog.testing.capture_logs() as logs, pytest.raises(Exception, match="no price"):
+        service.sync_paymob_plan(tier, admin_user_id=admin, reason="sync")
+    assert [e for e in logs if e["event"] == "paymob_plan_orphaned"] == []
+
+
+# -- syncing a tier that is already in sync does not call Paymob (M4) ------------------
+
+
+def test_syncing_an_in_sync_tier_is_409_and_calls_paymob_once_in_total(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    tier = add_plan_tier(sm)
+    paymob = FakePaymobClient()
+    client = admin_client(sm, admin, paymob=paymob)
+    assert client.post(f"{P}/tiers/{tier}/sync", json={"reason": "first"}).status_code == 200
+
+    again = client.post(f"{P}/tiers/{tier}/sync", json={"reason": "again"})
+
+    assert again.status_code == 409, again.text
+    assert again.json()["detail"]["code"] == "already_in_sync"
+    assert [name for name, _ in paymob.calls] == ["create_plan"]
+    assert len(audit_rows(sm, "catalogue.plan_tier.sync_paymob")) == 1
+
+
+def test_a_double_click_creates_one_plan(sm: sessionmaker[Session], admin: uuid.UUID) -> None:
+    tier = add_plan_tier(sm)
+    paymob = FakePaymobClient()
+    barrier = threading.Barrier(2)
+
+    def click(_: int) -> str:
+        service = AdminCatalogueService(sm, paymob, PAYMOB_SETTINGS, now=lambda: NOW)
+        barrier.wait()
+        try:
+            service.sync_paymob_plan(tier, admin_user_id=admin, reason="double click")
+        except AdminConflictError as exc:
+            return exc.code
+        return "synced"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = sorted(pool.map(click, range(2)))
+
+    assert outcomes == ["already_in_sync", "synced"]
+    assert [name for name, _ in paymob.calls] == ["create_plan"]
+
+
+def test_a_drifted_tier_can_be_synced_again(sm: sessionmaker[Session], admin: uuid.UUID) -> None:
+    tier = add_plan_tier(
+        sm,
+        paymob_plan_id=7001,
+        paymob_plan_mode="test",
+        synced_price_minor=15000,
+        synced_frequency=30,
+    )
+    paymob = FakePaymobClient()
+    resp = admin_client(sm, admin, paymob=paymob).post(
+        f"{P}/tiers/{tier}/sync", json={"reason": "price moved"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["paymobDrift"] == "in_sync"
+    assert len(paymob.calls) == 1
+
+
+# -- the tier row is locked for an edit (M6) ----------------------------------------
+
+
+def test_a_tier_edit_waits_for_a_concurrent_writer_and_audits_what_it_replaced(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    import time
+
+    tier = add_plan_tier(sm)
+    service = AdminCatalogueService(sm, FakePaymobClient(), PAYMOB_SETTINGS, now=lambda: NOW)
+    holder = sm()
+    holder.begin()
+    holder.execute(sa.update(PlanTier).where(PlanTier.id == tier).values(name="First writer"))
+
+    def edit() -> None:
+        service.update_plan_tier(
+            tier, {"name": "Second writer"}, admin_user_id=admin, reason="edit"
+        )
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(edit)
+        time.sleep(0.7)  # the edit must be parked on the row lock, not already past its read
+        holder.commit()
+        holder.close()
+        future.result(timeout=30)
+
+    [row] = audit_rows(sm, "catalogue.plan_tier.update")
+    assert row.before is not None and row.after is not None
+    assert row.before["name"] == "First writer"
+    assert row.after["name"] == "Second writer"

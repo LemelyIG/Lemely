@@ -17,6 +17,8 @@ from lemely.web.schemas_admin import ApiModel
 Reason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=2000)]
 #: Piasters: up to ten billion (100 million EGP).
 Money = Annotated[int, Field(ge=0, le=10**10)]
+#: ``plan_tiers.price_minor`` is an ``INTEGER`` column (the others are ``BIGINT``).
+TierPrice = Annotated[int, Field(ge=0, le=2**31 - 1)]
 PositiveMoney = Annotated[int, Field(gt=0, le=10**10)]
 #: Usage units: up to a trillion.
 Units = Annotated[int, Field(ge=0, le=10**12)]
@@ -102,7 +104,7 @@ class PlanTierCreateDTO(ApiModel):
     name: Name
     audience: Literal["student", "teacher"]
     interval: Literal["monthly", "yearly"]
-    priceMinor: Money
+    priceMinor: TierPrice
     currency: Literal["EGP"] = "EGP"
     allowanceUnits: Units
     includedSeats: Seats = 0
@@ -117,7 +119,7 @@ class PlanTierUpdateDTO(ApiModel):
     """Replaces the editable fields; ``features`` is replaced whole (the client sends the merge)."""
 
     name: Name
-    priceMinor: Money
+    priceMinor: TierPrice
     allowanceUnits: Units
     includedSeats: Seats
     seatAllowanceUnits: Units

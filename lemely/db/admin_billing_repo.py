@@ -16,6 +16,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Final, Literal
 
 import sqlalchemy as sa
+import structlog
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -26,7 +27,7 @@ from lemely.db.models.admin_audit import (
     IDEMPOTENCY_KEY_SQL,
     AdminAuditLog,
 )
-from lemely.db.models.billing import CreditPack, PlanAudience, PlanTier
+from lemely.db.models.billing import CreditPack, PlanAudience, PlanTier, PlanTierTerms
 from lemely.db.models.usage import EstimatorInputKind, UsageEstimator, UsageRate
 from lemely.db.subscription_repo import PlanNotPurchasable, PlanSyncFailed
 from lemely.db.subscription_repo import sync_paymob_plan as link_paymob_plan
@@ -50,6 +51,9 @@ if TYPE_CHECKING:
 #: Prefix of the advisory-lock key, so an admin key can never equal the usage ledger's
 #: ``usage:<owner id>`` keys (DV-12: both hash into the same 64-bit space).
 _LOCK_KEY_PREFIX = "admin-billing:"
+
+#: Events the operator alerts on (``alert=True`` survives only in structlog).
+alerts = structlog.get_logger("lemely.db.admin_billing_repo")
 
 
 class AdminBillingError(Exception):
@@ -267,6 +271,16 @@ _PLAN_TIER_AUDIT: Final = (
     "paymob_plan_synced_price_minor",
     "paymob_plan_synced_frequency",
 )
+#: The columns a ``plan_tier_terms`` row snapshots. Until T13 inserts the next terms version
+#: with the tier edit, changing one on a tier that has terms would leave the terms (which
+#: upgrade pricing reads) at the old numbers while checkout charges the new ones.
+_TERMS_FIELDS: Final = (
+    "price_minor",
+    "extra_seat_price_minor",
+    "allowance_units",
+    "included_seats",
+    "seat_allowance_units",
+)
 CREDIT_PACK_MUTABLE: Final = ("name", "units", "price_minor", "is_active")
 _CREDIT_PACK_AUDIT: Final = ("code", "name", "units", "price_minor", "currency", "is_active")
 _SIGNUP_CODES: Final[dict[FreeAudience, str]] = {
@@ -359,6 +373,17 @@ def paymob_drift(tier: PlanTier, key_mode: str) -> DriftState:
     return "in_sync"
 
 
+def _has_terms(session: Session, plan_tier_id: uuid.UUID) -> bool:
+    """True when the tier has a ``plan_tier_terms`` row (every tier gets version 1 at insert)."""
+    with session.no_autoflush:  # the caller's edited tier must not be written by this read
+        return (
+            session.scalar(
+                select(PlanTierTerms.id).where(PlanTierTerms.plan_tier_id == plan_tier_id).limit(1)
+            )
+            is not None
+        )
+
+
 def _check_tier_shape(tier: PlanTier) -> None:
     if tier.audience is PlanAudience.student and (
         (tier.included_seats or 0)
@@ -372,6 +397,20 @@ def require_reason(reason: str) -> None:
     """Refuse a blank reason before anything is read or written."""
     if not (reason or "").strip():
         raise ReasonRequiredError
+
+
+def _require_not_before(latest: UsageRate | UsageEstimator | None, starts: datetime) -> None:
+    """A new version may not start before the latest one.
+
+    The Phase 04 readers take the highest version already in effect, so a version scheduled
+    for next month would be silently overridden by a later "fix" that starts today.
+    """
+    if latest is not None and starts < latest.effective_from:
+        raise AdminInvalidError(
+            "effective_from_before_latest",
+            "A new version cannot start before the latest one "
+            f"({latest.effective_from.isoformat()}).",
+        )
 
 
 def _require_metered(action: str) -> None:
@@ -488,9 +527,20 @@ class AdminCatalogueService:
             if tier is None:
                 raise AdminNotFoundError("plan_tier_not_found")
             before = snapshot(tier, _PLAN_TIER_AUDIT)
+            terms_changed = any(
+                name in _TERMS_FIELDS and getattr(tier, name) != value
+                for name, value in changes.items()
+            )
             for name, value in changes.items():
                 setattr(tier, name, value)
             _check_tier_shape(tier)
+            if terms_changed and _has_terms(s, tier.id):
+                # T13 replaces this refusal with the terms version bump.
+                raise AdminConflictError(
+                    "terms_versioning_pending",
+                    "Price, seat and allowance changes are not available yet; name, features "
+                    "and active state can be edited.",
+                )
             s.flush()
             audited(
                 s,
@@ -518,13 +568,20 @@ class AdminCatalogueService:
         Every Paymob failure rolls the transaction back: no link, no stamp, no audit row.
         """
         require_reason(reason)
+        created_plan_id: int | None = None
         try:
             with self._sm.begin() as s:
                 tier = s.get(PlanTier, plan_tier_id, with_for_update=True)
                 if tier is None:
                     raise AdminNotFoundError("plan_tier_not_found")
+                if paymob_drift(tier, self.key_mode) == "in_sync":
+                    raise AdminConflictError(
+                        "already_in_sync", "This tier already matches its Paymob plan."
+                    )
                 before = snapshot(tier, _PLAN_TIER_AUDIT)
-                link_paymob_plan(s, self._client, self._settings, plan_tier_id, force_new=True)
+                created_plan_id = link_paymob_plan(
+                    s, self._client, self._settings, plan_tier_id, force_new=True
+                )
                 if tier.interval is None:  # the helper already refused it; narrows the type
                     raise PlanNotPurchasable("a plan tier without an interval cannot renew")
                 tier.paymob_plan_synced_price_minor = tier.price_minor
@@ -549,6 +606,17 @@ class AdminCatalogueService:
             raise PaymobCallError("paymob_not_configured", str(exc)) from exc
         except PaymobError as exc:
             raise PaymobCallError("paymob_plan_create_failed", str(exc)) from exc
+        except Exception:
+            if created_plan_id is not None:
+                # Paymob holds a plan our database never linked (the stamp, audit insert or
+                # commit failed afterwards). It charges no one; the operator should know.
+                alerts.error(
+                    "paymob_plan_orphaned",
+                    plan_tier_id=str(plan_tier_id),
+                    paymob_plan_id=created_plan_id,
+                    alert=True,
+                )
+            raise
 
     # -- packs ---------------------------------------------------------------
 
@@ -686,6 +754,7 @@ class AdminCatalogueService:
                 .order_by(UsageRate.version.desc())
                 .limit(1)
             ).first()
+            _require_not_before(latest, starts)
             row = UsageRate(
                 version=(latest.version if latest else 0) + 1,
                 action=action,
@@ -736,6 +805,7 @@ class AdminCatalogueService:
                 .order_by(UsageEstimator.version.desc())
                 .limit(1)
             ).first()
+            _require_not_before(latest, starts)
             row = UsageEstimator(
                 version=(latest.version if latest else 0) + 1,
                 action=action,
