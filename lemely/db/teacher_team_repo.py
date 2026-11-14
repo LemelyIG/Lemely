@@ -287,7 +287,7 @@ class TeacherTeamService:
     # -- Seats: capacity -----------------------------------------------------
 
     def seat_capacity(self, teacher_user_id: uuid.UUID) -> int:
-        """Return ``included_seats + extra_seats`` of the live teacher plan, or 0."""
+        """Return included seats plus usable extra seats (capped by a pending reduction), or 0."""
         return self._capacity(teacher_user_id, lock=False)
 
     def seats_used(self, teacher_user_id: uuid.UUID) -> int:
@@ -1035,7 +1035,11 @@ class TeacherTeamService:
 
     def _capacity(self, teacher_user_id: uuid.UUID, *, lock: bool) -> int:
         stmt = (
-            select(Subscription.extra_seats, PlanTier.included_seats)
+            select(
+                Subscription.extra_seats,
+                Subscription.pending_extra_seats,
+                PlanTier.included_seats,
+            )
             .join(PlanTier, Subscription.plan_tier_id == PlanTier.id)
             .where(
                 Subscription.user_id == teacher_user_id,
@@ -1054,8 +1058,12 @@ class TeacherTeamService:
         row = self._session.execute(stmt).first()
         if row is None:
             return 0
-        extra, included = row
-        return int(included or 0) + int(extra or 0)
+        extra, pending, included = row
+        # A scheduled seat reduction lowers the usable extra seats at once (the same rule as
+        # ``merchant_charge_repo.usable_extra_seats``, inlined: this module imports nothing from
+        # the billing charge code).
+        usable_extra = int(extra or 0) if pending is None else min(int(extra or 0), int(pending))
+        return int(included or 0) + usable_extra
 
     def _member_row(
         self, teacher_user_id: uuid.UUID, member_user_id: uuid.UUID, *, lock: bool

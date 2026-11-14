@@ -1290,7 +1290,7 @@ def test_seats_bought_after_the_quote_void_an_upgrade_to_a_plan_that_sells_none(
     assert event["reason"] == "seats_not_sold"
 
 
-def test_equal_seat_prices_or_the_floor_apply_the_upgrade_when_seats_change(
+def test_equal_seat_prices_apply_the_upgrade_when_seats_change(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     sm = pg_sessionmaker
@@ -1298,6 +1298,21 @@ def test_equal_seat_prices_or_the_floor_apply_the_upgrade_when_seats_change(
     target = _seat_target(sm, price=40_000, seat_price=2_000)  # the seat price does not change
     payment_id = _checkout(sm, _CheckoutClient(), scene, target)
     _update_sub(sm, scene, extra_seats=4)  # the price is unchanged, so nothing was under-collected
+    with capture_logs() as logs:
+        _pay(sm, payment_id)
+    assert _sub(sm, scene).plan_tier_id == target
+    assert not [log for log in logs if log["event"] == "merchant_charge_credited"]
+
+
+def test_the_one_piaster_floor_applies_the_upgrade_when_seats_change(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher_with_seats(sm)
+    target = _seat_target(sm, price=30_001, seat_price=1_000)  # 1 - 3 000 < 0: the floor applies
+    payment_id = _checkout(sm, _CheckoutClient(), scene, target)
+    assert _payment(sm, payment_id).amount_minor == 1
+    _update_sub(sm, scene, extra_seats=4)  # still on the floor, so the price did not move
     with capture_logs() as logs:
         _pay(sm, payment_id)
     assert _sub(sm, scene).plan_tier_id == target

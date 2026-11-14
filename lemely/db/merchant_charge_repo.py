@@ -44,7 +44,12 @@ verified callback or a reconcile inquiry settles it. An abandoned checkout can s
 an hour later, so :func:`on_upgrade_paid` re-checks under the subscription lock whether the payment
 still buys what it was priced for; when it does not, the money becomes credits (UD-P2) instead of
 a tier change. The handler makes no Paymob call (DV-1): Phase 05's drift check pushes the new
-amount.
+amount. An extra-seat purchase (T5) is the same shape (:meth:`MerchantChargeService
+.start_extra_seats_checkout`, :func:`on_extra_seats_paid`) and reuses the planner's helpers and the
+upgrade's repricing idea: the seats are repriced at settle from the terms billed then, so an
+upgrade that moved the seat price in between sends the money to credits, never to seats at the old
+price. A seat reduction (:meth:`~MerchantChargeService.schedule_seat_reduction`) only records
+``pending_extra_seats``; it makes no Paymob call either.
 
 Logs carry payment ids, status codes and flags only: never the card token (plain or encrypted),
 the payment key, the intention client secret, billing data or a response body.
@@ -60,6 +65,7 @@ import sqlalchemy as sa
 import structlog
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from lemely.core.subscription_rules import MAX_EXTRA_SEATS_AT_CHECKOUT, subscription_amount_minor
 from lemely.core.usage_pricing import prorate_minor, prorate_units
 from lemely.db.billing_repo import (
     INTENTION_EXPIRATION_SECONDS,
@@ -91,10 +97,12 @@ from lemely.db.models.billing import (
     Subscription,
     SubscriptionPeriod,
 )
+from lemely.db.models.billing_ops import BillingSettings
 from lemely.db.models.enums import SubscriptionStatus
 from lemely.db.models.team import TeacherMember, TeacherMemberKind, TeacherMemberStatus
 from lemely.db.models.usage import GrantKind
 from lemely.db.subscription_repo import NoCreditRate, convert_payment_to_credits
+from lemely.db.teacher_team_repo import TeacherTeamService
 from lemely.db.usage_ledger_repo import UsageLedger
 from lemely.io.paymob.client import PaymobError
 from lemely.runtime.token_cipher import TokenCipherError
@@ -129,6 +137,11 @@ MERCHANT_SWEEP_BATCH: Final = 200
 MAX_SWEEP_ERRORS: Final = 3
 #: ``payments.method`` of a saved-card MOTO charge.
 CARD_MOTO_METHOD: Final = "card_moto"
+#: ``payments.dedupe_key`` prefix of a fallback renewal seat charge (T6): it pays for seats the
+#: subscription already holds, so its paid handler never adds any.
+RENEWAL_SEAT_DEDUPE_PREFIX: Final = "extra_seat_renewal:"
+#: Upper bound on one seat purchase; a typo should not charge for a thousand seats.
+MAX_SEATS_PER_PURCHASE: Final = 100
 
 #: The intention item name (Paymob shows it on the receipt; at most 50 characters). Only the two
 #: queued purposes are here: upgrades, credit packs and seat purchases are 3DS checkouts (UD-P1) and
@@ -614,6 +627,206 @@ class MerchantChargeService:
             period_end=end,
         )
 
+    # -- payer-present extra seats (3DS checkout, saved cards offered) -----------
+
+    def quote_extra_seats(
+        self,
+        *,
+        subscription_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        seats: int,
+        now: datetime,
+    ) -> ChargeQuote:
+        """What ``seats`` extra seats would charge now; writes nothing, calls nobody.
+
+        The same planner as :meth:`start_extra_seats_checkout`, so the amount and period end
+        match what the checkout would bill. A seat purchase adds no allowance
+        (``allowance_units is None``).
+        """
+        plan = self._plan_extra_seats(
+            subscription_id=subscription_id,
+            actor_user_id=actor_user_id,
+            seats=seats,
+            now=now,
+            lock=False,
+        )
+        return ChargeQuote(
+            amount_minor=plan.amount_minor,
+            currency=plan.currency,
+            allowance_units=None,
+            period_end=plan.period_end,
+        )
+
+    def start_extra_seats_checkout(
+        self,
+        *,
+        subscription_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        seats: int,
+        now: datetime,
+    ) -> CheckoutResult:
+        """Record an ``extra_seats`` payment and open its 3DS checkout.
+
+        Refuses before any write (:class:`MerchantChargeError`, or
+        :class:`~lemely.db.billing_repo.PhoneRequired`); the caller rolls back. Past the refusals
+        the payment is committed ``created`` by Phase 02's checkout before Paymob is called, which
+        also releases the subscription lock. No saved card is needed: the payer may type a new
+        one in Unified Checkout. :class:`~lemely.db.billing_repo.CheckoutUnavailable` propagates:
+        the payer never got a client secret, so nothing was charged. Seats are added only when
+        the verified callback arrives (:func:`on_extra_seats_paid`).
+        """
+        plan = self._plan_extra_seats(
+            subscription_id=subscription_id,
+            actor_user_id=actor_user_id,
+            seats=seats,
+            now=now,
+            lock=True,
+        )
+        refuse_if_charge_pending(self._session, plan.subscription.id)
+        payer = self._session.get(User, actor_user_id)
+        if payer is None:
+            raise MerchantChargeError("unknown_payer", "The payer has no account")
+        billing_data_for(payer)  # PhoneRequired before any write
+        payment = self.new_payment(
+            purpose=PaymentPurpose.extra_seats,
+            payer_user_id=actor_user_id,
+            beneficiary_user_id=plan.subscription.user_id,
+            amount_minor=plan.amount_minor,
+            currency=plan.currency,
+            subscription_id=plan.subscription.id,
+            seat_quantity=seats,
+        )
+        # The injected clock is the checkout's birth: the void-at-settle rules compare against it.
+        payment.created_at = now
+        self._session.flush()
+        return start_present_checkout(
+            self._session,
+            self._client,
+            self._settings,
+            payment=payment,
+            item_name=SEATS_ITEM_NAME,
+            now=now,
+        )
+
+    def _plan_extra_seats(
+        self,
+        *,
+        subscription_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        seats: int,
+        now: datetime,
+        lock: bool,
+    ) -> _SeatPlan:
+        """Validate a seat purchase and price it; the one planner the quote and checkout share."""
+        session = self._session
+        if not 1 <= seats <= MAX_SEATS_PER_PURCHASE:
+            raise MerchantChargeError(
+                "invalid_seats", f"Buy between 1 and {MAX_SEATS_PER_PURCHASE} seats at a time"
+            )
+        sub = payable_subscription(session, subscription_id, actor_user_id, lock=lock)
+        tier = session.get(PlanTier, sub.plan_tier_id)
+        assert tier is not None  # noqa: S101 - the foreign key
+        terms = billed_terms(session, sub)
+        if tier.audience is not PlanAudience.teacher or terms.extra_seat_price_minor <= 0:
+            raise MerchantChargeError("not_a_teacher_plan", "This plan does not sell extra seats")
+        if (sub.extra_seats or 0) + seats > seat_ceiling(session):
+            raise MerchantChargeError(
+                "invalid_seats", "That would pass the most extra seats allowed"
+            )
+        if sub.pending_extra_seats is not None:
+            raise MerchantChargeError(
+                "seat_reduction_pending", "A seat reduction is already scheduled"
+            )
+        if sub.extra_seat_grace_until is not None:
+            raise MerchantChargeError("seat_charge_overdue", "The last seat charge was not paid")
+        start, end = sub.current_period_start, sub.current_period_end
+        if start is None or end is None:
+            raise MerchantChargeError("subscription_not_active", "The plan has no current period")
+        amount = _seat_amount(seats, terms.extra_seat_price_minor, start, end, now)
+        if amount <= 0:
+            raise MerchantChargeError("period_ending", "The current period is about to end")
+        return _SeatPlan(
+            subscription=sub,
+            seat_price_minor=terms.extra_seat_price_minor,
+            amount_minor=amount,
+            currency=tier.currency,
+            period_end=end,
+        )
+
+    def schedule_seat_reduction(
+        self,
+        *,
+        subscription_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        extra_seats: int,
+        now: datetime,
+    ) -> Subscription:
+        """Set ``pending_extra_seats`` to the extra-seat count wanted from the next renewal.
+
+        No Paymob call: the renewal bills the lower count and Phase 05's drift check and
+        period-end sweep push the amount. Asking for the current count clears a pending reduction.
+        The caller commits. Refusals, all before a write: ``not_a_teacher_plan``,
+        ``not_a_reduction`` (outside ``0..extra_seats``), ``seat_reduction_locked`` (see
+        :func:`_upgrade_applied_this_period`), ``seats_in_use`` (active plus leaving seats would
+        not fit, DV-8) and, on the fixed-amount fallback path, ``seat_reduction_unavailable``.
+        """
+        session = self._session
+        sub = payable_subscription(session, subscription_id, actor_user_id, lock=True)
+        tier = session.get(PlanTier, sub.plan_tier_id)
+        assert tier is not None  # noqa: S101 - the foreign key
+        if tier.audience is not PlanAudience.teacher:
+            raise MerchantChargeError("not_a_teacher_plan", "This plan has no student seats")
+        held = sub.extra_seats or 0
+        if not 0 <= extra_seats <= held:
+            raise MerchantChargeError(
+                "not_a_reduction", "Buy seats to add them; this only removes seats"
+            )
+        pending = sub.pending_extra_seats
+        if (
+            pending is not None
+            and extra_seats > pending
+            and _upgrade_applied_this_period(session, sub)
+        ):
+            # Lifting the reduction would bring seats back at a price an upgrade never charged.
+            raise MerchantChargeError(
+                "seat_reduction_locked",
+                "The scheduled reduction cannot be lifted after a plan upgrade this period",
+            )
+        if extra_seats == held:
+            if pending is None:
+                return sub
+            sub.pending_extra_seats = None
+        else:
+            terms = billed_terms(session, sub)
+            if terms.included_seats + extra_seats < TeacherTeamService(session).seats_used(
+                sub.user_id
+            ):
+                raise MerchantChargeError("seats_in_use", "Free the seats before removing them")
+            if (
+                not self._settings.subscription_amount_updatable
+                and sub.paymob_amount_minor is not None
+                and subscription_amount_minor(
+                    price_minor=terms.price_minor,
+                    extra_seats=extra_seats,
+                    extra_seat_price_minor=terms.extra_seat_price_minor,
+                )
+                < sub.paymob_amount_minor
+            ):
+                # Paymob would keep charging the higher amount it holds.
+                raise MerchantChargeError(
+                    "seat_reduction_unavailable", "These seats cannot be removed on this plan yet"
+                )
+            sub.pending_extra_seats = extra_seats
+        bump_version(sub)
+        session.flush()
+        log.info(
+            "seat_reduction_scheduled",
+            subscription_id=str(sub.id),
+            pending=sub.pending_extra_seats,
+            at=now.isoformat(),
+        )
+        return sub
+
     # -- the charge -------------------------------------------------------------
 
     def charge_saved_card(self, payment: Payment, card: SavedCard, *, now: datetime) -> Payment:
@@ -899,11 +1112,13 @@ def _payment_key(response: Mapping[str, object]) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Payer-present charges: shared helpers (T5 reuses them).
+# Payer-present charges: shared helpers (the upgrade and the seat purchase use them).
 # ---------------------------------------------------------------------------
 
 #: The intention item name of an upgrade (Paymob shows it on the receipt).
 UPGRADE_ITEM_NAME: Final = "Plan upgrade (prorated)"
+#: The intention item name of a seat purchase.
+SEATS_ITEM_NAME: Final = "Extra student seats"
 
 
 @dataclass(frozen=True, slots=True)
@@ -912,7 +1127,17 @@ class ChargeQuote:
 
     amount_minor: int
     currency: str
-    allowance_units: int
+    #: Allowance units an upgrade adds; ``None`` for a seat purchase (it adds no allowance).
+    allowance_units: int | None
+    period_end: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class _SeatPlan:
+    subscription: Subscription
+    seat_price_minor: int
+    amount_minor: int
+    currency: str
     period_end: datetime
 
 
@@ -924,6 +1149,55 @@ class _UpgradePlan:
     currency: str
     allowance_units: int
     period_end: datetime
+
+
+def seat_ceiling(session: Session) -> int:
+    """The most extra seats one subscription may hold: the admin setting, else the built-in 200."""
+    configured = session.scalar(
+        sa.select(BillingSettings.max_extra_seats).where(BillingSettings.id == 1)
+    )
+    return MAX_EXTRA_SEATS_AT_CHECKOUT if configured is None else int(configured)
+
+
+def _seat_amount(
+    seats: int, seat_price_minor: int, start: datetime, end: datetime, at: datetime
+) -> int:
+    """What ``seats`` extra seats cost at ``at``: the seat price for the rest of the period.
+
+    The quote, the checkout and the settle-time reprice all use this one function, so a seat
+    price that moved in between is a mismatch and voids the payment to credits.
+    """
+    return prorate_minor(seats * seat_price_minor, start, end, at)
+
+
+def _upgrade_applied_this_period(session: Session, sub: Subscription) -> bool:
+    """True when a paid upgrade that changed the plan landed in the current period (I3).
+
+    An upgrade prices the seats the subscription will bill (``usable_extra_seats``): the seats a
+    pending reduction drops are charged nothing at the new seat price. Lifting that reduction
+    afterwards would bring them back at a price nobody paid, so :meth:`schedule_seat_reduction`
+    refuses to lift one while such an upgrade exists. A payment converted to credits changed
+    nothing (``grant_units`` set) and does not count. The rule is conservative: it cannot tell a
+    reduction scheduled before the upgrade from one scheduled after it, because the reduction
+    carries no timestamp; deeper reductions stay allowed and the lock ends at the renewal.
+    """
+    start = sub.current_period_start
+    if start is None:
+        return True
+    return (
+        session.scalar(
+            sa.select(Payment.id)
+            .where(
+                Payment.subscription_id == sub.id,
+                Payment.purpose == PaymentPurpose.upgrade_proration,
+                Payment.status == PaymentStatus.paid,
+                Payment.grant_units.is_(None),
+                Payment.paid_at >= start,
+            )
+            .limit(1)
+        )
+        is not None
+    )
 
 
 def usable_extra_seats(sub: Subscription) -> int:
@@ -1195,13 +1469,15 @@ def upgrade_void_reason(session: Session, sub: Subscription, payment: Payment) -
 
     Checked under the subscription lock, in this order: the plan ended; the period rolled since
     the checkout was priced; the target is no longer an upgrade over the tier now billed (another
-    payment already switched it); the price recomputed from the terms billed now, at the instant
-    the checkout was priced, differs from the amount charged (an upgrade landed after the quote,
-    or the target's price changed).
+    payment already switched it); the target sells no extra seats while the teacher holds some
+    (``seats_not_sold``); the price recomputed from the terms billed now, at the instant the
+    checkout was priced, differs from the amount charged (an upgrade landed after the quote, the
+    target's price changed, or a seat change moved the price).
 
-    A downgrade, cancel or seat-capacity change scheduled after the checkout is not re-checked
-    here: the payer bought the upgrade for the rest of the period, and the scheduled change takes
-    effect at the renewal as it would have anyway, so no money is lost either way.
+    A downgrade or cancel scheduled after the checkout is not re-checked here, and neither is a
+    seat change that leaves the price and the seat-sold test as they were: the payer bought the
+    upgrade for the rest of the period, and the scheduled change takes effect at the renewal as it
+    would have anyway, so no money is lost either way.
     """
     if (
         sub.status not in PLAN_LIVE_STATUSES
@@ -1344,12 +1620,118 @@ def handle_upgrade_paid(session: Session, payment: Payment, obj: Mapping[str, ob
 register_paid_handler(PaymentPurpose.upgrade_proration, handle_upgrade_paid)
 
 
+# ---------------------------------------------------------------------------
+# The seat purchase's paid handler.
+# ---------------------------------------------------------------------------
+
+
+def seats_void_reason(session: Session, sub: Subscription, payment: Payment) -> str | None:
+    """Why a paid seat purchase no longer buys what it was priced for, or ``None`` (DV-26).
+
+    Checked under the subscription lock, in this order: the plan ended; the period rolled since
+    the checkout was priced; a reduction was scheduled or a seat grace started since (the
+    start-time refusals would now apply); the plan now sells no seats (an upgrade landed);
+    the seats would pass the ceiling (another purchase landed); the price recomputed from the
+    terms billed now, at the instant the checkout was priced, differs from the amount charged
+    (an upgrade moved the seat price after the quote, I4). Two purchases paid close together are
+    both applied: each paid for its own seats.
+    """
+    if (
+        sub.status not in PLAN_LIVE_STATUSES
+        or sub.current_period_start is None
+        or sub.current_period_end is None
+    ):
+        return "plan_ended"
+    if sub.current_period_start > payment.created_at:
+        return "period_rolled"
+    if sub.pending_extra_seats is not None or sub.extra_seat_grace_until is not None:
+        return "seats_changing"
+    price = billed_terms(session, sub).extra_seat_price_minor
+    if price <= 0:
+        return "seats_not_sold"
+    quantity = payment.seat_quantity or 0
+    if (sub.extra_seats or 0) + quantity > seat_ceiling(session):
+        return "seats_over_limit"
+    repriced = _seat_amount(
+        quantity, price, sub.current_period_start, sub.current_period_end, payment.created_at
+    )
+    return "superseded" if repriced != payment.amount_minor else None
+
+
+def on_extra_seats_paid(session: Session, payment: Payment) -> None:
+    """Apply a paid ``extra_seats`` payment: raise ``extra_seats`` by the quantity bought.
+
+    Runs once per payment inside Phase 02's callback or reconcile transaction, after the payment
+    lock, the event insert, the integration guard and the amount check (lock order: payment,
+    event, subscription, ledger). It makes no Paymob call and leaves ``paymob_amount_minor``
+    alone (DV-1): Phase 05's drift check pushes the new amount. A fallback renewal seat payment
+    (key prefix :data:`RENEWAL_SEAT_DEDUPE_PREFIX`) pays for seats that already exist and only
+    ends the grace. A purchase whose effect is void at settle time becomes credits instead
+    (:func:`seats_void_reason`).
+
+    Raises:
+        RuntimeError: ``payment.paid_at`` is missing (the clock is never guessed).
+        ValueError: a purchase has no ``seat_quantity``.
+    """
+    paid_at = payment.paid_at
+    if paid_at is None:
+        raise RuntimeError(f"seat payment {payment.id} has no paid_at")
+    sub = (
+        None
+        if payment.subscription_id is None
+        else lock_subscription(session, payment.subscription_id)
+    )
+    if sub is None:
+        alerts.error(
+            "merchant_charge_paid_without_subscription", alert=True, payment_id=str(payment.id)
+        )
+        return
+    if payment.dedupe_key is not None and payment.dedupe_key.startswith(RENEWAL_SEAT_DEDUPE_PREFIX):
+        if sub.status not in PLAN_LIVE_STATUSES:
+            log.warning(
+                "renewal_seat_paid_for_ended_plan",
+                payment_id=str(payment.id),
+                subscription_id=str(sub.id),
+            )
+        sub.extra_seat_grace_until = None
+        session.flush()
+        return
+    quantity = payment.seat_quantity
+    if quantity is None:
+        raise ValueError(f"seat purchase {payment.id} has no seat_quantity")
+    reason = seats_void_reason(session, sub, payment)
+    if reason is not None:
+        credit_void_payment(session, payment, sub, reason=reason, paid_at=paid_at)
+        return
+    sub.extra_seats = (sub.extra_seats or 0) + quantity
+    bump_version(sub)
+    session.flush()
+    log.info(
+        "merchant_charge_seats_applied",
+        payment_id=str(payment.id),
+        subscription_id=str(sub.id),
+        seats=quantity,
+    )
+
+
+def handle_extra_seats_paid(session: Session, payment: Payment, obj: Mapping[str, object]) -> None:
+    """Paid handler for ``extra_seats`` (the callback body is verified and not needed)."""
+    del obj
+    on_extra_seats_paid(session, payment)
+
+
+register_paid_handler(PaymentPurpose.extra_seats, handle_extra_seats_paid)
+
+
 __all__ = [
     "CARD_MOTO_METHOD",
     "FAILED_STATUSES",
     "IN_FLIGHT_STATUSES",
+    "MAX_SEATS_PER_PURCHASE",
     "MAX_SWEEP_ERRORS",
     "MERCHANT_SWEEP_BATCH",
+    "RENEWAL_SEAT_DEDUPE_PREFIX",
+    "SEATS_ITEM_NAME",
     "UPGRADE_ITEM_NAME",
     "ChargeAlreadyAttempted",
     "ChargeQuote",
@@ -1367,14 +1749,18 @@ __all__ = [
     "current_period",
     "current_terms",
     "fail_unsent",
+    "handle_extra_seats_paid",
     "handle_upgrade_paid",
     "insert_queued_payment",
     "is_upgrade",
     "lock_subscription",
     "offered_card_tokens",
+    "on_extra_seats_paid",
     "on_upgrade_paid",
     "payable_subscription",
     "refuse_if_charge_pending",
+    "seat_ceiling",
+    "seats_void_reason",
     "start_present_checkout",
     "upgrade_void_reason",
     "usable_extra_seats",
