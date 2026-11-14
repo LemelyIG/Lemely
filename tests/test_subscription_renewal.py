@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import threading
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -188,6 +188,15 @@ def _notices(sm: sessionmaker[Session], recipient: uuid.UUID) -> list[str]:
         return sorted(row.context["notice"] for row in rows)
 
 
+def _notice_instants(sm: sessionmaker[Session], recipient: uuid.UUID) -> list[datetime]:
+    """The ``effective_at`` each queued notice carries (stored as an ISO string)."""
+    with sm() as session:
+        rows = session.scalars(
+            sa.select(EmailOutbox).where(EmailOutbox.recipient_user_id == recipient)
+        ).all()
+        return [datetime.fromisoformat(str(row.context["effective_at"])) for row in rows]
+
+
 def _alerts(logs: list[dict[str, Any]]) -> list[str]:
     return [str(entry["event"]) for entry in logs if entry.get("alert") is True]
 
@@ -279,6 +288,8 @@ def test_successful_renewal_adds_payment_period_grant_and_notice(
     assert sub.paymob_amount_minor == 10_000
     assert sub.grace_until is None
     assert _notices(pg_sessionmaker, student) == ["renewed"]
+    # The notice names the stored period end, never the clock of the delivery.
+    assert _notice_instants(pg_sessionmaker, student) == [END + timedelta(days=30)]
     [grant] = grants_of(pg_sessionmaker, student)
     assert grant.subscription_period_id == period.id
     assert grant.payment_id == renewal.id
@@ -439,6 +450,47 @@ def test_a_trigger_without_a_charge_is_keyed_on_the_remote_state(
     [event] = _events(pg_sessionmaker)
     assert event.dedupe_key == f"sub:{PID}:updated:active:2026-12-01"
     assert client.names() == ["get_subscription"]  # no charge is read for a non-charge trigger
+
+
+def test_a_success_with_no_charge_id_is_not_deduplicated_on_a_placeholder(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """``txn:none`` would swallow every later success whose charge has no id; a real one is not."""
+    student, sid = _linked(pg_sessionmaker)
+    broken = _client()
+    broken.last_transactions[PID] = broken.last_transactions[PID] | {"id": None}
+    for _ in range(2):
+        with capture_logs() as logs:
+            _deliver(pg_sessionmaker, broken)
+        assert "subscription_webhook_not_deduplicable" in _alerts(logs)
+    assert _events(pg_sessionmaker) == []
+    _deliver(pg_sessionmaker, _client())  # the real charge arrives later and is applied
+    assert len(_renewals(pg_sessionmaker, sid)) == 1
+    assert len(grants_of(pg_sessionmaker, student)) == 1
+    [event] = _events(pg_sessionmaker)
+    assert event.processed_at == NOW
+
+
+@pytest.mark.parametrize("missing", ["updated_at", "state"])
+def test_a_trigger_without_a_remote_stamp_is_not_deduplicated_on_a_placeholder(
+    pg_sessionmaker: sessionmaker[Session], missing: str
+) -> None:
+    """``active:None`` would drop every later same-trigger delivery in the same state."""
+    _linked(pg_sessionmaker)
+    client = _client()
+    remote = remote_subscription(PID, state="active", updated_at="2026-12-01")
+    del remote[missing]
+    client.subscriptions[PID] = remote
+    body = subscription_webhook("updated", PID)
+    with capture_logs() as logs:
+        _deliver(pg_sessionmaker, client, body)
+    assert "subscription_webhook_not_deduplicable" in _alerts(logs)
+    assert _events(pg_sessionmaker) == []
+    client.subscriptions[PID] = remote_subscription(PID, state="active", updated_at="2026-12-02")
+    _deliver(pg_sessionmaker, client, body)  # a later real event is stored, not dropped
+    [event] = _events(pg_sessionmaker)
+    assert event.dedupe_key == f"sub:{PID}:updated:active:2026-12-02"
+    assert event.processed_at == NOW
 
 
 def test_the_same_charge_after_its_event_is_gone_is_still_granted_once(
@@ -634,8 +686,11 @@ def test_an_unreadable_charge_writes_nothing_and_alerts(
     assert _periods(pg_sessionmaker, sid) == []
     assert grants_of(pg_sessionmaker, student) == []
     assert "subscription_last_transaction_unreadable" in _alerts(logs)
-    # No 500 loop: the delivery completes and is recorded, so a replay is a no-op.
-    assert len(_events(pg_sessionmaker)) == 1
+    # No 500 loop: a delivery with a readable charge id is recorded, so a replay is a no-op. One
+    # with no id has nothing to dedupe on and is not recorded at all (it must not swallow later
+    # real deliveries).
+    expected_events = 0 if damage.get("id", 888) in (None, True, "888") else 1
+    assert len(_events(pg_sessionmaker)) == expected_events
 
 
 @pytest.mark.parametrize(
@@ -684,6 +739,18 @@ def test_a_charge_on_another_integration_is_refused_and_alerted(
     student, sid = _linked(pg_sessionmaker)
     with capture_logs() as logs:
         _deliver(pg_sessionmaker, _client(integration_id=MOTO_INTEGRATION_ID + 1))
+    assert _renewals(pg_sessionmaker, sid) == []
+    assert grants_of(pg_sessionmaker, student) == []
+    assert "paymob_unexpected_integration" in _alerts(logs)
+
+
+def test_a_digit_string_integration_id_is_judged_like_a_number(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Phase 02 reads a digit string as the integer, so both checks agree."""
+    student, sid = _linked(pg_sessionmaker)
+    with capture_logs() as logs:
+        _deliver(pg_sessionmaker, _client(integration_id=str(MOTO_INTEGRATION_ID + 1)))
     assert _renewals(pg_sessionmaker, sid) == []
     assert grants_of(pg_sessionmaker, student) == []
     assert "paymob_unexpected_integration" in _alerts(logs)
@@ -957,6 +1024,8 @@ def test_a_remote_whose_id_disagrees_is_unmatched(pg_sessionmaker: sessionmaker[
     assert "paymob_subscription_remote_mismatch" in [entry["event"] for entry in logs]
     [event] = _events(pg_sessionmaker)
     assert event.processed_at is None
+    # A copy judged untrustworthy is not kept where the first-payment linker would act on it.
+    assert event.payload["remote"] is None
 
 
 def test_an_unknown_subscription_is_stored_unprocessed_with_the_remote_copy(
@@ -1070,11 +1139,17 @@ def test_two_concurrent_deliveries_of_one_renewal_grant_once(
     assert len(grants_of(pg_sessionmaker, student)) == 1
 
 
+@pytest.mark.parametrize("txn_in_callback_transaction", [False, True])
 def test_a_renewal_webhook_racing_the_first_payment_callback_grants_one_period(
-    pg_sessionmaker: sessionmaker[Session],
+    pg_sessionmaker: sessionmaker[Session], txn_in_callback_transaction: bool
 ) -> None:
-    """The success webhook names the first charge while the first payment's handler runs."""
-    for round_number in range(3):
+    """The success webhook names the first charge while the first payment's handler runs.
+
+    In production Phase 02 writes the payment's Paymob transaction id and ``paid`` in the same
+    uncommitted transaction that runs the handler (``txn_in_callback_transaction``): the webhook
+    then cannot see the payment, stores itself unprocessed, and the handler's linker consumes it.
+    """
+    for round_number in range(5):
         student = seed_user(pg_sessionmaker, Role.student)
         sid = seed_subscription(
             pg_sessionmaker,
@@ -1088,7 +1163,11 @@ def test_a_renewal_webhook_racing_the_first_payment_callback_grants_one_period(
         first_txn = 9_000 + round_number
         paid_at = T0 + timedelta(minutes=7)
         pid = seed_first_payment(
-            pg_sessionmaker, subscription_id=sid, paymob_txn_id=first_txn, paid_at=paid_at
+            pg_sessionmaker,
+            subscription_id=sid,
+            status=PaymentStatus.created if txn_in_callback_transaction else PaymentStatus.paid,
+            paymob_txn_id=None if txn_in_callback_transaction else first_txn,
+            paid_at=paid_at,
         )
         paymob_id = PID + round_number
         client = FakePaymobClient()
@@ -1103,12 +1182,18 @@ def test_a_renewal_webhook_racing_the_first_payment_callback_grants_one_period(
             pid: uuid.UUID = pid,
             barrier: threading.Barrier = barrier,
             errors: list[BaseException] = errors,
+            first_txn: int = first_txn,
+            paid_at: datetime = paid_at,
         ) -> None:
             try:
                 barrier.wait(timeout=10)
                 with pg_sessionmaker.begin() as session:
                     payment = session.get(Payment, pid)
                     assert payment is not None
+                    if txn_in_callback_transaction:
+                        payment.paymob_txn_id = first_txn  # uncommitted, as Phase 02 writes it
+                        payment.status = PaymentStatus.paid
+                        payment.paid_at = paid_at
                     handle_subscription_first(session, payment, {})
             except BaseException as exc:
                 errors.append(exc)
@@ -1162,6 +1247,55 @@ def test_a_late_charge_reactivates_a_plan_that_lapsed_for_non_payment(
     [grant] = grants_of(pg_sessionmaker, student)
     assert grant.effective_at == charged
     assert _notices(pg_sessionmaker, student) == ["renewed"]
+    assert _notice_instants(pg_sessionmaker, student) == [charged + timedelta(days=30)]
+
+
+def test_reactivating_a_plan_whose_paymob_subscription_is_cancelled_ends_it_at_period_end(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The charge raced our cancel: the paid period runs, but the plan can never renew.
+
+    Paymob does not charge a cancelled subscription again, so the row must not look
+    auto-renewing: it ends cleanly as cancelled at the paid period's end, never in
+    "payment failed" notices the user cannot act on.
+    """
+    student, sid = _linked(
+        pg_sessionmaker,
+        status=SubscriptionStatus.expired,
+        paymob_cancelled_at=END + timedelta(days=4),
+    )
+    charged = END + timedelta(days=2)
+    _deliver(pg_sessionmaker, _client(charged=charged), now=END + timedelta(days=5))
+    sub = _subscription(pg_sessionmaker, sid)
+    assert sub.status is SubscriptionStatus.active
+    assert sub.cancel_at_period_end is True
+    assert sub.paymob_cancelled_at == END + timedelta(days=4)
+    assert sub.current_period_end == charged + timedelta(days=30)
+    assert len(grants_of(pg_sessionmaker, student)) == 1
+
+
+def test_reactivating_a_plan_paymob_still_holds_leaves_it_renewing(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _, sid = _linked(pg_sessionmaker, status=SubscriptionStatus.expired)
+    _deliver(pg_sessionmaker, _client(charged=END + timedelta(days=2)), now=END + timedelta(days=5))
+    sub = _subscription(pg_sessionmaker, sid)
+    assert (sub.status, sub.cancel_at_period_end) == (SubscriptionStatus.active, False)
+
+
+def test_a_charge_time_in_the_future_is_capped_at_now(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A skewed or mis-zoned timestamp (UD-8, S13) must not start the allowance in the future."""
+    student, sid = _linked(pg_sessionmaker, status=SubscriptionStatus.expired)
+    now = END + timedelta(days=5)
+    _deliver(pg_sessionmaker, _client(charged=now + timedelta(days=3)), now=now)
+    sub = _subscription(pg_sessionmaker, sid)
+    assert sub.current_period_start == now
+    [renewal] = _renewals(pg_sessionmaker, sid)
+    assert renewal.paid_at == now
+    [grant] = grants_of(pg_sessionmaker, student)
+    assert grant.effective_at == now
 
 
 def test_a_late_charge_does_not_reactivate_when_another_plan_is_live(
@@ -1263,7 +1397,8 @@ def test_a_reactivation_that_loses_the_unique_index_race_keeps_the_payment_only(
 def test_a_renewal_after_a_cancel_request_still_grants_what_was_paid(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    """The cancel had not reached Paymob yet: the paid period is granted, the flag stays."""
+    """The cancel had not reached Paymob yet: the paid period is granted, the flag stays, and an
+    operator is paged (the cancel did not take effect)."""
     student, sid = _linked(pg_sessionmaker, cancel_at_period_end=True)
     with capture_logs() as logs:
         _deliver(pg_sessionmaker, _client())
@@ -1271,7 +1406,9 @@ def test_a_renewal_after_a_cancel_request_still_grants_what_was_paid(
     assert sub.cancel_at_period_end is True
     assert len(_periods(pg_sessionmaker, sid)) == 1
     assert len(grants_of(pg_sessionmaker, student)) == 1
-    assert "subscription_renewal_after_cancel_request" in [entry["event"] for entry in logs]
+    [entry] = [e for e in logs if e["event"] == "subscription_renewal_after_cancel_request"]
+    # Our Paymob cancel did not take effect: the user asked to stop and was charged anyway.
+    assert (entry["log_level"], entry["alert"]) == ("error", True)
 
 
 # -- the paid handler for ``subscription_renewal`` (DV-33) -----------------------------
