@@ -15,7 +15,7 @@ from structlog.testing import capture_logs
 
 from lemely.core.subscription_rules import AMOUNT_SYNC_WINDOW, expected_renewal_amount_minor
 from lemely.db import subscription_repo
-from lemely.db.models.billing import PlanAudience, Subscription
+from lemely.db.models.billing import Payment, PaymentStatus, PlanAudience, Subscription
 from lemely.db.models.enums import PlanInterval, Role, SubscriptionStatus
 from lemely.db.models.tutoring import EmailOutbox
 from lemely.db.subscription_repo import (
@@ -492,9 +492,31 @@ def test_a_system_caller_can_cancel_without_a_paymob_call(
     _, _, sid = _student_sub(pg_sessionmaker)
     client = FakePaymobClient()
     with pg_sessionmaker.begin() as session:
-        _svc(session, client).schedule_cancel(sid, actor_user_id=None, now=NOW)
+        _svc(session, client).schedule_cancel_as_system(sid, now=NOW)
     assert _sub(pg_sessionmaker, sid).cancel_at_period_end is True
     assert client.calls == []
+
+
+def test_the_payer_methods_refuse_a_missing_actor_so_a_route_cannot_reach_the_system_path(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """M-6: ``None`` is not a payer; only the explicitly named system method skips the check."""
+    _, _, sid = _student_sub(pg_sessionmaker)
+    lower = seed_tier(pg_sessionmaker, price_minor=6_000)
+    with pytest.raises(TypeError), pg_sessionmaker.begin() as session:
+        _svc(session).schedule_cancel(sid, actor_user_id=None, now=NOW)  # type: ignore[arg-type]
+    with (
+        pytest.raises(TypeError),
+        pg_sessionmaker.begin() as session,
+    ):
+        _svc(session).schedule_downgrade(
+            sid,
+            actor_user_id=None,  # type: ignore[arg-type]
+            plan_tier_id=lower,
+            now=NOW,
+        )
+    sub = _sub(pg_sessionmaker, sid)
+    assert (sub.cancel_at_period_end, sub.pending_plan_tier_id) == (False, None)
 
 
 def test_an_expired_linked_row_with_no_cancel_stamp_gets_its_cancel_pushed(
@@ -607,13 +629,16 @@ def test_a_suspension_is_a_cancel_at_period_end_with_the_same_notice(
     assert (sub.status, sub.cancel_at_period_end, sub.pending_plan_tier_id) == (
         SubscriptionStatus.active,
         True,
-        None,
+        lower,  # M-4: the chosen downgrade is kept, so a resume restores it
     )
     assert _notices(pg_sessionmaker) == []
-    assert _sweep(pg_sessionmaker, NOW, client) == 1  # the cancel is pushed
+    # I-3: the cancel waits for the period end, so a resume can still undo it.
+    assert _sweep(pg_sessionmaker, NOW, client) == 0
+    assert client.calls_to("cancel_subscription") == []
+    assert _sweep(pg_sessionmaker, END, client) == 2  # the cancel is pushed, then the plan ends
     assert client.calls_to("cancel_subscription") == [{"subscription_id": PID}]
-    assert _sweep(pg_sessionmaker, END, client) == 1
-    assert _sub(pg_sessionmaker, sid).status is SubscriptionStatus.cancelled
+    sub = _sub(pg_sessionmaker, sid)
+    assert (sub.status, sub.suspended_at) == (SubscriptionStatus.cancelled, None)  # M-2
     assert _notices(pg_sessionmaker) == [("cancelled", END)]
 
 
@@ -691,7 +716,10 @@ def test_a_resume_after_the_paymob_cancel_was_pushed_alerts_and_keeps_the_row_en
     client = _remote(FakePaymobClient(), state="suspended")
     _deliver(pg_sessionmaker, client, subscription_repo.TRIGGER_SUSPENDED, NOW)
     if ended_by == "pushed_cancel":
-        assert _sweep(pg_sessionmaker, NOW, client) == 1
+        with pg_sessionmaker.begin() as session:  # the push stamped but the end has not run yet
+            row = session.get(Subscription, sid)
+            assert row is not None
+            row.paymob_cancelled_at = NOW
     else:
         with pg_sessionmaker.begin() as session:  # ended with the Paymob cancel never stamped
             row = session.get(Subscription, sid)
@@ -1021,3 +1049,268 @@ def test_the_last_payment_not_the_period_start_is_the_floor_when_they_differ(
             now=END - timedelta(hours=2),
         )
     assert not _failure_stands(pg_sessionmaker, other)
+
+
+# -- review fixes (P05-T8 review) ---------------------------------------------------------
+
+
+def _renewal_after(
+    sm: sessionmaker[Session], *, sweep_between: bool
+) -> tuple[uuid.UUID, Sequence[Mapping[str, Any]], FakePaymobClient]:
+    """A downgrade is pending and never pushed; Paymob charges the old 10 000 at the period end."""
+    payer, _, sid = _student_sub(sm)
+    lower = seed_tier(sm, price_minor=6_000)
+    with sm.begin() as session:
+        _svc(session).schedule_downgrade(sid, actor_user_id=payer, plan_tier_id=lower, now=NOW)
+    client = _remote(FakePaymobClient())
+    if sweep_between:
+        # The sweep runs after Paymob charged but before its renewal webhook is processed.
+        assert _sweep(sm, END + timedelta(minutes=5), client) == 0
+    client.last_transactions[PID] = charge(888, 10_000, created_at=END)
+    with capture_logs() as logs:
+        _deliver(sm, client, subscription_repo.TRIGGER_SUCCESS, END + timedelta(minutes=10))
+    return sid, logs, client
+
+
+def _payments(sm: sessionmaker[Session]) -> list[tuple[int, PaymentStatus]]:
+    with sm() as session:
+        return [
+            (p.amount_minor, p.status)
+            for p in session.scalars(sa.select(Payment).order_by(Payment.created_at)).all()
+        ]
+
+
+@pytest.mark.parametrize("sweep_between", [False, True])
+def test_a_sweep_after_paymob_charged_never_turns_the_paid_renewal_into_a_mismatch(
+    pg_sessionmaker: sessionmaker[Session], sweep_between: bool
+) -> None:
+    """I-1: once the period is over the amount is not pushed, so the old-amount charge is paid."""
+    sid, logs, client = _renewal_after(pg_sessionmaker, sweep_between=sweep_between)
+    assert _puts(client) == []
+    assert _payments(pg_sessionmaker) == [(10_000, PaymentStatus.paid)]
+    assert _sub(pg_sessionmaker, sid).current_period_end > END  # type: ignore[operator]
+    assert "subscription_renewal_mismatch" not in _alerts(logs)
+
+
+def test_sync_renewal_amount_refuses_once_the_period_is_over_for_any_caller(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """I-1: P06's ``push_renewal_amount`` reaches Paymob through this method too."""
+    payer, _, sid = _student_sub(pg_sessionmaker)
+    lower = seed_tier(pg_sessionmaker, price_minor=6_000)
+    with pg_sessionmaker.begin() as session:
+        _svc(session).schedule_downgrade(sid, actor_user_id=payer, plan_tier_id=lower, now=NOW)
+    client = FakePaymobClient()
+    with pg_sessionmaker.begin() as session:
+        svc = _svc(session, client)
+        row = session.get(Subscription, sid)
+        assert row is not None
+        assert svc.sync_renewal_amount(row, now=END) is False
+        assert svc.sync_renewal_amount(row, now=END + timedelta(hours=1)) is False
+        assert client.calls == []
+        assert svc.sync_renewal_amount(row, now=END - timedelta(seconds=1)) is True
+    assert _puts(client) == [(PID, 6_000)]
+
+
+def test_rows_that_need_nothing_never_use_up_the_amount_limit(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """I-2: a row inside the window with a correct amount (earlier end) must not hide a pending
+    change behind ``limit=1``."""
+    _student_sub(pg_sessionmaker, pid=1, period_end=NOW + timedelta(hours=1))
+    payer, _, sid_b = _student_sub(pg_sessionmaker, pid=2)
+    lower = seed_tier(pg_sessionmaker, price_minor=6_000)
+    with pg_sessionmaker.begin() as session:
+        _svc(session).schedule_downgrade(sid_b, actor_user_id=payer, plan_tier_id=lower, now=NOW)
+    client = FakePaymobClient()
+    assert _sweep(pg_sessionmaker, NOW, client, limit=1) == 1
+    assert _puts(client) == [(2, 6_000)]
+    assert _sub(pg_sessionmaker, sid_b).paymob_amount_minor == 6_000
+
+
+def test_an_unknown_put_that_landed_is_repaired_after_the_downgrade_is_cleared(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """M-1: the stamp stays 10 000 and so does the expected amount, yet Paymob may hold 6 000."""
+    payer, tier, sid = _student_sub(pg_sessionmaker)
+    lower = seed_tier(pg_sessionmaker, price_minor=6_000)
+    with pg_sessionmaker.begin() as session:
+        _svc(session).schedule_downgrade(sid, actor_user_id=payer, plan_tier_id=lower, now=NOW)
+    client = FakePaymobClient()
+    client.fail["update_subscription"] = PaymobError("timeout", timeout=True)
+    assert _sweep(pg_sessionmaker, NOW, client) == 0
+    del client.fail["update_subscription"]
+    with pg_sessionmaker.begin() as session:
+        _svc(session).schedule_downgrade(sid, actor_user_id=payer, plan_tier_id=tier, now=NOW)
+    assert _sweep(pg_sessionmaker, NOW + timedelta(hours=1), client) == 1  # outside the window
+    assert _puts(client) == [(PID, 6_000), (PID, 10_000)]
+    assert _sweep(pg_sessionmaker, NOW + timedelta(hours=2), client) == 0  # certain again
+    assert len(_puts(client)) == 2
+
+
+def test_repeated_unknown_put_outcomes_page_after_three_in_a_row(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """M-7: a persistent fault with no HTTP status must not stay a warning forever."""
+    payer, _, sid = _student_sub(pg_sessionmaker)
+    lower = seed_tier(pg_sessionmaker, price_minor=6_000)
+    with pg_sessionmaker.begin() as session:
+        _svc(session).schedule_downgrade(sid, actor_user_id=payer, plan_tier_id=lower, now=NOW)
+    client = FakePaymobClient()
+    client.fail["update_subscription"] = PaymobError("no route to host")
+    paged: list[list[str]] = []
+    for i in range(3):
+        with capture_logs() as logs:
+            assert _sweep(pg_sessionmaker, NOW + timedelta(minutes=i), client) == 0
+        paged.append(_alerts(logs))
+    assert paged == [[], [], ["paymob_amount_put_unknown_repeated"]]
+
+
+def test_a_downgrade_must_lower_the_whole_renewal_amount_not_the_base_price(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """M-3: 100 + 5 x 10 = 150 to 90 + 5 x 20 = 190 is an upgrade, though the base is lower."""
+    teacher = seed_user(pg_sessionmaker, Role.teacher)
+    current = seed_tier(
+        pg_sessionmaker,
+        audience=PlanAudience.teacher,
+        price_minor=10_000,
+        included_seats=10,
+        extra_seat_price_minor=1_000,
+    )
+    dearer_seats = seed_tier(
+        pg_sessionmaker,
+        audience=PlanAudience.teacher,
+        price_minor=9_000,
+        included_seats=10,
+        extra_seat_price_minor=2_000,
+    )
+    cheaper = seed_tier(
+        pg_sessionmaker,
+        audience=PlanAudience.teacher,
+        price_minor=9_000,
+        included_seats=10,
+        extra_seat_price_minor=1_000,
+    )
+    sid = seed_subscription(
+        pg_sessionmaker,
+        user_id=teacher,
+        tier_id=current,
+        payer_id=teacher,
+        paymob_subscription_id=PID,
+        paymob_amount_minor=15_000,
+        extra_seats=5,
+    )
+    with pytest.raises(InvalidPlanChange), pg_sessionmaker.begin() as session:
+        _svc(session).schedule_downgrade(
+            sid, actor_user_id=teacher, plan_tier_id=dearer_seats, now=NOW
+        )
+    with pg_sessionmaker.begin() as session:
+        _svc(session).schedule_downgrade(sid, actor_user_id=teacher, plan_tier_id=cheaper, now=NOW)
+    assert _sub(pg_sessionmaker, sid).pending_plan_tier_id == cheaper
+
+
+def test_a_sweep_between_suspension_and_resume_does_not_push_the_cancel(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """I-3 (and M-4): the undo survives routine sweeps, and the dropped downgrade comes back."""
+    payer, _, sid = _student_sub(pg_sessionmaker)
+    lower = seed_tier(pg_sessionmaker, price_minor=6_000)
+    with pg_sessionmaker.begin() as session:
+        _svc(session).schedule_downgrade(sid, actor_user_id=payer, plan_tier_id=lower, now=NOW)
+    client = _remote(FakePaymobClient(), state="suspended")
+    _deliver(pg_sessionmaker, client, subscription_repo.TRIGGER_SUSPENDED, NOW)
+    assert _sweep(pg_sessionmaker, NOW + timedelta(minutes=5), client) == 0
+    assert client.calls_to("cancel_subscription") == []
+    with capture_logs() as logs:
+        _deliver(
+            pg_sessionmaker,
+            _remote(FakePaymobClient(), state="active"),
+            subscription_repo.TRIGGER_RESUMED,
+            NOW + timedelta(hours=1),
+        )
+    assert _alerts(logs) == []
+    sub = _sub(pg_sessionmaker, sid)
+    assert (sub.cancel_at_period_end, sub.suspended_at, sub.pending_plan_tier_id) == (
+        False,
+        None,
+        lower,
+    )
+    assert client.calls_to("cancel_subscription") == []
+
+
+def test_ending_or_expiring_a_row_clears_the_suspension_marker(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """M-2: nothing can resume an ended plan, and the marker must not block 0058's downgrade."""
+    _, _, ended = _student_sub(pg_sessionmaker, pid=1)
+    _, _, lapsed = _student_sub(
+        pg_sessionmaker,
+        pid=2,
+        status=SubscriptionStatus.past_due,
+        grace_until=END + timedelta(days=3),
+    )
+    with pg_sessionmaker.begin() as session:
+        for sid in (ended, lapsed):
+            row = session.get(Subscription, sid)
+            assert row is not None
+            row.suspended_at = NOW
+        ended_row = session.get(Subscription, ended)
+        assert ended_row is not None
+        ended_row.cancel_at_period_end = True
+    client = FakePaymobClient()
+    with pg_sessionmaker() as session:
+        assert _svc(session, client).expire_overdue(now=END + timedelta(days=3)) == 1
+    assert _sweep(pg_sessionmaker, END, client) >= 1
+    for sid, status in (
+        (ended, SubscriptionStatus.cancelled),
+        (lapsed, SubscriptionStatus.expired),
+    ):
+        sub = _sub(pg_sessionmaker, sid)
+        assert (sub.status, sub.suspended_at) == (status, None)
+
+
+def test_failed_cancels_back_off_and_page_once_per_step(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """M-5: exponential, capped, and a backed-off row is neither retried nor counted."""
+    _, _, sid = _student_sub(pg_sessionmaker, status=SubscriptionStatus.expired)
+    client = FakePaymobClient()
+    client.fail["cancel_subscription"] = PaymobError("down", status_code=503)
+    attempts: list[datetime] = []
+    paged: list[list[str]] = []
+    now = NOW
+    for _ in range(40):  # one sweep per simulated minute for 40 minutes
+        before = len(client.calls_to("cancel_subscription"))
+        with capture_logs() as logs:
+            _sweep(pg_sessionmaker, now, client)
+        if len(client.calls_to("cancel_subscription")) > before:
+            attempts.append(now)
+            paged.append(_alerts(logs))
+        now += timedelta(minutes=1)
+    # Tried at 0, +10 and +30 minutes (delays 10, 20, ...): not every sweep.
+    assert attempts == [NOW, NOW + timedelta(minutes=10), NOW + timedelta(minutes=30)]
+    assert paged == [[], ["subscription_cancel_retrying"], ["subscription_cancel_retrying"]]
+    # A row that recovers is cancelled at its next try and forgotten.
+    del client.fail["cancel_subscription"]
+    assert _sweep(pg_sessionmaker, NOW + timedelta(hours=2), client) == 1
+    assert _sub(pg_sessionmaker, sid).paymob_cancelled_at is not None
+
+
+def test_a_backed_off_cancel_does_not_starve_the_rows_behind_it(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _, _, stuck = _student_sub(
+        pg_sessionmaker,
+        pid=1,
+        status=SubscriptionStatus.expired,
+        period_start=None,
+        period_end=None,
+    )
+    _, _, behind = _student_sub(pg_sessionmaker, pid=2, status=SubscriptionStatus.expired)
+    client = FakePaymobClient()
+    client.fail_for[("cancel_subscription", 1)] = PaymobError("down", status_code=503)
+    assert _sweep(pg_sessionmaker, NOW, client, limit=1) == 0  # the NULL-period row goes first
+    assert _sweep(pg_sessionmaker, NOW + timedelta(minutes=1), client, limit=1) == 1
+    assert _sub(pg_sessionmaker, behind).paymob_cancelled_at is not None
+    assert _sub(pg_sessionmaker, stuck).paymob_cancelled_at is None
