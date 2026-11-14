@@ -33,6 +33,8 @@ let listening = false
 
 function onWindowPopState() {
   dialogHistoryStack.handlePopState()
+  // The last overlay may have gone while its own move was in flight; now that move has landed, let go.
+  stopListeningIfIdle()
 }
 
 function startListening() {
@@ -42,7 +44,7 @@ function startListening() {
 }
 
 function stopListeningIfIdle() {
-  if (!listening || dialogHistoryStack.size > 0) return
+  if (!listening || dialogHistoryStack.size > 0 || dialogHistoryStack.hasPendingWork()) return
   window.removeEventListener("popstate", onWindowPopState)
   listening = false
 }
@@ -87,13 +89,17 @@ export function useDialogHistory({
     // current entry is still the one we pushed; otherwise the reader has
     // navigated (or replaced it) and `navigate(-1)` would undo that.
     const unwind = () => {
+      // This overlay reopened since, so the entry now on top is its new one, not the one being unwound.
+      if (pushedIdxRef.current !== null) return
       if (!isDialogEntry(window.history.state, pushedIdx)) return
+      // The listener may have been dropped when the stack emptied; the popstate of this move must be heard.
+      startListening()
       dialogHistoryStack.expectSelfPop()
       navigateRef.current(-1)
     }
-    // Stacked overlays closing in one tick: the overlay above is still popping, so the live entry is
-    // its entry, not ours. Wait for that popstate, then read again.
-    if (dialogHistoryStack.hasPendingSelfPop()) dialogHistoryStack.afterNextSelfPop(unwind)
+    // Stacked overlays closing in one tick: the overlay above is popping (or about to), so the live entry
+    // is its entry, not ours. Wait for that popstate, then read again.
+    if (dialogHistoryStack.hasPendingSelfPop() || dialogHistoryStack.topEntryIsCurrent()) dialogHistoryStack.afterNextSelfPop(unwind)
     else unwind()
   }
 

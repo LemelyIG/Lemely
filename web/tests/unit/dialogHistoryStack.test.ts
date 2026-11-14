@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { beforeEach, describe, expect, it, vi } from "vitest"
-import { createDialogHistoryStack } from "@/lib/nav/dialogHistoryStack"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { SELF_POP_EXPIRY_MS, createDialogHistoryStack } from "@/lib/nav/dialogHistoryStack"
 
 /*
  * `popstate` is a window-level event, so every mounted overlay's listener
@@ -177,6 +177,41 @@ describe("createDialogHistoryStack", () => {
   })
 })
 
+describe("a move whose popstate never arrives (fix round 1)", () => {
+  afterEach(() => vi.useRealTimers())
+
+  it("expires, so the in-flight count cannot stay stuck and starve later unwinds", () => {
+    vi.useFakeTimers()
+    const stack = createDialogHistoryStack()
+    stack.expectSelfPop()
+    expect(stack.hasPendingSelfPop()).toBe(true)
+    vi.advanceTimersByTime(SELF_POP_EXPIRY_MS + 10)
+    expect(stack.hasPendingSelfPop()).toBe(false)
+  })
+
+  it("runs the unwind waiting on the lost move, once, when it expires", () => {
+    vi.useFakeTimers()
+    const stack = createDialogHistoryStack()
+    const waiting = vi.fn()
+    stack.expectSelfPop()
+    stack.afterNextSelfPop(waiting)
+    expect(stack.hasPendingWork()).toBe(true)
+    vi.advanceTimersByTime(SELF_POP_EXPIRY_MS + 10)
+    expect(waiting).toHaveBeenCalledTimes(1)
+    expect(stack.hasPendingWork()).toBe(false)
+  })
+
+  it("a move that does land cancels its own expiry", () => {
+    vi.useFakeTimers()
+    const stack = createDialogHistoryStack()
+    stack.expectSelfPop()
+    stack.handlePopState()
+    stack.expectSelfPop()
+    vi.advanceTimersByTime(SELF_POP_EXPIRY_MS - 100)
+    expect(stack.hasPendingSelfPop()).toBe(true)
+  })
+})
+
 describe("wiring (polish B, item 18)", () => {
   const read = (rel: string) => readFileSync(join(import.meta.dirname, "..", "..", "src", rel), "utf8")
 
@@ -185,6 +220,13 @@ describe("wiring (polish B, item 18)", () => {
     const unwind = hook.slice(hook.indexOf("function unwindEntry"), hook.indexOf("const unwindRef"))
     expect(unwind).toContain("dialogHistoryStack.hasPendingSelfPop()")
     expect(unwind).toContain("dialogHistoryStack.afterNextSelfPop(unwind)")
+  })
+
+  it("the window listener stays up while a move of ours is in flight, and the move restarts it", () => {
+    const hook = read("lib/nav/useDialogHistory.ts")
+    expect(hook).toContain("dialogHistoryStack.hasPendingWork()")
+    expect(hook).toMatch(/startListening\(\)\s*\n\s*dialogHistoryStack\.expectSelfPop\(\)/)
+    expect(hook).toMatch(/function onWindowPopState\(\) \{[\s\S]*?stopListeningIfIdle\(\)/)
   })
 
   it("Popover never reads the DOM during render to name its sheet", () => {

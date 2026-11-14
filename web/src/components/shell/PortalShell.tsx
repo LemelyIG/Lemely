@@ -23,6 +23,7 @@ import { ShellPullToRefresh } from "./ShellPullToRefresh"
 import { ShellSidebar, type ShellSidebarContent } from "./ShellSidebar"
 import { ShellTopBar, type ShellTopBarProps } from "./ShellTopBar"
 import type { NavDirectionState } from "@/lib/nav/navDirectionState"
+import { stepsBackToRoot } from "@/lib/nav/historyPaths"
 import { activeTabTap } from "./tabTap"
 import { titleLevelFor } from "./largeTitle"
 
@@ -88,9 +89,12 @@ export function PortalShell({
       const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches
       window.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" })
     } else {
-      // REPLACE, not PUSH: the pop to the tab's root takes the drilled page's own history entry, so Back from
-      // the root does not return to the page the reader just left. The direction still reads "back" from the state.
-      navigate(item.to, { replace: true, viewTransition: true, state: { navDirection: "back" } satisfies NavDirectionState })
+      // The root is behind us in this tab's own run of pages: go back to it, so no entry is added and Back
+      // from the root leaves the tab. Entered the detail page directly (no root behind), take its entry with
+      // a REPLACE, so Back does not return to the page just left. Direction reads "back" either way.
+      const steps = stepsBackToRoot(window.history.state?.idx, item.to)
+      if (steps !== null) navigate(-steps)
+      else navigate(item.to, { replace: true, viewTransition: true, state: { navDirection: "back" } satisfies NavDirectionState })
     }
   }
   return (

@@ -14,6 +14,8 @@ import { RequireAuth, portalPathForRole } from "@/lib/auth/RequireAuth"
 import { DEFAULT_TITLE, DEFAULT_DESCRIPTION } from "@/lib/meta/documentMeta"
 import type { PageMeta } from "@/lib/meta/documentMeta"
 import { safeNextPath } from "@/lib/nextPath"
+import { DRIFT_BUILD } from "@/lib/nav/exposeRouter"
+import { driftStackedDialogsRoute } from "@/lib/nav/driftRoute"
 /*
  * P3.1 (DECISION D1.4). Deliberately a static import, unlike every screen in
  * this file, which are all `React.lazy`.
@@ -327,6 +329,8 @@ export const appRoutes: RouteObject[] = [
   {
     element: <RootOutlet />,
     children: [
+  // Drift builds only (a build-time constant, so a deployed build has no such route): the stacked-dialog page.
+  ...(DRIFT_BUILD ? [driftStackedDialogsRoute] : []),
   /*
    * Packet B2b · the second pathless layout route, grouping every top-level
    * route that is not one of the five portal subtrees below (which get

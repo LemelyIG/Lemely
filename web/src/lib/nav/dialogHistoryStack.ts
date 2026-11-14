@@ -27,6 +27,9 @@ export interface DialogHistoryEntry {
   isCurrent: () => boolean
 }
 
+/** A history move of ours whose popstate has not arrived after this long never will (`navigate(-1)` at the first entry fires none). */
+export const SELF_POP_EXPIRY_MS = 1000
+
 export type PopStateOutcome = "self" | "none" | "closeOnly" | "repush"
 
 export function createDialogHistoryStack() {
@@ -34,6 +37,8 @@ export function createDialogHistoryStack() {
   let pendingSelfPops = 0
   // Work that needs the history cursor settled: it runs on the popstate of the move in flight.
   const afterSelfPop: Array<() => void> = []
+  // One expiry per move in flight, oldest first, so a move that never reports cannot leave the count stuck.
+  const expiries: Array<ReturnType<typeof setTimeout>> = []
 
   return {
     /** Call when an overlay has pushed its history entry. Returns the release. */
@@ -50,6 +55,11 @@ export function createDialogHistoryStack() {
       return pendingSelfPops > 0
     },
 
+    /** A move in flight or an unwind waiting on one: the window listener must stay up for either. */
+    hasPendingWork(): boolean {
+      return pendingSelfPops > 0 || afterSelfPop.length > 0
+    },
+
     /**
      * Run `fn` once the move in flight has landed, and the cursor reads true. Stacked overlays that
      * close in one tick need this: the second `navigate(-1)` would otherwise look at the history entry
@@ -62,11 +72,21 @@ export function createDialogHistoryStack() {
     /** Call immediately before moving the history cursor ourselves. */
     expectSelfPop(): void {
       pendingSelfPops += 1
+      const expiry: ReturnType<typeof setTimeout> = setTimeout(() => {
+        const at = expiries.indexOf(expiry)
+        if (at === -1) return
+        expiries.splice(at, 1)
+        pendingSelfPops = Math.max(0, pendingSelfPops - 1)
+        afterSelfPop.shift()?.()
+      }, SELF_POP_EXPIRY_MS)
+      expiries.push(expiry)
     },
 
     handlePopState(): PopStateOutcome {
       if (pendingSelfPops > 0) {
         pendingSelfPops -= 1
+        const expiry = expiries.shift()
+        if (expiry !== undefined) clearTimeout(expiry)
         // One deferred unwind per popstate: each runs against the cursor the move before it left,
         // and queues its own `expectSelfPop`, so a third waits for the second's popstate in turn.
         afterSelfPop.shift()?.()

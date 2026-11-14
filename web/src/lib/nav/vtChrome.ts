@@ -73,7 +73,11 @@ export function installVtChrome(
     host.startViewTransition = function (this: unknown, ...args: unknown[]) {
       const transition = real.apply(host, args)
       const own = token
-      if (root.dataset.vtChrome && transition?.finished) void transition.finished.then(() => clear(own), () => clear(own))
+      if (root.dataset.vtChrome && transition?.finished) {
+        // A transition has the flag now, and its `finished` ends it: the fallback is for hops nobody claims.
+        clearTimeout(fallback)
+        void transition.finished.then(() => clear(own), () => clear(own))
+      }
       return transition
     }
   }
