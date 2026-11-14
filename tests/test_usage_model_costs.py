@@ -22,7 +22,7 @@ from lemely.core.metered_actions import MeteredAction
 from lemely.core.schemas import AIMarkResponse
 from lemely.db.models.billing_ops import UsageJobModelCost
 from lemely.db.models.enums import Role
-from lemely.db.models.usage import UsageJobStatus
+from lemely.db.models.usage import UsageJob, UsageJobStatus
 from lemely.db.usage_ledger_repo import UsageLedger
 from lemely.db.usage_model_costs_repo import record_job_model_costs
 from lemely.io import gemini
@@ -348,11 +348,11 @@ def test_a_failure_persisting_the_split_leaves_the_job_settled_and_alerts(
     sm = migrated_sessionmaker
     student = _student(sm)
 
-    def broken(session: Session, *, job_id: uuid.UUID, totals: dict[str, Decimal]) -> int:
+    def broken(session: Session, *, usage_job_id: uuid.UUID, totals: dict[str, Decimal]) -> int:
         # A real database error (the cost check constraint), which aborts the transaction
         # unless it ran in a savepoint.
         return record_job_model_costs(
-            session, job_id=job_id, totals={model: Decimal(-1) for model in totals}
+            session, usage_job_id=usage_job_id, totals={model: Decimal(-1) for model in totals}
         )
 
     monkeypatch.setattr(usage, "record_job_model_costs", broken)
@@ -369,7 +369,7 @@ def test_a_failure_persisting_the_split_leaves_the_job_settled_and_alerts(
     assert alert["error_type"] == "IntegrityError"
 
 
-def test_replaying_the_write_adds_to_the_row_never_duplicates(
+def test_replaying_the_write_replaces_the_row_never_duplicates(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:
     sm = migrated_sessionmaker
@@ -379,26 +379,117 @@ def test_replaying_the_write_adds_to_the_row_never_duplicates(
         record_llm_cost(Decimal("0.010"))
         record_model_cost(_GEMINI, Decimal("0.010"))
     (job,) = jobs_for(sm, student)
-    with sm.begin() as session:
-        assert (
-            record_job_model_costs(session, job_id=job.job_id, totals={_GEMINI: Decimal("0.005")})
-            == 1
-        )
-    assert [(r[1], r[2]) for r in _rows(sm)] == [(_GEMINI, Decimal("0.015"))]
+    for _ in range(2):
+        with sm.begin() as session:
+            assert (
+                record_job_model_costs(
+                    session, usage_job_id=job.id, totals={_GEMINI: Decimal("0.010")}
+                )
+                == 1
+            )
+    assert [(r[1], r[2]) for r in _rows(sm)] == [(_GEMINI, Decimal("0.010"))]
 
 
-def test_recording_for_an_unknown_job_raises_and_an_empty_split_writes_nothing(
+def test_an_empty_split_writes_nothing(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:
     import uuid as uuid_mod
 
     with migrated_sessionmaker.begin() as session:
-        assert record_job_model_costs(session, job_id=uuid_mod.uuid4(), totals={}) == 0
-        with pytest.raises(LookupError):
-            record_job_model_costs(
-                session, job_id=uuid_mod.uuid4(), totals={_GEMINI: Decimal("0.001")}
-            )
+        assert record_job_model_costs(session, usage_job_id=uuid_mod.uuid4(), totals={}) == 0
     assert _rows(migrated_sessionmaker) == []
+
+
+def test_replaying_the_finish_on_a_settled_job_keeps_the_rows_equal_to_its_cost(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """``ledger.settle`` hands back an already-settled job, so the split is written again."""
+    sm = migrated_sessionmaker
+    student = _student(sm)
+    meter = UsageMeter(sm, enforce=True, now=lambda: NOW)
+    job = meter.reserve(meter.authorize(_request(student)))
+    with job.run():
+        _call_two_models()
+    totals = {_GEMINI: Decimal("0.012"), _CLAUDE: Decimal("0.008")}
+    job._finish(Decimal("0.020"), settle=True, model_totals=totals)
+    (row,) = jobs_for(sm, student)
+    assert row.status is UsageJobStatus.settled
+    assert sum((r[2] for r in _rows(sm)), Decimal(0)) == row.actual_cost_usd
+    assert len(_rows(sm)) == 2
+
+
+def test_a_failing_settle_write_is_not_reported_as_an_unrecorded_split(
+    migrated_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sm = migrated_sessionmaker
+    student = _student(sm)
+    original = UsageLedger.settle
+
+    def settle_then_queue_a_bad_write(
+        self: UsageLedger, job_id: uuid.UUID, **kwargs: object
+    ) -> UsageJob:
+        settled = original(self, job_id, **kwargs)  # type: ignore[arg-type]
+        # A pending write of the settle itself that the database refuses at flush.
+        self._session.add(
+            UsageJobModelCost(usage_job_id=settled.id, model="x", cost_usd=Decimal(-1))
+        )
+        return settled
+
+    monkeypatch.setattr(UsageLedger, "settle", settle_then_queue_a_bad_write)
+    meter = UsageMeter(sm, enforce=True, now=lambda: NOW)
+    with capture_logs() as logs, meter.reserve(meter.authorize(_request(student))).run():
+        _call_two_models()
+    events = [e["event"] for e in logs]
+    assert "usage_finish_failed" in events
+    assert "usage_model_cost_unrecorded" not in events
+    (job,) = jobs_for(sm, student)
+    assert job.status is UsageJobStatus.open
+    assert _rows(sm) == []
+
+
+def test_the_real_feed_inside_a_metered_run_persists_what_the_job_was_charged(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Two real ``_record_spend`` calls, one in a ``copy_context`` worker: rows equal the cost."""
+    sm = migrated_sessionmaker
+    student = _student(sm)
+    _reset_process_counters()
+    meter = UsageMeter(sm, enforce=True, now=lambda: NOW)
+    with patch("lemely.io.gemini._today", lambda: _TODAY):
+        client = _gemini_client(
+            [
+                mock_response('{"value": "a"}', prompt=10_000, candidates=1_000),
+                mock_response('{"value": "b"}', prompt=2_000, candidates=300),
+            ]
+        )
+        with meter.reserve(meter.authorize(_request(student))).run():
+            _generate(client)
+            worker = threading.Thread(
+                target=contextvars.copy_context().run, args=(_generate, client)
+            )
+            worker.start()
+            worker.join()
+    (job,) = jobs_for(sm, student)
+    rows = _rows(sm)
+    assert [r[1] for r in rows] == [_GEMINI]
+    assert rows[0][2] > 0
+    assert rows[0][2] == job.actual_cost_usd
+
+
+def test_a_job_closed_while_its_work_ran_writes_no_model_rows(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    student = _student(sm)
+    meter = UsageMeter(sm, enforce=True, now=lambda: NOW)
+    with capture_logs() as logs, meter.reserve(meter.authorize(_request(student))).run():
+        _call_two_models()
+        with sm.begin() as session:
+            assert UsageLedger(session).expire_stale_jobs(now=NOW + timedelta(days=1)) == 1
+    (job,) = jobs_for(sm, student)
+    assert job.status is UsageJobStatus.expired
+    assert [e for e in logs if e["event"] == "usage_settle_on_closed_job"]
+    assert _rows(sm) == []
 
 
 def test_the_run_scope_does_not_leak_into_the_next_run(

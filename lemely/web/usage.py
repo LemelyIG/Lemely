@@ -757,18 +757,18 @@ class MeteredJob:
         self._finish(cost_usd, settle=settle, model_totals=model_totals)
 
     def _record_model_costs(
-        self, session: Session, model_totals: Mapping[str, Decimal] | None
+        self, session: Session, usage_job_id: uuid.UUID, model_totals: Mapping[str, Decimal] | None
     ) -> None:
         """Store the per-model split of a settled job; a failure never undoes the settle.
 
-        Runs in a savepoint inside the settle's transaction, against the job id as it stands
-        now (a hold re-reserved before the work started has a new one).
+        Runs in a savepoint inside the settle's transaction, against the settled row itself
+        (a hold re-reserved before the work started settles under its new row).
         """
         if not model_totals:
             return
         try:
             with session.begin_nested():
-                record_job_model_costs(session, job_id=self.job_id, totals=model_totals)
+                record_job_model_costs(session, usage_job_id=usage_job_id, totals=model_totals)
         except Exception as exc:
             log.error(
                 "usage_model_cost_unrecorded",
@@ -817,7 +817,10 @@ class MeteredJob:
                     settled_job = ledger.settle(self.job_id, actual_cost_usd=cost_usd, now=now)
                     if settled_job.status is UsageJobStatus.settled:
                         run_post_settle_hooks(session, settled_job, list(self.ctx.chain), now)
-                        self._record_model_costs(session, model_totals)
+                        # Flush the settle's own writes first: a failure there is the
+                        # settle's, not the split's, and must not be caught as the split's.
+                        session.flush()
+                        self._record_model_costs(session, settled_job.id, model_totals)
                     else:
                         # The sweeper closed the job while the work ran past its whole
                         # deadline: the hold is back and the balance may be spent, so a late

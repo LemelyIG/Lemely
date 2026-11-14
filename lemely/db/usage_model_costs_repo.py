@@ -11,11 +11,9 @@ import uuid
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from lemely.db.models.billing_ops import UsageJobModelCost
-from lemely.db.models.usage import UsageJob
 from lemely.io.llm.model_costs import MODEL_NAME_MAX_LENGTH
 
 if TYPE_CHECKING:
@@ -25,24 +23,22 @@ if TYPE_CHECKING:
 
 
 def record_job_model_costs(
-    session: Session, *, job_id: uuid.UUID, totals: Mapping[str, Decimal]
+    session: Session, *, usage_job_id: uuid.UUID, totals: Mapping[str, Decimal]
 ) -> int:
-    """Store one row per model for the job whose metering id is ``job_id``; return the count.
+    """Store one row per model for the usage job ``usage_job_id``; return the count.
 
-    ``job_id`` is ``UsageJob.job_id`` (the id the meter reserved under), not the row's primary
-    key. A replay adds to the row it already wrote rather than duplicating it (unique on job
-    and model). Raises :class:`LookupError` when no such job exists. The caller owns the
+    ``usage_job_id`` is the ``usage_jobs`` primary key (``UsageJob.id``). ``totals`` is the
+    job's complete per-model snapshot, so a replay REPLACES the row it already wrote: it can
+    neither duplicate a row nor double the money. Names are cut to the column width (the
+    accumulator already does this; the cut here covers direct callers). The caller owns the
     transaction.
     """
-    if not totals:
-        return 0
-    usage_job_id = session.scalar(sa.select(UsageJob.id).where(UsageJob.job_id == job_id))
-    if usage_job_id is None:
-        raise LookupError(f"no usage job with job_id {job_id}")
     merged: dict[str, Decimal] = {}
     for model, cost in totals.items():
         key = model[:MODEL_NAME_MAX_LENGTH]
         merged[key] = merged.get(key, Decimal(0)) + cost
+    if not merged:
+        return 0
     rows = [
         {"id": uuid.uuid4(), "usage_job_id": usage_job_id, "model": model, "cost_usd": cost}
         for model, cost in merged.items()
@@ -51,7 +47,7 @@ def record_job_model_costs(
     session.execute(
         stmt.on_conflict_do_update(
             index_elements=["usage_job_id", "model"],
-            set_={"cost_usd": UsageJobModelCost.cost_usd + stmt.excluded.cost_usd},
+            set_={"cost_usd": stmt.excluded.cost_usd},
         )
     )
     return len(rows)
