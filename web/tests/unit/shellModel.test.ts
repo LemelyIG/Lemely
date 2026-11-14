@@ -55,10 +55,10 @@ describe("nextSettingsTabIndex (arrow keys on the settings tabs)", () => {
 })
 
 describe("titleRuns (design A sets codes and dates in the mono face)", () => {
-  it("flags a day and month with the weekday before it as one token", () => {
+  it("flags a day and month, not the weekday before it", () => {
     expect(titleRuns("Physics mock moved to Thu 12 Nov")).toEqual([
-      { text: "Physics mock moved to ", mono: false },
-      { text: "Thu 12 Nov", mono: true },
+      { text: "Physics mock moved to Thu ", mono: false },
+      { text: "12 Nov", mono: true },
     ])
   })
   it("flags a paper code at the start", () => {

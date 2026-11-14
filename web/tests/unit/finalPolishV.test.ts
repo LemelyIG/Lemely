@@ -10,8 +10,8 @@ import { NativeFrameProvider } from "@/lib/useNativeFrame"
 describe("NF final polish, lane F1", () => {
   it("item 1: a date in a title is one unbreakable token", () => {
     const out = renderToStaticMarkup(createElement(NoBreakTitle, { title: "Physics mock moved to Thu 12 Nov", mono: true }))
-    expect(out).toContain('whitespace-nowrap">Thu 12 Nov</span>')
-    expect(out).toContain("font-mono")
+    // The weekday joins the date's no-wrap span but stays in the text face; only the date is mono.
+    expect(out).toContain('<span class="whitespace-nowrap">Thu <span class="font-mono font-semibold tabular-nums">12 Nov</span></span>')
     expect(renderToStaticMarkup(createElement(NoBreakTitle, { title: "Mock on 12 Nov" }))).not.toContain("font-mono")
   })
 

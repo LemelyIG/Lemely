@@ -17,7 +17,7 @@ export interface TitleRun {
   mono: boolean
 }
 
-const MONO_RUN = /(\d{4}\/\d{2}|(?:\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) )?\b\d{1,2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b)/
+const MONO_RUN = /(\d{4}\/\d{2}|\b\d{1,2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b)/
 
 export function titleRuns(title: string): TitleRun[] {
   return title

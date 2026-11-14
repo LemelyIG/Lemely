@@ -20,19 +20,20 @@ const openMore = async (page) => {
 
 /**
  * Narrow the title's container from its natural width down to 60px and ask, at every step, whether the
- * date span is ever split across two lines (an inline box that wraps reports one client rect per line).
+ * date span is ever split across two lines (an inline box that wraps reports client rects on more than one line).
  * Returns the widths at which it split.
  */
 const widthsThatSplitTheDate = (scope, dateText) =>
   scope.evaluate((root, text) => {
-    const span = [...root.querySelectorAll("span")].find((s) => s.textContent.trim() === text && !s.querySelector("span"))
+    const span = [...root.querySelectorAll("span")].find((s) => s.textContent.trim() === text)
     if (!span) return null
     const host = span.parentElement
     const natural = host.getBoundingClientRect().width
     const split = []
     for (let w = Math.floor(natural); w >= 60; w -= 4) {
       host.style.maxWidth = `${w}px`
-      if (span.getClientRects().length > 1) split.push(w)
+      const tops = new Set([...span.getClientRects()].filter((r) => r.width > 0).map((r) => Math.round(r.top)))
+      if (tops.size > 1) split.push(w)
     }
     host.style.maxWidth = ""
     return split
@@ -277,10 +278,14 @@ FINAL_V_CHECKS.push(
       if (r.props !== BASE) throw new Error(`desktop button transition is "${r.props}", base is "${BASE}"`)
       const icon = await page.evaluate(() => {
         const b = document.querySelector("button.lm-native-iconbtn")
-        return b ? getComputedStyle(b).transitionProperty : null
+        if (!b) return null
+        const cs = getComputedStyle(b)
+        return { props: cs.transitionProperty, duration: cs.transitionDuration }
       })
       if (icon === null) throw new Error("no shell icon button (.lm-native-iconbtn) on the page to measure")
-      if (/\bscale\b/.test(icon) || !/^color, /.test(icon)) throw new Error(`desktop shell icon button transition is "${icon}", base is transition-colors`)
+      const BASE_ICON = "color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to"
+      if (icon.props !== BASE_ICON || icon.duration !== "0.15s")
+        throw new Error(`desktop shell icon button transition is "${icon.props}" over ${icon.duration}, base is transition-colors over 0.15s`)
     },
   },
   ...PLATFORMS.map((platform) => ({
