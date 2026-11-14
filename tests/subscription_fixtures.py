@@ -100,6 +100,9 @@ class FakePaymobClient(_Phase02FakePaymobClient):
         super().__init__(settings)
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.fail: dict[str, Exception] = {}
+        #: ``(call, Paymob subscription id)`` to the exception that call raises for that
+        #: subscription only, so a sweep test can fail one row and let the rest through.
+        self.fail_for: dict[tuple[str, int], Exception] = {}
         self.subscriptions: dict[int, JsonObject] = {}
         self.last_transactions: dict[int, JsonObject] = {}
 
@@ -115,6 +118,9 @@ class FakePaymobClient(_Phase02FakePaymobClient):
         self.calls.append((call, kwargs))
         if call in self.fail:
             raise self.fail[call]
+        subscription_id = kwargs.get("subscription_id")
+        if isinstance(subscription_id, int) and (call, subscription_id) in self.fail_for:
+            raise self.fail_for[(call, subscription_id)]
 
     def create_plan(  # type: ignore[override]
         self,

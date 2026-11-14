@@ -32,6 +32,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
 from lemely.core.subscription_rules import (
+    GRACE_PERIOD,
     MAX_EXTRA_SEATS_AT_CHECKOUT,
     PAYMOB_RETRIAL_DAYS,
     STALE_CHECKOUT_AFTER,
@@ -105,6 +106,10 @@ TRIGGER_OVERDUE: Final = "Failed Overdue Transaction"
 TRIGGER_CANCELED: Final = "canceled"
 TRIGGER_SUSPENDED: Final = "suspended"
 TRIGGER_RESUMED: Final = "resumed"
+
+#: The most rows one sweep pass takes (DV-15): the rest wait for the next pass, oldest deadline
+#: first, so a backlog cannot hold one transaction's worth of Paymob calls open.
+SUBSCRIPTION_SWEEP_BATCH: Final = 200
 
 #: Paymob ids and amounts above this are not Paymob data: the columns are 64-bit and a hostile or
 #: corrupt body must not become a database error that makes the webhook fail on every retry.
@@ -1484,7 +1489,14 @@ class SubscriptionService:
         A trigger with none (``Subscription Created``, ``updated``, ...) is stored, marked
         processed and answered 200 (DV-29).
         """
-        return {TRIGGER_SUCCESS: self._on_successful_transaction}
+        return {
+            TRIGGER_SUCCESS: self._on_successful_transaction,
+            TRIGGER_FAILED: self._on_failed,
+            TRIGGER_OVERDUE: self._on_overdue,
+            TRIGGER_CANCELED: self._on_canceled,
+            TRIGGER_SUSPENDED: self._on_suspended,
+            TRIGGER_RESUMED: self._on_resumed,
+        }
 
     def _resolve(self, paymob_id: int, remote: JsonMap) -> Subscription | None:
         """Our subscription for a Paymob id, locked; linked through its first payment if new.
@@ -1677,6 +1689,305 @@ class SubscriptionService:
             return False
         return _settle_renewal(session, subscription, payment, charged_at=charged_at, now=now)
 
+    # -- grace and expiry (spec §2.6, §5.2) --------------------------------------------
+
+    def mark_past_due(self, subscription_id: uuid.UUID, *, now: datetime) -> Subscription:
+        """A renewal failed: ``past_due`` with ``grace_until = now + GRACE_PERIOD``.
+
+        A subscription that is not ``active`` is returned unchanged (see :meth:`_mark_past_due`).
+        The caller commits.
+
+        Raises:
+            SubscriptionNotFound: no such subscription.
+        """
+        subscription = self._lock(subscription_id)
+        self._mark_past_due(subscription, now=now)
+        return subscription
+
+    def expire_overdue(self, *, now: datetime, limit: int = SUBSCRIPTION_SWEEP_BATCH) -> int:
+        """Expire ``past_due`` subscriptions whose grace has elapsed, and cancel them at Paymob.
+
+        Takes at most ``limit`` rows, oldest ``grace_until`` first; the rest wait for the next
+        pass. Each row is its own transaction (:meth:`_sweep_one`), so one Paymob failure cannot
+        undo another row's expiry. Returns how many rows were expired. The session must hold no
+        uncommitted work: every row commits.
+
+        Raises:
+            ValueError: ``limit`` is below 1.
+        """
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+        ids = self._session.scalars(
+            select(Subscription.id)
+            .where(
+                Subscription.status == SubscriptionStatus.past_due,
+                Subscription.grace_until <= now,
+                # Complimentary rows have no Paymob link; Phase 07 ends those (index R15).
+                Subscription.paymob_subscription_id.is_not(None),
+            )
+            .order_by(Subscription.grace_until, Subscription.id)
+            .limit(limit)
+        ).all()
+        return sum(self._sweep_one(sid, self._expire_if_due, now) for sid in ids)
+
+    def _lock(self, subscription_id: uuid.UUID) -> Subscription:
+        """The subscription, locked and re-read, or :class:`SubscriptionNotFound`."""
+        subscription = self._session.scalars(
+            select(Subscription)
+            .where(Subscription.id == subscription_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).one_or_none()
+        if subscription is None:
+            raise SubscriptionNotFound(f"unknown subscription {subscription_id}")
+        return subscription
+
+    def _lock_for_sweep(self, subscription_id: uuid.UUID) -> Subscription | None:
+        """Lock one subscription for a sweep, or ``None`` when it is gone or another holds it.
+
+        ``FOR UPDATE SKIP LOCKED``: a row a webhook, a checkout or another replica's sweep is
+        working on is left to them, and the sweep never waits on it (DV-15).
+        """
+        return self._session.scalars(
+            select(Subscription)
+            .where(Subscription.id == subscription_id)
+            .with_for_update(skip_locked=True)
+            .execution_options(populate_existing=True)
+        ).one_or_none()
+
+    def _sweep_one(
+        self,
+        subscription_id: uuid.UUID,
+        step: Callable[[Subscription, datetime], bool],
+        now: datetime,
+    ) -> int:
+        """Lock, apply ``step`` to and commit one subscription: ``1`` when it changed, else ``0``.
+
+        A row that is missing or held is skipped and counted as nothing. Any failure rolls back
+        this row only and is alerted with the id and the exception type, never its message (a
+        Paymob error body can carry account data).
+        """
+        try:
+            subscription = self._lock_for_sweep(subscription_id)
+            changed = subscription is not None and step(subscription, now)
+            self._session.commit()
+        except Exception as exc:
+            self._session.rollback()
+            alerts.error(
+                "subscription_sweep_failed",
+                subscription_id=str(subscription_id),
+                error=type(exc).__name__,
+                alert=True,
+            )
+            return 0
+        return int(changed)
+
+    def _expire_if_due(self, subscription: Subscription, now: datetime) -> bool:
+        """Sweep step: expire a ``past_due`` row whose grace has elapsed, re-checked under lock."""
+        if (
+            subscription.status is not SubscriptionStatus.past_due
+            or subscription.grace_until is None
+            or subscription.grace_until > now
+            or subscription.paymob_subscription_id is None
+        ):
+            return False
+        self._expire(subscription, now=now, push_cancel=True)
+        return True
+
+    def _mark_past_due(self, subscription: Subscription, *, now: datetime) -> None:
+        """Start the grace period of an ``active`` plan, once.
+
+        Only from ``active``: Paymob retries a failed charge and every retry that fails calls
+        this again, and none of them may move the first deadline. The expiring period's leftover
+        allowance stays usable until the deadline (UD-1 (b)).
+        """
+        if subscription.status is not SubscriptionStatus.active:
+            return
+        grace_until = now + GRACE_PERIOD
+        subscription.status = SubscriptionStatus.past_due
+        subscription.grace_until = grace_until
+        _bump(subscription)
+        self._extend_period_grants(subscription, until=grace_until, now=now)
+        enqueue_subscription_notice(
+            self._session,
+            subscription=subscription,
+            notice="payment_failed",
+            effective_at=grace_until,
+        )
+        log.info("subscription_past_due", subscription_id=str(subscription.id))
+
+    def _extend_period_grants(
+        self, subscription: Subscription, *, until: datetime, now: datetime
+    ) -> None:
+        """Keep the current period's unexpired grants usable until ``until`` (UD-1 (b)).
+
+        No units are granted and none are lost. A grant that already lapsed stays lapsed. The
+        extension is best effort: a ledger failure is alerted and rolled back alone, because the
+        failed renewal itself must still be recorded (a webhook that fails here is retried by
+        Paymob for ever).
+        """
+        session = self._session
+        if subscription.current_period_end is None:
+            return
+        grant_ids = session.scalars(
+            select(UsageGrant.id)
+            .join(SubscriptionPeriod, SubscriptionPeriod.id == UsageGrant.subscription_period_id)
+            .where(
+                SubscriptionPeriod.subscription_id == subscription.id,
+                SubscriptionPeriod.period_end == subscription.current_period_end,
+                UsageGrant.expires_at > now,
+                UsageGrant.expires_at < until,
+            )
+            .order_by(UsageGrant.id)
+        ).all()
+        ledger = UsageLedger(session)
+        for grant_id in grant_ids:
+            try:
+                with session.begin_nested():
+                    ledger.extend_grant_expiry(grant_id, expires_at=until, now=now)
+            except Exception as exc:
+                alerts.error(
+                    "subscription_grace_extension_failed",
+                    subscription_id=str(subscription.id),
+                    grant_id=str(grant_id),
+                    error=type(exc).__name__,
+                    alert=True,
+                )
+
+    def _expire(self, subscription: Subscription, *, now: datetime, push_cancel: bool) -> None:
+        """Lapse the plan: no new allowance and no new seat allowances (spec §5.2).
+
+        ``push_cancel`` also cancels the Paymob subscription. Only the sweeps pass ``True``: the
+        webhook transaction holds the row lock and never calls Paymob (DV-15), and the sweeps
+        pick up an expired row whose cancel was never stamped.
+        """
+        subscription.status = SubscriptionStatus.expired
+        # The notice names the deadline the user was told, not the instant the sweep got to it.
+        deadline = subscription.grace_until or subscription.current_period_end or now
+        subscription.grace_until = None
+        _bump(subscription)
+        enqueue_subscription_notice(
+            self._session, subscription=subscription, notice="expired", effective_at=deadline
+        )
+        if push_cancel:
+            self._cancel_at_paymob(subscription, now=now)
+        log.info("subscription_expired", subscription_id=str(subscription.id))
+
+    def _cancel_at_paymob(self, subscription: Subscription, *, now: datetime) -> bool:
+        """Cancel the Paymob subscription once and stamp ``paymob_cancelled_at``.
+
+        ``True`` when the row is stamped. A refusal (4xx) is read back: Paymob already reporting
+        ``canceled`` stamps the row (it stops being retried), anything else is alerted. An
+        unknown outcome (timeout, transport failure, 5xx) is left alone for the next pass; a
+        cancel is idempotent at Paymob.
+        """
+        paymob_id = subscription.paymob_subscription_id
+        if paymob_id is None or subscription.paymob_cancelled_at is not None:
+            return False
+        try:
+            self._client.cancel_subscription(paymob_id)
+        except PaymobError as exc:
+            status = exc.status_code
+            if exc.outcome_unknown or status is None or not 400 <= status < 500:
+                log.warning(
+                    "paymob_cancel_failed", subscription_id=str(subscription.id), exc_info=True
+                )
+                return False
+            return self._stamp_if_already_cancelled(subscription, now=now, status_code=status)
+        subscription.paymob_cancelled_at = now
+        return True
+
+    def _stamp_if_already_cancelled(
+        self, subscription: Subscription, *, now: datetime, status_code: int
+    ) -> bool:
+        """After a refused cancel: stamp the row when Paymob says the subscription is gone."""
+        paymob_id = subscription.paymob_subscription_id
+        assert paymob_id is not None  # noqa: S101 - the caller checked
+        try:
+            remote = self._client.get_subscription(paymob_id)
+        except PaymobError:
+            log.warning("paymob_cancel_failed", subscription_id=str(subscription.id), exc_info=True)
+            return False
+        if remote.get("state") == "canceled":
+            subscription.paymob_cancelled_at = now
+            return True
+        alerts.error(
+            "paymob_cancel_refused",
+            subscription_id=str(subscription.id),
+            status_code=status_code,
+            remote_state=str(remote.get("state"))[:30],
+            alert=True,
+        )
+        return False
+
+    # -- mirrored Paymob states (spec §5.2) --------------------------------------------
+
+    def _disagrees(
+        self, subscription: Subscription, remote: RemoteState, *, trigger: str, expected: str
+    ) -> bool:
+        """Whether Paymob's own state contradicts the trigger (logged): the trigger is ignored."""
+        state = remote.subscription.get("state")
+        if state == expected:
+            return False
+        log.warning(
+            "paymob_state_disagrees",
+            subscription_id=str(subscription.id),
+            trigger_type=trigger,
+            state=state if isinstance(state, str) else None,
+        )
+        return True
+
+    def _on_failed(self, subscription: Subscription, remote: RemoteState, now: datetime) -> None:
+        del remote
+        self._mark_past_due(subscription, now=now)
+
+    def _on_overdue(self, subscription: Subscription, remote: RemoteState, now: datetime) -> None:
+        """Paymob gave up charging: expire at once, but never write to Paymob from here (DV-15)."""
+        del remote
+        if subscription.status in PLAN_LIVE_STATUSES:
+            self._expire(subscription, now=now, push_cancel=False)
+
+    def _on_canceled(self, subscription: Subscription, remote: RemoteState, now: datetime) -> None:
+        """Paymob reports the subscription cancelled: cancel at period end (UD-4 (b)).
+
+        Whether Lemely's own cancel or someone's in Paymob's dashboard, the paid period is kept
+        and the period-end sweep ends it. A pending plan change can no longer apply, so it is
+        dropped. No notice is queued here: "cancelled" is past tense and goes out when the
+        period ends.
+        """
+        if self._disagrees(subscription, remote, trigger=TRIGGER_CANCELED, expected="canceled"):
+            return
+        changed = subscription.paymob_cancelled_at is None
+        if changed:
+            subscription.paymob_cancelled_at = now
+        if subscription.status in PLAN_LIVE_STATUSES and not subscription.cancel_at_period_end:
+            subscription.cancel_at_period_end = True
+            subscription.pending_plan_tier_id = None
+            changed = True
+            log.info("subscription_cancelled_in_paymob", subscription_id=str(subscription.id))
+        if changed:
+            _bump(subscription)
+
+    def _on_suspended(self, subscription: Subscription, remote: RemoteState, now: datetime) -> None:
+        if self._disagrees(subscription, remote, trigger=TRIGGER_SUSPENDED, expected="suspended"):
+            return
+        if subscription.status is not SubscriptionStatus.active:
+            return
+        subscription.status = SubscriptionStatus.past_due
+        subscription.grace_until = max(subscription.current_period_end or now, now)
+        _bump(subscription)
+
+    def _on_resumed(self, subscription: Subscription, remote: RemoteState, now: datetime) -> None:
+        if self._disagrees(subscription, remote, trigger=TRIGGER_RESUMED, expected="active"):
+            return
+        if subscription.status is not SubscriptionStatus.past_due:
+            return
+        if subscription.current_period_end is None or subscription.current_period_end <= now:
+            return  # the paid period is over; the next renewal reactivates
+        subscription.status = SubscriptionStatus.active
+        subscription.grace_until = None
+        _bump(subscription)
+
     def _free_order_id(self, txn: JsonMap) -> int | None:
         """The charge's Paymob order id, unless another payment already holds it (DV-14).
 
@@ -1736,6 +2047,7 @@ def _violates_one_live(exc: IntegrityError) -> bool:
 
 
 __all__ = [
+    "SUBSCRIPTION_SWEEP_BATCH",
     "SUBSCRIPTION_WEBHOOK_PATH",
     "TRIGGER_CANCELED",
     "TRIGGER_CREATED",

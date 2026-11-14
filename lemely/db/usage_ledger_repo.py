@@ -1031,6 +1031,39 @@ class UsageLedger:
         self._session.flush()
         return amount
 
+    def extend_grant_expiry(
+        self, grant_id: uuid.UUID, *, expires_at: datetime, now: datetime
+    ) -> UsageGrant:
+        """Keep a grant's leftover usable until ``expires_at`` (a plan's failed-renewal grace).
+
+        Moves ``expires_at`` later and touches nothing else: no entry is written and no balance
+        changes, so a lapse loses nothing and a grace period grants nothing. An expiry never moves
+        earlier (a grant already expiring later, or never, is returned as it is), so a repeat is a
+        no-op. Takes the owner lock, and re-reads the grant under it, so it cannot race the
+        expiry sweep or a claw-back.
+
+        Raises:
+            ValueError: ``expires_at`` is not after ``now``, or the grant already expired at
+                ``now`` (its leftover is no longer usable, and a clawed-back grant is closed this
+                way too: neither is reopened).
+            LookupError: no such grant.
+        """
+        if expires_at <= now:
+            raise ValueError("expires_at must be after now")
+        grant = self._session.get(UsageGrant, grant_id)
+        if grant is None:
+            raise LookupError(f"no usage grant {grant_id}")
+        self._lock_owners([grant.owner_user_id])
+        self._session.refresh(grant)
+        if grant.expires_at is None:
+            return grant
+        if grant.expires_at <= now:
+            raise ValueError(f"usage grant {grant_id} already expired")
+        if expires_at > grant.expires_at:
+            grant.expires_at = expires_at
+            self._session.flush()
+        return grant
+
     def adjust(
         self,
         *,

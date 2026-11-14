@@ -29,6 +29,7 @@ from tests.usage_db import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from datetime import datetime
 
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -227,3 +228,87 @@ def test_meter_fraction_reads_the_seat_grant_for_in_scope_work(sm: sessionmaker[
         ledger = UsageLedger(session)
         assert ledger.meter_fraction(student, teacher_member_id=member, now=NOW) == 0.0
         assert ledger.meter_fraction(student, teacher_member_id=uuid.uuid4(), now=NOW) is None
+
+
+# ---------------------------------------------------------------------------
+# extend_grant_expiry
+# ---------------------------------------------------------------------------
+
+
+def _extend_expiry(
+    factory: sessionmaker[Session], grant_id: uuid.UUID, expires_at: datetime
+) -> datetime | None:
+    with factory.begin() as session:
+        return (
+            UsageLedger(session)
+            .extend_grant_expiry(grant_id, expires_at=expires_at, now=NOW)
+            .expires_at
+        )
+
+
+def test_extend_grant_expiry_moves_only_the_expiry_and_keeps_the_leftover_usable(
+    sm: sessionmaker[Session],
+) -> None:
+    owner = add_user(sm)
+    soon = NOW + timedelta(hours=1)
+    later = NOW + timedelta(days=3)
+    gid = grant(sm, owner, 100, expires_at=soon)
+    before = (balance(sm, gid), [e.id for e in entries(sm, grant_id=gid)])
+    assert _extend_expiry(sm, gid, later) == later
+    after = (balance(sm, gid), [e.id for e in entries(sm, grant_id=gid)])
+    assert after == before  # no entry, no balance change
+    with sm() as session:
+        ledger = UsageLedger(session)
+        assert ledger.available(own_chain(owner), now=soon + timedelta(hours=1)) == 100
+        assert ledger.available(own_chain(owner), now=later) == 0  # the new expiry still binds
+
+
+def test_extend_grant_expiry_never_moves_an_expiry_earlier(sm: sessionmaker[Session]) -> None:
+    owner = add_user(sm)
+    far = NOW + timedelta(days=9)
+    gid = grant(sm, owner, 100, expires_at=far)
+    assert _extend_expiry(sm, gid, NOW + timedelta(days=3)) == far
+
+
+def test_extend_grant_expiry_is_idempotent(sm: sessionmaker[Session]) -> None:
+    owner = add_user(sm)
+    later = NOW + timedelta(days=3)
+    gid = grant(sm, owner, 100, expires_at=NOW + timedelta(hours=1))
+    assert _extend_expiry(sm, gid, later) == later
+    assert _extend_expiry(sm, gid, later) == later
+    assert len(entries(sm, grant_id=gid)) == 1
+
+
+def test_extend_grant_expiry_leaves_a_grant_that_never_expires_alone(
+    sm: sessionmaker[Session],
+) -> None:
+    owner = add_user(sm)
+    gid = grant(sm, owner, 100, expires_at=None)
+    assert _extend_expiry(sm, gid, NOW + timedelta(days=3)) is None
+
+
+def test_extend_grant_expiry_refuses_a_grant_that_already_expired(
+    sm: sessionmaker[Session],
+) -> None:
+    owner = add_user(sm)
+    gone = NOW - timedelta(minutes=1)
+    gid = grant(sm, owner, 100, expires_at=gone, effective_at=NOW - timedelta(days=30))
+    with pytest.raises(ValueError, match="already expired"), sm.begin() as session:
+        UsageLedger(session).extend_grant_expiry(gid, expires_at=NOW + timedelta(days=3), now=NOW)
+    assert grant_row(sm, gid).expires_at == gone
+
+
+def test_extend_grant_expiry_refuses_an_expiry_that_is_not_in_the_future(
+    sm: sessionmaker[Session],
+) -> None:
+    owner = add_user(sm)
+    gid = grant(sm, owner, 100, expires_at=NOW + timedelta(hours=1))
+    with pytest.raises(ValueError, match="after now"), sm.begin() as session:
+        UsageLedger(session).extend_grant_expiry(gid, expires_at=NOW, now=NOW)
+
+
+def test_extend_grant_expiry_of_an_unknown_grant_raises(sm: sessionmaker[Session]) -> None:
+    with pytest.raises(LookupError), sm.begin() as session:
+        UsageLedger(session).extend_grant_expiry(
+            uuid.uuid4(), expires_at=NOW + timedelta(days=3), now=NOW
+        )
