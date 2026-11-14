@@ -584,6 +584,7 @@ POLISH_V_CHECKS.push(
           }
         }, meta)
         if (!r.shown) throw new Error(`the subject "${meta}" is not shown on native`)
+        if (!r.below) throw new Error("the subject line sits above the heading, not under it")
         if (r.mono || r.upper === "uppercase") throw new Error("the subject is still styled as a mono eyebrow")
         if (r.eyebrows) throw new Error("the eyebrow itself still shows above the heading")
       },
@@ -698,3 +699,29 @@ export async function dataEyebrowMocks(page) {
     }),
   )
 }
+
+// Fix round 2: the settings sheet's group gets the same iOS light grouped ground as More.
+POLISH_V_CHECKS.push({
+  id: "pv-ios-settings-group-matches-the-more-group-background",
+  platform: "ios",
+  width: 390,
+  app: { ...NATIVE_HOME, path: "/student/settings" },
+  async run(page) {
+    const settings = page.getByRole("dialog", { name: "Settings" })
+    await settings.waitFor()
+    const r = await settings.evaluate((el) => ({
+      sheet: getComputedStyle(el).backgroundColor,
+      group: getComputedStyle(el.querySelector("[data-list-group]")).backgroundColor,
+    }))
+    await page.keyboard.press("Escape")
+    await settings.waitFor({ state: "detached" })
+    await page.goto(new URL("/student", page.url()).href, { waitUntil: "networkidle" })
+    const dialog = await openMore(page)
+    const more = await dialog.evaluate((el) => ({
+      sheet: getComputedStyle(el).backgroundColor,
+      group: getComputedStyle(el.querySelector("[data-list-group]")).backgroundColor,
+    }))
+    if (r.group !== more.group) throw new Error(`settings group ${r.group} differs from the More group ${more.group}`)
+    if (r.sheet !== more.sheet) throw new Error(`settings sheet ${r.sheet} differs from the More sheet ${more.sheet}`)
+  },
+})

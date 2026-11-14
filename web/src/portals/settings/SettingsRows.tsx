@@ -68,6 +68,7 @@ export function SettingsSection({
 export function SettingsCard({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <div
+      data-list-group
       className={cn(
         "lm-native-group flex flex-col divide-y divide-outline-variant rounded-tile border border-outline-variant bg-surface-container-lowest",
         className,
