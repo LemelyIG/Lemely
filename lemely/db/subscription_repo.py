@@ -178,9 +178,18 @@ class DowngradeUnavailable(SubscriptionError):
 
 
 class NoCreditRate(SubscriptionError):
-    """No admin-set rate converts this payment, so it cannot be turned into credits (UD-12)."""
+    """No admin-set setting converts this payment, so it cannot be turned into credits (UD-12).
+
+    ``reason`` tells the operator which setting to fix: ``no_rate`` (no rate row for the currency),
+    ``no_validity_setting`` (no ``billing_settings`` row), ``below_one_unit`` (the amount is worth
+    less than one unit) or ``overflow`` (the units do not fit a ``BIGINT``).
+    """
 
     code: ClassVar[str] = "no_credit_rate"
+
+    def __init__(self, message: str, *, reason: str) -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 class PlanSyncFailed(SubscriptionError):
@@ -413,6 +422,29 @@ def _shed_excess_seats(
 # -- payment to credits (UD-3, UD-10; Phase 06 UD-P2) -------------------------------------
 
 
+#: The largest value ``usage_grants.units`` (a ``BIGINT``) holds.
+_BIGINT_MAX: Final = 2**63 - 1
+
+
+def _credit_units(session: Session, *, amount_minor: int, currency: str) -> int:
+    """``floor(amount_minor x rate)`` in exact decimal, or ``NoCreditRate`` with the reason."""
+    if amount_minor <= 0:
+        raise NoCreditRate("an amount of zero or less converts to nothing", reason="below_one_unit")
+    rate = session.scalar(
+        select(CreditConversionRate.units_per_minor).where(
+            CreditConversionRate.currency == currency
+        )
+    )
+    if rate is None or rate <= 0:
+        raise NoCreditRate(f"no credit conversion rate for {currency}", reason="no_rate")
+    units = int((Decimal(amount_minor) * rate).to_integral_value(rounding=ROUND_FLOOR))
+    if units > _BIGINT_MAX:
+        raise NoCreditRate("the converted units do not fit a grant", reason="overflow")
+    if units < 1:
+        raise NoCreditRate("the amount is worth less than one unit", reason="below_one_unit")
+    return units
+
+
 def credit_units_for_amount(session: Session, *, amount_minor: int, currency: str) -> int | None:
     """Credit units that ``amount_minor`` converts to, or ``None`` when it cannot be converted.
 
@@ -420,22 +452,15 @@ def credit_units_for_amount(session: Session, *, amount_minor: int, currency: st
     admin-set ``credit_conversion_rates.units_per_minor`` of ``currency`` (UD-12): usage units per
     minor currency unit, exact decimal. The result is ``floor(amount_minor x rate)``, so a
     conversion never grants more than was paid. It fails closed: ``None`` when the currency has no
-    row (nothing is inferred from credit packs or any constant) and when the amount is too small
-    for one unit. The read runs in the caller's transaction and takes no lock; a rate edited
-    concurrently applies to the next conversion, and a replay keeps the units already stamped on
-    the payment.
+    row (nothing is inferred from credit packs or any constant), when the amount is too small for
+    one unit, and when the units would not fit a ``BIGINT``. The read runs in the caller's
+    transaction and takes no lock; a rate edited concurrently applies to the next conversion.
+    :func:`convert_payment_to_credits` uses the same arithmetic and says why it refused.
     """
-    if amount_minor <= 0:
+    try:
+        return _credit_units(session, amount_minor=amount_minor, currency=currency)
+    except NoCreditRate:
         return None
-    rate = session.scalar(
-        select(CreditConversionRate.units_per_minor).where(
-            CreditConversionRate.currency == currency
-        )
-    )
-    if rate is None or rate <= 0:
-        return None
-    units = int((Decimal(amount_minor) * rate).to_integral_value(rounding=ROUND_FLOOR))
-    return units if units > 0 else None
 
 
 def _grant_by_key(session: Session, owner_id: uuid.UUID, idempotency_key: str) -> UsageGrant | None:
@@ -457,7 +482,9 @@ def _credit_validity_months(session: Session) -> int:
         select(BillingSettings.credit_validity_months).where(BillingSettings.id == 1)
     )
     if months is None:
-        raise NoCreditRate("no billing settings row: the credit validity is not set")
+        raise NoCreditRate(
+            "no billing settings row: the credit validity is not set", reason="no_validity_setting"
+        )
     return months
 
 
@@ -479,7 +506,8 @@ def convert_payment_to_credits(
             its credits); it already paid for a subscription period; or it carries grant units
             that no earlier conversion issued.
         NoCreditRate: no admin-set rate for the payment's currency, the amount is below one unit,
-            or the ``billing_settings`` row is missing (fail closed, UD-12).
+            the units overflow a ``BIGINT``, or the ``billing_settings`` row is missing (fail
+            closed, UD-12). ``reason`` names which.
     """
     if payment.status is not PaymentStatus.paid:
         raise ValueError("only a paid payment can be turned into credits")
@@ -491,15 +519,14 @@ def convert_payment_to_credits(
     stored = _grant_by_key(session, payment.beneficiary_user_id, credited_key)
     if payment.grant_units is not None and stored is None:
         raise ValueError("this payment carries grant units that no conversion issued")
-    units = payment.grant_units
-    if units is None:
-        units = credit_units_for_amount(
-            session, amount_minor=payment.amount_minor, currency=payment.currency
-        )
-    if units is None:
-        raise NoCreditRate(f"no credit rate for payment {payment.id}")
-    # A replay keeps the expiry already stamped on the grant: it needs no setting, and an edit
-    # made since never moves a grant that was issued.
+    # A replay keeps the units and the expiry already stamped on the grant, even when the payment
+    # lost its ``grant_units``: it reads no rate and no setting, and an edit made since never
+    # moves a grant that was issued.
+    units = (
+        stored.units
+        if stored is not None
+        else _credit_units(session, amount_minor=payment.amount_minor, currency=payment.currency)
+    )
     expires_at = (
         stored.expires_at
         if stored is not None and stored.expires_at is not None
@@ -718,12 +745,13 @@ def _convert_superseded_payment(
         session.flush()
     try:
         convert_payment_to_credits(session, payment, subscription=subscription, now=paid_at)
-    except NoCreditRate:
+    except NoCreditRate as exc:
         alerts.error(
             "subscription_first_paid_for_superseded_checkout",
             subscription_id=str(subscription.id),
             payment_id=str(payment.id),
             converted=False,
+            reason=exc.reason,
             alert=True,
         )
         return

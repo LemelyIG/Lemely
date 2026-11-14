@@ -769,6 +769,7 @@ def test_a_superseded_payment_with_no_credit_rate_keeps_the_money_visible_and_al
     [entry] = _events_named(logs, "subscription_first_paid_for_superseded_checkout")
     assert entry["alert"] is True
     assert entry["converted"] is False
+    assert entry["reason"] == "no_rate"
     assert _payment(pg_sessionmaker, pid).status is PaymentStatus.paid
     assert _payment(pg_sessionmaker, pid).grant_units is None
     assert _subscription(pg_sessionmaker, sid).status is SubscriptionStatus.expired
@@ -1213,8 +1214,9 @@ def test_an_amount_too_small_for_one_unit_is_refused_not_granted_as_zero(
 ) -> None:
     _set_rate(pg_sessionmaker, "EGP", "0.01")
     _, sid, pid = _pending(pg_sessionmaker, amount_minor=amount_minor)
-    with pytest.raises(NoCreditRate):
+    with pytest.raises(NoCreditRate) as refused:
         _convert(pg_sessionmaker, pid, sid)
+    assert refused.value.reason == "below_one_unit"
 
 
 def test_credit_units_follow_the_admin_set_rate_for_the_currency(
@@ -1254,8 +1256,9 @@ def test_a_missing_rate_refuses_and_a_pack_price_is_not_a_rate(
     student, sid, pid = _pending(pg_sessionmaker)
     with pg_sessionmaker() as session:
         assert credit_units_for_amount(session, amount_minor=10_000, currency="EGP") is None
-    with pytest.raises(NoCreditRate):
+    with pytest.raises(NoCreditRate) as refused:
         _convert(pg_sessionmaker, pid, sid)
+    assert refused.value.reason == "no_rate"
     assert grants_of(pg_sessionmaker, student) == []
     assert _payment(pg_sessionmaker, pid).grant_units is None
 
@@ -1316,8 +1319,9 @@ def test_a_missing_settings_row_refuses_and_grants_nothing(
     _set_rate(pg_sessionmaker)
     _delete_settings(pg_sessionmaker)
     student, sid, pid = _pending(pg_sessionmaker)
-    with pytest.raises(NoCreditRate, match="validity"):
+    with pytest.raises(NoCreditRate, match="validity") as refused:
         _convert(pg_sessionmaker, pid, sid)
+    assert refused.value.reason == "no_validity_setting"
     assert grants_of(pg_sessionmaker, student) == []
     assert _payment(pg_sessionmaker, pid).grant_units is None
     assert _outbox(pg_sessionmaker, student) == []
@@ -1333,8 +1337,79 @@ def test_a_superseded_payment_with_no_settings_row_alerts_for_manual_handling(
         _handle(pg_sessionmaker, pid)
     [entry] = _events_named(logs, "subscription_first_paid_for_superseded_checkout")
     assert (entry["alert"], entry["converted"]) == (True, False)
+    assert entry["reason"] == "no_validity_setting"
     assert _payment(pg_sessionmaker, pid).status is PaymentStatus.paid
     assert grants_of(pg_sessionmaker, student) == []
+
+
+# -- UD-12 review minors ------------------------------------------------------------------
+
+
+def test_the_credit_arithmetic_is_exact_decimal_not_float(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """M-2: ``int(100 * float("0.29"))`` is 28; the exact floor is 29."""
+    _set_rate(pg_sessionmaker, "EGP", "0.29")
+    with pg_sessionmaker() as session:
+        assert credit_units_for_amount(session, amount_minor=100, currency="EGP") == 29
+        assert credit_units_for_amount(session, amount_minor=1_000, currency="EGP") == 290
+
+
+def test_units_beyond_bigint_are_no_rate_not_a_database_error(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """M-1: the largest rate the column holds on 10,000,000 minor units overflows BIGINT."""
+    _set_rate(pg_sessionmaker, "EGP", "999999999999.999999")
+    student, sid, pid = _pending(pg_sessionmaker, amount_minor=10_000_000)
+    with pg_sessionmaker() as session:
+        assert credit_units_for_amount(session, amount_minor=10_000_000, currency="EGP") is None
+    with pytest.raises(NoCreditRate) as refused:  # not a sqlalchemy DataError
+        _convert(pg_sessionmaker, pid, sid)
+    assert refused.value.reason == "overflow"
+    assert grants_of(pg_sessionmaker, student) == []
+    assert _payment(pg_sessionmaker, pid).grant_units is None
+
+
+def test_an_overflowing_conversion_alerts_with_its_reason_and_keeps_the_payment_paid(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _set_rate(pg_sessionmaker, "EGP", "999999999999.999999")
+    student, sid, pid, _ = _superseded(pg_sessionmaker)
+    with pg_sessionmaker.begin() as session:
+        payment = session.get(Payment, pid)
+        assert payment is not None
+        payment.amount_minor = 10_000_000
+    with capture_logs() as logs:
+        _handle(pg_sessionmaker, pid)  # no DataError: the callback transaction survives
+    [entry] = _events_named(logs, "subscription_first_paid_for_superseded_checkout")
+    assert (entry["alert"], entry["converted"], entry["reason"]) == (True, False, "overflow")
+    assert _payment(pg_sessionmaker, pid).status is PaymentStatus.paid
+    assert grants_of(pg_sessionmaker, student) == []
+
+
+def test_a_replay_uses_the_stored_grants_units_even_when_the_payment_lost_its_stamp(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """M-3: a grant exists, ``grant_units`` is empty and the rate moved: the grant's units win."""
+    _set_rate(pg_sessionmaker, "EGP", "0.01")
+    student, sid, pid = _pending(pg_sessionmaker)
+    first = _convert(pg_sessionmaker, pid, sid)
+    with pg_sessionmaker.begin() as session:
+        payment = session.get(Payment, pid)
+        assert payment is not None
+        payment.grant_units = None
+    _set_rate(pg_sessionmaker, "EGP", "0.05")
+    replay = _convert(pg_sessionmaker, pid, sid)
+    assert replay.id == first.id
+    assert _payment(pg_sessionmaker, pid).grant_units == 100
+    with pg_sessionmaker.begin() as session:  # and with the rate row gone, the replay still works
+        payment = session.get(Payment, pid)
+        assert payment is not None
+        payment.grant_units = None
+        session.execute(sa.delete(CreditConversionRate))
+    assert _convert(pg_sessionmaker, pid, sid).id == first.id
+    assert _payment(pg_sessionmaker, pid).grant_units == 100
+    assert len(grants_of(pg_sessionmaker, student)) == 1
 
 
 # -- UD-5: seats over capacity move to leaving, before the grant ---------------------------
