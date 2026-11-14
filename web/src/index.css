@@ -898,11 +898,6 @@
     box-shadow: none;
   }
   :root[data-platform="ios"] .lm-sheet :is(.lm-native-card, .lm-native-group) { border-radius: var(--native-group-radius-ios); }
-  /* iOS light: an inset group is lowest (white) and must read against the sheet, so a sheet that holds
-     one sits on the grouped-list ground, one step down from the plain sheet. */
-  :root[data-platform="ios"]:not([data-theme="dark"]) .lm-sheet:not(.lm-action-sheet):has(.lm-native-group) {
-    background: var(--md-surface-container);
-  }
   :root[data-platform="ios"] .lm-sheet .lm-native-group-label { padding-inline: var(--space-4); }
   :root:is([data-platform="ios"], [data-platform="android"]) .lm-sheet .lm-native-group > .lm-native-row { border-top: 0; border-bottom: 0; }
   :root[data-platform="ios"] .lm-sheet .lm-native-row { position: relative; min-height: var(--native-row-min-ios); }
@@ -2203,20 +2198,23 @@ html[data-direction="swipe"]::view-transition-new(root) {
     display: grid;
     grid-template-columns: minmax(0, 0fr);
     opacity: 0;
-    transition: grid-template-columns var(--native-fab-dur) var(--ease-m3-emphasized), opacity var(--native-fab-dur) var(--ease-m3-emphasized);
   }
   :root[data-platform="android"] .lm-native-fab-label > * {
     min-inline-size: 0;
     overflow: hidden;
     white-space: nowrap;
     padding-inline-start: 0;
-    transition: padding-inline-start var(--native-fab-dur) var(--ease-m3-emphasized);
   }
   :root[data-platform="android"] .lm-native-fab[data-extended] .lm-native-fab-label { grid-template-columns: minmax(0, 1fr); opacity: 1; }
   :root[data-platform="android"] .lm-native-fab[data-extended] .lm-native-fab-label > * { padding-inline-start: var(--space-3); }
-  @media (prefers-reduced-motion: reduce) {
-    :root[data-platform="android"] .lm-native-fab-label,
-    :root[data-platform="android"] .lm-native-fab-label > * { transition: none; }
+  /* Reduced motion: no transition at all, so the FAB steps between its two states. */
+  @media (prefers-reduced-motion: no-preference) {
+    :root[data-platform="android"] .lm-native-fab-label {
+      transition: grid-template-columns var(--native-fab-dur) var(--ease-m3-emphasized), opacity var(--native-fab-dur) var(--ease-m3-emphasized);
+    }
+    :root[data-platform="android"] .lm-native-fab-label > * {
+      transition: padding-inline-start var(--native-fab-dur) var(--ease-m3-emphasized);
+    }
   }
   :root[data-platform="android"] .lm-native-fab svg { inline-size: var(--native-tab-icon); block-size: var(--native-tab-icon); }
   /* Room under the last row so the FAB never covers the end of a page. */
@@ -2254,6 +2252,11 @@ html[data-direction="swipe"]::view-transition-new(root) {
   :root[data-platform="android"] .lm-sheet [data-lines="1"] { min-height: var(--native-row-1-android); }
   :root[data-platform="ios"] .lm-sheet [data-list-group] { border-radius: var(--native-group-radius-ios); }
   :root[data-platform="ios"] .lm-sheet [data-lines] { min-height: var(--native-row-min-ios); }
+  /* iOS light: an inset group is lowest (white) and must read against the sheet, so a sheet that holds
+     one sits on the grouped-list ground, one step down from the plain sheet. */
+  :root[data-platform="ios"]:not([data-theme="dark"]) .lm-sheet:not(.lm-action-sheet):has([data-list-group]) {
+    background: var(--md-surface-container);
+  }
 }
 @media (max-width: 720px) {
   :root:is([data-platform="ios"], [data-platform="android"]) .lm-sheet .lm-native-sheet-title { margin: 0; color: var(--md-on-surface); }
