@@ -677,7 +677,7 @@ POLISH_V_CHECKS.push(
   },
 )
 
-async function dataEyebrowMocks(page) {
+export async function dataEyebrowMocks(page) {
   await teacherShellMocks(page)
   const json = (route, body) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) })
   await page.route(/\/api\/classes\/class-1(\?|$)/, (route) =>
