@@ -115,13 +115,13 @@ describe("View Transitions are wired from shell chrome", () => {
     },
   )
 
-  it("the /student/result/:paperId route opts out with handle.viewTransition: false", () => {
+  it("the /student/result/:paperId route no longer opts out (the paper result slides on phones)", () => {
     const source = sourceOf("src/portals/student/index.tsx")
     const resultRouteAt = source.indexOf('path: "result/:paperId"')
     expect(resultRouteAt).toBeGreaterThan(-1)
     const nextRouteAt = source.indexOf("path:", resultRouteAt + 1)
     const routeBlock = source.slice(resultRouteAt, nextRouteAt === -1 ? undefined : nextRouteAt)
-    expect(routeBlock).toContain("viewTransition: false")
+    expect(routeBlock).not.toContain("viewTransition: false")
   })
 
   it("CorrectPaper.tsx's navigate() to the result route does not pass viewTransition", () => {

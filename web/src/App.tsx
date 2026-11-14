@@ -3,6 +3,8 @@ import { appRoutes } from "@/routes"
 import { applyDocumentMeta } from "@/lib/meta/documentMeta"
 import { installNavigateMiddleware } from "@/lib/nav/navigateMiddleware"
 import { snapshotCaptureMiddleware } from "@/lib/nav/pageSnapshotCapture"
+import { createNativePushDefault } from "@/lib/nav/nativePushDefault"
+import { exposeRouterForChecks } from "@/lib/nav/exposeRouter"
 
 /*
  * The router instance, and nothing else.
@@ -18,10 +20,15 @@ export const router = createBrowserRouter(appRoutes)
 /*
  * Navigate middleware, in one place (see `lib/nav/navigateMiddleware.ts`). The swipe-back
  * snapshot is cloned from the page being left, so it must see the options as they will actually
- * run. A native push-default middleware (viewTransition on drill-downs) is installed in a LATER
+ * run. The native push-default middleware (viewTransition on drill-downs) is installed in a LATER
  * call, which wraps outside this one and therefore runs BEFORE capture.
+ *
+ * Both installs stay at module load, before the first render: `useSubmit` and `<Form>` cache
+ * `router.navigate` per render, so a wrapper added later would be missed by them.
  */
 installNavigateMiddleware(router, [snapshotCaptureMiddleware])
+installNavigateMiddleware(router, [createNativePushDefault(router)])
+exposeRouterForChecks(router)
 
 /*
  * P6.5 · the document title, driven from the route table.

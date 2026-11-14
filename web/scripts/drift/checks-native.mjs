@@ -3361,3 +3361,238 @@ NATIVE_CHECKS.push({
     if (got.trailing === 0 || got.visible !== 0) throw new Error(`the clone repeats the bar actions: ${JSON.stringify(got)}`)
   },
 });
+
+// ---------------------------------------------------------------------------------------------
+// Nav coverage: every phone drill-down pushes (src/lib/nav/nativePushDefault.ts).
+// The checks assert only that a view transition STARTED and which way it read (`html[data-direction]`
+// once the update callback has run), so they hold before and after the motion CSS lands.
+// ---------------------------------------------------------------------------------------------
+
+/** Installed standalone (as STANDALONE) and records every document.startViewTransition call. */
+const VT_PROBE = () => {
+  Object.defineProperty(navigator, "standalone", { value: true })
+  const real = window.matchMedia.bind(window)
+  window.matchMedia = (q) =>
+    q.includes("display-mode: standalone")
+      ? { matches: true, media: q, addEventListener() {}, removeEventListener() {} }
+      : real(q)
+  // The harness's fixed clock fakes performance.now/measure on the instance; keep the real ones.
+  window.__realPerf = {}
+  for (const k of ["now", "measure", "getEntriesByName", "clearMeasures"]) window.__realPerf[k] = performance[k].bind(performance)
+  window.__vt = []
+  const start = document.startViewTransition?.bind(document)
+  if (start) {
+    document.startViewTransition = (arg) => {
+      const rec = { from: location.pathname, to: null, direction: null }
+      window.__vt.push(rec)
+      const transition = start(arg)
+      transition.updateCallbackDone
+        .then(() => {
+          rec.to = location.pathname
+          rec.direction = document.documentElement.dataset.direction
+        })
+        .catch(() => {})
+      return transition
+    }
+  }
+}
+
+const PUSH_SUBJECT_MOCKS = async (page) => {
+  await NATIVE_SUBJECT.mocks(page)
+  // Overview lists the subjects; the subject page lists a paper so its history row can be tapped.
+  await page.route(/\/api\/student\/subject\/0606(\?|$)/, (route) =>
+    jsonRoute(route, {
+      ...SUBJECT_DETAIL,
+      paperHistory: [{ id: "paper-1", paper: "0606/12 · Oct 2025", note: "Attempt 1", marks: "52/80", pct: "65%", grade: "B", gradeColor: "primary", tab: "history" }],
+    }),
+  )
+}
+const PUSH_APP = (path) => ({ ...NATIVE_HOME, path, init: VT_PROBE, mocks: PUSH_SUBJECT_MOCKS })
+
+const vtLog = (page) => page.evaluate(() => window.__vt)
+async function expectOneTransition(page, to, direction) {
+  await page.waitForFunction(() => window.__vt.some((r) => r.direction !== null), null, { timeout: 5000 }).catch(() => {})
+  const log = await vtLog(page)
+  if (log.length !== 1) throw new Error(`expected one view transition, saw ${log.length}: ${JSON.stringify(log)}`)
+  if (log[0].direction !== direction) throw new Error(`direction ${log[0].direction}, expected ${direction}`)
+  if (to && log[0].to !== to) throw new Error(`transition went to ${log[0].to}, expected ${to}`)
+}
+async function expectNoTransition(page, what) {
+  await page.waitForTimeout(700)
+  const log = await vtLog(page)
+  if (log.length) throw new Error(`${what} started a view transition: ${JSON.stringify(log)}`)
+}
+const routerNavigate = (page, to, options) =>
+  page.evaluate(([t, o]) => {
+    if (!window.__lemelyRouter) throw new Error("no window.__lemelyRouter (harness flag missing)")
+    return window.__lemelyRouter.navigate(t, o)
+  }, [to, options])
+
+const PUSH_CASES = {
+  link: {
+    path: "/student",
+    to: "/student/subject/0606",
+    async act(page) {
+      await page.locator('main a[href="/student/subject/0606"]').first().click()
+    },
+  },
+  programmatic: {
+    path: "/student/subject/0606",
+    to: "/student/result/paper-1",
+    async act(page) {
+      await page.getByRole("button", { name: /0606\/12/ }).first().evaluate((el) => el.click())
+    },
+  },
+  notification: {
+    path: "/student/notifications",
+    to: "/student/announcements",
+    async act(page) {
+      await page.getByRole("button", { name: "Open" }).first().evaluate((el) => el.click())
+    },
+  },
+}
+
+NATIVE_CHECKS.push(
+  ...["ios", "android"].flatMap((platform) =>
+    Object.entries(PUSH_CASES).map(([name, c]) => ({
+      id: `native-${platform}-push-default-${name}-starts-a-forward-transition`,
+      platform,
+      width: 390,
+      app: PUSH_APP(c.path),
+      async run(page) {
+        await page.locator("main").waitFor()
+        await c.act(page)
+        await page.waitForURL(`**${c.to}`)
+        await expectOneTransition(page, c.to, "forward")
+      },
+    })),
+  ),
+  ...["ios", "android"].map((platform) => ({
+    id: `native-${platform}-push-default-back-plays-back`,
+    platform,
+    width: 390,
+    app: PUSH_APP("/student"),
+    async run(page) {
+      await page.locator("main").waitFor()
+      await PUSH_CASES.link.act(page)
+      await page.waitForURL("**/student/subject/0606")
+      await expectOneTransition(page, "/student/subject/0606", "forward")
+      await page.evaluate(() => window.history.back())
+      await page.waitForURL(/\/student$/)
+      await page.waitForFunction(() => window.__vt.length >= 2 && window.__vt[1].direction !== null, null, { timeout: 5000 }).catch(() => {})
+      const log = await vtLog(page)
+      if (log.length !== 2 || log[1].direction !== "back") throw new Error(`back did not play back: ${JSON.stringify(log)}`)
+    },
+  })),
+  // Nothing changes where the native frame is not active.
+  ...[
+    ["desktop", { width: 1440 }],
+    ["other-390", { width: 390 }],
+    ["tablet-ios-800", { width: 800, platform: "ios" }],
+  ].flatMap(([name, frame]) =>
+    Object.entries(PUSH_CASES)
+      // On the touch tablet the notification card's Open tap opens its long-press popover instead
+      // (pre-existing, unrelated); the same navigate() call is covered by the programmatic case.
+      .filter(([caseName]) => !(name.startsWith("tablet") && caseName === "notification"))
+      .map(([caseName, c]) => ({
+      id: `native-push-default-none-on-${name}-${caseName}`,
+      ...frame,
+      app: PUSH_APP(c.path),
+      async run(page) {
+        await page.locator("main").waitFor()
+        await c.act(page).catch(async () => {
+          // A phone-only row may be absent on a wide layout; the programmatic route is the same call.
+          await routerNavigate(page, c.to)
+        })
+        await page.waitForURL(`**${c.to}`)
+        await expectNoTransition(page, `${name} ${caseName}`)
+      },
+    })),
+  ),
+  {
+    id: "native-ios-push-default-none-for-a-search-param-change",
+    platform: "ios",
+    width: 390,
+    app: PUSH_APP("/student/classes"),
+    async run(page) {
+      await page.locator("main").waitFor()
+      await routerNavigate(page, "?filter=open")
+      await page.waitForURL(/filter=open/)
+      await expectNoTransition(page, "a search-only navigation")
+    },
+  },
+  {
+    id: "native-ios-push-default-none-for-explicit-false",
+    platform: "ios",
+    width: 390,
+    app: PUSH_APP("/student"),
+    async run(page) {
+      await page.locator("main").waitFor()
+      await routerNavigate(page, "/student/classes", { viewTransition: false })
+      await page.waitForURL(/\/student\/classes/)
+      await expectNoTransition(page, "viewTransition: false")
+    },
+  },
+  {
+    id: "native-ios-push-default-router-exposure-pushes",
+    platform: "ios",
+    width: 390,
+    app: PUSH_APP("/student"),
+    async run(page) {
+      await page.locator("main").waitFor()
+      // Control: the window router (harness flag) drives a programmatic push through the middleware.
+      await routerNavigate(page, "/student/classes")
+      await page.waitForURL(/\/student\/classes/)
+      await expectOneTransition(page, "/student/classes", "forward")
+    },
+  },
+  ...[
+    ["bell-row", SHEET_NAV_CASES[0]],
+    ["bell-footer", SHEET_NAV_CASES[1]],
+    ["account-row", SHEET_NAV_CASES[2]],
+    [
+      "more-row",
+      {
+        to: "/student/classes",
+        async open(page) {
+          await page.getByRole("navigation", { name: "Primary" }).getByRole("button", { name: "More" }).click()
+          const dialog = page.getByRole("dialog", { name: "More" })
+          await dialog.waitFor()
+          return { dialog, row: dialog.getByRole("link").first() }
+        },
+      },
+    ],
+  ].map(([name, c]) => ({
+    id: `native-ios-push-default-none-for-sheet-${name}`,
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_HOME, init: VT_PROBE, mocks: PUSH_SUBJECT_MOCKS },
+    async run(page) {
+      const { row } = await c.open(page)
+      await row.click()
+      await page.waitForFunction(() => location.pathname !== "/student", null, { timeout: 5000 })
+      await expectNoTransition(page, `a ${name} tap`)
+    },
+  })),
+);
+
+// The swipe-back snapshot walk is timed (performance.measure "lemely:snapshot-capture"). The figure
+// goes to the log so a report can quote it; the check fails only when nothing was measured.
+NATIVE_CHECKS.push({
+  id: "native-ios-snapshot-capture-is-measured",
+  platform: "ios",
+  width: 390,
+  app: PUSH_APP("/student"),
+  async run(page) {
+    await page.locator("main").waitFor()
+    // Put the real User Timing methods back (VT_PROBE kept them) so the figure is a real one.
+    await page.evaluate(() => Object.assign(performance, window.__realPerf))
+    await PUSH_CASES.link.act(page)
+    await page.waitForURL("**/student/subject/0606")
+    const got = await page.evaluate(() =>
+      performance.getEntriesByName("lemely:snapshot-capture").map((e) => ({ ms: e.duration, ...e.detail })),
+    )
+    if (!got.length) throw new Error("a push left no lemely:snapshot-capture measure")
+    console.log(`      capture timing: ${got.map((g) => `${g.ms.toFixed(1)}ms (${g.outcome})`).join(", ")}`)
+  },
+});

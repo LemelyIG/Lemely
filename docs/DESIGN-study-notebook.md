@@ -636,12 +636,23 @@ motion within each tier (the pulsing skeleton, the self-drawing mark) is
 affected, never when a tier appears.
 
 **When View Transitions apply.** A screen's entrance (`.lm-screen`) plays on
-every navigation by default. Native View Transitions — a directional slide of
-the outgoing/incoming screen, keyed to browser back vs. everything else — are
-layered on top of that only for portal-internal navigation initiated from
-shell chrome: sidebar links, breadcrumbs, `BackControl`, bottom-tab and
-drawer navigation. They never apply to the marked-paper result reveal (§9.3's
-celebration register owns that entrance instead) and never run under
+every navigation by default. Native View Transitions, a directional slide of
+the outgoing/incoming screen keyed to browser back vs. everything else, are
+layered on top of that in two places.
+
+- *Shell chrome, every size:* sidebar links, breadcrumbs, `BackControl`,
+  bottom-tab and drawer navigation.
+- *Native phones (width up to 720px on iOS or Android), every drill-down:* a
+  `Link` or `navigate()` that changes the pathname pushes with a transition by
+  default (`nativePushDefault`). It stays off for an explicit
+  `viewTransition={false}`, a replace, a search-only change, a navigation made
+  from inside a dialog or sheet (the sheet dismisses and the destination
+  appears, as on iOS), a route-backed overlay, and a destination route whose
+  `handle.viewTransition` is `false`. Desktop, tablet and unrecognised
+  platforms are unchanged.
+
+The marked-paper result reveal slides like any other page on phones (product
+owner, 2026-11-14); its celebration (§9.3) plays on arrival. Nothing runs under
 `prefers-reduced-motion: reduce`, where both the screen entrance and any
 in-flight transition collapse to an immediate, static swap.
 

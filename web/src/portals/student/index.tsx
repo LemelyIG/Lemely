@@ -249,17 +249,11 @@ export const studentRoute: RouteObject = {
     {
       path: "result/:paperId",
       element: <PaperResult />,
-      // Packet B2b: excluded from View Transitions — PaperResult keeps its
-      // own celebration entrance (DESIGN.md §9.3), and stacking that under a
-      // ±24px shell slide would read as two animations fighting rather than
-      // a reveal. See `PaperResult.tsx`'s own root className for the other
-      // half of this exception (it keeps `lm-screen`, unlike every other
-      // screen root).
-      handle: {
-        title: "Paper result",
-        skeleton: "page-header",
-        viewTransition: false,
-      },
+      // The paper result slides like any page on phones (user decision, 2026-11-14), so it carries no
+      // `viewTransition: false` marker. Desktop is unchanged: nothing there navigates here with a
+      // view transition. The marker still works (`nativePushDefault` reads it) for a route that
+      // needs to opt out. See DESIGN-study-notebook.md 9.4.
+      handle: { title: "Paper result", skeleton: "page-header" },
     },
     {
       path: "correct",

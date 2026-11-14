@@ -11,6 +11,11 @@
  *   and calls `next` to reach the second, and the last calls the router's own navigate.
  * - A separate, later install wraps outside everything installed before it, so it runs first.
  * - Installing the same middleware on the same router twice is a no-op.
+ *
+ * INSTALL AT MODULE LOAD, before the first render (`App.tsx`, right after `createBrowserRouter`).
+ * `useSubmit` and `<Form>` read `router.navigate` once per render and keep that function, so a
+ * wrapper installed after a component has rendered is invisible to its form submissions. Never
+ * install from an effect, a component body, or a lazy route.
  */
 
 export type NavigateOptions = { replace?: boolean; [key: string]: unknown }

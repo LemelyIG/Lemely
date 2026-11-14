@@ -45,6 +45,8 @@ export function MoreSheet({
               leading={item.icon}
               trailing={item.badge !== undefined ? <span className="text-metadata">{item.badge}</span> : undefined}
               lines={1}
+              // The sheet closes on arrival: native iOS dismisses it and shows the destination, with no push.
+              viewTransition={false}
             />
           ))}
         </ListGroup>

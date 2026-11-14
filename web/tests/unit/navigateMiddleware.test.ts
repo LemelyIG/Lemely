@@ -3,7 +3,7 @@ import { installNavigateMiddleware, type NavigateMiddleware } from "@/lib/nav/na
 
 function fakeRouter() {
   const calls: unknown[][] = []
-  return { calls, router: { navigate: (to: unknown, options?: unknown) => (calls.push([to, options]), "done") } }
+  return { calls, router: { navigate: ((to: unknown, options?: unknown): unknown => (calls.push([to, options]), "done")) } }
 }
 const tag =
   (name: string, log: string[]): NavigateMiddleware =>
@@ -34,7 +34,7 @@ describe("installNavigateMiddleware", () => {
     const { router } = fakeRouter()
     installNavigateMiddleware(router, [tag("first", log)])
     const current = router.navigate as (to: unknown, o?: unknown) => unknown
-    router.navigate = (to, o) => (log.push("foreign"), current(to, o))
+    router.navigate = (to: unknown, o?: unknown) => (log.push("foreign"), current(to, o))
     installNavigateMiddleware(router, [tag("last", log)])
     router.navigate("/x")
     expect(log).toEqual(["last", "foreign", "first"])

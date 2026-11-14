@@ -5,7 +5,7 @@ import { createScrollKeyer } from "@/lib/nav/scrollRestorationKey"
 import { navigationDirection } from "@/lib/nav/navigationDirection"
 import { stateDirection } from "@/lib/nav/navDirectionState"
 import { consumeSwipeNav } from "@/lib/nav/edgeSwipeBack"
-import { installSnapshotSessionGuard, pageSnapshots } from "@/lib/nav/pageSnapshotCapture"
+import { installSnapshotSessionGuard, dropSnapshotsFrom } from "@/lib/nav/pageSnapshotCapture"
 
 /*
  * Packet B2a · the one pathless layout route wrapping every top-level route
@@ -51,7 +51,7 @@ export function RootOutlet() {
   useLayoutEffect(() => {
     if (navigationType !== "PUSH") return
     const idx = window.history.state?.idx
-    if (typeof idx === "number") pageSnapshots.dropFrom(idx)
+    if (typeof idx === "number") dropSnapshotsFrom(idx)
   }, [navigationType, key])
 
   return (

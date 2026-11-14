@@ -173,6 +173,8 @@ export async function openApp(browser, { width, height, theme, app, platform }) 
       window.localStorage.setItem("lemely.session", JSON.stringify(sess))
       window.localStorage.setItem("lemely.deviceId", "drift-device")
       window.localStorage.setItem("lemely.theme", chosenTheme)
+      // Lets the production build expose its router (src/lib/nav/exposeRouter.ts) to checks.
+      window.__LEMELY_DRIFT__ = true
     },
     [session, theme],
   )
