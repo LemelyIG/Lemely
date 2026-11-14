@@ -88,11 +88,6 @@ def enqueue_auto_topup(
         session.flush()
         log.error("auto_topup_card_missing", alert=True, beneficiary=str(owner_user_id))
         return None
-    if setting.consented_at is None:
-        # An unattended MOTO charge without consent evidence is undefendable in a dispute.
-        # Stay armed: a later consent stamp lets the next settle queue.
-        log.error("auto_topup_no_consent", alert=True, beneficiary=str(owner_user_id))
-        return None
     if setting.payer_user_id != owner_user_id and not is_linked_parent(
         session, setting.payer_user_id, owner_user_id
     ):
@@ -131,6 +126,13 @@ def enqueue_auto_topup(
         spent_this_month(session, owner_user_id, now=now) + pack.price_minor
         > setting.monthly_cap_minor
     ):
+        return None
+    if setting.consented_at is None:
+        # Last gate, reached only when a top-up would otherwise queue: it must not alert on
+        # every settle at a healthy balance, nor hide the unlink disable. An unattended MOTO
+        # charge without consent evidence is undefendable in a dispute. Stay armed: a later
+        # consent stamp lets the next settle queue.
+        log.error("auto_topup_no_consent", alert=True, beneficiary=str(owner_user_id))
         return None
     payment = insert_queued_payment(
         session,

@@ -243,6 +243,23 @@ def test_a_setting_without_consent_queues_nothing_stays_armed_and_alerts(
     assert _enqueue(sm, ids["child"]) is not None
 
 
+def test_no_consent_alert_while_the_balance_is_healthy(sm: sessionmaker[Session]) -> None:
+    ids = _scene(sm, credits=5_000, consented=False)
+    with capture_logs() as logs:
+        for _ in range(5):
+            assert _enqueue(sm, ids["child"]) is None
+    assert [e for e in logs if e["event"] == "auto_topup_no_consent"] == []
+
+
+def test_an_unlinked_parent_is_disabled_even_without_consent(sm: sessionmaker[Session]) -> None:
+    ids = _scene(sm, credits=0, consented=False)
+    with sm.begin() as session:
+        session.execute(sa.delete(ParentChildLink).where(ParentChildLink.child_id == ids["child"]))
+    assert _enqueue(sm, ids["child"]) is None
+    setting = _setting(sm, ids["child"])
+    assert (setting.enabled, setting.disabled_reason) == (False, DISABLED_PARENT_UNLINKED)
+
+
 def test_a_recreated_setting_gets_a_new_key_and_does_not_collide_with_history(
     sm: sessionmaker[Session],
 ) -> None:
