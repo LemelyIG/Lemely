@@ -501,6 +501,13 @@
   --native-ripple-dur: 450ms;               /* --pf-ripple-dur, eased by --ease-m3-emphasized */
   /* Gestures */
   --native-parallax: 0.3;                   /* brief §3.6 */
+  /* Navigation transitions (brief §3.6) */
+  --native-push-dim: 0.7;                   /* iOS: brightness of the page under a push */
+  --native-axis-shift: 30px;                /* Android shared-axis X travel */
+  --native-fade-out-dur: 90ms;              /* M3 fade-through: the outgoing page */
+  --native-fade-in-dur: 210ms;              /* M3 fade-through: the incoming page */
+  --native-fade-through-scale: 0.92;        /* M3 fade-through: the incoming page's start scale */
+  --native-tab-fade-dur-ios: var(--dur-instant); /* iOS tab switch: a short opacity-only fade */
   --native-ptr-threshold: 64px;             /* --pf-ptr-threshold, both platforms */
   --native-ptr-hold-ios: 56px;              /* --pf-ptr-hold: where the content rests while refreshing */
   --native-ptr-hold-android: 64px;
@@ -1443,10 +1450,10 @@ html:active-view-transition .lm-screen {
   animation-duration: var(--dur-base);
   animation-timing-function: var(--ease-out-soft);
 }
-html[data-direction="forward"]::view-transition-old(root) {
+html:is([data-direction="forward"], [data-direction="tab"])::view-transition-old(root) {
   animation-name: lm-vt-old-forward;
 }
-html[data-direction="forward"]::view-transition-new(root) {
+html:is([data-direction="forward"], [data-direction="tab"])::view-transition-new(root) {
   animation-name: lm-vt-new-forward;
 }
 html[data-direction="back"]::view-transition-old(root) {
@@ -1454,6 +1461,67 @@ html[data-direction="back"]::view-transition-old(root) {
 }
 html[data-direction="back"]::view-transition-new(root) {
   animation-name: lm-vt-new-back;
+}
+
+/* ── Native frame: navigation motion (brief §3.6). The keyframes carry only the property that
+   moves; the gated block below picks them per platform and direction. `--lm-vt-sign` mirrors
+   every horizontal travel in RTL. */
+@keyframes lm-vt-ios-old-push {
+  to {
+    transform: translateX(calc(var(--lm-vt-sign, 1) * var(--native-parallax) * -100%));
+    filter: brightness(var(--native-push-dim));
+  }
+}
+@keyframes lm-vt-ios-new-push {
+  from {
+    transform: translateX(calc(var(--lm-vt-sign, 1) * 100%));
+  }
+}
+@keyframes lm-vt-ios-old-pop {
+  to {
+    transform: translateX(calc(var(--lm-vt-sign, 1) * 100%));
+  }
+}
+@keyframes lm-vt-ios-new-pop {
+  from {
+    transform: translateX(calc(var(--lm-vt-sign, 1) * var(--native-parallax) * -100%));
+    filter: brightness(var(--native-push-dim));
+  }
+}
+@keyframes lm-vt-axis-old-forward {
+  to {
+    transform: translateX(calc(var(--lm-vt-sign, 1) * var(--native-axis-shift) * -1));
+  }
+}
+@keyframes lm-vt-axis-new-forward {
+  from {
+    transform: translateX(calc(var(--lm-vt-sign, 1) * var(--native-axis-shift)));
+  }
+}
+@keyframes lm-vt-axis-old-back {
+  to {
+    transform: translateX(calc(var(--lm-vt-sign, 1) * var(--native-axis-shift)));
+  }
+}
+@keyframes lm-vt-axis-new-back {
+  from {
+    transform: translateX(calc(var(--lm-vt-sign, 1) * var(--native-axis-shift) * -1));
+  }
+}
+@keyframes lm-vt-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes lm-vt-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes lm-vt-scale-in {
+  from {
+    transform: scale(var(--native-fade-through-scale));
+  }
 }
 
 /* Outside the native frame (desktop PWA, tablet, `other`) a committed edge swipe plays the
@@ -1575,14 +1643,102 @@ html[data-direction="swipe"]::view-transition-new(root) {
       translate: none;
     }
   }
-  /* Pushes and pops: platform easing on the existing data-direction slides (brief §3.6). */
-  :root[data-platform="android"]::view-transition-old(root),
-  :root[data-platform="android"]::view-transition-new(root) {
-    animation-timing-function: var(--ease-m3-emphasized);
+  /* Chrome stays put (brief §1): the top bar and the tab bar are their own transition groups, and
+     none of their pseudo-elements animates, so they neither move nor cross-fade while the page
+     under them does. A changed bar title snaps; the old snapshot is dropped so the new one is not
+     blended over it. */
+  html:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar {
+    view-transition-name: lm-chrome-top;
   }
-  :root[data-platform="ios"]::view-transition-old(root),
-  :root[data-platform="ios"]::view-transition-new(root) {
-    animation-timing-function: var(--ease-ios-spring);
+  html:is([data-platform="ios"], [data-platform="android"]) .lm-native-tabbar {
+    view-transition-name: lm-chrome-tabs;
+  }
+  html:is([data-platform="ios"], [data-platform="android"])::view-transition-group(lm-chrome-top),
+  html:is([data-platform="ios"], [data-platform="android"])::view-transition-group(lm-chrome-tabs),
+  html:is([data-platform="ios"], [data-platform="android"])::view-transition-new(lm-chrome-top),
+  html:is([data-platform="ios"], [data-platform="android"])::view-transition-new(lm-chrome-tabs) {
+    animation: none;
+  }
+  html:is([data-platform="ios"], [data-platform="android"])::view-transition-old(lm-chrome-top),
+  html:is([data-platform="ios"], [data-platform="android"])::view-transition-old(lm-chrome-tabs) {
+    animation: none;
+    display: none;
+  }
+
+  html:is([data-platform="ios"], [data-platform="android"]) {
+    --lm-vt-sign: 1;
+  }
+  html[dir="rtl"]:is([data-platform="ios"], [data-platform="android"]) {
+    --lm-vt-sign: -1;
+  }
+
+  /* iOS push and pop: the page slides the full width over a parallaxed, dimmed page beneath
+     (the parallax and the dim are the swipe's own, so a tap and a drag read the same). The
+     incoming page of a push, and the outgoing page of a pop, are on top and carry the edge
+     shadow. Opaque pages, so the default plus-lighter blend is switched off. */
+  :root[data-platform="ios"]:is([data-direction="forward"], [data-direction="back"])::view-transition-old(root),
+  :root[data-platform="ios"]:is([data-direction="forward"], [data-direction="back"])::view-transition-new(root) {
+    mix-blend-mode: normal;
+  }
+  :root[data-platform="ios"][data-direction="forward"]::view-transition-old(root) {
+    animation: lm-vt-ios-old-push var(--dur-sheet-ios) var(--ease-ios-spring) both;
+  }
+  :root[data-platform="ios"][data-direction="forward"]::view-transition-new(root) {
+    animation: lm-vt-ios-new-push var(--dur-sheet-ios) var(--ease-ios-spring) both;
+    box-shadow: calc(-1 * var(--lm-vt-sign) * var(--space-4)) 0 var(--space-4)
+      color-mix(in oklch, var(--md-shadow) 18%, transparent);
+  }
+  :root[data-platform="ios"][data-direction="back"]::view-transition-old(root) {
+    animation: lm-vt-ios-old-pop var(--dur-sheet-ios) var(--ease-ios-spring) both;
+    z-index: var(--z-index-sticky);
+    box-shadow: calc(-1 * var(--lm-vt-sign) * var(--space-4)) 0 var(--space-4)
+      color-mix(in oklch, var(--md-shadow) 18%, transparent);
+  }
+  :root[data-platform="ios"][data-direction="back"]::view-transition-new(root) {
+    animation: lm-vt-ios-new-pop var(--dur-sheet-ios) var(--ease-ios-spring) both;
+  }
+  /* iOS tab switch: UITabBarController swaps instantly; a short opacity-only cross-fade stands in. */
+  :root[data-platform="ios"][data-direction="tab"]::view-transition-old(root) {
+    animation: lm-vt-fade-out var(--native-tab-fade-dur-ios) linear both;
+  }
+  :root[data-platform="ios"][data-direction="tab"]::view-transition-new(root) {
+    animation: lm-vt-fade-in var(--native-tab-fade-dur-ios) linear both;
+  }
+
+  /* Android push and pop: M3 shared axis X. A short slide plus fade over the emphasized curve. */
+  :root[data-platform="android"]:is([data-direction="forward"], [data-direction="back"])::view-transition-old(root),
+  :root[data-platform="android"]:is([data-direction="forward"], [data-direction="back"])::view-transition-new(root) {
+    mix-blend-mode: normal;
+  }
+  :root[data-platform="android"][data-direction="forward"]::view-transition-old(root) {
+    animation:
+      lm-vt-axis-old-forward var(--dur-sheet-android) var(--ease-m3-emphasized) both,
+      lm-vt-fade-out var(--native-fade-out-dur) linear both;
+  }
+  :root[data-platform="android"][data-direction="forward"]::view-transition-new(root) {
+    animation:
+      lm-vt-axis-new-forward var(--dur-sheet-android) var(--ease-m3-emphasized) both,
+      lm-vt-fade-in var(--native-fade-in-dur) linear var(--native-fade-out-dur) both;
+  }
+  :root[data-platform="android"][data-direction="back"]::view-transition-old(root) {
+    animation:
+      lm-vt-axis-old-back var(--dur-sheet-android) var(--ease-m3-emphasized) both,
+      lm-vt-fade-out var(--native-fade-out-dur) linear both;
+  }
+  :root[data-platform="android"][data-direction="back"]::view-transition-new(root) {
+    animation:
+      lm-vt-axis-new-back var(--dur-sheet-android) var(--ease-m3-emphasized) both,
+      lm-vt-fade-in var(--native-fade-in-dur) linear var(--native-fade-out-dur) both;
+  }
+  /* Android tab switch: M3 fade-through. The old page leaves in 90ms, the new one fades in over
+     210ms from 0.92 scale. No travel. */
+  :root[data-platform="android"][data-direction="tab"]::view-transition-old(root) {
+    animation: lm-vt-fade-out var(--native-fade-out-dur) linear both;
+  }
+  :root[data-platform="android"][data-direction="tab"]::view-transition-new(root) {
+    animation:
+      lm-vt-fade-in var(--native-fade-in-dur) linear var(--native-fade-out-dur) both,
+      lm-vt-scale-in var(--native-fade-in-dur) var(--ease-m3-emphasized-decelerate) var(--native-fade-out-dur) both;
   }
 }
 

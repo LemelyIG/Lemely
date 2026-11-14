@@ -3,6 +3,7 @@ import { ArrowLeft } from "@phosphor-icons/react"
 import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { backTarget } from "@/lib/nav/backTarget"
+import type { NavDirectionState } from "@/lib/nav/navDirectionState"
 
 /** The history-or-fallback back action, shared by BackControl and the native bar's NativeBack. */
 export function useBackAction(fallback: string): () => void {
@@ -17,7 +18,8 @@ export function useBackAction(fallback: string): () => void {
       // below is the one branch that can actually request one.
       navigate(-1)
     } else {
-      navigate(target.to, { replace: true, viewTransition: true })
+      // A replace reads as forward to the router; the person pressed back, so the state says so.
+      navigate(target.to, { replace: true, viewTransition: true, state: { navDirection: "back" } satisfies NavDirectionState })
     }
   }
 }

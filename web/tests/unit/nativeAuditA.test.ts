@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest"
 import { TitledCard } from "@/components/ui/card"
 import { NativeFrameProvider } from "@/lib/useNativeFrame"
 import { stateDirection } from "@/lib/nav/navDirectionState"
+import { resolveDirection } from "@/lib/nav/navigationDirection"
 
 const SRC = join(fileURLToPath(new URL("../../", import.meta.url)), "src")
 const read = (p: string) => readFileSync(join(SRC, p), "utf8")
@@ -95,7 +96,9 @@ describe("native shell frame fixes (audit batch A)", () => {
     expect(stateDirection({ lemelyDialog: true })).toBeUndefined()
     expect(stateDirection(null)).toBeUndefined()
     expect(read("components/shell/PortalShell.tsx")).toContain('state: { navDirection: "back" }')
-    expect(read("components/root-outlet.tsx")).toContain("explicit ?? navigationDirection(navigationType)")
+    expect(read("components/root-outlet.tsx")).toContain("resolveDirection(navigationType, explicit)")
+    // The explicit direction still wins over the router action (the helper's own tests pin it).
+    expect(resolveDirection("PUSH", stateDirection({ navDirection: "back" }))).toBe("back")
   })
 
   it("hand-rolled outlined containers on the audited roots are native cards", () => {

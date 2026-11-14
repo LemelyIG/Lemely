@@ -2137,7 +2137,8 @@ NATIVE_CHECKS.push(
       await page.waitForURL(/\/student\/classes/)
       // The URL moves before React renders the new route; give the layout effect its turn.
       await page.waitForFunction(() => document.documentElement.dataset.direction !== "swipe", null, { timeout: 1500 }).catch(() => {})
-      if ((await direction()) !== "forward") throw new Error(`a tab tap read "${await direction()}": the swipe flag went stale`)
+      // NF motion: a tab-bar tap reads "tab" now (it used to read "forward"); what matters is that it is not "swipe".
+      if ((await direction()) !== "tab") throw new Error(`a tab tap read "${await direction()}": the swipe flag went stale`)
     },
   },
 );
@@ -3633,4 +3634,217 @@ NATIVE_CHECKS.push(
       if (log.length !== before) throw new Error(`"Open class" from the Settings sheet started a view transition: ${JSON.stringify(log.slice(before))}`)
     },
   })),
+);
+
+// NF motion: the chrome stays put, tab switches fade, pushes and backs match the platform (brief §1,
+// §3.6). Every check samples `document.getAnimations()` for the `::view-transition-*` pseudo-elements
+// and the computed transform of the root snapshots, frame by frame, with real motion on.
+const NAV_PROBE = () => {
+  const html = document.documentElement
+  const pseudo = (name) => {
+    const cs = getComputedStyle(html, name)
+    const m = /matrix\(([^)]+)\)/.exec(cs.transform)
+    const parts = m ? m[1].split(",").map(Number) : null
+    return { tx: parts ? parts[4] : 0, scale: parts ? parts[0] : 1, opacity: Number(cs.opacity) }
+  }
+  const t0 = performance.now()
+  const frames = []
+  const tick = () => {
+    const anims = document
+      .getAnimations()
+      .filter((a) => a.playState === "running" && String(a.effect?.pseudoElement ?? "").startsWith("::view-transition"))
+    if (anims.length) {
+      frames.push({
+        t: performance.now() - t0,
+        anims: anims.map((a) => ({ pe: String(a.effect.pseudoElement), name: a.animationName, dur: a.effect.getTiming().duration })),
+        old: pseudo("::view-transition-old(root)"),
+        new: pseudo("::view-transition-new(root)"),
+        names: [...document.querySelectorAll(".lm-native-bar, .lm-native-tabbar")].map((el) => getComputedStyle(el).viewTransitionName),
+      })
+    }
+    if (performance.now() - t0 < 1200) requestAnimationFrame(tick)
+  }
+  window.__navFrames = frames
+  window.__navNamesBefore = [...document.querySelectorAll(".lm-native-bar, .lm-native-tabbar")].map((el) => getComputedStyle(el).viewTransitionName)
+  requestAnimationFrame(tick)
+}
+
+async function probeNav(page, action) {
+  await page.evaluate(NAV_PROBE)
+  await action()
+  await page.waitForTimeout(1300)
+  const frames = await page.evaluate(() => window.__navFrames)
+  frames.before = await page.evaluate(() => window.__navNamesBefore)
+  return frames
+}
+
+// The UA's own `-ua-view-transition-group-anim-*` (a group resizing) is not ours; only app keyframes count.
+const rootAnims = (frames) => frames.flatMap((f) => f.anims.filter((a) => a.pe.includes("(root)") && !a.name.startsWith("-ua-")))
+const chromeAnims = (frames) => frames.flatMap((f) => f.anims.filter((a) => a.pe.includes("lm-chrome")))
+const txRange = (frames, which) => {
+  const v = frames.map((f) => f[which].tx)
+  return { min: Math.min(...v), max: Math.max(...v), first: v[0] }
+}
+
+/** A More-sheet row (`ListRow` carries `viewTransition`, and no tab state): a real PUSH, not a tab switch. */
+async function pushFromContent(page) {
+  await page.locator("nav.lm-native-tabbar").getByRole("button", { name: "More" }).click()
+  const link = page.getByRole("dialog").getByRole("link").first()
+  await link.waitFor()
+  await page.waitForTimeout(400)
+  await link.click()
+}
+const tabTap = (page, name) => page.locator("nav.lm-native-tabbar").getByRole("link", { name }).first().click()
+
+function chromeStays(frames, before) {
+  if (!rootAnims(frames).length) throw new Error("no root transition ran, so the check proves nothing")
+  const names = new Set([...before, ...frames.flatMap((f) => f.names)])
+  if (!names.has("lm-chrome-top") || !names.has("lm-chrome-tabs")) throw new Error(`the bars carry no view-transition-name: ${[...names].join(", ")}`)
+  const moving = chromeAnims(frames)
+  if (moving.length) throw new Error(`the bars animated: ${[...new Set(moving.map((a) => `${a.pe} ${a.name}`))].join("; ")}`)
+}
+
+const NAV_APP = { ...NATIVE_HOME, path: "/student", motion: true }
+const PUSH_APP = NAV_APP
+const NAV_CASES = [
+  ["push", async (page) => pushFromContent(page), false, PUSH_APP],
+  ["back", async (page) => page.goBack(), true, PUSH_APP],
+  ["tab", async (page) => tabTap(page, "Profile"), false, NAV_APP],
+]
+NATIVE_CHECKS.push(
+  ...["ios", "android"].flatMap((platform) =>
+    NAV_CASES.map(([kind, act, needsPush, app]) => ({
+      id: `native-${platform}-nav-motion-${kind}-leaves-the-bars-alone`,
+      platform,
+      width: 390,
+      app,
+      async run(page) {
+        if (needsPush) {
+          await pushFromContent(page)
+          await page.waitForTimeout(700)
+        }
+        const frames = await probeNav(page, () => act(page))
+        chromeStays(frames, frames.before)
+      },
+    })),
+  ),
+  {
+    id: "native-ios-nav-motion-tab-switch-is-opacity-only",
+    platform: "ios",
+    width: 390,
+    app: NAV_APP,
+    async run(page) {
+      const frames = await probeNav(page, () => tabTap(page, "Profile"))
+      const anims = rootAnims(frames)
+      if (!anims.length) throw new Error("no root transition ran")
+      const bad = anims.filter((a) => !/^lm-vt-fade-(in|out)$/.test(a.name))
+      if (bad.length) throw new Error(`a tab switch ran ${[...new Set(bad.map((a) => a.name))].join(", ")}; only opacity fades are allowed`)
+      if (anims.some((a) => a.dur > 150)) throw new Error(`a tab fade ran ${Math.max(...anims.map((a) => a.dur))}ms (limit 150)`)
+      const moved = frames.some((f) => f.old.tx !== 0 || f.new.tx !== 0 || f.new.scale !== 1)
+      if (moved) throw new Error("the tab switch translated or scaled a page")
+    },
+  },
+  {
+    id: "native-android-nav-motion-tab-switch-is-fade-through",
+    platform: "android",
+    width: 390,
+    app: NAV_APP,
+    async run(page) {
+      const frames = await probeNav(page, () => tabTap(page, "Profile"))
+      const anims = rootAnims(frames)
+      if (!anims.length) throw new Error("no root transition ran")
+      const names = new Set(anims.map((a) => a.name))
+      for (const want of ["lm-vt-fade-out", "lm-vt-fade-in", "lm-vt-scale-in"])
+        if (!names.has(want)) throw new Error(`fade-through is missing ${want}; ran ${[...names].join(", ")}`)
+      if (frames.some((f) => f.old.tx !== 0 || f.new.tx !== 0)) throw new Error("the tab switch translated a page")
+      const out = anims.find((a) => a.name === "lm-vt-fade-out")
+      const inn = anims.find((a) => a.name === "lm-vt-fade-in")
+      if (Math.abs(out.dur - 90) > 1 || Math.abs(inn.dur - 210) > 1) throw new Error(`fade durations ${out.dur}/${inn.dur}, want 90/210`)
+      const scales = frames.map((f) => f.new.scale).filter((s) => s < 1)
+      if (!scales.length || Math.min(...scales) < 0.919 || Math.min(...scales) > 0.995) throw new Error(`the new page did not scale in from 0.92: ${scales.slice(0, 3)}`)
+    },
+  },
+  ...[
+    ["push", false, (f) => ({ oldMin: txRange(f, "old").min, newFirst: txRange(f, "new").first })],
+    ["back", true, (f) => ({ oldMax: txRange(f, "old").max, newFirst: txRange(f, "new").first })],
+  ].map(([kind, needsPush]) => ({
+    id: `native-ios-nav-motion-${kind}-slides-with-parallax`,
+    platform: "ios",
+    width: 390,
+    app: PUSH_APP,
+    async run(page) {
+      if (needsPush) {
+        await pushFromContent(page)
+        await page.waitForTimeout(700)
+      }
+      const frames = await probeNav(page, () => (needsPush ? page.goBack() : pushFromContent(page)))
+      if (!rootAnims(frames).length) throw new Error("no root transition ran")
+      const old = txRange(frames, "old")
+      const nu = txRange(frames, "new")
+      const parallax = 0.3 * 390
+      if (kind === "push") {
+        if (old.min > -(parallax - 10) || old.min < -(parallax + 10)) throw new Error(`old page moved to ${old.min}px, want about -${parallax}`)
+        if (nu.first < 330) throw new Error(`new page started at ${nu.first}px, want about 390`)
+      } else {
+        if (nu.first > -(parallax - 40) || nu.first < -(parallax + 10)) throw new Error(`new page started at ${nu.first}px, want about -${parallax}`)
+        if (old.max < 330) throw new Error(`old page only reached ${old.max}px, want about 390`)
+      }
+      const dur = rootAnims(frames).find((a) => a.name.startsWith("lm-vt-ios"))?.dur
+      if (dur !== 320) throw new Error(`iOS slide ran ${dur}ms, want the sheet token (320)`)
+    },
+  })),
+  ...[
+    ["push", false],
+    ["back", true],
+  ].map(([kind, needsPush]) => ({
+    id: `native-android-nav-motion-${kind}-shifts-thirty-pixels`,
+    platform: "android",
+    width: 390,
+    app: PUSH_APP,
+    async run(page) {
+      if (needsPush) {
+        await pushFromContent(page)
+        await page.waitForTimeout(700)
+      }
+      const frames = await probeNav(page, () => (needsPush ? page.goBack() : pushFromContent(page)))
+      if (!rootAnims(frames).length) throw new Error("no root transition ran")
+      const old = txRange(frames, "old")
+      const nu = txRange(frames, "new")
+      const sign = kind === "push" ? 1 : -1
+      const oldEnd = sign > 0 ? old.min : old.max
+      if (Math.abs(oldEnd + sign * 30) > 3) throw new Error(`old page shifted ${oldEnd}px, want ${-sign * 30}`)
+      if (Math.abs(nu.first - sign * 30) > 3) throw new Error(`new page started ${nu.first}px away, want ${sign * 30}`)
+      if (!rootAnims(frames).some((a) => a.dur === 300)) throw new Error("the shared axis did not run 300ms")
+    },
+  })),
+  {
+    id: "native-ios-nav-motion-push-mirrors-in-rtl",
+    platform: "ios",
+    width: 390,
+    app: PUSH_APP,
+    async run(page) {
+      await page.evaluate(() => document.documentElement.setAttribute("dir", "rtl"))
+      const frames = await probeNav(page, () => pushFromContent(page))
+      if (!rootAnims(frames).length) throw new Error("no root transition ran")
+      if (txRange(frames, "old").max < 100) throw new Error("the old page did not move toward the start edge in RTL")
+      if (txRange(frames, "new").first > -330) throw new Error("the new page did not enter from the start edge in RTL")
+    },
+  },
+  ...["ios", "android"].flatMap((platform) =>
+    NAV_CASES.map(([kind, act, needsPush, app]) => ({
+      id: `native-${platform}-nav-motion-reduced-${kind}-plays-nothing`,
+      platform,
+      width: 390,
+      app: { ...app, motion: false },
+      async run(page) {
+        if (needsPush) {
+          await pushFromContent(page)
+          await page.waitForTimeout(700)
+        }
+        const frames = await probeNav(page, () => act(page))
+        if (frames.length) throw new Error(`${kind} played ${frames.length} animated frame(s) under reduced motion`)
+        if (!/\/(student|teacher)/.test(page.url())) throw new Error("the navigation did not happen")
+      },
+    })),
+  ),
 );

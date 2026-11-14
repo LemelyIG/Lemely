@@ -1,6 +1,7 @@
 import type { HTMLAttributes, MouseEvent, ReactNode } from "react"
 import { NavLink, useMatch } from "react-router-dom"
 import { useDialogExitClick } from "@/lib/nav/dialogExit"
+import type { NavDirectionState } from "@/lib/nav/navDirectionState"
 import { cn } from "@/lib/utils"
 
 /*
@@ -69,9 +70,11 @@ interface NavShellLinkOwnProps {
   children: (isActive: boolean) => ReactNode
   /** Called when the link is clicked while it is already the active one (native tab re-tap). */
   onActiveClick?: (event: MouseEvent) => void
+  /** Location state for the navigation (the tab bar tags its taps `navDirection: "tab"`). */
+  navState?: NavDirectionState
 }
 
-export function NavShellLink({ item, className, children, onActiveClick }: NavShellLinkOwnProps) {
+export function NavShellLink({ item, className, children, onActiveClick, navState }: NavShellLinkOwnProps) {
   // Hooks run before the branch below; a non-route item matches nothing.
   const routeMatch = useMatch({ path: item.to ?? "/", end: item.to ? (item.end ?? false) : true })
   const isActiveNow = !!item.to && !!routeMatch
@@ -82,6 +85,7 @@ export function NavShellLink({ item, className, children, onActiveClick }: NavSh
         to={item.to}
         end={item.end}
         viewTransition
+        state={navState}
         onPointerEnter={item.prefetch}
         onTouchStart={item.prefetch}
         onFocus={item.prefetch}
@@ -132,6 +136,8 @@ export interface BottomNavProps extends HTMLAttributes<HTMLElement> {
   className?: string
 }
 
+const TAB_NAV_STATE: NavDirectionState = { navDirection: "tab" }
+
 /** Mobile student/teacher tab bar — fixed to the viewport bottom. */
 export function BottomNav({ items, emphasisId, onActiveTap, className, ...props }: BottomNavProps) {
   return (
@@ -152,6 +158,7 @@ export function BottomNav({ items, emphasisId, onActiveTap, className, ...props 
           <NavShellLink
             key={item.id}
             item={item}
+            navState={TAB_NAV_STATE}
             onActiveClick={onActiveTap ? (event) => onActiveTap(item, event) : undefined}
             className={(isActive) =>
               cn(
