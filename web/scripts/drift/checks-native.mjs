@@ -579,7 +579,9 @@ NATIVE_CHECKS.push({
     app: NATIVE_FIND_TUTOR,
     async run(page) {
       // The list renders after the page's own request settles; measuring at `networkidle` found no card yet.
-      await page.locator(".lm-native-main ul > li > .lm-native-card").first().waitFor({ timeout: 10000 }).catch(() => {})
+      await page.locator(".lm-native-main ul > li > .lm-native-card").first().waitFor({ timeout: 10000 }).catch(() => {
+        throw new Error("no .lm-native-card on Find a tutor after 10s (mock not served?)")
+      })
       const gaps = await page.evaluate(() => {
         const card = document.querySelector(".lm-native-main ul > li > .lm-native-card")
         if (!card) return null
@@ -1113,10 +1115,14 @@ NATIVE_CHECKS.push(
       app,
       async run(page) {
         // A lazy route renders its heading after `networkidle` under load; count once one is in <main>.
-        await page.locator("main").getByRole("heading", { level: 1 }).first().waitFor({ state: "attached", timeout: 10000 }).catch(() => {});
+        await page.locator("main").getByRole("heading", { level: 1 }).first().waitFor({ state: "attached", timeout: 10000 }).catch(() => {
+          throw new Error(`${app.path}: no h1 in <main> after 10s`);
+        });
         // The screen's own PageHeading, not a loading or error placeholder `h1`: a route whose mocks never reach it would pass below without checking anything.
         if (app.servesHeading) {
-          await page.locator("main h1[data-page-heading]").first().waitFor({ state: "attached", timeout: 10000 }).catch(() => {});
+          await page.locator("main h1[data-page-heading]").first().waitFor({ state: "attached", timeout: 10000 }).catch(() => {
+            throw new Error(`${app.path}: the screen's PageHeading never rendered (mocks do not serve its data?)`);
+          });
           if ((await page.locator("main h1[data-page-heading]").count()) !== 1)
             throw new Error(`${app.path}: the screen's PageHeading never rendered (mocks do not serve its data?)`);
         }
@@ -2308,9 +2314,10 @@ NATIVE_CHECKS.push(
       await page.getByRole("link", { name: "Classes" }).first().click()
       await page.waitForURL(/\/student\/classes/)
       // The URL moves before React renders the new route; give the layout effect its turn.
-      await page.waitForFunction(() => document.documentElement.dataset.direction !== "swipe", null, { timeout: 1500 }).catch(() => {})
       // NF motion: a tab-bar tap reads "tab" now (it used to read "forward"); what matters is that it is not "swipe".
-      if ((await direction()) !== "tab") throw new Error(`a tab tap read "${await direction()}": the swipe flag went stale`)
+      await page.waitForFunction(() => document.documentElement.dataset.direction === "tab", null, { timeout: 3000 }).catch(async () => {
+        throw new Error(`a tab tap read "${await direction()}": the swipe flag went stale`)
+      })
     },
   },
 );
@@ -2557,6 +2564,8 @@ NATIVE_CHECKS.push(
       if (!(await dialog.evaluate((el) => el.classList.contains("lm-sheet")))) throw new Error("the bell panel is not a sheet")
       if ((await page.getByRole("menu").count()) !== 0) throw new Error("native bell still opens a menu")
       if ((await dialog.locator(".lm-list-row").count()) === 0) throw new Error("the bell sheet has no grouped rows")
+      // Modal handles Escape in an onKeyDown on its own wrapper, so a key sent before the focus trap has moved focus inside lands on the page.
+      await dialogReady(page)
       await page.keyboard.press("Escape")
       await dialog.waitFor({ state: "detached" })
       await expectFocusOn(page, bell, "the bell")
@@ -2575,6 +2584,9 @@ NATIVE_CHECKS.push(
       if ((await page.getByRole("menu").count()) !== 0) throw new Error("native avatar still opens a menu")
       for (const name of ["Your profile", "Sign out"])
         if ((await dialog.getByText(name, { exact: true }).count()) === 0) throw new Error(`the account sheet has no ${name} row`)
+      // Root cause of the one-off 30s timeout: Modal handles Escape in an onKeyDown on its own wrapper, so an Escape sent
+      // before the focus trap has moved focus inside (a frame after mount, later under load) never reaches it.
+      await dialogReady(page)
       await page.keyboard.press("Escape")
       await dialog.waitFor({ state: "detached" })
       await expectFocusOn(page, avatar, "the avatar")
@@ -2685,7 +2697,7 @@ NATIVE_CHECKS.push(
         await row.click()
         await page.waitForURL((url) => url.pathname === c.to, { timeout: 8000 })
         await dialog.waitFor({ state: "detached" })
-        await page.waitForTimeout(400)
+        await entrySettled(page)
         if (new URL(page.url()).pathname !== c.to) throw new Error(`the tap went nowhere: ${new URL(page.url()).pathname}`)
         await page.goBack()
         await page.waitForURL((url) => url.pathname === "/student", { timeout: 5000 })
@@ -2729,6 +2741,14 @@ NATIVE_CHECKS.push(
    [origin, dialog, destination], whose second Back is a dead press. Proven by react-router's own
    history.state.idx, which is the origin's idx + 1 at the destination only without the orphan. */
 const histIdx = (page) => page.evaluate(() => window.history.state?.idx ?? 0)
+/** The history has settled on an entry that is not a dialog's (and, with `idx`, on that index). Throws what it found instead. */
+const entrySettled = (page, idx) =>
+  page
+    .waitForFunction((want) => !window.history.state?.usr?.lemelyDialog && (want === undefined || window.history.state?.idx === want), idx, { timeout: 5000 })
+    .catch(async () => {
+      const now = await page.evaluate(() => ({ idx: window.history.state?.idx ?? 0, dialog: window.history.state?.usr?.lemelyDialog ?? null }))
+      throw new Error(`history settled at ${JSON.stringify(now)}${idx === undefined ? "" : `, expected idx ${idx} on no dialog entry`}`)
+    })
 
 async function runDialogExit(page, { open, to }) {
   const origin = new URL(page.url())
@@ -2738,18 +2758,20 @@ async function runDialogExit(page, { open, to }) {
   await row.click()
   await page.waitForURL((url) => url.pathname === to, { timeout: 8000 })
   await dialog.waitFor({ state: "detached" })
-  await page.waitForTimeout(400)
-  const idx = await histIdx(page)
-  if (idx !== originIdx + 1) throw new Error(`orphan dialog entry: destination idx ${idx}, expected ${originIdx + 1}`)
+  await entrySettled(page, originIdx + 1).catch((e) => {
+    throw new Error(`orphan dialog entry: ${e.message}`)
+  })
   await page.goBack()
   await page.waitForURL((url) => url.pathname === origin.pathname, { timeout: 5000 })
   if ((await page.getByRole("dialog").count()) !== 0) throw new Error("a dialog came back after Back")
   if ((await histIdx(page)) !== originIdx) throw new Error(`Back landed on idx ${await histIdx(page)}, expected the origin ${originIdx}`)
   // The second Back must leave the origin (a URL change, or an idx decrease): not a dead press.
   await page.goBack()
-  await page.waitForTimeout(500)
-  const left = page.url() !== origin.href || (await histIdx(page)) < originIdx
-  if (!left) throw new Error("the second Back was a dead press: the origin never changed")
+  await page
+    .waitForFunction(([href, o]) => window.location.href !== href || (window.history.state?.idx ?? 0) < o, [origin.href, originIdx], { timeout: 3000 })
+    .catch(() => {
+      throw new Error("the second Back was a dead press: the origin never changed")
+    })
   // Return to the origin, so the final state (which --axe audits) is the app and not the page before it.
   await page.goForward()
   await page.waitForURL((url) => url.pathname === origin.pathname, { timeout: 5000 })
@@ -2784,7 +2806,7 @@ NATIVE_CHECKS.push(
           to = new URL(await dialog.locator("a").first().evaluate((a) => a.href)).pathname
           await page.keyboard.press("Escape")
           await dialog.waitFor({ state: "detached" })
-          await page.waitForTimeout(400)
+          await entrySettled(page)
         }
         await runDialogExit(page, { open: c.open, to })
       },
@@ -2802,10 +2824,10 @@ NATIVE_CHECKS.push(
       await dialog.waitFor()
       await dialog.getByRole("link", { name: "All notifications" }).click()
       await dialog.waitFor({ state: "detached" })
-      await page.waitForTimeout(400)
+      await entrySettled(page, originIdx).catch((e) => {
+        throw new Error(`same-path row: ${e.message}`)
+      })
       if (new URL(page.url()).pathname !== "/student/notifications") throw new Error("a same-path row changed the URL")
-      const idx = await histIdx(page)
-      if (idx !== originIdx) throw new Error(`same-path row left idx ${idx}, expected ${originIdx}`)
       if ((await page.getByRole("dialog").count()) !== 0) throw new Error("the dialog stayed open")
     },
   })),
@@ -2845,7 +2867,7 @@ NATIVE_CHECKS.push(
           to = hrefs.find((h) => h !== origin.pathname)
           await page.keyboard.press("Escape")
           await dialog.waitFor({ state: "detached" })
-          await page.waitForTimeout(400)
+          await entrySettled(page)
           return to
         })(),
         async open(p) {
@@ -3591,7 +3613,9 @@ const NAVCOV_APP = (path) => ({ ...NATIVE_HOME, path, init: NAVCOV_VT_PROBE, moc
 
 const navcovVtLog = (page) => page.evaluate(() => window.__navcovVt)
 async function navcovExpectOne(page, to, direction) {
-  await page.waitForFunction(() => window.__navcovVt.some((r) => r.direction !== null), null, { timeout: 5000 }).catch(() => {})
+  await page.waitForFunction(() => window.__navcovVt.some((r) => r.direction !== null), null, { timeout: 5000 }).catch(async () => {
+    throw new Error(`no view transition reached a direction: ${JSON.stringify(await navcovVtLog(page))}`)
+  })
   const log = await navcovVtLog(page)
   if (log.length !== 1) throw new Error(`expected one view transition, saw ${log.length}: ${JSON.stringify(log)}`)
   if (log[0].direction !== direction) throw new Error(`direction ${log[0].direction}, expected ${direction}`)
@@ -3659,7 +3683,9 @@ NATIVE_CHECKS.push(
       await navcovExpectOne(page, "/student/subject/0606", "forward")
       await page.evaluate(() => window.history.back())
       await page.waitForURL(/\/student$/)
-      await page.waitForFunction(() => window.__navcovVt.length >= 2 && window.__navcovVt[1].direction !== null, null, { timeout: 5000 }).catch(() => {})
+      await page.waitForFunction(() => window.__navcovVt.length >= 2 && window.__navcovVt[1].direction !== null, null, { timeout: 5000 }).catch(async () => {
+        throw new Error(`back did not play back: ${JSON.stringify(await navcovVtLog(page))}`)
+      })
       const log = await navcovVtLog(page)
       if (log.length !== 2 || log[1].direction !== "back") throw new Error(`back did not play back: ${JSON.stringify(log)}`)
     },
@@ -4150,6 +4176,39 @@ NATIVE_CHECKS.push(
     },
   },
   {
+    // Final polish item 9: two immersive hops in quick succession. The flag belongs to the newest transition, so
+    // the end of the first (skipped) one must not clear it while the second still plays.
+    id: "native-ios-nav-motion-vt-chrome-survives-two-back-to-back-hops",
+    platform: "ios",
+    width: 390,
+    app: NAV_APP,
+    async run(page) {
+      await page.evaluate(() => {
+        window.__chromeSamples = []
+        const t0 = performance.now()
+        const tick = () => {
+          const live = document.getAnimations().some((a) => a.playState === "running" && String(a.effect?.pseudoElement ?? "").startsWith("::view-transition"))
+          if (live) window.__chromeSamples.push(document.documentElement.dataset.vtChrome ?? null)
+          if (performance.now() - t0 < 4000) requestAnimationFrame(tick)
+        }
+        requestAnimationFrame(tick)
+      })
+      await tabTap(page, "Correct") // into the immersive route
+      await page.waitForFunction(() => document.getAnimations().some((a) => String(a.effect?.pseudoElement ?? "").startsWith("::view-transition")), null, { timeout: 3000 })
+      await page.goBack() // out again, before the first transition has finished
+      await page.waitForURL(/\/student$/)
+      await page.waitForFunction(() => window.__chromeSamples.length > 0, null, { timeout: 3000 })
+      await page.waitForFunction(
+        () => !document.documentElement.dataset.vtChrome && !document.getAnimations().some((a) => String(a.effect?.pseudoElement ?? "").startsWith("::view-transition")),
+        null,
+        { timeout: 3000 },
+      )
+      const samples = await page.evaluate(() => window.__chromeSamples)
+      const bare = samples.filter((v) => v !== "page").length
+      if (bare) throw new Error(`${bare} of ${samples.length} animated frame(s) ran with data-vt-chrome cleared early`)
+    },
+  },
+  {
     id: "native-ios-nav-motion-browser-forward-reads-forward",
     platform: "ios",
     width: 390,
@@ -4274,6 +4333,22 @@ const historyIs = (page, idx) =>
       const now = await page.evaluate(() => ({ idx: window.history.state?.idx, dialog: window.history.state?.usr?.lemelyDialog ?? null }));
       throw new Error(`history is at ${JSON.stringify(now)}, want idx ${idx} and no dialog entry`);
     });
+/** Delay our own `history.go` (what `navigate(-1)` calls) by `ms`, and count the popstates the page receives. */
+async function slowHistoryGo(page, ms) {
+  await page.evaluate((delay) => {
+    window.__popstates = 0;
+    window.addEventListener("popstate", () => (window.__popstates += 1));
+    const real = window.history.go.bind(window.history);
+    window.history.go = (d) => void setTimeout(() => real(d), delay);
+  }, ms);
+}
+const pressDriftButton = (page, name) =>
+  page.evaluate((n) => [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === n).click(), name);
+async function openBoth(page, originIdx) {
+  await pressDriftButton(page, "Open both");
+  await page.waitForFunction(() => document.querySelectorAll("[role=dialog]").length === 2, null, { timeout: 5000 });
+  await page.waitForFunction((o) => window.history.state?.idx === o + 2, originIdx, { timeout: 5000 });
+}
 async function openReport(page) {
   await page.getByRole("button", { name: "Report", exact: true }).click();
   await page.getByRole("dialog").waitFor();
@@ -4340,6 +4415,105 @@ NATIVE_CHECKS.push(
         await historyIs(page, originIdx);
       },
     },
+    // Final polish item 7: our own pops are recognised by the index they land on, not by a count that expires.
+    {
+      id: `native-${platform}-dialog-history-delayed-popstate-does-not-close-a-reopened-dialog`,
+      platform,
+      width: 390,
+      app: { ...NATIVE_HOME, path: `/student/tutors/${TUTOR_ID}`, mocks: tutorProfileMocks },
+      async run(page) {
+        const originIdx = await histIdx(page);
+        await openReport(page);
+        // Slow our own `navigate(-1)` past the old one-second window: its popstate arrives 1.5s late.
+        await slowHistoryGo(page, 1500);
+        await page.keyboard.press("Escape");
+        await page.getByRole("dialog").waitFor({ state: "detached" });
+        // Reopen while the first close's popstate is still on its way.
+        await page.getByRole("button", { name: "Report", exact: true }).click();
+        await page.getByRole("dialog").waitFor();
+        await page.waitForFunction(() => window.__popstates >= 1, null, { timeout: 6000 });
+        await dialogReady(page);
+        const idx = await histIdx(page);
+        if (idx !== originIdx + 1) throw new Error(`after the late popstate the history is at idx ${idx}, want ${originIdx + 1} (one entry for the reopened dialog)`);
+        // The late popstate must not have been taken for a real Back: the dialog stays, over a window.
+        const closed = await page
+          .waitForFunction(() => document.querySelectorAll("[role=dialog]").length === 0, null, { timeout: 700 })
+          .then(() => true, () => false);
+        if (closed) throw new Error("the late popstate of the first close closed the reopened dialog");
+        // And the reopened dialog still answers a real Back, once.
+        await page.goBack();
+        await page.getByRole("dialog").waitFor({ state: "detached", timeout: 5000 }).catch(() => {
+          throw new Error("the reopened dialog stayed open on browser Back");
+        });
+        await historyIs(page, originIdx);
+      },
+    },
+    {
+      id: `native-${platform}-dialog-history-stacked-close-both-survives-delayed-popstates`,
+      platform,
+      width: 390,
+      app: { ...NATIVE_HOME, path: "/__drift/stacked-dialogs" },
+      async run(page) {
+        const originIdx = await histIdx(page);
+        await openBoth(page, originIdx);
+        await slowHistoryGo(page, 1500);
+        await pressDriftButton(page, "Close both");
+        await page.waitForFunction(() => document.querySelectorAll("[role=dialog]").length === 0, null, { timeout: 5000 });
+        // Two moves, each 1.5s late, one after the other.
+        await page.waitForFunction(() => window.__popstates >= 2, null, { timeout: 9000 });
+        await historyIs(page, originIdx);
+      },
+    },
+    {
+      id: `native-${platform}-dialog-history-queued-unwind-runs-when-real-back-closes-the-upper-dialog`,
+      platform,
+      width: 390,
+      app: { ...NATIVE_HOME, path: "/__drift/stacked-dialogs" },
+      async run(page) {
+        const originIdx = await histIdx(page);
+        await openBoth(page, originIdx);
+        // The lower dialog closes under the open upper one: its unwind has to wait.
+        await pressDriftButton(page, "Close lower");
+        await page.waitForFunction(() => document.querySelectorAll("[role=dialog]").length === 1, null, { timeout: 5000 });
+        if ((await histIdx(page)) !== originIdx + 2) throw new Error("the lower close moved the history while the upper dialog was open");
+        // A real Back closes the upper dialog; the waiting unwind must then take the lower entry with it.
+        await page.goBack();
+        await page.waitForFunction(() => document.querySelectorAll("[role=dialog]").length === 0, null, { timeout: 5000 });
+        await historyIs(page, originIdx);
+      },
+    },
+    {
+      id: `native-${platform}-dialog-history-reopen-while-unwind-is-queued-keeps-one-entry`,
+      platform,
+      width: 390,
+      app: { ...NATIVE_HOME, path: "/__drift/stacked-dialogs" },
+      async run(page) {
+        const originIdx = await histIdx(page);
+        await openBoth(page, originIdx);
+        // Entry ids count up per push: the lower dialog pushed first, the upper one second, so a reopened lower one is next.
+        const upperId = await page.evaluate(() => window.history.state?.usr?.lemelyDialogId);
+        await pressDriftButton(page, "Close lower");
+        await pressDriftButton(page, "Open lower"); // reopened while its old entry's unwind is still waiting
+        await pressDriftButton(page, "Close upper");
+        // The lower dialog is open again, over exactly one entry on the origin: [origin, lower]. The old
+        // lower entry sits at the same index for a moment on the way there, so the reopened entry's own id is part of the wait.
+        await page.waitForFunction(
+          ([o, id]) =>
+            document.querySelectorAll("[role=dialog]").length === 1 &&
+            window.history.state?.idx === o + 1 &&
+            window.history.state?.usr?.lemelyDialog === true &&
+            window.history.state?.usr?.lemelyDialogId === id,
+          [originIdx, upperId + 1],
+          { timeout: 5000 },
+        ).catch(async () => {
+          const now = await page.evaluate(() => ({ dialogs: document.querySelectorAll("[role=dialog]").length, idx: window.history.state?.idx, entry: window.history.state?.usr?.lemelyDialog ?? null }));
+          throw new Error(`after the reopen the state is ${JSON.stringify(now)}, want one dialog at idx ${originIdx + 1} on its entry`);
+        });
+        await page.goBack();
+        await page.waitForFunction(() => document.querySelectorAll("[role=dialog]").length === 0, null, { timeout: 5000 });
+        await historyIs(page, originIdx);
+      },
+    },
     {
       id: `native-${platform}-tab-retap-from-root-drilldown-goes-back-to-root`,
       platform,
@@ -4361,3 +4535,180 @@ NATIVE_CHECKS.push(
     },
   ]),
 );
+
+// Final polish item 11: routes the mocks used to under-cover logged console errors (`e.entries is not iterable`
+// on the student Announcements memo, `.papers.some` on a teacher refetchInterval). Each route now loads with
+// no console error and no uncaught exception. The listener is attached before a reload, so the first render counts.
+async function expectConsoleClean(page, what, ready) {
+  const seen = [];
+  page.on("console", (m) => {
+    if (m.type() === "error") seen.push(`console.error: ${m.text().split("\n")[0]}`);
+  });
+  page.on("pageerror", (e) => seen.push(`uncaught: ${e.message.split("\n")[0]}`));
+  await page.reload({ waitUntil: "networkidle" });
+  await ready(page);
+  if (seen.length) throw new Error(`${what} logged ${seen.length} error(s): ${seen.join(" | ")}`);
+}
+const mainHeadingReady = (page) => page.locator("main h1").first().waitFor({ state: "attached", timeout: 10000 });
+NATIVE_CHECKS.push(
+  {
+    id: "native-ios-console-clean-student-announcements",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_HOME, path: "/student/announcements" },
+    run: (page) => expectConsoleClean(page, "student Announcements", mainHeadingReady),
+  },
+  {
+    id: "native-other-1440-console-clean-student-announcements",
+    width: 1440,
+    app: { ...NATIVE_HOME, path: "/student/announcements" },
+    run: (page) => expectConsoleClean(page, "student Announcements (desktop)", mainHeadingReady),
+  },
+  {
+    id: "native-ios-console-clean-teacher-home",
+    platform: "ios",
+    width: 390,
+    app: NATIVE_TEACHER_HOME,
+    run: (page) => expectConsoleClean(page, "teacher home", mainHeadingReady),
+  },
+  {
+    id: "native-ios-console-clean-teacher-grading",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_TEACHER_HOME, path: "/teacher/grading" },
+    run: (page) => expectConsoleClean(page, "teacher Grading", mainHeadingReady),
+  },
+  {
+    id: "native-ios-console-clean-teacher-announcements",
+    platform: "ios",
+    width: 390,
+    app: { ...NATIVE_TEACHER_HOME, path: "/teacher/announcements" },
+    run: (page) => expectConsoleClean(page, "teacher Announcements", mainHeadingReady),
+  },
+);
+
+// Final review I1: closing a sheet or dialog is a same-URL POP, and React Router 7 replays a view transition on a
+// POP whose destination ever started one. After one drill-down and Back that is nearly every page, so closing a
+// dialog slid the page onto itself. Nothing may animate the root on a close.
+const ROOT_VT_SAMPLER = () => {
+  window.__rootVt = { names: [], done: false, starts: 0 }
+  const real = document.startViewTransition.bind(document)
+  document.startViewTransition = (...a) => {
+    window.__rootVt.starts += 1
+    return real(...a)
+  }
+  const t0 = performance.now()
+  const tick = () => {
+    for (const a of document.getAnimations()) {
+      const pe = String(a.effect?.pseudoElement ?? "")
+      if (pe.startsWith("::view-transition") && a.playState === "running") window.__rootVt.names.push(`${pe}=${a.animationName}`)
+    }
+    if (performance.now() - t0 < 1500) requestAnimationFrame(tick)
+    else window.__rootVt.done = true
+  }
+  requestAnimationFrame(tick)
+}
+const DIALOG_CLOSE_CASES = [
+  {
+    id: "more-sheet",
+    app: { ...NATIVE_TEACHER_HOME, path: "/teacher/classes", motion: true },
+    away: "/teacher/classes/c1",
+    awayUrl: /\/teacher\/classes\/c1$/,
+    backUrl: /\/teacher\/classes$/,
+    async open(page) {
+      await page.locator("nav.lm-native-tabbar button[aria-haspopup]").click()
+    },
+  },
+  {
+    id: "modal",
+    app: { ...NATIVE_HOME, path: `/student/tutors/${TUTOR_ID}`, mocks: tutorProfileMocks, motion: true },
+    away: "/student/tutors",
+    awayUrl: /\/student\/tutors$/,
+    backUrl: new RegExp(`/student/tutors/${TUTOR_ID}$`),
+    async open(page) {
+      await page.getByRole("button", { name: "Report", exact: true }).click()
+    },
+  },
+]
+NATIVE_CHECKS.push(
+  ...["ios", "android"].flatMap((platform) =>
+    DIALOG_CLOSE_CASES.map((c) => ({
+      id: `native-${platform}-dialog-close-after-drill-down-plays-no-page-transition-${c.id}`,
+      platform,
+      width: 390,
+      app: c.app,
+      async run(page) {
+        await page.locator("main").waitFor()
+        await page.evaluate(() => {
+          window.__svtSeen = 0
+          const real = document.startViewTransition.bind(document)
+          document.startViewTransition = (...a) => {
+            window.__svtSeen += 1
+            return real(...a)
+          }
+        })
+        await navcovRouterNavigate(page, c.away)
+        await page.waitForURL(c.awayUrl)
+        await page.evaluate(() => window.__lemelyRouter.navigate(-1))
+        await page.waitForURL(c.backUrl)
+        // The drill-down's own transitions must be over before the close is watched: no transition running and
+        // no new one started for 600ms (the URL moves before React Router starts its transition).
+        await page.evaluate(
+          () =>
+            new Promise((resolve) => {
+              let seen = window.__svtSeen
+              let quietSince = performance.now()
+              const poll = () => {
+                const live = document.getAnimations().some((a) => String(a.effect?.pseudoElement ?? "").startsWith("::view-transition"))
+                if (live || window.__svtSeen !== seen) {
+                  seen = window.__svtSeen
+                  quietSince = performance.now()
+                }
+                if (performance.now() - quietSince > 600) resolve()
+                else setTimeout(poll, 50)
+              }
+              poll()
+            }),
+        )
+        await page.evaluate(ROOT_VT_SAMPLER)
+        await c.open(page)
+        await page.getByRole("dialog").waitFor()
+        await dialogReady(page)
+        await page.keyboard.press("Escape")
+        await page.getByRole("dialog").waitFor({ state: "detached" })
+        // The sampler watches 1.5s past the close: a replayed pop is on screen within a frame or two.
+        await page.waitForFunction(() => window.__rootVt.done, null, { timeout: 5000 })
+        const { names, starts } = await page.evaluate(() => window.__rootVt)
+        const moved = [...new Set(names)]
+        if (moved.length) throw new Error(`closing the dialog animated the page (${starts} startViewTransition call(s)): ${moved.join(", ")}`)
+      },
+    })),
+  ),
+  ...["ios", "android"].map((platform) => ({
+    // Final review I2: a re-tap at the root, already at the top, does nothing. It used to REPLACE the entry with a
+    // forward view transition onto the page it was already on.
+    id: `native-${platform}-tab-retap-at-top-of-root-does-nothing`,
+    platform,
+    width: 390,
+    app: { ...NATIVE_TEACHER_HOME, path: "/teacher/classes", motion: true },
+    async run(page) {
+      await page.locator("main").waitFor()
+      if ((await page.evaluate(() => window.scrollY)) !== 0) throw new Error("the page did not start at the top")
+      const before = await page.evaluate(() => {
+        window.__rootVt = { names: [], done: false, starts: 0 }
+        const real = document.startViewTransition.bind(document)
+        document.startViewTransition = (...a) => {
+          window.__rootVt.starts += 1
+          return real(...a)
+        }
+        return window.history.state?.key
+      })
+      await page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Classes" }).click()
+      // A navigation commits within a frame or two; give it far longer than that to show itself.
+      await page.evaluate(() => new Promise((r) => setTimeout(r, 600)))
+      const after = await page.evaluate(() => ({ key: window.history.state?.key, starts: window.__rootVt.starts }))
+      if (after.key !== before) throw new Error(`the re-tap replaced the entry (key ${before} -> ${after.key})`)
+      if (after.starts) throw new Error(`the re-tap started ${after.starts} view transition(s)`)
+    },
+  })),
+)

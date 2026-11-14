@@ -37,6 +37,9 @@ export async function teacherShellMocks(page) {
   await page.route("**/api/notifications", (route) => json(route, TEACHER_NOTIFICATIONS))
   await page.route("**/api/notifications/counts", (route) => json(route, TEACHER_COUNTS))
   await page.route("**/api/teacher/review?**", (route) => json(route, { items: [], total: 3 }))
+  // Grading polls `/papers` through a refetchInterval that reads `.papers.some`; the catch-all `{}` threw there.
+  await page.route(/\/api\/papers(\?|$)/, (route) => json(route, { papers: [], tabs: [] }))
+  await page.route(/\/api\/teacher\/announcements(\?|$)/, (route) => json(route, { announcements: [] }))
 }
 
 export const STUDENT_PROFILE = {
@@ -137,5 +140,12 @@ export function studentShellMocks(state) {
     )
     await page.route("**/api/notifications", (route) => json(route, { notifications: data.notifications }))
     await page.route("**/api/notifications/counts", (route) => json(route, data.counts))
+    // The Announcements screen (and the study plan's exam strip) read these three; the catch-all `{}` has no
+    // `entries`, so `nextExam` threw inside a memo.
+    await page.route(/\/api\/student\/announcements(\?|$)/, (route) => json(route, { announcements: [] }))
+    await page.route("**/api/student/announcements/unread-count", (route) => json(route, { unreadCount: 0 }))
+    await page.route("**/api/student/exam-calendar", (route) =>
+      json(route, { availability: state === "new" ? "no_enrolment" : "no_timetable", entries: [] }),
+    )
   }
 }
