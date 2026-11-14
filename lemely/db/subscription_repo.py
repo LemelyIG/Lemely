@@ -45,7 +45,6 @@ from lemely.core.subscription_rules import (
 )
 from lemely.db.billing_notices import enqueue_subscription_notice
 from lemely.db.billing_repo import (
-    CREDIT_EXPIRY_MONTHS,
     INTENTION_EXPIRATION_SECONDS,
     BillingService,
     CheckoutUnavailable,
@@ -71,7 +70,7 @@ from lemely.db.models.billing import (
     Subscription,
     SubscriptionPeriod,
 )
-from lemely.db.models.billing_ops import CreditConversionRate
+from lemely.db.models.billing_ops import BillingSettings, CreditConversionRate
 from lemely.db.models.enums import Role, SubscriptionStatus
 from lemely.db.models.team import TeacherMember, TeacherMemberKind, TeacherMemberStatus
 from lemely.db.models.usage import GrantKind, UsageGrant
@@ -439,15 +438,27 @@ def credit_units_for_amount(session: Session, *, amount_minor: int, currency: st
     return units if units > 0 else None
 
 
-def _has_grant(session: Session, owner_id: uuid.UUID, idempotency_key: str) -> bool:
-    return (
-        session.scalar(
-            select(UsageGrant.id).where(
-                UsageGrant.owner_user_id == owner_id, UsageGrant.idempotency_key == idempotency_key
-            )
+def _grant_by_key(session: Session, owner_id: uuid.UUID, idempotency_key: str) -> UsageGrant | None:
+    return session.scalars(
+        select(UsageGrant).where(
+            UsageGrant.owner_user_id == owner_id, UsageGrant.idempotency_key == idempotency_key
         )
-        is not None
+    ).one_or_none()
+
+
+def _credit_validity_months(session: Session) -> int:
+    """The admin-set credit validity: ``billing_settings.credit_validity_months`` (``id = 1``).
+
+    Read in the caller's transaction, no lock. Fails closed: a missing row is ``NoCreditRate`` (the
+    migration and ``create_all`` both insert it, so its absence is a damaged database, and no
+    constant stands in for it).
+    """
+    months = session.scalar(
+        select(BillingSettings.credit_validity_months).where(BillingSettings.id == 1)
     )
+    if months is None:
+        raise NoCreditRate("no billing settings row: the credit validity is not set")
+    return months
 
 
 def convert_payment_to_credits(
@@ -455,18 +466,20 @@ def convert_payment_to_credits(
 ) -> UsageGrant:
     """Turn a paid payment that bought nothing into the beneficiary's credits (UD-3, UD-10).
 
-    Issues a visible ``credit_pack`` grant that expires 12 months after ``now`` (key
-    ``credited:{payment.id}``), stamps ``payment.grant_units`` and queues the "credited" notice to
-    ``subscription``'s payer. Debt is repaid first by the ledger. Idempotent: a replay returns the
-    stored grant and queues nothing new, and the units are the first conversion's, not today's
-    rate. Callers pass ``payment.paid_at`` as ``now`` so a replay names the same instant.
+    Issues a visible ``credit_pack`` grant that expires after the admin-set
+    ``credit_validity_months`` counted from ``now`` (key ``credited:{payment.id}``), stamps
+    ``payment.grant_units`` and queues the "credited" notice to ``subscription``'s payer. Debt is
+    repaid first by the ledger. Idempotent: a replay returns the stored grant and queues nothing
+    new, and the units and expiry are the first conversion's, not today's. Callers pass
+    ``payment.paid_at`` as ``now`` so a replay names the same instant.
     The caller commits and holds the payment row lock; this makes no Paymob call.
 
     Raises:
         ValueError: the payment is not ``paid``; it is a credit pack payment (it already bought
             its credits); it already paid for a subscription period; or it carries grant units
             that no earlier conversion issued.
-        NoCreditRate: no admin-set rate for the payment's currency, or the amount is below one unit.
+        NoCreditRate: no admin-set rate for the payment's currency, the amount is below one unit,
+            or the ``billing_settings`` row is missing (fail closed, UD-12).
     """
     if payment.status is not PaymentStatus.paid:
         raise ValueError("only a paid payment can be turned into credits")
@@ -475,9 +488,8 @@ def convert_payment_to_credits(
     if _period_for_payment(session, payment.id) is not None:
         raise ValueError("this payment already paid for a subscription period")
     credited_key = f"credited:{payment.id}"
-    if payment.grant_units is not None and not _has_grant(
-        session, payment.beneficiary_user_id, credited_key
-    ):
+    stored = _grant_by_key(session, payment.beneficiary_user_id, credited_key)
+    if payment.grant_units is not None and stored is None:
         raise ValueError("this payment carries grant units that no conversion issued")
     units = payment.grant_units
     if units is None:
@@ -486,12 +498,19 @@ def convert_payment_to_credits(
         )
     if units is None:
         raise NoCreditRate(f"no credit rate for payment {payment.id}")
+    # A replay keeps the expiry already stamped on the grant: it needs no setting, and an edit
+    # made since never moves a grant that was issued.
+    expires_at = (
+        stored.expires_at
+        if stored is not None and stored.expires_at is not None
+        else add_months(now, _credit_validity_months(session))
+    )
     grant = UsageLedger(session).issue_grant(
         owner_user_id=payment.beneficiary_user_id,
         kind=GrantKind.credit_pack,
         units=units,
         idempotency_key=credited_key,
-        expires_at=add_months(now, CREDIT_EXPIRY_MONTHS),
+        expires_at=expires_at,
         visible=True,
         effective_at=now,
         payment_id=payment.id,

@@ -32,7 +32,7 @@ from lemely.db.models.billing import (
     Subscription,
     SubscriptionPeriod,
 )
-from lemely.db.models.billing_ops import CreditConversionRate
+from lemely.db.models.billing_ops import BillingSettings, CreditConversionRate
 from lemely.db.models.enums import PlanInterval, Role, SubscriptionStatus
 from lemely.db.models.team import TeacherMember, TeacherMemberStatus
 from lemely.db.models.tutoring import EmailOutbox
@@ -133,10 +133,37 @@ def _pending(
     return student, sid, pid
 
 
+def _set_validity(sm: sessionmaker[Session], months: int = 12) -> None:
+    """The admin-set credit validity: the singleton ``billing_settings`` row (``id = 1``).
+
+    The row is upserted because ``emptied_after`` truncates it (it references ``users``).
+    """
+    with sm.begin() as session:
+        row = session.get(BillingSettings, 1)
+        if row is None:
+            session.add(BillingSettings(id=1, credit_validity_months=months))
+        else:
+            row.credit_validity_months = months
+            row.version += 1
+
+
+def _delete_settings(sm: sessionmaker[Session]) -> None:
+    with sm.begin() as session:
+        session.execute(sa.delete(BillingSettings))
+
+
 def _set_rate(
     sm: sessionmaker[Session], currency: str = "EGP", units_per_minor: str = "0.01"
 ) -> None:
-    """The admin-set rate for ``currency`` (UD-12); a second call is an edit (version 2)."""
+    """The admin-set rate for ``currency`` (UD-12); a second call is an edit (version 2).
+
+    A conversion needs the validity setting too, so the default row (12 months) is made first
+    when it is missing.
+    """
+    with sm() as session:
+        missing = session.get(BillingSettings, 1) is None
+    if missing:
+        _set_validity(sm)
     with sm.begin() as session:
         row = session.scalars(
             sa.select(CreditConversionRate).where(CreditConversionRate.currency == currency)
@@ -1245,6 +1272,69 @@ def test_the_rate_is_read_inside_the_callers_transaction(
             .values(units_per_minor=Decimal("0.5"))
         )
         assert credit_units_for_amount(session, amount_minor=10_000, currency="EGP") == 5_000
+
+
+# -- credit validity: the admin-set billing_settings.credit_validity_months ------------------
+
+
+def test_an_edited_validity_changes_the_expiry_of_new_grants_only(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _set_rate(pg_sessionmaker)
+    _set_validity(pg_sessionmaker, 12)
+    _, sid, pid = _pending(pg_sessionmaker)
+    first = _convert(pg_sessionmaker, pid, sid)
+    assert first.expires_at == add_months(PAID_AT, 12)
+
+    _set_validity(pg_sessionmaker, 6)  # the admin shortens it (version 2)
+    _, other_sid, other_pid = _pending(pg_sessionmaker, txn_id=778)
+    second = _convert(pg_sessionmaker, other_pid, other_sid)
+    assert second.expires_at == add_months(PAID_AT, 6)
+    [stored_first] = [
+        g for g in grants_of(pg_sessionmaker, first.owner_user_id) if g.id == first.id
+    ]
+    assert stored_first.expires_at == add_months(PAID_AT, 12)  # untouched
+
+
+def test_a_replay_keeps_the_expiry_already_stamped_on_the_grant(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _set_rate(pg_sessionmaker)
+    _, sid, pid = _pending(pg_sessionmaker)
+    first = _convert(pg_sessionmaker, pid, sid)
+    _set_validity(pg_sessionmaker, 3)
+    second = _convert(pg_sessionmaker, pid, sid)
+    assert second.id == first.id
+    assert second.expires_at == first.expires_at == add_months(PAID_AT, 12)
+    _delete_settings(pg_sessionmaker)  # a replay needs no setting at all
+    assert _convert(pg_sessionmaker, pid, sid).id == first.id
+
+
+def test_a_missing_settings_row_refuses_and_grants_nothing(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _set_rate(pg_sessionmaker)
+    _delete_settings(pg_sessionmaker)
+    student, sid, pid = _pending(pg_sessionmaker)
+    with pytest.raises(NoCreditRate, match="validity"):
+        _convert(pg_sessionmaker, pid, sid)
+    assert grants_of(pg_sessionmaker, student) == []
+    assert _payment(pg_sessionmaker, pid).grant_units is None
+    assert _outbox(pg_sessionmaker, student) == []
+
+
+def test_a_superseded_payment_with_no_settings_row_alerts_for_manual_handling(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _set_rate(pg_sessionmaker)
+    _delete_settings(pg_sessionmaker)
+    student, sid, pid, _ = _superseded(pg_sessionmaker)
+    with capture_logs() as logs:
+        _handle(pg_sessionmaker, pid)
+    [entry] = _events_named(logs, "subscription_first_paid_for_superseded_checkout")
+    assert (entry["alert"], entry["converted"]) == (True, False)
+    assert _payment(pg_sessionmaker, pid).status is PaymentStatus.paid
+    assert grants_of(pg_sessionmaker, student) == []
 
 
 # -- UD-5: seats over capacity move to leaving, before the grant ---------------------------
