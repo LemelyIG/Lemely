@@ -156,7 +156,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/school/teachers"): SCHOOL_ADMIN,
     ("POST", "/api/school/teachers/invite"): SCHOOL_ADMIN,
     ("POST", "/api/school/teachers/{teacher_id}/remove"): SCHOOL_ADMIN,
-    # ── PLATFORM_ADMIN (45) ────────────────────
+    # ── PLATFORM_ADMIN (50) ────────────────────
     # P4.7 (UI spec X-01/X-02/X-03), and the first routes in the product gated
     # to this role. Note what the 403 sweep below therefore proves here: a
     # `school_admin` is denied every one of them. There is no super-role, and
@@ -220,6 +220,11 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/admin/billing/payments/{payment_id}/reconcile"): PLATFORM_ADMIN,
     ("GET", "/api/admin/billing/health"): PLATFORM_ADMIN,
     ("GET", "/api/admin/billing/margin"): PLATFORM_ADMIN,
+    ("GET", "/api/admin/billing/settings"): PLATFORM_ADMIN,
+    ("PUT", "/api/admin/billing/settings"): PLATFORM_ADMIN,
+    ("GET", "/api/admin/billing/credit-rates"): PLATFORM_ADMIN,
+    ("PUT", "/api/admin/billing/credit-rates/{currency}"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/billing/credit-rates/{currency}/clear"): PLATFORM_ADMIN,
     # ── TEACHER_OR_SCHOOL_ADMIN (7) ────────────────────
     ("GET", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
     ("POST", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
