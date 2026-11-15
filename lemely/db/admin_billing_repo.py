@@ -437,6 +437,31 @@ def tier_extra_seats_held(session: Session, plan_tier_id: uuid.UUID) -> int:
     )
 
 
+def require_no_live_subscribers_for_terms_change(session: Session, plan_tier_id: uuid.UUID) -> None:
+    """Refuse a terms edit while any subscriber is live on the tier (the T16 Part A gate).
+
+    The renewal amount, the period grant and the seat capacity still read the live tier, so an
+    edit would reach existing subscribers at once with no notice. T16 Part A moves those readers
+    to each subscription's own terms version and the notice flow; it then deletes this helper and
+    its one call in :meth:`AdminCatalogueService.update_plan_tier`.
+    """
+    live = session.scalar(
+        select(sa.func.count())
+        .select_from(Subscription)
+        .where(
+            Subscription.plan_tier_id == plan_tier_id,
+            Subscription.status.in_(LIVE_SUBSCRIPTION_STATUSES),
+        )
+    )
+    if live:
+        raise AdminConflictError(
+            "terms_change_needs_notice_flow",
+            "This plan has live subscribers. Price, seat and allowance changes need the "
+            "price-change notice flow, which is not available yet; name, features and active "
+            "state can be edited.",
+        )
+
+
 def _require_version(row_version: int, expected: int | None) -> None:
     """Refuse a write that carries a version other than the locked row's (UD13-DV-1)."""
     if expected is not None and expected != row_version:
@@ -540,6 +565,11 @@ class AdminCatalogueService:
     def subscription_amount_updatable(self) -> bool:
         """Whether Paymob can change an existing subscription's renewal amount (sandbox S14)."""
         return self._settings.subscription_amount_updatable
+
+    def auto_topup_counts(self) -> Mapping[uuid.UUID, int]:
+        """Enabled auto top-up settings per credit pack (one grouped query)."""
+        with self._sm() as s:
+            return _auto_topup_counts(s)
 
     def tier_counts(self) -> Mapping[uuid.UUID, TierCounts]:
         """Live and not-yet-moved subscriber counts per tier (one grouped query)."""
@@ -652,6 +682,8 @@ class AdminCatalogueService:
                         f"Subscribers on this plan hold {held} extra seats; "
                         "the seat price cannot be set to zero.",
                     )
+            if terms_changed:
+                require_no_live_subscribers_for_terms_change(s, tier.id)
             tier.version += 1
             if terms_changed and had_terms:
                 s.add(

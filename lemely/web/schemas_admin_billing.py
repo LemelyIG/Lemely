@@ -7,10 +7,11 @@ error (a ``BIGINT``/``INTEGER`` overflow), not business rules.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime  # noqa: TC003 - pydantic resolves annotations at runtime
 from typing import Annotated, Any, Literal
 
-from pydantic import Field, StringConstraints
+from pydantic import AfterValidator, Field, StringConstraints
 
 from lemely.web.schemas_admin import ApiModel
 
@@ -31,8 +32,17 @@ ActionName = Annotated[str, StringConstraints(min_length=1, max_length=64)]
 ExpectedVersion = Annotated[int, Field(ge=1, le=2**31 - 1)]
 #: ``credit_packs.signup_validity_days`` (``ck_credit_packs_signup_validity``): 1 day to 10 years.
 ValidDays = Annotated[int, Field(ge=1, le=3650)]
-#: ``features`` is free-form JSON: bound the keys, not the shape.
-Features = Annotated[dict[str, Any], Field(max_length=100)]
+#: ``features`` is free-form JSON stored as JSONB: cap the key count and the serialised size.
+FEATURES_MAX_BYTES = 16 * 1024
+
+
+def _bounded_features(value: dict[str, Any]) -> dict[str, Any]:
+    if len(json.dumps(value, separators=(",", ":"), default=str)) > FEATURES_MAX_BYTES:
+        raise ValueError(f"features must serialise to at most {FEATURES_MAX_BYTES} bytes")
+    return value
+
+
+Features = Annotated[dict[str, Any], Field(max_length=100), AfterValidator(_bounded_features)]
 
 
 class ReasonDTO(ApiModel):

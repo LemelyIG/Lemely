@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import sqlalchemy as sa
 from pydantic import SecretStr
+from sqlalchemy import event as sa_event
 from sqlalchemy import func, select
 
 from lemely.db.admin_billing_repo import (
@@ -26,6 +27,9 @@ from lemely.db.admin_billing_repo import (
 from lemely.db.models.billing import (
     AutoTopupSettings,
     CreditPack,
+    Payment,
+    PaymentPurpose,
+    PaymentStatus,
     PlanTier,
     PlanTierTerms,
     Subscription,
@@ -892,19 +896,153 @@ def test_a_stale_tier_edit_is_refused_before_any_terms_row_is_written(
     assert len(_terms(sm, created["id"])) == 1
 
 
-def test_the_terms_row_exists_before_the_tier_points_at_it(
+def test_the_terms_row_is_inserted_before_terms_version_moves(
     sm: sessionmaker[Session], admin: uuid.UUID
 ) -> None:
-    """The composite FK from subscriptions needs the row first (DV-T1a): a live subscriber on
-    v1 keeps working through a bump, and a tier row never names a missing terms version."""
+    """DV-T1a order, observed in the SQL: nothing else enforces it (``plan_tiers`` has no FK)."""
+    tier = add_plan_tier(sm)
+    statements: list[str] = []
+
+    def record(_conn: Any, _cursor: Any, statement: str, *_args: Any, **_kwargs: Any) -> None:
+        statements.append(statement)
+
+    engine = sm.kw["bind"]
+    sa_event.listen(engine, "before_cursor_execute", record)
+    try:
+        admin_client(sm, admin).put(f"{P}/tiers/{tier}", json=_tier_update(priceMinor=30000))
+    finally:
+        sa_event.remove(engine, "before_cursor_execute", record)
+
+    insert = next(
+        i for i, q in enumerate(statements) if q.startswith("INSERT INTO plan_tier_terms")
+    )
+    moves = [
+        i
+        for i, q in enumerate(statements)
+        if q.startswith("UPDATE plan_tiers") and "terms_version" in q.split(" WHERE ")[0]
+    ]
+    assert moves, statements
+    assert insert < min(moves)
+
+
+def test_catalogue_counts_live_subscribers_and_those_behind_the_current_terms(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    tier = add_plan_tier(sm)
     client = admin_client(sm, admin)
-    created = client.post(f"{P}/tiers", json=TEACHER_TIER).json()
+    assert client.put(f"{P}/tiers/{tier}", json=_tier_update(priceMinor=30000)).status_code == 200
+    add_subscription(sm, add_user(sm), tier)  # stamped terms v1; the tier is now at v2
+    row = client.get(f"{P}/catalogue").json()["planTiers"][0]
+    assert (row["liveSubscriptionCount"], row["pendingMoves"], row["termsVersion"]) == (1, 1, 2)
+
+
+# -- terms edits stay closed while the tier has live subscribers (T16 Part A gate) ---------
+
+
+@pytest.mark.parametrize("status", ["active", "past_due", "pending_first_payment"])
+def test_a_terms_edit_is_refused_while_the_tier_has_a_live_subscriber(
+    sm: sessionmaker[Session], admin: uuid.UUID, status: str
+) -> None:
+    """The reviewer's probe: a live subscriber must not be re-priced by an admin edit."""
+    tier = add_plan_tier(sm, price_minor=10000)
+    add_subscription(sm, add_user(sm), tier, status=SubscriptionStatus(status))
+    resp = admin_client(sm, admin).put(f"{P}/tiers/{tier}", json=_tier_update(priceMinor=15000))
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"]["code"] == "terms_change_needs_notice_flow"
+    with sm() as session:
+        row = session.get(PlanTier, tier)
+        assert row is not None
+        assert (row.price_minor, row.terms_version, row.version) == (10000, 1, 1)
+    assert [t.terms_version for t in _terms(sm, tier)] == [1]
+    assert audit_rows(sm, "catalogue.plan_tier.update") == []
+
+
+def test_a_name_edit_is_allowed_with_a_live_subscriber_and_a_terms_edit_without_one(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    client = admin_client(sm, admin)
+    with_sub = add_plan_tier(sm, code="with_sub", price_minor=10000)
+    add_subscription(sm, add_user(sm), with_sub)
+    renamed = client.put(
+        f"{P}/tiers/{with_sub}", json=_tier_update(priceMinor=10000, name="Renamed")
+    )
+    assert renamed.status_code == 200, renamed.text
+
+    free = add_plan_tier(sm, code="no_subs", price_minor=10000)
+    add_subscription(sm, add_user(sm), free, status=SubscriptionStatus.expired, end=None)
+    edited = client.put(f"{P}/tiers/{free}", json=_tier_update(priceMinor=15000))
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["termsVersion"] == 2
+
+
+def test_a_seat_checkout_in_flight_cannot_meet_a_seat_price_edit(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """M1: a seat checkout needs a live subscriber on the tier, so the seat-price edit that
+    would strand it is refused; the settle reprice only has to handle terms moves T16 makes."""
+    tier = add_plan_tier(
+        sm, code="seat_tier", audience="teacher", included_seats=2, extra_seat_price_minor=2000
+    )
     teacher = add_user(sm, Role.teacher)
-    add_subscription(sm, teacher, uuid.UUID(created["id"]))
-    resp = client.put(f"{P}/tiers/{created['id']}", json=_tier_body(created, priceMinor=60000))
+    sid = add_subscription(sm, teacher, tier)
+    payment_id = uuid.uuid4()
+    with sm.begin() as session:
+        session.add(
+            Payment(
+                id=payment_id,
+                special_reference=str(payment_id),
+                payer_user_id=teacher,
+                beneficiary_user_id=teacher,
+                purpose=PaymentPurpose.extra_seats,
+                subscription_id=sid,
+                seat_quantity=2,
+                amount_minor=2000,
+                currency="EGP",
+                status=PaymentStatus.created,
+            )
+        )
+    resp = admin_client(sm, admin).put(
+        f"{P}/tiers/{tier}",
+        json=_tier_update(includedSeats=2, extraSeatPriceMinor=0, seatAllowanceUnits=0),
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"]["code"] == "terms_change_needs_notice_flow"
+
+
+def test_a_pack_update_returns_the_real_auto_topup_count(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    pack = add_credit_pack(sm)
+    for enabled in (True, True, False):
+        user = add_user(sm)
+        with sm.begin() as session:
+            session.add(
+                AutoTopupSettings(
+                    beneficiary_user_id=user,
+                    payer_user_id=user,
+                    enabled=enabled,
+                    threshold_units=10,
+                    credit_pack_id=pack,
+                    monthly_cap_minor=1000,
+                )
+            )
+    resp = admin_client(sm, admin).put(
+        f"{P}/packs/{pack}",
+        json={"name": "n", "units": 9, "priceMinor": 9, "isActive": True, "reason": "edit"},
+    )
     assert resp.status_code == 200, resp.text
-    body = client.get(f"{P}/catalogue").json()["planTiers"][0]
-    assert (body["liveSubscriptionCount"], body["pendingMoves"], body["termsVersion"]) == (1, 1, 2)
+    assert resp.json()["autoTopupCount"] == 2
+
+
+def test_features_are_bounded_in_total_size(sm: sessionmaker[Session], admin: uuid.UUID) -> None:
+    tier = add_plan_tier(sm)
+    huge = admin_client(sm, admin).put(
+        f"{P}/tiers/{tier}", json=_tier_update(features={"k": "x" * 20_000})
+    )
+    small = admin_client(sm, admin).put(
+        f"{P}/tiers/{tier}", json=_tier_update(features={"k": "x" * 1_000})
+    )
+    assert (huge.status_code, small.status_code) == (422, 200)
 
 
 # -- seat price 0 while extra seats are held (P06-T4 n3) -------------------------------
@@ -931,8 +1069,11 @@ def test_a_seat_price_of_zero_is_refused_while_subscribers_hold_extra_seats(
         sub = session.get(Subscription, sid)
         assert sub is not None
         sub.extra_seats = 0
-    ok = client.put(f"{P}/tiers/{created['id']}", json=_tier_body(created, extraSeatPriceMinor=0))
-    assert ok.status_code == 200, ok.text
+    # With the seats gone the edit is still a terms edit on a tier with a live subscriber.
+    again = client.put(
+        f"{P}/tiers/{created['id']}", json=_tier_body(created, extraSeatPriceMinor=0)
+    )
+    assert again.json()["detail"]["code"] == "terms_change_needs_notice_flow"
 
 
 # -- optimistic concurrency (UD13-DV-1) --------------------------------------------------

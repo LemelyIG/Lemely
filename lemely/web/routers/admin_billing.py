@@ -251,7 +251,7 @@ def update_pack(
             reason=body.reason,
             expected_version=body.expectedVersion,
         )
-    return credit_pack_dto(pack)
+    return credit_pack_dto(pack, service.auto_topup_counts().get(pack.id, 0))
 
 
 @router.put("/free-allowances", response_model=FreeAllowanceDTO)
