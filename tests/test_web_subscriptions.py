@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
+from sqlalchemy import event as sa_event
 from structlog.testing import capture_logs
 
 from lemely.db import billing_observability_repo
@@ -704,8 +705,8 @@ def test_a_forged_callback_checks_out_no_database_connection_to_decide_the_401(
     def on_execute(*args: object) -> None:
         checkouts.append("execute")
 
-    sa.event.listen(engine, "checkout", on_checkout)
-    sa.event.listen(engine, "before_cursor_execute", on_execute)
+    sa_event.listen(engine, "checkout", on_checkout)
+    sa_event.listen(engine, "before_cursor_execute", on_execute)
     try:
         h = Harness(pg_sessionmaker)
         for trigger in ("Successful Transaction", "canceled", "suspended"):
@@ -715,8 +716,8 @@ def test_a_forged_callback_checks_out_no_database_connection_to_decide_the_401(
         del missing["hmac"]
         assert h.http.post(WEBHOOK, json=missing).status_code == 401
     finally:
-        sa.event.remove(engine, "checkout", on_checkout)
-        sa.event.remove(engine, "before_cursor_execute", on_execute)
+        sa_event.remove(engine, "checkout", on_checkout)
+        sa_event.remove(engine, "before_cursor_execute", on_execute)
     assert checkouts == []
 
 
