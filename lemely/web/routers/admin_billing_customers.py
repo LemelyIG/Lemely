@@ -4,8 +4,8 @@ A lane router of ``admin_billing`` (DV-2). It is mounted in ``app.py`` beside th
 the full prefix, and carries its own ``platform_admin`` guard: FastAPI 0.138 keeps a router
 included into another as a lazy wrapper, so ``flatten_routes`` (the authz matrix and
 ``test_admin_billing_authz``) would see ``/customers`` without the parent's prefix. Mounted
-directly, the discovery tests see the real path and check this guard. Tasks 6 and 7 append their
-audited money actions below the reads.
+directly, the discovery tests see the real path and check this guard. Task 6 appends the ledger
+actions (grant, adjust, forgive debt) below the reads; Task 7 the subscription ones.
 """
 
 # FastAPI ``Depends``/``response_model`` and pydantic construction need these type imports at
@@ -19,10 +19,19 @@ from fastapi import APIRouter, Depends, Query
 
 from lemely.db.admin_customer_repo import AdminCustomerService, CustomerDetail, JobView, MemberView
 from lemely.db.models.enums import Role
-from lemely.web.admin_billing_common import mapped_errors, optional_id, payment_row_dto
+from lemely.web.admin_billing_common import (
+    AdminAuth,
+    admin_id,
+    mapped_errors,
+    optional_id,
+    payment_row_dto,
+)
 from lemely.web.deps import require_role
 from lemely.web.deps_admin_billing import get_admin_customer_service
 from lemely.web.schemas_admin_billing_customers import (
+    AdminAdjustRequestDTO,
+    AdminForgiveRequestDTO,
+    AdminGrantRequestDTO,
     AuditEntryDTO,
     BalanceDTO,
     CustomerDetailDTO,
@@ -211,3 +220,48 @@ def search_customers(
 def get_customer(user_id: uuid.UUID, service: CustomerService) -> CustomerDetailDTO:
     with mapped_errors():
         return customer_detail_dto(service.detail(user_id))
+
+
+@router.post("/{user_id}/grant", response_model=CustomerDetailDTO)
+def grant_credits(
+    user_id: uuid.UUID, body: AdminGrantRequestDTO, service: CustomerService, auth: AdminAuth
+) -> CustomerDetailDTO:
+    with mapped_errors():
+        return customer_detail_dto(
+            service.grant_credits(
+                user_id,
+                units=body.units,
+                valid_days=body.validDays,
+                request_id=body.requestId,
+                admin_user_id=admin_id(auth),
+                reason=body.reason,
+            )
+        )
+
+
+@router.post("/{user_id}/adjust", response_model=CustomerDetailDTO)
+def adjust_balance(
+    user_id: uuid.UUID, body: AdminAdjustRequestDTO, service: CustomerService, auth: AdminAuth
+) -> CustomerDetailDTO:
+    with mapped_errors():
+        return customer_detail_dto(
+            service.adjust(
+                user_id,
+                units=body.units,
+                request_id=body.requestId,
+                admin_user_id=admin_id(auth),
+                reason=body.reason,
+            )
+        )
+
+
+@router.post("/{user_id}/forgive-debt", response_model=CustomerDetailDTO)
+def forgive_debt(
+    user_id: uuid.UUID, body: AdminForgiveRequestDTO, service: CustomerService, auth: AdminAuth
+) -> CustomerDetailDTO:
+    with mapped_errors():
+        return customer_detail_dto(
+            service.forgive_debt(
+                user_id, units=body.units, admin_user_id=admin_id(auth), reason=body.reason
+            )
+        )

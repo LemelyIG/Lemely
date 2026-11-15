@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import re
 import uuid
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Literal
 
 import sqlalchemy as sa
@@ -21,17 +21,30 @@ from sqlalchemy import and_, or_, select
 
 from lemely.core.usage_pricing import usd_to_units
 from lemely.db.admin_billing_repo import (
+    AdminConflictError,
     AdminInvalidError,
     AdminNotFoundError,
+    AuditAction,
     AuditTarget,
     PaymentView,
+    audited,
+    lock_idempotency_key,
     payment_views,
+    require_reason,
 )
 from lemely.db.models.admin_audit import AdminAuditLog
 from lemely.db.models.billing import Payment, PlanTier, Subscription, SubscriptionPeriod
 from lemely.db.models.team import TeacherMember, TeacherMemberKind
-from lemely.db.models.usage import UsageDebt, UsageGrant, UsageGrantBalance, UsageJob, UsageRate
+from lemely.db.models.usage import (
+    GrantKind,
+    UsageDebt,
+    UsageGrant,
+    UsageGrantBalance,
+    UsageJob,
+    UsageRate,
+)
 from lemely.db.models.users import ParentChildLink, User
+from lemely.db.usage_ledger_repo import UsageLedger
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -50,6 +63,10 @@ _PERIODS_PER_SUBSCRIPTION = 6
 _SUBSCRIPTIONS = 50
 #: ``payments.paymob_order_id`` is a ``BIGINT``: a longer number cannot be an order id.
 _MAX_ORDER_ID = 2**63 - 1
+#: An identical forgive by the same admin inside this window is a double click (DV-15).
+_FORGIVE_DEDUPE = timedelta(seconds=120)
+#: Recent forgive rows read for the dedupe; a window holds a handful at most.
+_FORGIVE_LOOKBACK = 50
 
 
 MatchedOn = Literal["user_id", "payment_id", "paymob_order", "email", "name"]
@@ -209,7 +226,7 @@ def actual_units(cost_usd: Decimal | None, units_per_usd: int | None) -> int | N
 
 
 class AdminCustomerService:
-    """Search and read one customer; Tasks 6-7 add the audited money actions."""
+    """Search and read one customer, and take the audited ledger actions on one."""
 
     def __init__(
         self,
@@ -502,6 +519,224 @@ class AdminCustomerService:
                 children=children,
                 audit=audit,
             )
+
+    # -- ledger actions (Task 6) -----------------------------------------------
+
+    @staticmethod
+    def _require_user(s: Session, user_id: uuid.UUID) -> None:
+        if s.get(User, user_id) is None:
+            raise AdminNotFoundError("customer_not_found")
+
+    @staticmethod
+    def _prior_request(
+        s: Session, action: AuditAction, request_id: uuid.UUID
+    ) -> AdminAuditLog | None:
+        """The audit row an earlier call with this ``request_id`` wrote, for any customer (DV-14).
+
+        The idempotency key is scoped by customer, so its index cannot see a request id reused
+        on another one; ``after.request_id`` is read across all targets instead.
+        """
+        return s.scalars(
+            select(AdminAuditLog)
+            .where(
+                AdminAuditLog.action == str(action),
+                AdminAuditLog.after["request_id"].as_string() == str(request_id),
+            )
+            .limit(1)
+        ).first()
+
+    @staticmethod
+    def _same_request(prior: AdminAuditLog, user_id: uuid.UUID, payload: dict[str, object]) -> bool:
+        """True when ``prior`` was this very request; a different target or payload is a reuse."""
+        after = prior.after or {}
+        return prior.target_id == user_id and all(after.get(k) == v for k, v in payload.items())
+
+    def grant_credits(
+        self,
+        user_id: uuid.UUID,
+        *,
+        units: int,
+        valid_days: int | None,
+        request_id: uuid.UUID,
+        admin_user_id: uuid.UUID,
+        reason: str,
+    ) -> CustomerDetail:
+        """Issue visible ``adjustment`` credits; the ledger repays debt first (spec §5.8).
+
+        ``valid_days=None`` never expires (DV-30). The ledger key is
+        ``admin-grant:{user_id}:{request_id}`` (DV-14). A replay of the same request changes
+        nothing; the same ``request_id`` with another customer, ``units`` or ``valid_days`` is
+        ``request_id_reused``.
+        """
+        require_reason(reason)
+        key = f"admin-grant:{user_id}:{request_id}"
+        payload: dict[str, object] = {"units": units, "valid_days": valid_days}
+        now = self._now()
+        with self._sm.begin() as s:
+            self._require_user(s, user_id)
+            lock_idempotency_key(s, f"admin-grant:{request_id}")
+            prior = self._prior_request(s, AuditAction.CUSTOMER_GRANT, request_id)
+            if prior is not None:
+                if not self._same_request(prior, user_id, payload):
+                    raise AdminConflictError(
+                        "request_id_reused", "This request id was used for a different grant."
+                    )
+            else:
+                before = asdict(balance_for(s, user_id, now=now))
+                issued = UsageLedger(s).issue_grant(
+                    owner_user_id=user_id,
+                    kind=GrantKind.adjustment,
+                    units=units,
+                    idempotency_key=key,
+                    expires_at=None if valid_days is None else now + timedelta(days=valid_days),
+                    visible=True,
+                    effective_at=now,
+                )
+                audited(
+                    s,
+                    admin_user_id,
+                    AuditAction.CUSTOMER_GRANT,
+                    AuditTarget.USER,
+                    user_id,
+                    reason,
+                    before,
+                    {
+                        **asdict(balance_for(s, user_id, now=now)),
+                        **payload,
+                        "grant_id": issued.id,
+                        "expires_at": issued.expires_at,
+                        "idempotency_key": key,
+                        "request_id": request_id,
+                        "user_id": user_id,
+                    },
+                )
+        return self.detail(user_id)
+
+    def adjust(
+        self,
+        user_id: uuid.UUID,
+        *,
+        units: int,
+        request_id: uuid.UUID,
+        admin_user_id: uuid.UUID,
+        reason: str,
+    ) -> CustomerDetail:
+        """Add (positive) or debit (negative) units; a shortfall becomes debt (Phase 01).
+
+        Keys and replays work as for :meth:`grant_credits`, with ``admin-adjust:``.
+        """
+        require_reason(reason)
+        if units == 0:
+            raise AdminInvalidError("zero_adjustment", "An adjustment must change the balance.")
+        key = f"admin-adjust:{user_id}:{request_id}"
+        payload: dict[str, object] = {"units": units}
+        now = self._now()
+        with self._sm.begin() as s:
+            self._require_user(s, user_id)
+            lock_idempotency_key(s, f"admin-adjust:{request_id}")
+            prior = self._prior_request(s, AuditAction.CUSTOMER_ADJUST, request_id)
+            if prior is not None:
+                if not self._same_request(prior, user_id, payload):
+                    raise AdminConflictError(
+                        "request_id_reused", "This request id was used for a different adjustment."
+                    )
+            else:
+                before = asdict(balance_for(s, user_id, now=now))
+                UsageLedger(s).adjust(
+                    owner_user_id=user_id,
+                    units=units,
+                    reason=reason.strip(),
+                    idempotency_key=key,
+                    now=now,
+                )
+                audited(
+                    s,
+                    admin_user_id,
+                    AuditAction.CUSTOMER_ADJUST,
+                    AuditTarget.USER,
+                    user_id,
+                    reason,
+                    before,
+                    {
+                        **asdict(balance_for(s, user_id, now=now)),
+                        **payload,
+                        "idempotency_key": key,
+                        "request_id": request_id,
+                        "user_id": user_id,
+                    },
+                )
+        return self.detail(user_id)
+
+    def forgive_debt(
+        self, user_id: uuid.UUID, *, units: int | None, admin_user_id: uuid.UUID, reason: str
+    ) -> CustomerDetail:
+        """Forgive ``units`` of outstanding debt, or all of it when ``units`` is None.
+
+        The ledger call has no key, so the dedupe is ours (DV-15): under the advisory lock
+        ``admin-forgive:{user_id}``, an identical forgive by the same admin (same
+        ``requested_units`` and reason) in the last 120 s is a no-op that returns the detail.
+        The lock key is never stored in ``idempotency_key``: that index is unique per action,
+        so a second forgive after the window would fail. The row records ``forgiven_at``.
+        """
+        require_reason(reason)
+        cleaned = reason.strip()
+        now = self._now()
+        with self._sm.begin() as s:
+            self._require_user(s, user_id)
+            lock_idempotency_key(s, f"admin-forgive:{user_id}")
+            if self._forgiven_recently(s, user_id, admin_user_id, units, cleaned, now):
+                return self.detail(user_id)
+            before = asdict(balance_for(s, user_id, now=now))
+            forgiven = UsageLedger(s).forgive_debt(user_id, units=units, reason=cleaned, now=now)
+            if forgiven == 0:
+                raise AdminConflictError("no_outstanding_debt", "This account owes nothing.")
+            audited(
+                s,
+                admin_user_id,
+                AuditAction.CUSTOMER_FORGIVE_DEBT,
+                AuditTarget.USER,
+                user_id,
+                cleaned,
+                before,
+                {
+                    **asdict(balance_for(s, user_id, now=now)),
+                    "forgiven_units": forgiven,
+                    "requested_units": units,
+                    "forgiven_at": now,
+                },
+            )
+        return self.detail(user_id)
+
+    @staticmethod
+    def _forgiven_recently(
+        s: Session,
+        user_id: uuid.UUID,
+        admin_user_id: uuid.UUID,
+        units: int | None,
+        reason: str,
+        now: datetime,
+    ) -> bool:
+        recent = s.scalars(
+            select(AdminAuditLog)
+            .where(
+                AdminAuditLog.action == str(AuditAction.CUSTOMER_FORGIVE_DEBT),
+                AdminAuditLog.target_id == user_id,
+                AdminAuditLog.admin_user_id == admin_user_id,
+            )
+            .order_by(AdminAuditLog.created_at.desc())
+            .limit(_FORGIVE_LOOKBACK)
+        )
+        for row in recent:
+            after = row.after or {}
+            at = after.get("forgiven_at")
+            if (
+                isinstance(at, str)
+                and row.reason == reason
+                and after.get("requested_units") == units
+                and timedelta(0) <= now - datetime.fromisoformat(at) < _FORGIVE_DEDUPE
+            ):
+                return True
+        return False
 
 
 def _parse_uuid(term: str) -> uuid.UUID | None:

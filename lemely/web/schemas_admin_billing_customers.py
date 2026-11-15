@@ -1,17 +1,23 @@
 """DTOs for the admin customer view (``/api/admin/billing/customers``, spec §8 area 2).
 
-Responses only: camelCase on the wire, ``extra="forbid"`` (``ApiModel``), money in integer
-piasters and usage in integer units. The payment and refund DTOs live in
-``schemas_admin_billing`` because the problem queue emits them too (DV-2, DV-21).
+Responses, plus the three ledger-action requests: camelCase on the wire, ``extra="forbid"``
+(``ApiModel``), money in integer piasters and usage in integer units. The payment and refund
+DTOs live in ``schemas_admin_billing`` because the problem queue emits them too (DV-2, DV-21).
 """
 
 from __future__ import annotations
 
+import uuid  # noqa: TC003 - pydantic resolves annotations at runtime
 from datetime import datetime  # noqa: TC003 - pydantic resolves annotations at runtime
-from typing import Literal
+from typing import Annotated, Literal
+
+from pydantic import Field
 
 from lemely.web.schemas_admin import ApiModel
-from lemely.web.schemas_admin_billing import AdminPaymentRowDTO  # noqa: TC001 - pydantic field type
+from lemely.web.schemas_admin_billing import (  # noqa: TC001 - pydantic field types
+    AdminPaymentRowDTO,
+    Reason,
+)
 
 
 class CustomerHitDTO(ApiModel):
@@ -151,3 +157,30 @@ class CustomerDetailDTO(ApiModel):
     parents: list[LinkedUserDTO]
     children: list[LinkedUserDTO]
     audit: list[AuditEntryDTO]
+
+
+# -- ledger-action requests (Task 6) -----------------------------------------------
+
+
+class AdminGrantRequestDTO(ApiModel):
+    """``validDays`` absent means 365, ``null`` means no expiry (DV-30)."""
+
+    units: Annotated[int, Field(gt=0, le=1_000_000)]
+    validDays: Annotated[int, Field(gt=0, le=730)] | None = 365
+    requestId: uuid.UUID
+    reason: Reason
+
+
+class AdminAdjustRequestDTO(ApiModel):
+    """Positive adds credits, negative debits them; zero is refused by the service."""
+
+    units: Annotated[int, Field(ge=-1_000_000, le=1_000_000)]
+    requestId: uuid.UUID
+    reason: Reason
+
+
+class AdminForgiveRequestDTO(ApiModel):
+    """``units`` absent or null forgives all the debt."""
+
+    units: Annotated[int, Field(gt=0, le=1_000_000)] | None = None
+    reason: Reason
