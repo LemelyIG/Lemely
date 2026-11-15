@@ -15,11 +15,17 @@
   --rd-bn-body: var(--md-primary);
   --rd-bn-face: var(--md-on-primary);
   --rd-bn-pupil: var(--md-on-surface);
+  --rd-bn-paper: var(--md-surface-container-lowest);
+  --rd-bn-paper-line: var(--md-outline);
 }
+/* Dark: the primary ramp flips (light blue body, navy face), so the body and face
+   tokens already read; only the paper needs a lighter fill and a stronger edge. */
 :root[data-theme="dark"] .rd-binny {
-  --rd-bn-body: var(--md-on-primary);
-  --rd-bn-face: var(--md-on-surface);
-  --rd-bn-pupil: var(--md-surface);
+  --rd-bn-body: var(--md-primary);
+  --rd-bn-face: var(--md-on-primary);
+  --rd-bn-pupil: var(--md-on-surface);
+  --rd-bn-paper: var(--md-surface-container-highest);
+  --rd-bn-paper-line: var(--md-on-surface-variant);
 }
 .rd-binny .rd-bn-pupil { fill: var(--rd-bn-pupil); }
 .rd-binny .rd-bn-body { transform-origin: 100px 200px; }

@@ -53,6 +53,7 @@ function Mouth({ mood }: { mood: BinnyMood }) {
 export function Binny({ mood, size = 96, motion = "idle", className, "aria-hidden": ariaHidden = true, roamDistance = 48, headCrop = false }: BinnyProps) {
   const reduced = usePrefersReducedMotion()
   const resolved = resolveMotion(motion, reduced)
+  // The zone follows the requested motion, not the resolved one, so reduced-motion and SSR layouts match.
   const dx = mood === "thinking" ? 4 : 0
   const dy = mood === "sad" ? 4 : 0
   const a11y = ariaHidden ? { "aria-hidden": true as const } : { role: "img", "aria-label": "Binny" }
@@ -77,13 +78,17 @@ export function Binny({ mood, size = 96, motion = "idle", className, "aria-hidde
     >
       <g className="rd-bn-body">
         {headCrop ? null : (
-          <rect x="54" y="168" width="92" height="48" rx="4" fill="var(--md-surface-container-lowest)" stroke="var(--md-outline)" strokeWidth="2" transform="rotate(-3 100 192)" />
+          <rect x="54" y="168" width="92" height="48" rx="4" fill="var(--rd-bn-paper)" stroke="var(--rd-bn-paper-line)" strokeWidth="2" transform="rotate(-3 100 192)" />
         )}
-        <g className="rd-bn-ear rd-bn-ear-l" transform={headCrop ? "rotate(-6 75 100)" : undefined}>
-          <path d={EAR_L} fill="none" stroke="var(--binny-steel)" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
+        <g data-tilt={headCrop ? "l" : undefined} transform={headCrop ? "rotate(-6 75 100)" : undefined}>
+          <g className="rd-bn-ear rd-bn-ear-l">
+            <path d={EAR_L} fill="none" stroke="var(--binny-steel)" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
+          </g>
         </g>
-        <g className="rd-bn-ear rd-bn-ear-r" transform={headCrop ? "rotate(6 125 100)" : undefined}>
-          <path d={EAR_R} fill="none" stroke="var(--binny-steel)" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
+        <g data-tilt={headCrop ? "r" : undefined} transform={headCrop ? "rotate(6 125 100)" : undefined}>
+          <g className="rd-bn-ear rd-bn-ear-r">
+            <path d={EAR_R} fill="none" stroke="var(--binny-steel)" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
+          </g>
         </g>
         <path d={headCrop ? "M40 104 H160 L154 150 H46 Z" : "M40 104 H160 L152 186 Q151 196 141 196 H59 Q49 196 48 186 Z"} fill="var(--rd-bn-body)" />
         <rect x="34" y="94" width="132" height="18" rx="8" fill="color-mix(in oklch, var(--rd-bn-body) 65%, black)" />
@@ -100,7 +105,7 @@ export function Binny({ mood, size = 96, motion = "idle", className, "aria-hidde
       </g>
     </svg>
   )
-  if (resolved !== "roam") return svg
+  if (motion !== "roam") return svg
   return (
     <span className="rd-binny-zone" style={{ "--rd-roam": `${roamDistance}px` } as CSSProperties}>
       {svg}

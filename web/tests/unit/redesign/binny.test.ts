@@ -62,6 +62,12 @@ describe("Binny", () => {
     expect(out).not.toContain("rotate(-3 100 192)")
     expect(out).not.toContain("M90 163 Q100 172 110 163")
   })
+  it("headCrop: the ear tilt sits on a wrapper so the CSS twitch and sad rotation compose", () => {
+    const out = html({ mood: "happy", headCrop: true })
+    expect(out).toMatch(/<g data-tilt="l" transform="rotate\(-6 75 100\)"><g class="rd-bn-ear rd-bn-ear-l">/)
+    expect(out).toMatch(/<g data-tilt="r" transform="rotate\(6 125 100\)"><g class="rd-bn-ear rd-bn-ear-r">/)
+    expect(out).not.toMatch(/class="rd-bn-ear[^"]*" transform=/)
+  })
   it("uses no literal colours (tokens only)", () => {
     expect(html({ mood: "sad" })).not.toMatch(/#[0-9a-f]{3,8}\b|oklch\(/i)
   })

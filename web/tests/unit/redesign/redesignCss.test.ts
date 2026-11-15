@@ -42,4 +42,11 @@ describe("redesign.css motion rule", () => {
     const foreign = selectors.flatMap((s) => [...s.matchAll(/\.([a-zA-Z][\w-]*)/g)].map((m) => m[1])).filter((c) => !c.startsWith("rd-"))
     expect(foreign).toEqual([])
   })
+
+  it("dark Binny never uses on-primary as the body (it is the dark ground's own ink, ~1.4:1)", () => {
+    const dark = css.match(/:root\[data-theme="dark"\] \.rd-binny\s*\{([^}]*)\}/)
+    expect(dark).not.toBeNull()
+    expect(dark![1]).toMatch(/--rd-bn-body:\s*var\(--md-primary\)/)
+    expect(dark![1]).toMatch(/--rd-bn-face:\s*var\(--md-on-primary\)/)
+  })
 })
