@@ -120,6 +120,38 @@ class PaperBarDTO(ApiModel):
     highlight: bool
 
 
+class GoalLineDTO(ApiModel):
+    """The goal block on one paper's steps path (redesign L2).
+
+    ``grade`` is A* when the paper's boundary map carries one, else the paper's
+    top grade (a Core paper tops out at C). ``marks`` is that grade's boundary
+    in raw marks on the latest attempt's maximum, so it reads in the same unit
+    as every bar beside it. ``source`` is the :class:`GradeBoundaryStore` rung
+    that answered, and ``sourceLabel`` says it in words a student can check.
+    """
+
+    grade: str
+    marks: int
+    outOf: int
+    source: Literal["exact", "subject_default", "global_default"]
+    sourceLabel: str
+
+
+class PaperAttemptDTO(ApiModel):
+    """One grade-bearing attempt on a paper's steps path, oldest first.
+
+    ``id`` is the index into the student's FULL history, the same addressing
+    ``GET /api/student/result/{paper_id}`` uses (see ``PaperHistoryRowDTO``).
+    """
+
+    id: str
+    recordedAt: str
+    grade: str
+    awarded: int
+    maximum: int
+    label: str
+
+
 class PaperBreakdownDTO(ApiModel):
     """Per-paper breakdown card (mirrors ``PaperBreakdown``)."""
 
