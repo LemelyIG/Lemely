@@ -273,7 +273,8 @@ def test_a_first_run_that_never_finished_is_not_an_ok_run(
 ) -> None:
     JobRunRecorder(sm).start("billing.reconcile_pending", NOW - timedelta(days=3))
 
-    jobs = {j["name"]: j for j in _client(sm, admin).get("/api/admin/billing/health").json()["jobs"]}
+    body = _client(sm, admin).get("/api/admin/billing/health").json()
+    jobs = {j["name"]: j for j in body["jobs"]}
 
     job = jobs["billing.reconcile_pending"]
     assert (job["neverRun"], job["lastOutcome"], job["totalRuns"]) == (True, None, 0)
